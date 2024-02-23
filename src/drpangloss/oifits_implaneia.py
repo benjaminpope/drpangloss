@@ -20,6 +20,8 @@ from astroquery.simbad import Simbad
 from matplotlib import pyplot as plt
 from termcolor import cprint
 
+import jax.numpy as jnp
+
 plt.close('all')
 
 
@@ -100,7 +102,7 @@ def ApplyFlag(data, unit='arcsec'):
 
 def save(dic, filename=None, datadir=None, verbose=False):
     """
-    Save dictionnary formatted data into a proper OIFITS (version 2) format file.
+    Save dictionary formatted data into a proper OIFITS (version 2) format file.
     Parameters:
     -----------
     `dic` {dict}:
@@ -828,3 +830,86 @@ def show(inputList, diffWl=False, vmin=0, vmax=1.05, cmax=180, setlog=False,
 
     plt.show(block=False)
     return fig
+
+
+def load_oifits(filename,directory):
+    wav = []
+    wav_band = []
+    vis2 = []
+    vis2_err = []
+    u = []
+    v = []
+    cp = []
+    cp_err = []
+    u1_cp = []
+    v1_cp = []
+    u2_cp = []
+    v2_cp = []
+    i_cps1 = []
+    i_cps2 = []
+    i_cps3 = []
+    v2_cov_inv = []
+    cp_cov_inv = []
+    ind1 = 0
+    wav_b = []
+    #Load the oifits 
+    dat = os.path.join(directory, filename)
+    obj = load(dat)
+    #extract important quantities and append to lists
+    wav.append(obj['OI_WAVELENGTH']['EFF_WAVE'])
+    wav_b.append(obj['OI_WAVELENGTH']['EFF_BAND'])
+    vis2.append(obj['OI_VIS2']['VIS2DATA'])
+    vis2_err.append(obj['OI_VIS2']['VIS2ERR'])
+    u.append(obj['OI_VIS2']['UCOORD'])
+    v.append(obj['OI_VIS2']['VCOORD'])
+    vis_sta_index = obj['OI_VIS2']['STA_INDEX']
+    cp.append(obj['OI_T3']['T3PHI'])
+    cp_err.append(obj['OI_T3']['T3PHIERR'])
+    wav_band.append(obj['OI_WAVELENGTH']['EFF_BAND'])
+    cp_sta_index = obj['OI_T3']['STA_INDEX']
+    i_cps1t,i_cps2t,i_cps3t = cp_indices(vis_sta_index, cp_sta_index)
+
+    i_cps1.append(i_cps1t+ind1*21)
+    i_cps2.append(i_cps2t+ind1*21)
+    i_cps3.append(i_cps3t+ind1*21)
+    ind1 += 1
+    wav = jnp.array(wav)
+    vis2 = jnp.array(vis2)
+    vis2_err = jnp.array(vis2_err)
+    u = jnp.array(u)
+    v = jnp.array(v)
+    cp = jnp.array(cp)
+    cp_err = jnp.array(cp_err)
+    i_cps1 = jnp.array(i_cps1)
+    i_cps2 = jnp.array(i_cps2)
+    i_cps3 = jnp.array(i_cps3)
+
+    a21 = jnp.argwhere(wav)[:,0]
+    wav21 = wav[a21][0,:][0]
+    vis221 =(jnp.array(vis2)[a21,:])
+    vis2_err21 = jnp.hstack(jnp.array(vis2_err)[a21,:])
+    u21 = jnp.hstack(jnp.array(u)[a21,:])
+    v21 = jnp.hstack(jnp.array(v)[a21,:])
+    cp21 = (jnp.array(cp)[a21,:])
+    cp_err21 = jnp.hstack(jnp.array(cp_err)[a21,:])
+    i_cps121 = jnp.hstack(jnp.array(i_cps1)[a21,:])
+    i_cps221 = jnp.hstack(jnp.array(i_cps2)[a21,:])
+    i_cps321 = jnp.hstack(jnp.array(i_cps3)[a21,:])
+    #convert u,v to wavelengths
+    u21 = jnp.hstack(u21/wav21)
+    v21 = jnp.hstack(v21/wav21)
+    dwav21 = wav_band[a21[0]][0]
+    
+    return cp21,cp_err21,vis221,vis2_err21,u21,v21,i_cps121,i_cps221,i_cps321
+
+def cp_indices(vis_sta_index, cp_sta_index):
+    """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
+    i_cps1 = np.zeros(len(cp_sta_index),np.int32)
+    i_cps2 = np.zeros(len(cp_sta_index),np.int32)
+    i_cps3 = np.zeros(len(cp_sta_index),np.int32)
+
+    for i in range(len(cp_sta_index)):
+        i_cps1[i] = np.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][1]==vis_sta_index[:,1]))[0,0]
+        i_cps2[i] = np.argwhere((cp_sta_index[i][1]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
+        i_cps3[i] = np.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
+    return i_cps1,i_cps2,i_cps3 
