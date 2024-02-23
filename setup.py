@@ -28,7 +28,7 @@ with open('requirements.txt') as f:
 tests_require = ['pytest', 'pytest-cov', 'pytest-remotedata']
 
 setup(name='pangloss',
-      version=find_version("src", "pangloss", "__init__.py"),
+      version=find_version("src", "__init__.py"),
       description='Python package to fit interferometric data, accelerated using Jax.',
       long_description=long_description,
       author='Dori Blakely, Benjamin Pope',
