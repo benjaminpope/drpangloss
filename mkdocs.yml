@@ -36,7 +36,6 @@ plugins:
           rendering:
             show_source: false
             show_if_no_docstring: yes
-      custom_templates: templates
 
 # ===== Navigation =====
 nav:
