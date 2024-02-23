@@ -34,5 +34,5 @@ jobs:
           pip install mkdocs-jupyter
 
       - name: generate and deploy documentation
-        run: mkdocs gh-deploy -d https://benjaminpope.github.io/pangloss
+        run: mkdocs gh-deploy -d https://benjaminpope.github.io/drpangloss
 

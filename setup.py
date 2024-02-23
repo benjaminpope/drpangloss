@@ -27,13 +27,13 @@ with open('requirements.txt') as f:
 # 2. What dependencies required to run the unit tests? (i.e. `pytest --remote-data`)
 tests_require = ['pytest', 'pytest-cov', 'pytest-remotedata']
 
-setup(name='pangloss',
+setup(name='drpangloss',
       version=find_version("src", "__init__.py"),
       description='Python package to fit interferometric data, accelerated using Jax.',
       long_description=long_description,
       author='Dori Blakely, Benjamin Pope',
       author_email='b.pope@uq.edu.au',
-      url='https://github.com/benjaminpope/pangloss',
+      url='https://github.com/benjaminpope/drpangloss',
       package_dir={'': 'src'},
       packages=find_packages(where='src'),
       package_data={},
