@@ -35,7 +35,7 @@ Documentation will be found [here](https://benjaminpope.github.io/drpangloss/), 
 
 ## Collaboration & Development
 
-We are always looking to collaborate and further develop this software! We have focused on flexibility and ease of development, so if you have a project you want to use drpangloss for, but it currently does not have the required capabilities, don't hesitate to [email me](b.pope@uq.edu.au) and we can discuss how to implement and merge it! Similarly you can take a look at the `CONTRIBUTING.md` file.
+We are always looking to collaborate and further develop this software! We have focused on flexibility and ease of development, so if you have a project you want to use drpangloss for, but it currently does not have the required capabilities, don't hesitate to [email me](mailto:b.pope@uq.edu.au) and we can discuss how to implement and merge it! Similarly you can take a look at the `CONTRIBUTING.md` file.
 
 ## Name
 
