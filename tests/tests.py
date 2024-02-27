@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax.random as random
-from jax.config import config; config.update("jax_enable_x64", True)
+import jax 
+jax.config.update("jax_enable_x64", True)
 
 import numpy as np
 
@@ -11,10 +12,9 @@ from drpangloss.oifits_implaneia import load_oifits
 
 # load an example dataset
 fn = "NuHor_F480M.oifits"
-dr = "../data/"
+dr = "./data/"
 oidata = OIData(*load_oifits(fn,dr))
 u, v, cp, cp_err, vis2, vis2_err, i_cps1,i_cps2,i_cps3 = oidata.unpack_all()
-
 
 
 '''----------------------------------------------------------------'''

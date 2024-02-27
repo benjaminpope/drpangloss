@@ -6,6 +6,7 @@ import numpy as np
 
 import optimistix as optx
 import equinox as eqx
+from functools import partial
 
 
 """------------------------------
@@ -181,7 +182,6 @@ def chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec, dra, pl
     return -0.5*(log_like_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec, dra, planet_contrast))
 
 
-
 def log_like_star(cp, d_cp, vis2, d_vis2):
     ''' Calculate the unnormalized log-likelihood of an unresolved star model
     ----------------------------------------------------------------
@@ -210,9 +210,11 @@ def optimize_log_like(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dr
     sol = optx.compat.minimize(log_like_wrap,method='BFGS',
                                 x0=jnp.array([planet_contrast]), args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra),options={"maxiter":100})
     res = sol.x
-
-
     return res
+
+#define a function to find the contrast that maximizes the log likelihood
+vmap_fun = partial(vmap(optimize_log_like, in_axes=(None,None,None,None,None,None,None,None,None,0,0,0)))
+optimize_log_like_map = jit(vmap_fun)
 
 #calc sigma with laplace approximation
 def sigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec, dra, planet_contrast):
