@@ -4,6 +4,11 @@ import numpy as np
 
 from .models import * 
 
+import jax.scipy as jsp
+import scipy.stats as stats
+
+
+
 def get_grid(sep_range,
              step_size,
              verbose=False):
@@ -140,3 +145,185 @@ def azimuthalAverage(image, center=None, stddev=False, returnradii=False, return
         return nr,bin_centers,radial_prof
     else:
         return radial_prof
+    
+
+def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
+
+    
+
+    #constraints
+    planet_contrast = jnp.where(planet_contrast<1e-6,1e-6,planet_contrast)
+    planet_contrast = jnp.where(planet_contrast>1.,1.,planet_contrast)
+
+    chi2_s = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, 0.,0.,0.)/ndof 
+    chi2_b = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast)/ndof
+
+    q = jsp.stats.chi2.cdf(ndof*chi2_b/chi2_s, ndof)
+    p = 1.-q
+
+    nsigma = jnp.sqrt(jnp.interp(p,xs,ppf_arr))
+
+    nsigma_overflow = jnp.sqrt(jnp.interp(1e-15,xs,ppf_arr))
+
+    nsigmavar = jnp.where(p<1e-15,nsigma_overflow,nsigma)
+
+    return (sigma-nsigmavar)**2
+
+def optimize_nsigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast,xs,ppf_arr,ndof,sigma):
+    '''
+    
+
+    Parameters
+    ----------
+    oidata: object
+        Observational data, including: 
+        - u: array
+            Baselines coordinates.
+        - v: array
+            Baselines coordinates.
+        - cp: array
+            Closure phases.
+        - d_cp: array
+            Closure phase uncertainties.
+        - vis2: array
+            Squared visibilities.
+        - d_vis2: array
+            Squared visibility uncertainties.
+        - i_cps1: array
+            Indices of closure phases for triangle 1.
+        - i_cps2: array
+            Indices of closure phases for triangle 2.
+        - i_cps3: array
+            Indices of closure phases for triangle 3.
+    ddec: float
+        Declination offset of companion (mas).
+    dra: float
+        Right ascension offset of companion (mas).
+    planet_contrast: float
+        Relative flux of companion.
+    xs: array
+        x values of PPF.
+    ppf_arr: array
+        PPF values.
+    ndof: int
+        Number of degrees of freedom.
+    sigma: int
+        Confidence level for which the detection limits shall be computed.
+
+    Returns
+    -------
+    res: float
+        Maximum relative flux of companion.
+    '''
+    
+    sol = optx.compat.minimize(nsigma_wrap,method='BFGS',
+                                x0=jnp.array([planet_contrast]), args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma),options={"maxiter":100})
+    
+    res = sol.x
+
+    return res
+
+
+def nsigma(chi2r_test,
+           chi2r_true,
+           ndof):
+    """
+    Parameters
+    ----------
+    chi2r_test: float
+        Reduced chi-squared of test model.
+    chi2r_true: float
+        Reduced chi-squared of true model.
+    ndof: int
+        Number of degrees of freedom.
+    
+    Returns
+    -------
+    nsigma: float
+        Detection significance.
+    """
+    
+    q = stats.chi2.cdf(ndof*chi2r_test/chi2r_true, ndof)
+    p = 1.-q
+    nsigma = np.sqrt(stats.chi2.ppf(1.-p, 1.))
+    if (p < 1e-15):
+        nsigma = np.sqrt(stats.chi2.ppf(1.-1e-15, 1.))
+    
+    return nsigma
+
+
+@jit
+def chi2all(cp_modelr,v2_modelr,oidata,
+           const=0.):
+
+    cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.cp, oidata.vis2, oidata.d_cp, oidata.d_vis2
+    # chi2 
+
+    chi2_closurer = jnp.sum((cp_obsr - cp_modelr.flatten())**2 / cp_errr**2)
+
+    chi2_v2r = jnp.sum((vis2_obsr - v2_modelr.flatten())**2 / (vis2_errr**2))
+
+    return ( chi2_closurer+chi2_v2r) + const
+
+@jit
+def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
+    u21, v21 = oidata.u, oidata.v
+    i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
+    cont = 10**cont
+    cvis_t211 = vis_binary2(u21, v21, ddec = ddec,dra=dra,
+                      p2=cont/(1.+cont+imsum),p3=1./(1.+cont+imsum))
+    cvis_t211 += vis_in/(1+cont+imsum)
+    cp_model_t211 = closure_phases(cvis_t211,i_cps121,i_cps221,i_cps321)
+    return chi2all(cp_model_t211,jnp.abs(cvis_t211)**2,oidata)
+
+def lim_absil(f0,
+              oidata,
+              ddec,
+              dra,
+              chi2_true,
+              ndof,
+              sigma=3):
+    """
+    Parameters
+    ----------
+    f0: float
+        Relative flux of companion.
+    func: method
+        Method to compute chi-squared.
+    p0: array
+        p0[0]: float
+            Relative flux of companion.
+        p0[1]: float
+            Right ascension offset of companion.
+        p0[2]: float
+            Declination offset of companion.
+        p0[3]: float
+            Uniform disk diameter (mas).
+    data_list: list of dict
+        List of data whose chi-squared shall be computed. The list
+        contains one data structure for each observation.
+    observables: list of str
+        List of observables which shall be considered.
+    cov: bool
+        True if covariance shall be considered.
+    smear: int
+        Numerical bandwidth smearing which shall be used.
+    chi2r_true: float
+        Reduced chi-squared of true model.
+    ndof: int
+        Number of degrees of freedom.
+    sigma: int
+        Confidence level for which the detection limits shall be computed.
+
+    Returns
+    -------
+    chi2: float
+        Chi-squared of Absil method.
+    """
+
+    chi2_test = chi2_suball(oidata,f0,vis_in=0.,imsum=0.,ddec=ddec,dra=dra)
+    nsigmavar = nsigma(chi2r_test=chi2_test/ndof,
+                         chi2r_true=chi2_true/ndof,
+                         ndof=ndof)
+
+    return np.abs(nsigmavar-sigma)**2
