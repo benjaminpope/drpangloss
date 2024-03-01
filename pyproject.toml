@@ -3,7 +3,7 @@ name = "drpangloss"
 version = "0.0.1"
 description = "Python package to fit interferometric data, accelerated using Jax."
 readme = "README.md"
-requires-python =">=3.11"
+requires-python =">=3.8"
 license = {file = "LICENSE.md"}
 authors = [
   {name = "Benjamin Pope", email = "b.pope@uq.edu.au"},

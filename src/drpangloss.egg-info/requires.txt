@@ -1,0 +1,10 @@
+jax
+jaxlib
+numpy
+matplotlib
+astropy
+tqdm
+optimistix
+scipy
+astroquery
+termcolor
