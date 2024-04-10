@@ -7,7 +7,7 @@ Project-URL: repository, https://github.com/benjaminpope/drpangloss
 Keywords: python,optics,machine-learning,jax,autodiff,differentiable,diffraction,simulation,telescope,drpangloss
 Classifier: Programming Language :: Python :: 3
 Classifier: Operating System :: OS Independent
-Requires-Python: >=3.9
+Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: jax
