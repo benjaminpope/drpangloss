@@ -256,7 +256,7 @@ def nsigma(chi2r_test,
 def chi2all(cp_modelr,v2_modelr,oidata,
            const=0.):
 
-    cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.cp, oidata.vis2, oidata.d_cp, oidata.d_vis2
+    cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.phi, oidata.vis, oidata.d_phi, oidata.d_vis
     # chi2 
 
     chi2_closurer = jnp.sum((cp_obsr - cp_modelr.flatten())**2 / cp_errr**2)
@@ -267,7 +267,7 @@ def chi2all(cp_modelr,v2_modelr,oidata,
 
 @jit
 def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
-    u21, v21 = oidata.u, oidata.v
+    u21, v21 = oidata.u/oidata.wavel, oidata.v/oidata.wavel
     i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
     cont = 10**cont
     cvis_t211 = vis_binary2(u21, v21, ddec = ddec,dra=dra,
