@@ -184,7 +184,7 @@ class OIData(zx.Base):
         Flatten model visibilities and phases.
         '''
 
-        return self.to_vis(cvis), self.to_phases(cvis)
+        return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
     
     def to_vis(self, cvis):
         '''
