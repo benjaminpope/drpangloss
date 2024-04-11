@@ -280,7 +280,7 @@ class BinaryModelAngular(zx.Base):
         Model for binary star system.
         '''
         uu, vv = u/wavel, v/wavel
-        return cvis_binar_angulary(uu, vv, self.sep, self.pa, self.contrast)
+        return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
     
 class BinaryModelCartesian(zx.Base):
     ''' 
@@ -306,7 +306,7 @@ class BinaryModelCartesian(zx.Base):
         self.flux = jnp.asarray(flux,dtype=float)
 
     def __repr__(self):
-        return f"BinaryModel(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
+        return f"BinaryModelAngular(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
     
     def unpack_all(self):
         '''
@@ -329,7 +329,6 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     - ddec = ddec (mas)
     - dra = dra (mas)
     - planet = planet brightness
-    - star = star brightness
     - u,v: baseline coordinates (wavelengths)
     ---------------------------------------------------------------- '''
 
@@ -357,7 +356,6 @@ def cvis_binary(u, v, ddec, dra, planet):
     - ddec = ddec (mas)
     - dra = dra (mas)
     - planet = planet brightness
-    - star = star brightness
     - u,v: baseline coordinates (wavelengths)
     ---------------------------------------------------------------- '''
     
