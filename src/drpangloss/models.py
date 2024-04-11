@@ -14,13 +14,16 @@ from functools import partial
 ------------------------------"""
 
 
-rad2mas = 180./np.pi*3600.*1000. # convert rad to mas
-mas2rad = np.pi/180./3600./1000. # convert mas to rad
+rad2mas = 180./jnp.pi*3600.*1000. # convert rad to mas
+mas2rad = jnp.pi/180./3600./1000. # convert mas to rad
 
+dtor = np.pi/180.0
+i2pi = 1j*2.0*np.pi
 
 '''--------------------------------------------------
 Data class
 --------------------------------------------------'''
+
 class OIData(zx.Base):
     ''' 
     Class for storing and manipulating data from OIFITS files, and for interfacing with drpangloss Model objects.
@@ -104,58 +107,82 @@ class OIData(zx.Base):
 
         Args:
         - data: dict
-            OIFITS data file opened with pyoifits
+            OIFITS data file opened with pyoifits, or dictionary filling out all the appropriate keywords & values
         '''
 
-        data_names = [d.name for d in data.get_dataHDUs()]
-        assert 'OI_VIS' in data_names or 'OI_VIS2' in data_names, "No visibility data found in OIFITS file"
-        assert 'OI_T3' in data_names or 'OI_PHI' in data_names, "No phase data found in OIFITS file"
+        try:
+            # assume data is an oifits file opened with pyoifits
+            data_names = [d.name for d in data.get_dataHDUs()]
+            assert 'OI_VIS' in data_names or 'OI_VIS2' in data_names, "No visibility data found in OIFITS file"
+            assert 'OI_T3' in data_names or 'OI_PHI' in data_names, "No phase data found in OIFITS file"
 
-        # get the data from the oifits file
-        self.wavel = np.array(data[1].data['EFF_WAVE'],dtype=float) # note that for AMI this is scalar but for CHARA it is an array
+            # get the data from the oifits file
+            self.wavel = jnp.array(data[1].data['EFF_WAVE'],dtype=float) # note that for AMI this is scalar but for CHARA it is an array
 
-        # if square visibilities are available, get them, otherwise get unsquared visibilities
-        if 'OI_VIS2' in data_names:
-            
-            visdata = data['OI_VIS2']
-            self.vis = np.array(visdata.data['VIS2DATA'],dtype=float)
-            self.d_vis = np.array(visdata.data['VIS2ERR'],dtype=float)
-            vis_sta_index = visdata.data['STA_INDEX']
+            # if square visibilities are available, get them, otherwise get unsquared visibilities
+            if 'OI_VIS2' in data_names:
+                
+                visdata = data['OI_VIS2']
+                self.vis = jnp.array(visdata.data['VIS2DATA'],dtype=float)
+                self.d_vis = jnp.array(visdata.data['VIS2ERR'],dtype=float)
+                vis_sta_index = visdata.data['STA_INDEX']
 
-            self.u, self.v = np.array(visdata.data['UCOORD'],dtype=float), np.array(visdata.data['VCOORD'],dtype=float)
+                self.u, self.v = jnp.array(visdata.data['UCOORD'],dtype=float), jnp.array(visdata.data['VCOORD'],dtype=float)
 
-            self.v2_flag = True
+                self.v2_flag = True
 
-        elif 'OI_VIS' in data_names:
+            elif 'OI_VIS' in data_names:
 
-            visdata = data['OI_VIS']
-            self.vis = np.array(visdata.data['VISPHI'],dtype=float)
-            self.d_vis = np.array(visdata.data['VISERR'],dtype=float)
-            self.u, self.v = np.array(visdata.data['UCOORD'],dtype=float), np.array(visdata.data['VCOORD'],dtype=float)
-            vis_sta_index = np.array(visdata.data['STA_INDEX'],dtype=int)
+                visdata = data['OI_VIS']
+                self.vis = jnp.array(visdata.data['VISPHI'],dtype=float)
+                self.d_vis = jnp.array(visdata.data['VISERR'],dtype=float)
+                self.u, self.v = jnp.array(visdata.data['UCOORD'],dtype=float), jnp.array(visdata.data['VCOORD'],dtype=float)
+                vis_sta_index = jnp.array(visdata.data['STA_INDEX'],dtype=int)
 
-            self.v2_flag = False
+                self.v2_flag = False
 
-        # if absolute phases are available, get them, otherwise get closure phases
-        if 'OI_PHI' in data_names:
+            # if absolute phases are available, get them, otherwise get closure phases
+            if 'OI_PHI' in data_names:
 
-            phidata = data['OI_PHI']
-            self.phi = np.array(phidata.data['VISPHI'],dtype=float)
-            self.d_phi = np.array(phidata.data['VISERR'],dtype=float)
-            self.i_cps1,self.i_cps2,self.i_cps3 = None, None, None
+                phidata = data['OI_PHI']
+                self.phi = jnp.array(phidata.data['VISPHI'],dtype=float)
+                self.d_phi = jnp.array(phidata.data['VISERR'],dtype=float)
+                self.i_cps1,self.i_cps2,self.i_cps3 = None, None, None
 
-            self.cp_flag = True
+                self.cp_flag = True
 
-        elif 'OI_T3' in data_names:
+            elif 'OI_T3' in data_names:
 
-            phidata = data['OI_T3']
-            self.phi = np.array(phidata.data['T3PHI'],dtype=float)
-            self.d_phi = np.array(phidata.data['T3PHIERR'],dtype=float)
+                phidata = data['OI_T3']
+                self.phi = jnp.array(phidata.data['T3PHI'],dtype=float)
+                self.d_phi = jnp.array(phidata.data['T3PHIERR'],dtype=float)
 
-            cp_sta_index = np.array(phidata.data['STA_INDEX'],dtype=int)
-            self.i_cps1,self.i_cps2,self.i_cps3 = cp_indices(vis_sta_index, cp_sta_index)
+                cp_sta_index = jnp.array(phidata.data['STA_INDEX'],dtype=int)
+                self.i_cps1,self.i_cps2,self.i_cps3 = cp_indices(vis_sta_index, cp_sta_index)
 
-            self.cp_flag = True
+                self.cp_flag = True
+
+        except: 
+            # assume data is a dict of the form {'u':u,'v':v,'wavel':wavel,'vis':vis,'d_vis':d_vis,
+            #'phi':phi,'d_phi':d_phi,'i_cps1':i_cps1,'i_cps2':i_cps2,'i_cps3':i_cps3,'v2_flag':v2_flag,'cp_flag':cp_flag}
+
+            self.u = jnp.array(data['u'],dtype=float)
+            self.v = jnp.array(data['v'],dtype=float)
+            self.wavel = jnp.array(data['wavel'],dtype=float)
+
+            self.vis = jnp.array(data['vis'],dtype=float)
+            self.d_vis = jnp.array(data['d_vis'],dtype=float)
+
+            self.phi = jnp.array(data['phi'],dtype=float)
+            self.d_phi = jnp.array(data['d_phi'],dtype=float)
+
+            self.i_cps1 = jnp.array(data['i_cps1'],dtype=int)
+            self.i_cps2 = jnp.array(data['i_cps2'],dtype=int)
+            self.i_cps3 = jnp.array(data['i_cps3'],dtype=int)
+
+            self.v2_flag = data['v2_flag']
+            self.cp_flag = data['cp_flag']
+
 
 
     def __repr__(self):
@@ -169,7 +196,7 @@ class OIData(zx.Base):
         '''
         Flatten closure phases and uncertainties.
         '''
-        return np.concatenate([self.vis, self.phi]), np.concatenate([self.d_vis, self.d_phi])
+        return jnp.concatenate([self.vis, self.phi]), jnp.concatenate([self.d_vis, self.d_phi])
     
     def unpack_all(self):
         '''
@@ -184,16 +211,16 @@ class OIData(zx.Base):
         Flatten model visibilities and phases.
         '''
 
-        return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
+        return jnp.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
     
     def to_vis(self, cvis):
         '''
         Convert complex visibilities to visibilities or squared visibilities.
         '''
         if self.v2_flag:
-            return np.abs(cvis)**2
+            return jnp.abs(cvis)**2
         else:
-            return np.abs(cvis)
+            return jnp.abs(cvis)
             
     def to_phases(self, cvis):
         '''
@@ -202,7 +229,7 @@ class OIData(zx.Base):
         if self.cp_flag:
             return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)  
         else:
-            np.angle(cvis)
+            jnp.angle(cvis)
     
     def model(self, model_object):
         '''
@@ -210,12 +237,13 @@ class OIData(zx.Base):
         '''
         cvis = model_object.model(self.u, self.v, self.wavel)
         return self.flatten_model(cvis)
+    
 
 '''--------------------------------------------------
 Model functions
 --------------------------------------------------'''
 
-class BinaryModel(zx.Base):
+class BinaryModelAngular(zx.Base):
     ''' 
     Class for a binary star model.
     '''
@@ -234,9 +262,9 @@ class BinaryModel(zx.Base):
 
         '''
 
-        self.sep = np.asarray(sep,dtype=float)
-        self.pa = np.asarray(pa,dtype=float)
-        self.contrast = np.asarray(contrast,dtype=float)
+        self.sep = jnp.asarray(sep,dtype=float)
+        self.pa = jnp.asarray(pa,dtype=float)
+        self.contrast = jnp.asarray(contrast,dtype=float)
 
     def __repr__(self):
         return f"BinaryModel(sep={self.sep}, pa={self.pa}, contrast={self.contrast})"
@@ -252,9 +280,49 @@ class BinaryModel(zx.Base):
         Model for binary star system.
         '''
         uu, vv = u/wavel, v/wavel
-        return cvis_binary(uu, vv, self.sep, self.pa, self.contrast)
+        return cvis_binar_angulary(uu, vv, self.sep, self.pa, self.contrast)
+    
+class BinaryModelCartesian(zx.Base):
+    ''' 
+    Class for a binary star model.
+    '''
+    dra: jax.Array
+    ddec: jax.Array
+    flux: jax.Array
 
-def cvis_binary(u, v, ddec,dra,planet,star=1.):
+    def __init__(self, dra, ddec, flux):
+
+        '''
+        Initialize a binary model with separation, position angle, and contrast.
+
+        sep: separation in mas
+        pa: position angle in degrees
+        contrast: flux ratio between components
+
+        '''
+
+        self.dra = jnp.asarray(dra,dtype=float)
+        self.ddec = jnp.asarray(ddec,dtype=float)
+        self.flux = jnp.asarray(flux,dtype=float)
+
+    def __repr__(self):
+        return f"BinaryModel(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
+    
+    def unpack_all(self):
+        '''
+        Convenience function to unpack all data to be used in model functions.
+        '''
+        return self.dra, self.ddec, self.flux
+    
+    def model(self, u, v, wavel):
+        '''
+        Model for binary star system.
+        '''
+        uu, vv = u/wavel, v/wavel
+        return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
+
+    
+def cvis_binary_angular(u, v, sep, pa, contrast):
     #adapted from pymask
     ''' Calculate the complex visibilities observed by an array on a binary star
     ----------------------------------------------------------------
@@ -264,6 +332,36 @@ def cvis_binary(u, v, ddec,dra,planet,star=1.):
     - star = star brightness
     - u,v: baseline coordinates (wavelengths)
     ---------------------------------------------------------------- '''
+
+    #normalize visibilities so total power is 1
+
+    th = pa * dtor
+
+    ddec = mas2rad*(sep * jnp.cos(th))
+    dra = -1*mas2rad*(sep * jnp.sin(th))
+
+    # decompose into two "luminosity"
+    l2 = 1. / (contrast + 1)
+    l1 = 1 - l2
+
+    # phase-factor
+    phi = jnp.exp(-i2pi*(u*dra + v*ddec))
+    cvis = l1 + l2 * phi
+
+    return cvis
+
+def cvis_binary(u, v, ddec, dra, planet):
+    #adapted from pymask
+    ''' Calculate the complex visibilities observed by an array on a binary star
+    ----------------------------------------------------------------
+    - ddec = ddec (mas)
+    - dra = dra (mas)
+    - planet = planet brightness
+    - star = star brightness
+    - u,v: baseline coordinates (wavelengths)
+    ---------------------------------------------------------------- '''
+    
+    star = 1 
 
     #normalize visibilities so total power is 1
     p3 = star/(star+planet)
@@ -411,10 +509,11 @@ def sigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec, dra, planet_c
     return jnp.sqrt(cov)
 
 def cp_indices(vis_sta_index, cp_sta_index):
+    vis_sta_index, cp_sta_index = np.array(vis_sta_index,dtype=int), np.array(cp_sta_index,dtype=int)
     """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
-    i_cps1 = np.zeros(len(cp_sta_index),np.int32)
-    i_cps2 = np.zeros(len(cp_sta_index),np.int32)
-    i_cps3 = np.zeros(len(cp_sta_index),np.int32)
+    i_cps1 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
+    i_cps2 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
+    i_cps3 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
 
     for i in range(len(cp_sta_index)):
         i_cps1[i] = np.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][1]==vis_sta_index[:,1]))[0,0]
