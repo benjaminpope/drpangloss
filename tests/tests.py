@@ -10,7 +10,7 @@ import numpy as np
 from functools import partial
 
 from drpangloss.models import OIData, BinaryModel, cvis_binary, closure_phases, log_like_binary, chi2_binary, log_like_star, log_like_wrap, optimize_log_like, sigma
-from drpangloss.oifits_implaneia import load_oifits
+# from drpangloss.oifits_implaneia import load_oifits
 
 # load an example dataset
 
