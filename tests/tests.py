@@ -15,7 +15,7 @@ from drpangloss.models import OIData, BinaryModel, cvis_binary, closure_phases, 
 # load an example dataset
 
 fname = "NuHor_F480M.oifits"
-ddir = "../data/"
+ddir = "./data/"
 
 data = oifits.open(ddir+fname)
 
