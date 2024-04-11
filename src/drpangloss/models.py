@@ -423,3 +423,13 @@ def cp_indices(vis_sta_index, cp_sta_index):
         i_cps2[i] = np.argwhere((cp_sta_index[i][1]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
         i_cps3[i] = np.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
     return np.array(i_cps1,dtype=int),np.array(i_cps2,dtype=int),np.array(i_cps3,dtype=int) 
+
+
+def test_likelihood()
+    sep, theta, con = 50., 45., 10.
+    
+    binary = BinaryModel(sep,theta,con)
+    model_data = oidata.model(binary)
+    data, errors = oidata.flatten_data()
+
+    return -0.5*np.sum((data - model_data)**2/errors**2)
