@@ -7,64 +7,203 @@ from .models import *
 import jax.scipy as jsp
 import scipy.stats as stats
 
+'''-------------------------------------------
 
+Functions to fit a model to data and optimize the 
+contrast of the model over a grid of parameter values.
 
-def get_grid(sep_range,
-             step_size,
-             verbose=False):
-    """
+-------------------------------------------'''
+
+@partial(jit, static_argnames=("model_class"))
+def likelihood_grid(data_obj, model_class, samples_dict):
+    ''' 
+    Function to vmap a likelihood function over a grid of parameter values provided in a dictionary.
+
     Parameters
     ----------
-    sep_range: tuple of float
-        Min. and max. angular separation of grid (mas).
-    step_size: float
-        Step size of grid (mas).
-    verbose: bool
-        True if feedback shall be printed.
+    data_obj : OIData
+        Object containing the data to be fitted.
+    model_class : class
+        Model class to be fitted to the data.
+    samples_dict: dict
+        Dictionary of parameter names and values to be fitted to the data.
+
+    Returns
+    -------
+    array-like
+        Log-likelihood values over the grid of parameter values.
+    '''
+    
+    params = list(samples_dict.keys())
+    samples = samples_dict.values()
+    vals = np.array(np.meshgrid(*samples))
+    vals_vec = vals.reshape((len(vals), -1)).T
+    
+    fn = vmap(lambda values: loglike(values, params, data_obj,model_class))
+
+    return fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+
+@partial(jit, static_argnames=("model_class"))
+def optimized_contrast_grid(best_contrast_indices, data_obj, model_class, samples_dict):
+    '''
+    Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
+
+    Parameters
+    ----------
+    best_contrast_indices : array-like
+        Indices of the best contrast values in a grid calculated with likelihood_grid.
+    data_obj : OIData
+        Object containing the data to be fitted.
+    model_class : class
+        Model class to be fitted to the data.
+    samples_dict: dict
+        Dictionary of parameter names and values to be fitted to the data.
+
+    Returns
+    -------
+    array-like
+        Optimized contrast values over the grid of parameter values.
+
+    '''
+    
+    params = list(samples_dict.keys())
+    coords = [samples_dict[key] for key in ["dra", "ddec"]]
+    ras, decs = np.meshgrid(*coords)
+    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals_vec = vals.reshape((len(vals), -1)).T
+
+    to_optimize = lambda flux, dra_inp, ddec_inp: -loglike([dra_inp, ddec_inp, flux], params, data_obj, model_class)
+    bestcon = lambda flux, dra, ddec: optx.compat.minimize(to_optimize, x0= np.array([flux]), args=(np.array(dra),np.array(ddec)), 
+                            method='BFGS', options={"maxiter":100}).x
+
+    fn = vmap(lambda values: bestcon(*values))
+
+    return fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+
+@partial(jit, static_argnames=("model_class"))
+def laplace_contrast_uncertainty_grid(best_contrast_indices, data_obj, model_class, samples_dict):
+    '''
+    Calculate the uncertainty with the Laplace method over a grid of parameters, for an optimized fit between a model and data object.
+
+    Parameters
+    ----------
+    best_contrast_indices : array-like
+        Indices of the best contrast values in a grid calculated with likelihood_grid.
+    data_obj : OIData
+        Object containing the data to be fitted.
+    model_class : class
+        Model class to be fitted to the data.
+    samples_dict: dict
+        Dictionary of parameter names and values to be fitted to the data.
+
+    Returns
+    -------
+    array-like
+        Uncertainty in the contrast.
+    '''
+
+    params = list(samples_dict.keys())
+    coords = [samples_dict[key] for key in ["dra", "ddec"]]
+    ras, decs = np.meshgrid(*coords)
+    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals_vec = vals.reshape((len(vals), -1)).T
+
+    
+    sigma = lambda flux, dra, ddec: laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class)
+    fn = vmap(lambda values: sigma(*values))
+
+    return fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+
+@partial(vmap, in_axes=(0,0,None))
+@partial(vmap, in_axes=(None,None,0))
+def ruffio_upperlimit(mean,sigma,percentile):
+    '''
+    Calculate the upper limit of a distribution given the mean and standard deviation.
+    This is an implementation of the Ruffio method in the old syntax.
+
+    TODO: Update this to the new syntax.
+
+    Parameters
+    ----------
+    mean : array-like
+        Mean of the distribution.
+    sigma : array-like
+        Standard deviation of the distribution.
+    percentile : float
+        Percentile value for the upper limit.
     
     Returns
     -------
-    grid_ra_dec: tuple of array
-        grid_ra_dec[0]: array
-            Right ascension offset of grid cells (mas).
-        grid_ra_dec[1]: array
-            Declination offset of grid cells (mas).
-    grid_sep_pa: tuple of array
-        grid_sep_pa[0]: array
-            Angular separation of grid cells (mas).
-        grid_sep_pa[1]: array
-            Position angle of grid cells (deg).
-    """
+    array-like
+        Upper limit of the distribution.
+    '''
+
+
+    #eqn 8 from Ruffio+2018
+    limit = jsp.stats.norm.ppf((percentile+(1-percentile)*jsp.stats.norm.cdf(0,loc=mean,scale=sigma)),loc=mean,scale=sigma)
+
+    return limit
+
+
+# def get_grid(sep_range,
+#              step_size,
+#              verbose=False):
+#     """
+#     Parameters
+#     ----------
+#     sep_range: tuple of float
+#         Min. and max. angular separation of grid (mas).
+#     step_size: float
+#         Step size of grid (mas).
+#     verbose: bool
+#         True if feedback shall be printed.
     
-    if (verbose == True):
-        print('Computing grid')
+#     Returns
+#     -------
+#     grid_ra_dec: tuple of array
+#         grid_ra_dec[0]: array
+#             Right ascension offset of grid cells (mas).
+#         grid_ra_dec[1]: array
+#             Declination offset of grid cells (mas).
+#     grid_sep_pa: tuple of array
+#         grid_sep_pa[0]: array
+#             Angular separation of grid cells (mas).
+#         grid_sep_pa[1]: array
+#             Position angle of grid cells (deg).
+#     """
     
-    nc = int(np.ceil(sep_range[1]/step_size))
-    temp = np.linspace(-nc*step_size, nc*step_size, 2*nc+1)
-    grid_ra_dec = np.meshgrid(temp, temp)
-    grid_ra_dec[0] = np.fliplr(grid_ra_dec[0])
-    sep = np.sqrt(grid_ra_dec[0]**2+grid_ra_dec[1]**2)
-    pa = np.rad2deg(np.arctan2(grid_ra_dec[0], grid_ra_dec[1]))
-    grid_sep_pa = np.array([sep, pa])
+#     if (verbose == True):
+#         print('Computing grid')
     
-    mask = (sep < sep_range[0]-1e-6) | (sep_range[1]+1e-6 < sep)
-    grid_ra_dec[0][mask] = np.nan
-    grid_ra_dec[1][mask] = np.nan
-    grid_sep_pa[0][mask] = np.nan
-    grid_sep_pa[1][mask] = np.nan
+#     nc = int(np.ceil(sep_range[1]/step_size))
+#     temp = np.linspace(-nc*step_size, nc*step_size, 2*nc+1)
+#     grid_ra_dec = np.meshgrid(temp, temp)
+#     grid_ra_dec[0] = np.fliplr(grid_ra_dec[0])
+#     sep = np.sqrt(grid_ra_dec[0]**2+grid_ra_dec[1]**2)
+#     pa = np.rad2deg(np.arctan2(grid_ra_dec[0], grid_ra_dec[1]))
+#     grid_sep_pa = np.array([sep, pa])
     
-    if (verbose):
-        print('   Min. sep. = %.1f mas' % np.nanmin(grid_sep_pa[0]))
-        print('   Max. sep. = %.1f mas' % np.nanmax(grid_sep_pa[0]))
-        print('   %.0f non-empty grid cells' % np.sum(np.logical_not(np.isnan(grid_sep_pa[0]))))
+#     mask = (sep < sep_range[0]-1e-6) | (sep_range[1]+1e-6 < sep)
+#     grid_ra_dec[0][mask] = np.nan
+#     grid_ra_dec[1][mask] = np.nan
+#     grid_sep_pa[0][mask] = np.nan
+#     grid_sep_pa[1][mask] = np.nan
     
-    return grid_ra_dec, grid_sep_pa
+#     if (verbose):
+#         print('   Min. sep. = %.1f mas' % np.nanmin(grid_sep_pa[0]))
+#         print('   Max. sep. = %.1f mas' % np.nanmax(grid_sep_pa[0]))
+#         print('   %.0f non-empty grid cells' % np.sum(np.logical_not(np.isnan(grid_sep_pa[0]))))
+    
+#     return grid_ra_dec, grid_sep_pa
 
 
 def azimuthalAverage(image, center=None, stddev=False, returnradii=False, return_nr=False, 
         binsize=0.5, weights=None, steps=False, interpnan=False, left=None, right=None, return_max=False):
     """
-    Calculate the azimuthally averaged radial profile.
+    Calculate the azimuthally-averaged radial profile.
     NB: This was found online and should be properly credited! Modified by MJI
 
     image - The 2D image
@@ -114,7 +253,7 @@ def azimuthalAverage(image, center=None, stddev=False, returnradii=False, return
     bin_centers = (bins[1:]+bins[:-1])/2.0
 
     # Find out which radial bin each point in the map belongs to
-    whichbin = np.digitize(r.flat,bins)
+    whichbin = np.digitize(r.flatten(),bins)
 
     # how many per bin (i.e., histogram)?
     # there are never any in bin 0, because the lowest index returned by digitize is 1
@@ -124,11 +263,11 @@ def azimuthalAverage(image, center=None, stddev=False, returnradii=False, return
     # radial_prof.shape = bin_centers.shape
 
     if stddev:
-        radial_prof = np.array([image.flat[whichbin==b].std() for b in range(1,nbins+1)])
+        radial_prof = np.array([image.flatten()[whichbin==b].std() for b in range(1,nbins+1)])
     elif return_max:
-        radial_prof = np.array([np.append((image*weights).flat[whichbin==b],-np.inf).max() for b in range(1,nbins+1)])
+        radial_prof = np.array([np.append((image*weights).flatten()[whichbin==b],-np.inf).max() for b in range(1,nbins+1)])
     else:
-        radial_prof = np.array([(image*weights).flat[whichbin==b].sum() / weights.flat[whichbin==b].sum() for b in range(1,nbins+1)])
+        radial_prof = np.array([(image*weights).flatten()[whichbin==b].sum() / weights.flatten()[whichbin==b].sum() for b in range(1,nbins+1)])
 
     #import pdb; pdb.set_trace()
 
@@ -146,184 +285,238 @@ def azimuthalAverage(image, center=None, stddev=False, returnradii=False, return
     else:
         return radial_prof
     
-
-def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
-
-    
-
-    #constraints
-    planet_contrast = jnp.where(planet_contrast<1e-6,1e-6,planet_contrast)
-    planet_contrast = jnp.where(planet_contrast>1.,1.,planet_contrast)
-
-    chi2_s = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, 0.,0.,0.)/ndof 
-    chi2_b = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast)/ndof
-
-    q = jsp.stats.chi2.cdf(ndof*chi2_b/chi2_s, ndof)
-    p = 1.-q
-
-    nsigma = jnp.sqrt(jnp.interp(p,xs,ppf_arr))
-
-    nsigma_overflow = jnp.sqrt(jnp.interp(1e-15,xs,ppf_arr))
-
-    nsigmavar = jnp.where(p<1e-15,nsigma_overflow,nsigma)
-
-    return (sigma-nsigmavar)**2
-
-def optimize_nsigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast,xs,ppf_arr,ndof,sigma):
+@partial(jit, static_argnames=("model_class"))
+def absil_limits(samples_dict, data_obj, model_class, sigma):
     '''
     
+    Using Jax for optimization, calculate the detection limits for a given model class and data object.
+    This is by finding the contrast at which the detection significance is equal to the sigma value.
+    For example, if we set sigma = 3, we optimize in each coordinate cell to find the contrast 
+    at which we would be 3 sigma confident that the companion is detected.
 
     Parameters
     ----------
-    oidata: object
-        Observational data, including: 
-        - u: array
-            Baselines coordinates.
-        - v: array
-            Baselines coordinates.
-        - cp: array
-            Closure phases.
-        - d_cp: array
-            Closure phase uncertainties.
-        - vis2: array
-            Squared visibilities.
-        - d_vis2: array
-            Squared visibility uncertainties.
-        - i_cps1: array
-            Indices of closure phases for triangle 1.
-        - i_cps2: array
-            Indices of closure phases for triangle 2.
-        - i_cps3: array
-            Indices of closure phases for triangle 3.
-    ddec: float
-        Declination offset of companion (mas).
-    dra: float
-        Right ascension offset of companion (mas).
-    planet_contrast: float
-        Relative flux of companion.
-    xs: array
-        x values of PPF.
-    ppf_arr: array
-        PPF values.
-    ndof: int
-        Number of degrees of freedom.
-    sigma: int
-        Confidence level for which the detection limits shall be computed.
+    samples_dict: dict
+        Dictionary of parameter names and values to be fitted to the data, eg dra and ddec grids.
+    data_obj: object
+        Observational data in the format of an OIData object.
+    model_class: class
+        Model class to be fitted to the data.
+    sigma: float
+        Detection significance.
 
+        
     Returns
     -------
     res: float
         Maximum relative flux of companion.
     '''
+
+    ndof = data_obj.vis.size + data_obj.phi.size # number of degrees of freedom
+
+    # unpack the samples dict
+    params = list(samples_dict.keys())
+    coords = [samples_dict[key] for key in ["dra", "ddec"]] # TODO: make these arbitrary coordinate labels, eg sep and position angle
+    ras, decs = np.meshgrid(*coords)
+    vals = np.array([ras, decs])
+    vals_vec = vals.reshape((len(vals), -1)).T
+
+    # define intermediate function: nsigma detection significance
+
+    # define chi2 wrappers
+    chi2_bin = lambda flux, dra_inp, ddec_inp: -2*loglike([dra_inp, ddec_inp, flux], params, data_obj, model_class)/ndof
+    chi2_null = chi2_bin(0., 0., 0.)
+
+    # define optimization wrapper
+    to_optimize = lambda flux, dra_inp, ddec_inp: (nsigma(chi2_bin(10.**(flux), dra_inp, ddec_inp)/ndof, chi2_null/ndof, ndof) - sigma)**2
+
+    #optimize
+    bestcon = lambda dra, ddec: optx.compat.minimize(to_optimize, x0 = np.array([-4.]), args=(np.array(dra),np.array(ddec)), 
+                            method='BFGS', options={"maxiter":100}).x
+
+    fn = vmap(lambda values: bestcon(*values))
+
+    limits = 10**fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+    limits_clipped = np.clip(limits, 1e-6, 1) # clip to 1e-6
+
+    return limits_clipped
+
+# def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
+
+#     #constraints
+#     planet_contrast = jnp.where(planet_contrast<1e-6,1e-6,planet_contrast)
+#     planet_contrast = jnp.where(planet_contrast>1.,1.,planet_contrast)
+
+#     chi2_s = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, 0.,0.,0.)/ndof 
+#     chi2_b = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast)/ndof
+
+#     q = jsp.stats.chi2.cdf(ndof*chi2_b/chi2_s, ndof)
+#     p = 1.-q
+
+#     nsigma = jnp.sqrt(jnp.interp(p,xs,ppf_arr))
+
+#     nsigma_overflow = jnp.sqrt(jnp.interp(1e-15,xs,ppf_arr))
+
+#     nsigmavar = jnp.where(p<1e-15,nsigma_overflow,nsigma)
+
+#     return (sigma-nsigmavar)**2
+
+# def optimize_nsigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast,xs,ppf_arr,ndof,sigma):
+#     '''
     
-    sol = optx.compat.minimize(nsigma_wrap,method='BFGS',
-                                x0=jnp.array([planet_contrast]), args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma),options={"maxiter":100})
+
+#     Parameters
+#     ----------
+#     oidata: object
+#         Observational data, including: 
+#         - u: array
+#             Baselines coordinates.
+#         - v: array
+#             Baselines coordinates.
+#         - cp: array
+#             Closure phases.
+#         - d_cp: array
+#             Closure phase uncertainties.
+#         - vis2: array
+#             Squared visibilities.
+#         - d_vis2: array
+#             Squared visibility uncertainties.
+#         - i_cps1: array
+#             Indices of closure phases for triangle 1.
+#         - i_cps2: array
+#             Indices of closure phases for triangle 2.
+#         - i_cps3: array
+#             Indices of closure phases for triangle 3.
+#     ddec: float
+#         Declination offset of companion (mas).
+#     dra: float
+#         Right ascension offset of companion (mas).
+#     planet_contrast: float
+#         Relative flux of companion.
+#     xs: array
+#         x values of PPF.
+#     ppf_arr: array
+#         PPF values.
+#     ndof: int
+#         Number of degrees of freedom.
+#     sigma: int
+#         Confidence level for which the detection limits shall be computed.
+
+#     Returns
+#     -------
+#     res: float
+#         Maximum relative flux of companion.
+#     '''
     
-    res = sol.x
-
-    return res
-
-
-def nsigma(chi2r_test,
-           chi2r_true,
-           ndof):
-    """
-    Parameters
-    ----------
-    chi2r_test: float
-        Reduced chi-squared of test model.
-    chi2r_true: float
-        Reduced chi-squared of true model.
-    ndof: int
-        Number of degrees of freedom.
+#     sol = optx.compat.minimize(nsigma_wrap,method='BFGS',
+#                                 x0=jnp.array([planet_contrast]), 
+#                                 args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma),options={"maxiter":100})
     
-    Returns
-    -------
-    nsigma: float
-        Detection significance.
-    """
+#     res = sol.x
+
+#     return res
+
+
+# def nsigma(chi2r_test,
+#            chi2r_true,
+#            ndof):
+#     """
+#     Parameters
+#     ----------
+#     chi2r_test: float
+#         Reduced chi-squared of test model.
+#     chi2r_true: float
+#         Reduced chi-squared of true model.
+#     ndof: int
+#         Number of degrees of freedom.
     
-    q = stats.chi2.cdf(ndof*chi2r_test/chi2r_true, ndof)
-    p = 1.-q
-    nsigma = np.sqrt(stats.chi2.ppf(1.-p, 1.))
-    if (p < 1e-15):
-        nsigma = np.sqrt(stats.chi2.ppf(1.-1e-15, 1.))
+#     Returns
+#     -------
+#     nsigma: float
+#         Detection significance.
+#     """
     
-    return nsigma
+#     q = stats.chi2.cdf(ndof*chi2r_test/chi2r_true, ndof)
+#     p = 1.-q
+#     nsigma = np.sqrt(stats.chi2.ppf(1.-p, 1.))
+#     if (p < 1e-15):
+#         nsigma = np.sqrt(stats.chi2.ppf(1.-1e-15, 1.))
+    
+#     return nsigma
 
 
-@jit
-def chi2all(cp_modelr,v2_modelr,oidata,
-           const=0.):
+# @jit
+# def chi2all(cp_modelr,v2_modelr,oidata,
+#            const=0.):
 
-    cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.phi, oidata.vis, oidata.d_phi, oidata.d_vis
-    # chi2 
+#     cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.phi, oidata.vis, oidata.d_phi, oidata.d_vis
+#     # chi2 
 
-    chi2_closurer = jnp.sum((cp_obsr - cp_modelr.flatten())**2 / cp_errr**2)
+#     chi2_closurer = jnp.sum((cp_obsr - cp_modelr.flatten())**2 / cp_errr**2)
 
-    chi2_v2r = jnp.sum((vis2_obsr - v2_modelr.flatten())**2 / (vis2_errr**2))
+#     chi2_v2r = jnp.sum((vis2_obsr - v2_modelr.flatten())**2 / (vis2_errr**2))
 
-    return ( chi2_closurer+chi2_v2r) + const
+#     return ( chi2_closurer+chi2_v2r) + const
 
-@jit
-def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
-    u21, v21 = oidata.u/oidata.wavel, oidata.v/oidata.wavel
-    i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
-    cont = 10**cont
-    cvis_t211 = vis_binary2(u21, v21, ddec = ddec,dra=dra,
-                      p2=cont/(1.+cont+imsum),p3=1./(1.+cont+imsum))
-    cvis_t211 += vis_in/(1+cont+imsum)
-    cp_model_t211 = closure_phases(cvis_t211,i_cps121,i_cps221,i_cps321)
-    return chi2all(cp_model_t211,jnp.abs(cvis_t211)**2,oidata)
+# @jit
+# def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
+#     u21, v21 = oidata.u/oidata.wavel, oidata.v/oidata.wavel
+#     i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
+#     cont = 10**cont
+#     cvis_t211 = vis_binary2(u21, v21, ddec = ddec,dra=dra,
+#                       p2=cont/(1.+cont+imsum),p3=1./(1.+cont+imsum))
+#     cvis_t211 += vis_in/(1+cont+imsum)
+#     cp_model_t211 = closure_phases(cvis_t211,i_cps121,i_cps221,i_cps321)
+#     return chi2all(cp_model_t211,jnp.abs(cvis_t211)**2,oidata)
 
-def lim_absil(f0,
-              oidata,
-              ddec,
-              dra,
-              chi2_true,
-              ndof,
-              sigma=3):
-    """
-    Parameters
-    ----------
-    f0: float
-        Relative flux of companion.
-    func: method
-        Method to compute chi-squared.
-    p0: array
-        p0[0]: float
-            Relative flux of companion.
-        p0[1]: float
-            Right ascension offset of companion.
-        p0[2]: float
-            Declination offset of companion.
-        p0[3]: float
-            Uniform disk diameter (mas).
-    data_list: list of dict
-        List of data whose chi-squared shall be computed. The list
-        contains one data structure for each observation.
-    observables: list of str
-        List of observables which shall be considered.
-    cov: bool
-        True if covariance shall be considered.
-    smear: int
-        Numerical bandwidth smearing which shall be used.
-    chi2r_true: float
-        Reduced chi-squared of true model.
-    ndof: int
-        Number of degrees of freedom.
-    sigma: int
-        Confidence level for which the detection limits shall be computed.
+# def lim_absil(f0,
+#               oidata,
+#               ddec,
+#               dra,
+#               chi2_true,
+#               ndof,
+#               sigma=3):
+#     """
+#     Parameters
+#     ----------
+#     f0: float
+#         Relative flux of companion.
+#     func: method
+#         Method to compute chi-squared.
+#     p0: array
+#         p0[0]: float
+#             Relative flux of companion.
+#         p0[1]: float
+#             Right ascension offset of companion.
+#         p0[2]: float
+#             Declination offset of companion.
+#         p0[3]: float
+#             Uniform disk diameter (mas).
+#     data_list: list of dict
+#         List of data whose chi-squared shall be computed. The list
+#         contains one data structure for each observation.
+#     observables: list of str
+#         List of observables which shall be considered.
+#     cov: bool
+#         True if covariance shall be considered.
+#     smear: int
+#         Numerical bandwidth smearing which shall be used.
+#     chi2r_true: float
+#         Reduced chi-squared of true model.
+#     ndof: int
+#         Number of degrees of freedom.
+#     sigma: int
+#         Confidence level for which the detection limits shall be computed.
 
-    Returns
-    -------
-    chi2: float
-        Chi-squared of Absil method.
-    """
+#     Returns
+#     -------
+#     chi2: float
+#         Chi-squared of Absil method.
+#     """
 
-    chi2_test = chi2_suball(oidata,f0,vis_in=0.,imsum=0.,ddec=ddec,dra=dra)
-    nsigmavar = nsigma(chi2r_test=chi2_test/ndof,
-                         chi2r_true=chi2_true/ndof,
-                         ndof=ndof)
+#     chi2_test = chi2_suball(oidata,f0,vis_in=0.,imsum=0.,ddec=ddec,dra=dra)
+#     nsigmavar = nsigma(chi2r_test=chi2_test/ndof,
+#                          chi2r_true=chi2_true/ndof,
+#                          ndof=ndof)
 
-    return np.abs(nsigmavar-sigma)**2
+#     return np.abs(nsigmavar-sigma)**2
