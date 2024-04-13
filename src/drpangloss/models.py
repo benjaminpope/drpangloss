@@ -117,12 +117,12 @@ class OIData(zx.Base):
             assert 'OI_T3' in data_names or 'OI_PHI' in data_names, "No phase data found in OIFITS file"
 
             # get the data from the oifits file
-            self.wavel = jnp.array(data[1].data['EFF_WAVE'],dtype=float) # note that for AMI this is scalar but for CHARA it is an array
+            self.wavel = jnp.array(data.get_wavelengthHDUs()[0].data['EFF_WAVE']) # note that for AMI this is scalar but for CHARA it is an array
 
             # if square visibilities are available, get them, otherwise get unsquared visibilities
             if 'OI_VIS2' in data_names:
                 
-                visdata = data['OI_VIS2']
+                visdata = data.get_vis2HDUs()[0]
                 self.vis = jnp.array(visdata.data['VIS2DATA'],dtype=float)
                 self.d_vis = jnp.array(visdata.data['VIS2ERR'],dtype=float)
                 vis_sta_index = visdata.data['STA_INDEX']
@@ -202,7 +202,8 @@ class OIData(zx.Base):
         '''
         Unpack all data to be used in some legacy model functions.
         '''
-        return self.u/self.wavel, self.v/self.wavel, self.phi, self.d_phi, self.vis, self.d_vis, self.i_cps1, self.i_cps2, self.i_cps3
+        u, v = uv_by_wavel(self.u,self.v,self.wavel)
+        return u, v, self.phi, self.d_phi, self.vis, self.d_vis, self.i_cps1, self.i_cps2, self.i_cps3
     
     def flatten_model(self,cvis):
         '''
@@ -211,7 +212,7 @@ class OIData(zx.Base):
         Flatten model visibilities and phases.
         '''
 
-        return jnp.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
+        return jnp.concatenate([self.to_vis(cvis), self.to_phases(cvis)], axis=0)
     
     def to_vis(self, cvis):
         '''
@@ -279,7 +280,7 @@ class BinaryModelAngular(zx.Base):
         '''
         Model for binary star system.
         '''
-        uu, vv = u/wavel, v/wavel
+        uu, vv = uv_by_wavel(u, v, wavel)
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
     
 class BinaryModelCartesian(zx.Base):
@@ -318,7 +319,7 @@ class BinaryModelCartesian(zx.Base):
         '''
         Model for binary star system.
         '''
-        uu, vv = u/wavel, v/wavel
+        uu, vv = uv_by_wavel(u, v, wavel)
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
 
     
@@ -400,6 +401,7 @@ def vis_binary2(u, v, ddec,dra,p2,p3):
     return cvis
 
 @jit
+@partial(vmap, in_axes=(1, None, None, None), out_axes=1)
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     '''
     Calculate closure phases [degrees] from complex visibilities and cp indices
@@ -518,3 +520,7 @@ def cp_indices(vis_sta_index, cp_sta_index):
         i_cps2[i] = np.argwhere((cp_sta_index[i][1]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
         i_cps3[i] = np.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
     return np.array(i_cps1,dtype=int),np.array(i_cps2,dtype=int),np.array(i_cps3,dtype=int) 
+
+def uv_by_wavel(u,v,wavel):
+    '''Converts u,v coordinates from wavelengths to mas'''
+    return u[:,jnp.newaxis]/wavel, v[:,jnp.newaxis]/wavel
