@@ -7,11 +7,11 @@ requires-python =">=3.8"
 license = {file = "LICENSE.md"}
 authors = [
   {name = "Benjamin Pope", email = "b.pope@uq.edu.au"},
-  {name = "Dori Blakely", email="blakelyd@uvic.ca"}
+  {name = "Dori Blakely", email = "blakelyd@uvic.ca"}
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
 urls = {repository = "https://github.com/benjaminpope/drpangloss"}
-dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","astropy","tqdm","optimistix","scipy","astroquery", "pyoifits"]
+dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","optimistix","scipy","astroquery", "pyoifits"]
 classifiers=[
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
