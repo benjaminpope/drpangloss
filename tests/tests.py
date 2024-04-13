@@ -13,6 +13,21 @@ from functools import partial
 from drpangloss.models import OIData, BinaryModelAngular, cvis_binary, closure_phases, BinaryModelCartesian
 from drpangloss.grid_fit import optimized_contrast_grid,  likelihood_grid, laplace_contrast_uncertainty_grid, ruffio_upperlimit, absil_limits, azimuthalAverage
 from drpangloss.plotting import plot_optimized_and_grid, plot_likelihood_grid, plot_optimized_and_sigma, plot_contrast_limits
+
+from matplotlib import get_backend
+import matplotlib.pyplot as plt
+import warnings
+curr_backend = get_backend()
+#switch to non-Gui, preventing plots being displayed
+plt.switch_backend("Agg")
+#suppress UserWarning that agg cannot show plots
+warnings.filterwarnings("ignore", "Matplotlib is currently using agg")
+
+
+'''
+Unit tests for the functions in drpangloss. 
+'''
+
 # load an example dataset
 
 fname = "NuHor_F480M.oifits"
