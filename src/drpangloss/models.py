@@ -260,6 +260,9 @@ class BinaryModelAngular(zx.Base):
         pa: position angle in degrees
         contrast: flux ratio between components
 
+        TODO: add flags to denote which coordinates are position and which are flux and use those to pass to 
+        plotting and grid functions
+
         '''
 
         self.sep = jnp.asarray(sep,dtype=float)
@@ -298,6 +301,9 @@ class BinaryModelCartesian(zx.Base):
         sep: separation in mas
         pa: position angle in degrees
         contrast: flux ratio between components
+        
+        TODO: add flags to denote which coordinates are position and which are flux and use those to pass to 
+        plotting and grid functions
 
         '''
 
