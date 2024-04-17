@@ -123,7 +123,7 @@ def test_optimized():
 	best_contrast_indices = np.argmax(loglike_im,axis=2)
 	best_contrasts = samples_dict['flux'][best_contrast_indices]
 
-	optimized = optimized_contrast_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
+	optimized = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples_dict)
 
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
@@ -132,7 +132,7 @@ def test_laplace():
 	best_contrast_indices = np.argmax(loglike_im,axis=2)
 	best_contrasts = samples_dict['flux'][best_contrast_indices]
 
-	optimized = optimized_contrast_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
+	optimized = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples_dict)
 
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
@@ -146,7 +146,7 @@ def test_ruffio():
 	best_contrast_indices = np.argmax(loglike_im,axis=2)
 
 	# this implementation is in the old syntax
-	optimized = optimized_contrast_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
+	optimized = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples_dict)
 	laplace_sigma_grid = laplace_contrast_uncertainty_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
 
 	perc = np.array([jsp.stats.norm.cdf(2.)])
