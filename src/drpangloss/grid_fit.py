@@ -45,7 +45,7 @@ def likelihood_grid(data_obj, model_class, samples_dict):
 
 
 @partial(jit, static_argnames=("model_class"))
-def optimized_contrast_grid(best_contrast_indices, data_obj, model_class, samples_dict):
+def optimized_contrast_grid(data_obj, model_class, samples_dict):
     '''
     Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
 
@@ -68,6 +68,21 @@ def optimized_contrast_grid(best_contrast_indices, data_obj, model_class, sample
     '''
     
     params = list(samples_dict.keys())
+
+    # first do a grid search to find a starting point
+
+    samples = samples_dict.values()
+    vals = np.array(np.meshgrid(*samples))
+    vals_vec = vals.reshape((len(vals), -1)).T
+    
+    fn = vmap(lambda values: loglike(values, params, data_obj,model_class))
+
+    loglike_im = fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+    best_contrast_indices = np.argmax(loglike_im,axis=2)
+    
+    # then do optimization to fine tune the contrast
+
     coords = [samples_dict[key] for key in ["dra", "ddec"]]
     ras, decs = np.meshgrid(*coords)
     vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
@@ -316,30 +331,44 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
 
     # unpack the samples dict
     params = list(samples_dict.keys())
-    coords = [samples_dict[key] for key in ["dra", "ddec"]] # TODO: make these arbitrary coordinate labels, eg sep and position angle
-    ras, decs = np.meshgrid(*coords)
-    vals = np.array([ras, decs])
+    samples = samples_dict.values()
+    
+    # define chi2 wrappers
+    chi2_bin = lambda values: -2*loglike(values, params, data_obj, model_class)/ndof
+    chi2_null = chi2_bin([0., 0., 0.])
+
+    # first do a grid search to find the best contrast
+    vals = np.array(np.meshgrid(*samples))
     vals_vec = vals.reshape((len(vals), -1)).T
 
-    # define intermediate function: nsigma detection significance
+    # define intermediate function: nsigma detection significance, difference from sigma
 
-    # define chi2 wrappers
-    chi2_bin = lambda flux, dra_inp, ddec_inp: -2*loglike([dra_inp, ddec_inp, flux], params, data_obj, model_class)/ndof
-    chi2_null = chi2_bin(0., 0., 0.)
+    loss = lambda values: (nsigma(chi2_bin(values)/ndof, chi2_null/ndof, ndof) - sigma)**2
 
-    # define optimization wrapper
-    to_optimize = lambda flux, dra_inp, ddec_inp: (nsigma(chi2_bin(10.**(flux), dra_inp, ddec_inp)/ndof, chi2_null/ndof, ndof) - sigma)**2
+    loss_im = vmap(loss)(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+    best_contrast_indices = np.argmax(loss_im,axis=2)
+     
+    # then optimize the contrast at each point
+    coords = [samples_dict[key] for key in ["dra", "ddec"]] # TODO: make these arbitrary coordinate labels, eg sep and position angle
+    ras, decs = np.meshgrid(*coords)
+    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals_vec = vals.reshape((len(vals), -1)).T 
+
+    # define optimization wrapper for the contrast
+    to_optimize = lambda flux, dra_inp, ddec_inp: loss([dra_inp, ddec_inp, 10**flux])
 
     #optimize
-    bestcon = lambda dra, ddec: optx.compat.minimize(to_optimize, x0 = np.array([-4.]), args=(np.array(dra),np.array(ddec)), 
+    bestcon = lambda flux, dra, ddec: optx.compat.minimize(to_optimize, x0 = np.array([flux]), args=(np.array(dra),np.array(ddec)), 
                             method='BFGS', options={"maxiter":100}).x
 
     fn = vmap(lambda values: bestcon(*values))
+    limits = fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
 
-    limits = 10**fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
     limits_clipped = np.clip(limits, 1e-6, 1) # clip to 1e-6
 
     return limits_clipped
+
 
 # def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
 
