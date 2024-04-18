@@ -44,8 +44,8 @@ params = ["dra", "ddec", "flux"]
 
 samples_dict = {
     "dra":  np.linspace(600., -600., 100), # left is more RA 
-    "ddec": np.linspace(-600., 600., 100), # up is more dec
-    "flux": 10**np.linspace(-6, -1, 100)
+    "ddec": np.linspace(-600., 600., 101), # up is more dec
+    "flux": 10**np.linspace(-6, -1, 102)
     }
 
 true_values = [150., 150., 5e-4] # ra, dec, planet flux
