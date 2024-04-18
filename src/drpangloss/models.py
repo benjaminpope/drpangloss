@@ -334,7 +334,10 @@ class BinaryModelCartesian(zx.Base):
         '''
         Model for binary star system.
         '''
-        uu, vv = uv_by_wavel(u, v, wavel)
+        if len(wavel)==1:
+            uu, vv = u/wavel, v/wavel
+        else:
+            uu, vv = uv_by_wavel(u, v, wavel)
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
 
     
