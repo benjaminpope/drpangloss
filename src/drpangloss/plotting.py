@@ -27,7 +27,7 @@ def plot_likelihood_grid(loglike_im, samples_dict,truths=None):
 
     plt.figure(figsize=(12,6))
 
-    plt.imshow(loglike_im.max(axis=2).T, cmap="inferno",aspect="equal",
+    plt.imshow(loglike_im, cmap="inferno",aspect="equal",
             extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                             samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
     plt.colorbar(shrink=1,label='Log likelihood', pad=0.01)

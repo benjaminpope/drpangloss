@@ -45,6 +45,59 @@ def likelihood_grid(data_obj, model_class, samples_dict):
 
 
 @partial(jit, static_argnames=("model_class"))
+def optimized_likelihood_grid(data_obj, model_class, samples_dict):
+    '''
+    Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
+
+    Parameters
+    ----------
+    best_contrast_indices : array-like
+        Indices of the best contrast values in a grid calculated with likelihood_grid.
+    data_obj : OIData
+        Object containing the data to be fitted.
+    model_class : class
+        Model class to be fitted to the data.
+    samples_dict: dict
+        Dictionary of parameter names and values to be fitted to the data.
+
+    Returns
+    -------
+    array-like
+        Optimized contrast values over the grid of parameter values.
+
+    '''
+    
+    params = list(samples_dict.keys())
+
+    # first do a grid search to find a starting point
+
+    samples = samples_dict.values()
+    vals = np.array(np.meshgrid(*samples))
+    vals_vec = vals.reshape((len(vals), -1)).T
+    
+    fn = vmap(lambda values: loglike(values, params, data_obj,model_class))
+
+    loglike_im = fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+    best_contrast_indices = np.argmax(loglike_im,axis=2)
+    
+    # then do optimization to fine tune the contrast
+
+    coords = [samples_dict[key] for key in ["dra", "ddec"]]
+    ras, decs = np.meshgrid(*coords)
+    vals = np.array([samples_dict['flux'][best_contrast_indices].T, ras, decs])
+    vals_vec = vals.reshape((len(vals), -1)).T
+
+    to_optimize = lambda flux, dra_inp, ddec_inp: -loglike([dra_inp, ddec_inp, flux], params, data_obj, model_class)
+    bestcon = lambda flux, dra, ddec: optx.compat.minimize(to_optimize, x0= np.array([flux]), args=(np.array(dra),np.array(ddec)), 
+                            method='BFGS', options={"maxiter":100}).fun
+
+    fn = vmap(lambda values: bestcon(*values))
+
+    return -fn(vals_vec).reshape(vals.shape[1:]) # check the shapes output here
+
+
+@partial(jit, static_argnames=("model_class"))
 def optimized_contrast_grid(data_obj, model_class, samples_dict):
     '''
     Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
@@ -85,7 +138,7 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
 
     coords = [samples_dict[key] for key in ["dra", "ddec"]]
     ras, decs = np.meshgrid(*coords)
-    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals = np.array([samples_dict['flux'][best_contrast_indices].T, ras, decs])
     vals_vec = vals.reshape((len(vals), -1)).T
 
     to_optimize = lambda flux, dra_inp, ddec_inp: -loglike([dra_inp, ddec_inp, flux], params, data_obj, model_class)
@@ -122,7 +175,7 @@ def laplace_contrast_uncertainty_grid(best_contrast_indices, data_obj, model_cla
     params = list(samples_dict.keys())
     coords = [samples_dict[key] for key in ["dra", "ddec"]]
     ras, decs = np.meshgrid(*coords)
-    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals = np.array([samples_dict['flux'][best_contrast_indices].T, ras, decs])
     vals_vec = vals.reshape((len(vals), -1)).T
 
     
@@ -352,7 +405,7 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
     # then optimize the contrast at each point
     coords = [samples_dict[key] for key in ["dra", "ddec"]] # TODO: make these arbitrary coordinate labels, eg sep and position angle
     ras, decs = np.meshgrid(*coords)
-    vals = np.array([samples_dict['flux'][best_contrast_indices], ras, decs])
+    vals = np.array([samples_dict['flux'][best_contrast_indices].T, ras, decs])
     vals_vec = vals.reshape((len(vals), -1)).T 
 
     # define optimization wrapper for the contrast
