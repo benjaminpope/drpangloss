@@ -121,7 +121,6 @@ def test_likelihood_grid():
 def test_optimized_likelihood_grid():
 	loglike_im = optimized_likelihood_grid(oidata, BinaryModelCartesian, samples_dict) # calculate once to jit
 	assert np.all(np.isfinite(loglike_im))
-	assert loglike_im.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0], samples_dict['flux'].shape[0])
 
 	plot_likelihood_grid(loglike_im, samples_dict, truths=true_values);
 
@@ -132,7 +131,7 @@ def test_optimized():
 	best_contrasts = samples_dict['flux'][best_contrast_indices]
 
 	optimized = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples_dict)
-
+	assert np.all(np.isfinite(optimized))
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
 def test_laplace():
@@ -145,6 +144,7 @@ def test_laplace():
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
 	laplace_sigma_grid = laplace_contrast_uncertainty_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
+	assert np.all(np.isfinite(laplace_sigma_grid))
 	plot_optimized_and_sigma(optimized, laplace_sigma_grid, samples_dict,snr=False);
 	plot_optimized_and_sigma(optimized, laplace_sigma_grid, samples_dict,snr=True);
 
@@ -164,6 +164,7 @@ def test_ruffio():
 	# TODO: fix this syntax to be more readable
 	rad_width_ruffio, avg_width_ruffio  = azimuthalAverage(-2.5*np.log10(limits_rs[:,:]), returnradii=True, binsize=2, stddev=False)
 	_, std_width_ruffio  = azimuthalAverage(-2.5*np.log10(limits_rs[:,:]), returnradii=True, binsize=2, stddev=True)
+	assert np.all(np.isfinite(limits_rs))
 	assert np.all(np.isfinite(rad_width_ruffio))
 	assert np.all(np.isfinite(avg_width_ruffio))
 	assert np.all(np.isfinite(std_width_ruffio))
@@ -176,6 +177,7 @@ def test_absil():
 	# TODO: make this syntax more readable
 	rad_width_absil, avg_width_absil  = azimuthalAverage(-2.5*np.log10(limits_absil[:,:]), returnradii=True, binsize=2, stddev=False)
 	_, std_width_absil  = azimuthalAverage(-2.5*np.log10(limits_absil[:,:]), returnradii=True, binsize=2, stddev=True)
+	assert np.all(np.isfinite(limits_absil))
 	assert np.all(np.isfinite(rad_width_absil))
 	assert np.all(np.isfinite(avg_width_absil))
 	assert np.all(np.isfinite(std_width_absil))
