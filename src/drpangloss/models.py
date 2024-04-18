@@ -197,7 +197,10 @@ class OIData(zx.Base):
         '''
         Flatten closure phases and uncertainties.
         '''
-        return np.concatenate([self.vis, self.phi]), np.concatenate([self.d_vis, self.d_phi])
+        if self.vis.ndim==1:
+            return np.concatenate([self.vis, self.phi]), np.concatenate([self.d_vis, self.d_phi])
+        else:
+            return np.concatenate([self.vis, self.phi], axis=0), np.concatenate([self.d_vis, self.d_phi], axis=0)
     
     def unpack_all(self):
         '''
@@ -212,8 +215,10 @@ class OIData(zx.Base):
 
         Flatten model visibilities and phases.
         '''
-
-        return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)], axis=0)
+        if cvis.ndim == 1:
+            return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
+        else:
+            return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)], axis=0)
     
     def to_vis(self, cvis):
         '''
@@ -229,7 +234,10 @@ class OIData(zx.Base):
         Convert complex visibilities to closure phases or absolute phases.
         '''
         if self.cp_flag:
-            return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)  
+            if cvis.ndim == 1:
+                return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)  
+            else:
+                return vmap(closure_phases, in_axes=(1, None, None, None), out_axes=1)(cvis, self.i_cps1, self.i_cps2, self.i_cps3)
         else:
             np.angle(cvis)
     
@@ -545,7 +553,6 @@ def nsigma(chi2r_test,
 
 
 @jit
-@partial(vmap, in_axes=(1, None, None, None), out_axes=1)
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     '''
     Calculate closure phases [degrees] from complex visibilities and cp indices
