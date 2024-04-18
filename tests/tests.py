@@ -11,7 +11,7 @@ import numpy as onp
 from functools import partial
 
 from drpangloss.models import OIData, BinaryModelAngular, cvis_binary, closure_phases, BinaryModelCartesian
-from drpangloss.grid_fit import optimized_contrast_grid,  likelihood_grid, laplace_contrast_uncertainty_grid, ruffio_upperlimit, absil_limits, azimuthalAverage
+from drpangloss.grid_fit import optimized_contrast_grid, likelihood_grid, optimized_likelihood_grid, laplace_contrast_uncertainty_grid, ruffio_upperlimit, absil_limits, azimuthalAverage
 from drpangloss.plotting import plot_optimized_and_grid, plot_likelihood_grid, plot_optimized_and_sigma, plot_contrast_limits
 
 from matplotlib import get_backend
@@ -116,7 +116,15 @@ def test_likelihood_grid():
 	assert np.all(np.isfinite(loglike_im))
 	assert loglike_im.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0], samples_dict['flux'].shape[0])
 
+	plot_likelihood_grid(loglike_im.max(axis=2).T, samples_dict, truths=true_values);
+
+def test_optimized_likelihood_grid():
+	loglike_im = optimized_likelihood_grid(oidata, BinaryModelCartesian, samples_dict) # calculate once to jit
+	assert np.all(np.isfinite(loglike_im))
+	assert loglike_im.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0], samples_dict['flux'].shape[0])
+
 	plot_likelihood_grid(loglike_im, samples_dict, truths=true_values);
+
 
 def test_optimized():
 	loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict) # calculate once to jit
