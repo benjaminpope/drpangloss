@@ -48,7 +48,7 @@ samples_dict = {
     "flux": 10**np.linspace(-6, -1, 102)
     }
 
-true_values = [150., 150., 5e-4] # ra, dec, planet flux
+true_values = [250., 150., 5e-4] # ra, dec, planet flux
 binary = BinaryModelCartesian(true_values[0], true_values[1], true_values[2])
 
 cvis_sim = binary.model(oidata.u, oidata.v, oidata.wavel) 
@@ -72,7 +72,7 @@ oidata_sim = OIData(sim_data)
 
 '''----------------------------------------------------------------'''
 
-ddec, dra, planet = 0.1, 0.1, 10
+ddec, dra, planet = 0.1, 0.2, 10
 
 
 def test_cvis_binary():
@@ -121,7 +121,7 @@ def test_likelihood_grid():
 def test_optimized_likelihood_grid():
 	loglike_im = optimized_likelihood_grid(oidata, BinaryModelCartesian, samples_dict) # calculate once to jit
 	assert np.all(np.isfinite(loglike_im))
-
+	assert loglike_im.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0])
 	plot_likelihood_grid(loglike_im, samples_dict, truths=true_values);
 
 
@@ -131,6 +131,7 @@ def test_optimized():
 	best_contrasts = samples_dict['flux'][best_contrast_indices]
 
 	optimized = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples_dict)
+	assert optimized.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0])
 	assert np.all(np.isfinite(optimized))
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
@@ -144,6 +145,7 @@ def test_laplace():
 	plot_optimized_and_grid(loglike_im, optimized, samples_dict);
 
 	laplace_sigma_grid = laplace_contrast_uncertainty_grid(best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict)
+	assert laplace_sigma_grid.shape == (samples_dict['dra'].shape[0], samples_dict['ddec'].shape[0])
 	assert np.all(np.isfinite(laplace_sigma_grid))
 	plot_optimized_and_sigma(optimized, laplace_sigma_grid, samples_dict,snr=False);
 	plot_optimized_and_sigma(optimized, laplace_sigma_grid, samples_dict,snr=True);
