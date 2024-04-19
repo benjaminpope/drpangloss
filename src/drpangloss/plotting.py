@@ -27,7 +27,7 @@ def plot_likelihood_grid(loglike_im, samples_dict,truths=None):
 
     plt.figure(figsize=(12,6))
 
-    plt.imshow(loglike_im, cmap="inferno",aspect="equal",
+    plt.imshow(loglike_im.T, cmap="inferno",aspect="equal",
             extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                             samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
     plt.colorbar(shrink=1,label='Log likelihood', pad=0.01)
@@ -52,7 +52,7 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
     matplotlib.rcParams['font.family'] = ['serif']
     plt.rcParams.update({'font.size': 14})
     plt.subplot(1,2,1)
-    plt.imshow(optimized,cmap='inferno', norm = matplotlib.colors.LogNorm(),
+    plt.imshow(optimized.T,cmap='inferno', norm = matplotlib.colors.LogNorm(),
                         extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                         samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
     plt.colorbar(shrink=1,label='Contrast', pad=0.01)
@@ -98,7 +98,7 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict,snr=False):
     matplotlib.rcParams['font.family'] = ['serif']
     plt.rcParams.update({'font.size': 14})
     plt.subplot(1,2,1)
-    plt.imshow(contrast,cmap='inferno', norm = matplotlib.colors.LogNorm(),
+    plt.imshow(contrast.T,cmap='inferno', norm = matplotlib.colors.LogNorm(),
                         extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                         samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
     plt.colorbar(shrink=1,label='Contrast', pad=0.01)
@@ -110,7 +110,7 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict,snr=False):
 
     plt.subplot(1,2,2)
     if snr:
-        plt.imshow(contrast/sigma_grid,cmap='inferno',norm=matplotlib.colors.PowerNorm(1),
+        plt.imshow(contrast.T/sigma_grid.T,cmap='inferno',norm=matplotlib.colors.PowerNorm(1),
                                 extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                                 samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
         plt.colorbar(shrink=1,label='SNR', pad=0.01)
@@ -118,7 +118,7 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict,snr=False):
         plt.title('SNR')
 
     else:
-        plt.imshow(sigma_grid,cmap='inferno', norm = matplotlib.colors.LogNorm(),
+        plt.imshow(sigma_grid.T,cmap='inferno', norm = matplotlib.colors.LogNorm(),
                                 extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                                 samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
         plt.colorbar(shrink=1,label='σ(Contrast)', pad=0.01)
@@ -163,7 +163,7 @@ def plot_contrast_limits(contrast_limits, samples_dict, rad_width, avg_width, st
     # first show x% upper limit map
 
     plt.subplot(1,2,1)
-    plt.imshow(-2.5*np.log10(contrast_limits[:,:]),cmap=matplotlib.colormaps['magma_r'],
+    plt.imshow(-2.5*np.log10(contrast_limits[:,:].T),cmap=matplotlib.colormaps['magma_r'],
                                 extent = [samples_dict["dra"].max(), samples_dict["dra"].min(), # this may seem weird, but left is more RA and up is more Dec
                                 samples_dict["ddec"].max(), samples_dict["ddec"].min()]) # this took me far too long to get the sign right for
     plt.colorbar(shrink=1, pad=0.01)
