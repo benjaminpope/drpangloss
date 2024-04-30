@@ -2,7 +2,9 @@ name = "drpangloss"
 
 from . import (
     grid_fit,
-    models
+    models,
+    plotting,
+    savefits
 )
 
 __all__ = []

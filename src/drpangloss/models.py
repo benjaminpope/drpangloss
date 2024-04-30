@@ -177,9 +177,14 @@ class OIData(zx.Base):
             self.phi = np.array(data['phi'],dtype=float)
             self.d_phi = np.array(data['d_phi'],dtype=float)
 
-            self.i_cps1 = np.array(data['i_cps1'],dtype=int)
-            self.i_cps2 = np.array(data['i_cps2'],dtype=int)
-            self.i_cps3 = np.array(data['i_cps3'],dtype=int)
+            try:
+                self.i_cps1 = np.array(data['i_cps1'],dtype=int)
+                self.i_cps2 = np.array(data['i_cps2'],dtype=int)
+                self.i_cps3 = np.array(data['i_cps3'],dtype=int)
+            except:
+                self.i_cps1 = None
+                self.i_cps2 = None
+                self.i_cps3 = None
 
             self.v2_flag = data['v2_flag']
             self.cp_flag = data['cp_flag']
@@ -230,7 +235,7 @@ class OIData(zx.Base):
         if self.cp_flag:
             return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)  
         else:
-            np.angle(cvis)
+            return np.angle(cvis)
     
     def model(self, model_object):
         '''
