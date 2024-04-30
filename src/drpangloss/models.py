@@ -206,8 +206,11 @@ class OIData(zx.Base):
         '''
         Unpack all data to be used in some legacy model functions.
         '''
-        u, v = uv_by_wavel(self.u,self.v,self.wavel)
-        return u, v, self.phi, self.d_phi, self.vis, self.d_vis, self.i_cps1, self.i_cps2, self.i_cps3
+        if len(self.wavel)==1:
+            return self.u/self.wavel, self.v/self.wavel, self.phi, self.d_phi, self.vis, self.d_vis, self.i_cps1, self.i_cps2, self.i_cps3
+        else:
+            u, v = uv_by_wavel(self.u,self.v,self.wavel)
+            return u, v, self.phi, self.d_phi, self.vis, self.d_vis, self.i_cps1, self.i_cps2, self.i_cps3
     
     def flatten_model(self,cvis):
         '''
