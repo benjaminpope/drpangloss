@@ -216,7 +216,6 @@ class OIData(zx.Base):
 
         Flatten model visibilities and phases.
         '''
-
         return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
     
     def to_vis(self, cvis):
@@ -243,7 +242,48 @@ class OIData(zx.Base):
         '''
         cvis = model_object.model(self.u, self.v, self.wavel)
         return self.flatten_model(cvis)
-    
+
+
+class KPData(OIData):
+    K: jax.Array
+    phi_cov: jax.Array
+
+    def __init__(self, oi_data):
+
+        self.phi = np.array(oi_data['phi'], dtype=float)
+        self.phi_cov = np.array(oi_data["phi_cov"], dtype=float)
+        self.K = np.array(oi_data["K"], dtype=float)
+        self.u = np.array(oi_data['u'], dtype=float)
+        self.v = np.array(oi_data['v'], dtype=float)
+        self.wavel = np.array(oi_data['wavel'], dtype=float)
+
+        self.vis = None
+        self.d_vis = None
+        self.d_phi = None
+        self.i_cps1 = None
+        self.i_cps2 = None
+        self.i_cps3 = None
+        self.v2_flag = False
+        self.cp_flag = False
+
+    @property
+    def Kphi(self):
+        return np.dot(self.K, self.phi)
+
+    @property
+    def K_phi_cov(self):
+        return np.dot(self.K, np.dot(self.phi_cov, self.K.T))
+
+    @property
+    def d_Kphi(self):
+        return np.sqrt(np.diag(self.K_phi_cov))
+
+    def flatten_data(self):
+        '''
+        Flatten closure phases and uncertainties.
+        '''
+        return np.concatenate([self.vis, self.Kphi]), np.concatenate([self.d_vis, self.d_Kphi])
+
 
 '''--------------------------------------------------
 Model functions
@@ -290,7 +330,7 @@ class BinaryModelAngular(zx.Base):
         '''
         uu, vv = u/wavel, v/wavel
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
-    
+
 class BinaryModelCartesian(zx.Base):
     ''' 
     Class for a binary star model.
@@ -333,7 +373,7 @@ class BinaryModelCartesian(zx.Base):
         uu, vv = u/wavel, v/wavel
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
 
-    
+
 def cvis_binary_angular(u, v, sep, pa, contrast):
     #adapted from pymask
     ''' Calculate the complex visibilities observed by an array on a binary star
@@ -579,4 +619,3 @@ def cp_indices(vis_sta_index, cp_sta_index):
         i_cps2[i] = onp.argwhere((cp_sta_index[i][1]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
         i_cps3[i] = onp.argwhere((cp_sta_index[i][0]==vis_sta_index[:,0])&(cp_sta_index[i][2]==vis_sta_index[:,1]))[0,0]
     return onp.array(i_cps1,dtype=int),onp.array(i_cps2,dtype=int),onp.array(i_cps3,dtype=int) 
-
