@@ -1,78 +1,83 @@
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_recovery_grid_hmc.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- Edit the notebook, then re-run the sync script. -->
+
 # Binary recovery with grid search and HMC
 
-This page is adapted from the existing exploratory notebooks and rewritten as a lightweight, reproducible tutorial that does **not** require large external datasets.
-
-The workflow is:
-1. Generate synthetic interferometric observables from a binary model.
-2. Recover the companion with a coarse likelihood grid.
-3. Refine inference with HMC (NUTS) over `(dra, ddec, flux)`.
-4. Reparameterize the latent space with a local Fisher projection and run HMC in near-unit coordinates.
-
-## Imports
+This notebook mirrors the docs tutorial and adds a Fisher-reparameterized HMC path.
 
 ```python
+import warnings
 import jax
 import jax.numpy as jnp
 import numpy as onp
+import pandas as pd
+import matplotlib.pyplot as plt
+from jax.flatten_util import ravel_pytree
+
+warnings.filterwarnings("ignore", message="IProgress not found.*")
 
 import numpyro
 import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
+from numpyro.infer.initialization import init_to_value
 
 from drpangloss.models import OIData, BinaryModelCartesian, loglike
 from drpangloss.grid_fit import likelihood_grid
+from drpangloss.inference import fisher_matrix, fisher_projection
+from drpangloss.plotting import (
+    posterior_predictive_summary,
+    plot_data_model_correlation,
+    plot_likelihood_grid,
+    plot_chainconsumer_diagnostics,
+    diagnostics_table_from_samples,
+    truth_cartesian_and_polar,
+)
 ```
 
-## Build a compact synthetic dataset
+## 1) Build a compact synthetic dataset
+Create synthetic $V^2$ and phase observables from a known binary model so recovery can be validated against truth.
 
 ```python
-# Fixed PRNG for reproducibility
 rng = onp.random.default_rng(42)
-
-# Baseline geometry (small synthetic layout)
-n_bl = 18
-u = jnp.linspace(-22.0, 22.0, n_bl)
-v = jnp.linspace(18.0, -18.0, n_bl)
+n_bl = 24
+u = jnp.array(rng.uniform(-28.0, 28.0, size=n_bl))
+v = jnp.array(rng.uniform(-28.0, 28.0, size=n_bl))
 wavel = jnp.array([4.8e-6])
 
-# True binary parameters (mas, mas, flux ratio)
 truth = {"dra": 120.0, "ddec": -80.0, "flux": 4e-3}
 model_true = BinaryModelCartesian(**truth)
-
-# Create noiseless complex visibilities
 cvis_true = model_true.model(u, v, wavel)
 
-# Data model: use V^2 + absolute phase (degrees)
 vis_true = jnp.abs(cvis_true) ** 2
 phi_true = jnp.rad2deg(jnp.angle(cvis_true))
 
-# Modest observational noise
-d_vis = 0.02 * jnp.ones_like(vis_true)
-d_phi = 1.0 * jnp.ones_like(phi_true)
+# Synthetic noise as percentage of data scale (phase in degrees), boosted SNR by 5x.
+vis_scale = jnp.maximum(jnp.median(vis_true), 1e-6)
+phi_scale = jnp.maximum(jnp.median(jnp.abs(phi_true)), 5.0)
+d_vis = 0.001 * vis_scale * jnp.ones_like(vis_true)
+d_phi = 0.004 * phi_scale * jnp.ones_like(phi_true)
 
 vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
 phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
 
-# OIData from dict (no large files required)
-data = OIData(
-    {
-        "u": u,
-        "v": v,
-        "wavel": wavel,
-        "vis": vis_obs,
-        "d_vis": d_vis,
-        "phi": phi_obs,
-        "d_phi": d_phi,
-        "i_cps1": None,
-        "i_cps2": None,
-        "i_cps3": None,
-        "v2_flag": True,
-        "cp_flag": False,
-    }
-)
+data = OIData({
+    "u": u,
+    "v": v,
+    "wavel": wavel,
+    "vis": vis_obs,
+    "d_vis": d_vis,
+    "phi": phi_obs,
+    "d_phi": d_phi,
+    "i_cps1": None,
+    "i_cps2": None,
+    "i_cps3": None,
+    "v2_flag": True,
+    "cp_flag": False,
+})
 ```
 
-## Step 1: coarse recovery with a grid search
+## 2) Coarse likelihood-grid recovery
+Run a broad grid over $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ to locate a robust starting point for MCMC.
 
 ```python
 samples = {
@@ -83,36 +88,56 @@ samples = {
 
 ll_cube = likelihood_grid(data, BinaryModelCartesian, samples)
 max_idx = jnp.unravel_index(jnp.argmax(ll_cube), ll_cube.shape)
-
 grid_est = {
     "dra": float(samples["dra"][max_idx[0]]),
     "ddec": float(samples["ddec"][max_idx[1]]),
     "flux": float(samples["flux"][max_idx[2]]),
 }
-
 grid_est
 ```
 
-## Step 2: posterior refinement with HMC (NUTS)
+## 2b) Visualize the grid structure
+This map is a fast sanity check before MCMC. The bright region should sit near the truth marker, and the grid maximum provides a robust initialization point for subsequent samplers.
+
+Because we marginalize over flux here (taking the max over the flux axis), this panel emphasizes positional structure in $(\Delta\mathrm{RA}, \Delta\mathrm{Dec})$ while keeping the notebook compact.
+
+```python
+ll_2d = ll_cube.max(axis=2)
+plot_likelihood_grid(
+    ll_2d,
+    samples,
+    truths=truth,
+    best_point=grid_est,
+    colorbar_label="Max log-likelihood over flux",
+)
+plt.title("Likelihood grid (max over flux)")
+plt.show()
+```
+
+## 3) Posterior refinement with vanilla HMC
+Sample directly in physical parameters with NUTS, initialized near the grid maximum.
 
 ```python
 params = ["dra", "ddec", "flux"]
 
-
+# Define a simple physical-parameter HMC model with bounded priors.
 def model_hmc(oidata):
     dra = numpyro.sample("dra", dist.Uniform(-300.0, 300.0))
     ddec = numpyro.sample("ddec", dist.Uniform(-300.0, 300.0))
     log10_flux = numpyro.sample("log10_flux", dist.Uniform(-6.0, -1.0))
     flux = 10.0 ** log10_flux
-
     ll = loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian)
     numpyro.factor("loglike", ll)
 
-
-kernel = NUTS(model_hmc)
-mcmc = MCMC(kernel, num_warmup=500, num_samples=1000, num_chains=1, progress_bar=False)
-
-mcmc.run(jax.random.PRNGKey(123), oidata=data)
+# Initialize near the grid maximum for robust convergence in this toy setup.
+init_values = {
+    "dra": float(grid_est["dra"]),
+    "ddec": float(grid_est["ddec"]),
+    "log10_flux": float(jnp.log10(max(grid_est["flux"], 1e-12))),
+}
+kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
+mcmc = MCMC(kernel, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False)
+mcmc.run(jax.random.PRNGKey(2026), oidata=data)
 posterior = mcmc.get_samples()
 
 summary = {
@@ -123,27 +148,149 @@ summary = {
 summary
 ```
 
-## Step 3: Fisher-reparameterized HMC (faster, better-conditioned)
+## 3b) Prepare vanilla HMC samples for shared diagnostics
+We build a common diagnostics table in both Cartesian (`dra`, `ddec`, `flux`) and polar (`sep`, `pa`, `flux`) coordinates.
 
-The standard HMC above samples directly in physical coordinates. A lightweight conditioning trick is to:
+Section 4b then overlays HMC and Fisher-HMC in each coordinate system so geometry differences are visible without changing plotting style.
 
-1. Build a local Fisher matrix near a good initial point (for example the grid estimate).
-2. Compute a projection matrix $P$ such that $x = x_0 + P u$ with $u \sim \mathcal{N}(0, I)$.
-3. Sample in latent coordinates `u` and transform to physical parameters inside the model.
+```python
+# Convert vanilla posterior samples into diagnostics table for later comparison plots.
+hmc_results = diagnostics_table_from_samples(
+    posterior,
+    flux_key="log10_flux",
+    log10_flux=True,
+)
 
-In the executable docs workflow this is implemented in `examples/synthetic_binary_workflow.py` via:
+{
+    "hmc_rows": len(hmc_results),
+    "hmc_dra_median": float(hmc_results["dra"].median()),
+    "hmc_ddec_median": float(hmc_results["ddec"].median()),
+    "hmc_flux_median": float(hmc_results["flux"].median()),
+}
+```
 
-- `drpangloss.inference.fisher_matrix`
-- `drpangloss.inference.fisher_projection`
-- `_recover_hmc_fisher(...)`
+## 4) Fisher-reparameterized HMC
+Whiten local geometry around the grid estimate using a Fisher projection, then sample in latent coordinates with prior correction.
 
-This keeps priors simple in latent space and often improves sampler geometry for strongly correlated parameters.
+```python
+x0_dict = {
+    "dra": grid_est["dra"],
+    "ddec": grid_est["ddec"],
+    "log10_flux": float(jnp.log10(max(grid_est["flux"], 1e-12))),
+}
+x0, unravel = ravel_pytree(x0_dict)
 
-## Notes
+# Build local Fisher geometry around x0 for whitening transform.
+def objective(x):
+    xdict = unravel(x)
+    flux = 10.0 ** xdict["log10_flux"]
+    values = jnp.array([xdict["dra"], xdict["ddec"], flux])
+    return -loglike(values, params, data, BinaryModelCartesian)
 
-- Grid search provides robust initialization and a quick sanity check of global structure.
-- HMC adds uncertainty quantification and posterior correlations.
-- Fisher reparameterization is a practical conditioning layer for HMC and black-box optimizers.
-- This tutorial keeps everything small and synthetic for docs portability.
+F = fisher_matrix(objective, x0, ridge=1e-8)
+P = fisher_projection(F)
 
-For larger science runs, switch the `OIData` dict to real OIFITS-derived arrays and increase chain/grid settings.
+# Sample in latent coordinates and apply explicit prior correction back to physical priors.
+def model_hmc_fisher(oidata):
+    u_latent = numpyro.sample("u", dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1))
+    log_q_u = dist.Normal(0.0, 1.0).log_prob(u_latent).sum()
+    x = x0 + jnp.dot(P, u_latent)
+    xdict = unravel(x)
+    dra = xdict["dra"]
+    ddec = xdict["ddec"]
+    log10_flux = xdict["log10_flux"]
+    flux = 10.0 ** log10_flux
+    numpyro.deterministic("dra", dra)
+    numpyro.deterministic("ddec", ddec)
+    numpyro.deterministic("flux", flux)
+    log_prior_x = (
+        dist.Uniform(-300.0, 300.0).log_prob(dra)
+        + dist.Uniform(-300.0, 300.0).log_prob(ddec)
+        + dist.Uniform(-6.0, -1.0).log_prob(log10_flux)
+    )
+    numpyro.factor("prior_correction", log_prior_x - log_q_u)
+    numpyro.factor("loglike", loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian))
+
+kernel_f = NUTS(model_hmc_fisher)
+mcmc_f = MCMC(kernel_f, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False)
+mcmc_f.run(jax.random.PRNGKey(2027), oidata=data)
+post_f = mcmc_f.get_samples()
+
+{
+    "fisher_dra_median": float(jnp.median(post_f["dra"])),
+    "fisher_ddec_median": float(jnp.median(post_f["ddec"])),
+    "fisher_flux_median": float(jnp.median(post_f["flux"])),
+}
+```
+
+## 4b) Combined HMC vs Fisher-HMC diagnostics (Cartesian and polar)
+Both samplers are plotted on shared axes in Cartesian space and then again in polar space, each with matching walk/trace panels for direct comparison.
+
+```python
+# Convert Fisher-HMC posterior samples and prepare shared diagnostic tables.
+fisher_results = diagnostics_table_from_samples(post_f)
+truth_cart, truth_polar = truth_cartesian_and_polar(truth)
+
+{
+    "fisher_rows": len(fisher_results),
+    "fisher_sep_median": float(fisher_results["sep"].median()),
+    "fisher_pa_median": float(fisher_results["pa"].median()),
+}
+```
+
+```python
+# Cartesian comparison plot
+plot_chainconsumer_diagnostics(
+    {
+        "HMC Cartesian": hmc_results,
+        "Fisher-HMC Cartesian": fisher_results,
+    },
+    columns=["dra", "ddec", "flux"],
+    truth=truth_cart,
+    colors=["#1f77b4", "#ff7f0e"],
+)
+plt.show()
+```
+
+```python
+# Polar comparison plot
+plot_chainconsumer_diagnostics(
+    {
+        "HMC Polar": hmc_results,
+        "Fisher-HMC Polar": fisher_results,
+    },
+    columns=["sep", "pa", "flux"],
+    truth=truth_polar,
+    colors=["#1f77b4", "#ff7f0e"],
+)
+plt.show()
+```
+
+## 5) Posterior predictive correlation checks
+Compare observed data against posterior predictive means for both HMC variants, with $1\!:\!1$ reference lines for visibility and phase observables.
+
+```python
+# Posterior predictive correlation: data vs model (HMC and Fisher-HMC)
+hmc_pred = posterior_predictive_summary(
+    onp.asarray(posterior["dra"]),
+    onp.asarray(posterior["ddec"]),
+    onp.asarray(10.0 ** posterior["log10_flux"]),
+    data,
+    BinaryModelCartesian,
+ )
+
+fisher_pred = posterior_predictive_summary(
+    onp.asarray(post_f["dra"]),
+    onp.asarray(post_f["ddec"]),
+    onp.asarray(post_f["flux"]),
+    data,
+    BinaryModelCartesian,
+ )
+
+plot_data_model_correlation(
+    data,
+    {"HMC": hmc_pred, "Fisher-HMC": fisher_pred},
+    colors=["C0", "C1"],
+ )
+plt.show()
+```

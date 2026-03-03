@@ -15,7 +15,7 @@ git clone https://github.com/your-username-here/drpangloss.git
 cd drpangloss
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e . pytest mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+uv pip install --python .venv/bin/python -e . pytest ruff pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter ipywidgets
 ```
 
 Then you will need to install the pre-commit hooks. This will ensure that the code is formatted correctly and that the unit tests pass before you can commit your changes. To do this, run the following command:
@@ -25,6 +25,28 @@ pre-commit install
 ```
 
 This will ensure that any changes you make will adhere to the code style and formatting guidelines of the rest of the package!
+
+You can also run linting and formatting manually at any time:
+
+```bash
+ruff check . --fix
+ruff format .
+```
+
+For lower-noise local runs (especially when notebooks are involved), use:
+
+```bash
+bash scripts/lint_local.sh
+```
+
+This command writes full diagnostics to `.lint-logs/` and keeps terminal output compact.
+Useful flags:
+
+```bash
+bash scripts/lint_local.sh --fix
+bash scripts/lint_local.sh --changed
+bash scripts/lint_local.sh --no-notebooks
+```
 
 ---
 
@@ -53,6 +75,32 @@ Note that passing locally does not guarantee cross-platform compatibility. GitHu
 **Documentation**
 
 Any changes you make should also be appropriately documented! For small API changes this shouldn't require any changes, however if you are adding new functionality you will need to add some documentation. This can be done by modifying the appropriates files in the `docs` directory.
+
+Tutorial pages are notebook-synced. For these tutorials:
+
+- `notebooks/binary_recovery_grid_hmc.ipynb`
+- `notebooks/synthetic_data_file_roundtrip.ipynb`
+- `notebooks/contrast_limits_ruffio.ipynb`
+
+edit the notebook first, then regenerate the corresponding docs markdown with:
+
+```bash
+uv run --python .venv/bin/python scripts/sync_tutorial_docs.py
+```
+
+Notebook style conventions for tutorials:
+
+- Keep explanatory markdown between major code blocks (zodiax sandbox style).
+- Keep imports in the top import cell; avoid repeated imports in later cells.
+- Prefer shared plotting helpers from `src/drpangloss/plotting.py` over long notebook-local plotting scripts.
+- When a plotting helper is missing, add/extend it in `src/drpangloss/plotting.py` first, then call it from the notebook.
+- Keep notebook plotting cells short and declarative (prepare inputs, call helper, show figure).
+
+Typical helper usage patterns:
+
+- Grid and map visuals: `plot_likelihood_grid`, `plot_contrast_limit_map`
+- Posterior diagnostics: `plot_chainconsumer_diagnostics`, `plot_trace_panels`
+- Recovery/correlation summaries: `plot_recovery_residuals`, `plot_data_model_correlation`, `plot_radial_limit_summary`
 
 To build the documentation locally and make sure everything is working correctly, you can run the following command:
 

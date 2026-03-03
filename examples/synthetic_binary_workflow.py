@@ -11,6 +11,7 @@ import numpyro
 import numpyro.distributions as dist
 import pyoifits as oifits
 from jax.flatten_util import ravel_pytree
+from numpyro.infer.initialization import init_to_value
 from numpyro.infer import MCMC, NUTS
 
 from drpangloss.inference import fisher_matrix, fisher_projection
@@ -34,10 +35,13 @@ class RecoverySummary:
     hmc_std: dict[str, float]
     fisher_hmc_median: dict[str, float]
     fisher_hmc_std: dict[str, float]
+    noise_settings: dict[str, float]
     output_file: str
 
 
-def _array_geometry() -> tuple[jnp.ndarray, jnp.ndarray, np.ndarray, np.ndarray]:
+def _array_geometry() -> tuple[
+    jnp.ndarray, jnp.ndarray, np.ndarray, np.ndarray
+]:
     station_xy = np.array(
         [
             [0.0, 0.0],
@@ -81,7 +85,9 @@ def _array_geometry() -> tuple[jnp.ndarray, jnp.ndarray, np.ndarray, np.ndarray]
     return jnp.array(ucoord), jnp.array(vcoord), baseline_pairs, triangles
 
 
-def _triangle_uv(station_xy: np.ndarray, triangles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _triangle_uv(
+    station_xy: np.ndarray, triangles: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     u1, v1, u2, v2 = [], [], [], []
     for a, b, c in triangles:
         pa = station_xy[a - 1]
@@ -96,7 +102,9 @@ def _triangle_uv(station_xy: np.ndarray, triangles: np.ndarray) -> tuple[np.ndar
     return np.array(u1), np.array(v1), np.array(u2), np.array(v2)
 
 
-def _build_synthetic_oifits_dict(seed: int = 4) -> tuple[dict[str, Any], dict[str, float]]:
+def _build_synthetic_oifits_dict(
+    seed: int = 4,
+) -> tuple[dict[str, Any], dict[str, float]]:
     rng = np.random.default_rng(seed)
     wavel = 4.8e-6
 
@@ -122,14 +130,42 @@ def _build_synthetic_oifits_dict(seed: int = 4) -> tuple[dict[str, Any], dict[st
     i1, i2, i3 = cp_indices(baseline_pairs, triangles)
     cp = closure_phases(cvis, i1, i2, i3)
 
-    visamp_err = 0.01 * jnp.ones_like(visamp)
-    visphi_err = 0.5 * jnp.ones_like(visphi)
-    vis2_err = 0.02 * jnp.ones_like(vis2)
-    cp_err = 0.7 * jnp.ones_like(cp)
+    visamp_scale = jnp.maximum(jnp.median(visamp), 1e-6)
+    visphi_scale = jnp.maximum(jnp.median(jnp.abs(visphi)), 5.0)
+    vis2_scale = jnp.maximum(jnp.median(vis2), 1e-6)
+    cp_scale = jnp.maximum(jnp.median(jnp.abs(cp)), 5.0)
 
-    visamp_obs = np.array(visamp + visamp_err * jnp.array(rng.normal(size=visamp.shape)))
-    visphi_obs = np.array(visphi + visphi_err * jnp.array(rng.normal(size=visphi.shape)))
-    vis2_obs = np.array(vis2 + vis2_err * jnp.array(rng.normal(size=vis2.shape)))
+    noise_settings = {
+        "visamp_err_frac": 0.002,
+        "visphi_err_frac": 0.004,
+        "vis2_err_frac": 0.001,
+        "cp_err_frac": 0.004,
+    }
+
+    visamp_err = (
+        noise_settings["visamp_err_frac"]
+        * visamp_scale
+        * jnp.ones_like(visamp)
+    )
+    visphi_err = (
+        noise_settings["visphi_err_frac"]
+        * visphi_scale
+        * jnp.ones_like(visphi)
+    )
+    vis2_err = (
+        noise_settings["vis2_err_frac"] * vis2_scale * jnp.ones_like(vis2)
+    )
+    cp_err = noise_settings["cp_err_frac"] * cp_scale * jnp.ones_like(cp)
+
+    visamp_obs = np.array(
+        visamp + visamp_err * jnp.array(rng.normal(size=visamp.shape))
+    )
+    visphi_obs = np.array(
+        visphi + visphi_err * jnp.array(rng.normal(size=visphi.shape))
+    )
+    vis2_obs = np.array(
+        vis2 + vis2_err * jnp.array(rng.normal(size=vis2.shape))
+    )
     cp_obs = np.array(cp + cp_err * jnp.array(rng.normal(size=cp.shape)))
 
     n_bl = len(baseline_pairs)
@@ -201,7 +237,7 @@ def _build_synthetic_oifits_dict(seed: int = 4) -> tuple[dict[str, Any], dict[st
             "FLAG": np.zeros(n_cp, dtype=bool),
         },
     }
-    return dic, truth
+    return dic, truth, noise_settings
 
 
 def _recover_grid(oidata: OIData) -> dict[str, float]:
@@ -219,18 +255,44 @@ def _recover_grid(oidata: OIData) -> dict[str, float]:
     }
 
 
-def _recover_hmc(oidata: OIData, seed: int = 123) -> tuple[dict[str, float], dict[str, float]]:
+def _recover_hmc(
+    oidata: OIData,
+    seed: int = 2026,
+    init: dict[str, float] | None = None,
+) -> tuple[dict[str, float], dict[str, float]]:
     params = ["dra", "ddec", "flux"]
 
     def model_hmc(data_obj: OIData):
         dra = numpyro.sample("dra", dist.Uniform(-250.0, 250.0))
         ddec = numpyro.sample("ddec", dist.Uniform(-250.0, 250.0))
         log10_flux = numpyro.sample("log10_flux", dist.Uniform(-6.0, -1.0))
-        flux = 10.0 ** log10_flux
-        numpyro.factor("loglike", loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian))
+        flux = 10.0**log10_flux
+        numpyro.factor(
+            "loglike",
+            loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian),
+        )
 
-    kernel = NUTS(model_hmc)
-    mcmc = MCMC(kernel, num_warmup=200, num_samples=400, num_chains=1, progress_bar=False)
+    if init is None:
+        init_values = {
+            "dra": 0.0,
+            "ddec": 0.0,
+            "log10_flux": -3.0,
+        }
+    else:
+        init_values = {
+            "dra": float(init["dra"]),
+            "ddec": float(init["ddec"]),
+            "log10_flux": float(np.log10(max(init["flux"], 1e-12))),
+        }
+
+    kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
+    mcmc = MCMC(
+        kernel,
+        num_warmup=800,
+        num_samples=2000,
+        num_chains=1,
+        progress_bar=False,
+    )
     mcmc.run(jax.random.PRNGKey(seed), data_obj=oidata)
     s = mcmc.get_samples()
 
@@ -252,7 +314,7 @@ def _recover_hmc(oidata: OIData, seed: int = 123) -> tuple[dict[str, float], dic
 def _recover_hmc_fisher(
     oidata: OIData,
     init: dict[str, float],
-    seed: int = 321,
+    seed: int = 2027,
 ) -> tuple[dict[str, float], dict[str, float]]:
     params = ["dra", "ddec", "flux"]
 
@@ -277,20 +339,37 @@ def _recover_hmc_fisher(
             "u",
             dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1),
         )
+        log_q_u = dist.Normal(0.0, 1.0).log_prob(u).sum()
         x = x0 + jnp.dot(proj, u)
         xdict = unravel(x)
 
         dra = xdict["dra"]
         ddec = xdict["ddec"]
-        flux = 10.0 ** xdict["log10_flux"]
+        log10_flux = xdict["log10_flux"]
+        flux = 10.0**log10_flux
 
         numpyro.deterministic("dra", dra)
         numpyro.deterministic("ddec", ddec)
         numpyro.deterministic("flux", flux)
-        numpyro.factor("loglike", loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian))
+        log_prior_x = (
+            dist.Uniform(-250.0, 250.0).log_prob(dra)
+            + dist.Uniform(-250.0, 250.0).log_prob(ddec)
+            + dist.Uniform(-6.0, -1.0).log_prob(log10_flux)
+        )
+        numpyro.factor("prior_correction", log_prior_x - log_q_u)
+        numpyro.factor(
+            "loglike",
+            loglike([dra, ddec, flux], params, data_obj, BinaryModelCartesian),
+        )
 
     kernel = NUTS(model_hmc)
-    mcmc = MCMC(kernel, num_warmup=150, num_samples=300, num_chains=1, progress_bar=False)
+    mcmc = MCMC(
+        kernel,
+        num_warmup=800,
+        num_samples=2000,
+        num_chains=1,
+        progress_bar=False,
+    )
     mcmc.run(jax.random.PRNGKey(seed), data_obj=oidata)
     s = mcmc.get_samples()
 
@@ -307,12 +386,19 @@ def _recover_hmc_fisher(
     return median, std
 
 
-def run_synthetic_binary_demo(output_path: str | Path = "docs/generated/synthetic_binary.oifits") -> RecoverySummary:
+def run_synthetic_binary_demo(
+    output_path: str | Path = "docs/generated/synthetic_binary.oifits",
+) -> RecoverySummary:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    dic, truth = _build_synthetic_oifits_dict()
-    save_oifits_dict(dic, filename=output_path.name, datadir=str(output_path.parent), verbose=False)
+    dic, truth, noise_settings = _build_synthetic_oifits_dict()
+    save_oifits_dict(
+        dic,
+        filename=output_path.name,
+        datadir=str(output_path.parent),
+        verbose=False,
+    )
 
     # Load through both dict loader and OIData path to demonstrate roundtrip.
     _ = load_oifits_dict(str(output_path))
@@ -321,7 +407,7 @@ def run_synthetic_binary_demo(output_path: str | Path = "docs/generated/syntheti
     oidata = OIData(loaded)
 
     grid_est = _recover_grid(oidata)
-    hmc_median, hmc_std = _recover_hmc(oidata)
+    hmc_median, hmc_std = _recover_hmc(oidata, init=grid_est)
     fisher_hmc_median, fisher_hmc_std = _recover_hmc_fisher(oidata, grid_est)
 
     return RecoverySummary(
@@ -331,6 +417,7 @@ def run_synthetic_binary_demo(output_path: str | Path = "docs/generated/syntheti
         hmc_std=hmc_std,
         fisher_hmc_median=fisher_hmc_median,
         fisher_hmc_std=fisher_hmc_std,
+        noise_settings=noise_settings,
         output_file=str(output_path),
     )
 
@@ -339,7 +426,9 @@ def within_two_sigma(summary: RecoverySummary) -> dict[str, bool]:
     checks: dict[str, bool] = {}
     for key in ("dra", "ddec", "flux"):
         sigma = max(summary.hmc_std[key], 1e-10)
-        checks[key] = abs(summary.hmc_median[key] - summary.truth[key]) <= 2.0 * sigma
+        checks[key] = (
+            abs(summary.hmc_median[key] - summary.truth[key]) <= 2.0 * sigma
+        )
     return checks
 
 
@@ -347,7 +436,10 @@ def fisher_within_three_sigma(summary: RecoverySummary) -> dict[str, bool]:
     checks: dict[str, bool] = {}
     for key in ("dra", "ddec", "flux"):
         sigma = max(summary.fisher_hmc_std[key], 1e-10)
-        checks[key] = abs(summary.fisher_hmc_median[key] - summary.truth[key]) <= 3.0 * sigma
+        checks[key] = (
+            abs(summary.fisher_hmc_median[key] - summary.truth[key])
+            <= 3.0 * sigma
+        )
     return checks
 
 

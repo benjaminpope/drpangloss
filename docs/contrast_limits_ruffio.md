@@ -1,19 +1,16 @@
-# Contrast limits with the Ruffio method
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits_ruffio.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- Edit the notebook, then re-run the sync script. -->
 
-This page is adapted from the upper-limit notebook workflow and rewritten to be lightweight and reproducible with synthetic data.
+# Contrast limits with Ruffio method
 
-The procedure is:
-1. Build synthetic binary-like observables.
-2. Compute likelihood and optimized-contrast maps.
-3. Estimate local Laplace uncertainties.
-4. Convert to Ruffio upper limits.
-
-## Imports
+Notebook version of docs/contrast_limits_ruffio.md.
 
 ```python
 import jax.numpy as jnp
 import numpy as onp
 import jax.scipy as jsp
+import matplotlib.pyplot as plt
+import pyoifits as oifits
 
 from drpangloss.models import OIData, BinaryModelCartesian
 from drpangloss.grid_fit import (
@@ -22,50 +19,49 @@ from drpangloss.grid_fit import (
     laplace_contrast_uncertainty_grid,
     ruffio_upperlimit,
 )
+from drpangloss.plotting import (
+    plot_contrast_limit_map,
+    radial_limit_summary,
+    plot_radial_limit_summary,
+)
 ```
-
-## Synthetic observables (small and self-contained)
 
 ```python
 rng = onp.random.default_rng(7)
 
-n_bl = 18
-u = jnp.linspace(-22.0, 22.0, n_bl)
-v = jnp.linspace(18.0, -18.0, n_bl)
-wavel = jnp.array([4.8e-6])
+fname = "NuHor_F480M.oifits"
+ddir = "../data/"
+data = oifits.open(ddir + fname)
+try:
+    data.verify("silentfix")
+except AttributeError:
+    pass
+
+oidata = OIData(data)
 
 truth = {"dra": 100.0, "ddec": 60.0, "flux": 2.5e-3}
 model_true = BinaryModelCartesian(**truth)
-cvis_true = model_true.model(u, v, wavel)
+cvis_true = model_true.model(oidata.u, oidata.v, oidata.wavel)
 
-vis_true = jnp.abs(cvis_true) ** 2
-phi_true = jnp.rad2deg(jnp.angle(cvis_true))
+sim_data = {
+    "u": oidata.u,
+    "v": oidata.v,
+    "wavel": oidata.wavel,
+    "vis": oidata.to_vis(cvis_true)
+    + jnp.array(rng.normal(size=oidata.vis.shape)) * oidata.d_vis,
+    "d_vis": oidata.d_vis,
+    "phi": oidata.to_phases(cvis_true)
+    + jnp.array(rng.normal(size=oidata.phi.shape)) * oidata.d_phi,
+    "d_phi": oidata.d_phi,
+    "i_cps1": oidata.i_cps1,
+    "i_cps2": oidata.i_cps2,
+    "i_cps3": oidata.i_cps3,
+    "v2_flag": oidata.v2_flag,
+    "cp_flag": oidata.cp_flag,
+}
 
-d_vis = 0.02 * jnp.ones_like(vis_true)
-d_phi = 1.0 * jnp.ones_like(phi_true)
-
-vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
-phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
-
-oidata = OIData(
-    {
-        "u": u,
-        "v": v,
-        "wavel": wavel,
-        "vis": vis_obs,
-        "d_vis": d_vis,
-        "phi": phi_obs,
-        "d_phi": d_phi,
-        "i_cps1": None,
-        "i_cps2": None,
-        "i_cps3": None,
-        "v2_flag": True,
-        "cp_flag": False,
-    }
-)
+oidata_sim = OIData(sim_data)
 ```
-
-## Grid products and Ruffio limits
 
 ```python
 samples = {
@@ -74,30 +70,61 @@ samples = {
     "flux": 10 ** jnp.linspace(-5.0, -1.5, 50),
 }
 
-# 1) Coarse likelihood cube
-ll_cube = likelihood_grid(oidata, BinaryModelCartesian, samples)
-
-# 2) Local optimization over flux at each (dra, ddec)
-opt_flux = optimized_contrast_grid(oidata, BinaryModelCartesian, samples)
-
-# 3) Laplace uncertainty map around local optimum
+ll_cube = likelihood_grid(oidata_sim, BinaryModelCartesian, samples)
+opt_flux = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples)
 best_idx = jnp.argmax(ll_cube, axis=2)
-sigma_flux = laplace_contrast_uncertainty_grid(best_idx, oidata, BinaryModelCartesian, samples)
+sigma_flux = laplace_contrast_uncertainty_grid(
+    best_idx, oidata_sim, BinaryModelCartesian, samples
+)
 
-# 4) Ruffio upper limit at 2-sigma confidence
 perc = jnp.array([jsp.stats.norm.cdf(2.0)])
 limit_flat = ruffio_upperlimit(opt_flux.flatten(), sigma_flux.flatten(), perc)
 limit_map = limit_flat.reshape(*opt_flux.shape, perc.shape[0])[:, :, 0]
 
 {
+    "opt_flux_finite_frac": float(jnp.mean(jnp.isfinite(opt_flux))),
+    "sigma_flux_finite_frac": float(jnp.mean(jnp.isfinite(sigma_flux))),
+    "limit_finite_frac": float(jnp.mean(jnp.isfinite(limit_map))),
     "limit_min": float(jnp.nanmin(limit_map)),
     "limit_median": float(jnp.nanmedian(limit_map)),
     "limit_max": float(jnp.nanmax(limit_map)),
 }
 ```
 
-## Notes
+```python
+# 2D contrast-limit map (Δmag)
 
-- This method combines a local contrast estimate with uncertainty to report upper limits at a chosen confidence.
-- In production analyses, use denser grids and observationally calibrated noise models.
-- You can convert flux-ratio limits to magnitudes with `-2.5 * log10(limit_map)` when needed.
+dra_axis = onp.array(samples["dra"])
+ddec_axis = onp.array(samples["ddec"])
+limit_np = onp.array(limit_map)
+
+plot_contrast_limit_map(
+    limit_np,
+    dra_axis,
+    ddec_axis,
+    truth=truth,
+    unit_mode="delta_mag",
+    title="Ruffio 2σ Upper-Limit Map (Δmag)",
+    cmap="inferno",
+)
+plt.show()
+```
+
+```python
+# Radial summary: median and spread of limits vs separation
+radial_summary = radial_limit_summary(
+    limit_np,
+    dra_axis,
+    ddec_axis,
+    center=(0.0, 0.0),
+    r_max=350.0,
+    n_bins=20,
+)
+plot_radial_limit_summary(
+    radial_summary,
+    unit_mode="flux_ratio",
+    title="Radial Ruffio limit summary",
+)
+plt.xlabel("Separation from origin (mas)")
+plt.show()
+```

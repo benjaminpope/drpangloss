@@ -39,9 +39,11 @@ sim_data = {
     "u": oidata.u,
     "v": oidata.v,
     "wavel": oidata.wavel,
-    "vis": oidata.to_vis(cvis_sim) + onp.random.randn(*oidata.vis.shape) * oidata.d_vis,
+    "vis": oidata.to_vis(cvis_sim)
+    + onp.random.randn(*oidata.vis.shape) * oidata.d_vis,
     "d_vis": oidata.d_vis,
-    "phi": oidata.to_phases(cvis_sim) + onp.random.randn(*oidata.phi.shape) * oidata.d_phi,
+    "phi": oidata.to_phases(cvis_sim)
+    + onp.random.randn(*oidata.phi.shape) * oidata.d_phi,
     "d_phi": oidata.d_phi,
     "i_cps1": oidata.i_cps1,
     "i_cps2": oidata.i_cps2,

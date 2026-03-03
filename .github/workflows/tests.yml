@@ -30,7 +30,12 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . pytest mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e . pytest ruff mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+
+      - name: Lint (Ruff)
+        run: |
+          uv run --python .venv/bin/python ruff check .
+          uv run --python .venv/bin/python ruff format --check .
 
       # ===== Tests =====
       - name: Test Suite
