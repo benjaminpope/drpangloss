@@ -14,17 +14,11 @@ From source:
 pip install .
 ```
 
-## Project status
-
-The project is actively being modernized for improved reliability, testing coverage, and model extensibility.
-
-Current review and execution notes:
-
-- [Detailed review log](review_2026-03-03.md)
-
 ## Development
 
 See the repository contribution guide on GitHub for contribution and testing workflow.
+
+The project is actively being modernized for improved reliability, testing coverage, and model extensibility.
 
 ## Name
 

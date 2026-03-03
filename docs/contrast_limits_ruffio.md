@@ -3,7 +3,7 @@
 
 # Contrast limits with Ruffio method
 
-Notebook version of docs/contrast_limits_ruffio.md.
+This tutorial covers Ruffio-style contrast-limit estimation on interferometry data, including likelihood evaluation on a spatial grid, local uncertainty estimation via Laplace approximation, and conversion to practical upper-limit maps and radial summaries. It highlights finite-value diagnostics and visualization choices in both flux-ratio and Δmag units so sensitivity structure is interpretable for scientific comparison.
 
 ```python
 import jax.numpy as jnp
@@ -91,6 +91,19 @@ limit_map = limit_flat.reshape(*opt_flux.shape, perc.shape[0])[:, :, 0]
 }
 ```
 
+```text
+W0304 00:01:29.563588 2574370 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+```
+
+```text
+{'opt_flux_finite_frac': 1.0,
+ 'sigma_flux_finite_frac': 0.9997313022613525,
+ 'limit_finite_frac': 0.9997313022613525,
+ 'limit_min': 0.000561241467949003,
+ 'limit_median': 0.0011003934778273106,
+ 'limit_max': 0.8645578026771545}
+```
+
 ```python
 # 2D contrast-limit map (Δmag)
 
@@ -110,6 +123,8 @@ plot_contrast_limit_map(
 plt.show()
 ```
 
+![contrast_limits_ruffio output 5.1](generated/contrast_limits_ruffio_cell005_out01.png)
+
 ```python
 # Radial summary: median and spread of limits vs separation
 radial_summary = radial_limit_summary(
@@ -128,3 +143,5 @@ plot_radial_limit_summary(
 plt.xlabel("Separation from origin (mas)")
 plt.show()
 ```
+
+![contrast_limits_ruffio output 6.1](generated/contrast_limits_ruffio_cell006_out01.png)

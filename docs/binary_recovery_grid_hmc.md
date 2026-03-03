@@ -3,7 +3,7 @@
 
 # Binary recovery with grid search and HMC
 
-This notebook mirrors the docs tutorial and adds a Fisher-reparameterized HMC path.
+This tutorial walks through end-to-end binary recovery on synthetic interferometric observables, starting from a coarse likelihood grid and continuing through vanilla HMC and Fisher-reparameterized HMC. It emphasizes practical initialization, posterior diagnostics in Cartesian and polar coordinates, and posterior-predictive correlation checks so you can verify both numerical stability and physical consistency in one workflow.
 
 ```python
 import warnings
@@ -96,6 +96,10 @@ grid_est = {
 grid_est
 ```
 
+```text
+{'dra': 118.75, 'ddec': -81.25, 'flux': 0.0038436660543084145}
+```
+
 ## 2b) Visualize the grid structure
 This map is a fast sanity check before MCMC. The bright region should sit near the truth marker, and the grid maximum provides a robust initialization point for subsequent samplers.
 
@@ -113,6 +117,8 @@ plot_likelihood_grid(
 plt.title("Likelihood grid (max over flux)")
 plt.show()
 ```
+
+![binary_recovery_grid_hmc output 8.1](generated/binary_recovery_grid_hmc_cell008_out01.png)
 
 ## 3) Posterior refinement with vanilla HMC
 Sample directly in physical parameters with NUTS, initialized near the grid maximum.
@@ -148,6 +154,16 @@ summary = {
 summary
 ```
 
+```text
+W0304 00:22:25.988509 2596293 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+```
+
+```text
+{'dra_median': 119.70986938476562,
+ 'ddec_median': -80.13255310058594,
+ 'flux_median': 0.00393222039565444}
+```
+
 ## 3b) Prepare vanilla HMC samples for shared diagnostics
 We build a common diagnostics table in both Cartesian (`dra`, `ddec`, `flux`) and polar (`sep`, `pa`, `flux`) coordinates.
 
@@ -167,6 +183,13 @@ hmc_results = diagnostics_table_from_samples(
     "hmc_ddec_median": float(hmc_results["ddec"].median()),
     "hmc_flux_median": float(hmc_results["flux"].median()),
 }
+```
+
+```text
+{'hmc_rows': 2000,
+ 'hmc_dra_median': 119.70986557006836,
+ 'hmc_ddec_median': -80.13254928588867,
+ 'hmc_flux_median': 0.003932220572237748}
 ```
 
 ## 4) Fisher-reparameterized HMC
@@ -223,6 +246,12 @@ post_f = mcmc_f.get_samples()
 }
 ```
 
+```text
+{'fisher_dra_median': 119.70191955566406,
+ 'fisher_ddec_median': -80.1236572265625,
+ 'fisher_flux_median': 0.003927189856767654}
+```
+
 ## 4b) Combined HMC vs Fisher-HMC diagnostics (Cartesian and polar)
 Both samplers are plotted on shared axes in Cartesian space and then again in polar space, each with matching walk/trace panels for direct comparison.
 
@@ -236,6 +265,12 @@ truth_cart, truth_polar = truth_cartesian_and_polar(truth)
     "fisher_sep_median": float(fisher_results["sep"].median()),
     "fisher_pa_median": float(fisher_results["pa"].median()),
 }
+```
+
+```text
+{'fisher_rows': 2000,
+ 'fisher_sep_median': 144.04738651467596,
+ 'fisher_pa_median': 326.204775360319}
 ```
 
 ```python
@@ -252,6 +287,14 @@ plot_chainconsumer_diagnostics(
 plt.show()
 ```
 
+```text
+Parameter dra in chain HMC Cartesian is not constrained
+```
+
+![binary_recovery_grid_hmc output 17.2](generated/binary_recovery_grid_hmc_cell017_out02.png)
+
+![binary_recovery_grid_hmc output 17.3](generated/binary_recovery_grid_hmc_cell017_out03.png)
+
 ```python
 # Polar comparison plot
 plot_chainconsumer_diagnostics(
@@ -265,6 +308,14 @@ plot_chainconsumer_diagnostics(
 )
 plt.show()
 ```
+
+```text
+Parameter sep in chain HMC Polar is not constrained
+```
+
+![binary_recovery_grid_hmc output 18.2](generated/binary_recovery_grid_hmc_cell018_out02.png)
+
+![binary_recovery_grid_hmc output 18.3](generated/binary_recovery_grid_hmc_cell018_out03.png)
 
 ## 5) Posterior predictive correlation checks
 Compare observed data against posterior predictive means for both HMC variants, with $1\!:\!1$ reference lines for visibility and phase observables.
@@ -294,3 +345,5 @@ plot_data_model_correlation(
  )
 plt.show()
 ```
+
+![binary_recovery_grid_hmc output 20.1](generated/binary_recovery_grid_hmc_cell020_out01.png)

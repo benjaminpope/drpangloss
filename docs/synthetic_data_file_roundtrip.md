@@ -3,7 +3,7 @@
 
 # Synthetic data file roundtrip
 
-Notebook version of docs/synthetic_data_file_roundtrip.md using the executable example helper.
+This tutorial demonstrates a full synthetic-data roundtrip: generate a realistic OIFITS product, reload it through `OIData`, and recover companion parameters with grid, HMC, and Fisher-HMC approaches under shared diagnostics. It focuses on reproducibility of file I/O, uncertainty conventions, and cross-checks that confirm recovered parameters remain consistent with the known truth model within expected posterior spreads.
 
 ```python
 import warnings
@@ -60,6 +60,20 @@ summary = run_synthetic_binary_demo(out)
 summary
 ```
 
+```text
+[36m
+
+### OIFITS CREATED (synthetic_binary_from_notebook.oifits).[0m
+```
+
+```text
+W0303 22:42:46.194978 2506260 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+```
+
+```text
+RecoverySummary(truth={'dra': 110.0, 'ddec': -70.0, 'flux': 0.0032}, grid_estimate={'dra': 99.0, 'ddec': -66.0, 'flux': 0.0036069736815989017}, hmc_median={'dra': 100.57429504394531, 'ddec': -66.22709655761719, 'flux': 0.0034537953324615955}, hmc_std={'dra': 4.655518531799316, 'ddec': 3.7644033432006836, 'flux': 0.00018507087952457368}, fisher_hmc_median={'dra': 100.7736587524414, 'ddec': -66.27662658691406, 'flux': 0.003446513321250677}, fisher_hmc_std={'dra': 4.612907409667969, 'ddec': 3.6174638271331787, 'flux': 0.00017996276437770575}, noise_settings={'visamp_err_frac': 0.002, 'visphi_err_frac': 0.004, 'vis2_err_frac': 0.001, 'cp_err_frac': 0.004}, output_file='/Users/benpope/code/drpangloss/docs/generated/synthetic_binary_from_notebook.oifits')
+```
+
 ## 1) Execute the synthetic roundtrip workflow
 Generate a synthetic OIFITS product, reload it, and collect recovery summaries from grid, HMC, and Fisher-HMC runs.
 
@@ -67,6 +81,11 @@ Generate a synthetic OIFITS product, reload it, and collect recovery summaries f
 checks = within_two_sigma(summary)
 fisher_checks = fisher_within_three_sigma(summary)
 checks, fisher_checks
+```
+
+```text
+({'dra': True, 'ddec': True, 'flux': True},
+ {'dra': True, 'ddec': True, 'flux': True})
 ```
 
 ## 2) Full posterior diagnostics
@@ -213,6 +232,13 @@ truth_pa = float(
 }
 ```
 
+```text
+{'hmc_rows': 2000,
+ 'fisher_rows': 2000,
+ 'truth_sep': 130.38404810405297,
+ 'truth_pa': 327.5288077091515}
+```
+
 ```python
 # Cartesian comparison plot
 plot_chainconsumer_diagnostics(
@@ -226,6 +252,10 @@ plot_chainconsumer_diagnostics(
 )
 plt.show()
 ```
+
+![synthetic_data_file_roundtrip output 9.1](generated/synthetic_data_file_roundtrip_cell009_out01.png)
+
+![synthetic_data_file_roundtrip output 9.2](generated/synthetic_data_file_roundtrip_cell009_out02.png)
 
 ```python
 # Polar comparison plot
@@ -264,6 +294,10 @@ plot_recovery_residuals(
 plt.show()
 ```
 
+![synthetic_data_file_roundtrip output 11.1](generated/synthetic_data_file_roundtrip_cell011_out01.png)
+
+![synthetic_data_file_roundtrip output 11.2](generated/synthetic_data_file_roundtrip_cell011_out02.png)
+
 ## 3) Recovery summary metrics
 Visualize median recovery against truth and standardized residuals to quantify estimator quality.
 
@@ -294,6 +328,8 @@ plot_data_model_correlation(
 )
 plt.show()
 ```
+
+![synthetic_data_file_roundtrip output 13.1](generated/synthetic_data_file_roundtrip_cell013_out01.png)
 
 ## 4) Posterior predictive correlation checks
 Overlay model-vs-data correlation panels for visibility and phase, including uncertainty bars and $1\!:\!1$ lines.

@@ -4,6 +4,8 @@
 
 # ===== Setup and Themes =====
 markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.highlight
   - pymdownx.arithmatex:
       generic: true
 
@@ -17,15 +19,17 @@ repo_url: https://github.com/benjaminpope/drpangloss
 
 theme:
   name: material
+  palette:
+    scheme: slate
   icon:
     logo: material/telescope
+
+exclude_docs: |
+  review_2026-03-03.md
 
 # ===== Plugins =====
 plugins:
   - search
-  - mkdocs-jupyter:
-      include:
-        - "*.ipynb"
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -44,4 +48,3 @@ nav:
   - Binary Recovery (Grid + HMC): binary_recovery_grid_hmc.md
   - Contrast Limits (Ruffio): contrast_limits_ruffio.md
   - API Reference: api.md
-  - Review Log: review_2026-03-03.md
