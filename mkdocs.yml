@@ -23,20 +23,25 @@ theme:
 # ===== Plugins =====
 plugins:
   - search
-  - mkdocs-jupyter
+  - mkdocs-jupyter:
+      include:
+        - "*.ipynb"
   - mkdocstrings:
       default_handler: python
       handlers:
         python:
-          selection:
-            docstring_style: "numpy"
-          setup_commands:
-            - import sys
-            - sys.path.append("dLux")
-          rendering:
+          paths:
+            - src
+          options:
+            docstring_style: numpy
             show_source: false
-            show_if_no_docstring: yes
+            show_if_no_docstring: true
 
 # ===== Navigation =====
 nav:
-    - Home: index.md
+  - Home: index.md
+  - Synthetic Data Roundtrip: synthetic_data_file_roundtrip.md
+  - Binary Recovery (Grid + HMC): binary_recovery_grid_hmc.md
+  - Contrast Limits (Ruffio): contrast_limits_ruffio.md
+  - API Reference: api.md
+  - Review Log: review_2026-03-03.md

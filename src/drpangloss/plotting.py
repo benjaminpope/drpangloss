@@ -43,6 +43,18 @@ def plot_likelihood_grid(loglike_im, samples_dict,truths=None):
     plt.gca().invert_yaxis() # up is more Dec
 
 def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
+    '''
+    Plot optimized contrast results alongside the brute-force grid maximum.
+
+    Parameters
+    ----------
+    loglike_im : array
+        Full 3D log-likelihood cube from ``likelihood_grid``.
+    optimized : array
+        2D optimized contrast map from ``optimized_contrast_grid``.
+    samples_dict : dict
+        Sampling dictionary containing ``dra``, ``ddec``, and ``flux`` axes.
+    '''
 
     best_contrast_indices = np.argmax(loglike_im,axis=2)
     best_contrasts = samples_dict['flux'][best_contrast_indices]

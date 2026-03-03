@@ -4,14 +4,14 @@ version = "0.0.2"
 description = "Python package to fit interferometric data, accelerated using Jax."
 readme = "README.md"
 requires-python =">=3.11"
-license = {file = "LICENSE.md"}
+license = {file = "LICENSE"}
 authors = [
   {name = "Benjamin Pope", email = "b.pope@uq.edu.au"},
   {name = "Dori Blakely", email = "blakelyd@uvic.ca"}
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
 urls = {repository = "https://github.com/benjaminpope/drpangloss"}
-dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","optimistix","scipy","astroquery", "pyoifits"]
+dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","optimistix","scipy","astroquery", "pyoifits", "termcolor"]
 classifiers=[
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -37,3 +37,11 @@ ignore-init-module-imports = true
 [tool.ruff.isort]
 combine-as-imports = true
 lines-after-imports = 2
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+filterwarnings = [
+  "ignore:Setting `jax_pmap_shmap_merge` is deprecated in JAX v0.9.0:DeprecationWarning",
+]

@@ -186,6 +186,7 @@ class OIData(zx.Base):
 
 
     def __repr__(self):
+        """Return a compact string summary of the loaded interferometric data."""
         phname = "CP" if self.cp_flag else "Phi"
         visname = "V2" if self.v2_flag else "Vis"
         return (f"OIData(u={self.u}, v={self.v}, {phname}={self.phi}, d_{phname}={self.d_phi}, "
@@ -270,6 +271,7 @@ class BinaryModelAngular(zx.Base):
         self.contrast = jnp.asarray(contrast,dtype=float)
 
     def __repr__(self):
+        """Return a readable representation of binary angular parameters."""
         return f"BinaryModel(sep={self.sep}, pa={self.pa}, contrast={self.contrast})"
     
     def unpack_all(self):
@@ -312,6 +314,7 @@ class BinaryModelCartesian(zx.Base):
         self.flux = jnp.asarray(flux,dtype=float)
 
     def __repr__(self):
+        """Return a readable representation of binary Cartesian parameters."""
         return f"BinaryModelAngular(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
     
     def unpack_all(self):
@@ -491,11 +494,11 @@ def log_like_star(cp, d_cp, vis2, d_vis2):
 
 
 def log_like_wrap(planet_contrast,u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra):
-    
+    """Wrapper returning the negative binary log-likelihood for scalar optimization."""
     return -log_like_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast)
 
 def optimize_log_like(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast):
-    
+    """Optimize binary contrast by minimizing ``log_like_wrap`` with BFGS."""
     sol = optx.compat.minimize(log_like_wrap,method='BFGS',
                                 x0=jnp.array([planet_contrast]), args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra),options={"maxiter":100})
     res = sol.x
@@ -507,14 +510,15 @@ optimize_log_like_map = jit(vmap_fun)
 
 #calc sigma with laplace approximation
 def sigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec, dra, planet_contrast):
+    """Estimate contrast uncertainty from the Hessian (Laplace approximation)."""
     hess = jax.hessian(log_like_binary, argnums=[11])(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3,ddec,dra,planet_contrast)
     cov = -jnp.linalg.inv(jnp.array(hess))
 
     return jnp.sqrt(cov)
 
 def cp_indices(vis_sta_index, cp_sta_index):
+    """Map closure-triangle station indices to baseline indices."""
     vis_sta_index, cp_sta_index = np.array(vis_sta_index,dtype=int), np.array(cp_sta_index,dtype=int)
-    """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
     i_cps1 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
     i_cps2 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
     i_cps3 = np.zeros(len(np.array(cp_sta_index)),dtype=int)
@@ -528,6 +532,7 @@ def cp_indices(vis_sta_index, cp_sta_index):
 
 
 def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
+    """Objective for solving the contrast that matches a target sigma threshold."""
 
     #constraints
     planet_contrast = jnp.where(planet_contrast<1e-6,1e-6,planet_contrast)
@@ -634,6 +639,7 @@ def nsigma(chi2r_test,
 @jit
 def chi2all(cp_modelr,v2_modelr,oidata,
            const=0.):
+    """Compute total chi-square from modeled closure phases and squared visibilities."""
 
     cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.phi, oidata.vis, oidata.d_phi, oidata.d_vis
     # chi2 
@@ -646,6 +652,7 @@ def chi2all(cp_modelr,v2_modelr,oidata,
 
 @jit
 def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
+    """Compute chi-square for a binary-plus-input-visibility composite model."""
     u21, v21 = oidata.u/oidata.wavel, oidata.v/oidata.wavel
     i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
     cont = 10**cont

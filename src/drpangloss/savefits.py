@@ -27,6 +27,7 @@ plt.close('all')
 list_color = ['#00a7b5', '#afd1de', '#055c63', '#ce0058', '#8a8d8f', '#f1b2dc']
 
 def rad2mas(rad):
+    """Convert radians to milliarcseconds."""
     return rad / u.milliarcsec.to(u.rad)
 
 

@@ -1,6 +1,6 @@
 # Contributing Guide
 
-pangloss is an open-source framework and as such is very welcoming to contributions via pull requests.
+drpangloss is an open-source package and welcomes contributions via pull requests.
 
 ---
 
@@ -11,9 +11,11 @@ Firstly, you will need to fork the repository to your own GitHub account. This w
 Next, you will need to clone the repository to your local machine. To do this, open a terminal and navigate to the directory you would like to clone the repository to. Then run the following command:
 
 ```bash
-https://github.com/your-username-here/pangloss.git 
-cd dLux
-pip install '.[dev]'
+git clone https://github.com/your-username-here/drpangloss.git
+cd drpangloss
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e . pytest mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
 ```
 
 Then you will need to install the pre-commit hooks. This will ensure that the code is formatted correctly and that the unit tests pass before you can commit your changes. To do this, run the following command:
@@ -37,16 +39,16 @@ It is important that any changes you make are tested to ensure that they work as
 To ensure that everything is working as expected, you can run the unit tests by running the following command:
 
 ```bash
-pytest tests/*
+uv run --python .venv/bin/python pytest tests
 ```
 
-This will run all the scripts labelled with `test_` in the `tests` directory. If you would like to run a specific test, you can run the following command:
+This will run all tests in the `tests` directory. If you would like to run a specific test, you can run:
 
 ```bash
-pytest tests/test_file.py
+uv run --python .venv/bin/python pytest tests/test_file.py
 ```
 
-Note that just because the tests pass on your local machine, that does not mean that it will necessarily pass on all others! This can be due to a number of reasons such a different operating system, different python version, or different dependencies. This is why github actions are used to run the unit tests on a number of different operating systems and python versions. This should help ensure that the code works as expected on all platforms.
+Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions runs CI checks for consistency across environments.
 
 **Documentation**
 

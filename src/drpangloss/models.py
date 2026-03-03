@@ -9,7 +9,11 @@ import equinox as eqx
 import zodiax as zx
 from functools import partial
 
-from numpyro.distributions.util import gammaincinv
+from .inference import (
+    fisher_matrix as _fisher_matrix,
+    hessian_matrix as _hessian_matrix,
+    laplace_covariance as _laplace_covariance,
+)
 
 """------------------------------
 ------------------------------"""
@@ -111,7 +115,7 @@ class OIData(zx.Base):
             OIFITS data file opened with pyoifits, or dictionary filling out all the appropriate keywords & values
         '''
 
-        try:
+        if not isinstance(data, dict):
             # assume data is an oifits file opened with pyoifits
             data_names = [d.name for d in data.get_dataHDUs()]
             assert 'OI_VIS' in data_names or 'OI_VIS2' in data_names, "No visibility data found in OIFITS file"
@@ -135,8 +139,10 @@ class OIData(zx.Base):
             elif 'OI_VIS' in data_names:
 
                 visdata = data['OI_VIS']
-                self.vis = np.array(visdata.data['VISPHI'],dtype=float)
-                self.d_vis = np.array(visdata.data['VISERR'],dtype=float)
+                vis_key = 'VISAMP' if 'VISAMP' in visdata.data.names else 'VISPHI'
+                d_vis_key = 'VISAMPERR' if 'VISAMPERR' in visdata.data.names else 'VISERR'
+                self.vis = np.array(visdata.data[vis_key],dtype=float)
+                self.d_vis = np.array(visdata.data[d_vis_key],dtype=float)
                 self.u, self.v = np.array(visdata.data['UCOORD'],dtype=float), np.array(visdata.data['VCOORD'],dtype=float)
                 vis_sta_index = np.array(visdata.data['STA_INDEX'],dtype=int)
 
@@ -150,7 +156,7 @@ class OIData(zx.Base):
                 self.d_phi = np.array(phidata.data['VISERR'],dtype=float)
                 self.i_cps1,self.i_cps2,self.i_cps3 = None, None, None
 
-                self.cp_flag = True
+                self.cp_flag = False
 
             elif 'OI_T3' in data_names:
 
@@ -163,7 +169,7 @@ class OIData(zx.Base):
 
                 self.cp_flag = True
 
-        except: 
+        else:
             # assume data is a dict of the form {'u':u,'v':v,'wavel':wavel,'vis':vis,'d_vis':d_vis,
             #'phi':phi,'d_phi':d_phi,'i_cps1':i_cps1,'i_cps2':i_cps2,'i_cps3':i_cps3,'v2_flag':v2_flag,'cp_flag':cp_flag}
 
@@ -178,20 +184,26 @@ class OIData(zx.Base):
             self.d_phi = np.array(data['d_phi'],dtype=float)
 
             try:
-                self.i_cps1 = np.array(data['i_cps1'],dtype=int)
-                self.i_cps2 = np.array(data['i_cps2'],dtype=int)
-                self.i_cps3 = np.array(data['i_cps3'],dtype=int)
-            except:
+                idx1 = data['i_cps1']
+                idx2 = data['i_cps2']
+                idx3 = data['i_cps3']
+                if idx1 is None or idx2 is None or idx3 is None:
+                    raise KeyError
+                self.i_cps1 = np.array(idx1, dtype=int)
+                self.i_cps2 = np.array(idx2, dtype=int)
+                self.i_cps3 = np.array(idx3, dtype=int)
+            except KeyError:
                 self.i_cps1 = None
                 self.i_cps2 = None
                 self.i_cps3 = None
 
-            self.v2_flag = data['v2_flag']
-            self.cp_flag = data['cp_flag']
+            self.v2_flag = bool(data.get('v2_flag', True))
+            self.cp_flag = bool(data.get('cp_flag', self.i_cps1 is not None))
 
 
 
     def __repr__(self):
+        """Return a compact string summary of the loaded interferometric data."""
         phname = "CP" if self.cp_flag else "Phi"
         visname = "V2" if self.v2_flag else "Vis"
         return (f"OIData(u={self.u}, v={self.v}, {phname}={self.phi}, d_{phname}={self.d_phi}, "
@@ -235,7 +247,7 @@ class OIData(zx.Base):
         if self.cp_flag:
             return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)  
         else:
-            return np.angle(cvis)
+            return np.rad2deg(np.angle(cvis))
     
     def model(self, model_object):
         '''
@@ -276,6 +288,7 @@ class BinaryModelAngular(zx.Base):
         self.contrast = np.asarray(contrast,dtype=float)
 
     def __repr__(self):
+        """Return a readable representation of binary angular parameters."""
         return f"BinaryModel(sep={self.sep}, pa={self.pa}, contrast={self.contrast})"
     
     def unpack_all(self):
@@ -318,6 +331,7 @@ class BinaryModelCartesian(zx.Base):
         self.flux = np.asarray(flux,dtype=float)
 
     def __repr__(self):
+        """Return a readable representation of binary Cartesian parameters."""
         return f"BinaryModelAngular(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
     
     def unpack_all(self):
@@ -451,8 +465,6 @@ def laplace_cov(values, params, data_obj, model_class):
 
     Parameters
     ----------
-    Parameters
-    ----------
     values : array-like
         Values of the model parameters.
     params : list
@@ -468,8 +480,8 @@ def laplace_cov(values, params, data_obj, model_class):
         Covariance matrix.
     '''
 
-    hess = jax.hessian(loglike, argnums=0)(values, params, data_obj, model_class)
-    return -np.linalg.inv(np.array(hess))
+    objective = lambda vals: -loglike(vals, params, data_obj, model_class)
+    return _laplace_covariance(objective, np.asarray(values, dtype=float))
 
 def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
 
@@ -478,12 +490,12 @@ def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
 
     Parameters
     ----------
-    Parameters
-    ----------
-    values : array-like
-        Values of the model parameters.
-    params : list
-        List of parameter names.
+    flux : float
+        Flux ratio value at which the local Laplace uncertainty is evaluated.
+    dra : float
+        Right ascension offset in mas.
+    ddec : float
+        Declination offset in mas.
     data_obj : OIData
         Object containing the data to be fitted.
     model_class : class
@@ -497,15 +509,28 @@ def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
 
     params = ['dra', 'ddec', 'flux'] # TODO: make this more general
 
-    objective = lambda flux: -loglike([dra, ddec, flux], params, data_obj, model_class)
-    hess = jax.hessian(objective)(flux)
-    cov = 1/(np.array(hess))
+    objective = lambda f: -loglike([dra, ddec, f], params, data_obj, model_class)
+    hess = _hessian_matrix(objective, np.asarray(flux, dtype=float))
+    cov = 1 / np.asarray(hess)
     return np.sqrt(cov)
+
+
+def fisher(values, params, data_obj, model_class, ridge=0.0):
+    """Approximate local Fisher matrix for a parameter vector at a point."""
+    objective = lambda vals: -loglike(vals, params, data_obj, model_class)
+    return _fisher_matrix(objective, np.asarray(values, dtype=float), ridge=ridge)
 
 def chi2ppf(p,df): 
     '''
-    tensorflow-probability backend for the percentile function for chi2
-    tested - matches scipy.stats.chi2.ppf to machine precision over domain we care about
+    Percentile function for chi-square.
+
+    For ``df=1`` (the path used in ``nsigma``), use the closed-form identity
+    based on the standard normal quantile, i.e. square ``norm.ppf((p+1)/2)``.
+    This remains JAX-native,
+    differentiable, and fast.
+
+    For ``df != 1``, this falls back to numpyro's gammaincinv backend when
+    available.
 
     Parameters
     ----------
@@ -519,7 +544,19 @@ def chi2ppf(p,df):
     array-like
         Corresponding chi2 value to the percentile
     '''
-    return gammaincinv(df/2.,p)*2
+    p = np.asarray(p, dtype=float)
+    p = np.clip(p, np.finfo(float).eps, 1.0 - np.finfo(float).eps)
+
+    try:
+        if float(onp.asarray(df)) == 1.0:
+            z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
+            return z**2
+    except Exception:
+        pass
+
+    from numpyro.distributions.util import gammaincinv
+
+    return gammaincinv(df / 2.0, p) * 2.0
 
 
 def nsigma(chi2r_test,
@@ -558,18 +595,30 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     Returns: closure phases [degrees]
 
     '''
-    real = np.real(cvis)
-    imag = np.imag(cvis)
-    visphiall = np.arctan2(imag,real)
-    visphiall = np.mod(visphiall + 10980., 360.)-180.
-    visphi = np.reshape(visphiall,(len(cvis),1))
+    visphiall = np.rad2deg(np.angle(cvis))
+    visphiall = np.mod(visphiall + 180., 360.) - 180.
+    visphi = np.reshape(visphiall, (len(cvis), 1))
     cp = visphi[np.array(index_cps1)] + visphi[np.array(index_cps2)] - visphi[np.array(index_cps3)]
-    out = np.reshape(cp*180/np.pi,len(index_cps1))
+    out = np.reshape(np.mod(cp + 180., 360.) - 180., len(index_cps1))
     return out
 
 def cp_indices(vis_sta_index, cp_sta_index):
+    """Map closure-triangle station indices to baseline indices.
+
+    Parameters
+    ----------
+    vis_sta_index : array-like
+        Baseline station index pairs from visibility data.
+    cp_sta_index : array-like
+        Triangle station index triplets from closure-phase data.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Arrays ``(i_cps1, i_cps2, i_cps3)`` identifying the three baselines
+        composing each closure phase.
+    """
     vis_sta_index, cp_sta_index = onp.array(vis_sta_index,dtype=int), onp.array(cp_sta_index,dtype=int)
-    """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
     i_cps1 = onp.zeros(len(onp.array(cp_sta_index)),dtype=int)
     i_cps2 = onp.zeros(len(onp.array(cp_sta_index)),dtype=int)
     i_cps3 = onp.zeros(len(onp.array(cp_sta_index)),dtype=int)

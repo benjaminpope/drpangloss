@@ -51,8 +51,6 @@ def optimized_likelihood_grid(data_obj, model_class, samples_dict):
 
     Parameters
     ----------
-    best_contrast_indices : array-like
-        Indices of the best contrast values in a grid calculated with likelihood_grid.
     data_obj : OIData
         Object containing the data to be fitted.
     model_class : class
@@ -102,8 +100,6 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
 
     Parameters
     ----------
-    best_contrast_indices : array-like
-        Indices of the best contrast values in a grid calculated with likelihood_grid.
     data_obj : OIData
         Object containing the data to be fitted.
     model_class : class

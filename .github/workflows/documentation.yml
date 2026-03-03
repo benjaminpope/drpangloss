@@ -8,31 +8,40 @@ on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
   documentation:
     runs-on: ubuntu-latest
     steps: 
       - name: checkout all
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
+
 
       - name: python install 
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
           architecture: x64
 
-      - name: install environment
+      - name: create environment
         run: |
-          pip install mkdocs
-          pip install mkdocstrings
-          pip install mkdocstrings[python]
-          pip install mkdocs-material 
-          pip install mkdocs-jupyter
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
 
       - name: generate and deploy documentation
-        run: mkdocs gh-deploy -d https://benjaminpope.github.io/drpangloss
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: uv run --python .venv/bin/python mkdocs gh-deploy
+
+      - name: build documentation
+        if: github.event_name == 'pull_request'
+        run: uv run --python .venv/bin/python mkdocs build --strict
+
+      - name: validate synthetic docs workflow
+        run: uv run --python .venv/bin/python pytest tests/test_docs_synthetic_recovery.py
 

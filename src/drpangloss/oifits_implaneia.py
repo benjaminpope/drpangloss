@@ -28,6 +28,7 @@ plt.close('all')
 list_color = ['#00a7b5', '#afd1de', '#055c63', '#ce0058', '#8a8d8f', '#f1b2dc']
 
 def rad2mas(rad):
+    """Convert radians to milliarcseconds."""
     return rad / u.milliarcsec.to(u.rad)
 
 
@@ -200,7 +201,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
     name_star = dic['info']['TARGET']
 
     customSimbad = Simbad()
-    customSimbad.add_votable_fields('propermotions', 'sptype', 'parallax')
+    customSimbad.add_votable_fields('propermotions', 'sp_type', 'parallax')
 
     # Add informations from Simbad:
     if name_star == 'UNKNOWN':
@@ -698,11 +699,11 @@ def show(inputList, diffWl=False, vmin=0, vmax=1.05, cmax=180, setlog=False,
         V = tmp[1]
         band = tmp[10]
         wl = tmp[9]
-        label = '%2.2f $\mu m$ (%s)' % (wl, band)
+        label = '%2.2f $\\mu m$ (%s)' % (wl, band)
         if diffWl:
             c1, c2 = dic_color[band], dic_color[band]
             if band not in l_band_al:
-                label = '%2.2f $\mu m$ (%s)' % (wl*1e6, band)
+                label = '%2.2f $\\mu m$ (%s)' % (wl*1e6, band)
         else:
             c1, c2 = '#00adb5', '#fc5185'
         l_bmax.append(tmp[2])
@@ -733,7 +734,7 @@ def show(inputList, diffWl=False, vmin=0, vmax=1.05, cmax=180, setlog=False,
     unitlabel = {'m': 'm',
                  'rad': 'rad$^{-1}$',
                  'arcsec': 'arcsec$^{-1}$',
-                 'lambda': 'M$\lambda$'}
+                 'lambda': 'M$\\lambda$'}
 
     ax1.set_xlabel(r'U [%s]' % unitlabel[unit])
     ax1.set_ylabel(r'V [%s]' % unitlabel[unit])
@@ -817,7 +818,7 @@ def show(inputList, diffWl=False, vmin=0, vmax=1.05, cmax=180, setlog=False,
     ax3.xaxis.set_ticks_position('none')
     ax3.yaxis.set_ticks_position('none')
     ax3.set_xlabel('Spatial frequency [cycle/arcsec]')
-    ax3.set_ylabel('Clos. $\phi$ [%s]' % unit_cp)
+    ax3.set_ylabel('Clos. $\\phi$ [%s]' % unit_cp)
     ax3.axis([0, 1.2*np.max(max_f_cp), cmin*conv_cp, cmax*conv_cp])
     ax3.grid(which='both', alpha=.2)
 
@@ -833,6 +834,22 @@ def show(inputList, diffWl=False, vmin=0, vmax=1.05, cmax=180, setlog=False,
 
 
 def load_oifits(filename,directory):
+    """Load a single OIFITS file and return flattened AMI-ready observables.
+
+    Parameters
+    ----------
+    filename : str
+        OIFITS file name.
+    directory : str
+        Directory containing the file.
+
+    Returns
+    -------
+    tuple
+        ``(u, v, cp, cp_err, vis2, vis2_err, i_cps1, i_cps2, i_cps3)`` where
+        baselines are converted to spatial frequencies using the effective
+        wavelength.
+    """
     wav = []
     wav_band = []
     vis2 = []
