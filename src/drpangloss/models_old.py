@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 from jax import jit, vmap
 import jax
+import warnings
 
 import numpy as np
 
@@ -15,6 +16,22 @@ mas2rad = jnp.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 
 dtor = np.pi / 180.0
 i2pi = 1j * 2.0 * np.pi
+
+
+_LEGACY_MODULE_MSG = (
+    "drpangloss.models_old is deprecated and will be removed in a future "
+    "release. Migrate to drpangloss.models and drpangloss.grid_fit APIs."
+)
+
+
+def _warn_legacy(symbol_name, replacement=None):
+    msg = f"{symbol_name} from drpangloss.models_old is deprecated."
+    if replacement is not None:
+        msg += f" Use {replacement} instead."
+    warnings.warn(msg, DeprecationWarning, stacklevel=2)
+
+
+warnings.warn(_LEGACY_MODULE_MSG, DeprecationWarning, stacklevel=2)
 
 class OIData(zx.Base):
     """
@@ -55,6 +72,8 @@ class OIData(zx.Base):
             OIFITS data opened with ``pyoifits``, or a dictionary containing
             visibility/phase arrays and associated metadata.
         """
+
+        _warn_legacy("OIData", replacement="drpangloss.models.OIData")
 
         try:
             # assume data is an oifits file opened with pyoifits
@@ -255,6 +274,11 @@ class BinaryModelAngular(zx.Base):
 
         """
 
+        _warn_legacy(
+            "BinaryModelAngular",
+            replacement="drpangloss.models.BinaryModelAngular",
+        )
+
         self.sep = jnp.asarray(sep, dtype=float)
         self.pa = jnp.asarray(pa, dtype=float)
         self.contrast = jnp.asarray(contrast, dtype=float)
@@ -333,6 +357,11 @@ class BinaryModelCartesian(zx.Base):
             Flux ratio of the companion.
 
         """
+
+        _warn_legacy(
+            "BinaryModelCartesian",
+            replacement="drpangloss.models.BinaryModelCartesian",
+        )
 
         self.dra = jnp.asarray(dra, dtype=float)
         self.ddec = jnp.asarray(ddec, dtype=float)
@@ -482,6 +511,8 @@ def vis_binary2(u, v, ddec, dra, p2, p3):
         Complex visibility samples.
     """
 
+    _warn_legacy("vis_binary2", replacement="No direct replacement")
+
     # relative locations
     ddec = (ddec) * np.pi / (180.0 * 3600.0 * 1000.0)
     dra = (dra) * np.pi / (180.0 * 3600.0 * 1000.0)
@@ -573,6 +604,8 @@ def log_like_binary(
         Log-likelihood value.
     """
 
+    _warn_legacy("log_like_binary", replacement="drpangloss.models.loglike")
+
     cvis_model = cvis_binary(u, v, ddec, dra, planet_contrast)
 
     # calculate model observables
@@ -629,6 +662,8 @@ def chi2_binary(
         Half-scaled negative log-likelihood value.
     """
 
+    _warn_legacy("chi2_binary", replacement="No direct replacement")
+
     return -0.5 * (
         log_like_binary(
             u,
@@ -667,6 +702,10 @@ def log_like_star(cp, d_cp, vis2, d_vis2):
         Log-likelihood value under a null-companion model.
     """
 
+    _warn_legacy(
+        "log_like_star", replacement="drpangloss.models.loglike_nosignal"
+    )
+
     # calculate model observables
     cp_obs = 0.0
     vis2_obs = 1.0
@@ -692,6 +731,7 @@ def log_like_wrap(
     dra,
 ):
     """Wrapper returning the negative binary log-likelihood for scalar optimization."""
+    _warn_legacy("log_like_wrap", replacement="No direct replacement")
     return -log_like_binary(
         u,
         v,
@@ -723,6 +763,10 @@ def optimize_log_like(
     planet_contrast,
 ):
     """Optimize binary contrast by minimizing ``log_like_wrap`` with BFGS."""
+    _warn_legacy(
+        "optimize_log_like",
+        replacement="drpangloss.grid_fit.optimized_contrast_grid",
+    )
     sol = optx.compat.minimize(
         log_like_wrap,
         method="BFGS",
@@ -773,6 +817,7 @@ def sigma(
     planet_contrast,
 ):
     """Estimate contrast uncertainty from the Hessian (Laplace approximation)."""
+    _warn_legacy("sigma", replacement="drpangloss.models.laplace_contrast_uncertainty")
     hess = jax.hessian(log_like_binary, argnums=[11])(
         u,
         v,
@@ -794,6 +839,7 @@ def sigma(
 
 def cp_indices(vis_sta_index, cp_sta_index):
     """Map closure-triangle station indices to baseline indices."""
+    _warn_legacy("cp_indices", replacement="drpangloss.models.cp_indices")
     vis_sta_index, cp_sta_index = (
         np.array(vis_sta_index, dtype=int),
         np.array(cp_sta_index, dtype=int),
@@ -841,6 +887,8 @@ def nsigma_wrap(
     sigma,
 ):
     """Objective for solving the contrast that matches a target sigma threshold."""
+
+    _warn_legacy("nsigma_wrap", replacement="drpangloss.grid_fit.absil_limits")
 
     # constraints
     planet_contrast = jnp.where(planet_contrast < 1e-6, 1e-6, planet_contrast)
@@ -946,6 +994,8 @@ def optimize_nsigma(
         Maximum relative flux of companion.
     """
 
+    _warn_legacy("optimize_nsigma", replacement="drpangloss.grid_fit.absil_limits")
+
     sol = optx.compat.minimize(
         nsigma_wrap,
         method="BFGS",
@@ -991,6 +1041,8 @@ def nsigma(chi2r_test, chi2r_true, ndof):
     nsigma: float
         Detection significance.
     """
+
+    _warn_legacy("nsigma", replacement="drpangloss.models.nsigma")
 
     q = stats.chi2.cdf(ndof * chi2r_test / chi2r_true, ndof)
     p = 1.0 - q
@@ -1077,6 +1129,8 @@ def lim_absil(f0, oidata, ddec, dra, chi2_true, ndof, sigma=3):
     chi2: float
         Chi-squared of Absil method.
     """
+
+    _warn_legacy("lim_absil", replacement="drpangloss.grid_fit.absil_limits")
 
     chi2_test = chi2_suball(
         oidata, f0, vis_in=0.0, imsum=0.0, ddec=ddec, dra=dra

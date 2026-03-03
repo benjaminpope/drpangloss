@@ -58,6 +58,7 @@ nav:
               - BinaryModelAngular: api/models/classes/binary_model_angular.md
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
           - Functions: api/models/functions.md
+          - Legacy Migration: api/models/legacy_migration.md
       - Grid Fit: api/grid_fit.md
       - Inference: api/inference.md
       - Plotting: api/plotting.md
