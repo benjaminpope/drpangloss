@@ -218,7 +218,22 @@ class OIData(zx.Base):
 
 class BinaryModelAngular(zx.Base):
     """
-    Class for a binary star model.
+    Represent a binary companion using angular separation and position angle.
+
+    Parameters
+    ----------
+    sep : float or array-like
+        On-sky separation in milliarcseconds.
+    pa : float or array-like
+        Position angle in degrees, measured East of North.
+    contrast : float or array-like
+        Brightness contrast ratio ``star/companion``.
+
+    Notes
+    -----
+    This parameterization is often convenient for reporting astrophysical
+    constraints directly in polar-like coordinates. The model evaluates complex
+    visibilities on the provided interferometric baseline geometry.
     """
 
     sep: jax.Array
@@ -250,13 +265,32 @@ class BinaryModelAngular(zx.Base):
 
     def unpack_all(self):
         """
-        Convenience function to unpack all data to be used in model functions.
+        Return all model parameters in angular form.
+
+        Returns
+        -------
+        tuple[array-like, array-like, array-like]
+            Tuple ``(sep, pa, contrast)``.
         """
         return self.sep, self.pa, self.contrast
 
     def model(self, u, v, wavel):
         """
-        Model for binary star system.
+        Evaluate complex visibilities for this angular binary model.
+
+        Parameters
+        ----------
+        u : array-like
+            Baseline ``u`` coordinates in meters.
+        v : array-like
+            Baseline ``v`` coordinates in meters.
+        wavel : array-like
+            Effective wavelength(s) in meters.
+
+        Returns
+        -------
+        array-like
+            Complex visibility samples on the provided baselines.
         """
         uu, vv = u / wavel, v / wavel
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
@@ -264,7 +298,21 @@ class BinaryModelAngular(zx.Base):
 
 class BinaryModelCartesian(zx.Base):
     """
-    Class for a binary star model.
+    Represent a binary companion using Cartesian sky offsets.
+
+    Parameters
+    ----------
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+    flux : float or array-like
+        Companion-to-primary flux ratio.
+
+    Notes
+    -----
+    This parameterization is useful for optimization and inference workflows
+    that operate directly in Cartesian offsets.
     """
 
     dra: jax.Array
@@ -296,13 +344,32 @@ class BinaryModelCartesian(zx.Base):
 
     def unpack_all(self):
         """
-        Convenience function to unpack all data to be used in model functions.
+        Return all model parameters in Cartesian form.
+
+        Returns
+        -------
+        tuple[array-like, array-like, array-like]
+            Tuple ``(dra, ddec, flux)``.
         """
         return self.dra, self.ddec, self.flux
 
     def model(self, u, v, wavel):
         """
-        Model for binary star system.
+        Evaluate complex visibilities for this Cartesian binary model.
+
+        Parameters
+        ----------
+        u : array-like
+            Baseline ``u`` coordinates in meters.
+        v : array-like
+            Baseline ``v`` coordinates in meters.
+        wavel : array-like
+            Effective wavelength(s) in meters.
+
+        Returns
+        -------
+        array-like
+            Complex visibility samples on the provided baselines.
         """
         uu, vv = u / wavel, v / wavel
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
