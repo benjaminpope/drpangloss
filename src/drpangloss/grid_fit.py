@@ -4,16 +4,11 @@ from jax import jit, vmap
 import numpy as np
 import optimistix as optx
 
-from .models import *
+from .models import laplace_contrast_uncertainty, loglike, nsigma
 
 import jax.scipy as jsp
 
-"""-------------------------------------------
-
-Functions to fit a model to data and optimize the 
-contrast of the model over a grid of parameter values.
-
--------------------------------------------"""
+"""Grid-based fitting and contrast-limit utilities."""
 
 
 @partial(jit, static_argnames=("model_class"))
@@ -312,32 +307,48 @@ def azimuthalAverage(
     return_max=False,
 ):
     """
-    Calculate the azimuthally-averaged radial profile.
-    NB: This was found online and should be properly credited! Modified by MJI
+    Calculate an azimuthally averaged radial profile for a 2D image.
 
-    image - The 2D image
-    center - The [x,y] pixel coordinates used as the center. The default is
-             None, which then uses the center of the image (including
-             fractional pixels).
-    stddev - if specified, return the azimuthal standard deviation instead of the average
-    returnradii - if specified, return (radii_array,radial_profile)
-    return_nr   - if specified, return number of pixels per radius *and* radius
-    binsize - size of the averaging bin.  Can lead to strange results if
-        non-binsize factors are used to specify the center and the binsize is
-        too large
-    weights - can do a weighted average instead of a simple average if this keyword parameter
-        is set.  weights.shape must = image.shape.  weighted stddev is undefined, so don't
-        set weights and stddev.
-    steps - if specified, will return a double-length bin array and radial
-        profile so you can plot a step-form radial profile (which more accurately
-        represents what's going on)
-    interpnan - Interpolate over NAN values, i.e. bins where there is no data?
-        left,right - passed to interpnan; they set the extrapolated values
-    return_max - (MJI) Return the maximum index.
+    Parameters
+    ----------
+    image : array-like
+        Two-dimensional image.
+    center : tuple[float, float], optional
+        Pixel coordinates ``(x, y)`` of the radial center. If omitted, the
+        geometric image center is used.
+    stddev : bool, optional
+        If ``True``, return the azimuthal standard deviation instead of the
+        weighted mean.
+    returnradii : bool, optional
+        If ``True``, return ``(radii, profile)``.
+    return_nr : bool, optional
+        If ``True``, return ``(n_per_bin, radii, profile)``.
+    binsize : float, optional
+        Radial bin width in pixel units.
+    weights : array-like, optional
+        Per-pixel weights. Must match ``image.shape``.
+    steps : bool, optional
+        If ``True``, return step-ready ``(x, y)`` arrays.
+    interpnan : bool, optional
+        If ``True``, interpolate over bins with ``NaN`` profile values.
+    left : float, optional
+        Left extrapolation value passed to ``numpy.interp`` when
+        ``interpnan=True``.
+    right : float, optional
+        Right extrapolation value passed to ``numpy.interp`` when
+        ``interpnan=True``.
+    return_max : bool, optional
+        If ``True``, return the maximum value per radial bin.
 
-    If a bin contains NO DATA, it will have a NAN value because of the
-    divide-by-sum-of-weights component.  I think this is a useful way to denote
-    lack of data, but users let me know if an alternative is prefered...
+    Returns
+    -------
+    array-like or tuple
+        Radial profile array, or a tuple depending on ``returnradii``,
+        ``return_nr``, or ``steps``.
+
+    Notes
+    -----
+    Empty bins are returned as ``NaN`` unless interpolated.
 
     """
     # Calculate the indices from the image

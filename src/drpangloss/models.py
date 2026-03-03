@@ -12,75 +12,28 @@ from .inference import (
     laplace_covariance as _laplace_covariance,
 )
 
-"""------------------------------
-------------------------------"""
-
-
 rad2mas = 180.0 / np.pi * 3600.0 * 1000.0  # convert rad to mas
 mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 
 dtor = np.pi / 180.0
 i2pi = 1j * 2.0 * np.pi
 
-"""--------------------------------------------------
-Data class
---------------------------------------------------"""
-
-
 class OIData(zx.Base):
     """
-    Class for storing and manipulating data from OIFITS files, and for interfacing with drpangloss Model objects.
+    Store and transform optical-interferometry observables.
 
-    Attributes:
+    Parameters
+    ----------
+    data : dict or object
+        Either a dictionary with explicit interferometric arrays, or an OIFITS
+        object opened with ``pyoifits``.
 
-    - u: jax.Array
-        u coordinate of baselines (m)
-    - v: jax.Array
-        v coordinate of baselines (m)
-    - wavels: jax.Array
-        wavelengths of observations (m)
-    - vis: jax.Array
-        visibility data: either squared visibilities or visibilities
-    - d_vis: jax.Array
-        visibility uncertainties in same units as vis
-    - phi: jax.Array
-        phase data: either absolute phases or closure phases
-    - d_phi: jax.Array
-        phase uncertainties in same units as phi
-    - i_cps1: jax.Array
-        indices for closure phases, or None if absolute phases are available
-    - i_cps2: jax.Array
-        indices for closure phases, or None if absolute phases are available
-    - i_cps3: jax.Array
-        indices for closure phases, or None if absolute phases are available
-    - v2_flag : bool = eqx.field(static=True)
-        flag to indicate whether visibilities are squared or not
-    - cp_flag: bool = eqx.field(static=True)
-        flag to indicate whether phases are closure phases or absolute phases
-
-
-    Methods:
-
-    - __init__(self, fname)
-        Load data from an OIFITS file and store it in the object.
-
-    - __repr__(self)
-        Print the object in a readable format.
-
-    - unpack_all(self)
-        Convenience function to unpack all data to be used in model functions.
-
-    - flatten_data(self)
-        Flatten closure phases and uncertainties.
-
-    - flatten_model(self,cvis)
-        Flatten model visibilities and phases.
-
-    - to_vis(self,cvis)
-        Convert complex visibilities to visibilities or squared visibilities.
-
-    - to_phases(self,cvis)
-        Convert complex visibilities to closure phases or absolute phases.
+    Notes
+    -----
+    The object stores baseline coordinates, observables, uncertainties, and
+    optional closure-phase index triplets. It provides convenience methods for
+    flattening data/model vectors and converting complex visibilities to the
+    configured visibility/phase conventions.
     """
 
     u: jax.Array
@@ -98,19 +51,14 @@ class OIData(zx.Base):
 
     def __init__(self, data):
         """
-        Object for storing data, including:
+        Initialize from an OIFITS object or explicit arrays.
 
-        - u,v: baseline coordinates (m)
-        - wavels: wavelengths of observations (m)
-        - vis: squared visibilities or visibilities
-        - d_vis: uncertainties in vis
-        - phi: absolute phases or closure phases
-        - d_phi: uncertainties in phi
-        - i_cps1, i_cps2, i_cps3: indices for closure phases, or None if absolute phases are available
-
-        Args:
-        - data: dict
-            OIFITS data file opened with pyoifits, or dictionary filling out all the appropriate keywords & values
+        Parameters
+        ----------
+        data : dict or object
+            OIFITS data opened with ``pyoifits``, or a dictionary containing
+            ``u``, ``v``, ``wavel``, ``vis``, ``d_vis``, ``phi``, ``d_phi``,
+            optional closure-phase indices, and convention flags.
         """
 
         if not isinstance(data, dict):
@@ -250,9 +198,18 @@ class OIData(zx.Base):
 
     def flatten_model(self, cvis):
         """
-        cvis: complex visibilities from model
-
         Flatten model visibilities and phases.
+
+        Parameters
+        ----------
+        cvis : array-like
+            Complex visibilities from a model evaluation.
+
+        Returns
+        -------
+        array-like
+            Concatenated visibility and phase model vector in the same
+            convention/order as ``flatten_data``.
         """
 
         return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
@@ -283,11 +240,6 @@ class OIData(zx.Base):
         return self.flatten_model(cvis)
 
 
-"""--------------------------------------------------
-Model functions
---------------------------------------------------"""
-
-
 class BinaryModelAngular(zx.Base):
     """
     Class for a binary star model.
@@ -299,14 +251,16 @@ class BinaryModelAngular(zx.Base):
 
     def __init__(self, sep, pa, contrast):
         """
-        Initialize a binary model with separation, position angle, and contrast.
+        Initialize a binary model in angular coordinates.
 
-        sep: separation in mas
-        pa: position angle in degrees
-        contrast: flux ratio between components
-
-        TODO: add flags to denote which coordinates are position and which are flux and use those to pass to
-        plotting and grid functions
+        Parameters
+        ----------
+        sep : float or array-like
+            Separation in milliarcseconds.
+        pa : float or array-like
+            Position angle in degrees.
+        contrast : float or array-like
+            Contrast ratio between primary and companion (``star/companion``).
 
         """
 
@@ -343,14 +297,16 @@ class BinaryModelCartesian(zx.Base):
 
     def __init__(self, dra, ddec, flux):
         """
-        Initialize a binary model with separation, position angle, and contrast.
+        Initialize a binary model in Cartesian offsets.
 
-        sep: separation in mas
-        pa: position angle in degrees
-        contrast: flux ratio between components
-
-        TODO: add flags to denote which coordinates are position and which are flux and use those to pass to
-        plotting and grid functions
+        Parameters
+        ----------
+        dra : float or array-like
+            Right-ascension offset in milliarcseconds.
+        ddec : float or array-like
+            Declination offset in milliarcseconds.
+        flux : float or array-like
+            Flux ratio for the companion component.
 
         """
 
@@ -378,13 +334,26 @@ class BinaryModelCartesian(zx.Base):
 
 def cvis_binary_angular(u, v, sep, pa, contrast):
     # adapted from pymask
-    """Calculate the complex visibilities observed by an array on a binary star
-    ----------------------------------------------------------------
-    - ddec = ddec (mas)
-    - dra = dra (mas)
-    - planet = planet brightness
-    - u,v: baseline coordinates (wavelengths)
-    ----------------------------------------------------------------"""
+    """Compute complex visibilities for an angular-parameterized binary model.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units.
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units.
+    sep : float or array-like
+        Separation in milliarcseconds.
+    pa : float or array-like
+        Position angle in degrees.
+    contrast : float or array-like
+        Contrast ratio ``star/companion``.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
 
     # normalize visibilities so total power is 1
 
@@ -406,13 +375,26 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
 
 def cvis_binary(u, v, ddec, dra, planet):
     # adapted from pymask
-    """Calculate the complex visibilities observed by an array on a binary star
-    ----------------------------------------------------------------
-    - ddec = ddec (mas)
-    - dra = dra (mas)
-    - planet = planet brightness
-    - u,v: baseline coordinates (wavelengths)
-    ----------------------------------------------------------------"""
+    """Compute complex visibilities for a Cartesian-parameterized binary model.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units.
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    planet : float or array-like
+        Flux ratio of the companion.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
 
     star = 1
 
@@ -551,7 +533,26 @@ def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
 
 
 def fisher(values, params, data_obj, model_class, ridge=0.0):
-    """Approximate local Fisher matrix for a parameter vector at a point."""
+    """Approximate the local Fisher matrix at a parameter point.
+
+    Parameters
+    ----------
+    values : array-like
+        Parameter vector at which to evaluate the local curvature.
+    params : list[str]
+        Parameter names corresponding to ``values``.
+    data_obj : OIData
+        Observational data object.
+    model_class : class
+        Model class used to evaluate the likelihood.
+    ridge : float, optional
+        Diagonal regularization term.
+
+    Returns
+    -------
+    array-like
+        Fisher information matrix.
+    """
     objective = lambda vals: -loglike(vals, params, data_obj, model_class)
     return _fisher_matrix(
         objective, np.asarray(values, dtype=float), ridge=ridge
@@ -623,12 +624,23 @@ def nsigma(chi2r_test, chi2r_true, ndof):
 
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     """
-    Calculate closure phases [degrees] from complex visibilities and cp indices
+    Calculate closure phases from complex visibilities.
 
-    vis: complex visibilities
-    index_cps1, index_cps2, index_cps3: indices for closure phases (e.g. [0,1,2] for 1st 3-baseline closure phase)
+    Parameters
+    ----------
+    cvis : array-like
+        Complex visibilities.
+    index_cps1 : array-like
+        First baseline indices for each closure triangle.
+    index_cps2 : array-like
+        Second baseline indices for each closure triangle.
+    index_cps3 : array-like
+        Third baseline indices for each closure triangle.
 
-    Returns: closure phases [degrees]
+    Returns
+    -------
+    array-like
+        Closure phases in degrees.
 
     """
     visphiall = np.rad2deg(np.angle(cvis))

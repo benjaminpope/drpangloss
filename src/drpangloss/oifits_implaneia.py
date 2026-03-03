@@ -1,13 +1,6 @@
 #! /usr/bin/env python
 
-"""
-@author: Anthony Soulain (University of Sydney), Rachel Cooper (STScI), Anand Sivaramakrishnan (STScI)
---------------------------------------------------------------------
-implaneIA software
---------------------------------------------------------------------
-OIFITS related function.
---------------------------------------------------------------------
-"""
+"""OIFITS helper utilities for reading, plotting, and writing AMI products."""
 
 import datetime
 import os
@@ -121,12 +114,24 @@ def ApplyFlag(data, unit="arcsec"):
 def save(dic, filename=None, datadir=None, verbose=False):
     """
     Save dictionary formatted data into a proper OIFITS (version 2) format file.
-    Parameters:
-    -----------
-    `dic` {dict}:
-        Dictionnary containing all extracted data (keys: 'OI_VIS2', 'OI_VIS', 'OI_T3', 'OI_WAVELENGTH', 'info'),\n
-    `filename` {str}:
-        By default None, the filename is constructed using informations included in the input dictionnary ('info'),\n
+
+    Parameters
+    ----------
+    dic : dict
+        Dictionary containing extracted OIFITS-compatible tables with keys such
+        as ``OI_VIS2``, ``OI_VIS``, ``OI_T3``, ``OI_WAVELENGTH``, and ``info``.
+    filename : str, optional
+        Output filename. If omitted, the name is derived from entries in
+        ``dic["info"]``.
+    datadir : str, optional
+        Destination directory for the output file.
+    verbose : bool, optional
+        If ``True``, print progress while writing tables.
+
+    Returns
+    -------
+    None
+        Writes an OIFITS file to disk.
     """
     if dic is None:
         cprint("\nError save oifits : Wrong data format!", on_color="on_red")
@@ -628,19 +633,26 @@ def save(dic, filename=None, datadir=None, verbose=False):
 
 
 def load(filename, target=None, ins=None, mask=None, include_vis=True):
-    """Load oifits file and create the dictionary format to be read and plotted.
+    """Load an OIFITS file into an internal dictionary representation.
+
     Parameters
     ----------
-    `filename` {str}:
-        Name of the oifits file,\n
-    `target` {str}:
-        If target name is not included in the header, use `target` instead,\n
-    `ins` {str}:
-        If instrument name is not included in the header, use `ins` instead,\n
-    `mask` {str}:
-        If mask name not included in the header, use `mask` instead,\n
-    `include_vis` {boolean}:
-        If True, include visibilities amplitude and phase in the oifits (default: True),\n
+    filename : str
+        Name of the OIFITS file.
+    target : str, optional
+        Fallback target name if not present in headers.
+    ins : str, optional
+        Fallback instrument name if not present in headers.
+    mask : str, optional
+        Fallback mask name if not present in headers.
+    include_vis : bool, optional
+        If ``True``, include visibility-amplitude and visibility-phase tables
+        when available.
+
+    Returns
+    -------
+    dict
+        Dictionary containing parsed OIFITS tables and metadata.
     """
     with fits.open(filename, mode="readonly", memmap=False) as hdulist:
         fitsHandler = copy.deepcopy(hdulist)
@@ -815,24 +827,32 @@ def show(
     unit="arcsec",
     unit_cp="deg",
 ):
-    """Show oifits data of a multiple dataset (loaded with oifits.load) or oifits filename).
-    Parameters:
-    -----------
-    `inputList` {list or str or dict}:
-        Single or list of dictionnaries (from `oifits.load` or `ObservablesFromText`) or
-        oifits filename,\n
-    `diffWl` {bool}:
-        If True, differentiate the file (wavelenghts) by color,\n
-    `vmin`, `vmax` {float}:
-        Minimum and maximum visibilities (default: 0, 1.05),\n
-    `cmax` {float}:
-        Maximum closure phase [deg] (default: 180),\n
-    `setlog` {bool}:
-        If True, the visibility curve is plotted in log scale,\n
-    `unit` {str}:
-        Unit of the sp. frequencies (default: 'arcsec'),\n
-    `unit_cp` {str}:
-        Unit of the closure phases (default: 'deg'),\n
+    """Display visibility and closure-phase diagnostics for one or more datasets.
+
+    Parameters
+    ----------
+    inputList : list or str or dict
+        Single input or list of inputs, where each item is either an OIFITS
+        filename or a dictionary produced by ``load``.
+    diffWl : bool, optional
+        If ``True``, color-code points by wavelength/filter.
+    vmin : float, optional
+        Lower y-axis limit for visibility panel.
+    vmax : float, optional
+        Upper y-axis limit for visibility panel.
+    cmax : float, optional
+        Maximum absolute closure phase for plotting.
+    setlog : bool, optional
+        If ``True``, use logarithmic scaling for visibility values.
+    unit : str, optional
+        Unit for spatial frequencies.
+    unit_cp : str, optional
+        Unit label for closure phases.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Figure containing UV, visibility, and closure-phase panels.
     """
 
     if type(inputList) is not list:

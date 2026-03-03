@@ -369,7 +369,23 @@ def diagnostics_table_from_samples(
     """
     Build a standardized diagnostics table from posterior sample arrays.
 
-    Returns a dataframe with ``dra``, ``ddec``, ``flux``, ``sep``, ``pa`` columns.
+    Parameters
+    ----------
+    samples : dict-like
+        Mapping of sample arrays.
+    dra_key : str, optional
+        Key for right-ascension offsets.
+    ddec_key : str, optional
+        Key for declination offsets.
+    flux_key : str, optional
+        Key for flux or log10-flux samples.
+    log10_flux : bool, optional
+        If ``True``, exponentiate ``flux_key`` values as base-10.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Table with ``dra``, ``ddec``, ``flux``, ``sep``, and ``pa`` columns.
     """
     dra = np.asarray(samples[dra_key], dtype=float)
     ddec = np.asarray(samples[ddec_key], dtype=float)
@@ -385,6 +401,16 @@ def diagnostics_table_from_samples(
 def truth_cartesian_and_polar(truth):
     """
     Return truth mappings for shared ChainConsumer Cartesian and polar interfaces.
+
+    Parameters
+    ----------
+    truth : dict
+        Mapping with ``dra``, ``ddec``, and ``flux`` values.
+
+    Returns
+    -------
+    tuple[dict, dict]
+        Cartesian and polar truth dictionaries.
     """
     truth_cart = {
         "dra": float(truth["dra"]),
@@ -415,6 +441,22 @@ def plot_hmc_fisher_chainconsumer(
 ):
     """
     Plot paired Cartesian and polar ChainConsumer diagnostics for HMC and Fisher-HMC.
+
+    Parameters
+    ----------
+    hmc_table : pandas.DataFrame
+        Posterior table for vanilla HMC.
+    fisher_table : pandas.DataFrame
+        Posterior table for Fisher-reparameterized HMC.
+    truth_cartesian : dict
+        Truth mapping in Cartesian coordinates.
+    colors : tuple[str, str], optional
+        Colors used for HMC and Fisher-HMC chains.
+
+    Returns
+    -------
+    dict
+        Mapping containing configured ChainConsumer objects and truth mappings.
     """
     truth_cart, truth_polar = truth_cartesian_and_polar(truth_cartesian)
 
@@ -455,6 +497,24 @@ def plot_recovery_residuals(
 ):
     """
     Plot parameter recovery and normalized residuals for multiple estimators.
+
+    Parameters
+    ----------
+    params : list[str]
+        Parameter names.
+    truth : array-like
+        Truth values in the same order as ``params``.
+    estimates_by_label : dict
+        Mapping of label to posterior median arrays.
+    std_by_label : dict
+        Mapping of label to posterior standard-deviation arrays.
+    figsize : tuple, optional
+        Base figure size.
+
+    Returns
+    -------
+    tuple
+        ``((fig1, ax1), (fig2, ax2))`` for recovery and residual panels.
     """
     x = np.arange(len(params))
     labels = list(estimates_by_label.keys())
@@ -514,6 +574,26 @@ def radial_limit_summary(
 ):
     """
     Compute radial median and percentile bands for a 2D contrast-limit map.
+
+    Parameters
+    ----------
+    limit_map : array-like
+        Two-dimensional map of contrast limits.
+    dra_axis : array-like
+        Right-ascension axis in milliarcseconds.
+    ddec_axis : array-like
+        Declination axis in milliarcseconds.
+    center : tuple[float, float], optional
+        Radial center in milliarcseconds.
+    r_max : float, optional
+        Maximum radial separation to summarize.
+    n_bins : int, optional
+        Number of radial edges (bins are ``n_bins - 1``).
+
+    Returns
+    -------
+    dict
+        Mapping with ``r_centers``, ``median``, ``q16``, and ``q84`` arrays.
     """
     yy, xx = np.meshgrid(
         np.asarray(ddec_axis), np.asarray(dra_axis), indexing="xy"
@@ -559,6 +639,30 @@ def plot_contrast_limit_map(
 ):
     """
     Plot a 2D contrast-limit map in flux-ratio or Δmag units.
+
+    Parameters
+    ----------
+    limit_map : array-like
+        Two-dimensional contrast-limit map.
+    dra_axis : array-like
+        Right-ascension axis in milliarcseconds.
+    ddec_axis : array-like
+        Declination axis in milliarcseconds.
+    truth : dict or tuple, optional
+        Truth location to overplot.
+    unit_mode : {"flux_ratio", "delta_mag"}, optional
+        Display units for the map.
+    title : str, optional
+        Axes title.
+    cmap : str, optional
+        Matplotlib colormap name.
+    figsize : tuple, optional
+        Figure size.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
     """
     limit_np = np.asarray(limit_map)
     cmap_to_use = cmap
@@ -617,6 +721,22 @@ def plot_radial_limit_summary(
 ):
     """
     Plot radial median and percentile spread from ``radial_limit_summary`` output.
+
+    Parameters
+    ----------
+    radial_summary : dict
+        Output mapping from ``radial_limit_summary``.
+    unit_mode : {"flux_ratio", "delta_mag"}, optional
+        Display units for the y-axis.
+    title : str, optional
+        Plot title.
+    figsize : tuple, optional
+        Figure size.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
     """
     r_centers = np.asarray(radial_summary["r_centers"])
     med = np.asarray(radial_summary["median"])

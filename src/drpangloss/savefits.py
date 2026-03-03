@@ -1,13 +1,6 @@
 #! /usr/bin/env python
 
-"""
-@author: Anthony Soulain (University of Sydney), Rachel Cooper (STScI), Anand Sivaramakrishnan (STScI)
---------------------------------------------------------------------
-implaneIA software
---------------------------------------------------------------------
-OIFITS related function.
---------------------------------------------------------------------
-"""
+"""OIFITS helper utilities for reading and writing AMI products."""
 
 import datetime
 import os
@@ -118,12 +111,24 @@ def ApplyFlag(data, unit="arcsec"):
 def save(dic, filename=None, datadir=None, verbose=False):
     """
     Save dictionary formatted data into a proper OIFITS (version 2) format file.
-    Parameters:
-    -----------
-    `dic` {dict}:
-        Dictionnary containing all extracted data (keys: 'OI_VIS2', 'OI_VIS', 'OI_T3', 'OI_WAVELENGTH', 'info'),\n
-    `filename` {str}:
-        By default None, the filename is constructed using informations included in the input dictionnary ('info'),\n
+
+    Parameters
+    ----------
+    dic : dict
+        Dictionary containing extracted OIFITS-compatible tables with keys such
+        as ``OI_VIS2``, ``OI_VIS``, ``OI_T3``, ``OI_WAVELENGTH``, and ``info``.
+    filename : str, optional
+        Output filename. If omitted, the name is derived from entries in
+        ``dic["info"]``.
+    datadir : str, optional
+        Destination directory for the output file.
+    verbose : bool, optional
+        If ``True``, print progress while writing tables.
+
+    Returns
+    -------
+    None
+        Writes an OIFITS file to disk.
     """
     if dic is None:
         print("\nError save oifits : Wrong data format!")
@@ -616,7 +621,20 @@ def save(dic, filename=None, datadir=None, verbose=False):
 
 
 def cp_indices(vis_sta_index, cp_sta_index):
-    """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
+    """Map closure-triangle station indices to visibility baseline indices.
+
+    Parameters
+    ----------
+    vis_sta_index : array-like
+        Visibility station index pairs.
+    cp_sta_index : array-like
+        Closure-phase station index triplets.
+
+    Returns
+    -------
+    tuple[numpy.ndarray, numpy.ndarray, numpy.ndarray]
+        Arrays ``(i_cps1, i_cps2, i_cps3)`` identifying triangle baselines.
+    """
     i_cps1 = np.zeros(len(cp_sta_index), np.int32)
     i_cps2 = np.zeros(len(cp_sta_index), np.int32)
     i_cps3 = np.zeros(len(cp_sta_index), np.int32)
