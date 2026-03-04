@@ -718,6 +718,7 @@ def plot_radial_limit_summary(
     unit_mode="flux_ratio",
     title="Radial limit summary",
     figsize=(8, 4),
+    ax=None,
 ):
     """
     Plot radial median and percentile spread from ``radial_limit_summary`` output.
@@ -732,6 +733,8 @@ def plot_radial_limit_summary(
         Plot title.
     figsize : tuple, optional
         Figure size.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to draw on. If omitted, create a new figure and axes.
 
     Returns
     -------
@@ -754,7 +757,10 @@ def plot_radial_limit_summary(
         q84_plot = q84
         ylabel = "Contrast limit (flux ratio)"
 
-    fig, ax = plt.subplots(figsize=figsize)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    else:
+        fig = ax.figure
     ax.plot(r_centers, med_plot, lw=2, label="Median")
     ax.fill_between(r_centers, q16_plot, q84_plot, alpha=0.3, label="16–84%")
     if unit_mode == "flux_ratio":
@@ -925,11 +931,10 @@ def plot_contrast_limits(
     avg_width,
     std_width,
     true_values=None,
+    limit_label="98% Upper Limit",
 ):
     """
     Plot the contrast limits calculated with the Ruffio or Absil methods.
-
-    TODO: pass in the percentile or number of sigmas as a parameter to be used in legends.
 
     Parameters
     ----------
@@ -945,6 +950,8 @@ def plot_contrast_limits(
         Standard deviation of the contrast limits.
     true_values : list, optional
         List of true values for the parameters, default None
+    limit_label : str, optional
+        Label used for the map title and curve legend.
 
     """
 
@@ -971,14 +978,14 @@ def plot_contrast_limits(
     plt.colorbar(shrink=1, pad=0.01)
     plt.scatter(0, 0, marker="*", s=100, c="black", alpha=0.5)
     plt.gca().invert_yaxis()
-    plt.title("98% Upper Limit Map ($\\Delta$mag)")
+    plt.title(f"{limit_label} Map ($\\Delta$mag)")
     plt.xlabel("$\\Delta$RA [mas]")
     plt.ylabel("$\\Delta$DEC [mas]")
 
     # then show contrast curve including detected target
     plt.subplot(1, 2, 2)
     dx = np.abs(np.median(np.diff(samples_dict["dra"])))
-    plt.plot(rad_width * dx, avg_width, "-k", label="98% Upper Limit")
+    plt.plot(rad_width * dx, avg_width, "-k", label=limit_label)
     plt.fill_between(
         rad_width * dx,
         avg_width - std_width,

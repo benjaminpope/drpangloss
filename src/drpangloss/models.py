@@ -566,7 +566,9 @@ def laplace_cov(values, params, data_obj, model_class):
     return _laplace_covariance(objective, np.asarray(values, dtype=float))
 
 
-def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
+def laplace_contrast_uncertainty(
+    flux, dra, ddec, data_obj, model_class, params=None
+):
     """
     Calculate the uncertainty with the Laplace method from an optimized fit between a model and data object.
 
@@ -582,6 +584,9 @@ def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
         Object containing the data to be fitted.
     model_class : class
         Model class to be fitted to the data.
+    params : list[str] or tuple[str, str, str], optional
+        Parameter names corresponding to ``(dra, ddec, flux)``. Defaults to
+        ``["dra", "ddec", "flux"]``.
 
     Returns
     -------
@@ -589,7 +594,8 @@ def laplace_contrast_uncertainty(flux, dra, ddec, data_obj, model_class):
         Uncertainty in the contrast.
     """
 
-    params = ["dra", "ddec", "flux"]  # TODO: make this more general
+    if params is None:
+        params = ["dra", "ddec", "flux"]
 
     objective = lambda f: -loglike(
         [dra, ddec, f], params, data_obj, model_class
