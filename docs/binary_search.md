@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Binary recovery with grid search and HMC
@@ -14,7 +14,6 @@ import warnings
 import jax
 import jax.numpy as jnp
 import numpy as onp
-import pandas as pd
 import matplotlib.pyplot as plt
 from jax.flatten_util import ravel_pytree
 
@@ -65,20 +64,22 @@ d_phi = 0.004 * phi_scale * jnp.ones_like(phi_true)
 vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
 phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
 
-data = OIData({
-    "u": u,
-    "v": v,
-    "wavel": wavel,
-    "vis": vis_obs,
-    "d_vis": d_vis,
-    "phi": phi_obs,
-    "d_phi": d_phi,
-    "i_cps1": None,
-    "i_cps2": None,
-    "i_cps3": None,
-    "v2_flag": True,
-    "cp_flag": False,
-})
+data = OIData(
+    {
+        "u": u,
+        "v": v,
+        "wavel": wavel,
+        "vis": vis_obs,
+        "d_vis": d_vis,
+        "phi": phi_obs,
+        "d_phi": d_phi,
+        "i_cps1": None,
+        "i_cps2": None,
+        "i_cps3": None,
+        "v2_flag": True,
+        "cp_flag": False,
+    }
+)
 ```
 
 ## Grid Search for Companions
@@ -102,8 +103,11 @@ grid_est = {
     "flux": float(samples["flux"][max_idx[2]]),
 }
 
-print('Grid estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
-    grid_est["dra"], grid_est["ddec"], grid_est["flux"]))
+print(
+    "Grid estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}".format(
+        grid_est["dra"], grid_est["ddec"], grid_est["flux"]
+    )
+)
 ```
 
 ```text
@@ -114,7 +118,9 @@ Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
 
 ```python
-ll_2d = ll_cube.max(axis=2) # find max log-likelihood over flux for each (dra, ddec) pair
+ll_2d = ll_cube.max(
+    axis=2
+)  # find max log-likelihood over flux for each (dra, ddec) pair
 plot_likelihood_grid(
     ll_2d,
     samples,
@@ -133,14 +139,16 @@ You may have used MCMC before, for example with [Metropolis-Hastings](https://en
 ```python
 params = ["dra", "ddec", "flux"]
 
+
 # Define a simple physical-parameter HMC model with bounded priors.
 def model_hmc(oidata):
     dra = numpyro.sample("dra", dist.Uniform(-300.0, 300.0))
     ddec = numpyro.sample("ddec", dist.Uniform(-300.0, 300.0))
     log10_flux = numpyro.sample("log10_flux", dist.Uniform(-6.0, -1.0))
-    flux = 10.0 ** log10_flux
+    flux = 10.0**log10_flux
     ll = loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian)
     numpyro.factor("loglike", ll)
+
 
 # Initialize near the grid maximum for robust convergence in this toy setup.
 init_values = {
@@ -149,7 +157,9 @@ init_values = {
     "log10_flux": float(jnp.log10(max(grid_est["flux"], 1e-12))),
 }
 kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
-mcmc = MCMC(kernel, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False)
+mcmc = MCMC(
+    kernel, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False
+)
 mcmc.run(jax.random.PRNGKey(2026), oidata=data)
 posterior = mcmc.get_samples()
 
@@ -158,8 +168,11 @@ summary = {
     "ddec_median": float(jnp.median(posterior["ddec"])),
     "flux_median": float(jnp.median(10.0 ** posterior["log10_flux"])),
 }
-print('HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
-    summary["dra_median"], summary["ddec_median"], summary["flux_median"]))
+print(
+    "HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}".format(
+        summary["dra_median"], summary["ddec_median"], summary["flux_median"]
+    )
+)
 ```
 
 ```text
@@ -181,11 +194,13 @@ hmc_results = diagnostics_table_from_samples(
     log10_flux=True,
 )
 
-print('HMC estimate from diagnostics table: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
-    float(hmc_results["dra"].median()),
-    float(hmc_results["ddec"].median()),
-    float(hmc_results["flux"].median()),
-))
+print(
+    "HMC estimate from diagnostics table: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}".format(
+        float(hmc_results["dra"].median()),
+        float(hmc_results["ddec"].median()),
+        float(hmc_results["flux"].median()),
+    )
+)
 ```
 
 ```text
@@ -205,6 +220,7 @@ x0_dict = {
 }
 x0, unravel = ravel_pytree(x0_dict)
 
+
 # Build local Fisher geometry around x0 for whitening transform.
 def objective(x):
     xdict = unravel(x)
@@ -212,19 +228,25 @@ def objective(x):
     values = jnp.array([xdict["dra"], xdict["ddec"], flux])
     return -loglike(values, params, data, BinaryModelCartesian)
 
+
 F = fisher_matrix(objective, x0, ridge=1e-8)
 P = fisher_projection(F)
 
+
 # Sample in latent coordinates and apply explicit prior correction back to physical priors.
 def model_hmc_fisher(oidata):
-    u_latent = numpyro.sample("u", dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1))
+    u_latent = numpyro.sample(
+        "u", dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1)
+    )
     log_q_u = dist.Normal(0.0, 1.0).log_prob(u_latent).sum()
-    x = x0 + jnp.dot(P, u_latent) # this maps it to the original physical space
+    x = x0 + jnp.dot(
+        P, u_latent
+    )  # this maps it to the original physical space
     xdict = unravel(x)
     dra = xdict["dra"]
     ddec = xdict["ddec"]
     log10_flux = xdict["log10_flux"]
-    flux = 10.0 ** log10_flux
+    flux = 10.0**log10_flux
     numpyro.deterministic("dra", dra)
     numpyro.deterministic("ddec", ddec)
     numpyro.deterministic("flux", flux)
@@ -234,19 +256,31 @@ def model_hmc_fisher(oidata):
         + dist.Uniform(-6.0, -1.0).log_prob(log10_flux)
     )
     numpyro.factor("prior_correction", log_prior_x - log_q_u)
-    numpyro.factor("loglike", loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian))
+    numpyro.factor(
+        "loglike",
+        loglike([dra, ddec, flux], params, oidata, BinaryModelCartesian),
+    )
+
 
 kernel_f = NUTS(model_hmc_fisher)
-mcmc_f = MCMC(kernel_f, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False)
+mcmc_f = MCMC(
+    kernel_f,
+    num_warmup=800,
+    num_samples=2000,
+    num_chains=1,
+    progress_bar=False,
+)
 mcmc_f.run(jax.random.PRNGKey(2027), oidata=data)
 post_f = mcmc_f.get_samples()
 
 
-print('Fisher HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
-    float(jnp.median(post_f["dra"])),
-    float(jnp.median(post_f["ddec"])),
-    float(jnp.median(post_f["flux"])),
-))
+print(
+    "Fisher HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}".format(
+        float(jnp.median(post_f["dra"])),
+        float(jnp.median(post_f["ddec"])),
+        float(jnp.median(post_f["flux"])),
+    )
+)
 ```
 
 ```text
@@ -262,10 +296,12 @@ Our sample reformatter gives you coordinate conversions:
 fisher_results = diagnostics_table_from_samples(post_f)
 truth_cart, truth_polar = truth_cartesian_and_polar(truth)
 
-print('Fisher HMC estimate: sep={:.3g} mas, pa={:.3g} deg'.format(
-    float(fisher_results["sep"].median()),
-    float(fisher_results["pa"].median()),
-))
+print(
+    "Fisher HMC estimate: sep={:.3g} mas, pa={:.3g} deg".format(
+        float(fisher_results["sep"].median()),
+        float(fisher_results["pa"].median()),
+    )
+)
 ```
 
 ```text
@@ -332,7 +368,7 @@ hmc_pred = posterior_predictive_summary(
     onp.asarray(10.0 ** posterior["log10_flux"]),
     data,
     BinaryModelCartesian,
- )
+)
 
 fisher_pred = posterior_predictive_summary(
     onp.asarray(post_f["dra"]),
@@ -340,13 +376,13 @@ fisher_pred = posterior_predictive_summary(
     onp.asarray(post_f["flux"]),
     data,
     BinaryModelCartesian,
- )
+)
 
 plot_data_model_correlation(
     data,
     {"HMC": hmc_pred, "Fisher-HMC": fisher_pred},
     colors=["C0", "C1"],
- )
+)
 plt.show()
 ```
 

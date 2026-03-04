@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Data I/O
@@ -53,9 +53,9 @@ module.save_oifits_dict(
 -> Including OI Vis table...
 -> Including OI Vis2 table...
 -> Including OI T3 table...
-[36m
 
-### OIFITS CREATED (synthetic_binary_from_notebook.oifits).[0m
+
+### OIFITS CREATED (synthetic_binary_from_notebook.oifits).
 ```
 
 # Reading Data
@@ -87,7 +87,7 @@ OIData(u=[ 3.2  1.4 -1.1 -1.8 -4.3 -2.5], v=[ 0.2  2.6  1.8  2.4  1.6 -0.8], CP=
 ```
 
 ```python
-print('OIData keys:', list(oidata.__dict__.keys()))
+print("OIData keys:", list(oidata.__dict__.keys()))
 ```
 
 ```text
@@ -107,7 +107,9 @@ expected = {
     "d_vis": np.asarray(synth_dict["OI_VIS2"]["VIS2ERR"]),
     "phi": np.asarray(synth_dict["OI_T3"]["T3PHI"]),
     "d_phi": np.asarray(synth_dict["OI_T3"]["T3PHIERR"]),
-    "wavel": np.atleast_1d(np.asarray(synth_dict["OI_WAVELENGTH"]["EFF_WAVE"])),
+    "wavel": np.atleast_1d(
+        np.asarray(synth_dict["OI_WAVELENGTH"]["EFF_WAVE"])
+    ),
 }
 
 reloaded = {
