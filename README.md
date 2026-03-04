@@ -4,17 +4,17 @@
 [![integration](https://github.com/benjaminpope/drpangloss/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/drpangloss/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/drpangloss/actions/workflows/documentation.yml/badge.svg)](https://benjaminpope.github.io/drpangloss/)
 
-the best of all possible interferometry models
+The best of all possible interferometry models.
 
-Contributors: Dori Blakely, [Benjamin Pope](https://github.com/benjaminpope)
+Contributors: [Dori Blakely](https://github.com/blakelyd), [Benjamin Pope](https://github.com/benjaminpope)
 
 ## What is drpangloss?
 
-drpangloss is a package for modelling optical interferometry data in Jax.
+drpangloss is a package for modelling optical interferometry data in JAX.
 
 ## Installation
 
-drpangloss is hosted on PyPI (though this is currently a placeholder): the easiest way to install this is with 
+drpangloss is hosted on PyPI; the easiest way to install it is:
 
 ```
 pip install drpangloss
@@ -26,16 +26,27 @@ You can also build from source. To do so, clone the git repo, enter the director
 pip install .
 ```
 
-We encourage the creation of a virtual enironment to run drpangloss to prevent software conflicts as we keep the software up to date with the lastest version of the core packages.
+We recommend using a virtual environment to avoid dependency conflicts.
+
+Using `uv` (recommended):
+
+```bash
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e . pytest
+uv run --python .venv/bin/python pytest -q
+```
 
 
 ## Use & Documentation
 
-Documentation will be found [here](https://benjaminpope.github.io/drpangloss/), though this is currently a placeholder. 
+Documentation is published at [benjaminpope.github.io/drpangloss](https://benjaminpope.github.io/drpangloss/).
 
 ## Collaboration & Development
 
-We are always looking to collaborate and further develop this software! We have focused on flexibility and ease of development, so if you have a project you want to use drpangloss for, but it currently does not have the required capabilities, don't hesitate to [email me](mailto:b.pope@uq.edu.au) and we can discuss how to implement and merge it! Similarly you can take a look at the `CONTRIBUTING.md` file.
+We welcome collaboration and development contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request workflow.
+
+Current modernization priorities are tracked in [REVIEW_NOTES.md](REVIEW_NOTES.md) and [docs/review_2026-03-03.md](docs/review_2026-03-03.md).
 
 ## Name
 

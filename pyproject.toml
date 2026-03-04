@@ -1,17 +1,17 @@
 [project]
 name = "drpangloss"
-version = "0.0.2"
+version = "0.1.0"
 description = "Python package to fit interferometric data, accelerated using Jax."
 readme = "README.md"
 requires-python =">=3.11"
-license = {file = "LICENSE.md"}
+license = {file = "LICENSE"}
 authors = [
-  {name = "Benjamin Pope", email = "b.pope@uq.edu.au"},
+  {name = "Benjamin Pope", email = "benjamin.pope@mq.edu.au"},
   {name = "Dori Blakely", email = "blakelyd@uvic.ca"}
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
 urls = {repository = "https://github.com/benjaminpope/drpangloss"}
-dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","optimistix","scipy","astroquery", "pyoifits"]
+dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","ipywidgets","optimistix","scipy","astroquery", "pyoifits", "termcolor", "chainconsumer"]
 classifiers=[
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -30,10 +30,37 @@ line-length = 79
 
 [tool.ruff]
 line-length = 79
-select = ["E", "F"]
-ignore = ["E402", "E721", "E731", "E741", "F722"]
-ignore-init-module-imports = true
+required-version = "==0.11.0"
+force-exclude = true
+extend-exclude = [
+  "notebooks/ami_exploration.ipynb",
+  "notebooks/louis_visibilities.ipynb",
+]
 
-[tool.ruff.isort]
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/drpangloss/__init__.py" = ["F401"]
+"src/drpangloss/grid_fit.py" = ["F403", "F405", "F841"]
+"src/drpangloss/models_old.py" = ["E722", "F821"]
+"notebooks/contrast_limits.ipynb" = ["E702"]
+"notebooks/oidata_sandbox.ipynb" = ["F841"]
+"notebooks/upper_limits_new.ipynb" = ["F403", "F405"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
 combine-as-imports = true
 lines-after-imports = 2
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+filterwarnings = [
+  "ignore:Setting `jax_pmap_shmap_merge` is deprecated in JAX v0.9.0:DeprecationWarning",
+]

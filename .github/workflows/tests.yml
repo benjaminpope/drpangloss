@@ -5,28 +5,41 @@
 #   The tests that are run can be found in the tests directory.
 
 name: automated tests
-on: [push]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@main
+        uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
 
       - name: python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
           architecture: x64
 
-      - name: install environment
+      - name: create environment
         run: |
-          python -m pip install --upgrade pip
-          pip install --quiet pytest
-          pip install --quiet .
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+
+      - name: Lint (pre-commit)
+        run: |
+          uv run --python .venv/bin/python pre-commit run --all-files --show-diff-on-failure
 
       # ===== Tests =====
-      - name: Test Models
-        run: pytest --quiet tests/tests.py
+      - name: Test Suite
+        run: uv run --python .venv/bin/python pytest
+
+      - name: Docs Build (strict)
+        run: uv run --python .venv/bin/python mkdocs build --strict
 

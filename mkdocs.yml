@@ -4,6 +4,8 @@
 
 # ===== Setup and Themes =====
 markdown_extensions:
+  - pymdownx.superfences
+  - pymdownx.highlight
   - pymdownx.arithmatex:
       generic: true
 
@@ -17,26 +19,46 @@ repo_url: https://github.com/benjaminpope/drpangloss
 
 theme:
   name: material
+  palette:
+    scheme: slate
   icon:
     logo: material/telescope
 
 # ===== Plugins =====
 plugins:
   - search
-  - mkdocs-jupyter
   - mkdocstrings:
       default_handler: python
       handlers:
         python:
-          selection:
-            docstring_style: "numpy"
-          setup_commands:
-            - import sys
-            - sys.path.append("dLux")
-          rendering:
+          paths:
+            - src
+          options:
+            docstring_style: numpy
             show_source: false
-            show_if_no_docstring: yes
+            show_if_no_docstring: true
+            members_order: source
+            show_category_heading: false
 
 # ===== Navigation =====
 nav:
-    - Home: index.md
+  - Home: index.md
+  - Binary Search: binary_search.md
+  - Contrast Limits: contrast_limits.md
+  - Data I/O: data_io.md
+  - Visibility Models: model_syntax.md
+  - API Reference:
+      - Overview: api/index.md
+      - Models:
+          - Overview: api/models/index.md
+          - Classes:
+              - OIData: api/models/classes/oidata.md
+              - BinaryModelAngular: api/models/classes/binary_model_angular.md
+              - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
+          - Functions: api/models/functions.md
+          - Legacy Migration: api/models/legacy_migration.md
+      - Grid Fit: api/grid_fit.md
+      - Inference: api/inference.md
+      - Plotting: api/plotting.md
+      - SaveFITS: api/savefits.md
+      - OIFITS ImplaneIA: api/oifits_implaneia.md

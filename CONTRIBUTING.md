@@ -1,6 +1,6 @@
 # Contributing Guide
 
-pangloss is an open-source framework and as such is very welcoming to contributions via pull requests.
+drpangloss is an open-source package and welcomes contributions via pull requests.
 
 ---
 
@@ -11,9 +11,11 @@ Firstly, you will need to fork the repository to your own GitHub account. This w
 Next, you will need to clone the repository to your local machine. To do this, open a terminal and navigate to the directory you would like to clone the repository to. Then run the following command:
 
 ```bash
-https://github.com/your-username-here/pangloss.git 
-cd dLux
-pip install '.[dev]'
+git clone https://github.com/your-username-here/drpangloss.git
+cd drpangloss
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e . pytest ruff pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter ipywidgets
 ```
 
 Then you will need to install the pre-commit hooks. This will ensure that the code is formatted correctly and that the unit tests pass before you can commit your changes. To do this, run the following command:
@@ -23,6 +25,28 @@ pre-commit install
 ```
 
 This will ensure that any changes you make will adhere to the code style and formatting guidelines of the rest of the package!
+
+You can also run linting and formatting manually at any time:
+
+```bash
+ruff check . --fix
+ruff format .
+```
+
+For lower-noise local runs (especially when notebooks are involved), use:
+
+```bash
+bash scripts/lint_local.sh
+```
+
+This command writes full diagnostics to `.lint-logs/` and keeps terminal output compact.
+Useful flags:
+
+```bash
+bash scripts/lint_local.sh --fix
+bash scripts/lint_local.sh --changed
+bash scripts/lint_local.sh --no-notebooks
+```
 
 ---
 
@@ -37,20 +61,47 @@ It is important that any changes you make are tested to ensure that they work as
 To ensure that everything is working as expected, you can run the unit tests by running the following command:
 
 ```bash
-pytest tests/*
+uv run --python .venv/bin/python pytest tests
 ```
 
-This will run all the scripts labelled with `test_` in the `tests` directory. If you would like to run a specific test, you can run the following command:
+This will run all tests in the `tests` directory. If you would like to run a specific test, you can run:
 
 ```bash
-pytest tests/test_file.py
+uv run --python .venv/bin/python pytest tests/test_file.py
 ```
 
-Note that just because the tests pass on your local machine, that does not mean that it will necessarily pass on all others! This can be due to a number of reasons such a different operating system, different python version, or different dependencies. This is why github actions are used to run the unit tests on a number of different operating systems and python versions. This should help ensure that the code works as expected on all platforms.
+Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions runs CI checks for consistency across environments.
 
 **Documentation**
 
 Any changes you make should also be appropriately documented! For small API changes this shouldn't require any changes, however if you are adding new functionality you will need to add some documentation. This can be done by modifying the appropriates files in the `docs` directory.
+
+Tutorial pages are notebook-synced. For these tutorials:
+
+- `notebooks/binary_search.ipynb`
+- `notebooks/data_io.ipynb`
+- `notebooks/contrast_limits.ipynb`
+- `notebooks/model_syntax.ipynb`
+
+edit the notebook first, then regenerate the corresponding docs markdown with:
+
+```bash
+uv run --python .venv/bin/python scripts/sync_tutorial_docs.py
+```
+
+Notebook style conventions for tutorials:
+
+- Keep explanatory markdown between major code blocks (zodiax sandbox style).
+- Keep imports in the top import cell; avoid repeated imports in later cells.
+- Prefer shared plotting helpers from `src/drpangloss/plotting.py` over long notebook-local plotting scripts.
+- When a plotting helper is missing, add/extend it in `src/drpangloss/plotting.py` first, then call it from the notebook.
+- Keep notebook plotting cells short and declarative (prepare inputs, call helper, show figure).
+
+Typical helper usage patterns:
+
+- Grid and map visuals: `plot_likelihood_grid`, `plot_contrast_limit_map`
+- Posterior diagnostics: `plot_chainconsumer_diagnostics`, `plot_trace_panels`
+- Recovery/correlation summaries: `plot_recovery_residuals`, `plot_data_model_correlation`, `plot_radial_limit_summary`
 
 To build the documentation locally and make sure everything is working correctly, you can run the following command:
 

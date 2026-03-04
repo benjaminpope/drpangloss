@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.lint-logs/
+
+*.egg-info/
+src/drpangloss.egg-info/
