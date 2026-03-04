@@ -8,7 +8,6 @@ import zodiax as zx
 
 from .inference import (
     fisher_matrix as _fisher_matrix,
-    hessian_matrix as _hessian_matrix,
     laplace_covariance as _laplace_covariance,
 )
 
@@ -544,7 +543,16 @@ def loglike_nosignal(values, params, data_obj, model_class):
 
 def laplace_cov(values, params, data_obj, model_class):
     """
-    Calculate the uncertainty with the Laplace method from an optimized fit between a model and data object.
+    Compute the full Laplace covariance matrix for all model parameters jointly.
+
+    Computes the inverse of the Hessian of the negative log-likelihood with
+    respect to all parameters in ``params`` simultaneously, returning an
+    ``N x N`` covariance matrix (where ``N = len(params)``).
+
+    .. note::
+        This function returns the *full* covariance matrix over all ``N``
+        parameters.  To obtain only the marginal flux uncertainty at a fixed
+        position, use :func:`laplace_contrast_uncertainty` instead.
 
     Parameters
     ----------
@@ -560,7 +568,7 @@ def laplace_cov(values, params, data_obj, model_class):
     Returns
     -------
     array-like
-        Covariance matrix.
+        ``N x N`` covariance matrix, where ``N = len(params)``.
     """
 
     objective = lambda vals: -loglike(vals, params, data_obj, model_class)
@@ -571,16 +579,29 @@ def laplace_contrast_uncertainty(
     flux, dra, ddec, data_obj, model_class, params=None
 ):
     """
-    Calculate the uncertainty with the Laplace method from an optimized fit between a model and data object.
+    Compute the Laplace uncertainty in flux at a fixed sky position.
+
+    Unlike :func:`laplace_cov`, which inverts the *full* N-parameter Hessian,
+    this function **fixes** ``dra`` and ``ddec`` and computes only the scalar
+    curvature of the negative log-likelihood along the **flux axis alone**:
+
+    .. math::
+
+        \\sigma_f = \\left(\\frac{\\partial^2 (-\\log L)}{\\partial f^2}\\right)^{-1/2}
+
+    This is a 1-D (scalar) second derivative, not a matrix inversion.  It is
+    appropriate when the position is held fixed (e.g. on a detection grid) and
+    only the contrast uncertainty at that grid point is needed.  For the joint
+    uncertainty over all parameters, use :func:`laplace_cov` instead.
 
     Parameters
     ----------
     flux : float
         Flux ratio value at which the local Laplace uncertainty is evaluated.
     dra : float
-        Right ascension offset in mas.
+        Right ascension offset in mas (held fixed).
     ddec : float
-        Declination offset in mas.
+        Declination offset in mas (held fixed).
     data_obj : OIData
         Object containing the data to be fitted.
     model_class : class
@@ -591,8 +612,8 @@ def laplace_contrast_uncertainty(
 
     Returns
     -------
-    array-like
-        Uncertainty in the contrast.
+    float
+        Scalar uncertainty in the contrast (standard deviation along flux axis).
     """
 
     if params is None:
@@ -601,9 +622,12 @@ def laplace_contrast_uncertainty(
     objective = lambda f: -loglike(
         [dra, ddec, f], params, data_obj, model_class
     )
-    hess = _hessian_matrix(objective, np.asarray(flux, dtype=float))
-    cov = 1 / np.asarray(hess)
-    return np.sqrt(cov)
+    # Compute the scalar second derivative d²(-logL)/df² via double grad.
+    # Using jax.grad twice makes it explicit that we expect a scalar result.
+    # jax.hessian on a scalar-to-scalar function returns a 0-d array (not a
+    # matrix), so calling hessian_matrix here would be misleading.
+    d2_flux = jax.grad(jax.grad(objective))(np.asarray(flux, dtype=float))
+    return np.sqrt(1.0 / np.asarray(d2_flux, dtype=float))
 
 
 def fisher(values, params, data_obj, model_class, ridge=0.0):
