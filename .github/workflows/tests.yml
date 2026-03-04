@@ -30,12 +30,11 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . pytest ruff==0.11.0 mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
 
-      - name: Lint (Ruff)
+      - name: Lint (pre-commit)
         run: |
-          uv run --python .venv/bin/python ruff check --force-exclude .
-          uv run --python .venv/bin/python ruff format --force-exclude --check .
+          uv run --python .venv/bin/python pre-commit run --all-files --show-diff-on-failure
 
       # ===== Tests =====
       - name: Test Suite
