@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 MAPPINGS = {
     "notebooks/binary_search.ipynb": "docs/binary_search.md",
@@ -99,7 +102,7 @@ def render_notebook_markdown(nb_path: Path) -> str:
                     lines.append("")
                     continue
 
-                text_out = _output_text(output).rstrip()
+                text_out = _ANSI_ESCAPE.sub("", _output_text(output)).rstrip()
                 if text_out:
                     lines.append("```text")
                     lines.append(text_out)

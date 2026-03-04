@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Visibility Models
@@ -32,9 +32,11 @@ from drpangloss.models import (
 )
 ```
 
-## Use those models to simulate data and build `OIData`
+## Generate OIData from models
 
 Now we generate synthetic observables from the Cartesian model and package them into an `OIData` instance.
+
+These models are *parametrized functions* that take a set of parameters like sep, theta, contrast, and instantiate an object - say, `model` - which can then apply these to data. You then call `model.movel(u, v, wavel)` and it evaluates the complex visibilities at those coordinates.
 
 ```python
 rng = np.random.default_rng(21)
@@ -72,32 +74,40 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'max_complex_visibility_difference': 6.009040731669302e-08}
 ```
 
-`OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently.
+`OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
 
 ```python
 vis_true = jnp.abs(cvis_true) ** 2
 phi_true = jnp.rad2deg(jnp.angle(cvis_true))
 
-d_vis = 0.002 * jnp.maximum(jnp.median(vis_true), 1e-6) * jnp.ones_like(vis_true)
-d_phi = 0.01 * jnp.maximum(jnp.median(jnp.abs(phi_true)), 5.0) * jnp.ones_like(phi_true)
+d_vis = (
+    0.002 * jnp.maximum(jnp.median(vis_true), 1e-6) * jnp.ones_like(vis_true)
+)
+d_phi = (
+    0.01
+    * jnp.maximum(jnp.median(jnp.abs(phi_true)), 5.0)
+    * jnp.ones_like(phi_true)
+)
 
 vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
 phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
 
-data = OIData({
-    "u": u,
-    "v": v,
-    "wavel": wavel,
-    "vis": vis_obs,
-    "d_vis": d_vis,
-    "phi": phi_obs,
-    "d_phi": d_phi,
-    "i_cps1": None,
-    "i_cps2": None,
-    "i_cps3": None,
-    "v2_flag": True,
-    "cp_flag": False,
-})
+data = OIData(
+    {
+        "u": u,
+        "v": v,
+        "wavel": wavel,
+        "vis": vis_obs,
+        "d_vis": d_vis,
+        "phi": phi_obs,
+        "d_phi": d_phi,
+        "i_cps1": None,
+        "i_cps2": None,
+        "i_cps3": None,
+        "v2_flag": True,
+        "cp_flag": False,
+    }
+)
 
 {
     "n_baselines": int(data.u.shape[0]),
@@ -122,7 +132,9 @@ data_vector, err_vector = data.flatten_data()
     "model_len": int(model_vector.shape[0]),
     "data_len": int(data_vector.shape[0]),
     "error_len": int(err_vector.shape[0]),
-    "vector_alignment": bool(model_vector.shape == data_vector.shape == err_vector.shape),
+    "vector_alignment": bool(
+        model_vector.shape == data_vector.shape == err_vector.shape
+    ),
 }
 ```
 
@@ -179,14 +191,18 @@ phi_ang = np.asarray(data.to_phases(cvis_ang))
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
 ax1.scatter(vis_cart, vis_ang, alpha=0.7)
-line_v = np.linspace(min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100)
+line_v = np.linspace(
+    min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100
+)
 ax1.plot(line_v, line_v, "k--", lw=1)
 ax1.set_xlabel("Cartesian model V²")
 ax1.set_ylabel("Angular model V²")
 ax1.set_title("Visibility mapping")
 
 ax2.scatter(phi_cart, phi_ang, alpha=0.7)
-line_p = np.linspace(min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100)
+line_p = np.linspace(
+    min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100
+)
 ax2.plot(line_p, line_p, "k--", lw=1)
 ax2.set_xlabel("Cartesian model phase (deg)")
 ax2.set_ylabel("Angular model phase (deg)")
@@ -212,7 +228,12 @@ vals_ang = [sep, pa, contrast]
 ll_ang = float(loglike(vals_ang, params_ang, data, BinaryModelAngular))
 
 ll_cart_perturbed = float(
-    loglike([dra + 20.0, ddec - 20.0, flux * 1.6], params_cart, data, BinaryModelCartesian)
+    loglike(
+        [dra + 20.0, ddec - 20.0, flux * 1.6],
+        params_cart,
+        data,
+        BinaryModelCartesian,
+    )
 )
 
 {

@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Contrast limits with Ruffio method
@@ -73,7 +73,9 @@ sim_data = {
     "vis": jnp.ones_like(oidata.vis)
     + noise_amp * jnp.array(rng.normal(size=oidata.vis.shape)) * oidata.d_vis,
     "d_vis": oidata.d_vis,
-    "phi": noise_amp * jnp.array(rng.normal(size=oidata.phi.shape)) * oidata.d_phi,
+    "phi": noise_amp
+    * jnp.array(rng.normal(size=oidata.phi.shape))
+    * oidata.d_phi,
     "d_phi": oidata.d_phi,
     "i_cps1": oidata.i_cps1,
     "i_cps2": oidata.i_cps2,
@@ -84,7 +86,13 @@ sim_data = {
 
 oidata_sim = OIData(sim_data)
 
-print('Noise amplitude: {:.2g}, Vis std: {:.2g}, Phi std: {:.2g}'.format(noise_amp, float(jnp.std(sim_data["vis"] - 1.0)), float(jnp.std(sim_data["phi"]))))
+print(
+    "Noise amplitude: {:.2g}, Vis std: {:.2g}, Phi std: {:.2g}".format(
+        noise_amp,
+        float(jnp.std(sim_data["vis"] - 1.0)),
+        float(jnp.std(sim_data["phi"])),
+    )
+)
 ```
 
 ```text
@@ -112,7 +120,6 @@ best_idx = jnp.argmax(ll_cube, axis=2)
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
 
 ```python
-
 sigma_flux = laplace_contrast_uncertainty_grid(
     best_idx, oidata_sim, BinaryModelCartesian, samples
 )
@@ -150,7 +157,6 @@ W0304 14:46:13.318260 3093216 cpp_gen_intrinsics.cc:74] Empty bitcode string pro
 In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), a frequentist p-value is used to infer an upper limit from data. This is done by a chi-squared hypothesis test, inferring what the highest contrast would be such that it would have been detected at n-σ.
 
 ```python
-
 # Absil method at 2σ
 absil_map = absil_limits(samples, oidata_sim, BinaryModelCartesian, sigma=2.0)
 
