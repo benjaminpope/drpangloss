@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_recovery_grid_hmc.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Binary recovery with grid search and HMC
@@ -124,7 +124,7 @@ plot_likelihood_grid(
 );
 ```
 
-![binary_recovery_grid_hmc output 9.1](generated/binary_recovery_grid_hmc_cell009_out01.png)
+![binary_search output 9.1](generated/binary_search_cell009_out01.png)
 
 ## Uncertainty quantification with Hamiltonian Monte Carlo
 
@@ -293,9 +293,9 @@ plot_chainconsumer_diagnostics(
 Parameter dra in chain HMC Cartesian is not constrained
 ```
 
-![binary_recovery_grid_hmc output 19.2](generated/binary_recovery_grid_hmc_cell019_out02.png)
+![binary_search output 19.2](generated/binary_search_cell019_out02.png)
 
-![binary_recovery_grid_hmc output 19.3](generated/binary_recovery_grid_hmc_cell019_out03.png)
+![binary_search output 19.3](generated/binary_search_cell019_out03.png)
 
 And in polar coordinates:
 
@@ -316,9 +316,9 @@ plot_chainconsumer_diagnostics(
 Parameter sep in chain HMC Polar is not constrained
 ```
 
-![binary_recovery_grid_hmc output 21.2](generated/binary_recovery_grid_hmc_cell021_out02.png)
+![binary_search output 21.2](generated/binary_search_cell021_out02.png)
 
-![binary_recovery_grid_hmc output 21.3](generated/binary_recovery_grid_hmc_cell021_out03.png)
+![binary_search output 21.3](generated/binary_search_cell021_out03.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 
@@ -350,4 +350,4 @@ plot_data_model_correlation(
 plt.show()
 ```
 
-![binary_recovery_grid_hmc output 23.1](generated/binary_recovery_grid_hmc_cell023_out01.png)
+![binary_search output 23.1](generated/binary_search_cell023_out01.png)

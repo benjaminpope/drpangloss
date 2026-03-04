@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 
 MAPPINGS = {
-    "notebooks/binary_recovery_grid_hmc.ipynb": "docs/binary_recovery_grid_hmc.md",
-    "notebooks/synthetic_data_file_roundtrip.ipynb": "docs/synthetic_data_file_roundtrip.md",
-    "notebooks/contrast_limits_ruffio.ipynb": "docs/contrast_limits_ruffio.md",
+    "notebooks/binary_search.ipynb": "docs/binary_search.md",
+    "notebooks/data_io.ipynb": "docs/data_io.md",
+    "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
 }
 
 

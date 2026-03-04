@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits_ruffio.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Contrast limits with Ruffio method
@@ -137,7 +137,7 @@ plot_contrast_limit_map(
 W0304 13:53:20.767323 3042460 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
-![contrast_limits_ruffio output 9.2](generated/contrast_limits_ruffio_cell009_out02.png)
+![contrast_limits output 9.2](generated/contrast_limits_cell009_out02.png)
 
 ```python
 
@@ -166,7 +166,7 @@ plot_contrast_limit_map(
 );
 ```
 
-![contrast_limits_ruffio output 10.1](generated/contrast_limits_ruffio_cell010_out01.png)
+![contrast_limits output 10.1](generated/contrast_limits_cell010_out01.png)
 
 We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
 
@@ -203,4 +203,4 @@ ax.legend(loc="best")
 <matplotlib.legend.Legend at 0x330e78f90>
 ```
 
-![contrast_limits_ruffio output 12.2](generated/contrast_limits_ruffio_cell012_out02.png)
+![contrast_limits output 12.2](generated/contrast_limits_cell012_out02.png)

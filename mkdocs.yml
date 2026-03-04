@@ -46,9 +46,9 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
-  - Synthetic Data Roundtrip: synthetic_data_file_roundtrip.md
-  - Binary Recovery (Grid + HMC): binary_recovery_grid_hmc.md
-  - Contrast Limits (Ruffio): contrast_limits_ruffio.md
+  - Binary Search: binary_search.md
+  - Contrast Limits: contrast_limits.md
+  - Data I/O: data_io.md
   - API Reference:
       - Overview: api/index.md
       - Models:

@@ -43,7 +43,7 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 "src/drpangloss/__init__.py" = ["F401"]
 "src/drpangloss/grid_fit.py" = ["F403", "F405", "F841"]
 "src/drpangloss/models_old.py" = ["E722", "F821"]
-"notebooks/contrast_limits_ruffio.ipynb" = ["E702"]
+"notebooks/contrast_limits.ipynb" = ["E702"]
 "notebooks/oidata_sandbox.ipynb" = ["F841"]
 "notebooks/upper_limits_new.ipynb" = ["F403", "F405"]
 

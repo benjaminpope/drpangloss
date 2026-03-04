@@ -78,9 +78,9 @@ Any changes you make should also be appropriately documented! For small API chan
 
 Tutorial pages are notebook-synced. For these tutorials:
 
-- `notebooks/binary_recovery_grid_hmc.ipynb`
-- `notebooks/synthetic_data_file_roundtrip.ipynb`
-- `notebooks/contrast_limits_ruffio.ipynb`
+- `notebooks/binary_search.ipynb`
+- `notebooks/data_io.ipynb`
+- `notebooks/contrast_limits.ipynb`
 
 edit the notebook first, then regenerate the corresponding docs markdown with:
 
