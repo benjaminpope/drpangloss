@@ -30,6 +30,7 @@ line-length = 79
 
 [tool.ruff]
 line-length = 79
+force-exclude = true
 extend-exclude = [
   "notebooks/ami_exploration.ipynb",
   "notebooks/louis_visibilities.ipynb",

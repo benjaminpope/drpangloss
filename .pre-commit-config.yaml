@@ -3,5 +3,6 @@ repos:
     rev: v0.11.0
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, --force-exclude]
       - id: ruff-format
+        args: [--force-exclude]
