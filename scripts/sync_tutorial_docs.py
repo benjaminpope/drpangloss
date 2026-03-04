@@ -10,50 +10,11 @@ MAPPINGS = {
     "notebooks/contrast_limits_ruffio.ipynb": "docs/contrast_limits_ruffio.md",
 }
 
-INTRO_PARAGRAPHS = {
-    "notebooks/binary_recovery_grid_hmc.ipynb": (
-        "This tutorial walks through end-to-end binary recovery on synthetic "
-        "interferometric observables, starting from a coarse likelihood grid and "
-        "continuing through vanilla HMC and Fisher-reparameterized HMC. It "
-        "emphasizes practical initialization, posterior diagnostics in Cartesian and "
-        "polar coordinates, and posterior-predictive correlation checks so you can "
-        "verify both numerical stability and physical consistency in one workflow."
-    ),
-    "notebooks/synthetic_data_file_roundtrip.ipynb": (
-        "This tutorial demonstrates a full synthetic-data roundtrip: generate a "
-        "realistic OIFITS product, reload it through `OIData`, and recover companion "
-        "parameters with grid, HMC, and Fisher-HMC approaches under shared "
-        "diagnostics. It focuses on reproducibility of file I/O, uncertainty "
-        "conventions, and cross-checks that confirm recovered parameters remain "
-        "consistent with the known truth model within expected posterior spreads."
-    ),
-    "notebooks/contrast_limits_ruffio.ipynb": (
-        "This tutorial covers Ruffio-style contrast-limit estimation on interferometry "
-        "data, including likelihood evaluation on a spatial grid, local uncertainty "
-        "estimation via Laplace approximation, and conversion to practical upper-limit "
-        "maps and radial summaries. It highlights finite-value diagnostics and "
-        "visualization choices in both flux-ratio and Δmag units so sensitivity "
-        "structure is interpretable for scientific comparison."
-    ),
-}
-
 
 def _to_md_source(cell_source: list[str] | str) -> str:
     if isinstance(cell_source, list):
         return "".join(cell_source).rstrip()
     return str(cell_source).rstrip()
-
-
-def _clean_markdown_text(text: str) -> str:
-    cleaned_lines = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("This notebook mirrors"):
-            continue
-        if stripped.startswith("Notebook version of"):
-            continue
-        cleaned_lines.append(line)
-    return "\n".join(cleaned_lines).strip()
 
 
 def _to_text(value) -> str:
@@ -91,7 +52,6 @@ def render_notebook_markdown(nb_path: Path) -> str:
         nb = json.load(f)
 
     repo_root = nb_path.resolve().parents[1]
-    nb_rel = nb_path.relative_to(repo_root).as_posix()
     generated_dir = repo_root / "docs" / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,9 +65,6 @@ def render_notebook_markdown(nb_path: Path) -> str:
     lines.append("<!-- Edit the notebook, then re-run the sync script. -->")
     lines.append("")
 
-    intro_inserted = False
-    intro_text = INTRO_PARAGRAPHS.get(nb_rel)
-
     for cell_index, cell in enumerate(nb.get("cells", []), start=1):
         cell_type = cell.get("cell_type")
         source = _to_md_source(cell.get("source", []))
@@ -115,18 +72,7 @@ def render_notebook_markdown(nb_path: Path) -> str:
             continue
 
         if cell_type == "markdown":
-            cleaned = _clean_markdown_text(source)
-            if not cleaned:
-                continue
-            lines.append(cleaned)
-            if (
-                not intro_inserted
-                and intro_text is not None
-                and cleaned.lstrip().startswith("# ")
-            ):
-                lines.append("")
-                lines.append(intro_text)
-                intro_inserted = True
+            lines.append(source.strip())
             lines.append("")
         elif cell_type == "code":
             lines.append("```python")

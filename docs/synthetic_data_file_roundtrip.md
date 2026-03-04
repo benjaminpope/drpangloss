@@ -67,7 +67,7 @@ summary
 ```
 
 ```text
-W0303 22:42:46.194978 2506260 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0304 00:08:28.676986 2581304 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ```text
@@ -84,7 +84,7 @@ checks, fisher_checks
 ```
 
 ```text
-({'dra': True, 'ddec': True, 'flux': True},
+({'dra': False, 'ddec': True, 'flux': True},
  {'dra': True, 'ddec': True, 'flux': True})
 ```
 
@@ -270,6 +270,10 @@ plot_chainconsumer_diagnostics(
 )
 plt.show()
 ```
+
+![synthetic_data_file_roundtrip output 10.1](generated/synthetic_data_file_roundtrip_cell010_out01.png)
+
+![synthetic_data_file_roundtrip output 10.2](generated/synthetic_data_file_roundtrip_cell010_out02.png)
 
 ```python
 params = ["dra", "ddec", "flux"]
