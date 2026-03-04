@@ -1304,7 +1304,7 @@
 </code></pre></div>
 <h2 id="fisher-reparametrization">Fisher Reparametrization</h2>
 <p>If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that <a href="https://github.com/LouisDesdoigts/zodiax"><code>zodiax</code></a>, the backend of <code>drpangloss</code>, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters <code>x0</code> and the <a href="https://en.wikipedia.org/wiki/Fisher_information">Fisher Information Matrix</a>.</p>
-<p>See <a href="https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb">this <code>zodiax</code> tutorial</a> for more information!</p>
+<p>See <a href="https://louisdesdoigts.github.io/zodiax/optimisation_tools/">this <code>zodiax</code> tutorial</a> for more information!</p>
 <div class="highlight"><pre><span></span><code><span class="n">x0_dict</span> <span class="o">=</span> <span class="p">{</span>
     <span class="s2">&quot;dra&quot;</span><span class="p">:</span> <span class="n">grid_est</span><span class="p">[</span><span class="s2">&quot;dra&quot;</span><span class="p">],</span>
     <span class="s2">&quot;ddec&quot;</span><span class="p">:</span> <span class="n">grid_est</span><span class="p">[</span><span class="s2">&quot;ddec&quot;</span><span class="p">],</span>
