@@ -179,7 +179,7 @@ def _build_synthetic_oifits_dict(
             "MASK": "SYNTH_MASK",
             "ARRNAME": "SYNTH_MASK",
             "FILT": "F480M",
-            "DATE-OBS": "2026-03-03",
+            "DATE-OBS": "2000-01-01",
             "TELESCOP": "SIM",
             "OBSERVER": "drpangloss-docs",
             "INSMODE": "NRM",

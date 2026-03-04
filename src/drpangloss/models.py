@@ -364,7 +364,7 @@ class BinaryModelCartesian(zx.Base):
 
     def __repr__(self):
         """Return a readable representation of binary Cartesian parameters."""
-        return f"BinaryModelAngular(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
+        return f"BinaryModelCartesian(dra={self.dra}, ddec={self.ddec}, flux={self.flux})"
 
     def unpack_all(self):
         """
