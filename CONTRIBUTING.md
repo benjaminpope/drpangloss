@@ -81,6 +81,7 @@ Tutorial pages are notebook-synced. For these tutorials:
 - `notebooks/binary_search.ipynb`
 - `notebooks/data_io.ipynb`
 - `notebooks/contrast_limits.ipynb`
+- `notebooks/model_syntax.ipynb`
 
 edit the notebook first, then regenerate the corresponding docs markdown with:
 
