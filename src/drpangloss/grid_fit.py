@@ -535,9 +535,7 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
     ).x
 
     fn = vmap(lambda values: bestcon(*values))
-    limits = (
-        fn(vals_vec).reshape(vals.shape[1:]).T
-    )  # check the shapes output here
+    limits = fn(vals_vec).reshape(vals.shape[1:])
 
     limits_clipped = jnp.clip(limits, 1e-6, 1)  # clip to 1e-6
 
