@@ -257,34 +257,80 @@ def plot_likelihood_grid(
         List of true values for the parameters, default None
     """
 
-    dra_axis = np.asarray(samples_dict["dra"])
-    ddec_axis = np.asarray(samples_dict["ddec"])
+    params = list(samples_dict.keys())
+    if "contrast" in samples_dict:
+        opt_key = "contrast"
+    elif "flux" in samples_dict:
+        opt_key = "flux"
+    else:
+        opt_key = params[-1]
+    coord_keys = [k for k in params if k != opt_key]
+
+    grid = np.asarray(loglike_im)
+
+    if grid.ndim == 1 or len(coord_keys) == 1:
+        x_key = coord_keys[0] if coord_keys else params[0]
+        x_axis = np.asarray(samples_dict[x_key])
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(x_axis, grid.reshape(-1), color="C0", lw=2)
+
+        if truths is not None:
+            if isinstance(truths, dict):
+                x_truth = float(truths[x_key])
+            else:
+                x_truth = float(truths[0])
+            ax.axvline(
+                x_truth, color="white", lw=1.5, ls="--", label=truth_label
+            )
+
+        if best_point is not None:
+            if isinstance(best_point, dict):
+                x_best = float(best_point[x_key])
+            else:
+                x_best = float(best_point[0])
+            ax.axvline(x_best, color="cyan", lw=1.2, ls=":", label=best_label)
+
+        ax.set_xlabel(x_key)
+        ax.set_ylabel(colorbar_label)
+        ax.set_title("Likelihood profile")
+        if truths is not None or best_point is not None:
+            ax.legend(loc="best")
+        return fig, ax
+
+    if len(coord_keys) < 2:
+        raise ValueError(
+            "Could not infer two coordinate axes for a 2D likelihood map."
+        )
+
+    x_key, y_key = coord_keys[:2]
+    x_axis = np.asarray(samples_dict[x_key])
+    y_axis = np.asarray(samples_dict[y_key])
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(
-        np.asarray(loglike_im).T,
+        grid.T,
         cmap=cmap,
         origin="lower",
         aspect="equal",
         extent=[
-            float(dra_axis.min()),
-            float(dra_axis.max()),
-            float(ddec_axis.min()),
-            float(ddec_axis.max()),
+            float(x_axis.min()),
+            float(x_axis.max()),
+            float(y_axis.min()),
+            float(y_axis.max()),
         ],
     )
     fig.colorbar(im, ax=ax, shrink=0.9, label=colorbar_label, pad=0.01)
 
     if truths is not None:
         if isinstance(truths, dict):
-            dra_inp = float(truths["dra"])
-            ddec_inp = float(truths["ddec"])
+            x_truth = float(truths[x_key])
+            y_truth = float(truths[y_key])
         else:
-            dra_inp = float(truths[0])
-            ddec_inp = float(truths[1])
+            x_truth = float(truths[0])
+            y_truth = float(truths[1])
         ax.scatter(
-            [dra_inp],
-            [ddec_inp],
+            [x_truth],
+            [y_truth],
             marker="x",
             s=80,
             c="white",
@@ -294,14 +340,14 @@ def plot_likelihood_grid(
 
     if best_point is not None:
         if isinstance(best_point, dict):
-            dra_best = float(best_point["dra"])
-            ddec_best = float(best_point["ddec"])
+            x_best = float(best_point[x_key])
+            y_best = float(best_point[y_key])
         else:
-            dra_best = float(best_point[0])
-            ddec_best = float(best_point[1])
+            x_best = float(best_point[0])
+            y_best = float(best_point[1])
         ax.scatter(
-            [dra_best],
-            [ddec_best],
+            [x_best],
+            [y_best],
             marker="o",
             s=40,
             facecolors="none",
@@ -309,8 +355,8 @@ def plot_likelihood_grid(
             label=best_label,
         )
 
-    ax.set_xlabel("ΔRA [mas]")
-    ax.set_ylabel("ΔDec [mas]")
+    ax.set_xlabel(x_key)
+    ax.set_ylabel(y_key)
     ax.set_title("Likelihood grid")
     if truths is not None or best_point is not None:
         ax.legend(loc="best")
@@ -799,8 +845,44 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
         Sampling dictionary containing ``dra``, ``ddec``, and ``flux`` axes.
     """
 
-    best_contrast_indices = np.argmax(loglike_im, axis=2)
-    best_contrasts = samples_dict["flux"][best_contrast_indices]
+    params = list(samples_dict.keys())
+    opt_key = (
+        "contrast"
+        if "contrast" in samples_dict
+        else ("flux" if "flux" in samples_dict else params[-1])
+    )
+    coord_keys = [k for k in params if k != opt_key]
+
+    if len(coord_keys) == 1:
+        x_key = coord_keys[0]
+        x = np.asarray(samples_dict[x_key])
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(
+            x,
+            np.asarray(optimized).reshape(-1),
+            lw=2,
+            label=f"Optimized {opt_key}",
+        )
+        best_idx = np.argmax(
+            np.asarray(loglike_im), axis=params.index(opt_key)
+        )
+        best_grid = np.asarray(samples_dict[opt_key])[best_idx]
+        ax.plot(
+            x,
+            np.asarray(best_grid).reshape(-1),
+            lw=1.5,
+            ls="--",
+            label=f"Grid {opt_key}",
+        )
+        ax.set_xlabel(x_key)
+        ax.set_ylabel(opt_key)
+        ax.set_title("Optimization vs grid")
+        ax.legend(loc="best")
+        return
+
+    x_key, y_key = coord_keys[:2]
+    best_contrast_indices = np.argmax(loglike_im, axis=params.index(opt_key))
+    best_contrasts = samples_dict[opt_key][best_contrast_indices]
 
     plt.figure(figsize=(14, 5))
     matplotlib.rcParams["figure.dpi"] = 100
@@ -812,18 +894,16 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
         extent=[
-            samples_dict["dra"].max(),
-            samples_dict[
-                "dra"
-            ].min(),  # this may seem weird, but left is more RA and up is more Dec
-            samples_dict["ddec"].max(),
-            samples_dict["ddec"].min(),
+            samples_dict[x_key].max(),
+            samples_dict[x_key].min(),
+            samples_dict[y_key].max(),
+            samples_dict[y_key].min(),
         ],
     )  # this took me far too long to get the sign right for
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="black", marker="*")
-    plt.xlabel("$\\Delta$RA [mas]")
-    plt.ylabel("$\\Delta$DEC [mas]")
+    plt.xlabel(x_key)
+    plt.ylabel(y_key)
     plt.title("Optimization")
     plt.gca().invert_yaxis()
 
@@ -833,18 +913,16 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
         extent=[
-            samples_dict["dra"].max(),
-            samples_dict[
-                "dra"
-            ].min(),  # this may seem weird, but left is more RA and up is more Dec
-            samples_dict["ddec"].max(),
-            samples_dict["ddec"].min(),
+            samples_dict[x_key].max(),
+            samples_dict[x_key].min(),
+            samples_dict[y_key].max(),
+            samples_dict[y_key].min(),
         ],
     )  # this took me far too long to get the sign right for
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="black", marker="*")
-    plt.xlabel("$\\Delta$RA [mas]")
-    plt.ylabel("$\\Delta$DEC [mas]")
+    plt.xlabel(x_key)
+    plt.ylabel(y_key)
     plt.title("Grid Search")
     plt.gca().invert_yaxis()
     plt.tight_layout(pad=0.0)
@@ -868,6 +946,36 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
 
     """
 
+    params = list(samples_dict.keys())
+    opt_key = (
+        "contrast"
+        if "contrast" in samples_dict
+        else ("flux" if "flux" in samples_dict else params[-1])
+    )
+    coord_keys = [k for k in params if k != opt_key]
+
+    if len(coord_keys) == 1:
+        x_key = coord_keys[0]
+        x = np.asarray(samples_dict[x_key])
+        fig, ax = plt.subplots(figsize=(8, 4))
+        if snr:
+            ax.plot(
+                x,
+                np.asarray(contrast).reshape(-1)
+                / np.asarray(sigma_grid).reshape(-1),
+                lw=2,
+            )
+            ax.set_ylabel("SNR")
+            ax.set_title("SNR profile")
+        else:
+            ax.plot(x, np.asarray(sigma_grid).reshape(-1), lw=2)
+            ax.set_ylabel(f"σ({opt_key})")
+            ax.set_title("Uncertainty profile")
+        ax.set_xlabel(x_key)
+        return
+
+    x_key, y_key = coord_keys[:2]
+
     plt.figure(figsize=(14, 5))
     matplotlib.rcParams["figure.dpi"] = 100
     matplotlib.rcParams["font.family"] = ["serif"]
@@ -878,18 +986,16 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
         extent=[
-            samples_dict["dra"].max(),
-            samples_dict[
-                "dra"
-            ].min(),  # this may seem weird, but left is more RA and up is more Dec
-            samples_dict["ddec"].max(),
-            samples_dict["ddec"].min(),
+            samples_dict[x_key].max(),
+            samples_dict[x_key].min(),
+            samples_dict[y_key].max(),
+            samples_dict[y_key].min(),
         ],
     )  # this took me far too long to get the sign right for
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="y", marker="*")
-    plt.xlabel("$\\Delta$RA [mas]")
-    plt.ylabel("$\\Delta$DEC [mas]")
+    plt.xlabel(x_key)
+    plt.ylabel(y_key)
     plt.title("Contrast")
     plt.gca().invert_yaxis()
 
@@ -900,12 +1006,10 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
             cmap="inferno",
             norm=matplotlib.colors.PowerNorm(1),
             extent=[
-                samples_dict["dra"].max(),
-                samples_dict[
-                    "dra"
-                ].min(),  # this may seem weird, but left is more RA and up is more Dec
-                samples_dict["ddec"].max(),
-                samples_dict["ddec"].min(),
+                samples_dict[x_key].max(),
+                samples_dict[x_key].min(),
+                samples_dict[y_key].max(),
+                samples_dict[y_key].min(),
             ],
         )  # this took me far too long to get the sign right for
         plt.colorbar(shrink=1, label="SNR", pad=0.01)
@@ -918,20 +1022,18 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
             cmap="inferno",
             norm=matplotlib.colors.LogNorm(),
             extent=[
-                samples_dict["dra"].max(),
-                samples_dict[
-                    "dra"
-                ].min(),  # this may seem weird, but left is more RA and up is more Dec
-                samples_dict["ddec"].max(),
-                samples_dict["ddec"].min(),
+                samples_dict[x_key].max(),
+                samples_dict[x_key].min(),
+                samples_dict[y_key].max(),
+                samples_dict[y_key].min(),
             ],
         )  # this took me far too long to get the sign right for
         plt.colorbar(shrink=1, label="σ(Contrast)", pad=0.01)
         plt.scatter(0, 0, s=140, c="y", marker="*")  # mark star at origin
         plt.title("σ(Contrast)")
 
-    plt.xlabel("$\\Delta$RA [mas]")
-    plt.ylabel("$\\Delta$DEC [mas]")
+    plt.xlabel(x_key)
+    plt.ylabel(y_key)
     plt.gca().invert_yaxis()
     plt.tight_layout(pad=0.0)
     plt.show()
