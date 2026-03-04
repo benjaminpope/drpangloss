@@ -18,6 +18,7 @@ mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 dtor = np.pi / 180.0
 i2pi = 1j * 2.0 * np.pi
 
+
 class OIData(zx.Base):
     """
     Store and transform optical-interferometry observables.

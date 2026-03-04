@@ -100,7 +100,9 @@ def optimized_likelihood_grid(data_obj, model_class, samples_dict):
 
     coords = [samples_dict[key] for key in coord_keys]
     ras, decs = jnp.meshgrid(*coords)
-    vals = jnp.array([samples_dict[flux_key][best_contrast_indices], decs, ras])
+    vals = jnp.array(
+        [samples_dict[flux_key][best_contrast_indices], decs, ras]
+    )
     vals_vec = vals.reshape((len(vals), -1)).T
 
     to_optimize = lambda flux, dra_inp, ddec_inp: -loglike(
@@ -161,7 +163,9 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
 
     coords = [samples_dict[key] for key in coord_keys]
     ras, decs = jnp.meshgrid(*coords)
-    vals = jnp.array([samples_dict[flux_key][best_contrast_indices], decs, ras])
+    vals = jnp.array(
+        [samples_dict[flux_key][best_contrast_indices], decs, ras]
+    )
     vals_vec = vals.reshape((len(vals), -1)).T
 
     to_optimize = lambda flux, dra_inp, ddec_inp: -loglike(
@@ -208,7 +212,9 @@ def laplace_contrast_uncertainty_grid(
     coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict)
     coords = [samples_dict[key] for key in coord_keys]
     ras, decs = jnp.meshgrid(*coords)
-    vals = jnp.array([samples_dict[flux_key][best_contrast_indices], decs, ras])
+    vals = jnp.array(
+        [samples_dict[flux_key][best_contrast_indices], decs, ras]
+    )
     vals_vec = vals.reshape((len(vals), -1)).T
 
     sigma = lambda flux, dra, ddec: laplace_contrast_uncertainty(
@@ -509,7 +515,9 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
     # then optimize the contrast at each point
     coords = [samples_dict[key] for key in coord_keys]
     ras, decs = jnp.meshgrid(*coords)
-    vals = jnp.array([samples_dict[flux_key][best_contrast_indices], decs, ras])
+    vals = jnp.array(
+        [samples_dict[flux_key][best_contrast_indices], decs, ras]
+    )
     vals_vec = vals.reshape((len(vals), -1)).T
 
     # define optimization wrapper for the contrast

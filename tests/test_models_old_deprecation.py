@@ -11,7 +11,10 @@ def test_models_old_module_import_warns_deprecation():
         importlib.reload(module)
 
     messages = [str(item.message) for item in caught]
-    assert any("drpangloss.models_old is deprecated" in message for message in messages)
+    assert any(
+        "drpangloss.models_old is deprecated" in message
+        for message in messages
+    )
 
 
 def test_models_old_class_constructor_warns():

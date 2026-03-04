@@ -33,6 +33,7 @@ def _warn_legacy(symbol_name, replacement=None):
 
 warnings.warn(_LEGACY_MODULE_MSG, DeprecationWarning, stacklevel=2)
 
+
 class OIData(zx.Base):
     """
     Store and transform optical-interferometry observables.
@@ -817,7 +818,9 @@ def sigma(
     planet_contrast,
 ):
     """Estimate contrast uncertainty from the Hessian (Laplace approximation)."""
-    _warn_legacy("sigma", replacement="drpangloss.models.laplace_contrast_uncertainty")
+    _warn_legacy(
+        "sigma", replacement="drpangloss.models.laplace_contrast_uncertainty"
+    )
     hess = jax.hessian(log_like_binary, argnums=[11])(
         u,
         v,
@@ -994,7 +997,9 @@ def optimize_nsigma(
         Maximum relative flux of companion.
     """
 
-    _warn_legacy("optimize_nsigma", replacement="drpangloss.grid_fit.absil_limits")
+    _warn_legacy(
+        "optimize_nsigma", replacement="drpangloss.grid_fit.absil_limits"
+    )
 
     sol = optx.compat.minimize(
         nsigma_wrap,
