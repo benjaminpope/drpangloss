@@ -162,16 +162,6 @@ class OIData(zx.Base):
             self.v2_flag = bool(data.get("v2_flag", True))
             self.cp_flag = bool(data.get("cp_flag", self.i_cps1 is not None))
 
-    def __repr__(self):
-        """Return a compact string summary of the loaded interferometric data."""
-        phname = "CP" if self.cp_flag else "Phi"
-        visname = "V2" if self.v2_flag else "Vis"
-        return (
-            f"OIData(u={self.u}, v={self.v}, {phname}={self.phi}, d_{phname}={self.d_phi}, "
-            f"{visname}={self.vis}, d_{visname}={self.d_vis}, "
-            f"i_cps1={self.i_cps1}, i_cps2={self.i_cps2}, i_cps3={self.i_cps3})"
-        )
-
     def flatten_data(self):
         """
         Flatten closure phases and uncertainties.
@@ -283,10 +273,6 @@ class BinaryModelAngular(zx.Base):
         self.pa = np.asarray(pa, dtype=float)
         self.contrast = np.asarray(contrast, dtype=float)
 
-    def __repr__(self):
-        """Return a readable representation of binary angular parameters."""
-        return f"BinaryModel(sep={self.sep}, pa={self.pa}, contrast={self.contrast})"
-
     def unpack_all(self):
         """
         Return all model parameters in angular form.
@@ -361,10 +347,6 @@ class BinaryModelCartesian(zx.Base):
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
         self.flux = np.asarray(flux, dtype=float)
-
-    def __repr__(self):
-        """Return a readable representation of binary Cartesian parameters."""
-        return f"BinaryModelCartesian(dra={self.dra}, ddec={self.ddec}, flux={self.flux})"
 
     def unpack_all(self):
         """

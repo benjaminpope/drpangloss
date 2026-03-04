@@ -7,7 +7,6 @@
       show_attributes: false
       members:
         - __init__
-        - __repr__
         - flatten_data
         - unpack_all
         - flatten_model
