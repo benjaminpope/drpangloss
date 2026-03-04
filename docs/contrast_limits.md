@@ -46,6 +46,8 @@ from drpangloss.plotting import (
 )
 ```
 
+## Simulate Data
+
 Now we will generate some synthetic data from pure noise, using a Fourier sampling similar to the JWST AMI mask.
 
 ```python
@@ -89,6 +91,8 @@ print('Noise amplitude: {:.2g}, Vis std: {:.2g}, Phi std: {:.2g}'.format(noise_a
 Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.016
 ```
 
+## Declare a search grid
+
 Next we declare the grid over which we're going to search for companions, and we will use this to initialize the flux level in each grid pixel around which we are going to expand the posterior / come up with confidence intervals.
 
 ```python
@@ -103,7 +107,9 @@ opt_flux = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples)
 best_idx = jnp.argmax(ll_cube, axis=2)
 ```
 
-Let's run and visualize the results of the Ruffio method.
+## Ruffio Contrast Limits
+
+The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
 
 ```python
 
@@ -134,10 +140,14 @@ plot_contrast_limit_map(
 ```
 
 ```text
-W0304 13:53:20.767323 3042460 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0304 14:46:13.318260 3093216 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ![contrast_limits output 9.2](generated/contrast_limits_cell009_out02.png)
+
+## Absil Contrast Limits
+
+In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), a frequentist p-value is used to infer an upper limit from data. This is done by a chi-squared hypothesis test, inferring what the highest contrast would be such that it would have been detected at n-σ.
 
 ```python
 
@@ -166,8 +176,9 @@ plot_contrast_limit_map(
 );
 ```
 
-![contrast_limits output 10.1](generated/contrast_limits_cell010_out01.png)
+![contrast_limits output 11.1](generated/contrast_limits_cell011_out01.png)
 
+## Contrast Curves
 We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
 
 ```python
@@ -200,7 +211,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0x330e78f90>
+<matplotlib.legend.Legend at 0x166d95690>
 ```
 
-![contrast_limits output 12.2](generated/contrast_limits_cell012_out02.png)
+![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)

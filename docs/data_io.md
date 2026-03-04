@@ -26,6 +26,7 @@ repo_root = find_repo_root()
 module = load_synthetic_workflow_module(repo_root)
 ```
 
+## Simulate Data
 Let's simulate some synthetic data and save it to an `.oifits` file:
 
 ```python
@@ -38,22 +39,35 @@ module.save_oifits_dict(
     synth_dict,
     filename=out.name,
     datadir=str(out.parent),
-    verbose=False,
+    verbose=True,
 )
 ```
 
 ```text
+
+
+### Init creation of OI_FITS (synthetic_binary_from_notebook.oifits) :
+-> Including OI Wavelength table...
+-> Including OI Target table...
+-> Including OI Array table...
+-> Including OI Vis table...
+-> Including OI Vis2 table...
+-> Including OI T3 table...
 [36m
 
 ### OIFITS CREATED (synthetic_binary_from_notebook.oifits).[0m
 ```
 
-## Let's read the data:
+# Reading Data
+
+Let's read the data - this is easy!
 
 ```python
 loaded = oifits.open(str(out))
 oidata = module.OIData(loaded)
 ```
+
+## OIData Object
 
 OIData knows automatically whether you're using visibilities or squared visibilities, which are just saved as `oidata.vis` with uncertainty `oidata.d_vis` and toggled with `oidata.v2_flag`. 
 
@@ -80,7 +94,8 @@ print('OIData keys:', list(oidata.__dict__.keys()))
 OIData keys: ['wavel', 'vis', 'd_vis', 'u', 'v', 'v2_flag', 'phi', 'd_phi', 'i_cps1', 'i_cps2', 'i_cps3', 'cp_flag']
 ```
 
-## And just to verify, let's make sure all the keys are saved and loaded correctly:
+## Verification
+And just to verify, let's make sure all the keys are saved and loaded correctly:
 
 ```python
 # Compare arrays written to OIFITS with arrays reloaded via OIData.
