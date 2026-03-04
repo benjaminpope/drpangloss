@@ -210,7 +210,7 @@ HMC estimate from diagnostics table: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ## Fisher Reparametrization
 If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `drpangloss`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
 
-See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb) for more information!
+See [this `zodiax` tutorial](https://louisdesdoigts.github.io/zodiax/optimisation_tools/) for more information!
 
 ```python
 x0_dict = {
