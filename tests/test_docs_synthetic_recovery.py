@@ -2,32 +2,21 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
-import pytest
 
-
-_MODULE_PATH = (
+MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "examples"
     / "synthetic_binary_workflow.py"
 )
 
 
-@pytest.fixture(scope="module")
-def synthetic_workflow_module():
-    spec = spec_from_file_location("synthetic_binary_workflow", _MODULE_PATH)
-    assert spec is not None and spec.loader is not None, (
-        f"Could not load spec from {_MODULE_PATH}"
-    )
+def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
+    spec = spec_from_file_location("synthetic_binary_workflow", MODULE_PATH)
+    assert spec is not None and spec.loader is not None
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module
 
-
-def test_synthetic_docs_binary_recovery_within_two_sigma(
-    tmp_path: Path, synthetic_workflow_module
-):
-    module = synthetic_workflow_module
     run_synthetic_binary_demo = module.run_synthetic_binary_demo
     within_two_sigma = module.within_two_sigma
     fisher_within_three_sigma = module.fisher_within_three_sigma

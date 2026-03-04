@@ -8,7 +8,6 @@ import zodiax as zx
 
 from .inference import (
     fisher_matrix as _fisher_matrix,
-    hessian_matrix as _hessian_matrix,
     laplace_covariance as _laplace_covariance,
 )
 
@@ -571,16 +570,20 @@ def laplace_contrast_uncertainty(
     flux, dra, ddec, data_obj, model_class, params=None
 ):
     """
-    Calculate the 1-D Laplace uncertainty in contrast from an optimised fit.
+    Compute the Laplace uncertainty in flux at a fixed sky position.
 
-    This function evaluates the Hessian of the negative log-likelihood with
-    respect to the flux parameter *only*, with ``dra`` and ``ddec`` held fixed.
-    The result is therefore the marginal (1-D) flux uncertainty at the given
-    sky position, not the full covariance matrix.
+    Unlike :func:`laplace_cov`, which inverts the *full* N-parameter Hessian,
+    this function **fixes** ``dra`` and ``ddec`` and computes only the scalar
+    curvature of the negative log-likelihood along the **flux axis alone**:
 
-    For the full multi-parameter covariance (including position uncertainty)
-    see :func:`laplace_cov`, which evaluates the Hessian over all free
-    parameters simultaneously.
+    .. math::
+
+        \\sigma_f = \\left(\\frac{\\partial^2 (-\\log L)}{\\partial f^2}\\right)^{-1/2}
+
+    This is a 1-D (scalar) second derivative, not a matrix inversion.  It is
+    appropriate when the position is held fixed (e.g. on a detection grid) and
+    only the contrast uncertainty at that grid point is needed.  For the joint
+    uncertainty over all parameters, use :func:`laplace_cov` instead.
 
     Parameters
     ----------
@@ -601,7 +604,7 @@ def laplace_contrast_uncertainty(
     Returns
     -------
     float
-        1-D Laplace standard deviation of the contrast at the given position.
+        Scalar uncertainty in the contrast (standard deviation along flux axis).
     """
 
     if params is None:
@@ -610,9 +613,12 @@ def laplace_contrast_uncertainty(
     objective = lambda f: -loglike(
         [dra, ddec, f], params, data_obj, model_class
     )
-    hess = _hessian_matrix(objective, np.asarray(flux, dtype=float))
-    cov = 1 / np.asarray(hess)
-    return np.sqrt(cov)
+    # Compute the scalar second derivative d²(-logL)/df² via double grad.
+    # Using jax.grad twice makes it explicit that we expect a scalar result.
+    # jax.hessian on a scalar-to-scalar function returns a 0-d array (not a
+    # matrix), so calling hessian_matrix here would be misleading.
+    d2_flux = jax.grad(jax.grad(objective))(np.asarray(flux, dtype=float))
+    return np.sqrt(1.0 / np.asarray(d2_flux, dtype=float))
 
 
 def fisher(values, params, data_obj, model_class, ridge=0.0):

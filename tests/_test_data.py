@@ -35,16 +35,16 @@ binary = BinaryModelCartesian(true_values[0], true_values[1], true_values[2])
 
 cvis_sim = binary.model(oidata.u, oidata.v, oidata.wavel)
 
-rng = onp.random.default_rng(42)
+_rng = onp.random.default_rng(42)
 sim_data = {
     "u": oidata.u,
     "v": oidata.v,
     "wavel": oidata.wavel,
     "vis": oidata.to_vis(cvis_sim)
-    + rng.standard_normal(oidata.vis.shape) * oidata.d_vis,
+    + _rng.standard_normal(oidata.vis.shape) * oidata.d_vis,
     "d_vis": oidata.d_vis,
     "phi": oidata.to_phases(cvis_sim)
-    + rng.standard_normal(oidata.phi.shape) * oidata.d_phi,
+    + _rng.standard_normal(oidata.phi.shape) * oidata.d_phi,
     "d_phi": oidata.d_phi,
     "i_cps1": oidata.i_cps1,
     "i_cps2": oidata.i_cps2,
