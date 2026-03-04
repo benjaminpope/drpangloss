@@ -32,7 +32,7 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter pytest
 
       - name: generate and deploy documentation
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
