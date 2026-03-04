@@ -2,24 +2,36 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
+import pytest
 
-MODULE_PATH = (
+
+_MODULE_PATH = (
     Path(__file__).resolve().parents[1]
     / "examples"
     / "synthetic_binary_workflow.py"
 )
-SPEC = spec_from_file_location("synthetic_binary_workflow", MODULE_PATH)
-MODULE = module_from_spec(SPEC)
-assert SPEC is not None and SPEC.loader is not None
-sys.modules[SPEC.name] = MODULE
-SPEC.loader.exec_module(MODULE)
-
-run_synthetic_binary_demo = MODULE.run_synthetic_binary_demo
-within_two_sigma = MODULE.within_two_sigma
-fisher_within_three_sigma = MODULE.fisher_within_three_sigma
 
 
-def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
+@pytest.fixture(scope="module")
+def synthetic_workflow_module():
+    spec = spec_from_file_location("synthetic_binary_workflow", _MODULE_PATH)
+    assert spec is not None and spec.loader is not None, (
+        f"Could not load spec from {_MODULE_PATH}"
+    )
+    module = module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_synthetic_docs_binary_recovery_within_two_sigma(
+    tmp_path: Path, synthetic_workflow_module
+):
+    module = synthetic_workflow_module
+    run_synthetic_binary_demo = module.run_synthetic_binary_demo
+    within_two_sigma = module.within_two_sigma
+    fisher_within_three_sigma = module.fisher_within_three_sigma
+
     output = tmp_path / "synthetic_binary_docs.oifits"
     summary = run_synthetic_binary_demo(output)
 

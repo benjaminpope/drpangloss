@@ -53,9 +53,9 @@ module.save_oifits_dict(
 -> Including OI Vis table...
 -> Including OI Vis2 table...
 -> Including OI T3 table...
-[36m
 
-### OIFITS CREATED (synthetic_binary_from_notebook.oifits).[0m
+
+### OIFITS CREATED (synthetic_binary_from_notebook.oifits).
 ```
 
 # Reading Data

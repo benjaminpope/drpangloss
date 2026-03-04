@@ -24,9 +24,6 @@ theme:
   icon:
     logo: material/telescope
 
-exclude_docs: |
-  review_2026-03-03.md
-
 # ===== Plugins =====
 plugins:
   - search

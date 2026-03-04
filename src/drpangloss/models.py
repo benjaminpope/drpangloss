@@ -365,7 +365,7 @@ class BinaryModelCartesian(zx.Base):
 
     def __repr__(self):
         """Return a readable representation of binary Cartesian parameters."""
-        return f"BinaryModelAngular(dra={self.dra}, pa={self.ddec}, flux={self.flux})"
+        return f"BinaryModelCartesian(dra={self.dra}, ddec={self.ddec}, flux={self.flux})"
 
     def unpack_all(self):
         """
@@ -571,16 +571,25 @@ def laplace_contrast_uncertainty(
     flux, dra, ddec, data_obj, model_class, params=None
 ):
     """
-    Calculate the uncertainty with the Laplace method from an optimized fit between a model and data object.
+    Calculate the 1-D Laplace uncertainty in contrast from an optimised fit.
+
+    This function evaluates the Hessian of the negative log-likelihood with
+    respect to the flux parameter *only*, with ``dra`` and ``ddec`` held fixed.
+    The result is therefore the marginal (1-D) flux uncertainty at the given
+    sky position, not the full covariance matrix.
+
+    For the full multi-parameter covariance (including position uncertainty)
+    see :func:`laplace_cov`, which evaluates the Hessian over all free
+    parameters simultaneously.
 
     Parameters
     ----------
     flux : float
         Flux ratio value at which the local Laplace uncertainty is evaluated.
     dra : float
-        Right ascension offset in mas.
+        Right ascension offset in mas (held fixed).
     ddec : float
-        Declination offset in mas.
+        Declination offset in mas (held fixed).
     data_obj : OIData
         Object containing the data to be fitted.
     model_class : class
@@ -591,8 +600,8 @@ def laplace_contrast_uncertainty(
 
     Returns
     -------
-    array-like
-        Uncertainty in the contrast.
+    float
+        1-D Laplace standard deviation of the contrast at the given position.
     """
 
     if params is None:
