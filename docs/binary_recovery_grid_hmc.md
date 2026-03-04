@@ -3,7 +3,11 @@
 
 # Binary recovery with grid search and HMC
 
-This tutorial walks through end-to-end binary recovery on synthetic interferometric observables, starting from a coarse likelihood grid and continuing through vanilla HMC and Fisher-reparameterized HMC. It emphasizes practical initialization, posterior diagnostics in Cartesian and polar coordinates, and posterior-predictive correlation checks so you can verify both numerical stability and physical consistency in one workflow.
+The first and simplest thing you will want to do in a lot of interferometric datasets is to look for faint companions at high resolution: this is often why we're in the game in the first place!
+
+This tutorial walks through end-to-end binary recovery on synthetic interferometric observables, starting from a coarse likelihood grid and continuing through vanilla HMC and Fisher-reparameterized HMC.
+
+First, let's import everything we will need.
 
 ```python
 import warnings
@@ -34,8 +38,9 @@ from drpangloss.plotting import (
 )
 ```
 
-## 1) Build a compact synthetic dataset
-Create synthetic $V^2$ and phase observables from a known binary model so recovery can be validated against truth.
+## Simulate Data
+
+We're going simulate $V^2$ and phase observables from a known binary model, add realistic noise, and wrap this into the `OIData` object that `drpangloss` uses to handle data.
 
 ```python
 rng = onp.random.default_rng(42)
@@ -76,8 +81,11 @@ data = OIData({
 })
 ```
 
-## 2) Coarse likelihood-grid recovery
-Run a broad grid over $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ to locate a robust starting point for MCMC.
+## Grid Search for Companions
+
+Because Jax is so fast and parallelizes so well, we can run very efficient grid searches compared to previous implementations. This is often the first place you will want to start in searching for a companion.
+
+First we have to define our grid dictionary `samples` in our chosen coordinates - we will use Cartesian $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ but you can just as well use polar coordinates in separation, position angle, and contrast if you use `BinaryModelAngular` instead.
 
 ```python
 samples = {
@@ -93,35 +101,34 @@ grid_est = {
     "ddec": float(samples["ddec"][max_idx[1]]),
     "flux": float(samples["flux"][max_idx[2]]),
 }
-grid_est
+
+print('Grid estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
+    grid_est["dra"], grid_est["ddec"], grid_est["flux"]))
 ```
 
 ```text
-{'dra': 118.75, 'ddec': -81.25, 'flux': 0.0038436660543084145}
+Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 ```
 
-## 2b) Visualize the grid structure
-This map is a fast sanity check before MCMC. The bright region should sit near the truth marker, and the grid maximum provides a robust initialization point for subsequent samplers.
-
-Because we marginalize over flux here (taking the max over the flux axis), this panel emphasizes positional structure in $(\Delta\mathrm{RA}, \Delta\mathrm{Dec})$ while keeping the notebook compact.
+## Visualize the Grid
+We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
 
 ```python
-ll_2d = ll_cube.max(axis=2)
+ll_2d = ll_cube.max(axis=2) # find max log-likelihood over flux for each (dra, ddec) pair
 plot_likelihood_grid(
     ll_2d,
     samples,
     truths=truth,
     best_point=grid_est,
     colorbar_label="Max log-likelihood over flux",
-)
-plt.title("Likelihood grid (max over flux)")
-plt.show()
+);
 ```
 
-![binary_recovery_grid_hmc output 8.1](generated/binary_recovery_grid_hmc_cell008_out01.png)
+![binary_recovery_grid_hmc output 9.1](generated/binary_recovery_grid_hmc_cell009_out01.png)
 
-## 3) Posterior refinement with vanilla HMC
-Sample directly in physical parameters with NUTS, initialized near the grid maximum.
+## Uncertainty quantification with Hamiltonian Monte Carlo
+
+You may have used MCMC before, for example with [Metropolis-Hastings](https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm) or [`emcee`](http://emcee.readthedocs.io/), but these will often perform poorly in high dimensions. Because we're using Jax and have gradients, we can use [Hamiltonian Monte Carlo](https://arxiv.org/abs/1701.02434), which can work in arbitrarily high dimensions. We will use [`numpyro`](https://num.pyro.ai/en/stable/) to handle this:
 
 ```python
 params = ["dra", "ddec", "flux"]
@@ -151,23 +158,20 @@ summary = {
     "ddec_median": float(jnp.median(posterior["ddec"])),
     "flux_median": float(jnp.median(10.0 ** posterior["log10_flux"])),
 }
-summary
+print('HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
+    summary["dra_median"], summary["ddec_median"], summary["flux_median"]))
 ```
 
 ```text
-W0304 00:22:25.988509 2596293 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0304 14:17:57.533295 3060719 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ```text
-{'dra_median': 119.70986938476562,
- 'ddec_median': -80.13255310058594,
- 'flux_median': 0.00393222039565444}
+HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
-## 3b) Prepare vanilla HMC samples for shared diagnostics
-We build a common diagnostics table in both Cartesian (`dra`, `ddec`, `flux`) and polar (`sep`, `pa`, `flux`) coordinates.
-
-Section 4b then overlays HMC and Fisher-HMC in each coordinate system so geometry differences are visible without changing plotting style.
+## Diagnostic Tables
+We have helper functions to reformat the posterior draws into a dataframe.
 
 ```python
 # Convert vanilla posterior samples into diagnostics table for later comparison plots.
@@ -177,23 +181,21 @@ hmc_results = diagnostics_table_from_samples(
     log10_flux=True,
 )
 
-{
-    "hmc_rows": len(hmc_results),
-    "hmc_dra_median": float(hmc_results["dra"].median()),
-    "hmc_ddec_median": float(hmc_results["ddec"].median()),
-    "hmc_flux_median": float(hmc_results["flux"].median()),
-}
+print('HMC estimate from diagnostics table: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
+    float(hmc_results["dra"].median()),
+    float(hmc_results["ddec"].median()),
+    float(hmc_results["flux"].median()),
+))
 ```
 
 ```text
-{'hmc_rows': 2000,
- 'hmc_dra_median': 119.70986557006836,
- 'hmc_ddec_median': -80.13254928588867,
- 'hmc_flux_median': 0.003932220572237748}
+HMC estimate from diagnostics table: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
-## 4) Fisher-reparameterized HMC
-Whiten local geometry around the grid estimate using a Fisher projection, then sample in latent coordinates with prior correction.
+## Fisher Reparametrization
+If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `drpangloss`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
+
+See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb) for more information!
 
 ```python
 x0_dict = {
@@ -217,7 +219,7 @@ P = fisher_projection(F)
 def model_hmc_fisher(oidata):
     u_latent = numpyro.sample("u", dist.Normal(0.0, 1.0).expand([x0.shape[0]]).to_event(1))
     log_q_u = dist.Normal(0.0, 1.0).log_prob(u_latent).sum()
-    x = x0 + jnp.dot(P, u_latent)
+    x = x0 + jnp.dot(P, u_latent) # this maps it to the original physical space
     xdict = unravel(x)
     dra = xdict["dra"]
     ddec = xdict["ddec"]
@@ -239,39 +241,40 @@ mcmc_f = MCMC(kernel_f, num_warmup=800, num_samples=2000, num_chains=1, progress
 mcmc_f.run(jax.random.PRNGKey(2027), oidata=data)
 post_f = mcmc_f.get_samples()
 
-{
-    "fisher_dra_median": float(jnp.median(post_f["dra"])),
-    "fisher_ddec_median": float(jnp.median(post_f["ddec"])),
-    "fisher_flux_median": float(jnp.median(post_f["flux"])),
-}
+
+print('Fisher HMC estimate: dra={:.3g} mas, ddec={:.3g} mas, flux={:.2g}'.format(
+    float(jnp.median(post_f["dra"])),
+    float(jnp.median(post_f["ddec"])),
+    float(jnp.median(post_f["flux"])),
+))
 ```
 
 ```text
-{'fisher_dra_median': 119.70191955566406,
- 'fisher_ddec_median': -80.1236572265625,
- 'fisher_flux_median': 0.003927189856767654}
+Fisher HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
-## 4b) Combined HMC vs Fisher-HMC diagnostics (Cartesian and polar)
-Both samplers are plotted on shared axes in Cartesian space and then again in polar space, each with matching walk/trace panels for direct comparison.
+## Converting coordinate systems
+
+Our sample reformatter gives you coordinate conversions:
 
 ```python
 # Convert Fisher-HMC posterior samples and prepare shared diagnostic tables.
 fisher_results = diagnostics_table_from_samples(post_f)
 truth_cart, truth_polar = truth_cartesian_and_polar(truth)
 
-{
-    "fisher_rows": len(fisher_results),
-    "fisher_sep_median": float(fisher_results["sep"].median()),
-    "fisher_pa_median": float(fisher_results["pa"].median()),
-}
+print('Fisher HMC estimate: sep={:.3g} mas, pa={:.3g} deg'.format(
+    float(fisher_results["sep"].median()),
+    float(fisher_results["pa"].median()),
+))
 ```
 
 ```text
-{'fisher_rows': 2000,
- 'fisher_sep_median': 144.04738651467596,
- 'fisher_pa_median': 326.204775360319}
+Fisher HMC estimate: sep=144 mas, pa=326 deg
 ```
+
+We can visualize the outputs with a corner plot. You can use anything you like, eg [corner.py](https://corner.readthedocs.io/en/latest/) or [pairplots](https://sefffal.github.io/PairPlots.jl/dev/), but we have default helpers for chainconsumer.
+
+We will see that the Fisher and default parametrizations work similarly well, and closely recover the true parameter values to about a 1σ precision. The first plot is a corner plot; the second is a trace, where ideally the chains look like they are stationary. `chainconsumer` and the packages like it contain functions for convergence diagnostics on posterior chains like these.
 
 ```python
 # Cartesian comparison plot
@@ -283,17 +286,18 @@ plot_chainconsumer_diagnostics(
     columns=["dra", "ddec", "flux"],
     truth=truth_cart,
     colors=["#1f77b4", "#ff7f0e"],
-)
-plt.show()
+);
 ```
 
 ```text
 Parameter dra in chain HMC Cartesian is not constrained
 ```
 
-![binary_recovery_grid_hmc output 17.2](generated/binary_recovery_grid_hmc_cell017_out02.png)
+![binary_recovery_grid_hmc output 19.2](generated/binary_recovery_grid_hmc_cell019_out02.png)
 
-![binary_recovery_grid_hmc output 17.3](generated/binary_recovery_grid_hmc_cell017_out03.png)
+![binary_recovery_grid_hmc output 19.3](generated/binary_recovery_grid_hmc_cell019_out03.png)
+
+And in polar coordinates:
 
 ```python
 # Polar comparison plot
@@ -305,20 +309,20 @@ plot_chainconsumer_diagnostics(
     columns=["sep", "pa", "flux"],
     truth=truth_polar,
     colors=["#1f77b4", "#ff7f0e"],
-)
-plt.show()
+);
 ```
 
 ```text
 Parameter sep in chain HMC Polar is not constrained
 ```
 
-![binary_recovery_grid_hmc output 18.2](generated/binary_recovery_grid_hmc_cell018_out02.png)
+![binary_recovery_grid_hmc output 21.2](generated/binary_recovery_grid_hmc_cell021_out02.png)
 
-![binary_recovery_grid_hmc output 18.3](generated/binary_recovery_grid_hmc_cell018_out03.png)
+![binary_recovery_grid_hmc output 21.3](generated/binary_recovery_grid_hmc_cell021_out03.png)
 
-## 5) Posterior predictive correlation checks
-Compare observed data against posterior predictive means for both HMC variants, with $1\!:\!1$ reference lines for visibility and phase observables.
+## Posterior Predictive Checks with Correlation Plots
+
+It is a general rule that you *always* want to check the posterior predictions vs the data when doing Bayesian inference. If the data are time series or curves or images this can be reasonably straightforward; but interferometric data can be hard to visualize. It is common in this field to plot 1:1 correlation plots with data on one axis and the model on the other.
 
 ```python
 # Posterior predictive correlation: data vs model (HMC and Fisher-HMC)
@@ -346,4 +350,4 @@ plot_data_model_correlation(
 plt.show()
 ```
 
-![binary_recovery_grid_hmc output 20.1](generated/binary_recovery_grid_hmc_cell020_out01.png)
+![binary_recovery_grid_hmc output 23.1](generated/binary_recovery_grid_hmc_cell023_out01.png)

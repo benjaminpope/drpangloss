@@ -3,14 +3,33 @@
 
 # Contrast limits with Ruffio method
 
-This tutorial covers Ruffio-style contrast-limit estimation on interferometry data, including likelihood evaluation on a spatial grid, local uncertainty estimation via Laplace approximation, and conversion to practical upper-limit maps and radial summaries. It highlights finite-value diagnostics and visualization choices in both flux-ratio and Δmag units so sensitivity structure is interpretable for scientific comparison.
+Suppose you have a non-detection; or suppose you have a detection of a point source very accurately, and you can subtract that signal off the visibilities and you want to know if there is anything *else* in the data. How can you quantify what your detection limits would have been?
+
+There are two methods widely in use in interferometry and this tutorial covers both of them:
+
+- the [Ruffio method](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract), which is Bayesian. This calculates the posterior distribution for flux of a point source companion everywhere in a grid using the Laplace approximation, and uses this to put a posterior Nσ upper limit on any flux.
+- the [Absil method](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), which is frequentist, and relies on $\chi^2$ statistics to put a confidence interval on the data and report an upper limit.
+
+In this tutorial we'll work through applying both methods to a nondetection.
+
+First, let's import everything we need.
 
 ```python
+import sys
+from pathlib import Path
+
 import jax.numpy as jnp
 import numpy as onp
 import jax.scipy as jsp
 import matplotlib.pyplot as plt
 import pyoifits as oifits
+
+repo_root = Path.cwd()
+if not (repo_root / "src").exists():
+    repo_root = repo_root.parent
+src_path = repo_root / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
 
 from drpangloss.models import OIData, BinaryModelCartesian
 from drpangloss.grid_fit import (
@@ -26,6 +45,8 @@ from drpangloss.plotting import (
     plot_radial_limit_summary,
 )
 ```
+
+Now we will generate some synthetic data from pure noise, using a Fourier sampling similar to the JWST AMI mask.
 
 ```python
 rng = onp.random.default_rng(7)
@@ -61,8 +82,14 @@ sim_data = {
 
 oidata_sim = OIData(sim_data)
 
-{"noise_amp": noise_amp, "vis_std": float(jnp.std(sim_data["vis"] - 1.0)), "phi_std": float(jnp.std(sim_data["phi"]))}
+print('Noise amplitude: {:.2g}, Vis std: {:.2g}, Phi std: {:.2g}'.format(noise_amp, float(jnp.std(sim_data["vis"] - 1.0)), float(jnp.std(sim_data["phi"]))))
 ```
+
+```text
+Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.016
+```
+
+Next we declare the grid over which we're going to search for companions, and we will use this to initialize the flux level in each grid pixel around which we are going to expand the posterior / come up with confidence intervals.
 
 ```python
 samples = {
@@ -74,6 +101,12 @@ samples = {
 ll_cube = likelihood_grid(oidata_sim, BinaryModelCartesian, samples)
 opt_flux = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples)
 best_idx = jnp.argmax(ll_cube, axis=2)
+```
+
+Let's run and visualize the results of the Ruffio method.
+
+```python
+
 sigma_flux = laplace_contrast_uncertainty_grid(
     best_idx, oidata_sim, BinaryModelCartesian, samples
 )
@@ -82,6 +115,31 @@ sigma_flux = laplace_contrast_uncertainty_grid(
 perc = jnp.array([jsp.stats.norm.cdf(2.0)])
 ruffio_flat = ruffio_upperlimit(opt_flux.flatten(), sigma_flux.flatten(), perc)
 ruffio_map = ruffio_flat.reshape(*opt_flux.shape, perc.shape[0])[:, :, 0]
+
+# 2D contrast-limit maps (Δmag): Ruffio and Absil
+
+dra_axis = onp.array(samples["dra"])
+ddec_axis = onp.array(samples["ddec"])
+ruffio_np = onp.array(ruffio_map)
+
+plot_contrast_limit_map(
+    ruffio_np,
+    dra_axis,
+    ddec_axis,
+    truth=None,
+    unit_mode="delta_mag",
+    title="Ruffio 2σ Upper-Limit Map (Δmag)",
+    cmap="inferno",
+);
+```
+
+```text
+W0304 13:53:20.767323 3042460 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+```
+
+![contrast_limits_ruffio output 9.2](generated/contrast_limits_ruffio_cell009_out02.png)
+
+```python
 
 # Absil method at 2σ
 absil_map = absil_limits(samples, oidata_sim, BinaryModelCartesian, sigma=2.0)
@@ -94,39 +152,8 @@ absil_map = absil_limits(samples, oidata_sim, BinaryModelCartesian, sigma=2.0)
     "ruffio_median": float(jnp.nanmedian(ruffio_map)),
     "absil_median": float(jnp.nanmedian(absil_map)),
 }
-```
-
-```text
-W0304 00:01:29.563588 2574370 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
-{'opt_flux_finite_frac': 1.0,
- 'sigma_flux_finite_frac': 0.9997313022613525,
- 'limit_finite_frac': 0.9997313022613525,
- 'limit_min': 0.000561241467949003,
- 'limit_median': 0.0011003934778273106,
- 'limit_max': 0.8645578026771545}
-```
-
-```python
-# 2D contrast-limit maps (Δmag): Ruffio and Absil
-
-dra_axis = onp.array(samples["dra"])
-ddec_axis = onp.array(samples["ddec"])
-ruffio_np = onp.array(ruffio_map)
 absil_np = onp.array(absil_map)
 
-plot_contrast_limit_map(
-    ruffio_np,
-    dra_axis,
-    ddec_axis,
-    truth=None,
-    unit_mode="delta_mag",
-    title="Ruffio 2σ Upper-Limit Map (Δmag)",
-    cmap="inferno",
-)
-plt.show()
 
 plot_contrast_limit_map(
     absil_np,
@@ -136,45 +163,44 @@ plot_contrast_limit_map(
     unit_mode="delta_mag",
     title="Absil 2σ Limit Map (Δmag)",
     cmap="inferno",
-)
-plt.show()
+);
 ```
 
-![contrast_limits_ruffio output 5.1](generated/contrast_limits_ruffio_cell005_out01.png)
+![contrast_limits_ruffio output 10.1](generated/contrast_limits_ruffio_cell010_out01.png)
+
+We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
 
 ```python
-# Radial summary: median and spread of limits vs separation (Ruffio and Absil)
-ruffio_radial_summary = radial_limit_summary(
-    ruffio_np,
-    dra_axis,
-    ddec_axis,
-    center=(0.0, 0.0),
-    r_max=350.0,
-    n_bins=20,
-)
+# Overplot Ruffio and Absil radial contrast curves on one axis
+fig, ax = plt.subplots(figsize=(8, 4))
+
+ruffio_radial_summary = radial_limit_summary(ruffio_map, dra_axis, ddec_axis)
+absil_radial_summary = radial_limit_summary(absil_map, dra_axis, ddec_axis)
+
 plot_radial_limit_summary(
     ruffio_radial_summary,
     unit_mode="flux_ratio",
-    title="Radial Ruffio limit summary",
+    title="Radial contrast limits: Ruffio vs Absil",
+    ax=ax,
 )
-plt.xlabel("Separation from origin (mas)")
-plt.show()
+ax.lines[-1].set_label("Ruffio median")
+ax.collections[-1].set_label("Ruffio 16–84%")
 
-absil_radial_summary = radial_limit_summary(
-    absil_np,
-    dra_axis,
-    ddec_axis,
-    center=(0.0, 0.0),
-    r_max=350.0,
-    n_bins=20,
-)
 plot_radial_limit_summary(
     absil_radial_summary,
     unit_mode="flux_ratio",
-    title="Radial Absil limit summary",
+    title="Radial contrast limits: Ruffio vs Absil",
+    ax=ax,
 )
-plt.xlabel("Separation from origin (mas)")
-plt.show()
+ax.lines[-1].set_label("Absil median")
+ax.collections[-1].set_label("Absil 16–84%")
+
+ax.set_xlabel("Separation from origin (mas)")
+ax.legend(loc="best")
 ```
 
-![contrast_limits_ruffio output 6.1](generated/contrast_limits_ruffio_cell006_out01.png)
+```text
+<matplotlib.legend.Legend at 0x330e78f90>
+```
+
+![contrast_limits_ruffio output 12.2](generated/contrast_limits_ruffio_cell012_out02.png)

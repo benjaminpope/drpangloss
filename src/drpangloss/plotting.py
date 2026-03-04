@@ -77,8 +77,9 @@ def plot_data_model_correlation(
     oidata,
     predictions_by_label,
     colors=None,
-    figsize=(12, 4),
+    figsize=(10, 5),
     phase_title="Phase correlation",
+    square_axes=True,
 ):
     """
     Plot data-vs-model correlation panels for visibility and phase observables.
@@ -96,6 +97,8 @@ def plot_data_model_correlation(
         Figure size.
     phase_title : str, optional
         Title for the phase panel.
+    square_axes : bool, optional
+        If ``True``, enforce square panel boxes for both subplots.
 
     Returns
     -------
@@ -125,7 +128,10 @@ def plot_data_model_correlation(
             xerr=d_vis_data,
             yerr=np.asarray(pred["vis_std"]).reshape(-1),
             fmt="o",
+            markersize=4,
             alpha=0.45,
+            elinewidth=1.0,
+            capsize=2,
             color=color,
             label=label,
         )
@@ -135,7 +141,10 @@ def plot_data_model_correlation(
             xerr=d_phi_data,
             yerr=np.asarray(pred["phi_std"]).reshape(-1),
             fmt="o",
+            markersize=4,
             alpha=0.45,
+            elinewidth=1.0,
+            capsize=2,
             color=color,
             label=label,
         )
@@ -165,6 +174,8 @@ def plot_data_model_correlation(
     ax1.set_xlabel("Data (V2, %)")
     ax1.set_ylabel("Model (V2, %)")
     ax1.set_title("Visibility correlation")
+    if square_axes:
+        ax1.set_box_aspect(1)
     ax1.legend(loc="best")
 
     ax2.plot(phi_line, phi_line, "k--", lw=1)
@@ -175,6 +186,8 @@ def plot_data_model_correlation(
     ax2.set_xlabel("Data (deg)")
     ax2.set_ylabel("Model (deg)")
     ax2.set_title(phase_title)
+    if square_axes:
+        ax2.set_box_aspect(1)
     ax2.legend(loc="best")
 
     plt.tight_layout()
