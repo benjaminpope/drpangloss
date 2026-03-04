@@ -104,7 +104,7 @@ def _triangle_uv(
 
 def _build_synthetic_oifits_dict(
     seed: int = 4,
-) -> tuple[dict[str, Any], dict[str, float]]:
+) -> tuple[dict[str, Any], dict[str, float], dict[str, float]]:
     rng = np.random.default_rng(seed)
     wavel = 4.8e-6
 
