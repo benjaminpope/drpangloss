@@ -46,6 +46,9 @@ class OIData(zx.Base):
     i_cps1: jax.Array
     i_cps2: jax.Array
     i_cps3: jax.Array
+    vis_mat: jax.Array
+    phi_mat: jax.Array
+    vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
 
@@ -162,6 +165,146 @@ class OIData(zx.Base):
             self.v2_flag = bool(data.get("v2_flag", True))
             self.cp_flag = bool(data.get("cp_flag", self.i_cps1 is not None))
 
+            vis_mat_in = data.get("disco_vis_mat", data.get("vis_mat", None))
+            phi_mat_in = data.get("disco_phi_mat", data.get("phi_mat", None))
+            self.vis_mat = (
+                None
+                if vis_mat_in is None
+                else np.asarray(vis_mat_in, dtype=float)
+            )
+            self.phi_mat = (
+                None
+                if phi_mat_in is None
+                else np.asarray(phi_mat_in, dtype=float)
+            )
+            vis_mode_in = data.get(
+                "vis_mode", data.get("observable_vis_mode", "auto")
+            )
+            self.vis_mode = self._resolve_vis_mode(vis_mode_in)
+            self._transform_observed_channels()
+            return
+
+        self.vis_mat = None
+        self.phi_mat = None
+        self.vis_mode = self._resolve_vis_mode("auto")
+
+    def _resolve_vis_mode(self, vis_mode):
+        """Resolve the visibility channel convention used before linear projection."""
+        mode = str(vis_mode).strip().lower()
+        if mode == "auto":
+            return "v2" if self.v2_flag else "amp"
+        valid = {"v2", "amp", "logamp"}
+        if mode not in valid:
+            raise ValueError(
+                f"Unsupported vis_mode '{vis_mode}'. Expected one of {sorted(valid)} or 'auto'."
+            )
+        return mode
+
+    @staticmethod
+    def _validate_operator_shape(operator, input_size, label):
+        """Validate a linear operator can act on vectors of length ``input_size``."""
+        if operator is None:
+            return
+        if operator.ndim != 2:
+            raise ValueError(
+                f"{label} must be a 2D matrix; got shape {operator.shape}."
+            )
+        if operator.shape[0] != input_size and operator.shape[1] != input_size:
+            raise ValueError(
+                f"{label} shape {operator.shape} is incompatible with vector length {input_size}."
+            )
+
+    @staticmethod
+    def _apply_linear_operator(values, operator):
+        """Apply a 2D linear operator to a 1D vector, supporting left or right multiplication."""
+        if operator is None:
+            return values
+        vec = np.asarray(values, dtype=float).reshape(-1)
+        if operator.shape[1] == vec.size:
+            return operator @ vec
+        if operator.shape[0] == vec.size:
+            return vec @ operator
+        raise ValueError(
+            f"Operator shape {operator.shape} is incompatible with vector length {vec.size}."
+        )
+
+    @staticmethod
+    def _propagate_uncertainty(channel_sigma, operator):
+        """Propagate diagonal uncertainties through a linear operator."""
+        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        if operator is None:
+            return sigma
+        op = operator
+        if op.shape[1] == sigma.size:
+            weights = op
+        elif op.shape[0] == sigma.size:
+            weights = op.T
+        else:
+            raise ValueError(
+                f"Operator shape {op.shape} is incompatible with uncertainty length {sigma.size}."
+            )
+        return np.sqrt(np.sum((weights * sigma[None, :]) ** 2, axis=1))
+
+    def _visibility_channel_from_model(self, cvis):
+        """Convert complex visibilities to the configured scalar visibility channel."""
+        amp = np.abs(cvis)
+        if self.vis_mode == "v2":
+            return amp**2
+        if self.vis_mode == "logamp":
+            return np.log(np.maximum(amp, 1e-30))
+        return amp
+
+    def _visibility_channel_from_data(self, vis):
+        """Convert stored visibility observables to the configured scalar channel."""
+        vis = np.asarray(vis, dtype=float)
+        if self.vis_mode == "logamp":
+            if self.v2_flag:
+                return 0.5 * np.log(np.maximum(vis, 1e-30))
+            return np.log(np.maximum(vis, 1e-30))
+        if self.vis_mode == "amp" and self.v2_flag:
+            return np.sqrt(np.maximum(vis, 0.0))
+        if self.vis_mode == "v2" and (not self.v2_flag):
+            return vis**2
+        return vis
+
+    def _visibility_uncertainty_channel(self, vis, d_vis):
+        """Convert visibility uncertainties into the configured scalar channel."""
+        vis = np.asarray(vis, dtype=float)
+        d_vis = np.asarray(d_vis, dtype=float)
+        if self.vis_mode == "logamp":
+            if self.v2_flag:
+                return 0.5 * d_vis / np.maximum(vis, 1e-30)
+            return d_vis / np.maximum(vis, 1e-30)
+        if self.vis_mode == "amp" and self.v2_flag:
+            return 0.5 * d_vis / np.sqrt(np.maximum(vis, 1e-30))
+        if self.vis_mode == "v2" and (not self.v2_flag):
+            return 2.0 * np.maximum(vis, 1e-30) * d_vis
+        return d_vis
+
+    def _transform_observed_channels(self):
+        """Optionally project observed channels into linear self-calibrated observables."""
+        n_vis = np.asarray(self.u).size
+        n_phi = (
+            np.asarray(self.u).size
+            if not self.cp_flag
+            else np.asarray(self.phi).size
+        )
+        self._validate_operator_shape(self.vis_mat, n_vis, "vis_mat")
+        self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
+
+        if self.vis_mat is not None and np.asarray(self.vis).size == n_vis:
+            vis_channel = self._visibility_channel_from_data(self.vis)
+            vis_sigma = self._visibility_uncertainty_channel(
+                self.vis, self.d_vis
+            )
+            self.vis = self._apply_linear_operator(vis_channel, self.vis_mat)
+            self.d_vis = self._propagate_uncertainty(vis_sigma, self.vis_mat)
+
+        if self.phi_mat is not None and np.asarray(self.phi).size == n_phi:
+            phi_sigma = np.asarray(self.d_phi, dtype=float)
+            self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
+            self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
+
     def __repr__(self):
         """Return a compact string summary of the loaded interferometric data."""
         phname = "CP" if self.cp_flag else "Phi"
@@ -218,19 +361,20 @@ class OIData(zx.Base):
         """
         Convert complex visibilities to visibilities or squared visibilities.
         """
-        if self.v2_flag:
-            return np.abs(cvis) ** 2
-        else:
-            return np.abs(cvis)
+        vis = self._visibility_channel_from_model(cvis)
+        return self._apply_linear_operator(vis, self.vis_mat)
 
     def to_phases(self, cvis):
         """
         Convert complex visibilities to closure phases or absolute phases.
         """
         if self.cp_flag:
-            return closure_phases(cvis, self.i_cps1, self.i_cps2, self.i_cps3)
+            phases = closure_phases(
+                cvis, self.i_cps1, self.i_cps2, self.i_cps3
+            )
         else:
-            return np.rad2deg(np.angle(cvis))
+            phases = np.rad2deg(np.angle(cvis))
+        return self._apply_linear_operator(phases, self.phi_mat)
 
     def model(self, model_object):
         """
@@ -619,15 +763,33 @@ def laplace_contrast_uncertainty(
     if params is None:
         params = ["dra", "ddec", "flux"]
 
-    objective = lambda f: -loglike(
-        [dra, ddec, f], params, data_obj, model_class
+    values = np.asarray([dra, ddec, flux], dtype=float)
+    return laplace_parameter_uncertainty(
+        values,
+        params,
+        data_obj,
+        model_class,
+        target_param=params[-1],
     )
-    # Compute the scalar second derivative d²(-logL)/df² via double grad.
-    # Using jax.grad twice makes it explicit that we expect a scalar result.
-    # jax.hessian on a scalar-to-scalar function returns a 0-d array (not a
-    # matrix), so calling hessian_matrix here would be misleading.
-    d2_flux = jax.grad(jax.grad(objective))(np.asarray(flux, dtype=float))
-    return np.sqrt(1.0 / np.asarray(d2_flux, dtype=float))
+
+
+def laplace_parameter_uncertainty(
+    values, params, data_obj, model_class, target_param
+):
+    """Compute scalar Laplace uncertainty for one parameter with all others fixed."""
+    params = list(params)
+    if target_param not in params:
+        raise ValueError(
+            f"target_param '{target_param}' is not present in params={params}."
+        )
+    idx = params.index(target_param)
+    values = np.asarray(values, dtype=float)
+
+    objective = lambda x: -loglike(
+        values.at[idx].set(x), params, data_obj, model_class
+    )
+    d2_axis = jax.grad(jax.grad(objective))(values[idx])
+    return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
 
 def fisher(values, params, data_obj, model_class, ridge=0.0):

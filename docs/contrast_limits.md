@@ -1,4 +1,4 @@
-<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 # Contrast limits with Ruffio method
