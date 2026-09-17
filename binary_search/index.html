@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1127,7 +1127,7 @@
   
 
 
-<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
 <!-- Edit the notebook, then re-run the sync script. -->
 
 <h1 id="binary-recovery-with-grid-search-and-hmc">Binary recovery with grid search and HMC</h1>
@@ -1304,7 +1304,7 @@
 </code></pre></div>
 <h2 id="fisher-reparametrization">Fisher Reparametrization</h2>
 <p>If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that <a href="https://github.com/LouisDesdoigts/zodiax"><code>zodiax</code></a>, the backend of <code>drpangloss</code>, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters <code>x0</code> and the <a href="https://en.wikipedia.org/wiki/Fisher_information">Fisher Information Matrix</a>.</p>
-<p>See <a href="https://louisdesdoigts.github.io/zodiax/optimisation_tools/">this <code>zodiax</code> tutorial</a> for more information!</p>
+<p>See <a href="https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb">this <code>zodiax</code> tutorial</a> for more information!</p>
 <div class="highlight"><pre><span></span><code><span class="n">x0_dict</span> <span class="o">=</span> <span class="p">{</span>
     <span class="s2">&quot;dra&quot;</span><span class="p">:</span> <span class="n">grid_est</span><span class="p">[</span><span class="s2">&quot;dra&quot;</span><span class="p">],</span>
     <span class="s2">&quot;ddec&quot;</span><span class="p">:</span> <span class="n">grid_est</span><span class="p">[</span><span class="s2">&quot;ddec&quot;</span><span class="p">],</span>
@@ -1503,7 +1503,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": [], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../javascripts/mathjax.js"></script>
       
