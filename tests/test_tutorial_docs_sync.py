@@ -38,7 +38,7 @@ def test_tutorial_markdown_header_uses_repo_relative_notebook_path():
 
     nb_rel = "notebooks/binary_search.ipynb"
     rendered = module.render_notebook_markdown(repo_root / nb_rel)
-    header_line = rendered.splitlines()[0]
+    header_line = next(line for line in rendered.splitlines() if line.strip())
 
     assert nb_rel in header_line
     assert str(repo_root.resolve()) not in header_line
