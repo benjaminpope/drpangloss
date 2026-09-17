@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
 MAPPINGS = {
@@ -63,11 +64,14 @@ def render_notebook_markdown(nb_path: Path) -> str:
         old_img.unlink()
 
     lines: list[str] = []
+    # scripts/sync_tutorial_docs.py
+    repo_root = nb_path.resolve().parents[1]
+    relative_nb_path = nb_path.resolve().relative_to(repo_root).as_posix()
+
     lines.append(
-        f"<!-- AUTO-GENERATED FROM {nb_path.as_posix()} by scripts/sync_tutorial_docs.py. -->"
+        f"<!-- AUTO-GENERATED FROM {relative_nb_path} "
+        "by scripts/sync_tutorial_docs.py. -->"
     )
-    lines.append("<!-- Edit the notebook, then re-run the sync script. -->")
-    lines.append("")
 
     for cell_index, cell in enumerate(nb.get("cells", []), start=1):
         cell_type = cell.get("cell_type")

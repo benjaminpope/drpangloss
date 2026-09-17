@@ -1,6 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
-<!-- Edit the notebook, then re-run the sync script. -->
-
+<!-- AUTO-GENERATED FROM notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
 # Binary recovery with grid search and HMC
 
 The first and simplest thing you will want to do in a lot of interferometric datasets is to look for faint companions at high resolution: this is often why we're in the game in the first place!

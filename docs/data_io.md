@@ -1,6 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
-<!-- Edit the notebook, then re-run the sync script. -->
-
+<!-- AUTO-GENERATED FROM notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 # Data I/O
 
 `drpangloss` has I/O tools for reading and writing `.oifits` files, which are the data standard in interferometry. These are largely cribbed from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA).

@@ -1,6 +1,4 @@
-<!-- AUTO-GENERATED FROM /Users/benpope/code/drpangloss/notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
-<!-- Edit the notebook, then re-run the sync script. -->
-
+<!-- AUTO-GENERATED FROM notebooks/contrast_limits.ipynb by scripts/sync_tutorial_docs.py. -->
 # Contrast limits with Ruffio method
 
 Suppose you have a non-detection; or suppose you have a detection of a point source very accurately, and you can subtract that signal off the visibilities and you want to know if there is anything *else* in the data. How can you quantify what your detection limits would have been?
