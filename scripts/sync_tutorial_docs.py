@@ -52,16 +52,20 @@ def _output_png_bytes(output: dict) -> bytes | None:
     return base64.b64decode(image_b64)
 
 
-def render_notebook_markdown(nb_path: Path) -> str:
+def render_notebook_markdown(
+    nb_path: Path, *, write_images: bool = False
+) -> str:
     with nb_path.open("r", encoding="utf-8") as f:
         nb = json.load(f)
 
     repo_root = nb_path.resolve().parents[1]
     generated_dir = repo_root / "docs" / "generated"
-    generated_dir.mkdir(parents=True, exist_ok=True)
 
-    for old_img in generated_dir.glob(f"{nb_path.stem}_cell*_out*.png"):
-        old_img.unlink()
+    # Only the sync step should touch the filesystem; comparisons stay read-only.
+    if write_images:
+        generated_dir.mkdir(parents=True, exist_ok=True)
+        for old_img in generated_dir.glob(f"{nb_path.stem}_cell*_out*.png"):
+            old_img.unlink()
 
     lines: list[str] = []
     # scripts/sync_tutorial_docs.py
@@ -97,8 +101,9 @@ def render_notebook_markdown(nb_path: Path) -> str:
                         f"{nb_path.stem}_cell{cell_index:03d}"
                         f"_out{output_index:02d}.png"
                     )
-                    image_path = generated_dir / image_name
-                    image_path.write_bytes(png_bytes)
+                    if write_images:
+                        image_path = generated_dir / image_name
+                        image_path.write_bytes(png_bytes)
                     lines.append(
                         f"![{nb_path.stem} output {cell_index}.{output_index}]"
                         f"(generated/{image_name})"
@@ -122,7 +127,7 @@ def main() -> None:
     for nb_rel, doc_rel in MAPPINGS.items():
         nb_path = repo_root / nb_rel
         doc_path = repo_root / doc_rel
-        rendered = render_notebook_markdown(nb_path)
+        rendered = render_notebook_markdown(nb_path, write_images=True)
         doc_path.write_text(rendered, encoding="utf-8")
         print(f"synced {doc_rel} <- {nb_rel}")
 
