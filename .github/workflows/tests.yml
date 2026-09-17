@@ -30,7 +30,7 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter zensical
 
       - name: Lint (pre-commit)
         run: |
@@ -42,4 +42,7 @@ jobs:
 
       - name: Docs Build (strict)
         run: uv run --python .venv/bin/python mkdocs build --strict
+
+      - name: Docs Build (zensical)
+        run: uv run --python .venv/bin/python zensical build --clean
 

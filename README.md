@@ -42,6 +42,15 @@ uv run --python .venv/bin/python pytest -q
 
 Documentation is published at [benjaminpope.github.io/drpangloss](https://benjaminpope.github.io/drpangloss/).
 
+Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
+
+Local docs checks:
+
+```bash
+uv run --python .venv/bin/python mkdocs build --strict
+uv run --python .venv/bin/python zensical build --clean
+```
+
 ## Collaboration & Development
 
 We welcome collaboration and development contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request workflow.
