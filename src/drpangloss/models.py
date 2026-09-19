@@ -119,9 +119,7 @@ class OIData(zx.Base):
                 phidata = data["OI_PHI"]
                 phi = np.array(phidata.data["VISPHI"], dtype=float)
                 d_phi = np.array(phidata.data["VISERR"], dtype=float)
-                phase_unit = self._extract_oifits_phase_unit(
-                    phidata, "VISPHI"
-                )
+                phase_unit = self._extract_oifits_phase_unit(phidata, "VISPHI")
                 self.phi, self.d_phi = self._phase_to_radians(
                     phi, d_phi, phase_unit, default_unit="deg"
                 )
@@ -955,9 +953,7 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
         + visphi[np.array(index_cps2)]
         - visphi[np.array(index_cps3)]
     )
-    out = np.reshape(
-        np.mod(cp + np.pi, 2.0 * np.pi) - np.pi, len(index_cps1)
-    )
+    out = np.reshape(np.mod(cp + np.pi, 2.0 * np.pi) - np.pi, len(index_cps1))
     return out
 
 

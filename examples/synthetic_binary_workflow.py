@@ -128,7 +128,7 @@ def _build_synthetic_oifits_dict(
     vis2 = visamp**2
 
     i1, i2, i3 = cp_indices(baseline_pairs, triangles)
-    cp = closure_phases(cvis, i1, i2, i3)
+    cp = jnp.rad2deg(closure_phases(cvis, i1, i2, i3))
 
     visamp_scale = jnp.maximum(jnp.median(visamp), 1e-6)
     visphi_scale = jnp.maximum(jnp.median(jnp.abs(visphi)), 5.0)
