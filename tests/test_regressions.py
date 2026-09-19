@@ -31,7 +31,9 @@ def _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None):
 class _FakeOIFITS:
     def __init__(self, hdus):
         self._hdus = hdus
-        self._by_name = {hdu.name: hdu for hdu in hdus if getattr(hdu, "name", "")}
+        self._by_name = {
+            hdu.name: hdu for hdu in hdus if getattr(hdu, "name", "")
+        }
 
     def get_dataHDUs(self):
         return [
@@ -128,7 +130,9 @@ def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
     phase_hdu = fits.BinTableHDU.from_columns(phase_columns)
     phase_hdu.name = phase_ext
 
-    return _FakeOIFITS([fits.PrimaryHDU(), wavelength_hdu, vis2_hdu, phase_hdu])
+    return _FakeOIFITS(
+        [fits.PrimaryHDU(), wavelength_hdu, vis2_hdu, phase_hdu]
+    )
 
 
 def test_to_phases_absolute_returns_radians():
