@@ -186,9 +186,11 @@ def test_plot_contrast_limits_percentile_label():
         percentile=perc,
     )
 
-    axes = plt.gcf().axes
-    assert axes[0].get_title() == "97.7% Upper Limit Map ($\\Delta$mag)"
-    assert axes[1].get_legend().texts[0].get_text() == "97.7% Upper Limit"
+    fig = plt.gcf()
+    map_axis = next(ax for ax in fig.axes if ax.get_title())
+    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
+    assert map_axis.get_title() == "97.7% Upper Limit Map ($\\Delta$mag)"
+    assert legend_axis.get_legend().texts[0].get_text() == "97.7% Upper Limit"
 
 
 def test_plot_contrast_limits_sigma_label():
@@ -203,10 +205,11 @@ def test_plot_contrast_limits_sigma_label():
         sigma=5.0,
     )
 
-    axes = plt.gcf().axes
+    fig = plt.gcf()
+    map_axis = next(ax for ax in fig.axes if ax.get_title())
+    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
+    assert map_axis.get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
     assert (
-        axes[0].get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
-    )
-    assert (
-        axes[1].get_legend().texts[0].get_text() == "5$\\sigma$ Contrast Limit"
+        legend_axis.get_legend().texts[0].get_text()
+        == "5$\\sigma$ Contrast Limit"
     )
