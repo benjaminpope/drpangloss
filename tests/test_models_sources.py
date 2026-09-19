@@ -31,7 +31,9 @@ def test_gaussian_disk_oidata_and_render():
 
 
 def test_binary_render_is_available():
-    image = BinaryModelCartesian(10.0, -5.0, 1e-3).render(npix=32, fov_mas=80.0)
+    image = BinaryModelCartesian(10.0, -5.0, 1e-3).render(
+        npix=32, fov_mas=80.0
+    )
     assert image.shape == (32, 32)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)

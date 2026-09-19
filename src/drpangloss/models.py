@@ -663,7 +663,9 @@ class HarmonixAdapter(SourceModel):
 
     def model(self, u, v, wavel):
         method = getattr(self.source, self.visibility_method)
-        args = [u, v] if self.expects_wavelength_units else [u / wavel, v / wavel]
+        args = (
+            [u, v] if self.expects_wavelength_units else [u / wavel, v / wavel]
+        )
         params = inspect.signature(method).parameters.values()
         if any(p.kind == p.VAR_POSITIONAL for p in params) or len(params) >= 3:
             args.append(wavel)
@@ -674,7 +676,9 @@ class HarmonixAdapter(SourceModel):
             raise NotImplementedError(
                 "Wrapped source does not expose a render method."
             )
-        return np.asarray(getattr(self.source, self.render_method)(npix, fov_mas))
+        return np.asarray(
+            getattr(self.source, self.render_method)(npix, fov_mas)
+        )
 
 
 def cvis_binary_angular(u, v, sep, pa, contrast):
