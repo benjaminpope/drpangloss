@@ -10,3 +10,4 @@
         - __repr__
         - unpack_all
         - model
+        - render

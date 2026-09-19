@@ -9,7 +9,7 @@ Module-level API for interferometric data containers and source models.
 - [BinaryModelAngular](classes/binary_model_angular.md)
 - [BinaryModelCartesian](classes/binary_model_cartesian.md)
 - [GaussianDiskModel](classes/gaussian_disk_model.md)
-- [HarmonixAdapter](classes/harmonix_adapter.md)
+- [HarmonixModel](classes/harmonix_model.md)
 
 ## Functions
 

@@ -2,7 +2,6 @@ import jax.numpy as np
 import jax
 
 import numpy as onp
-import inspect
 
 import equinox as eqx
 import zodiax as zx
@@ -391,6 +390,15 @@ def _image_coordinates(npix, fov_mas):
     return np.meshgrid(coords, coords, indexing="xy")
 
 
+def _normalize_image(image):
+    """Return a finite unit-sum image for render outputs."""
+    image = np.nan_to_num(np.asarray(image), nan=0.0, posinf=0.0, neginf=0.0)
+    total = np.sum(image)
+    if bool(np.isfinite(total)) and bool(total > 0.0):
+        return image / total
+    raise ValueError("Rendered image must contain positive finite flux.")
+
+
 class SourceModel(zx.Base):
     """Base class for sky-brightness source models."""
 
@@ -603,51 +611,49 @@ class BinaryModelCartesian(SourceModel):
 class GaussianDiskModel(SourceModel):
     """Centered or offset circular Gaussian disk model."""
 
-    fwhm: jax.Array
+    sigma: jax.Array
     dra: jax.Array
     ddec: jax.Array
 
-    def __init__(self, fwhm, dra=0.0, ddec=0.0):
-        self.fwhm = np.asarray(fwhm, dtype=float)
+    def __init__(self, sigma, dra=0.0, ddec=0.0):
+        self.sigma = np.asarray(sigma, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
     def __repr__(self):
         return (
             "GaussianDiskModel("
-            f"fwhm={self.fwhm}, dra={self.dra}, ddec={self.ddec})"
+            f"sigma={self.sigma}, dra={self.dra}, ddec={self.ddec})"
         )
 
     def unpack_all(self):
-        return self.fwhm, self.dra, self.ddec
+        return self.sigma, self.dra, self.ddec
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        return cvis_gaussian_disk(uu, vv, self.fwhm, self.dra, self.ddec)
+        return cvis_gaussian_disk(uu, vv, self.sigma, self.dra, self.ddec)
 
     def render(self, npix=256, fov_mas=200.0):
         xx, yy = _image_coordinates(npix, fov_mas)
-        sigma_mas = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-        sigma_mas = np.maximum(sigma_mas, 1e-9)
-        image = np.exp(
-            -0.5
-            * (
-                ((xx - self.dra) / sigma_mas) ** 2
-                + ((yy - self.ddec) / sigma_mas) ** 2
-            )
+        sigma_mas = np.maximum(self.sigma, 1e-9)
+        log_image = -0.5 * (
+            ((xx - self.dra) / sigma_mas) ** 2
+            + ((yy - self.ddec) / sigma_mas) ** 2
         )
-        return image / np.sum(image)
+        image = np.exp(log_image - np.max(log_image))
+        return _normalize_image(image)
 
 
-class HarmonixAdapter(SourceModel):
+class HarmonixModel(SourceModel):
     """
-    Adapter for external source models with harmonix-like visibility methods.
+    Wrapper for external source models with harmonix-like visibility methods.
     """
 
     source: object = eqx.field(static=True)
     visibility_method: str = eqx.field(static=True)
     render_method: str = eqx.field(static=True)
     expects_wavelength_units: bool = eqx.field(static=True)
+    observation_time: object = eqx.field(static=True)
 
     def __init__(
         self,
@@ -655,30 +661,46 @@ class HarmonixAdapter(SourceModel):
         visibility_method="model",
         render_method="render",
         expects_wavelength_units=True,
+        observation_time=None,
     ):
         self.source = source
         self.visibility_method = str(visibility_method)
         self.render_method = str(render_method)
         self.expects_wavelength_units = bool(expects_wavelength_units)
+        self.observation_time = observation_time
 
     def model(self, u, v, wavel):
         method = getattr(self.source, self.visibility_method)
         args = (
-            [u, v] if self.expects_wavelength_units else [u / wavel, v / wavel]
+            [u / wavel, v / wavel] if self.expects_wavelength_units else [u, v]
         )
-        params = inspect.signature(method).parameters.values()
-        if any(p.kind == p.VAR_POSITIONAL for p in params) or len(params) >= 3:
-            args.append(wavel)
+        if self.observation_time is not None:
+            args.append(self.observation_time)
         return np.asarray(method(*args))
 
     def render(self, npix=256, fov_mas=200.0):
         if not hasattr(self.source, self.render_method):
+            if hasattr(self.source, "surface"):
+                theta = 0.0
+                if hasattr(self.source, "rotational_phase"):
+                    theta = self.source.rotational_phase(
+                        0.0
+                        if self.observation_time is None
+                        else self.observation_time
+                    )
+                image = np.asarray(
+                    self.source.surface.render(res=npix, theta=theta)
+                )
+                return _normalize_image(image)
             raise NotImplementedError(
-                "Wrapped source does not expose a render method."
+                "Wrapped source does not expose a compatible render method."
             )
-        return np.asarray(
+        return _normalize_image(
             getattr(self.source, self.render_method)(npix, fov_mas)
         )
+
+
+HarmonixAdapter = HarmonixModel
 
 
 def cvis_binary_angular(u, v, sep, pa, contrast):
@@ -762,9 +784,9 @@ def cvis_binary(u, v, ddec, dra, planet):
     return cvis
 
 
-def cvis_gaussian_disk(u, v, fwhm, dra=0.0, ddec=0.0):
+def cvis_gaussian_disk(u, v, sigma, dra=0.0, ddec=0.0):
     """Compute complex visibilities for a circular Gaussian disk."""
-    sigma_rad = mas2rad * fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
     envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
 
