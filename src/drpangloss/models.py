@@ -393,6 +393,7 @@ class OIData(zx.Base):
                 )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
             self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
+
     def flatten_data(self):
         """
         Flatten closure phases and uncertainties.
