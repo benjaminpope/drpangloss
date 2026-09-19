@@ -44,3 +44,13 @@ def test_models_old_cp_indices_warns():
 
     messages = [str(item.message) for item in caught]
     assert any("cp_indices" in message for message in messages)
+
+
+def test_models_old_reexports_current_api():
+    import drpangloss.models as models
+    import drpangloss.models_old as models_old
+
+    assert issubclass(models_old.BinaryModelCartesian, models.BinaryModelCartesian)
+    assert issubclass(models_old.BinaryModelAngular, models.BinaryModelAngular)
+    assert callable(models_old.cp_indices)
+    assert callable(models_old.nsigma)
