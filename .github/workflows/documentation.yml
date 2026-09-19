@@ -32,15 +32,14 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter pytest
+          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter pytest zensical
 
-      - name: generate and deploy documentation
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: uv run --python .venv/bin/python mkdocs gh-deploy
-
+      # Deployment now happens via zensical-pages.yml; this workflow only validates MkDocs parity.
       - name: build documentation
-        if: github.event_name == 'pull_request'
         run: uv run --python .venv/bin/python mkdocs build --strict
+
+      - name: build documentation (zensical)
+        run: uv run --python .venv/bin/python zensical build --clean
 
       - name: validate synthetic docs workflow
         run: uv run --python .venv/bin/python pytest tests/test_docs_synthetic_recovery.py

@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as np
+from jax.flatten_util import ravel_pytree
 
 
 def hessian_matrix(objective, x):
@@ -21,13 +22,72 @@ def laplace_covariance(objective, x, ridge=1e-10):
     return regularized_inverse(hess, ridge=ridge)
 
 
-def fisher_matrix(objective, x, ridge=0.0):
-    """Approximate local Fisher matrix using the Hessian of ``objective`` at ``x``."""
-    fmat = hessian_matrix(objective, x)
+def observed_information(objective, x, ridge=0.0):
+    """Return observed information from the Hessian of a negative log likelihood.
+
+    Unlike expected Fisher information, this quantity depends on the observed
+    residuals and includes curvature of a nonlinear forward model.
+    """
+    information = hessian_matrix(objective, x)
     if ridge > 0.0:
-        ident = np.eye(fmat.shape[-1], dtype=fmat.dtype)
-        fmat = fmat + ridge * ident
-    return fmat
+        ident = np.eye(information.shape[-1], dtype=information.dtype)
+        information = information + ridge * ident
+    return information
+
+
+def fisher_matrix(objective, x, ridge=0.0):
+    """Return observed information for backward compatibility.
+
+    This historical name computes the Hessian of ``objective``. Use
+    :func:`observed_information` when the distinction from expected Fisher
+    information matters.
+    """
+    return observed_information(objective, x, ridge=ridge)
+
+
+def gaussian_fisher(prediction_fn, params, errors, ridge=0.0):
+    """Return expected Fisher information for fixed independent Gaussian errors.
+
+    Parameters
+    ----------
+    prediction_fn : callable
+        Function mapping the parameter pytree to a one-dimensional prediction.
+    params : pytree
+        Parameter values at which to evaluate the local model sensitivity.
+    errors : array-like
+        Standard deviations corresponding to the prediction vector.
+    ridge : float, optional
+        Diagonal regularization term.
+
+    Returns
+    -------
+    tuple[array-like, callable]
+        Expected Fisher matrix and a function restoring a flat parameter vector
+        to the structure of ``params``.
+    """
+    flat_params, unravel = ravel_pytree(params)
+    errors = np.asarray(errors, dtype=float).reshape(-1)
+
+    def flat_prediction(values):
+        return np.asarray(prediction_fn(unravel(values)), dtype=float).reshape(
+            -1
+        )
+
+    jacobian = jax.jacrev(flat_prediction)(flat_params)
+    if jacobian.shape[0] != errors.size:
+        raise ValueError(
+            "Prediction and error vectors must have the same length; "
+            f"got {jacobian.shape[0]} and {errors.size}."
+        )
+    if bool(np.any(errors <= 0.0)):
+        raise ValueError("Gaussian errors must be strictly positive.")
+
+    weighted_jacobian = jacobian / errors[:, None]
+    information = weighted_jacobian.T @ weighted_jacobian
+    if ridge > 0.0:
+        ident = np.eye(information.shape[-1], dtype=information.dtype)
+        information = information + ridge * ident
+    return information, unravel
 
 
 def fisher_projection(fmat, eps=1e-12):

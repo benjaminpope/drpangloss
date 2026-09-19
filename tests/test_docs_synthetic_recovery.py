@@ -2,6 +2,11 @@ from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import sys
 
+import jax.numpy as jnp
+import numpy as np
+
+from drpangloss.models import BinaryModelCartesian, closure_phases, cp_indices
+
 
 MODULE_PATH = (
     Path(__file__).resolve().parents[1]
@@ -10,12 +15,37 @@ MODULE_PATH = (
 )
 
 
-def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
+def _load_synthetic_module():
     spec = spec_from_file_location("synthetic_binary_workflow", MODULE_PATH)
     assert spec is not None and spec.loader is not None
     module = module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def test_synthetic_docs_builder_writes_closure_phases_in_degrees():
+    module = _load_synthetic_module()
+    dic, truth, _ = module._build_synthetic_oifits_dict(seed=4)
+
+    ucoord, vcoord, baseline_pairs, triangles = module._array_geometry()
+    cvis = BinaryModelCartesian(**truth).model(
+        ucoord, vcoord, jnp.array([4.8e-6])
+    )
+    i1, i2, i3 = cp_indices(baseline_pairs, triangles)
+    cp_rad = np.array(closure_phases(cvis, i1, i2, i3))
+    cp_deg = np.rad2deg(cp_rad)
+
+    observed_cp = np.asarray(dic["OI_T3"]["T3PHI"])
+    mean_abs_err_deg = float(np.mean(np.abs(observed_cp - cp_deg)))
+    mean_abs_err_rad = float(np.mean(np.abs(observed_cp - cp_rad)))
+
+    assert mean_abs_err_deg < mean_abs_err_rad
+    assert np.max(np.abs(observed_cp)) > np.max(np.abs(cp_rad))
+
+
+def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
+    module = _load_synthetic_module()
 
     run_synthetic_binary_demo = module.run_synthetic_binary_demo
     within_two_sigma = module.within_two_sigma

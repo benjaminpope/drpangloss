@@ -1,0 +1,39 @@
+name: copilot-setup-steps
+
+# Prepares the environment for the GitHub Copilot coding agent. The job name must
+# stay exactly "copilot-setup-steps" for the agent to pick it up.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+permissions:
+  contents: read
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+          architecture: x64
+
+      - name: create environment
+        run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
+
+      - name: install pre-commit hooks
+        run: uv run --python .venv/bin/python pre-commit install --install-hooks

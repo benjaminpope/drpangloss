@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Lint: local (low-noise)",
+			"type": "shell",
+			"command": "bash",
+			"args": [
+				"scripts/lint_local.sh"
+			],
+			"isBackground": false,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		}
+	]
+}

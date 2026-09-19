@@ -30,3 +30,15 @@ def test_tutorial_markdown_is_synced_with_notebooks():
             f"{doc_rel} is out of sync with {nb_rel}. "
             "Run scripts/sync_tutorial_docs.py to regenerate tutorial docs."
         )
+
+
+def test_tutorial_markdown_header_uses_repo_relative_notebook_path():
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_sync_module(repo_root)
+
+    nb_rel = "notebooks/binary_search.ipynb"
+    rendered = module.render_notebook_markdown(repo_root / nb_rel)
+    header_line = next(line for line in rendered.splitlines() if line.strip())
+
+    assert nb_rel in header_line
+    assert str(repo_root.resolve()) not in header_line

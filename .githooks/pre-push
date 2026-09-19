@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if [[ -f "scripts/lint_local.sh" ]]; then
+  echo "Running Ruff auto-fix before push..."
+  bash scripts/lint_local.sh --fix
+else
+  echo "Missing scripts/lint_local.sh; refusing to push." >&2
+  exit 1
+fi

@@ -1,6 +1,4 @@
-<!-- AUTO-GENERATED FROM /home/runner/work/drpangloss/drpangloss/notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
-<!-- Edit the notebook, then re-run the sync script. -->
-
+<!-- AUTO-GENERATED FROM notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
 # Visibility Models
 
 This tutorial explains how `BinaryModelCartesian` and `BinaryModelAngular` work internally, how they interact with `OIData`, and how likelihoods are built from an `OIData` instance plus a model class.
@@ -101,6 +99,7 @@ data = OIData(
         "d_vis": d_vis,
         "phi": phi_obs,
         "d_phi": d_phi,
+        "phi_unit": "deg",
         "i_cps1": None,
         "i_cps2": None,
         "i_cps3": None,

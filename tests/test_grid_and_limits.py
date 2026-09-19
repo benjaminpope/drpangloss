@@ -138,6 +138,7 @@ def test_ruffio():
         avg_width_ruffio,
         std_width_ruffio,
         true_values=true_values,
+        percentile=perc,
     )
 
 
@@ -169,4 +170,48 @@ def test_absil():
         avg_width_absil,
         std_width_absil,
         true_values=true_values,
+        sigma=5.0,
+    )
+
+
+def test_plot_contrast_limits_percentile_label():
+    plt.close("all")
+
+    plot_contrast_limits(
+        np.ones((2, 2)) * 1e-4,
+        {"dra": np.array([1.0, 0.0]), "ddec": np.array([0.0, 1.0])},
+        np.array([0.0, 1.0]),
+        np.array([10.0, 9.0]),
+        np.array([0.2, 0.3]),
+        percentile=perc,
+    )
+
+    fig = plt.gcf()
+    map_axis = next(ax for ax in fig.axes if ax.get_title())
+    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
+    assert map_axis.get_title() == "97.7% Upper Limit Map ($\\Delta$mag)"
+    assert legend_axis.get_legend().texts[0].get_text() == "97.7% Upper Limit"
+
+
+def test_plot_contrast_limits_sigma_label():
+    plt.close("all")
+
+    plot_contrast_limits(
+        np.ones((2, 2)) * 1e-4,
+        {"dra": np.array([1.0, 0.0]), "ddec": np.array([0.0, 1.0])},
+        np.array([0.0, 1.0]),
+        np.array([10.0, 9.0]),
+        np.array([0.2, 0.3]),
+        sigma=5.0,
+    )
+
+    fig = plt.gcf()
+    map_axis = next(ax for ax in fig.axes if ax.get_title())
+    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
+    assert (
+        map_axis.get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
+    )
+    assert (
+        legend_axis.get_legend().texts[0].get_text()
+        == "5$\\sigma$ Contrast Limit"
     )
