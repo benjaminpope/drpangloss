@@ -15,8 +15,12 @@ git clone https://github.com/your-username-here/drpangloss.git
 cd drpangloss
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e . pytest ruff pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter zensical ipywidgets
+uv pip install --python .venv/bin/python -e ".[dev]" ipywidgets
 ```
+
+Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
+runs and CI format identically; installing the `dev` extra gives you the right one. If you
+have another ruff on your `PATH`, call the one in `.venv` explicitly.
 
 Then you will need to install the pre-commit hooks. This will ensure that the code is formatted correctly and that the unit tests pass before you can commit your changes. To do this, run the following command:
 

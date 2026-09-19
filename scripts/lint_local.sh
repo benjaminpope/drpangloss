@@ -16,7 +16,7 @@ Options:
   -h, --help      Show this help message.
 
 Defaults:
-  - Checks src/ and tests/
+  - Checks src/, tests/, examples/ and scripts/ (same scope as CI)
   - Includes notebooks/*.ipynb
   - Writes full logs to .lint-logs/
 EOF
@@ -99,9 +99,11 @@ if [[ "$changed_only" -eq 1 ]]; then
   done < <(git diff --name-only --diff-filter=ACMRTUXB "${base_ref}"...HEAD -- "*.ipynb" | sort)
 
   for file in "${changed_py[@]}"; do
-    if [[ "$file" == src/* || "$file" == tests/* ]]; then
-      py_targets+=("$file")
-    fi
+    case "$file" in
+      src/*|tests/*|examples/*|scripts/*)
+        py_targets+=("$file")
+        ;;
+    esac
   done
 
   for file in "${changed_ipynb[@]}"; do
@@ -110,7 +112,7 @@ if [[ "$changed_only" -eq 1 ]]; then
     fi
   done
 else
-  py_targets=(src tests)
+  py_targets=(src tests examples scripts)
   ipynb_targets=(notebooks/*.ipynb)
 fi
 

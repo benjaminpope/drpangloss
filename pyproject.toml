@@ -23,16 +23,30 @@ build-backend = "setuptools.build_meta"
 
 # [project.optional-dependencies]
 # extras = []
-# dev = ["pytest", "black", "ruff", "pre-commit", "mkdocs", "mkdocs-jupyter", "mkdocs-same-dir", "mkdocs-autorefs", "mkdocs-simple-plugin", "mkdocstrings-python", "jupyter_contrib_nbextensions", "notebook==6.4.12"]
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.11.0",
+  "pre-commit",
+  "pytest",
+  "mkdocs",
+  "mkdocs-material",
+  "mkdocs-jupyter",
+  "mkdocstrings[python]",
+  "zensical",
+]
 
 [tool.black]
 line-length = 79
 
 [tool.ruff]
 line-length = 79
-required-version = ">=0.11.0"
+# Must match the rev in .pre-commit-config.yaml and RUFF_VERSION in the workflows.
+required-version = "==0.11.0"
 force-exclude = true
 extend-exclude = [
+  "site",
+  "docs/generated",
   "notebooks/ami_exploration.ipynb",
   "notebooks/louis_visibilities.ipynb",
 ]
