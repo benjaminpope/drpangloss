@@ -1,6 +1,6 @@
-# Class: `BinaryModelCartesian`
+# Class: `GaussianDiskModel`
 
-::: drpangloss.models.BinaryModelCartesian
+::: drpangloss.models.GaussianDiskModel
     options:
       show_root_heading: false
       heading_level: 3

@@ -33,7 +33,8 @@ class OIData(zx.Base):
     The object stores baseline coordinates, observables, uncertainties, and
     optional closure-phase index triplets. It provides convenience methods for
     flattening data/model vectors and converting complex visibilities to the
-    configured visibility/phase conventions.
+    configured visibility/phase conventions. Phase observables are stored
+    internally in radians.
     """
 
     u: jax.Array
@@ -61,7 +62,10 @@ class OIData(zx.Base):
         data : dict or object
             OIFITS data opened with ``pyoifits``, or a dictionary containing
             ``u``, ``v``, ``wavel``, ``vis``, ``d_vis``, ``phi``, ``d_phi``,
-            optional closure-phase indices, and convention flags.
+            optional closure-phase indices, convention flags, and optional
+            ``phi_unit`` (``"rad"`` or ``"deg"``). OIFITS phase columns are
+            interpreted using their column unit metadata when present, and
+            default to degrees when metadata is missing.
         """
 
         if not isinstance(data, dict):
@@ -116,16 +120,24 @@ class OIData(zx.Base):
             # if absolute phases are available, get them, otherwise get closure phases
             if "OI_PHI" in data_names:
                 phidata = data["OI_PHI"]
-                self.phi = np.array(phidata.data["VISPHI"], dtype=float)
-                self.d_phi = np.array(phidata.data["VISERR"], dtype=float)
+                phi = np.array(phidata.data["VISPHI"], dtype=float)
+                d_phi = np.array(phidata.data["VISERR"], dtype=float)
+                phase_unit = self._extract_oifits_phase_unit(phidata, "VISPHI")
+                self.phi, self.d_phi = self._phase_to_radians(
+                    phi, d_phi, phase_unit, default_unit="deg"
+                )
                 self.i_cps1, self.i_cps2, self.i_cps3 = None, None, None
 
                 self.cp_flag = False
 
             elif "OI_T3" in data_names:
                 phidata = data["OI_T3"]
-                self.phi = np.array(phidata.data["T3PHI"], dtype=float)
-                self.d_phi = np.array(phidata.data["T3PHIERR"], dtype=float)
+                phi = np.array(phidata.data["T3PHI"], dtype=float)
+                d_phi = np.array(phidata.data["T3PHIERR"], dtype=float)
+                phase_unit = self._extract_oifits_phase_unit(phidata, "T3PHI")
+                self.phi, self.d_phi = self._phase_to_radians(
+                    phi, d_phi, phase_unit, default_unit="deg"
+                )
 
                 cp_sta_index = np.array(phidata.data["STA_INDEX"], dtype=int)
                 self.i_cps1, self.i_cps2, self.i_cps3 = cp_indices(
@@ -147,6 +159,10 @@ class OIData(zx.Base):
 
             self.phi = np.array(data["phi"], dtype=float)
             self.d_phi = np.array(data["d_phi"], dtype=float)
+            phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
+            self.phi, self.d_phi = self._phase_to_radians(
+                self.phi, self.d_phi, phi_unit, default_unit="rad"
+            )
 
             try:
                 idx1 = data["i_cps1"]
@@ -165,6 +181,8 @@ class OIData(zx.Base):
             self.v2_flag = bool(data.get("v2_flag", True))
             self.cp_flag = bool(data.get("cp_flag", self.i_cps1 is not None))
 
+            has_disco_vis = "disco_vis_mat" in data
+            has_disco_phi = "disco_phi_mat" in data
             vis_mat_in = data.get("disco_vis_mat", data.get("vis_mat", None))
             phi_mat_in = data.get("disco_phi_mat", data.get("phi_mat", None))
             self.vis_mat = (
@@ -181,7 +199,10 @@ class OIData(zx.Base):
                 "vis_mode", data.get("observable_vis_mode", "auto")
             )
             self.vis_mode = self._resolve_vis_mode(vis_mode_in)
-            self._transform_observed_channels()
+            self._transform_observed_channels(
+                validate_vis_covariance=has_disco_vis,
+                validate_phi_covariance=has_disco_phi,
+            )
             return
 
         self.vis_mat = None
@@ -199,6 +220,35 @@ class OIData(zx.Base):
                 f"Unsupported vis_mode '{vis_mode}'. Expected one of {sorted(valid)} or 'auto'."
             )
         return mode
+
+    @staticmethod
+    def _phase_unit_scale(unit, default_unit):
+        """Return multiplicative factor converting the provided phase unit to rad."""
+        raw_unit = default_unit if unit is None else unit
+        unit_name = str(raw_unit).strip().lower()
+        if unit_name in {"rad", "radian", "radians"}:
+            return 1.0
+        if unit_name in {"deg", "degree", "degrees"}:
+            return np.pi / 180.0
+        raise ValueError(
+            f"Unsupported phase unit '{raw_unit}'. Expected radians or degrees."
+        )
+
+    @classmethod
+    def _phase_to_radians(cls, phi, d_phi, unit, default_unit):
+        """Convert phase observables and uncertainties to radians."""
+        scale = cls._phase_unit_scale(unit, default_unit)
+        return np.asarray(phi, dtype=float) * scale, np.asarray(
+            d_phi, dtype=float
+        ) * np.abs(scale)
+
+    @staticmethod
+    def _extract_oifits_phase_unit(phidata, column_name):
+        """Extract phase-column unit from an OIFITS table, if available."""
+        columns = getattr(phidata, "columns", None)
+        if columns is None or column_name not in columns.names:
+            return None
+        return getattr(columns[column_name], "unit", None)
 
     @staticmethod
     def _validate_operator_shape(operator, input_size, label):
@@ -229,11 +279,11 @@ class OIData(zx.Base):
         )
 
     @staticmethod
-    def _propagate_uncertainty(channel_sigma, operator):
-        """Propagate diagonal uncertainties through a linear operator."""
+    def _operator_weights(channel_sigma, operator):
+        """Orient a linear operator to act on the supplied channel vector."""
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
         if operator is None:
-            return sigma
+            return None
         op = operator
         if op.shape[1] == sigma.size:
             weights = op
@@ -243,7 +293,36 @@ class OIData(zx.Base):
             raise ValueError(
                 f"Operator shape {op.shape} is incompatible with uncertainty length {sigma.size}."
             )
+        return weights
+
+    @classmethod
+    def _propagate_uncertainty(cls, channel_sigma, operator):
+        """Propagate diagonal uncertainties through a linear operator."""
+        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        if operator is None:
+            return sigma
+        weights = cls._operator_weights(sigma, operator)
+        assert weights is not None
         return np.sqrt(np.sum((weights * sigma[None, :]) ** 2, axis=1))
+
+    @classmethod
+    def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
+        """Assert that an explicitly labelled DISCO operator whitens covariance."""
+        if operator is None:
+            return
+        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        weights = cls._operator_weights(sigma, operator)
+        assert weights is not None
+        weighted = weights * sigma[None, :]
+        covariance = weighted @ weighted.T
+        diagonal = np.diag(np.diag(covariance))
+        scale = float(np.max(np.abs(np.diag(covariance))))
+        atol = max(1e-12, 1e-7 * scale)
+        if not bool(np.allclose(covariance, diagonal, rtol=1e-5, atol=atol)):
+            raise ValueError(
+                f"{label} does not produce diagonal propagated covariance. "
+                "DISCO observables must be statistically independent."
+            )
 
     def _visibility_channel_from_model(self, cvis):
         """Convert complex visibilities to the configured scalar visibility channel."""
@@ -281,7 +360,9 @@ class OIData(zx.Base):
             return 2.0 * np.maximum(vis, 1e-30) * d_vis
         return d_vis
 
-    def _transform_observed_channels(self):
+    def _transform_observed_channels(
+        self, validate_vis_covariance=False, validate_phi_covariance=False
+    ):
         """Optionally project observed channels into linear self-calibrated observables."""
         n_vis = np.asarray(self.u).size
         n_phi = (
@@ -297,11 +378,19 @@ class OIData(zx.Base):
             vis_sigma = self._visibility_uncertainty_channel(
                 self.vis, self.d_vis
             )
+            if validate_vis_covariance:
+                self._validate_diagonal_covariance(
+                    vis_sigma, self.vis_mat, "disco_vis_mat"
+                )
             self.vis = self._apply_linear_operator(vis_channel, self.vis_mat)
             self.d_vis = self._propagate_uncertainty(vis_sigma, self.vis_mat)
 
         if self.phi_mat is not None and np.asarray(self.phi).size == n_phi:
             phi_sigma = np.asarray(self.d_phi, dtype=float)
+            if validate_phi_covariance:
+                self._validate_diagonal_covariance(
+                    phi_sigma, self.phi_mat, "disco_phi_mat"
+                )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
             self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
 
@@ -366,14 +455,14 @@ class OIData(zx.Base):
 
     def to_phases(self, cvis):
         """
-        Convert complex visibilities to closure phases or absolute phases.
+        Convert complex visibilities to closure or absolute phases in radians.
         """
         if self.cp_flag:
             phases = closure_phases(
                 cvis, self.i_cps1, self.i_cps2, self.i_cps3
             )
         else:
-            phases = np.rad2deg(np.angle(cvis))
+            phases = np.angle(cvis)
         return self._apply_linear_operator(phases, self.phi_mat)
 
     def model(self, model_object):
@@ -383,8 +472,59 @@ class OIData(zx.Base):
         cvis = model_object.model(self.u, self.v, self.wavel)
         return self.flatten_model(cvis)
 
+    def with_model(self, model_object, key=None, noise_scale=1.0):
+        """Return a copy populated from a model with optional Gaussian noise.
 
-class BinaryModelAngular(zx.Base):
+        Sampling, uncertainties, conventions, closure indices, and linear
+        observable operators are preserved from this object.
+        """
+        noise_scale = float(noise_scale)
+        if noise_scale < 0.0:
+            raise ValueError("noise_scale must be non-negative.")
+
+        prediction = self.model(model_object)
+        n_vis = self.vis.size
+        vis = prediction[:n_vis]
+        phi = prediction[n_vis:]
+        if key is not None:
+            vis_key, phi_key = jax.random.split(key)
+            vis = vis + noise_scale * self.d_vis * jax.random.normal(
+                vis_key, vis.shape
+            )
+            phi = phi + noise_scale * self.d_phi * jax.random.normal(
+                phi_key, phi.shape
+            )
+        return self.set(["vis", "phi"], [vis, phi])
+
+
+def _image_coordinates(npix, fov_mas):
+    """Return Cartesian image-plane coordinates in milliarcseconds."""
+    coords = np.linspace(-0.5 * fov_mas, 0.5 * fov_mas, int(npix))
+    return np.meshgrid(coords, coords, indexing="xy")
+
+
+def _normalize_image(image):
+    """Return a finite unit-sum image for render outputs."""
+    image = np.nan_to_num(np.asarray(image), nan=0.0, posinf=0.0, neginf=0.0)
+    total = np.sum(image)
+    if bool(np.isfinite(total)) and bool(total > 0.0):
+        return image / total
+    raise ValueError("Rendered image must contain positive finite flux.")
+
+
+class SourceModel(zx.Base):
+    """Base class for sky-brightness source models."""
+
+    def model(self, u, v, wavel):
+        """Evaluate complex visibilities on interferometric baselines."""
+        raise NotImplementedError
+
+    def render(self, npix=256, fov_mas=200.0):
+        """Render an image-plane model in milliarcseconds."""
+        raise NotImplementedError
+
+
+class BinaryModelAngular(SourceModel):
     """
     Represent a binary companion using angular separation and position angle.
 
@@ -442,6 +582,21 @@ class BinaryModelAngular(zx.Base):
         """
         return self.sep, self.pa, self.contrast
 
+    def to_cartesian(self):
+        """
+        Convert this angular parameterization into Cartesian sky offsets.
+
+        Returns
+        -------
+        BinaryModelCartesian
+            Equivalent binary model expressed as ``(dra, ddec, flux)``.
+        """
+        th = self.pa * dtor
+        dra = -self.sep * np.sin(th)
+        ddec = self.sep * np.cos(th)
+        flux = 1.0 / self.contrast
+        return BinaryModelCartesian(dra, ddec, flux)
+
     def model(self, u, v, wavel):
         """
         Evaluate complex visibilities for this angular binary model.
@@ -463,8 +618,27 @@ class BinaryModelAngular(zx.Base):
         uu, vv = u / wavel, v / wavel
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
 
+    def render(self, npix=256, fov_mas=200.0):
+        """
+        Render a two-point-source approximation on a Cartesian image grid.
+        """
+        xx, yy = _image_coordinates(npix, fov_mas)
+        th = self.pa * dtor
+        ddec = self.sep * np.cos(th)
+        dra = -1.0 * self.sep * np.sin(th)
 
-class BinaryModelCartesian(zx.Base):
+        l2 = 1.0 / (self.contrast + 1.0)
+        l1 = 1.0 - l2
+        sigma = max(float(fov_mas) / float(npix), 1e-6)
+        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
+        comp = np.exp(
+            -0.5 * (((xx - dra) / sigma) ** 2 + ((yy - ddec) / sigma) ** 2)
+        )
+        image = l1 * star + l2 * comp
+        return image / np.sum(image)
+
+
+class BinaryModelCartesian(SourceModel):
     """
     Represent a binary companion using Cartesian sky offsets.
 
@@ -521,6 +695,20 @@ class BinaryModelCartesian(zx.Base):
         """
         return self.dra, self.ddec, self.flux
 
+    def to_angular(self):
+        """
+        Convert this Cartesian parameterization into angular coordinates.
+
+        Returns
+        -------
+        BinaryModelAngular
+            Equivalent binary model expressed as ``(sep, pa, contrast)``.
+        """
+        sep = np.sqrt(self.dra**2 + self.ddec**2)
+        pa = np.mod(np.rad2deg(np.arctan2(-self.dra, self.ddec)), 360.0)
+        contrast = 1.0 / self.flux
+        return BinaryModelAngular(sep, pa, contrast)
+
     def model(self, u, v, wavel):
         """
         Evaluate complex visibilities for this Cartesian binary model.
@@ -541,6 +729,120 @@ class BinaryModelCartesian(zx.Base):
         """
         uu, vv = u / wavel, v / wavel
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
+
+    def render(self, npix=256, fov_mas=200.0):
+        """
+        Render a two-point-source approximation on a Cartesian image grid.
+        """
+        xx, yy = _image_coordinates(npix, fov_mas)
+        l2 = self.flux / (1.0 + self.flux)
+        l1 = 1.0 - l2
+        sigma = max(float(fov_mas) / float(npix), 1e-6)
+        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
+        comp = np.exp(
+            -0.5
+            * (
+                ((xx - self.dra) / sigma) ** 2
+                + ((yy - self.ddec) / sigma) ** 2
+            )
+        )
+        image = l1 * star + l2 * comp
+        return image / np.sum(image)
+
+
+class GaussianDiskModel(SourceModel):
+    """Centered or offset circular Gaussian disk model."""
+
+    sigma: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def __init__(self, sigma, dra=0.0, ddec=0.0):
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __repr__(self):
+        return (
+            "GaussianDiskModel("
+            f"sigma={self.sigma}, dra={self.dra}, ddec={self.ddec})"
+        )
+
+    def unpack_all(self):
+        return self.sigma, self.dra, self.ddec
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return cvis_gaussian_disk(uu, vv, self.sigma, self.dra, self.ddec)
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        sigma_mas = np.maximum(self.sigma, 1e-9)
+        log_image = -0.5 * (
+            ((xx - self.dra) / sigma_mas) ** 2
+            + ((yy - self.ddec) / sigma_mas) ** 2
+        )
+        image = np.exp(log_image - np.max(log_image))
+        return _normalize_image(image)
+
+
+class HarmonixModel(SourceModel):
+    """
+    Wrapper for external source models with harmonix-like visibility methods.
+    """
+
+    source: object = eqx.field(static=True)
+    visibility_method: str = eqx.field(static=True)
+    render_method: str = eqx.field(static=True)
+    expects_wavelength_units: bool = eqx.field(static=True)
+    observation_time: object = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source,
+        visibility_method="model",
+        render_method="render",
+        expects_wavelength_units=True,
+        observation_time=None,
+    ):
+        self.source = source
+        self.visibility_method = str(visibility_method)
+        self.render_method = str(render_method)
+        self.expects_wavelength_units = bool(expects_wavelength_units)
+        self.observation_time = observation_time
+
+    def model(self, u, v, wavel):
+        method = getattr(self.source, self.visibility_method)
+        args = (
+            [u / wavel, v / wavel] if self.expects_wavelength_units else [u, v]
+        )
+        if self.observation_time is not None:
+            args.append(self.observation_time)
+        return np.asarray(method(*args))
+
+    def render(self, npix=256, fov_mas=200.0):
+        if not hasattr(self.source, self.render_method):
+            if hasattr(self.source, "surface"):
+                theta = 0.0
+                if hasattr(self.source, "rotational_phase"):
+                    theta = self.source.rotational_phase(
+                        0.0
+                        if self.observation_time is None
+                        else self.observation_time
+                    )
+                image = np.asarray(
+                    self.source.surface.render(res=npix, theta=theta)
+                )
+                return _normalize_image(image)
+            raise NotImplementedError(
+                "Wrapped source does not expose a compatible render method."
+            )
+        return _normalize_image(
+            getattr(self.source, self.render_method)(npix, fov_mas)
+        )
+
+
+HarmonixAdapter = HarmonixModel
 
 
 def cvis_binary_angular(u, v, sep, pa, contrast):
@@ -624,6 +926,47 @@ def cvis_binary(u, v, ddec, dra, planet):
     return cvis
 
 
+def cvis_gaussian_disk(u, v, sigma, dra=0.0, ddec=0.0):
+    """Compute complex visibilities for a circular Gaussian disk."""
+    sigma_rad = mas2rad * sigma
+    rho2 = u**2 + v**2
+    envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
+
+    dra_rad = mas2rad * dra
+    ddec_rad = mas2rad * ddec
+    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    return envelope * phase
+
+
+def model_loglike(model_object, data_obj):
+    """Evaluate a Gaussian log likelihood for an instantiated model object."""
+    model_data = data_obj.model(model_object)
+    data, errors = data_obj.flatten_data()
+    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+
+
+def joint_prediction(params, observations, model_fn):
+    """Concatenate predictions for a parameter pytree and multiple observations.
+
+    ``model_fn(params, index)`` defines which parameters are shared and which
+    are specific to each observation.
+    """
+    return np.concatenate(
+        [
+            observation.model(model_fn(params, index))
+            for index, observation in enumerate(observations)
+        ]
+    )
+
+
+def joint_loglike(params, observations, model_fn):
+    """Sum independent Gaussian log likelihoods over multiple observations."""
+    return sum(
+        model_loglike(model_fn(params, index), observation)
+        for index, observation in enumerate(observations)
+    )
+
+
 def loglike(values, params, data_obj, model_class):
     """
     Abstract log-likelihood function for a given model class and data object, assuming Gaussian errors.
@@ -647,12 +990,16 @@ def loglike(values, params, data_obj, model_class):
 
     param_dict = dict(zip(params, values))
 
+<<<<<<< HEAD
     model_data = data_obj.model(model_class(**param_dict))
     data, errors = data_obj.flatten_data()
 
     return jax.scipy.stats.norm.logpdf(
         model_data, loc=data, scale=errors
     ).sum()
+=======
+    return model_loglike(model_class(**param_dict), data_obj)
+>>>>>>> origin/main
 
 
 def loglike_nosignal(values, params, data_obj, model_class):
@@ -904,18 +1251,23 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     Returns
     -------
     array-like
-        Closure phases in degrees.
+        Closure phases in radians.
+
+    Notes
+    -----
+    This helper returns radians for internal modeling consistency. Convert to
+    degrees before writing OIFITS phase columns (e.g., ``T3PHI``).
 
     """
-    visphiall = np.rad2deg(np.angle(cvis))
-    visphiall = np.mod(visphiall + 180.0, 360.0) - 180.0
+    visphiall = np.angle(cvis)
+    visphiall = np.mod(visphiall + np.pi, 2.0 * np.pi) - np.pi
     visphi = np.reshape(visphiall, (len(cvis), 1))
     cp = (
         visphi[np.array(index_cps1)]
         + visphi[np.array(index_cps2)]
         - visphi[np.array(index_cps3)]
     )
-    out = np.reshape(np.mod(cp + 180.0, 360.0) - 180.0, len(index_cps1))
+    out = np.reshape(np.mod(cp + np.pi, 2.0 * np.pi) - np.pi, len(index_cps1))
     return out
 
 

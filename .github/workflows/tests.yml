@@ -32,9 +32,7 @@ jobs:
           uv venv --python 3.11 .venv
           uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter zensical
 
-      - name: Lint (pre-commit)
-        run: |
-          uv run --python .venv/bin/python pre-commit run --all-files --show-diff-on-failure
+      # Linting lives in lint.yml so formatting never blocks tests or docs.
 
       # ===== Tests =====
       - name: Test Suite

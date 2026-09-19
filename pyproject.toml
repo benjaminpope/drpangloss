@@ -23,16 +23,30 @@ build-backend = "setuptools.build_meta"
 
 # [project.optional-dependencies]
 # extras = []
-# dev = ["pytest", "black", "ruff", "pre-commit", "mkdocs", "mkdocs-jupyter", "mkdocs-same-dir", "mkdocs-autorefs", "mkdocs-simple-plugin", "mkdocstrings-python", "jupyter_contrib_nbextensions", "notebook==6.4.12"]
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.11.0",
+  "pre-commit",
+  "pytest",
+  "mkdocs",
+  "mkdocs-material",
+  "mkdocs-jupyter",
+  "mkdocstrings[python]",
+  "zensical",
+]
 
 [tool.black]
 line-length = 79
 
 [tool.ruff]
 line-length = 79
-required-version = ">=0.11.0"
+# Must match the rev in .pre-commit-config.yaml and RUFF_VERSION in the workflows.
+required-version = "==0.11.0"
 force-exclude = true
 extend-exclude = [
+  "site",
+  "docs/generated",
   "notebooks/ami_exploration.ipynb",
   "notebooks/louis_visibilities.ipynb",
 ]
@@ -44,7 +58,6 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 [tool.ruff.lint.per-file-ignores]
 "src/drpangloss/__init__.py" = ["F401"]
 "src/drpangloss/grid_fit.py" = ["F403", "F405", "F841"]
-"src/drpangloss/models_old.py" = ["E722", "F821"]
 "notebooks/contrast_limits.ipynb" = ["E702"]
 "notebooks/oidata_sandbox.ipynb" = ["F841"]
 "notebooks/upper_limits_new.ipynb" = ["F403", "F405"]

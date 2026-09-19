@@ -45,8 +45,9 @@ nav:
   - Home: index.md
   - Binary Search: binary_search.md
   - Contrast Limits: contrast_limits.md
+  - Hierarchical Inference: hierarchical_inference.md
   - Data I/O: data_io.md
-  - Visibility Models: model_syntax.md
+  - Extended Source Models: source_models.md
   - API Reference:
       - Overview: api/index.md
       - Models:
@@ -56,7 +57,6 @@ nav:
               - BinaryModelAngular: api/models/classes/binary_model_angular.md
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
           - Functions: api/models/functions.md
-          - Legacy Migration: api/models/legacy_migration.md
       - Grid Fit: api/grid_fit.md
       - Inference: api/inference.md
       - Plotting: api/plotting.md
