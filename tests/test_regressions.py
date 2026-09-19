@@ -26,16 +26,16 @@ def _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None):
     }
 
 
-def test_to_phases_absolute_returns_degrees():
+def test_to_phases_absolute_returns_radians():
     data = OIData(
         _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
     )
     cvis = np.array([1.0 + 0.0j, 0.0 + 1.0j])
     phases = data.to_phases(cvis)
-    assert np.allclose(phases, np.array([0.0, 90.0]))
+    assert np.allclose(phases, np.array([0.0, np.pi / 2.0]))
 
 
-def test_closure_phases_degree_convention():
+def test_closure_phases_radian_convention():
     cvis = np.exp(1j * np.deg2rad(np.array([10.0, 30.0, 25.0])))
     cps = closure_phases(
         cvis,
@@ -43,7 +43,19 @@ def test_closure_phases_degree_convention():
         np.array([1]),
         np.array([2]),
     )
-    assert np.allclose(cps, np.array([15.0]))
+    assert np.allclose(cps, np.deg2rad(np.array([15.0])))
+
+
+def test_dict_phase_unit_degrees_converted_to_radians():
+    data = _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
+    data["phi"] = np.array([0.0, 90.0, -180.0])
+    data["d_phi"] = np.array([1.0, 2.0, 3.0])
+    data["phi_unit"] = "deg"
+
+    oidata = OIData(data)
+
+    assert np.allclose(oidata.phi, np.deg2rad(np.array([0.0, 90.0, -180.0])))
+    assert np.allclose(oidata.d_phi, np.deg2rad(np.array([1.0, 2.0, 3.0])))
 
 
 def test_cp_flag_inferred_from_indices_when_missing():

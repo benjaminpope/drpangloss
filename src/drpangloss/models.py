@@ -61,7 +61,8 @@ class OIData(zx.Base):
         data : dict or object
             OIFITS data opened with ``pyoifits``, or a dictionary containing
             ``u``, ``v``, ``wavel``, ``vis``, ``d_vis``, ``phi``, ``d_phi``,
-            optional closure-phase indices, and convention flags.
+            optional closure-phase indices, convention flags, and optional
+            ``phi_unit`` (``"rad"`` or ``"deg"``).
         """
 
         if not isinstance(data, dict):
@@ -116,16 +117,26 @@ class OIData(zx.Base):
             # if absolute phases are available, get them, otherwise get closure phases
             if "OI_PHI" in data_names:
                 phidata = data["OI_PHI"]
-                self.phi = np.array(phidata.data["VISPHI"], dtype=float)
-                self.d_phi = np.array(phidata.data["VISERR"], dtype=float)
+                phi = np.array(phidata.data["VISPHI"], dtype=float)
+                d_phi = np.array(phidata.data["VISERR"], dtype=float)
+                phase_unit = self._extract_oifits_phase_unit(
+                    phidata, "VISPHI"
+                )
+                self.phi, self.d_phi = self._phase_to_radians(
+                    phi, d_phi, phase_unit, default_unit="deg"
+                )
                 self.i_cps1, self.i_cps2, self.i_cps3 = None, None, None
 
                 self.cp_flag = False
 
             elif "OI_T3" in data_names:
                 phidata = data["OI_T3"]
-                self.phi = np.array(phidata.data["T3PHI"], dtype=float)
-                self.d_phi = np.array(phidata.data["T3PHIERR"], dtype=float)
+                phi = np.array(phidata.data["T3PHI"], dtype=float)
+                d_phi = np.array(phidata.data["T3PHIERR"], dtype=float)
+                phase_unit = self._extract_oifits_phase_unit(phidata, "T3PHI")
+                self.phi, self.d_phi = self._phase_to_radians(
+                    phi, d_phi, phase_unit, default_unit="deg"
+                )
 
                 cp_sta_index = np.array(phidata.data["STA_INDEX"], dtype=int)
                 self.i_cps1, self.i_cps2, self.i_cps3 = cp_indices(
@@ -147,6 +158,10 @@ class OIData(zx.Base):
 
             self.phi = np.array(data["phi"], dtype=float)
             self.d_phi = np.array(data["d_phi"], dtype=float)
+            phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
+            self.phi, self.d_phi = self._phase_to_radians(
+                self.phi, self.d_phi, phi_unit, default_unit="rad"
+            )
 
             try:
                 idx1 = data["i_cps1"]
@@ -199,6 +214,35 @@ class OIData(zx.Base):
                 f"Unsupported vis_mode '{vis_mode}'. Expected one of {sorted(valid)} or 'auto'."
             )
         return mode
+
+    @staticmethod
+    def _phase_unit_scale(unit, default_unit):
+        """Return multiplicative factor converting the provided phase unit to rad."""
+        raw_unit = default_unit if unit is None else unit
+        unit_name = str(raw_unit).strip().lower()
+        if unit_name in {"rad", "radian", "radians"}:
+            return 1.0
+        if unit_name in {"deg", "degree", "degrees"}:
+            return np.pi / 180.0
+        raise ValueError(
+            f"Unsupported phase unit '{raw_unit}'. Expected radians or degrees."
+        )
+
+    @classmethod
+    def _phase_to_radians(cls, phi, d_phi, unit, default_unit):
+        """Convert phase observables and uncertainties to radians."""
+        scale = cls._phase_unit_scale(unit, default_unit)
+        return np.asarray(phi, dtype=float) * scale, np.asarray(
+            d_phi, dtype=float
+        ) * np.abs(scale)
+
+    @staticmethod
+    def _extract_oifits_phase_unit(phidata, column_name):
+        """Extract phase-column unit from an OIFITS table, if available."""
+        columns = getattr(phidata, "columns", None)
+        if columns is None or column_name not in columns.names:
+            return None
+        return getattr(columns[column_name], "unit", None)
 
     @staticmethod
     def _validate_operator_shape(operator, input_size, label):
@@ -366,14 +410,14 @@ class OIData(zx.Base):
 
     def to_phases(self, cvis):
         """
-        Convert complex visibilities to closure phases or absolute phases.
+        Convert complex visibilities to closure or absolute phases in radians.
         """
         if self.cp_flag:
             phases = closure_phases(
                 cvis, self.i_cps1, self.i_cps2, self.i_cps3
             )
         else:
-            phases = np.rad2deg(np.angle(cvis))
+            phases = np.angle(cvis)
         return self._apply_linear_operator(phases, self.phi_mat)
 
     def model(self, model_object):
@@ -900,18 +944,20 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     Returns
     -------
     array-like
-        Closure phases in degrees.
+        Closure phases in radians.
 
     """
-    visphiall = np.rad2deg(np.angle(cvis))
-    visphiall = np.mod(visphiall + 180.0, 360.0) - 180.0
+    visphiall = np.angle(cvis)
+    visphiall = np.mod(visphiall + np.pi, 2.0 * np.pi) - np.pi
     visphi = np.reshape(visphiall, (len(cvis), 1))
     cp = (
         visphi[np.array(index_cps1)]
         + visphi[np.array(index_cps2)]
         - visphi[np.array(index_cps3)]
     )
-    out = np.reshape(np.mod(cp + 180.0, 360.0) - 180.0, len(index_cps1))
+    out = np.reshape(
+        np.mod(cp + np.pi, 2.0 * np.pi) - np.pi, len(index_cps1)
+    )
     return out
 
 
