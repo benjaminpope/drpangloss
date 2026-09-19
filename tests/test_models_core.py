@@ -1,10 +1,7 @@
 import jax
 import jax.numpy as np
-<<<<<<< HEAD
 import jax.scipy as jsp
-=======
 import pytest
->>>>>>> origin/main
 
 from drpangloss.models import (
     BinaryModelAngular,
@@ -17,11 +14,8 @@ from drpangloss.models import (
     joint_prediction,
     laplace_cov,
     loglike,
-<<<<<<< HEAD
     loglike_nosignal,
-=======
     model_loglike,
->>>>>>> origin/main
 )
 
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
