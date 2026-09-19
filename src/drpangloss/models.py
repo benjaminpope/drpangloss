@@ -33,7 +33,8 @@ class OIData(zx.Base):
     The object stores baseline coordinates, observables, uncertainties, and
     optional closure-phase index triplets. It provides convenience methods for
     flattening data/model vectors and converting complex visibilities to the
-    configured visibility/phase conventions.
+    configured visibility/phase conventions. Phase observables are stored
+    internally in radians.
     """
 
     u: jax.Array
@@ -62,7 +63,9 @@ class OIData(zx.Base):
             OIFITS data opened with ``pyoifits``, or a dictionary containing
             ``u``, ``v``, ``wavel``, ``vis``, ``d_vis``, ``phi``, ``d_phi``,
             optional closure-phase indices, convention flags, and optional
-            ``phi_unit`` (``"rad"`` or ``"deg"``).
+            ``phi_unit`` (``"rad"`` or ``"deg"``). OIFITS phase columns are
+            interpreted using their column unit metadata when present, and
+            default to degrees when metadata is missing.
         """
 
         if not isinstance(data, dict):
@@ -943,6 +946,11 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     -------
     array-like
         Closure phases in radians.
+
+    Notes
+    -----
+    This helper returns radians for internal modeling consistency. Convert to
+    degrees before writing OIFITS phase columns (e.g., ``T3PHI``).
 
     """
     visphiall = np.angle(cvis)
