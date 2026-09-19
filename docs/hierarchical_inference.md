@@ -1,13 +1,18 @@
 <!-- AUTO-GENERATED FROM notebooks/hierarchical_inference.ipynb by scripts/sync_tutorial_docs.py. -->
 # Hierarchical binary inference across filters
 
-Here we fit three interferometric observations simultaneously. The binary position is shared between filters, while each filter has its own flux ratio. We also distinguish the expected Fisher information used to scale the optimization from the observed likelihood curvature used for a local Laplace uncertainty estimate.
+We often have multiple datasets with different telescopes or wavelengths, and it is useful to be able to treat a shared scene geometry with different fluxes at different wavelengths, for example; this is the principle behind (say) [SPARCO](https://arxiv.org/abs/1403.3343), where objects in the scene are allowed to have different SEDs.
+
+Here is a simple example where we fit a binary model to three interferometric observations simultaneously, taken at three different wavelengths. The binary position is shared between filters, while each filter has its own flux ratio.
+
+Many of the ideas in this notebook are explored in greater detail [in the Zodiax docs](https://louisdesdoigts.github.io/zodiax/optimisation_tools/) - check them out!
 
 ```python
 import sys
 from pathlib import Path
 
 import jax
+import optimistix as optx
 
 jax.config.update("jax_enable_x64", True)
 
@@ -22,7 +27,12 @@ for path in (repo_root, repo_root / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from drpangloss.inference import fisher_projection, gaussian_fisher
+from drpangloss.inference import (
+    fisher_projection,
+    gaussian_fisher,
+    observed_information,
+    regularized_inverse,
+)
 from drpangloss.models import (
     BinaryModelCartesian,
     joint_loglike,
@@ -32,14 +42,13 @@ from examples.hierarchical_binary_workflow import (
     FILTER_LABELS,
     binary_model,
     observation_errors,
-    run_hierarchical_binary_demo,
     simulate_observations,
 )
 ```
 
 ## Simulate three observations
 
-The three `OIData` objects have the same baseline sampling and uncertainties but wavelengths of 800 nm, 1.0 micron, and 1.2 microns. `OIData.with_model` preserves that observing configuration while replacing the observables with a model realization and optional Gaussian noise.
+The three `OIData` objects have the same baseline sampling and uncertainties but wavelengths of 800 nm, 1.0 micron, and 1.2 microns.
 
 ```python
 observations, truth = simulate_observations(seed=7)
@@ -57,7 +66,7 @@ observations, truth = simulate_observations(seed=7)
 ```
 
 ```text
-W0919 16:38:54.464285  440271 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0919 17:44:53.064665  506698 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ```text
@@ -74,7 +83,7 @@ W0919 16:38:54.464285  440271 cpp_gen_intrinsics.cc:74] Empty bitcode string pro
 
 ## Define the hierarchy
 
-The hierarchy is expressed by an ordinary JAX pytree. The scalar astrometry is shared, while indexing the flux vector selects a parameter unique to each observation. This is the same model-building pattern used by Zodiax: parameters remain separate from the objects that describe each observation.
+A hierarchical model is easily expressed by an ordinary JAX pytree. The astrometry is shared, while indexing the flux vector selects a parameter unique to each observation. This is the same model-building pattern used by Zodiax: parameters remain separate from the objects that describe each observation.
 
 ```python
 params = {
@@ -104,9 +113,9 @@ truth_loglike = joint_loglike(truth, observations, model_fn)
 {'initial_loglike': -6385.33425087397, 'truth_loglike': -48.91251621611459}
 ```
 
-## Construct the expected Fisher information
+## Preconditioning before Inference
 
-For fixed independent Gaussian errors, the expected Fisher information is exactly $F = J^T W J$, even when the prediction is nonlinear in the parameters. It is positive semidefinite and independent of the particular noise realization, making it useful for whitening the optimization coordinates.
+The Fisher Information Matrix tells us the expected information in the data, providing both a limit to the best possible covariance we can obtain from the data (the Cramér-Rao lower bound) and a way of normalising parameters, which might have very different scales and correlations. It is often best to do this normalization before Bayesian inference, in order to precondition the model for fast convergence.
 
 ```python
 prediction_fn = lambda values: joint_prediction(
@@ -138,22 +147,78 @@ projection = fisher_projection(initial_fisher, eps=1e-10)
          -8.98142407e-17,  1.00000000e+00]], dtype=float64)}
 ```
 
-## Fit in Fisher-whitened coordinates
+## Optimization
 
-Following the Zodiax optimization tutorial, we optimize a zero-centered latent vector and project it back into the physical parameter pytree. The helper uses Optimistix BFGS and the Fisher projection calculated at the initial point.
+We first fit the model using optimization from a decent starting point:
 
 ```python
-summary = run_hierarchical_binary_demo(seed=7)
+initial_vector, unravel = ravel_pytree(params)
 
-recovered_flux = 10.0 ** summary.recovered["log10_flux"]
-truth_flux = 10.0 ** summary.truth["log10_flux"]
+
+def project(latent):
+    # Map latent optimization coordinates back to model parameters.
+    return unravel(initial_vector + projection @ latent)
+
+
+def latent_objective(latent, args):
+    # Optimize the negative joint log-likelihood in latent coordinates.
+    del args
+    return -joint_loglike(project(latent), observations, binary_model)
+
+
+solver = optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8))
+solution = optx.minimise(
+    latent_objective,
+    solver,
+    jnp.zeros_like(initial_vector),
+    max_steps=256,
+    throw=False,
+)
+recovered = project(solution.value)
+
+recovered_flux = 10.0 ** recovered["log10_flux"]
+truth_flux = 10.0 ** truth["log10_flux"]
 {
-    "initial_reduced_chi2": summary.initial_chi2r,
-    "final_reduced_chi2": summary.final_chi2r,
-    "truth_dra_mas": float(summary.truth["dra"]),
-    "recovered_dra_mas": float(summary.recovered["dra"]),
-    "truth_ddec_mas": float(summary.truth["ddec"]),
-    "recovered_ddec_mas": float(summary.recovered["ddec"]),
+    "initial_reduced_chi2": float(
+        jnp.sum(
+            (
+                (
+                    jnp.concatenate(
+                        [
+                            observation.flatten_data()[0]
+                            for observation in observations
+                        ]
+                    )
+                    - prediction_fn(params)
+                )
+                / errors
+            )
+            ** 2
+        )
+        / (errors.size - initial_vector.size)
+    ),
+    "final_reduced_chi2": float(
+        jnp.sum(
+            (
+                (
+                    jnp.concatenate(
+                        [
+                            observation.flatten_data()[0]
+                            for observation in observations
+                        ]
+                    )
+                    - prediction_fn(recovered)
+                )
+                / errors
+            )
+            ** 2
+        )
+        / (errors.size - initial_vector.size)
+    ),
+    "truth_dra_mas": float(truth["dra"]),
+    "recovered_dra_mas": float(recovered["dra"]),
+    "truth_ddec_mas": float(truth["ddec"]),
+    "recovered_ddec_mas": float(recovered["ddec"]),
     "truth_fluxes": truth_flux,
     "recovered_fluxes": recovered_flux,
 }
@@ -170,34 +235,21 @@ truth_flux = 10.0 ** summary.truth["log10_flux"]
  'recovered_fluxes': Array([0.01491984, 0.01003515, 0.00700039], dtype=float64)}
 ```
 
-## Expected and observed curvature
-
-The observed information is the Hessian of the negative log likelihood for this particular dataset. It contains a residual-weighted model-curvature term that is absent from the expected Fisher information. We use the observed information at the fitted solution for the local Laplace covariance.
-
 ```python
-def correlation(matrix):
-    scale = jnp.sqrt(jnp.abs(jnp.diag(matrix)))
-    return matrix / jnp.outer(scale, scale)
+recovered_vector, recovered_unravel = ravel_pytree(recovered)
 
 
-fig, axes = plt.subplots(1, 2, figsize=(8, 3.4), constrained_layout=True)
-for ax, matrix, title in zip(
-    axes,
-    (summary.expected_fisher, summary.observed_information),
-    ("Expected Fisher", "Observed information"),
-):
-    image = ax.imshow(correlation(matrix), vmin=-1, vmax=1, cmap="coolwarm")
-    ax.set_title(title)
-    ax.set_xlabel("Parameter index")
-    ax.set_ylabel("Parameter index")
-fig.colorbar(image, ax=axes, label="Normalized curvature")
-plt.show()
-```
+def flat_objective(values):
+    # Evaluate the negative log-likelihood for flat parameter vectors.
+    return -joint_loglike(
+        recovered_unravel(values), observations, binary_model
+    )
 
-![hierarchical_inference output 12.1](generated/hierarchical_inference_cell012_out01.png)
 
-```python
-flat_recovered, _ = ravel_pytree(summary.recovered)
+expected_fisher, _ = gaussian_fisher(prediction_fn, recovered, errors)
+observed_info = observed_information(flat_objective, recovered_vector)
+laplace_covariance = regularized_inverse(observed_info, ridge=1e-8)
+
 parameter_names = [
     "ddec (mas)",
     "dra (mas)",
@@ -205,11 +257,11 @@ parameter_names = [
     "log10 flux: 1.0 micron",
     "log10 flux: 1.2 microns",
 ]
-laplace_sigma = jnp.sqrt(jnp.diag(summary.laplace_covariance))
+laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))
 {
     name: {"estimate": float(value), "laplace_sigma": float(sigma)}
     for name, value, sigma in zip(
-        parameter_names, flat_recovered, laplace_sigma
+        parameter_names, recovered_vector, laplace_sigma
     )
 }
 ```
@@ -229,7 +281,7 @@ laplace_sigma = jnp.sqrt(jnp.diag(summary.laplace_covariance))
 
 ## Corner plot of shared and per-filter parameters
 
-We have not run HMC in this tutorial, but we can still visualize the local uncertainty with a corner plot by drawing Gaussian samples from the Laplace covariance around the recovered solution, following the same `chainconsumer` helpers used in the binary search tutorial. The five parameters are the shared astrometry `dra`/`ddec` and one `log10_flux` per filter.
+Let's visualize the recovered parameters and compare them to the truth values from which they are simulated:
 
 ```python
 import numpy as onp
@@ -249,12 +301,12 @@ parameter_columns = [
     "log10_flux_1p2um",
 ]
 
-flat_recovered, unravel_recovered = ravel_pytree(summary.recovered)
-flat_truth, _ = ravel_pytree(summary.truth)
+flat_recovered, unravel_recovered = ravel_pytree(recovered)
+flat_truth, _ = ravel_pytree(truth)
 
 # Gaussian samples from the local Laplace covariance around the fitted solution.
 n_samples = 20000
-cholesky = jnp.linalg.cholesky(summary.laplace_covariance)
+cholesky = jnp.linalg.cholesky(laplace_covariance)
 standard_normal = jax.random.normal(
     jax.random.key(11), (n_samples, flat_recovered.size)
 )
@@ -273,9 +325,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![hierarchical_inference output 15.1](generated/hierarchical_inference_cell015_out01.png)
+![hierarchical_inference output 13.1](generated/hierarchical_inference_cell013_out01.png)
 
-![hierarchical_inference output 15.2](generated/hierarchical_inference_cell015_out02.png)
+![hierarchical_inference output 13.2](generated/hierarchical_inference_cell013_out02.png)
 
 ## Posterior predictive correlation per filter
 
@@ -302,11 +354,11 @@ for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
     plt.show()
 ```
 
-![hierarchical_inference output 17.1](generated/hierarchical_inference_cell017_out01.png)
+![hierarchical_inference output 15.1](generated/hierarchical_inference_cell015_out01.png)
 
-![hierarchical_inference output 17.2](generated/hierarchical_inference_cell017_out02.png)
+![hierarchical_inference output 15.2](generated/hierarchical_inference_cell015_out02.png)
 
-![hierarchical_inference output 17.3](generated/hierarchical_inference_cell017_out03.png)
+![hierarchical_inference output 15.3](generated/hierarchical_inference_cell015_out03.png)
 
 ## Visibility and phase versus baseline
 
@@ -319,7 +371,7 @@ fig, axes = plt.subplots(
 
 for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
     baseline = jnp.sqrt(observation.u**2 + observation.v**2)
-    cvis_fit = binary_model(summary.recovered, index).model(
+    cvis_fit = binary_model(recovered, index).model(
         observation.u, observation.v, observation.wavel
     )
     vis_fit = observation.to_vis(cvis_fit)
@@ -357,4 +409,4 @@ axes[0, 0].legend(loc="best")
 plt.show()
 ```
 
-![hierarchical_inference output 19.1](generated/hierarchical_inference_cell019_out01.png)
+![hierarchical_inference output 17.1](generated/hierarchical_inference_cell017_out01.png)
