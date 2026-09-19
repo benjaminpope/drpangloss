@@ -7,7 +7,6 @@
       show_attributes: false
       members:
         - __init__
-        - __repr__
         - unpack_all
         - model
         - render
