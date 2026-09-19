@@ -13,6 +13,7 @@ MAPPINGS = {
     "notebooks/data_io.ipynb": "docs/data_io.md",
     "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
+    "notebooks/source_models.ipynb": "docs/source_models.md",
 }
 
 

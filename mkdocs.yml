@@ -47,6 +47,7 @@ nav:
   - Contrast Limits: contrast_limits.md
   - Data I/O: data_io.md
   - Visibility Models: model_syntax.md
+  - Extended Source Models: source_models.md
   - API Reference:
       - Overview: api/index.md
       - Models:
