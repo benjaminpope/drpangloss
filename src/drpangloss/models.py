@@ -2,6 +2,7 @@ import jax.numpy as np
 import jax
 
 import numpy as onp
+import inspect
 
 import equinox as eqx
 import zodiax as zx
@@ -384,7 +385,25 @@ class OIData(zx.Base):
         return self.flatten_model(cvis)
 
 
-class BinaryModelAngular(zx.Base):
+def _image_coordinates(npix, fov_mas):
+    """Return Cartesian image-plane coordinates in milliarcseconds."""
+    coords = np.linspace(-0.5 * fov_mas, 0.5 * fov_mas, int(npix))
+    return np.meshgrid(coords, coords, indexing="xy")
+
+
+class SourceModel(zx.Base):
+    """Base class for sky-brightness source models."""
+
+    def model(self, u, v, wavel):
+        """Evaluate complex visibilities on interferometric baselines."""
+        raise NotImplementedError
+
+    def render(self, npix=256, fov_mas=200.0):
+        """Render an image-plane model in milliarcseconds."""
+        raise NotImplementedError
+
+
+class BinaryModelAngular(SourceModel):
     """
     Represent a binary companion using angular separation and position angle.
 
@@ -463,8 +482,27 @@ class BinaryModelAngular(zx.Base):
         uu, vv = u / wavel, v / wavel
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
 
+    def render(self, npix=256, fov_mas=200.0):
+        """
+        Render a two-point-source approximation on a Cartesian image grid.
+        """
+        xx, yy = _image_coordinates(npix, fov_mas)
+        th = self.pa * dtor
+        ddec = self.sep * np.cos(th)
+        dra = -1.0 * self.sep * np.sin(th)
 
-class BinaryModelCartesian(zx.Base):
+        l2 = 1.0 / (self.contrast + 1.0)
+        l1 = 1.0 - l2
+        sigma = max(float(fov_mas) / float(npix), 1e-6)
+        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
+        comp = np.exp(
+            -0.5 * (((xx - dra) / sigma) ** 2 + ((yy - ddec) / sigma) ** 2)
+        )
+        image = l1 * star + l2 * comp
+        return image / np.sum(image)
+
+
+class BinaryModelCartesian(SourceModel):
     """
     Represent a binary companion using Cartesian sky offsets.
 
@@ -541,6 +579,102 @@ class BinaryModelCartesian(zx.Base):
         """
         uu, vv = u / wavel, v / wavel
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
+
+    def render(self, npix=256, fov_mas=200.0):
+        """
+        Render a two-point-source approximation on a Cartesian image grid.
+        """
+        xx, yy = _image_coordinates(npix, fov_mas)
+        l2 = self.flux / (1.0 + self.flux)
+        l1 = 1.0 - l2
+        sigma = max(float(fov_mas) / float(npix), 1e-6)
+        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
+        comp = np.exp(
+            -0.5
+            * (
+                ((xx - self.dra) / sigma) ** 2
+                + ((yy - self.ddec) / sigma) ** 2
+            )
+        )
+        image = l1 * star + l2 * comp
+        return image / np.sum(image)
+
+
+class GaussianDiskModel(SourceModel):
+    """Centered or offset circular Gaussian disk model."""
+
+    fwhm: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def __init__(self, fwhm, dra=0.0, ddec=0.0):
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __repr__(self):
+        return (
+            "GaussianDiskModel("
+            f"fwhm={self.fwhm}, dra={self.dra}, ddec={self.ddec})"
+        )
+
+    def unpack_all(self):
+        return self.fwhm, self.dra, self.ddec
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return cvis_gaussian_disk(uu, vv, self.fwhm, self.dra, self.ddec)
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        sigma_mas = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        sigma_mas = np.maximum(sigma_mas, 1e-9)
+        image = np.exp(
+            -0.5
+            * (
+                ((xx - self.dra) / sigma_mas) ** 2
+                + ((yy - self.ddec) / sigma_mas) ** 2
+            )
+        )
+        return image / np.sum(image)
+
+
+class HarmonixAdapter(SourceModel):
+    """
+    Adapter for external source models with harmonix-like visibility methods.
+    """
+
+    source: object = eqx.field(static=True)
+    visibility_method: str = eqx.field(static=True)
+    render_method: str = eqx.field(static=True)
+    expects_wavelength_units: bool = eqx.field(static=True)
+
+    def __init__(
+        self,
+        source,
+        visibility_method="model",
+        render_method="render",
+        expects_wavelength_units=True,
+    ):
+        self.source = source
+        self.visibility_method = str(visibility_method)
+        self.render_method = str(render_method)
+        self.expects_wavelength_units = bool(expects_wavelength_units)
+
+    def model(self, u, v, wavel):
+        method = getattr(self.source, self.visibility_method)
+        args = [u, v] if self.expects_wavelength_units else [u / wavel, v / wavel]
+        params = inspect.signature(method).parameters.values()
+        if any(p.kind == p.VAR_POSITIONAL for p in params) or len(params) >= 3:
+            args.append(wavel)
+        return np.asarray(method(*args))
+
+    def render(self, npix=256, fov_mas=200.0):
+        if not hasattr(self.source, self.render_method):
+            raise NotImplementedError(
+                "Wrapped source does not expose a render method."
+            )
+        return np.asarray(getattr(self.source, self.render_method)(npix, fov_mas))
 
 
 def cvis_binary_angular(u, v, sep, pa, contrast):
@@ -622,6 +756,18 @@ def cvis_binary(u, v, ddec, dra, planet):
     cvis = p3 + p2 * phi_r + p2 * phi_i * 1.0j
 
     return cvis
+
+
+def cvis_gaussian_disk(u, v, fwhm, dra=0.0, ddec=0.0):
+    """Compute complex visibilities for a circular Gaussian disk."""
+    sigma_rad = mas2rad * fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+    rho2 = u**2 + v**2
+    envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
+
+    dra_rad = mas2rad * dra
+    ddec_rad = mas2rad * ddec
+    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    return envelope * phase
 
 
 def loglike(values, params, data_obj, model_class):

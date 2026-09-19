@@ -6,6 +6,7 @@
       members:
         - cvis_binary_angular
         - cvis_binary
+        - cvis_gaussian_disk
         - loglike
         - loglike_nosignal
         - laplace_cov
