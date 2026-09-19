@@ -55,8 +55,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 - Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
 - JAX runs in float64 (`jax.config.update("jax_enable_x64", True)`); keep it that way in
   new notebooks and tests.
-- `src/drpangloss/models_old.py` is deprecated. Do not extend it; new model code goes in
-  `src/drpangloss/models.py`.
+- New model code goes in `src/drpangloss/models.py`.
 
 ## Do not modify
 

@@ -14,9 +14,3 @@ Module-level API for interferometric data containers and source models.
 ## Functions
 
 - [Module functions](functions.md)
-
-## Legacy module deprecation
-
-`drpangloss.models_old` is deprecated and will be removed in a future release.
-
-- [Legacy migration map](legacy_migration.md)
