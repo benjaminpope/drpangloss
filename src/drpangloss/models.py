@@ -650,7 +650,9 @@ def loglike(values, params, data_obj, model_class):
     model_data = data_obj.model(model_class(**param_dict))
     data, errors = data_obj.flatten_data()
 
-    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    return jax.scipy.stats.norm.logpdf(
+        model_data, loc=data, scale=errors
+    ).sum()
 
 
 def loglike_nosignal(values, params, data_obj, model_class):
@@ -682,7 +684,9 @@ def loglike_nosignal(values, params, data_obj, model_class):
         [np.ones_like(data_obj.vis), np.zeros_like(data_obj.phi)]
     )
 
-    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    return jax.scipy.stats.norm.logpdf(
+        model_data, loc=data, scale=errors
+    ).sum()
 
 
 def laplace_cov(values, params, data_obj, model_class):
