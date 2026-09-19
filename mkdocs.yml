@@ -44,6 +44,7 @@ plugins:
 nav:
   - Home: index.md
   - Binary Search: binary_search.md
+  - Hierarchical Inference: hierarchical_inference.md
   - Contrast Limits: contrast_limits.md
   - Data I/O: data_io.md
   - Visibility Models: model_syntax.md

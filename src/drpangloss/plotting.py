@@ -183,8 +183,8 @@ def plot_data_model_correlation(
     ax2.set_ylim(phi_min, phi_max)
     ax2.xaxis.set_major_formatter(phi_formatter)
     ax2.yaxis.set_major_formatter(phi_formatter)
-    ax2.set_xlabel("Data (deg)")
-    ax2.set_ylabel("Model (deg)")
+    ax2.set_xlabel("Data (rad)")
+    ax2.set_ylabel("Model (rad)")
     ax2.set_title(phase_title)
     if square_axes:
         ax2.set_box_aspect(1)

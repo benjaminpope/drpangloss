@@ -181,6 +181,8 @@ class OIData(zx.Base):
             self.v2_flag = bool(data.get("v2_flag", True))
             self.cp_flag = bool(data.get("cp_flag", self.i_cps1 is not None))
 
+            has_disco_vis = "disco_vis_mat" in data
+            has_disco_phi = "disco_phi_mat" in data
             vis_mat_in = data.get("disco_vis_mat", data.get("vis_mat", None))
             phi_mat_in = data.get("disco_phi_mat", data.get("phi_mat", None))
             self.vis_mat = (
@@ -197,7 +199,10 @@ class OIData(zx.Base):
                 "vis_mode", data.get("observable_vis_mode", "auto")
             )
             self.vis_mode = self._resolve_vis_mode(vis_mode_in)
-            self._transform_observed_channels()
+            self._transform_observed_channels(
+                validate_vis_covariance=has_disco_vis,
+                validate_phi_covariance=has_disco_phi,
+            )
             return
 
         self.vis_mat = None
@@ -274,11 +279,11 @@ class OIData(zx.Base):
         )
 
     @staticmethod
-    def _propagate_uncertainty(channel_sigma, operator):
-        """Propagate diagonal uncertainties through a linear operator."""
+    def _operator_weights(channel_sigma, operator):
+        """Orient a linear operator to act on the supplied channel vector."""
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
         if operator is None:
-            return sigma
+            return None
         op = operator
         if op.shape[1] == sigma.size:
             weights = op
@@ -288,7 +293,36 @@ class OIData(zx.Base):
             raise ValueError(
                 f"Operator shape {op.shape} is incompatible with uncertainty length {sigma.size}."
             )
+        return weights
+
+    @classmethod
+    def _propagate_uncertainty(cls, channel_sigma, operator):
+        """Propagate diagonal uncertainties through a linear operator."""
+        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        if operator is None:
+            return sigma
+        weights = cls._operator_weights(sigma, operator)
+        assert weights is not None
         return np.sqrt(np.sum((weights * sigma[None, :]) ** 2, axis=1))
+
+    @classmethod
+    def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
+        """Assert that an explicitly labelled DISCO operator whitens covariance."""
+        if operator is None:
+            return
+        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        weights = cls._operator_weights(sigma, operator)
+        assert weights is not None
+        weighted = weights * sigma[None, :]
+        covariance = weighted @ weighted.T
+        diagonal = np.diag(np.diag(covariance))
+        scale = float(np.max(np.abs(np.diag(covariance))))
+        atol = max(1e-12, 1e-7 * scale)
+        if not bool(np.allclose(covariance, diagonal, rtol=1e-5, atol=atol)):
+            raise ValueError(
+                f"{label} does not produce diagonal propagated covariance. "
+                "DISCO observables must be statistically independent."
+            )
 
     def _visibility_channel_from_model(self, cvis):
         """Convert complex visibilities to the configured scalar visibility channel."""
@@ -326,7 +360,9 @@ class OIData(zx.Base):
             return 2.0 * np.maximum(vis, 1e-30) * d_vis
         return d_vis
 
-    def _transform_observed_channels(self):
+    def _transform_observed_channels(
+        self, validate_vis_covariance=False, validate_phi_covariance=False
+    ):
         """Optionally project observed channels into linear self-calibrated observables."""
         n_vis = np.asarray(self.u).size
         n_phi = (
@@ -342,11 +378,19 @@ class OIData(zx.Base):
             vis_sigma = self._visibility_uncertainty_channel(
                 self.vis, self.d_vis
             )
+            if validate_vis_covariance:
+                self._validate_diagonal_covariance(
+                    vis_sigma, self.vis_mat, "disco_vis_mat"
+                )
             self.vis = self._apply_linear_operator(vis_channel, self.vis_mat)
             self.d_vis = self._propagate_uncertainty(vis_sigma, self.vis_mat)
 
         if self.phi_mat is not None and np.asarray(self.phi).size == n_phi:
             phi_sigma = np.asarray(self.d_phi, dtype=float)
+            if validate_phi_covariance:
+                self._validate_diagonal_covariance(
+                    phi_sigma, self.phi_mat, "disco_phi_mat"
+                )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
             self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
 
@@ -427,6 +471,30 @@ class OIData(zx.Base):
         """
         cvis = model_object.model(self.u, self.v, self.wavel)
         return self.flatten_model(cvis)
+
+    def with_model(self, model_object, key=None, noise_scale=1.0):
+        """Return a copy populated from a model with optional Gaussian noise.
+
+        Sampling, uncertainties, conventions, closure indices, and linear
+        observable operators are preserved from this object.
+        """
+        noise_scale = float(noise_scale)
+        if noise_scale < 0.0:
+            raise ValueError("noise_scale must be non-negative.")
+
+        prediction = self.model(model_object)
+        n_vis = self.vis.size
+        vis = prediction[:n_vis]
+        phi = prediction[n_vis:]
+        if key is not None:
+            vis_key, phi_key = jax.random.split(key)
+            vis = vis + noise_scale * self.d_vis * jax.random.normal(
+                vis_key, vis.shape
+            )
+            phi = phi + noise_scale * self.d_phi * jax.random.normal(
+                phi_key, phi.shape
+            )
+        return self.set(["vis", "phi"], [vis, phi])
 
 
 def _image_coordinates(npix, fov_mas):
@@ -870,6 +938,35 @@ def cvis_gaussian_disk(u, v, sigma, dra=0.0, ddec=0.0):
     return envelope * phase
 
 
+def model_loglike(model_object, data_obj):
+    """Evaluate a Gaussian log likelihood for an instantiated model object."""
+    model_data = data_obj.model(model_object)
+    data, errors = data_obj.flatten_data()
+    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+
+
+def joint_prediction(params, observations, model_fn):
+    """Concatenate predictions for a parameter pytree and multiple observations.
+
+    ``model_fn(params, index)`` defines which parameters are shared and which
+    are specific to each observation.
+    """
+    return np.concatenate(
+        [
+            observation.model(model_fn(params, index))
+            for index, observation in enumerate(observations)
+        ]
+    )
+
+
+def joint_loglike(params, observations, model_fn):
+    """Sum independent Gaussian log likelihoods over multiple observations."""
+    return sum(
+        model_loglike(model_fn(params, index), observation)
+        for index, observation in enumerate(observations)
+    )
+
+
 def loglike(values, params, data_obj, model_class):
     """
     Abstract log-likelihood function for a given model class and data object, assuming Gaussian errors.
@@ -893,10 +990,7 @@ def loglike(values, params, data_obj, model_class):
 
     param_dict = dict(zip(params, values))
 
-    model_data = data_obj.model(model_class(**param_dict))
-    data, errors = data_obj.flatten_data()
-
-    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    return model_loglike(model_class(**param_dict), data_obj)
 
 
 def loglike_nosignal(values, params, data_obj, model_class):

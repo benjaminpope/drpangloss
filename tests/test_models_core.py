@@ -1,4 +1,6 @@
+import jax
 import jax.numpy as np
+import pytest
 
 from drpangloss.models import (
     BinaryModelAngular,
@@ -7,8 +9,11 @@ from drpangloss.models import (
     closure_phases,
     cvis_binary,
     fisher,
+    joint_loglike,
+    joint_prediction,
     laplace_cov,
     loglike,
+    model_loglike,
 )
 
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
@@ -94,6 +99,42 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.isfinite(like)
 
 
+def test_model_and_joint_loglike_helpers_match_legacy_loglike():
+    values = np.array([120.0, -80.0, 2e-3])
+    params = ["dra", "ddec", "flux"]
+    model = BinaryModelCartesian(*values)
+    observations = (oidata, oidata)
+    tree = {"dra": values[0], "ddec": values[1], "flux": values[2:]}
+    model_fn = lambda values, index: BinaryModelCartesian(
+        values["dra"], values["ddec"], values["flux"][index]
+    )
+
+    legacy = loglike(values, params, oidata, BinaryModelCartesian)
+    assert np.allclose(model_loglike(model, oidata), legacy)
+    assert np.allclose(joint_loglike(tree, observations, model_fn), 2 * legacy)
+    assert joint_prediction(tree, observations, model_fn).shape[0] == 2 * (
+        oidata.vis.size + oidata.phi.size
+    )
+
+
+def test_oidata_with_model_preserves_structure_and_seeded_noise():
+    model = BinaryModelCartesian(120.0, -80.0, 2e-3)
+    noiseless = oidata.with_model(model)
+    noisy_a = oidata.with_model(model, key=jax.random.key(12))
+    noisy_b = oidata.with_model(model, key=jax.random.key(12))
+
+    assert np.allclose(noiseless.flatten_data()[0], oidata.model(model))
+    assert np.allclose(noisy_a.vis, noisy_b.vis)
+    assert np.allclose(noisy_a.phi, noisy_b.phi)
+    assert np.allclose(noiseless.u, oidata.u)
+    assert np.allclose(noiseless.d_vis, oidata.d_vis)
+    assert noiseless.cp_flag == oidata.cp_flag
+    assert noiseless.vis_mode == oidata.vis_mode
+
+    with pytest.raises(ValueError, match="non-negative"):
+        oidata.with_model(model, noise_scale=-1.0)
+
+
 def test_oidata_linear_observables_transform_and_model_alignment():
     cvis = cvis_binary(
         oidata.u / oidata.wavel, oidata.v / oidata.wavel, 0.0, 50.0, 1e-3
@@ -152,3 +193,33 @@ def test_oidata_linear_observables_invalid_shape_raises():
     except ValueError:
         raised = True
     assert raised
+
+
+def test_disco_operator_requires_diagonal_propagated_covariance():
+    base = {
+        "u": np.zeros(2),
+        "v": np.zeros(2),
+        "wavel": np.array([1e-6]),
+        "vis": np.ones(2),
+        "d_vis": np.ones(2),
+        "phi": np.zeros(2),
+        "d_phi": np.ones(2),
+        "v2_flag": False,
+        "cp_flag": False,
+    }
+    orthogonal = np.array([[1.0, 1.0], [1.0, -1.0]]) / np.sqrt(2.0)
+    independent = OIData({**base, "disco_vis_mat": orthogonal})
+
+    assert np.allclose(independent.d_vis, np.ones(2))
+    with pytest.raises(ValueError, match="diagonal propagated covariance"):
+        OIData(
+            {
+                **base,
+                "disco_vis_mat": np.array([[1.0, 0.0], [1.0, 1.0]]),
+            }
+        )
+
+    correlated_generic = OIData(
+        {**base, "vis_mat": np.array([[1.0, 0.0], [1.0, 1.0]])}
+    )
+    assert correlated_generic.vis.shape == (2,)
