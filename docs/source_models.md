@@ -93,7 +93,9 @@ data_vec, err_vec = data.flatten_data()
     "model_len": int(model_vec.shape[0]),
     "data_len": int(data_vec.shape[0]),
     "error_len": int(err_vec.shape[0]),
-    "vector_alignment": bool(model_vec.shape == data_vec.shape == err_vec.shape),
+    "vector_alignment": bool(
+        model_vec.shape == data_vec.shape == err_vec.shape
+    ),
 }
 ```
 
@@ -166,7 +168,7 @@ class ToyHarmonixSource:
 
     def model(self, uu, vv, time):
         rho = jnp.sqrt((uu / 8.0e7) ** 2 + (vv / 5.0e7) ** 2)
-        envelope = jnp.exp(-rho**2)
+        envelope = jnp.exp(-(rho**2))
         phase = jnp.exp(-2j * jnp.pi * time * uu / 2.0e8)
         return envelope * phase
 
