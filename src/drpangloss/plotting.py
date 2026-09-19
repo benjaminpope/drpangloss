@@ -1039,6 +1039,35 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
     plt.show()
 
 
+def _format_sigma_or_percent_value(value):
+    formatted = f"{float(value):.3g}"
+    return formatted.rstrip("0").rstrip(".") if "." in formatted else formatted
+
+
+def _resolve_contrast_limit_label(
+    limit_label=None, percentile=None, sigma=None
+):
+    if limit_label is not None:
+        return limit_label
+
+    if percentile is not None and sigma is not None:
+        raise ValueError("Provide only one of percentile or sigma.")
+
+    if percentile is not None:
+        percentile = np.asarray(percentile, dtype=float).reshape(-1)
+        if percentile.size != 1:
+            raise ValueError("percentile must be a scalar or length-1 array.")
+        return f"{_format_sigma_or_percent_value(percentile[0] * 100)}% Upper Limit"
+
+    if sigma is not None:
+        sigma = np.asarray(sigma, dtype=float).reshape(-1)
+        if sigma.size != 1:
+            raise ValueError("sigma must be a scalar or length-1 array.")
+        return f"{_format_sigma_or_percent_value(sigma[0])}$\\sigma$ Contrast Limit"
+
+    return "98% Upper Limit"
+
+
 def plot_contrast_limits(
     contrast_limits,
     samples_dict,
@@ -1046,7 +1075,9 @@ def plot_contrast_limits(
     avg_width,
     std_width,
     true_values=None,
-    limit_label="98% Upper Limit",
+    limit_label=None,
+    percentile=None,
+    sigma=None,
 ):
     """
     Plot the contrast limits calculated with the Ruffio or Absil methods.
@@ -1066,9 +1097,17 @@ def plot_contrast_limits(
     true_values : list, optional
         List of true values for the parameters, default None
     limit_label : str, optional
-        Label used for the map title and curve legend.
+        Label used for the map title and curve legend. If not provided, the
+        label is inferred from ``percentile`` or ``sigma`` when available.
+    percentile : float or array-like, optional
+        Percentile confidence level for Ruffio-style upper limits.
+    sigma : float or array-like, optional
+        Sigma confidence level for Absil-style detection limits.
 
     """
+    limit_label = _resolve_contrast_limit_label(
+        limit_label=limit_label, percentile=percentile, sigma=sigma
+    )
 
     plt.figure(figsize=(20, 5))
     matplotlib.rcParams["figure.dpi"] = 150
