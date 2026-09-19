@@ -442,6 +442,21 @@ class BinaryModelAngular(zx.Base):
         """
         return self.sep, self.pa, self.contrast
 
+    def to_cartesian(self):
+        """
+        Convert this angular parameterization into Cartesian sky offsets.
+
+        Returns
+        -------
+        BinaryModelCartesian
+            Equivalent binary model expressed as ``(dra, ddec, flux)``.
+        """
+        th = self.pa * dtor
+        dra = -self.sep * np.sin(th)
+        ddec = self.sep * np.cos(th)
+        flux = 1.0 / self.contrast
+        return BinaryModelCartesian(dra, ddec, flux)
+
     def model(self, u, v, wavel):
         """
         Evaluate complex visibilities for this angular binary model.
@@ -520,6 +535,20 @@ class BinaryModelCartesian(zx.Base):
             Tuple ``(dra, ddec, flux)``.
         """
         return self.dra, self.ddec, self.flux
+
+    def to_angular(self):
+        """
+        Convert this Cartesian parameterization into angular coordinates.
+
+        Returns
+        -------
+        BinaryModelAngular
+            Equivalent binary model expressed as ``(sep, pa, contrast)``.
+        """
+        sep = np.sqrt(self.dra**2 + self.ddec**2)
+        pa = np.mod(np.rad2deg(np.arctan2(-self.dra, self.ddec)), 360.0)
+        contrast = 1.0 / self.flux
+        return BinaryModelAngular(sep, pa, contrast)
 
     def model(self, u, v, wavel):
         """
