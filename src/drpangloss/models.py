@@ -942,7 +942,9 @@ def model_loglike(model_object, data_obj):
     """Evaluate a Gaussian log likelihood for an instantiated model object."""
     model_data = data_obj.model(model_object)
     data, errors = data_obj.flatten_data()
-    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    return jax.scipy.stats.norm.logpdf(
+        model_data, loc=data, scale=errors
+    ).sum()
 
 
 def joint_prediction(params, observations, model_fn):
@@ -1022,7 +1024,9 @@ def loglike_nosignal(values, params, data_obj, model_class):
         [np.ones_like(data_obj.vis), np.zeros_like(data_obj.phi)]
     )
 
-    return -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    return jax.scipy.stats.norm.logpdf(
+        model_data, loc=data, scale=errors
+    ).sum()
 
 
 def laplace_cov(values, params, data_obj, model_class):

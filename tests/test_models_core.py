@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as np
+import jax.scipy as jsp
 import pytest
 
 from drpangloss.models import (
@@ -13,6 +14,7 @@ from drpangloss.models import (
     joint_prediction,
     laplace_cov,
     loglike,
+    loglike_nosignal,
     model_loglike,
 )
 
@@ -43,7 +45,7 @@ def test_likelihood():
     model_data = oidata.model(binary)
     data, errors = oidata.flatten_data()
 
-    like = -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+    like = jsp.stats.norm.logpdf(model_data, loc=data, scale=errors).sum()
     assert np.all(np.isfinite(like))
 
 
@@ -86,10 +88,16 @@ def test_BinaryModelCartesian_to_angular_roundtrip():
 def test_laplace_and_fisher_wrappers_are_finite():
     params = ["dra", "ddec", "flux"]
     values = np.array([120.0, -80.0, 2e-3])
+    param_dict = dict(zip(params, values))
+    model_data = oidata.model(BinaryModelCartesian(**param_dict))
+    data, errors = oidata.flatten_data()
 
     cov = laplace_cov(values, params, oidata, BinaryModelCartesian)
     fmat = fisher(values, params, oidata, BinaryModelCartesian, ridge=1e-10)
     like = loglike(values, params, oidata, BinaryModelCartesian)
+    expected_like = jsp.stats.norm.logpdf(
+        model_data, loc=data, scale=errors
+    ).sum()
 
     assert cov.shape == (3, 3)
     assert fmat.shape == (3, 3)
@@ -97,6 +105,26 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.all(np.isfinite(fmat))
     assert np.allclose(fmat, fmat.T)
     assert np.isfinite(like)
+    assert np.allclose(like, expected_like)
+
+
+def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
+    params = ["dra", "ddec", "flux"]
+    values = np.array([120.0, -80.0, 2e-3])
+    param_dict = dict(zip(params, values))
+    model_data = oidata.model(BinaryModelCartesian(**param_dict))
+    _, errors = oidata.flatten_data()
+    null_data = np.concatenate(
+        [np.ones_like(oidata.vis), np.zeros_like(oidata.phi)]
+    )
+
+    like = loglike_nosignal(values, params, oidata, BinaryModelCartesian)
+    expected_like = jsp.stats.norm.logpdf(
+        model_data, loc=null_data, scale=errors
+    ).sum()
+
+    assert np.isfinite(like)
+    assert np.allclose(like, expected_like)
 
 
 def test_model_and_joint_loglike_helpers_match_legacy_loglike():
