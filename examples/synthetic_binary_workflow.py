@@ -105,6 +105,14 @@ def _triangle_uv(
 def _build_synthetic_oifits_dict(
     seed: int = 4,
 ) -> tuple[dict[str, Any], dict[str, float], dict[str, float]]:
+    """Build a synthetic OIFITS-like dictionary for docs and tests.
+
+    Notes
+    -----
+    ``drpangloss.models`` computes phases internally in radians. OIFITS phase
+    channels in this helper are written in degrees (``VISPHI``, ``T3PHI``) so
+    they match the standard OIFITS convention expected by downstream readers.
+    """
     rng = np.random.default_rng(seed)
     wavel = 4.8e-6
 
@@ -128,7 +136,7 @@ def _build_synthetic_oifits_dict(
     vis2 = visamp**2
 
     i1, i2, i3 = cp_indices(baseline_pairs, triangles)
-    cp = closure_phases(cvis, i1, i2, i3)
+    cp = jnp.rad2deg(closure_phases(cvis, i1, i2, i3))
 
     visamp_scale = jnp.maximum(jnp.median(visamp), 1e-6)
     visphi_scale = jnp.maximum(jnp.median(jnp.abs(visphi)), 5.0)
@@ -389,6 +397,11 @@ def _recover_hmc_fisher(
 def run_synthetic_binary_demo(
     output_path: str | Path = "docs/generated/synthetic_binary.oifits",
 ) -> RecoverySummary:
+    """Generate synthetic OIFITS data and run grid/HMC recovery checks.
+
+    The generated file stores OIFITS phase channels in degrees while
+    ``OIData`` normalizes loaded phases to internal radians.
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
