@@ -1,5 +1,7 @@
 import jax.numpy as np
 import matplotlib.pyplot as plt
+import numpy as onp
+from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
 from drpangloss.models import OIData, chi2ppf, closure_phases
@@ -24,6 +26,109 @@ def _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None):
         "i_cps2": i_cps2,
         "i_cps3": i_cps3,
     }
+
+
+class _FakeOIFITS:
+    def __init__(self, hdus):
+        self._hdus = hdus
+        self._by_name = {hdu.name: hdu for hdu in hdus if getattr(hdu, "name", "")}
+
+    def get_dataHDUs(self):
+        return [
+            hdu
+            for hdu in self._hdus[1:]
+            if hdu.name in {"OI_VIS", "OI_VIS2", "OI_T3", "OI_PHI"}
+        ]
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._hdus[key]
+        return self._by_name[key]
+
+
+def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
+    wavelength_hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(
+                name="EFF_WAVE",
+                format="1E",
+                array=onp.array([4.8e-6], dtype=onp.float32),
+            )
+        ]
+    )
+    wavelength_hdu.name = "OI_WAVELENGTH"
+
+    vis2_hdu = fits.BinTableHDU.from_columns(
+        [
+            fits.Column(
+                name="VIS2DATA",
+                format="1E",
+                array=onp.array([1.0, 0.9, 0.8], dtype=onp.float32),
+            ),
+            fits.Column(
+                name="VIS2ERR",
+                format="1E",
+                array=onp.array([0.01, 0.01, 0.01], dtype=onp.float32),
+            ),
+            fits.Column(
+                name="UCOORD",
+                format="1D",
+                array=onp.array([0.0, 1.0, -1.0], dtype=float),
+            ),
+            fits.Column(
+                name="VCOORD",
+                format="1D",
+                array=onp.array([0.0, 1.0, 1.0], dtype=float),
+            ),
+            fits.Column(
+                name="STA_INDEX",
+                format="2I",
+                array=onp.array([[1, 2], [2, 3], [1, 3]], dtype=onp.int16),
+            ),
+        ]
+    )
+    vis2_hdu.name = "OI_VIS2"
+
+    if phase_ext == "OI_PHI":
+        phase_columns = [
+            fits.Column(
+                name="VISPHI",
+                format="1D",
+                unit=unit,
+                array=onp.asarray(phi, dtype=float),
+            ),
+            fits.Column(
+                name="VISERR",
+                format="1D",
+                unit=unit,
+                array=onp.asarray(d_phi, dtype=float),
+            ),
+        ]
+    else:
+        phase_columns = [
+            fits.Column(
+                name="T3PHI",
+                format="1D",
+                unit=unit,
+                array=onp.asarray(phi, dtype=float),
+            ),
+            fits.Column(
+                name="T3PHIERR",
+                format="1D",
+                unit=unit,
+                array=onp.asarray(d_phi, dtype=float),
+            ),
+            fits.Column(
+                name="STA_INDEX",
+                format="3I",
+                array=onp.array([[1, 2, 3]], dtype=onp.int16),
+            ),
+        ]
+
+    phase_hdu = fits.BinTableHDU.from_columns(phase_columns)
+    phase_hdu.name = phase_ext
+
+    return _FakeOIFITS([fits.PrimaryHDU(), wavelength_hdu, vis2_hdu, phase_hdu])
 
 
 def test_to_phases_absolute_returns_radians():
@@ -56,6 +161,31 @@ def test_dict_phase_unit_degrees_converted_to_radians():
 
     assert np.allclose(oidata.phi, np.deg2rad(np.array([0.0, 90.0, -180.0])))
     assert np.allclose(oidata.d_phi, np.deg2rad(np.array([1.0, 2.0, 3.0])))
+
+
+def test_oifits_phase_units_convert_values_and_uncertainties_to_radians():
+    cases = [
+        ("OI_PHI", "DEGREES", onp.array([10.0, -20.0]), onp.array([1.0, 2.0])),
+        ("OI_PHI", "RADIANS", onp.array([0.1, -0.2]), onp.array([0.01, 0.02])),
+        ("OI_PHI", None, onp.array([15.0, -30.0]), onp.array([0.5, 0.75])),
+        ("OI_T3", "DEGREES", onp.array([12.0]), onp.array([1.5])),
+        ("OI_T3", "RADIANS", onp.array([0.4]), onp.array([0.05])),
+        ("OI_T3", None, onp.array([-25.0]), onp.array([2.5])),
+    ]
+
+    for phase_ext, unit, phi, d_phi in cases:
+        oidata = OIData(
+            _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit)
+        )
+        if unit == "RADIANS":
+            expected_phi = phi
+            expected_d_phi = d_phi
+        else:
+            expected_phi = onp.deg2rad(phi)
+            expected_d_phi = onp.deg2rad(d_phi)
+
+        assert np.allclose(oidata.phi, expected_phi)
+        assert np.allclose(oidata.d_phi, expected_d_phi)
 
 
 def test_cp_flag_inferred_from_indices_when_missing():

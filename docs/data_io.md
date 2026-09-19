@@ -97,14 +97,15 @@ And just to verify, let's make sure all the keys are saved and loaded correctly:
 
 ```python
 # Compare arrays written to OIFITS with arrays reloaded via OIData.
+# OIData converts OIFITS phase columns from degrees to internal radians.
 # We test all core OIData keys in one cell.
 expected = {
     "u": np.asarray(synth_dict["OI_VIS2"]["UCOORD"]),
     "v": np.asarray(synth_dict["OI_VIS2"]["VCOORD"]),
     "vis": np.asarray(synth_dict["OI_VIS2"]["VIS2DATA"]),
     "d_vis": np.asarray(synth_dict["OI_VIS2"]["VIS2ERR"]),
-    "phi": np.asarray(synth_dict["OI_T3"]["T3PHI"]),
-    "d_phi": np.asarray(synth_dict["OI_T3"]["T3PHIERR"]),
+    "phi": np.deg2rad(np.asarray(synth_dict["OI_T3"]["T3PHI"])),
+    "d_phi": np.deg2rad(np.asarray(synth_dict["OI_T3"]["T3PHIERR"])),
     "wavel": np.atleast_1d(
         np.asarray(synth_dict["OI_WAVELENGTH"]["EFF_WAVE"])
     ),
