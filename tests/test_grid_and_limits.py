@@ -204,8 +204,9 @@ def test_plot_contrast_limits_sigma_label():
     )
 
     axes = plt.gcf().axes
-    assert axes[0].get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
     assert (
-        axes[1].get_legend().texts[0].get_text()
-        == "5$\\sigma$ Contrast Limit"
+        axes[0].get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
+    )
+    assert (
+        axes[1].get_legend().texts[0].get_text() == "5$\\sigma$ Contrast Limit"
     )

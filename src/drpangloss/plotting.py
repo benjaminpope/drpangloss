@@ -1044,7 +1044,9 @@ def _format_sigma_or_percent_value(value):
     return formatted.rstrip("0").rstrip(".") if "." in formatted else formatted
 
 
-def _resolve_contrast_limit_label(limit_label=None, percentile=None, sigma=None):
+def _resolve_contrast_limit_label(
+    limit_label=None, percentile=None, sigma=None
+):
     if limit_label is not None:
         return limit_label
 
@@ -1055,9 +1057,7 @@ def _resolve_contrast_limit_label(limit_label=None, percentile=None, sigma=None)
         percentile = np.asarray(percentile, dtype=float).reshape(-1)
         if percentile.size != 1:
             raise ValueError("percentile must be a scalar or length-1 array.")
-        return (
-            f"{_format_sigma_or_percent_value(percentile[0] * 100)}% Upper Limit"
-        )
+        return f"{_format_sigma_or_percent_value(percentile[0] * 100)}% Upper Limit"
 
     if sigma is not None:
         sigma = np.asarray(sigma, dtype=float).reshape(-1)

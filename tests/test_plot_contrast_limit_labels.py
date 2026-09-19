@@ -8,7 +8,9 @@ import numpy as np
 MODULE_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "drpangloss" / "plotting.py"
 )
-SPEC = importlib.util.spec_from_file_location("drpangloss_plotting", MODULE_PATH)
+SPEC = importlib.util.spec_from_file_location(
+    "drpangloss_plotting", MODULE_PATH
+)
 PLOTTING = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PLOTTING)
 
@@ -42,7 +44,9 @@ def test_plot_contrast_limits_percentile_label():
 def test_plot_contrast_limits_sigma_label():
     fig, map_axis, legend_axis = _plot_and_collect_axes(sigma=5.0)
 
-    assert map_axis.get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
+    assert (
+        map_axis.get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
+    )
     assert (
         legend_axis.get_legend().texts[0].get_text()
         == "5$\\sigma$ Contrast Limit"
