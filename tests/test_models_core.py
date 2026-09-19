@@ -56,6 +56,28 @@ def test_BinaryModelCartesian():
     assert np.all(np.isfinite(model_data))
 
 
+def test_BinaryModelAngular_to_cartesian_preserves_model():
+    angular = BinaryModelAngular(50.0, 45.0, 10.0)
+    cartesian = angular.to_cartesian()
+
+    assert isinstance(cartesian, BinaryModelCartesian)
+    assert np.allclose(
+        angular.model(oidata.u, oidata.v, oidata.wavel),
+        cartesian.model(oidata.u, oidata.v, oidata.wavel),
+    )
+
+
+def test_BinaryModelCartesian_to_angular_roundtrip():
+    cartesian = BinaryModelCartesian(150.0, -120.0, 1e-3)
+    angular = cartesian.to_angular()
+    roundtrip = angular.to_cartesian()
+
+    assert isinstance(angular, BinaryModelAngular)
+    assert np.allclose(roundtrip.dra, cartesian.dra)
+    assert np.allclose(roundtrip.ddec, cartesian.ddec)
+    assert np.allclose(roundtrip.flux, cartesian.flux)
+
+
 def test_laplace_and_fisher_wrappers_are_finite():
     params = ["dra", "ddec", "flux"]
     values = np.array([120.0, -80.0, 2e-3])
