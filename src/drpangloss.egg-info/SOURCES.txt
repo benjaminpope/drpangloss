@@ -4,6 +4,7 @@ pyproject.toml
 src/drpangloss/__init__.py
 src/drpangloss/grid_fit.py
 src/drpangloss/models.py
+src/drpangloss/models_old.py
 src/drpangloss/oifits_implaneia.py
 src/drpangloss/plotting.py
 src/drpangloss.egg-info/PKG-INFO

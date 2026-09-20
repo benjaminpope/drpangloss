@@ -1,6 +1,6 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: drpangloss
-Version: 0.0.1
+Version: 0.0.2
 Summary: Python package to fit interferometric data, accelerated using Jax.
 Author-email: Benjamin Pope <b.pope@uq.edu.au>, Dori Blakely <blakelyd@uvic.ca>
 Project-URL: repository, https://github.com/benjaminpope/drpangloss
@@ -12,14 +12,18 @@ Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: jax
 Requires-Dist: jaxlib
+Requires-Dist: zodiax
 Requires-Dist: numpy
 Requires-Dist: matplotlib
+Requires-Dist: numpyro
+Requires-Dist: tensorflow-probability
 Requires-Dist: astropy
 Requires-Dist: tqdm
 Requires-Dist: optimistix
 Requires-Dist: scipy
 Requires-Dist: astroquery
-Requires-Dist: termcolor
+Requires-Dist: pyoifits
+Dynamic: license-file
 
 # drpangloss
 [![PyPI version](https://badge.fury.io/py/drpangloss.svg)](https://badge.fury.io/py/drpangloss)

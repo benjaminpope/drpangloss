@@ -1,10 +1,13 @@
 jax
 jaxlib
+zodiax
 numpy
 matplotlib
+numpyro
+tensorflow-probability
 astropy
 tqdm
 optimistix
 scipy
 astroquery
-termcolor
+pyoifits
