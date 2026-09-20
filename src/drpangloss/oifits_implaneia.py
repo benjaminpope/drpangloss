@@ -231,14 +231,13 @@ def save(dic, filename=None, datadir=None, verbose=False):
 
     name_star = dic["info"]["TARGET"]
 
-    customSimbad = Simbad()
-    customSimbad.add_votable_fields("propermotions", "sp_type", "parallax")
-
     # Add informations from Simbad:
     if name_star == "UNKNOWN":
         ra, dec, spectyp = [0], [0], ["unknown"]
         pmra, pmdec, plx = [0], [0], [0]
     else:
+        customSimbad = Simbad()
+        customSimbad.add_votable_fields("propermotions", "sp_type", "parallax")
         try:
             query = customSimbad.query_object(name_star)
             coord = SkyCoord(

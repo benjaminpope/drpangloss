@@ -5,6 +5,7 @@ import sys
 import jax.numpy as jnp
 import numpy as np
 
+from drpangloss import oifits_implaneia
 from drpangloss.models import BinaryModelCartesian, closure_phases, cp_indices
 
 
@@ -85,3 +86,25 @@ def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
         assert z < 3.0, (
             f"HMC {key} is too far from truth in z-space ({z:.3f}); summary={summary}"
         )
+
+
+def test_synthetic_oifits_save_skips_simbad_for_unknown_target(
+    tmp_path: Path, monkeypatch
+):
+    module = _load_synthetic_module()
+    dic, _, _ = module._build_synthetic_oifits_dict(seed=4)
+
+    assert dic["info"]["TARGET"] == "UNKNOWN"
+
+    class ForbiddenSimbad:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("Simbad should not be instantiated")
+
+    monkeypatch.setattr(oifits_implaneia, "Simbad", ForbiddenSimbad)
+
+    output = tmp_path / "synthetic_binary_docs.oifits"
+    oifits_implaneia.save(
+        dic, filename=output.name, datadir=str(output.parent), verbose=False
+    )
+
+    assert output.exists()
