@@ -3,6 +3,7 @@ import jax.numpy as np
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    OIData,
     closure_phases,
     cvis_binary,
     fisher,
@@ -69,3 +70,63 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.all(np.isfinite(fmat))
     assert np.allclose(fmat, fmat.T)
     assert np.isfinite(like)
+
+
+def test_oidata_linear_observables_transform_and_model_alignment():
+    cvis = cvis_binary(
+        oidata.u / oidata.wavel, oidata.v / oidata.wavel, 0.0, 50.0, 1e-3
+    )
+    n = cvis.shape[0]
+    m_vis = 12
+    m_phi = 10
+    vis_mat = np.eye(n)[:m_vis, :]
+    phi_mat = np.eye(n)[:m_phi, :]
+
+    sim_data = {
+        "u": oidata.u,
+        "v": oidata.v,
+        "wavel": oidata.wavel,
+        "vis": np.abs(cvis),
+        "d_vis": np.ones_like(np.abs(cvis)) * 1e-3,
+        "phi": np.rad2deg(np.angle(cvis)),
+        "d_phi": np.ones_like(np.rad2deg(np.angle(cvis))) * 0.1,
+        "v2_flag": False,
+        "cp_flag": False,
+        "vis_mode": "logamp",
+        "disco_vis_mat": vis_mat,
+        "disco_phi_mat": phi_mat,
+    }
+
+    disco_data = OIData(sim_data)
+    flattened_data, errors = disco_data.flatten_data()
+    model_vector = disco_data.model(BinaryModelCartesian(50.0, 0.0, 1e-3))
+
+    assert disco_data.vis.shape == (m_vis,)
+    assert disco_data.phi.shape == (m_phi,)
+    assert flattened_data.shape == model_vector.shape
+    assert errors.shape == flattened_data.shape
+    assert np.all(np.isfinite(flattened_data))
+    assert np.all(np.isfinite(model_vector))
+
+
+def test_oidata_linear_observables_invalid_shape_raises():
+    n = oidata.u.shape[0]
+    bad_data = {
+        "u": oidata.u,
+        "v": oidata.v,
+        "wavel": oidata.wavel,
+        "vis": np.ones(n),
+        "d_vis": np.ones(n) * 1e-3,
+        "phi": np.zeros(n),
+        "d_phi": np.ones(n) * 0.1,
+        "v2_flag": False,
+        "cp_flag": False,
+        "disco_vis_mat": np.ones((5, 7)),
+    }
+
+    raised = False
+    try:
+        OIData(bad_data)
+    except ValueError:
+        raised = True
+    assert raised

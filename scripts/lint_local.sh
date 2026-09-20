@@ -117,22 +117,22 @@ fi
 if [[ "${#py_targets[@]}" -gt 0 ]]; then
   count_python="${#py_targets[@]}"
   if [[ "$fix_mode" -eq 1 ]]; then
-    run_phase "ruff check (python, --fix)" "${ruff_cmd[@]}" check --fix "${py_targets[@]}"
-    run_phase "ruff format (python)" "${ruff_cmd[@]}" format "${py_targets[@]}"
+    run_phase "ruff check (python, --fix)" "${ruff_cmd[@]}" check --force-exclude --fix "${py_targets[@]}"
+    run_phase "ruff format (python)" "${ruff_cmd[@]}" format --force-exclude "${py_targets[@]}"
   else
-    run_phase "ruff check (python)" "${ruff_cmd[@]}" check "${py_targets[@]}"
-    run_phase "ruff format --check (python)" "${ruff_cmd[@]}" format --check "${py_targets[@]}"
+    run_phase "ruff check (python)" "${ruff_cmd[@]}" check --force-exclude "${py_targets[@]}"
+    run_phase "ruff format --check (python)" "${ruff_cmd[@]}" format --force-exclude --check "${py_targets[@]}"
   fi
 fi
 
 if [[ "$include_notebooks" -eq 1 && "${#ipynb_targets[@]}" -gt 0 ]]; then
   count_notebooks="${#ipynb_targets[@]}"
   if [[ "$fix_mode" -eq 1 ]]; then
-    run_phase "ruff check (notebooks, --fix)" "${ruff_cmd[@]}" check --fix "${ipynb_targets[@]}"
-    run_phase "ruff format (notebooks)" "${ruff_cmd[@]}" format "${ipynb_targets[@]}"
+    run_phase "ruff check (notebooks, --fix)" "${ruff_cmd[@]}" check --force-exclude --fix "${ipynb_targets[@]}"
+    run_phase "ruff format (notebooks)" "${ruff_cmd[@]}" format --force-exclude "${ipynb_targets[@]}"
   else
-    run_phase "ruff check (notebooks)" "${ruff_cmd[@]}" check "${ipynb_targets[@]}"
-    run_phase "ruff format --check (notebooks)" "${ruff_cmd[@]}" format --check "${ipynb_targets[@]}"
+    run_phase "ruff check (notebooks)" "${ruff_cmd[@]}" check --force-exclude "${ipynb_targets[@]}"
+    run_phase "ruff format --check (notebooks)" "${ruff_cmd[@]}" format --force-exclude --check "${ipynb_targets[@]}"
   fi
 fi
 
