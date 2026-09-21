@@ -6,6 +6,7 @@ from drpangloss.models import (
     BinaryModelCartesian,
     GaussianDiskModel,
     HarmonixModel,
+    _image_coordinates,
     cvis_gaussian_disk,
 )
 from tests._test_data import oidata
@@ -49,6 +50,33 @@ def test_binary_render_is_available():
     assert image.shape == (32, 32)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("npix", "fov_mas", "expected"),
+    [
+        (4, 8.0, onp.array([3.0, 1.0, -1.0, -3.0])),
+        (5, 10.0, onp.array([4.0, 2.0, 0.0, -2.0, -4.0])),
+    ],
+)
+def test_image_coordinates_use_pixel_centers(npix, fov_mas, expected):
+    xx, yy = _image_coordinates(npix, fov_mas)
+
+    assert xx.shape == (npix, npix)
+    assert yy.shape == (npix, npix)
+    assert onp.allclose(onp.asarray(xx[0]), expected)
+    assert onp.allclose(onp.asarray(yy[:, 0]), expected)
+
+
+def test_gaussian_disk_render_uses_interferometric_image_orientation():
+    image = GaussianDiskModel(sigma=1e-3, dra=2.0, ddec=2.0).render(
+        npix=5, fov_mas=10.0
+    )
+
+    assert onp.unravel_index(onp.asarray(image).argmax(), image.shape) == (
+        1,
+        1,
+    )
 
 
 def test_harmonix_model_for_external_visibility_models():
