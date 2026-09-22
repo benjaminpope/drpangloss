@@ -1197,8 +1197,13 @@ def chi2ppf(p, df):
             "or concrete (non-traced) inputs for the SciPy fallback."
         ) from exc
 
-    q_general = np.asarray(scipy_chi2.ppf(p_host, df_host))
-    return np.where(df == 1.0, q_df1, q_general)
+    p_host, df_host = onp.broadcast_arrays(p_host, df_host)
+    q_host = onp.asarray(np.broadcast_to(q_df1, p_host.shape))
+    mask = df_host != 1.0
+    if onp.any(mask):
+        q_host = q_host.copy()
+        q_host[mask] = scipy_chi2.ppf(p_host[mask], df_host[mask])
+    return np.asarray(q_host)
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
