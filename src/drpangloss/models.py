@@ -489,8 +489,13 @@ class OIData(zx.Base):
 
 def _image_coordinates(npix, fov_mas):
     """Return Cartesian image-plane coordinates in milliarcseconds."""
-    coords = np.linspace(-0.5 * fov_mas, 0.5 * fov_mas, int(npix))
-    return np.meshgrid(coords, coords, indexing="xy")
+    npix = int(npix)
+    pixel_scale_mas = float(fov_mas) / npix
+    pixel_indices = np.arange(npix)
+    center = 0.5 * (npix - 1)
+    x = -(pixel_indices - center) * pixel_scale_mas
+    y = (center - pixel_indices) * pixel_scale_mas
+    return np.meshgrid(x, y, indexing="xy")
 
 
 def _normalize_image(image):
