@@ -1162,7 +1162,8 @@ def chi2ppf(p, df):
 
     For ``df != 1``, use JAX's native inverse lower incomplete gamma when it
     is available. On older JAX versions where that function does not exist,
-    fall back to SciPy's ``chi2.ppf``.
+    fall back to SciPy's ``chi2.ppf`` for concrete (non-traced) inputs.
+    Traced/JIT execution with ``df != 1`` on those versions is unsupported.
 
     Parameters
     ----------
@@ -1179,12 +1180,13 @@ def chi2ppf(p, df):
     p = np.asarray(p, dtype=float)
     p = np.clip(p, np.finfo(float).eps, 1.0 - np.finfo(float).eps)
 
-    if bool(onp.all(onp.asarray(df) == 1.0)):
-        z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
-        return z**2
+    df = np.asarray(df, dtype=float)
+    z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
+    q_df1 = z**2
 
     if hasattr(jax.scipy.special, "gammaincinv"):
-        return jax.scipy.special.gammaincinv(df / 2.0, p) * 2.0
+        q_general = jax.scipy.special.gammaincinv(df / 2.0, p) * 2.0
+        return np.where(df == 1.0, q_df1, q_general)
 
     try:
         p_host = onp.asarray(p)
@@ -1195,7 +1197,8 @@ def chi2ppf(p, df):
             "or concrete (non-traced) inputs for the SciPy fallback."
         ) from exc
 
-    return np.asarray(scipy_chi2.ppf(p_host, df_host))
+    q_general = np.asarray(scipy_chi2.ppf(p_host, df_host))
+    return np.where(df == 1.0, q_df1, q_general)
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):

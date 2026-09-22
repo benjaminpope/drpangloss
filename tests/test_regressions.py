@@ -226,6 +226,14 @@ def test_chi2ppf_df_not_one_jit_requires_native_inverse_gamma():
         jax.jit(lambda p: chi2ppf(p, 2.0))(np.array([0.5]))
 
 
+def test_chi2ppf_mixed_df_array_uses_df1_identity_elementwise():
+    p = np.array([0.8, 0.9])
+    df = np.array([1.0, 2.0])
+    q = chi2ppf(p, df)
+    expected = stats.chi2.ppf(onp.asarray(p), onp.asarray(df))
+    assert onp.allclose(onp.asarray(q), expected, rtol=1e-6, atol=1e-8)
+
+
 def test_visibility_correlation_ticks_use_adaptive_float_formatter():
     data = OIData(_base_dict())
     pred = {
