@@ -228,6 +228,13 @@ def test_v2_flag_string_false_is_parsed_as_false():
     assert oidata.v2_flag is False
 
 
+def test_v2_flag_string_true_is_parsed_as_true():
+    data = _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
+    data["v2_flag"] = "true"
+    oidata = OIData(data)
+    assert oidata.v2_flag is True
+
+
 def test_chi2ppf_df1_returns_finite_values():
     p = np.array([1e-6, 0.5, 0.95, 1.0 - 1e-6])
     q = chi2ppf(p, 1.0)
