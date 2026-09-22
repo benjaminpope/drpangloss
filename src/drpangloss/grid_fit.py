@@ -146,10 +146,14 @@ def _optimized_likelihood_grid(
 
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    vals = jnp.array(
-        [samples_dict[flux_key][best_contrast_indices], *coord_grids]
-    )
+    param_grids = {
+        flux_key: samples_dict[flux_key][best_contrast_indices],
+        **dict(zip(coord_keys, coord_grids)),
+    }
+    vals = jnp.array([param_grids[param] for param in params])
     vals_vec = vals.reshape((len(vals), -1)).T
+    flux_index = params.index(flux_key)
+    coord_indices = tuple(params.index(param) for param in coord_keys)
 
     def to_optimize(flux, coord_vals):
         ordered_values = _ordered_values_from_flux_and_coords(
@@ -165,7 +169,11 @@ def _optimized_likelihood_grid(
         options={"maxiter": 100},
     ).fun
 
-    fn = vmap(lambda values: bestcon(*values))
+    fn = vmap(
+        lambda values: bestcon(
+            values[flux_index], *[values[index] for index in coord_indices]
+        )
+    )
 
     return -fn(vals_vec).reshape(vals.shape[1:])
 
@@ -230,10 +238,14 @@ def _optimized_contrast_grid(
 
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    vals = jnp.array(
-        [samples_dict[flux_key][best_contrast_indices], *coord_grids]
-    )
+    param_grids = {
+        flux_key: samples_dict[flux_key][best_contrast_indices],
+        **dict(zip(coord_keys, coord_grids)),
+    }
+    vals = jnp.array([param_grids[param] for param in params])
     vals_vec = vals.reshape((len(vals), -1)).T
+    flux_index = params.index(flux_key)
+    coord_indices = tuple(params.index(param) for param in coord_keys)
 
     def to_optimize(flux, coord_vals):
         ordered_values = _ordered_values_from_flux_and_coords(
@@ -249,7 +261,11 @@ def _optimized_contrast_grid(
         options={"maxiter": 100},
     ).x
 
-    fn = vmap(lambda values: bestcon(*values))
+    fn = vmap(
+        lambda values: bestcon(
+            values[flux_index], *[values[index] for index in coord_indices]
+        )
+    )
 
     return fn(vals_vec).reshape(vals.shape[1:])
 
@@ -311,15 +327,29 @@ def _laplace_contrast_uncertainty_grid(
 
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    vals = jnp.array(
-        [samples_dict[flux_key][best_contrast_indices], *coord_grids]
-    )
+    param_grids = {
+        flux_key: samples_dict[flux_key][best_contrast_indices],
+        **dict(zip(coord_keys, coord_grids)),
+    }
+    vals = jnp.array([param_grids[param] for param in params])
     vals_vec = vals.reshape((len(vals), -1)).T
+    flux_index = params.index(flux_key)
+    if "dra" in params and "ddec" in params:
+        dra_index = params.index("dra")
+        ddec_index = params.index("ddec")
+    else:
+        dra_index = params.index(coord_keys[0])
+        ddec_index = params.index(coord_keys[1])
 
-    sigma = lambda flux, dra, ddec: laplace_contrast_uncertainty(
-        flux, dra, ddec, data_obj, model_class, params=params
+    sigma = lambda values: laplace_contrast_uncertainty(
+        values[flux_index],
+        values[dra_index],
+        values[ddec_index],
+        data_obj,
+        model_class,
+        params=params,
     )
-    fn = vmap(lambda values: sigma(*values))
+    fn = vmap(lambda values: sigma(values))
 
     return fn(vals_vec).reshape(vals.shape[1:])
 

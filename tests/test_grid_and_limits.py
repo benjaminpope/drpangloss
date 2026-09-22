@@ -102,9 +102,9 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
     )
 
     permuted_samples = {
+        "ddec": reduced_samples["ddec"],
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
-        "ddec": reduced_samples["ddec"],
     }
     permuted = optimized_likelihood_grid(
         oidata, BinaryModelCartesian, permuted_samples
@@ -115,10 +115,10 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
         reduced_samples["ddec"].shape[0],
     )
     assert permuted.shape == (
-        reduced_samples["dra"].shape[0],
         reduced_samples["ddec"].shape[0],
+        reduced_samples["dra"].shape[0],
     )
-    assert np.allclose(ordered, permuted)
+    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_optimized():
