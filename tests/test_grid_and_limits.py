@@ -47,6 +47,38 @@ def test_likelihood_grid():
     )
 
 
+def test_likelihood_grid_axis_order_tracks_key_order():
+    reduced_samples = {
+        "dra": samples_dict["dra"][::40],
+        "ddec": samples_dict["ddec"][::40],
+        "flux": samples_dict["flux"][::40],
+    }
+    ordered = likelihood_grid(
+        oidata, BinaryModelCartesian, reduced_samples
+    )
+
+    permuted_samples = {
+        "flux": reduced_samples["flux"],
+        "dra": reduced_samples["dra"],
+        "ddec": reduced_samples["ddec"],
+    }
+    permuted = likelihood_grid(
+        oidata, BinaryModelCartesian, permuted_samples
+    )
+
+    assert ordered.shape == (
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+        reduced_samples["flux"].shape[0],
+    )
+    assert permuted.shape == (
+        reduced_samples["flux"].shape[0],
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+    )
+    assert np.allclose(ordered, np.transpose(permuted, (1, 2, 0)))
+
+
 def test_optimized_likelihood_grid():
     loglike_im = optimized_likelihood_grid(
         oidata, BinaryModelCartesian, samples_dict
