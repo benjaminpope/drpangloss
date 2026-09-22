@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from .models import laplace_contrast_uncertainty, loglike, nsigma
+from .models import laplace_parameter_uncertainty, loglike, nsigma
 
 import jax.scipy as jsp
 
@@ -274,11 +274,6 @@ def laplace_contrast_uncertainty_grid(
     best_contrast_indices, data_obj, model_class, samples_dict
 ):
     params = tuple(samples_dict.keys())
-    if "dra" not in params or "ddec" not in params:
-        raise ValueError(
-            "laplace_contrast_uncertainty_grid requires 'dra' and 'ddec' "
-            "keys in samples_dict."
-        )
     _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
     coord_keys = tuple(param for param in params if param != flux_key)
     return _laplace_contrast_uncertainty_grid(
@@ -338,18 +333,12 @@ def _laplace_contrast_uncertainty_grid(
     }
     vals = jnp.array([param_grids[param] for param in params])
     vals_vec = vals.reshape((len(vals), -1)).T
-    flux_index = params.index(flux_key)
-    dra_index = params.index("dra")
-    ddec_index = params.index("ddec")
-    laplace_params = ("dra", "ddec", flux_key)
-
-    sigma = lambda values: laplace_contrast_uncertainty(
-        flux=values[flux_index],
-        dra=values[dra_index],
-        ddec=values[ddec_index],
+    sigma = lambda values: laplace_parameter_uncertainty(
+        values=values,
+        params=params,
         data_obj=data_obj,
         model_class=model_class,
-        params=laplace_params,
+        target_param=flux_key,
     )
     fn = vmap(lambda values: sigma(values))
 
