@@ -274,6 +274,11 @@ def laplace_contrast_uncertainty_grid(
     best_contrast_indices, data_obj, model_class, samples_dict
 ):
     params = tuple(samples_dict.keys())
+    if "dra" not in params or "ddec" not in params:
+        raise ValueError(
+            "laplace_contrast_uncertainty_grid requires 'dra' and 'ddec' "
+            "keys in samples_dict."
+        )
     _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
     coord_keys = tuple(param for param in params if param != flux_key)
     return _laplace_contrast_uncertainty_grid(
@@ -334,12 +339,9 @@ def _laplace_contrast_uncertainty_grid(
     vals = jnp.array([param_grids[param] for param in params])
     vals_vec = vals.reshape((len(vals), -1)).T
     flux_index = params.index(flux_key)
-    if "dra" in params and "ddec" in params:
-        dra_index = params.index("dra")
-        ddec_index = params.index("ddec")
-    else:
-        dra_index = params.index(coord_keys[0])
-        ddec_index = params.index(coord_keys[1])
+    dra_index = params.index("dra")
+    ddec_index = params.index("ddec")
+    laplace_params = ("dra", "ddec", flux_key)
 
     sigma = lambda values: laplace_contrast_uncertainty(
         values[flux_index],
@@ -347,7 +349,7 @@ def _laplace_contrast_uncertainty_grid(
         values[ddec_index],
         data_obj,
         model_class,
-        params=params,
+        params=laplace_params,
     )
     fn = vmap(lambda values: sigma(values))
 
