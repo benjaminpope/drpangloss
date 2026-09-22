@@ -344,11 +344,11 @@ def _laplace_contrast_uncertainty_grid(
     laplace_params = ("dra", "ddec", flux_key)
 
     sigma = lambda values: laplace_contrast_uncertainty(
-        values[flux_index],
-        values[dra_index],
-        values[ddec_index],
-        data_obj,
-        model_class,
+        flux=values[flux_index],
+        dra=values[dra_index],
+        ddec=values[ddec_index],
+        data_obj=data_obj,
+        model_class=model_class,
         params=laplace_params,
     )
     fn = vmap(lambda values: sigma(values))
