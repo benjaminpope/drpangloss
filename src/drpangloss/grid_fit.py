@@ -74,7 +74,8 @@ def _likelihood_grid(data_obj, model_class, samples_dict, params):
 
 def optimized_likelihood_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
-    coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    coord_keys = tuple(param for param in params if param != flux_key)
     return _optimized_likelihood_grid(
         data_obj,
         model_class,
@@ -156,7 +157,8 @@ def _optimized_likelihood_grid(
 
 def optimized_contrast_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
-    coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    coord_keys = tuple(param for param in params if param != flux_key)
     return _optimized_contrast_grid(
         data_obj,
         model_class,
@@ -242,7 +244,8 @@ def laplace_contrast_uncertainty_grid(
     best_contrast_indices, data_obj, model_class, samples_dict
 ):
     params = tuple(samples_dict.keys())
-    coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
+    coord_keys = tuple(param for param in params if param != flux_key)
     return _laplace_contrast_uncertainty_grid(
         best_contrast_indices,
         data_obj,
