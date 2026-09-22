@@ -204,6 +204,23 @@ def test_cp_flag_inferred_from_indices_when_missing():
     assert oidata.cp_flag is True
 
 
+def test_cp_flag_string_false_is_parsed_as_false():
+    data = _base_dict(
+        cp_flag="False",
+        i_cps1=np.array([0]),
+        i_cps2=np.array([1]),
+        i_cps3=np.array([2]),
+    )
+    oidata = OIData(data)
+    assert oidata.cp_flag is False
+
+
+def test_cp_flag_string_true_is_parsed_as_true():
+    data = _base_dict(cp_flag="true", i_cps1=None, i_cps2=None, i_cps3=None)
+    oidata = OIData(data)
+    assert oidata.cp_flag is True
+
+
 def test_chi2ppf_df1_returns_finite_values():
     p = np.array([1e-6, 0.5, 0.95, 1.0 - 1e-6])
     q = chi2ppf(p, 1.0)

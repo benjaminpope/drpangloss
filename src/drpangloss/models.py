@@ -179,7 +179,8 @@ class OIData(zx.Base):
                 self.i_cps3 = None
 
             self.v2_flag = bool(data.get("v2_flag", True))
-            self.cp_flag = bool(data.get("cp_flag", self.i_cps1 is not None))
+            cp_flag = data.get("cp_flag", self.i_cps1 is not None)
+            self.cp_flag = self._coerce_bool_flag(cp_flag, "cp_flag")
 
             has_disco_vis = "disco_vis_mat" in data
             has_disco_phi = "disco_phi_mat" in data
@@ -220,6 +221,19 @@ class OIData(zx.Base):
                 f"Unsupported vis_mode '{vis_mode}'. Expected one of {sorted(valid)} or 'auto'."
             )
         return mode
+
+    @staticmethod
+    def _coerce_bool_flag(value, name):
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"true", "t", "1", "yes", "y", "on"}:
+                return True
+            if text in {"false", "f", "0", "no", "n", "off"}:
+                return False
+            raise ValueError(
+                f"Unsupported {name!r} value {value!r}; expected a boolean."
+            )
+        return bool(value)
 
     @staticmethod
     def _phase_unit_scale(unit, default_unit):
