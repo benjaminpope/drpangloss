@@ -2,6 +2,7 @@ import jax.numpy as np
 import jax
 
 import numpy as onp
+from scipy.stats import chi2 as scipy_chi2
 
 import equinox as eqx
 import zodiax as zx
@@ -1159,8 +1160,9 @@ def chi2ppf(p, df):
     This remains JAX-native,
     differentiable, and fast.
 
-    For ``df != 1``, this falls back to numpyro's gammaincinv backend when
-    available.
+    For ``df != 1``, use JAX's native inverse lower incomplete gamma when it
+    is available. On older JAX versions where that function does not exist,
+    fall back to SciPy's ``chi2.ppf``.
 
     Parameters
     ----------
@@ -1177,16 +1179,14 @@ def chi2ppf(p, df):
     p = np.asarray(p, dtype=float)
     p = np.clip(p, np.finfo(float).eps, 1.0 - np.finfo(float).eps)
 
-    try:
-        if float(onp.asarray(df)) == 1.0:
-            z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
-            return z**2
-    except Exception:
-        pass
+    if bool(onp.all(onp.asarray(df) == 1.0)):
+        z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
+        return z**2
 
-    from numpyro.distributions.util import gammaincinv
+    if hasattr(jax.scipy.special, "gammaincinv"):
+        return jax.scipy.special.gammaincinv(df / 2.0, p) * 2.0
 
-    return gammaincinv(df / 2.0, p) * 2.0
+    return np.asarray(scipy_chi2.ppf(onp.asarray(p), onp.asarray(df)))
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
@@ -1207,8 +1207,8 @@ def nsigma(chi2r_test, chi2r_true, ndof):
     """
 
     q = jax.scipy.stats.chi2.cdf(ndof * chi2r_test / chi2r_true, ndof)
-    p = 1.0 - q
-    nsigma = np.sqrt(chi2ppf(p, 1.0))
+    p = np.clip(1.0 - q, np.finfo(float).eps, 1.0 - np.finfo(float).eps)
+    nsigma = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
 
     return nsigma
 

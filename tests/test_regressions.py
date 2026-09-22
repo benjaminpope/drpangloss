@@ -1,6 +1,7 @@
 import jax.numpy as np
 import matplotlib.pyplot as plt
 import numpy as onp
+from scipy import stats
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
@@ -209,6 +210,13 @@ def test_chi2ppf_df1_returns_finite_values():
     q = chi2ppf(p, 1.0)
     assert np.all(np.isfinite(q))
     assert np.all(q >= 0.0)
+
+
+def test_chi2ppf_df_not_one_matches_scipy():
+    p = np.array([0.1, 0.5, 0.9])
+    q = chi2ppf(p, 2.0)
+    expected = stats.chi2.ppf(onp.asarray(p), 2.0)
+    assert onp.allclose(onp.asarray(q), expected, rtol=1e-6, atol=1e-8)
 
 
 def test_visibility_correlation_ticks_use_adaptive_float_formatter():
