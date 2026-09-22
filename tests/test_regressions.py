@@ -1,6 +1,8 @@
+import jax
 import jax.numpy as np
 import matplotlib.pyplot as plt
 import numpy as onp
+import pytest
 from scipy import stats
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
@@ -217,6 +219,11 @@ def test_chi2ppf_df_not_one_matches_scipy():
     q = chi2ppf(p, 2.0)
     expected = stats.chi2.ppf(onp.asarray(p), 2.0)
     assert onp.allclose(onp.asarray(q), expected, rtol=1e-6, atol=1e-8)
+
+
+def test_chi2ppf_df_not_one_jit_requires_native_inverse_gamma():
+    with pytest.raises(NotImplementedError):
+        jax.jit(lambda p: chi2ppf(p, 2.0))(np.array([0.5]))
 
 
 def test_visibility_correlation_ticks_use_adaptive_float_formatter():

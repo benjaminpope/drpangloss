@@ -1186,7 +1186,16 @@ def chi2ppf(p, df):
     if hasattr(jax.scipy.special, "gammaincinv"):
         return jax.scipy.special.gammaincinv(df / 2.0, p) * 2.0
 
-    return np.asarray(scipy_chi2.ppf(onp.asarray(p), onp.asarray(df)))
+    try:
+        p_host = onp.asarray(p)
+        df_host = onp.asarray(df)
+    except Exception as exc:
+        raise NotImplementedError(
+            "chi2ppf(df != 1) requires either jax.scipy.special.gammaincinv "
+            "or concrete (non-traced) inputs for the SciPy fallback."
+        ) from exc
+
+    return np.asarray(scipy_chi2.ppf(p_host, df_host))
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
