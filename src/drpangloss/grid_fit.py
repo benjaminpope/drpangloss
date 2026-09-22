@@ -259,7 +259,7 @@ def _optimized_contrast_grid(
         args=(jnp.asarray(coord_vals),),
         method="BFGS",
         options={"maxiter": 100},
-    ).x
+    ).x[0]
 
     fn = vmap(
         lambda values: bestcon(
