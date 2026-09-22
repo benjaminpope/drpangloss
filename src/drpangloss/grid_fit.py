@@ -31,10 +31,27 @@ def _infer_grid_parameter_keys(samples_dict, params=None):
     return coord_keys, flux_key
 
 
-def _meshgrid_values(samples_dict, params):
-    """Build meshgrid values with axis order matching ``params``."""
+def _meshgrid_vectors(samples_dict, params):
+    """Build flattened meshgrid vectors with axis order matching ``params``."""
     samples = [samples_dict[param] for param in params]
-    return jnp.array(jnp.meshgrid(*samples, indexing="ij"))
+    grid_shape = tuple(sample.shape[0] for sample in samples)
+    grids = jnp.meshgrid(*samples, indexing="ij")
+    vals_vec = jnp.stack([grid.reshape(-1) for grid in grids], axis=1)
+    return vals_vec, grid_shape
+
+
+def _ordered_values_from_flux_and_coords(
+    flux, coord_vals, params, coord_keys, flux_key
+):
+    """Build parameter values in ``params`` order without traced dict objects."""
+    flux_value = jnp.asarray(flux).reshape(-1)[0]
+    coord_vals = jnp.asarray(coord_vals)
+    return [
+        flux_value
+        if param == flux_key
+        else coord_vals[coord_keys.index(param)]
+        for param in params
+    ]
 
 
 def likelihood_grid(data_obj, model_class, samples_dict):
@@ -64,12 +81,11 @@ def _likelihood_grid(data_obj, model_class, samples_dict, params):
         Log-likelihood values over the grid of parameter values.
     """
 
-    vals = _meshgrid_values(samples_dict, params)
-    vals_vec = vals.reshape((len(vals), -1)).T
+    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
 
     fn = vmap(lambda values: loglike(values, params, data_obj, model_class))
 
-    return fn(vals_vec).reshape(vals.shape[1:])
+    return fn(vals_vec).reshape(grid_shape)
 
 
 def optimized_likelihood_grid(data_obj, model_class, samples_dict):
@@ -119,12 +135,11 @@ def _optimized_likelihood_grid(
 
     # first do a grid search to find a starting point
 
-    vals = _meshgrid_values(samples_dict, params)
-    vals_vec = vals.reshape((len(vals), -1)).T
+    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
 
     fn = vmap(lambda values: loglike(values, params, data_obj, model_class))
 
-    loglike_im = fn(vals_vec).reshape(vals.shape[1:])
+    loglike_im = fn(vals_vec).reshape(grid_shape)
     flux_axis = params.index(flux_key)
     best_contrast_indices = jnp.argmax(loglike_im, axis=flux_axis)
     # then do optimization to fine tune the contrast
@@ -137,9 +152,9 @@ def _optimized_likelihood_grid(
     vals_vec = vals.reshape((len(vals), -1)).T
 
     def to_optimize(flux, coord_vals):
-        coord_dict = dict(zip(coord_keys, coord_vals))
-        param_dict = {flux_key: jnp.asarray(flux).reshape(-1)[0], **coord_dict}
-        ordered_values = [param_dict[param] for param in params]
+        ordered_values = _ordered_values_from_flux_and_coords(
+            flux, coord_vals, params, coord_keys, flux_key
+        )
         return -loglike(ordered_values, params, data_obj, model_class)
 
     bestcon = lambda flux, *coord_vals: optx.compat.minimize(
@@ -202,12 +217,11 @@ def _optimized_contrast_grid(
 
     # first do a grid search to find a starting point
 
-    vals = _meshgrid_values(samples_dict, params)
-    vals_vec = vals.reshape((len(vals), -1)).T
+    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
 
     fn = vmap(lambda values: loglike(values, params, data_obj, model_class))
 
-    loglike_im = fn(vals_vec).reshape(vals.shape[1:])
+    loglike_im = fn(vals_vec).reshape(grid_shape)
 
     flux_axis = params.index(flux_key)
     best_contrast_indices = jnp.argmax(loglike_im, axis=flux_axis)
@@ -222,9 +236,9 @@ def _optimized_contrast_grid(
     vals_vec = vals.reshape((len(vals), -1)).T
 
     def to_optimize(flux, coord_vals):
-        coord_dict = dict(zip(coord_keys, coord_vals))
-        param_dict = {flux_key: jnp.asarray(flux).reshape(-1)[0], **coord_dict}
-        ordered_values = [param_dict[param] for param in params]
+        ordered_values = _ordered_values_from_flux_and_coords(
+            flux, coord_vals, params, coord_keys, flux_key
+        )
         return -loglike(ordered_values, params, data_obj, model_class)
 
     bestcon = lambda flux, *coord_vals: optx.compat.minimize(
