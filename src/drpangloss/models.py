@@ -178,7 +178,8 @@ class OIData(zx.Base):
                 self.i_cps2 = None
                 self.i_cps3 = None
 
-            self.v2_flag = bool(data.get("v2_flag", True))
+            v2_flag = data.get("v2_flag", True)
+            self.v2_flag = self._coerce_bool_flag(v2_flag, "v2_flag")
             cp_flag = data.get("cp_flag", self.i_cps1 is not None)
             self.cp_flag = self._coerce_bool_flag(cp_flag, "cp_flag")
 
