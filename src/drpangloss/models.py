@@ -1,3 +1,5 @@
+from typing import Any
+
 import jax.numpy as np
 import jax
 
@@ -18,7 +20,7 @@ dtor = np.pi / 180.0
 i2pi = 1j * 2.0 * np.pi
 
 
-class OIData(zx.Base):
+class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     """
     Store and transform optical-interferometry observables.
 
@@ -44,11 +46,11 @@ class OIData(zx.Base):
     d_vis: jax.Array
     phi: jax.Array
     d_phi: jax.Array
-    i_cps1: jax.Array
-    i_cps2: jax.Array
-    i_cps3: jax.Array
-    vis_mat: jax.Array
-    phi_mat: jax.Array
+    i_cps1: jax.Array | onp.ndarray | None
+    i_cps2: jax.Array | onp.ndarray | None
+    i_cps3: jax.Array | onp.ndarray | None
+    vis_mat: jax.Array | None
+    phi_mat: jax.Array | None
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
@@ -522,7 +524,7 @@ def _normalize_image(image):
     raise ValueError("Rendered image must contain positive finite flux.")
 
 
-class SourceModel(zx.Base):
+class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for sky-brightness source models."""
 
     def model(self, u, v, wavel):
@@ -793,11 +795,11 @@ class HarmonixModel(SourceModel):
     Wrapper for external source models with harmonix-like visibility methods.
     """
 
-    source: object = eqx.field(static=True)
+    source: Any = eqx.field(static=True)
     visibility_method: str = eqx.field(static=True)
     render_method: str = eqx.field(static=True)
     expects_wavelength_units: bool = eqx.field(static=True)
-    observation_time: object = eqx.field(static=True)
+    observation_time: Any = eqx.field(static=True)
 
     def __init__(
         self,
@@ -928,7 +930,13 @@ def cvis_binary(u, v, ddec, dra, planet):
     return cvis
 
 
-def cvis_gaussian_disk(u, v, sigma, dra=0.0, ddec=0.0):
+def cvis_gaussian_disk(
+    u,
+    v,
+    sigma,
+    dra: jax.Array | float = 0.0,
+    ddec: jax.Array | float = 0.0,
+):
     """Compute complex visibilities for a circular Gaussian disk."""
     sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
@@ -1201,7 +1209,7 @@ def chi2ppf(p, df):
 
     from numpyro.distributions.util import gammaincinv
 
-    return gammaincinv(df / 2.0, p) * 2.0
+    return np.asarray(gammaincinv(df / 2.0, p), dtype=float) * 2.0
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
