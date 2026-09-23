@@ -47,6 +47,34 @@ def test_likelihood_grid():
     )
 
 
+def test_likelihood_grid_axis_order_tracks_key_order():
+    reduced_samples = {
+        "dra": samples_dict["dra"][::40],
+        "ddec": samples_dict["ddec"][::40],
+        "flux": samples_dict["flux"][::40],
+    }
+    ordered = likelihood_grid(oidata, BinaryModelCartesian, reduced_samples)
+
+    permuted_samples = {
+        "flux": reduced_samples["flux"],
+        "dra": reduced_samples["dra"],
+        "ddec": reduced_samples["ddec"],
+    }
+    permuted = likelihood_grid(oidata, BinaryModelCartesian, permuted_samples)
+
+    assert ordered.shape == (
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+        reduced_samples["flux"].shape[0],
+    )
+    assert permuted.shape == (
+        reduced_samples["flux"].shape[0],
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+    )
+    assert np.allclose(ordered, np.transpose(permuted, (1, 2, 0)))
+
+
 def test_optimized_likelihood_grid():
     loglike_im = optimized_likelihood_grid(
         oidata, BinaryModelCartesian, samples_dict
@@ -57,6 +85,36 @@ def test_optimized_likelihood_grid():
         samples_dict["ddec"].shape[0],
     )
     plot_likelihood_grid(loglike_im, samples_dict, truths=true_values)
+
+
+def test_optimized_likelihood_grid_axis_order_tracks_key_order():
+    reduced_samples = {
+        "dra": samples_dict["dra"][::40],
+        "ddec": samples_dict["ddec"][::40],
+        "flux": samples_dict["flux"][::40],
+    }
+    ordered = optimized_likelihood_grid(
+        oidata, BinaryModelCartesian, reduced_samples
+    )
+
+    permuted_samples = {
+        "ddec": reduced_samples["ddec"],
+        "flux": reduced_samples["flux"],
+        "dra": reduced_samples["dra"],
+    }
+    permuted = optimized_likelihood_grid(
+        oidata, BinaryModelCartesian, permuted_samples
+    )
+
+    assert ordered.shape == (
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+    )
+    assert permuted.shape == (
+        reduced_samples["ddec"].shape[0],
+        reduced_samples["dra"].shape[0],
+    )
+    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_optimized():
@@ -71,6 +129,36 @@ def test_optimized():
     )
     assert np.all(np.isfinite(optimized))
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
+
+
+def test_optimized_contrast_grid_axis_order_tracks_key_order():
+    reduced_samples = {
+        "dra": samples_dict["dra"][::40],
+        "ddec": samples_dict["ddec"][::40],
+        "flux": samples_dict["flux"][::40],
+    }
+    ordered = optimized_contrast_grid(
+        oidata_sim, BinaryModelCartesian, reduced_samples
+    )
+
+    permuted_samples = {
+        "ddec": reduced_samples["ddec"],
+        "flux": reduced_samples["flux"],
+        "dra": reduced_samples["dra"],
+    }
+    permuted = optimized_contrast_grid(
+        oidata_sim, BinaryModelCartesian, permuted_samples
+    )
+
+    assert ordered.shape == (
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+    )
+    assert permuted.shape == (
+        reduced_samples["ddec"].shape[0],
+        reduced_samples["dra"].shape[0],
+    )
+    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_laplace():
@@ -97,6 +185,46 @@ def test_laplace():
     plot_optimized_and_sigma(
         optimized, laplace_sigma_grid, samples_dict, snr=True
     )
+
+
+def test_laplace_grid_axis_order_tracks_key_order():
+    reduced_samples = {
+        "dra": samples_dict["dra"][::40],
+        "ddec": samples_dict["ddec"][::40],
+        "flux": samples_dict["flux"][::40],
+    }
+    ordered_loglike = likelihood_grid(
+        oidata, BinaryModelCartesian, reduced_samples
+    )
+    ordered_best = np.argmax(ordered_loglike, axis=2)
+    ordered = laplace_contrast_uncertainty_grid(
+        ordered_best, oidata_sim, BinaryModelCartesian, reduced_samples
+    )
+
+    permuted_samples = {
+        "ddec": reduced_samples["ddec"],
+        "flux": reduced_samples["flux"],
+        "dra": reduced_samples["dra"],
+    }
+    permuted_loglike = likelihood_grid(
+        oidata, BinaryModelCartesian, permuted_samples
+    )
+    permuted_best = np.argmax(
+        permuted_loglike, axis=list(permuted_samples.keys()).index("flux")
+    )
+    permuted = laplace_contrast_uncertainty_grid(
+        permuted_best, oidata_sim, BinaryModelCartesian, permuted_samples
+    )
+
+    assert ordered.shape == (
+        reduced_samples["dra"].shape[0],
+        reduced_samples["ddec"].shape[0],
+    )
+    assert permuted.shape == (
+        reduced_samples["ddec"].shape[0],
+        reduced_samples["dra"].shape[0],
+    )
+    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_ruffio():
