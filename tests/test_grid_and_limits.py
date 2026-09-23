@@ -53,18 +53,14 @@ def test_likelihood_grid_axis_order_tracks_key_order():
         "ddec": samples_dict["ddec"][::40],
         "flux": samples_dict["flux"][::40],
     }
-    ordered = likelihood_grid(
-        oidata, BinaryModelCartesian, reduced_samples
-    )
+    ordered = likelihood_grid(oidata, BinaryModelCartesian, reduced_samples)
 
     permuted_samples = {
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
         "ddec": reduced_samples["ddec"],
     }
-    permuted = likelihood_grid(
-        oidata, BinaryModelCartesian, permuted_samples
-    )
+    permuted = likelihood_grid(oidata, BinaryModelCartesian, permuted_samples)
 
     assert ordered.shape == (
         reduced_samples["dra"].shape[0],

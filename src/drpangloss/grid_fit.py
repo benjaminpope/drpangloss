@@ -56,9 +56,7 @@ def _ordered_values_from_flux_and_coords(
 
 def likelihood_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
-    return _likelihood_grid(
-        data_obj, model_class, samples_dict, params=params
-    )
+    return _likelihood_grid(data_obj, model_class, samples_dict, params=params)
 
 
 @partial(jit, static_argnames=("model_class", "params"))
