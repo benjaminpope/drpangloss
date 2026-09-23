@@ -494,8 +494,6 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return self.set(["vis", "phi"], [vis, phi])
 
 
-
-
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     """
     Calculate closure phases from complex visibilities.
