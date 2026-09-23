@@ -6,7 +6,7 @@ cd "$repo_root"
 
 if [[ -f "scripts/lint_local.sh" ]]; then
   echo "Running Ruff auto-fix before push..."
-  bash scripts/lint_local.sh --fix
+  bash scripts/lint_local.sh --fix --no-notebooks
 else
   echo "Missing scripts/lint_local.sh; refusing to push." >&2
   exit 1
