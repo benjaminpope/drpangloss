@@ -5,7 +5,8 @@ import jax.scipy as jsp
 import numpy as onp
 import pyoifits as oifits
 
-from drpangloss.models import BinaryModelCartesian, OIData
+from drpangloss.models import BinaryModelCartesian
+from drpangloss.oidata import OIData
 
 fname = "NuHor_F480M.oifits"
 ddir = "./data/"

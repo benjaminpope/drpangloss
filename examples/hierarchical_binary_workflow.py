@@ -15,10 +15,10 @@ from drpangloss.inference import (
 )
 from drpangloss.models import (
     BinaryModelCartesian,
-    OIData,
     joint_loglike,
     joint_prediction,
 )
+from drpangloss.oidata import OIData
 
 
 WAVELENGTHS = jnp.array([800e-9, 1.0e-6, 1.2e-6])

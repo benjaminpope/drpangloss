@@ -2,6 +2,7 @@
 
 This reference is organized by module origin and split into class and function sections.
 
+- [OIData](oidata.md)
 - [Models](models/index.md)
 - [Grid Fit](grid_fit.md)
 - [Inference](inference.md)

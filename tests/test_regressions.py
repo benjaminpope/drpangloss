@@ -4,7 +4,8 @@ import numpy as onp
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
-from drpangloss.models import OIData, chi2ppf, closure_phases
+from drpangloss.models import chi2ppf
+from drpangloss.oidata import OIData, closure_phases
 from drpangloss.plotting import (
     plot_contrast_limit_map,
     plot_data_model_correlation,

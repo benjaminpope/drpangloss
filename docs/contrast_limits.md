@@ -29,7 +29,8 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.models import OIData, BinaryModelCartesian
+from drpangloss.models import BinaryModelCartesian
+from drpangloss.oidata import OIData
 from drpangloss.grid_fit import (
     likelihood_grid,
     optimized_contrast_grid,

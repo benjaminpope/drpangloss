@@ -17,5 +17,3 @@
         - fisher
         - chi2ppf
         - nsigma
-        - closure_phases
-        - cp_indices

@@ -22,7 +22,8 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
-from drpangloss.models import OIData, BinaryModelCartesian, loglike
+from drpangloss.models import BinaryModelCartesian, loglike
+from drpangloss.oidata import OIData
 from drpangloss.grid_fit import likelihood_grid
 from drpangloss.inference import fisher_matrix, fisher_projection
 from drpangloss.plotting import (

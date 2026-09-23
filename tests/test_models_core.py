@@ -3,11 +3,10 @@ import jax.numpy as np
 import jax.scipy as jsp
 import pytest
 
+import drpangloss.models as models
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
-    OIData,
-    closure_phases,
     cvis_binary,
     fisher,
     joint_loglike,
@@ -17,11 +16,17 @@ from drpangloss.models import (
     loglike_nosignal,
     model_loglike,
 )
+from drpangloss.oidata import OIData, closure_phases
 
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
 
 
 ddec, dra, planet = 0.1, 0.2, 10
+
+
+def test_oidata_compatibility_reexports():
+    assert models.OIData is OIData
+    assert models.closure_phases is closure_phases
 
 
 def test_cvis_binary():

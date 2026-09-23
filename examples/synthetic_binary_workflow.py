@@ -18,11 +18,9 @@ from drpangloss.inference import fisher_matrix, fisher_projection
 from drpangloss.grid_fit import likelihood_grid
 from drpangloss.models import (
     BinaryModelCartesian,
-    OIData,
-    closure_phases,
-    cp_indices,
     loglike,
 )
+from drpangloss.oidata import OIData, closure_phases, cp_indices
 from drpangloss.oifits_implaneia import load as load_oifits_dict
 from drpangloss.oifits_implaneia import save as save_oifits_dict
 
@@ -109,7 +107,7 @@ def _build_synthetic_oifits_dict(
 
     Notes
     -----
-    ``drpangloss.models`` computes phases internally in radians. OIFITS phase
+    ``drpangloss.oidata`` computes phases internally in radians. OIFITS phase
     channels in this helper are written in degrees (``VISPHI``, ``T3PHI``) so
     they match the standard OIFITS convention expected by downstream readers.
     """
