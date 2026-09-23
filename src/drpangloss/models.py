@@ -1160,10 +1160,9 @@ def chi2ppf(p, df):
     This remains JAX-native,
     differentiable, and fast.
 
-    For ``df != 1``, use JAX's native inverse lower incomplete gamma when it
-    is available. On older JAX versions where that function does not exist,
-    fall back to SciPy's ``chi2.ppf`` for concrete (non-traced) inputs.
-    Traced/JIT execution with ``df != 1`` on those versions is unsupported.
+    For ``df != 1``, this uses SciPy's ``chi2.ppf`` for concrete
+    (non-traced) inputs. Traced/JIT execution with ``df != 1`` is
+    unsupported.
 
     Parameters
     ----------
@@ -1184,17 +1183,13 @@ def chi2ppf(p, df):
     z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
     q_df1 = z**2
 
-    if hasattr(jax.scipy.special, "gammaincinv"):
-        q_general = jax.scipy.special.gammaincinv(df / 2.0, p) * 2.0
-        return np.where(df == 1.0, q_df1, q_general)
-
     try:
         p_host = onp.asarray(p)
         df_host = onp.asarray(df)
     except Exception as exc:
         raise NotImplementedError(
-            "chi2ppf(df != 1) requires either jax.scipy.special.gammaincinv "
-            "or concrete (non-traced) inputs for the SciPy fallback."
+            "chi2ppf(df != 1) requires concrete (non-traced) inputs for "
+            "the SciPy fallback."
         ) from exc
 
     p_host, df_host = onp.broadcast_arrays(p_host, df_host)

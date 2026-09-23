@@ -221,14 +221,10 @@ def test_chi2ppf_df_not_one_matches_scipy():
     assert onp.allclose(onp.asarray(q), expected, rtol=1e-6, atol=1e-8)
 
 
-def test_chi2ppf_df_not_one_jit_requires_native_inverse_gamma():
+def test_chi2ppf_df_not_one_jit_raises_not_implemented():
     fn = jax.jit(lambda p: chi2ppf(p, 2.0))
-    if hasattr(jax.scipy.special, "gammaincinv"):
-        q = fn(np.array([0.5]))
-        assert np.all(np.isfinite(q))
-    else:
-        with pytest.raises(NotImplementedError):
-            fn(np.array([0.5]))
+    with pytest.raises(NotImplementedError):
+        fn(np.array([0.5]))
 
 
 def test_chi2ppf_mixed_df_array_uses_df1_identity_elementwise():
