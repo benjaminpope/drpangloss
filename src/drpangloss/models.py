@@ -124,7 +124,7 @@ class BinaryModelAngular(SourceModel):
             Equivalent binary model expressed as ``(dra, ddec, flux)``.
         """
         th = self.pa * dtor
-        dra = -self.sep * np.sin(th)
+        dra = self.sep * np.sin(th)
         ddec = self.sep * np.cos(th)
         flux = 1.0 / self.contrast
         return BinaryModelCartesian(dra, ddec, flux)
@@ -157,7 +157,7 @@ class BinaryModelAngular(SourceModel):
         xx, yy = _image_coordinates(npix, fov_mas)
         th = self.pa * dtor
         ddec = self.sep * np.cos(th)
-        dra = -1.0 * self.sep * np.sin(th)
+        dra = self.sep * np.sin(th)
 
         l2 = 1.0 / (self.contrast + 1.0)
         l1 = 1.0 - l2
@@ -233,7 +233,7 @@ class BinaryModelCartesian(SourceModel):
             Equivalent binary model expressed as ``(sep, pa, contrast)``.
         """
         sep = np.sqrt(self.dra**2 + self.ddec**2)
-        pa = np.mod(np.rad2deg(np.arctan2(-self.dra, self.ddec)), 360.0)
+        pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         contrast = 1.0 / self.flux
         return BinaryModelAngular(sep, pa, contrast)
 
@@ -612,7 +612,7 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     sep : float or array-like
         Separation in milliarcseconds.
     pa : float or array-like
-        Position angle in degrees.
+        Position angle in degrees, measured East of North.
     contrast : float or array-like
         Contrast ratio ``star/companion``.
 
@@ -627,7 +627,7 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     th = pa * dtor
 
     ddec = mas2rad * (sep * np.cos(th))
-    dra = -1 * mas2rad * (sep * np.sin(th))
+    dra = mas2rad * (sep * np.sin(th))
 
     # decompose into two "luminosity"
     l2 = 1.0 / (contrast + 1)
