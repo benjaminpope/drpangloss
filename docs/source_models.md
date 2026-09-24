@@ -136,8 +136,7 @@ axes[1].set_title("Phase response")
 
 im = axes[2].imshow(
     image,
-    origin="lower",
-    extent=[-60.0, 60.0, -60.0, 60.0],
+    extent=[60.0, -60.0, -60.0, 60.0],
     cmap="magma",
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
@@ -206,8 +205,7 @@ axes[0].set_title("`HarmonixModel.model(...)`")
 
 im = axes[1].imshow(
     image_ext,
-    origin="lower",
-    extent=[-20.0, 20.0, -20.0, 20.0],
+    extent=[20.0, -20.0, -20.0, 20.0],
     cmap="viridis",
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
@@ -266,8 +264,7 @@ axes[0].set_title("Uniform disk")
 
 im = axes[1].imshow(
     image_udisk,
-    origin="lower",
-    extent=[-60.0, 60.0, -60.0, 60.0],
+    extent=[60.0, -60.0, -60.0, 60.0],
     cmap="magma",
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
@@ -342,8 +339,7 @@ axes[0].set_title("Modulated rim")
 
 im1 = axes[1].imshow(
     image_rim_symmetric,
-    origin="lower",
-    extent=[-50.0, 50.0, -50.0, 50.0],
+    extent=[50.0, -50.0, -50.0, 50.0],
     cmap="magma",
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
@@ -353,8 +349,7 @@ fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
 im2 = axes[2].imshow(
     image_rim_modulated,
-    origin="lower",
-    extent=[-50.0, 50.0, -50.0, 50.0],
+    extent=[50.0, -50.0, -50.0, 50.0],
     cmap="magma",
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
