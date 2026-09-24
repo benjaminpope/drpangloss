@@ -1,15 +1,23 @@
 import numpy as onp
 import pytest
 import jax.numpy as np
+from scipy.special import j1 as scipy_j1
+from scipy.special import jn_zeros
 
 from drpangloss.models import (
     BinaryModelCartesian,
     GaussianDiskModel,
     HarmonixModel,
+    UniformDiskModel,
     _image_coordinates,
     cvis_gaussian_disk,
+    cvis_uniform_disk,
 )
 from tests._test_data import oidata
+
+# Independent reference conversion (not imported from drpangloss) so the
+# analytic checks below don't just re-test the module's own constant.
+_MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 
 
 def test_cvis_gaussian_disk_is_well_behaved():
@@ -41,6 +49,81 @@ def test_gaussian_disk_render_remains_finite_for_narrow_shifted_disk():
     assert image.shape == (32, 32)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+def test_cvis_uniform_disk_is_well_behaved():
+    uu = oidata.u / oidata.wavel
+    vv = oidata.v / oidata.wavel
+    cvis = cvis_uniform_disk(uu, vv, ud=5.0, dra=5.0, ddec=-3.0)
+    assert cvis.shape == uu.shape
+    assert np.all(np.isfinite(cvis))
+    assert np.all(np.abs(cvis) <= 1.0 + 1e-12)
+
+
+def test_cvis_uniform_disk_zero_baseline_is_unity():
+    cvis = cvis_uniform_disk(np.array([0.0]), np.array([0.0]), ud=10.0)
+    assert np.allclose(cvis, 1.0 + 0j)
+
+
+def test_cvis_uniform_disk_matches_analytic_airy_formula():
+    """Visibility amplitude should follow 2*J1(pi*theta*B/lambda) /
+    (pi*theta*B/lambda), with theta the disk diameter in mas and B/lambda
+    the baseline length in wavelength units (here passed directly as
+    ``u``, ``v``). Checked against an independent scipy.special.j1 call,
+    not against the module's own Bessel implementation.
+    """
+    ud = 8.0
+    base_norm = onp.array([5.0, 20.0, 45.0, 80.0])
+
+    cvis = cvis_uniform_disk(
+        np.asarray(base_norm), np.zeros_like(base_norm), ud
+    )
+
+    kernel = onp.pi * ud * _MAS2RAD_REF * base_norm
+    expected = 2.0 * scipy_j1(kernel) / kernel
+
+    assert onp.allclose(onp.asarray(cvis).real, expected, atol=1e-8)
+    assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-8)
+
+
+def test_cvis_uniform_disk_vanishes_at_first_airy_null():
+    ud = 8.0
+    first_null_kernel = jn_zeros(1, 1)[0]
+    base_norm = first_null_kernel / (onp.pi * ud * _MAS2RAD_REF)
+
+    cvis = cvis_uniform_disk(np.asarray(base_norm), np.asarray(0.0), ud)
+
+    assert onp.abs(onp.asarray(cvis)) < 1e-6
+
+
+def test_cvis_uniform_disk_converges_to_point_source_for_small_ud():
+    uu = oidata.u / oidata.wavel
+    vv = oidata.v / oidata.wavel
+    cvis = cvis_uniform_disk(uu, vv, ud=1e-6)
+    assert np.allclose(cvis, 1.0 + 0j, atol=1e-6)
+
+
+def test_uniform_disk_oidata_and_render():
+    model = UniformDiskModel(ud=30.0, dra=10.0, ddec=-10.0)
+    model_vec = oidata.model(model)
+    image = model.render(npix=64, fov_mas=150.0)
+
+    assert model_vec.shape[0] == len(oidata.vis) + len(oidata.phi)
+    assert np.all(np.isfinite(model_vec))
+    assert image.shape == (64, 64)
+    assert np.all(np.isfinite(image))
+    assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+def test_uniform_disk_render_uses_interferometric_image_orientation():
+    image = UniformDiskModel(ud=1e-3, dra=2.0, ddec=2.0).render(
+        npix=5, fov_mas=10.0
+    )
+
+    assert onp.unravel_index(onp.asarray(image).argmax(), image.shape) == (
+        1,
+        1,
+    )
 
 
 def test_binary_render_is_available():

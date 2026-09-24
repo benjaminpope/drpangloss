@@ -9,6 +9,7 @@ import equinox as eqx
 import zodiax as zx
 
 from ._utils import (
+    bessel_jn as bessel_jn,
     dtor as dtor,
     i2pi as i2pi,
     mas2rad as mas2rad,
@@ -328,6 +329,39 @@ class GaussianDiskModel(SourceModel):
         return _normalize_image(image)
 
 
+class UniformDiskModel(SourceModel):
+    """Centered or offset uniform (tophat) circular disk model."""
+
+    ud: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def __init__(self, ud, dra=0.0, ddec=0.0):
+        self.ud = np.asarray(ud, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __repr__(self):
+        return (
+            f"UniformDiskModel(ud={self.ud}, dra={self.dra}, ddec={self.ddec})"
+        )
+
+    def unpack_all(self):
+        return self.ud, self.dra, self.ddec
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return cvis_uniform_disk(uu, vv, self.ud, self.dra, self.ddec)
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        pixel_scale_mas = float(fov_mas) / float(npix)
+        radius_mas = np.maximum(self.ud / 2.0, 0.5 * pixel_scale_mas)
+        rr2 = (xx - self.dra) ** 2 + (yy - self.ddec) ** 2
+        image = np.where(rr2 <= radius_mas**2, 1.0, 0.0)
+        return _normalize_image(image)
+
+
 class HarmonixModel(SourceModel):
     """
     Wrapper for external source models with harmonix-like visibility methods.
@@ -491,6 +525,47 @@ def cvis_gaussian_disk(
     l2 = flux / (flux + 1.0)
     l1 = 1.0 - l2
     return l1 + l2 * envelope * phase
+
+
+def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
+    """Compute complex visibilities for a uniform (tophat) disk.
+
+    The visibility amplitude follows the classic uniform-disk form
+    ``2 * J1(x) / x``, with ``x = pi * ud_rad * base_norm`` the product of
+    the disk diameter (in radians) and the baseline length in wavelength
+    units (``base_norm = hypot(u, v)``, i.e. baseline length divided by
+    wavelength).
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units (cycles / rad).
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    ud : float or array-like
+        Diameter of the uniform disk in milliarcseconds.
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
+    ud_rad = mas2rad * ud
+    base_norm = np.hypot(u, v)
+    kernel = np.pi * base_norm * ud_rad
+
+    envelope = np.where(
+        kernel == 0, 1.0 + 0j, (2.0 * bessel_jn(1, kernel)[1]) / kernel + 0j
+    )
+
+    dra_rad = mas2rad * dra
+    ddec_rad = mas2rad * ddec
+    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    return envelope * phase
 
 
 def model_loglike(model_object, data_obj):
