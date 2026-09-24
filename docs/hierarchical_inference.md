@@ -331,7 +331,7 @@ Parameter ddec (mas) in chain HMC is not constrained
 ```
 
 ```text
-<chainconsumer.chainconsumer.ChainConsumer at 0xfd952783bd0>
+<chainconsumer.chainconsumer.ChainConsumer at 0xf4f3a80d3d0>
 ```
 
 ![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)

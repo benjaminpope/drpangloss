@@ -55,22 +55,20 @@ d_phi = 0.02 * phi_scale * jnp.ones_like(phi_true)
 vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
 phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
 
-data = OIData(
-    {
-        "u": u,
-        "v": v,
-        "wavel": wavel,
-        "vis": vis_obs,
-        "d_vis": d_vis,
-        "phi": phi_obs,
-        "d_phi": d_phi,
-        "i_cps1": None,
-        "i_cps2": None,
-        "i_cps3": None,
-        "v2_flag": True,
-        "cp_flag": False,
-    }
-)
+data = OIData({
+    "u": u,
+    "v": v,
+    "wavel": wavel,
+    "vis": vis_obs,
+    "d_vis": d_vis,
+    "phi": phi_obs,
+    "d_phi": d_phi,
+    "i_cps1": None,
+    "i_cps2": None,
+    "i_cps3": None,
+    "v2_flag": True,
+    "cp_flag": False,
+})
 
 {
     "n_baselines": int(n_bl),
@@ -284,16 +282,22 @@ plt.show()
 
 ```python
 rim_symmetric = ModulatedGaussianRimModel(
-    diam=30.0, fwhm=3.0, inc=55.0, pa=20.0, flux=0.4
+    diam=14.15,
+    fwhm=3.233,
+    inc=19.0,
+    pa=6.0,
+    flux=0.67504187604,
+    az_amps=jnp.array([0.0]),
+    az_pas=jnp.array([0.0]),
 )
 rim_modulated = ModulatedGaussianRimModel(
-    diam=30.0,
-    fwhm=3.0,
-    inc=55.0,
-    pa=20.0,
-    az_amps=jnp.array([0.5]),
-    az_pas=jnp.array([40.0]),
-    flux=0.4,
+    diam=14.15,
+    fwhm=3.233,
+    inc=19.0,
+    pa=6.0,
+    flux=0.67504187604,
+    az_amps=jnp.array([0.43011627, 0.2745906]),
+    az_pas=jnp.array([35.537678 + 6.0, 50.245735 + 6.0]),
 )
 
 cvis_rim = rim_modulated.model(u, v, wavel)
@@ -311,24 +315,21 @@ model_vec_rim = data.model(rim_modulated)
 ```
 
 ```text
-{'diam_mas': 30.0,
- 'flux': 0.4000000059604645,
- 'az_amps': [0.5],
- 'az_pas_deg': [40.0],
+{'diam_mas': 14.149999618530273,
+ 'flux': 0.6750418543815613,
+ 'az_amps': [0.4301162660121918, 0.2745906114578247],
+ 'az_pas_deg': [41.53767776489258, 56.24573516845703],
  'model_len': 64}
 ```
 
 ## Visualize the rim: azimuthal modulation and Fourier response
 
-Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response.
+Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response. The parameters are chosen here so the modulated rim model and its image
+match the final geometric model shown for the post-AGB IRAS 08544-4431 in [Hillen et al. 2016](http://dx.doi.org/10.1051/0004-6361/201628125).
 
 ```python
-image_rim_symmetric = np.asarray(
-    rim_symmetric.render(npix=128, fov_mas=100.0)
-)
-image_rim_modulated = np.asarray(
-    rim_modulated.render(npix=128, fov_mas=100.0)
-)
+image_rim_symmetric = np.asarray(rim_symmetric.render(npix=256, fov_mas=30.0))
+image_rim_modulated = np.asarray(rim_modulated.render(npix=256, fov_mas=30.0))
 
 fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
