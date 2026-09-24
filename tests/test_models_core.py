@@ -9,6 +9,8 @@ from drpangloss.models import (
     BinaryModelCartesian,
     cvis_binary,
     fisher,
+    joint_data,
+    joint_errors,
     joint_loglike,
     joint_prediction,
     laplace_cov,
@@ -145,6 +147,10 @@ def test_model_and_joint_loglike_helpers_match_legacy_loglike():
     legacy = loglike(values, params, oidata, BinaryModelCartesian)
     assert np.allclose(model_loglike(model, oidata), legacy)
     assert np.allclose(joint_loglike(tree, observations, model_fn), 2 * legacy)
+    assert joint_data(observations).shape[0] == 2 * (
+        oidata.vis.size + oidata.phi.size
+    )
+    assert joint_errors(observations).shape == joint_data(observations).shape
     assert joint_prediction(tree, observations, model_fn).shape[0] == 2 * (
         oidata.vis.size + oidata.phi.size
     )
@@ -196,9 +202,16 @@ def test_oidata_linear_observables_transform_and_model_alignment():
     disco_data = OIData(sim_data)
     flattened_data, errors = disco_data.flatten_data()
     model_vector = disco_data.model(BinaryModelCartesian(50.0, 0.0, 1e-3))
+    cvis_model = BinaryModelCartesian(50.0, 0.0, 1e-3).model(
+        disco_data.u, disco_data.v, disco_data.wavel
+    )
 
     assert disco_data.vis.shape == (m_vis,)
     assert disco_data.phi.shape == (m_phi,)
+    assert disco_data.observable_kind == "split"
+    assert np.allclose(flattened_data, disco_data.standardize_data())
+    assert np.allclose(errors, disco_data.standardize_errors())
+    assert np.allclose(model_vector, disco_data.standardize_model(cvis_model))
     assert flattened_data.shape == model_vector.shape
     assert errors.shape == flattened_data.shape
     assert np.all(np.isfinite(flattened_data))

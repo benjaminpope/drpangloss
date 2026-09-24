@@ -12,13 +12,18 @@ import sys
 from pathlib import Path
 
 import jax
-import optimistix as optx
-
-jax.config.update("jax_enable_x64", True)
-
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import numpy as onp
+import numpyro
+import numpyro.distributions as dist
+import optimistix as optx
+import pandas as pd
 from jax.flatten_util import ravel_pytree
+from numpyro.infer import MCMC, NUTS
+from numpyro.infer.initialization import init_to_value
+
+jax.config.update("jax_enable_x64", True)
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -35,15 +40,50 @@ from drpangloss.inference import (
 )
 from drpangloss.models import (
     BinaryModelCartesian,
+    joint_data,
+    joint_errors,
     joint_loglike,
     joint_prediction,
 )
+from drpangloss.plotting import (
+    plot_chainconsumer_diagnostics,
+    plot_data_model_correlation,
+    plot_likelihood_grid,
+    posterior_predictive_summary,
+)
 from examples.hierarchical_binary_workflow import (
     FILTER_LABELS,
-    binary_model,
-    observation_errors,
     simulate_observations,
 )
+```
+
+```text
+---------------------------------------------------------------------------ImportError                               Traceback (most recent call last)Cell In[18], line 31
+     23         sys.path.insert(0, str(path))
+     25 from drpangloss.inference import (
+     26     fisher_projection,
+     27     gaussian_fisher,
+     28     observed_information,
+     29     regularized_inverse,
+     30 )
+---> 31 from drpangloss.models import (
+     32     BinaryModelCartesian,
+     33     joint_data,
+     34     joint_errors,
+     35     joint_loglike,
+     36     joint_prediction,
+     37 )
+     38 from drpangloss.plotting import (
+     39     plot_chainconsumer_diagnostics,
+     40     plot_data_model_correlation,
+     41     plot_likelihood_grid,
+     42     posterior_predictive_summary,
+     43 )
+     44 from examples.hierarchical_binary_workflow import (
+     45     FILTER_LABELS,
+     46     simulate_observations,
+     47 )
+ImportError: cannot import name 'joint_data' from 'drpangloss.models' (/Users/benpope/code/drpangloss/src/drpangloss/models.py)
 ```
 
 ## Simulate three observations
@@ -63,10 +103,6 @@ observations, truth = simulate_observations(seed=7)
         zip(FILTER_LABELS, observations)
     )
 }
-```
-
-```text
-W0919 17:44:53.064665  506698 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ```text
@@ -93,7 +129,7 @@ params = {
 }
 
 
-def model_fn(values, observation_index):
+def binary_model(values, observation_index):
     return BinaryModelCartesian(
         values["dra"],
         values["ddec"],
@@ -101,8 +137,8 @@ def model_fn(values, observation_index):
     )
 
 
-initial_loglike = joint_loglike(params, observations, model_fn)
-truth_loglike = joint_loglike(truth, observations, model_fn)
+initial_loglike = joint_loglike(params, observations, binary_model)
+truth_loglike = joint_loglike(truth, observations, binary_model)
 {
     "initial_loglike": float(initial_loglike),
     "truth_loglike": float(truth_loglike),
@@ -110,27 +146,84 @@ truth_loglike = joint_loglike(truth, observations, model_fn)
 ```
 
 ```text
-{'initial_loglike': -6385.33425087397, 'truth_loglike': -48.91251621611459}
+{'initial_loglike': -5654.122745306354, 'truth_loglike': 682.2989893515032}
 ```
+
+## Joint grid initialization
+
+Before fitting independent fluxes in each filter, we search a compact grid in shared right ascension, declination, and flux. The best shared-flux point provides a robust starting position and initializes every filter flux for the hierarchical optimization and HMC steps.
+
+```python
+joint_grid_samples = {
+    "dra": jnp.linspace(-50.0, 50.0, 21),
+    "ddec": jnp.linspace(-50.0, 50.0, 21),
+    "flux": 10.0 ** jnp.linspace(-4.0, -1.0, 16),
+}
+joint_grid_axes = jnp.meshgrid(*joint_grid_samples.values(), indexing="ij")
+joint_grid_values = jnp.stack(
+    [axis.reshape(-1) for axis in joint_grid_axes], axis=1
+)
+
+
+def shared_flux_loglike(values):
+    shared_params = {
+        "dra": values[0],
+        "ddec": values[1],
+        "log10_flux": jnp.full(
+            len(observations), jnp.log10(values[2]), dtype=values.dtype
+        ),
+    }
+    return joint_loglike(shared_params, observations, binary_model)
+
+
+joint_grid_loglike = jax.vmap(shared_flux_loglike)(joint_grid_values).reshape(
+    tuple(axis.size for axis in joint_grid_samples.values())
+)
+joint_grid_index = jnp.unravel_index(
+    jnp.argmax(joint_grid_loglike), joint_grid_loglike.shape
+)
+joint_grid_best = {
+    name: float(joint_grid_samples[name][index])
+    for name, index in zip(joint_grid_samples, joint_grid_index)
+}
+
+plot_likelihood_grid(
+    joint_grid_loglike.max(axis=2),
+    joint_grid_samples,
+    truths={"dra": float(truth["dra"]), "ddec": float(truth["ddec"])},
+    best_point=joint_grid_best,
+    colorbar_label="Joint max log-likelihood over shared flux",
+)
+
+params = {
+    "dra": jnp.array(joint_grid_best["dra"]),
+    "ddec": jnp.array(joint_grid_best["ddec"]),
+    "log10_flux": jnp.full(
+        len(observations), jnp.log10(joint_grid_best["flux"])
+    ),
+}
+joint_loglike(params, observations, binary_model)
+```
+
+```text
+Array(-5122.31702663, dtype=float64)
+```
+
+![hierarchical_inference output 8.2](generated/hierarchical_inference_cell008_out02.png)
 
 ## Preconditioning before Inference
 
 The Fisher Information Matrix tells us the expected information in the data, providing both a limit to the best possible covariance we can obtain from the data (the Cramér-Rao lower bound) and a way of normalising parameters, which might have very different scales and correlations. It is often best to do this normalization before Bayesian inference, in order to precondition the model for fast convergence.
 
 ```python
-prediction_fn = lambda values: joint_prediction(
-    values, observations, binary_model
-)
-errors = observation_errors(observations)
+prediction_fn = lambda values: joint_prediction(values, observations, binary_model)
+errors = joint_errors(observations)
 initial_fisher, unravel = gaussian_fisher(
     prediction_fn, params, errors, ridge=1e-8
 )
 projection = fisher_projection(initial_fisher, eps=1e-10)
 
-{
-    "fisher_shape": initial_fisher.shape,
-    "whitened_metric": projection.T @ initial_fisher @ projection,
-}
+print(f"Fisher matrix: {initial_fisher.shape[0]} x {initial_fisher.shape[1]}")
 ```
 
 ```text
@@ -149,20 +242,18 @@ projection = fisher_projection(initial_fisher, eps=1e-10)
 
 ## Optimization
 
-We first fit the model using optimization from a decent starting point:
+The Fisher matrix defines well-scaled local coordinates. We optimize in those coordinates, then map the result back to the physical parameter tree.
 
 ```python
 initial_vector, unravel = ravel_pytree(params)
 
 
 def project(latent):
-    # Map latent optimization coordinates back to model parameters.
     return unravel(initial_vector + projection @ latent)
 
 
-def latent_objective(latent, args):
-    # Optimize the negative joint log-likelihood in latent coordinates.
-    del args
+def latent_objective(latent, unused):
+    del unused
     return -joint_loglike(project(latent), observations, binary_model)
 
 
@@ -176,52 +267,13 @@ solution = optx.minimise(
 )
 recovered = project(solution.value)
 
-recovered_flux = 10.0 ** recovered["log10_flux"]
-truth_flux = 10.0 ** truth["log10_flux"]
-{
-    "initial_reduced_chi2": float(
-        jnp.sum(
-            (
-                (
-                    jnp.concatenate(
-                        [
-                            observation.flatten_data()[0]
-                            for observation in observations
-                        ]
-                    )
-                    - prediction_fn(params)
-                )
-                / errors
-            )
-            ** 2
-        )
-        / (errors.size - initial_vector.size)
-    ),
-    "final_reduced_chi2": float(
-        jnp.sum(
-            (
-                (
-                    jnp.concatenate(
-                        [
-                            observation.flatten_data()[0]
-                            for observation in observations
-                        ]
-                    )
-                    - prediction_fn(recovered)
-                )
-                / errors
-            )
-            ** 2
-        )
-        / (errors.size - initial_vector.size)
-    ),
-    "truth_dra_mas": float(truth["dra"]),
-    "recovered_dra_mas": float(recovered["dra"]),
-    "truth_ddec_mas": float(truth["ddec"]),
-    "recovered_ddec_mas": float(recovered["ddec"]),
-    "truth_fluxes": truth_flux,
-    "recovered_fluxes": recovered_flux,
-}
+initial_chi2r = jnp.sum(((joint_data(observations) - prediction_fn(params)) / errors) ** 2) / (
+    errors.size - initial_vector.size
+)
+final_chi2r = jnp.sum(((joint_data(observations) - prediction_fn(recovered)) / errors) ** 2) / (
+    errors.size - initial_vector.size
+)
+print(f"Reduced chi-squared: {float(initial_chi2r):.2f} -> {float(final_chi2r):.2f}")
 ```
 
 ```text
@@ -240,30 +292,21 @@ recovered_vector, recovered_unravel = ravel_pytree(recovered)
 
 
 def flat_objective(values):
-    # Evaluate the negative log-likelihood for flat parameter vectors.
-    return -joint_loglike(
-        recovered_unravel(values), observations, binary_model
-    )
+    return -joint_loglike(recovered_unravel(values), observations, binary_model)
 
 
 expected_fisher, _ = gaussian_fisher(prediction_fn, recovered, errors)
 observed_info = observed_information(flat_objective, recovered_vector)
 laplace_covariance = regularized_inverse(observed_info, ridge=1e-8)
-
-parameter_names = [
-    "ddec (mas)",
-    "dra (mas)",
-    "log10 flux: 800 nm",
-    "log10 flux: 1.0 micron",
-    "log10 flux: 1.2 microns",
-]
 laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))
-{
-    name: {"estimate": float(value), "laplace_sigma": float(sigma)}
-    for name, value, sigma in zip(
-        parameter_names, recovered_vector, laplace_sigma
-    )
-}
+
+parameter_names = ["ddec (mas)", "dra (mas)"] + [
+    f"log10 flux ({label})" for label in FILTER_LABELS
+]
+pd.DataFrame(
+    {"estimate": onp.asarray(recovered_vector), "Laplace sigma": onp.asarray(laplace_sigma)},
+    index=parameter_names,
+)
 ```
 
 ```text
@@ -279,55 +322,103 @@ laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))
   'laplace_sigma': 0.004064131977928648}}
 ```
 
+## Interpreting the local covariance
+
+The table above comes from the Hessian of the negative log likelihood at the optimum. It is a local Laplace approximation, which we compare with HMC below.
+
+## Hamiltonian Monte Carlo
+
+The same shared-position, per-filter-flux parameter tree can be sampled with NumPyro. We initialize HMC from the joint grid maximum used by the optimizer.
+
+```python
+def model_hmc():
+    dra = numpyro.sample("dra", dist.Uniform(-300.0, 300.0))
+    ddec = numpyro.sample("ddec", dist.Uniform(-300.0, 300.0))
+    log10_flux = numpyro.sample(
+        "log10_flux", dist.Uniform(-6.0, -1.0).expand([len(observations)])
+    )
+    values = {"dra": dra, "ddec": ddec, "log10_flux": log10_flux}
+    numpyro.factor("loglike", joint_loglike(values, observations, binary_model))
+
+
+init_values = {
+    "dra": float(params["dra"]),
+    "ddec": float(params["ddec"]),
+    "log10_flux": params["log10_flux"],
+}
+kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
+mcmc = MCMC(
+    kernel, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False
+)
+mcmc.run(jax.random.PRNGKey(2026))
+posterior = mcmc.get_samples()
+
+{
+    "dra_median": float(jnp.median(posterior["dra"])),
+    "ddec_median": float(jnp.median(posterior["ddec"])),
+    "flux_median_by_filter": {
+        name: float(jnp.median(10.0 ** posterior["log10_flux"][:, index]))
+        for index, name in enumerate(FILTER_LABELS)
+    },
+}
+```
+
+```text
+{'dra_median': 17.96329911007365,
+ 'ddec_median': -11.928571765819612,
+ 'flux_median_by_filter': {'800 nm': 0.014920229880374595,
+  '1.0 micron': 0.010034410311986427,
+  '1.2 microns': 0.006998137757271148}}
+```
+
 ## Corner plot of shared and per-filter parameters
 
 Let's visualize the recovered parameters and compare them to the truth values from which they are simulated:
 
 ```python
-import numpy as onp
-import pandas as pd
-
-from drpangloss.plotting import (
-    plot_chainconsumer_diagnostics,
-    plot_data_model_correlation,
-    posterior_predictive_summary,
-)
-
-parameter_columns = [
-    "ddec",
-    "dra",
-    "log10_flux_800nm",
-    "log10_flux_1um",
-    "log10_flux_1p2um",
+parameter_columns = ["ddec (mas)", "dra (mas)"] + [
+    f"log10 flux ({label})" for label in FILTER_LABELS
 ]
 
 flat_recovered, unravel_recovered = ravel_pytree(recovered)
 flat_truth, _ = ravel_pytree(truth)
-
-# Gaussian samples from the local Laplace covariance around the fitted solution.
 n_samples = 20000
 cholesky = jnp.linalg.cholesky(laplace_covariance)
 standard_normal = jax.random.normal(
     jax.random.key(11), (n_samples, flat_recovered.size)
 )
 latent_samples = flat_recovered[None, :] + standard_normal @ cholesky.T
-
-samples_df = pd.DataFrame(
+laplace_samples_df = pd.DataFrame(
     onp.asarray(latent_samples), columns=parameter_columns
+)
+
+hmc_samples_df = pd.DataFrame(
+    {
+        "ddec (mas)": onp.asarray(posterior["ddec"]),
+        "dra (mas)": onp.asarray(posterior["dra"]),
+        **{
+            f"log10 flux ({label})": onp.asarray(posterior["log10_flux"][:, index])
+            for index, label in enumerate(FILTER_LABELS)
+        },
+    }
 )
 truth_dict = dict(zip(parameter_columns, onp.asarray(flat_truth)))
 
 plot_chainconsumer_diagnostics(
-    {"Laplace approximation": samples_df},
+    {"HMC": hmc_samples_df, "Laplace approximation": laplace_samples_df},
     columns=parameter_columns,
     truth=truth_dict,
-    colors=["#1f77b4"],
-);
+    colors=["#1f77b4", "#ff7f0e"],
+)
 ```
 
-![hierarchical_inference output 13.1](generated/hierarchical_inference_cell013_out01.png)
+```text
+<chainconsumer.chainconsumer.ChainConsumer at 0x131136d10>
+```
 
-![hierarchical_inference output 13.2](generated/hierarchical_inference_cell013_out02.png)
+![hierarchical_inference output 18.2](generated/hierarchical_inference_cell018_out02.png)
+
+![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
 
 ## Posterior predictive correlation per filter
 
@@ -354,11 +445,11 @@ for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
     plt.show()
 ```
 
-![hierarchical_inference output 15.1](generated/hierarchical_inference_cell015_out01.png)
+![hierarchical_inference output 20.1](generated/hierarchical_inference_cell020_out01.png)
 
-![hierarchical_inference output 15.2](generated/hierarchical_inference_cell015_out02.png)
+![hierarchical_inference output 20.2](generated/hierarchical_inference_cell020_out02.png)
 
-![hierarchical_inference output 15.3](generated/hierarchical_inference_cell015_out03.png)
+![hierarchical_inference output 20.3](generated/hierarchical_inference_cell020_out03.png)
 
 ## Visibility and phase versus baseline
 
@@ -409,4 +500,4 @@ axes[0, 0].legend(loc="best")
 plt.show()
 ```
 
-![hierarchical_inference output 17.1](generated/hierarchical_inference_cell017_out01.png)
+![hierarchical_inference output 22.1](generated/hierarchical_inference_cell022_out01.png)

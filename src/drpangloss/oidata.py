@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import jax
 import jax.numpy as np
 
@@ -7,7 +9,19 @@ import equinox as eqx
 import zodiax as zx
 
 
-__all__ = ["OIData", "closure_phases", "cp_indices"]
+__all__ = ["OIData", "closure_phases", "cp_indices", "load_oi_data"]
+
+
+_MIXED_DISCO_REQUIRED_FIELDS = (
+    "u",
+    "v",
+    "wavelength_m",
+    "disco_coefficients",
+    "disco_sigma",
+    "disco_covariance",
+    "disco_logamp_model_operator",
+    "disco_phase_model_operator",
+)
 
 
 class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -41,6 +55,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     i_cps3: jax.Array | onp.ndarray | None
     vis_mat: jax.Array | None
     phi_mat: jax.Array | None
+    observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
@@ -139,6 +154,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 self.cp_flag = True
 
         else:
+            if self._is_mixed_disco_record(data):
+                self._init_mixed_disco(data)
+                return
+
             # assume data is a dict of the form {'u':u,'v':v,'wavel':wavel,'vis':vis,'d_vis':d_vis,
             #'phi':phi,'d_phi':d_phi,'i_cps1':i_cps1,'i_cps2':i_cps2,'i_cps3':i_cps3,'v2_flag':v2_flag,'cp_flag':cp_flag}
 
@@ -193,6 +212,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "vis_mode", data.get("observable_vis_mode", "auto")
             )
             self.vis_mode = self._resolve_vis_mode(vis_mode_in)
+            self.observable_kind = "split"
             self._transform_observed_channels(
                 validate_vis_covariance=has_disco_vis,
                 validate_phi_covariance=has_disco_phi,
@@ -201,7 +221,110 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         self.vis_mat = None
         self.phi_mat = None
+        self.observable_kind = "split"
         self.vis_mode = self._resolve_vis_mode("auto")
+
+    @staticmethod
+    def _is_mixed_disco_record(data):
+        return "disco_coefficients" in data
+
+    def _init_mixed_disco(self, data):
+        self._validate_mixed_disco_record(data)
+
+        self.u = -np.asarray(data["u"], dtype=float)
+        self.v = -np.asarray(data["v"], dtype=float)
+        self.wavel = np.asarray(data["wavelength_m"], dtype=float)
+
+        self.vis = np.asarray(data["disco_coefficients"], dtype=float)
+        self.d_vis = np.asarray(data["disco_sigma"], dtype=float)
+        self.phi = np.empty((0,), dtype=float)
+        self.d_phi = np.empty((0,), dtype=float)
+
+        self.i_cps1 = None
+        self.i_cps2 = None
+        self.i_cps3 = None
+        self.vis_mat = np.asarray(
+            data["disco_logamp_model_operator"], dtype=float
+        )
+        self.phi_mat = np.asarray(
+            data["disco_phase_model_operator"], dtype=float
+        )
+        self.observable_kind = "mixed_log_complex"
+        self.vis_mode = "logamp"
+        self.v2_flag = False
+        self.cp_flag = False
+
+    @staticmethod
+    def _validate_mixed_disco_record(data):
+        missing = [
+            name for name in _MIXED_DISCO_REQUIRED_FIELDS if name not in data
+        ]
+        if missing:
+            raise KeyError(
+                f"AMIGO mixed-DISCO record is missing fields: {missing}"
+            )
+
+        u = onp.asarray(data["u"], dtype=float)
+        v = onp.asarray(data["v"], dtype=float)
+        coefficients = onp.asarray(data["disco_coefficients"], dtype=float)
+        sigma = onp.asarray(data["disco_sigma"], dtype=float)
+        covariance = onp.asarray(data["disco_covariance"], dtype=float)
+        logamp = onp.asarray(data["disco_logamp_model_operator"], dtype=float)
+        phase = onp.asarray(data["disco_phase_model_operator"], dtype=float)
+
+        if u.ndim != 1 or v.shape != u.shape:
+            raise ValueError("AMIGO DISCO u and v must be matching vectors.")
+        if coefficients.ndim != 1 or coefficients.size == 0:
+            raise ValueError(
+                "AMIGO DISCO coefficients must be a non-empty vector."
+            )
+        if sigma.shape != coefficients.shape:
+            raise ValueError(
+                "AMIGO DISCO coefficients and sigma must have matching shapes."
+            )
+        if covariance.shape != (sigma.size, sigma.size):
+            raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
+        expected_operator_shape = (sigma.size, u.size)
+        if (
+            logamp.shape != expected_operator_shape
+            or phase.shape != expected_operator_shape
+        ):
+            raise ValueError(
+                "AMIGO DISCO model operators have inconsistent shapes."
+            )
+        if not all(
+            onp.all(onp.isfinite(value))
+            for value in (u, v, coefficients, sigma, covariance, logamp, phase)
+        ):
+            raise ValueError("AMIGO DISCO arrays must be finite.")
+        if onp.any(sigma <= 0.0):
+            raise ValueError("AMIGO DISCO sigma values must be positive.")
+
+        tolerance = 1e-12 * max(float(onp.max(sigma)), 1.0)
+        if onp.any(onp.diff(sigma) < -tolerance):
+            raise ValueError(
+                "AMIGO DISCO modes must be ordered by increasing uncertainty."
+            )
+
+        covariance_scale = max(
+            float(onp.max(onp.abs(onp.diag(covariance)))),
+            onp.finfo(float).tiny,
+        )
+        off_diagonal = covariance - onp.diag(onp.diag(covariance))
+        relative_off_diagonal = float(
+            onp.max(onp.abs(off_diagonal)) / covariance_scale
+        )
+        if relative_off_diagonal > 1e-10:
+            raise ValueError(
+                "AMIGO DISCO covariance is not diagonal: relative "
+                f"off-diagonal {relative_off_diagonal:.3g}."
+            )
+        if not onp.allclose(
+            onp.diag(covariance), sigma**2, rtol=1e-8, atol=0.0
+        ):
+            raise ValueError(
+                "AMIGO DISCO covariance diagonal does not match sigma squared."
+            )
 
     def _resolve_vis_mode(self, vis_mode):
         """Resolve the visibility channel convention used before linear projection."""
@@ -405,9 +528,19 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         Flatten closure phases and uncertainties.
         """
-        return np.concatenate([self.vis, self.phi]), np.concatenate(
-            [self.d_vis, self.d_phi]
-        )
+        return self.standardize_data(), self.standardize_errors()
+
+    def standardize_data(self):
+        """Return observables in the likelihood comparison vector format."""
+        if self.observable_kind == "mixed_log_complex":
+            return self.vis
+        return np.concatenate([self.vis, self.phi])
+
+    def standardize_errors(self):
+        """Return uncertainties matching ``standardize_data``."""
+        if self.observable_kind == "mixed_log_complex":
+            return self.d_vis
+        return np.concatenate([self.d_vis, self.d_phi])
 
     def unpack_all(self):
         """
@@ -441,6 +574,17 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             convention/order as ``flatten_data``.
         """
 
+        return self.standardize_model(cvis)
+
+    def standardize_model(self, cvis):
+        """Map complex visibilities into the data comparison vector format."""
+        if self.observable_kind == "mixed_log_complex":
+            if self.vis_mat is None or self.phi_mat is None:
+                raise ValueError(
+                    "Mixed log-complex observables require model operators."
+                )
+            log_cvis = np.log(cvis)
+            return self.vis_mat @ log_cvis.real + self.phi_mat @ log_cvis.imag
         return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
 
     def to_vis(self, cvis):
@@ -492,6 +636,18 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 phi_key, phi.shape
             )
         return self.set(["vis", "phi"], [vis, phi])
+
+
+def load_oi_data(path, filter_name=None):
+    """Load one or all filters from an AMIGO mixed-DISCO NumPy product."""
+    records = onp.load(Path(path), allow_pickle=True).item()
+    if not isinstance(records, dict):
+        raise TypeError(
+            "Expected a filter-keyed dictionary in the NumPy file."
+        )
+    if filter_name is not None:
+        return OIData(records[filter_name])
+    return {name: OIData(record) for name, record in records.items()}
 
 
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):

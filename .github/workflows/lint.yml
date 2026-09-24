@@ -40,7 +40,7 @@ jobs:
       - name: ruff autofix
         run: |
           uvx ruff@${RUFF_VERSION} check --fix-only --force-exclude .
-          uvx ruff@${RUFF_VERSION} format --force-exclude .
+          uvx ruff@${RUFF_VERSION} format --force-exclude src tests examples scripts
 
       - name: commit and push
         run: |
@@ -72,4 +72,4 @@ jobs:
         run: uvx ruff@${RUFF_VERSION} check --output-format=github --force-exclude .
 
       - name: ruff format --check
-        run: uvx ruff@${RUFF_VERSION} format --check --force-exclude .
+        run: uvx ruff@${RUFF_VERSION} format --check --force-exclude src tests examples scripts

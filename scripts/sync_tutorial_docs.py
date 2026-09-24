@@ -15,6 +15,7 @@ MAPPINGS = {
     "notebooks/hierarchical_inference.ipynb": "docs/hierarchical_inference.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
     "notebooks/source_models.ipynb": "docs/source_models.md",
+    "notebooks/amigo_disco.ipynb": "docs/amigo_disco.md",
 }
 
 

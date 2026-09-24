@@ -491,6 +491,20 @@ def joint_prediction(params, observations, model_fn):
     )
 
 
+def joint_data(observations):
+    """Concatenate observed vectors in the same order as ``joint_prediction``."""
+    return np.concatenate(
+        [observation.standardize_data() for observation in observations]
+    )
+
+
+def joint_errors(observations):
+    """Concatenate uncertainty vectors in the same order as ``joint_prediction``."""
+    return np.concatenate(
+        [observation.standardize_errors() for observation in observations]
+    )
+
+
 def joint_loglike(params, observations, model_fn):
     """Sum independent Gaussian log likelihoods over multiple observations."""
     return sum(
@@ -550,9 +564,8 @@ def loglike_nosignal(values, params, data_obj, model_class):
 
     model_data = data_obj.model(model_class(**param_dict))
     _, errors = data_obj.flatten_data()
-    data = np.concatenate(
-        [np.ones_like(data_obj.vis), np.zeros_like(data_obj.phi)]
-    )
+    unity_cvis = np.ones_like(data_obj.u, dtype=complex)
+    data = data_obj.standardize_model(unity_cvis)
 
     return jax.scipy.stats.norm.logpdf(
         model_data, loc=data, scale=errors

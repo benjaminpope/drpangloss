@@ -367,7 +367,7 @@ def plot_likelihood_grid(
 def plot_chainconsumer_diagnostics(
     chains_by_label,
     columns,
-    truth,
+    truth=None,
     colors=None,
     walk_columns=None,
 ):
@@ -380,8 +380,9 @@ def plot_chainconsumer_diagnostics(
         Mapping ``label -> pandas.DataFrame`` containing chain samples.
     columns : list[str]
         Columns used for contour/corner plotting.
-    truth : dict
-        Truth mapping for columns displayed.
+    truth : dict, optional
+        Truth mapping for columns displayed. When omitted, no truth overlay is
+        drawn.
     colors : list[str], optional
         Per-chain colors.
     walk_columns : list[str], optional
@@ -395,7 +396,18 @@ def plot_chainconsumer_diagnostics(
     from chainconsumer import ChainConsumer, Chain, Truth
 
     if colors is None:
-        colors = [f"C{i}" for i in range(max(1, len(chains_by_label)))]
+        colors = [
+            "#1f77b4",
+            "#ff7f0e",
+            "#2ca02c",
+            "#d62728",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#7f7f7f",
+            "#bcbd22",
+            "#17becf",
+        ]
     if walk_columns is None:
         walk_columns = columns
 
@@ -410,7 +422,8 @@ def plot_chainconsumer_diagnostics(
                 plot_cloud=False,
             )
         )
-    consumer.add_truth(Truth(location=truth))
+    if truth is not None:
+        consumer.add_truth(Truth(location=truth))
     consumer.plotter.plot()
     consumer.plotter.plot_walks(
         columns=walk_columns, plot_weights=False, plot_posterior=False

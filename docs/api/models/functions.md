@@ -9,6 +9,8 @@
         - cvis_gaussian_disk
         - model_loglike
         - joint_prediction
+        - joint_data
+        - joint_errors
         - joint_loglike
         - loglike
         - loglike_nosignal

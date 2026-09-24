@@ -48,6 +48,7 @@ nav:
   - Hierarchical Inference: hierarchical_inference.md
   - Data I/O: data_io.md
   - Extended Source Models: source_models.md
+  - AMIGO DISCO: amigo_disco.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
