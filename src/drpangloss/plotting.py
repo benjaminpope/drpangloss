@@ -480,7 +480,7 @@ def diagnostics_table_from_samples(
 
     df = pd.DataFrame({"dra": dra, "ddec": ddec, "flux": flux})
     df["sep"] = np.sqrt(df["dra"] ** 2 + df["ddec"] ** 2)
-    df["pa"] = (np.degrees(np.arctan2(df["ddec"], df["dra"])) + 360.0) % 360.0
+    df["pa"] = (np.degrees(np.arctan2(df["dra"], df["ddec"])) + 360.0) % 360.0
     return df
 
 
@@ -509,7 +509,7 @@ def truth_cartesian_and_polar(truth):
         ),
         "pa": float(
             (
-                np.degrees(np.arctan2(truth_cart["ddec"], truth_cart["dra"]))
+                np.degrees(np.arctan2(truth_cart["dra"], truth_cart["ddec"]))
                 + 360.0
             )
             % 360.0

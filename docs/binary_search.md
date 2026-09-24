@@ -301,7 +301,7 @@ print(
 ```
 
 ```text
-Fisher HMC estimate: sep=144 mas, pa=326 deg
+Fisher HMC estimate: sep=144 mas, pa=124 deg
 ```
 
 We can visualize the outputs with a corner plot. You can use anything you like, eg [corner.py](https://corner.readthedocs.io/en/latest/) or [pairplots](https://sefffal.github.io/PairPlots.jl/dev/), but we have default helpers for chainconsumer.

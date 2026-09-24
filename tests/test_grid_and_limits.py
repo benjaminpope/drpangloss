@@ -3,6 +3,7 @@ import warnings
 import jax.numpy as np
 from matplotlib import get_backend
 import matplotlib.pyplot as plt
+import pytest
 
 from drpangloss.grid_fit import (
     absil_limits,
@@ -16,10 +17,12 @@ from drpangloss.grid_fit import (
 from drpangloss.models import BinaryModelCartesian, nsigma
 from drpangloss.oidata import OIData
 from drpangloss.plotting import (
+    diagnostics_table_from_samples,
     plot_contrast_limits,
     plot_likelihood_grid,
     plot_optimized_and_grid,
     plot_optimized_and_sigma,
+    truth_cartesian_and_polar,
 )
 from tests._test_data import (
     oidata,
@@ -415,3 +418,38 @@ def test_plot_contrast_limits_sigma_label():
         legend_axis.get_legend().texts[0].get_text()
         == "5$\\sigma$ Contrast Limit"
     )
+
+
+def test_diagnostics_table_from_samples_follows_north_to_east_pa_convention():
+    """A sample due East (dra=+40, ddec=0) must report pa=90 under the
+    package's North-to-East convention. The previous swapped-argument
+    arctan2(ddec, dra) bug would instead report pa=0 here, so this catches
+    the bug directly rather than via a self-consistent round-trip.
+    """
+    samples = {
+        "dra": np.array([40.0]),
+        "ddec": np.array([0.0]),
+        "flux": np.array([1.0]),
+    }
+    df = diagnostics_table_from_samples(samples)
+    assert df["pa"].to_numpy() == pytest.approx(90.0)
+
+    dra, ddec = 50.0, 50.0
+    off_axis = diagnostics_table_from_samples(
+        {
+            "dra": np.array([dra]),
+            "ddec": np.array([ddec]),
+            "flux": np.array([1.0]),
+        }
+    )
+    expected_pa = float(BinaryModelCartesian(dra, ddec, 1.0).to_angular().pa)
+    assert off_axis["pa"].to_numpy() == pytest.approx(expected_pa)
+
+
+def test_truth_cartesian_and_polar_follows_north_to_east_pa_convention():
+    """Same North-to-East check as above, for the truth-marker helper used
+    by plot_hmc_fisher_chainconsumer.
+    """
+    truth = {"dra": 40.0, "ddec": 0.0, "flux": 1.0}
+    _, truth_polar = truth_cartesian_and_polar(truth)
+    assert truth_polar["pa"] == pytest.approx(90.0)
