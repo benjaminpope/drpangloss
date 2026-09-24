@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 src/drpangloss.egg-info/
 REVIEW_NOTES.md
+TODO.md
 
 site/
 docs/generated/_tmp_*

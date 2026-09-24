@@ -8,6 +8,12 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from ._utils import (
+    dtor as dtor,
+    i2pi as i2pi,
+    mas2rad as mas2rad,
+    rad2mas as rad2mas,
+)
 from .inference import (
     fisher_matrix as _fisher_matrix,
     laplace_covariance as _laplace_covariance,
@@ -16,12 +22,6 @@ from .inference import (
 from .oidata import OIData as OIData
 from .oidata import closure_phases as closure_phases
 from .oidata import cp_indices as cp_indices
-
-rad2mas = 180.0 / np.pi * 3600.0 * 1000.0  # convert rad to mas
-mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
-
-dtor = np.pi / 180.0
-i2pi = 1j * 2.0 * np.pi
 
 
 def _image_coordinates(npix, fov_mas):
