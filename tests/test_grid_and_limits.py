@@ -34,6 +34,19 @@ plt.switch_backend("Agg")
 warnings.filterwarnings("ignore", "Matplotlib is currently using agg")
 
 
+def _assert_sky_oriented(fig):
+    """Every imshow'd Axes in ``fig`` must show dra increasing toward the
+    left (East) and ddec increasing toward the top (North), per the
+    package's coordinate convention (see AGENTS.md).
+    """
+    image_axes = [ax for ax in fig.axes if ax.images]
+    assert image_axes, "expected at least one image axes in this figure"
+    for ax in image_axes:
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
+        assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
+
+
 def test_likelihood_grid():
     loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
     assert np.all(np.isfinite(loglike_im))
@@ -43,9 +56,14 @@ def test_likelihood_grid():
         samples_dict["flux"].shape[0],
     )
 
-    plot_likelihood_grid(
-        loglike_im.max(axis=2).T, samples_dict, truths=true_values
+    # loglike_im.max(axis=2) already has shape (dra_len, ddec_len), which
+    # is what plot_likelihood_grid expects (it transposes internally);
+    # the extra .T previously here silently fed it a distorted,
+    # wrong-shape image that no assertion caught.
+    fig, ax = plot_likelihood_grid(
+        loglike_im.max(axis=2), samples_dict, truths=true_values
     )
+    _assert_sky_oriented(fig)
 
 
 def test_likelihood_grid_axis_order_tracks_key_order():
@@ -85,7 +103,10 @@ def test_optimized_likelihood_grid():
         samples_dict["dra"].shape[0],
         samples_dict["ddec"].shape[0],
     )
-    plot_likelihood_grid(loglike_im, samples_dict, truths=true_values)
+    fig, ax = plot_likelihood_grid(
+        loglike_im, samples_dict, truths=true_values
+    )
+    _assert_sky_oriented(fig)
 
 
 def test_optimized_likelihood_grid_axis_order_tracks_key_order():
@@ -130,6 +151,7 @@ def test_optimized():
     )
     assert np.all(np.isfinite(optimized))
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_optimized_contrast_grid_axis_order_tracks_key_order():
@@ -171,6 +193,7 @@ def test_laplace():
     )
 
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
+    _assert_sky_oriented(plt.gcf())
 
     laplace_sigma_grid = laplace_contrast_uncertainty_grid(
         best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict
@@ -183,9 +206,11 @@ def test_laplace():
     plot_optimized_and_sigma(
         optimized, laplace_sigma_grid, samples_dict, snr=False
     )
+    _assert_sky_oriented(plt.gcf())
     plot_optimized_and_sigma(
         optimized, laplace_sigma_grid, samples_dict, snr=True
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_laplace_grid_axis_order_tracks_key_order():
@@ -269,6 +294,7 @@ def test_ruffio():
         true_values=true_values,
         percentile=perc,
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_absil():
@@ -301,6 +327,7 @@ def test_absil():
         true_values=true_values,
         sigma=5.0,
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_nsigma_increases_with_chi2_ratio():

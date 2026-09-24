@@ -281,6 +281,9 @@ def test_delta_mag_map_uses_reversed_colormap_by_default():
         cmap="inferno",
     )
     assert ax.images[0].get_cmap().name == "inferno_r"
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
+    assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
     plt.close(fig)
 
 
@@ -297,4 +300,7 @@ def test_delta_mag_map_keeps_explicit_reversed_colormap():
         cmap="inferno_r",
     )
     assert ax.images[0].get_cmap().name == "inferno_r"
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
+    assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
     plt.close(fig)

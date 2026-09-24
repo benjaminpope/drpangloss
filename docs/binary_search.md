@@ -176,10 +176,6 @@ print(
 ```
 
 ```text
-W0304 14:17:57.533295 3060719 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
@@ -325,13 +321,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-Parameter dra in chain HMC Cartesian is not constrained
-```
+![binary_search output 19.1](generated/binary_search_cell019_out01.png)
 
 ![binary_search output 19.2](generated/binary_search_cell019_out02.png)
-
-![binary_search output 19.3](generated/binary_search_cell019_out03.png)
 
 And in polar coordinates:
 
@@ -348,13 +340,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-Parameter sep in chain HMC Polar is not constrained
-```
+![binary_search output 21.1](generated/binary_search_cell021_out01.png)
 
 ![binary_search output 21.2](generated/binary_search_cell021_out02.png)
-
-![binary_search output 21.3](generated/binary_search_cell021_out03.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 
