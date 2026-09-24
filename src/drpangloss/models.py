@@ -368,7 +368,9 @@ class UniformDiskModel(SourceModel):
 class ModulatedGaussianRimModel(SourceModel):
     r"""
     Represents an azimuthally modulated, infinitely thin rim convolved with an
-    isotropic 2D Gaussian, optionally inclined and rotated.
+    isotropic 2D Gaussian, optionally inclined and rotated, added to an
+    unresolved point source, using the same ``flux`` (companion/star) contrast
+    convention as :class:`GaussianDiskModel`.
 
     Parameters
     ----------
@@ -390,6 +392,8 @@ class ModulatedGaussianRimModel(SourceModel):
         1D array containing position angles of the cosine azimuthal modulations, in
         degrees. The first element is the angle for the first-order modulation, the
         second for the second-order modulation, etc.
+    flux : float or array-like
+        Rim-to-star flux ratio.
     dra : float or array-like
         Right-ascension offset of the rim's center in milliarcseconds.
     ddec : float or array-like
@@ -403,6 +407,11 @@ class ModulatedGaussianRimModel(SourceModel):
     A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
     profile convolved with an isotropic Gaussian.
 
+    The rim is mixed with an unresolved point source centered on the origin (i.e.
+    unaffected by ``dra``/``ddec``, which offset only the rim), using the same
+    ``flux`` companion/star contrast convention as :class:`GaussianDiskModel` and
+    :func:`cvis_gaussian_disk`.
+
     This model is achromatic: it does not represent any spectral dependence.
     """
 
@@ -412,6 +421,7 @@ class ModulatedGaussianRimModel(SourceModel):
     pa: jax.Array
     az_amps: jax.Array
     az_pas: jax.Array
+    flux: jax.Array
     dra: jax.Array
     ddec: jax.Array
 
@@ -423,6 +433,7 @@ class ModulatedGaussianRimModel(SourceModel):
         pa,
         az_amps=(),
         az_pas=(),
+        flux=0.0,
         dra=0.0,
         ddec=0.0,
     ):
@@ -432,6 +443,7 @@ class ModulatedGaussianRimModel(SourceModel):
         self.pa = np.asarray(pa, dtype=float)
         self.az_amps = np.asarray(az_amps, dtype=float)
         self.az_pas = np.asarray(az_pas, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
@@ -440,7 +452,7 @@ class ModulatedGaussianRimModel(SourceModel):
             "ModulatedGaussianRimModel("
             f"diam={self.diam}, fwhm={self.fwhm}, inc={self.inc}, "
             f"pa={self.pa}, az_amps={self.az_amps}, az_pas={self.az_pas}, "
-            f"dra={self.dra}, ddec={self.ddec})"
+            f"flux={self.flux}, dra={self.dra}, ddec={self.ddec})"
         )
 
     def unpack_all(self):
@@ -451,6 +463,7 @@ class ModulatedGaussianRimModel(SourceModel):
             self.pa,
             self.az_amps,
             self.az_pas,
+            self.flux,
             self.dra,
             self.ddec,
         )
@@ -469,6 +482,7 @@ class ModulatedGaussianRimModel(SourceModel):
             self.pa,
             self.az_amps,
             az_phis,
+            self.flux,
         )
 
     def render(self, npix=256, fov_mas=200.0):
@@ -511,7 +525,18 @@ class ModulatedGaussianRimModel(SourceModel):
         r_psf = np.hypot(xx, yy)
         psf = np.exp(-0.5 * (r_psf / sigma_mas) ** 2)
 
-        image = fftconvolve(ring, psf, mode="same")
+        rim_image = fftconvolve(ring, psf, mode="same")
+
+        # Unresolved point source centered on the origin (the star, unlike
+        # the rim, is not offset by dra/ddec).
+        point_sigma_mas = max(pixel_scale_mas, 1e-6)
+        star_image = np.exp(
+            -0.5 * ((xx / point_sigma_mas) ** 2 + (yy / point_sigma_mas) ** 2)
+        )
+
+        l2 = self.flux / (self.flux + 1.0)
+        l1 = 1.0 - l2
+        image = l1 * star_image + l2 * rim_image
         return _normalize_image(image)
 
 
@@ -809,10 +834,12 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     )
 
 
-def cvis_gaussian_rim(u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis):
+def cvis_gaussian_rim(
+    u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis, flux
+):
     """Compute complex visibilities for a (modulated) rim, consisting of a radial
     Dirac delta ring (infinitely thin) subsequently convolved with an isotropic 2D
-    Gaussian.
+    Gaussian, mixed with an unresolved point source at the origin.
 
     Parameters
     ----------
@@ -842,6 +869,11 @@ def cvis_gaussian_rim(u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis):
         relative to the position angle of the rim's projected major axis, in
         degrees. The first element is seen as the offset for the first-order
         modulation, the second for the second-order modulation, etc.
+    flux : float or array-like
+        Rim/star flux ratio, using the same companion/star contrast convention
+        as :func:`cvis_gaussian_disk`. The unresolved point source is centered
+        on the origin (i.e. unaffected by ``dra``/``ddec``, which offset only
+        the rim).
 
     Returns
     -------
@@ -866,7 +898,13 @@ def cvis_gaussian_rim(u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis):
 
     # Apply offset phase-factor.
     phi = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
-    return cvis * phi
+    rim_cvis = cvis * phi
+
+    # Mix with an unresolved point source at the origin, using the same
+    # flux (companion/star) contrast convention as cvis_gaussian_disk.
+    l2 = flux / (flux + 1.0)
+    l1 = 1.0 - l2
+    return l1 + l2 * rim_cvis
 
 
 def model_loglike(model_object, data_obj):
