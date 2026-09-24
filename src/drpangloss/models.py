@@ -275,38 +275,56 @@ class BinaryModelCartesian(SourceModel):
 
 
 class GaussianDiskModel(SourceModel):
-    """Centered or offset circular Gaussian disk model."""
+    """
+    Resolved circular Gaussian disk companion added to an unresolved point
+    source, using the same ``flux`` (companion/star) contrast convention as
+    :class:`BinaryModelCartesian`.
+    """
 
     sigma: jax.Array
+    flux: jax.Array
     dra: jax.Array
     ddec: jax.Array
 
-    def __init__(self, sigma, dra=0.0, ddec=0.0):
+    def __init__(self, sigma, flux, dra=0.0, ddec=0.0):
         self.sigma = np.asarray(sigma, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
     def __repr__(self):
         return (
             "GaussianDiskModel("
-            f"sigma={self.sigma}, dra={self.dra}, ddec={self.ddec})"
+            f"sigma={self.sigma}, flux={self.flux}, "
+            f"dra={self.dra}, ddec={self.ddec})"
         )
 
     def unpack_all(self):
-        return self.sigma, self.dra, self.ddec
+        return self.sigma, self.flux, self.dra, self.ddec
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        return cvis_gaussian_disk(uu, vv, self.sigma, self.dra, self.ddec)
+        return cvis_gaussian_disk(
+            uu, vv, self.sigma, self.flux, self.dra, self.ddec
+        )
 
     def render(self, npix=256, fov_mas=200.0):
         xx, yy = _image_coordinates(npix, fov_mas)
         sigma_mas = np.maximum(self.sigma, 1e-9)
-        log_image = -0.5 * (
-            ((xx - self.dra) / sigma_mas) ** 2
-            + ((yy - self.ddec) / sigma_mas) ** 2
+        point_sigma_mas = max(float(fov_mas) / float(npix), 1e-6)
+        l2 = self.flux / (self.flux + 1.0)
+        l1 = 1.0 - l2
+        star = np.exp(
+            -0.5 * ((xx / point_sigma_mas) ** 2 + (yy / point_sigma_mas) ** 2)
         )
-        image = np.exp(log_image - np.max(log_image))
+        disk = np.exp(
+            -0.5
+            * (
+                ((xx - self.dra) / sigma_mas) ** 2
+                + ((yy - self.ddec) / sigma_mas) ** 2
+            )
+        )
+        image = l1 * star + l2 * disk
         return _normalize_image(image)
 
 
@@ -454,10 +472,14 @@ def cvis_gaussian_disk(
     u,
     v,
     sigma,
+    flux,
     dra: jax.Array | float = 0.0,
     ddec: jax.Array | float = 0.0,
 ):
-    """Compute complex visibilities for a circular Gaussian disk."""
+    """Compute complex visibilities for a Gaussian-disk companion mixed with
+    an unresolved point source, using the ``flux`` companion/star contrast
+    convention shared with :func:`cvis_binary`.
+    """
     sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
     envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
@@ -465,7 +487,10 @@ def cvis_gaussian_disk(
     dra_rad = mas2rad * dra
     ddec_rad = mas2rad * ddec
     phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
-    return envelope * phase
+
+    l2 = flux / (flux + 1.0)
+    l1 = 1.0 - l2
+    return l1 + l2 * envelope * phase
 
 
 def model_loglike(model_object, data_obj):

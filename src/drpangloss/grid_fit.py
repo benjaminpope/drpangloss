@@ -13,20 +13,25 @@ import jax.scipy as jsp
 
 
 def _infer_grid_parameter_keys(samples_dict, params=None):
-    """Infer coordinate and flux-like keys from a 3-parameter sample grid."""
+    """Infer coordinate and flux-like keys from a sample grid.
+
+    Supports any number of coordinate parameters (one or more) plus exactly
+    one flux-like parameter, e.g. ``(dra, ddec, flux)`` for a binary
+    companion search or ``(sigma, flux)`` for a resolved-source search.
+    """
     if params is None:
         params = tuple(samples_dict.keys())
-    if len(params) != 3:
+    if len(params) < 2:
         raise ValueError(
-            "Grid-based helpers currently expect exactly three parameters: "
-            "two coordinates and one flux-like parameter."
+            "Grid-based helpers expect at least two parameters: one or "
+            "more coordinates and one flux-like parameter."
         )
 
     flux_key = "flux" if "flux" in samples_dict else params[-1]
     coord_keys = [key for key in params if key != flux_key]
-    if len(coord_keys) != 2:
+    if not coord_keys:
         raise ValueError(
-            "Could not infer two coordinate parameters from samples_dict."
+            "Could not infer any coordinate parameters from samples_dict."
         )
     return coord_keys, flux_key
 
