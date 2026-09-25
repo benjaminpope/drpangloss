@@ -31,6 +31,20 @@ def _range_aware_float_formatter(
     return FuncFormatter(lambda x, _: f"{(x * scale):.{sigfigs}g}")
 
 
+def _enforce_sky_orientation(ax):
+    """Ensure the displayed x-axis increases toward the left (East) and
+    the y-axis increases toward the top (North), matching drpangloss's
+    image coordinate convention (see AGENTS.md). Works regardless of
+    whether the plotted array's ``dra``/``ddec`` axis was built ascending
+    or descending, since it corrects the axes' final displayed limits
+    rather than assuming any particular extent/origin construction.
+    """
+    if ax.get_xlim()[0] < ax.get_xlim()[1]:
+        ax.invert_xaxis()
+    if ax.get_ylim()[0] > ax.get_ylim()[1]:
+        ax.invert_yaxis()
+
+
 def posterior_predictive_summary(
     dra_samples, ddec_samples, flux_samples, oidata, model_class
 ):
@@ -313,10 +327,10 @@ def plot_likelihood_grid(
         origin="lower",
         aspect="equal",
         extent=[
-            float(x_axis.min()),
-            float(x_axis.max()),
-            float(y_axis.min()),
-            float(y_axis.max()),
+            float(x_axis[0]),
+            float(x_axis[-1]),
+            float(y_axis[0]),
+            float(y_axis[-1]),
         ],
     )
     fig.colorbar(im, ax=ax, shrink=0.9, label=colorbar_label, pad=0.01)
@@ -360,7 +374,7 @@ def plot_likelihood_grid(
     ax.set_title("Likelihood grid")
     if truths is not None or best_point is not None:
         ax.legend(loc="best")
-    ax.invert_yaxis()
+    _enforce_sky_orientation(ax)
     return fig, ax
 
 
@@ -466,7 +480,7 @@ def diagnostics_table_from_samples(
 
     df = pd.DataFrame({"dra": dra, "ddec": ddec, "flux": flux})
     df["sep"] = np.sqrt(df["dra"] ** 2 + df["ddec"] ** 2)
-    df["pa"] = (np.degrees(np.arctan2(df["ddec"], df["dra"])) + 360.0) % 360.0
+    df["pa"] = (np.degrees(np.arctan2(df["dra"], df["ddec"])) + 360.0) % 360.0
     return df
 
 
@@ -495,7 +509,7 @@ def truth_cartesian_and_polar(truth):
         ),
         "pa": float(
             (
-                np.degrees(np.arctan2(truth_cart["ddec"], truth_cart["dra"]))
+                np.degrees(np.arctan2(truth_cart["dra"], truth_cart["ddec"]))
                 + 360.0
             )
             % 360.0
@@ -747,14 +761,17 @@ def plot_contrast_limit_map(
         map_to_plot = limit_np
         cbar_label = "Contrast limit (flux ratio)"
 
+    dra_axis_np = np.asarray(dra_axis)
+    ddec_axis_np = np.asarray(ddec_axis)
+
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(
         map_to_plot.T,
         extent=(
-            float(np.asarray(dra_axis).min()),
-            float(np.asarray(dra_axis).max()),
-            float(np.asarray(ddec_axis).min()),
-            float(np.asarray(ddec_axis).max()),
+            float(dra_axis_np[0]),
+            float(dra_axis_np[-1]),
+            float(ddec_axis_np[0]),
+            float(ddec_axis_np[-1]),
         ),
         origin="lower",
         aspect="equal",
@@ -782,6 +799,7 @@ def plot_contrast_limit_map(
     ax.set_xlabel("ΔRA (mas)")
     ax.set_ylabel("ΔDec (mas)")
     ax.set_title(title)
+    _enforce_sky_orientation(ax)
     return fig, ax
 
 
@@ -901,43 +919,48 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
     matplotlib.rcParams["figure.dpi"] = 100
     matplotlib.rcParams["font.family"] = ["serif"]
     plt.rcParams.update({"font.size": 14})
+    x_axis = np.asarray(samples_dict[x_key])
+    y_axis = np.asarray(samples_dict[y_key])
+
     plt.subplot(1, 2, 1)
     plt.imshow(
         optimized.T,
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
+        origin="lower",
         extent=[
-            samples_dict[x_key].max(),
-            samples_dict[x_key].min(),
-            samples_dict[y_key].max(),
-            samples_dict[y_key].min(),
+            float(x_axis[0]),
+            float(x_axis[-1]),
+            float(y_axis[0]),
+            float(y_axis[-1]),
         ],
-    )  # this took me far too long to get the sign right for
+    )
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="black", marker="*")
     plt.xlabel(x_key)
     plt.ylabel(y_key)
     plt.title("Optimization")
-    plt.gca().invert_yaxis()
+    _enforce_sky_orientation(plt.gca())
 
     plt.subplot(1, 2, 2)
     plt.imshow(
         best_contrasts.T,
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
+        origin="lower",
         extent=[
-            samples_dict[x_key].max(),
-            samples_dict[x_key].min(),
-            samples_dict[y_key].max(),
-            samples_dict[y_key].min(),
+            float(x_axis[0]),
+            float(x_axis[-1]),
+            float(y_axis[0]),
+            float(y_axis[-1]),
         ],
-    )  # this took me far too long to get the sign right for
+    )
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="black", marker="*")
     plt.xlabel(x_key)
     plt.ylabel(y_key)
     plt.title("Grid Search")
-    plt.gca().invert_yaxis()
+    _enforce_sky_orientation(plt.gca())
     plt.tight_layout(pad=0.0)
     plt.show()
 
@@ -988,6 +1011,14 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
         return
 
     x_key, y_key = coord_keys[:2]
+    x_axis = np.asarray(samples_dict[x_key])
+    y_axis = np.asarray(samples_dict[y_key])
+    extent = [
+        float(x_axis[0]),
+        float(x_axis[-1]),
+        float(y_axis[0]),
+        float(y_axis[-1]),
+    ]
 
     plt.figure(figsize=(14, 5))
     matplotlib.rcParams["figure.dpi"] = 100
@@ -998,19 +1029,15 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
         contrast.T,
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
-        extent=[
-            samples_dict[x_key].max(),
-            samples_dict[x_key].min(),
-            samples_dict[y_key].max(),
-            samples_dict[y_key].min(),
-        ],
-    )  # this took me far too long to get the sign right for
+        origin="lower",
+        extent=extent,
+    )
     plt.colorbar(shrink=1, label="Contrast", pad=0.01)
     plt.scatter(0, 0, s=140, c="y", marker="*")
     plt.xlabel(x_key)
     plt.ylabel(y_key)
     plt.title("Contrast")
-    plt.gca().invert_yaxis()
+    _enforce_sky_orientation(plt.gca())
 
     plt.subplot(1, 2, 2)
     if snr:
@@ -1018,13 +1045,9 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
             contrast.T / sigma_grid.T,
             cmap="inferno",
             norm=matplotlib.colors.PowerNorm(1),
-            extent=[
-                samples_dict[x_key].max(),
-                samples_dict[x_key].min(),
-                samples_dict[y_key].max(),
-                samples_dict[y_key].min(),
-            ],
-        )  # this took me far too long to get the sign right for
+            origin="lower",
+            extent=extent,
+        )
         plt.colorbar(shrink=1, label="SNR", pad=0.01)
         plt.scatter(0, 0, s=140, c="y", marker="*")  # mark star at origin
         plt.title("SNR")
@@ -1034,20 +1057,16 @@ def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
             sigma_grid.T,
             cmap="inferno",
             norm=matplotlib.colors.LogNorm(),
-            extent=[
-                samples_dict[x_key].max(),
-                samples_dict[x_key].min(),
-                samples_dict[y_key].max(),
-                samples_dict[y_key].min(),
-            ],
-        )  # this took me far too long to get the sign right for
+            origin="lower",
+            extent=extent,
+        )
         plt.colorbar(shrink=1, label="σ(Contrast)", pad=0.01)
         plt.scatter(0, 0, s=140, c="y", marker="*")  # mark star at origin
         plt.title("σ(Contrast)")
 
     plt.xlabel(x_key)
     plt.ylabel(y_key)
-    plt.gca().invert_yaxis()
+    _enforce_sky_orientation(plt.gca())
     plt.tight_layout(pad=0.0)
     plt.show()
 
@@ -1130,21 +1149,22 @@ def plot_contrast_limits(
     # first show x% upper limit map
 
     plt.subplot(1, 2, 1)
+    dra_axis = np.asarray(samples_dict["dra"])
+    ddec_axis = np.asarray(samples_dict["ddec"])
     plt.imshow(
         -2.5 * np.log10(contrast_limits[:, :].T),
         cmap=matplotlib.colormaps["magma_r"],
+        origin="lower",
         extent=[
-            samples_dict["dra"].max(),
-            samples_dict[
-                "dra"
-            ].min(),  # this may seem weird, but left is more RA and up is more Dec
-            samples_dict["ddec"].max(),
-            samples_dict["ddec"].min(),
+            float(dra_axis[0]),
+            float(dra_axis[-1]),
+            float(ddec_axis[0]),
+            float(ddec_axis[-1]),
         ],
-    )  # this took me far too long to get the sign right for
+    )
     plt.colorbar(shrink=1, pad=0.01)
     plt.scatter(0, 0, marker="*", s=100, c="black", alpha=0.5)
-    plt.gca().invert_yaxis()
+    _enforce_sky_orientation(plt.gca())
     plt.title(f"{limit_label} Map ($\\Delta$mag)")
     plt.xlabel("$\\Delta$RA [mas]")
     plt.ylabel("$\\Delta$DEC [mas]")

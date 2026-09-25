@@ -57,35 +57,6 @@ from examples.hierarchical_binary_workflow import (
 )
 ```
 
-```text
----------------------------------------------------------------------------ImportError                               Traceback (most recent call last)Cell In[18], line 31
-     23         sys.path.insert(0, str(path))
-     25 from drpangloss.inference import (
-     26     fisher_projection,
-     27     gaussian_fisher,
-     28     observed_information,
-     29     regularized_inverse,
-     30 )
----> 31 from drpangloss.models import (
-     32     BinaryModelCartesian,
-     33     joint_data,
-     34     joint_errors,
-     35     joint_loglike,
-     36     joint_prediction,
-     37 )
-     38 from drpangloss.plotting import (
-     39     plot_chainconsumer_diagnostics,
-     40     plot_data_model_correlation,
-     41     plot_likelihood_grid,
-     42     posterior_predictive_summary,
-     43 )
-     44 from examples.hierarchical_binary_workflow import (
-     45     FILTER_LABELS,
-     46     simulate_observations,
-     47 )
-ImportError: cannot import name 'joint_data' from 'drpangloss.models' (/Users/benpope/code/drpangloss/src/drpangloss/models.py)
-```
-
 ## Simulate three observations
 
 The three `OIData` objects have the same baseline sampling and uncertainties but wavelengths of 800 nm, 1.0 micron, and 1.2 microns.
@@ -130,23 +101,18 @@ params = {
 
 
 def binary_model(values, observation_index):
-    return BinaryModelCartesian(
-        values["dra"],
-        values["ddec"],
-        10.0 ** values["log10_flux"][observation_index],
-    )
+    return BinaryModelCartesian(values["dra"],values["ddec"],
+                                10.0 ** values["log10_flux"][observation_index])
 
 
 initial_loglike = joint_loglike(params, observations, binary_model)
 truth_loglike = joint_loglike(truth, observations, binary_model)
-{
-    "initial_loglike": float(initial_loglike),
-    "truth_loglike": float(truth_loglike),
-}
+
+print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_loglike)}")
 ```
 
 ```text
-{'initial_loglike': -5654.122745306354, 'truth_loglike': 682.2989893515032}
+initial log-likelihood: -5654.122745306354, optimal: 682.2989893515032
 ```
 
 ## Joint grid initialization
@@ -160,40 +126,32 @@ joint_grid_samples = {
     "flux": 10.0 ** jnp.linspace(-4.0, -1.0, 16),
 }
 joint_grid_axes = jnp.meshgrid(*joint_grid_samples.values(), indexing="ij")
-joint_grid_values = jnp.stack(
-    [axis.reshape(-1) for axis in joint_grid_axes], axis=1
-)
-
+joint_grid_values = jnp.stack([axis.reshape(-1) for axis in joint_grid_axes], axis=1)
 
 def shared_flux_loglike(values):
     shared_params = {
         "dra": values[0],
         "ddec": values[1],
         "log10_flux": jnp.full(
-            len(observations), jnp.log10(values[2]), dtype=values.dtype
-        ),
-    }
+            len(observations), jnp.log10(values[2]), dtype=values.dtype)
+            }
     return joint_loglike(shared_params, observations, binary_model)
 
 
 joint_grid_loglike = jax.vmap(shared_flux_loglike)(joint_grid_values).reshape(
-    tuple(axis.size for axis in joint_grid_samples.values())
-)
+    tuple(axis.size for axis in joint_grid_samples.values()))
 joint_grid_index = jnp.unravel_index(
-    jnp.argmax(joint_grid_loglike), joint_grid_loglike.shape
-)
+    jnp.argmax(joint_grid_loglike), joint_grid_loglike.shape)
 joint_grid_best = {
     name: float(joint_grid_samples[name][index])
-    for name, index in zip(joint_grid_samples, joint_grid_index)
-}
+    for name, index in zip(joint_grid_samples, joint_grid_index)}
 
 plot_likelihood_grid(
     joint_grid_loglike.max(axis=2),
     joint_grid_samples,
     truths={"dra": float(truth["dra"]), "ddec": float(truth["ddec"])},
     best_point=joint_grid_best,
-    colorbar_label="Joint max log-likelihood over shared flux",
-)
+    colorbar_label="Joint max log-likelihood over shared flux",)
 
 params = {
     "dra": jnp.array(joint_grid_best["dra"]),
@@ -202,14 +160,9 @@ params = {
         len(observations), jnp.log10(joint_grid_best["flux"])
     ),
 }
-joint_loglike(params, observations, binary_model)
 ```
 
-```text
-Array(-5122.31702663, dtype=float64)
-```
-
-![hierarchical_inference output 8.2](generated/hierarchical_inference_cell008_out02.png)
+![hierarchical_inference output 8.1](generated/hierarchical_inference_cell008_out01.png)
 
 ## Preconditioning before Inference
 
@@ -218,26 +171,14 @@ The Fisher Information Matrix tells us the expected information in the data, pro
 ```python
 prediction_fn = lambda values: joint_prediction(values, observations, binary_model)
 errors = joint_errors(observations)
-initial_fisher, unravel = gaussian_fisher(
-    prediction_fn, params, errors, ridge=1e-8
-)
+initial_fisher, unravel = gaussian_fisher(prediction_fn, params, errors, ridge=1e-8)
 projection = fisher_projection(initial_fisher, eps=1e-10)
 
 print(f"Fisher matrix: {initial_fisher.shape[0]} x {initial_fisher.shape[1]}")
 ```
 
 ```text
-{'fisher_shape': (5, 5),
- 'whitened_metric': Array([[ 1.00000000e+00, -1.27301457e-14,  2.65879295e-15,
-         -8.28795953e-15, -1.63882087e-15],
-        [-1.27803055e-14,  1.00000000e+00, -1.38036846e-16,
-          2.59037282e-16,  1.90507011e-16],
-        [ 2.57401550e-15, -2.15819231e-16,  1.00000000e+00,
-         -6.67937215e-17, -1.67082727e-16],
-        [-8.30188663e-15,  2.39350635e-16, -6.68363146e-17,
-          1.00000000e+00, -8.98250567e-17],
-        [-1.65031501e-15,  1.92294384e-16, -1.67144588e-16,
-         -8.98142407e-17,  1.00000000e+00]], dtype=float64)}
+Fisher matrix: 5 x 5
 ```
 
 ## Optimization
@@ -249,13 +190,11 @@ initial_vector, unravel = ravel_pytree(params)
 
 
 def project(latent):
+    # project a latent vector back to the original space
     return unravel(initial_vector + projection @ latent)
 
-
-def latent_objective(latent, unused):
-    del unused
+def latent_objective(latent, args) :
     return -joint_loglike(project(latent), observations, binary_model)
-
 
 solver = optx.BestSoFarMinimiser(optx.BFGS(rtol=1e-8, atol=1e-8))
 solution = optx.minimise(
@@ -277,19 +216,11 @@ print(f"Reduced chi-squared: {float(initial_chi2r):.2f} -> {float(final_chi2r):.
 ```
 
 ```text
-{'initial_reduced_chi2': 123.9870728325043,
- 'final_reduced_chi2': 0.8943819615350423,
- 'truth_dra_mas': 18.0,
- 'recovered_dra_mas': 17.96212282578262,
- 'truth_ddec_mas': -12.0,
- 'recovered_ddec_mas': -11.928193565383811,
- 'truth_fluxes': Array([0.015, 0.01 , 0.007], dtype=float64),
- 'recovered_fluxes': Array([0.01491984, 0.01003515, 0.00700039], dtype=float64)}
+Reduced chi-squared: 113.66 -> 0.89
 ```
 
 ```python
 recovered_vector, recovered_unravel = ravel_pytree(recovered)
-
 
 def flat_objective(values):
     return -joint_loglike(recovered_unravel(values), observations, binary_model)
@@ -300,9 +231,7 @@ observed_info = observed_information(flat_objective, recovered_vector)
 laplace_covariance = regularized_inverse(observed_info, ridge=1e-8)
 laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))
 
-parameter_names = ["ddec (mas)", "dra (mas)"] + [
-    f"log10 flux ({label})" for label in FILTER_LABELS
-]
+parameter_names = ["ddec (mas)", "dra (mas)"] + [f"log10 flux ({label})" for label in FILTER_LABELS]
 pd.DataFrame(
     {"estimate": onp.asarray(recovered_vector), "Laplace sigma": onp.asarray(laplace_sigma)},
     index=parameter_names,
@@ -310,16 +239,12 @@ pd.DataFrame(
 ```
 
 ```text
-{'ddec (mas)': {'estimate': -11.928193565383811,
-  'laplace_sigma': 0.048961508424356745},
- 'dra (mas)': {'estimate': 17.96212282578262,
-  'laplace_sigma': 0.04878174841724983},
- 'log10 flux: 800 nm': {'estimate': -1.8262356970862887,
-  'laplace_sigma': 0.001677751652555576},
- 'log10 flux: 1.0 micron': {'estimate': -1.9984762187934384,
-  'laplace_sigma': 0.002589982668792857},
- 'log10 flux: 1.2 microns': {'estimate': -2.154877810613793,
-  'laplace_sigma': 0.004064131977928648}}
+                           estimate  Laplace sigma
+ddec (mas)               -11.928194       0.048962
+dra (mas)                 17.962123       0.048782
+log10 flux (800 nm)       -1.826236       0.001678
+log10 flux (1.0 micron)   -1.998476       0.002590
+log10 flux (1.2 microns)  -2.154878       0.004064
 ```
 
 ## Interpreting the local covariance
@@ -332,43 +257,38 @@ The same shared-position, per-filter-flux parameter tree can be sampled with Num
 
 ```python
 def model_hmc():
-    dra = numpyro.sample("dra", dist.Uniform(-300.0, 300.0))
-    ddec = numpyro.sample("ddec", dist.Uniform(-300.0, 300.0))
+    dra = numpyro.sample("dra", dist.Uniform(-30.0, 30.0)) # uniform prior in cartesian coordinates
+    ddec = numpyro.sample("ddec", dist.Uniform(-30.0, 30.0))
     log10_flux = numpyro.sample(
         "log10_flux", dist.Uniform(-6.0, -1.0).expand([len(observations)])
-    )
+    ) # uniform prior for the fluxes in log space, ie jeffreys prior
     values = {"dra": dra, "ddec": ddec, "log10_flux": log10_flux}
     numpyro.factor("loglike", joint_loglike(values, observations, binary_model))
-
 
 init_values = {
     "dra": float(params["dra"]),
     "ddec": float(params["ddec"]),
     "log10_flux": params["log10_flux"],
 }
-kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
+# HMC with no U-turn sampler
+kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values)) 
 mcmc = MCMC(
     kernel, num_warmup=800, num_samples=2000, num_chains=1, progress_bar=False
 )
 mcmc.run(jax.random.PRNGKey(2026))
 posterior = mcmc.get_samples()
 
-{
-    "dra_median": float(jnp.median(posterior["dra"])),
-    "ddec_median": float(jnp.median(posterior["ddec"])),
-    "flux_median_by_filter": {
-        name: float(jnp.median(10.0 ** posterior["log10_flux"][:, index]))
-        for index, name in enumerate(FILTER_LABELS)
-    },
-}
+print(f"Posterior RA {jnp.median(posterior['dra']):.2f}, \
+      Dec {jnp.median(posterior['ddec']):.2f}")
+for index, name in enumerate(FILTER_LABELS):
+    print(f"{name} Flux: {jnp.median(10.0 ** posterior['log10_flux'][:, index]):.4f}")
 ```
 
 ```text
-{'dra_median': 17.96329911007365,
- 'ddec_median': -11.928571765819612,
- 'flux_median_by_filter': {'800 nm': 0.014920229880374595,
-  '1.0 micron': 0.010034410311986427,
-  '1.2 microns': 0.006998137757271148}}
+Posterior RA 17.96,       Dec -11.93
+800 nm Flux: 0.0149
+1.0 micron Flux: 0.0100
+1.2 microns Flux: 0.0070
 ```
 
 ## Corner plot of shared and per-filter parameters
@@ -376,21 +296,15 @@ posterior = mcmc.get_samples()
 Let's visualize the recovered parameters and compare them to the truth values from which they are simulated:
 
 ```python
-parameter_columns = ["ddec (mas)", "dra (mas)"] + [
-    f"log10 flux ({label})" for label in FILTER_LABELS
-]
+parameter_columns = ["ddec (mas)", "dra (mas)"] + [f"log10 flux ({label})" for label in FILTER_LABELS]
 
 flat_recovered, unravel_recovered = ravel_pytree(recovered)
 flat_truth, _ = ravel_pytree(truth)
 n_samples = 20000
 cholesky = jnp.linalg.cholesky(laplace_covariance)
-standard_normal = jax.random.normal(
-    jax.random.key(11), (n_samples, flat_recovered.size)
-)
+standard_normal = jax.random.normal(jax.random.PRNGKey(11), (n_samples, flat_recovered.size))
 latent_samples = flat_recovered[None, :] + standard_normal @ cholesky.T
-laplace_samples_df = pd.DataFrame(
-    onp.asarray(latent_samples), columns=parameter_columns
-)
+laplace_samples_df = pd.DataFrame(onp.asarray(latent_samples), columns=parameter_columns)
 
 hmc_samples_df = pd.DataFrame(
     {
@@ -413,12 +327,16 @@ plot_chainconsumer_diagnostics(
 ```
 
 ```text
-<chainconsumer.chainconsumer.ChainConsumer at 0x131136d10>
+Parameter ddec (mas) in chain HMC is not constrained
 ```
 
-![hierarchical_inference output 18.2](generated/hierarchical_inference_cell018_out02.png)
+```text
+<chainconsumer.chainconsumer.ChainConsumer at 0xf4f3a80d3d0>
+```
 
 ![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
+
+![hierarchical_inference output 18.4](generated/hierarchical_inference_cell018_out04.png)
 
 ## Posterior predictive correlation per filter
 

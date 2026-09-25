@@ -145,11 +145,7 @@ plot_contrast_limit_map(
 );
 ```
 
-```text
-W0925 09:44:16.344793 6221992 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-![contrast_limits output 9.2](generated/contrast_limits_cell009_out02.png)
+![contrast_limits output 9.1](generated/contrast_limits_cell009_out01.png)
 
 ## Absil Contrast Limits
 
@@ -216,7 +212,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0x11a987790>
+<matplotlib.legend.Legend at 0x132319f85510>
 ```
 
 ![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)

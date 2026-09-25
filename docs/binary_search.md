@@ -176,10 +176,6 @@ print(
 ```
 
 ```text
-W0304 14:17:57.533295 3060719 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
@@ -305,7 +301,7 @@ print(
 ```
 
 ```text
-Fisher HMC estimate: sep=144 mas, pa=326 deg
+Fisher HMC estimate: sep=144 mas, pa=124 deg
 ```
 
 We can visualize the outputs with a corner plot. You can use anything you like, eg [corner.py](https://corner.readthedocs.io/en/latest/) or [pairplots](https://sefffal.github.io/PairPlots.jl/dev/), but we have default helpers for chainconsumer.
@@ -326,7 +322,7 @@ plot_chainconsumer_diagnostics(
 ```
 
 ```text
-Parameter dra in chain HMC Cartesian is not constrained
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
 ```
 
 ![binary_search output 19.2](generated/binary_search_cell019_out02.png)
@@ -349,7 +345,7 @@ plot_chainconsumer_diagnostics(
 ```
 
 ```text
-Parameter sep in chain HMC Polar is not constrained
+Parameter pa in chain Fisher-HMC Polar is not constrained
 ```
 
 ![binary_search output 21.2](generated/binary_search_cell021_out02.png)

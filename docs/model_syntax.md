@@ -49,7 +49,7 @@ dra = float(truth_cart["dra"])
 ddec = float(truth_cart["ddec"])
 flux = float(truth_cart["flux"])
 sep = float(np.sqrt(dra**2 + ddec**2))
-pa = float((np.degrees(np.arctan2(-dra, ddec)) + 360.0) % 360.0)
+pa = float((np.degrees(np.arctan2(dra, ddec)) + 360.0) % 360.0)
 contrast = float(1.0 / flux)
 model_ang = BinaryModelAngular(sep=sep, pa=pa, contrast=contrast)
 
@@ -67,9 +67,9 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 ```text
 {'cartesian': {'dra': 120.0, 'ddec': -80.0, 'flux': 0.004},
  'angular': {'sep': 144.22205101855957,
-  'pa': 236.30993247402023,
+  'pa': 123.69006752597977,
   'contrast': 250.0},
- 'max_complex_visibility_difference': 6.009040731669302e-08}
+ 'max_complex_visibility_difference': 6.002618135880766e-08}
 ```
 
 `OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
@@ -159,7 +159,7 @@ ddec = float(truth_cart["ddec"])
 flux = float(truth_cart["flux"])
 
 sep = float(np.sqrt(dra**2 + ddec**2))
-pa = float((np.degrees(np.arctan2(-dra, ddec)) + 360.0) % 360.0)
+pa = float((np.degrees(np.arctan2(dra, ddec)) + 360.0) % 360.0)
 contrast = float(1.0 / flux)
 
 model_ang = BinaryModelAngular(sep=sep, pa=pa, contrast=contrast)
@@ -176,9 +176,9 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 
 ```text
 {'sep_mas': 144.22205101855957,
- 'pa_deg': 236.30993247402023,
+ 'pa_deg': 123.69006752597977,
  'contrast': 250.0,
- 'max_complex_visibility_difference': 6.009040731669302e-08}
+ 'max_complex_visibility_difference': 6.002618135880766e-08}
 ```
 
 ```python
@@ -244,9 +244,9 @@ ll_cart_perturbed = float(
 ```
 
 ```text
-{'ll_cart_true': -14.96725845336914,
- 'll_ang_equivalent': -14.967044830322266,
- 'll_cart_perturbed': -854.9948120117188,
+{'ll_cart_true': 259.3246154785156,
+ 'll_ang_equivalent': 259.3248291015625,
+ 'll_cart_perturbed': -580.702880859375,
  'true_beats_perturbed': True}
 ```
 

@@ -2,12 +2,22 @@ from typing import Any
 
 import jax.numpy as np
 import jax
+from jax.scipy.signal import fftconvolve
 
 import numpy as onp
 
 import equinox as eqx
 import zodiax as zx
 
+from ._utils import (
+    bessel_jn as bessel_jn,
+    dtor as dtor,
+    i2pi as i2pi,
+    mas2rad as mas2rad,
+    rad2mas as rad2mas,
+    undo_elliptical_transf_coord as undo_elliptical_transf_coord,
+    undo_elliptical_transf_spat_freq as undo_elliptical_transf_spat_freq,
+)
 from .inference import (
     fisher_matrix as _fisher_matrix,
     laplace_covariance as _laplace_covariance,
@@ -16,12 +26,6 @@ from .inference import (
 from .oidata import OIData as OIData
 from .oidata import closure_phases as closure_phases
 from .oidata import cp_indices as cp_indices
-
-rad2mas = 180.0 / np.pi * 3600.0 * 1000.0  # convert rad to mas
-mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
-
-dtor = np.pi / 180.0
-i2pi = 1j * 2.0 * np.pi
 
 
 def _image_coordinates(npix, fov_mas):
@@ -120,7 +124,7 @@ class BinaryModelAngular(SourceModel):
             Equivalent binary model expressed as ``(dra, ddec, flux)``.
         """
         th = self.pa * dtor
-        dra = -self.sep * np.sin(th)
+        dra = self.sep * np.sin(th)
         ddec = self.sep * np.cos(th)
         flux = 1.0 / self.contrast
         return BinaryModelCartesian(dra, ddec, flux)
@@ -153,7 +157,7 @@ class BinaryModelAngular(SourceModel):
         xx, yy = _image_coordinates(npix, fov_mas)
         th = self.pa * dtor
         ddec = self.sep * np.cos(th)
-        dra = -1.0 * self.sep * np.sin(th)
+        dra = self.sep * np.sin(th)
 
         l2 = 1.0 / (self.contrast + 1.0)
         l1 = 1.0 - l2
@@ -229,7 +233,7 @@ class BinaryModelCartesian(SourceModel):
             Equivalent binary model expressed as ``(sep, pa, contrast)``.
         """
         sep = np.sqrt(self.dra**2 + self.ddec**2)
-        pa = np.mod(np.rad2deg(np.arctan2(-self.dra, self.ddec)), 360.0)
+        pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         contrast = 1.0 / self.flux
         return BinaryModelAngular(sep, pa, contrast)
 
@@ -328,6 +332,214 @@ class GaussianDiskModel(SourceModel):
         return _normalize_image(image)
 
 
+class UniformDiskModel(SourceModel):
+    """Centered or offset uniform (tophat) circular disk model."""
+
+    ud: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def __init__(self, ud, dra=0.0, ddec=0.0):
+        self.ud = np.asarray(ud, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __repr__(self):
+        return (
+            f"UniformDiskModel(ud={self.ud}, dra={self.dra}, ddec={self.ddec})"
+        )
+
+    def unpack_all(self):
+        return self.ud, self.dra, self.ddec
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return cvis_uniform_disk(uu, vv, self.ud, self.dra, self.ddec)
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        pixel_scale_mas = float(fov_mas) / float(npix)
+        radius_mas = np.maximum(self.ud / 2.0, 0.5 * pixel_scale_mas)
+        rr2 = (xx - self.dra) ** 2 + (yy - self.ddec) ** 2
+        image = np.where(rr2 <= radius_mas**2, 1.0, 0.0)
+        return _normalize_image(image)
+
+
+class ModulatedGaussianRimModel(SourceModel):
+    r"""
+    Represents an azimuthally modulated, infinitely thin rim convolved with an
+    isotropic 2D Gaussian, optionally inclined and rotated, added to an
+    unresolved point source, using the same ``flux`` (companion/star) contrast
+    convention as :class:`GaussianDiskModel`.
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Diameter of the rim in milliarcseconds.
+    fwhm : float or array-like
+        Gaussian FWHM of the rim in milliarcseconds.
+    inc : float or array-like
+        Apparent inclination of the rim in degrees.
+    pa : float or array-like
+        Position angle of the rim's projected major axis in degrees, measured North
+        to East (i.e. counter-clockwise in conventional astronomical image orientation).
+    az_amps : array-like
+        1D array containing amplitude coefficients for cosine azimuthal modulations.
+        The first element is the amplitude for the first-order modulation, the second
+        for the second-order modulation, etc. An empty array gives an unmodulated,
+        azimuthally symmetric rim.
+    az_pas : array-like
+        1D array containing position angles of the cosine azimuthal modulations, in
+        degrees. The first element is the angle for the first-order modulation, the
+        second for the second-order modulation, etc.
+    flux : float or array-like
+        Rim-to-star flux ratio.
+    dra : float or array-like
+        Right-ascension offset of the rim's center in milliarcseconds.
+    ddec : float or array-like
+        Declination offset of the rim's center in milliarcseconds.
+
+    Notes
+    -----
+    The intensity profile is separable into a symmetric radial profile and cosine
+    azimuthal modulations, meaning the image intensity can be described in polar image
+    coordinates as $I(r, \theta) = f(r) \left( 1 + \sum_{m=1}^{n}
+    A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
+    profile convolved with an isotropic Gaussian.
+
+    The rim is mixed with an unresolved point source centered on the origin (i.e.
+    unaffected by ``dra``/``ddec``, which offset only the rim), using the same
+    ``flux`` companion/star contrast convention as :class:`GaussianDiskModel` and
+    :func:`cvis_gaussian_disk`.
+
+    This model is achromatic: it does not represent any spectral dependence.
+    """
+
+    diam: jax.Array
+    fwhm: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    az_amps: jax.Array
+    az_pas: jax.Array
+    flux: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def __init__(
+        self,
+        diam,
+        fwhm,
+        inc,
+        pa,
+        az_amps=(),
+        az_pas=(),
+        flux=0.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.diam = np.asarray(diam, dtype=float)
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.az_amps = np.asarray(az_amps, dtype=float)
+        self.az_pas = np.asarray(az_pas, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __repr__(self):
+        return (
+            "ModulatedGaussianRimModel("
+            f"diam={self.diam}, fwhm={self.fwhm}, inc={self.inc}, "
+            f"pa={self.pa}, az_amps={self.az_amps}, az_pas={self.az_pas}, "
+            f"flux={self.flux}, dra={self.dra}, ddec={self.ddec})"
+        )
+
+    def unpack_all(self):
+        return (
+            self.diam,
+            self.fwhm,
+            self.inc,
+            self.pa,
+            self.az_amps,
+            self.az_pas,
+            self.flux,
+            self.dra,
+            self.ddec,
+        )
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        az_phis = self.az_pas - self.pa
+        return cvis_gaussian_rim(
+            uu,
+            vv,
+            self.dra,
+            self.ddec,
+            self.diam,
+            self.fwhm,
+            self.inc,
+            self.pa,
+            self.az_amps,
+            az_phis,
+            self.flux,
+        )
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        pixel_scale_mas = float(fov_mas) / float(npix)
+
+        # Ring pattern is centered on (dra, ddec).
+        xx_centered = xx - self.dra
+        yy_centered = yy - self.ddec
+
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        xx_ell, yy_ell = undo_elliptical_transf_coord(
+            xx_centered, yy_centered, self.pa, stretch
+        )
+        r_ell = np.hypot(xx_ell, yy_ell)
+        theta_ell = np.arctan2(xx_ell, yy_ell)
+
+        ring = np.where(
+            np.abs(r_ell - self.diam / 2.0) <= pixel_scale_mas, 1.0, 0.0
+        )
+
+        az_amps = np.concatenate([np.array([1.0]), self.az_amps])
+        az_phis_rad = (
+            np.concatenate([np.array([0.0]), self.az_pas - self.pa]) * dtor
+        )
+        az_orders = np.arange(az_amps.size)
+
+        def _az_term(az_amp, az_phi_rad, az_order):
+            return az_amp * np.cos(az_order * (theta_ell - az_phi_rad))
+
+        az_factors = jax.vmap(_az_term)(az_amps, az_phis_rad, az_orders)
+        ring = ring * np.sum(az_factors, axis=0)
+
+        # The Gaussian PSF is centered on the pixel grid's own origin (not
+        # on (dra, ddec)), so convolving with it blurs in place instead of
+        # also shifting the image.
+        sigma_mas = np.maximum(
+            self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
+        )
+        r_psf = np.hypot(xx, yy)
+        psf = np.exp(-0.5 * (r_psf / sigma_mas) ** 2)
+
+        rim_image = fftconvolve(ring, psf, mode="same")
+
+        # Unresolved point source centered on the origin (the star, unlike
+        # the rim, is not offset by dra/ddec).
+        point_sigma_mas = max(pixel_scale_mas, 1e-6)
+        star_image = np.exp(
+            -0.5 * ((xx / point_sigma_mas) ** 2 + (yy / point_sigma_mas) ** 2)
+        )
+
+        l2 = self.flux / (self.flux + 1.0)
+        l1 = 1.0 - l2
+        image = l1 * star_image + l2 * rim_image
+        return _normalize_image(image)
+
+
 class HarmonixModel(SourceModel):
     """
     Wrapper for external source models with harmonix-like visibility methods.
@@ -400,7 +612,7 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     sep : float or array-like
         Separation in milliarcseconds.
     pa : float or array-like
-        Position angle in degrees.
+        Position angle in degrees, measured East of North.
     contrast : float or array-like
         Contrast ratio ``star/companion``.
 
@@ -415,7 +627,7 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     th = pa * dtor
 
     ddec = mas2rad * (sep * np.cos(th))
-    dra = -1 * mas2rad * (sep * np.sin(th))
+    dra = mas2rad * (sep * np.sin(th))
 
     # decompose into two "luminosity"
     l2 = 1.0 / (contrast + 1)
@@ -491,6 +703,208 @@ def cvis_gaussian_disk(
     l2 = flux / (flux + 1.0)
     l1 = 1.0 - l2
     return l1 + l2 * envelope * phase
+
+
+def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
+    """Compute complex visibilities for a uniform (tophat) disk.
+
+    The visibility amplitude follows the classic uniform-disk form
+    ``2 * J1(x) / x``, with ``x = pi * ud_rad * base_norm`` the product of
+    the disk diameter (in radians) and the baseline length in wavelength
+    units (``base_norm = hypot(u, v)``, i.e. baseline length divided by
+    wavelength).
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units (cycles / rad).
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    ud : float or array-like
+        Diameter of the uniform disk in milliarcseconds.
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
+    ud_rad = mas2rad * ud
+    base_norm = np.hypot(u, v)
+    kernel = np.pi * base_norm * ud_rad
+
+    envelope = np.where(
+        kernel == 0, 1.0 + 0j, (2.0 * bessel_jn(1, kernel)[1]) / kernel + 0j
+    )
+
+    dra_rad = mas2rad * dra
+    ddec_rad = mas2rad * ddec
+    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    return envelope * phase
+
+
+def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
+    r"""Compute the complex visibility for an azimuthally modulated radial dirac
+    delta ring. The image intensity can be described in polar image coordinates as
+    $I(r, \theta) \propto \delta(r-r_0) \left( 1 + \sum_{m=1}^{n} A_m
+    \cos{(m(\theta - \phi_m))} \right)$, where $r_0$ is the ring's radial position,
+    $A_m$ the amplitude and $\phi_m$ the position phase angle (defined counter-clockwise
+    , North to East) for the m-th order modulation.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units (cycles / rad).
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    r0 : float or array-like
+        Scalar with the radial position of the ring in milliarcseconds.
+    az_amps : array-like
+        1D array containing amplitude coefficients for cosine azimuthal modulations.
+        The first element is seen as the amplitude for the first-order modulation,
+        the second as the amplitude for the second-order modulation, etc.
+    az_phis : array-like
+        1D array containing offset angles of the cosine azimuthal modulations,
+        relative to the position angle of the rim's projected major axis, in
+        degrees. The first element is seen as the offset for the first-order
+        modulation, the second for the second-order modulation, etc.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+
+    Notes
+    -----
+    This function does not account for rotation and geometric stretching (e.g. due to
+    inclination). A separate transformation of $uv$ coordinates should account for this.
+    The phase angles of the cosine modulations are defined relative to the
+    spatial y-axis (North), turning counterclockwise to the x-axis (East). This means
+    that a single 1st order modulation with a phase angle of $0 \, \mathrm{deg}$
+    results in a bright peak towards the North, and a faint peak towards the South.
+    A phase angle of $90 \, \mathrm{deg}$ would result in a bright peak towards the
+    East, and a faint one towards the West.
+    """
+    # Add radially symmetric component (order m=0) to beginning of the order arrays.
+    az_amps = np.concatenate([np.array([1.0]), az_amps])
+    az_phis = np.concatenate([np.array([0.0]), az_phis])
+    az_orders = np.arange(az_amps.size)
+
+    r0_rad = r0 * mas2rad
+    az_phis_rad = az_phis * dtor
+
+    # Get length of baseline and baseline projection angle (i.e. counterclockwise
+    # angle in uv-plane, turning from top, i.e. positive v, to left, i.e. positive u).
+    base_norm = np.hypot(u, v)
+    base_proj_ang_rad = np.arctan2(u, v)
+
+    az_order_max = np.size(az_orders) - 1
+    xbes = 2.0 * np.pi * base_norm * r0_rad
+    bessel_vals = bessel_jn(az_order_max, xbes)
+
+    def _azmod_cvis_term(az_amp, az_phi_rad, az_order):
+        return (
+            az_amp
+            * np.exp(-0.5j * np.pi * az_order)
+            * np.cos(az_order * (base_proj_ang_rad - az_phi_rad))
+            * bessel_vals[az_order, :]
+        )
+
+    azmod_cvis_terms = jax.vmap(
+        _azmod_cvis_term, in_axes=(0, 0, 0), out_axes=0
+    )(az_amps, az_phis_rad, az_orders)
+
+    return np.sum(azmod_cvis_terms, axis=0)
+
+
+def _cvis_gaussian_envelope(u, v, fwhm):
+    """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
+    as the convolution kernel in :func:`cvis_gaussian_rim`. Not offered as a public
+    function: unlike :func:`cvis_gaussian_disk`, this is a plain Gaussian envelope
+    with no point-source/flux-contrast mixture.
+    """
+    fwhm_rad = fwhm * mas2rad
+    base_norm = np.hypot(u, v)
+    return (
+        np.exp(-(np.pi**2) * fwhm_rad**2 * base_norm**2 / (4.0 * np.log(2.0)))
+        + 0j
+    )
+
+
+def cvis_gaussian_rim(
+    u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis, flux
+):
+    """Compute complex visibilities for a (modulated) rim, consisting of a radial
+    Dirac delta ring (infinitely thin) subsequently convolved with an isotropic 2D
+    Gaussian, mixed with an unresolved point source at the origin.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units.
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units.
+    dra : float or array-like
+        Right-ascension offset of the rim in milliarcseconds.
+    ddec : float or array-like
+        Declination offset of the rim in milliarcseconds.
+    diam : float or array-like
+        Diameter of the rim in milliarcseconds.
+    fwhm : float or array-like
+        Gaussian FWHM of the rim in milliarcseconds.
+    inc : float or array-like
+        Apparent inclination of the rim in degrees.
+    pa : float or array-like
+        Position angle of the rim's projected major axis in degrees, measured North to
+        East (i.e. counter-clockwise in conventional astronomical image orientation).
+    az_amps : array-like
+        1D array containing amplitude coefficients for cosine azimuthal modulations.
+        The first element is seen as the amplitude for the first-order modulation,
+        the second as the amplitude for the second-order modulation, etc.
+    az_phis : array-like
+        1D array containing offset angles of the rim's cosine azimuthal modulations,
+        relative to the position angle of the rim's projected major axis, in
+        degrees. The first element is seen as the offset for the first-order
+        modulation, the second for the second-order modulation, etc.
+    flux : float or array-like
+        Rim/star flux ratio, using the same companion/star contrast convention
+        as :func:`cvis_gaussian_disk`. The unresolved point source is centered
+        on the origin (i.e. unaffected by ``dra``/``ddec``, which offset only
+        the rim).
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
+    inc_rad, dra_rad, ddec_rad = inc * dtor, dra * mas2rad, ddec * mas2rad
+
+    # Transform spatial frequency coordinates to the frame of reference where the
+    # model rim is uninclined and the major axis is pointed North.
+    stretch_factor = np.maximum(np.cos(inc_rad), 1e-8)
+    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch_factor)
+
+    # Complex visibility of the (inclined) Dirac delta modulated ring.
+    cvis = cvis_radial_dirac_delta_modulated(
+        ut, vt, diam / 2.0, az_amps, az_phis
+    )
+
+    # Effect of convolution in image-plane with an isotropic Gaussian of the given
+    # FWHM, evaluated in the original (un-transformed) image frame of reference.
+    cvis = cvis * _cvis_gaussian_envelope(u, v, fwhm)
+
+    # Apply offset phase-factor.
+    phi = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    rim_cvis = cvis * phi
+
+    # Mix with an unresolved point source at the origin, using the same
+    # flux (companion/star) contrast convention as cvis_gaussian_disk.
+    l2 = flux / (flux + 1.0)
+    l1 = 1.0 - l2
+    return l1 + l2 * rim_cvis
 
 
 def model_loglike(model_object, data_obj):

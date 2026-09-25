@@ -3,6 +3,7 @@ import warnings
 import jax.numpy as np
 from matplotlib import get_backend
 import matplotlib.pyplot as plt
+import pytest
 
 from drpangloss.grid_fit import (
     absil_limits,
@@ -16,10 +17,12 @@ from drpangloss.grid_fit import (
 from drpangloss.models import BinaryModelCartesian, nsigma
 from drpangloss.oidata import OIData
 from drpangloss.plotting import (
+    diagnostics_table_from_samples,
     plot_contrast_limits,
     plot_likelihood_grid,
     plot_optimized_and_grid,
     plot_optimized_and_sigma,
+    truth_cartesian_and_polar,
 )
 from tests._test_data import (
     oidata,
@@ -34,6 +37,19 @@ plt.switch_backend("Agg")
 warnings.filterwarnings("ignore", "Matplotlib is currently using agg")
 
 
+def _assert_sky_oriented(fig):
+    """Every imshow'd Axes in ``fig`` must show dra increasing toward the
+    left (East) and ddec increasing toward the top (North), per the
+    package's coordinate convention (see AGENTS.md).
+    """
+    image_axes = [ax for ax in fig.axes if ax.images]
+    assert image_axes, "expected at least one image axes in this figure"
+    for ax in image_axes:
+        xlim, ylim = ax.get_xlim(), ax.get_ylim()
+        assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
+        assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
+
+
 def test_likelihood_grid():
     loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
     assert np.all(np.isfinite(loglike_im))
@@ -43,9 +59,14 @@ def test_likelihood_grid():
         samples_dict["flux"].shape[0],
     )
 
-    plot_likelihood_grid(
-        loglike_im.max(axis=2).T, samples_dict, truths=true_values
+    # loglike_im.max(axis=2) already has shape (dra_len, ddec_len), which
+    # is what plot_likelihood_grid expects (it transposes internally);
+    # the extra .T previously here silently fed it a distorted,
+    # wrong-shape image that no assertion caught.
+    fig, ax = plot_likelihood_grid(
+        loglike_im.max(axis=2), samples_dict, truths=true_values
     )
+    _assert_sky_oriented(fig)
 
 
 def test_likelihood_grid_axis_order_tracks_key_order():
@@ -85,7 +106,10 @@ def test_optimized_likelihood_grid():
         samples_dict["dra"].shape[0],
         samples_dict["ddec"].shape[0],
     )
-    plot_likelihood_grid(loglike_im, samples_dict, truths=true_values)
+    fig, ax = plot_likelihood_grid(
+        loglike_im, samples_dict, truths=true_values
+    )
+    _assert_sky_oriented(fig)
 
 
 def test_optimized_likelihood_grid_axis_order_tracks_key_order():
@@ -130,6 +154,7 @@ def test_optimized():
     )
     assert np.all(np.isfinite(optimized))
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_optimized_contrast_grid_axis_order_tracks_key_order():
@@ -171,6 +196,7 @@ def test_laplace():
     )
 
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
+    _assert_sky_oriented(plt.gcf())
 
     laplace_sigma_grid = laplace_contrast_uncertainty_grid(
         best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict
@@ -183,9 +209,11 @@ def test_laplace():
     plot_optimized_and_sigma(
         optimized, laplace_sigma_grid, samples_dict, snr=False
     )
+    _assert_sky_oriented(plt.gcf())
     plot_optimized_and_sigma(
         optimized, laplace_sigma_grid, samples_dict, snr=True
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_laplace_grid_axis_order_tracks_key_order():
@@ -269,6 +297,7 @@ def test_ruffio():
         true_values=true_values,
         percentile=perc,
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_absil():
@@ -301,6 +330,7 @@ def test_absil():
         true_values=true_values,
         sigma=5.0,
     )
+    _assert_sky_oriented(plt.gcf())
 
 
 def test_nsigma_increases_with_chi2_ratio():
@@ -388,3 +418,38 @@ def test_plot_contrast_limits_sigma_label():
         legend_axis.get_legend().texts[0].get_text()
         == "5$\\sigma$ Contrast Limit"
     )
+
+
+def test_diagnostics_table_from_samples_follows_north_to_east_pa_convention():
+    """A sample due East (dra=+40, ddec=0) must report pa=90 under the
+    package's North-to-East convention. The previous swapped-argument
+    arctan2(ddec, dra) bug would instead report pa=0 here, so this catches
+    the bug directly rather than via a self-consistent round-trip.
+    """
+    samples = {
+        "dra": np.array([40.0]),
+        "ddec": np.array([0.0]),
+        "flux": np.array([1.0]),
+    }
+    df = diagnostics_table_from_samples(samples)
+    assert df["pa"].to_numpy() == pytest.approx(90.0)
+
+    dra, ddec = 50.0, 50.0
+    off_axis = diagnostics_table_from_samples(
+        {
+            "dra": np.array([dra]),
+            "ddec": np.array([ddec]),
+            "flux": np.array([1.0]),
+        }
+    )
+    expected_pa = float(BinaryModelCartesian(dra, ddec, 1.0).to_angular().pa)
+    assert off_axis["pa"].to_numpy() == pytest.approx(expected_pa)
+
+
+def test_truth_cartesian_and_polar_follows_north_to_east_pa_convention():
+    """Same North-to-East check as above, for the truth-marker helper used
+    by plot_hmc_fisher_chainconsumer.
+    """
+    truth = {"dra": 40.0, "ddec": 0.0, "flux": 1.0}
+    _, truth_polar = truth_cartesian_and_polar(truth)
+    assert truth_polar["pa"] == pytest.approx(90.0)
