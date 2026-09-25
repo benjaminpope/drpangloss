@@ -5,8 +5,11 @@ __pycache__/
 
 *.egg-info/
 src/drpangloss.egg-info/
+
+# Ignore files meant for personal agents for session context retention
 REVIEW_NOTES.md
 TODO.md
+HANDOFF.md
 
 site/
 docs/generated/_tmp_*

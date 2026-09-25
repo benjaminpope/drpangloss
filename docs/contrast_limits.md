@@ -96,7 +96,6 @@ print(
 
 ```text
 Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.00028
-Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.00028
 ```
 
 ## Declare a search grid
@@ -213,7 +212,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0xeb41dabb350>
+<matplotlib.legend.Legend at 0x132319f85510>
 ```
 
 ![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)

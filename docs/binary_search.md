@@ -321,9 +321,13 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![binary_search output 19.1](generated/binary_search_cell019_out01.png)
+```text
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
+```
 
 ![binary_search output 19.2](generated/binary_search_cell019_out02.png)
+
+![binary_search output 19.3](generated/binary_search_cell019_out03.png)
 
 And in polar coordinates:
 
@@ -340,9 +344,13 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![binary_search output 21.1](generated/binary_search_cell021_out01.png)
+```text
+Parameter pa in chain Fisher-HMC Polar is not constrained
+```
 
 ![binary_search output 21.2](generated/binary_search_cell021_out02.png)
+
+![binary_search output 21.3](generated/binary_search_cell021_out03.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 
