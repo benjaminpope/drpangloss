@@ -327,11 +327,9 @@ def test_absil_limit_responds_to_smaller_uncertainties():
                 "u": oidata_sim.u,
                 "v": oidata_sim.v,
                 "wavel": oidata_sim.wavel,
-                "vis": null_vis
-                + vis_noise * oidata_sim.d_vis * error_scale,
+                "vis": null_vis + vis_noise * oidata_sim.d_vis * error_scale,
                 "d_vis": oidata_sim.d_vis * error_scale,
-                "phi": null_phi
-                + phi_noise * oidata_sim.d_phi * error_scale,
+                "phi": null_phi + phi_noise * oidata_sim.d_phi * error_scale,
                 "d_phi": oidata_sim.d_phi * error_scale,
                 "i_cps1": oidata_sim.i_cps1,
                 "i_cps2": oidata_sim.i_cps2,
@@ -341,9 +339,7 @@ def test_absil_limit_responds_to_smaller_uncertainties():
             }
         )
 
-    nominal = absil_limits(
-        samples, noisy_null(1.0), BinaryModelCartesian, 2.0
-    )
+    nominal = absil_limits(samples, noisy_null(1.0), BinaryModelCartesian, 2.0)
     improved = absil_limits(
         samples, noisy_null(0.1), BinaryModelCartesian, 2.0
     )

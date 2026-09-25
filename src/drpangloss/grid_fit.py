@@ -623,9 +623,11 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
     start_flux = samples_dict[flux_key][best_flux_indices]
-    starts = jnp.stack(
-        [jnp.log10(start_flux), *coord_grids], axis=0
-    ).reshape((len(coord_keys) + 1, -1)).T
+    starts = (
+        jnp.stack([jnp.log10(start_flux), *coord_grids], axis=0)
+        .reshape((len(coord_keys) + 1, -1))
+        .T
+    )
 
     def optimize_log_flux(log_flux, coord_vals):
         flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]

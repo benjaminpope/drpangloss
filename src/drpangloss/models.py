@@ -787,9 +787,7 @@ def nsigma(chi2r_test, chi2r_true, ndof):
         Detection significance.
     """
 
-    percentile = jax.scipy.stats.chi2.cdf(
-        ndof * chi2r_test / chi2r_true, ndof
-    )
+    percentile = jax.scipy.stats.chi2.cdf(ndof * chi2r_test / chi2r_true, ndof)
     nsigma = np.sqrt(chi2ppf(percentile, 1.0))
 
     return nsigma
