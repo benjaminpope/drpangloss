@@ -13,7 +13,8 @@ from drpangloss.grid_fit import (
     optimized_likelihood_grid,
     ruffio_upperlimit,
 )
-from drpangloss.models import BinaryModelCartesian
+from drpangloss.models import BinaryModelCartesian, nsigma
+from drpangloss.oidata import OIData
 from drpangloss.plotting import (
     plot_contrast_limits,
     plot_likelihood_grid,
@@ -300,6 +301,54 @@ def test_absil():
         true_values=true_values,
         sigma=5.0,
     )
+
+
+def test_nsigma_increases_with_chi2_ratio():
+    significances = nsigma(np.array([1.0, 2.0, 4.0]), 1.0, 56)
+
+    assert np.all(np.diff(significances) > 0.0)
+
+
+def test_absil_limit_responds_to_smaller_uncertainties():
+    samples = {
+        "dra": np.array([100.0]),
+        "ddec": np.array([100.0]),
+        "flux": 10 ** np.linspace(-6.0, -1.0, 30),
+    }
+    null_cvis = np.ones_like(oidata_sim.u, dtype=complex)
+    null_vis = oidata_sim.to_vis(null_cvis)
+    null_phi = oidata_sim.to_phases(null_cvis)
+    vis_noise = np.linspace(-1.0, 1.0, oidata_sim.vis.size)
+    phi_noise = np.linspace(1.0, -1.0, oidata_sim.phi.size)
+
+    def noisy_null(error_scale):
+        return OIData(
+            {
+                "u": oidata_sim.u,
+                "v": oidata_sim.v,
+                "wavel": oidata_sim.wavel,
+                "vis": null_vis
+                + vis_noise * oidata_sim.d_vis * error_scale,
+                "d_vis": oidata_sim.d_vis * error_scale,
+                "phi": null_phi
+                + phi_noise * oidata_sim.d_phi * error_scale,
+                "d_phi": oidata_sim.d_phi * error_scale,
+                "i_cps1": oidata_sim.i_cps1,
+                "i_cps2": oidata_sim.i_cps2,
+                "i_cps3": oidata_sim.i_cps3,
+                "v2_flag": oidata_sim.v2_flag,
+                "cp_flag": oidata_sim.cp_flag,
+            }
+        )
+
+    nominal = absil_limits(
+        samples, noisy_null(1.0), BinaryModelCartesian, 2.0
+    )
+    improved = absil_limits(
+        samples, noisy_null(0.1), BinaryModelCartesian, 2.0
+    )
+
+    assert improved.item() < nominal.item()
 
 
 def test_plot_contrast_limits_percentile_label():

@@ -599,72 +599,53 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
         Maximum relative flux of companion.
     """
 
-    ndof = (
-        data_obj.vis.size + data_obj.phi.size
-    )  # number of degrees of freedom
+    data, errors = data_obj.flatten_data()
+    ndof = data.size
+    params = tuple(samples_dict.keys())
+    coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
 
-    # unpack the samples dict
-    params = list(samples_dict.keys())
-    coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict)
-    samples = samples_dict.values()
+    def reduced_chi2(values):
+        model = data_obj.model(model_class(**dict(zip(params, values))))
+        return jnp.sum(((data - model) / errors) ** 2) / ndof
 
-    # define chi2 wrappers
-    chi2_bin = (
-        lambda values: -2
-        * loglike(values, params, data_obj, model_class)
-        / ndof
-    )
-    chi2_null = chi2_bin(jnp.zeros(len(params)))
+    null_values = [0.0] * len(params)
+    chi2_null = reduced_chi2(null_values)
 
-    # first do a grid search to find the best contrast
-    vals = jnp.array(jnp.meshgrid(*samples))
-    vals_vec = vals.reshape((len(vals), -1)).T
+    def loss(values):
+        significance = nsigma(reduced_chi2(values), chi2_null, ndof)
+        return (significance - sigma) ** 2
 
-    # define intermediate function: nsigma detection significance, difference from sigma
+    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
+    loss_grid = vmap(loss)(vals_vec).reshape(grid_shape)
+    flux_axis = params.index(flux_key)
+    best_flux_indices = jnp.argmin(loss_grid, axis=flux_axis)
 
-    loss = (
-        lambda values: (
-            nsigma(chi2_bin(values) / ndof, chi2_null / ndof, ndof) - sigma
-        )
-        ** 2
-    )
-
-    loss_im = vmap(loss)(vals_vec).reshape(
-        vals.shape[1:]
-    )  # check the shapes output here
-
-    best_contrast_indices = jnp.argmax(loss_im, axis=2)
-
-    # then optimize the contrast at each point
     coords = [samples_dict[key] for key in coord_keys]
-    ras, decs = jnp.meshgrid(*coords)
-    vals = jnp.array(
-        [samples_dict[flux_key][best_contrast_indices], decs, ras]
-    )
-    vals_vec = vals.reshape((len(vals), -1)).T
+    coord_grids = jnp.meshgrid(*coords, indexing="ij")
+    start_flux = samples_dict[flux_key][best_flux_indices]
+    starts = jnp.stack(
+        [jnp.log10(start_flux), *coord_grids], axis=0
+    ).reshape((len(coord_keys) + 1, -1)).T
 
-    # define optimization wrapper for the contrast
-    to_optimize = lambda flux, dra_inp, ddec_inp: loss(
-        [dra_inp, ddec_inp, 10**flux]
-    )
+    def optimize_log_flux(log_flux, coord_vals):
+        flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]
+        values = _ordered_values_from_flux_and_coords(
+            flux, coord_vals, params, coord_keys, flux_key
+        )
+        return loss(values)
 
-    # optimize
-    bestcon = lambda flux, dra, ddec: optx.compat.minimize(
-        to_optimize,
-        x0=jnp.array([flux]),
-        args=(jnp.asarray(dra), jnp.asarray(ddec)),
-        method="BFGS",
-        options={"maxiter": 100},
-    ).x
+    def best_flux(log_flux, *coord_vals):
+        solution = optx.compat.minimize(
+            optimize_log_flux,
+            x0=jnp.array([log_flux]),
+            args=(jnp.asarray(coord_vals),),
+            method="BFGS",
+            options={"maxiter": 100},
+        )
+        return 10.0 ** solution.x[0]
 
-    fn = vmap(lambda values: bestcon(*values))
-    limits = fn(vals_vec).reshape(
-        vals.shape[1:]
-    )  # check the shapes output here
-
-    limits_clipped = jnp.clip(limits, 1e-6, 1)  # clip to 1e-6
-
-    return limits_clipped
+    limits = vmap(lambda values: best_flux(values[0], *values[1:]))(starts)
+    return jnp.clip(limits.reshape(start_flux.shape), 1e-6, 1.0)
 
 
 # def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):

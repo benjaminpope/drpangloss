@@ -95,7 +95,7 @@ print(
 ```
 
 ```text
-Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.016
+Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.00028
 ```
 
 ## Declare a search grid
@@ -146,7 +146,7 @@ plot_contrast_limit_map(
 ```
 
 ```text
-W0304 14:46:13.318260 3093216 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0925 09:44:16.344793 6221992 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
 ![contrast_limits output 9.2](generated/contrast_limits_cell009_out02.png)
@@ -216,7 +216,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0x166d95690>
+<matplotlib.legend.Legend at 0x11a987790>
 ```
 
 ![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)
