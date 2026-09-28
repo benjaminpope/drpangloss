@@ -334,7 +334,8 @@ def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
     """
     pa_rad = pa * dtor
 
-    ut = (u * np.cos(pa_rad) - v * np.sin(pa_rad)) / stretch
+    # Fourier similarity theorem: compressing the image by `stretch` dilates uv by 1/stretch.
+    ut = (u * np.cos(pa_rad) - v * np.sin(pa_rad)) * stretch
     vt = u * np.sin(pa_rad) + v * np.cos(pa_rad)
 
     return ut, vt
@@ -369,7 +370,7 @@ def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
     """
     pa_rad = pa * dtor
 
-    u_scaled = u * stretch
+    u_scaled = u / stretch
     v_scaled = v
 
     ut = u_scaled * np.cos(pa_rad) + v_scaled * np.sin(pa_rad)
