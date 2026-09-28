@@ -7,6 +7,7 @@ Module-level API for visibility source models and fitting helpers.
 - [SourceModel](classes/source_model.md)
 - [BinaryModelAngular](classes/binary_model_angular.md)
 - [BinaryModelCartesian](classes/binary_model_cartesian.md)
+- [System and building blocks](classes/composition.md)
 - [GaussianDiskModel](classes/gaussian_disk_model.md)
 - [HarmonixModel](classes/harmonix_model.md)
 
