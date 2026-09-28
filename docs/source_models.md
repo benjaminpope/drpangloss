@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source extensions in `drpangloss`: `GaussianDiskModel`, `UniformDiskModel`, `ModulatedGaussianRimModel`, and `HarmonixModel`.
+This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `drpangloss`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `HarmonixModel`.
 
-We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally wrap a harmonix-style external source object to show how the visibility and rendering interfaces fit together.
+We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally wrap a harmonix-style external source object to show how the visibility and rendering interfaces fit together. See the composition tutorial for how to combine these building blocks into more complex scenes.
 
 ```python
 import sys
@@ -23,8 +23,9 @@ if str(src_path) not in sys.path:
 from drpangloss.models import (
     GaussianDiskModel,
     HarmonixModel,
-    ModulatedGaussianRimModel,
-    UniformDiskModel,
+    ModulatedGaussianRim,
+    PointSource,
+    UniformDisk,
 )
 from drpangloss.oidata import OIData
 ```
@@ -84,7 +85,7 @@ data = OIData({
  'sigma_mas': 18.0,
  'flux': 0.15,
  'centroid_mas': (12.0, -7.5),
- 'vis_range': (0.7543691396713257, 0.8830579519271851)}
+ 'vis_range': (0.7543692588806152, 0.8830579519271851)}
 ```
 
 ## Use `OIData` to flatten observables
@@ -220,12 +221,12 @@ plt.show()
 
 This is the same pattern you would use with a real harmonix object: instantiate the external source, wrap it in `HarmonixModel`, and then call `model(...)` or `render(...)` through the common `SourceModel` interface.
 
-## Simulate a uniform-disk companion
+## Simulate a uniform disk
 
-`UniformDiskModel` represents a resolved tophat (uniform-brightness) disk. Unlike `GaussianDiskModel`, it has no `flux`/point-source mixture -- the whole model is the resolved disk. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
+`UniformDisk` represents a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; add a `PointSource` with `+` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
 
 ```python
-udisk = UniformDiskModel(ud=25.0, dra=-9.0, ddec=6.0)
+udisk = UniformDisk(diam=25.0, dra=-9.0, ddec=6.0)
 cvis_udisk = udisk.model(u, v, wavel)
 
 vis_udisk = jnp.abs(cvis_udisk) ** 2
@@ -233,7 +234,7 @@ phi_udisk = jnp.rad2deg(jnp.angle(cvis_udisk))
 model_vec_udisk = data.model(udisk)
 
 {
-    "ud_mas": float(udisk.ud),
+    "diam_mas": float(udisk.diam),
     "centroid_mas": (float(udisk.dra), float(udisk.ddec)),
     "vis_range": (float(jnp.min(vis_udisk)), float(jnp.max(vis_udisk))),
     "model_len": int(model_vec_udisk.shape[0]),
@@ -241,9 +242,9 @@ model_vec_udisk = data.model(udisk)
 ```
 
 ```text
-{'ud_mas': 25.0,
+{'diam_mas': 25.0,
  'centroid_mas': (-9.0, 6.0),
- 'vis_range': (0.00014090703916735947, 0.8681560754776001),
+ 'vis_range': (0.0001409070537192747, 0.8681560754776001),
  'model_len': 64}
 ```
 
@@ -268,7 +269,7 @@ im = axes[1].imshow(
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
 axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("`UniformDiskModel.render(...)`")
+axes[1].set_title("`UniformDisk.render(...)`")
 fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
 
 plt.tight_layout()
@@ -279,27 +280,17 @@ plt.show()
 
 ## Simulate an azimuthally modulated rim
 
-`ModulatedGaussianRimModel` is an inclined, Gaussian-blurred ring mixed with an unresolved point source (the same `flux` companion/star convention as `GaussianDiskModel`), optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). We compare a symmetric rim against one with first- and second-order modulations.
+`ModulatedGaussianRim` is an inclined, Gaussian-blurred ring, optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). Adding a `PointSource` puts an unresolved star at the centre; the rim's `flux` is then its flux relative to the star. We compare a symmetric rim against one with first- and second-order modulations.
 
 ```python
-rim_symmetric = ModulatedGaussianRimModel(
-    diam=14.15,
-    fwhm=3.233,
-    inc=19.0,
-    pa=6.0,
-    flux=0.67504187604,
-    az_amps=jnp.array([0.0]),
-    az_pas=jnp.array([0.0]),
-)
-rim_modulated = ModulatedGaussianRimModel(
-    diam=14.15,
-    fwhm=3.233,
-    inc=19.0,
-    pa=6.0,
-    flux=0.67504187604,
+rim_geometry = dict(diam=14.15, fwhm=3.233, inc=19.0, pa=6.0, flux=0.67504187604)
+rim = ModulatedGaussianRim(
+    **rim_geometry,
     az_amps=jnp.array([0.43011627, 0.2745906]),
     az_pas=jnp.array([35.537678 + 6.0, 50.245735 + 6.0]),
 )
+rim_symmetric = PointSource() + ModulatedGaussianRim(**rim_geometry)
+rim_modulated = PointSource() + rim
 
 cvis_rim = rim_modulated.model(u, v, wavel)
 vis_rim = jnp.abs(cvis_rim) ** 2
@@ -307,17 +298,17 @@ phi_rim = jnp.rad2deg(jnp.angle(cvis_rim))
 model_vec_rim = data.model(rim_modulated)
 
 {
-    "diam_mas": float(rim_modulated.diam),
-    "flux": float(rim_modulated.flux),
-    "az_amps": np.asarray(rim_modulated.az_amps).tolist(),
-    "az_pas_deg": np.asarray(rim_modulated.az_pas).tolist(),
+    "diam_mas": float(rim.diam),
+    "rim_to_star_flux": float(rim.flux),
+    "az_amps": np.asarray(rim.az_amps).tolist(),
+    "az_pas_deg": np.asarray(rim.az_pas).tolist(),
     "model_len": int(model_vec_rim.shape[0]),
 }
 ```
 
 ```text
 {'diam_mas': 14.149999618530273,
- 'flux': 0.6750418543815613,
+ 'rim_to_star_flux': 0.6750418543815613,
  'az_amps': [0.4301162660121918, 0.2745906114578247],
  'az_pas_deg': [41.53767776489258, 56.24573516845703],
  'model_len': 64}

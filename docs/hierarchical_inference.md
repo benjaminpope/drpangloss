@@ -331,7 +331,7 @@ findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
 ```
 
 ```text
-<chainconsumer.chainconsumer.ChainConsumer at 0x11da8ccd0>
+<chainconsumer.chainconsumer.ChainConsumer at 0x11fc2c750>
 ```
 
 ![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
