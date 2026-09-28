@@ -35,7 +35,7 @@ u = jnp.array(rng.uniform(-24.0, 24.0, size=n_bl))
 v = jnp.array(rng.uniform(-24.0, 24.0, size=n_bl))
 wavel = jnp.full((n_bl,), 1.65e-6)
 
-truth = {"sigma": 18.0, "dra": 12.0, "ddec": -7.5}
+truth = {"sigma": 18.0, "flux": 0.15, "dra": 12.0, "ddec": -7.5}
 disk = GaussianDiskModel(**truth)
 cvis_true = disk.model(u, v, wavel)
 
@@ -70,6 +70,7 @@ data = OIData(
 {
     "n_baselines": int(n_bl),
     "sigma_mas": truth["sigma"],
+    "flux": truth["flux"],
     "centroid_mas": (truth["dra"], truth["ddec"]),
     "vis_range": (float(jnp.min(vis_true)), float(jnp.max(vis_true))),
 }

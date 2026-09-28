@@ -32,26 +32,29 @@ observations_by_filter = load_oi_data(product_path)
 filter_names = tuple(observations_by_filter)
 observations = tuple(observations_by_filter[name] for name in filter_names)
 
-{
-    name: {
-        "n_observables": int(oidata.standardize_data().size),
-        "n_uv": int(oidata.u.size),
-        "observable_kind": oidata.observable_kind,
-    }
-    for name, oidata in observations_by_filter.items()
-}
+for name, oidata in observations_by_filter.items():
+    print(f"Filter: {name}")
+    print(f"Number of observables: {int(oidata.standardize_data().size)}")
+    print(f"Number of UV points: {int(oidata.u.size)}")
+    print(f"Observable kind: {oidata.observable_kind}")
+    print()
 ```
 
 ```text
-{'F380M': {'n_observables': 1030,
-  'n_uv': 2380,
-  'observable_kind': 'mixed_log_complex'},
- 'F430M': {'n_observables': 1052,
-  'n_uv': 2380,
-  'observable_kind': 'mixed_log_complex'},
- 'F480M': {'n_observables': 974,
-  'n_uv': 2380,
-  'observable_kind': 'mixed_log_complex'}}
+Filter: F380M
+Number of observables: 206
+Number of UV points: 47
+Observable kind: mixed_log_complex
+
+Filter: F430M
+Number of observables: 210
+Number of UV points: 47
+Observable kind: mixed_log_complex
+
+Filter: F480M
+Number of observables: 194
+Number of UV points: 47
+Observable kind: mixed_log_complex
 ```
 
 ## Verify one mixed-DISCO projection
@@ -75,7 +78,11 @@ prediction.shape, data.shape, errors.shape
 ```
 
 ```text
-((1052,), (1052,), (1052,))
+W0924 18:06:45.279340 5522799 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+```
+
+```text
+((210,), (210,), (210,))
 ```
 
 ## Use the shared hierarchical interface
@@ -104,5 +111,5 @@ joint_prediction(params, observations, binary_model).shape, joint_loglike(
 ```
 
 ```text
-((3056,), Array(23209.74354018, dtype=float64))
+((610,), Array(14801.682, dtype=float32))
 ```
