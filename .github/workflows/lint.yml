@@ -63,7 +63,10 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref }}
+          ref: >-
+            ${{ (github.event_name == 'pull_request' &&
+            github.event.pull_request.head.repo.full_name == github.repository)
+            && github.head_ref || github.ref }}
 
       - name: install uv
         uses: astral-sh/setup-uv@v6
