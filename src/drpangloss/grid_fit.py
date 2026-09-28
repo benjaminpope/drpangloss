@@ -1,5 +1,6 @@
 from functools import partial
 
+import jax
 from jax import jit, vmap
 import jax.numpy as jnp
 import numpy as np
@@ -18,14 +19,42 @@ import jax.scipy as jsp
 """Grid-based fitting and contrast-limit utilities."""
 
 
+class _StaticTemplate:
+    """Hashable-by-value wrapper so a template model can be a jit static argument."""
+
+    def __init__(self, model):
+        leaves, treedef = jax.tree_util.tree_flatten(model)
+        arrays = [np.asarray(leaf) for leaf in leaves]
+        self.model = model
+        self._key = (
+            treedef,
+            tuple((a.dtype.str, a.shape, a.tobytes()) for a in arrays),
+        )
+
+    def __hash__(self):
+        return hash(self._key)
+
+    def __eq__(self, other):
+        return isinstance(other, _StaticTemplate) and self._key == other._key
+
+
 def _split_model(model):
-    """Separate a static model class from a (dynamic) template model instance."""
-    if isinstance(model, SourceModel):
+    """Return ``(static, dynamic_template)`` for a model class or template instance.
+
+    Concrete templates are static so that unvaried parameters (e.g. a star at
+    the origin) stay concrete and are simplified away during tracing.
+    """
+    if not isinstance(model, SourceModel):
+        return model, None
+    try:
+        return _StaticTemplate(model), None
+    except jax.errors.TracerArrayConversionError:
         return None, model
-    return model, None
 
 
 def _resolve_model(model_class, template):
+    if isinstance(model_class, _StaticTemplate):
+        return model_class.model
     return template if model_class is None else model_class
 
 

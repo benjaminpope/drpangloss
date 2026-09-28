@@ -56,6 +56,24 @@ def _unit_flux(component):
     )
 
 
+def _is_concrete_zero(x):
+    try:
+        return bool(onp.all(onp.asarray(x) == 0.0))
+    except (
+        jax.errors.TracerArrayConversionError,
+        jax.errors.ConcretizationTypeError,
+    ):
+        return False
+
+
+def _offset_phase(uu, vv, dra, ddec):
+    """Fourier shift factor, or ``None`` for a known zero offset."""
+    if _is_concrete_zero(dra) and _is_concrete_zero(ddec):
+        return None
+    arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)
+    return jax.lax.complex(np.cos(arg), -np.sin(arg))
+
+
 class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for sky-brightness source models.
 
@@ -113,8 +131,9 @@ class Component(SourceModel):
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        phase = np.exp(-i2pi * mas2rad * (uu * self.dra + vv * self.ddec))
-        return self._centred_cvis(uu, vv) * phase
+        cvis = self._centred_cvis(uu, vv)
+        phase = _offset_phase(uu, vv, self.dra, self.ddec)
+        return cvis if phase is None else cvis * phase
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self._centred_image(
@@ -366,8 +385,8 @@ class System(SourceModel):
             for w, c in zip(weights, self.components.values())
         ) / sum(weights)
         uu, vv = u / wavel, v / wavel
-        phase = np.exp(-i2pi * mas2rad * (uu * self.dra + vv * self.ddec))
-        return total * phase
+        phase = _offset_phase(uu, vv, self.dra, self.ddec)
+        return total if phase is None else total * phase
 
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = xx - self.dra, yy - self.ddec
@@ -1108,6 +1127,42 @@ def loglike(values, params, data_obj, model_class):
     """
 
     return model_loglike(build_model(model_class, params, values), data_obj)
+
+
+def numpyro_model(template, priors, data_obj):
+    """Return a numpyro model sampling ``template`` parameters from ``priors``.
+
+    Parameters
+    ----------
+    template : SourceModel
+        Model whose leaves at the paths in ``priors`` are sampled.
+    priors : dict[str, numpyro.distributions.Distribution]
+        Mapping from parameter path (e.g. ``"comp.flux"``) to prior; each path
+        is also used as the numpyro sample-site name.
+    data_obj : OIData or sequence of OIData
+        Data whose Gaussian log likelihood is added with ``numpyro.factor``.
+
+    Returns
+    -------
+    callable
+        Zero-argument numpyro model, e.g. for ``numpyro.infer.NUTS``.
+    """
+    import numpyro
+
+    paths = list(priors)
+    observations = (
+        tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
+    )
+
+    def model():
+        values = [numpyro.sample(path, priors[path]) for path in paths]
+        source = template.set(paths, values)
+        numpyro.factor(
+            "loglike",
+            sum(model_loglike(source, obs) for obs in observations),
+        )
+
+    return model
 
 
 def loglike_nosignal(values, params, data_obj, model_class):
