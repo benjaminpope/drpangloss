@@ -8,10 +8,13 @@ from scipy.special import jn_zeros
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    GaussianDisk,
     GaussianDiskModel,
     HarmonixModel,
-    ModulatedGaussianRimModel,
-    UniformDiskModel,
+    ModulatedGaussianRim,
+    PointSource,
+    System,
+    UniformDisk,
     _image_coordinates,
     cvis_gaussian_disk,
     cvis_gaussian_rim,
@@ -22,6 +25,12 @@ from tests._test_data import oidata
 # Independent reference conversion (not imported from drpangloss) so the
 # analytic checks below don't just re-test the module's own constant.
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
+
+
+def _star_and_rim(flux, **rim_kwargs):
+    return System(
+        star=PointSource(), rim=ModulatedGaussianRim(flux=flux, **rim_kwargs)
+    )
 
 
 def test_cvis_gaussian_disk_is_well_behaved():
@@ -108,7 +117,7 @@ def test_cvis_uniform_disk_converges_to_point_source_for_small_ud():
 
 
 def test_uniform_disk_oidata_and_render():
-    model = UniformDiskModel(ud=30.0, dra=10.0, ddec=-10.0)
+    model = UniformDisk(diam=30.0, dra=10.0, ddec=-10.0)
     model_vec = oidata.model(model)
     image = model.render(npix=64, fov_mas=150.0)
 
@@ -120,7 +129,7 @@ def test_uniform_disk_oidata_and_render():
 
 
 def test_uniform_disk_render_uses_interferometric_image_orientation():
-    image = UniformDiskModel(ud=1e-3, dra=2.0, ddec=2.0).render(
+    image = UniformDisk(diam=1e-3, dra=2.0, ddec=2.0).render(
         npix=5, fov_mas=10.0
     )
 
@@ -216,7 +225,7 @@ def test_cvis_gaussian_rim_symmetric_case_matches_bessel_j0():
 
 
 def test_modulated_gaussian_rim_oidata_and_render():
-    model = ModulatedGaussianRimModel(
+    model = _star_and_rim(
         diam=30.0,
         fwhm=3.0,
         inc=25.0,
@@ -238,7 +247,7 @@ def test_modulated_gaussian_rim_oidata_and_render():
 
 
 def test_modulated_gaussian_rim_symmetric_case_is_finite_and_normalized():
-    image = ModulatedGaussianRimModel(
+    image = _star_and_rim(
         diam=40.0, fwhm=2.0, inc=0.0, pa=0.0, flux=0.5
     ).render(npix=64, fov_mas=100.0)
 
@@ -255,9 +264,9 @@ def test_modulated_gaussian_rim_render_at_zero_flux_is_point_source_only():
     fov_mas = 100.0
     diam = 40.0
     image = onp.asarray(
-        ModulatedGaussianRimModel(
-            diam=diam, fwhm=2.0, inc=0.0, pa=0.0, flux=0.0
-        ).render(npix=npix, fov_mas=fov_mas)
+        _star_and_rim(diam=diam, fwhm=2.0, inc=0.0, pa=0.0, flux=0.0).render(
+            npix=npix, fov_mas=fov_mas
+        )
     )
     center = npix // 2
 
@@ -299,7 +308,7 @@ def test_modulated_gaussian_rim_render_finite_at_moderate_inclination():
     # (near-)zero-measure ring on a coarse pixel grid; that's a
     # rasterization limitation of the mask-based render, not a numerical
     # blow-up, so this checks a realistic, non-degenerate inclination.
-    image = ModulatedGaussianRimModel(
+    image = _star_and_rim(
         diam=40.0, fwhm=2.0, inc=60.0, pa=0.0, flux=0.5
     ).render(npix=64, fov_mas=100.0)
 
@@ -320,7 +329,7 @@ def test_modulated_gaussian_rim_render_follows_north_to_east_pa_convention(
     az_pas, bright_half, faint_half
 ):
     image = onp.asarray(
-        ModulatedGaussianRimModel(
+        _star_and_rim(
             diam=40.0,
             fwhm=2.0,
             inc=0.0,
@@ -356,11 +365,11 @@ def test_binary_render_is_available():
         (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
         (BinaryModelAngular(20.0, 60.0, 3.0), 2e-3),
         (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
-        (UniformDiskModel(15.0, -5.0, 4.0), 2e-3),
+        (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
         (
-            ModulatedGaussianRimModel(
-                14.0,
-                3.0,
+            _star_and_rim(
+                diam=14.0,
+                fwhm=3.0,
                 inc=60.0,
                 pa=30.0,
                 az_amps=np.array([0.6, 0.3]),
@@ -369,11 +378,30 @@ def test_binary_render_is_available():
                 dra=3.0,
                 ddec=-2.0,
             ),
-            # One-pixel-wide ring rasterization limits render accuracy.
-            2e-2,
+            2e-3,
+        ),
+        (
+            System(
+                star=PointSource(),
+                comp=System(
+                    core=PointSource(),
+                    disk=GaussianDisk(3.0, flux=0.5),
+                    dra=-15.0,
+                    ddec=10.0,
+                    flux=0.2,
+                ),
+            ),
+            2e-3,
         ),
     ],
-    ids=["binary_cart", "binary_ang", "gauss_disk", "uniform_disk", "rim"],
+    ids=[
+        "binary_cart",
+        "binary_ang",
+        "gauss_disk",
+        "uniform_disk",
+        "rim",
+        "nested_system",
+    ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):
     npix, fov_mas, wavel = 512, 80.0, 1.65e-6
