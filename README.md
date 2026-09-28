@@ -2,7 +2,7 @@
 [![PyPI version](https://badge.fury.io/py/drpangloss.svg)](https://badge.fury.io/py/drpangloss)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![integration](https://github.com/benjaminpope/drpangloss/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/drpangloss/actions/workflows/tests.yml)
-[![Documentation](https://github.com/benjaminpope/drpangloss/actions/workflows/documentation.yml/badge.svg)](https://benjaminpope.github.io/drpangloss/)
+[![Documentation](https://github.com/benjaminpope/drpangloss/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/drpangloss/)
 
 The best of all possible interferometry models.
 
@@ -54,8 +54,6 @@ uv run --python .venv/bin/python zensical build --clean
 ## Collaboration & Development
 
 We welcome collaboration and development contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request workflow.
-
-Current modernization priorities are tracked in [REVIEW_NOTES.md](REVIEW_NOTES.md) and [docs/review_2026-03-03.md](docs/review_2026-03-03.md).
 
 ## Name
 

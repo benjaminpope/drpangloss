@@ -42,7 +42,9 @@ from drpangloss.models import (
     numpyro_model,
 )
 from drpangloss.oidata import OIData, cp_indices
-from drpangloss.plotting import plot_likelihood_grid, plot_model
+from drpangloss.plotting import plot_likelihood_grid, plot_model, set_style
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Shapes
@@ -140,7 +142,7 @@ System(
     dra=0,
     ddec=0,
 )
-largest difference in observables: 2.4e-07
+largest difference in observables: 1.2e-07
 ```
 
 The difference is at the level of float32 rounding. For a plain binary, keep using `BinaryModelCartesian` or `BinaryModelAngular`. They are the fastest option, and the binary tutorials all still apply. If you start from a binary and later need more, `binary.to_system()` returns this `System` form for you to extend.
@@ -339,11 +341,11 @@ for path in paths:
 
 ```text
 parameter     truth                HMC  Laplace σ  σ, rim fixed
-comp.dra    45.0000   45.0774 ± 1.1205     1.0649        1.0422
-comp.ddec   30.0000   32.6515 ± 1.1829     1.3602        1.0782
-comp.flux    0.0100    0.0096 ± 0.0006     0.0008        0.0006
-rim.flux     0.5000    0.4583 ± 0.0239     0.0286             -
-rim.diam    40.0000   41.4686 ± 0.9624     0.9892             -
+comp.dra    45.0000   44.9272 ± 1.0927     1.0649        1.0422
+comp.ddec   30.0000   32.6506 ± 1.1473     1.3602        1.0782
+comp.flux    0.0100    0.0096 ± 0.0007     0.0008        0.0006
+rim.flux     0.5000    0.4553 ± 0.0223     0.0286             -
+rim.diam    40.0000   41.5851 ± 0.9025     0.9892             -
 ```
 
 The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. That is exactly the check you would want to make before believing a detection.
@@ -383,8 +385,8 @@ print(f"position angle {polar_best['pa']:6.2f} ± {polar_sigma['pa']:.2f} deg  (
 ```
 
 ```text
-separation      55.66 ± 1.07 mas  (HMC spread 1.09)
-position angle  54.08 ± 1.23 deg  (HMC spread 1.25)
+separation      55.54 ± 1.06 mas  (HMC spread 1.05)
+position angle  53.99 ± 1.23 deg  (HMC spread 1.23)
 ```
 
 The Laplace uncertainties in separation and position angle agree with the spread of the HMC samples converted to the same quantities. The function works everywhere a template does: in `numpyro_model` (with priors keyed by argument name), `laplace_cov`, and the grid tools.

@@ -27,6 +27,7 @@ from drpangloss.oidata import OIData
 from drpangloss.grid_fit import likelihood_grid
 from drpangloss.inference import fisher_matrix, fisher_projection
 from drpangloss.plotting import (
+    set_style,
     posterior_predictive_summary,
     plot_data_model_correlation,
     plot_likelihood_grid,
@@ -34,6 +35,8 @@ from drpangloss.plotting import (
     diagnostics_table_from_samples,
     truth_cartesian_and_polar,
 )
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Simulate Data
@@ -321,14 +324,6 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
-
-![binary_search output 19.2](generated/binary_search_cell019_out02.png)
-
-![binary_search output 19.3](generated/binary_search_cell019_out03.png)
-
 And in polar coordinates:
 
 ```python
@@ -343,10 +338,6 @@ plot_chainconsumer_diagnostics(
     colors=["#1f77b4", "#ff7f0e"],
 );
 ```
-
-![binary_search output 21.1](generated/binary_search_cell021_out01.png)
-
-![binary_search output 21.2](generated/binary_search_cell021_out02.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 
@@ -379,3 +370,11 @@ plt.show()
 ```
 
 ![binary_search output 23.1](generated/binary_search_cell023_out01.png)
+
+![binary_search output 23.2](generated/binary_search_cell023_out02.png)
+
+![binary_search output 23.3](generated/binary_search_cell023_out03.png)
+
+![binary_search output 23.4](generated/binary_search_cell023_out04.png)
+
+![binary_search output 23.5](generated/binary_search_cell023_out05.png)

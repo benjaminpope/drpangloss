@@ -46,6 +46,7 @@ from drpangloss.models import (
     joint_prediction,
 )
 from drpangloss.plotting import (
+    set_style,
     plot_chainconsumer_diagnostics,
     plot_data_model_correlation,
     plot_likelihood_grid,
@@ -55,6 +56,8 @@ from examples.hierarchical_binary_workflow import (
     FILTER_LABELS,
     simulate_observations,
 )
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Simulate three observations
@@ -112,7 +115,7 @@ print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_
 ```
 
 ```text
-initial log-likelihood: -5654.122745306364, optimal: 682.2989893515032
+initial log-likelihood: -5654.1227453063275, optimal: 682.2989893515023
 ```
 
 ## Joint grid initialization
@@ -323,20 +326,8 @@ plot_chainconsumer_diagnostics(
     columns=parameter_columns,
     truth=truth_dict,
     colors=["#1f77b4", "#ff7f0e"],
-)
+);
 ```
-
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
-
-```text
-<chainconsumer.chainconsumer.ChainConsumer at 0x11fc2c750>
-```
-
-![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)
-
-![hierarchical_inference output 18.4](generated/hierarchical_inference_cell018_out04.png)
 
 ## Posterior predictive correlation per filter
 
@@ -368,6 +359,10 @@ for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
 ![hierarchical_inference output 20.2](generated/hierarchical_inference_cell020_out02.png)
 
 ![hierarchical_inference output 20.3](generated/hierarchical_inference_cell020_out03.png)
+
+![hierarchical_inference output 20.4](generated/hierarchical_inference_cell020_out04.png)
+
+![hierarchical_inference output 20.5](generated/hierarchical_inference_cell020_out05.png)
 
 ## Visibility and phase versus baseline
 
