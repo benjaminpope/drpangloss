@@ -77,10 +77,6 @@ observations, truth = simulate_observations(seed=7)
 ```
 
 ```text
-W0924 16:15:26.984204 5392410 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 {'800 nm': {'wavelength_m': 8e-07,
   'n_observables': 36,
   'flux_ratio': 0.014999999999999996},
@@ -116,7 +112,7 @@ print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_
 ```
 
 ```text
-initial log-likelihood: -5654.122745306354, optimal: 682.2989893515032
+initial log-likelihood: -5654.122745306364, optimal: 682.2989893515032
 ```
 
 ## Joint grid initialization
@@ -331,12 +327,11 @@ plot_chainconsumer_diagnostics(
 ```
 
 ```text
-Parameter ddec (mas) in chain HMC is not constrained
-Parameter log10 flux (1.0 micron) in chain HMC is not constrained
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
 ```
 
 ```text
-<chainconsumer.chainconsumer.ChainConsumer at 0x11bc56010>
+<chainconsumer.chainconsumer.ChainConsumer at 0x11fc2c750>
 ```
 
 ![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)

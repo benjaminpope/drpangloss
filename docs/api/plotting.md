@@ -8,6 +8,7 @@
         - posterior_predictive_summary
         - plot_data_model_correlation
         - plot_trace_panels
+        - plot_model
         - plot_likelihood_grid
         - plot_chainconsumer_diagnostics
         - diagnostics_table_from_samples

@@ -110,7 +110,9 @@ samples = {
 }
 
 ll_cube = likelihood_grid(oidata_sim, BinaryModelCartesian, samples)
-opt_flux = optimized_contrast_grid(oidata_sim, BinaryModelCartesian, samples)
+opt_flux = optimized_contrast_grid(
+    oidata_sim, BinaryModelCartesian, samples, flux_param="flux"
+)
 best_idx = jnp.argmax(ll_cube, axis=2)
 ```
 
@@ -120,7 +122,7 @@ The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/ab
 
 ```python
 sigma_flux = laplace_contrast_uncertainty_grid(
-    best_idx, oidata_sim, BinaryModelCartesian, samples
+    best_idx, oidata_sim, BinaryModelCartesian, samples, flux_param="flux"
 )
 
 # Ruffio method at 2σ equivalent percentile
@@ -145,11 +147,7 @@ plot_contrast_limit_map(
 );
 ```
 
-```text
-W0925 09:44:16.344793 6221992 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-![contrast_limits output 9.2](generated/contrast_limits_cell009_out02.png)
+![contrast_limits output 9.1](generated/contrast_limits_cell009_out01.png)
 
 ## Absil Contrast Limits
 
@@ -157,7 +155,9 @@ In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/ab
 
 ```python
 # Absil method at 2σ
-absil_map = absil_limits(samples, oidata_sim, BinaryModelCartesian, sigma=2.0)
+absil_map = absil_limits(
+    samples, oidata_sim, BinaryModelCartesian, sigma=2.0, flux_param="flux"
+)
 
 {
     "opt_flux_finite_frac": float(jnp.mean(jnp.isfinite(opt_flux))),
@@ -216,7 +216,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0x11a987790>
+<matplotlib.legend.Legend at 0x119bc2f50>
 ```
 
 ![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)

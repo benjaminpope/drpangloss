@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as np
 import jax.scipy as jsp
+import numpy as onp
 import pytest
 
 import drpangloss.models as models
@@ -90,6 +91,46 @@ def test_BinaryModelCartesian_to_angular_roundtrip():
     assert np.allclose(roundtrip.dra, cartesian.dra)
     assert np.allclose(roundtrip.ddec, cartesian.ddec)
     assert np.allclose(roundtrip.flux, cartesian.flux)
+
+
+@pytest.mark.parametrize(
+    ("pa", "expected_index"),
+    [
+        # pa=0deg -> North (+y, low row index).
+        (0.0, (0, 2)),
+        # pa=90deg -> East (+x, low column index).
+        (90.0, (2, 0)),
+    ],
+)
+def test_binary_model_angular_render_follows_north_to_east_pa_convention(
+    pa, expected_index
+):
+    image = BinaryModelAngular(sep=4.0, pa=pa, contrast=1e-6).render(
+        npix=5, fov_mas=10.0
+    )
+    assert (
+        onp.unravel_index(onp.asarray(image).argmax(), image.shape)
+        == expected_index
+    )
+
+
+def test_binary_model_angular_matches_cartesian_at_east_position_angle():
+    """A companion placed at pa=90deg (East) must match the
+    already-validated BinaryModelCartesian placed at dra=+sep, ddec=0.
+    Comparing against an independently constructed BinaryModelCartesian
+    (rather than angular.to_cartesian()) is what actually catches a
+    sign error in the angular parameterization: a self-consistency
+    round-trip through to_cartesian()/to_angular() alone would stay
+    internally consistent even if both used the same wrong sign.
+    """
+    sep, contrast = 40.0, 5.0
+    angular = BinaryModelAngular(sep=sep, pa=90.0, contrast=contrast)
+    cartesian = BinaryModelCartesian(dra=sep, ddec=0.0, flux=1.0 / contrast)
+
+    assert np.allclose(
+        angular.model(oidata.u, oidata.v, oidata.wavel),
+        cartesian.model(oidata.u, oidata.v, oidata.wavel),
+    )
 
 
 def test_laplace_and_fisher_wrappers_are_finite():

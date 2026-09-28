@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the first non-binary source extensions in `drpangloss`: `GaussianDiskModel` and `HarmonixModel`.
+This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `drpangloss`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `HarmonixModel`.
 
-We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, and then wrap a harmonix-style external source object to show how the visibility and rendering interfaces fit together.
+We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally wrap a harmonix-style external source object to show how the visibility and rendering interfaces fit together. See the composition tutorial for how to combine these building blocks into more complex scenes.
 
 ```python
 import sys
@@ -20,7 +20,14 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.models import GaussianDiskModel, HarmonixModel
+from drpangloss.models import (
+    GaussianDiskModel,
+    HarmonixModel,
+    ModulatedGaussianRim,
+    PointSource,
+    System,
+    UniformDisk,
+)
 from drpangloss.oidata import OIData
 ```
 
@@ -50,22 +57,20 @@ d_phi = 0.02 * phi_scale * jnp.ones_like(phi_true)
 vis_obs = vis_true + d_vis * jnp.array(rng.normal(size=vis_true.shape))
 phi_obs = phi_true + d_phi * jnp.array(rng.normal(size=phi_true.shape))
 
-data = OIData(
-    {
-        "u": u,
-        "v": v,
-        "wavel": wavel,
-        "vis": vis_obs,
-        "d_vis": d_vis,
-        "phi": phi_obs,
-        "d_phi": d_phi,
-        "i_cps1": None,
-        "i_cps2": None,
-        "i_cps3": None,
-        "v2_flag": True,
-        "cp_flag": False,
-    }
-)
+data = OIData({
+    "u": u,
+    "v": v,
+    "wavel": wavel,
+    "vis": vis_obs,
+    "d_vis": d_vis,
+    "phi": phi_obs,
+    "d_phi": d_phi,
+    "i_cps1": None,
+    "i_cps2": None,
+    "i_cps3": None,
+    "v2_flag": True,
+    "cp_flag": False,
+})
 
 {
     "n_baselines": int(n_bl),
@@ -79,8 +84,9 @@ data = OIData(
 ```text
 {'n_baselines': 32,
  'sigma_mas': 18.0,
+ 'flux': 0.15,
  'centroid_mas': (12.0, -7.5),
- 'vis_range': (0.0, 0.31383904814720154)}
+ 'vis_range': (0.7543692588806152, 0.8830579519271851)}
 ```
 
 ## Use `OIData` to flatten observables
@@ -130,9 +136,9 @@ axes[1].set_title("Phase response")
 
 im = axes[2].imshow(
     image,
-    origin="lower",
-    extent=[-60.0, 60.0, -60.0, 60.0],
+    extent=[60.0, -60.0, -60.0, 60.0],
     cmap="magma",
+    vmax=np.quantile(image, 0.99),  # saturate the unresolved star
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
 axes[2].set_ylabel(r"$\Delta$Dec (mas)")
@@ -200,8 +206,7 @@ axes[0].set_title("`HarmonixModel.model(...)`")
 
 im = axes[1].imshow(
     image_ext,
-    origin="lower",
-    extent=[-20.0, 20.0, -20.0, 20.0],
+    extent=[20.0, -20.0, -20.0, 20.0],
     cmap="viridis",
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
@@ -216,3 +221,140 @@ plt.show()
 ![source_models output 11.1](generated/source_models_cell011_out01.png)
 
 This is the same pattern you would use with a real harmonix object: instantiate the external source, wrap it in `HarmonixModel`, and then call `model(...)` or `render(...)` through the common `SourceModel` interface.
+
+## Simulate a uniform disk
+
+`UniformDisk` represents a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; put it in a `System` with a `PointSource` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
+
+```python
+udisk = UniformDisk(diam=25.0, dra=-9.0, ddec=6.0)
+cvis_udisk = udisk.model(u, v, wavel)
+
+vis_udisk = jnp.abs(cvis_udisk) ** 2
+phi_udisk = jnp.rad2deg(jnp.angle(cvis_udisk))
+model_vec_udisk = data.model(udisk)
+
+{
+    "diam_mas": float(udisk.diam),
+    "centroid_mas": (float(udisk.dra), float(udisk.ddec)),
+    "vis_range": (float(jnp.min(vis_udisk)), float(jnp.max(vis_udisk))),
+    "model_len": int(model_vec_udisk.shape[0]),
+}
+```
+
+```text
+{'diam_mas': 25.0,
+ 'centroid_mas': (-9.0, 6.0),
+ 'vis_range': (0.0001409070537192747, 0.8681560754776001),
+ 'model_len': 64}
+```
+
+## Visualize the uniform disk in Fourier and image space
+
+Visibility squared falls off with Airy-like nulls as baseline length grows; `render(...)` gives the matching tophat image.
+
+```python
+image_udisk = np.asarray(udisk.render(npix=128, fov_mas=120.0))
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+axes[0].scatter(baseline, np.asarray(vis_udisk), color="tab:orange")
+axes[0].set_xlabel("Baseline length (m)")
+axes[0].set_ylabel("Visibility squared")
+axes[0].set_title("Uniform disk")
+
+im = axes[1].imshow(
+    image_udisk,
+    extent=[60.0, -60.0, -60.0, 60.0],
+    cmap="magma",
+)
+axes[1].set_xlabel(r"$\Delta$RA (mas)")
+axes[1].set_ylabel(r"$\Delta$Dec (mas)")
+axes[1].set_title("`UniformDisk.render(...)`")
+fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+
+plt.tight_layout()
+plt.show()
+```
+
+![source_models output 16.1](generated/source_models_cell016_out01.png)
+
+## Simulate an azimuthally modulated rim
+
+`ModulatedGaussianRim` is an inclined, Gaussian-blurred ring, optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). Adding a `PointSource` puts an unresolved star at the centre; the rim's `flux` is then its flux relative to the star. We compare a symmetric rim against one with first- and second-order modulations.
+
+```python
+rim_geometry = dict(diam=14.15, fwhm=3.233, inc=19.0, pa=6.0, flux=0.67504187604)
+rim = ModulatedGaussianRim(
+    **rim_geometry,
+    az_amps=jnp.array([0.43011627, 0.2745906]),
+    az_pas=jnp.array([35.537678 + 6.0, 50.245735 + 6.0]),
+)
+rim_symmetric = System(star=PointSource(), rim=ModulatedGaussianRim(**rim_geometry))
+rim_modulated = System(star=PointSource(), rim=rim)
+
+cvis_rim = rim_modulated.model(u, v, wavel)
+vis_rim = jnp.abs(cvis_rim) ** 2
+phi_rim = jnp.rad2deg(jnp.angle(cvis_rim))
+model_vec_rim = data.model(rim_modulated)
+
+{
+    "diam_mas": float(rim.diam),
+    "rim_to_star_flux": float(rim.flux),
+    "az_amps": np.asarray(rim.az_amps).tolist(),
+    "az_pas_deg": np.asarray(rim.az_pas).tolist(),
+    "model_len": int(model_vec_rim.shape[0]),
+}
+```
+
+```text
+{'diam_mas': 14.149999618530273,
+ 'rim_to_star_flux': 0.6750418543815613,
+ 'az_amps': [0.4301162660121918, 0.2745906114578247],
+ 'az_pas_deg': [41.53767776489258, 56.24573516845703],
+ 'model_len': 64}
+```
+
+## Visualize the rim: azimuthal modulation and Fourier response
+
+Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response. The parameters are chosen here so the modulated rim model and its image
+match the final geometric model shown for the post-AGB IRAS 08544-4431 in [Hillen et al. 2016](http://dx.doi.org/10.1051/0004-6361/201628125).
+
+```python
+image_rim_symmetric = np.asarray(rim_symmetric.render(npix=256, fov_mas=30.0))
+image_rim_modulated = np.asarray(rim_modulated.render(npix=256, fov_mas=30.0))
+
+fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+axes[0].scatter(baseline, np.asarray(vis_rim), color="tab:purple")
+axes[0].set_xlabel("Baseline length (m)")
+axes[0].set_ylabel("Visibility squared")
+axes[0].set_title("Modulated rim")
+
+im1 = axes[1].imshow(
+    image_rim_symmetric,
+    extent=[15.0, -15.0, -15.0, 15.0],
+    cmap="magma",
+    vmax=np.quantile(image_rim_symmetric, 0.999),  # saturate the unresolved star
+)
+axes[1].set_xlabel(r"$\Delta$RA (mas)")
+axes[1].set_ylabel(r"$\Delta$Dec (mas)")
+axes[1].set_title("Symmetric rim")
+fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+
+im2 = axes[2].imshow(
+    image_rim_modulated,
+    extent=[15.0, -15.0, -15.0, 15.0],
+    cmap="magma",
+    vmax=np.quantile(image_rim_modulated, 0.999),
+)
+axes[2].set_xlabel(r"$\Delta$RA (mas)")
+axes[2].set_ylabel(r"$\Delta$Dec (mas)")
+axes[2].set_title("Modulated rim (m=1, 2)")
+fig.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+plt.tight_layout()
+plt.show()
+```
+
+![source_models output 20.1](generated/source_models_cell020_out01.png)

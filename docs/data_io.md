@@ -81,7 +81,24 @@ print(oidata)
 ```
 
 ```text
-OIData(u=[ 3.2  1.4 -1.1 -1.8 -4.3 -2.5], v=[ 0.2  2.6  1.8  2.4  1.6 -0.8], CP=[-0.05890521 -0.45451784  0.01607962  0.40036282], d_CP=[0.02 0.02 0.02 0.02], V2=[0.99050045 1.000406   0.9921805  0.9915316  0.9863897  0.995878  ], d_V2=[0.00099192 0.00099192 0.00099192 0.00099192 0.00099192 0.00099192], i_cps1=[0 0 1 3], i_cps2=[3 4 5 5], i_cps3=[1 2 2 4])
+OIData(
+  u=f32[6],
+  v=f32[6],
+  wavel=f32[1],
+  vis=f32[6],
+  d_vis=f32[6],
+  phi=f32[4],
+  d_phi=f32[4],
+  i_cps1=i64[4](numpy),
+  i_cps2=i64[4](numpy),
+  i_cps3=i64[4](numpy),
+  vis_mat=None,
+  phi_mat=None,
+  observable_kind='split',
+  vis_mode='v2',
+  v2_flag=True,
+  cp_flag=True
+)
 ```
 
 ```python
@@ -89,7 +106,7 @@ print("OIData keys:", list(oidata.__dict__.keys()))
 ```
 
 ```text
-OIData keys: ['wavel', 'vis', 'd_vis', 'u', 'v', 'v2_flag', 'phi', 'd_phi', 'i_cps1', 'i_cps2', 'i_cps3', 'cp_flag']
+OIData keys: ['wavel', 'vis', 'd_vis', 'u', 'v', 'v2_flag', 'phi', 'd_phi', 'i_cps1', 'i_cps2', 'i_cps3', 'cp_flag', 'vis_mat', 'phi_mat', 'observable_kind', 'vis_mode']
 ```
 
 ## Verification
