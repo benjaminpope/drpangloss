@@ -8,7 +8,7 @@ from numpyro.infer.util import log_density
 from drpangloss.grid_fit import (
     absil_limits,
     likelihood_grid,
-    optimized_contrast_grid,
+    optimized_likelihood_grid,
 )
 from drpangloss.models import (
     BinaryModelAngular,
@@ -149,19 +149,20 @@ def test_likelihood_grid_with_paths_matches_model_class():
     )
 
 
-def test_optimized_contrast_grid_with_paths_matches_model_class():
-    composed = optimized_contrast_grid(
-        oidata, _composed_binary(), _path_samples()
+def test_optimized_likelihood_grid_with_paths_matches_model_class():
+    grid_best = onp.asarray(
+        likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
+    ).max(axis=2)
+    composed = onp.asarray(
+        optimized_likelihood_grid(oidata, _composed_binary(), _path_samples())
     )
-    reference = optimized_contrast_grid(
-        oidata, BinaryModelCartesian, samples_dict
+    reference = onp.asarray(
+        optimized_likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
     )
-    composed, reference = onp.asarray(composed), onp.asarray(reference)
-    scale = onp.abs(reference).max()
-    # float32 BFGS may settle differently where there is no signal (contrast ~ 0).
-    signal = onp.abs(reference) > 0.1 * scale
-    assert onp.allclose(composed[signal], reference[signal], rtol=1e-3)
-    assert onp.abs(composed - reference).max() < 0.1 * scale
+    # In float32, BFGS lands on slightly different optima in ~1% of cells for
+    # either input; both must still improve on the grid.
+    assert onp.all(composed >= grid_best - 1e-2 * onp.abs(grid_best))
+    assert onp.mean(onp.isclose(composed, reference, rtol=1e-4)) > 0.98
 
 
 def test_absil_limits_with_paths_matches_model_class():
