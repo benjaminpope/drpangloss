@@ -1,7 +1,8 @@
 name: Documentation (Zensical)
 
+# Pull requests are built by documentation.yml; this workflow builds and
+# (when ZENSICAL_DEPLOY_ENABLED is 'true') deploys main.
 on:
-  pull_request:
   push:
     branches:
       - main
@@ -28,7 +29,7 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . zensical mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e ".[dev]"
 
       - name: build documentation (zensical)
         run: uv run --python .venv/bin/python zensical build --clean
@@ -63,7 +64,7 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . zensical mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter
+          uv pip install --python .venv/bin/python -e ".[dev]"
 
       - name: build documentation (zensical)
         run: uv run --python .venv/bin/python zensical build --clean

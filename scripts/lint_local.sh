@@ -12,12 +12,13 @@ Usage:
 Options:
   --fix           Apply Ruff fixes/formatting changes.
   --no-notebooks  Skip notebook lint pass.
-  --changed       Lint only changed files vs merge-base.
+  --changed       Lint only files changed vs origin/main, including
+                  uncommitted and untracked files.
   -h, --help      Show this help message.
 
 Defaults:
   - Checks src/, tests/, examples/ and scripts/ (same scope as CI)
-  - Includes notebooks/*.ipynb
+  - Includes the tracked notebooks/*.ipynb
   - Writes full logs to .lint-logs/
 EOF
 }
@@ -65,6 +66,11 @@ mkdir -p .lint-logs
 timestamp="$(date +"%Y%m%d_%H%M%S")"
 log_file=".lint-logs/lint_${timestamp}.log"
 
+failed=0
+
+# Run one lint command, logging its output. A failure is recorded (and its
+# log tail printed) instead of exiting, so every phase runs and the log path
+# is always reported.
 run_phase() {
   local label="$1"
   shift
@@ -72,8 +78,12 @@ run_phase() {
     echo
     echo "===== ${label} ====="
     echo "Command: $*"
-    "$@"
-  } >>"$log_file" 2>&1
+  } >>"$log_file"
+  if ! "$@" >>"$log_file" 2>&1; then
+    failed=1
+    echo "FAILED: ${label}" >&2
+    tail -n 20 "$log_file" >&2
+  fi
 }
 
 count_python=0
@@ -88,15 +98,26 @@ if [[ "$changed_only" -eq 1 ]]; then
     base_ref="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
   fi
 
+  # Committed changes since the merge base, plus uncommitted and untracked
+  # files, so that the script is useful before committing.
+  changed_files() {
+    local pattern="$1"
+    {
+      git diff --name-only --diff-filter=ACMRTUXB "${base_ref}"...HEAD -- "$pattern"
+      git diff --name-only --diff-filter=ACMRTUXB HEAD -- "$pattern"
+      git ls-files --others --exclude-standard -- "$pattern"
+    } | sort -u
+  }
+
   changed_py=()
   while IFS= read -r file; do
-    [[ -n "$file" ]] && changed_py+=("$file")
-  done < <(git diff --name-only --diff-filter=ACMRTUXB "${base_ref}"...HEAD -- "*.py" | sort)
+    [[ -n "$file" && -f "$file" ]] && changed_py+=("$file")
+  done < <(changed_files "*.py")
 
   changed_ipynb=()
   while IFS= read -r file; do
-    [[ -n "$file" ]] && changed_ipynb+=("$file")
-  done < <(git diff --name-only --diff-filter=ACMRTUXB "${base_ref}"...HEAD -- "*.ipynb" | sort)
+    [[ -n "$file" && -f "$file" ]] && changed_ipynb+=("$file")
+  done < <(changed_files "*.ipynb")
 
   for file in "${changed_py[@]}"; do
     case "$file" in
@@ -113,7 +134,11 @@ if [[ "$changed_only" -eq 1 ]]; then
   done
 else
   py_targets=(src tests examples scripts)
-  ipynb_targets=(notebooks/*.ipynb)
+  # Tracked notebooks only, so local scratch notebooks are skipped.
+  ipynb_targets=()
+  while IFS= read -r file; do
+    [[ -n "$file" ]] && ipynb_targets+=("$file")
+  done < <(git ls-files -- "notebooks/*.ipynb")
 fi
 
 if [[ "${#py_targets[@]}" -gt 0 ]]; then
@@ -140,6 +165,11 @@ if [[ "$count_python" -eq 0 && ( "$include_notebooks" -eq 0 || "$count_notebooks
   echo "No lint targets found for requested scope."
   echo "Log: ${log_file}"
   exit 0
+fi
+
+if [[ "$failed" -ne 0 ]]; then
+  echo "Lint failed; full log: ${log_file}" >&2
+  exit 1
 fi
 
 echo "Lint completed successfully."

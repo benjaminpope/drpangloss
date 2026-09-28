@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
+# Enable with: git config core.hooksPath .githooks
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-if [[ -f "scripts/lint_local.sh" ]]; then
-  echo "Running Ruff auto-fix before push..."
-  bash scripts/lint_local.sh --fix --no-notebooks
-else
+if [[ ! -f "scripts/lint_local.sh" ]]; then
   echo "Missing scripts/lint_local.sh; refusing to push." >&2
+  exit 1
+fi
+
+# Check only: fixing here would edit the working tree while pushing the
+# unfixed commits. Run `bash scripts/lint_local.sh --fix`, commit, and push.
+echo "Running Ruff checks before push..."
+if ! bash scripts/lint_local.sh --no-notebooks; then
+  echo "Lint failed. Fix with 'bash scripts/lint_local.sh --fix', commit, and push again." >&2
   exit 1
 fi

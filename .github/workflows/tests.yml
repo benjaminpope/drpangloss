@@ -14,6 +14,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -21,26 +25,15 @@ jobs:
       - name: install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
-          architecture: x64
-
       - name: create environment
         run: |
-          uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . pytest pre-commit mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter zensical
+          uv venv --python ${{ matrix.python-version }} .venv
+          uv pip install --python .venv/bin/python -e ".[dev]"
 
-      # Linting lives in lint.yml so formatting never blocks tests or docs.
+      # Linting lives in lint.yml and docs builds in documentation.yml, so
+      # neither blocks the test suite.
 
       # ===== Tests =====
       - name: Test Suite
         run: uv run --python .venv/bin/python pytest
-
-      - name: Docs Build (strict)
-        run: uv run --python .venv/bin/python mkdocs build --strict
-
-      - name: Docs Build (zensical)
-        run: uv run --python .venv/bin/python zensical build --clean
 

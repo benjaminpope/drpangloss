@@ -72,8 +72,6 @@ def render_notebook_markdown(
             old_img.unlink()
 
     lines: list[str] = []
-    # scripts/sync_tutorial_docs.py
-    repo_root = nb_path.resolve().parents[1]
     relative_nb_path = nb_path.resolve().relative_to(repo_root).as_posix()
 
     lines.append(
@@ -132,6 +130,9 @@ def main() -> None:
         nb_path = repo_root / nb_rel
         doc_path = repo_root / doc_rel
         rendered = render_notebook_markdown(nb_path, write_images=True)
+        if doc_path.exists() and doc_path.read_text("utf-8") == rendered:
+            print(f"unchanged {doc_rel}")
+            continue
         doc_path.write_text(rendered, encoding="utf-8")
         print(f"synced {doc_rel} <- {nb_rel}")
 

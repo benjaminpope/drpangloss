@@ -15,27 +15,33 @@ git clone https://github.com/your-username-here/drpangloss.git
 cd drpangloss
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e ".[dev]" ipywidgets
+uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
 ```
 
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you
 have another ruff on your `PATH`, call the one in `.venv` explicitly.
 
-Then you will need to install the pre-commit hooks. This will ensure that the code is formatted correctly and that the unit tests pass before you can commit your changes. To do this, run the following command:
+Then you will need to install the pre-commit hooks. These run Ruff (lint and formatting) on the files you commit; they do not run the unit tests. To do this, run the following command:
 
 ```bash
 pre-commit install
 ```
 
-This will ensure that any changes you make will adhere to the code style and formatting guidelines of the rest of the package!
+This will ensure that any changes you make will adhere to the code style and formatting guidelines of the rest of the package! Optionally, enable the pre-push hook as well, which refuses to push code that fails the Ruff checks:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 You can also run linting and formatting manually at any time:
 
 ```bash
 ruff check . --fix
-ruff format .
+ruff format src tests examples scripts
 ```
+
+(Notebooks are linted but not reformatted, matching CI.)
 
 For lower-noise local runs (especially when notebooks are involved), use:
 
@@ -80,14 +86,7 @@ Note that passing locally does not guarantee cross-platform compatibility. GitHu
 
 Any changes you make should also be appropriately documented! For small API changes this shouldn't require any changes, however if you are adding new functionality you will need to add some documentation. This can be done by modifying the appropriates files in the `docs` directory.
 
-Tutorial pages are notebook-synced. For these tutorials:
-
-- `notebooks/binary_search.ipynb`
-- `notebooks/data_io.ipynb`
-- `notebooks/contrast_limits.ipynb`
-- `notebooks/model_syntax.ipynb`
-
-edit the notebook first, then regenerate the corresponding docs markdown with:
+Tutorial pages are notebook-synced: for every notebook listed in `MAPPINGS` in `scripts/sync_tutorial_docs.py`, edit the notebook first, then regenerate the corresponding docs markdown with:
 
 ```bash
 uv run --python .venv/bin/python scripts/sync_tutorial_docs.py
