@@ -1,3 +1,5 @@
+import dataclasses
+import textwrap
 from typing import Any
 
 import jax.numpy as np
@@ -15,6 +17,7 @@ from ._utils import (
     i2pi as i2pi,
     mas2rad as mas2rad,
     rad2mas as rad2mas,
+    renamed_argument as _renamed_argument,
     undo_elliptical_transf_coord as undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq as undo_elliptical_transf_spat_freq,
 )
@@ -56,65 +59,141 @@ def _unit_flux(component):
     )
 
 
-def _is_concrete_zero(x):
+def _offset_phase(uu, vv, dra, ddec):
+    """Fourier shift factor for an offset of ``(dra, ddec)`` milliarcseconds."""
+    arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)
+    return jax.lax.complex(np.cos(arg), -np.sin(arg))
+
+
+def _format_leaf(x):
+    """Short human-readable form of a parameter value for ``repr``."""
     try:
-        return bool(onp.all(onp.asarray(x) == 0.0))
+        value = onp.asarray(x)
     except (
         jax.errors.TracerArrayConversionError,
         jax.errors.ConcretizationTypeError,
     ):
-        return False
+        return repr(x)
+    if value.ndim == 0 and value.dtype.kind in "fiu":
+        return f"{float(value):g}"
+    if value.dtype.kind in "fiu":
+        return "[" + ", ".join(f"{float(v):g}" for v in value.ravel()) + "]"
+    return repr(x)
 
 
-def _offset_phase(uu, vv, dra, ddec):
-    """Fourier shift factor, or ``None`` for a known zero offset."""
-    if _is_concrete_zero(dra) and _is_concrete_zero(ddec):
+def _check_non_negative_flux(flux, owner):
+    """Raise if a concrete ``flux`` is negative; traced values are not checked."""
+    try:
+        value = onp.asarray(flux)
+    except (
+        jax.errors.TracerArrayConversionError,
+        jax.errors.ConcretizationTypeError,
+    ):
+        return
+    if onp.any(value < 0.0):
+        raise ValueError(
+            f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
+        )
+
+
+def _concrete_sum(values):
+    """Sum of ``values`` as a float, or ``None`` if any value is traced."""
+    try:
+        return float(sum(onp.sum(onp.asarray(v)) for v in values))
+    except (
+        jax.errors.TracerArrayConversionError,
+        jax.errors.ConcretizationTypeError,
+    ):
         return None
-    arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)
-    return jax.lax.complex(np.cos(arg), -np.sin(arg))
 
 
 class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for sky-brightness source models.
 
-    Models combine with ``+`` into a :class:`System`, and ``k * model`` weights
-    a model's flux by ``k`` inside a :class:`System`.
+    There are two kinds of source model.
+
+    * **Components** (:class:`Component` subclasses such as
+      :class:`PointSource`) are single shapes normalized to unit flux. Their
+      ``flux`` is a *relative weight*, which only matters once they are mixed
+      together in a :class:`System`.
+    * **Scenes** (:class:`System`, :class:`BinaryModelCartesian`,
+      :class:`BinaryModelAngular`, :class:`HarmonixModel`) describe a whole,
+      normalized sky. A scene placed inside a :class:`System` has weight 1,
+      unless it carries its own ``flux`` weight as :class:`System` does.
+
+    For historical reasons the binary models use ``flux`` (and ``contrast``)
+    for a companion/primary ratio rather than a weight. New models should use
+    ``flux`` only to mean a relative weight.
+
+    Subclasses implement :meth:`model`, and ``_image`` if they can be drawn.
     """
 
     def model(self, u, v, wavel):
-        """Evaluate complex visibilities on interferometric baselines."""
+        """Evaluate complex visibilities on interferometric baselines.
+
+        Parameters
+        ----------
+        u, v : array-like
+            Baseline coordinates in metres.
+        wavel : array-like
+            Wavelength(s) in metres.
+
+        Returns
+        -------
+        array-like
+            Complex visibilities, normalized to 1 at zero baseline.
+        """
         raise NotImplementedError
 
     def render(self, npix=256, fov_mas=200.0):
-        """Render an image-plane model in milliarcseconds."""
-        raise NotImplementedError
+        """Render a unit-sum image of the model.
 
-    def _weight(self):
-        """Relative flux of this model when mixed inside a :class:`System`."""
+        The image is ``npix`` x ``npix`` pixels spanning ``fov_mas``
+        milliarcseconds, with East to the left (column 0 is the most
+        positive ``dra``) and North up (row 0 is the most positive ``ddec``).
+        Use :func:`drpangloss.plotting.plot_model` to display it with the
+        correct axes.
+        """
+        xx, yy = _image_coordinates(npix, fov_mas)
+        return _normalize_image(
+            self._image(xx, yy, float(fov_mas) / float(npix))
+        )
+
+    def _weight(self, wavel=None):
+        """Relative flux of this model inside a :class:`System`.
+
+        ``wavel`` is the wavelength in metres at which the flux is wanted
+        (broadcastable against the baselines), or ``None`` for the model's
+        reference flux, as used when rendering. Every current model is
+        achromatic and ignores it; chromatic fluxes (e.g. spectral indices)
+        will override this.
+        """
         return 1.0
 
     def _image(self, xx, yy, pixel_scale_mas):
         """Un-normalized image on the given coordinate grid."""
-        raise NotImplementedError(
-            f"{type(self).__name__} cannot be rendered inside a System."
+        raise NotImplementedError(f"{type(self).__name__} cannot be rendered.")
+
+    def __repr__(self):
+        fields = ", ".join(
+            f"{field.name}={_format_leaf(getattr(self, field.name))}"
+            for field in dataclasses.fields(self)
         )
-
-    def __add__(self, other):
-        return _combine(self, other)
-
-    def __mul__(self, factor):
-        # Compound models such as binaries use `flux` for an internal ratio,
-        # so weighting them wraps rather than rescaling that ratio.
-        return System(c0=self, flux=factor)
-
-    __rmul__ = __mul__
+        return f"{type(self).__name__}({fields})"
 
 
 class Component(SourceModel):
-    """Base class for pure shape components with ``flux``, ``dra`` and ``ddec``.
+    """Base class for single shapes with ``flux``, ``dra`` and ``ddec``.
 
-    ``flux`` is the component's weight relative to the other components of a
-    :class:`System`; on its own a component is normalized to unit flux.
+    A component on its own is normalized to unit flux. Inside a
+    :class:`System`, ``flux`` is its weight relative to the other components,
+    and ``dra``/``ddec`` place its centre (milliarcseconds, positive ``dra``
+    to the East, positive ``ddec`` to the North).
+
+    New shapes subclass :class:`Component` and implement ``_centred_cvis``
+    (the unit-flux visibility of the shape at the origin) and
+    ``_centred_image`` (an un-normalized image of the shape at the origin);
+    offsets and mixing are handled here.
     """
 
     flux: jax.Array
@@ -131,32 +210,41 @@ class Component(SourceModel):
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        cvis = self._centred_cvis(uu, vv)
-        phase = _offset_phase(uu, vv, self.dra, self.ddec)
-        return cvis if phase is None else cvis * phase
+        return self._centred_cvis(uu, vv) * _offset_phase(
+            uu, vv, self.dra, self.ddec
+        )
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self._centred_image(
             xx - self.dra, yy - self.ddec, pixel_scale_mas
         )
 
-    def render(self, npix=256, fov_mas=200.0):
-        xx, yy = _image_coordinates(npix, fov_mas)
-        return _normalize_image(
-            self._image(xx, yy, float(fov_mas) / float(npix))
-        )
-
-    def _weight(self):
+    def _weight(self, wavel=None):
         return self.flux
 
-    def __mul__(self, factor):
-        return eqx.tree_at(lambda m: m.flux, self, self.flux * factor)
-
-    __rmul__ = __mul__
+    def __check_init__(self):
+        _check_non_negative_flux(self.flux, type(self).__name__)
 
 
 class PointSource(Component):
-    """Unresolved point source."""
+    """Unresolved point source.
+
+    Parameters
+    ----------
+    flux : float or array-like, optional
+        Weight relative to the other components of a :class:`System`
+        (default 1). Keep the reference star at ``flux=1`` and a companion's
+        ``flux`` is then its companion/star flux ratio.
+    dra : float or array-like, optional
+        Right-ascension offset in milliarcseconds, positive to the East.
+    ddec : float or array-like, optional
+        Declination offset in milliarcseconds, positive to the North.
+
+    Examples
+    --------
+    >>> star = PointSource()
+    >>> companion = PointSource(flux=0.01, dra=45.0, ddec=30.0)
+    """
 
     def __init__(self, flux=1.0, dra=0.0, ddec=0.0):
         self.flux = np.asarray(flux, dtype=float)
@@ -172,7 +260,27 @@ class PointSource(Component):
 
 
 class GaussianDisk(Component):
-    """Circular Gaussian disk with standard deviation ``sigma`` in mas."""
+    """Circular Gaussian brightness distribution.
+
+    Parameters
+    ----------
+    sigma : float or array-like
+        Standard deviation of the Gaussian in milliarcseconds
+        (FWHM = 2.3548 ``sigma``).
+    flux : float or array-like, optional
+        Weight relative to the other components of a :class:`System`
+        (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> halo = GaussianDisk(sigma=8.0, flux=0.2)
+    """
 
     sigma: jax.Array
 
@@ -192,7 +300,26 @@ class GaussianDisk(Component):
 
 
 class UniformDisk(Component):
-    """Uniform (tophat) circular disk of diameter ``diam`` in mas."""
+    """Uniformly bright (tophat) circular disk, e.g. a resolved stellar photosphere.
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Angular diameter in milliarcseconds.
+    flux : float or array-like, optional
+        Weight relative to the other components of a :class:`System`
+        (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> photosphere = UniformDisk(diam=3.0)
+    """
 
     diam: jax.Array
 
@@ -208,6 +335,16 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+def _modulation_array(values, name):
+    """Coerce azimuthal-modulation coefficients to a 1D float array."""
+    array = np.atleast_1d(np.asarray(values, dtype=float))
+    if array.ndim != 1:
+        raise ValueError(
+            f"{name} must be a scalar or 1D sequence, got shape {array.shape}."
+        )
+    return array
 
 
 class ModulatedGaussianRim(Component):
@@ -226,21 +363,24 @@ class ModulatedGaussianRim(Component):
     pa : float or array-like
         Position angle of the rim's projected major axis in degrees, measured North
         to East (i.e. counter-clockwise in conventional astronomical image orientation).
-    az_amps : array-like
-        1D array containing amplitude coefficients for cosine azimuthal modulations.
-        The first element is the amplitude for the first-order modulation, the second
-        for the second-order modulation, etc. An empty array gives an unmodulated,
-        azimuthally symmetric rim.
-    az_pas : array-like
-        1D array containing position angles of the cosine azimuthal modulations, in
-        degrees. The first element is the angle for the first-order modulation, the
-        second for the second-order modulation, etc.
-    flux : float or array-like
-        Relative flux of the rim inside a :class:`System`.
-    dra : float or array-like
-        Right-ascension offset of the rim's center in milliarcseconds.
-    ddec : float or array-like
-        Declination offset of the rim's center in milliarcseconds.
+    az_amps : float or array-like, optional
+        Amplitudes of the cosine azimuthal modulations. The first element is
+        the amplitude for the first-order modulation, the second for the
+        second-order modulation, etc. A scalar gives a single first-order
+        modulation, and the default (empty) gives an unmodulated, azimuthally
+        symmetric rim. Amplitudes up to 1 keep the brightness non-negative.
+    az_pas : float or array-like, optional
+        Position angles of the cosine azimuthal modulations in degrees, North
+        to East, one per entry of ``az_amps``.
+    flux : float or array-like, optional
+        Weight relative to the other components of a :class:`System`
+        (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the rim's center in milliarcseconds,
+        positive to the East.
+    ddec : float or array-like, optional
+        Declination offset of the rim's center in milliarcseconds, positive
+        to the North.
 
     Notes
     -----
@@ -251,7 +391,14 @@ class ModulatedGaussianRim(Component):
     profile convolved with an isotropic Gaussian.
 
     This model is achromatic: it does not represent any spectral dependence.
-    Add a :class:`PointSource` with ``+`` for a central star.
+    The rim contains no star; put it in a :class:`System` with a
+    :class:`PointSource` for that.
+
+    Examples
+    --------
+    >>> rim = ModulatedGaussianRim(
+    ...     diam=40.0, fwhm=4.0, inc=50.0, pa=30.0, az_amps=0.7, az_pas=120.0
+    ... )
     """
 
     diam: jax.Array
@@ -277,8 +424,13 @@ class ModulatedGaussianRim(Component):
         self.fwhm = np.asarray(fwhm, dtype=float)
         self.inc = np.asarray(inc, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
-        self.az_amps = np.asarray(az_amps, dtype=float)
-        self.az_pas = np.asarray(az_pas, dtype=float)
+        self.az_amps = _modulation_array(az_amps, "az_amps")
+        self.az_pas = _modulation_array(az_pas, "az_pas")
+        if self.az_amps.shape != self.az_pas.shape:
+            raise ValueError(
+                f"az_amps has {self.az_amps.size} entries but az_pas has "
+                f"{self.az_pas.size}; give one position angle per modulation."
+            )
         self.flux = np.asarray(flux, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
@@ -330,26 +482,87 @@ class ModulatedGaussianRim(Component):
 
 
 class System(SourceModel):
-    """Flux-weighted sum of named source models.
+    r"""Flux-weighted mixture of named source models.
 
-    The visibility is ``sum_i f_i V_i / sum_i f_i``, where ``f_i`` is each
-    component's ``flux``; fix one component's flux (conventionally the primary
-    at 1) and fit the others as flux ratios. Components are reached by name, so
-    ``system.comp.flux`` and zodiax paths such as ``"comp.flux"`` both work.
-    The system's own ``flux``, ``dra`` and ``ddec`` weight and shift it as a
-    whole when nested inside another :class:`System`.
+    A :class:`System` is how you describe a scene with more than one part:
+    a star with a disk, a binary inside a ring, a companion with its own
+    circumstellar material. Each component is given a name, and the
+    visibility is the flux-weighted mean
+    $V = \sum_i f_i V_i \,/\, \sum_i f_i$, where ``f_i`` is each component's ``flux``. Because interferometric
+    visibilities are normalized to 1 at zero baseline, only the *ratios* of
+    the fluxes can be measured: keep one reference component (usually the
+    star) at ``flux=1`` and fit the others relative to it.
+
+    Components are reached by name, both as attributes (``system.comp.flux``)
+    and as zodiax paths (``system.get("comp.flux")``,
+    ``system.set("comp.flux", 0.02)``). These paths are how the fitting tools
+    in :mod:`drpangloss.grid_fit` and :func:`numpyro_model` address
+    parameters. Components keep the order in which they were given.
+
+    A :class:`System` can itself be a component. Its own ``flux`` is then the
+    total flux of the group relative to its siblings, and ``dra``/``ddec``
+    move the whole group together.
+
+    Parameters
+    ----------
+    components : dict[str, SourceModel], optional
+        Components as a mapping from name to model. Usually it is clearer to
+        pass them as keyword arguments instead.
+    flux : float or array-like, optional
+        Weight of the whole system when nested inside another
+        :class:`System` (default 1). It has no effect at the top level.
+    dra, ddec : float or array-like, optional
+        Offset of the whole system in milliarcseconds (positive to the East
+        and North).
+    **named : SourceModel
+        Components as keyword arguments, e.g. ``star=PointSource()``. Names
+        must be valid Python identifiers that do not start with ``_`` and do
+        not clash with a :class:`System` attribute (``model``, ``render``,
+        ``set``, ``flux``, ...).
+
+    Notes
+    -----
+    Fluxes are physical brightnesses, so they must be non-negative, and they
+    must not all be zero. Both are checked when a model is built from
+    concrete values. Inside a traced computation (a fit or grid search) the
+    values cannot be checked, so positivity is the job of the priors and grid
+    axes: :func:`numpyro_model` rejects flux priors that allow negative
+    values, and the grid tools reject negative flux axes.
 
     Examples
     --------
-    ``System(star=PointSource(), comp=PointSource(dra=120, ddec=-80, flux=4e-3))``
+    A star with a faint companion:
+
+    >>> binary = System(
+    ...     star=PointSource(),
+    ...     comp=PointSource(dra=45.0, ddec=30.0, flux=0.01),
+    ... )
+    >>> binary.comp
+    PointSource(flux=0.01, dra=45, ddec=30)
+
+    A star with a rim, and a companion that has its own disk:
+
+    >>> scene = System(
+    ...     star=PointSource(),
+    ...     rim=ModulatedGaussianRim(diam=40.0, fwhm=4.0, inc=50.0, pa=30.0, flux=0.5),
+    ...     comp=System(
+    ...         core=PointSource(),
+    ...         disk=GaussianDisk(sigma=4.0, flux=0.5),
+    ...         dra=-30.0,
+    ...         ddec=25.0,
+    ...         flux=0.3,
+    ...     ),
+    ... )
+    >>> list(scene.components)
+    ['star', 'rim', 'comp']
+    >>> moved = scene.set(["comp.dra", "comp.ddec"], [30.0, -25.0])
     """
 
-    components: dict
+    names: tuple = eqx.field(static=True)
+    parts: tuple
     flux: jax.Array
     dra: jax.Array
     ddec: jax.Array
-
-    _RESERVED = ("components", "flux", "dra", "ddec")
 
     def __init__(
         self, components=None, /, *, flux=1.0, dra=0.0, ddec=0.0, **named
@@ -358,101 +571,111 @@ class System(SourceModel):
         if not components:
             raise ValueError("System needs at least one component.")
         for name, component in components.items():
-            if name in self._RESERVED or name.startswith("_"):
-                raise ValueError(f"'{name}' is not a valid component name.")
+            _check_component_name(name)
             if not isinstance(component, SourceModel):
                 raise TypeError(
                     f"Component '{name}' is not a SourceModel: {component!r}"
                 )
-        self.components = components
+        total = _concrete_sum(c._weight() for c in components.values())
+        if total == 0.0:
+            raise ValueError(
+                "The component fluxes sum to zero, so the system has no "
+                "light. Keep a reference component (usually the star) at "
+                "flux=1."
+            )
+        self.names = tuple(components)
+        self.parts = tuple(components.values())
         self.flux = np.asarray(flux, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
+    @property
+    def components(self):
+        """The components as a ``{name: model}`` dictionary, in order."""
+        return dict(zip(self.names, self.parts))
+
     def __getattr__(self, name):
         try:
-            components = object.__getattribute__(self, "components")
+            names = object.__getattribute__(self, "names")
+            parts = object.__getattribute__(self, "parts")
         except AttributeError:
             raise AttributeError(name) from None
-        if name in components:
-            return components[name]
-        raise AttributeError(f"System has no component or attribute '{name}'.")
+        if name in names:
+            return parts[names.index(name)]
+        raise AttributeError(
+            f"System has no component or attribute '{name}'; its components "
+            f"are {list(names)}."
+        )
+
+    def __repr__(self):
+        lines = [
+            f"{name}={component!r},"
+            for name, component in self.components.items()
+        ]
+        lines += [
+            f"{field}={_format_leaf(getattr(self, field))},"
+            for field in ("flux", "dra", "ddec")
+        ]
+        body = textwrap.indent("\n".join(lines), "    ")
+        return f"System(\n{body}\n)"
 
     def model(self, u, v, wavel):
-        weights = [c._weight() for c in self.components.values()]
+        weights = [c._weight(wavel) for c in self.parts]
         total = sum(
-            w * c.model(u, v, wavel)
-            for w, c in zip(weights, self.components.values())
+            w * c.model(u, v, wavel) for w, c in zip(weights, self.parts)
         ) / sum(weights)
         uu, vv = u / wavel, v / wavel
-        phase = _offset_phase(uu, vv, self.dra, self.ddec)
-        return total if phase is None else total * phase
+        return total * _offset_phase(uu, vv, self.dra, self.ddec)
 
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = xx - self.dra, yy - self.ddec
-        weights = [c._weight() for c in self.components.values()]
+        weights = [c._weight() for c in self.parts]
         return sum(
             w * _unit_flux(c._image(xx, yy, pixel_scale_mas))
-            for w, c in zip(weights, self.components.values())
+            for w, c in zip(weights, self.parts)
         ) / sum(weights)
 
-    def render(self, npix=256, fov_mas=200.0):
-        xx, yy = _image_coordinates(npix, fov_mas)
-        return _normalize_image(
-            self._image(xx, yy, float(fov_mas) / float(npix))
-        )
-
-    def _weight(self):
+    def _weight(self, wavel=None):
         return self.flux
 
-    def __mul__(self, factor):
-        return eqx.tree_at(lambda m: m.flux, self, self.flux * factor)
-
-    __rmul__ = __mul__
+    def __check_init__(self):
+        _check_non_negative_flux(self.flux, "System")
 
 
-def _is_plain_system(model):
-    """True for an unweighted, unshifted System whose components can be merged."""
-    if not isinstance(model, System):
-        return False
-    try:
-        return bool(
-            onp.all(onp.asarray(model.flux) == 1.0)
-            and onp.all(onp.asarray(model.dra) == 0.0)
-            and onp.all(onp.asarray(model.ddec) == 0.0)
+_RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})
+
+
+def _check_component_name(name):
+    """Reject component names that cannot be used as parameter paths."""
+    if not isinstance(name, str) or not name.isidentifier():
+        raise ValueError(
+            f"Component name {name!r} must be a valid Python identifier, "
+            "so that it can be used in parameter paths such as 'comp.flux'."
         )
-    except jax.errors.TracerArrayConversionError:
-        return False
-
-
-def _combine(*models):
-    """Build a System from ``a + b``, merging plain Systems and auto-naming others."""
-    named = {}
-    unnamed = []
-    for model in models:
-        if _is_plain_system(model):
-            for name, component in model.components.items():
-                if name in named:
-                    raise ValueError(
-                        f"Component name '{name}' appears in both operands; "
-                        "build the System explicitly with distinct names."
-                    )
-                named[name] = component
-        else:
-            unnamed.append(model)
-    index = 0
-    for model in unnamed:
-        while f"c{index}" in named:
-            index += 1
-        named[f"c{index}"] = model
-    return System(**named)
+    if (
+        name.startswith("_")
+        or name in _RESERVED_COMPONENT_NAMES
+        or name in {"flux", "dra", "ddec"}
+        or hasattr(System, name)
+    ):
+        raise ValueError(
+            f"'{name}' cannot be a component name because it clashes with a "
+            "System attribute or method; choose another name."
+        )
 
 
 def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
     """Point source at the origin plus a Gaussian disk with disk/star ratio ``flux``.
 
     Convenience constructor equivalent to
-    ``System(star=PointSource(), disk=GaussianDisk(sigma, flux, dra, ddec))``.
+    ``System(star=PointSource(), disk=GaussianDisk(sigma, flux, dra, ddec))``,
+    whose parameters are addressed as ``"disk.sigma"``, ``"disk.flux"`` etc.
+    It can still be passed as a model class with plain parameter names
+    (``sigma``, ``flux``, ``dra``, ``ddec``) to the fitting tools.
+
+    ``GaussianDiskModel`` used to be a class. It now returns a
+    :class:`System`, so ``isinstance(model, GaussianDiskModel)`` no longer
+    works.
     """
     return System(
         star=PointSource(),
@@ -550,24 +773,8 @@ class BinaryModelAngular(SourceModel):
         uu, vv = u / wavel, v / wavel
         return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
 
-    def render(self, npix=256, fov_mas=200.0):
-        """
-        Render a two-point-source approximation on a Cartesian image grid.
-        """
-        xx, yy = _image_coordinates(npix, fov_mas)
-        th = self.pa * dtor
-        ddec = self.sep * np.cos(th)
-        dra = self.sep * np.sin(th)
-
-        l2 = 1.0 / (self.contrast + 1.0)
-        l1 = 1.0 - l2
-        sigma = max(float(fov_mas) / float(npix), 1e-6)
-        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
-        comp = np.exp(
-            -0.5 * (((xx - dra) / sigma) ** 2 + ((yy - ddec) / sigma) ** 2)
-        )
-        image = l1 * star + l2 * comp
-        return image / np.sum(image)
+    def _image(self, xx, yy, pixel_scale_mas):
+        return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
 
 
 class BinaryModelCartesian(SourceModel):
@@ -658,24 +865,21 @@ class BinaryModelCartesian(SourceModel):
         uu, vv = u / wavel, v / wavel
         return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
 
-    def render(self, npix=256, fov_mas=200.0):
+    def to_system(self):
+        """Return the equivalent ``System(primary=..., companion=...)``.
+
+        The :class:`System` form is slower to evaluate but can be extended,
+        e.g. by adding a disk around the primary.
         """
-        Render a two-point-source approximation on a Cartesian image grid.
-        """
-        xx, yy = _image_coordinates(npix, fov_mas)
-        l2 = self.flux / (1.0 + self.flux)
-        l1 = 1.0 - l2
-        sigma = max(float(fov_mas) / float(npix), 1e-6)
-        star = np.exp(-0.5 * ((xx / sigma) ** 2 + (yy / sigma) ** 2))
-        comp = np.exp(
-            -0.5
-            * (
-                ((xx - self.dra) / sigma) ** 2
-                + ((yy - self.ddec) / sigma) ** 2
-            )
+        return System(
+            primary=PointSource(),
+            companion=PointSource(
+                flux=self.flux, dra=self.dra, ddec=self.ddec
+            ),
         )
-        image = l1 * star + l2 * comp
-        return image / np.sum(image)
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        return self.to_system()._image(xx, yy, pixel_scale_mas)
 
 
 class HarmonixModel(SourceModel):
@@ -960,7 +1164,7 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
 def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
-    as the convolution kernel in :func:`cvis_gaussian_rim`. Not offered as a public
+    as the convolution kernel of :class:`ModulatedGaussianRim`. Not offered as a public
     function: unlike :func:`cvis_gaussian_disk`, this is a plain Gaussian envelope
     with no point-source/flux-contrast mixture.
     """
@@ -985,66 +1189,6 @@ def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
 
     # Image-plane Gaussian blur, evaluated in the original (untransformed) frame.
     return cvis * _cvis_gaussian_envelope(u, v, fwhm)
-
-
-def cvis_gaussian_rim(
-    u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis, flux
-):
-    """Compute complex visibilities for a (modulated) rim, consisting of a radial
-    Dirac delta ring (infinitely thin) subsequently convolved with an isotropic 2D
-    Gaussian, mixed with an unresolved point source at the origin.
-
-    Parameters
-    ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units.
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units.
-    dra : float or array-like
-        Right-ascension offset of the rim in milliarcseconds.
-    ddec : float or array-like
-        Declination offset of the rim in milliarcseconds.
-    diam : float or array-like
-        Diameter of the rim in milliarcseconds.
-    fwhm : float or array-like
-        Gaussian FWHM of the rim in milliarcseconds.
-    inc : float or array-like
-        Apparent inclination of the rim in degrees.
-    pa : float or array-like
-        Position angle of the rim's projected major axis in degrees, measured North to
-        East (i.e. counter-clockwise in conventional astronomical image orientation).
-    az_amps : array-like
-        1D array containing amplitude coefficients for cosine azimuthal modulations.
-        The first element is seen as the amplitude for the first-order modulation,
-        the second as the amplitude for the second-order modulation, etc.
-    az_phis : array-like
-        1D array containing offset angles of the rim's cosine azimuthal modulations,
-        relative to the position angle of the rim's projected major axis, in
-        degrees. The first element is seen as the offset for the first-order
-        modulation, the second for the second-order modulation, etc.
-    flux : float or array-like
-        Rim/star flux ratio, using the same companion/star contrast convention
-        as :func:`cvis_gaussian_disk`. The unresolved point source is centered
-        on the origin (i.e. unaffected by ``dra``/``ddec``, which offset only
-        the rim).
-
-    Returns
-    -------
-    array-like
-        Complex visibility samples.
-    """
-    dra_rad, ddec_rad = dra * mas2rad, ddec * mas2rad
-    cvis = _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis)
-
-    # Apply offset phase-factor.
-    phi = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
-    rim_cvis = cvis * phi
-
-    # Mix with an unresolved point source at the origin, using the same
-    # flux (companion/star) contrast convention as cvis_gaussian_disk.
-    l2 = flux / (flux + 1.0)
-    l1 = 1.0 - l2
-    return l1 + l2 * rim_cvis
 
 
 def model_loglike(model_object, data_obj):
@@ -1104,9 +1248,10 @@ def build_model(model, params, values):
     return model(**dict(zip(params, values)))
 
 
-def loglike(values, params, data_obj, model_class):
+@_renamed_argument("model_class", "model")
+def loglike(values, params, data_obj, model):
     """
-    Abstract log-likelihood function for a given model class and data object, assuming Gaussian errors.
+    Gaussian log-likelihood of a model with the given parameter values, assuming Gaussian errors.
 
     Parameters
     ----------
@@ -1116,9 +1261,10 @@ def loglike(values, params, data_obj, model_class):
         List of parameter names.
     data_obj : OIData
         Object containing the data to be fitted.
-    model_class : class or SourceModel
-        Model class to be fitted to the data, or a template model instance
-        whose parameters are addressed by path (see :func:`build_model`).
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
 
     Returns
     -------
@@ -1126,19 +1272,54 @@ def loglike(values, params, data_obj, model_class):
         Log-likelihood value.
     """
 
-    return model_loglike(build_model(model_class, params, values), data_obj)
+    return model_loglike(build_model(model, params, values), data_obj)
 
 
-def numpyro_model(template, priors, data_obj):
-    """Return a numpyro model sampling ``template`` parameters from ``priors``.
+def _is_flux_name(name):
+    return name == "flux" or name.endswith(".flux") or name.endswith("_flux")
+
+
+def _check_positive_flux_prior(name, distribution):
+    """Reject flux priors whose support includes negative values."""
+    from numpyro.distributions import constraints
+
+    support = distribution.support
+    lower = getattr(support, "lower_bound", None)
+    if lower is None:
+        unbounded = support in (constraints.real, constraints.real_vector)
+    else:
+        try:
+            unbounded = bool(onp.any(onp.asarray(lower) < 0.0))
+        except (
+            jax.errors.TracerArrayConversionError,
+            jax.errors.ConcretizationTypeError,
+        ):
+            unbounded = False
+    if unbounded:
+        raise ValueError(
+            f"The prior on {name!r} allows negative values, but fluxes must "
+            "be non-negative. Use a prior with non-negative support, e.g. "
+            "dist.LogUniform or dist.Uniform(0, ...)."
+        )
+
+
+def numpyro_model(model, priors, data_obj):
+    """Return a numpyro model sampling the parameters in ``priors``.
 
     Parameters
     ----------
-    template : SourceModel
-        Model whose leaves at the paths in ``priors`` are sampled.
+    model : SourceModel or callable
+        Either a template model whose leaves at the paths in ``priors`` are
+        sampled, or a function called with the sampled values as keyword
+        arguments that returns a :class:`SourceModel`. A function lets you
+        sample parameters that are not leaves of the model, such as a
+        separation and position angle, or one inclination shared by two
+        components (see :func:`build_model`).
     priors : dict[str, numpyro.distributions.Distribution]
-        Mapping from parameter path (e.g. ``"comp.flux"``) to prior; each path
-        is also used as the numpyro sample-site name.
+        Mapping from parameter path (e.g. ``"comp.flux"``) or function
+        argument name to prior; each key is also used as the numpyro
+        sample-site name. Priors on fluxes (keys named ``flux`` or ending in
+        ``.flux`` or ``_flux``) must have non-negative support.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
 
@@ -1150,24 +1331,28 @@ def numpyro_model(template, priors, data_obj):
     import numpyro
 
     paths = list(priors)
+    for path in paths:
+        if _is_flux_name(path):
+            _check_positive_flux_prior(path, priors[path])
     observations = (
         tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
     )
 
-    def model():
+    def numpyro_fn():
         values = [numpyro.sample(path, priors[path]) for path in paths]
-        source = template.set(paths, values)
+        source = build_model(model, paths, values)
         numpyro.factor(
             "loglike",
             sum(model_loglike(source, obs) for obs in observations),
         )
 
-    return model
+    return numpyro_fn
 
 
-def loglike_nosignal(values, params, data_obj, model_class):
+@_renamed_argument("model_class", "model")
+def loglike_nosignal(values, params, data_obj, model):
     """
-    Abstract null log-likelihood function for a given model class and data object, assuming Gaussian errors.
+    Gaussian log-likelihood of the no-signal (unresolved point source) data under a model, assuming Gaussian errors.
 
     Parameters
     ----------
@@ -1177,8 +1362,10 @@ def loglike_nosignal(values, params, data_obj, model_class):
         List of parameter names.
     data_obj : OIData
         Object containing the data to be fitted.
-    model_class : class
-        Model class to be fitted to the data.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
 
     Returns
     -------
@@ -1186,7 +1373,7 @@ def loglike_nosignal(values, params, data_obj, model_class):
         Log-likelihood value.
     """
 
-    model_data = data_obj.model(build_model(model_class, params, values))
+    model_data = data_obj.model(build_model(model, params, values))
     _, errors = data_obj.flatten_data()
     unity_cvis = np.ones_like(data_obj.u, dtype=complex)
     data = data_obj.standardize_model(unity_cvis)
@@ -1196,7 +1383,8 @@ def loglike_nosignal(values, params, data_obj, model_class):
     ).sum()
 
 
-def laplace_cov(values, params, data_obj, model_class):
+@_renamed_argument("model_class", "model")
+def laplace_cov(values, params, data_obj, model):
     """
     Compute the full Laplace covariance matrix for all model parameters jointly.
 
@@ -1217,8 +1405,10 @@ def laplace_cov(values, params, data_obj, model_class):
         List of parameter names.
     data_obj : OIData
         Object containing the data to be fitted.
-    model_class : class
-        Model class to be fitted to the data.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
 
     Returns
     -------
@@ -1226,12 +1416,13 @@ def laplace_cov(values, params, data_obj, model_class):
         ``N x N`` covariance matrix, where ``N = len(params)``.
     """
 
-    objective = lambda vals: -loglike(vals, params, data_obj, model_class)
+    objective = lambda vals: -loglike(vals, params, data_obj, model)
     return _laplace_covariance(objective, np.asarray(values, dtype=float))
 
 
+@_renamed_argument("model_class", "model")
 def laplace_contrast_uncertainty(
-    flux, dra, ddec, data_obj, model_class, params=None
+    flux, dra, ddec, data_obj, model, params=None
 ):
     """
     Compute the Laplace uncertainty in flux at a fixed sky position.
@@ -1259,8 +1450,10 @@ def laplace_contrast_uncertainty(
         Declination offset in mas (held fixed).
     data_obj : OIData
         Object containing the data to be fitted.
-    model_class : class
-        Model class to be fitted to the data.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
     params : list[str] or tuple[str, str, str], optional
         Parameter names corresponding to ``(dra, ddec, flux)``. Defaults to
         ``["dra", "ddec", "flux"]``.
@@ -1279,13 +1472,14 @@ def laplace_contrast_uncertainty(
         values,
         params,
         data_obj,
-        model_class,
+        model,
         target_param=params[-1],
     )
 
 
+@_renamed_argument("model_class", "model")
 def laplace_parameter_uncertainty(
-    values, params, data_obj, model_class, target_param
+    values, params, data_obj, model, target_param
 ):
     """Compute scalar Laplace uncertainty for one parameter with all others fixed."""
     params = list(params)
@@ -1297,13 +1491,14 @@ def laplace_parameter_uncertainty(
     values = np.asarray(values, dtype=float)
 
     objective = lambda x: -loglike(
-        values.at[idx].set(x), params, data_obj, model_class
+        values.at[idx].set(x), params, data_obj, model
     )
     d2_axis = jax.grad(jax.grad(objective))(values[idx])
     return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
 
-def fisher(values, params, data_obj, model_class, ridge=0.0):
+@_renamed_argument("model_class", "model")
+def fisher(values, params, data_obj, model, ridge=0.0):
     """Approximate the local Fisher matrix at a parameter point.
 
     Parameters
@@ -1314,8 +1509,10 @@ def fisher(values, params, data_obj, model_class, ridge=0.0):
         Parameter names corresponding to ``values``.
     data_obj : OIData
         Observational data object.
-    model_class : class
-        Model class used to evaluate the likelihood.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
     ridge : float, optional
         Diagonal regularization term.
 
@@ -1324,7 +1521,7 @@ def fisher(values, params, data_obj, model_class, ridge=0.0):
     array-like
         Fisher information matrix.
     """
-    objective = lambda vals: -loglike(vals, params, data_obj, model_class)
+    objective = lambda vals: -loglike(vals, params, data_obj, model)
     return _fisher_matrix(
         objective, np.asarray(values, dtype=float), ridge=ridge
     )

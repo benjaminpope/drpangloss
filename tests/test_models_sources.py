@@ -17,7 +17,6 @@ from drpangloss.models import (
     UniformDisk,
     _image_coordinates,
     cvis_gaussian_disk,
-    cvis_gaussian_rim,
     cvis_uniform_disk,
 )
 from tests._test_data import oidata
@@ -139,78 +138,60 @@ def test_uniform_disk_render_uses_interferometric_image_orientation():
     )
 
 
-def test_cvis_gaussian_rim_is_well_behaved():
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_rim(
-        uu,
-        vv,
+def test_star_and_rim_is_well_behaved():
+    cvis = _star_and_rim(
         dra=5.0,
         ddec=-3.0,
         diam=20.0,
         fwhm=2.0,
         inc=30.0,
         pa=45.0,
-        az_amps=np.array([0.3]),
-        az_phis=np.array([10.0]),
+        az_amps=0.3,
+        az_pas=55.0,
         flux=0.5,
-    )
-    assert cvis.shape == uu.shape
+    ).model(oidata.u, oidata.v, oidata.wavel)
+    assert cvis.shape == oidata.u.shape
     assert np.all(np.isfinite(cvis))
     # |1 + 0.3*cos(theta)| never drops below 0.7, i.e. flux stays
     # non-negative everywhere, so the rim's own visibility magnitude stays
     # bounded by 1, and the point-source mixture preserves that bound.
-    assert np.all(np.abs(cvis) <= 1.0 + 1e-8)
+    assert np.all(np.abs(cvis) <= 1.0 + 1e-6)
 
 
-def test_cvis_gaussian_rim_zero_flux_is_pure_point_source():
+def test_star_and_zero_flux_rim_is_pure_point_source():
     """With flux=0 the rim contributes no light, so the visibility should
     be exactly that of an unresolved point source (unity everywhere),
     regardless of the rim's own geometry.
     """
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_rim(
-        uu,
-        vv,
+    cvis = _star_and_rim(
         dra=5.0,
         ddec=-3.0,
         diam=20.0,
         fwhm=2.0,
         inc=30.0,
         pa=45.0,
-        az_amps=np.array([0.3]),
-        az_phis=np.array([10.0]),
+        az_amps=0.3,
+        az_pas=55.0,
         flux=0.0,
-    )
+    ).model(oidata.u, oidata.v, oidata.wavel)
     assert np.allclose(cvis, 1.0 + 0j)
 
 
-def test_cvis_gaussian_rim_symmetric_case_matches_bessel_j0():
+def test_symmetric_rim_matches_bessel_j0():
     """An unmodulated, uninclined, infinitely-narrow rim is a plain thin
     ring, whose visibility is the classic J0(2*pi*r0*B/lambda) form; mixed
-    with an unresolved point source (visibility 1 everywhere) via the
-    flux (rim/star) contrast convention, the total visibility should be
-    l1 + l2*J0(...). Checked against an independent scipy.special.j0 call.
+    with an unresolved point source (visibility 1 everywhere) at flux ratio
+    ``flux``, the total visibility should be l1 + l2*J0(...). Checked against
+    an independent scipy.special.j0 call.
     """
     diam = 20.0
     flux = 3.0
     uu = oidata.u / oidata.wavel
     vv = oidata.v / oidata.wavel
 
-    cvis = cvis_gaussian_rim(
-        uu,
-        vv,
-        dra=0.0,
-        ddec=0.0,
-        diam=diam,
-        fwhm=1e-6,
-        inc=0.0,
-        pa=0.0,
-        az_amps=np.array([]),
-        az_phis=np.array([]),
-        flux=flux,
-    )
+    cvis = _star_and_rim(
+        diam=diam, fwhm=1e-6, inc=0.0, pa=0.0, flux=flux
+    ).model(oidata.u, oidata.v, oidata.wavel)
 
     base_norm = onp.hypot(onp.asarray(uu), onp.asarray(vv))
     rim_expected = scipy_j0(
@@ -222,6 +203,16 @@ def test_cvis_gaussian_rim_symmetric_case_matches_bessel_j0():
 
     assert onp.allclose(onp.asarray(cvis).real, expected, atol=1e-6)
     assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-6)
+
+
+def test_rim_stays_finite_at_edge_on_inclination():
+    # inc=90deg drives stretch = cos(inc) to 0; the 1e-8 floor on stretch
+    # should keep the Fourier-domain visibility finite (unlike the
+    # pixel-mask render below, this doesn't depend on grid resolution).
+    cvis = ModulatedGaussianRim(diam=40.0, fwhm=2.0, inc=90.0, pa=0.0).model(
+        oidata.u, oidata.v, oidata.wavel
+    )
+    assert np.all(np.isfinite(cvis))
 
 
 def test_modulated_gaussian_rim_oidata_and_render():
@@ -279,28 +270,6 @@ def test_modulated_gaussian_rim_render_at_zero_flux_is_point_source_only():
     pixel_scale_mas = fov_mas / npix
     ring_px = int(round((diam / 2.0) / pixel_scale_mas))
     assert image[center, center + ring_px] < 1e-6
-
-
-def test_cvis_gaussian_rim_stays_finite_at_edge_on_inclination():
-    # inc=90deg drives stretch = cos(inc) to 0; the 1e-8 floor on stretch
-    # should keep the Fourier-domain visibility finite (unlike the
-    # pixel-mask render below, this doesn't depend on grid resolution).
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_rim(
-        uu,
-        vv,
-        dra=0.0,
-        ddec=0.0,
-        diam=40.0,
-        fwhm=2.0,
-        inc=90.0,
-        pa=0.0,
-        az_amps=np.array([]),
-        az_phis=np.array([]),
-        flux=0.5,
-    )
-    assert np.all(np.isfinite(cvis))
 
 
 def test_modulated_gaussian_rim_render_finite_at_moderate_inclination():

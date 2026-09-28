@@ -6,6 +6,8 @@ translations are adopted (almost) verbatim from
 [Harmonix](https://github.com/shashankdholakia/harmonix).
 """
 
+import functools
+import warnings
 from functools import partial
 
 import jax.numpy as np
@@ -529,3 +531,30 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
 
 
 # ===
+
+
+def renamed_argument(old, new):
+    """Accept keyword ``old`` as a deprecated alias of argument ``new``."""
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            if old in kwargs:
+                if new in kwargs:
+                    raise TypeError(
+                        f"{fn.__name__}() got both '{old}' and '{new}'; "
+                        f"'{old}' is a deprecated alias of '{new}'."
+                    )
+                warnings.warn(
+                    f"{fn.__name__}(): the '{old}' argument has been renamed "
+                    f"'{new}'. Pass '{new}=' instead; '{old}=' will be "
+                    "removed in a future release.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                kwargs[new] = kwargs.pop(old)
+            return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator

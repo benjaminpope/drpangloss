@@ -1,6 +1,7 @@
 import warnings
 
 import jax.numpy as np
+import numpy as onp
 from matplotlib import get_backend
 import matplotlib.pyplot as plt
 import pytest
@@ -99,7 +100,7 @@ def test_likelihood_grid_axis_order_tracks_key_order():
 
 def test_optimized_likelihood_grid():
     loglike_im = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, samples_dict
+        oidata, BinaryModelCartesian, samples_dict, flux_param="flux"
     )
     assert np.all(np.isfinite(loglike_im))
     assert loglike_im.shape == (
@@ -119,7 +120,7 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
         "flux": samples_dict["flux"][::40],
     }
     ordered = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, reduced_samples
+        oidata, BinaryModelCartesian, reduced_samples, flux_param="flux"
     )
 
     permuted_samples = {
@@ -128,7 +129,7 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
         "dra": reduced_samples["dra"],
     }
     permuted = optimized_likelihood_grid(
-        oidata, BinaryModelCartesian, permuted_samples
+        oidata, BinaryModelCartesian, permuted_samples, flux_param="flux"
     )
 
     assert ordered.shape == (
@@ -146,7 +147,7 @@ def test_optimized():
     loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
 
     optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
     )
     assert optimized.shape == (
         samples_dict["dra"].shape[0],
@@ -164,7 +165,7 @@ def test_optimized_contrast_grid_axis_order_tracks_key_order():
         "flux": samples_dict["flux"][::40],
     }
     ordered = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, reduced_samples
+        oidata_sim, BinaryModelCartesian, reduced_samples, flux_param="flux"
     )
 
     permuted_samples = {
@@ -173,7 +174,7 @@ def test_optimized_contrast_grid_axis_order_tracks_key_order():
         "dra": reduced_samples["dra"],
     }
     permuted = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, permuted_samples
+        oidata_sim, BinaryModelCartesian, permuted_samples, flux_param="flux"
     )
 
     assert ordered.shape == (
@@ -192,14 +193,18 @@ def test_laplace():
     best_contrast_indices = np.argmax(loglike_im, axis=2)
 
     optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
     )
 
     plot_optimized_and_grid(loglike_im, optimized, samples_dict)
     _assert_sky_oriented(plt.gcf())
 
     laplace_sigma_grid = laplace_contrast_uncertainty_grid(
-        best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict
+        best_contrast_indices,
+        oidata_sim,
+        BinaryModelCartesian,
+        samples_dict,
+        flux_param="flux",
     )
     assert laplace_sigma_grid.shape == (
         samples_dict["dra"].shape[0],
@@ -227,7 +232,11 @@ def test_laplace_grid_axis_order_tracks_key_order():
     )
     ordered_best = np.argmax(ordered_loglike, axis=2)
     ordered = laplace_contrast_uncertainty_grid(
-        ordered_best, oidata_sim, BinaryModelCartesian, reduced_samples
+        ordered_best,
+        oidata_sim,
+        BinaryModelCartesian,
+        reduced_samples,
+        flux_param="flux",
     )
 
     permuted_samples = {
@@ -242,7 +251,11 @@ def test_laplace_grid_axis_order_tracks_key_order():
         permuted_loglike, axis=list(permuted_samples.keys()).index("flux")
     )
     permuted = laplace_contrast_uncertainty_grid(
-        permuted_best, oidata_sim, BinaryModelCartesian, permuted_samples
+        permuted_best,
+        oidata_sim,
+        BinaryModelCartesian,
+        permuted_samples,
+        flux_param="flux",
     )
 
     assert ordered.shape == (
@@ -261,10 +274,14 @@ def test_ruffio():
     best_contrast_indices = np.argmax(loglike_im, axis=2)
 
     optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict
+        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
     )
     laplace_sigma_grid = laplace_contrast_uncertainty_grid(
-        best_contrast_indices, oidata_sim, BinaryModelCartesian, samples_dict
+        best_contrast_indices,
+        oidata_sim,
+        BinaryModelCartesian,
+        samples_dict,
+        flux_param="flux",
     )
 
     limits = ruffio_upperlimit(
@@ -302,7 +319,7 @@ def test_ruffio():
 
 def test_absil():
     limits_absil = absil_limits(
-        samples_dict, oidata_sim, BinaryModelCartesian, 5.0
+        samples_dict, oidata_sim, BinaryModelCartesian, 5.0, flux_param="flux"
     )
 
     rad_width_absil, avg_width_absil = azimuthalAverage(
@@ -369,9 +386,11 @@ def test_absil_limit_responds_to_smaller_uncertainties():
             }
         )
 
-    nominal = absil_limits(samples, noisy_null(1.0), BinaryModelCartesian, 2.0)
+    nominal = absil_limits(
+        samples, noisy_null(1.0), BinaryModelCartesian, 2.0, flux_param="flux"
+    )
     improved = absil_limits(
-        samples, noisy_null(0.1), BinaryModelCartesian, 2.0
+        samples, noisy_null(0.1), BinaryModelCartesian, 2.0, flux_param="flux"
     )
 
     assert improved.item() < nominal.item()
@@ -453,3 +472,26 @@ def test_truth_cartesian_and_polar_follows_north_to_east_pa_convention():
     truth = {"dra": 40.0, "ddec": 0.0, "flux": 1.0}
     _, truth_polar = truth_cartesian_and_polar(truth)
     assert truth_polar["pa"] == pytest.approx(90.0)
+
+
+def test_ruffio_matches_truncated_gaussian_even_far_below_zero():
+    from scipy.stats import norm, truncnorm
+
+    sigma = 1e-3
+    means = onp.array([2.0, 0.0, -1.0, -3.0, -5.0, -8.0, -20.0, -60.0]) * sigma
+    percentiles = onp.array([0.16, 0.5, norm.cdf(2.0), 0.99])
+    limits = onp.asarray(
+        ruffio_upperlimit(
+            np.array(means), np.full(means.size, sigma), np.array(percentiles)
+        )
+    )
+    expected = onp.array(
+        [
+            truncnorm.ppf(percentiles, -m / sigma, onp.inf, loc=m, scale=sigma)
+            for m in means
+        ]
+    )
+    assert onp.all(onp.isfinite(limits))
+    assert onp.all(limits >= 0.0)
+    assert onp.all(onp.diff(limits, axis=1) > 0.0)
+    onp.testing.assert_allclose(limits, expected, rtol=2e-3)

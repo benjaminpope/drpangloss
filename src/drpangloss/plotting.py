@@ -247,6 +247,62 @@ def plot_trace_panels(samples_dict, keys, title, color="C0", figsize=(10, 6)):
     return fig, axes
 
 
+def plot_model(
+    model,
+    fov_mas,
+    npix=256,
+    ax=None,
+    title=None,
+    saturate=None,
+    cmap="magma",
+):
+    """Show a source model's rendered image with sky axes.
+
+    East is to the left and North is up, matching the orientation of
+    :meth:`~drpangloss.models.SourceModel.render`.
+
+    Parameters
+    ----------
+    model : SourceModel
+        Model to render.
+    fov_mas : float
+        Width of the field of view in milliarcseconds.
+    npix : int, optional
+        Number of pixels on a side.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    title : str, optional
+        Axes title.
+    saturate : float, optional
+        Quantile (e.g. ``0.99``) at which to saturate the colour scale, so
+        that faint structure next to a bright star is visible.
+    cmap : str, optional
+        Matplotlib colour map.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axes drawn on.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5, 4))
+    image = np.asarray(model.render(npix=npix, fov_mas=fov_mas))
+    vmax = None if saturate is None else np.quantile(image, saturate)
+    half = float(fov_mas) / 2.0
+    ax.imshow(
+        image,
+        extent=[half, -half, -half, half],
+        origin="upper",
+        cmap=cmap,
+        vmax=vmax,
+    )
+    ax.set(xlabel="ΔRA (mas)", ylabel="ΔDec (mas)")
+    if title is not None:
+        ax.set_title(title)
+    _enforce_sky_orientation(ax)
+    return ax
+
+
 def plot_likelihood_grid(
     loglike_im,
     samples_dict,
@@ -257,6 +313,7 @@ def plot_likelihood_grid(
     colorbar_label="Log likelihood",
     cmap="inferno",
     figsize=(12, 6),
+    flux_param=None,
 ):
     """
     Plot the results of a likelihood_grid calculation.
@@ -267,12 +324,18 @@ def plot_likelihood_grid(
         The likelihood grid, output of likelihood_grid
     samples_dict : dict
         Dictionary of samples used in the grid calculation
-    truths : list, optional
-        List of true values for the parameters, default None
+    truths : list or dict, optional
+        True values for the plotted coordinates, default None
+    flux_param : str, optional
+        Key of ``samples_dict`` that is not a plotted coordinate (e.g.
+        ``"comp.flux"``). By default ``"contrast"`` or ``"flux"`` if present,
+        otherwise the last key.
     """
 
     params = list(samples_dict.keys())
-    if "contrast" in samples_dict:
+    if flux_param is not None:
+        opt_key = flux_param
+    elif "contrast" in samples_dict:
         opt_key = "contrast"
     elif "flux" in samples_dict:
         opt_key = "flux"
