@@ -8,6 +8,23 @@ from pathlib import Path
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
+# A warning raised from a notebook cell is printed as
+# "<tmpdir>/ipykernel_<pid>/<hash>.py:<line>: <Category>: <message>" followed
+# by the offending source line. The path is machine-specific and changes on
+# every run, so the published pages keep only "<Category>: <message>".
+_CELL_WARNING = re.compile(
+    r"^\S*ipykernel_\d+[/\\]\d+\.py:\d+: (?P<warning>\w+: .*)\n"
+    r"(?P<source>[ \t]+\S.*\n?)?",
+    re.MULTILINE,
+)
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip terminal colours and machine-specific warning locations."""
+    text = _ANSI_ESCAPE.sub("", text)
+    return _CELL_WARNING.sub(lambda m: m.group("warning") + "\n", text)
+
+
 MAPPINGS = {
     "notebooks/binary_search.ipynb": "docs/binary_search.md",
     "notebooks/data_io.ipynb": "docs/data_io.md",
@@ -113,7 +130,7 @@ def render_notebook_markdown(
                     lines.append("")
                     continue
 
-                text_out = _ANSI_ESCAPE.sub("", _output_text(output)).rstrip()
+                text_out = _sanitize_text(_output_text(output)).rstrip()
                 if text_out:
                     lines.append("```text")
                     lines.append(text_out)

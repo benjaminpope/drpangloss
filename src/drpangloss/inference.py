@@ -162,9 +162,10 @@ def fisher_projection(fmat, eps=1e-12):
     fmat : array-like
         Symmetric Fisher (or observed information) matrix.
     eps : float, optional
-        Eigenvalues below ``eps`` times the largest eigenvalue are raised to
-        that floor, with a ``RuntimeWarning`` (outside ``jax.jit``), so that
-        flat directions get large but finite steps.
+        Eigenvalues below ``eps`` times the largest eigenvalue (or below
+        ``eps`` itself, if every eigenvalue is zero) are raised to that
+        floor, with a ``RuntimeWarning`` (outside ``jax.jit``), so that flat
+        directions get large but finite steps.
 
     Returns
     -------
@@ -172,7 +173,10 @@ def fisher_projection(fmat, eps=1e-12):
         ``P = V diag(λ^-1/2)``, so that ``P Pᵀ = F⁻¹``.
     """
     evals, evecs = np.linalg.eigh(np.asarray(fmat, dtype=float))
-    floor = eps * np.max(np.abs(evals))
+    largest = np.max(np.abs(evals))
+    # Relative floor; a matrix with no information at all has no scale to be
+    # relative to, so its directions get the absolute floor eps instead.
+    floor = np.where(largest > 0.0, eps * largest, eps)
     concrete = _concrete(evals)
     if concrete is not None and (concrete < _concrete(floor)).any():
         warnings.warn(

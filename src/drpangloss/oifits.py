@@ -65,7 +65,9 @@ def read_oifits(source, target=None):
     -----
     Squared visibilities (``OI_VIS2``) are preferred over amplitudes
     (``OI_VIS``), and closure phases (``OI_T3``) over absolute phases
-    (``OI_VIS`` ``VISPHI``). Samples are flagged when their ``FLAG`` is set
+    (``OI_VIS`` ``VISPHI``). A file with only ``OI_T3`` gives closure phases
+    alone: its baselines come from the triangle coordinates, and ``vis`` is
+    empty. Samples are flagged when their ``FLAG`` is set
     or their value or uncertainty is not finite.
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
@@ -233,8 +235,10 @@ def _read_visibilities(tables, wavelengths, target_id):
     elif "OI_VIS" in tables:
         names = ("OI_VIS", "VISAMP", "VISAMPERR")
         v2_flag = False
+    elif "OI_T3" in tables:
+        return _baselines_from_triangles(tables, wavelengths, target_id)
     else:
-        raise ValueError("OIFITS file has no OI_VIS2 or OI_VIS table.")
+        raise ValueError("OIFITS file has no OI_VIS2, OI_VIS or OI_T3 table.")
     extname, value_col, error_col = names
 
     u, v, wavel, vis, d_vis, vis_flag = [], [], [], [], [], []
@@ -273,6 +277,55 @@ def _read_visibilities(tables, wavelengths, target_id):
         "d_vis": onp.concatenate(d_vis),
         "vis_flag": onp.concatenate(vis_flag),
         "v2_flag": v2_flag,
+    }
+    return record, lookup
+
+
+def _baselines_from_triangles(tables, wavelengths, target_id):
+    """Baseline samples for closure-phase-only files, from the T3 legs.
+
+    Each triangle ``(a, b, c)`` contributes baselines ``(a, b)`` at
+    ``(U1COORD, V1COORD)``, ``(b, c)`` at ``(U2COORD, V2COORD)`` and
+    ``(a, c)`` at their sum; baselines shared by several triangles (same
+    ``INSNAME`` and epoch) become one sample. There are no visibility
+    observables, so every sample is flagged.
+    """
+    u, v, wavel = [], [], []
+    lookup = _BaselineLookup()
+    start = 0
+    for hdu in tables["OI_T3"]:
+        wave = _table_wavelengths(hdu, wavelengths)
+        nwave = wave.size
+        mask = _row_mask(hdu, target_id)
+        u1, v1 = _column(hdu, "U1COORD", mask), _column(hdu, "V1COORD", mask)
+        u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
+        sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
+        mjd = _mjd(hdu, mask)
+        ins = _insname(hdu)
+        for row, (a, b, c) in enumerate(sta_index):
+            legs = (
+                ((a, b), u1[row], v1[row]),
+                ((b, c), u2[row], v2[row]),
+                ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
+            )
+            for pair, uu, vv in legs:
+                if lookup.find(ins, pair, mjd[row]) is not None:
+                    continue
+                lookup.add(ins, pair, mjd[row], start, nwave)
+                start += nwave
+                u.append(onp.full(nwave, uu))
+                v.append(onp.full(nwave, vv))
+                wavel.append(wave)
+
+    n = start
+    record = {
+        "u": onp.concatenate(u),
+        "v": onp.concatenate(v),
+        "wavel": onp.concatenate(wavel),
+        "vis": onp.full(n, onp.nan),
+        "d_vis": onp.full(n, onp.nan),
+        "vis_flag": onp.ones(n, dtype=bool),
+        "v2_flag": True,
     }
     return record, lookup
 

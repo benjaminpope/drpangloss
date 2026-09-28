@@ -280,3 +280,18 @@ def test_v2_error_from_negative_amplitude_is_not_zero():
         )
     )
     assert np.all(data.d_vis > 1e-3)
+
+
+def test_closure_phase_only_file_round_trips(tmp_path):
+    waves = onp.array([4.4e-6, 5.2e-6])
+    tables = _tables(waves=waves)
+    del tables["OI_VIS2"]
+    data = OIData(write_oifits(tables, tmp_path / "t3.oifits"))
+
+    assert data.cp_flag
+    assert data.vis.size == 0
+    assert data.phi.size == len(TRIANGLES) * waves.size
+    # Shared baselines are merged: six unique pairs per channel.
+    assert data.u.size == len(PAIRS) * waves.size
+    assert np.allclose(data.model(TRUTH), data.flatten_data()[0], atol=1e-5)
+    assert np.isfinite(model_loglike(TRUTH, data))

@@ -42,3 +42,16 @@ def test_tutorial_markdown_header_uses_repo_relative_notebook_path():
 
     assert nb_rel in header_line
     assert str(repo_root.resolve()) not in header_line
+
+
+def test_warning_locations_are_removed_from_published_output():
+    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    raw = (
+        "/var/folders/ab/T/ipykernel_86886/1114166516.py:8: RuntimeWarning: "
+        "optimizer did not converge\n"
+        "  opt_flux = optimized_contrast_grid(\n"
+        "result: 3\n"
+    )
+    assert module._sanitize_text(raw) == (
+        "RuntimeWarning: optimizer did not converge\nresult: 3\n"
+    )
