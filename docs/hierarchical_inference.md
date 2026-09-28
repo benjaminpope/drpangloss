@@ -112,7 +112,7 @@ print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_
 ```
 
 ```text
-initial log-likelihood: -5654.122745306354, optimal: 682.2989893515032
+initial log-likelihood: -5654.122745306364, optimal: 682.2989893515032
 ```
 
 ## Joint grid initialization
@@ -327,11 +327,11 @@ plot_chainconsumer_diagnostics(
 ```
 
 ```text
-Parameter ddec (mas) in chain HMC is not constrained
+findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
 ```
 
 ```text
-<chainconsumer.chainconsumer.ChainConsumer at 0xf4f3a80d3d0>
+<chainconsumer.chainconsumer.ChainConsumer at 0x11da8ccd0>
 ```
 
 ![hierarchical_inference output 18.3](generated/hierarchical_inference_cell018_out03.png)

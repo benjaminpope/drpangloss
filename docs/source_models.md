@@ -136,6 +136,7 @@ im = axes[2].imshow(
     image,
     extent=[60.0, -60.0, -60.0, 60.0],
     cmap="magma",
+    vmax=np.quantile(image, 0.99),  # saturate the unresolved star
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
 axes[2].set_ylabel(r"$\Delta$Dec (mas)")
@@ -278,7 +279,7 @@ plt.show()
 
 ## Simulate an azimuthally modulated rim
 
-`ModulatedGaussianRimModel` is an inclined, Gaussian-blurred ring mixed with an unresolved point source (the same `flux` companion/star convention as `GaussianDiskModel`), optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). We compare a symmetric rim against one with a single first-order modulation.
+`ModulatedGaussianRimModel` is an inclined, Gaussian-blurred ring mixed with an unresolved point source (the same `flux` companion/star convention as `GaussianDiskModel`), optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). We compare a symmetric rim against one with first- and second-order modulations.
 
 ```python
 rim_symmetric = ModulatedGaussianRimModel(
@@ -340,22 +341,24 @@ axes[0].set_title("Modulated rim")
 
 im1 = axes[1].imshow(
     image_rim_symmetric,
-    extent=[50.0, -50.0, -50.0, 50.0],
+    extent=[15.0, -15.0, -15.0, 15.0],
     cmap="magma",
+    vmax=np.quantile(image_rim_symmetric, 0.999),  # saturate the unresolved star
 )
 axes[1].set_xlabel(r"$\Delta$RA (mas)")
 axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("Symmetric rim (`az_amps=()`)")
+axes[1].set_title("Symmetric rim")
 fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
 im2 = axes[2].imshow(
     image_rim_modulated,
-    extent=[50.0, -50.0, -50.0, 50.0],
+    extent=[15.0, -15.0, -15.0, 15.0],
     cmap="magma",
+    vmax=np.quantile(image_rim_modulated, 0.999),
 )
 axes[2].set_xlabel(r"$\Delta$RA (mas)")
 axes[2].set_ylabel(r"$\Delta$Dec (mas)")
-axes[2].set_title("Modulated rim (`az_amps=[0.5]`)")
+axes[2].set_title("Modulated rim (m=1, 2)")
 fig.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
 
 plt.tight_layout()

@@ -78,10 +78,6 @@ prediction.shape, data.shape, errors.shape
 ```
 
 ```text
-W0924 18:06:45.279340 5522799 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 ((210,), (210,), (210,))
 ```
 

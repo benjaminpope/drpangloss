@@ -344,13 +344,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-Parameter pa in chain Fisher-HMC Polar is not constrained
-```
+![binary_search output 21.1](generated/binary_search_cell021_out01.png)
 
 ![binary_search output 21.2](generated/binary_search_cell021_out02.png)
-
-![binary_search output 21.3](generated/binary_search_cell021_out03.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 

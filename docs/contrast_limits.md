@@ -212,7 +212,7 @@ ax.legend(loc="best")
 ```
 
 ```text
-<matplotlib.legend.Legend at 0x132319f85510>
+<matplotlib.legend.Legend at 0x119e1c1d0>
 ```
 
 ![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)
