@@ -278,7 +278,12 @@ def bessel_jn(n, x):
     """Compute the Bessel function $J_n(x)$, for $n >= 0$. Returns the function output
     for all orders up to the requested order $n$ evaluated for the kernel $x$, where the
     the different orders are stacked along the first axis. The shape of the final result
-    is thus (n + 1, shape(x))."""
+    is thus (n + 1, shape(x)).
+
+    TODO: a much faster and more numerically stable JAX Bessel implementation
+    exists outside this repository and is due to replace this upward recurrence,
+    which loses accuracy when the order approaches ``x``.
+    """
     if n == 0:
         return np.array([j0(x)])
     else:
