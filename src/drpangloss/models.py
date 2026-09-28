@@ -48,6 +48,14 @@ def _normalize_image(image):
     raise ValueError("Rendered image must contain positive finite flux.")
 
 
+def _unit_flux(component):
+    """Scale an image component to unit sum; components off the grid stay zero."""
+    total = np.sum(component)
+    return np.where(
+        total > 0.0, component / np.where(total > 0.0, total, 1.0), 0.0
+    )
+
+
 class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for sky-brightness source models."""
 
@@ -328,7 +336,7 @@ class GaussianDiskModel(SourceModel):
                 + ((yy - self.ddec) / sigma_mas) ** 2
             )
         )
-        image = l1 * star + l2 * disk
+        image = l1 * _unit_flux(star) + l2 * _unit_flux(disk)
         return _normalize_image(image)
 
 
@@ -536,7 +544,7 @@ class ModulatedGaussianRimModel(SourceModel):
 
         l2 = self.flux / (self.flux + 1.0)
         l1 = 1.0 - l2
-        image = l1 * star_image + l2 * rim_image
+        image = l1 * _unit_flux(star_image) + l2 * _unit_flux(rim_image)
         return _normalize_image(image)
 
 
