@@ -12,3 +12,4 @@
         - ruffio_upperlimit
         - azimuthalAverage
         - absil_limits
+        - best_grid_point

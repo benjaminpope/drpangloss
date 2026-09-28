@@ -215,7 +215,7 @@ plt.show()
 
 ## Likelihood wiring from `OIData` + model class
 
-`loglike(values, params, data_obj, model_class)` zips parameter names to values, instantiates `model_class(**param_dict)`, evaluates `data_obj.model(...)`, then compares to flattened data with Gaussian errors.
+`loglike(values, params, data_obj, model)` zips parameter names to values, instantiates `model(**param_dict)` (or, for a template model instance, sets the leaves at those paths), evaluates `data_obj.model(...)`, then compares to flattened data with Gaussian errors.
 
 ```python
 params_cart = ["dra", "ddec", "flux"]

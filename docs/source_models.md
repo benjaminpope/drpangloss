@@ -25,6 +25,7 @@ from drpangloss.models import (
     HarmonixModel,
     ModulatedGaussianRim,
     PointSource,
+    System,
     UniformDisk,
 )
 from drpangloss.oidata import OIData
@@ -223,7 +224,7 @@ This is the same pattern you would use with a real harmonix object: instantiate 
 
 ## Simulate a uniform disk
 
-`UniformDisk` represents a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; add a `PointSource` with `+` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
+`UniformDisk` represents a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; put it in a `System` with a `PointSource` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
 
 ```python
 udisk = UniformDisk(diam=25.0, dra=-9.0, ddec=6.0)
@@ -289,8 +290,8 @@ rim = ModulatedGaussianRim(
     az_amps=jnp.array([0.43011627, 0.2745906]),
     az_pas=jnp.array([35.537678 + 6.0, 50.245735 + 6.0]),
 )
-rim_symmetric = PointSource() + ModulatedGaussianRim(**rim_geometry)
-rim_modulated = PointSource() + rim
+rim_symmetric = System(star=PointSource(), rim=ModulatedGaussianRim(**rim_geometry))
+rim_modulated = System(star=PointSource(), rim=rim)
 
 cvis_rim = rim_modulated.model(u, v, wavel)
 vis_rim = jnp.abs(cvis_rim) ** 2
