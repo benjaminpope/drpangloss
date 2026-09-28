@@ -27,6 +27,7 @@ from drpangloss.oidata import OIData
 from drpangloss.grid_fit import likelihood_grid
 from drpangloss.inference import fisher_matrix, fisher_projection
 from drpangloss.plotting import (
+    set_style,
     posterior_predictive_summary,
     plot_data_model_correlation,
     plot_likelihood_grid,
@@ -34,6 +35,8 @@ from drpangloss.plotting import (
     diagnostics_table_from_samples,
     truth_cartesian_and_polar,
 )
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Simulate Data
@@ -321,13 +324,9 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-```text
-findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
-```
+![binary_search output 19.1](generated/binary_search_cell019_out01.png)
 
 ![binary_search output 19.2](generated/binary_search_cell019_out02.png)
-
-![binary_search output 19.3](generated/binary_search_cell019_out03.png)
 
 And in polar coordinates:
 

@@ -13,6 +13,7 @@ import zodiax as zx
 
 from ._utils import (
     bessel_jn as bessel_jn,
+    check_az_prof_nonnegative,
     dtor as dtor,
     i2pi as i2pi,
     mas2rad as mas2rad,
@@ -96,6 +97,23 @@ def _check_non_negative_flux(flux, owner):
         )
 
 
+def _check_non_negative_modulation(az_amps, az_pas):
+    """Raise if concrete azimuthal modulations make the brightness negative."""
+    try:
+        amps, pas = onp.asarray(az_amps), onp.asarray(az_pas)
+    except (
+        jax.errors.TracerArrayConversionError,
+        jax.errors.ConcretizationTypeError,
+    ):
+        return
+    if not bool(check_az_prof_nonnegative(np.asarray(amps), np.asarray(pas))):
+        raise ValueError(
+            f"Azimuthal modulations az_amps={amps.tolist()}, "
+            f"az_pas={pas.tolist()} make the rim brightness negative "
+            "somewhere; sum(abs(az_amps)) <= 1 always keeps it non-negative."
+        )
+
+
 def _concrete_sum(values):
     """Sum of ``values`` as a float, or ``None`` if any value is traced."""
     try:
@@ -112,20 +130,20 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     There are two kinds of source model.
 
-    * **Components** (:class:`Component` subclasses such as
-      :class:`PointSource`) are single shapes normalized to unit flux. Their
+    * **Components** ([`Component`][drpangloss.models.Component] subclasses such as
+      [`PointSource`][drpangloss.models.PointSource]) are single shapes normalized to unit flux. Their
       ``flux`` is a *relative weight*, which only matters once they are mixed
-      together in a :class:`System`.
-    * **Scenes** (:class:`System`, :class:`BinaryModelCartesian`,
-      :class:`BinaryModelAngular`, :class:`HarmonixModel`) describe a whole,
-      normalized sky. A scene placed inside a :class:`System` has weight 1,
-      unless it carries its own ``flux`` weight as :class:`System` does.
+      together in a [`System`][drpangloss.models.System].
+    * **Scenes** ([`System`][drpangloss.models.System], [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian],
+      [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular], [`HarmonixModel`][drpangloss.models.HarmonixModel]) describe a whole,
+      normalized sky. A scene placed inside a [`System`][drpangloss.models.System] has weight 1,
+      unless it carries its own ``flux`` weight as [`System`][drpangloss.models.System] does.
 
     For historical reasons the binary models use ``flux`` (and ``contrast``)
     for a companion/primary ratio rather than a weight. New models should use
     ``flux`` only to mean a relative weight.
 
-    Subclasses implement :meth:`model`, and ``_image`` if they can be drawn.
+    Subclasses implement [`model`][drpangloss.models.SourceModel.model], and ``_image`` if they can be drawn.
     """
 
     def model(self, u, v, wavel):
@@ -151,7 +169,7 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         The image is ``npix`` x ``npix`` pixels spanning ``fov_mas``
         milliarcseconds, with East to the left (column 0 is the most
         positive ``dra``) and North up (row 0 is the most positive ``ddec``).
-        Use :func:`drpangloss.plotting.plot_model` to display it with the
+        Use [`drpangloss.plotting.plot_model`][drpangloss.plotting.plot_model] to display it with the
         correct axes.
         """
         xx, yy = _image_coordinates(npix, fov_mas)
@@ -160,7 +178,7 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
 
     def _weight(self, wavel=None):
-        """Relative flux of this model inside a :class:`System`.
+        """Relative flux of this model inside a [`System`][drpangloss.models.System].
 
         ``wavel`` is the wavelength in metres at which the flux is wanted
         (broadcastable against the baselines), or ``None`` for the model's
@@ -186,11 +204,11 @@ class Component(SourceModel):
     """Base class for single shapes with ``flux``, ``dra`` and ``ddec``.
 
     A component on its own is normalized to unit flux. Inside a
-    :class:`System`, ``flux`` is its weight relative to the other components,
+    [`System`][drpangloss.models.System], ``flux`` is its weight relative to the other components,
     and ``dra``/``ddec`` place its centre (milliarcseconds, positive ``dra``
     to the East, positive ``ddec`` to the North).
 
-    New shapes subclass :class:`Component` and implement ``_centred_cvis``
+    New shapes subclass [`Component`][drpangloss.models.Component] and implement ``_centred_cvis``
     (the unit-flux visibility of the shape at the origin) and
     ``_centred_image`` (an un-normalized image of the shape at the origin);
     offsets and mixing are handled here.
@@ -232,7 +250,7 @@ class PointSource(Component):
     Parameters
     ----------
     flux : float or array-like, optional
-        Weight relative to the other components of a :class:`System`
+        Weight relative to the other components of a [`System`][drpangloss.models.System]
         (default 1). Keep the reference star at ``flux=1`` and a companion's
         ``flux`` is then its companion/star flux ratio.
     dra : float or array-like, optional
@@ -268,7 +286,7 @@ class GaussianDisk(Component):
         Standard deviation of the Gaussian in milliarcseconds
         (FWHM = 2.3548 ``sigma``).
     flux : float or array-like, optional
-        Weight relative to the other components of a :class:`System`
+        Weight relative to the other components of a [`System`][drpangloss.models.System]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -307,7 +325,7 @@ class UniformDisk(Component):
     diam : float or array-like
         Angular diameter in milliarcseconds.
     flux : float or array-like, optional
-        Weight relative to the other components of a :class:`System`
+        Weight relative to the other components of a [`System`][drpangloss.models.System]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -368,12 +386,15 @@ class ModulatedGaussianRim(Component):
         the amplitude for the first-order modulation, the second for the
         second-order modulation, etc. A scalar gives a single first-order
         modulation, and the default (empty) gives an unmodulated, azimuthally
-        symmetric rim. Amplitudes up to 1 keep the brightness non-negative.
+        symmetric rim. The brightness must stay non-negative, which
+        ``sum(abs(az_amps)) <= 1`` guarantees; with several orders larger
+        amplitudes can also be valid. Concrete values are checked when the
+        model is built.
     az_pas : float or array-like, optional
         Position angles of the cosine azimuthal modulations in degrees, North
         to East, one per entry of ``az_amps``.
     flux : float or array-like, optional
-        Weight relative to the other components of a :class:`System`
+        Weight relative to the other components of a [`System`][drpangloss.models.System]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the rim's center in milliarcseconds,
@@ -391,8 +412,8 @@ class ModulatedGaussianRim(Component):
     profile convolved with an isotropic Gaussian.
 
     This model is achromatic: it does not represent any spectral dependence.
-    The rim contains no star; put it in a :class:`System` with a
-    :class:`PointSource` for that.
+    The rim contains no star; put it in a [`System`][drpangloss.models.System] with a
+    [`PointSource`][drpangloss.models.PointSource] for that.
 
     Examples
     --------
@@ -431,6 +452,7 @@ class ModulatedGaussianRim(Component):
                 f"az_amps has {self.az_amps.size} entries but az_pas has "
                 f"{self.az_pas.size}; give one position angle per modulation."
             )
+        _check_non_negative_modulation(self.az_amps, self.az_pas)
         self.flux = np.asarray(flux, dtype=float)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
@@ -484,7 +506,7 @@ class ModulatedGaussianRim(Component):
 class System(SourceModel):
     r"""Flux-weighted mixture of named source models.
 
-    A :class:`System` is how you describe a scene with more than one part:
+    A [`System`][drpangloss.models.System] is how you describe a scene with more than one part:
     a star with a disk, a binary inside a ring, a companion with its own
     circumstellar material. Each component is given a name, and the
     visibility is the flux-weighted mean
@@ -496,10 +518,10 @@ class System(SourceModel):
     Components are reached by name, both as attributes (``system.comp.flux``)
     and as zodiax paths (``system.get("comp.flux")``,
     ``system.set("comp.flux", 0.02)``). These paths are how the fitting tools
-    in :mod:`drpangloss.grid_fit` and :func:`numpyro_model` address
+    in [`drpangloss.grid_fit`][drpangloss.grid_fit] and [`numpyro_model`][drpangloss.models.numpyro_model] address
     parameters. Components keep the order in which they were given.
 
-    A :class:`System` can itself be a component. Its own ``flux`` is then the
+    A [`System`][drpangloss.models.System] can itself be a component. Its own ``flux`` is then the
     total flux of the group relative to its siblings, and ``dra``/``ddec``
     move the whole group together.
 
@@ -510,23 +532,24 @@ class System(SourceModel):
         pass them as keyword arguments instead.
     flux : float or array-like, optional
         Weight of the whole system when nested inside another
-        :class:`System` (default 1). It has no effect at the top level.
+        [`System`][drpangloss.models.System] (default 1). It has no effect at the top level.
     dra, ddec : float or array-like, optional
         Offset of the whole system in milliarcseconds (positive to the East
         and North).
     **named : SourceModel
         Components as keyword arguments, e.g. ``star=PointSource()``. Names
         must be valid Python identifiers that do not start with ``_`` and do
-        not clash with a :class:`System` attribute (``model``, ``render``,
+        not clash with a [`System`][drpangloss.models.System] attribute (``model``, ``render``,
         ``set``, ``flux``, ...).
 
     Notes
     -----
     Fluxes are physical brightnesses, so they must be non-negative, and they
     must not all be zero. Both are checked when a model is built from
-    concrete values. Inside a traced computation (a fit or grid search) the
+    concrete values; changing values afterwards with ``set`` is not
+    checked. Inside a traced computation (a fit or grid search) the
     values cannot be checked, so positivity is the job of the priors and grid
-    axes: :func:`numpyro_model` rejects flux priors that allow negative
+    axes: [`numpyro_model`][drpangloss.models.numpyro_model] rejects flux priors that allow negative
     values, and the grid tools reject negative flux axes.
 
     Examples
@@ -674,7 +697,7 @@ def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
     (``sigma``, ``flux``, ``dra``, ``ddec``) to the fitting tools.
 
     ``GaussianDiskModel`` used to be a class. It now returns a
-    :class:`System`, so ``isinstance(model, GaussianDiskModel)`` no longer
+    [`System`][drpangloss.models.System], so ``isinstance(model, GaussianDiskModel)`` no longer
     works.
     """
     return System(
@@ -863,12 +886,12 @@ class BinaryModelCartesian(SourceModel):
             Complex visibility samples on the provided baselines.
         """
         uu, vv = u / wavel, v / wavel
-        return cvis_binary(uu, vv, self.ddec, self.dra, self.flux)
+        return cvis_binary(uu, vv, self.dra, self.ddec, self.flux)
 
     def to_system(self):
         """Return the equivalent ``System(primary=..., companion=...)``.
 
-        The :class:`System` form is slower to evaluate but can be extended,
+        The [`System`][drpangloss.models.System] form is slower to evaluate but can be extended,
         e.g. by adding a disk around the primary.
         """
         return System(
@@ -885,6 +908,34 @@ class BinaryModelCartesian(SourceModel):
 class HarmonixModel(SourceModel):
     """
     Wrapper for external source models with harmonix-like visibility methods.
+
+    Parameters
+    ----------
+    source : object
+        External model. ``getattr(source, visibility_method)`` is called with
+        the baselines (and ``observation_time`` if given) and must return
+        complex visibilities normalized to 1 at zero baseline.
+    visibility_method : str, optional
+        Name of the visibility method (default ``"model"``).
+    render_method : str, optional
+        Name of a ``render(npix, fov_mas)`` method used by [`render`][drpangloss.models.HarmonixModel.render]
+        (default ``"render"``). Sources without one but with a ``surface``
+        (harmonix stars) are rendered from ``surface.render``.
+    expects_wavelength_units : bool, optional
+        If True (default), pass spatial frequencies ``u / wavel``,
+        ``v / wavel``; otherwise pass ``u``, ``v`` in metres.
+    observation_time : optional
+        Extra argument passed after the baselines, e.g. a time for rotating
+        stars.
+
+    Notes
+    -----
+    ``source`` and ``observation_time`` are static (hashable) fields: the
+    wrapped model's parameters cannot be fitted through zodiax paths, and
+    array-valued ``observation_time`` values are not supported under
+    ``jax.jit``. A wrapped source has weight 1 inside a
+    [System][drpangloss.models.System], and cannot be drawn there (only on
+    its own, with [`render`][drpangloss.models.HarmonixModel.render]).
     """
 
     source: Any = eqx.field(static=True)
@@ -982,7 +1033,7 @@ def cvis_binary_angular(u, v, sep, pa, contrast):
     return cvis
 
 
-def cvis_binary(u, v, ddec, dra, planet):
+def cvis_binary(u, v, dra, ddec, flux):
     # adapted from pymask
     """Compute complex visibilities for a Cartesian-parameterized binary model.
 
@@ -992,34 +1043,26 @@ def cvis_binary(u, v, ddec, dra, planet):
         Baseline ``u`` coordinates in wavelength units.
     v : array-like
         Baseline ``v`` coordinates in wavelength units.
-    ddec : float or array-like
-        Declination offset in milliarcseconds.
     dra : float or array-like
-        Right-ascension offset in milliarcseconds.
-    planet : float or array-like
-        Flux ratio of the companion.
+        Right-ascension offset of the companion in milliarcseconds, positive
+        to the East.
+    ddec : float or array-like
+        Declination offset of the companion in milliarcseconds, positive to
+        the North.
+    flux : float or array-like
+        Companion/primary flux ratio.
 
     Returns
     -------
     array-like
-        Complex visibility samples.
+        Complex visibility samples, normalized to 1 at zero baseline.
     """
 
-    star = 1
-
     # normalize visibilities so total power is 1
-    p3 = star / (star + planet)
-    p2 = planet / (star + planet)
+    primary = 1.0 / (1.0 + flux)
+    companion = flux / (1.0 + flux)
 
-    # relative locations
-    ddec = ddec * np.pi / (180.0 * 3600.0 * 1000.0)
-    dra = dra * np.pi / (180.0 * 3600.0 * 1000.0)
-    phi_r = np.cos(-2 * np.pi * (u * dra + v * ddec))
-    phi_i = np.sin(-2 * np.pi * (u * dra + v * ddec))
-
-    cvis = p3 + p2 * phi_r + p2 * phi_i * 1.0j
-
-    return cvis
+    return primary + companion * _offset_phase(u, v, dra, ddec)
 
 
 def cvis_gaussian_disk(
@@ -1032,7 +1075,7 @@ def cvis_gaussian_disk(
 ):
     """Compute complex visibilities for a Gaussian-disk companion mixed with
     an unresolved point source, using the ``flux`` companion/star contrast
-    convention shared with :func:`cvis_binary`.
+    convention shared with [`cvis_binary`][drpangloss.models.cvis_binary].
     """
     sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
@@ -1169,8 +1212,8 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
 def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
-    as the convolution kernel of :class:`ModulatedGaussianRim`. Not offered as a public
-    function: unlike :func:`cvis_gaussian_disk`, this is a plain Gaussian envelope
+    as the convolution kernel of [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]. Not offered as a public
+    function: unlike [`cvis_gaussian_disk`][drpangloss.models.cvis_gaussian_disk], this is a plain Gaussian envelope
     with no point-source/flux-contrast mixture.
     """
     fwhm_rad = fwhm * mas2rad
@@ -1196,13 +1239,20 @@ def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
     return cvis * _cvis_gaussian_envelope(u, v, fwhm)
 
 
+def _gaussian_loglike(residuals, errors):
+    """Sum of independent Gaussian log densities of ``residuals``."""
+    return jax.scipy.stats.norm.logpdf(residuals, loc=0.0, scale=errors).sum()
+
+
 def model_loglike(model_object, data_obj):
-    """Evaluate a Gaussian log likelihood for an instantiated model object."""
-    model_data = data_obj.model(model_object)
-    data, errors = data_obj.flatten_data()
-    return jax.scipy.stats.norm.logpdf(
-        model_data, loc=data, scale=errors
-    ).sum()
+    """Evaluate a Gaussian log likelihood for an instantiated model object.
+
+    Phase residuals are wrapped into ``[-π, π)`` (see
+    [`residuals`][drpangloss.oidata.OIData.residuals]).
+    """
+    _, errors = data_obj.flatten_data()
+    residuals = data_obj.residuals(data_obj.model(model_object))
+    return _gaussian_loglike(residuals, errors)
 
 
 def joint_prediction(params, observations, model_fn):
@@ -1245,7 +1295,7 @@ def build_model(model, params, values):
     """Build a model from parameter names and values.
 
     ``model`` is either a class/callable, called as ``model(**dict(zip(params,
-    values)))``, or a :class:`SourceModel` instance used as a template whose
+    values)))``, or a [`SourceModel`][drpangloss.models.SourceModel] instance used as a template whose
     leaves at the (dot-separated) paths ``params`` are replaced by ``values``.
     """
     if isinstance(model, SourceModel):
@@ -1269,7 +1319,7 @@ def loglike(values, params, data_obj, model):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
 
     Returns
     -------
@@ -1281,7 +1331,9 @@ def loglike(values, params, data_obj, model):
 
 
 def _is_flux_name(name):
-    return name == "flux" or name.endswith(".flux") or name.endswith("_flux")
+    """Whether a prior key names a (non-negative) brightness parameter."""
+    leaf = name.rsplit(".", 1)[-1]
+    return leaf in {"flux", "contrast"} or leaf.endswith("_flux")
 
 
 def _check_positive_flux_prior(name, distribution):
@@ -1316,15 +1368,16 @@ def numpyro_model(model, priors, data_obj):
     model : SourceModel or callable
         Either a template model whose leaves at the paths in ``priors`` are
         sampled, or a function called with the sampled values as keyword
-        arguments that returns a :class:`SourceModel`. A function lets you
+        arguments that returns a [`SourceModel`][drpangloss.models.SourceModel]. A function lets you
         sample parameters that are not leaves of the model, such as a
         separation and position angle, or one inclination shared by two
-        components (see :func:`build_model`).
+        components (see [`build_model`][drpangloss.models.build_model]).
     priors : dict[str, numpyro.distributions.Distribution]
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
-        sample-site name. Priors on fluxes (keys named ``flux`` or ending in
-        ``.flux`` or ``_flux``) must have non-negative support.
+        sample-site name. Priors on brightnesses (keys named ``flux`` or
+        ``contrast``, or ending in ``.flux``, ``.contrast`` or ``_flux``)
+        must have non-negative support.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
 
@@ -1370,7 +1423,7 @@ def loglike_nosignal(values, params, data_obj, model):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
 
     Returns
     -------
@@ -1381,11 +1434,9 @@ def loglike_nosignal(values, params, data_obj, model):
     model_data = data_obj.model(build_model(model, params, values))
     _, errors = data_obj.flatten_data()
     unity_cvis = np.ones_like(data_obj.u, dtype=complex)
-    data = data_obj.standardize_model(unity_cvis)
+    null_data = data_obj.standardize_model(unity_cvis)
 
-    return jax.scipy.stats.norm.logpdf(
-        model_data, loc=data, scale=errors
-    ).sum()
+    return _gaussian_loglike(data_obj.residuals(model_data, null_data), errors)
 
 
 @_renamed_argument("model_class", "model")
@@ -1397,10 +1448,10 @@ def laplace_cov(values, params, data_obj, model):
     respect to all parameters in ``params`` simultaneously, returning an
     ``N x N`` covariance matrix (where ``N = len(params)``).
 
-    .. note::
-        This function returns the *full* covariance matrix over all ``N``
-        parameters.  To obtain only the marginal flux uncertainty at a fixed
-        position, use :func:`laplace_contrast_uncertainty` instead.
+    This returns the *full* covariance matrix over all ``N`` parameters. For
+    only the flux uncertainty at a fixed position, use
+    [`laplace_contrast_uncertainty`][drpangloss.models.laplace_contrast_uncertainty]
+    instead.
 
     Parameters
     ----------
@@ -1413,7 +1464,7 @@ def laplace_cov(values, params, data_obj, model):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
 
     Returns
     -------
@@ -1432,18 +1483,18 @@ def laplace_contrast_uncertainty(
     """
     Compute the Laplace uncertainty in flux at a fixed sky position.
 
-    Unlike :func:`laplace_cov`, which inverts the *full* N-parameter Hessian,
+    Unlike [`laplace_cov`][drpangloss.models.laplace_cov], which inverts the *full* N-parameter Hessian,
     this function **fixes** ``dra`` and ``ddec`` and computes only the scalar
     curvature of the negative log-likelihood along the **flux axis alone**:
 
-    .. math::
-
-        \\sigma_f = \\left(\\frac{\\partial^2 (-\\log L)}{\\partial f^2}\\right)^{-1/2}
+    $$
+    \\sigma_f = \\left(\\frac{\\partial^2 (-\\log L)}{\\partial f^2}\\right)^{-1/2}
+    $$
 
     This is a 1-D (scalar) second derivative, not a matrix inversion.  It is
     appropriate when the position is held fixed (e.g. on a detection grid) and
     only the contrast uncertainty at that grid point is needed.  For the joint
-    uncertainty over all parameters, use :func:`laplace_cov` instead.
+    uncertainty over all parameters, use [`laplace_cov`][drpangloss.models.laplace_cov] instead.
 
     Parameters
     ----------
@@ -1458,7 +1509,7 @@ def laplace_contrast_uncertainty(
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
     params : list[str] or tuple[str, str, str], optional
         Parameter names corresponding to ``(dra, ddec, flux)``. Defaults to
         ``["dra", "ddec", "flux"]``.
@@ -1486,7 +1537,28 @@ def laplace_contrast_uncertainty(
 def laplace_parameter_uncertainty(
     values, params, data_obj, model, target_param
 ):
-    """Compute scalar Laplace uncertainty for one parameter with all others fixed."""
+    """Compute scalar Laplace uncertainty for one parameter with all others fixed.
+
+    Parameters
+    ----------
+    values : array-like
+        Parameter values at which to evaluate the curvature.
+    params : list[str]
+        Parameter names corresponding to ``values``.
+    data_obj : OIData
+        Data to fit.
+    model : SourceModel or callable
+        Template model or class, as for [`loglike`][drpangloss.models.loglike].
+    target_param : str
+        The parameter whose uncertainty is returned.
+
+    Returns
+    -------
+    float
+        ``(d² -log L / d target²)^(-1/2)``. It is NaN where the curvature is
+        not positive, i.e. away from a likelihood maximum along
+        ``target_param``.
+    """
     params = list(params)
     if target_param not in params:
         raise ValueError(
@@ -1504,7 +1576,9 @@ def laplace_parameter_uncertainty(
 
 @_renamed_argument("model_class", "model")
 def fisher(values, params, data_obj, model, ridge=0.0):
-    """Approximate the local Fisher matrix at a parameter point.
+    """Observed information (Hessian of ``-log L``) at a parameter point.
+
+    At the maximum-likelihood point this approximates the Fisher matrix.
 
     Parameters
     ----------
@@ -1517,14 +1591,14 @@ def fisher(values, params, data_obj, model, ridge=0.0):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see :func:`build_model`).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
     ridge : float, optional
         Diagonal regularization term.
 
     Returns
     -------
     array-like
-        Fisher information matrix.
+        Observed information matrix, ``N x N`` for ``N = len(params)``.
     """
     objective = lambda vals: -loglike(vals, params, data_obj, model)
     return _fisher_matrix(
@@ -1538,32 +1612,42 @@ def chi2ppf(p, df):
 
     For ``df=1`` (the path used in ``nsigma``), use the closed-form identity
     based on the standard normal quantile, i.e. square ``norm.ppf((p+1)/2)``.
-    This remains JAX-native,
-    differentiable, and fast.
+    This remains JAX-native, differentiable, and fast.
 
-    For ``df != 1``, this falls back to numpyro's gammaincinv backend when
-    available.
+    For ``df != 1``, this falls back to numpyro's gammaincinv backend.
 
     Parameters
     ----------
     p : array-like
-        Percentile value
+        Percentile value.
     df : array-like
-        Degrees of freedom
+        Degrees of freedom.
 
     Returns
     -------
     array-like
-        Corresponding chi2 value to the percentile
+        Corresponding chi2 value to the percentile.
+
+    Notes
+    -----
+    ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
+    the result stays finite. Near ``p = 1`` this loses precision; to convert
+    small tail probabilities, use [`nsigma`][drpangloss.models.nsigma], which works with the upper
+    tail directly.
     """
     p = np.asarray(p, dtype=float)
-    p = np.clip(p, np.finfo(float).eps, 1.0 - np.finfo(float).eps)
+    eps = np.finfo(p.dtype).eps
+    p = np.clip(p, eps, 1.0 - eps)
 
     try:
         if float(onp.asarray(df)) == 1.0:
             z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
             return z**2
-    except Exception:
+    except (
+        TypeError,
+        jax.errors.TracerArrayConversionError,
+        jax.errors.ConcretizationTypeError,
+    ):
         pass
 
     from numpyro.distributions.util import gammaincinv
@@ -1573,6 +1657,13 @@ def chi2ppf(p, df):
 
 def nsigma(chi2r_test, chi2r_true, ndof):
     """
+    Convert a reduced-chi-squared ratio to a Gaussian-equivalent significance.
+
+    The statistic ``x = ndof * chi2r_test / chi2r_true`` is compared with a
+    chi-squared distribution of ``ndof`` degrees of freedom, and its
+    upper-tail probability is expressed as the equivalent two-sided Gaussian
+    significance (as in Absil et al. 2011).
+
     Parameters
     ----------
     chi2r_test: float
@@ -1585,10 +1676,17 @@ def nsigma(chi2r_test, chi2r_true, ndof):
     Returns
     -------
     nsigma: float
-        Detection significance.
+        Detection significance in Gaussian sigma.
+
+    Notes
+    -----
+    The upper tail is computed directly (with the regularized incomplete
+    gamma function) rather than as ``1 - cdf``, so significances stay finite
+    and accurate far beyond 8σ, including in float32 (up to about 13σ).
     """
-
-    percentile = jax.scipy.stats.chi2.cdf(ndof * chi2r_test / chi2r_true, ndof)
-    nsigma = np.sqrt(chi2ppf(percentile, 1.0))
-
-    return nsigma
+    x = ndof * chi2r_test / chi2r_true
+    half_tail = 0.5 * jax.scipy.special.gammaincc(ndof / 2.0, x / 2.0)
+    # Floor at the smallest normal number, so the result saturates (about
+    # 13σ in float32, 37σ in float64) instead of becoming infinite.
+    half_tail = np.maximum(half_tail, np.finfo(half_tail.dtype).tiny)
+    return -jax.scipy.special.ndtri(half_tail)

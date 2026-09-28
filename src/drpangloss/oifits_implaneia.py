@@ -1,21 +1,65 @@
-#! /usr/bin/env python
+"""Legacy OIFITS helpers from ImPlaneIA (reading, plotting, writing AMI data).
 
-"""OIFITS helper utilities for reading, plotting, and writing AMI products."""
+These functions work on the ImPlaneIA dictionary layout (``info``,
+``OI_VIS``, ``OI_VIS2``, ``OI_T3``, ...). They are kept for existing scripts,
+but new code should prefer [`drpangloss.oifits`][drpangloss.oifits], which reads and writes
+OIFITS with ``astropy.io.fits`` alone:
 
+* [`drpangloss.oifits.write_oifits`][drpangloss.oifits.write_oifits] accepts the same dictionary layout
+  as [`save`][drpangloss.oifits_implaneia.save], without querying SIMBAD.
+* [`drpangloss.oidata.OIData`][drpangloss.oidata.OIData] reads OIFITS files directly (including
+  several channels and flags), replacing [`load_oifits`][drpangloss.oifits_implaneia.load_oifits].
+
+TODO: once downstream scripts have moved, reduce this module to thin
+wrappers around [`drpangloss.oifits`][drpangloss.oifits] (keeping [`load`][drpangloss.oifits_implaneia.load] and
+[`show`][drpangloss.oifits_implaneia.show] for the ImPlaneIA dictionary layout) and drop the astroquery and
+termcolor dependencies.
+
+Phases in these dictionaries are in **degrees**, as in OIFITS.
+"""
+
+import copy
 import datetime
 import os
-import copy
+
 import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astroquery.simbad import Simbad
-from matplotlib import pyplot as plt
-from termcolor import cprint
 
 import jax.numpy as jnp
 
-plt.close("all")
+# cp_indices is re-exported here for existing imports.
+from .oidata import OIData, cp_indices  # noqa: F401
+
+
+# astroquery is imported only when save() queries SIMBAD; tests may replace
+# this with a stand-in.
+Simbad = None
+
+
+def _simbad():
+    """The astroquery ``Simbad`` class, imported on first use."""
+    if Simbad is not None:
+        return Simbad
+    from astroquery.simbad import Simbad as simbad_class
+
+    return simbad_class
+
+
+def _cprint(text, *args, **kwargs):
+    """Coloured print if termcolor is installed, plain print otherwise."""
+    try:
+        from termcolor import cprint
+    except ImportError:
+        print(text)
+    else:
+        cprint(text, *args, **kwargs)
+
+
+def _scalar(value):
+    """First element of a scalar, list or array (per-table metadata)."""
+    return np.ravel(np.asarray(value))[0]
 
 
 list_color = ["#00a7b5", "#afd1de", "#055c63", "#ce0058", "#8a8d8f", "#f1b2dc"]
@@ -27,7 +71,10 @@ def rad2mas(rad):
 
 
 def GetWavelength(ins, filt):
-    """Get wavelengths information from using instrument and filter informations."""
+    """Return ``(wavelength, bandwidth)`` in metres for an instrument filter.
+
+    Only JWST NIRISS AMI filters (``ins="JWST"``) are tabulated.
+    """
     dic_filt = {
         "JWST": {
             "F277W": [2.776, 0.715],
@@ -44,36 +91,41 @@ def GetWavelength(ins, filt):
 
 
 def Format_STAINDEX_V2(tab):
-    """Converts sta_index to save oifits in the appropriate format."""
-    sta_index = []
-    for x in tab:
-        ap1 = int(x[0])
-        ap2 = int(x[1])
-        if np.min(tab) == 0:
-            line = np.array([ap1, ap2]) + 1  # RAC 2/2021
-        else:
-            line = np.array([ap1, ap2])
-        sta_index.append(line)
-    return sta_index
+    """Return baseline station pairs as 1-based ``(n, 2)`` integers.
+
+    Zero-based indices (any 0 present) are shifted up by one.
+    """
+    tab = np.asarray(tab, dtype=int).reshape(-1, 2)
+    return tab + 1 if tab.min() == 0 else tab  # RAC 2/2021
 
 
 def Format_STAINDEX_T3(tab):
-    """Converts sta_index to save oifits in the appropriate format."""
-    sta_index = []
-    for x in tab:
-        ap1 = int(x[0])
-        ap2 = int(x[1])
-        ap3 = int(x[2])
-        if np.min(tab) == 0:
-            line = np.array([ap1, ap2, ap3]) + 1
-        else:
-            line = np.array([ap1, ap2, ap3])
-        sta_index.append(line)
-    return sta_index
+    """Return triangle station triplets as 1-based ``(n, 3)`` integers.
+
+    Zero-based indices (any 0 present) are shifted up by one.
+    """
+    tab = np.asarray(tab, dtype=int).reshape(-1, 3)
+    return tab + 1 if tab.min() == 0 else tab
 
 
 def ApplyFlag(data, unit="arcsec"):
-    """Apply flag and convert to the appropriate units."""
+    """Remove flagged points and convert baselines to the requested units.
+
+    Parameters
+    ----------
+    data : dict
+        ImPlaneIA dictionary with ``OI_WAVELENGTH``, ``OI_VIS2`` (with a
+        ``BL`` baseline-length column), ``OI_T3`` and ``info``.
+    unit : {"m", "rad", "arcsec", "lambda"}, optional
+        Units of the returned baselines: metres, cycles per radian, cycles
+        per arcsecond, or millions of wavelengths.
+
+    Returns
+    -------
+    tuple
+        ``(U, V, bmax, V2, e_V2, cp, e_cp, sp_freq_vis, sp_freq_cp, wl,
+        filter)``, with the flagged V² points removed from ``U``/``V`` too.
+    """
 
     wl = data["OI_WAVELENGTH"]["EFF_WAVE"]
     uv_scale = {
@@ -83,14 +135,14 @@ def ApplyFlag(data, unit="arcsec"):
         "lambda": 1 / wl / 1e6,
     }
 
-    U = data["OI_VIS2"]["UCOORD"] * uv_scale[unit]
-    V = data["OI_VIS2"]["VCOORD"] * uv_scale[unit]
+    flag_v2 = ~np.asarray(data["OI_VIS2"]["FLAG"], dtype=bool)
+    U = np.asarray(data["OI_VIS2"]["UCOORD"])[flag_v2] * uv_scale[unit]
+    V = np.asarray(data["OI_VIS2"]["VCOORD"])[flag_v2] * uv_scale[unit]
 
-    flag_v2 = np.invert(data["OI_VIS2"]["FLAG"])
     V2 = data["OI_VIS2"]["VIS2DATA"][flag_v2]
     e_V2 = data["OI_VIS2"]["VIS2ERR"][flag_v2] * 1
     sp_freq_vis = data["OI_VIS2"]["BL"][flag_v2] * uv_scale[unit]
-    flag_cp = np.invert(data["OI_T3"]["FLAG"])
+    flag_cp = ~np.asarray(data["OI_T3"]["FLAG"], dtype=bool)
     cp = data["OI_T3"]["T3PHI"][flag_cp]
     e_cp = data["OI_T3"]["T3PHIERR"][flag_cp]
     sp_freq_cp = data["OI_T3"]["BL"][flag_cp] * uv_scale[unit]
@@ -115,16 +167,25 @@ def save(dic, filename=None, datadir=None, verbose=False):
     """
     Save dictionary formatted data into a proper OIFITS (version 2) format file.
 
+    New code should prefer [`drpangloss.oifits.write_oifits`][drpangloss.oifits.write_oifits], which
+    takes the same dictionary, supports flags, and makes no network calls.
+
     Parameters
     ----------
     dic : dict
-        Dictionary containing extracted OIFITS-compatible tables with keys such
-        as ``OI_VIS2``, ``OI_VIS``, ``OI_T3``, ``OI_WAVELENGTH``, and ``info``.
-    filename : str, optional
-        Output filename. If omitted, the name is derived from entries in
-        ``dic["info"]``.
-    datadir : str, optional
-        Destination directory for the output file.
+        ImPlaneIA dictionary with the tables ``OI_WAVELENGTH``, ``OI_VIS``,
+        ``OI_VIS2`` and ``OI_T3`` and an ``info`` dict. ``info`` must hold
+        ``TARGET``, ``OBJECT``, ``INSTRUME``, ``MASK``, ``ARRNAME``, ``FILT``,
+        ``DATE-OBS``, ``TELESCOP``, ``OBSERVER``, ``INSMODE``, ``PA``,
+        ``MJD``, ``PSCALE`` (mas/pixel), ``ISZ`` and ``STAXY``/``CTRS_EQT``
+        (or an ``OI_ARRAY`` table holding them). Phases (``VISPHI``,
+        ``T3PHI``) are in degrees. ``dic`` is not modified.
+    filename : str or os.PathLike, optional
+        Output filename. If omitted, the name is built from ``TARGET``,
+        ``INSTRUME``, ``MASK``, ``FILT`` and ``MJD`` in ``dic["info"]``.
+    datadir : str or os.PathLike, optional
+        Destination directory (default ``"Saveoifits/"``), created if
+        needed.
     verbose : bool, optional
         If ``True``, print progress while writing tables.
 
@@ -132,41 +193,30 @@ def save(dic, filename=None, datadir=None, verbose=False):
     -------
     None
         Writes an OIFITS file to disk.
+
+    Notes
+    -----
+    Unless ``info["TARGET"]`` is ``"UNKNOWN"``, the target's coordinates,
+    proper motion, parallax and spectral type are queried from SIMBAD over
+    the network (this needs ``astroquery``).
     """
     if dic is None:
-        cprint("\nError save oifits : Wrong data format!", on_color="on_red")
-        return None
+        raise ValueError("save(): dic is None; nothing to write.")
+    # Work on a copy: the per-table metadata below is normalized in place.
+    dic = copy.deepcopy(dic)
 
-    if datadir is None:
-        datadir = "Saveoifits/"
-    if datadir[-1] != "/":
-        datadir = datadir + "/"
+    datadir = "Saveoifits/" if datadir is None else os.fspath(datadir)
+    os.makedirs(datadir, exist_ok=True)
 
-    if not os.path.exists(datadir):
-        print(
-            "### Create %s directory to save all requested Oifits ###"
-            % datadir
+    if not isinstance(filename, (str, os.PathLike)):
+        info = dic["info"]
+        filename = "%s_%s_%s_%s_%s.oifits" % (
+            str(info["TARGET"]).replace(" ", ""),
+            info["INSTRUME"],
+            info["MASK"],
+            info["FILT"],
+            _scalar(info["MJD"]),
         )
-        os.system("mkdir %s" % datadir)
-
-    if type(filename) != str:
-        try:
-            if len(dic["info"]["MJD"]) > 1:
-                filename = "%s_%s_%s_%s_%s.oifits" % (
-                    dic["info"]["TARGET"].replace(" ", ""),
-                    dic["info"]["INSTRUME"],
-                    dic["info"]["MASK"],
-                    dic["info"]["FILT"],
-                    dic["info"]["MJD"][0],
-                )  # if loaded from oifits it is a list
-        except TypeError:
-            filename = "%s_%s_%s_%s_%s.oifits" % (
-                dic["info"]["TARGET"].replace(" ", ""),
-                dic["info"]["INSTRUME"],
-                dic["info"]["MASK"],
-                dic["info"]["FILT"],
-                dic["info"]["MJD"],
-            )
 
     # ------------------------------
     #       Creation OIFITS
@@ -176,9 +226,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
 
     hdulist = fits.HDUList()
     hdu = fits.PrimaryHDU()
-    hdu.header["DATE"] = datetime.datetime.now().strftime(
-        format="%F"
-    )  # , 'Creation date'
+    hdu.header["DATE"] = datetime.date.today().isoformat()  # Creation date
     hdu.header["ORIGIN"] = "STScI"
     hdu.header["DATE-OBS"] = dic["info"]["DATE-OBS"]
     hdu.header["CONTENT"] = "OIFITS2"
@@ -189,7 +237,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
     hdu.header["INSMODE"] = dic["info"]["INSMODE"]
     hdu.header["FILT"] = dic["info"]["FILT"]
     hdu.header["ARRNAME"] = dic["info"]["ARRNAME"]  # Anand 9/2020
-    hdu.header["MASK"] = dic["info"]["ARRNAME"]  # Anand 9/2020
+    hdu.header["MASK"] = dic["info"]["MASK"]  # Anand 9/2020
     hdu.header["PA"] = dic["info"]["PA"]  # RC 1/2021
     # name of calibrator if applicable. RC 1/2021
     try:
@@ -206,11 +254,16 @@ def save(dic, filename=None, datadir=None, verbose=False):
         print("-> Including OI Wavelength table...")
     data = dic["OI_WAVELENGTH"]
 
+    # One row per wavelength channel.
+    eff_wave = np.atleast_1d(np.asarray(data["EFF_WAVE"], dtype=float))
+    eff_band = np.broadcast_to(
+        np.asarray(data["EFF_BAND"], dtype=float), eff_wave.shape
+    )
     col1 = fits.Column(
-        name="EFF_WAVE", format="1E", unit="METERS", array=[data["EFF_WAVE"]]
+        name="EFF_WAVE", format="1E", unit="METERS", array=eff_wave
     )
     col2 = fits.Column(
-        name="EFF_BAND", format="1E", unit="METERS", array=[data["EFF_BAND"]]
+        name="EFF_BAND", format="1E", unit="METERS", array=eff_band
     )
 
     coldefs = fits.ColDefs([col1, col2])
@@ -236,20 +289,9 @@ def save(dic, filename=None, datadir=None, verbose=False):
         ra, dec, spectyp = [0], [0], ["unknown"]
         pmra, pmdec, plx = [0], [0], [0]
     else:
-        customSimbad = Simbad()
-        customSimbad.add_votable_fields("propermotions", "sp_type", "parallax")
-        try:
-            query = customSimbad.query_object(name_star)
-            coord = SkyCoord(
-                query["RA"][0] + " " + query["DEC"][0],
-                unit=(u.hourangle, u.deg),
-            )
-            ra, dec = [coord.ra.deg], [coord.dec.deg]
-            spectyp, plx = query["SP_TYPE"], query["PLX_VALUE"]
-            pmra, pmdec = query["PMRA"], query["PMDEC"]
-        except TypeError:
-            ra, dec, spectyp = [0], [0], ["unknown"]
-            pmra, pmdec, plx = [0], [0], [0]
+        # TODO: let callers pass coordinates instead of querying SIMBAD here
+        # (drpangloss.oifits.write_oifits already does).
+        ra, dec, spectyp, pmra, pmdec, plx = _query_simbad(name_star)
 
     col1 = fits.Column(name="TARGET_ID", format="1I", array=[1])
     col2 = fits.Column(name="TARGET", format="16A", array=[name_star])
@@ -335,7 +377,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
 
     pscale = dic["info"]["PSCALE"] / 1000.0  # arcsec
     isz = dic["info"]["ISZ"]  # Size of the image to extract NRM data
-    fov = [pscale * isz] * N_ap
+    fov = [pscale * isz / 2.0] * N_ap  # FOVTYPE RADIUS: half the width
     fovtype = ["RADIUS"] * N_ap
 
     col1 = fits.Column(name="TEL_NAME", format="16A", array=tel_name)
@@ -377,21 +419,8 @@ def save(dic, filename=None, datadir=None, verbose=False):
     npts = len(dic["OI_VIS"]["VISAMP"])
 
     sta_index = Format_STAINDEX_V2(data["STA_INDEX"])
-    some_keys = ["TARGET_ID", "TIME", "MJD", "INT_TIME"]
-    for akey in some_keys:
-        try:
-            if len(data[akey]) > 1:
-                data[akey] = data[akey][0]
-                if len(data[akey]) > 1:
-                    data[akey] = data[akey][0]
-        except TypeError:
-            pass
-    if len(data["VISAMP"].shape) == 1:  # figure out if it's multi-slice or not
-        nslice = 1
-    else:
-        nslice = data["VISAMP"].shape[
-            1
-        ]  # this would cause an error if not multi-slice
+    _normalize_row_metadata(data)
+    nslice = _n_channels(data["VISAMP"])
     col1 = fits.Column(
         name="TARGET_ID", format="1I", array=[data["TARGET_ID"]] * npts
     )
@@ -432,7 +461,9 @@ def save(dic, filename=None, datadir=None, verbose=False):
         name="VCOORD", format="1D", unit="METERS", array=data["VCOORD"]
     )
     col11 = fits.Column(name="STA_INDEX", format="2I", array=sta_index)
-    col12 = fits.Column(name="FLAG", format="1L", array=data["FLAG"])
+    col12 = fits.Column(
+        name="FLAG", format="%dL" % nslice, array=_flags(data, npts, nslice)
+    )
 
     coldefs = fits.ColDefs(
         [
@@ -471,15 +502,10 @@ def save(dic, filename=None, datadir=None, verbose=False):
     data = dic["OI_VIS2"]
     npts = len(dic["OI_VIS2"]["VIS2DATA"])
 
-    some_keys = ["TARGET_ID", "TIME", "MJD", "INT_TIME"]
-    for akey in some_keys:
-        try:
-            if len(data[akey]) > 1:
-                data[akey] = data[akey][0]
-                if len(data[akey]) > 1:
-                    data[akey] = data[akey][0]
-        except TypeError:
-            pass
+    # OI_VIS2 may order its baselines differently from OI_VIS.
+    sta_index = Format_STAINDEX_V2(data["STA_INDEX"])
+    _normalize_row_metadata(data)
+    nslice = _n_channels(data["VIS2DATA"])
     col1 = fits.Column(
         name="TARGET_ID", format="1I", array=[data["TARGET_ID"]] * npts
     )
@@ -508,7 +534,9 @@ def save(dic, filename=None, datadir=None, verbose=False):
         name="VCOORD", format="1D", unit="METERS", array=data["VCOORD"]
     )
     col9 = fits.Column(name="STA_INDEX", format="2I", array=sta_index)
-    col10 = fits.Column(name="FLAG", format="1L", array=data["FLAG"])
+    col10 = fits.Column(
+        name="FLAG", format="%dL" % nslice, array=_flags(data, npts, nslice)
+    )
 
     coldefs = fits.ColDefs(
         [col1, col2, col3, col4, col5, col6, col7, col8, col9, col10]
@@ -535,19 +563,14 @@ def save(dic, filename=None, datadir=None, verbose=False):
     npts = len(dic["OI_T3"]["T3PHI"])
 
     sta_index = Format_STAINDEX_T3(data["STA_INDEX"])
-    some_keys = ["TARGET_ID", "TIME", "MJD", "INT_TIME"]
-    for akey in some_keys:
-        try:
-            if len(data[akey]) > 1:
-                data[akey] = data[akey][0]
-                if len(data[akey]) > 1:
-                    data[akey] = data[akey][0]
-        except TypeError:
-            pass
+    _normalize_row_metadata(data)
+    nslice = _n_channels(data["T3PHI"])
 
-    col1 = fits.Column(name="TARGET_ID", format="1I", array=[1] * npts)
+    col1 = fits.Column(
+        name="TARGET_ID", format="1I", array=[data["TARGET_ID"]] * npts
+    )
     col2 = fits.Column(
-        name="TIME", format="1D", unit="SECONDS", array=[0] * npts
+        name="TIME", format="1D", unit="SECONDS", array=[data["TIME"]] * npts
     )
     col3 = fits.Column(
         name="MJD", format="1D", unit="DAY", array=[data["MJD"]] * npts
@@ -589,7 +612,9 @@ def save(dic, filename=None, datadir=None, verbose=False):
         name="V2COORD", format="1D", unit="METERS", array=data["V2COORD"]
     )
     col13 = fits.Column(name="STA_INDEX", format="3I", array=sta_index)
-    col14 = fits.Column(name="FLAG", format="1L", array=data["FLAG"])
+    col14 = fits.Column(
+        name="FLAG", format="%dL" % nslice, array=_flags(data, npts, nslice)
+    )
 
     coldefs = fits.ColDefs(
         [
@@ -624,11 +649,73 @@ def save(dic, filename=None, datadir=None, verbose=False):
     # ------------------------------
     #          Save file
     # ------------------------------
-    # print(os.path.join(datadir,filename))
     hdulist.writeto(os.path.join(datadir, filename), overwrite=True)
-    cprint("\n\n### OIFITS CREATED (%s)." % filename, "cyan")
-    del hdu
-    del hdulist
+    if verbose:
+        _cprint("\n\n### OIFITS CREATED (%s)." % filename, "cyan")
+
+
+def _normalize_row_metadata(data):
+    """Reduce per-table TARGET_ID/TIME/MJD/INT_TIME to scalars.
+
+    TODO: write the per-row values instead, so that tables spanning several
+    epochs keep their times (drpangloss.oifits.write_oifits does).
+    """
+    for key in ("TARGET_ID", "TIME", "MJD", "INT_TIME"):
+        if key in data:
+            data[key] = _scalar(data[key])
+
+
+def _n_channels(values):
+    """Number of wavelength channels of a data column."""
+    values = np.asarray(values)
+    return 1 if values.ndim == 1 else values.shape[1]
+
+
+def _flags(data, npts, nslice):
+    """FLAG column of shape ``(npts, nslice)`` (default: nothing flagged)."""
+    if "FLAG" not in data:
+        return np.zeros((npts, nslice), dtype=bool)
+    return np.asarray(data["FLAG"], dtype=bool).reshape(npts, nslice)
+
+
+def _query_simbad(name):
+    """Return SIMBAD ``(ra, dec, spectyp, pmra, pmdec, plx)`` for OI_TARGET.
+
+    Coordinates are in degrees, proper motions in deg/yr and the parallax in
+    degrees, as OIFITS requires (SIMBAD gives mas/yr and mas). Any failure,
+    including a network error or an unknown target, gives zeros.
+    """
+    unknown = [0], [0], ["unknown"], [0], [0], [0]
+    mas_to_deg = 1.0 / 3.6e6
+    try:
+        custom_simbad = _simbad()()
+        custom_simbad.add_votable_fields(
+            "propermotions", "sp_type", "parallax"
+        )
+        query = custom_simbad.query_object(name)
+        names = {col.lower(): col for col in query.colnames}
+
+        def column(*candidates):
+            for candidate in candidates:
+                if candidate in names:
+                    return query[names[candidate]][0]
+            raise KeyError(candidates)
+
+        ra, dec = column("ra"), column("dec")
+        if isinstance(ra, str):
+            # astroquery < 0.4.8 returns sexagesimal strings.
+            coord = SkyCoord(ra + " " + dec, unit=(u.hourangle, u.deg))
+            ra, dec = coord.ra.deg, coord.dec.deg
+        return (
+            [float(ra)],
+            [float(dec)],
+            [str(column("sp_type"))],
+            [float(column("pmra")) * mas_to_deg],
+            [float(column("pmdec")) * mas_to_deg],
+            [float(column("plx_value")) * mas_to_deg],
+        )
+    except Exception:
+        return unknown
 
 
 def load(filename, target=None, ins=None, mask=None, include_vis=True):
@@ -645,13 +732,15 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
     mask : str, optional
         Fallback mask name if not present in headers.
     include_vis : bool, optional
-        If ``True``, include visibility-amplitude and visibility-phase tables
-        when available.
+        If ``True`` (default), include the ``OI_VIS`` (visibility amplitude
+        and phase) table when available.
 
     Returns
     -------
     dict
-        Dictionary containing parsed OIFITS tables and metadata.
+        ImPlaneIA dictionary of the tables and metadata. Only the last table
+        of each type is kept, and phases stay in degrees. To fit the data,
+        use [`drpangloss.oidata.OIData`][drpangloss.oidata.OIData] on the file instead.
     """
     with fits.open(filename, mode="readonly", memmap=False) as hdulist:
         fitsHandler = copy.deepcopy(hdulist)
@@ -704,34 +793,29 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
             dic["info"]["PA"] = None
 
         for hdu in fitsHandler[1:]:
+            extname = str(hdu.header.get("EXTNAME", "")).strip().upper()
             # RAC 9/2020
             # try to read in info from the OI_ARRAY required for re-saving
-            if hdu.header["EXTNAME"] == "OI_ARRAY":
-                try:
-                    dic["info"]["PSCALE"] = hdu.header["PSCALE"]
-                except KeyError:
-                    continue
-                try:
-                    dic["info"]["ISZ"] = hdu.header["ISZ"]
-                except KeyError:
-                    continue
+            if extname == "OI_ARRAY":
+                # PSCALE, ISZ and CTRS_EQT are ImPlaneIA extensions.
+                for key in ("PSCALE", "ISZ"):
+                    if key in hdu.header:
+                        dic["info"][key] = hdu.header[key]
 
                 # make staxy from staxyz array (remove last column)
                 staxyz = hdu.data["STAXYZ"]
                 staxy = np.delete(staxyz, -1, 1)
-                dic["OI_ARRAY"] = {
-                    "STAXYZ": staxyz,
-                    "STAXY": staxy,
-                    "CTRS_EQT": hdu.data["CTRS_EQT"],
-                }
+                dic["OI_ARRAY"] = {"STAXYZ": staxyz, "STAXY": staxy}
+                if "CTRS_EQT" in hdu.columns.names:
+                    dic["OI_ARRAY"]["CTRS_EQT"] = hdu.data["CTRS_EQT"]
 
-            if hdu.header["EXTNAME"] == "OI_WAVELENGTH":
+            if extname == "OI_WAVELENGTH":
                 dic["OI_WAVELENGTH"] = {
                     "EFF_WAVE": hdu.data["EFF_WAVE"],
                     "EFF_BAND": hdu.data["EFF_BAND"],
                 }
 
-            if hdu.header["EXTNAME"] == "OI_VIS2":
+            if extname == "OI_VIS2":
                 dic["OI_VIS2"] = {
                     "VIS2DATA": hdu.data["VIS2DATA"],
                     "VIS2ERR": hdu.data["VIS2ERR"],
@@ -746,7 +830,7 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
                 }
                 # these are in every extension, but take them from here
                 dic["info"]["MJD"] = hdu.data["MJD"][0]
-                dic["info"]["ARRNAME"] = hdu.header["ARRNAME"]
+                dic["info"]["ARRNAME"] = hdu.header.get("ARRNAME")
                 try:
                     dic["OI_VIS2"]["BL"] = hdu.data["BL"]
                 except KeyError:
@@ -754,7 +838,7 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
                         hdu.data["UCOORD"] ** 2 + hdu.data["VCOORD"] ** 2
                     ) ** 0.5
 
-            if hdu.header["EXTNAME"] == "OI_VIS":
+            if extname == "OI_VIS" and include_vis:
                 dic["OI_VIS"] = {
                     "TARGET_ID": hdu.data["TARGET_ID"],
                     "TIME": hdu.data["TIME"],
@@ -776,20 +860,15 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
                         hdu.data["UCOORD"] ** 2 + hdu.data["VCOORD"] ** 2
                     ) ** 0.5
 
-            if hdu.header["EXTNAME"] == "OI_T3":
+            if extname == "OI_T3":
                 u1 = hdu.data["U1COORD"]
                 u2 = hdu.data["U2COORD"]
                 v1 = hdu.data["V1COORD"]
                 v2 = hdu.data["V2COORD"]
-                u3 = -(u1 + u2)
-                v3 = -(v1 + v2)
-                bl_cp = []
-                for k in range(len(u1)):
-                    B1 = np.sqrt(u1[k] ** 2 + v1[k] ** 2)
-                    B2 = np.sqrt(u2[k] ** 2 + v2[k] ** 2)
-                    B3 = np.sqrt(u3[k] ** 2 + v3[k] ** 2)
-                    bl_cp.append(np.max([B1, B2, B3]))  # rad-1
-                bl_cp = np.array(bl_cp)
+                # Longest baseline of each triangle, in metres.
+                bl_cp = np.max(
+                    np.hypot([u1, u2, u1 + u2], [v1, v2, v1 + v2]), axis=0
+                )
 
                 dic["OI_T3"] = {
                     "T3PHI": hdu.data["T3PHI"],
@@ -807,10 +886,7 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
                     "TIME": hdu.data["TIME"],
                     "INT_TIME": hdu.data["INT_TIME"],
                 }
-                try:
-                    dic["OI_T3"]["BL"] = hdu.data["FREQ"]  # why?
-                except KeyError:
-                    dic["OI_T3"]["BL"] = bl_cp
+                dic["OI_T3"]["BL"] = bl_cp
     del fitsHandler
 
     return dic
@@ -853,26 +929,25 @@ def show(
     matplotlib.figure.Figure
         Figure containing UV, visibility, and closure-phase panels.
     """
+    from matplotlib import pyplot as plt
 
-    if type(inputList) is not list:
+    if not isinstance(inputList, list):
         inputList = [inputList]
 
-    if type(inputList[0]) is str:
+    if isinstance(inputList[0], (str, os.PathLike)):
         l_dic = [load(x) for x in inputList]
-        print("Inputs are oifits filename.")
-    elif type(inputList[0]) is dict:
+    elif isinstance(inputList[0], dict):
         l_dic = inputList
-        print("Inputs are dict from oifits.load or ObservablesFromText.")
-
-    # return None
+    else:
+        raise TypeError(
+            "show() expects OIFITS filenames or dictionaries from load()."
+        )
 
     dic_color = {}
-    i_c = 0
     for dic in l_dic:
         filt = dic["info"]["FILT"]
-        if filt not in dic_color.keys():
-            dic_color[filt] = list_color[i_c]
-            i_c += 1
+        if filt not in dic_color:
+            dic_color[filt] = list_color[len(dic_color) % len(list_color)]
 
     fig = plt.figure(figsize=(16, 5.5))
     ax1 = plt.subplot2grid((2, 6), (0, 0), rowspan=2, colspan=2)
@@ -888,11 +963,11 @@ def show(
         V = tmp[1]
         band = tmp[10]
         wl = tmp[9]
-        label = "%2.2f $\\mu m$ (%s)" % (wl, band)
+        label = "%2.2f $\\mu m$ (%s)" % (_scalar(wl) * 1e6, band)
         if diffWl:
             c1, c2 = dic_color[band], dic_color[band]
-            if band not in l_band_al:
-                label = "%2.2f $\\mu m$ (%s)" % (wl * 1e6, band)
+            if band in l_band_al:
+                label = None  # one legend entry per filter
         else:
             c1, c2 = "#00adb5", "#fc5185"
         l_bmax.append(tmp[2])
@@ -1072,6 +1147,9 @@ def show(
 def load_oifits(filename, directory):
     """Load a single OIFITS file and return flattened AMI-ready observables.
 
+    Prefer [`drpangloss.oidata.OIData`][drpangloss.oidata.OIData], which reads the same file with
+    phases in radians, several wavelength channels and flags.
+
     Parameters
     ----------
     filename : str
@@ -1082,100 +1160,22 @@ def load_oifits(filename, directory):
     Returns
     -------
     tuple
-        ``(u, v, cp, cp_err, vis2, vis2_err, i_cps1, i_cps2, i_cps3)`` where
-        baselines are converted to spatial frequencies using the effective
-        wavelength.
+        ``(u, v, cp, cp_err, vis2, vis2_err, i_cps1, i_cps2, i_cps3)``:
+        spatial frequencies in cycles per radian, closure phases and their
+        errors in **degrees**, squared visibilities and their errors, and the
+        closure-phase baseline indices. Flagged points are removed, except
+        for spatial frequencies needed by closure phases.
     """
-    wav = []
-    wav_band = []
-    vis2 = []
-    vis2_err = []
-    u = []
-    v = []
-    cp = []
-    cp_err = []
-    i_cps1 = []
-    i_cps2 = []
-    i_cps3 = []
-    ind1 = 0
-    wav_b = []
-    # Load the oifits
-    dat = os.path.join(directory, filename)
-    obj = load(dat)
-    # extract important quantities and append to lists
-    wav.append(obj["OI_WAVELENGTH"]["EFF_WAVE"])
-    wav_b.append(obj["OI_WAVELENGTH"]["EFF_BAND"])
-    vis2.append(obj["OI_VIS2"]["VIS2DATA"])
-    vis2_err.append(obj["OI_VIS2"]["VIS2ERR"])
-    u.append(obj["OI_VIS2"]["UCOORD"])
-    v.append(obj["OI_VIS2"]["VCOORD"])
-    vis_sta_index = obj["OI_VIS2"]["STA_INDEX"]
-    cp.append(obj["OI_T3"]["T3PHI"])
-    cp_err.append(obj["OI_T3"]["T3PHIERR"])
-    wav_band.append(obj["OI_WAVELENGTH"]["EFF_BAND"])
-    cp_sta_index = obj["OI_T3"]["STA_INDEX"]
-    i_cps1t, i_cps2t, i_cps3t = cp_indices(vis_sta_index, cp_sta_index)
-
-    i_cps1.append(i_cps1t + ind1 * 21)
-    i_cps2.append(i_cps2t + ind1 * 21)
-    i_cps3.append(i_cps3t + ind1 * 21)
-    ind1 += 1
-    wav = jnp.array(wav)
-    vis2 = jnp.array(vis2)
-    vis2_err = jnp.array(vis2_err)
-    u = jnp.array(u)
-    v = jnp.array(v)
-    cp = jnp.array(cp)
-    cp_err = jnp.array(cp_err)
-    i_cps1 = jnp.array(i_cps1)
-    i_cps2 = jnp.array(i_cps2)
-    i_cps3 = jnp.array(i_cps3)
-
-    a21 = jnp.argwhere(wav)[:, 0]
-    wav21 = wav[a21][0, :][0]
-    vis221 = jnp.array(vis2)[a21, :]
-    vis2_err21 = jnp.hstack(jnp.array(vis2_err)[a21, :])
-    u21 = jnp.hstack(jnp.array(u)[a21, :])
-    v21 = jnp.hstack(jnp.array(v)[a21, :])
-    cp21 = jnp.array(cp)[a21, :]
-    cp_err21 = jnp.hstack(jnp.array(cp_err)[a21, :])
-    i_cps121 = jnp.hstack(jnp.array(i_cps1)[a21, :])
-    i_cps221 = jnp.hstack(jnp.array(i_cps2)[a21, :])
-    i_cps321 = jnp.hstack(jnp.array(i_cps3)[a21, :])
-    # convert u,v to wavelengths
-    u21 = jnp.hstack(u21 / wav21)
-    v21 = jnp.hstack(v21 / wav21)
-
+    data = OIData(os.path.join(directory, filename))
+    uu, vv, cp, cp_err, vis2, vis2_err, i1, i2, i3 = data.unpack_all()
     return (
-        u21,
-        v21,
-        cp21,
-        cp_err21,
-        vis221,
-        vis2_err21,
-        i_cps121,
-        i_cps221,
-        i_cps321,
+        jnp.asarray(uu),
+        jnp.asarray(vv),
+        jnp.rad2deg(cp),
+        jnp.rad2deg(cp_err),
+        vis2,
+        vis2_err,
+        i1,
+        i2,
+        i3,
     )
-
-
-def cp_indices(vis_sta_index, cp_sta_index):
-    """Extracts indices for calculating closure phase from visibility and closure phase station indices"""
-    i_cps1 = np.zeros(len(cp_sta_index), np.int32)
-    i_cps2 = np.zeros(len(cp_sta_index), np.int32)
-    i_cps3 = np.zeros(len(cp_sta_index), np.int32)
-
-    for i in range(len(cp_sta_index)):
-        i_cps1[i] = np.argwhere(
-            (cp_sta_index[i][0] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][1] == vis_sta_index[:, 1])
-        )[0, 0]
-        i_cps2[i] = np.argwhere(
-            (cp_sta_index[i][1] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][2] == vis_sta_index[:, 1])
-        )[0, 0]
-        i_cps3[i] = np.argwhere(
-            (cp_sta_index[i][0] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][2] == vis_sta_index[:, 1])
-        )[0, 0]
-    return i_cps1, i_cps2, i_cps3

@@ -13,7 +13,16 @@ from drpangloss._utils import (
     undo_elliptical_transf_spat_freq,
 )
 
-jax.config.update("jax_enable_x64", True)
+
+@pytest.fixture(autouse=True)
+def _float64_by_default():
+    """Run these tests in float64, without changing the rest of the suite.
+
+    Setting ``jax_enable_x64`` globally at import time made the precision of
+    every other test module depend on collection order.
+    """
+    with jax.enable_x64(True):
+        yield
 
 
 # (jax_enable_x64, expected dtype, absolute tolerance vs scipy)

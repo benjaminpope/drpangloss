@@ -15,6 +15,8 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from drpangloss.plotting import set_style
+
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
     repo_root = repo_root.parent
@@ -28,6 +30,8 @@ from drpangloss.models import (
     loglike,
 )
 from drpangloss.oidata import OIData
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Generate OIData from models
@@ -69,7 +73,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'angular': {'sep': 144.22205101855957,
   'pa': 123.69006752597977,
   'contrast': 250.0},
- 'max_complex_visibility_difference': 6.002618135880766e-08}
+ 'max_complex_visibility_difference': 6.00885670110074e-08}
 ```
 
 `OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
@@ -178,7 +182,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 {'sep_mas': 144.22205101855957,
  'pa_deg': 123.69006752597977,
  'contrast': 250.0,
- 'max_complex_visibility_difference': 6.002618135880766e-08}
+ 'max_complex_visibility_difference': 6.00885670110074e-08}
 ```
 
 ```python
@@ -244,9 +248,9 @@ ll_cart_perturbed = float(
 ```
 
 ```text
-{'ll_cart_true': 259.3246154785156,
- 'll_ang_equivalent': 259.3248291015625,
- 'll_cart_perturbed': -580.702392578125,
+{'ll_cart_true': 259.32489013671875,
+ 'll_ang_equivalent': 259.3251037597656,
+ 'll_cart_perturbed': -580.7030029296875,
  'true_beats_perturbed': True}
 ```
 

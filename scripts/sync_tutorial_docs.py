@@ -8,6 +8,23 @@ from pathlib import Path
 
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 
+# A warning raised from a notebook cell is printed as
+# "<tmpdir>/ipykernel_<pid>/<hash>.py:<line>: <Category>: <message>" followed
+# by the offending source line. The path is machine-specific and changes on
+# every run, so the published pages keep only "<Category>: <message>".
+_CELL_WARNING = re.compile(
+    r"^\S*ipykernel_\d+[/\\]\d+\.py:\d+: (?P<warning>\w+: .*)\n"
+    r"(?P<source>[ \t]+\S.*\n?)?",
+    re.MULTILINE,
+)
+
+
+def _sanitize_text(text: str) -> str:
+    """Strip terminal colours and machine-specific warning locations."""
+    text = _ANSI_ESCAPE.sub("", text)
+    return _CELL_WARNING.sub(lambda m: m.group("warning") + "\n", text)
+
+
 MAPPINGS = {
     "notebooks/binary_search.ipynb": "docs/binary_search.md",
     "notebooks/data_io.ipynb": "docs/data_io.md",
@@ -72,8 +89,6 @@ def render_notebook_markdown(
             old_img.unlink()
 
     lines: list[str] = []
-    # scripts/sync_tutorial_docs.py
-    repo_root = nb_path.resolve().parents[1]
     relative_nb_path = nb_path.resolve().relative_to(repo_root).as_posix()
 
     lines.append(
@@ -115,7 +130,7 @@ def render_notebook_markdown(
                     lines.append("")
                     continue
 
-                text_out = _ANSI_ESCAPE.sub("", _output_text(output)).rstrip()
+                text_out = _sanitize_text(_output_text(output)).rstrip()
                 if text_out:
                     lines.append("```text")
                     lines.append(text_out)
@@ -132,6 +147,9 @@ def main() -> None:
         nb_path = repo_root / nb_rel
         doc_path = repo_root / doc_rel
         rendered = render_notebook_markdown(nb_path, write_images=True)
+        if doc_path.exists() and doc_path.read_text("utf-8") == rendered:
+            print(f"unchanged {doc_rel}")
+            continue
         doc_path.write_text(rendered, encoding="utf-8")
         print(f"synced {doc_rel} <- {nb_rel}")
 

@@ -13,6 +13,8 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
+from drpangloss.plotting import set_style
+
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
     repo_root = repo_root.parent
@@ -29,6 +31,8 @@ from drpangloss.models import (
     UniformDisk,
 )
 from drpangloss.oidata import OIData
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Simulate resolved-disk observables
@@ -193,7 +197,7 @@ image_ext = np.asarray(wrapped.render(npix=128, fov_mas=40.0))
 ```
 
 ```text
-{'cvis_shape': (32,), 'all_finite': True, 'render_sum': 1.0}
+{'cvis_shape': (32,), 'all_finite': True, 'render_sum': 0.9999998211860657}
 ```
 
 ```python

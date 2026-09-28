@@ -16,8 +16,6 @@ jobs:
     steps: 
       - name: checkout all
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: install uv
         uses: astral-sh/setup-uv@v6
@@ -32,9 +30,10 @@ jobs:
       - name: create environment
         run: |
           uv venv --python 3.11 .venv
-          uv pip install --python .venv/bin/python -e . mkdocs mkdocstrings mkdocstrings[python] mkdocs-material mkdocs-jupyter pytest zensical
+          uv pip install --python .venv/bin/python -e ".[dev]"
 
-      # Deployment now happens via zensical-pages.yml; this workflow only validates MkDocs parity.
+      # This is the one docs build for pull requests; deployment happens in
+      # zensical-pages.yml on pushes to main.
       - name: build documentation
         run: uv run --python .venv/bin/python mkdocs build --strict
 

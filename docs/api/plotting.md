@@ -5,6 +5,7 @@
 ::: drpangloss.plotting
     options:
       members:
+        - set_style
         - posterior_predictive_summary
         - plot_data_model_correlation
         - plot_trace_panels

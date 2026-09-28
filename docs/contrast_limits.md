@@ -39,10 +39,13 @@ from drpangloss.grid_fit import (
     absil_limits,
 )
 from drpangloss.plotting import (
+    set_style,
     plot_contrast_limit_map,
     radial_limit_summary,
     plot_radial_limit_summary,
 )
+
+set_style()  # the figure style used throughout the docs
 ```
 
 ## Simulate Data
@@ -116,6 +119,10 @@ opt_flux = optimized_contrast_grid(
 best_idx = jnp.argmax(ll_cube, axis=2)
 ```
 
+```text
+RuntimeWarning: optimized_contrast_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+```
+
 ## Ruffio Contrast Limits
 
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
@@ -181,7 +188,11 @@ plot_contrast_limit_map(
 );
 ```
 
-![contrast_limits output 11.1](generated/contrast_limits_cell011_out01.png)
+```text
+RuntimeWarning: absil_limits(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+```
+
+![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
 
 ## Contrast Curves
 We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
@@ -212,11 +223,7 @@ ax.lines[-1].set_label("Absil median")
 ax.collections[-1].set_label("Absil 16–84%")
 
 ax.set_xlabel("Separation from origin (mas)")
-ax.legend(loc="best")
+ax.legend(loc="best");
 ```
 
-```text
-<matplotlib.legend.Legend at 0x119bc2f50>
-```
-
-![contrast_limits output 13.2](generated/contrast_limits_cell013_out02.png)
+![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)

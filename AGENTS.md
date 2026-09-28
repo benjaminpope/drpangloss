@@ -53,8 +53,10 @@ rely on it — a clean diff keeps review focused on the actual change.
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
 - Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
-- JAX runs in float64 (`jax.config.update("jax_enable_x64", True)`); keep it that way in
-  new notebooks and tests.
+- drpangloss does not enable float64: library code must work in JAX's default float32
+  (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
+  they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
+  never set `jax_enable_x64` globally at import time in a test module.
 - New model code goes in `src/drpangloss/models.py`.
 
 ## Image coordinate convention

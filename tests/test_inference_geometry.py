@@ -97,3 +97,13 @@ def test_nonlinear_residual_curvature_changes_observed_information():
     observed = observed_information(objective, params)
 
     assert not np.allclose(expected, observed, rtol=1e-4, atol=1e-5)
+
+
+def test_fisher_projection_of_zero_matrix_is_finite():
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        proj = fisher_projection(np.zeros((2, 2)), eps=1e-12)
+    assert np.all(np.isfinite(proj))
+    assert np.allclose(np.abs(proj).max(), 1e6)

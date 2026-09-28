@@ -1,14 +1,17 @@
 <!-- AUTO-GENERATED FROM notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 # Data I/O
 
-`drpangloss` has I/O tools for reading and writing `.oifits` files, which are the data standard in interferometry. These are largely cribbed from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA).
+`drpangloss` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `drpangloss.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `drpangloss.oifits_implaneia`, are still available for existing scripts.
 
 ```python
-import numpy as np
-import pyoifits as oifits
-
-from pathlib import Path
+import copy
 import sys
+from pathlib import Path
+
+import numpy as np
+
+from drpangloss.oidata import OIData
+from drpangloss.oifits import write_oifits
 
 notebook_dir = (
     (Path.cwd() / "notebooks")
@@ -25,7 +28,7 @@ module = load_synthetic_workflow_module(repo_root)
 ```
 
 ## Simulate Data
-Let's simulate some synthetic data and save it to an `.oifits` file:
+Let's simulate some synthetic data and save it to an `.oifits` file. The synthetic data are a dictionary of OIFITS tables (`OI_WAVELENGTH`, `OI_VIS`, `OI_VIS2`, `OI_T3`, plus an `info` dictionary for the header), with phases in degrees as in OIFITS:
 
 ```python
 out = (
@@ -33,27 +36,7 @@ out = (
 ).resolve()
 
 synth_dict, truth, noise_settings = module._build_synthetic_oifits_dict(seed=4)
-module.save_oifits_dict(
-    synth_dict,
-    filename=out.name,
-    datadir=str(out.parent),
-    verbose=True,
-)
-```
-
-```text
-
-
-### Init creation of OI_FITS (synthetic_binary_from_notebook.oifits) :
--> Including OI Wavelength table...
--> Including OI Target table...
--> Including OI Array table...
--> Including OI Vis table...
--> Including OI Vis2 table...
--> Including OI T3 table...
-
-
-### OIFITS CREATED (synthetic_binary_from_notebook.oifits).
+_ = write_oifits(synth_dict, out)
 ```
 
 # Reading Data
@@ -61,8 +44,8 @@ module.save_oifits_dict(
 Let's read the data - this is easy!
 
 ```python
-loaded = oifits.open(str(out))
-oidata = module.OIData(loaded)
+# A path works, as does a file opened with astropy.io.fits or pyoifits.
+oidata = OIData(out)
 ```
 
 ## OIData Object
@@ -74,6 +57,8 @@ Likewise OIData can tell if you're using closure phases or absolute phases, whic
 $u,v$ information is saved in `oidata.u` and `oidata.v`, with closure phase indices in `oidata.i_cps1`, `oidata.i_cps2`, `oidata.i_cps3`.
 
 When you're using this, you will pass it a model object, which will automatically evaluate it at the appropriate arguments.
+
+Phases are always stored in radians, whatever the unit in the file. Flagged points (the OIFITS `FLAG` column, or non-finite values) are left out of the observables.
 
 ```python
 # let's have a tour of the oidata object
@@ -89,24 +74,18 @@ OIData(
   d_vis=f32[6],
   phi=f32[4],
   d_phi=f32[4],
-  i_cps1=i64[4](numpy),
-  i_cps2=i64[4](numpy),
-  i_cps3=i64[4](numpy),
+  i_cps1=i32[4],
+  i_cps2=i32[4],
+  i_cps3=i32[4],
   vis_mat=None,
   phi_mat=None,
+  vis_index=None,
+  phi_index=None,
   observable_kind='split',
   vis_mode='v2',
   v2_flag=True,
   cp_flag=True
 )
-```
-
-```python
-print("OIData keys:", list(oidata.__dict__.keys()))
-```
-
-```text
-OIData keys: ['wavel', 'vis', 'd_vis', 'u', 'v', 'v2_flag', 'phi', 'd_phi', 'i_cps1', 'i_cps2', 'i_cps3', 'cp_flag', 'vis_mat', 'phi_mat', 'observable_kind', 'vis_mode']
 ```
 
 ## Verification
@@ -158,3 +137,45 @@ phi: equal
 d_phi: equal
 wavel: equal
 ```
+
+## Several Wavelengths, Flags and Targets
+
+Files with several wavelength channels work the same way: every (baseline, wavelength) sample becomes one entry of `oidata.u`, `oidata.v` and `oidata.wavel`, and closure phases are built from visibilities at their own wavelength. Here we copy the synthetic data into three channels (repeating the same values, just for illustration) and flag one squared visibility:
+
+```python
+multi = copy.deepcopy(synth_dict)
+multi["OI_WAVELENGTH"] = {
+    "EFF_WAVE": np.array([4.6e-6, 4.8e-6, 5.0e-6]),
+    "EFF_BAND": np.full(3, 0.1e-6),
+}
+data_columns = {
+    "OI_VIS": ["VISAMP", "VISAMPERR", "VISPHI", "VISPHIERR"],
+    "OI_VIS2": ["VIS2DATA", "VIS2ERR"],
+    "OI_T3": ["T3AMP", "T3AMPERR", "T3PHI", "T3PHIERR"],
+}
+for table, columns in data_columns.items():
+    for column in columns:
+        values = np.asarray(multi[table][column])
+        multi[table][column] = np.repeat(values[:, None], 3, axis=1)
+    multi[table].pop("FLAG")
+
+flag = np.zeros(multi["OI_VIS2"]["VIS2DATA"].shape, dtype=bool)
+flag[0, 1] = True  # first baseline, middle channel
+multi["OI_VIS2"]["FLAG"] = flag
+
+multi_out = out.with_name("synthetic_binary_three_channels.oifits")
+write_oifits(multi, multi_out)
+multi_data = OIData(multi_out)
+
+print("samples:", multi_data.u.size, "wavelengths:", np.unique(multi_data.wavel))
+print("V2 observables:", multi_data.vis.size, "(one flagged)")
+print("closure phases:", multi_data.phi.size)
+```
+
+```text
+samples: 18 wavelengths: [4.6e-06 4.8e-06 5.0e-06]
+V2 observables: 17 (one flagged)
+closure phases: 12
+```
+
+If a file holds data on several targets (e.g. a science target and its calibrator), pick one with `OIData(path, target="name")` or by `TARGET_ID`; `OIData` refuses to mix them silently.

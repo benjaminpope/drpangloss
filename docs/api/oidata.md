@@ -9,6 +9,12 @@ single mixed log-complex vector defined by the stored log-amplitude and phase
 projection operators. In this context, "standardize" means "put data and model
 predictions into the same comparison basis", not z-score normalization.
 
+Every (baseline, wavelength) sample is one entry of `u`, `v` and `wavel`, so
+data with several wavelength channels need no special handling in models.
+Flagged samples are left out of the observables (see `vis_index` and
+`phi_index`). Phase residuals are wrapped into `[-π, π)` by `residuals`,
+which every likelihood in drpangloss uses.
+
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
 AMIGO DISCO tutorial for a schema-compatible loading example.
 
@@ -30,6 +36,8 @@ AMIGO DISCO tutorial for a schema-compatible loading example.
         - to_vis
         - to_phases
         - model
+        - residuals
+        - with_model
 
 ## Functions
 

@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
-import pyoifits as oifits
 from jax.flatten_util import ravel_pytree
 from numpyro.infer.initialization import init_to_value
 from numpyro.infer import MCMC, NUTS
@@ -21,8 +20,7 @@ from drpangloss.models import (
     loglike,
 )
 from drpangloss.oidata import OIData, closure_phases, cp_indices
-from drpangloss.oifits_implaneia import load as load_oifits_dict
-from drpangloss.oifits_implaneia import save as save_oifits_dict
+from drpangloss.oifits import write_oifits
 
 
 @dataclass(frozen=True)
@@ -404,18 +402,10 @@ def run_synthetic_binary_demo(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     dic, truth, noise_settings = _build_synthetic_oifits_dict()
-    save_oifits_dict(
-        dic,
-        filename=output_path.name,
-        datadir=str(output_path.parent),
-        verbose=False,
-    )
+    write_oifits(dic, output_path)
 
-    # Load through both dict loader and OIData path to demonstrate roundtrip.
-    _ = load_oifits_dict(str(output_path))
-
-    loaded = oifits.open(str(output_path))
-    oidata = OIData(loaded)
+    # OIData reads the OIFITS file directly (with astropy).
+    oidata = OIData(output_path)
 
     grid_est = _recover_grid(oidata)
     hmc_median, hmc_std = _recover_hmc(oidata, init=grid_est)

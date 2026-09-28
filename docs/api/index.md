@@ -7,5 +7,6 @@ This reference is organized by module origin and split into class and function s
 - [Grid Fit](grid_fit.md)
 - [Inference](inference.md)
 - [Plotting](plotting.md)
-- [SaveFITS](savefits.md)
-- [OIFITS ImplaneIA](oifits_implaneia.md)
+- [OIFITS](oifits.md)
+- [SaveFITS (legacy)](savefits.md)
+- [OIFITS ImplaneIA (legacy)](oifits_implaneia.md)
