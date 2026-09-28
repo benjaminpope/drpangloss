@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 # Data I/O
 
-`drpangloss` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `drpangloss.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `drpangloss.oifits_implaneia`, are still available for existing scripts.
+`drpangloss` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `drpangloss.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `drpangloss.legacy.oifits_implaneia`, are still available for existing scripts.
 
 ```python
 import copy
