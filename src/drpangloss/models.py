@@ -1078,8 +1078,13 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     base_norm = np.hypot(u, v)
     kernel = np.pi * base_norm * ud_rad
 
+    # Keep 0 out of the division so the unused branch has finite gradients.
+    at_zero = kernel == 0
+    safe_kernel = np.where(at_zero, 1.0, kernel)
     envelope = np.where(
-        kernel == 0, 1.0 + 0j, (2.0 * bessel_jn(1, kernel)[1]) / kernel + 0j
+        at_zero,
+        1.0 + 0j,
+        (2.0 * bessel_jn(1, safe_kernel)[1]) / safe_kernel + 0j,
     )
 
     dra_rad = mas2rad * dra

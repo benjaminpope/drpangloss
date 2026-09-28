@@ -11,6 +11,7 @@ import warnings
 from functools import partial
 
 import jax.numpy as np
+import numpy as onp
 from jax import jit
 from jax.lax import scan
 
@@ -26,8 +27,11 @@ i2pi = 1j * 2.0 * np.pi
 
 
 # === BESSEL FUNCTIONS OF THE FIRST KIND, BASED ON THE CEPHES IMPLEMENTATION ===
+#
+# The coefficient tables are NumPy arrays, not JAX arrays, so they stay float64
+# even when drpangloss is imported before ``jax_enable_x64`` is set.
 
-RP1 = np.array(
+RP1 = onp.array(
     [
         -8.99971225705559398224e8,
         4.52228297998194034323e11,
@@ -35,7 +39,7 @@ RP1 = np.array(
         3.68295732863852883286e15,
     ]
 )
-RQ1 = np.array(
+RQ1 = onp.array(
     [
         1.0,
         6.20836478118054335476e2,
@@ -49,7 +53,7 @@ RQ1 = np.array(
     ]
 )
 
-PP1 = np.array(
+PP1 = onp.array(
     [
         7.62125616208173112003e-4,
         7.31397056940917570436e-2,
@@ -60,7 +64,7 @@ PP1 = np.array(
         1.00000000000000000254e0,
     ]
 )
-PQ1 = np.array(
+PQ1 = onp.array(
     [
         5.71323128072548699714e-4,
         6.88455908754495404082e-2,
@@ -72,7 +76,7 @@ PQ1 = np.array(
     ]
 )
 
-QP1 = np.array(
+QP1 = onp.array(
     [
         5.10862594750176621635e-2,
         4.98213872951233449420e0,
@@ -84,7 +88,7 @@ QP1 = np.array(
         2.52070205858023719784e1,
     ]
 )
-QQ1 = np.array(
+QQ1 = onp.array(
     [
         1.0,
         7.42373277035675149943e1,
@@ -97,7 +101,7 @@ QQ1 = np.array(
     ]
 )
 
-YP1 = np.array(
+YP1 = onp.array(
     [
         1.26320474790178026440e9,
         -6.47355876379160291031e11,
@@ -107,7 +111,7 @@ YP1 = np.array(
         -7.78877196265950026825e17,
     ]
 )
-YQ1 = np.array(
+YQ1 = onp.array(
     [
         5.94301592346128195359e2,
         2.35564092943068577943e5,
@@ -146,12 +150,19 @@ def j1_large_c(x):
 
 def j1(x):
     """Bessel function of order one, translated from the CEPHES implementation."""
-    return np.sign(x) * np.where(
-        np.abs(x) < 5.0, j1_small(np.abs(x)), j1_large_c(np.abs(x))
+    ax = np.abs(x)
+    small = ax < 5.0
+    # Feed each branch only arguments in its own range, so the unused branch
+    # cannot produce NaN gradients (e.g. 5 / x at x = 0). ``j1_small`` is odd,
+    # so it takes the signed argument and keeps the gradient at x = 0.
+    return np.where(
+        small,
+        j1_small(np.where(small, x, 0.0)),
+        np.sign(x) * j1_large_c(np.where(small, 5.0, ax)),
     )
 
 
-PP0 = np.array(
+PP0 = onp.array(
     [
         7.96936729297347051624e-4,
         8.28352392107440799803e-2,
@@ -162,7 +173,7 @@ PP0 = np.array(
         9.99999999999999997821e-1,
     ]
 )
-PQ0 = np.array(
+PQ0 = onp.array(
     [
         9.24408810558863637013e-4,
         8.56288474354474431428e-2,
@@ -174,7 +185,7 @@ PQ0 = np.array(
     ]
 )
 
-QP0 = np.array(
+QP0 = onp.array(
     [
         -1.13663838898469149931e-2,
         -1.28252718670509318512e0,
@@ -186,7 +197,7 @@ QP0 = np.array(
         -6.05014350600728481186e0,
     ]
 )
-QQ0 = np.array(
+QQ0 = onp.array(
     [
         1.0,
         6.43178256118178023184e1,
@@ -199,7 +210,7 @@ QQ0 = np.array(
     ]
 )
 
-YP0 = np.array(
+YP0 = onp.array(
     [
         1.55924367855235737965e4,
         -1.46639295903971606143e7,
@@ -211,7 +222,7 @@ YP0 = np.array(
         -1.84950800436986690637e16,
     ]
 )
-YQ0 = np.array(
+YQ0 = onp.array(
     [
         1.04128353664259848412e3,
         6.26107330137134956842e5,
@@ -226,7 +237,7 @@ YQ0 = np.array(
 DR10 = 5.78318596294678452118e0
 DR20 = 3.04712623436620863991e1
 
-RP0 = np.array(
+RP0 = onp.array(
     [
         -4.79443220978201773821e9,
         1.95617491946556577543e12,
@@ -234,7 +245,7 @@ RP0 = np.array(
         9.70862251047306323952e15,
     ]
 )
-RQ0 = np.array(
+RQ0 = onp.array(
     [
         1.0,
         4.99563147152651017219e2,
@@ -270,35 +281,87 @@ def j0_large(x):
 
 def j0(x):
     """Implementation of J0 for all x in Jax."""
-    return np.where(np.abs(x) < 5.0, j0_small(np.abs(x)), j0_large(np.abs(x)))
+    ax = np.abs(x)
+    small = ax < 5.0
+    return np.where(
+        small,
+        j0_small(np.where(small, ax, 0.0)),
+        j0_large(np.where(small, 5.0, ax)),
+    )
 
 
-# Modified from Harmonix implementation to return only J0 if called with n=0
-# (previously returned stacked J0 and J1 results for this case).
+def _bessel_jn_trig(n, x, nodes):
+    r"""All orders ``0..n`` of $J_m(x)$ from an ``nodes``-point trigonometric sum.
+
+    The trapezoidal rule applied to Bessel's integral
+    $J_m(x) = \frac{1}{2\pi}\int_0^{2\pi} \cos(m t - x \sin t)\,dt$
+    gives $J_m(x) + \sum_{k \neq 0} (\pm) J_{m + k N}(x)$ (see
+    arXiv:2206.05334), so it matches $J_m(x)$ to machine precision while
+    $J_{N - m}(x)$ is negligible, i.e. for $|x|$ well below $N - m$.
+
+    ``nodes`` must be a multiple of 4. The nodes' $\sin t$ values repeat, up
+    to sign, over the quarter period, so only ``nodes / 4 + 1`` cosines and
+    sines of $x$ are needed; the weights are folded together at trace time.
+    """
+    k = onp.arange(nodes)
+    t = 2.0 * onp.pi * k / nodes
+    half = k % (nodes // 2)
+    quarter = onp.where(half <= nodes // 4, half, nodes // 2 - half)
+    sign = onp.where(k < nodes // 2, 1.0, -1.0)
+    orders = onp.arange(n + 1)[:, None]
+    # cos(m t - x sin t) = cos(m t) cos(x sin t) + sin(m t) sin(x sin t)
+    w_cos = onp.zeros((n + 1, nodes // 4 + 1))
+    w_sin = onp.zeros((n + 1, nodes // 4 + 1))
+    onp.add.at(w_cos.T, quarter, (onp.cos(orders * t) / nodes).T)
+    onp.add.at(w_sin.T, quarter, (sign * onp.sin(orders * t) / nodes).T)
+    weights = np.asarray(onp.concatenate([w_cos, w_sin], axis=1))
+
+    arg = x[..., None] * np.sin(
+        2.0 * np.pi * onp.arange(nodes // 4 + 1) / nodes
+    )
+    trig = np.concatenate([np.cos(arg), np.sin(arg)], axis=-1)
+    return np.moveaxis(trig @ weights.T, -1, 0)
+
+
 @partial(jit, static_argnums=0)
 def bessel_jn(n, x):
-    """Compute the Bessel function $J_n(x)$, for $n >= 0$. Returns the function output
+    r"""Compute the Bessel function $J_n(x)$, for $n >= 0$. Returns the function output
     for all orders up to the requested order $n$ evaluated for the kernel $x$, where the
     the different orders are stacked along the first axis. The shape of the final result
     is thus (n + 1, shape(x)).
 
-    TODO: a much faster and more numerically stable JAX Bessel implementation
-    exists outside this repository and is due to replace this upward recurrence,
-    which loses accuracy when the order approaches ``x``.
+    For $n \le 1$ this is the CEPHES rational approximations. For $n \ge 2$, all
+    orders come from the upward recurrence $J_{m+1} = (2m/x) J_m - J_{m-1}$,
+    seeded by CEPHES, where it is stable ($|x| > n$), and from a
+    trigonometric sum (see :func:`_bessel_jn_trig`) below that, where the
+    recurrence loses accuracy. Both agree with
+    ``scipy.special.jv`` to about 1e-14, and the gradients are finite
+    everywhere, including $x = 0$.
     """
+    x = np.asarray(x, dtype=float)
     if n == 0:
-        return np.array([j0(x)])
-    else:
-        # use recurrence relations
-        def body(carry, i):
-            jnm1, jn = carry
-            jnplus = (2 * i) / x * jn - jnm1
-            return (jn, jnplus), jnplus
+        return j0(x)[None]
+    if n == 1:
+        return np.stack([j0(x), j1(x)])
 
-        j0_val, j1_val = j0(x), j1(x)
-        _, jn = scan(body, (j0_val, j1_val), np.arange(1, n))
+    # The recurrence is accurate for |x| > n. With 3n + 24 nodes (rounded up
+    # to a multiple of 4) the trigonometric sum is accurate to machine
+    # precision up to x_switch for every order <= n.
+    x_switch = float(n + 2)
+    nodes = 4 * -(-(3 * n + 24) // 4)
+    small = np.abs(x) < x_switch
+    x_rec = np.where(small, x_switch, x)
 
-        return np.concatenate((np.array([j0_val]), np.array([j1_val]), jn))
+    def body(carry, i):
+        jnm1, jn = carry
+        jnplus = (2 * i) / x_rec * jn - jnm1
+        return (jn, jnplus), jnplus
+
+    j0_rec, j1_rec = j0(x_rec), j1(x_rec)
+    _, j_high = scan(body, (j0_rec, j1_rec), np.arange(1, n))
+    j_rec = np.concatenate([j0_rec[None], j1_rec[None], j_high])
+    j_trig = _bessel_jn_trig(n, np.where(small, x, 0.0), nodes)
+    return np.where(small, j_trig, j_rec)
 
 
 # ===
