@@ -5,8 +5,9 @@ from pathlib import Path
 
 import jax.numpy as jnp
 
-from drpangloss.models import BinaryModelCartesian, model_loglike
-from drpangloss.oidata import load_oi_data
+from drpangloss.amigo import load_oi_data
+from drpangloss.likelihood import model_loglike
+from drpangloss.models import BinaryModelCartesian
 
 
 DATA_PATH = (

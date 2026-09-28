@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/amigo_disco.ipynb by scripts/sync_tutorial_docs.py. -->
 # AMIGO mixed-DISCO products
 
-AMIGO pipeline reductions write filter-keyed mixed-DISCO products. `drpangloss.oidata.load_oi_data` loads each filter into an `OIData` object whose standardized model vector uses the stored log-amplitude and phase projection operators.
+AMIGO pipeline reductions write filter-keyed mixed-DISCO products. `drpangloss.amigo.load_oi_data` loads each filter into an `OIData` object whose standardized model vector uses the stored log-amplitude and phase projection operators.
 
 This notebook is deliberately short: once loaded, these observations use the same `joint_loglike` and `joint_prediction` interfaces as the complete hierarchical inference tutorial.
 
@@ -20,12 +20,9 @@ for path in (repo_root, repo_root / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from drpangloss.models import (
-    BinaryModelCartesian,
-    joint_loglike,
-    joint_prediction,
-)
-from drpangloss.oidata import load_oi_data
+from drpangloss.amigo import load_oi_data
+from drpangloss.likelihood import joint_loglike, joint_prediction
+from drpangloss.models import BinaryModelCartesian
 
 product_path = repo_root / "data" / "calibrated_visibility.npy"
 observations_by_filter = load_oi_data(product_path)
@@ -34,7 +31,7 @@ observations = tuple(observations_by_filter[name] for name in filter_names)
 
 for name, oidata in observations_by_filter.items():
     print(f"Filter: {name}")
-    print(f"Number of observables: {int(oidata.standardize_data().size)}")
+    print(f"Number of observables: {int(oidata.flatten_data()[0].size)}")
     print(f"Number of UV points: {int(oidata.u.size)}")
     print(f"Observable kind: {oidata.observable_kind}")
     print()

@@ -13,11 +13,8 @@ from drpangloss.inference import (
     observed_information,
     regularized_inverse,
 )
-from drpangloss.models import (
-    BinaryModelCartesian,
-    joint_loglike,
-    joint_prediction,
-)
+from drpangloss.likelihood import joint_loglike, joint_prediction
+from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import OIData
 
 

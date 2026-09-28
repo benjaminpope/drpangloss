@@ -17,3 +17,7 @@ dist/
 
 # Proprietary AMIGO reduction product used only to generate the public fixture.
 data/calibrated_visibility_private.npy
+
+# Old exploratory notebooks, kept locally for reference only. They use
+# retired APIs and are not maintained, tested or read by agents.
+notebooks/archive/

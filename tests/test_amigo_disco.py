@@ -5,12 +5,10 @@ import jax.scipy as jsp
 import numpy as onp
 import pytest
 
-from drpangloss.models import (
-    BinaryModelCartesian,
-    loglike_nosignal,
-    model_loglike,
-)
-from drpangloss.oidata import OIData, load_oi_data
+from drpangloss.amigo import load_oi_data
+from drpangloss.likelihood import loglike_nosignal, model_loglike
+from drpangloss.models import BinaryModelCartesian
+from drpangloss.oidata import OIData
 
 
 PRODUCT = (
@@ -78,7 +76,7 @@ def test_mixed_disco_standardize_model_matches_operator_formula():
     expected = oidata.vis_mat @ log_cvis.real + oidata.phi_mat @ log_cvis.imag
 
     assert np.allclose(oidata.standardize_model(cvis), expected)
-    assert np.allclose(oidata.flatten_model(cvis), expected)
+    assert np.allclose(oidata.standardize_model(cvis), expected)
 
 
 def test_mixed_disco_flatten_data_returns_coefficients_and_sigma():
@@ -90,8 +88,8 @@ def test_mixed_disco_flatten_data_returns_coefficients_and_sigma():
         data, np.asarray(product["F480M"]["disco_coefficients"])
     )
     assert np.allclose(errors, np.asarray(product["F480M"]["disco_sigma"]))
-    assert np.allclose(data, oidata.standardize_data())
-    assert np.allclose(errors, oidata.standardize_errors())
+    assert np.allclose(data, oidata.vis)
+    assert np.allclose(errors, oidata.d_vis)
 
 
 def test_mixed_disco_likelihoods_are_finite_and_no_signal_is_zero_target():

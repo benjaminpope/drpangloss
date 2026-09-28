@@ -21,7 +21,8 @@ except AttributeError:
     )
 
 oidata = OIData(data)
-u, v, cp, cp_err, vis2, vis2_err, i_cps1, i_cps2, i_cps3 = oidata.unpack_all()
+u, v = oidata.u / oidata.wavel, oidata.v / oidata.wavel
+i_cps1, i_cps2, i_cps3 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
 
 params = ["dra", "ddec", "flux"]
 

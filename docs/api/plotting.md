@@ -1,24 +1,17 @@
 # `drpangloss.plotting`
 
-## Functions
-
 ::: drpangloss.plotting
     options:
       members:
         - set_style
-        - posterior_predictive_summary
+        - plot_grid_map
+        - plot_contrast_curve
+        - plot_model
+        - plot_oidata_overview
         - plot_data_model_correlation
         - plot_trace_panels
-        - plot_model
-        - plot_likelihood_grid
+        - plot_recovery_residuals
         - plot_chainconsumer_diagnostics
+        - plot_hmc_fisher_chainconsumer
         - diagnostics_table_from_samples
         - truth_cartesian_and_polar
-        - plot_hmc_fisher_chainconsumer
-        - plot_recovery_residuals
-        - radial_limit_summary
-        - plot_contrast_limit_map
-        - plot_radial_limit_summary
-        - plot_optimized_and_grid
-        - plot_optimized_and_sigma
-        - plot_contrast_limits

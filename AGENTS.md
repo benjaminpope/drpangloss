@@ -58,6 +58,38 @@ rely on it — a clean diff keeps review focused on the actual change.
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
 - New model code goes in `src/drpangloss/models.py`.
+- Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
+  and unmaintained: do not read, edit, lint or cite them.
+
+## Package layout
+
+| Module | Contents |
+| --- | --- |
+| `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
+| `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
+| `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
+| `models.py` | source models (`SourceModel`, components, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
+| `likelihood.py` | `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
+| `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
+| `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
+| `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
+| `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
+| `_geometry.py`, `_utils.py` | shared geometry, constants and helpers (private) |
+| `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
+
+Imports flow one way: `_utils`/`_geometry`/`bessel` → `oifits`/`amigo`/`oidata`
+→ `models` → `likelihood` → `inference` → `grid_fit` → `limits` → `plotting`.
+
+## Flux and contrast
+
+`flux` always means a flux *relative to the primary* (companion/primary, so
+0.01 for a companion 100 times fainter). Reports and plots follow the
+astronomical convention instead: **contrast** is primary/companion (100) and
+**Δmag** is `2.5 log10(contrast)` (5 mag). Convert with
+`drpangloss.limits.flux_to_contrast` / `flux_to_delta_mag`, and plot with
+`units="flux" | "contrast" | "delta_mag"`. Never name a model parameter
+`contrast`.
 
 ## Image coordinate convention
 
@@ -85,9 +117,9 @@ finiteness/normalization check.
   azimuthal modulation phases) are measured **counter-clockwise from the top**,
   i.e. **North-to-East**: PA=0° points North, PA=90° points East.
 
-The canonical, tested reference implementation is `_image_coordinates` in
-`src/drpangloss/models.py` (image-plane pixel coordinates) and the elliptical
-rotation/stretch helpers in `src/drpangloss/_utils.py` (`undo_`/`apply_elliptical_transf_coord`
+The canonical, tested reference implementation is `image_coordinates` in
+`src/drpangloss/_geometry.py` (image-plane pixel coordinates) and the elliptical
+rotation/stretch helpers in the same module (`undo_`/`apply_elliptical_transf_coord`
 and `..._spat_freq`). Every geometric `SourceModel`'s `model()`/`render()` must
 be dimensionally consistent with these, and should have a direct regression
 test analogous to `test_gaussian_disk_render_uses_interferometric_image_orientation`,
@@ -145,17 +177,16 @@ to that test.
   public fitting interface and must depend only on the names the user chose.
 - Parameters are addressed by zodiax dot-paths through component names
   (`"comp.flux"`); tools accept a template model plus paths anywhere they
-  accept a model class (`build_model`). The argument is called `model`;
-  `model_class=` is a deprecated keyword alias.
-- Grid tools that optimize a brightness (`optimized_likelihood_grid`,
-  `optimized_contrast_grid`, `laplace_contrast_uncertainty_grid`,
-  `absil_limits`) take `flux_param=`. Without it, a key named `flux` or the
-  single key ending in `.flux` is used silently; falling back on key order
-  raises `DeprecationWarning`. Documented examples pass it explicitly.
+  accept a model class (`build_model`). The argument is called `model`.
+- Grid tools that optimize a flux (`optimized_likelihood_grid`,
+  `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`)
+  use the one key whose last part is `flux` (`_utils.resolve_flux_param`);
+  if there is none or more than one, the caller must pass `flux_param=`.
+  Plotting uses the same rule.
 - Fluxes are non-negative. `Component`/`System` reject concrete negative
   fluxes in `__check_init__` (traced values cannot be checked),
   `numpyro_model` rejects flux priors with negative support, and grid tools
-  reject negative flux axes. The optimizers in `optimized_contrast_grid`
+  reject negative flux axes. The optimizers in `optimized_flux_grid`
   deliberately stay unconstrained, because Ruffio upper limits need the
   unconstrained estimate.
 - `SourceModel._weight(wavel)` takes the wavelength (or `None` for the
@@ -180,8 +211,7 @@ to that test.
 - `docs/generated/` and `data/*.npy` — generated or fixture data.
 - `docs/*.md` pages listed in `scripts/sync_tutorial_docs.py::MAPPINGS` — generated from
   notebooks (see below).
-- `notebooks/ami_exploration.ipynb`, `notebooks/louis_visibilities.ipynb` — excluded from
-  linting on purpose.
+- `notebooks/archive/` — old exploratory notebooks, git-ignored; do not read or edit.
 - `.venv/`, `.lint-logs/`.
 
 ## Notebooks and docs are coupled

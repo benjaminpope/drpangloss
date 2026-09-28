@@ -4,14 +4,14 @@ import pytest
 import jax.numpy as np
 from scipy.special import jv
 
-from drpangloss._utils import (
+from drpangloss._geometry import (
     apply_elliptical_transf_coord,
     apply_elliptical_transf_spat_freq,
-    bessel_jn,
     check_az_prof_nonnegative,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
+from drpangloss.bessel import bessel_jn
 
 
 @pytest.fixture(autouse=True)

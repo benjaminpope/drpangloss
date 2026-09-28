@@ -20,7 +20,6 @@ import jax.numpy as jnp
 import numpy as onp
 import jax.scipy as jsp
 import matplotlib.pyplot as plt
-import pyoifits as oifits
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -29,21 +28,11 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
+from drpangloss.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
+from drpangloss.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
 from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import OIData
-from drpangloss.grid_fit import (
-    likelihood_grid,
-    optimized_contrast_grid,
-    laplace_contrast_uncertainty_grid,
-    ruffio_upperlimit,
-    absil_limits,
-)
-from drpangloss.plotting import (
-    set_style,
-    plot_contrast_limit_map,
-    radial_limit_summary,
-    plot_radial_limit_summary,
-)
+from drpangloss.plotting import plot_contrast_curve, plot_grid_map, set_style
 
 set_style()  # the figure style used throughout the docs
 ```
@@ -55,15 +44,7 @@ Now we will generate some synthetic data from pure noise, using a Fourier sampli
 ```python
 rng = onp.random.default_rng(7)
 
-fname = "NuHor_F480M.oifits"
-ddir = "../data/"
-data = oifits.open(ddir + fname)
-try:
-    data.verify("silentfix")
-except AttributeError:
-    pass
-
-oidata = OIData(data)
+oidata = OIData(repo_root / "data" / "NuHor_F480M.oifits")
 
 # Pure-noise injection amplitude (1.0 uses nominal OIData uncertainties).
 noise_amp = 1.0
@@ -112,15 +93,12 @@ samples = {
     "flux": 10 ** jnp.linspace(-5.0, -1.5, 50),
 }
 
-ll_cube = likelihood_grid(oidata_sim, BinaryModelCartesian, samples)
-opt_flux = optimized_contrast_grid(
-    oidata_sim, BinaryModelCartesian, samples, flux_param="flux"
-)
-best_idx = jnp.argmax(ll_cube, axis=2)
+# Best-fit companion/primary flux at every (dra, ddec).
+opt_flux = optimized_flux_grid(oidata_sim, BinaryModelCartesian, samples)
 ```
 
 ```text
-RuntimeWarning: optimized_contrast_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+RuntimeWarning: optimized_flux_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
 ```
 
 ## Ruffio Contrast Limits
@@ -128,29 +106,16 @@ RuntimeWarning: optimized_contrast_grid(): the optimizer did not converge at 1 o
 The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
 
 ```python
-sigma_flux = laplace_contrast_uncertainty_grid(
-    best_idx, oidata_sim, BinaryModelCartesian, samples, flux_param="flux"
+sigma_flux = laplace_flux_uncertainty_grid(
+    oidata_sim, BinaryModelCartesian, samples, flux=opt_flux
 )
 
-# Ruffio method at 2σ equivalent percentile
-perc = jnp.array([jsp.stats.norm.cdf(2.0)])
-ruffio_flat = ruffio_upperlimit(opt_flux.flatten(), sigma_flux.flatten(), perc)
-ruffio_map = ruffio_flat.reshape(*opt_flux.shape, perc.shape[0])[:, :, 0]
+# Ruffio method at the 2σ-equivalent percentile
+perc = jsp.stats.norm.cdf(2.0)
+ruffio_map = ruffio_upperlimit(opt_flux, sigma_flux, perc)
 
-# 2D contrast-limit maps (Δmag): Ruffio and Absil
-
-dra_axis = onp.array(samples["dra"])
-ddec_axis = onp.array(samples["ddec"])
-ruffio_np = onp.array(ruffio_map)
-
-plot_contrast_limit_map(
-    ruffio_np,
-    dra_axis,
-    ddec_axis,
-    truth=None,
-    unit_mode="delta_mag",
-    title="Ruffio 2σ Upper-Limit Map (Δmag)",
-    cmap="inferno",
+plot_grid_map(
+    ruffio_map, samples, kind="limit", units="delta_mag", percentile=perc
 );
 ```
 
@@ -162,30 +127,18 @@ In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/ab
 
 ```python
 # Absil method at 2σ
-absil_map = absil_limits(
-    samples, oidata_sim, BinaryModelCartesian, sigma=2.0, flux_param="flux"
-)
+absil_map = absil_limits(oidata_sim, BinaryModelCartesian, samples, sigma=2.0)
 
 {
     "opt_flux_finite_frac": float(jnp.mean(jnp.isfinite(opt_flux))),
     "sigma_flux_finite_frac": float(jnp.mean(jnp.isfinite(sigma_flux))),
     "ruffio_finite_frac": float(jnp.mean(jnp.isfinite(ruffio_map))),
     "absil_finite_frac": float(jnp.mean(jnp.isfinite(absil_map))),
-    "ruffio_median": float(jnp.nanmedian(ruffio_map)),
-    "absil_median": float(jnp.nanmedian(absil_map)),
+    "ruffio_median_dmag": float(jnp.nanmedian(flux_to_delta_mag(ruffio_map))),
+    "absil_median_dmag": float(jnp.nanmedian(flux_to_delta_mag(absil_map))),
 }
-absil_np = onp.array(absil_map)
 
-
-plot_contrast_limit_map(
-    absil_np,
-    dra_axis,
-    ddec_axis,
-    truth=None,
-    unit_mode="delta_mag",
-    title="Absil 2σ Limit Map (Δmag)",
-    cmap="inferno",
-);
+plot_grid_map(absil_map, samples, kind="limit", units="delta_mag", sigma=2.0);
 ```
 
 ```text
@@ -197,33 +150,14 @@ RuntimeWarning: absil_limits(): the optimizer did not converge at 1 of 3721 grid
 ## Contrast Curves
 We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
 
+The limits are companion/primary flux ratios, but by astronomical convention they are reported as a contrast (primary/companion) or in magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers themselves.
+
 ```python
 # Overplot Ruffio and Absil radial contrast curves on one axis
 fig, ax = plt.subplots(figsize=(8, 4))
-
-ruffio_radial_summary = radial_limit_summary(ruffio_map, dra_axis, ddec_axis)
-absil_radial_summary = radial_limit_summary(absil_map, dra_axis, ddec_axis)
-
-plot_radial_limit_summary(
-    ruffio_radial_summary,
-    unit_mode="flux_ratio",
-    title="Radial contrast limits: Ruffio vs Absil",
-    ax=ax,
-)
-ax.lines[-1].set_label("Ruffio median")
-ax.collections[-1].set_label("Ruffio 16–84%")
-
-plot_radial_limit_summary(
-    absil_radial_summary,
-    unit_mode="flux_ratio",
-    title="Radial contrast limits: Ruffio vs Absil",
-    ax=ax,
-)
-ax.lines[-1].set_label("Absil median")
-ax.collections[-1].set_label("Absil 16–84%")
-
-ax.set_xlabel("Separation from origin (mas)")
-ax.legend(loc="best");
+plot_contrast_curve(ruffio_map, samples, label="Ruffio (2σ-equivalent)", ax=ax)
+plot_contrast_curve(absil_map, samples, label="Absil 2σ", ax=ax)
+ax.set_title("Radial contrast limits: Ruffio vs Absil");
 ```
 
 ![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)

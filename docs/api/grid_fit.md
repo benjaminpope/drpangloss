@@ -1,15 +1,12 @@
 # `drpangloss.grid_fit`
 
-## Functions
+Grid searches. Contrast limits built on them are in [`drpangloss.limits`](limits.md).
 
 ::: drpangloss.grid_fit
     options:
       members:
         - likelihood_grid
         - optimized_likelihood_grid
-        - optimized_contrast_grid
-        - laplace_contrast_uncertainty_grid
-        - ruffio_upperlimit
-        - azimuthalAverage
-        - absil_limits
+        - optimized_flux_grid
+        - laplace_flux_uncertainty_grid
         - best_grid_point

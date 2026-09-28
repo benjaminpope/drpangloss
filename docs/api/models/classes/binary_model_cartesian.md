@@ -7,7 +7,7 @@
       show_attributes: false
       members:
         - __init__
-        - unpack_all
+        - to_angular
         - model
         - render
         - to_system

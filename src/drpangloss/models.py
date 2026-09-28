@@ -1,46 +1,41 @@
+"""Source models: sky-brightness distributions and their visibilities.
+
+* Components ([`PointSource`][drpangloss.models.PointSource],
+  [`GaussianDisk`][drpangloss.models.GaussianDisk],
+  [`UniformDisk`][drpangloss.models.UniformDisk],
+  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]) are
+  single shapes, combined with flux weights in a
+  [`System`][drpangloss.models.System].
+* [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian] and
+  [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular] are fast
+  forms of a primary plus a point-source companion.
+* The ``cvis_*`` functions are the analytic visibilities behind them.
+
+Every flux is relative: for a companion it is the companion/primary flux
+ratio. Likelihoods of these models are in
+[`drpangloss.likelihood`][drpangloss.likelihood].
+"""
+
 import dataclasses
 import textwrap
 from typing import Any
 
-import jax.numpy as np
+import equinox as eqx
 import jax
+import jax.numpy as np
+import numpy as onp
+import zodiax as zx
 from jax.scipy.signal import fftconvolve
 
-import numpy as onp
-
-import equinox as eqx
-import zodiax as zx
-
-from ._utils import (
-    bessel_jn as bessel_jn,
+from ._geometry import (
     check_az_prof_nonnegative,
-    dtor as dtor,
-    i2pi as i2pi,
-    mas2rad as mas2rad,
-    rad2mas as rad2mas,
-    renamed_argument as _renamed_argument,
-    undo_elliptical_transf_coord as undo_elliptical_transf_coord,
-    undo_elliptical_transf_spat_freq as undo_elliptical_transf_spat_freq,
+    image_coordinates,
+    offset_phase,
+    undo_elliptical_transf_coord,
+    undo_elliptical_transf_spat_freq,
 )
-from .inference import (
-    fisher_matrix as _fisher_matrix,
-    laplace_covariance as _laplace_covariance,
-)
-
-from .oidata import OIData as OIData
-from .oidata import closure_phases as closure_phases
-from .oidata import cp_indices as cp_indices
-
-
-def _image_coordinates(npix, fov_mas):
-    """Return Cartesian image-plane coordinates in milliarcseconds."""
-    npix = int(npix)
-    pixel_scale_mas = float(fov_mas) / npix
-    pixel_indices = np.arange(npix)
-    center = 0.5 * (npix - 1)
-    x = -(pixel_indices - center) * pixel_scale_mas
-    y = (center - pixel_indices) * pixel_scale_mas
-    return np.meshgrid(x, y, indexing="xy")
+from ._utils import concrete, dtor, mas2rad
+from .bessel import bessel_jn
 
 
 def _normalize_image(image):
@@ -60,38 +55,20 @@ def _unit_flux(component):
     )
 
 
-def _offset_phase(uu, vv, dra, ddec):
-    """Fourier shift factor for an offset of ``(dra, ddec)`` milliarcseconds."""
-    arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)
-    return jax.lax.complex(np.cos(arg), -np.sin(arg))
-
-
 def _format_leaf(x):
     """Short human-readable form of a parameter value for ``repr``."""
-    try:
-        value = onp.asarray(x)
-    except (
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
+    value = concrete(x)
+    if value is None or value.dtype.kind not in "fiu":
         return repr(x)
-    if value.ndim == 0 and value.dtype.kind in "fiu":
+    if value.ndim == 0:
         return f"{float(value):g}"
-    if value.dtype.kind in "fiu":
-        return "[" + ", ".join(f"{float(v):g}" for v in value.ravel()) + "]"
-    return repr(x)
+    return "[" + ", ".join(f"{float(v):g}" for v in value.ravel()) + "]"
 
 
 def _check_non_negative_flux(flux, owner):
     """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    try:
-        value = onp.asarray(flux)
-    except (
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
-        return
-    if onp.any(value < 0.0):
+    value = concrete(flux)
+    if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
         )
@@ -99,12 +76,8 @@ def _check_non_negative_flux(flux, owner):
 
 def _check_non_negative_modulation(az_amps, az_pas):
     """Raise if concrete azimuthal modulations make the brightness negative."""
-    try:
-        amps, pas = onp.asarray(az_amps), onp.asarray(az_pas)
-    except (
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
+    amps, pas = concrete(az_amps), concrete(az_pas)
+    if amps is None or pas is None:
         return
     if not bool(check_az_prof_nonnegative(np.asarray(amps), np.asarray(pas))):
         raise ValueError(
@@ -116,13 +89,10 @@ def _check_non_negative_modulation(az_amps, az_pas):
 
 def _concrete_sum(values):
     """Sum of ``values`` as a float, or ``None`` if any value is traced."""
-    try:
-        return float(sum(onp.sum(onp.asarray(v)) for v in values))
-    except (
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
+    values = [concrete(v) for v in values]
+    if any(v is None for v in values):
         return None
+    return float(sum(onp.sum(v) for v in values))
 
 
 class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -139,9 +109,9 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
       normalized sky. A scene placed inside a [`System`][drpangloss.models.System] has weight 1,
       unless it carries its own ``flux`` weight as [`System`][drpangloss.models.System] does.
 
-    For historical reasons the binary models use ``flux`` (and ``contrast``)
-    for a companion/primary ratio rather than a weight. New models should use
-    ``flux`` only to mean a relative weight.
+    The binary models' ``flux`` is their companion/primary flux ratio, which
+    is the same thing as a companion's weight in a System whose primary
+    has ``flux=1``.
 
     Subclasses implement [`model`][drpangloss.models.SourceModel.model], and ``_image`` if they can be drawn.
     """
@@ -172,7 +142,7 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Use [`drpangloss.plotting.plot_model`][drpangloss.plotting.plot_model] to display it with the
         correct axes.
         """
-        xx, yy = _image_coordinates(npix, fov_mas)
+        xx, yy = image_coordinates(npix, fov_mas)
         return _normalize_image(
             self._image(xx, yy, float(fov_mas) / float(npix))
         )
@@ -228,7 +198,7 @@ class Component(SourceModel):
 
     def model(self, u, v, wavel):
         uu, vv = u / wavel, v / wavel
-        return self._centred_cvis(uu, vv) * _offset_phase(
+        return self._centred_cvis(uu, vv) * offset_phase(
             uu, vv, self.dra, self.ddec
         )
 
@@ -495,7 +465,7 @@ class ModulatedGaussianRim(Component):
         # Odd-sized kernel centred on a pixel, so mode="same" introduces no shift.
         npix = xx.shape[0]
         nker = npix + 1 - npix % 2
-        kx, ky = _image_coordinates(nker, nker * pixel_scale_mas)
+        kx, ky = image_coordinates(nker, nker * pixel_scale_mas)
         sigma_mas = np.maximum(
             self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
         )
@@ -518,7 +488,7 @@ class System(SourceModel):
     Components are reached by name, both as attributes (``system.comp.flux``)
     and as zodiax paths (``system.get("comp.flux")``,
     ``system.set("comp.flux", 0.02)``). These paths are how the fitting tools
-    in [`drpangloss.grid_fit`][drpangloss.grid_fit] and [`numpyro_model`][drpangloss.models.numpyro_model] address
+    in [`drpangloss.grid_fit`][drpangloss.grid_fit] and [`numpyro_model`][drpangloss.likelihood.numpyro_model] address
     parameters. Components keep the order in which they were given.
 
     A [`System`][drpangloss.models.System] can itself be a component. Its own ``flux`` is then the
@@ -549,7 +519,7 @@ class System(SourceModel):
     concrete values; changing values afterwards with ``set`` is not
     checked. Inside a traced computation (a fit or grid search) the
     values cannot be checked, so positivity is the job of the priors and grid
-    axes: [`numpyro_model`][drpangloss.models.numpyro_model] rejects flux priors that allow negative
+    axes: [`numpyro_model`][drpangloss.likelihood.numpyro_model] rejects flux priors that allow negative
     values, and the grid tools reject negative flux axes.
 
     Examples
@@ -648,7 +618,7 @@ class System(SourceModel):
             w * c.model(u, v, wavel) for w, c in zip(weights, self.parts)
         ) / sum(weights)
         uu, vv = u / wavel, v / wavel
-        return total * _offset_phase(uu, vv, self.dra, self.ddec)
+        return total * offset_phase(uu, vv, self.dra, self.ddec)
 
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = xx - self.dra, yy - self.ddec
@@ -708,7 +678,7 @@ def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
 
 class BinaryModelAngular(SourceModel):
     """
-    Represent a binary companion using angular separation and position angle.
+    A primary star and a point-source companion, in polar coordinates.
 
     Parameters
     ----------
@@ -716,85 +686,38 @@ class BinaryModelAngular(SourceModel):
         On-sky separation in milliarcseconds.
     pa : float or array-like
         Position angle in degrees, measured East of North.
-    contrast : float or array-like
-        Brightness contrast ratio ``star/companion``.
+    flux : float or array-like
+        Companion/primary flux ratio (e.g. 0.01 for a companion 100 times
+        fainter, i.e. contrast 100 or 5 mag; see
+        [`flux_to_contrast`][drpangloss.limits.flux_to_contrast]).
 
     Notes
     -----
-    This parameterization is often convenient for reporting astrophysical
-    constraints directly in polar-like coordinates. The model evaluates complex
-    visibilities on the provided interferometric baseline geometry.
+    Equivalent to [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian]
+    at ``dra = sep sin(pa)``, ``ddec = sep cos(pa)``; convenient for
+    reporting astrometry directly in separation and position angle.
     """
 
     sep: jax.Array
     pa: jax.Array
-    contrast: jax.Array
+    flux: jax.Array
 
-    def __init__(self, sep, pa, contrast):
-        """
-        Initialize a binary model in angular coordinates.
-
-        Parameters
-        ----------
-        sep : float or array-like
-            Separation in milliarcseconds.
-        pa : float or array-like
-            Position angle in degrees.
-        contrast : float or array-like
-            Contrast ratio between primary and companion (``star/companion``).
-
-        """
-
+    def __init__(self, sep, pa, flux):
         self.sep = np.asarray(sep, dtype=float)
         self.pa = np.asarray(pa, dtype=float)
-        self.contrast = np.asarray(contrast, dtype=float)
-
-    def unpack_all(self):
-        """
-        Return all model parameters in angular form.
-
-        Returns
-        -------
-        tuple[array-like, array-like, array-like]
-            Tuple ``(sep, pa, contrast)``.
-        """
-        return self.sep, self.pa, self.contrast
+        self.flux = np.asarray(flux, dtype=float)
 
     def to_cartesian(self):
-        """
-        Convert this angular parameterization into Cartesian sky offsets.
-
-        Returns
-        -------
-        BinaryModelCartesian
-            Equivalent binary model expressed as ``(dra, ddec, flux)``.
-        """
+        """Return the equivalent [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian]."""
         th = self.pa * dtor
-        dra = self.sep * np.sin(th)
-        ddec = self.sep * np.cos(th)
-        flux = 1.0 / self.contrast
-        return BinaryModelCartesian(dra, ddec, flux)
+        return BinaryModelCartesian(
+            self.sep * np.sin(th), self.sep * np.cos(th), self.flux
+        )
 
     def model(self, u, v, wavel):
-        """
-        Evaluate complex visibilities for this angular binary model.
-
-        Parameters
-        ----------
-        u : array-like
-            Baseline ``u`` coordinates in meters.
-        v : array-like
-            Baseline ``v`` coordinates in meters.
-        wavel : array-like
-            Effective wavelength(s) in meters.
-
-        Returns
-        -------
-        array-like
-            Complex visibility samples on the provided baselines.
-        """
+        """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
         uu, vv = u / wavel, v / wavel
-        return cvis_binary_angular(uu, vv, self.sep, self.pa, self.contrast)
+        return cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
@@ -802,21 +725,25 @@ class BinaryModelAngular(SourceModel):
 
 class BinaryModelCartesian(SourceModel):
     """
-    Represent a binary companion using Cartesian sky offsets.
+    A primary star and a point-source companion, in Cartesian sky offsets.
 
     Parameters
     ----------
     dra : float or array-like
-        Right-ascension offset in milliarcseconds.
+        Right-ascension offset of the companion in milliarcseconds, positive
+        to the East.
     ddec : float or array-like
-        Declination offset in milliarcseconds.
+        Declination offset of the companion in milliarcseconds, positive to
+        the North.
     flux : float or array-like
-        Companion-to-primary flux ratio.
+        Companion/primary flux ratio (e.g. 0.01 for a companion 100 times
+        fainter, i.e. contrast 100 or 5 mag).
 
     Notes
     -----
-    This parameterization is useful for optimization and inference workflows
-    that operate directly in Cartesian offsets.
+    This is the fast form of ``System(primary=PointSource(),
+    companion=PointSource(flux, dra, ddec))`` (see :meth:`to_system`), and
+    the most convenient parameterization for grid searches and fits.
     """
 
     dra: jax.Array
@@ -824,75 +751,26 @@ class BinaryModelCartesian(SourceModel):
     flux: jax.Array
 
     def __init__(self, dra, ddec, flux):
-        """
-        Initialize a binary model in Cartesian offsets.
-
-        Parameters
-        ----------
-        dra : float or array-like
-            Right-ascension offset in milliarcseconds.
-        ddec : float or array-like
-            Declination offset in milliarcseconds.
-        flux : float or array-like
-            Flux ratio for the companion component.
-
-        """
-
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
         self.flux = np.asarray(flux, dtype=float)
 
-    def unpack_all(self):
-        """
-        Return all model parameters in Cartesian form.
-
-        Returns
-        -------
-        tuple[array-like, array-like, array-like]
-            Tuple ``(dra, ddec, flux)``.
-        """
-        return self.dra, self.ddec, self.flux
-
     def to_angular(self):
-        """
-        Convert this Cartesian parameterization into angular coordinates.
-
-        Returns
-        -------
-        BinaryModelAngular
-            Equivalent binary model expressed as ``(sep, pa, contrast)``.
-        """
+        """Return the equivalent [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular]."""
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
-        contrast = 1.0 / self.flux
-        return BinaryModelAngular(sep, pa, contrast)
+        return BinaryModelAngular(sep, pa, self.flux)
 
     def model(self, u, v, wavel):
-        """
-        Evaluate complex visibilities for this Cartesian binary model.
-
-        Parameters
-        ----------
-        u : array-like
-            Baseline ``u`` coordinates in meters.
-        v : array-like
-            Baseline ``v`` coordinates in meters.
-        wavel : array-like
-            Effective wavelength(s) in meters.
-
-        Returns
-        -------
-        array-like
-            Complex visibility samples on the provided baselines.
-        """
+        """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
         uu, vv = u / wavel, v / wavel
         return cvis_binary(uu, vv, self.dra, self.ddec, self.flux)
 
     def to_system(self):
         """Return the equivalent ``System(primary=..., companion=...)``.
 
-        The [`System`][drpangloss.models.System] form is slower to evaluate but can be extended,
-        e.g. by adding a disk around the primary.
+        The [`System`][drpangloss.models.System] form is slower to evaluate
+        but can be extended, e.g. by adding a disk around the primary.
         """
         return System(
             primary=PointSource(),
@@ -989,48 +867,27 @@ class HarmonixModel(SourceModel):
         )
 
 
-HarmonixAdapter = HarmonixModel
-
-
-def cvis_binary_angular(u, v, sep, pa, contrast):
-    # adapted from pymask
-    """Compute complex visibilities for an angular-parameterized binary model.
+def cvis_binary_angular(u, v, sep, pa, flux):
+    """Complex visibilities of a binary in polar coordinates.
 
     Parameters
     ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units.
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units.
+    u, v : array-like
+        Baseline coordinates in wavelength units.
     sep : float or array-like
         Separation in milliarcseconds.
     pa : float or array-like
         Position angle in degrees, measured East of North.
-    contrast : float or array-like
-        Contrast ratio ``star/companion``.
+    flux : float or array-like
+        Companion/primary flux ratio.
 
     Returns
     -------
     array-like
-        Complex visibility samples.
+        Complex visibility samples, normalized to 1 at zero baseline.
     """
-
-    # normalize visibilities so total power is 1
-
     th = pa * dtor
-
-    ddec = mas2rad * (sep * np.cos(th))
-    dra = mas2rad * (sep * np.sin(th))
-
-    # decompose into two "luminosity"
-    l2 = 1.0 / (contrast + 1)
-    l1 = 1 - l2
-
-    # phase-factor
-    phi = np.exp(-i2pi * (u * dra + v * ddec))
-    cvis = l1 + l2 * phi
-
-    return cvis
+    return cvis_binary(u, v, sep * np.sin(th), sep * np.cos(th), flux)
 
 
 def cvis_binary(u, v, dra, ddec, flux):
@@ -1062,7 +919,7 @@ def cvis_binary(u, v, dra, ddec, flux):
     primary = 1.0 / (1.0 + flux)
     companion = flux / (1.0 + flux)
 
-    return primary + companion * _offset_phase(u, v, dra, ddec)
+    return primary + companion * offset_phase(u, v, dra, ddec)
 
 
 def cvis_gaussian_disk(
@@ -1074,16 +931,14 @@ def cvis_gaussian_disk(
     ddec: jax.Array | float = 0.0,
 ):
     """Compute complex visibilities for a Gaussian-disk companion mixed with
-    an unresolved point source, using the ``flux`` companion/star contrast
+    an unresolved point source, using the ``flux`` companion/primary flux ratio
     convention shared with [`cvis_binary`][drpangloss.models.cvis_binary].
     """
     sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
     envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
 
-    dra_rad = mas2rad * dra
-    ddec_rad = mas2rad * ddec
-    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
+    phase = offset_phase(u, v, dra, ddec)
 
     l2 = flux / (flux + 1.0)
     l1 = 1.0 - l2
@@ -1130,10 +985,7 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
         (2.0 * bessel_jn(1, safe_kernel)[1]) / safe_kernel + 0j,
     )
 
-    dra_rad = mas2rad * dra
-    ddec_rad = mas2rad * ddec
-    phase = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
-    return envelope * phase
+    return envelope * offset_phase(u, v, dra, ddec)
 
 
 def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
@@ -1214,7 +1066,7 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
     as the convolution kernel of [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]. Not offered as a public
     function: unlike [`cvis_gaussian_disk`][drpangloss.models.cvis_gaussian_disk], this is a plain Gaussian envelope
-    with no point-source/flux-contrast mixture.
+    with no point-source/companion mixture.
     """
     fwhm_rad = fwhm * mas2rad
     base_norm = np.hypot(u, v)
@@ -1237,456 +1089,3 @@ def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
 
     # Image-plane Gaussian blur, evaluated in the original (untransformed) frame.
     return cvis * _cvis_gaussian_envelope(u, v, fwhm)
-
-
-def _gaussian_loglike(residuals, errors):
-    """Sum of independent Gaussian log densities of ``residuals``."""
-    return jax.scipy.stats.norm.logpdf(residuals, loc=0.0, scale=errors).sum()
-
-
-def model_loglike(model_object, data_obj):
-    """Evaluate a Gaussian log likelihood for an instantiated model object.
-
-    Phase residuals are wrapped into ``[-π, π)`` (see
-    [`residuals`][drpangloss.oidata.OIData.residuals]).
-    """
-    _, errors = data_obj.flatten_data()
-    residuals = data_obj.residuals(data_obj.model(model_object))
-    return _gaussian_loglike(residuals, errors)
-
-
-def joint_prediction(params, observations, model_fn):
-    """Concatenate predictions for a parameter pytree and multiple observations.
-
-    ``model_fn(params, index)`` defines which parameters are shared and which
-    are specific to each observation.
-    """
-    return np.concatenate(
-        [
-            observation.model(model_fn(params, index))
-            for index, observation in enumerate(observations)
-        ]
-    )
-
-
-def joint_data(observations):
-    """Concatenate observed vectors in the same order as ``joint_prediction``."""
-    return np.concatenate(
-        [observation.standardize_data() for observation in observations]
-    )
-
-
-def joint_errors(observations):
-    """Concatenate uncertainty vectors in the same order as ``joint_prediction``."""
-    return np.concatenate(
-        [observation.standardize_errors() for observation in observations]
-    )
-
-
-def joint_loglike(params, observations, model_fn):
-    """Sum independent Gaussian log likelihoods over multiple observations."""
-    return sum(
-        model_loglike(model_fn(params, index), observation)
-        for index, observation in enumerate(observations)
-    )
-
-
-def build_model(model, params, values):
-    """Build a model from parameter names and values.
-
-    ``model`` is either a class/callable, called as ``model(**dict(zip(params,
-    values)))``, or a [`SourceModel`][drpangloss.models.SourceModel] instance used as a template whose
-    leaves at the (dot-separated) paths ``params`` are replaced by ``values``.
-    """
-    if isinstance(model, SourceModel):
-        return model.set(list(params), list(values))
-    return model(**dict(zip(params, values)))
-
-
-@_renamed_argument("model_class", "model")
-def loglike(values, params, data_obj, model):
-    """
-    Gaussian log-likelihood of a model with the given parameter values, assuming Gaussian errors.
-
-    Parameters
-    ----------
-    values : array-like
-        Values of the model parameters.
-    params : list
-        List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
-
-    Returns
-    -------
-    float
-        Log-likelihood value.
-    """
-
-    return model_loglike(build_model(model, params, values), data_obj)
-
-
-def _is_flux_name(name):
-    """Whether a prior key names a (non-negative) brightness parameter."""
-    leaf = name.rsplit(".", 1)[-1]
-    return leaf in {"flux", "contrast"} or leaf.endswith("_flux")
-
-
-def _check_positive_flux_prior(name, distribution):
-    """Reject flux priors whose support includes negative values."""
-    from numpyro.distributions import constraints
-
-    support = distribution.support
-    lower = getattr(support, "lower_bound", None)
-    if lower is None:
-        unbounded = support in (constraints.real, constraints.real_vector)
-    else:
-        try:
-            unbounded = bool(onp.any(onp.asarray(lower) < 0.0))
-        except (
-            jax.errors.TracerArrayConversionError,
-            jax.errors.ConcretizationTypeError,
-        ):
-            unbounded = False
-    if unbounded:
-        raise ValueError(
-            f"The prior on {name!r} allows negative values, but fluxes must "
-            "be non-negative. Use a prior with non-negative support, e.g. "
-            "dist.LogUniform or dist.Uniform(0, ...)."
-        )
-
-
-def numpyro_model(model, priors, data_obj):
-    """Return a numpyro model sampling the parameters in ``priors``.
-
-    Parameters
-    ----------
-    model : SourceModel or callable
-        Either a template model whose leaves at the paths in ``priors`` are
-        sampled, or a function called with the sampled values as keyword
-        arguments that returns a [`SourceModel`][drpangloss.models.SourceModel]. A function lets you
-        sample parameters that are not leaves of the model, such as a
-        separation and position angle, or one inclination shared by two
-        components (see [`build_model`][drpangloss.models.build_model]).
-    priors : dict[str, numpyro.distributions.Distribution]
-        Mapping from parameter path (e.g. ``"comp.flux"``) or function
-        argument name to prior; each key is also used as the numpyro
-        sample-site name. Priors on brightnesses (keys named ``flux`` or
-        ``contrast``, or ending in ``.flux``, ``.contrast`` or ``_flux``)
-        must have non-negative support.
-    data_obj : OIData or sequence of OIData
-        Data whose Gaussian log likelihood is added with ``numpyro.factor``.
-
-    Returns
-    -------
-    callable
-        Zero-argument numpyro model, e.g. for ``numpyro.infer.NUTS``.
-    """
-    import numpyro
-
-    paths = list(priors)
-    for path in paths:
-        if _is_flux_name(path):
-            _check_positive_flux_prior(path, priors[path])
-    observations = (
-        tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
-    )
-
-    def numpyro_fn():
-        values = [numpyro.sample(path, priors[path]) for path in paths]
-        source = build_model(model, paths, values)
-        numpyro.factor(
-            "loglike",
-            sum(model_loglike(source, obs) for obs in observations),
-        )
-
-    return numpyro_fn
-
-
-@_renamed_argument("model_class", "model")
-def loglike_nosignal(values, params, data_obj, model):
-    """
-    Gaussian log-likelihood of the no-signal (unresolved point source) data under a model, assuming Gaussian errors.
-
-    Parameters
-    ----------
-    values : array-like
-        Values of the model parameters.
-    params : list
-        List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
-
-    Returns
-    -------
-    float
-        Log-likelihood value.
-    """
-
-    model_data = data_obj.model(build_model(model, params, values))
-    _, errors = data_obj.flatten_data()
-    unity_cvis = np.ones_like(data_obj.u, dtype=complex)
-    null_data = data_obj.standardize_model(unity_cvis)
-
-    return _gaussian_loglike(data_obj.residuals(model_data, null_data), errors)
-
-
-@_renamed_argument("model_class", "model")
-def laplace_cov(values, params, data_obj, model):
-    """
-    Compute the full Laplace covariance matrix for all model parameters jointly.
-
-    Computes the inverse of the Hessian of the negative log-likelihood with
-    respect to all parameters in ``params`` simultaneously, returning an
-    ``N x N`` covariance matrix (where ``N = len(params)``).
-
-    This returns the *full* covariance matrix over all ``N`` parameters. For
-    only the flux uncertainty at a fixed position, use
-    [`laplace_contrast_uncertainty`][drpangloss.models.laplace_contrast_uncertainty]
-    instead.
-
-    Parameters
-    ----------
-    values : array-like
-        Values of the model parameters.
-    params : list
-        List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
-
-    Returns
-    -------
-    array-like
-        ``N x N`` covariance matrix, where ``N = len(params)``.
-    """
-
-    objective = lambda vals: -loglike(vals, params, data_obj, model)
-    return _laplace_covariance(objective, np.asarray(values, dtype=float))
-
-
-@_renamed_argument("model_class", "model")
-def laplace_contrast_uncertainty(
-    flux, dra, ddec, data_obj, model, params=None
-):
-    """
-    Compute the Laplace uncertainty in flux at a fixed sky position.
-
-    Unlike [`laplace_cov`][drpangloss.models.laplace_cov], which inverts the *full* N-parameter Hessian,
-    this function **fixes** ``dra`` and ``ddec`` and computes only the scalar
-    curvature of the negative log-likelihood along the **flux axis alone**:
-
-    $$
-    \\sigma_f = \\left(\\frac{\\partial^2 (-\\log L)}{\\partial f^2}\\right)^{-1/2}
-    $$
-
-    This is a 1-D (scalar) second derivative, not a matrix inversion.  It is
-    appropriate when the position is held fixed (e.g. on a detection grid) and
-    only the contrast uncertainty at that grid point is needed.  For the joint
-    uncertainty over all parameters, use [`laplace_cov`][drpangloss.models.laplace_cov] instead.
-
-    Parameters
-    ----------
-    flux : float
-        Flux ratio value at which the local Laplace uncertainty is evaluated.
-    dra : float
-        Right ascension offset in mas (held fixed).
-    ddec : float
-        Declination offset in mas (held fixed).
-    data_obj : OIData
-        Object containing the data to be fitted.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
-    params : list[str] or tuple[str, str, str], optional
-        Parameter names corresponding to ``(dra, ddec, flux)``. Defaults to
-        ``["dra", "ddec", "flux"]``.
-
-    Returns
-    -------
-    float
-        Scalar uncertainty in the contrast (standard deviation along flux axis).
-    """
-
-    if params is None:
-        params = ["dra", "ddec", "flux"]
-
-    values = np.asarray([dra, ddec, flux], dtype=float)
-    return laplace_parameter_uncertainty(
-        values,
-        params,
-        data_obj,
-        model,
-        target_param=params[-1],
-    )
-
-
-@_renamed_argument("model_class", "model")
-def laplace_parameter_uncertainty(
-    values, params, data_obj, model, target_param
-):
-    """Compute scalar Laplace uncertainty for one parameter with all others fixed.
-
-    Parameters
-    ----------
-    values : array-like
-        Parameter values at which to evaluate the curvature.
-    params : list[str]
-        Parameter names corresponding to ``values``.
-    data_obj : OIData
-        Data to fit.
-    model : SourceModel or callable
-        Template model or class, as for [`loglike`][drpangloss.models.loglike].
-    target_param : str
-        The parameter whose uncertainty is returned.
-
-    Returns
-    -------
-    float
-        ``(d² -log L / d target²)^(-1/2)``. It is NaN where the curvature is
-        not positive, i.e. away from a likelihood maximum along
-        ``target_param``.
-    """
-    params = list(params)
-    if target_param not in params:
-        raise ValueError(
-            f"target_param '{target_param}' is not present in params={params}."
-        )
-    idx = params.index(target_param)
-    values = np.asarray(values, dtype=float)
-
-    objective = lambda x: -loglike(
-        values.at[idx].set(x), params, data_obj, model
-    )
-    d2_axis = jax.grad(jax.grad(objective))(values[idx])
-    return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
-
-
-@_renamed_argument("model_class", "model")
-def fisher(values, params, data_obj, model, ridge=0.0):
-    """Observed information (Hessian of ``-log L``) at a parameter point.
-
-    At the maximum-likelihood point this approximates the Fisher matrix.
-
-    Parameters
-    ----------
-    values : array-like
-        Parameter vector at which to evaluate the local curvature.
-    params : list[str]
-        Parameter names corresponding to ``values``.
-    data_obj : OIData
-        Observational data object.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.models.build_model]).
-    ridge : float, optional
-        Diagonal regularization term.
-
-    Returns
-    -------
-    array-like
-        Observed information matrix, ``N x N`` for ``N = len(params)``.
-    """
-    objective = lambda vals: -loglike(vals, params, data_obj, model)
-    return _fisher_matrix(
-        objective, np.asarray(values, dtype=float), ridge=ridge
-    )
-
-
-def chi2ppf(p, df):
-    """
-    Percentile function for chi-square.
-
-    For ``df=1`` (the path used in ``nsigma``), use the closed-form identity
-    based on the standard normal quantile, i.e. square ``norm.ppf((p+1)/2)``.
-    This remains JAX-native, differentiable, and fast.
-
-    For ``df != 1``, this falls back to numpyro's gammaincinv backend.
-
-    Parameters
-    ----------
-    p : array-like
-        Percentile value.
-    df : array-like
-        Degrees of freedom.
-
-    Returns
-    -------
-    array-like
-        Corresponding chi2 value to the percentile.
-
-    Notes
-    -----
-    ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
-    the result stays finite. Near ``p = 1`` this loses precision; to convert
-    small tail probabilities, use [`nsigma`][drpangloss.models.nsigma], which works with the upper
-    tail directly.
-    """
-    p = np.asarray(p, dtype=float)
-    eps = np.finfo(p.dtype).eps
-    p = np.clip(p, eps, 1.0 - eps)
-
-    try:
-        if float(onp.asarray(df)) == 1.0:
-            z = jax.scipy.stats.norm.ppf((p + 1.0) / 2.0)
-            return z**2
-    except (
-        TypeError,
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
-        pass
-
-    from numpyro.distributions.util import gammaincinv
-
-    return np.asarray(gammaincinv(df / 2.0, p), dtype=float) * 2.0
-
-
-def nsigma(chi2r_test, chi2r_true, ndof):
-    """
-    Convert a reduced-chi-squared ratio to a Gaussian-equivalent significance.
-
-    The statistic ``x = ndof * chi2r_test / chi2r_true`` is compared with a
-    chi-squared distribution of ``ndof`` degrees of freedom, and its
-    upper-tail probability is expressed as the equivalent two-sided Gaussian
-    significance (as in Absil et al. 2011).
-
-    Parameters
-    ----------
-    chi2r_test: float
-        Reduced chi-squared of test model.
-    chi2r_true: float
-        Reduced chi-squared of true model.
-    ndof: int
-        Number of degrees of freedom.
-
-    Returns
-    -------
-    nsigma: float
-        Detection significance in Gaussian sigma.
-
-    Notes
-    -----
-    The upper tail is computed directly (with the regularized incomplete
-    gamma function) rather than as ``1 - cdf``, so significances stay finite
-    and accurate far beyond 8σ, including in float32 (up to about 13σ).
-    """
-    x = ndof * chi2r_test / chi2r_true
-    half_tail = 0.5 * jax.scipy.special.gammaincc(ndof / 2.0, x / 2.0)
-    # Floor at the smallest normal number, so the result saturates (about
-    # 13σ in float32, 37σ in float64) instead of becoming infinite.
-    half_tail = np.maximum(half_tail, np.finfo(half_tail.dtype).tiny)
-    return -jax.scipy.special.ndtri(half_tail)

@@ -15,10 +15,8 @@ from numpyro.infer import MCMC, NUTS
 
 from drpangloss.inference import fisher_matrix, fisher_projection
 from drpangloss.grid_fit import likelihood_grid
-from drpangloss.models import (
-    BinaryModelCartesian,
-    loglike,
-)
+from drpangloss.likelihood import loglike
+from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import OIData, closure_phases, cp_indices
 from drpangloss.oifits import write_oifits
 

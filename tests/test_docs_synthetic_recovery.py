@@ -5,7 +5,7 @@ import sys
 import jax.numpy as jnp
 import numpy as np
 
-from drpangloss import oifits_implaneia
+from drpangloss.legacy import oifits_implaneia
 from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import closure_phases, cp_indices
 

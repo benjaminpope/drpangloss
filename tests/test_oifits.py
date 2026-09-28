@@ -6,7 +6,8 @@ import pyoifits
 import pytest
 from astropy.io import fits
 
-from drpangloss.models import BinaryModelCartesian, loglike, model_loglike
+from drpangloss.likelihood import loglike, model_loglike
+from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import OIData, closure_phases, cp_indices
 from drpangloss.oifits import read_oifits, write_oifits
 

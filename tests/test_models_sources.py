@@ -5,6 +5,7 @@ from scipy.special import j0 as scipy_j0
 from scipy.special import j1 as scipy_j1
 from scipy.special import jn_zeros
 
+from drpangloss._geometry import image_coordinates as _image_coordinates
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -15,7 +16,6 @@ from drpangloss.models import (
     PointSource,
     System,
     UniformDisk,
-    _image_coordinates,
     cvis_gaussian_disk,
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
@@ -333,7 +333,7 @@ def test_binary_render_is_available():
     ("model", "atol"),
     [
         (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
-        (BinaryModelAngular(20.0, 60.0, 3.0), 2e-3),
+        (BinaryModelAngular(20.0, 60.0, 1.0 / 3.0), 2e-3),
         (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
         (

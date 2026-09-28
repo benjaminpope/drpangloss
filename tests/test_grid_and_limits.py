@@ -7,22 +7,26 @@ import matplotlib.pyplot as plt
 import pytest
 
 from drpangloss.grid_fit import (
-    absil_limits,
-    azimuthalAverage,
-    laplace_contrast_uncertainty_grid,
+    laplace_flux_uncertainty_grid,
     likelihood_grid,
-    optimized_contrast_grid,
+    optimized_flux_grid,
     optimized_likelihood_grid,
+)
+from drpangloss.limits import (
+    absil_limits,
+    delta_mag_to_flux,
+    flux_to_contrast,
+    flux_to_delta_mag,
+    nsigma,
+    radial_profile,
     ruffio_upperlimit,
 )
-from drpangloss.models import BinaryModelCartesian, nsigma
+from drpangloss.models import BinaryModelCartesian
 from drpangloss.oidata import OIData
 from drpangloss.plotting import (
     diagnostics_table_from_samples,
-    plot_contrast_limits,
-    plot_likelihood_grid,
-    plot_optimized_and_grid,
-    plot_optimized_and_sigma,
+    plot_contrast_curve,
+    plot_grid_map,
     truth_cartesian_and_polar,
 )
 from tests._test_data import (
@@ -60,14 +64,14 @@ def test_likelihood_grid():
         samples_dict["flux"].shape[0],
     )
 
-    # loglike_im.max(axis=2) already has shape (dra_len, ddec_len), which
-    # is what plot_likelihood_grid expects (it transposes internally);
-    # the extra .T previously here silently fed it a distorted,
-    # wrong-shape image that no assertion caught.
-    fig, ax = plot_likelihood_grid(
-        loglike_im.max(axis=2), samples_dict, truths=true_values
-    )
+    # The full cube (with its flux axis) is reduced to its maximum over flux.
+    fig, ax = plot_grid_map(loglike_im, samples_dict, truth=true_values)
     _assert_sky_oriented(fig)
+    reduced, _ = plot_grid_map(loglike_im.max(axis=2), samples_dict)
+    assert onp.allclose(
+        onp.ma.getdata(ax.images[0].get_array()),
+        onp.ma.getdata(reduced.axes[0].images[0].get_array()),
+    )
 
 
 def test_likelihood_grid_axis_order_tracks_key_order():
@@ -107,9 +111,7 @@ def test_optimized_likelihood_grid():
         samples_dict["dra"].shape[0],
         samples_dict["ddec"].shape[0],
     )
-    fig, ax = plot_likelihood_grid(
-        loglike_im, samples_dict, truths=true_values
-    )
+    fig, ax = plot_grid_map(loglike_im, samples_dict, truth=true_values)
     _assert_sky_oriented(fig)
 
 
@@ -144,28 +146,26 @@ def test_optimized_likelihood_grid_axis_order_tracks_key_order():
 
 
 def test_optimized():
-    loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
-
-    optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
+    optimized = optimized_flux_grid(
+        oidata_sim, BinaryModelCartesian, samples_dict
     )
     assert optimized.shape == (
         samples_dict["dra"].shape[0],
         samples_dict["ddec"].shape[0],
     )
     assert np.all(np.isfinite(optimized))
-    plot_optimized_and_grid(loglike_im, optimized, samples_dict)
-    _assert_sky_oriented(plt.gcf())
+    fig, _ = plot_grid_map(optimized, samples_dict, kind="flux")
+    _assert_sky_oriented(fig)
 
 
-def test_optimized_contrast_grid_axis_order_tracks_key_order():
+def test_optimized_flux_grid_axis_order_tracks_key_order():
     reduced_samples = {
         "dra": samples_dict["dra"][::40],
         "ddec": samples_dict["ddec"][::40],
         "flux": samples_dict["flux"][::40],
     }
-    ordered = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, reduced_samples, flux_param="flux"
+    ordered = optimized_flux_grid(
+        oidata_sim, BinaryModelCartesian, reduced_samples
     )
 
     permuted_samples = {
@@ -173,8 +173,8 @@ def test_optimized_contrast_grid_axis_order_tracks_key_order():
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
     }
-    permuted = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, permuted_samples, flux_param="flux"
+    permuted = optimized_flux_grid(
+        oidata_sim, BinaryModelCartesian, permuted_samples
     )
 
     assert ordered.shape == (
@@ -189,36 +189,36 @@ def test_optimized_contrast_grid_axis_order_tracks_key_order():
 
 
 def test_laplace():
-    loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
-    best_contrast_indices = np.argmax(loglike_im, axis=2)
-
-    optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
+    optimized = optimized_flux_grid(
+        oidata_sim, BinaryModelCartesian, samples_dict
     )
-
-    plot_optimized_and_grid(loglike_im, optimized, samples_dict)
-    _assert_sky_oriented(plt.gcf())
-
-    laplace_sigma_grid = laplace_contrast_uncertainty_grid(
-        best_contrast_indices,
-        oidata_sim,
-        BinaryModelCartesian,
-        samples_dict,
-        flux_param="flux",
+    laplace_sigma_grid = laplace_flux_uncertainty_grid(
+        oidata_sim, BinaryModelCartesian, samples_dict, flux=optimized
     )
     assert laplace_sigma_grid.shape == (
         samples_dict["dra"].shape[0],
         samples_dict["ddec"].shape[0],
     )
     assert np.all(np.isfinite(laplace_sigma_grid))
-    plot_optimized_and_sigma(
-        optimized, laplace_sigma_grid, samples_dict, snr=False
+    # By default the curvature is taken at the optimized flux.
+    small = {key: value[::20] for key, value in samples_dict.items()}
+    assert np.allclose(
+        laplace_flux_uncertainty_grid(oidata_sim, BinaryModelCartesian, small),
+        laplace_flux_uncertainty_grid(
+            oidata_sim,
+            BinaryModelCartesian,
+            small,
+            flux=optimized_flux_grid(oidata_sim, BinaryModelCartesian, small),
+        ),
     )
-    _assert_sky_oriented(plt.gcf())
-    plot_optimized_and_sigma(
-        optimized, laplace_sigma_grid, samples_dict, snr=True
+
+    fig, (a, b) = plt.subplots(1, 2)
+    plot_grid_map(laplace_sigma_grid, samples_dict, kind="sigma", ax=a)
+    plot_grid_map(
+        optimized / laplace_sigma_grid, samples_dict, kind="snr", ax=b
     )
-    _assert_sky_oriented(plt.gcf())
+    _assert_sky_oriented(fig)
+    assert a.get_title() == "σ(flux)" and b.get_title() == "S/N"
 
 
 def test_laplace_grid_axis_order_tracks_key_order():
@@ -227,40 +227,16 @@ def test_laplace_grid_axis_order_tracks_key_order():
         "ddec": samples_dict["ddec"][::40],
         "flux": samples_dict["flux"][::40],
     }
-    ordered_loglike = likelihood_grid(
-        oidata, BinaryModelCartesian, reduced_samples
+    ordered = laplace_flux_uncertainty_grid(
+        oidata_sim, BinaryModelCartesian, reduced_samples
     )
-    ordered_best = np.argmax(ordered_loglike, axis=2)
-    ordered = laplace_contrast_uncertainty_grid(
-        ordered_best,
-        oidata_sim,
-        BinaryModelCartesian,
-        reduced_samples,
-        flux_param="flux",
-    )
-
     permuted_samples = {
         "ddec": reduced_samples["ddec"],
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
     }
-    permuted_loglike = likelihood_grid(
-        oidata, BinaryModelCartesian, permuted_samples
-    )
-    permuted_best = np.argmax(
-        permuted_loglike, axis=list(permuted_samples.keys()).index("flux")
-    )
-    permuted = laplace_contrast_uncertainty_grid(
-        permuted_best,
-        oidata_sim,
-        BinaryModelCartesian,
-        permuted_samples,
-        flux_param="flux",
-    )
-
-    assert ordered.shape == (
-        reduced_samples["dra"].shape[0],
-        reduced_samples["ddec"].shape[0],
+    permuted = laplace_flux_uncertainty_grid(
+        oidata_sim, BinaryModelCartesian, permuted_samples
     )
     assert permuted.shape == (
         reduced_samples["ddec"].shape[0],
@@ -270,84 +246,67 @@ def test_laplace_grid_axis_order_tracks_key_order():
 
 
 def test_ruffio():
-    loglike_im = likelihood_grid(oidata, BinaryModelCartesian, samples_dict)
-    best_contrast_indices = np.argmax(loglike_im, axis=2)
-
-    optimized = optimized_contrast_grid(
-        oidata_sim, BinaryModelCartesian, samples_dict, flux_param="flux"
+    optimized = optimized_flux_grid(
+        oidata_sim, BinaryModelCartesian, samples_dict
     )
-    laplace_sigma_grid = laplace_contrast_uncertainty_grid(
-        best_contrast_indices,
-        oidata_sim,
-        BinaryModelCartesian,
+    sigma = laplace_flux_uncertainty_grid(
+        oidata_sim, BinaryModelCartesian, samples_dict, flux=optimized
+    )
+    limits = ruffio_upperlimit(optimized, sigma, perc[0])
+    assert limits.shape == optimized.shape
+    assert np.all(np.isfinite(limits))
+
+    profile = radial_profile(limits, samples_dict["dra"], samples_dict["ddec"])
+    assert np.all(np.isfinite(profile["median"][profile["count"] > 0]))
+
+    fig, (a, b) = plt.subplots(1, 2)
+    plot_grid_map(
+        limits,
         samples_dict,
-        flux_param="flux",
-    )
-
-    limits = ruffio_upperlimit(
-        optimized.flatten(), laplace_sigma_grid.flatten(), perc
-    )
-    limits_rs = limits.reshape(*optimized.shape, perc.shape[0])[:, :, 0]
-
-    rad_width_ruffio, avg_width_ruffio = azimuthalAverage(
-        -2.5 * np.log10(limits_rs[:, :]),
-        returnradii=True,
-        binsize=2,
-        stddev=False,
-    )
-    _, std_width_ruffio = azimuthalAverage(
-        -2.5 * np.log10(limits_rs[:, :]),
-        returnradii=True,
-        binsize=2,
-        stddev=True,
-    )
-    assert np.all(np.isfinite(limits_rs))
-    assert np.all(np.isfinite(rad_width_ruffio))
-    assert np.all(np.isfinite(avg_width_ruffio))
-    assert np.all(np.isfinite(std_width_ruffio))
-    plot_contrast_limits(
-        limits_rs,
-        samples_dict,
-        rad_width_ruffio,
-        avg_width_ruffio,
-        std_width_ruffio,
-        true_values=true_values,
+        kind="limit",
+        units="delta_mag",
         percentile=perc,
+        ax=a,
     )
-    _assert_sky_oriented(plt.gcf())
+    plot_contrast_curve(
+        limits, samples_dict, percentile=perc, truth=true_values, ax=b
+    )
+    _assert_sky_oriented(fig)
+    assert a.get_title() == "97.7% upper limit (Δmag)"
+    assert b.get_legend().texts[0].get_text() == "97.7% upper limit"
 
 
 def test_absil():
     limits_absil = absil_limits(
-        samples_dict, oidata_sim, BinaryModelCartesian, 5.0, flux_param="flux"
-    )
-
-    rad_width_absil, avg_width_absil = azimuthalAverage(
-        -2.5 * np.log10(limits_absil[:, :]),
-        returnradii=True,
-        binsize=2,
-        stddev=False,
-    )
-    _, std_width_absil = azimuthalAverage(
-        -2.5 * np.log10(limits_absil[:, :]),
-        returnradii=True,
-        binsize=2,
-        stddev=True,
+        oidata_sim, BinaryModelCartesian, samples_dict, 5.0
     )
     assert np.all(np.isfinite(limits_absil))
-    assert np.all(np.isfinite(rad_width_absil))
-    assert np.all(np.isfinite(avg_width_absil))
-    assert np.all(np.isfinite(std_width_absil))
-    plot_contrast_limits(
-        limits_absil,
-        samples_dict,
-        rad_width_absil,
-        avg_width_absil,
-        std_width_absil,
-        true_values=true_values,
-        sigma=5.0,
+    fig, ax = plot_grid_map(
+        limits_absil, samples_dict, kind="limit", units="contrast", sigma=5.0
     )
-    _assert_sky_oriented(plt.gcf())
+    _assert_sky_oriented(fig)
+    assert ax.get_title() == "5$\\sigma$ limit (contrast)"
+    # Contrast is primary/companion: the displayed values are 1/flux.
+    assert np.allclose(
+        onp.nanmax(ax.images[0].get_array()),
+        onp.nanmax(1.0 / onp.asarray(limits_absil)),
+        rtol=1e-5,
+    )
+
+
+def test_contrast_units_follow_astronomical_convention():
+    # A companion 100 times fainter than the primary has contrast 100, 5 mag.
+    assert np.allclose(flux_to_contrast(0.01), 100.0)
+    assert np.allclose(flux_to_delta_mag(0.01), 5.0)
+    assert np.allclose(delta_mag_to_flux(5.0), 0.01)
+    fig, ax = plot_contrast_curve(
+        onp.full((5, 5), 0.01),
+        {"dra": onp.linspace(-10, 10, 5), "ddec": onp.linspace(-10, 10, 5)},
+        units="delta_mag",
+    )
+    assert np.allclose(onp.nanmedian(ax.lines[0].get_ydata()), 5.0)
+    assert ax.yaxis_inverted()  # deeper limits drawn lower down
+    plt.close("all")
 
 
 def test_nsigma_increases_with_chi2_ratio():
@@ -386,57 +345,12 @@ def test_absil_limit_responds_to_smaller_uncertainties():
             }
         )
 
-    nominal = absil_limits(
-        samples, noisy_null(1.0), BinaryModelCartesian, 2.0, flux_param="flux"
-    )
+    nominal = absil_limits(noisy_null(1.0), BinaryModelCartesian, samples, 2.0)
     improved = absil_limits(
-        samples, noisy_null(0.1), BinaryModelCartesian, 2.0, flux_param="flux"
+        noisy_null(0.1), BinaryModelCartesian, samples, 2.0
     )
 
     assert improved.item() < nominal.item()
-
-
-def test_plot_contrast_limits_percentile_label():
-    plt.close("all")
-
-    plot_contrast_limits(
-        np.ones((2, 2)) * 1e-4,
-        {"dra": np.array([1.0, 0.0]), "ddec": np.array([0.0, 1.0])},
-        np.array([0.0, 1.0]),
-        np.array([10.0, 9.0]),
-        np.array([0.2, 0.3]),
-        percentile=perc,
-    )
-
-    fig = plt.gcf()
-    map_axis = next(ax for ax in fig.axes if ax.get_title())
-    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
-    assert map_axis.get_title() == "97.7% Upper Limit Map ($\\Delta$mag)"
-    assert legend_axis.get_legend().texts[0].get_text() == "97.7% Upper Limit"
-
-
-def test_plot_contrast_limits_sigma_label():
-    plt.close("all")
-
-    plot_contrast_limits(
-        np.ones((2, 2)) * 1e-4,
-        {"dra": np.array([1.0, 0.0]), "ddec": np.array([0.0, 1.0])},
-        np.array([0.0, 1.0]),
-        np.array([10.0, 9.0]),
-        np.array([0.2, 0.3]),
-        sigma=5.0,
-    )
-
-    fig = plt.gcf()
-    map_axis = next(ax for ax in fig.axes if ax.get_title())
-    legend_axis = next(ax for ax in fig.axes if ax.get_legend() is not None)
-    assert (
-        map_axis.get_title() == "5$\\sigma$ Contrast Limit Map ($\\Delta$mag)"
-    )
-    assert (
-        legend_axis.get_legend().texts[0].get_text()
-        == "5$\\sigma$ Contrast Limit"
-    )
 
 
 def test_diagnostics_table_from_samples_follows_north_to_east_pa_convention():

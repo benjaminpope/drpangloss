@@ -38,19 +38,19 @@ from drpangloss.inference import (
     observed_information,
     regularized_inverse,
 )
-from drpangloss.models import (
-    BinaryModelCartesian,
+from drpangloss.likelihood import (
     joint_data,
     joint_errors,
     joint_loglike,
     joint_prediction,
+    posterior_predictive_summary,
 )
+from drpangloss.models import BinaryModelCartesian
 from drpangloss.plotting import (
     set_style,
     plot_chainconsumer_diagnostics,
     plot_data_model_correlation,
-    plot_likelihood_grid,
-    posterior_predictive_summary,
+    plot_grid_map,
 )
 from examples.hierarchical_binary_workflow import (
     FILTER_LABELS,
@@ -149,12 +149,13 @@ joint_grid_best = {
     name: float(joint_grid_samples[name][index])
     for name, index in zip(joint_grid_samples, joint_grid_index)}
 
-plot_likelihood_grid(
-    joint_grid_loglike.max(axis=2),
+plot_grid_map(
+    joint_grid_loglike,
     joint_grid_samples,
-    truths={"dra": float(truth["dra"]), "ddec": float(truth["ddec"])},
-    best_point=joint_grid_best,
-    colorbar_label="Joint max log-likelihood over shared flux",)
+    truth={"dra": float(truth["dra"]), "ddec": float(truth["ddec"])},
+    best=joint_grid_best,
+    label="Joint max log-likelihood over shared flux",
+)
 
 params = {
     "dra": jnp.array(joint_grid_best["dra"]),
@@ -342,12 +343,13 @@ As always, we check the fit against the data directly rather than trusting the c
 predictive_samples = jax.vmap(unravel_recovered)(latent_samples[:500])
 
 for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
+    filter_samples = {
+        "dra": predictive_samples["dra"],
+        "ddec": predictive_samples["ddec"],
+        "flux": 10.0 ** predictive_samples["log10_flux"][:, index],
+    }
     predicted = posterior_predictive_summary(
-        onp.asarray(predictive_samples["dra"]),
-        onp.asarray(predictive_samples["ddec"]),
-        onp.asarray(10.0 ** predictive_samples["log10_flux"][:, index]),
-        observation,
-        BinaryModelCartesian,
+        filter_samples, BinaryModelCartesian, observation
     )
     plot_data_model_correlation(
         observation,

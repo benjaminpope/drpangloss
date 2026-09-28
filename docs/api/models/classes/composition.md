@@ -42,12 +42,5 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
-::: drpangloss.models.build_model
-    options:
-      show_root_heading: true
-      heading_level: 2
-
-::: drpangloss.models.numpyro_model
-    options:
-      show_root_heading: true
-      heading_level: 2
+Models are fitted through [`drpangloss.likelihood`](../../likelihood.md)
+(`build_model`, `loglike`, `numpyro_model`).

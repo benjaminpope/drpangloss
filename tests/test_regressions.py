@@ -5,10 +5,11 @@ import pytest
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
-from drpangloss.models import GaussianDisk, chi2ppf
+from drpangloss.limits import chi2ppf
+from drpangloss.models import GaussianDisk
 from drpangloss.oidata import OIData, closure_phases
 from drpangloss.plotting import (
-    plot_contrast_limit_map,
+    plot_grid_map,
     plot_data_model_correlation,
     plot_model,
 )
@@ -281,39 +282,26 @@ def test_visibility_correlation_ticks_use_adaptive_float_formatter():
 
 def test_delta_mag_map_uses_reversed_colormap_by_default():
     limit_map = np.array([[1e-3, 2e-3], [5e-4, 1e-3]])
-    dra = np.array([-1.0, 1.0])
-    ddec = np.array([-1.0, 1.0])
+    grid = {"dra": np.array([-1.0, 1.0]), "ddec": np.array([-1.0, 1.0])}
 
-    fig, ax = plot_contrast_limit_map(
-        limit_map,
-        dra,
-        ddec,
-        unit_mode="delta_mag",
-        cmap="inferno",
+    fig, ax = plot_grid_map(
+        limit_map, grid, kind="limit", units="delta_mag", cmap=None
     )
-    assert ax.images[0].get_cmap().name == "inferno_r"
+    assert ax.images[0].get_cmap().name == "magma_r"
     xlim, ylim = ax.get_xlim(), ax.get_ylim()
     assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
     assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
     plt.close(fig)
 
 
-def test_delta_mag_map_keeps_explicit_reversed_colormap():
+def test_explicit_colormap_overrides_the_default():
     limit_map = np.array([[1e-3, 2e-3], [5e-4, 1e-3]])
-    dra = np.array([-1.0, 1.0])
-    ddec = np.array([-1.0, 1.0])
+    grid = {"dra": np.array([-1.0, 1.0]), "ddec": np.array([-1.0, 1.0])}
 
-    fig, ax = plot_contrast_limit_map(
-        limit_map,
-        dra,
-        ddec,
-        unit_mode="delta_mag",
-        cmap="inferno_r",
+    fig, ax = plot_grid_map(
+        limit_map, grid, kind="limit", units="delta_mag", cmap="inferno_r"
     )
     assert ax.images[0].get_cmap().name == "inferno_r"
-    xlim, ylim = ax.get_xlim(), ax.get_ylim()
-    assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
-    assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
     plt.close(fig)
 
 
@@ -360,14 +348,12 @@ def test_plotting_leaves_global_rcparams_alone():
 
 
 def test_likelihood_map_pixels_are_centred_on_samples():
-    from drpangloss.plotting import plot_likelihood_grid
-
     samples = {
         "dra": onp.linspace(-10.0, 10.0, 5),
         "ddec": onp.linspace(-4.0, 4.0, 3),
         "flux": onp.array([1e-3]),
     }
-    fig, ax = plot_likelihood_grid(onp.zeros((5, 3)), samples)
+    fig, ax = plot_grid_map(onp.zeros((5, 3)), samples)
     left, right, bottom, top = ax.images[0].get_extent()
     # Samples are 5 apart in dra and 4 apart in ddec: pad by half of that.
     assert sorted([left, right]) == [-12.5, 12.5]
@@ -376,37 +362,40 @@ def test_likelihood_map_pixels_are_centred_on_samples():
 
 
 def test_likelihood_map_uses_dra_as_x_whatever_the_key_order():
-    from drpangloss.plotting import plot_likelihood_grid
-
     samples = {
         "ddec": onp.linspace(-4.0, 4.0, 3),
         "dra": onp.linspace(-10.0, 10.0, 5),
         "flux": onp.array([1e-3]),
     }
     grid = onp.arange(15.0).reshape(3, 5)  # axes (ddec, dra)
-    fig, ax = plot_likelihood_grid(grid, samples)
-    assert ax.get_xlabel() == "dra"
+    fig, ax = plot_grid_map(grid, samples)
+    assert ax.get_xlabel() == "ΔRA (mas)"
     assert ax.images[0].get_array().shape == (3, 5)  # rows are ddec
     plt.close(fig)
 
 
-def test_optimized_plots_return_figures():
-    from drpangloss.plotting import plot_optimized_and_sigma
-
+def test_grid_map_kinds_set_defaults_and_accept_overrides():
     samples = {
         "dra": onp.linspace(-10.0, 10.0, 4),
         "ddec": onp.linspace(-10.0, 10.0, 4),
         "flux": onp.array([1e-3, 1e-2]),
     }
-    fig, axes = plot_optimized_and_sigma(
-        onp.full((4, 4), 1e-3), onp.full((4, 4), 1e-4), samples, snr=True
+    fig, ax = plot_grid_map(onp.full((4, 4), 1e-3), samples, kind="flux")
+    assert ax.get_title() == "Best-fit flux (flux ratio)"
+    fig, ax = plot_grid_map(
+        onp.full((4, 4), 1e-3), samples, kind="flux", title="Mine"
     )
-    assert len(axes) == 2
-    plt.close(fig)
+    assert ax.get_title() == "Mine"
+    with pytest.raises(ValueError, match="kind"):
+        plot_grid_map(onp.zeros((4, 4)), samples, kind="nonsense")
+    # Only log-likelihood grids are reduced over the flux axis.
+    with pytest.raises(ValueError, match="only kind='loglike'"):
+        plot_grid_map(onp.zeros((4, 4, 2)), samples, kind="flux")
+    plt.close("all")
 
 
 def test_ruffio_upperlimit_accepts_scalars_and_keeps_axis_order():
-    from drpangloss.grid_fit import ruffio_upperlimit
+    from drpangloss.limits import ruffio_upperlimit
 
     scalar = ruffio_upperlimit(1e-3, 1e-3, 0.5)
     assert np.shape(scalar) == ()
@@ -416,14 +405,16 @@ def test_ruffio_upperlimit_accepts_scalars_and_keeps_axis_order():
     assert np.all(limits[..., 1] > limits[..., 0])
 
 
-def test_azimuthal_average_steps_and_counts():
-    from drpangloss.grid_fit import azimuthalAverage
+def test_radial_profile_counts_and_statistics():
+    from drpangloss.limits import radial_profile
 
-    image = onp.ones((9, 9))
-    x, y = azimuthalAverage(image, binsize=1.0, steps=True)
-    assert x.dtype.kind == "f" and x.shape == y.shape
-    nr, radii, profile = azimuthalAverage(image, binsize=1.0, return_nr=True)
-    assert nr.shape == radii.shape == profile.shape
+    axis = onp.linspace(-4.0, 4.0, 9)
+    values = onp.ones((9, 9))
+    values[4, 4] = onp.nan  # non-finite values are ignored
+    profile = radial_profile(values, axis, axis, bins=4)
+    assert profile["r"].shape == profile["count"].shape == (4,)
+    assert profile["count"].sum() == 80
+    assert np.allclose(profile["median"][profile["count"] > 0], 1.0)
 
 
 def test_best_grid_point_rejects_reduced_grids():
@@ -444,7 +435,7 @@ def test_best_grid_point_rejects_reduced_grids():
 
 
 def test_legacy_savefits_writes_a_readable_file(tmp_path):
-    from drpangloss import savefits
+    from drpangloss.legacy import savefits
 
     phi = onp.array([10.0, -5.0, 3.0])
     dic = {
