@@ -563,3 +563,19 @@ def test_batched_grid_matches_unbatched(monkeypatch):
     monkeypatch.setattr(grid_fit, "GRID_BATCH_SIZE", 10)
     batched = grid_fit.likelihood_grid(oidata, BinaryModelCartesian, samples)
     assert np.allclose(batched[..., :3], whole)
+
+
+def test_styled_plotting_keeps_other_figures_open():
+    # plt.rc_context restores the backend on exit, which in Jupyter can
+    # close every open figure before it is shown.
+    import matplotlib
+
+    from drpangloss.plotting import plot_model
+
+    backend = matplotlib.rcParams["backend"]
+    existing = plt.figure()
+    ax = plot_model(GaussianDisk(sigma=5.0), fov_mas=40.0, npix=16)
+    assert existing.number in plt.get_fignums()
+    assert ax.figure.number in plt.get_fignums()
+    assert matplotlib.rcParams["backend"] == backend
+    plt.close("all")

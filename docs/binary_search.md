@@ -324,6 +324,10 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
+![binary_search output 19.1](generated/binary_search_cell019_out01.png)
+
+![binary_search output 19.2](generated/binary_search_cell019_out02.png)
+
 And in polar coordinates:
 
 ```python
@@ -338,6 +342,10 @@ plot_chainconsumer_diagnostics(
     colors=["#1f77b4", "#ff7f0e"],
 );
 ```
+
+![binary_search output 21.1](generated/binary_search_cell021_out01.png)
+
+![binary_search output 21.2](generated/binary_search_cell021_out02.png)
 
 ## Posterior Predictive Checks with Correlation Plots
 
@@ -370,11 +378,3 @@ plt.show()
 ```
 
 ![binary_search output 23.1](generated/binary_search_cell023_out01.png)
-
-![binary_search output 23.2](generated/binary_search_cell023_out02.png)
-
-![binary_search output 23.3](generated/binary_search_cell023_out03.png)
-
-![binary_search output 23.4](generated/binary_search_cell023_out04.png)
-
-![binary_search output 23.5](generated/binary_search_cell023_out05.png)

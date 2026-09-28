@@ -6,6 +6,7 @@ matplotlib's global settings; call [`set_style`][drpangloss.plotting.set_style] 
 drpangloss look for every figure.
 """
 
+import contextlib
 import functools
 
 import matplotlib
@@ -32,12 +33,30 @@ def set_style():
     matplotlib.rcParams.update(STYLE)
 
 
+@contextlib.contextmanager
+def _style_context(style=None):
+    """Temporarily apply ``style`` (default ``STYLE``) to ``rcParams``.
+
+    Only the keys in ``style`` are saved and restored. ``plt.rc_context``
+    restores every key, including ``backend``, and in Jupyter that can
+    switch backends on exit, which closes the open figures before they are
+    shown.
+    """
+    style = STYLE if style is None else style
+    saved = {key: matplotlib.rcParams[key] for key in style}
+    matplotlib.rcParams.update(style)
+    try:
+        yield
+    finally:
+        matplotlib.rcParams.update(saved)
+
+
 def _styled(fn):
-    """Run ``fn`` inside ``plt.rc_context(STYLE)``."""
+    """Run ``fn`` with the drpangloss style applied."""
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        with plt.rc_context(STYLE):
+        with _style_context():
             return fn(*args, **kwargs)
 
     return wrapper
@@ -1318,7 +1337,7 @@ def plot_contrast_limits(
         limit_label=limit_label, percentile=percentile, sigma=sigma
     )
 
-    with plt.rc_context({**STYLE, "figure.dpi": 150, "font.size": 16}):
+    with _style_context({**STYLE, "figure.dpi": 150, "font.size": 16}):
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 5))
 
         # First show the upper-limit map.

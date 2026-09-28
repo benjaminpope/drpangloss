@@ -341,6 +341,9 @@ for path in paths:
 
 ```text
 parameter     truth                HMC  Laplace σ  σ, rim fixed
+```
+
+```text
 comp.dra    45.0000   44.9272 ± 1.0927     1.0649        1.0422
 comp.ddec   30.0000   32.6506 ± 1.1473     1.3602        1.0782
 comp.flux    0.0100    0.0096 ± 0.0007     0.0008        0.0006

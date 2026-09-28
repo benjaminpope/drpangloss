@@ -120,7 +120,7 @@ best_idx = jnp.argmax(ll_cube, axis=2)
 ```
 
 ```text
-/var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/ipykernel_86379/1114166516.py:8: RuntimeWarning: optimized_contrast_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+/var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/ipykernel_86886/1114166516.py:8: RuntimeWarning: optimized_contrast_grid(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
   opt_flux = optimized_contrast_grid(
 ```
 
@@ -190,9 +190,11 @@ plot_contrast_limit_map(
 ```
 
 ```text
-/var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/ipykernel_86379/612624357.py:2: RuntimeWarning: absil_limits(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
+/var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/ipykernel_86886/612624357.py:2: RuntimeWarning: absil_limits(): the optimizer did not converge at 1 of 3721 grid positions; values there may be inaccurate.
   absil_map = absil_limits(
 ```
+
+![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
 
 ## Contrast Curves
 We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
@@ -225,3 +227,5 @@ ax.collections[-1].set_label("Absil 16–84%")
 ax.set_xlabel("Separation from origin (mas)")
 ax.legend(loc="best");
 ```
+
+![contrast_limits output 13.1](generated/contrast_limits_cell013_out01.png)
