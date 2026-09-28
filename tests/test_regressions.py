@@ -4,11 +4,12 @@ import numpy as onp
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
-from drpangloss.models import chi2ppf
+from drpangloss.models import GaussianDisk, chi2ppf
 from drpangloss.oidata import OIData, closure_phases
 from drpangloss.plotting import (
     plot_contrast_limit_map,
     plot_data_model_correlation,
+    plot_model,
 )
 
 
@@ -303,4 +304,29 @@ def test_delta_mag_map_keeps_explicit_reversed_colormap():
     xlim, ylim = ax.get_xlim(), ax.get_ylim()
     assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
     assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
+    plt.close(fig)
+
+
+def test_plot_model_shows_east_left_north_up():
+    # A source offset to the North-East must be drawn in the upper-left.
+    fov, npix = 10.0, 5
+    model = GaussianDisk(sigma=1e-3, flux=1.0, dra=2.0, ddec=2.0)
+    fig, ax = plt.subplots()
+    plot_model(model, fov_mas=fov, npix=npix, ax=ax)
+
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    assert xlim[0] > xlim[1], f"x-axis not East-left: {xlim}"
+    assert ylim[0] < ylim[1], f"y-axis not North-up: {ylim}"
+
+    # Map the brightest pixel to the data coordinates it is displayed at.
+    image = ax.get_images()[0]
+    array = onp.asarray(image.get_array())
+    left, right, bottom, top = image.get_extent()
+    row, col = onp.unravel_index(array.argmax(), array.shape)
+    x = left + (col + 0.5) * (right - left) / npix
+    if image.origin == "upper":
+        y = top - (row + 0.5) * (top - bottom) / npix
+    else:
+        y = bottom + (row + 0.5) * (top - bottom) / npix
+    assert onp.allclose((x, y), (2.0, 2.0))
     plt.close(fig)

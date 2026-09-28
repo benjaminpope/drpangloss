@@ -486,6 +486,9 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
         by the azimuthal modulations, remains positive.
     """
     k = len(az_amps)
+    if k == 0:
+        # No modulation: the profile is the constant 1.
+        return True
     deg = 2 * k
 
     # Orders start from 1 up to k

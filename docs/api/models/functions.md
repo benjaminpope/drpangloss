@@ -7,6 +7,8 @@
         - cvis_binary_angular
         - cvis_binary
         - cvis_gaussian_disk
+        - cvis_uniform_disk
+        - cvis_radial_dirac_delta_modulated
         - model_loglike
         - joint_prediction
         - joint_data

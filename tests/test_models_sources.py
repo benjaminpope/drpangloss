@@ -17,6 +17,7 @@ from drpangloss.models import (
     UniformDisk,
     _image_coordinates,
     cvis_gaussian_disk,
+    cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
 from tests._test_data import oidata
@@ -491,3 +492,14 @@ def test_harmonix_model_random_spherical_harmonics_are_finite(seed):
     assert image.shape == (64, 64)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+def test_modulated_ring_visibility_accepts_scalar_baselines():
+    amps, phis = np.array([0.3, 0.2]), np.array([10.0, 40.0])
+    scalar = cvis_radial_dirac_delta_modulated(1e6, 2e6, 5.0, amps, phis)
+    vector = cvis_radial_dirac_delta_modulated(
+        np.array([1e6]), np.array([2e6]), 5.0, amps, phis
+    )
+
+    assert np.shape(scalar) == ()
+    assert np.allclose(scalar, vector[0])

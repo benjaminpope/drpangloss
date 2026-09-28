@@ -69,10 +69,15 @@ def _infer_grid_parameter_keys(samples_dict, params=None):
     return coord_keys, flux_key
 
 
-def _check_flux_axes(samples_dict):
-    """Reject grid axes that would give a flux parameter negative values."""
+def _check_flux_axes(samples_dict, flux_param=None):
+    """Reject grid axes that would give a flux parameter negative values.
+
+    Axes named ``flux`` or ending in ``.flux`` are checked, as is the
+    explicitly selected ``flux_param`` whatever its name.
+    """
     for key, values in samples_dict.items():
-        if not (key == "flux" or key.endswith(".flux")):
+        is_flux = key == "flux" or key.endswith(".flux")
+        if not (is_flux or key == flux_param):
             continue
         try:
             negative = np.any(np.asarray(values) < 0.0)
@@ -97,7 +102,7 @@ def _resolve_flux_param(samples_dict, flux_param, caller):
     ``samples_dict``, a :class:`DeprecationWarning` is raised.
     """
     params = tuple(samples_dict.keys())
-    _check_flux_axes(samples_dict)
+    _check_flux_axes(samples_dict, flux_param)
     if flux_param is None:
         coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
         if _unambiguous_flux_key(samples_dict, params) is not None:
@@ -757,7 +762,8 @@ def absil_limits(samples_dict, data_obj, model, sigma, flux_param=None):
     ----------
     samples_dict : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values.
-        The flux axis is only used for the starting guess.
+        The flux axis is only used for the starting guess, and must contain
+        at least one positive value.
     data_obj : OIData
         Data to fit.
     model : SourceModel or class
@@ -780,6 +786,11 @@ def absil_limits(samples_dict, data_obj, model, sigma, flux_param=None):
     params, coord_keys, flux_key = _resolve_flux_param(
         samples_dict, flux_param, "absil_limits"
     )
+    if not np.any(np.asarray(samples_dict[flux_key]) > 0.0):
+        raise ValueError(
+            f"The flux axis {flux_key!r} needs at least one positive value "
+            "to start the log-flux optimizer from."
+        )
     return _absil_limits(
         samples_dict,
         data_obj,
@@ -823,7 +834,14 @@ def _absil_limits(
 
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    start_flux = samples_dict[flux_key][best_flux_indices]
+    # A zero flux would start the log-flux optimizer at -inf; start from the
+    # smallest positive flux on the grid instead.
+    flux_axis_vals = jnp.asarray(samples_dict[flux_key])
+    smallest_positive = jnp.min(
+        jnp.where(flux_axis_vals > 0.0, flux_axis_vals, jnp.inf)
+    )
+    start_flux = flux_axis_vals[best_flux_indices]
+    start_flux = jnp.where(start_flux > 0.0, start_flux, smallest_positive)
     starts = (
         jnp.stack([jnp.log10(start_flux), *coord_grids], axis=0)
         .reshape((len(coord_keys) + 1, -1))

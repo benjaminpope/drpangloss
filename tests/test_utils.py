@@ -94,3 +94,7 @@ def test_check_az_prof_nonnegative_detects_valid_and_invalid_profiles():
             az_amps=np.array([1.5]), az_pas=np.array([0.0])
         )
     )
+
+
+def test_check_az_prof_nonnegative_accepts_no_modulation():
+    assert check_az_prof_nonnegative(az_amps=np.array([]), az_pas=np.array([]))

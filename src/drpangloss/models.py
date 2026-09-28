@@ -1152,7 +1152,7 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
             az_amp
             * np.exp(-0.5j * np.pi * az_order)
             * np.cos(az_order * (base_proj_ang_rad - az_phi_rad))
-            * bessel_vals[az_order, :]
+            * bessel_vals[az_order]
         )
 
     azmod_cvis_terms = jax.vmap(

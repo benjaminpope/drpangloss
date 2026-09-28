@@ -122,6 +122,46 @@ def test_negative_flux_grid_axis_is_rejected():
         likelihood_grid(oidata, _composed_binary(), grid)
 
 
+def test_negative_explicit_flux_param_axis_is_rejected():
+    # The selected brightness axis is checked even when it is not named
+    # "flux" or "*.flux".
+    grid = {
+        "sep": np.array([150.0]),
+        "pa": np.array([30.0]),
+        "contrast": np.array([-1e-3, 1e-3]),
+    }
+    with pytest.raises(ValueError, match="negative values"):
+        absil_limits(
+            grid, oidata, BinaryModelAngular, 3.0, flux_param="contrast"
+        )
+
+
+def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
+    # A tiny sigma makes the zero flux the best grid start; the optimizer
+    # must start from the smallest positive flux instead of log10(0).
+    coords = {
+        "comp.dra": np.array([100.0, 200.0]),
+        "comp.ddec": np.array([100.0]),
+    }
+    with_zero = {**coords, "comp.flux": np.array([0.0, 1e-3])}
+    positive = {**coords, "comp.flux": np.array([1e-3])}
+    template = _composed_binary()
+    kwargs = dict(flux_param="comp.flux")
+
+    assert np.allclose(
+        absil_limits(with_zero, oidata, template, 1e-3, **kwargs),
+        absil_limits(positive, oidata, template, 1e-3, **kwargs),
+    )
+
+
+def test_absil_limits_rejects_flux_axis_without_positive_values():
+    grid = {**_path_samples(), "comp.flux": np.array([0.0])}
+    with pytest.raises(ValueError, match="positive value"):
+        absil_limits(
+            grid, oidata, _composed_binary(), 3.0, flux_param="comp.flux"
+        )
+
+
 def test_flux_prior_with_negative_support_is_rejected():
     priors = {"comp.flux": dist.Normal(0.0, 1e-3)}
     with pytest.raises(ValueError, match="allows negative values"):
