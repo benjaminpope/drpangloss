@@ -5,11 +5,42 @@ import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from .models import laplace_parameter_uncertainty, loglike, nsigma
+from .models import (
+    SourceModel,
+    build_model,
+    laplace_parameter_uncertainty,
+    loglike,
+    nsigma,
+)
 
 import jax.scipy as jsp
 
 """Grid-based fitting and contrast-limit utilities."""
+
+
+def _split_model(model):
+    """Separate a static model class from a (dynamic) template model instance."""
+    if isinstance(model, SourceModel):
+        return None, model
+    return model, None
+
+
+def _resolve_model(model_class, template):
+    return template if model_class is None else model_class
+
+
+def _infer_flux_key(samples_dict, params):
+    if "flux" in samples_dict:
+        return "flux"
+    path_fluxes = [key for key in params if key.endswith(".flux")]
+    if len(path_fluxes) == 1:
+        return path_fluxes[0]
+    if len(path_fluxes) > 1 and params[-1] not in path_fluxes:
+        raise ValueError(
+            f"Several flux parameters {path_fluxes}; put the one to optimize "
+            "last in samples_dict."
+        )
+    return params[-1]
 
 
 def _infer_grid_parameter_keys(samples_dict, params=None):
@@ -17,7 +48,8 @@ def _infer_grid_parameter_keys(samples_dict, params=None):
 
     Supports any number of coordinate parameters (one or more) plus exactly
     one flux-like parameter, e.g. ``(dra, ddec, flux)`` for a binary
-    companion search or ``(sigma, flux)`` for a resolved-source search.
+    companion search, ``(sigma, flux)`` for a resolved-source search, or
+    ``(comp.dra, comp.ddec, comp.flux)`` for a composed :class:`System`.
     """
     if params is None:
         params = tuple(samples_dict.keys())
@@ -27,7 +59,7 @@ def _infer_grid_parameter_keys(samples_dict, params=None):
             "more coordinates and one flux-like parameter."
         )
 
-    flux_key = "flux" if "flux" in samples_dict else params[-1]
+    flux_key = _infer_flux_key(samples_dict, params)
     coord_keys = [key for key in params if key != flux_key]
     if not coord_keys:
         raise ValueError(
@@ -61,11 +93,16 @@ def _ordered_values_from_flux_and_coords(
 
 def likelihood_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
-    return _likelihood_grid(data_obj, model_class, samples_dict, params=params)
+    model_class, template = _split_model(model_class)
+    return _likelihood_grid(
+        data_obj, model_class, samples_dict, params=params, template=template
+    )
 
 
 @partial(jit, static_argnames=("model_class", "params"))
-def _likelihood_grid(data_obj, model_class, samples_dict, params):
+def _likelihood_grid(
+    data_obj, model_class, samples_dict, params, template=None
+):
     """
     Function to vmap a likelihood function over a grid of parameter values provided in a dictionary.
 
@@ -84,6 +121,7 @@ def _likelihood_grid(data_obj, model_class, samples_dict, params):
         Log-likelihood values over the grid of parameter values.
     """
 
+    model_class = _resolve_model(model_class, template)
     vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
 
     fn = vmap(lambda values: loglike(values, params, data_obj, model_class))
@@ -95,6 +133,7 @@ def optimized_likelihood_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
     _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
     coord_keys = tuple(param for param in params if param != flux_key)
+    model_class, template = _split_model(model_class)
     return _optimized_likelihood_grid(
         data_obj,
         model_class,
@@ -102,6 +141,7 @@ def optimized_likelihood_grid(data_obj, model_class, samples_dict):
         params=params,
         coord_keys=tuple(coord_keys),
         flux_key=flux_key,
+        template=template,
     )
 
 
@@ -115,7 +155,13 @@ def optimized_likelihood_grid(data_obj, model_class, samples_dict):
     ),
 )
 def _optimized_likelihood_grid(
-    data_obj, model_class, samples_dict, params, coord_keys, flux_key
+    data_obj,
+    model_class,
+    samples_dict,
+    params,
+    coord_keys,
+    flux_key,
+    template=None,
 ):
     """
     Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
@@ -136,6 +182,7 @@ def _optimized_likelihood_grid(
 
     """
 
+    model_class = _resolve_model(model_class, template)
     # first do a grid search to find a starting point
 
     vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
@@ -185,6 +232,7 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
     params = tuple(samples_dict.keys())
     _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
     coord_keys = tuple(param for param in params if param != flux_key)
+    model_class, template = _split_model(model_class)
     return _optimized_contrast_grid(
         data_obj,
         model_class,
@@ -192,6 +240,7 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
         params=params,
         coord_keys=tuple(coord_keys),
         flux_key=flux_key,
+        template=template,
     )
 
 
@@ -205,7 +254,13 @@ def optimized_contrast_grid(data_obj, model_class, samples_dict):
     ),
 )
 def _optimized_contrast_grid(
-    data_obj, model_class, samples_dict, params, coord_keys, flux_key
+    data_obj,
+    model_class,
+    samples_dict,
+    params,
+    coord_keys,
+    flux_key,
+    template=None,
 ):
     """
     Function to optimize the contrast of a model over a grid of parameter values provided in a dictionary.
@@ -226,6 +281,7 @@ def _optimized_contrast_grid(
 
     """
 
+    model_class = _resolve_model(model_class, template)
     # first do a grid search to find a starting point
 
     vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
@@ -279,6 +335,7 @@ def laplace_contrast_uncertainty_grid(
     params = tuple(samples_dict.keys())
     _, flux_key = _infer_grid_parameter_keys(samples_dict, params)
     coord_keys = tuple(param for param in params if param != flux_key)
+    model_class, template = _split_model(model_class)
     return _laplace_contrast_uncertainty_grid(
         best_contrast_indices,
         data_obj,
@@ -287,6 +344,7 @@ def laplace_contrast_uncertainty_grid(
         params=params,
         coord_keys=tuple(coord_keys),
         flux_key=flux_key,
+        template=template,
     )
 
 
@@ -307,6 +365,7 @@ def _laplace_contrast_uncertainty_grid(
     params,
     coord_keys,
     flux_key,
+    template=None,
 ):
     """
     Calculate the uncertainty with the Laplace method over a grid of parameters, for an optimized fit between a model and data object.
@@ -328,6 +387,7 @@ def _laplace_contrast_uncertainty_grid(
         Uncertainty in the contrast.
     """
 
+    model_class = _resolve_model(model_class, template)
     coords = [samples_dict[key] for key in coord_keys]
     coord_grids = jnp.meshgrid(*coords, indexing="ij")
     param_grids = {
@@ -572,7 +632,6 @@ def azimuthalAverage(
         return radial_prof
 
 
-@partial(jit, static_argnames=("model_class"))
 def absil_limits(samples_dict, data_obj, model_class, sigma):
     """
 
@@ -599,13 +658,22 @@ def absil_limits(samples_dict, data_obj, model_class, sigma):
         Maximum relative flux of companion.
     """
 
+    model_class, template = _split_model(model_class)
+    return _absil_limits(
+        samples_dict, data_obj, model_class, sigma, template=template
+    )
+
+
+@partial(jit, static_argnames=("model_class",))
+def _absil_limits(samples_dict, data_obj, model_class, sigma, template=None):
+    model_class = _resolve_model(model_class, template)
     data, errors = data_obj.flatten_data()
     ndof = data.size
     params = tuple(samples_dict.keys())
     coord_keys, flux_key = _infer_grid_parameter_keys(samples_dict, params)
 
     def reduced_chi2(values):
-        model = data_obj.model(model_class(**dict(zip(params, values))))
+        model = data_obj.model(build_model(model_class, params, values))
         return jnp.sum(((data - model) / errors) ** 2) / ndof
 
     null_values = [0.0] * len(params)

@@ -57,7 +57,11 @@ def _unit_flux(component):
 
 
 class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
-    """Base class for sky-brightness source models."""
+    """Base class for sky-brightness source models.
+
+    Models combine with ``+`` into a :class:`System`, and ``k * model`` weights
+    a model's flux by ``k`` inside a :class:`System`.
+    """
 
     def model(self, u, v, wavel):
         """Evaluate complex visibilities on interferometric baselines."""
@@ -66,6 +70,375 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     def render(self, npix=256, fov_mas=200.0):
         """Render an image-plane model in milliarcseconds."""
         raise NotImplementedError
+
+    def _weight(self):
+        """Relative flux of this model when mixed inside a :class:`System`."""
+        return 1.0
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        """Un-normalized image on the given coordinate grid."""
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot be rendered inside a System."
+        )
+
+    def __add__(self, other):
+        return _combine(self, other)
+
+    def __mul__(self, factor):
+        # Compound models such as binaries use `flux` for an internal ratio,
+        # so weighting them wraps rather than rescaling that ratio.
+        return System(c0=self, flux=factor)
+
+    __rmul__ = __mul__
+
+
+class Component(SourceModel):
+    """Base class for pure shape components with ``flux``, ``dra`` and ``ddec``.
+
+    ``flux`` is the component's weight relative to the other components of a
+    :class:`System`; on its own a component is normalized to unit flux.
+    """
+
+    flux: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    def _centred_cvis(self, uu, vv):
+        """Visibility of the shape centred on the origin, normalized to 1."""
+        raise NotImplementedError
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        """Un-normalized image of the shape centred on the origin."""
+        raise NotImplementedError
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        phase = np.exp(-i2pi * mas2rad * (uu * self.dra + vv * self.ddec))
+        return self._centred_cvis(uu, vv) * phase
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        return self._centred_image(
+            xx - self.dra, yy - self.ddec, pixel_scale_mas
+        )
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        return _normalize_image(
+            self._image(xx, yy, float(fov_mas) / float(npix))
+        )
+
+    def _weight(self):
+        return self.flux
+
+    def __mul__(self, factor):
+        return eqx.tree_at(lambda m: m.flux, self, self.flux * factor)
+
+    __rmul__ = __mul__
+
+
+class PointSource(Component):
+    """Unresolved point source."""
+
+    def __init__(self, flux=1.0, dra=0.0, ddec=0.0):
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        return np.ones_like(uu) + 0j
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        sigma = max(pixel_scale_mas, 1e-6)
+        return np.exp(-0.5 * (xx**2 + yy**2) / sigma**2)
+
+
+class GaussianDisk(Component):
+    """Circular Gaussian disk with standard deviation ``sigma`` in mas."""
+
+    sigma: jax.Array
+
+    def __init__(self, sigma, flux=1.0, dra=0.0, ddec=0.0):
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        sigma_rad = mas2rad * self.sigma
+        return np.exp(-2.0 * np.pi**2 * sigma_rad**2 * (uu**2 + vv**2)) + 0j
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        sigma = np.maximum(self.sigma, 1e-9)
+        return np.exp(-0.5 * (xx**2 + yy**2) / sigma**2)
+
+
+class UniformDisk(Component):
+    """Uniform (tophat) circular disk of diameter ``diam`` in mas."""
+
+    diam: jax.Array
+
+    def __init__(self, diam, flux=1.0, dra=0.0, ddec=0.0):
+        self.diam = np.asarray(diam, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        return cvis_uniform_disk(uu, vv, self.diam)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
+        return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+class ModulatedGaussianRim(Component):
+    r"""
+    Azimuthally modulated, infinitely thin rim convolved with an isotropic 2D
+    Gaussian, optionally inclined and rotated.
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Diameter of the rim in milliarcseconds.
+    fwhm : float or array-like
+        Gaussian FWHM of the rim in milliarcseconds.
+    inc : float or array-like
+        Apparent inclination of the rim in degrees.
+    pa : float or array-like
+        Position angle of the rim's projected major axis in degrees, measured North
+        to East (i.e. counter-clockwise in conventional astronomical image orientation).
+    az_amps : array-like
+        1D array containing amplitude coefficients for cosine azimuthal modulations.
+        The first element is the amplitude for the first-order modulation, the second
+        for the second-order modulation, etc. An empty array gives an unmodulated,
+        azimuthally symmetric rim.
+    az_pas : array-like
+        1D array containing position angles of the cosine azimuthal modulations, in
+        degrees. The first element is the angle for the first-order modulation, the
+        second for the second-order modulation, etc.
+    flux : float or array-like
+        Relative flux of the rim inside a :class:`System`.
+    dra : float or array-like
+        Right-ascension offset of the rim's center in milliarcseconds.
+    ddec : float or array-like
+        Declination offset of the rim's center in milliarcseconds.
+
+    Notes
+    -----
+    The intensity profile is separable into a symmetric radial profile and cosine
+    azimuthal modulations, meaning the image intensity can be described in polar image
+    coordinates as $I(r, \theta) = f(r) \left( 1 + \sum_{m=1}^{n}
+    A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
+    profile convolved with an isotropic Gaussian.
+
+    This model is achromatic: it does not represent any spectral dependence.
+    Add a :class:`PointSource` with ``+`` for a central star.
+    """
+
+    diam: jax.Array
+    fwhm: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    az_amps: jax.Array
+    az_pas: jax.Array
+
+    def __init__(
+        self,
+        diam,
+        fwhm,
+        inc,
+        pa,
+        az_amps=(),
+        az_pas=(),
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.diam = np.asarray(diam, dtype=float)
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.az_amps = np.asarray(az_amps, dtype=float)
+        self.az_pas = np.asarray(az_pas, dtype=float)
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        return _cvis_centred_rim(
+            uu,
+            vv,
+            self.diam,
+            self.fwhm,
+            self.inc,
+            self.pa,
+            self.az_amps,
+            self.az_pas - self.pa,
+        )
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        xx_ell, yy_ell = undo_elliptical_transf_coord(xx, yy, self.pa, stretch)
+        r_ell = np.hypot(xx_ell, yy_ell)
+        theta_ell = np.arctan2(xx_ell, yy_ell)
+
+        # Anti-aliased thin ring: Gaussian in de-projected radius, at least
+        # half a pixel wide on the sky along the compressed minor axis.
+        width = 0.5 * pixel_scale_mas / stretch
+        ring = np.exp(-0.5 * ((r_ell - self.diam / 2.0) / width) ** 2)
+
+        az_amps = np.concatenate([np.array([1.0]), self.az_amps])
+        az_phis_rad = (
+            np.concatenate([np.array([0.0]), self.az_pas - self.pa]) * dtor
+        )
+        az_orders = np.arange(az_amps.size)
+
+        def _az_term(az_amp, az_phi_rad, az_order):
+            return az_amp * np.cos(az_order * (theta_ell - az_phi_rad))
+
+        az_factors = jax.vmap(_az_term)(az_amps, az_phis_rad, az_orders)
+        ring = ring * np.sum(az_factors, axis=0)
+
+        # Odd-sized kernel centred on a pixel, so mode="same" introduces no shift.
+        npix = xx.shape[0]
+        nker = npix + 1 - npix % 2
+        kx, ky = _image_coordinates(nker, nker * pixel_scale_mas)
+        sigma_mas = np.maximum(
+            self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
+        )
+        psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
+        return fftconvolve(ring, psf, mode="same")
+
+
+class System(SourceModel):
+    """Flux-weighted sum of named source models.
+
+    The visibility is ``sum_i f_i V_i / sum_i f_i``, where ``f_i`` is each
+    component's ``flux``; fix one component's flux (conventionally the primary
+    at 1) and fit the others as flux ratios. Components are reached by name, so
+    ``system.comp.flux`` and zodiax paths such as ``"comp.flux"`` both work.
+    The system's own ``flux``, ``dra`` and ``ddec`` weight and shift it as a
+    whole when nested inside another :class:`System`.
+
+    Examples
+    --------
+    ``System(star=PointSource(), comp=PointSource(dra=120, ddec=-80, flux=4e-3))``
+    """
+
+    components: dict
+    flux: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+
+    _RESERVED = ("components", "flux", "dra", "ddec")
+
+    def __init__(
+        self, components=None, /, *, flux=1.0, dra=0.0, ddec=0.0, **named
+    ):
+        components = {**(components or {}), **named}
+        if not components:
+            raise ValueError("System needs at least one component.")
+        for name, component in components.items():
+            if name in self._RESERVED or name.startswith("_"):
+                raise ValueError(f"'{name}' is not a valid component name.")
+            if not isinstance(component, SourceModel):
+                raise TypeError(
+                    f"Component '{name}' is not a SourceModel: {component!r}"
+                )
+        self.components = components
+        self.flux = np.asarray(flux, dtype=float)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __getattr__(self, name):
+        try:
+            components = object.__getattribute__(self, "components")
+        except AttributeError:
+            raise AttributeError(name) from None
+        if name in components:
+            return components[name]
+        raise AttributeError(f"System has no component or attribute '{name}'.")
+
+    def model(self, u, v, wavel):
+        weights = [c._weight() for c in self.components.values()]
+        total = sum(
+            w * c.model(u, v, wavel)
+            for w, c in zip(weights, self.components.values())
+        ) / sum(weights)
+        uu, vv = u / wavel, v / wavel
+        phase = np.exp(-i2pi * mas2rad * (uu * self.dra + vv * self.ddec))
+        return total * phase
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        xx, yy = xx - self.dra, yy - self.ddec
+        weights = [c._weight() for c in self.components.values()]
+        return sum(
+            w * _unit_flux(c._image(xx, yy, pixel_scale_mas))
+            for w, c in zip(weights, self.components.values())
+        ) / sum(weights)
+
+    def render(self, npix=256, fov_mas=200.0):
+        xx, yy = _image_coordinates(npix, fov_mas)
+        return _normalize_image(
+            self._image(xx, yy, float(fov_mas) / float(npix))
+        )
+
+    def _weight(self):
+        return self.flux
+
+    def __mul__(self, factor):
+        return eqx.tree_at(lambda m: m.flux, self, self.flux * factor)
+
+    __rmul__ = __mul__
+
+
+def _is_plain_system(model):
+    """True for an unweighted, unshifted System whose components can be merged."""
+    if not isinstance(model, System):
+        return False
+    try:
+        return bool(
+            onp.all(onp.asarray(model.flux) == 1.0)
+            and onp.all(onp.asarray(model.dra) == 0.0)
+            and onp.all(onp.asarray(model.ddec) == 0.0)
+        )
+    except jax.errors.TracerArrayConversionError:
+        return False
+
+
+def _combine(*models):
+    """Build a System from ``a + b``, merging plain Systems and auto-naming others."""
+    named = {}
+    unnamed = []
+    for model in models:
+        if _is_plain_system(model):
+            for name, component in model.components.items():
+                if name in named:
+                    raise ValueError(
+                        f"Component name '{name}' appears in both operands; "
+                        "build the System explicitly with distinct names."
+                    )
+                named[name] = component
+        else:
+            unnamed.append(model)
+    index = 0
+    for model in unnamed:
+        while f"c{index}" in named:
+            index += 1
+        named[f"c{index}"] = model
+    return System(**named)
+
+
+def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
+    """Point source at the origin plus a Gaussian disk with disk/star ratio ``flux``.
+
+    Convenience constructor equivalent to
+    ``System(star=PointSource(), disk=GaussianDisk(sigma, flux, dra, ddec))``.
+    """
+    return System(
+        star=PointSource(),
+        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
+    )
 
 
 class BinaryModelAngular(SourceModel):
@@ -284,268 +657,6 @@ class BinaryModelCartesian(SourceModel):
         )
         image = l1 * star + l2 * comp
         return image / np.sum(image)
-
-
-class GaussianDiskModel(SourceModel):
-    """
-    Resolved circular Gaussian disk companion added to an unresolved point
-    source, using the same ``flux`` (companion/star) contrast convention as
-    :class:`BinaryModelCartesian`.
-    """
-
-    sigma: jax.Array
-    flux: jax.Array
-    dra: jax.Array
-    ddec: jax.Array
-
-    def __init__(self, sigma, flux, dra=0.0, ddec=0.0):
-        self.sigma = np.asarray(sigma, dtype=float)
-        self.flux = np.asarray(flux, dtype=float)
-        self.dra = np.asarray(dra, dtype=float)
-        self.ddec = np.asarray(ddec, dtype=float)
-
-    def __repr__(self):
-        return (
-            "GaussianDiskModel("
-            f"sigma={self.sigma}, flux={self.flux}, "
-            f"dra={self.dra}, ddec={self.ddec})"
-        )
-
-    def unpack_all(self):
-        return self.sigma, self.flux, self.dra, self.ddec
-
-    def model(self, u, v, wavel):
-        uu, vv = u / wavel, v / wavel
-        return cvis_gaussian_disk(
-            uu, vv, self.sigma, self.flux, self.dra, self.ddec
-        )
-
-    def render(self, npix=256, fov_mas=200.0):
-        xx, yy = _image_coordinates(npix, fov_mas)
-        sigma_mas = np.maximum(self.sigma, 1e-9)
-        point_sigma_mas = max(float(fov_mas) / float(npix), 1e-6)
-        l2 = self.flux / (self.flux + 1.0)
-        l1 = 1.0 - l2
-        star = np.exp(
-            -0.5 * ((xx / point_sigma_mas) ** 2 + (yy / point_sigma_mas) ** 2)
-        )
-        disk = np.exp(
-            -0.5
-            * (
-                ((xx - self.dra) / sigma_mas) ** 2
-                + ((yy - self.ddec) / sigma_mas) ** 2
-            )
-        )
-        image = l1 * _unit_flux(star) + l2 * _unit_flux(disk)
-        return _normalize_image(image)
-
-
-class UniformDiskModel(SourceModel):
-    """Centered or offset uniform (tophat) circular disk model."""
-
-    ud: jax.Array
-    dra: jax.Array
-    ddec: jax.Array
-
-    def __init__(self, ud, dra=0.0, ddec=0.0):
-        self.ud = np.asarray(ud, dtype=float)
-        self.dra = np.asarray(dra, dtype=float)
-        self.ddec = np.asarray(ddec, dtype=float)
-
-    def __repr__(self):
-        return (
-            f"UniformDiskModel(ud={self.ud}, dra={self.dra}, ddec={self.ddec})"
-        )
-
-    def unpack_all(self):
-        return self.ud, self.dra, self.ddec
-
-    def model(self, u, v, wavel):
-        uu, vv = u / wavel, v / wavel
-        return cvis_uniform_disk(uu, vv, self.ud, self.dra, self.ddec)
-
-    def render(self, npix=256, fov_mas=200.0):
-        xx, yy = _image_coordinates(npix, fov_mas)
-        pixel_scale_mas = float(fov_mas) / float(npix)
-        radius_mas = np.maximum(self.ud / 2.0, 0.5 * pixel_scale_mas)
-        rr2 = (xx - self.dra) ** 2 + (yy - self.ddec) ** 2
-        image = np.where(rr2 <= radius_mas**2, 1.0, 0.0)
-        return _normalize_image(image)
-
-
-class ModulatedGaussianRimModel(SourceModel):
-    r"""
-    Represents an azimuthally modulated, infinitely thin rim convolved with an
-    isotropic 2D Gaussian, optionally inclined and rotated, added to an
-    unresolved point source, using the same ``flux`` (companion/star) contrast
-    convention as :class:`GaussianDiskModel`.
-
-    Parameters
-    ----------
-    diam : float or array-like
-        Diameter of the rim in milliarcseconds.
-    fwhm : float or array-like
-        Gaussian FWHM of the rim in milliarcseconds.
-    inc : float or array-like
-        Apparent inclination of the rim in degrees.
-    pa : float or array-like
-        Position angle of the rim's projected major axis in degrees, measured North
-        to East (i.e. counter-clockwise in conventional astronomical image orientation).
-    az_amps : array-like
-        1D array containing amplitude coefficients for cosine azimuthal modulations.
-        The first element is the amplitude for the first-order modulation, the second
-        for the second-order modulation, etc. An empty array gives an unmodulated,
-        azimuthally symmetric rim.
-    az_pas : array-like
-        1D array containing position angles of the cosine azimuthal modulations, in
-        degrees. The first element is the angle for the first-order modulation, the
-        second for the second-order modulation, etc.
-    flux : float or array-like
-        Rim-to-star flux ratio.
-    dra : float or array-like
-        Right-ascension offset of the rim's center in milliarcseconds.
-    ddec : float or array-like
-        Declination offset of the rim's center in milliarcseconds.
-
-    Notes
-    -----
-    The intensity profile is separable into a symmetric radial profile and cosine
-    azimuthal modulations, meaning the image intensity can be described in polar image
-    coordinates as $I(r, \theta) = f(r) \left( 1 + \sum_{m=1}^{n}
-    A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
-    profile convolved with an isotropic Gaussian.
-
-    The rim is mixed with an unresolved point source centered on the origin (i.e.
-    unaffected by ``dra``/``ddec``, which offset only the rim), using the same
-    ``flux`` companion/star contrast convention as :class:`GaussianDiskModel` and
-    :func:`cvis_gaussian_disk`.
-
-    This model is achromatic: it does not represent any spectral dependence.
-    """
-
-    diam: jax.Array
-    fwhm: jax.Array
-    inc: jax.Array
-    pa: jax.Array
-    az_amps: jax.Array
-    az_pas: jax.Array
-    flux: jax.Array
-    dra: jax.Array
-    ddec: jax.Array
-
-    def __init__(
-        self,
-        diam,
-        fwhm,
-        inc,
-        pa,
-        az_amps=(),
-        az_pas=(),
-        flux=0.0,
-        dra=0.0,
-        ddec=0.0,
-    ):
-        self.diam = np.asarray(diam, dtype=float)
-        self.fwhm = np.asarray(fwhm, dtype=float)
-        self.inc = np.asarray(inc, dtype=float)
-        self.pa = np.asarray(pa, dtype=float)
-        self.az_amps = np.asarray(az_amps, dtype=float)
-        self.az_pas = np.asarray(az_pas, dtype=float)
-        self.flux = np.asarray(flux, dtype=float)
-        self.dra = np.asarray(dra, dtype=float)
-        self.ddec = np.asarray(ddec, dtype=float)
-
-    def __repr__(self):
-        return (
-            "ModulatedGaussianRimModel("
-            f"diam={self.diam}, fwhm={self.fwhm}, inc={self.inc}, "
-            f"pa={self.pa}, az_amps={self.az_amps}, az_pas={self.az_pas}, "
-            f"flux={self.flux}, dra={self.dra}, ddec={self.ddec})"
-        )
-
-    def unpack_all(self):
-        return (
-            self.diam,
-            self.fwhm,
-            self.inc,
-            self.pa,
-            self.az_amps,
-            self.az_pas,
-            self.flux,
-            self.dra,
-            self.ddec,
-        )
-
-    def model(self, u, v, wavel):
-        uu, vv = u / wavel, v / wavel
-        az_phis = self.az_pas - self.pa
-        return cvis_gaussian_rim(
-            uu,
-            vv,
-            self.dra,
-            self.ddec,
-            self.diam,
-            self.fwhm,
-            self.inc,
-            self.pa,
-            self.az_amps,
-            az_phis,
-            self.flux,
-        )
-
-    def render(self, npix=256, fov_mas=200.0):
-        xx, yy = _image_coordinates(npix, fov_mas)
-        pixel_scale_mas = float(fov_mas) / float(npix)
-
-        # Ring pattern is centered on (dra, ddec).
-        xx_centered = xx - self.dra
-        yy_centered = yy - self.ddec
-
-        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
-        xx_ell, yy_ell = undo_elliptical_transf_coord(
-            xx_centered, yy_centered, self.pa, stretch
-        )
-        r_ell = np.hypot(xx_ell, yy_ell)
-        theta_ell = np.arctan2(xx_ell, yy_ell)
-
-        ring = np.where(
-            np.abs(r_ell - self.diam / 2.0) <= pixel_scale_mas, 1.0, 0.0
-        )
-
-        az_amps = np.concatenate([np.array([1.0]), self.az_amps])
-        az_phis_rad = (
-            np.concatenate([np.array([0.0]), self.az_pas - self.pa]) * dtor
-        )
-        az_orders = np.arange(az_amps.size)
-
-        def _az_term(az_amp, az_phi_rad, az_order):
-            return az_amp * np.cos(az_order * (theta_ell - az_phi_rad))
-
-        az_factors = jax.vmap(_az_term)(az_amps, az_phis_rad, az_orders)
-        ring = ring * np.sum(az_factors, axis=0)
-
-        # The Gaussian PSF is centered on the pixel grid's own origin (not
-        # on (dra, ddec)), so convolving with it blurs in place instead of
-        # also shifting the image.
-        sigma_mas = np.maximum(
-            self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
-        )
-        r_psf = np.hypot(xx, yy)
-        psf = np.exp(-0.5 * (r_psf / sigma_mas) ** 2)
-
-        rim_image = fftconvolve(ring, psf, mode="same")
-
-        # Unresolved point source centered on the origin (the star, unlike
-        # the rim, is not offset by dra/ddec).
-        point_sigma_mas = max(pixel_scale_mas, 1e-6)
-        star_image = np.exp(
-            -0.5 * ((xx / point_sigma_mas) ** 2 + (yy / point_sigma_mas) ** 2)
-        )
-
-        l2 = self.flux / (self.flux + 1.0)
-        l1 = 1.0 - l2
-        image = l1 * _unit_flux(star_image) + l2 * _unit_flux(rim_image)
-        return _normalize_image(image)
 
 
 class HarmonixModel(SourceModel):
@@ -842,6 +953,21 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     )
 
 
+def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
+    """Unit-flux visibility of a Gaussian-blurred, inclined, modulated thin ring at the origin."""
+    # Transform spatial frequency coordinates to the frame of reference where the
+    # model rim is uninclined and the major axis is pointed North.
+    stretch_factor = np.maximum(np.cos(inc * dtor), 1e-8)
+    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch_factor)
+
+    cvis = cvis_radial_dirac_delta_modulated(
+        ut, vt, diam / 2.0, az_amps, az_phis
+    )
+
+    # Image-plane Gaussian blur, evaluated in the original (untransformed) frame.
+    return cvis * _cvis_gaussian_envelope(u, v, fwhm)
+
+
 def cvis_gaussian_rim(
     u, v, dra, ddec, diam, fwhm, inc, pa, az_amps, az_phis, flux
 ):
@@ -888,21 +1014,8 @@ def cvis_gaussian_rim(
     array-like
         Complex visibility samples.
     """
-    inc_rad, dra_rad, ddec_rad = inc * dtor, dra * mas2rad, ddec * mas2rad
-
-    # Transform spatial frequency coordinates to the frame of reference where the
-    # model rim is uninclined and the major axis is pointed North.
-    stretch_factor = np.maximum(np.cos(inc_rad), 1e-8)
-    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch_factor)
-
-    # Complex visibility of the (inclined) Dirac delta modulated ring.
-    cvis = cvis_radial_dirac_delta_modulated(
-        ut, vt, diam / 2.0, az_amps, az_phis
-    )
-
-    # Effect of convolution in image-plane with an isotropic Gaussian of the given
-    # FWHM, evaluated in the original (un-transformed) image frame of reference.
-    cvis = cvis * _cvis_gaussian_envelope(u, v, fwhm)
+    dra_rad, ddec_rad = dra * mas2rad, ddec * mas2rad
+    cvis = _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis)
 
     # Apply offset phase-factor.
     phi = np.exp(-i2pi * (u * dra_rad + v * ddec_rad))
@@ -960,6 +1073,18 @@ def joint_loglike(params, observations, model_fn):
     )
 
 
+def build_model(model, params, values):
+    """Build a model from parameter names and values.
+
+    ``model`` is either a class/callable, called as ``model(**dict(zip(params,
+    values)))``, or a :class:`SourceModel` instance used as a template whose
+    leaves at the (dot-separated) paths ``params`` are replaced by ``values``.
+    """
+    if isinstance(model, SourceModel):
+        return model.set(list(params), list(values))
+    return model(**dict(zip(params, values)))
+
+
 def loglike(values, params, data_obj, model_class):
     """
     Abstract log-likelihood function for a given model class and data object, assuming Gaussian errors.
@@ -972,8 +1097,9 @@ def loglike(values, params, data_obj, model_class):
         List of parameter names.
     data_obj : OIData
         Object containing the data to be fitted.
-    model_class : class
-        Model class to be fitted to the data.
+    model_class : class or SourceModel
+        Model class to be fitted to the data, or a template model instance
+        whose parameters are addressed by path (see :func:`build_model`).
 
     Returns
     -------
@@ -981,9 +1107,7 @@ def loglike(values, params, data_obj, model_class):
         Log-likelihood value.
     """
 
-    param_dict = dict(zip(params, values))
-
-    return model_loglike(model_class(**param_dict), data_obj)
+    return model_loglike(build_model(model_class, params, values), data_obj)
 
 
 def loglike_nosignal(values, params, data_obj, model_class):
@@ -1007,9 +1131,7 @@ def loglike_nosignal(values, params, data_obj, model_class):
         Log-likelihood value.
     """
 
-    param_dict = dict(zip(params, values))
-
-    model_data = data_obj.model(model_class(**param_dict))
+    model_data = data_obj.model(build_model(model_class, params, values))
     _, errors = data_obj.flatten_data()
     unity_cvis = np.ones_like(data_obj.u, dtype=complex)
     data = data_obj.standardize_model(unity_cvis)
