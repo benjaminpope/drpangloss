@@ -6,6 +6,7 @@ from scipy.special import j1 as scipy_j1
 from scipy.special import jn_zeros
 
 from drpangloss.models import (
+    BinaryModelAngular,
     BinaryModelCartesian,
     GaussianDiskModel,
     HarmonixModel,
@@ -347,6 +348,54 @@ def test_binary_render_is_available():
     assert image.shape == (32, 32)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize(
+    ("model", "atol"),
+    [
+        (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
+        (BinaryModelAngular(20.0, 60.0, 3.0), 2e-3),
+        (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
+        (UniformDiskModel(15.0, -5.0, 4.0), 2e-3),
+        (
+            ModulatedGaussianRimModel(
+                14.0,
+                3.0,
+                inc=60.0,
+                pa=30.0,
+                az_amps=np.array([0.6, 0.3]),
+                az_pas=np.array([100.0, 20.0]),
+                flux=0.7,
+                dra=3.0,
+                ddec=-2.0,
+            ),
+            # One-pixel-wide ring rasterization limits render accuracy.
+            2e-2,
+        ),
+    ],
+    ids=["binary_cart", "binary_ang", "gauss_disk", "uniform_disk", "rim"],
+)
+def test_render_fourier_transform_matches_model_visibilities(model, atol):
+    npix, fov_mas, wavel = 512, 80.0, 1.65e-6
+    rng = onp.random.default_rng(1)
+    u = rng.uniform(-8.0, 8.0, 40)
+    v = rng.uniform(-8.0, 8.0, 40)
+
+    image = onp.asarray(model.render(npix=npix, fov_mas=fov_mas)).ravel()
+    xx, yy = (
+        onp.asarray(a).ravel() for a in _image_coordinates(npix, fov_mas)
+    )
+    phase = onp.exp(
+        -2j
+        * onp.pi
+        * _MAS2RAD_REF
+        * (onp.outer(u, xx) + onp.outer(v, yy))
+        / wavel
+    )
+    cvis_render = phase @ image / image.sum()
+    cvis_model = onp.asarray(model.model(u, v, wavel))
+
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < atol
 
 
 @pytest.mark.parametrize(
