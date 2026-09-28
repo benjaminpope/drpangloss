@@ -24,7 +24,7 @@ from drpangloss.oidata import OIData, closure_phases
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
 
 
-ddec, dra, planet = 0.1, 0.2, 10
+dra, ddec, flux = 0.2, 0.1, 10
 
 
 def test_oidata_compatibility_reexports():
@@ -33,7 +33,7 @@ def test_oidata_compatibility_reexports():
 
 
 def test_cvis_binary():
-    vis = cvis_binary(u, v, ddec, dra, planet)
+    vis = cvis_binary(u, v, dra, ddec, flux)
     vis2 = np.abs(vis) ** 2
     assert vis.shape == (u.shape[0],)
     assert np.all(vis2 >= 0.0)
@@ -41,8 +41,26 @@ def test_cvis_binary():
     assert np.all(np.isfinite(vis))
 
 
+def test_cvis_binary_argument_order_matches_other_cvis_functions():
+    # dra before ddec, as in cvis_gaussian_disk and cvis_uniform_disk.
+    uu, vv = u / oidata.wavel, v / oidata.wavel
+    assert np.allclose(
+        cvis_binary(uu, vv, dra=150.0, ddec=-40.0, flux=1e-2),
+        BinaryModelCartesian(dra=150.0, ddec=-40.0, flux=1e-2).model(
+            u, v, oidata.wavel
+        ),
+        # Phases reach ~1e4 rad here, so float32 inputs limit agreement.
+        atol=1e-3,
+    )
+    east_only = cvis_binary(np.array([1e7]), np.array([0.0]), 100.0, 0.0, 1.0)
+    north_only = cvis_binary(np.array([1e7]), np.array([0.0]), 0.0, 100.0, 1.0)
+    # A u-only baseline sees an East offset but not a North one.
+    assert not np.allclose(east_only, 1.0)
+    assert np.allclose(north_only, 1.0)
+
+
 def test_closure_phases():
-    vis = cvis_binary(u, v, ddec, dra, planet)
+    vis = cvis_binary(u, v, dra, ddec, flux)
     cps = closure_phases(vis, i_cps1, i_cps2, i_cps3)
     assert cps.shape == (35,)
     assert np.all(np.isfinite(cps))
@@ -217,7 +235,7 @@ def test_oidata_with_model_preserves_structure_and_seeded_noise():
 
 def test_oidata_linear_observables_transform_and_model_alignment():
     cvis = cvis_binary(
-        oidata.u / oidata.wavel, oidata.v / oidata.wavel, 0.0, 50.0, 1e-3
+        oidata.u / oidata.wavel, oidata.v / oidata.wavel, 50.0, 0.0, 1e-3
     )
     n = cvis.shape[0]
     m_vis = 12

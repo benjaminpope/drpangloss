@@ -8,6 +8,8 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from .oifits import read_oifits
+
 
 __all__ = ["OIData", "closure_phases", "cp_indices", "load_oi_data"]
 
@@ -30,17 +32,29 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     Parameters
     ----------
-    data : dict or object
-        Either a dictionary with explicit interferometric arrays, or an OIFITS
-        object opened with ``pyoifits``.
+    data : dict, str, os.PathLike or astropy.io.fits.HDUList
+        An OIFITS file (a path, or a file opened with ``astropy.io.fits`` or
+        ``pyoifits``), or a dictionary of arrays; see ``__init__``.
+    target : str or int, optional
+        For OIFITS input, the target to keep (by name or ``TARGET_ID``).
+        Required when the file contains more than one target.
 
     Notes
     -----
-    The object stores baseline coordinates, observables, uncertainties, and
-    optional closure-phase index triplets. It provides convenience methods for
-    flattening data/model vectors and converting complex visibilities to the
-    configured visibility/phase conventions. Phase observables are stored
-    internally in radians.
+    Every (baseline, wavelength) sample is one element of the flat ``u``,
+    ``v`` (metres) and ``wavel`` (metres) arrays; ``wavel`` has a single
+    element when all samples share one wavelength. Models are evaluated on
+    these samples. The observables are:
+
+    * ``vis``/``d_vis``: squared visibilities (``v2_flag=True``) or
+      amplitudes, or their projection through ``vis_mat``.
+    * ``phi``/``d_phi``: closure phases (``cp_flag=True``) built from the
+      samples ``i_cps1 + i_cps2 - i_cps3``, or absolute phases; always in
+      radians, optionally projected through ``phi_mat``.
+
+    Flagged samples are left out of the observables. ``vis_index`` (and
+    ``phi_index`` for absolute phases) then lists the samples that are
+    observed; they are ``None`` when every sample is used.
     """
 
     u: jax.Array
@@ -55,174 +69,180 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     i_cps3: jax.Array | onp.ndarray | None
     vis_mat: jax.Array | None
     phi_mat: jax.Array | None
+    vis_index: jax.Array | None
+    phi_index: jax.Array | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
 
-    def __init__(self, data):
+    def __init__(self, data, target=None):
         """
-        Initialize from an OIFITS object or explicit arrays.
+        Initialize from an OIFITS file or explicit arrays.
 
         Parameters
         ----------
-        data : dict or object
-            OIFITS data opened with ``pyoifits``, or a dictionary containing
-            ``u``, ``v``, ``wavel``, ``vis``, ``d_vis``, ``phi``, ``d_phi``,
-            optional closure-phase indices, convention flags, and optional
-            ``phi_unit`` (``"rad"`` or ``"deg"``). OIFITS phase columns are
-            interpreted using their column unit metadata when present, and
-            default to degrees when metadata is missing.
+        data : dict, str, os.PathLike or astropy.io.fits.HDUList
+            An OIFITS file, read with [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits]
+            (several wavelength channels, tables and epochs, and ``FLAG``
+            columns, are supported). Or a dictionary with keys:
+
+            * ``u``, ``v`` (metres) and ``wavel`` (metres): per sample, or
+              ``u``/``v`` per baseline with ``vis`` of shape
+              ``(n_baseline, n_wavel)`` for several channels.
+            * ``vis``, ``d_vis``: squared visibilities or amplitudes.
+            * ``phi``, ``d_phi``: closure or absolute phases, with
+              ``phi_unit`` (``"rad"``, the default, or ``"deg"``;
+              ``phase_unit`` is an alias). For several channels, shape
+              ``(n_triangle, n_wavel)`` or ``(n_baseline, n_wavel)``.
+            * ``i_cps1``, ``i_cps2``, ``i_cps3`` (optional): for each
+              closure phase, the baselines ``(a, b)``, ``(b, c)`` and
+              ``(a, c)`` of its triangle.
+            * ``v2_flag`` (default True): ``vis`` holds squared
+              visibilities; otherwise amplitudes.
+            * ``cp_flag`` (default: True when closure indices are given):
+              ``phi`` holds closure phases; otherwise absolute phases.
+            * ``vis_flag``, ``phi_flag`` (optional): boolean masks, True
+              for bad samples, shaped like ``vis`` and ``phi``. Samples with
+              non-finite values or errors are flagged automatically.
+            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``;
+              ``observable_kind`` is an alias): the visibility channel that
+              data and model are compared in. ``"auto"`` keeps the channel
+              of ``vis``.
+            * ``vis_mat``, ``phi_mat`` (optional): linear operators of shape
+              ``(n_out, n_in)`` projecting the channels into, e.g., kernel
+              or DISCO observables. The ``disco_vis_mat``/``disco_phi_mat``
+              spellings also check that the projected covariance is
+              diagonal. Only diagonal uncertainties are propagated.
+
+            A record with ``disco_coefficients`` is read as an AMIGO
+            mixed-DISCO product (see [`load_oi_data`][drpangloss.oidata.load_oi_data]); its ``u`` and
+            ``v`` are negated to match the drpangloss sign convention.
+        target : str or int, optional
+            For OIFITS input, the target to keep.
         """
-
         if not isinstance(data, dict):
-            # assume data is an oifits file opened with pyoifits
-            data_names = [d.name for d in data.get_dataHDUs()]
-            assert "OI_VIS" in data_names or "OI_VIS2" in data_names, (
-                "No visibility data found in OIFITS file"
-            )
-            assert "OI_T3" in data_names or "OI_PHI" in data_names, (
-                "No phase data found in OIFITS file"
-            )
+            data = read_oifits(data, target=target)
+        elif target is not None:
+            raise ValueError("target only applies to OIFITS input.")
 
-            # get the data from the oifits file
-            self.wavel = np.array(
-                data[1].data["EFF_WAVE"], dtype=float
-            )  # note that for AMI this is scalar but for CHARA it is an array
-
-            # if square visibilities are available, get them, otherwise get unsquared visibilities
-            if "OI_VIS2" in data_names:
-                visdata = data["OI_VIS2"]
-                self.vis = np.array(visdata.data["VIS2DATA"], dtype=float)
-                self.d_vis = np.array(visdata.data["VIS2ERR"], dtype=float)
-                vis_sta_index = visdata.data["STA_INDEX"]
-
-                self.u, self.v = (
-                    np.array(visdata.data["UCOORD"], dtype=float),
-                    np.array(visdata.data["VCOORD"], dtype=float),
-                )
-
-                self.v2_flag = True
-
-            elif "OI_VIS" in data_names:
-                visdata = data["OI_VIS"]
-                vis_key = (
-                    "VISAMP" if "VISAMP" in visdata.data.names else "VISPHI"
-                )
-                d_vis_key = (
-                    "VISAMPERR"
-                    if "VISAMPERR" in visdata.data.names
-                    else "VISERR"
-                )
-                self.vis = np.array(visdata.data[vis_key], dtype=float)
-                self.d_vis = np.array(visdata.data[d_vis_key], dtype=float)
-                self.u, self.v = (
-                    np.array(visdata.data["UCOORD"], dtype=float),
-                    np.array(visdata.data["VCOORD"], dtype=float),
-                )
-                vis_sta_index = np.array(visdata.data["STA_INDEX"], dtype=int)
-
-                self.v2_flag = False
-
-            # if absolute phases are available, get them, otherwise get closure phases
-            if "OI_PHI" in data_names:
-                phidata = data["OI_PHI"]
-                phi = np.array(phidata.data["VISPHI"], dtype=float)
-                d_phi = np.array(phidata.data["VISERR"], dtype=float)
-                phase_unit = self._extract_oifits_phase_unit(phidata, "VISPHI")
-                self.phi, self.d_phi = self._phase_to_radians(
-                    phi, d_phi, phase_unit, default_unit="deg"
-                )
-                self.i_cps1, self.i_cps2, self.i_cps3 = None, None, None
-
-                self.cp_flag = False
-
-            elif "OI_T3" in data_names:
-                phidata = data["OI_T3"]
-                phi = np.array(phidata.data["T3PHI"], dtype=float)
-                d_phi = np.array(phidata.data["T3PHIERR"], dtype=float)
-                phase_unit = self._extract_oifits_phase_unit(phidata, "T3PHI")
-                self.phi, self.d_phi = self._phase_to_radians(
-                    phi, d_phi, phase_unit, default_unit="deg"
-                )
-
-                cp_sta_index = np.array(phidata.data["STA_INDEX"], dtype=int)
-                self.i_cps1, self.i_cps2, self.i_cps3 = cp_indices(
-                    vis_sta_index, cp_sta_index
-                )
-
-                self.cp_flag = True
-
-        else:
-            if self._is_mixed_disco_record(data):
-                self._init_mixed_disco(data)
-                return
-
-            # assume data is a dict of the form {'u':u,'v':v,'wavel':wavel,'vis':vis,'d_vis':d_vis,
-            #'phi':phi,'d_phi':d_phi,'i_cps1':i_cps1,'i_cps2':i_cps2,'i_cps3':i_cps3,'v2_flag':v2_flag,'cp_flag':cp_flag}
-
-            self.u = np.array(data["u"], dtype=float)
-            self.v = np.array(data["v"], dtype=float)
-            self.wavel = np.array(data["wavel"], dtype=float)
-
-            self.vis = np.array(data["vis"], dtype=float)
-            self.d_vis = np.array(data["d_vis"], dtype=float)
-
-            self.phi = np.array(data["phi"], dtype=float)
-            self.d_phi = np.array(data["d_phi"], dtype=float)
-            phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
-            self.phi, self.d_phi = self._phase_to_radians(
-                self.phi, self.d_phi, phi_unit, default_unit="rad"
-            )
-
-            try:
-                idx1 = data["i_cps1"]
-                idx2 = data["i_cps2"]
-                idx3 = data["i_cps3"]
-                if idx1 is None or idx2 is None or idx3 is None:
-                    raise KeyError
-                self.i_cps1 = np.array(idx1, dtype=int)
-                self.i_cps2 = np.array(idx2, dtype=int)
-                self.i_cps3 = np.array(idx3, dtype=int)
-            except KeyError:
-                self.i_cps1 = None
-                self.i_cps2 = None
-                self.i_cps3 = None
-
-            v2_flag = data.get("v2_flag", True)
-            self.v2_flag = self._coerce_bool_flag(v2_flag, "v2_flag")
-            cp_flag = data.get("cp_flag", self.i_cps1 is not None)
-            self.cp_flag = self._coerce_bool_flag(cp_flag, "cp_flag")
-
-            has_disco_vis = "disco_vis_mat" in data
-            has_disco_phi = "disco_phi_mat" in data
-            vis_mat_in = data.get("disco_vis_mat", data.get("vis_mat", None))
-            phi_mat_in = data.get("disco_phi_mat", data.get("phi_mat", None))
-            self.vis_mat = (
-                None
-                if vis_mat_in is None
-                else np.asarray(vis_mat_in, dtype=float)
-            )
-            self.phi_mat = (
-                None
-                if phi_mat_in is None
-                else np.asarray(phi_mat_in, dtype=float)
-            )
-            vis_mode_in = data.get(
-                "vis_mode", data.get("observable_vis_mode", "auto")
-            )
-            self.vis_mode = self._resolve_vis_mode(vis_mode_in)
-            self.observable_kind = "split"
-            self._transform_observed_channels(
-                validate_vis_covariance=has_disco_vis,
-                validate_phi_covariance=has_disco_phi,
-            )
+        if self._is_mixed_disco_record(data):
+            self._init_mixed_disco(data)
             return
 
-        self.vis_mat = None
-        self.phi_mat = None
+        u = onp.asarray(data["u"], dtype=float)
+        v = onp.asarray(data["v"], dtype=float)
+        wavel = onp.atleast_1d(onp.asarray(data["wavel"], dtype=float))
+        vis = onp.asarray(data["vis"], dtype=float)
+        d_vis = onp.asarray(data["d_vis"], dtype=float)
+        phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
+        phi, d_phi = self._phase_to_radians(
+            onp.asarray(data["phi"], dtype=float),
+            onp.asarray(data["d_phi"], dtype=float),
+            phi_unit,
+            default_unit="rad",
+        )
+        phi, d_phi = onp.asarray(phi), onp.asarray(d_phi)
+
+        indices = [data.get(key) for key in ("i_cps1", "i_cps2", "i_cps3")]
+        if any(index is None for index in indices):
+            indices = None
+        else:
+            indices = [onp.asarray(index, dtype=int) for index in indices]
+
+        v2_flag = self._coerce_bool_flag(data.get("v2_flag", True), "v2_flag")
+        cp_flag = self._coerce_bool_flag(
+            data.get("cp_flag", indices is not None), "cp_flag"
+        )
+        if cp_flag and indices is None:
+            raise ValueError(
+                "cp_flag=True needs the closure-phase indices i_cps1, "
+                "i_cps2 and i_cps3."
+            )
+        vis_flag = data.get("vis_flag")
+        phi_flag = data.get("phi_flag")
+
+        if vis.ndim == 2:
+            u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
+            vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
+            phi, d_phi = phi.reshape(-1), d_phi.reshape(-1)
+            vis_flag = None if vis_flag is None else onp.ravel(vis_flag)
+            phi_flag = None if phi_flag is None else onp.ravel(phi_flag)
+        elif wavel.size not in (1, u.size):
+            raise ValueError(
+                f"wavel has {wavel.size} values for {u.size} samples. For "
+                "several wavelength channels give vis with shape "
+                "(n_baseline, n_wavel), or give one wavelength per sample."
+            )
+
+        has_disco_vis = "disco_vis_mat" in data
+        has_disco_phi = "disco_phi_mat" in data
+        vis_mat_in = data.get("disco_vis_mat", data.get("vis_mat", None))
+        phi_mat_in = data.get("disco_phi_mat", data.get("phi_mat", None))
+        vis_mat = (
+            None if vis_mat_in is None else onp.asarray(vis_mat_in, float)
+        )
+        phi_mat = (
+            None if phi_mat_in is None else onp.asarray(phi_mat_in, float)
+        )
+
+        # Drop flagged samples from the observables. Their baselines stay in
+        # u and v, because closure phases may still need them.
+        vis_index = None
+        keep = _good_samples(vis, d_vis, vis_flag, u.size, "vis")
+        if keep is not None:
+            if vis_mat is not None:
+                raise ValueError(
+                    "Flagged visibilities cannot be combined with vis_mat; "
+                    "remove the flagged samples and the matching operator "
+                    "columns first."
+                )
+            vis_index = onp.flatnonzero(keep)
+            vis, d_vis = vis[keep], d_vis[keep]
+
+        phi_index = None
+        n_phi = len(indices[0]) if cp_flag else u.size
+        keep = _good_samples(phi, d_phi, phi_flag, n_phi, "phi")
+        if keep is not None:
+            if phi_mat is not None:
+                raise ValueError(
+                    "Flagged phases cannot be combined with phi_mat; "
+                    "remove the flagged samples and the matching operator "
+                    "columns first."
+                )
+            phi, d_phi = phi[keep], d_phi[keep]
+            if cp_flag:
+                indices = [index[keep] for index in indices]
+            else:
+                phi_index = onp.flatnonzero(keep)
+
+        self.u = np.asarray(u)
+        self.v = np.asarray(v)
+        self.wavel = np.asarray(wavel)
+        self.vis = np.asarray(vis)
+        self.d_vis = np.asarray(d_vis)
+        self.phi = np.asarray(phi)
+        self.d_phi = np.asarray(d_phi)
+        self.i_cps1, self.i_cps2, self.i_cps3 = (
+            (None, None, None)
+            if indices is None
+            else tuple(np.asarray(index) for index in indices)
+        )
+        self.v2_flag = v2_flag
+        self.cp_flag = cp_flag
+        self.vis_mat = None if vis_mat is None else np.asarray(vis_mat)
+        self.phi_mat = None if phi_mat is None else np.asarray(phi_mat)
+        self.vis_index = None if vis_index is None else np.asarray(vis_index)
+        self.phi_index = None if phi_index is None else np.asarray(phi_index)
+        vis_mode_in = data.get(
+            "vis_mode", data.get("observable_vis_mode", "auto")
+        )
+        self.vis_mode = self._resolve_vis_mode(vis_mode_in)
         self.observable_kind = "split"
-        self.vis_mode = self._resolve_vis_mode("auto")
+        self._transform_observed_channels(
+            validate_vis_covariance=has_disco_vis,
+            validate_phi_covariance=has_disco_phi,
+        )
 
     @staticmethod
     def _is_mixed_disco_record(data):
@@ -249,6 +269,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.phi_mat = np.asarray(
             data["disco_phase_model_operator"], dtype=float
         )
+        self.vis_index = None
+        self.phi_index = None
         self.observable_kind = "mixed_log_complex"
         self.vis_mode = "logamp"
         self.v2_flag = False
@@ -373,57 +395,31 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         ) * np.abs(scale)
 
     @staticmethod
-    def _extract_oifits_phase_unit(phidata, column_name):
-        """Extract phase-column unit from an OIFITS table, if available."""
-        columns = getattr(phidata, "columns", None)
-        if columns is None or column_name not in columns.names:
-            return None
-        return getattr(columns[column_name], "unit", None)
-
-    @staticmethod
     def _validate_operator_shape(operator, input_size, label):
-        """Validate a linear operator can act on vectors of length ``input_size``."""
+        """Check an operator has shape ``(n_out, input_size)``."""
         if operator is None:
             return
         if operator.ndim != 2:
             raise ValueError(
                 f"{label} must be a 2D matrix; got shape {operator.shape}."
             )
-        if operator.shape[0] != input_size and operator.shape[1] != input_size:
+        if operator.shape[1] != input_size:
+            hint = (
+                " It looks transposed; pass its transpose."
+                if operator.shape[0] == input_size
+                else ""
+            )
             raise ValueError(
-                f"{label} shape {operator.shape} is incompatible with vector length {input_size}."
+                f"{label} has shape {operator.shape}, but operators must have "
+                f"shape (n_out, n_in) with n_in = {input_size} samples.{hint}"
             )
 
     @staticmethod
     def _apply_linear_operator(values, operator):
-        """Apply a 2D linear operator to a 1D vector, supporting left or right multiplication."""
+        """Apply an ``(n_out, n_in)`` operator to a length-``n_in`` vector."""
         if operator is None:
             return values
-        vec = np.asarray(values, dtype=float).reshape(-1)
-        if operator.shape[1] == vec.size:
-            return operator @ vec
-        if operator.shape[0] == vec.size:
-            return vec @ operator
-        raise ValueError(
-            f"Operator shape {operator.shape} is incompatible with vector length {vec.size}."
-        )
-
-    @staticmethod
-    def _operator_weights(channel_sigma, operator):
-        """Orient a linear operator to act on the supplied channel vector."""
-        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
-        if operator is None:
-            return None
-        op = operator
-        if op.shape[1] == sigma.size:
-            weights = op
-        elif op.shape[0] == sigma.size:
-            weights = op.T
-        else:
-            raise ValueError(
-                f"Operator shape {op.shape} is incompatible with uncertainty length {sigma.size}."
-            )
-        return weights
+        return operator @ np.asarray(values, dtype=float).reshape(-1)
 
     @classmethod
     def _propagate_uncertainty(cls, channel_sigma, operator):
@@ -431,9 +427,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
         if operator is None:
             return sigma
-        weights = cls._operator_weights(sigma, operator)
-        assert weights is not None
-        return np.sqrt(np.sum((weights * sigma[None, :]) ** 2, axis=1))
+        return np.sqrt(np.sum((operator * sigma[None, :]) ** 2, axis=1))
 
     @classmethod
     def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
@@ -441,9 +435,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if operator is None:
             return
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
-        weights = cls._operator_weights(sigma, operator)
-        assert weights is not None
-        weighted = weights * sigma[None, :]
+        weighted = operator * sigma[None, :]
         covariance = weighted @ weighted.T
         diagonal = np.diag(np.diag(covariance))
         scale = float(np.max(np.abs(np.diag(covariance))))
@@ -487,33 +479,42 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if self.vis_mode == "amp" and self.v2_flag:
             return 0.5 * d_vis / np.sqrt(np.maximum(vis, 1e-30))
         if self.vis_mode == "v2" and (not self.v2_flag):
-            return 2.0 * np.maximum(vis, 1e-30) * d_vis
+            # |V| is floored at its own uncertainty, so noisy amplitudes near
+            # or below zero do not get a vanishing V² error.
+            return 2.0 * np.hypot(vis, d_vis) * d_vis
         return d_vis
 
     def _transform_observed_channels(
         self, validate_vis_covariance=False, validate_phi_covariance=False
     ):
-        """Optionally project observed channels into linear self-calibrated observables."""
-        n_vis = np.asarray(self.u).size
-        n_phi = (
-            np.asarray(self.u).size
-            if not self.cp_flag
-            else np.asarray(self.phi).size
-        )
+        """Convert observed channels to ``vis_mode`` and apply operators.
+
+        Data already in the projected basis (their size differs from the
+        number of observed samples) are left unchanged.
+        """
+        n_vis = self._n_vis_samples()
+        n_phi = self._n_phi_samples()
         self._validate_operator_shape(self.vis_mat, n_vis, "vis_mat")
         self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
 
-        if self.vis_mat is not None and np.asarray(self.vis).size == n_vis:
+        if np.asarray(self.vis).size == n_vis:
             vis_channel = self._visibility_channel_from_data(self.vis)
             vis_sigma = self._visibility_uncertainty_channel(
                 self.vis, self.d_vis
             )
-            if validate_vis_covariance:
-                self._validate_diagonal_covariance(
-                    vis_sigma, self.vis_mat, "disco_vis_mat"
+            if self.vis_mat is None:
+                self.vis, self.d_vis = vis_channel, vis_sigma
+            else:
+                if validate_vis_covariance:
+                    self._validate_diagonal_covariance(
+                        vis_sigma, self.vis_mat, "disco_vis_mat"
+                    )
+                self.vis = self._apply_linear_operator(
+                    vis_channel, self.vis_mat
                 )
-            self.vis = self._apply_linear_operator(vis_channel, self.vis_mat)
-            self.d_vis = self._propagate_uncertainty(vis_sigma, self.vis_mat)
+                self.d_vis = self._propagate_uncertainty(
+                    vis_sigma, self.vis_mat
+                )
 
         if self.phi_mat is not None and np.asarray(self.phi).size == n_phi:
             phi_sigma = np.asarray(self.d_phi, dtype=float)
@@ -524,11 +525,64 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
             self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
 
+    def _n_vis_samples(self):
+        """Number of visibility samples before any projection."""
+        if self.vis_index is not None:
+            return int(np.asarray(self.vis_index).size)
+        return int(np.asarray(self.u).size)
+
+    def _n_phi_samples(self):
+        """Number of phase samples (or closure phases) before projection."""
+        if self.cp_flag:
+            return len(self.i_cps1)
+        if self.phi_index is not None:
+            return int(np.asarray(self.phi_index).size)
+        return int(np.asarray(self.u).size)
+
     def flatten_data(self):
         """
-        Flatten closure phases and uncertainties.
+        Return the data vector and its uncertainties.
+
+        Returns
+        -------
+        tuple[array-like, array-like]
+            ``(standardize_data(), standardize_errors())``: the visibility
+            observables followed by the phases (radians), in the order of
+            [`model`][drpangloss.oidata.OIData.model], and matching one-sigma uncertainties.
         """
         return self.standardize_data(), self.standardize_errors()
+
+    @property
+    def _phases_wrap(self):
+        """Whether the phase block is raw angles that wrap at ±π."""
+        return self.observable_kind == "split" and self.phi_mat is None
+
+    def residuals(self, prediction, reference=None):
+        """Return ``prediction - reference`` with phase residuals wrapped.
+
+        Parameters
+        ----------
+        prediction : array-like
+            Model vector, e.g. from [`model`][drpangloss.oidata.OIData.model].
+        reference : array-like, optional
+            Vector to compare against; by default the data
+            ([`standardize_data`][drpangloss.oidata.OIData.standardize_data]).
+
+        Returns
+        -------
+        array-like
+            Residual vector. Unprojected phase residuals are wrapped into
+            ``[-π, π)``, so that a closure phase of ``π - ε`` against a model
+            of ``-π + ε`` counts as a small residual rather than ``2π``.
+        """
+        if reference is None:
+            reference = self.standardize_data()
+        resid = np.asarray(prediction) - np.asarray(reference)
+        if not self._phases_wrap:
+            return resid
+        n_vis = np.asarray(self.vis).size
+        phase = np.mod(resid[n_vis:] + np.pi, 2.0 * np.pi) - np.pi
+        return np.concatenate([resid[:n_vis], phase])
 
     def standardize_data(self):
         """Return observables in the likelihood comparison vector format."""
@@ -544,7 +598,15 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     def unpack_all(self):
         """
-        Unpack all data to be used in some legacy model functions.
+        Unpack all data for legacy model functions.
+
+        Returns
+        -------
+        tuple
+            ``(u / wavel, v / wavel, phi, d_phi, vis, d_vis, i_cps1, i_cps2,
+            i_cps3)``: spatial frequencies in cycles per radian, then the
+            observables. Flagged samples are not removed from the spatial
+            frequencies; see ``vis_index``.
         """
         return (
             self.u / self.wavel,
@@ -589,9 +651,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     def to_vis(self, cvis):
         """
-        Convert complex visibilities to visibilities or squared visibilities.
+        Convert model complex visibilities to the visibility observables.
+
+        The channel follows ``vis_mode`` (V², amplitude or log-amplitude);
+        flagged samples are dropped, and ``vis_mat`` is applied if set.
         """
         vis = self._visibility_channel_from_model(cvis)
+        if self.vis_index is not None:
+            vis = vis[self.vis_index]
         return self._apply_linear_operator(vis, self.vis_mat)
 
     def to_phases(self, cvis):
@@ -604,6 +671,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         else:
             phases = np.angle(cvis)
+            if self.phi_index is not None:
+                phases = phases[self.phi_index]
         return self._apply_linear_operator(phases, self.phi_mat)
 
     def model(self, model_object):
@@ -639,7 +708,23 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
 
 def load_oi_data(path, filter_name=None):
-    """Load one or all filters from an AMIGO mixed-DISCO NumPy product."""
+    """Load one or all filters from an AMIGO mixed-DISCO NumPy product.
+
+    The file is a pickled dictionary loaded with ``allow_pickle=True``, which
+    can run arbitrary code: only load files you trust.
+
+    Parameters
+    ----------
+    path : str or os.PathLike
+        ``.npy`` file holding a ``{filter_name: record}`` dictionary.
+    filter_name : str, optional
+        Filter to load. By default every filter is loaded.
+
+    Returns
+    -------
+    OIData or dict[str, OIData]
+        The chosen filter, or a dictionary of all filters.
+    """
     records = onp.load(Path(path), allow_pickle=True).item()
     if not isinstance(records, dict):
         raise TypeError(
@@ -657,35 +742,32 @@ def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
     Parameters
     ----------
     cvis : array-like
-        Complex visibilities.
+        Complex visibilities, one per sample.
     index_cps1 : array-like
-        First baseline indices for each closure triangle.
+        For each closure phase, the sample of baseline ``(a, b)``.
     index_cps2 : array-like
-        Second baseline indices for each closure triangle.
+        For each closure phase, the sample of baseline ``(b, c)``.
     index_cps3 : array-like
-        Third baseline indices for each closure triangle.
+        For each closure phase, the sample of baseline ``(a, c)``.
 
     Returns
     -------
     array-like
-        Closure phases in radians.
+        Closure phases ``φ[i1] + φ[i2] − φ[i3]`` in radians, wrapped into
+        ``[-π, π)``.
 
     Notes
     -----
     This helper returns radians for internal modeling consistency. Convert to
     degrees before writing OIFITS phase columns (e.g., ``T3PHI``).
-
     """
-    visphiall = np.angle(cvis)
-    visphiall = np.mod(visphiall + np.pi, 2.0 * np.pi) - np.pi
-    visphi = np.reshape(visphiall, (len(cvis), 1))
+    phases = np.angle(np.asarray(cvis))
     cp = (
-        visphi[np.array(index_cps1)]
-        + visphi[np.array(index_cps2)]
-        - visphi[np.array(index_cps3)]
+        phases[np.asarray(index_cps1)]
+        + phases[np.asarray(index_cps2)]
+        - phases[np.asarray(index_cps3)]
     )
-    out = np.reshape(np.mod(cp + np.pi, 2.0 * np.pi) - np.pi, len(index_cps1))
-    return out
+    return np.mod(cp + np.pi, 2.0 * np.pi) - np.pi
 
 
 def cp_indices(vis_sta_index, cp_sta_index):
@@ -694,39 +776,108 @@ def cp_indices(vis_sta_index, cp_sta_index):
     Parameters
     ----------
     vis_sta_index : array-like
-        Baseline station index pairs from visibility data.
+        Station index pairs ``(a, b)``, one per baseline.
     cp_sta_index : array-like
-        Triangle station index triplets from closure-phase data.
+        Station index triplets ``(a, b, c)``, one per closure triangle.
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray]
-        Arrays ``(i_cps1, i_cps2, i_cps3)`` identifying the three baselines
-        composing each closure phase.
-    """
-    vis_sta_index, cp_sta_index = (
-        onp.array(vis_sta_index, dtype=int),
-        onp.array(cp_sta_index, dtype=int),
-    )
-    i_cps1 = onp.zeros(len(onp.array(cp_sta_index)), dtype=int)
-    i_cps2 = onp.zeros(len(onp.array(cp_sta_index)), dtype=int)
-    i_cps3 = onp.zeros(len(onp.array(cp_sta_index)), dtype=int)
+        Arrays ``(i_cps1, i_cps2, i_cps3)`` giving, for each triangle, the
+        baselines ``(a, b)``, ``(b, c)`` and ``(a, c)``, so that the closure
+        phase is ``φ[i_cps1] + φ[i_cps2] − φ[i_cps3]``.
 
-    for i in range(len(cp_sta_index)):
-        i_cps1[i] = onp.argwhere(
-            (cp_sta_index[i][0] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][1] == vis_sta_index[:, 1])
-        )[0, 0]
-        i_cps2[i] = onp.argwhere(
-            (cp_sta_index[i][1] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][2] == vis_sta_index[:, 1])
-        )[0, 0]
-        i_cps3[i] = onp.argwhere(
-            (cp_sta_index[i][0] == vis_sta_index[:, 0])
-            & (cp_sta_index[i][2] == vis_sta_index[:, 1])
-        )[0, 0]
+    Raises
+    ------
+    ValueError
+        If a triangle needs a baseline that is missing, or stored only in the
+        reversed orientation.
+
+    Notes
+    -----
+    Baselines are matched on station indices alone. For data with several
+    epochs or wavelength channels use [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits],
+    which also matches on instrument and MJD.
+    """
+    vis_sta_index = onp.asarray(vis_sta_index, dtype=int).reshape(-1, 2)
+    cp_sta_index = onp.asarray(cp_sta_index, dtype=int).reshape(-1, 3)
+    lookup = {}
+    for k, (a, b) in enumerate(vis_sta_index):
+        lookup.setdefault((int(a), int(b)), k)
+
+    def baseline(pair):
+        pair = (int(pair[0]), int(pair[1]))
+        if pair in lookup:
+            return lookup[pair]
+        # TODO: support reversed baselines by returning a sign per leg.
+        detail = (
+            f"it is only stored reversed as {pair[::-1]}"
+            if pair[::-1] in lookup
+            else "it is missing"
+        )
+        raise ValueError(
+            f"A closure triangle needs baseline {pair}, but {detail}."
+        )
+
+    legs = [[], [], []]
+    for a, b, c in cp_sta_index:
+        for leg, pair in zip(legs, ((a, b), (b, c), (a, c))):
+            leg.append(baseline(pair))
+    return tuple(onp.asarray(leg, dtype=int) for leg in legs)
+
+
+def _expand_channels(u, v, wavel, vis, indices):
+    """Expand per-baseline arrays to one sample per (baseline, channel).
+
+    Samples are ordered baseline-major; closure indices (per baseline) are
+    mapped to the samples at the same channel.
+    """
+    n_baseline, n_wavel = vis.shape
+    if u.shape != (n_baseline,) or v.shape != (n_baseline,):
+        raise ValueError(
+            f"vis has shape {vis.shape}, so u and v need {n_baseline} "
+            "entries (one per baseline)."
+        )
+    if wavel.size != n_wavel:
+        raise ValueError(
+            f"vis has {n_wavel} wavelength channels but wavel has "
+            f"{wavel.size} values."
+        )
+    channels = onp.arange(n_wavel)
+    if indices is not None:
+        indices = [
+            (index[:, None] * n_wavel + channels[None, :]).reshape(-1)
+            for index in indices
+        ]
     return (
-        onp.array(i_cps1, dtype=int),
-        onp.array(i_cps2, dtype=int),
-        onp.array(i_cps3, dtype=int),
+        onp.repeat(u, n_wavel),
+        onp.repeat(v, n_wavel),
+        onp.tile(wavel, n_baseline),
+        indices,
     )
+
+
+def _good_samples(values, errors, flag, n_samples, name):
+    """Mask of unflagged, finite samples, or ``None`` if all are good.
+
+    Data whose size is not ``n_samples`` are already projected and are not
+    checked.
+    """
+    if values.size != n_samples:
+        if flag is not None:
+            raise ValueError(
+                f"{name}_flag was given, but {name} has {values.size} values "
+                f"for {n_samples} samples (it looks already projected)."
+            )
+        return None
+    bad = ~(onp.isfinite(values) & onp.isfinite(errors))
+    if flag is not None:
+        flag = onp.asarray(flag, dtype=bool).reshape(-1)
+        if flag.size != n_samples:
+            raise ValueError(
+                f"{name}_flag has {flag.size} entries for {n_samples} samples."
+            )
+        bad = bad | flag
+    if not bad.any():
+        return None
+    return ~bad

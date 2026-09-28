@@ -333,7 +333,7 @@ def bessel_jn(n, x):
     For $n \le 1$ this is the CEPHES rational approximations. For $n \ge 2$, all
     orders come from the upward recurrence $J_{m+1} = (2m/x) J_m - J_{m-1}$,
     seeded by CEPHES, where it is stable ($|x| > n$), and from a
-    trigonometric sum (see :func:`_bessel_jn_trig`) below that, where the
+    trigonometric sum (see ``_bessel_jn_trig``) below that, where the
     recurrence loses accuracy. Both agree with
     ``scipy.special.jv`` to about 1e-14, and the gradients are finite
     everywhere, including $x = 0$.
@@ -412,7 +412,7 @@ def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
 
 
 def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
-    """Inverse of :func:`undo_elliptical_transf_spat_freq`. Takes spatial frequency
+    """Inverse of [`undo_elliptical_transf_spat_freq`][drpangloss._utils.undo_elliptical_transf_spat_freq]. Takes spatial frequency
     coordinates in the frame of reference where an elliptical object appears circular
     and aligned with its major axis pointing North, and transforms them into the
     original (rotated and stretched) frame of reference.
@@ -484,7 +484,7 @@ def undo_elliptical_transf_coord(x, y, pa, stretch):
 
 
 def apply_elliptical_transf_coord(x, y, pa, stretch):
-    """Inverse of :func:`undo_elliptical_transf_coord`. Takes spatial coordinates in
+    """Inverse of [`undo_elliptical_transf_coord`][drpangloss._utils.undo_elliptical_transf_coord]. Takes spatial coordinates in
     the frame of reference where an elliptical object appears circular and aligned
     with its major axis pointing North, and transforms them into the original
     (rotated and stretched) frame of reference.
@@ -528,10 +528,12 @@ def apply_elliptical_transf_coord(x, y, pa, stretch):
 
 
 def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
-    r"""Returns `False` if $1 + f(theta)$ drops below 0 at any point, where $f$ is a
-    harmonic series of form $I(r, \theta) = \sum_{m=0}^{n} A_m \cos{(m(\theta - \pa_m)$.
-    This is done using a Laurent polynomial + companion matrix approach, and should
-    thus be pretty quick.
+    r"""Check that an azimuthal brightness modulation stays non-negative.
+
+    The modulation is $1 + f(\theta)$ with
+    $f(\theta) = \sum_{m=1}^{n} A_m \cos(m(\theta - \mathrm{pa}_m))$. Its
+    minimum is found from the roots of $f'$, using a Laurent polynomial and
+    its companion matrix, so the check is fast and exact.
 
     Parameters
     ----------
@@ -540,13 +542,15 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
         order 1.
     az_pas : array-like
         1D array containing the azimuthal modulation order position angles, starting from
-        order 1.
+        order 1, in degrees.
+    tol : float, optional
+        Tolerance: minima down to ``-tol`` still count as non-negative.
 
     Returns
     -------
-    bool
-        Whether the intensity profile $1 + f(\theta)$, where $f(\theta)$ is described
-        by the azimuthal modulations, remains positive.
+    bool or jax.Array
+        Whether $1 + f(\theta) \geq -\mathrm{tol}$ everywhere. For array
+        inputs this is a 0-d JAX boolean array; use ``bool()`` on it.
     """
     k = len(az_amps)
     if k == 0:

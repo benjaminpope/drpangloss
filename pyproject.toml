@@ -11,9 +11,26 @@ authors = [
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
 urls = {repository = "https://github.com/benjaminpope/drpangloss"}
-dependencies = ["jax", "jaxlib", "zodiax","numpy","matplotlib","numpyro","tensorflow-probability", "astropy","tqdm","ipywidgets","optimistix","scipy","astroquery", "pyoifits", "termcolor", "chainconsumer"]
+dependencies = [
+  "jax>=0.4.30",
+  "equinox>=0.11",
+  "zodiax>=0.4",
+  "optimistix>=0.0.10",
+  "numpyro>=0.15",
+  "numpy",
+  "matplotlib",
+  "pandas",
+  "chainconsumer",
+  "astropy",
+  "pyoifits",
+  # Only needed by the legacy writers in savefits.py / oifits_implaneia.py.
+  "astroquery",
+  "termcolor",
+]
 classifiers=[
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
 ]
 
@@ -21,23 +38,21 @@ classifiers=[
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# [project.optional-dependencies]
-# extras = []
-
 [project.optional-dependencies]
+notebooks = [
+  "tqdm",
+  "ipywidgets",
+]
 dev = [
   "ruff==0.11.0",
   "pre-commit",
   "pytest",
+  "scipy",
   "mkdocs",
   "mkdocs-material",
-  "mkdocs-jupyter",
   "mkdocstrings[python]",
   "zensical",
 ]
-
-[tool.black]
-line-length = 79
 
 [tool.ruff]
 line-length = 79
@@ -57,7 +72,6 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/drpangloss/__init__.py" = ["F401"]
-"src/drpangloss/grid_fit.py" = ["F403", "F405", "F841"]
 "notebooks/contrast_limits.ipynb" = ["E702"]
 "notebooks/oidata_sandbox.ipynb" = ["F841"]
 "notebooks/upper_limits_new.ipynb" = ["F403", "F405"]
@@ -65,10 +79,6 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-
-[tool.ruff.lint.isort]
-combine-as-imports = true
-lines-after-imports = 2
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

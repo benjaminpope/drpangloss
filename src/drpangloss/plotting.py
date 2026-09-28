@@ -1,22 +1,121 @@
+"""Plotting functions to render outputs from the model fitting functions.
+
+Sky images follow the package convention: East (positive ``dra``) to the
+left and North (positive ``ddec``) up. Importing this module does not change
+matplotlib's global settings; call [`set_style`][drpangloss.plotting.set_style] to opt in to the
+drpangloss look for every figure.
+"""
+
+import functools
+
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import matplotlib
 import pandas as pd
 from matplotlib.ticker import FuncFormatter
 
 
-matplotlib.rcParams["figure.dpi"] = 100
-matplotlib.rcParams["font.family"] = ["serif"]
-plt.rcParams.update({"font.size": 14})
+STYLE = {
+    "figure.dpi": 100,
+    "font.family": ["serif"],
+    "font.size": 14,
+}
 
-"""
-Plotting functions to automatically render outputs from the model fitting functions.
-"""
+
+def set_style():
+    """Apply the drpangloss matplotlib style globally.
+
+    The plotting functions in this module already use this style for the
+    figures they create, without touching global settings. Call this to use
+    it for your own figures too.
+    """
+    matplotlib.rcParams.update(STYLE)
+
+
+def _styled(fn):
+    """Run ``fn`` inside ``plt.rc_context(STYLE)``."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with plt.rc_context(STYLE):
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def _centres_to_extent(x_axis, y_axis):
+    """Return an imshow ``extent`` whose pixels are centred on the samples.
+
+    ``imshow`` places ``extent`` at the outer pixel *edges*, so grid sample
+    positions (pixel centres) are padded by half a sample spacing.
+    """
+
+    def _edges(axis):
+        axis = np.asarray(axis, dtype=float).reshape(-1)
+        half = 0.5 * (axis[1] - axis[0]) if axis.size > 1 else 0.5
+        return float(axis[0] - half), float(axis[-1] + half)
+
+    return [*_edges(x_axis), *_edges(y_axis)]
+
+
+def _flux_key(samples_dict, flux_param=None):
+    """Key of ``samples_dict`` that is optimized out rather than plotted."""
+    if flux_param is not None:
+        if flux_param not in samples_dict:
+            raise KeyError(
+                f"flux_param {flux_param!r} is not a key of samples_dict."
+            )
+        return flux_param
+    for key in ("contrast", "flux"):
+        if key in samples_dict:
+            return key
+    return list(samples_dict)[-1]
+
+
+def _is_sky_key(key, name):
+    return key == name or key.endswith("." + name)
+
+
+def _image_axes(grid, coord_keys):
+    """Pick the plotted x/y keys and orient ``grid`` as ``image[y, x]``.
+
+    ``grid`` has one axis per entry of ``coord_keys``, in that order. If the
+    keys include a ``dra`` and a ``ddec`` (possibly as zodiax paths such as
+    ``"comp.dra"``), those are used as x and y whatever their order.
+    Otherwise the first two keys are used. Returns
+    ``(x_key, y_key, image, is_sky)``.
+    """
+    grid = np.asarray(grid)
+    if grid.ndim != 2 or len(coord_keys) != 2:
+        raise ValueError(
+            f"Expected a 2D grid with two coordinate keys; got shape "
+            f"{grid.shape} for keys {list(coord_keys)}. Reduce the flux axis "
+            "first, e.g. loglike_im.max(axis=...)."
+        )
+    dra = [k for k in coord_keys if _is_sky_key(k, "dra")]
+    ddec = [k for k in coord_keys if _is_sky_key(k, "ddec")]
+    if len(dra) == 1 and len(ddec) == 1:
+        x_key, y_key = dra[0], ddec[0]
+        is_sky = True
+    else:
+        x_key, y_key = coord_keys
+        is_sky = False
+    if list(coord_keys).index(x_key) == 0:
+        image = grid.T
+    else:
+        image = grid
+    return x_key, y_key, image, is_sky
+
+
+def _to_delta_mag(flux_ratio):
+    """Convert a flux ratio to Δmag, flooring non-positive values."""
+    return -2.5 * np.log10(np.maximum(np.asarray(flux_ratio), 1e-30))
 
 
 def _range_aware_float_formatter(
     vmin, vmax, min_sigfigs=3, max_sigfigs=6, scale=1.0
 ):
+    """Tick formatter whose significant figures adapt to the axis span."""
     span = abs(float(vmax) - float(vmin)) * abs(float(scale))
     if not np.isfinite(span) or span <= 0:
         sigfigs = min_sigfigs + 1
@@ -34,7 +133,7 @@ def _range_aware_float_formatter(
 def _enforce_sky_orientation(ax):
     """Ensure the displayed x-axis increases toward the left (East) and
     the y-axis increases toward the top (North), matching drpangloss's
-    image coordinate convention (see AGENTS.md). Works regardless of
+    image coordinate convention. Works regardless of
     whether the plotted array's ``dra``/``ddec`` axis was built ascending
     or descending, since it corrects the axes' final displayed limits
     rather than assuming any particular extent/origin construction.
@@ -87,6 +186,7 @@ def posterior_predictive_summary(
     }
 
 
+@_styled
 def plot_data_model_correlation(
     oidata,
     predictions_by_label,
@@ -94,6 +194,7 @@ def plot_data_model_correlation(
     figsize=(10, 5),
     phase_title="Phase correlation",
     square_axes=True,
+    vis_label=None,
 ):
     """
     Plot data-vs-model correlation panels for visibility and phase observables.
@@ -113,12 +214,27 @@ def plot_data_model_correlation(
         Title for the phase panel.
     square_axes : bool, optional
         If ``True``, enforce square panel boxes for both subplots.
+    vis_label : str, optional
+        Axis label for the visibility observable. By default it follows
+        ``oidata.vis_mode``: V² and amplitudes are shown in percent,
+        log-amplitudes and projected (e.g. DISCO) observables as plain
+        values.
 
     Returns
     -------
     tuple
         ``(fig, (ax1, ax2))`` for visibility and phase axes.
     """
+    vis_mode = getattr(oidata, "vis_mode", "v2")
+    projected = getattr(oidata, "vis_mat", None) is not None
+    if projected or vis_mode == "logamp":
+        vis_scale = 1.0
+        default_label = "projected" if projected else "log amplitude"
+    else:
+        vis_scale = 100.0
+        default_label = "V2, %" if vis_mode == "v2" else "amplitude, %"
+    if vis_label is None:
+        vis_label = default_label
     vis_data = np.asarray(oidata.vis).reshape(-1)
     phi_data = np.asarray(oidata.phi).reshape(-1)
     d_vis_data = np.asarray(oidata.d_vis).reshape(-1)
@@ -177,7 +293,9 @@ def plot_data_model_correlation(
 
     vis_line = np.linspace(vis_min, vis_max, 200)
     phi_line = np.linspace(phi_min, phi_max, 200)
-    vis_formatter = _range_aware_float_formatter(vis_min, vis_max, scale=100.0)
+    vis_formatter = _range_aware_float_formatter(
+        vis_min, vis_max, scale=vis_scale
+    )
     phi_formatter = _range_aware_float_formatter(phi_min, phi_max)
 
     ax1.plot(vis_line, vis_line, "k--", lw=1)
@@ -185,8 +303,8 @@ def plot_data_model_correlation(
     ax1.set_ylim(vis_min, vis_max)
     ax1.xaxis.set_major_formatter(vis_formatter)
     ax1.yaxis.set_major_formatter(vis_formatter)
-    ax1.set_xlabel("Data (V2, %)")
-    ax1.set_ylabel("Model (V2, %)")
+    ax1.set_xlabel(f"Data ({vis_label})")
+    ax1.set_ylabel(f"Model ({vis_label})")
     ax1.set_title("Visibility correlation")
     if square_axes:
         ax1.set_box_aspect(1)
@@ -204,10 +322,11 @@ def plot_data_model_correlation(
         ax2.set_box_aspect(1)
     ax2.legend(loc="best")
 
-    plt.tight_layout()
+    fig.tight_layout()
     return fig, (ax1, ax2)
 
 
+@_styled
 def plot_trace_panels(samples_dict, keys, title, color="C0", figsize=(10, 6)):
     """
     Plot simple one-dimensional trace panels for selected sample keys.
@@ -242,11 +361,12 @@ def plot_trace_panels(samples_dict, keys, title, color="C0", figsize=(10, 6)):
         )
         ax.set_ylabel(key)
     axes[-1].set_xlabel("Sample")
-    fig.suptitle(title, y=1.02)
-    plt.tight_layout()
+    fig.suptitle(title)
+    fig.tight_layout()
     return fig, axes
 
 
+@_styled
 def plot_model(
     model,
     fov_mas,
@@ -259,7 +379,7 @@ def plot_model(
     """Show a source model's rendered image with sky axes.
 
     East is to the left and North is up, matching the orientation of
-    :meth:`~drpangloss.models.SourceModel.render`.
+    [`render`][drpangloss.models.SourceModel.render].
 
     Parameters
     ----------
@@ -303,6 +423,14 @@ def plot_model(
     return ax
 
 
+def _coord_value(values, key, coord_keys):
+    """Look up ``key`` in a dict, or by position in ``coord_keys`` order."""
+    if isinstance(values, dict):
+        return float(values[key])
+    return float(values[list(coord_keys).index(key)])
+
+
+@_styled
 def plot_likelihood_grid(
     loglike_im,
     samples_dict,
@@ -316,31 +444,50 @@ def plot_likelihood_grid(
     flux_param=None,
 ):
     """
-    Plot the results of a likelihood_grid calculation.
+    Plot a likelihood map (or profile) over the coordinate axes of a grid.
 
     Parameters
     ----------
     loglike_im : array
-        The likelihood grid, output of likelihood_grid
+        Log likelihood with one axis per coordinate key of ``samples_dict``
+        (every key except the flux key), in key order. Pass the output of
+        [`drpangloss.grid_fit.optimized_likelihood_grid`][drpangloss.grid_fit.optimized_likelihood_grid], or reduce the
+        flux axis of [`drpangloss.grid_fit.likelihood_grid`][drpangloss.grid_fit.likelihood_grid] first, e.g.
+        ``loglike_im.max(axis=2)``.
     samples_dict : dict
-        Dictionary of samples used in the grid calculation
-    truths : list or dict, optional
-        True values for the plotted coordinates, default None
+        Dictionary of samples used in the grid calculation.
+    truths : dict or sequence, optional
+        True coordinate values to mark. A dict is looked up by key; a
+        sequence is read in the coordinate-key order of ``samples_dict``.
+    best_point : dict or sequence, optional
+        Best-fit coordinates to mark, in the same form as ``truths``.
+    truth_label, best_label : str, optional
+        Legend labels for the two markers.
+    colorbar_label : str, optional
+        Label of the colour bar (or of the y-axis for a 1D profile).
+    cmap : str, optional
+        Matplotlib colour map.
+    figsize : tuple, optional
+        Figure size.
     flux_param : str, optional
         Key of ``samples_dict`` that is not a plotted coordinate (e.g.
         ``"comp.flux"``). By default ``"contrast"`` or ``"flux"`` if present,
         otherwise the last key.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)``.
+
+    Notes
+    -----
+    When the coordinates include ``dra`` and ``ddec`` (also as paths such as
+    ``"comp.dra"``) they are drawn as x and y, East-left and North-up,
+    whatever their order in ``samples_dict``.
     """
 
     params = list(samples_dict.keys())
-    if flux_param is not None:
-        opt_key = flux_param
-    elif "contrast" in samples_dict:
-        opt_key = "contrast"
-    elif "flux" in samples_dict:
-        opt_key = "flux"
-    else:
-        opt_key = params[-1]
+    opt_key = _flux_key(samples_dict, flux_param)
     coord_keys = [k for k in params if k != opt_key]
 
     grid = np.asarray(loglike_im)
@@ -352,20 +499,12 @@ def plot_likelihood_grid(
         ax.plot(x_axis, grid.reshape(-1), color="C0", lw=2)
 
         if truths is not None:
-            if isinstance(truths, dict):
-                x_truth = float(truths[x_key])
-            else:
-                x_truth = float(truths[0])
-            ax.axvline(
-                x_truth, color="white", lw=1.5, ls="--", label=truth_label
-            )
+            x_truth = _coord_value(truths, x_key, [x_key])
+            ax.axvline(x_truth, color="k", lw=1.5, ls="--", label=truth_label)
 
         if best_point is not None:
-            if isinstance(best_point, dict):
-                x_best = float(best_point[x_key])
-            else:
-                x_best = float(best_point[0])
-            ax.axvline(x_best, color="cyan", lw=1.2, ls=":", label=best_label)
+            x_best = _coord_value(best_point, x_key, [x_key])
+            ax.axvline(x_best, color="C1", lw=1.2, ls=":", label=best_label)
 
         ax.set_xlabel(x_key)
         ax.set_ylabel(colorbar_label)
@@ -374,40 +513,22 @@ def plot_likelihood_grid(
             ax.legend(loc="best")
         return fig, ax
 
-    if len(coord_keys) < 2:
-        raise ValueError(
-            "Could not infer two coordinate axes for a 2D likelihood map."
-        )
-
-    x_key, y_key = coord_keys[:2]
-    x_axis = np.asarray(samples_dict[x_key])
-    y_axis = np.asarray(samples_dict[y_key])
+    x_key, y_key, image, is_sky = _image_axes(grid, coord_keys)
 
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(
-        grid.T,
+        image,
         cmap=cmap,
         origin="lower",
-        aspect="equal",
-        extent=[
-            float(x_axis[0]),
-            float(x_axis[-1]),
-            float(y_axis[0]),
-            float(y_axis[-1]),
-        ],
+        aspect="equal" if is_sky else "auto",
+        extent=_centres_to_extent(samples_dict[x_key], samples_dict[y_key]),
     )
     fig.colorbar(im, ax=ax, shrink=0.9, label=colorbar_label, pad=0.01)
 
     if truths is not None:
-        if isinstance(truths, dict):
-            x_truth = float(truths[x_key])
-            y_truth = float(truths[y_key])
-        else:
-            x_truth = float(truths[0])
-            y_truth = float(truths[1])
         ax.scatter(
-            [x_truth],
-            [y_truth],
+            [_coord_value(truths, x_key, coord_keys)],
+            [_coord_value(truths, y_key, coord_keys)],
             marker="x",
             s=80,
             c="white",
@@ -416,15 +537,9 @@ def plot_likelihood_grid(
         )
 
     if best_point is not None:
-        if isinstance(best_point, dict):
-            x_best = float(best_point[x_key])
-            y_best = float(best_point[y_key])
-        else:
-            x_best = float(best_point[0])
-            y_best = float(best_point[1])
         ax.scatter(
-            [x_best],
-            [y_best],
+            [_coord_value(best_point, x_key, coord_keys)],
+            [_coord_value(best_point, y_key, coord_keys)],
             marker="o",
             s=40,
             facecolors="none",
@@ -437,10 +552,12 @@ def plot_likelihood_grid(
     ax.set_title("Likelihood grid")
     if truths is not None or best_point is not None:
         ax.legend(loc="best")
-    _enforce_sky_orientation(ax)
+    if is_sky:
+        _enforce_sky_orientation(ax)
     return fig, ax
 
 
+@_styled
 def plot_chainconsumer_diagnostics(
     chains_by_label,
     columns,
@@ -467,24 +584,15 @@ def plot_chainconsumer_diagnostics(
 
     Returns
     -------
-    ChainConsumer
-        Configured ChainConsumer instance.
+    tuple
+        ``(consumer, corner_fig, walks_fig)``: the configured ChainConsumer
+        instance and the two figures it drew.
     """
     from chainconsumer import ChainConsumer, Chain, Truth
 
     if colors is None:
-        colors = [
-            "#1f77b4",
-            "#ff7f0e",
-            "#2ca02c",
-            "#d62728",
-            "#9467bd",
-            "#8c564b",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#17becf",
-        ]
+        colors = matplotlib.colormaps["tab10"].colors
+        colors = [matplotlib.colors.to_hex(color) for color in colors]
     if walk_columns is None:
         walk_columns = columns
 
@@ -501,11 +609,11 @@ def plot_chainconsumer_diagnostics(
         )
     if truth is not None:
         consumer.add_truth(Truth(location=truth))
-    consumer.plotter.plot()
-    consumer.plotter.plot_walks(
+    corner_fig = consumer.plotter.plot()
+    walks_fig = consumer.plotter.plot_walks(
         columns=walk_columns, plot_weights=False, plot_posterior=False
     )
-    return consumer
+    return consumer, corner_fig, walks_fig
 
 
 def diagnostics_table_from_samples(
@@ -605,11 +713,14 @@ def plot_hmc_fisher_chainconsumer(
     Returns
     -------
     dict
-        Mapping containing configured ChainConsumer objects and truth mappings.
+        Mapping with the ChainConsumer objects (``"cartesian"``,
+        ``"polar"``), their figures (``"cartesian_figures"``,
+        ``"polar_figures"``, each ``(corner, walks)``) and the truth
+        mappings.
     """
     truth_cart, truth_polar = truth_cartesian_and_polar(truth_cartesian)
 
-    cartesian_consumer = plot_chainconsumer_diagnostics(
+    cartesian_consumer, *cartesian_figures = plot_chainconsumer_diagnostics(
         {
             "HMC Cartesian": hmc_table,
             "Fisher-HMC Cartesian": fisher_table,
@@ -619,7 +730,7 @@ def plot_hmc_fisher_chainconsumer(
         colors=list(colors),
     )
 
-    polar_consumer = plot_chainconsumer_diagnostics(
+    polar_consumer, *polar_figures = plot_chainconsumer_diagnostics(
         {
             "HMC Polar": hmc_table,
             "Fisher-HMC Polar": fisher_table,
@@ -632,11 +743,14 @@ def plot_hmc_fisher_chainconsumer(
     return {
         "cartesian": cartesian_consumer,
         "polar": polar_consumer,
+        "cartesian_figures": tuple(cartesian_figures),
+        "polar_figures": tuple(polar_figures),
         "truth_cartesian": truth_cart,
         "truth_polar": truth_polar,
     }
 
 
+@_styled
 def plot_recovery_residuals(
     params,
     truth,
@@ -668,7 +782,7 @@ def plot_recovery_residuals(
     x = np.arange(len(params))
     labels = list(estimates_by_label.keys())
     n_labels = max(1, len(labels))
-    offsets = np.linspace(-0.3, 0.3, n_labels)
+    offsets = np.linspace(-0.3, 0.3, n_labels) if n_labels > 1 else np.zeros(1)
 
     fig1, ax1 = plt.subplots(figsize=figsize)
     for idx, label in enumerate(labels):
@@ -727,26 +841,35 @@ def radial_limit_summary(
     Parameters
     ----------
     limit_map : array-like
-        Two-dimensional map of contrast limits.
+        Two-dimensional map of contrast limits with shape
+        ``(len(dra_axis), len(ddec_axis))``, i.e. axis 0 is ``dra``, as
+        returned by the [`drpangloss.grid_fit`][drpangloss.grid_fit] functions.
     dra_axis : array-like
         Right-ascension axis in milliarcseconds.
     ddec_axis : array-like
         Declination axis in milliarcseconds.
     center : tuple[float, float], optional
-        Radial center in milliarcseconds.
+        Radial centre ``(dra, ddec)`` in milliarcseconds.
     r_max : float, optional
-        Maximum radial separation to summarize.
+        Maximum radial separation to summarize, in milliarcseconds.
     n_bins : int, optional
-        Number of radial edges (bins are ``n_bins - 1``).
+        Number of radial bin *edges* (there are ``n_bins - 1`` bins).
 
     Returns
     -------
     dict
-        Mapping with ``r_centers``, ``median``, ``q16``, and ``q84`` arrays.
+        Mapping with ``r_centers`` (mas), ``median``, ``q16``, and ``q84``
+        arrays. Empty bins are NaN.
     """
-    yy, xx = np.meshgrid(
-        np.asarray(ddec_axis), np.asarray(dra_axis), indexing="xy"
+    xx, yy = np.meshgrid(
+        np.asarray(dra_axis), np.asarray(ddec_axis), indexing="ij"
     )
+    limit_np = np.asarray(limit_map)
+    if limit_np.shape != xx.shape:
+        raise ValueError(
+            f"limit_map has shape {limit_np.shape}; expected "
+            f"(len(dra_axis), len(ddec_axis)) = {xx.shape}."
+        )
     rr = np.sqrt((xx - float(center[0])) ** 2 + (yy - float(center[1])) ** 2)
 
     r_edges = np.linspace(0.0, float(r_max), int(n_bins))
@@ -754,7 +877,6 @@ def radial_limit_summary(
     med = []
     q16 = []
     q84 = []
-    limit_np = np.asarray(limit_map)
 
     for lo, hi in zip(r_edges[:-1], r_edges[1:]):
         mask = (rr >= lo) & (rr < hi)
@@ -776,6 +898,39 @@ def radial_limit_summary(
     }
 
 
+def _reversed_cmap(cmap):
+    """Reverse a colour map given by name or as a ``Colormap``.
+
+    Maps whose name already ends in ``_r`` are taken as deliberately
+    reversed and kept.
+    """
+    if isinstance(cmap, str):
+        cmap = matplotlib.colormaps[cmap]
+    if cmap.name.endswith("_r"):
+        return cmap
+    return cmap.reversed()
+
+
+def _sky_map(ax, grid, samples_dict, coord_keys, **imshow_kwargs):
+    """``imshow`` a coordinate grid with centred pixels and sky orientation.
+
+    Returns the image and whether the axes are sky offsets.
+    """
+    x_key, y_key, image, is_sky = _image_axes(grid, coord_keys)
+    im = ax.imshow(
+        image,
+        origin="lower",
+        extent=_centres_to_extent(samples_dict[x_key], samples_dict[y_key]),
+        **imshow_kwargs,
+    )
+    ax.set_xlabel(x_key)
+    ax.set_ylabel(y_key)
+    if is_sky:
+        _enforce_sky_orientation(ax)
+    return im, is_sky
+
+
+@_styled
 def plot_contrast_limit_map(
     limit_map,
     dra_axis,
@@ -792,19 +947,21 @@ def plot_contrast_limit_map(
     Parameters
     ----------
     limit_map : array-like
-        Two-dimensional contrast-limit map.
+        Two-dimensional contrast-limit map (flux ratios) with shape
+        ``(len(dra_axis), len(ddec_axis))``.
     dra_axis : array-like
         Right-ascension axis in milliarcseconds.
     ddec_axis : array-like
         Declination axis in milliarcseconds.
     truth : dict or tuple, optional
-        Truth location to overplot.
+        Truth location ``(dra, ddec)`` in milliarcseconds to overplot.
     unit_mode : {"flux_ratio", "delta_mag"}, optional
         Display units for the map.
     title : str, optional
         Axes title.
-    cmap : str, optional
-        Matplotlib colormap name.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colour map. It is reversed for ``"delta_mag"``, so that deeper
+        limits keep the same colour in both modes.
     figsize : tuple, optional
         Figure size.
 
@@ -816,27 +973,19 @@ def plot_contrast_limit_map(
     limit_np = np.asarray(limit_map)
     cmap_to_use = cmap
     if unit_mode == "delta_mag":
-        map_to_plot = -2.5 * np.log10(np.maximum(limit_np, 1e-30))
+        map_to_plot = _to_delta_mag(limit_np)
         cbar_label = "Contrast limit (Δmag)"
-        if not str(cmap_to_use).endswith("_r"):
-            cmap_to_use = f"{cmap_to_use}_r"
+        cmap_to_use = _reversed_cmap(cmap)
     else:
         map_to_plot = limit_np
         cbar_label = "Contrast limit (flux ratio)"
 
-    dra_axis_np = np.asarray(dra_axis)
-    ddec_axis_np = np.asarray(ddec_axis)
-
     fig, ax = plt.subplots(figsize=figsize)
-    im = ax.imshow(
-        map_to_plot.T,
-        extent=(
-            float(dra_axis_np[0]),
-            float(dra_axis_np[-1]),
-            float(ddec_axis_np[0]),
-            float(ddec_axis_np[-1]),
-        ),
-        origin="lower",
+    im, _ = _sky_map(
+        ax,
+        map_to_plot,
+        {"dra": dra_axis, "ddec": ddec_axis},
+        ["dra", "ddec"],
         aspect="equal",
         cmap=cmap_to_use,
     )
@@ -862,10 +1011,10 @@ def plot_contrast_limit_map(
     ax.set_xlabel("ΔRA (mas)")
     ax.set_ylabel("ΔDec (mas)")
     ax.set_title(title)
-    _enforce_sky_orientation(ax)
     return fig, ax
 
 
+@_styled
 def plot_radial_limit_summary(
     radial_summary,
     unit_mode="flux_ratio",
@@ -881,7 +1030,9 @@ def plot_radial_limit_summary(
     radial_summary : dict
         Output mapping from ``radial_limit_summary``.
     unit_mode : {"flux_ratio", "delta_mag"}, optional
-        Display units for the y-axis.
+        Display units for the y-axis. In both modes deeper (fainter) limits
+        are drawn lower down: flux ratios on a log axis, Δmag on an inverted
+        axis.
     title : str, optional
         Plot title.
     figsize : tuple, optional
@@ -900,9 +1051,9 @@ def plot_radial_limit_summary(
     q84 = np.asarray(radial_summary["q84"])
 
     if unit_mode == "delta_mag":
-        med_plot = -2.5 * np.log10(np.maximum(med, 1e-30))
-        q16_plot = -2.5 * np.log10(np.maximum(q16, 1e-30))
-        q84_plot = -2.5 * np.log10(np.maximum(q84, 1e-30))
+        med_plot = _to_delta_mag(med)
+        q16_plot = _to_delta_mag(q16)
+        q84_plot = _to_delta_mag(q84)
         ylabel = "Contrast limit (Δmag)"
     else:
         med_plot = med
@@ -918,6 +1069,8 @@ def plot_radial_limit_summary(
     ax.fill_between(r_centers, q16_plot, q84_plot, alpha=0.3, label="16–84%")
     if unit_mode == "flux_ratio":
         ax.set_yscale("log")
+    elif not ax.yaxis_inverted():
+        ax.invert_yaxis()
     ax.set_xlabel("Separation (mas)")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -925,27 +1078,40 @@ def plot_radial_limit_summary(
     return fig, ax
 
 
-def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
+@_styled
+def plot_optimized_and_grid(
+    loglike_im, optimized, samples_dict, flux_param=None
+):
     """
     Plot optimized contrast results alongside the brute-force grid maximum.
 
     Parameters
     ----------
     loglike_im : array
-        Full 3D log-likelihood cube from ``likelihood_grid``.
+        Full log-likelihood cube from ``likelihood_grid``, with one axis per
+        key of ``samples_dict``.
     optimized : array
-        2D optimized contrast map from ``optimized_contrast_grid``.
+        Optimized flux map from ``optimized_contrast_grid``, with one axis
+        per coordinate key.
     samples_dict : dict
-        Sampling dictionary containing ``dra``, ``ddec``, and ``flux`` axes.
+        Sampling dictionary used for both grids, e.g. with ``dra``, ``ddec``
+        and ``flux`` axes.
+    flux_param : str, optional
+        Key of the optimized flux axis. By default ``"contrast"`` or
+        ``"flux"`` if present, otherwise the last key.
+
+    Returns
+    -------
+    tuple
+        ``(fig, ax)`` for a 1D profile, or ``(fig, (ax1, ax2))`` for 2D maps.
     """
 
     params = list(samples_dict.keys())
-    opt_key = (
-        "contrast"
-        if "contrast" in samples_dict
-        else ("flux" if "flux" in samples_dict else params[-1])
-    )
+    opt_key = _flux_key(samples_dict, flux_param)
     coord_keys = [k for k in params if k != opt_key]
+    flux_values = np.asarray(samples_dict[opt_key])
+    best_idx = np.nanargmax(np.asarray(loglike_im), axis=params.index(opt_key))
+    best_grid = flux_values[best_idx]
 
     if len(coord_keys) == 1:
         x_key = coord_keys[0]
@@ -957,10 +1123,6 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
             lw=2,
             label=f"Optimized {opt_key}",
         )
-        best_idx = np.argmax(
-            np.asarray(loglike_im), axis=params.index(opt_key)
-        )
-        best_grid = np.asarray(samples_dict[opt_key])[best_idx]
         ax.plot(
             x,
             np.asarray(best_grid).reshape(-1),
@@ -972,169 +1134,109 @@ def plot_optimized_and_grid(loglike_im, optimized, samples_dict):
         ax.set_ylabel(opt_key)
         ax.set_title("Optimization vs grid")
         ax.legend(loc="best")
-        return
+        return fig, ax
 
-    x_key, y_key = coord_keys[:2]
-    best_contrast_indices = np.argmax(loglike_im, axis=params.index(opt_key))
-    best_contrasts = samples_dict[opt_key][best_contrast_indices]
-
-    plt.figure(figsize=(14, 5))
-    matplotlib.rcParams["figure.dpi"] = 100
-    matplotlib.rcParams["font.family"] = ["serif"]
-    plt.rcParams.update({"font.size": 14})
-    x_axis = np.asarray(samples_dict[x_key])
-    y_axis = np.asarray(samples_dict[y_key])
-
-    plt.subplot(1, 2, 1)
-    plt.imshow(
-        optimized.T,
-        cmap="inferno",
-        norm=matplotlib.colors.LogNorm(),
-        origin="lower",
-        extent=[
-            float(x_axis[0]),
-            float(x_axis[-1]),
-            float(y_axis[0]),
-            float(y_axis[-1]),
-        ],
-    )
-    plt.colorbar(shrink=1, label="Contrast", pad=0.01)
-    plt.scatter(0, 0, s=140, c="black", marker="*")
-    plt.xlabel(x_key)
-    plt.ylabel(y_key)
-    plt.title("Optimization")
-    _enforce_sky_orientation(plt.gca())
-
-    plt.subplot(1, 2, 2)
-    plt.imshow(
-        best_contrasts.T,
-        cmap="inferno",
-        norm=matplotlib.colors.LogNorm(),
-        origin="lower",
-        extent=[
-            float(x_axis[0]),
-            float(x_axis[-1]),
-            float(y_axis[0]),
-            float(y_axis[-1]),
-        ],
-    )
-    plt.colorbar(shrink=1, label="Contrast", pad=0.01)
-    plt.scatter(0, 0, s=140, c="black", marker="*")
-    plt.xlabel(x_key)
-    plt.ylabel(y_key)
-    plt.title("Grid Search")
-    _enforce_sky_orientation(plt.gca())
-    plt.tight_layout(pad=0.0)
-    plt.show()
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, grid, title in (
+        (ax1, optimized, "Optimization"),
+        (ax2, best_grid, "Grid Search"),
+    ):
+        im, is_sky = _sky_map(
+            ax,
+            grid,
+            samples_dict,
+            coord_keys,
+            cmap="inferno",
+            norm=matplotlib.colors.LogNorm(),
+        )
+        fig.colorbar(im, ax=ax, shrink=1, label="Contrast", pad=0.01)
+        if is_sky:
+            ax.scatter(0, 0, s=140, c="black", marker="*")
+        ax.set_title(title)
+    fig.tight_layout(pad=0.0)
+    return fig, (ax1, ax2)
 
 
-def plot_optimized_and_sigma(contrast, sigma_grid, samples_dict, snr=False):
+@_styled
+def plot_optimized_and_sigma(
+    contrast, sigma_grid, samples_dict, snr=False, flux_param=None
+):
     """
-    Plot the results of an optimized contrast grid calculation and the corresponding uncertainty grid.
+    Plot an optimized contrast grid and the corresponding uncertainty grid.
 
     Parameters
     ----------
     contrast : array
-        The optimized contrast grid, output of optimized_contrast_grid
+        The optimized contrast grid, output of optimized_contrast_grid.
     sigma_grid : array
-        The uncertainty grid, output of laplace_contrast_uncertainty_grid
+        The uncertainty grid, output of laplace_contrast_uncertainty_grid.
     samples_dict : dict
-        Dictionary of samples used in the grid calculation
+        Dictionary of samples used in the grid calculation.
     snr : bool, optional
-        If True, plot the SNR instead of the uncertainty, default False
+        If True, plot the SNR instead of the uncertainty, default False.
+    flux_param : str, optional
+        Key of the optimized flux axis. By default ``"contrast"`` or
+        ``"flux"`` if present, otherwise the last key.
 
+    Returns
+    -------
+    tuple
+        ``(fig, ax)`` for a 1D profile, or ``(fig, (ax1, ax2))`` for 2D maps.
     """
 
     params = list(samples_dict.keys())
-    opt_key = (
-        "contrast"
-        if "contrast" in samples_dict
-        else ("flux" if "flux" in samples_dict else params[-1])
-    )
+    opt_key = _flux_key(samples_dict, flux_param)
     coord_keys = [k for k in params if k != opt_key]
+    contrast = np.asarray(contrast)
+    sigma_grid = np.asarray(sigma_grid)
 
     if len(coord_keys) == 1:
         x_key = coord_keys[0]
         x = np.asarray(samples_dict[x_key])
         fig, ax = plt.subplots(figsize=(8, 4))
         if snr:
-            ax.plot(
-                x,
-                np.asarray(contrast).reshape(-1)
-                / np.asarray(sigma_grid).reshape(-1),
-                lw=2,
-            )
+            ax.plot(x, (contrast / sigma_grid).reshape(-1), lw=2)
             ax.set_ylabel("SNR")
             ax.set_title("SNR profile")
         else:
-            ax.plot(x, np.asarray(sigma_grid).reshape(-1), lw=2)
+            ax.plot(x, sigma_grid.reshape(-1), lw=2)
             ax.set_ylabel(f"σ({opt_key})")
             ax.set_title("Uncertainty profile")
         ax.set_xlabel(x_key)
-        return
+        return fig, ax
 
-    x_key, y_key = coord_keys[:2]
-    x_axis = np.asarray(samples_dict[x_key])
-    y_axis = np.asarray(samples_dict[y_key])
-    extent = [
-        float(x_axis[0]),
-        float(x_axis[-1]),
-        float(y_axis[0]),
-        float(y_axis[-1]),
-    ]
-
-    plt.figure(figsize=(14, 5))
-    matplotlib.rcParams["figure.dpi"] = 100
-    matplotlib.rcParams["font.family"] = ["serif"]
-    plt.rcParams.update({"font.size": 14})
-    plt.subplot(1, 2, 1)
-    plt.imshow(
-        contrast.T,
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    im, is_sky = _sky_map(
+        ax1,
+        contrast,
+        samples_dict,
+        coord_keys,
         cmap="inferno",
         norm=matplotlib.colors.LogNorm(),
-        origin="lower",
-        extent=extent,
     )
-    plt.colorbar(shrink=1, label="Contrast", pad=0.01)
-    plt.scatter(0, 0, s=140, c="y", marker="*")
-    plt.xlabel(x_key)
-    plt.ylabel(y_key)
-    plt.title("Contrast")
-    _enforce_sky_orientation(plt.gca())
+    fig.colorbar(im, ax=ax1, shrink=1, label="Contrast", pad=0.01)
+    ax1.set_title("Contrast")
 
-    plt.subplot(1, 2, 2)
     if snr:
-        plt.imshow(
-            contrast.T / sigma_grid.T,
-            cmap="inferno",
-            norm=matplotlib.colors.PowerNorm(1),
-            origin="lower",
-            extent=extent,
-        )
-        plt.colorbar(shrink=1, label="SNR", pad=0.01)
-        plt.scatter(0, 0, s=140, c="y", marker="*")  # mark star at origin
-        plt.title("SNR")
-
+        right, norm, label = contrast / sigma_grid, None, "SNR"
     else:
-        plt.imshow(
-            sigma_grid.T,
-            cmap="inferno",
-            norm=matplotlib.colors.LogNorm(),
-            origin="lower",
-            extent=extent,
-        )
-        plt.colorbar(shrink=1, label="σ(Contrast)", pad=0.01)
-        plt.scatter(0, 0, s=140, c="y", marker="*")  # mark star at origin
-        plt.title("σ(Contrast)")
+        right, norm = sigma_grid, matplotlib.colors.LogNorm()
+        label = "σ(Contrast)"
+    im, _ = _sky_map(
+        ax2, right, samples_dict, coord_keys, cmap="inferno", norm=norm
+    )
+    fig.colorbar(im, ax=ax2, shrink=1, label=label, pad=0.01)
+    ax2.set_title(label)
 
-    plt.xlabel(x_key)
-    plt.ylabel(y_key)
-    _enforce_sky_orientation(plt.gca())
-    plt.tight_layout(pad=0.0)
-    plt.show()
+    if is_sky:
+        for ax in (ax1, ax2):
+            ax.scatter(0, 0, s=140, c="y", marker="*")  # star at origin
+    fig.tight_layout(pad=0.0)
+    return fig, (ax1, ax2)
 
 
 def _format_sigma_or_percent_value(value):
+    """Format a confidence level compactly, e.g. ``97.7`` or ``5``."""
     formatted = f"{float(value):.3g}"
     return formatted.rstrip("0").rstrip(".") if "." in formatted else formatted
 
@@ -1142,6 +1244,7 @@ def _format_sigma_or_percent_value(value):
 def _resolve_contrast_limit_label(
     limit_label=None, percentile=None, sigma=None
 ):
+    """Legend/title label for a contrast limit at a given confidence."""
     if limit_label is not None:
         return limit_label
 
@@ -1175,91 +1278,93 @@ def plot_contrast_limits(
     sigma=None,
 ):
     """
-    Plot the contrast limits calculated with the Ruffio or Absil methods.
+    Plot a contrast-limit map and its azimuthally averaged contrast curve.
 
     Parameters
     ----------
     contrast_limits : array
-        The contrast limits calculated with the Ruffio or Absil methods.
+        Contrast limits (flux ratios) from the Ruffio or Absil methods, with
+        shape ``(len(samples_dict["dra"]), len(samples_dict["ddec"]))``.
+        They are shown in Δmag.
     samples_dict : dict
-        Dictionary of samples used in the grid calculation
+        Dictionary of samples used in the grid calculation; must contain
+        ``"dra"`` and ``"ddec"`` axes in milliarcseconds.
     rad_width : array
-        Radial width of the contrast limits.
+        Radii of the contrast curve in *pixels* of the ``dra`` grid, as
+        returned by [`drpangloss.grid_fit.azimuthalAverage`][drpangloss.grid_fit.azimuthalAverage]. They are
+        converted to mas using the median ``dra`` spacing.
     avg_width : array
-        Average width of the contrast limits.
+        Azimuthal mean of the limit map at each radius, already in Δmag.
     std_width : array
-        Standard deviation of the contrast limits.
-    true_values : list, optional
-        List of true values for the parameters, default None
+        Azimuthal standard deviation at each radius, in Δmag.
+    true_values : tuple, optional
+        ``(dra, ddec, flux_ratio)`` of a detected companion to mark on the
+        contrast curve.
     limit_label : str, optional
         Label used for the map title and curve legend. If not provided, the
-        label is inferred from ``percentile`` or ``sigma`` when available.
+        label is inferred from ``percentile`` or ``sigma``, falling back to
+        ``"98% Upper Limit"``.
     percentile : float or array-like, optional
         Percentile confidence level for Ruffio-style upper limits.
     sigma : float or array-like, optional
         Sigma confidence level for Absil-style detection limits.
 
+    Returns
+    -------
+    tuple
+        ``(fig, (ax_map, ax_curve))``.
     """
     limit_label = _resolve_contrast_limit_label(
         limit_label=limit_label, percentile=percentile, sigma=sigma
     )
 
-    plt.figure(figsize=(20, 5))
-    matplotlib.rcParams["figure.dpi"] = 150
-    matplotlib.rcParams["font.family"] = ["serif"]
-    plt.rcParams.update({"font.size": 16})
+    with plt.rc_context({**STYLE, "figure.dpi": 150, "font.size": 16}):
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 5))
 
-    # first show x% upper limit map
+        # First show the upper-limit map.
+        im, _ = _sky_map(
+            ax1,
+            _to_delta_mag(contrast_limits),
+            samples_dict,
+            ["dra", "ddec"],
+            cmap=matplotlib.colormaps["magma_r"],
+        )
+        fig.colorbar(im, ax=ax1, shrink=1, pad=0.01, label="$\\Delta$mag")
+        ax1.scatter(0, 0, marker="*", s=100, c="black", alpha=0.5)
+        ax1.set_title(f"{limit_label} Map ($\\Delta$mag)")
+        ax1.set_xlabel("$\\Delta$RA [mas]")
+        ax1.set_ylabel("$\\Delta$DEC [mas]")
 
-    plt.subplot(1, 2, 1)
-    dra_axis = np.asarray(samples_dict["dra"])
-    ddec_axis = np.asarray(samples_dict["ddec"])
-    plt.imshow(
-        -2.5 * np.log10(contrast_limits[:, :].T),
-        cmap=matplotlib.colormaps["magma_r"],
-        origin="lower",
-        extent=[
-            float(dra_axis[0]),
-            float(dra_axis[-1]),
-            float(ddec_axis[0]),
-            float(ddec_axis[-1]),
-        ],
-    )
-    plt.colorbar(shrink=1, pad=0.01)
-    plt.scatter(0, 0, marker="*", s=100, c="black", alpha=0.5)
-    _enforce_sky_orientation(plt.gca())
-    plt.title(f"{limit_label} Map ($\\Delta$mag)")
-    plt.xlabel("$\\Delta$RA [mas]")
-    plt.ylabel("$\\Delta$DEC [mas]")
+        # Then show the contrast curve, including any detected target.
+        dx = np.abs(np.median(np.diff(np.asarray(samples_dict["dra"]))))
+        sep = np.asarray(rad_width) * dx
+        avg_width = np.asarray(avg_width)
+        std_width = np.asarray(std_width)
+        ax2.plot(sep, avg_width, "-k", label=limit_label)
+        ax2.fill_between(
+            sep,
+            avg_width - std_width,
+            avg_width + std_width,
+            color=(0.6, 0.4, 0.9),
+            alpha=0.3,
+        )
+        ax2.set_ylabel("Contrast ($\\Delta$mag)")
+        ax2.set_xlabel("Separation [mas]")
+        ax2.invert_yaxis()
+        finite = np.isfinite(sep) & np.isfinite(avg_width)
+        if np.any(finite):
+            ax2.set_xlim(sep[finite].min(), sep[finite].max())
+        ax2.grid(color="black", alpha=0.3)
+        ax2.legend(loc="best")
 
-    # then show contrast curve including detected target
-    plt.subplot(1, 2, 2)
-    dx = np.abs(np.median(np.diff(samples_dict["dra"])))
-    plt.plot(rad_width * dx, avg_width, "-k", label=limit_label)
-    plt.fill_between(
-        rad_width * dx,
-        avg_width - std_width,
-        avg_width + std_width,
-        color=(0.6, 0.4, 0.9),
-        alpha=0.3,
-    )
-    plt.ylabel("Contrast ($\\Delta$mag)")
-    plt.xlabel("Separation [mas]")
-    plt.gca().invert_yaxis()
-    plt.xlim(
-        np.nanmin(rad_width * dx + avg_width * 0.0),
-        np.nanmax(rad_width * dx + avg_width * 0.0),
-    )
-    plt.grid(color="black", alpha=0.3)
-    plt.legend(loc="best")
-    plt.tight_layout(pad=0.0)
-
-    if true_values is not None:
-        true_dra, true_ddec, true_contrast = true_values
-        plt.plot(
-            np.sqrt(true_dra**2 + true_ddec**2),
-            -2.5 * np.log10(true_contrast),
-            marker="*",
-            c="k",
-            markersize=15,
-        )  # detected value
+        if true_values is not None:
+            true_dra, true_ddec, true_contrast = true_values
+            ax2.plot(
+                np.sqrt(true_dra**2 + true_ddec**2),
+                _to_delta_mag(true_contrast),
+                marker="*",
+                c="k",
+                markersize=15,
+            )  # detected value
+        fig.tight_layout(pad=0.0)
+    return fig, (ax1, ax2)

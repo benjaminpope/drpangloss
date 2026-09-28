@@ -1,10 +1,18 @@
+"""Grid-based fitting and contrast-limit utilities.
+
+Grids are built with ``indexing="ij"``: every output has one axis per grid
+key, in the order of ``samples_dict``. For ``{"dra", "ddec", ...}`` axis 0 is
+``dra`` (East offset) and axis 1 is ``ddec`` (North offset), so 2D maps need
+a transpose to be shown as images with North up; the functions in
+[`drpangloss.plotting`][drpangloss.plotting] handle this.
+"""
+
 import warnings
-from functools import partial
 
 import equinox as eqx
 import jax
-from jax import vmap
 import jax.numpy as jnp
+import jax.scipy as jsp
 import numpy as np
 import optimistix as optx
 
@@ -15,10 +23,6 @@ from .models import (
     loglike,
     nsigma,
 )
-
-import jax.scipy as jsp
-
-"""Grid-based fitting and contrast-limit utilities."""
 
 
 def _unambiguous_flux_key(samples_dict, params):
@@ -50,7 +54,7 @@ def _infer_grid_parameter_keys(samples_dict, params=None):
     Supports any number of coordinate parameters (one or more) plus exactly
     one flux-like parameter, e.g. ``(dra, ddec, flux)`` for a binary
     companion search, ``(sigma, flux)`` for a resolved-source search, or
-    ``(comp.dra, comp.ddec, comp.flux)`` for a composed :class:`System`.
+    ``(comp.dra, comp.ddec, comp.flux)`` for a composed [`System`][drpangloss.models.System].
     """
     if params is None:
         params = tuple(samples_dict.keys())
@@ -99,7 +103,7 @@ def _resolve_flux_param(samples_dict, flux_param, caller):
     Without an explicit ``flux_param``, the flux parameter is inferred as
     before: a key named exactly ``flux``, else the only key ending in
     ``.flux``. When neither applies and the choice falls back on the order of
-    ``samples_dict``, a :class:`DeprecationWarning` is raised.
+    ``samples_dict``, a ``DeprecationWarning`` is raised.
     """
     params = tuple(samples_dict.keys())
     _check_flux_axes(samples_dict, flux_param)
@@ -131,9 +135,20 @@ def _resolve_flux_param(samples_dict, flux_param, caller):
     return params, coord_keys, flux_param
 
 
+# Grid points are evaluated in batches of this many, which bounds memory on
+# large grids (each point holds a full model evaluation). It is read when a
+# function is first compiled for a given grid shape.
+GRID_BATCH_SIZE = 4096
+
+
+def _map_points(fn, *xs):
+    """Apply ``fn`` to every row of ``xs``, ``GRID_BATCH_SIZE`` rows at a time."""
+    return jax.lax.map(lambda args: fn(*args), xs, batch_size=GRID_BATCH_SIZE)
+
+
 def _meshgrid_vectors(samples_dict, params):
     """Build flattened meshgrid vectors with axis order matching ``params``."""
-    samples = [samples_dict[param] for param in params]
+    samples = [jnp.asarray(samples_dict[param]) for param in params]
     grid_shape = tuple(sample.shape[0] for sample in samples)
     grids = jnp.meshgrid(*samples, indexing="ij")
     vals_vec = jnp.stack([grid.reshape(-1) for grid in grids], axis=1)
@@ -154,6 +169,122 @@ def _ordered_values_from_flux_and_coords(
     ]
 
 
+def _coordinate_points(samples_dict, coord_keys):
+    """Flattened ``(n_points, n_coords)`` coordinate grid and its shape.
+
+    The grid uses ``indexing="ij"``: axis ``k`` follows ``coord_keys[k]``,
+    so for ``(dra, ddec)`` axis 0 is ``dra``.
+    """
+    coord_grids = jnp.meshgrid(
+        *[jnp.asarray(samples_dict[key]) for key in coord_keys],
+        indexing="ij",
+    )
+    points = jnp.stack([grid.reshape(-1) for grid in coord_grids], axis=1)
+    return points, coord_grids[0].shape
+
+
+def _best_grid_flux(data_obj, model, samples_dict, params, flux_key):
+    """Best flux on the grid, and its log likelihood, at every position."""
+    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
+    loglike_im = _map_points(
+        lambda values: loglike(values, params, data_obj, model), vals_vec
+    ).reshape(grid_shape)
+    flux_axis = params.index(flux_key)
+    best_index = jnp.nanargmax(loglike_im, axis=flux_axis)
+    best_flux = jnp.asarray(samples_dict[flux_key])[best_index]
+    return best_flux, jnp.nanmax(loglike_im, axis=flux_axis)
+
+
+@eqx.filter_jit
+def _optimize_flux_grid(
+    data_obj, model, samples_dict, params, coord_keys, flux_key
+):
+    """Refine the best grid flux at every position with BFGS.
+
+    Returns ``(flux, loglike, converged)``, each with one axis per
+    coordinate key; a point has converged when it is within a quarter sigma
+    of the likelihood maximum along the flux. The optimizer works in units of the starting flux, and on the log
+    likelihood relative to its starting value, so its default tolerances are
+    relative to the problem's own scale.
+    """
+    start_flux, start_loglike = _best_grid_flux(
+        data_obj, model, samples_dict, params, flux_key
+    )
+    coords, shape = _coordinate_points(samples_dict, coord_keys)
+
+    def objective(x, coord_vals, scale, loglike0):
+        values = _ordered_values_from_flux_and_coords(
+            x * scale, coord_vals, params, coord_keys, flux_key
+        )
+        return loglike0 - loglike(values, params, data_obj, model)
+
+    def flux_loglike(flux, coord_vals):
+        values = _ordered_values_from_flux_and_coords(
+            flux, coord_vals, params, coord_keys, flux_key
+        )
+        return loglike(values, params, data_obj, model)
+
+    def newton_step(flux, coord_vals):
+        grad = jax.grad(flux_loglike)(flux, coord_vals)
+        curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
+        step = jnp.where(curvature < 0.0, grad / curvature, 0.0)
+        # Keep the step only if it improves the fit: far from quadratic
+        # regions a Newton step can overshoot.
+        trial = flux - step
+        improved = flux_loglike(trial, coord_vals) >= flux_loglike(
+            flux, coord_vals
+        )
+        return jnp.where(improved, trial, flux)
+
+    def refine(flux0, coord_vals, loglike0):
+        scale = jnp.where(jnp.abs(flux0) > 0.0, jnp.abs(flux0), 1.0)
+        result = optx.compat.minimize(
+            objective,
+            x0=jnp.array([flux0 / scale]),
+            args=(coord_vals, scale, loglike0),
+            method="BFGS",
+            options={"maxiter": 100},
+        )
+        # BFGS stops once the change in log likelihood is below its
+        # tolerance, which in float32 is comparable to rounding noise. Two
+        # Newton steps on the analytic gradient pin down the maximum.
+        flux = result.x[0] * scale
+        for _ in range(2):
+            flux = newton_step(flux, coord_vals)
+        # Converged if the remaining distance to the maximum, estimated from
+        # the gradient and curvature, is under a quarter sigma of the flux.
+        # (Float32 rounding alone leaves offsets of up to ~0.1 sigma.)
+        grad = jax.grad(flux_loglike)(flux, coord_vals)
+        curvature = jax.grad(jax.grad(flux_loglike))(flux, coord_vals)
+        converged = (curvature < 0.0) & (
+            jnp.abs(grad) < 0.25 * jnp.sqrt(jnp.abs(curvature))
+        )
+        return flux, flux_loglike(flux, coord_vals), converged
+
+    flux, best_loglike, success = _map_points(
+        refine, start_flux.reshape(-1), coords, start_loglike.reshape(-1)
+    )
+    return (
+        flux.reshape(shape),
+        best_loglike.reshape(shape),
+        success.reshape(shape),
+    )
+
+
+def _warn_unconverged(success, caller):
+    """Warn if an optimizer failed to converge at some grid positions."""
+    failed = int(np.sum(~np.asarray(success, dtype=bool)))
+    if failed:
+        warnings.warn(
+            f"{caller}(): the optimizer did not converge at {failed} of "
+            f"{np.size(success)} grid positions; values there may be "
+            "inaccurate.",
+            RuntimeWarning,
+            # user -> renamed_argument wrapper -> public function -> here
+            stacklevel=4,
+        )
+
+
 @renamed_argument("model_class", "model")
 def likelihood_grid(data_obj, model, samples_dict):
     """Evaluate the log likelihood at every point of a parameter grid.
@@ -164,17 +295,23 @@ def likelihood_grid(data_obj, model, samples_dict):
         Data to fit.
     model : SourceModel or class
         Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a :class:`~drpangloss.models.System` with paths such as
+        varied (e.g. a [System][drpangloss.models.System] with paths such as
         ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``).
     samples_dict : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values.
-        The output has one axis per key, in this order.
+        Grid axes, as a mapping from parameter name or path to 1D values
+        (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
+        companion/primary flux ratio). The output has one axis per key, in
+        this order.
 
     Returns
     -------
     array-like
-        Log likelihood with shape ``tuple(len(v) for v in samples_dict.values())``.
+        Log likelihood with shape
+        ``tuple(len(v) for v in samples_dict.values())``. Axis ``k`` follows
+        the ``k``-th key (``indexing="ij"``), so for
+        ``{"dra", "ddec", "flux"}`` axis 0 is ``dra``: transpose a 2D slice
+        before showing it as an image with North up.
     """
     params = tuple(samples_dict.keys())
     _check_flux_axes(samples_dict)
@@ -183,50 +320,46 @@ def likelihood_grid(data_obj, model, samples_dict):
 
 @eqx.filter_jit
 def _likelihood_grid(data_obj, model, samples_dict, params):
-    """Jitted implementation of :func:`likelihood_grid`."""
+    """Jitted implementation of [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]."""
 
     vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
 
-    fn = vmap(lambda values: loglike(values, params, data_obj, model))
+    return _map_points(
+        lambda values: loglike(values, params, data_obj, model), vals_vec
+    ).reshape(grid_shape)
 
-    return fn(vals_vec).reshape(grid_shape)
+
+_OPTIMIZED_PARAMS_DOC = """
+    Parameters
+    ----------
+    data_obj : OIData
+        Data to fit.
+    model : SourceModel or class
+        Template model whose parameters at the paths in ``samples_dict`` are
+        varied (e.g. a [System][drpangloss.models.System] with paths such as
+        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
+        as keyword arguments (e.g. ``BinaryModelCartesian``).
+    samples_dict : dict[str, array-like]
+        Grid axes, as a mapping from parameter name or path to 1D values
+        (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
+        companion/primary flux ratio). The output has one axis per
+        coordinate key (every key except ``flux_param``), in this order;
+        the flux axis only sets the optimizer's starting points.
+    flux_param : str, optional
+        The key of ``samples_dict`` holding the flux (or other brightness)
+        parameter that is optimized at each grid position, e.g. ``"flux"`` or
+        ``"comp.flux"``. The remaining keys are the grid coordinates. Leaving
+        it out uses a key named ``flux`` or the only key ending in
+        ``.flux``; falling back on the order of the keys is deprecated.
+"""
 
 
 @renamed_argument("model_class", "model")
 def optimized_likelihood_grid(data_obj, model, samples_dict, flux_param=None):
-    """Find the maximum log likelihood over flux at every grid position.
-
-    A grid search over ``flux_param`` gives the starting point, which BFGS
-    then refines with the coordinates held fixed.
-
-    Parameters
-    ----------
-    data_obj : OIData
-        Data to fit.
-    model : SourceModel or class
-        Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a :class:`~drpangloss.models.System` with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``).
-    samples_dict : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values.
-        The output has one axis per key, in this order.
-    flux_param : str
-        The key of ``samples_dict`` holding the flux (or other brightness)
-        parameter that is optimized at each grid position, e.g. ``"flux"`` or
-        ``"comp.flux"``. The remaining keys are the grid coordinates. Leaving
-        it out uses a key named ``flux`` or the only key ending in
-        ``.flux``; falling back on the order of the keys is deprecated.
-
-    Returns
-    -------
-    array-like
-        Log likelihood at the optimized flux, with one axis per coordinate key.
-    """
     params, coord_keys, flux_key = _resolve_flux_param(
         samples_dict, flux_param, "optimized_likelihood_grid"
     )
-    return _optimized_likelihood_grid(
+    _, best_loglike, success = _optimize_flux_grid(
         data_obj,
         model,
         samples_dict,
@@ -234,99 +367,34 @@ def optimized_likelihood_grid(data_obj, model, samples_dict, flux_param=None):
         coord_keys=coord_keys,
         flux_key=flux_key,
     )
+    _warn_unconverged(success, "optimized_likelihood_grid")
+    return best_loglike
 
 
-@eqx.filter_jit
-def _optimized_likelihood_grid(
-    data_obj,
-    model,
-    samples_dict,
-    params,
-    coord_keys,
-    flux_key,
-):
-    """Jitted implementation of :func:`optimized_likelihood_grid`."""
+optimized_likelihood_grid.__doc__ = (
+    """Find the maximum log likelihood over flux at every grid position.
 
-    # first do a grid search to find a starting point
-
-    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
-
-    fn = vmap(lambda values: loglike(values, params, data_obj, model))
-
-    loglike_im = fn(vals_vec).reshape(grid_shape)
-    flux_axis = params.index(flux_key)
-    best_contrast_indices = jnp.argmax(loglike_im, axis=flux_axis)
-    # then do optimization to fine tune the contrast
-
-    coords = [samples_dict[key] for key in coord_keys]
-    coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    param_grids = {
-        flux_key: samples_dict[flux_key][best_contrast_indices],
-        **dict(zip(coord_keys, coord_grids)),
-    }
-    vals = jnp.array([param_grids[param] for param in params])
-    vals_vec = vals.reshape((len(vals), -1)).T
-    flux_index = params.index(flux_key)
-    coord_indices = tuple(params.index(param) for param in coord_keys)
-
-    def to_optimize(flux, coord_vals):
-        ordered_values = _ordered_values_from_flux_and_coords(
-            flux, coord_vals, params, coord_keys, flux_key
-        )
-        return -loglike(ordered_values, params, data_obj, model)
-
-    bestcon = lambda flux, *coord_vals: optx.compat.minimize(
-        to_optimize,
-        x0=jnp.array([flux]),
-        args=(jnp.asarray(coord_vals),),
-        method="BFGS",
-        options={"maxiter": 100},
-    ).fun
-
-    fn = vmap(
-        lambda values: bestcon(
-            values[flux_index], *[values[index] for index in coord_indices]
-        )
-    )
-
-    return -fn(vals_vec).reshape(vals.shape[1:])
+    A grid search over ``flux_param`` gives the starting point, which BFGS
+    then refines with the coordinates held fixed. A ``RuntimeWarning`` is
+    raised if the optimizer fails to converge anywhere.
+"""
+    + _OPTIMIZED_PARAMS_DOC
+    + """
+    Returns
+    -------
+    array-like
+        Log likelihood at the optimized flux, with one axis per coordinate
+        key (axis 0 is the first coordinate key, e.g. ``dra``).
+    """
+)
 
 
 @renamed_argument("model_class", "model")
 def optimized_contrast_grid(data_obj, model, samples_dict, flux_param=None):
-    """Find the best-fit flux at every grid position.
-
-    A grid search over ``flux_param`` gives the starting point, which BFGS
-    then refines with the coordinates held fixed.
-
-    Parameters
-    ----------
-    data_obj : OIData
-        Data to fit.
-    model : SourceModel or class
-        Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a :class:`~drpangloss.models.System` with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``).
-    samples_dict : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values.
-        The output has one axis per key, in this order.
-    flux_param : str
-        The key of ``samples_dict`` holding the flux (or other brightness)
-        parameter that is optimized at each grid position, e.g. ``"flux"`` or
-        ``"comp.flux"``. The remaining keys are the grid coordinates. Leaving
-        it out uses a key named ``flux`` or the only key ending in
-        ``.flux``; falling back on the order of the keys is deprecated.
-
-    Returns
-    -------
-    array-like
-        Best-fit value of ``flux_param``, with one axis per coordinate key.
-    """
     params, coord_keys, flux_key = _resolve_flux_param(
         samples_dict, flux_param, "optimized_contrast_grid"
     )
-    return _optimized_contrast_grid(
+    best_flux, _, success = _optimize_flux_grid(
         data_obj,
         model,
         samples_dict,
@@ -334,109 +402,92 @@ def optimized_contrast_grid(data_obj, model, samples_dict, flux_param=None):
         coord_keys=coord_keys,
         flux_key=flux_key,
     )
+    _warn_unconverged(success, "optimized_contrast_grid")
+    return best_flux
 
 
-@eqx.filter_jit
-def _optimized_contrast_grid(
-    data_obj,
-    model,
-    samples_dict,
-    params,
-    coord_keys,
-    flux_key,
-):
-    """Jitted implementation of :func:`optimized_contrast_grid`."""
+optimized_contrast_grid.__doc__ = (
+    """Find the best-fit flux at every grid position.
 
-    # first do a grid search to find a starting point
-
-    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
-
-    fn = vmap(lambda values: loglike(values, params, data_obj, model))
-
-    loglike_im = fn(vals_vec).reshape(grid_shape)
-
-    flux_axis = params.index(flux_key)
-    best_contrast_indices = jnp.argmax(loglike_im, axis=flux_axis)
-
-    # then do optimization to fine tune the contrast
-
-    coords = [samples_dict[key] for key in coord_keys]
-    coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    param_grids = {
-        flux_key: samples_dict[flux_key][best_contrast_indices],
-        **dict(zip(coord_keys, coord_grids)),
-    }
-    vals = jnp.array([param_grids[param] for param in params])
-    vals_vec = vals.reshape((len(vals), -1)).T
-    flux_index = params.index(flux_key)
-    coord_indices = tuple(params.index(param) for param in coord_keys)
-
-    def to_optimize(flux, coord_vals):
-        ordered_values = _ordered_values_from_flux_and_coords(
-            flux, coord_vals, params, coord_keys, flux_key
-        )
-        return -loglike(ordered_values, params, data_obj, model)
-
-    bestcon = lambda flux, *coord_vals: optx.compat.minimize(
-        to_optimize,
-        x0=jnp.array([flux]),
-        args=(jnp.asarray(coord_vals),),
-        method="BFGS",
-        options={"maxiter": 100},
-    ).x[0]
-
-    fn = vmap(
-        lambda values: bestcon(
-            values[flux_index], *[values[index] for index in coord_indices]
-        )
-    )
-
-    return fn(vals_vec).reshape(vals.shape[1:])
+    A grid search over ``flux_param`` gives the starting point, which BFGS
+    then refines with the coordinates held fixed. The flux is not
+    constrained to be positive, as [`ruffio_upperlimit`][drpangloss.grid_fit.ruffio_upperlimit] expects. A
+    ``RuntimeWarning`` is raised if the optimizer fails to converge
+    anywhere.
+"""
+    + _OPTIMIZED_PARAMS_DOC
+    + """
+    Returns
+    -------
+    array-like
+        Best-fit value of ``flux_param``, with one axis per coordinate key
+        (axis 0 is the first coordinate key, e.g. ``dra``).
+    """
+)
 
 
 @renamed_argument("model_class", "model")
 def laplace_contrast_uncertainty_grid(
-    best_contrast_indices, data_obj, model, samples_dict, flux_param=None
+    best_contrast_indices,
+    data_obj,
+    model,
+    samples_dict,
+    flux_param=None,
+    flux_values=None,
 ):
     """Laplace uncertainty of the flux at every grid position.
 
     At each position the coordinates are held fixed and the uncertainty is
     the inverse square root of the curvature of the negative log likelihood
-    along ``flux_param``, evaluated at the best flux on the grid.
+    along ``flux_param``.
 
     Parameters
     ----------
-    best_contrast_indices : array-like of int
-        Index into ``samples_dict[flux_param]`` of the best flux at each
-        position, e.g. ``jnp.argmax(loglike, axis=flux_axis)`` for the output
-        of :func:`likelihood_grid`.
+    best_contrast_indices : array-like of int or None
+        Index into ``samples_dict[flux_param]`` of the flux at which to
+        evaluate the curvature at each position, e.g.
+        ``jnp.argmax(loglike, axis=flux_axis)`` for the output of
+        [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]. Ignored when ``flux_values`` is given.
     data_obj : OIData
         Data to fit.
     model : SourceModel or class
         Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a :class:`~drpangloss.models.System` with paths such as
-        ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``).
+        varied, or a model class, as for [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid].
     samples_dict : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values.
-        The output has one axis per key, in this order.
-    flux_param : str
-        The key of ``samples_dict`` holding the flux (or other brightness)
-        parameter that is optimized at each grid position, e.g. ``"flux"`` or
-        ``"comp.flux"``. The remaining keys are the grid coordinates. Leaving
-        it out uses a key named ``flux`` or the only key ending in
-        ``.flux``; falling back on the order of the keys is deprecated.
+        The output has one axis per coordinate key (every key except
+        ``flux_param``), in this order.
+    flux_param : str, optional
+        The key of ``samples_dict`` holding the flux parameter. Leaving it
+        out uses a key named ``flux`` or the only key ending in ``.flux``;
+        falling back on the order of the keys is deprecated.
+    flux_values : array-like, optional
+        Flux at which to evaluate the curvature at each position, with one
+        axis per coordinate key. Pass the output of
+        [`optimized_contrast_grid`][drpangloss.grid_fit.optimized_contrast_grid] so that the uncertainty is evaluated
+        at the same best fit that [`ruffio_upperlimit`][drpangloss.grid_fit.ruffio_upperlimit] uses as the mean.
 
     Returns
     -------
     array-like
-        One-sigma flux uncertainty, with one axis per coordinate key.
+        One-sigma flux uncertainty, with one axis per coordinate key. It is
+        NaN where the curvature is not positive (the flux is not at a
+        likelihood maximum).
     """
     params, coord_keys, flux_key = _resolve_flux_param(
         samples_dict, flux_param, "laplace_contrast_uncertainty_grid"
     )
+    if flux_values is None:
+        if best_contrast_indices is None:
+            raise ValueError(
+                "Pass best_contrast_indices or flux_values to choose where "
+                "the curvature is evaluated."
+            )
+        flux_values = jnp.asarray(samples_dict[flux_key])[
+            jnp.asarray(best_contrast_indices)
+        ]
     return _laplace_contrast_uncertainty_grid(
-        best_contrast_indices,
+        jnp.asarray(flux_values),
         data_obj,
         model,
         samples_dict,
@@ -448,7 +499,7 @@ def laplace_contrast_uncertainty_grid(
 
 @eqx.filter_jit
 def _laplace_contrast_uncertainty_grid(
-    best_contrast_indices,
+    flux_values,
     data_obj,
     model,
     samples_dict,
@@ -456,26 +507,24 @@ def _laplace_contrast_uncertainty_grid(
     coord_keys,
     flux_key,
 ):
-    """Jitted implementation of :func:`laplace_contrast_uncertainty_grid`."""
+    """Jitted implementation of [`laplace_contrast_uncertainty_grid`][drpangloss.grid_fit.laplace_contrast_uncertainty_grid]."""
+    coords, shape = _coordinate_points(samples_dict, coord_keys)
 
-    coords = [samples_dict[key] for key in coord_keys]
-    coord_grids = jnp.meshgrid(*coords, indexing="ij")
-    param_grids = {
-        flux_key: samples_dict[flux_key][best_contrast_indices],
-        **dict(zip(coord_keys, coord_grids)),
-    }
-    vals = jnp.array([param_grids[param] for param in params])
-    vals_vec = vals.reshape((len(vals), -1)).T
-    sigma = lambda values: laplace_parameter_uncertainty(
-        values=values,
-        params=params,
-        data_obj=data_obj,
-        model=model,
-        target_param=flux_key,
-    )
-    fn = vmap(lambda values: sigma(values))
+    def sigma(flux, coord_vals):
+        values = jnp.stack(
+            _ordered_values_from_flux_and_coords(
+                flux, coord_vals, params, coord_keys, flux_key
+            )
+        )
+        return laplace_parameter_uncertainty(
+            values=values,
+            params=params,
+            data_obj=data_obj,
+            model=model,
+            target_param=flux_key,
+        )
 
-    return fn(vals_vec).reshape(vals.shape[1:])
+    return _map_points(sigma, flux_values.reshape(-1), coords).reshape(shape)
 
 
 def best_grid_point(loglike_grid, samples_dict):
@@ -484,7 +533,8 @@ def best_grid_point(loglike_grid, samples_dict):
     Parameters
     ----------
     loglike_grid : array-like
-        Output of :func:`likelihood_grid` for ``samples_dict``.
+        Output of [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid] for ``samples_dict``, with one axis
+        per key. NaNs are ignored.
     samples_dict : dict[str, array-like]
         The grid axes used to compute ``loglike_grid``.
 
@@ -493,17 +543,19 @@ def best_grid_point(loglike_grid, samples_dict):
     dict[str, float]
         ``{name: value}`` at the maximum, in the order of ``samples_dict``.
     """
-    index = np.unravel_index(
-        int(jnp.argmax(loglike_grid)), jnp.shape(loglike_grid)
-    )
+    shape = jnp.shape(loglike_grid)
+    if len(shape) != len(samples_dict):
+        raise ValueError(
+            f"loglike_grid has {len(shape)} axes but samples_dict has "
+            f"{len(samples_dict)} keys; pass the full likelihood_grid output."
+        )
+    index = np.unravel_index(int(jnp.nanargmax(loglike_grid)), shape)
     return {
         key: float(values[i])
         for (key, values), i in zip(samples_dict.items(), index)
     }
 
 
-@partial(vmap, in_axes=(0, 0, None))
-@partial(vmap, in_axes=(None, None, 0))
 def ruffio_upperlimit(mean, sigma, percentile):
     """
     Percentile of a flux posterior truncated to non-negative values.
@@ -514,25 +566,23 @@ def ruffio_upperlimit(mean, sigma, percentile):
     ``flux >= 0`` by the positivity prior. This returns its ``percentile``
     quantile, so ``percentile = norm.cdf(2)`` gives a 2-sigma-equivalent
     upper limit and ``0.16, 0.5, 0.84`` give a median and credible interval.
-    The inputs are vectorized over positions (``mean``, ``sigma``) and
-    percentiles.
 
     Parameters
     ----------
-    mean : array-like
-        Unconstrained best-fit flux, e.g. from :func:`optimized_contrast_grid`.
+    mean : float or array-like
+        Unconstrained best-fit flux, e.g. from [`optimized_contrast_grid`][drpangloss.grid_fit.optimized_contrast_grid].
         It may be negative.
-    sigma : array-like
+    sigma : float or array-like
         Laplace uncertainty of the flux, e.g. from
-        :func:`laplace_contrast_uncertainty_grid`.
-    percentile : array-like
+        [`laplace_contrast_uncertainty_grid`][drpangloss.grid_fit.laplace_contrast_uncertainty_grid], broadcastable to ``mean``.
+    percentile : float or array-like
         Quantile(s) of the truncated posterior to return, between 0 and 1.
 
     Returns
     -------
     array-like
         Non-negative flux at each percentile, with shape
-        ``mean.shape + percentile.shape``.
+        ``broadcast(mean, sigma).shape + percentile.shape``.
 
     Notes
     -----
@@ -544,6 +594,11 @@ def ruffio_upperlimit(mean, sigma, percentile):
     ``z = sqrt(a**2 - 2 log(1 - percentile))`` (``a = -mean / sigma``) is the
     starting point, and two Newton steps on ``log Q(z)`` polish the result.
     """
+    mean, sigma = jnp.broadcast_arrays(jnp.asarray(mean), jnp.asarray(sigma))
+    percentile = jnp.asarray(percentile)
+    expand = (...,) + (None,) * percentile.ndim
+    mean, sigma = mean[expand], sigma[expand]
+
     a = -mean / sigma
     log_tail = jnp.log1p(-percentile) + jsp.special.log_ndtr(-a)
     z_tail = -jsp.special.ndtri(jnp.exp(log_tail))
@@ -558,58 +613,6 @@ def ruffio_upperlimit(mean, sigma, percentile):
 
     z, _ = jax.lax.scan(newton, z, None, length=2)
     return jnp.maximum(mean + sigma * z, 0.0)
-
-
-# def get_grid(sep_range,
-#              step_size,
-#              verbose=False):
-#     """
-#     Parameters
-#     ----------
-#     sep_range: tuple of float
-#         Min. and max. angular separation of grid (mas).
-#     step_size: float
-#         Step size of grid (mas).
-#     verbose: bool
-#         True if feedback shall be printed.
-
-#     Returns
-#     -------
-#     grid_ra_dec: tuple of array
-#         grid_ra_dec[0]: array
-#             Right ascension offset of grid cells (mas).
-#         grid_ra_dec[1]: array
-#             Declination offset of grid cells (mas).
-#     grid_sep_pa: tuple of array
-#         grid_sep_pa[0]: array
-#             Angular separation of grid cells (mas).
-#         grid_sep_pa[1]: array
-#             Position angle of grid cells (deg).
-#     """
-
-#     if (verbose == True):
-#         print('Computing grid')
-
-#     nc = int(np.ceil(sep_range[1]/step_size))
-#     temp = np.linspace(-nc*step_size, nc*step_size, 2*nc+1)
-#     grid_ra_dec = np.meshgrid(temp, temp)
-#     grid_ra_dec[0] = np.fliplr(grid_ra_dec[0])
-#     sep = np.sqrt(grid_ra_dec[0]**2+grid_ra_dec[1]**2)
-#     pa = np.rad2deg(np.arctan2(grid_ra_dec[0], grid_ra_dec[1]))
-#     grid_sep_pa = np.array([sep, pa])
-
-#     mask = (sep < sep_range[0]-1e-6) | (sep_range[1]+1e-6 < sep)
-#     grid_ra_dec[0][mask] = np.nan
-#     grid_ra_dec[1][mask] = np.nan
-#     grid_sep_pa[0][mask] = np.nan
-#     grid_sep_pa[1][mask] = np.nan
-
-#     if (verbose):
-#         print('   Min. sep. = %.1f mas' % np.nanmin(grid_sep_pa[0]))
-#         print('   Max. sep. = %.1f mas' % np.nanmax(grid_sep_pa[0]))
-#         print('   %.0f non-empty grid cells' % np.sum(np.logical_not(np.isnan(grid_sep_pa[0]))))
-
-#     return grid_ra_dec, grid_sep_pa
 
 
 def azimuthalAverage(
@@ -658,7 +661,8 @@ def azimuthalAverage(
         Right extrapolation value passed to ``numpy.interp`` when
         ``interpnan=True``.
     return_max : bool, optional
-        If ``True``, return the maximum value per radial bin.
+        If ``True``, return the maximum of ``image * weights`` per radial
+        bin.
 
     Returns
     -------
@@ -668,7 +672,11 @@ def azimuthalAverage(
 
     Notes
     -----
-    Empty bins are returned as ``NaN`` unless interpolated.
+    Empty bins are returned as ``NaN`` unless interpolated. Radii and
+    ``binsize`` are in *pixels*: for a ``(dra, ddec)`` grid, multiply the
+    radii by the grid spacing to get milliarcseconds, and pass ``center`` if
+    the grid is not centred on the origin. The image's first axis is taken as
+    ``y``.
 
     """
     # Calculate the indices from the image
@@ -699,7 +707,7 @@ def azimuthalAverage(
 
     # how many per bin (i.e., histogram)?
     # there are never any in bin 0, because the lowest index returned by digitize is 1
-    nr = np.bincount(whichbin)[1:]
+    nr = np.bincount(whichbin, minlength=nbins + 1)[1:]
 
     # recall that bins are from 1 to nbins (which is expressed in array terms by arange(nbins)+1 or xrange(1,nbins+1) )
     # radial_prof.shape = bin_centers.shape
@@ -726,8 +734,6 @@ def azimuthalAverage(
             ]
         )
 
-    # import pdb; pdb.set_trace()
-
     if interpnan:
         radial_prof = np.interp(
             bin_centers,
@@ -738,8 +744,8 @@ def azimuthalAverage(
         )
 
     if steps:
-        xarr = np.array(zip(bins[:-1], bins[1:])).ravel()
-        yarr = np.array(zip(radial_prof, radial_prof)).ravel()
+        xarr = np.column_stack([bins[:-1], bins[1:]]).ravel()
+        yarr = np.repeat(radial_prof, 2)
         return xarr, yarr
     elif returnradii:
         return bin_centers, radial_prof
@@ -750,38 +756,59 @@ def azimuthalAverage(
 
 
 @renamed_argument("model_class", "model")
-def absil_limits(samples_dict, data_obj, model, sigma, flux_param=None):
-    """Flux at which a companion would be detected at ``sigma`` significance.
+def absil_limits(
+    samples_dict,
+    data_obj,
+    model,
+    sigma,
+    flux_param=None,
+    flux_bounds=(1e-6, 1.0),
+):
+    """Flux above which a companion is ruled out at ``sigma`` significance.
 
     Following Absil et al. (2011), at each grid position this finds the flux
-    for which the chi-squared improvement over the no-companion model
-    corresponds to a ``sigma`` detection. For example, with ``sigma=3`` the
-    result is the faintest companion that would be detected at 3 sigma.
+    at which the model fits the data worse than the no-companion model by a
+    chi-squared ratio corresponding to ``sigma`` (see
+    [nsigma][drpangloss.models.nsigma]). Brighter companions at that
+    position are excluded at ``sigma``: with ``sigma=3`` the result is a
+    3-sigma upper limit on the flux.
 
     Parameters
     ----------
     samples_dict : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values.
-        The flux axis is only used for the starting guess, and must contain
-        at least one positive value.
+        Grid axes, as a mapping from parameter name or path to 1D values
+        (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
+        used for the starting guess, and must contain at least one positive
+        value.
     data_obj : OIData
         Data to fit.
     model : SourceModel or class
-        Template model or model class, as for :func:`likelihood_grid`. The
+        Template model or model class, as for [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]. The
         no-companion model sets every parameter in ``samples_dict`` to zero.
     sigma : float
-        Detection significance.
-    flux_param : str
+        Exclusion significance. It must exceed the significance of a
+        chi-squared ratio of 1 (about 0.67 for many degrees of freedom).
+    flux_param : str, optional
         The key of ``samples_dict`` holding the flux (or other brightness)
         parameter that is optimized at each grid position, e.g. ``"flux"`` or
         ``"comp.flux"``. The remaining keys are the grid coordinates. Leaving
         it out uses a key named ``flux`` or the only key ending in
         ``.flux``; falling back on the order of the keys is deprecated.
+    flux_bounds : tuple[float, float] or None, optional
+        Limits are clipped to this range (default ``(1e-6, 1.0)``), and a
+        ``RuntimeWarning`` reports how many were clipped. Pass ``None`` to
+        return them unclipped, e.g. for [`System`][drpangloss.models.System]
+        weights that may exceed 1.
 
     Returns
     -------
     array-like
-        Flux detection limit, with one axis per coordinate key.
+        Flux limit, with one axis per coordinate key.
+
+    Notes
+    -----
+    The number of degrees of freedom is the number of data points; the
+    fitted parameters are not subtracted.
     """
     params, coord_keys, flux_key = _resolve_flux_param(
         samples_dict, flux_param, "absil_limits"
@@ -791,7 +818,14 @@ def absil_limits(samples_dict, data_obj, model, sigma, flux_param=None):
             f"The flux axis {flux_key!r} needs at least one positive value "
             "to start the log-flux optimizer from."
         )
-    return _absil_limits(
+    ndof = int(np.asarray(data_obj.flatten_data()[0]).size)
+    floor = float(nsigma(1.0, 1.0, ndof))
+    if not float(sigma) > floor:
+        raise ValueError(
+            f"sigma={sigma} cannot be reached: with {ndof} degrees of "
+            f"freedom a chi-squared ratio of 1 is already {floor:.3g} sigma."
+        )
+    limits, success = _absil_limits(
         samples_dict,
         data_obj,
         model,
@@ -800,6 +834,22 @@ def absil_limits(samples_dict, data_obj, model, sigma, flux_param=None):
         coord_keys=coord_keys,
         flux_key=flux_key,
     )
+    _warn_unconverged(success, "absil_limits")
+    if flux_bounds is None:
+        return limits
+    low, high = flux_bounds
+    clipped = int(
+        np.sum((np.asarray(limits) < low) | (np.asarray(limits) > high))
+    )
+    if clipped:
+        warnings.warn(
+            f"absil_limits(): {clipped} limits fell outside flux_bounds="
+            f"{tuple(flux_bounds)} and were clipped; pass flux_bounds=None "
+            "to keep them.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return jnp.clip(limits, low, high)
 
 
 @eqx.filter_jit
@@ -812,13 +862,17 @@ def _absil_limits(
     coord_keys,
     flux_key,
 ):
-    """Jitted implementation of :func:`absil_limits`."""
+    """Jitted implementation of [`absil_limits`][drpangloss.grid_fit.absil_limits].
+
+    Returns the unclipped limits and whether each reaches ``sigma``.
+    """
     data, errors = data_obj.flatten_data()
     ndof = data.size
 
     def reduced_chi2(values):
         prediction = data_obj.model(build_model(model, params, values))
-        return jnp.sum(((data - prediction) / errors) ** 2) / ndof
+        residuals = data_obj.residuals(prediction)
+        return jnp.sum((residuals / errors) ** 2) / ndof
 
     null_values = [0.0] * len(params)
     chi2_null = reduced_chi2(null_values)
@@ -828,25 +882,19 @@ def _absil_limits(
         return (significance - sigma) ** 2
 
     vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
-    loss_grid = vmap(loss)(vals_vec).reshape(grid_shape)
+    loss_grid = _map_points(loss, vals_vec).reshape(grid_shape)
     flux_axis = params.index(flux_key)
-    best_flux_indices = jnp.argmin(loss_grid, axis=flux_axis)
+    best_flux_indices = jnp.nanargmin(loss_grid, axis=flux_axis)
 
-    coords = [samples_dict[key] for key in coord_keys]
-    coord_grids = jnp.meshgrid(*coords, indexing="ij")
+    coords, shape = _coordinate_points(samples_dict, coord_keys)
     # A zero flux would start the log-flux optimizer at -inf; start from the
     # smallest positive flux on the grid instead.
     flux_axis_vals = jnp.asarray(samples_dict[flux_key])
     smallest_positive = jnp.min(
         jnp.where(flux_axis_vals > 0.0, flux_axis_vals, jnp.inf)
     )
-    start_flux = flux_axis_vals[best_flux_indices]
+    start_flux = flux_axis_vals[best_flux_indices].reshape(-1)
     start_flux = jnp.where(start_flux > 0.0, start_flux, smallest_positive)
-    starts = (
-        jnp.stack([jnp.log10(start_flux), *coord_grids], axis=0)
-        .reshape((len(coord_keys) + 1, -1))
-        .T
-    )
 
     def optimize_log_flux(log_flux, coord_vals):
         flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]
@@ -855,196 +903,23 @@ def _absil_limits(
         )
         return loss(values)
 
-    def best_flux(log_flux, *coord_vals):
+    def best_flux(flux0, coord_vals):
         solution = optx.compat.minimize(
             optimize_log_flux,
-            x0=jnp.array([log_flux]),
-            args=(jnp.asarray(coord_vals),),
+            x0=jnp.array([jnp.log10(flux0)]),
+            args=(coord_vals,),
             method="BFGS",
             options={"maxiter": 100},
         )
-        return 10.0 ** solution.x[0]
+        limit = 10.0 ** solution.x[0]
+        values = _ordered_values_from_flux_and_coords(
+            limit, coord_vals, params, coord_keys, flux_key
+        )
+        # Converged if the target significance is reached to 0.01 sigma.
+        reached = jnp.abs(
+            nsigma(reduced_chi2(values), chi2_null, ndof) - sigma
+        )
+        return limit, reached < 1e-2
 
-    limits = vmap(lambda values: best_flux(values[0], *values[1:]))(starts)
-    return jnp.clip(limits.reshape(start_flux.shape), 1e-6, 1.0)
-
-
-# def nsigma_wrap(planet_contrast, u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2, i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma):
-
-#     #constraints
-#     planet_contrast = jnp.where(planet_contrast<1e-6,1e-6,planet_contrast)
-#     planet_contrast = jnp.where(planet_contrast>1.,1.,planet_contrast)
-
-#     chi2_s = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, 0.,0.,0.)/ndof
-#     chi2_b = chi2_binary(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast)/ndof
-
-#     q = jsp.stats.chi2.cdf(ndof*chi2_b/chi2_s, ndof)
-#     p = 1.-q
-
-#     nsigma = jnp.sqrt(jnp.interp(p,xs,ppf_arr))
-
-#     nsigma_overflow = jnp.sqrt(jnp.interp(1e-15,xs,ppf_arr))
-
-#     nsigmavar = jnp.where(p<1e-15,nsigma_overflow,nsigma)
-
-#     return (sigma-nsigmavar)**2
-
-# def optimize_nsigma(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,planet_contrast,xs,ppf_arr,ndof,sigma):
-#     '''
-
-
-#     Parameters
-#     ----------
-#     oidata: object
-#         Observational data, including:
-#         - u: array
-#             Baselines coordinates.
-#         - v: array
-#             Baselines coordinates.
-#         - cp: array
-#             Closure phases.
-#         - d_cp: array
-#             Closure phase uncertainties.
-#         - vis2: array
-#             Squared visibilities.
-#         - d_vis2: array
-#             Squared visibility uncertainties.
-#         - i_cps1: array
-#             Indices of closure phases for triangle 1.
-#         - i_cps2: array
-#             Indices of closure phases for triangle 2.
-#         - i_cps3: array
-#             Indices of closure phases for triangle 3.
-#     ddec: float
-#         Declination offset of companion (mas).
-#     dra: float
-#         Right ascension offset of companion (mas).
-#     planet_contrast: float
-#         Relative flux of companion.
-#     xs: array
-#         x values of PPF.
-#     ppf_arr: array
-#         PPF values.
-#     ndof: int
-#         Number of degrees of freedom.
-#     sigma: int
-#         Confidence level for which the detection limits shall be computed.
-
-#     Returns
-#     -------
-#     res: float
-#         Maximum relative flux of companion.
-#     '''
-
-#     sol = optx.compat.minimize(nsigma_wrap,method='BFGS',
-#                                 x0=jnp.array([planet_contrast]),
-#                                 args=(u, v, cp, d_cp, vis2, d_vis2,i_cps1,i_cps2,i_cps3, ddec,dra,xs,ppf_arr,ndof,sigma),options={"maxiter":100})
-
-#     res = sol.x
-
-#     return res
-
-
-# def nsigma(chi2r_test,
-#            chi2r_true,
-#            ndof):
-#     """
-#     Parameters
-#     ----------
-#     chi2r_test: float
-#         Reduced chi-squared of test model.
-#     chi2r_true: float
-#         Reduced chi-squared of true model.
-#     ndof: int
-#         Number of degrees of freedom.
-
-#     Returns
-#     -------
-#     nsigma: float
-#         Detection significance.
-#     """
-
-#     q = stats.chi2.cdf(ndof*chi2r_test/chi2r_true, ndof)
-#     p = 1.-q
-#     nsigma = np.sqrt(stats.chi2.ppf(1.-p, 1.))
-#     if (p < 1e-15):
-#         nsigma = np.sqrt(stats.chi2.ppf(1.-1e-15, 1.))
-
-#     return nsigma
-
-
-# @jit
-# def chi2all(cp_modelr,v2_modelr,oidata,
-#            const=0.):
-
-#     cp_obsr, vis2_obsr, cp_errr, vis2_errr = oidata.phi, oidata.vis, oidata.d_phi, oidata.d_vis
-#     # chi2
-
-#     chi2_closurer = jnp.sum((cp_obsr - cp_modelr.flatten())**2 / cp_errr**2)
-
-#     chi2_v2r = jnp.sum((vis2_obsr - v2_modelr.flatten())**2 / (vis2_errr**2))
-
-#     return ( chi2_closurer+chi2_v2r) + const
-
-# @jit
-# def chi2_suball(oidata,cont,vis_in,imsum,ddec,dra):
-#     u21, v21 = oidata.u/oidata.wavel, oidata.v/oidata.wavel
-#     i_cps121, i_cps221, i_cps321 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
-#     cont = 10**cont
-#     cvis_t211 = vis_binary2(u21, v21, ddec = ddec,dra=dra,
-#                       p2=cont/(1.+cont+imsum),p3=1./(1.+cont+imsum))
-#     cvis_t211 += vis_in/(1+cont+imsum)
-#     cp_model_t211 = closure_phases(cvis_t211,i_cps121,i_cps221,i_cps321)
-#     return chi2all(cp_model_t211,jnp.abs(cvis_t211)**2,oidata)
-
-# def lim_absil(f0,
-#               oidata,
-#               ddec,
-#               dra,
-#               chi2_true,
-#               ndof,
-#               sigma=3):
-#     """
-#     Parameters
-#     ----------
-#     f0: float
-#         Relative flux of companion.
-#     func: method
-#         Method to compute chi-squared.
-#     p0: array
-#         p0[0]: float
-#             Relative flux of companion.
-#         p0[1]: float
-#             Right ascension offset of companion.
-#         p0[2]: float
-#             Declination offset of companion.
-#         p0[3]: float
-#             Uniform disk diameter (mas).
-#     data_list: list of dict
-#         List of data whose chi-squared shall be computed. The list
-#         contains one data structure for each observation.
-#     observables: list of str
-#         List of observables which shall be considered.
-#     cov: bool
-#         True if covariance shall be considered.
-#     smear: int
-#         Numerical bandwidth smearing which shall be used.
-#     chi2r_true: float
-#         Reduced chi-squared of true model.
-#     ndof: int
-#         Number of degrees of freedom.
-#     sigma: int
-#         Confidence level for which the detection limits shall be computed.
-
-#     Returns
-#     -------
-#     chi2: float
-#         Chi-squared of Absil method.
-#     """
-
-#     chi2_test = chi2_suball(oidata,f0,vis_in=0.,imsum=0.,ddec=ddec,dra=dra)
-#     nsigmavar = nsigma(chi2r_test=chi2_test/ndof,
-#                          chi2r_true=chi2_true/ndof,
-#                          ndof=ndof)
-
-#     return np.abs(nsigmavar-sigma)**2
+    limits, success = _map_points(best_flux, start_flux, coords)
+    return limits.reshape(shape), success.reshape(shape)

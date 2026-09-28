@@ -1,6 +1,7 @@
 import jax.numpy as np
 import matplotlib.pyplot as plt
 import numpy as onp
+import pytest
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
@@ -28,26 +29,6 @@ def _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None):
         "i_cps2": i_cps2,
         "i_cps3": i_cps3,
     }
-
-
-class _FakeOIFITS:
-    def __init__(self, hdus):
-        self._hdus = hdus
-        self._by_name = {
-            hdu.name: hdu for hdu in hdus if getattr(hdu, "name", "")
-        }
-
-    def get_dataHDUs(self):
-        return [
-            hdu
-            for hdu in self._hdus[1:]
-            if hdu.name in {"OI_VIS", "OI_VIS2", "OI_T3", "OI_PHI"}
-        ]
-
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            return self._hdus[key]
-        return self._by_name[key]
 
 
 def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
@@ -93,8 +74,14 @@ def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
     )
     vis2_hdu.name = "OI_VIS2"
 
-    if phase_ext == "OI_PHI":
+    if phase_ext == "OI_VIS":
+        # Absolute phases: an OI_VIS table on the first len(phi) baselines.
+        n = len(phi)
         phase_columns = [
+            fits.Column(name="VISAMP", format="1D", array=onp.ones(n)),
+            fits.Column(
+                name="VISAMPERR", format="1D", array=onp.full(n, 0.01)
+            ),
             fits.Column(
                 name="VISPHI",
                 format="1D",
@@ -102,10 +89,21 @@ def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
                 array=onp.asarray(phi, dtype=float),
             ),
             fits.Column(
-                name="VISERR",
+                name="VISPHIERR",
                 format="1D",
                 unit=unit,
                 array=onp.asarray(d_phi, dtype=float),
+            ),
+            fits.Column(
+                name="UCOORD", format="1D", array=onp.array([0.0, 1.0])[:n]
+            ),
+            fits.Column(
+                name="VCOORD", format="1D", array=onp.array([0.0, 1.0])[:n]
+            ),
+            fits.Column(
+                name="STA_INDEX",
+                format="2I",
+                array=onp.array([[1, 2], [2, 3]], dtype=onp.int16)[:n],
             ),
         ]
     else:
@@ -132,7 +130,7 @@ def _make_fake_oifits_phase_input(phase_ext, phi, d_phi, unit):
     phase_hdu = fits.BinTableHDU.from_columns(phase_columns)
     phase_hdu.name = phase_ext
 
-    return _FakeOIFITS(
+    return fits.HDUList(
         [fits.PrimaryHDU(), wavelength_hdu, vis2_hdu, phase_hdu]
     )
 
@@ -171,9 +169,9 @@ def test_dict_phase_unit_degrees_converted_to_radians():
 
 def test_oifits_phase_units_convert_values_and_uncertainties_to_radians():
     cases = [
-        ("OI_PHI", "DEGREES", onp.array([10.0, -20.0]), onp.array([1.0, 2.0])),
-        ("OI_PHI", "RADIANS", onp.array([0.1, -0.2]), onp.array([0.01, 0.02])),
-        ("OI_PHI", None, onp.array([15.0, -30.0]), onp.array([0.5, 0.75])),
+        ("OI_VIS", "DEGREES", onp.array([10.0, -20.0]), onp.array([1.0, 2.0])),
+        ("OI_VIS", "RADIANS", onp.array([0.1, -0.2]), onp.array([0.01, 0.02])),
+        ("OI_VIS", None, onp.array([15.0, -30.0]), onp.array([0.5, 0.75])),
         ("OI_T3", "DEGREES", onp.array([12.0]), onp.array([1.5])),
         ("OI_T3", "RADIANS", onp.array([0.4]), onp.array([0.05])),
         ("OI_T3", None, onp.array([-25.0]), onp.array([2.5])),
@@ -218,9 +216,21 @@ def test_cp_flag_string_false_is_parsed_as_false():
 
 
 def test_cp_flag_string_true_is_parsed_as_true():
-    data = _base_dict(cp_flag="true", i_cps1=None, i_cps2=None, i_cps3=None)
+    data = _base_dict(
+        cp_flag="true",
+        i_cps1=np.array([0]),
+        i_cps2=np.array([1]),
+        i_cps3=np.array([2]),
+    )
+    data["phi"], data["d_phi"] = np.array([0.0]), np.array([1.0])
     oidata = OIData(data)
     assert oidata.cp_flag is True
+
+
+def test_cp_flag_without_closure_indices_is_rejected():
+    data = _base_dict(cp_flag=True, i_cps1=None, i_cps2=None, i_cps3=None)
+    with pytest.raises(ValueError, match="closure-phase indices"):
+        OIData(data)
 
 
 def test_v2_flag_string_false_is_parsed_as_false():
@@ -330,3 +340,226 @@ def test_plot_model_shows_east_left_north_up():
         y = bottom + (row + 0.5) * (top - bottom) / npix
     assert onp.allclose((x, y), (2.0, 2.0))
     plt.close(fig)
+
+
+# === Fixes from the 2026-09 code review ===
+
+
+def test_plotting_leaves_global_rcparams_alone():
+    import importlib
+
+    import matplotlib
+
+    import drpangloss.plotting as plotting
+
+    before = dict(matplotlib.rcParams)
+    importlib.reload(plotting)
+    plotting.plot_model(GaussianDisk(sigma=5.0), fov_mas=40.0, npix=16)
+    plt.close("all")
+    assert dict(matplotlib.rcParams) == before
+
+
+def test_likelihood_map_pixels_are_centred_on_samples():
+    from drpangloss.plotting import plot_likelihood_grid
+
+    samples = {
+        "dra": onp.linspace(-10.0, 10.0, 5),
+        "ddec": onp.linspace(-4.0, 4.0, 3),
+        "flux": onp.array([1e-3]),
+    }
+    fig, ax = plot_likelihood_grid(onp.zeros((5, 3)), samples)
+    left, right, bottom, top = ax.images[0].get_extent()
+    # Samples are 5 apart in dra and 4 apart in ddec: pad by half of that.
+    assert sorted([left, right]) == [-12.5, 12.5]
+    assert sorted([bottom, top]) == [-6.0, 6.0]
+    plt.close(fig)
+
+
+def test_likelihood_map_uses_dra_as_x_whatever_the_key_order():
+    from drpangloss.plotting import plot_likelihood_grid
+
+    samples = {
+        "ddec": onp.linspace(-4.0, 4.0, 3),
+        "dra": onp.linspace(-10.0, 10.0, 5),
+        "flux": onp.array([1e-3]),
+    }
+    grid = onp.arange(15.0).reshape(3, 5)  # axes (ddec, dra)
+    fig, ax = plot_likelihood_grid(grid, samples)
+    assert ax.get_xlabel() == "dra"
+    assert ax.images[0].get_array().shape == (3, 5)  # rows are ddec
+    plt.close(fig)
+
+
+def test_optimized_plots_return_figures():
+    from drpangloss.plotting import plot_optimized_and_sigma
+
+    samples = {
+        "dra": onp.linspace(-10.0, 10.0, 4),
+        "ddec": onp.linspace(-10.0, 10.0, 4),
+        "flux": onp.array([1e-3, 1e-2]),
+    }
+    fig, axes = plot_optimized_and_sigma(
+        onp.full((4, 4), 1e-3), onp.full((4, 4), 1e-4), samples, snr=True
+    )
+    assert len(axes) == 2
+    plt.close(fig)
+
+
+def test_ruffio_upperlimit_accepts_scalars_and_keeps_axis_order():
+    from drpangloss.grid_fit import ruffio_upperlimit
+
+    scalar = ruffio_upperlimit(1e-3, 1e-3, 0.5)
+    assert np.shape(scalar) == ()
+    mean = onp.full((3, 4), 1e-3)
+    limits = ruffio_upperlimit(mean, 1e-3, onp.array([0.5, 0.9]))
+    assert limits.shape == (3, 4, 2)
+    assert np.all(limits[..., 1] > limits[..., 0])
+
+
+def test_azimuthal_average_steps_and_counts():
+    from drpangloss.grid_fit import azimuthalAverage
+
+    image = onp.ones((9, 9))
+    x, y = azimuthalAverage(image, binsize=1.0, steps=True)
+    assert x.dtype.kind == "f" and x.shape == y.shape
+    nr, radii, profile = azimuthalAverage(image, binsize=1.0, return_nr=True)
+    assert nr.shape == radii.shape == profile.shape
+
+
+def test_best_grid_point_rejects_reduced_grids():
+    from drpangloss.grid_fit import best_grid_point
+
+    samples = {"dra": onp.arange(3.0), "ddec": onp.arange(4.0)}
+    samples["flux"] = onp.array([1e-3, 1e-2])
+    with pytest.raises(ValueError, match="axes"):
+        best_grid_point(onp.zeros((3, 4)), samples)
+    grid = onp.zeros((3, 4, 2))
+    grid[1, 2, 0] = onp.nan
+    grid[2, 3, 1] = 1.0
+    assert best_grid_point(grid, samples) == {
+        "dra": 2.0,
+        "ddec": 3.0,
+        "flux": 1e-2,
+    }
+
+
+def test_legacy_savefits_writes_a_readable_file(tmp_path):
+    from drpangloss import savefits
+
+    phi = onp.array([10.0, -5.0, 3.0])
+    dic = {
+        "info": {
+            "TARGET": "UNKNOWN",
+            "OBJECT": "UNKNOWN",
+            "INSTRUME": "TEST",
+            "MASK": "MASK3",
+            "ARRNAME": "ARRAY3",
+            "FILT": "F480M",
+            "DATE-OBS": "2000-01-01",
+            "TELESCOP": "SIM",
+            "OBSERVER": "tests",
+            "INSMODE": "NRM",
+            "PA": 0.0,
+            "MJD": [61000.0],
+            "PSCALE": 65.0,
+            "ISZ": 81,
+            "STAXY": onp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+            "CTRS_EQT": onp.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+        },
+        "OI_WAVELENGTH": {"EFF_WAVE": 4.8e-6, "EFF_BAND": 0.3e-6},
+        "OI_VIS": {
+            "TARGET_ID": 1,
+            "TIME": 0.0,
+            "MJD": 61000.0,
+            "INT_TIME": 1.0,
+            "VISAMP": onp.ones(3),
+            "VISAMPERR": onp.full(3, 0.01),
+            "VISPHI": phi,
+            "VISPHIERR": onp.ones(3),
+            "UCOORD": onp.array([1.0, 0.0, -1.0]),
+            "VCOORD": onp.array([0.0, 1.0, 1.0]),
+            "STA_INDEX": onp.array([[1, 2], [1, 3], [2, 3]]),
+            "FLAG": onp.zeros(3, dtype=bool),
+        },
+        "OI_T3": {
+            "TARGET_ID": 1,
+            "TIME": 0.0,
+            "MJD": 61000.0,
+            "INT_TIME": 1.0,
+            "T3AMP": onp.ones(1),
+            "T3AMPERR": onp.ones(1),
+            "T3PHI": onp.array([12.0]),
+            "T3PHIERR": onp.array([1.0]),
+            "U1COORD": onp.array([1.0]),
+            "V1COORD": onp.array([0.0]),
+            "U2COORD": onp.array([-1.0]),
+            "V2COORD": onp.array([1.0]),
+            "STA_INDEX": onp.array([[1, 2, 3]]),
+            "FLAG": onp.zeros(1, dtype=bool),
+        },
+    }
+    dic["OI_VIS2"] = {
+        key: dic["OI_VIS"][key]
+        for key in ("TARGET_ID", "TIME", "MJD", "INT_TIME", "UCOORD")
+    }
+    dic["OI_VIS2"].update(
+        VCOORD=dic["OI_VIS"]["VCOORD"],
+        VIS2DATA=onp.ones(3),
+        VIS2ERR=onp.full(3, 0.01),
+        STA_INDEX=dic["OI_VIS"]["STA_INDEX"],
+        FLAG=onp.zeros(3, dtype=bool),
+    )
+    original_mjd = list(dic["info"]["MJD"])
+
+    savefits.save(dic, datadir=tmp_path)
+
+    # The caller's dictionary is untouched, and the file reads back.
+    assert dic["info"]["MJD"] == original_mjd
+    assert dic["OI_VIS"]["VISPHI"] is phi
+    (path,) = tmp_path.glob("*.oifits")
+    with fits.open(path) as hdul:
+        assert hdul[0].header["MASK"] == "MASK3"
+        assert hdul["OI_ARRAY"].data["FOV"][0] == pytest.approx(0.065 * 81 / 2)
+    assert np.allclose(OIData(path).phi, onp.deg2rad(12.0))
+
+
+def test_transposed_operator_is_rejected_with_a_hint():
+    data = _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
+    with pytest.raises(ValueError, match="transposed"):
+        OIData({**data, "vis_mat": onp.ones((3, 2))})
+    projected = OIData({**data, "vis_mat": onp.ones((2, 3))})
+    assert projected.vis.shape == (2,)
+
+
+def test_chainconsumer_diagnostics_return_their_figures():
+    import pandas as pd
+    from matplotlib.figure import Figure
+
+    from drpangloss.plotting import plot_chainconsumer_diagnostics
+
+    rng = onp.random.default_rng(0)
+    chain = pd.DataFrame(rng.normal(size=(400, 2)), columns=["dra", "ddec"])
+    consumer, corner, walks = plot_chainconsumer_diagnostics(
+        {"chain": chain}, columns=["dra", "ddec"]
+    )
+    assert isinstance(corner, Figure) and isinstance(walks, Figure)
+    plt.close("all")
+
+
+def test_batched_grid_matches_unbatched(monkeypatch):
+    import drpangloss.grid_fit as grid_fit
+    from drpangloss.models import BinaryModelCartesian
+    from tests._test_data import oidata
+
+    # A grid shape used nowhere else, so both calls compile afresh.
+    samples = {
+        "dra": np.linspace(-200.0, 200.0, 9),
+        "ddec": np.linspace(-200.0, 200.0, 7),
+        "flux": np.array([1e-4, 1e-3, 1e-2]),
+    }
+    monkeypatch.setattr(grid_fit, "GRID_BATCH_SIZE", 10**6)
+    whole = grid_fit.likelihood_grid(oidata, BinaryModelCartesian, samples)
+    samples = {**samples, "flux": np.array([1e-4, 1e-3, 1e-2, 1e-1])}
+    monkeypatch.setattr(grid_fit, "GRID_BATCH_SIZE", 10)
+    batched = grid_fit.likelihood_grid(oidata, BinaryModelCartesian, samples)
+    assert np.allclose(batched[..., :3], whole)
