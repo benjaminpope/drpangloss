@@ -537,23 +537,23 @@ def test_chainconsumer_diagnostics_return_their_figures():
     plt.close("all")
 
 
-def test_batched_grid_matches_unbatched(monkeypatch):
-    import drpangloss.grid_fit as grid_fit
+def test_batched_grid_matches_unbatched():
+    from drpangloss.grid_fit import likelihood_grid
     from drpangloss.models import BinaryModelCartesian
     from tests._test_data import oidata
 
-    # A grid shape used nowhere else, so both calls compile afresh.
     samples = {
         "dra": np.linspace(-200.0, 200.0, 9),
         "ddec": np.linspace(-200.0, 200.0, 7),
         "flux": np.array([1e-4, 1e-3, 1e-2]),
     }
-    monkeypatch.setattr(grid_fit, "GRID_BATCH_SIZE", 10**6)
-    whole = grid_fit.likelihood_grid(oidata, BinaryModelCartesian, samples)
-    samples = {**samples, "flux": np.array([1e-4, 1e-3, 1e-2, 1e-1])}
-    monkeypatch.setattr(grid_fit, "GRID_BATCH_SIZE", 10)
-    batched = grid_fit.likelihood_grid(oidata, BinaryModelCartesian, samples)
-    assert np.allclose(batched[..., :3], whole)
+    whole = likelihood_grid(oidata, BinaryModelCartesian, samples, 10**6)
+    batched = likelihood_grid(
+        oidata, BinaryModelCartesian, samples, batch_size=10
+    )
+    assert np.allclose(batched, whole)
+    with pytest.raises(ValueError, match="batch_size"):
+        likelihood_grid(oidata, BinaryModelCartesian, samples, batch_size=0)
 
 
 def test_styled_plotting_keeps_other_figures_open():
@@ -569,4 +569,34 @@ def test_styled_plotting_keeps_other_figures_open():
     assert existing.number in plt.get_fignums()
     assert ax.figure.number in plt.get_fignums()
     assert matplotlib.rcParams["backend"] == backend
+    plt.close("all")
+
+
+def test_legacy_load_then_save_round_trips(tmp_path):
+    from drpangloss.legacy import oifits_implaneia
+
+    first = tmp_path / "first"
+    test_legacy_savefits_writes_a_readable_file(first)
+    (path,) = first.glob("*.oifits")
+    loaded = oifits_implaneia.load(path)
+    oifits_implaneia.save(loaded, datadir=tmp_path / "second")
+    (again,) = (tmp_path / "second").glob("*.oifits")
+    assert np.allclose(OIData(again).phi, OIData(path).phi)
+    with fits.open(again) as hdul:
+        assert list(hdul["OI_ARRAY"].data["STA_INDEX"]) == [1, 2, 3]
+
+
+def test_contrast_curve_is_independent_of_grid_key_order():
+    from drpangloss.plotting import plot_contrast_curve
+
+    dra = onp.linspace(-20.0, 20.0, 9)
+    ddec = onp.linspace(-10.0, 10.0, 5)
+    limits = 1e-3 * (1.0 + onp.hypot(*onp.meshgrid(dra, ddec, indexing="ij")))
+    _, ax = plot_contrast_curve(limits, {"dra": dra, "ddec": ddec})
+    _, ax_t = plot_contrast_curve(
+        limits.T, {"ddec": ddec, "flux": onp.array([1e-3]), "dra": dra}
+    )
+    assert onp.allclose(
+        ax.lines[0].get_ydata(), ax_t.lines[0].get_ydata(), equal_nan=True
+    )
     plt.close("all")

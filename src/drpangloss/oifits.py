@@ -665,9 +665,22 @@ def _target_hdu(target, info):
 
 def _array_hdu(array, info, arrname, tables, data_tables):
     if array is not None:
-        sta_index = onp.atleast_1d(onp.asarray(array["STA_INDEX"], int))
-        staxyz = onp.asarray(array["STAXYZ"], dtype=float).reshape(-1, 3)
-        n = sta_index.size
+        # Station positions are required; the other columns default, so an
+        # array given by positions alone (e.g. from the legacy loader) works.
+        if "STAXYZ" in array:
+            staxyz = onp.asarray(array["STAXYZ"], dtype=float).reshape(-1, 3)
+        else:
+            staxy = onp.asarray(array["STAXY"], dtype=float).reshape(-1, 2)
+            staxyz = onp.column_stack([staxy, onp.zeros(staxy.shape[0])])
+        n = staxyz.shape[0]
+        sta_index = onp.atleast_1d(
+            onp.asarray(array.get("STA_INDEX", onp.arange(1, n + 1)), int)
+        )
+        if sta_index.size != n:
+            raise ValueError(
+                f"OI_ARRAY has {sta_index.size} STA_INDEX values for {n} "
+                "stations."
+            )
         tel_name = array.get("TEL_NAME", [f"T{i}" for i in sta_index])
         sta_name = array.get("STA_NAME", tel_name)
         diameter = array.get("DIAMETER", 0.0)

@@ -963,19 +963,32 @@ def plot_grid_map(
     return fig, ax
 
 
-def _sky_axes(samples_dict):
-    """The ``dra`` and ``ddec`` axes of a grid (also as zodiax paths)."""
-    keys = list(samples_dict)
+def _sky_map(values, samples_dict):
+    """A sky map with axes ``(dra, ddec)``, and those two axes.
+
+    ``values`` has one axis per coordinate key of ``samples_dict`` (every key
+    whose name does not end in ``flux``), in key order, so it is transposed
+    when ``ddec`` comes before ``dra``.
+    """
+    keys = [key for key in samples_dict if not is_flux_param(key)]
     found = []
     for name in ("dra", "ddec"):
         matches = [key for key in keys if _is_sky_key(key, name)]
         if len(matches) != 1:
             raise ValueError(
                 f"samples_dict needs exactly one {name!r} axis; keys are "
-                f"{keys}."
+                f"{list(samples_dict)}."
             )
-        found.append(np.asarray(samples_dict[matches[0]]))
-    return found
+        found.append(matches[0])
+    if len(keys) != 2:
+        raise ValueError(
+            f"A sky map needs exactly two coordinate keys; got {keys}."
+        )
+    values = np.asarray(values, dtype=float)
+    if keys.index(found[0]) == 1:
+        values = values.T
+    dra, ddec = (np.asarray(samples_dict[key]) for key in found)
+    return values, dra, ddec
 
 
 @_styled
@@ -1001,8 +1014,8 @@ def plot_contrast_curve(
     Parameters
     ----------
     values : array-like or dict
-        A limit map (companion/primary flux ratios, one axis per sky
-        coordinate, as from
+        A limit map (companion/primary flux ratios, with one axis per
+        coordinate key of ``samples_dict`` in key order, as from
         [`absil_limits`][drpangloss.limits.absil_limits] or
         [`ruffio_upperlimit`][drpangloss.limits.ruffio_upperlimit]), or a
         [`radial_profile`][drpangloss.limits.radial_profile] of one.
@@ -1040,11 +1053,9 @@ def plot_contrast_curve(
     else:
         if samples_dict is None:
             raise ValueError("Pass samples_dict with a limit map.")
-        dra, ddec = _sky_axes(
-            {k: v for k, v in samples_dict.items() if not is_flux_param(k)}
-        )
+        sky_values, dra, ddec = _sky_map(values, samples_dict)
         profile = radial_profile(
-            values, dra, ddec, center=center, r_max=r_max, bins=bins
+            sky_values, dra, ddec, center=center, r_max=r_max, bins=bins
         )
     r = np.asarray(profile["r"])
     median = _convert_flux(profile["median"], units)

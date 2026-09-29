@@ -14,105 +14,35 @@ key whose last part is ``flux`` (``flux``, ``comp.flux``, ...), unless
 Contrast limits (Ruffio, Absil) are in [`drpangloss.limits`][drpangloss.limits].
 """
 
-import warnings
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optimistix as optx
 
-from ._utils import concrete, is_flux_param, resolve_flux_param
+from ._grid import (
+    batch_size_or_default,
+    check_flux_axes,
+    coordinate_points,
+    map_points,
+    meshgrid_vectors,
+    ordered_values,
+    resolve_grid_keys,
+    warn_unconverged,
+)
 from .inference import laplace_parameter_uncertainty
 from .likelihood import loglike
 
 
-def _check_flux_axes(samples_dict, flux_param=None):
-    """Reject grid axes that would give a flux parameter negative values.
-
-    Axes whose name ends in ``flux`` are checked, as is the explicitly
-    selected ``flux_param`` whatever its name.
-    """
-    for key, values in samples_dict.items():
-        if not (is_flux_param(key) or key == flux_param):
-            continue
-        values = concrete(values)
-        if values is not None and np.any(values < 0.0):
-            raise ValueError(
-                f"The grid axis {key!r} contains negative values, but fluxes "
-                "must be non-negative."
-            )
-
-
-def _resolve_flux_param(samples_dict, flux_param=None):
-    """Return ``(params, coord_keys, flux_key)`` for a grid-fitting call."""
-    params = tuple(samples_dict.keys())
-    _check_flux_axes(samples_dict, flux_param)
-    flux_key = resolve_flux_param(params, flux_param)
-    coord_keys = tuple(key for key in params if key != flux_key)
-    if not coord_keys:
-        raise ValueError(
-            "samples_dict needs at least one coordinate parameter besides "
-            f"the flux {flux_key!r}."
-        )
-    return params, coord_keys, flux_key
-
-
-# Grid points are evaluated in batches of this many, which bounds memory on
-# large grids: each point holds a full model evaluation and, in the
-# optimizers, a BFGS state. 256 keeps multi-component float64 models over
-# DISCO data within a laptop's memory; raise it for small models. It is read
-# when a function is first compiled for a given grid shape.
-GRID_BATCH_SIZE = 256
-
-
-def _map_points(fn, *xs):
-    """Apply ``fn`` to every row of ``xs``, ``GRID_BATCH_SIZE`` rows at a time."""
-    return jax.lax.map(lambda args: fn(*args), xs, batch_size=GRID_BATCH_SIZE)
-
-
-def _meshgrid_vectors(samples_dict, params):
-    """Build flattened meshgrid vectors with axis order matching ``params``."""
-    samples = [jnp.asarray(samples_dict[param]) for param in params]
-    grid_shape = tuple(sample.shape[0] for sample in samples)
-    grids = jnp.meshgrid(*samples, indexing="ij")
-    vals_vec = jnp.stack([grid.reshape(-1) for grid in grids], axis=1)
-    return vals_vec, grid_shape
-
-
-def _ordered_values_from_flux_and_coords(
-    flux, coord_vals, params, coord_keys, flux_key
+def _best_grid_flux(
+    data_obj, model, samples_dict, params, flux_key, batch_size
 ):
-    """Build parameter values in ``params`` order without traced dict objects."""
-    flux_value = jnp.asarray(flux).reshape(-1)[0]
-    coord_vals = jnp.asarray(coord_vals)
-    return [
-        flux_value
-        if param == flux_key
-        else coord_vals[coord_keys.index(param)]
-        for param in params
-    ]
-
-
-def _coordinate_points(samples_dict, coord_keys):
-    """Flattened ``(n_points, n_coords)`` coordinate grid and its shape.
-
-    The grid uses ``indexing="ij"``: axis ``k`` follows ``coord_keys[k]``,
-    so for ``(dra, ddec)`` axis 0 is ``dra``.
-    """
-    coord_grids = jnp.meshgrid(
-        *[jnp.asarray(samples_dict[key]) for key in coord_keys],
-        indexing="ij",
-    )
-    points = jnp.stack([grid.reshape(-1) for grid in coord_grids], axis=1)
-    return points, coord_grids[0].shape
-
-
-def _best_grid_flux(data_obj, model, samples_dict, params, flux_key):
     """Best flux on the grid, and its log likelihood, at every position."""
-    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
-    loglike_im = _map_points(
-        lambda values: loglike(values, params, data_obj, model), vals_vec
+    vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
+    loglike_im = map_points(
+        lambda values: loglike(values, params, data_obj, model),
+        vals_vec,
+        batch_size=batch_size,
     ).reshape(grid_shape)
     flux_axis = params.index(flux_key)
     best_index = jnp.nanargmax(loglike_im, axis=flux_axis)
@@ -122,7 +52,7 @@ def _best_grid_flux(data_obj, model, samples_dict, params, flux_key):
 
 @eqx.filter_jit
 def _optimize_flux_grid(
-    data_obj, model, samples_dict, params, coord_keys, flux_key
+    data_obj, model, samples_dict, params, coord_keys, flux_key, batch_size
 ):
     """Refine the best grid flux at every position with BFGS.
 
@@ -133,20 +63,18 @@ def _optimize_flux_grid(
     relative to the problem's own scale.
     """
     start_flux, start_loglike = _best_grid_flux(
-        data_obj, model, samples_dict, params, flux_key
+        data_obj, model, samples_dict, params, flux_key, batch_size
     )
-    coords, shape = _coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(samples_dict, coord_keys)
 
     def objective(x, coord_vals, scale, loglike0):
-        values = _ordered_values_from_flux_and_coords(
+        values = ordered_values(
             x * scale, coord_vals, params, coord_keys, flux_key
         )
         return loglike0 - loglike(values, params, data_obj, model)
 
     def flux_loglike(flux, coord_vals):
-        values = _ordered_values_from_flux_and_coords(
-            flux, coord_vals, params, coord_keys, flux_key
-        )
+        values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         return loglike(values, params, data_obj, model)
 
     def newton_step(flux, coord_vals):
@@ -186,8 +114,12 @@ def _optimize_flux_grid(
         )
         return flux, flux_loglike(flux, coord_vals), converged
 
-    flux, best_loglike, success = _map_points(
-        refine, start_flux.reshape(-1), coords, start_loglike.reshape(-1)
+    flux, best_loglike, success = map_points(
+        refine,
+        start_flux.reshape(-1),
+        coords,
+        start_loglike.reshape(-1),
+        batch_size=batch_size,
     )
     return (
         flux.reshape(shape),
@@ -196,21 +128,7 @@ def _optimize_flux_grid(
     )
 
 
-def _warn_unconverged(success, caller):
-    """Warn if an optimizer failed to converge at some grid positions."""
-    failed = int(np.sum(~np.asarray(success, dtype=bool)))
-    if failed:
-        warnings.warn(
-            f"{caller}(): the optimizer did not converge at {failed} of "
-            f"{np.size(success)} grid positions; values there may be "
-            "inaccurate.",
-            RuntimeWarning,
-            # user -> public function -> here
-            stacklevel=3,
-        )
-
-
-def likelihood_grid(data_obj, model, samples_dict):
+def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
     """Evaluate the log likelihood at every point of a parameter grid.
 
     Parameters
@@ -227,6 +145,9 @@ def likelihood_grid(data_obj, model, samples_dict):
         (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
         companion/primary flux ratio). The output has one axis per key, in
         this order.
+    batch_size : int, optional
+        Number of grid points evaluated at once (default 256). Larger is
+        faster for small models; smaller bounds memory for large ones.
 
     Returns
     -------
@@ -238,18 +159,26 @@ def likelihood_grid(data_obj, model, samples_dict):
         before showing it as an image with North up.
     """
     params = tuple(samples_dict.keys())
-    _check_flux_axes(samples_dict)
-    return _likelihood_grid(data_obj, model, samples_dict, params=params)
+    check_flux_axes(samples_dict)
+    return _likelihood_grid(
+        data_obj,
+        model,
+        samples_dict,
+        params=params,
+        batch_size=batch_size_or_default(batch_size),
+    )
 
 
 @eqx.filter_jit
-def _likelihood_grid(data_obj, model, samples_dict, params):
+def _likelihood_grid(data_obj, model, samples_dict, params, batch_size):
     """Jitted implementation of [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]."""
 
-    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
+    vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
 
-    return _map_points(
-        lambda values: loglike(values, params, data_obj, model), vals_vec
+    return map_points(
+        lambda values: loglike(values, params, data_obj, model),
+        vals_vec,
+        batch_size=batch_size,
     ).reshape(grid_shape)
 
 
@@ -273,13 +202,16 @@ _OPTIMIZED_PARAMS_DOC = """
         The key of ``samples_dict`` holding the flux optimized at each grid
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
+    batch_size : int, optional
+        Number of grid points evaluated at once (default 256). Larger is
+        faster for small models; smaller bounds memory for large ones.
 """
 
 
-def optimized_likelihood_grid(data_obj, model, samples_dict, flux_param=None):
-    params, coord_keys, flux_key = _resolve_flux_param(
-        samples_dict, flux_param
-    )
+def optimized_likelihood_grid(
+    data_obj, model, samples_dict, flux_param=None, batch_size=None
+):
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     _, best_loglike, success = _optimize_flux_grid(
         data_obj,
         model,
@@ -287,8 +219,9 @@ def optimized_likelihood_grid(data_obj, model, samples_dict, flux_param=None):
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size),
     )
-    _warn_unconverged(success, "optimized_likelihood_grid")
+    warn_unconverged(success, "optimized_likelihood_grid")
     return best_loglike
 
 
@@ -310,10 +243,10 @@ optimized_likelihood_grid.__doc__ = (
 )
 
 
-def optimized_flux_grid(data_obj, model, samples_dict, flux_param=None):
-    params, coord_keys, flux_key = _resolve_flux_param(
-        samples_dict, flux_param
-    )
+def optimized_flux_grid(
+    data_obj, model, samples_dict, flux_param=None, batch_size=None
+):
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     best_flux, _, success = _optimize_flux_grid(
         data_obj,
         model,
@@ -321,8 +254,9 @@ def optimized_flux_grid(data_obj, model, samples_dict, flux_param=None):
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size),
     )
-    _warn_unconverged(success, "optimized_flux_grid")
+    warn_unconverged(success, "optimized_flux_grid")
     return best_flux
 
 
@@ -349,7 +283,7 @@ optimized_flux_grid.__doc__ = (
 
 
 def laplace_flux_uncertainty_grid(
-    data_obj, model, samples_dict, flux=None, flux_param=None
+    data_obj, model, samples_dict, flux=None, flux_param=None, batch_size=None
 ):
     """Laplace uncertainty of the flux at every grid position.
 
@@ -375,6 +309,9 @@ def laplace_flux_uncertainty_grid(
     flux_param : str, optional
         The key of ``samples_dict`` holding the flux. By default, the one key
         whose last part is ``flux``.
+    batch_size : int, optional
+        Number of grid points evaluated at once (default 256). Larger is
+        faster for small models; smaller bounds memory for large ones.
 
     Returns
     -------
@@ -383,12 +320,14 @@ def laplace_flux_uncertainty_grid(
         NaN where the curvature is not positive (the flux is not at a
         likelihood maximum).
     """
-    params, coord_keys, flux_key = _resolve_flux_param(
-        samples_dict, flux_param
-    )
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     if flux is None:
         flux = optimized_flux_grid(
-            data_obj, model, samples_dict, flux_param=flux_key
+            data_obj,
+            model,
+            samples_dict,
+            flux_param=flux_key,
+            batch_size=batch_size,
         )
     return _laplace_flux_uncertainty_grid(
         jnp.asarray(flux),
@@ -398,6 +337,7 @@ def laplace_flux_uncertainty_grid(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size),
     )
 
 
@@ -410,15 +350,14 @@ def _laplace_flux_uncertainty_grid(
     params,
     coord_keys,
     flux_key,
+    batch_size,
 ):
     """Jitted implementation of :func:`laplace_flux_uncertainty_grid`."""
-    coords, shape = _coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(samples_dict, coord_keys)
 
     def sigma(flux, coord_vals):
         values = jnp.stack(
-            _ordered_values_from_flux_and_coords(
-                flux, coord_vals, params, coord_keys, flux_key
-            )
+            ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         )
         return laplace_parameter_uncertainty(
             values=values,
@@ -428,7 +367,9 @@ def _laplace_flux_uncertainty_grid(
             target_param=flux_key,
         )
 
-    return _map_points(sigma, flux_values.reshape(-1), coords).reshape(shape)
+    return map_points(
+        sigma, flux_values.reshape(-1), coords, batch_size=batch_size
+    ).reshape(shape)
 
 
 def best_grid_point(loglike_grid, samples_dict):

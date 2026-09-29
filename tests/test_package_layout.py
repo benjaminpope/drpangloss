@@ -31,6 +31,18 @@ def test_bessel_module_is_self_contained():
             assert not (node.module or "").startswith("drpangloss")
 
 
+def test_limits_do_not_depend_on_grid_fit():
+    # Both share the private _grid machinery instead.
+    tree = ast.parse((SRC / "limits.py").read_text())
+    modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    assert "grid_fit" not in modules
+    assert "_grid" in modules
+
+
 def test_legacy_tools_are_not_imported_by_default():
     tree = ast.parse((SRC / "__init__.py").read_text())
     imported = {
