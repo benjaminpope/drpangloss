@@ -75,11 +75,12 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
 | `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
-| `_geometry.py`, `_utils.py` | shared geometry, constants and helpers (private) |
+| `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
 
 Imports flow one way: `_utils`/`_geometry`/`bessel` → `oifits`/`amigo`/`oidata`
-→ `models` → `likelihood` → `inference` → `grid_fit` → `limits` → `plotting`.
+→ `models` → `likelihood` → `inference` → `_grid` → (`grid_fit`, `limits`)
+→ `plotting`. `grid_fit` and `limits` do not import each other.
 
 ## Flux and contrast
 

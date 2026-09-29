@@ -304,6 +304,9 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
                 staxyz = hdu.data["STAXYZ"]
                 staxy = np.delete(staxyz, -1, 1)
                 dic["OI_ARRAY"] = {"STAXYZ": staxyz, "STAXY": staxy}
+                for key in ("STA_INDEX", "TEL_NAME", "STA_NAME", "DIAMETER"):
+                    if key in hdu.columns.names:
+                        dic["OI_ARRAY"][key] = hdu.data[key]
                 if "CTRS_EQT" in hdu.columns.names:
                     dic["OI_ARRAY"]["CTRS_EQT"] = hdu.data["CTRS_EQT"]
 

@@ -24,13 +24,14 @@ import numpy as np
 import optimistix as optx
 
 from ._utils import concrete
-from .grid_fit import (
-    _coordinate_points,
-    _map_points,
-    _meshgrid_vectors,
-    _ordered_values_from_flux_and_coords,
-    _resolve_flux_param,
-    _warn_unconverged,
+from ._grid import (
+    batch_size_or_default,
+    coordinate_points,
+    map_points,
+    meshgrid_vectors,
+    ordered_values,
+    resolve_grid_keys,
+    warn_unconverged,
 )
 from .likelihood import build_model
 
@@ -298,6 +299,7 @@ def absil_limits(
     sigma,
     flux_param=None,
     flux_bounds=(1e-6, 1.0),
+    batch_size=None,
 ):
     """Flux above which a companion is ruled out at ``sigma`` significance.
 
@@ -332,6 +334,9 @@ def absil_limits(
         ``RuntimeWarning`` reports how many were clipped. Pass ``None`` to
         return them unclipped, e.g. for [`System`][drpangloss.models.System]
         weights that may exceed 1.
+    batch_size : int, optional
+        Number of grid points evaluated at once (default 256). Larger is
+        faster for small models; smaller bounds memory for large ones.
 
     Returns
     -------
@@ -344,9 +349,7 @@ def absil_limits(
     The number of degrees of freedom is the number of data points; the
     fitted parameters are not subtracted.
     """
-    params, coord_keys, flux_key = _resolve_flux_param(
-        samples_dict, flux_param
-    )
+    params, coord_keys, flux_key = resolve_grid_keys(samples_dict, flux_param)
     if not np.any(np.asarray(samples_dict[flux_key]) > 0.0):
         raise ValueError(
             f"The flux axis {flux_key!r} needs at least one positive value "
@@ -367,8 +370,9 @@ def absil_limits(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size),
     )
-    _warn_unconverged(success, "absil_limits")
+    warn_unconverged(success, "absil_limits")
     if flux_bounds is None:
         return limits
     low, high = flux_bounds
@@ -395,6 +399,7 @@ def _absil_limits(
     params,
     coord_keys,
     flux_key,
+    batch_size,
 ):
     """Jitted implementation of `absil_limits`.
 
@@ -415,12 +420,14 @@ def _absil_limits(
         significance = nsigma(reduced_chi2(values), chi2_null, ndof)
         return (significance - sigma) ** 2
 
-    vals_vec, grid_shape = _meshgrid_vectors(samples_dict, params)
-    loss_grid = _map_points(loss, vals_vec).reshape(grid_shape)
+    vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
+    loss_grid = map_points(loss, vals_vec, batch_size=batch_size).reshape(
+        grid_shape
+    )
     flux_axis = params.index(flux_key)
     best_flux_indices = jnp.nanargmin(loss_grid, axis=flux_axis)
 
-    coords, shape = _coordinate_points(samples_dict, coord_keys)
+    coords, shape = coordinate_points(samples_dict, coord_keys)
     # A zero flux would start the log-flux optimizer at -inf; start from the
     # smallest positive flux on the grid instead.
     flux_axis_vals = jnp.asarray(samples_dict[flux_key])
@@ -432,9 +439,7 @@ def _absil_limits(
 
     def optimize_log_flux(log_flux, coord_vals):
         flux = 10.0 ** jnp.asarray(log_flux).reshape(-1)[0]
-        values = _ordered_values_from_flux_and_coords(
-            flux, coord_vals, params, coord_keys, flux_key
-        )
+        values = ordered_values(flux, coord_vals, params, coord_keys, flux_key)
         return loss(values)
 
     def best_flux(flux0, coord_vals):
@@ -446,7 +451,7 @@ def _absil_limits(
             options={"maxiter": 100},
         )
         limit = 10.0 ** solution.x[0]
-        values = _ordered_values_from_flux_and_coords(
+        values = ordered_values(
             limit, coord_vals, params, coord_keys, flux_key
         )
         # Converged if the target significance is reached to 0.01 sigma.
@@ -455,5 +460,7 @@ def _absil_limits(
         )
         return limit, reached < 1e-2
 
-    limits, success = _map_points(best_flux, start_flux, coords)
+    limits, success = map_points(
+        best_flux, start_flux, coords, batch_size=batch_size
+    )
     return limits.reshape(shape), success.reshape(shape)

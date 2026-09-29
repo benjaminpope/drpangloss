@@ -66,7 +66,7 @@ def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
 
 
 def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
-    """Inverse of [`undo_elliptical_transf_spat_freq`][drpangloss._utils.undo_elliptical_transf_spat_freq]. Takes spatial frequency
+    """Inverse of [`undo_elliptical_transf_spat_freq`][drpangloss._geometry.undo_elliptical_transf_spat_freq]. Takes spatial frequency
     coordinates in the frame of reference where an elliptical object appears circular
     and aligned with its major axis pointing North, and transforms them into the
     original (rotated and stretched) frame of reference.
@@ -138,7 +138,7 @@ def undo_elliptical_transf_coord(x, y, pa, stretch):
 
 
 def apply_elliptical_transf_coord(x, y, pa, stretch):
-    """Inverse of [`undo_elliptical_transf_coord`][drpangloss._utils.undo_elliptical_transf_coord]. Takes spatial coordinates in
+    """Inverse of [`undo_elliptical_transf_coord`][drpangloss._geometry.undo_elliptical_transf_coord]. Takes spatial coordinates in
     the frame of reference where an elliptical object appears circular and aligned
     with its major axis pointing North, and transforms them into the original
     (rotated and stretched) frame of reference.
