@@ -8,3 +8,4 @@
       members:
         - model
         - render
+        - is_physical

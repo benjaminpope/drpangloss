@@ -69,6 +69,7 @@ nav:
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
+      - Spectra: api/spectra.md
       - Plotting: api/plotting.md
       - Bessel: api/bessel.md
       - Legacy: api/legacy.md

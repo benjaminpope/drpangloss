@@ -14,6 +14,7 @@ Modules:
 * [`grid_fit`][drpangloss.grid_fit]: grid searches.
 * [`limits`][drpangloss.limits]: contrast limits and flux/contrast/Δmag
   conversions.
+* [`spectra`][drpangloss.spectra]: wavelength-dependent fluxes.
 * [`plotting`][drpangloss.plotting]: figures.
 * [`bessel`][drpangloss.bessel]: Bessel functions in JAX.
 
@@ -33,6 +34,7 @@ from . import (  # noqa: E402
     oidata,
     oifits,
     plotting,
+    spectra,
 )
 from .amigo import load_oi_data  # noqa: E402
 from .grid_fit import (  # noqa: E402
@@ -45,6 +47,7 @@ from .grid_fit import (  # noqa: E402
 from .inference import fisher, laplace_cov  # noqa: E402
 from .likelihood import (  # noqa: E402
     build_model,
+    inflated_errors,
     loglike,
     model_loglike,
     numpyro_model,
@@ -65,12 +68,14 @@ from .models import (  # noqa: E402
     GaussianDiskModel,
     ModulatedGaussianRim,
     PointSource,
+    Resolved,
     SourceModel,
     System,
     UniformDisk,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
+from .spectra import PowerLaw  # noqa: E402
 
 
 __all__ = [
@@ -81,6 +86,8 @@ __all__ = [
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
+    "PowerLaw",
+    "Resolved",
     "SourceModel",
     "System",
     "UniformDisk",
@@ -90,6 +97,7 @@ __all__ = [
     "contrast_to_flux",
     "delta_mag_to_flux",
     "fisher",
+    "inflated_errors",
     "flux_to_contrast",
     "flux_to_delta_mag",
     "laplace_cov",

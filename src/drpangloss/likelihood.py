@@ -21,15 +21,81 @@ def _gaussian_loglike(residuals, errors):
     return jax.scipy.stats.norm.logpdf(residuals, loc=0.0, scale=errors).sum()
 
 
-def model_loglike(model_object, data_obj):
+def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
+    """The data uncertainties with extra error terms added in quadrature.
+
+    Parameters
+    ----------
+    data_obj : OIData
+        Data whose uncertainties are inflated.
+    prediction : array-like
+        Model vector, e.g. from [`OIData.model`][drpangloss.oidata.OIData.model].
+    vis_error_rel : float, optional
+        Extra visibility error, as a fraction of the *model* visibility
+        observable (e.g. of the model V² for squared visibilities).
+    phi_error : float, optional
+        Extra phase error in radians.
+
+    Returns
+    -------
+    array-like
+        Uncertainties matching [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
+    """
+    _, errors = data_obj.flatten_data()
+    if vis_error_rel is None and phi_error is None:
+        return errors
+    if data_obj.vis_mat is not None or data_obj.phi_mat is not None:
+        raise ValueError(
+            "Extra error terms are defined for the observed visibilities and "
+            "phases, not for projected (vis_mat/phi_mat) observables."
+        )
+    n_vis = np.asarray(data_obj.vis).size
+    d_vis, d_phi = errors[:n_vis], errors[n_vis:]
+    if vis_error_rel is not None:
+        d_vis = np.hypot(d_vis, vis_error_rel * np.asarray(prediction)[:n_vis])
+    if phi_error is not None:
+        d_phi = np.hypot(d_phi, phi_error)
+    return np.concatenate([d_vis, d_phi])
+
+
+def model_loglike(
+    model_object,
+    data_obj,
+    *,
+    vis_error_rel=None,
+    phi_error=None,
+    reject_unphysical=False,
+):
     """Evaluate a Gaussian log likelihood for an instantiated model object.
 
     Phase residuals are wrapped into ``[-π, π)`` (see
     [`residuals`][drpangloss.oidata.OIData.residuals]).
+
+    Parameters
+    ----------
+    model_object : SourceModel
+        Model to evaluate.
+    data_obj : OIData
+        Data to compare with.
+    vis_error_rel, phi_error : float, optional
+        Extra error terms added in quadrature to the data uncertainties,
+        e.g. fitted as nuisance parameters: a visibility error relative to
+        the model visibility, and a phase error in radians (see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). The
+        Gaussian normalization uses the inflated errors.
+    reject_unphysical : bool, optional
+        If True, return ``-inf`` when
+        [`is_physical`][drpangloss.models.SourceModel.is_physical] is false,
+        e.g. for a negative flux or a rim whose brightness goes negative.
+        This works inside ``jax.jit``, so samplers can use it as a hard prior
+        boundary.
     """
-    _, errors = data_obj.flatten_data()
-    residuals = data_obj.residuals(data_obj.model(model_object))
-    return _gaussian_loglike(residuals, errors)
+    prediction = data_obj.model(model_object)
+    errors = inflated_errors(data_obj, prediction, vis_error_rel, phi_error)
+    logl = _gaussian_loglike(data_obj.residuals(prediction), errors)
+    if reject_unphysical:
+        logl = np.where(model_object.is_physical(), logl, -np.inf)
+    return logl
 
 
 def joint_prediction(params, observations, model_fn):
@@ -60,10 +126,14 @@ def joint_errors(observations):
     )
 
 
-def joint_loglike(params, observations, model_fn):
-    """Sum independent Gaussian log likelihoods over multiple observations."""
+def joint_loglike(params, observations, model_fn, **options):
+    """Sum independent Gaussian log likelihoods over multiple observations.
+
+    ``options`` (``vis_error_rel``, ``phi_error``, ``reject_unphysical``) are
+    passed to [`model_loglike`][drpangloss.likelihood.model_loglike].
+    """
     return sum(
-        model_loglike(model_fn(params, index), observation)
+        model_loglike(model_fn(params, index), observation, **options)
         for index, observation in enumerate(observations)
     )
 
@@ -80,7 +150,7 @@ def build_model(model, params, values):
     return model(**dict(zip(params, values)))
 
 
-def loglike(values, params, data_obj, model):
+def loglike(values, params, data_obj, model, **options):
     """
     Gaussian log-likelihood of a model with the given parameter values, assuming Gaussian errors.
 
@@ -96,6 +166,9 @@ def loglike(values, params, data_obj, model):
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+    **options
+        ``vis_error_rel``, ``phi_error`` and ``reject_unphysical``, passed to
+        [`model_loglike`][drpangloss.likelihood.model_loglike].
 
     Returns
     -------
@@ -103,7 +176,9 @@ def loglike(values, params, data_obj, model):
         Log-likelihood value.
     """
 
-    return model_loglike(build_model(model, params, values), data_obj)
+    return model_loglike(
+        build_model(model, params, values), data_obj, **options
+    )
 
 
 def loglike_nosignal(values, params, data_obj, model):
@@ -156,7 +231,7 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-def numpyro_model(model, priors, data_obj):
+def numpyro_model(model, priors, data_obj, **options):
     """Return a numpyro model sampling the parameters in ``priors``.
 
     Parameters
@@ -175,6 +250,9 @@ def numpyro_model(model, priors, data_obj):
         in ``.flux``) must have non-negative support.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
+    **options
+        ``vis_error_rel``, ``phi_error`` and ``reject_unphysical``, passed to
+        [`model_loglike`][drpangloss.likelihood.model_loglike].
 
     Returns
     -------
@@ -196,7 +274,7 @@ def numpyro_model(model, priors, data_obj):
         source = build_model(model, paths, values)
         numpyro.factor(
             "loglike",
-            sum(model_loglike(source, obs) for obs in observations),
+            sum(model_loglike(source, obs, **options) for obs in observations),
         )
 
     return numpyro_fn

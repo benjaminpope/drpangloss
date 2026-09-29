@@ -19,9 +19,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     Parameters
     ----------
-    data : dict, str, os.PathLike or astropy.io.fits.HDUList
+    data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
         An OIFITS file (a path, or a file opened with ``astropy.io.fits`` or
-        ``pyoifits``), or a dictionary of arrays; see ``__init__``.
+        ``pyoifits``), a list of such files (concatenated), or a dictionary
+        of arrays; see ``__init__``.
     target : str or int, optional
         For OIFITS input, the target to keep (by name or ``TARGET_ID``).
         Required when the file contains more than one target.
@@ -69,10 +70,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Parameters
         ----------
-        data : dict, str, os.PathLike or astropy.io.fits.HDUList
-            An OIFITS file, read with [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits]
-            (several wavelength channels, tables and epochs, and ``FLAG``
-            columns, are supported). Or a dictionary with keys:
+        data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
+            An OIFITS file or a list of them, read with
+            [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits]
+            (several files, wavelength channels, tables and epochs, and
+            ``FLAG`` columns, are supported). Or a dictionary with keys:
 
             * ``u``, ``v`` (metres) and ``wavel`` (metres): per sample, or
               ``u``/``v`` per baseline with ``vis`` of shape

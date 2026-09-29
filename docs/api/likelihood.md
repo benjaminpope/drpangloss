@@ -7,6 +7,7 @@ Gaussian likelihoods of source models given data, and numpyro models.
       members:
         - build_model
         - model_loglike
+        - inflated_errors
         - loglike
         - loglike_nosignal
         - joint_prediction
