@@ -86,13 +86,16 @@ DERIV_XS = onp.unique(
 )
 
 
+@pytest.mark.parametrize("x64, dtype, atol", BESSEL_PRECISIONS)
 @pytest.mark.parametrize("order", [0, 1, 2, 3, 4, 8])
-def test_bessel_jn_second_derivatives_match_scipy(order):
-    second = jax.vmap(
-        jax.grad(jax.grad(lambda z: bessel_jn(order, z)[order]))
-    )(np.asarray(DERIV_XS))
+def test_bessel_jn_second_derivatives_match_scipy(order, x64, dtype, atol):
+    with jax.enable_x64(x64):
+        second = jax.vmap(
+            jax.grad(jax.grad(lambda z: bessel_jn(order, z)[order]))
+        )(np.asarray(DERIV_XS))
     expected = jvp(order, DERIV_XS, 2)
-    assert onp.allclose(onp.asarray(second), expected, rtol=0.0, atol=1e-13)
+    assert second.dtype == dtype
+    assert onp.allclose(onp.asarray(second), expected, rtol=0.0, atol=atol)
 
 
 @pytest.mark.parametrize("order", [1, 4, 8])
@@ -100,9 +103,9 @@ def test_bessel_jn_jacobians_all_orders_match_scipy(order):
     xs = np.asarray(DERIV_XS)
     expected = onp.array([jvp(m, DERIV_XS, 1) for m in range(order + 1)])
     for jac in (jax.jacfwd, jax.jacrev):
-        full = jac(lambda z: bessel_jn(order, z))(xs)
-        # Elementwise in x, so the Jacobian is diagonal in the x axes.
-        diag = onp.einsum("mii->mi", onp.asarray(full))
+        # Elementwise in x, so vmapping scalar Jacobians avoids materializing
+        # the dense diagonal Jacobian over the x axes.
+        diag = onp.asarray(jax.vmap(jac(lambda z: bessel_jn(order, z)))(xs)).T
         assert onp.allclose(diag, expected, rtol=0.0, atol=1e-13)
 
 
