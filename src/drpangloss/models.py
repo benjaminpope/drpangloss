@@ -40,12 +40,17 @@ from .spectra import Spectrum, flux_at, reference_flux
 
 
 def _normalize_image(image):
-    """Return a finite unit-sum image for render outputs."""
+    """Return a finite unit-sum image for render outputs.
+
+    Empty images are rejected when the flux is known; under ``jax.jit``
+    (e.g. rendering many posterior samples) the check is skipped.
+    """
     image = np.nan_to_num(np.asarray(image), nan=0.0, posinf=0.0, neginf=0.0)
     total = np.sum(image)
-    if bool(np.isfinite(total)) and bool(total > 0.0):
-        return image / total
-    raise ValueError("Rendered image must contain positive finite flux.")
+    value = concrete(total)
+    if value is not None and not (onp.isfinite(value) and value > 0.0):
+        raise ValueError("Rendered image must contain positive finite flux.")
+    return image / total
 
 
 def _unit_flux(component):

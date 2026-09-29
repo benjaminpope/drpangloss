@@ -165,3 +165,11 @@ def test_flux_ratio_priors_must_be_non_negative():
         numpyro_model(
             _scene(), {"secondary.flux.ratio": dist.Normal(0.0, 1.0)}, None
         )
+
+
+def test_render_under_jit():
+    rim = lambda diam: ModulatedGaussianRim(
+        diam, 2.0, 30.0, 40.0, az_amps=0.5, az_pas=60.0
+    )
+    render = jax.jit(lambda diam: rim(diam).render(npix=32, fov_mas=30.0))
+    assert np.allclose(render(12.0), rim(12.0).render(npix=32, fov_mas=30.0))
