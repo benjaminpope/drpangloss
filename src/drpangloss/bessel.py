@@ -10,10 +10,18 @@ returns all orders up to ``n``: for ``|x| < n + 2`` it uses a folded
 trapezoidal trigonometric sum (arXiv:2206.05334), where upward recurrence is
 unstable, and the recurrence above it. Values and gradients are finite
 everywhere, including at ``x = 0``.
+
+Derivatives are not traced through these approximations. Custom JVP rules use
+the recurrence identities $J_0' = -J_1$ and
+$J_m' = (J_{m-1} - J_{m+1}) / 2$, so ``jax.grad``, ``jax.jacfwd``,
+``jax.jacrev`` and ``jax.hessian`` all evaluate Bessel functions directly. The
+$k$-th derivative of ``bessel_jn(n, x)`` costs one call to
+``bessel_jn(n + k, x)``.
 """
 
 from functools import partial
 
+import jax
 import jax.numpy as np
 import numpy as onp
 from jax import jit
@@ -144,6 +152,7 @@ def j1_large_c(x):
     return p * SQ2OPI / np.sqrt(x)
 
 
+@jax.custom_jvp
 def j1(x):
     """Bessel function of order one, translated from the CEPHES implementation."""
     ax = np.abs(x)
@@ -156,6 +165,26 @@ def j1(x):
         j1_small(np.where(small, x, 0.0)),
         np.sign(x) * j1_large_c(np.where(small, 5.0, ax)),
     )
+
+
+def _j1_over_x(x):
+    """$J_1(x) / x$, regular at $x = 0$ where it equals 1/2."""
+    ax = np.abs(x)
+    small = ax < 5.0
+    # ``j1_small`` is x times an even rational function; return that function
+    # directly, so there is no division near 0.
+    xs = np.where(small, x, 0.0)
+    z = xs * xs
+    w_small = np.polyval(RP1, z) / np.polyval(RQ1, z) * (z - Z1) * (z - Z2)
+    xl = np.where(small, 5.0, ax)
+    return np.where(small, w_small, j1_large_c(xl) / xl)
+
+
+@j1.defjvp
+def _j1_jvp(primals, tangents):
+    (x,), (x_dot,) = primals, tangents
+    # J_1' = J_0 - J_1 / x
+    return j1(x), (j0(x) - _j1_over_x(x)) * x_dot
 
 
 PP0 = onp.array(
@@ -275,6 +304,7 @@ def j0_large(x):
     return p * SQ2OPI / np.sqrt(x)
 
 
+@jax.custom_jvp
 def j0(x):
     """Implementation of J0 for all x in Jax."""
     ax = np.abs(x)
@@ -284,6 +314,12 @@ def j0(x):
         j0_small(np.where(small, ax, 0.0)),
         j0_large(np.where(small, 5.0, ax)),
     )
+
+
+@j0.defjvp
+def _j0_jvp(primals, tangents):
+    (x,), (x_dot,) = primals, tangents
+    return j0(x), -j1(x) * x_dot
 
 
 def _bessel_jn_trig(n, x, nodes):
@@ -319,22 +355,9 @@ def _bessel_jn_trig(n, x, nodes):
     return np.moveaxis(trig @ weights.T, -1, 0)
 
 
-@partial(jit, static_argnums=0)
-def bessel_jn(n, x):
-    r"""Compute the Bessel function $J_n(x)$, for $n >= 0$. Returns the function output
-    for all orders up to the requested order $n$ evaluated for the kernel $x$, where the
-    the different orders are stacked along the first axis. The shape of the final result
-    is thus (n + 1, shape(x)).
-
-    For $n \le 1$ this is the CEPHES rational approximations. For $n \ge 2$, all
-    orders come from the upward recurrence $J_{m+1} = (2m/x) J_m - J_{m-1}$,
-    seeded by CEPHES, where it is stable ($|x| > n$), and from a
-    trigonometric sum (see ``_bessel_jn_trig``) below that, where the
-    recurrence loses accuracy. Both agree with
-    ``scipy.special.jv`` to about 1e-14, and the gradients are finite
-    everywhere, including $x = 0$.
-    """
-    x = np.asarray(x, dtype=float)
+@partial(jax.custom_jvp, nondiff_argnums=(0,))
+def _bessel_jn(n, x):
+    """All orders ``0..n`` of $J_m(x)$ for a float array ``x``; see ``bessel_jn``."""
     if n == 0:
         return j0(x)[None]
     if n == 1:
@@ -358,3 +381,38 @@ def bessel_jn(n, x):
     j_rec = np.concatenate([j0_rec[None], j1_rec[None], j_high])
     j_trig = _bessel_jn_trig(n, np.where(small, x, 0.0), nodes)
     return np.where(small, j_trig, j_rec)
+
+
+@_bessel_jn.defjvp
+def _bessel_jn_jvp(n, primals, tangents):
+    (x,), (x_dot,) = primals, tangents
+    j = _bessel_jn(n + 1, x)
+    # J_m' = (J_{m-1} - J_{m+1}) / 2, with J_{-1} = -J_1 (so J_0' = -J_1).
+    # The primal is taken from the same order-(n + 1) evaluation. Its
+    # trig/recurrence switch sits at |x| = n + 3 rather than n + 2, so it can
+    # differ from bessel_jn(n, x) by rounding (below 1e-15), which saves a
+    # second evaluation per derivative.
+    j_below = np.concatenate([-j[1:2], j[:n]])
+    return j[: n + 1], 0.5 * (j_below - j[1 : n + 2]) * x_dot
+
+
+@partial(jit, static_argnums=0)
+def bessel_jn(n, x):
+    r"""Compute the Bessel function $J_n(x)$, for $n >= 0$. Returns the function output
+    for all orders up to the requested order $n$ evaluated for the kernel $x$, where the
+    the different orders are stacked along the first axis. The shape of the final result
+    is thus (n + 1, shape(x)).
+
+    For $n \le 1$ this is the CEPHES rational approximations. For $n \ge 2$, all
+    orders come from the upward recurrence $J_{m+1} = (2m/x) J_m - J_{m-1}$,
+    seeded by CEPHES, where it is stable ($|x| > n$), and from a
+    trigonometric sum (see ``_bessel_jn_trig``) below that, where the
+    recurrence loses accuracy. Both agree with
+    ``scipy.special.jv`` to about 1e-14, and the gradients are finite
+    everywhere, including $x = 0$.
+
+    Derivatives of all orders use $J_m' = (J_{m-1} - J_{m+1}) / 2$ (with
+    $J_{-1} = -J_1$), evaluated from ``bessel_jn(n + 1, x)``, rather than
+    differentiating through the approximations.
+    """
+    return _bessel_jn(n, np.asarray(x, dtype=float))
