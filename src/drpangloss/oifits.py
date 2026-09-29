@@ -49,8 +49,8 @@ def read_oifits(source, target=None):
         concatenated into one record, in the order given.
     target : str or int, optional
         Target to keep, by ``OI_TARGET`` name or ``TARGET_ID``. Required when
-        a file contains data on more than one target. With several files,
-        give the name: ``TARGET_ID`` numbering is per file.
+        a file contains data on more than one target. With several files it
+        must be the name, since ``TARGET_ID`` numbering is per file.
 
     Returns
     -------
@@ -87,6 +87,12 @@ def read_oifits(source, target=None):
     ):
         if not source:
             raise ValueError("read_oifits() got an empty list of files.")
+        if target is not None and not isinstance(target, str):
+            raise TypeError(
+                "With several files, choose the target by name: TARGET_ID "
+                f"values are local to each file, so target={target!r} could "
+                "select different stars in different files."
+            )
         return _concat_records([read_oifits(s, target) for s in source])
     if isinstance(source, (str, os.PathLike)):
         with fits.open(source, memmap=False) as hdul:

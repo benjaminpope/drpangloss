@@ -79,8 +79,10 @@ def _as_flux(flux):
 
 
 def _flux_is_non_negative(flux):
-    """Traced check that a number or spectrum has non-negative flux."""
-    return np.all(np.asarray(reference_flux(flux)) >= 0.0)
+    """Traced check that a number or spectrum is a valid (non-negative) flux."""
+    if isinstance(flux, Spectrum):
+        return flux.is_physical()
+    return np.all(np.asarray(flux) >= 0.0)
 
 
 def _check_non_negative_flux(flux, owner):
@@ -532,10 +534,13 @@ class Resolved(SourceModel):
 
     Notes
     -----
-    A resolved component spreads its light far beyond any image, so
-    [`render`][drpangloss.models.SourceModel.render] draws nothing for it,
-    and a rendered [`System`][drpangloss.models.System] shows only its other
-    components (renormalized to unit sum).
+    A resolved component spreads its light far beyond any image, so it
+    cannot be rendered on its own, and a rendered
+    [`System`][drpangloss.models.System] shows only its other components,
+    renormalized to unit sum. The Fourier transform of such an image is
+    therefore the visibility of the unresolved components alone, i.e.
+    ``model()`` divided by the unresolved fraction of the flux, not
+    ``model()`` itself.
 
     Examples
     --------
@@ -551,7 +556,15 @@ class Resolved(SourceModel):
         at_origin = (np.asarray(u) == 0) & (np.asarray(v) == 0)
         return np.where(at_origin, 1.0, 0.0) + 0j
 
+    def render(self, npix=256, fov_mas=200.0):
+        raise ValueError(
+            "A Resolved component has no image: its light is spread far "
+            "beyond any field of view. Render the System it belongs to, which "
+            "shows the other components."
+        )
+
     def _image(self, xx, yy, pixel_scale_mas):
+        # Contributes nothing inside a rendered System (see Notes).
         return np.zeros_like(xx)
 
     def _weight(self, wavel=None):
@@ -726,7 +739,9 @@ class System(SourceModel):
         valid = _flux_is_non_negative(self.flux)
         for part in self.parts:
             valid = valid & part.is_physical()
-        return valid
+        # All parts are non-negative when valid, so a zero sum means no light.
+        total = sum(np.sum(c._weight()) for c in self.parts)
+        return valid & (total > 0.0)
 
     def __check_init__(self):
         _check_non_negative_flux(self.flux, "System")

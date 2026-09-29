@@ -173,3 +173,42 @@ def test_render_under_jit():
     )
     render = jax.jit(lambda diam: rim(diam).render(npix=32, fov_mas=30.0))
     assert np.allclose(render(12.0), rim(12.0).render(npix=32, fov_mas=30.0))
+
+
+def test_resolved_alone_cannot_be_rendered():
+    with pytest.raises(ValueError, match="no image"):
+        Resolved(flux=0.2).render(npix=16, fov_mas=10.0)
+
+
+def test_several_files_need_a_target_name(tmp_path):
+    paths = [
+        write_oifits(_tables(waves=(1.6e-6,)), tmp_path / f"{name}.fits")
+        for name in "ab"
+    ]
+    with pytest.raises(TypeError, match="by name"):
+        OIData(paths, target=1)
+
+
+def test_zero_total_flux_is_unphysical(tmp_path):
+    data = OIData(write_oifits(_tables(waves=WAVES), tmp_path / "x.fits"))
+    scene = System(star=PointSource(), background=Resolved(flux=0.1))
+
+    @jax.jit
+    def logl(star_flux, bkg_flux):
+        dark = scene.set(
+            ["star.flux", "background.flux"], [star_flux, bkg_flux]
+        )
+        return model_loglike(dark, data, reject_unphysical=True)
+
+    assert np.isfinite(logl(1.0, 0.1))
+    assert logl(0.0, 0.0) == -np.inf
+
+
+def test_power_law_reference_wavelength_must_be_positive():
+    with pytest.raises(ValueError, match="wavel0"):
+        PowerLaw(0.1, index=1.5, wavel0=0.0)
+    traced = jax.jit(
+        lambda w0: PointSource(flux=PowerLaw(0.1, 1.5, w0)).is_physical()
+    )
+    assert bool(traced(1.65e-6))
+    assert not bool(traced(-1.65e-6))

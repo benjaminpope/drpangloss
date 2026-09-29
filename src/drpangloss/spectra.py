@@ -38,6 +38,10 @@ class Spectrum(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     def __call__(self, wavel=None):
         raise NotImplementedError
 
+    def is_physical(self):
+        """Whether the spectrum is valid, as a (traceable) boolean."""
+        return np.all(self.ratio >= 0.0)
+
 
 class PowerLaw(Spectrum):
     """Power-law spectrum ``ratio * (λ / wavel0) ** index``.
@@ -74,12 +78,21 @@ class PowerLaw(Spectrum):
             return self.ratio
         return self.ratio * (np.asarray(wavel) / self.wavel0) ** self.index
 
+    def is_physical(self):
+        return np.all(self.ratio >= 0.0) & np.all(self.wavel0 > 0.0)
+
     def __check_init__(self):
         value = concrete(self.ratio)
         if value is not None and (value < 0.0).any():
             raise ValueError(
                 f"PowerLaw ratio {value.tolist()} is negative; fluxes must be "
                 "non-negative."
+            )
+        wavel0 = concrete(self.wavel0)
+        if wavel0 is not None and (wavel0 <= 0.0).any():
+            raise ValueError(
+                f"PowerLaw wavel0 {wavel0.tolist()} must be a positive "
+                "wavelength (in metres)."
             )
 
 
