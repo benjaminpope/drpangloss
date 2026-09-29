@@ -36,6 +36,7 @@ from ._geometry import (
 )
 from ._utils import concrete, dtor, mas2rad
 from .bessel import bessel_jn
+from .spectra import Spectrum, flux_at, reference_flux
 
 
 def _normalize_image(image):
@@ -65,9 +66,21 @@ def _format_leaf(x):
     return "[" + ", ".join(f"{float(v):g}" for v in value.ravel()) + "]"
 
 
+def _as_flux(flux):
+    """A component flux: a spectrum as given, or a number as a float array."""
+    if isinstance(flux, Spectrum):
+        return flux
+    return np.asarray(flux, dtype=float)
+
+
+def _flux_is_non_negative(flux):
+    """Traced check that a number or spectrum has non-negative flux."""
+    return np.all(np.asarray(reference_flux(flux)) >= 0.0)
+
+
 def _check_non_negative_flux(flux, owner):
     """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    value = concrete(flux)
+    value = concrete(reference_flux(flux))
     if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
@@ -152,11 +165,22 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         ``wavel`` is the wavelength in metres at which the flux is wanted
         (broadcastable against the baselines), or ``None`` for the model's
-        reference flux, as used when rendering. Every current model is
-        achromatic and ignores it; chromatic fluxes (e.g. spectral indices)
-        will override this.
+        reference flux, as used when rendering. Components and systems whose
+        ``flux`` is a spectrum (see [`drpangloss.spectra`][drpangloss.spectra])
+        evaluate it here.
         """
         return 1.0
+
+    def is_physical(self):
+        """Whether the model is physically valid, as a (traceable) boolean.
+
+        Unlike the checks made when a model is built, this works inside
+        ``jax.jit`` and on models changed with ``set``, so likelihoods can
+        reject invalid models (see ``reject_unphysical`` in
+        [`model_loglike`][drpangloss.likelihood.model_loglike]). The base
+        class has no constraints.
+        """
+        return np.asarray(True)
 
     def _image(self, xx, yy, pixel_scale_mas):
         """Un-normalized image on the given coordinate grid."""
@@ -208,7 +232,10 @@ class Component(SourceModel):
         )
 
     def _weight(self, wavel=None):
-        return self.flux
+        return flux_at(self.flux, wavel)
+
+    def is_physical(self):
+        return _flux_is_non_negative(self.flux)
 
     def __check_init__(self):
         _check_non_negative_flux(self.flux, type(self).__name__)
@@ -219,8 +246,9 @@ class PointSource(Component):
 
     Parameters
     ----------
-    flux : float or array-like, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System]
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a [`System`][drpangloss.models.System],
+        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
         (default 1). Keep the reference star at ``flux=1`` and a companion's
         ``flux`` is then its companion/star flux ratio.
     dra : float or array-like, optional
@@ -235,7 +263,7 @@ class PointSource(Component):
     """
 
     def __init__(self, flux=1.0, dra=0.0, ddec=0.0):
-        self.flux = np.asarray(flux, dtype=float)
+        self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
@@ -255,8 +283,9 @@ class GaussianDisk(Component):
     sigma : float or array-like
         Standard deviation of the Gaussian in milliarcseconds
         (FWHM = 2.3548 ``sigma``).
-    flux : float or array-like, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System]
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a [`System`][drpangloss.models.System],
+        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -274,7 +303,7 @@ class GaussianDisk(Component):
 
     def __init__(self, sigma, flux=1.0, dra=0.0, ddec=0.0):
         self.sigma = np.asarray(sigma, dtype=float)
-        self.flux = np.asarray(flux, dtype=float)
+        self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
@@ -294,8 +323,9 @@ class UniformDisk(Component):
     ----------
     diam : float or array-like
         Angular diameter in milliarcseconds.
-    flux : float or array-like, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System]
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a [`System`][drpangloss.models.System],
+        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -313,7 +343,7 @@ class UniformDisk(Component):
 
     def __init__(self, diam, flux=1.0, dra=0.0, ddec=0.0):
         self.diam = np.asarray(diam, dtype=float)
-        self.flux = np.asarray(flux, dtype=float)
+        self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
@@ -363,8 +393,9 @@ class ModulatedGaussianRim(Component):
     az_pas : float or array-like, optional
         Position angles of the cosine azimuthal modulations in degrees, North
         to East, one per entry of ``az_amps``.
-    flux : float or array-like, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System]
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a [`System`][drpangloss.models.System],
+        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the rim's center in milliarcseconds,
@@ -423,9 +454,16 @@ class ModulatedGaussianRim(Component):
                 f"{self.az_pas.size}; give one position angle per modulation."
             )
         _check_non_negative_modulation(self.az_amps, self.az_pas)
-        self.flux = np.asarray(flux, dtype=float)
+        self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
+
+    def is_physical(self):
+        # Non-negative flux, and a brightness that stays non-negative round
+        # the rim.
+        return super().is_physical() & np.asarray(
+            check_az_prof_nonnegative(self.az_amps, self.az_pas)
+        )
 
     def _centred_cvis(self, uu, vv):
         return _cvis_centred_rim(
@@ -471,6 +509,54 @@ class ModulatedGaussianRim(Component):
         )
         psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
         return fftconvolve(ring, psf, mode="same")
+
+
+class Resolved(SourceModel):
+    """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
+
+    Its visibility is 0 on every non-zero baseline, so inside a
+    [`System`][drpangloss.models.System] it only adds to the normalization,
+    lowering every other component's visibility by the same factor.
+
+    Parameters
+    ----------
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1), or a spectrum from
+        [`drpangloss.spectra`][drpangloss.spectra].
+
+    Notes
+    -----
+    A resolved component spreads its light far beyond any image, so
+    [`render`][drpangloss.models.SourceModel.render] draws nothing for it,
+    and a rendered [`System`][drpangloss.models.System] shows only its other
+    components (renormalized to unit sum).
+
+    Examples
+    --------
+    >>> scene = System(star=PointSource(), background=Resolved(flux=0.1))
+    """
+
+    flux: jax.Array
+
+    def __init__(self, flux=1.0):
+        self.flux = _as_flux(flux)
+
+    def model(self, u, v, wavel):
+        at_origin = (np.asarray(u) == 0) & (np.asarray(v) == 0)
+        return np.where(at_origin, 1.0, 0.0) + 0j
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        return np.zeros_like(xx)
+
+    def _weight(self, wavel=None):
+        return flux_at(self.flux, wavel)
+
+    def is_physical(self):
+        return _flux_is_non_negative(self.flux)
+
+    def __check_init__(self):
+        _check_non_negative_flux(self.flux, "Resolved")
 
 
 class System(SourceModel):
@@ -578,7 +664,7 @@ class System(SourceModel):
             )
         self.names = tuple(components)
         self.parts = tuple(components.values())
-        self.flux = np.asarray(flux, dtype=float)
+        self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
@@ -629,7 +715,13 @@ class System(SourceModel):
         ) / sum(weights)
 
     def _weight(self, wavel=None):
-        return self.flux
+        return flux_at(self.flux, wavel)
+
+    def is_physical(self):
+        valid = _flux_is_non_negative(self.flux)
+        for part in self.parts:
+            valid = valid & part.is_physical()
+        return valid
 
     def __check_init__(self):
         _check_non_negative_flux(self.flux, "System")
@@ -714,6 +806,9 @@ class BinaryModelAngular(SourceModel):
             self.sep * np.sin(th), self.sep * np.cos(th), self.flux
         )
 
+    def is_physical(self):
+        return _flux_is_non_negative(self.flux)
+
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
         uu, vv = u / wavel, v / wavel
@@ -760,6 +855,9 @@ class BinaryModelCartesian(SourceModel):
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         return BinaryModelAngular(sep, pa, self.flux)
+
+    def is_physical(self):
+        return _flux_is_non_negative(self.flux)
 
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""

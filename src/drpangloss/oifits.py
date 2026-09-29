@@ -43,12 +43,14 @@ def read_oifits(source, target=None):
 
     Parameters
     ----------
-    source : str, os.PathLike or astropy.io.fits.HDUList
+    source : str, os.PathLike, astropy.io.fits.HDUList, or a list of them
         File path, or an opened file (e.g. from ``astropy.io.fits.open`` or
-        ``pyoifits.open``).
+        ``pyoifits.open``). A list or tuple of files is read file by file and
+        concatenated into one record, in the order given.
     target : str or int, optional
         Target to keep, by ``OI_TARGET`` name or ``TARGET_ID``. Required when
-        the file contains data on more than one target.
+        a file contains data on more than one target. With several files,
+        give the name: ``TARGET_ID`` numbering is per file.
 
     Returns
     -------
@@ -72,8 +74,20 @@ def read_oifits(source, target=None):
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
-    and nearest ``MJD``. The baselines must be stored in that orientation.
+    and nearest ``MJD``, within its own file. The baselines must be stored in
+    that orientation.
+
+    All files in a list must hold the same kinds of observable (squared
+    visibilities or amplitudes; closure or absolute phases).
     """
+    # An HDUList is itself a list (of HDUs): only other sequences are lists
+    # of files.
+    if isinstance(source, (list, tuple)) and not isinstance(
+        source, fits.HDUList
+    ):
+        if not source:
+            raise ValueError("read_oifits() got an empty list of files.")
+        return _concat_records([read_oifits(s, target) for s in source])
     if isinstance(source, (str, os.PathLike)):
         with fits.open(source, memmap=False) as hdul:
             return _read_hdulist(hdul, target)
@@ -447,6 +461,46 @@ def _read_hdulist(hdul, target):
         record["wavel"] = unique_wavel
     record["phi_unit"] = "rad"
     return record
+
+
+def _concat_records(records):
+    """Concatenate single-file records, sample by sample."""
+    first = records[0]
+    for key in ("v2_flag", "cp_flag"):
+        kinds = {bool(record[key]) for record in records}
+        if len(kinds) > 1:
+            raise ValueError(
+                f"Files disagree on {key}: they must all hold the same kinds "
+                "of visibility and phase observables."
+            )
+    out = {
+        key: onp.concatenate([onp.asarray(r[key]) for r in records])
+        for key in ("u", "v", "vis", "d_vis", "vis_flag")
+    }
+    # Per-sample wavelengths, since files have their own channels.
+    out["wavel"] = onp.concatenate(
+        [
+            onp.broadcast_to(onp.asarray(r["wavel"]), onp.shape(r["u"]))
+            for r in records
+        ]
+    )
+    for key in ("phi", "d_phi", "phi_flag"):
+        out[key] = onp.concatenate([onp.asarray(r[key]) for r in records])
+    if first["cp_flag"]:
+        offsets = onp.cumsum([0] + [onp.size(r["u"]) for r in records[:-1]])
+        for key in ("i_cps1", "i_cps2", "i_cps3"):
+            out[key] = onp.concatenate(
+                [onp.asarray(r[key]) + off for r, off in zip(records, offsets)]
+            ).astype(int)
+    else:
+        out.update(i_cps1=None, i_cps2=None, i_cps3=None)
+    unique_wavel = onp.unique(out["wavel"])
+    if unique_wavel.size == 1:
+        out["wavel"] = unique_wavel
+    out.update(
+        v2_flag=first["v2_flag"], cp_flag=first["cp_flag"], phi_unit="rad"
+    )
+    return out
 
 
 # === WRITING ===

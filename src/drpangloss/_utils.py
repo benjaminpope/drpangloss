@@ -37,14 +37,20 @@ def concrete(value):
 # === FLUX PARAMETERS ===
 #
 # A parameter is a flux when the last part of its name (or zodiax path) is
-# ``flux``: ``flux``, ``comp.flux``, ``comp.disk.flux``. Fluxes are relative
+# ``flux`` (``flux``, ``comp.flux``, ``comp.disk.flux``), or when it is a flux
+# spectrum's reference ratio (``comp.flux.ratio``). Fluxes are relative
 # to a reference component (usually the primary star at flux 1), so for a
 # companion ``flux`` is its companion/primary flux ratio.
 
 
 def is_flux_param(name):
-    """Whether ``name`` (a parameter name or path) is a flux."""
-    return str(name).rsplit(".", 1)[-1] == "flux"
+    """Whether ``name`` (a parameter name or path) is a flux.
+
+    That is, its last part is ``flux`` (``flux``, ``comp.flux``), or it is
+    the reference ratio of a flux spectrum (``comp.flux.ratio``).
+    """
+    parts = str(name).split(".")
+    return parts[-1] == "flux" or parts[-2:] == ["flux", "ratio"]
 
 
 def resolve_flux_param(keys, flux_param=None):

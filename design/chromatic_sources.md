@@ -1,9 +1,10 @@
 # Design note: chromatic sources and SPARCO
 
-Status: **proposal, not implemented.** This records how wavelength-dependent
-fluxes should fit into the composition API, so that we can eventually
-implement SPARCO without redesigning `System`. Nothing here should be built
-until we have multi-channel data to test it on.
+Status: **partly implemented.** Multi-channel `OIData` (prerequisite 1),
+`Resolved` (prerequisite 3) and the `PowerLaw` spectrum (prerequisite 4, in
+`drpangloss.spectra`) exist, and `Component`/`System` accept a spectrum as
+`flux`. Still to do: the `Image` component (prerequisite 2), `Blackbody` and
+`Tabulated` spectra, and rendering at a given wavelength.
 
 ## Goal
 

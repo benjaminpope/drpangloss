@@ -11,6 +11,7 @@ The everyday names are importable from the top level, e.g.
 - [Inference](inference.md): Laplace and Fisher curvature
 - [Grid Fit](grid_fit.md): grid searches
 - [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions
+- [Spectra](spectra.md): wavelength-dependent fluxes
 - [Plotting](plotting.md): figures
 - [Bessel](bessel.md): Bessel functions in JAX
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools
