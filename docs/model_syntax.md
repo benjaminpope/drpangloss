@@ -24,11 +24,9 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.models import (
-    BinaryModelCartesian,
-    BinaryModelAngular,
-    loglike,
-)
+from drpangloss.likelihood import loglike
+from drpangloss.limits import flux_to_contrast, flux_to_delta_mag
+from drpangloss.models import BinaryModelAngular, BinaryModelCartesian
 from drpangloss.oidata import OIData
 
 set_style()  # the figure style used throughout the docs
@@ -38,7 +36,7 @@ set_style()  # the figure style used throughout the docs
 
 Now we generate synthetic observables from the Cartesian model and package them into an `OIData` instance.
 
-These models are *parametrized functions* that take a set of parameters like sep, theta, contrast, and instantiate an object - say, `model` - which can then apply these to data. You then call `model.movel(u, v, wavel)` and it evaluates the complex visibilities at those coordinates.
+These models are *parametrized functions* that take a set of parameters like sep, pa and flux, and instantiate an object - say, `model` - which can then apply these to data. You then call `model.model(u, v, wavel)` and it evaluates the complex visibilities at those coordinates.
 
 ```python
 rng = np.random.default_rng(21)
@@ -54,8 +52,7 @@ ddec = float(truth_cart["ddec"])
 flux = float(truth_cart["flux"])
 sep = float(np.sqrt(dra**2 + ddec**2))
 pa = float((np.degrees(np.arctan2(dra, ddec)) + 360.0) % 360.0)
-contrast = float(1.0 / flux)
-model_ang = BinaryModelAngular(sep=sep, pa=pa, contrast=contrast)
+model_ang = BinaryModelAngular(sep=sep, pa=pa, flux=flux)
 
 cvis_true = model_cart_true.model(u, v, wavel)
 cvis_ang = model_ang.model(u, v, wavel)
@@ -63,7 +60,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 
 {
     "cartesian": truth_cart,
-    "angular": {"sep": sep, "pa": pa, "contrast": contrast},
+    "angular": {"sep": sep, "pa": pa, "flux": flux},
     "max_complex_visibility_difference": max_complex_diff,
 }
 ```
@@ -72,8 +69,8 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 {'cartesian': {'dra': 120.0, 'ddec': -80.0, 'flux': 0.004},
  'angular': {'sep': 144.22205101855957,
   'pa': 123.69006752597977,
-  'contrast': 250.0},
- 'max_complex_visibility_difference': 6.00885670110074e-08}
+  'flux': 0.004},
+ 'max_complex_visibility_difference': 3.7834979593753815e-09}
 ```
 
 `OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
@@ -147,15 +144,15 @@ data_vector, err_vector = data.flatten_data()
 
 ## Cartesian vs angular parameter conversions
 
-The Cartesian model uses $(\Delta\mathrm{RA},\Delta\mathrm{Dec}, f)$, where $f$ is companion/primary flux ratio.
-The angular model uses $(\rho,\mathrm{PA}, C)$, where $C$ is primary/companion contrast.
-The conversion is:
+The Cartesian model uses $(\Delta\mathrm{RA},\Delta\mathrm{Dec}, f)$, where $f$ is the companion/primary flux ratio.
+The angular model uses $(\rho,\mathrm{PA}, f)$ with the same flux ratio. The conversion is:
 
 $$
 \rho = \sqrt{\Delta\mathrm{RA}^2 + \Delta\mathrm{Dec}^2}, \quad
-\mathrm{PA} = \mathrm{atan2}(-\Delta\mathrm{RA}, \Delta\mathrm{Dec}), \quad
-C = 1/f
+\mathrm{PA} = \mathrm{atan2}(\Delta\mathrm{RA}, \Delta\mathrm{Dec})
 $$
+
+Results are usually reported as a contrast $C = 1/f$ (primary/companion) or $\Delta m = 2.5 \log_{10} C$: a companion 100 times fainter has $f = 0.01$, $C = 100$ and $\Delta m = 5$ mag. `drpangloss.limits.flux_to_contrast` and `flux_to_delta_mag` do the conversion.
 
 ```python
 dra = float(truth_cart["dra"])
@@ -164,16 +161,17 @@ flux = float(truth_cart["flux"])
 
 sep = float(np.sqrt(dra**2 + ddec**2))
 pa = float((np.degrees(np.arctan2(dra, ddec)) + 360.0) % 360.0)
-contrast = float(1.0 / flux)
-
-model_ang = BinaryModelAngular(sep=sep, pa=pa, contrast=contrast)
+model_ang = BinaryModelAngular(sep=sep, pa=pa, flux=flux)
 cvis_ang = model_ang.model(u, v, wavel)
 max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 
 {
     "sep_mas": sep,
     "pa_deg": pa,
-    "contrast": contrast,
+    "flux": flux,
+    # Reported the astronomical way: primary/companion, and in magnitudes.
+    "contrast": float(flux_to_contrast(flux)),
+    "delta_mag": float(flux_to_delta_mag(flux)),
     "max_complex_visibility_difference": max_complex_diff,
 }
 ```
@@ -181,8 +179,10 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
 ```text
 {'sep_mas': 144.22205101855957,
  'pa_deg': 123.69006752597977,
+ 'flux': 0.004,
  'contrast': 250.0,
- 'max_complex_visibility_difference': 6.00885670110074e-08}
+ 'delta_mag': 5.994850021680094,
+ 'max_complex_visibility_difference': 3.7834979593753815e-09}
 ```
 
 ```python
@@ -226,8 +226,8 @@ params_cart = ["dra", "ddec", "flux"]
 vals_cart = [dra, ddec, flux]
 ll_cart = float(loglike(vals_cart, params_cart, data, BinaryModelCartesian))
 
-params_ang = ["sep", "pa", "contrast"]
-vals_ang = [sep, pa, contrast]
+params_ang = ["sep", "pa", "flux"]
+vals_ang = [sep, pa, flux]
 ll_ang = float(loglike(vals_ang, params_ang, data, BinaryModelAngular))
 
 ll_cart_perturbed = float(
@@ -249,7 +249,7 @@ ll_cart_perturbed = float(
 
 ```text
 {'ll_cart_true': 259.32489013671875,
- 'll_ang_equivalent': 259.3251037597656,
+ 'll_ang_equivalent': 259.32489013671875,
  'll_cart_perturbed': -580.7030029296875,
  'true_beats_perturbed': True}
 ```

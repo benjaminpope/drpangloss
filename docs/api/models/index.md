@@ -1,6 +1,7 @@
 # `drpangloss.models`
 
-Module-level API for visibility source models and fitting helpers.
+Source models and their analytic visibilities. Every flux is relative: for a
+companion it is the companion/primary flux ratio.
 
 ## Classes
 

@@ -112,5 +112,6 @@ complement its priors. Once spectra exist, rewrite the tutorial in two steps:
 - Bandwidth smearing across a wide filter is a scene-level operation (an
   integral over λ within a channel), not a component property; it should be
   a wrapper around a scene rather than part of the spectrum objects.
-- Grid tools use a single `flux_param` path; for a chromatic companion this
-  would be `"comp.flux.ratio"`, which works unchanged.
+- Grid tools use a single flux path; for a chromatic companion this would be
+  `"comp.flux.ratio"`. Its last part is not `flux`, so it would be passed as
+  `flux_param=`, unless the automatic rule learns about spectrum objects.

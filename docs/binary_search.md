@@ -22,15 +22,15 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
-from drpangloss.models import BinaryModelCartesian, loglike
-from drpangloss.oidata import OIData
 from drpangloss.grid_fit import likelihood_grid
 from drpangloss.inference import fisher_matrix, fisher_projection
+from drpangloss.likelihood import loglike, posterior_predictive_summary
+from drpangloss.models import BinaryModelCartesian
+from drpangloss.oidata import OIData
 from drpangloss.plotting import (
     set_style,
-    posterior_predictive_summary,
     plot_data_model_correlation,
-    plot_likelihood_grid,
+    plot_grid_map,
     plot_chainconsumer_diagnostics,
     diagnostics_table_from_samples,
     truth_cartesian_and_polar,
@@ -89,7 +89,7 @@ data = OIData(
 
 Because Jax is so fast and parallelizes so well, we can run very efficient grid searches compared to previous implementations. This is often the first place you will want to start in searching for a companion.
 
-First we have to define our grid dictionary `samples` in our chosen coordinates - we will use Cartesian $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ but you can just as well use polar coordinates in separation, position angle, and contrast if you use `BinaryModelAngular` instead.
+First we have to define our grid dictionary `samples` in our chosen coordinates - we will use Cartesian $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ but you can just as well use polar coordinates in separation, position angle, and flux if you use `BinaryModelAngular` instead.
 
 ```python
 samples = {
@@ -121,15 +121,14 @@ Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
 
 ```python
-ll_2d = ll_cube.max(
-    axis=2
-)  # find max log-likelihood over flux for each (dra, ddec) pair
-plot_likelihood_grid(
-    ll_2d,
+# The full grid is reduced to the maximum log likelihood over flux at each
+# (dra, ddec).
+plot_grid_map(
+    ll_cube,
     samples,
-    truths=truth,
-    best_point=grid_est,
-    colorbar_label="Max log-likelihood over flux",
+    truth=truth,
+    best=grid_est,
+    label="Max log-likelihood over flux",
 );
 ```
 
@@ -353,20 +352,16 @@ It is a general rule that you *always* want to check the posterior predictions v
 
 ```python
 # Posterior predictive correlation: data vs model (HMC and Fisher-HMC)
-hmc_pred = posterior_predictive_summary(
-    onp.asarray(posterior["dra"]),
-    onp.asarray(posterior["ddec"]),
-    onp.asarray(10.0 ** posterior["log10_flux"]),
-    data,
-    BinaryModelCartesian,
-)
+hmc_samples = {
+    "dra": posterior["dra"],
+    "ddec": posterior["ddec"],
+    "flux": 10.0 ** posterior["log10_flux"],
+}
+hmc_pred = posterior_predictive_summary(hmc_samples, BinaryModelCartesian, data)
 
+fisher_samples = {key: post_f[key] for key in ("dra", "ddec", "flux")}
 fisher_pred = posterior_predictive_summary(
-    onp.asarray(post_f["dra"]),
-    onp.asarray(post_f["ddec"]),
-    onp.asarray(post_f["flux"]),
-    data,
-    BinaryModelCartesian,
+    fisher_samples, BinaryModelCartesian, data
 )
 
 plot_data_model_correlation(

@@ -62,8 +62,7 @@ force-exclude = true
 extend-exclude = [
   "site",
   "docs/generated",
-  "notebooks/ami_exploration.ipynb",
-  "notebooks/louis_visibilities.ipynb",
+  "notebooks/archive",
 ]
 
 [tool.ruff.lint]
@@ -73,8 +72,6 @@ ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 [tool.ruff.lint.per-file-ignores]
 "src/drpangloss/__init__.py" = ["F401"]
 "notebooks/contrast_limits.ipynb" = ["E702"]
-"notebooks/oidata_sandbox.ipynb" = ["F841"]
-"notebooks/upper_limits_new.ipynb" = ["F403", "F405"]
 
 [tool.ruff.format]
 quote-style = "double"

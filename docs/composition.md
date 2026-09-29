@@ -27,10 +27,12 @@ if str(repo_root / "src") not in sys.path:
 
 from drpangloss.grid_fit import (
     best_grid_point,
-    laplace_contrast_uncertainty_grid,
+    laplace_flux_uncertainty_grid,
     likelihood_grid,
-    optimized_contrast_grid,
+    optimized_flux_grid,
 )
+from drpangloss.inference import laplace_cov
+from drpangloss.likelihood import numpyro_model
 from drpangloss.models import (
     BinaryModelCartesian,
     GaussianDisk,
@@ -38,11 +40,9 @@ from drpangloss.models import (
     PointSource,
     System,
     UniformDisk,
-    laplace_cov,
-    numpyro_model,
 )
 from drpangloss.oidata import OIData, cp_indices
-from drpangloss.plotting import plot_likelihood_grid, plot_model, set_style
+from drpangloss.plotting import plot_grid_map, plot_model, set_style
 
 set_style()  # the figure style used throughout the docs
 ```
@@ -247,12 +247,11 @@ best = best_grid_point(loglike_grid, grid)
 print("best grid point:", {path: round(value, 4) for path, value in best.items()})
 
 truth_position = {"comp.dra": 45.0, "comp.ddec": 30.0}
-plot_likelihood_grid(
-    loglike_grid.max(axis=2),
+plot_grid_map(
+    loglike_grid,
     grid,
-    truths=truth_position,
-    flux_param="comp.flux",
-    colorbar_label="log likelihood, maximized over companion flux",
+    truth=truth_position,
+    label="log likelihood, maximized over companion flux",
 )
 plt.show()
 ```
@@ -267,26 +266,23 @@ The brightest peak sits on the true position. The fainter peaks are aliases: wit
 
 ## How significant is it?
 
-A likelihood peak is not yet a detection. `optimized_contrast_grid` finds the best-fitting companion flux at every position, and `laplace_contrast_uncertainty_grid` estimates the uncertainty on that flux. Their ratio is a map of detection significance.
+A likelihood peak is not yet a detection. `optimized_flux_grid` finds the best-fitting companion flux at every position, and `laplace_flux_uncertainty_grid` estimates the uncertainty on that flux. Their ratio is a map of detection significance.
 
-Both functions need to know which parameter is the brightness to optimize and which are the coordinates of the map; `flux_param` tells them.
+Both functions need to know which parameter is the flux to optimize and which are the coordinates of the map. They use the one key ending in `flux` (here `comp.flux`); if a grid has several, say which with `flux_param=`.
 
 ```python
-best_flux = optimized_contrast_grid(data, search, grid, flux_param="comp.flux")
-best_flux_indices = jnp.argmax(loglike_grid, axis=2)
-flux_sigma = laplace_contrast_uncertainty_grid(
-    best_flux_indices, data, search, grid, flux_param="comp.flux"
-)
+best_flux = optimized_flux_grid(data, search, grid)
+flux_sigma = laplace_flux_uncertainty_grid(data, search, grid, flux=best_flux)
 significance = best_flux / flux_sigma
 
-fig, ax = plot_likelihood_grid(
+fig, ax = plot_grid_map(
     significance,
     grid,
-    truths=truth_position,
-    flux_param="comp.flux",
-    colorbar_label="companion flux / Laplace σ",
+    kind="snr",
+    truth=truth_position,
+    label="companion flux / Laplace σ",
+    title="Detection significance",
 )
-ax.set_title("Detection significance")
 plt.show()
 ```
 
@@ -428,6 +424,6 @@ Positions don't need a function at all, because nesting already ties them. Parts
 
 * **Keep one flux fixed.** Only flux ratios are measurable, so leave the reference part (usually the star) at `flux=1`. If every flux is free, the overall scale is unconstrained and samplers will wander.
 * **Names become parameter names.** Component names must be valid Python identifiers, and can't clash with `System` attributes such as `flux`, `model` or `set`.
-* **Fluxes are positive.** Models refuse negative fluxes, `numpyro_model` refuses flux priors that allow them, and the grid tools refuse negative flux axes. Only the unconstrained optimizer inside `optimized_contrast_grid` may report a negative best fit, for the reason given above.
-* **Say which parameter is the brightness.** Pass `flux_param=` to `optimized_contrast_grid`, `laplace_contrast_uncertainty_grid`, `optimized_likelihood_grid` and `absil_limits`. If you leave it out, a key named `flux` or a single key ending in `.flux` is used; if the choice would depend on the order of the keys, you get a deprecation warning.
+* **Fluxes are positive.** Models refuse negative fluxes, `numpyro_model` refuses flux priors that allow them, and the grid tools refuse negative flux axes. Only the unconstrained optimizer inside `optimized_flux_grid` may report a negative best fit, for the reason given above.
+* **Say which parameter is the flux, if it's ambiguous.** `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `optimized_likelihood_grid` and `absil_limits` use the one grid key ending in `flux` (such as `comp.flux`). If there is none, or more than one, pass `flux_param=`; otherwise you get an error rather than a guess.
 * **Images are for looking, not fitting.** `render` and `plot_model` are there to check what a model looks like. Fits always use the exact analytic visibilities.

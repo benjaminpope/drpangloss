@@ -1,5 +1,3 @@
-import warnings
-
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -8,13 +6,15 @@ import pytest
 from numpyro.infer.util import log_density
 
 from drpangloss.grid_fit import (
-    absil_limits,
     best_grid_point,
-    laplace_contrast_uncertainty_grid,
+    laplace_flux_uncertainty_grid,
     likelihood_grid,
-    optimized_contrast_grid,
+    optimized_flux_grid,
     optimized_likelihood_grid,
 )
+from drpangloss.inference import laplace_cov
+from drpangloss.likelihood import build_model, loglike, numpyro_model
+from drpangloss.limits import absil_limits, nsigma
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -24,11 +24,6 @@ from drpangloss.models import (
     PointSource,
     System,
     UniformDisk,
-    build_model,
-    laplace_cov,
-    loglike,
-    nsigma,
-    numpyro_model,
 )
 from tests._test_data import oidata, samples_dict
 
@@ -125,16 +120,22 @@ def test_negative_flux_grid_axis_is_rejected():
 
 
 def test_negative_explicit_flux_param_axis_is_rejected():
-    # The selected brightness axis is checked even when it is not named
-    # "flux" or "*.flux".
+    # The selected flux axis is checked even when its name does not end in
+    # "flux".
     grid = {
         "sep": np.array([150.0]),
         "pa": np.array([30.0]),
-        "contrast": np.array([-1e-3, 1e-3]),
+        "companion_brightness": np.array([-1e-3, 1e-3]),
     }
     with pytest.raises(ValueError, match="negative values"):
         absil_limits(
-            grid, oidata, BinaryModelAngular, 3.0, flux_param="contrast"
+            oidata,
+            lambda sep, pa, companion_brightness: BinaryModelAngular(
+                sep, pa, companion_brightness
+            ),
+            grid,
+            3.0,
+            flux_param="companion_brightness",
         )
 
 
@@ -155,8 +156,8 @@ def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
     ndof = oidata.flatten_data()[0].size
     sigma = float(nsigma(1.0, 1.0, ndof)) + 1e-3
     assert np.allclose(
-        absil_limits(with_zero, oidata, template, sigma, **kwargs),
-        absil_limits(positive, oidata, template, sigma, **kwargs),
+        absil_limits(oidata, template, with_zero, sigma, **kwargs),
+        absil_limits(oidata, template, positive, sigma, **kwargs),
     )
 
 
@@ -164,7 +165,7 @@ def test_absil_limits_rejects_flux_axis_without_positive_values():
     grid = {**_path_samples(), "comp.flux": np.array([0.0])}
     with pytest.raises(ValueError, match="positive value"):
         absil_limits(
-            grid, oidata, _composed_binary(), 3.0, flux_param="comp.flux"
+            oidata, _composed_binary(), grid, 3.0, flux_param="comp.flux"
         )
 
 
@@ -296,41 +297,30 @@ def _two_flux_template():
     )
 
 
-def test_ambiguous_flux_inference_warns():
+def test_ambiguous_flux_needs_flux_param():
     small = {key: value[::20] for key, value in _path_samples().items()}
     grid = {"disk.flux": np.array([0.05, 0.1]), **small}
-    with pytest.warns(DeprecationWarning, match="flux_param='comp.flux'"):
-        inferred = optimized_contrast_grid(oidata, _two_flux_template(), grid)
-    explicit = optimized_contrast_grid(
+    with pytest.raises(ValueError, match="Pass flux_param"):
+        optimized_flux_grid(oidata, _two_flux_template(), grid)
+    explicit = optimized_flux_grid(
         oidata, _two_flux_template(), grid, flux_param="comp.flux"
     )
-    assert np.allclose(inferred, explicit)
+    assert explicit.shape == (2,) + tuple(v.size for v in small.values())[:2]
 
 
-def test_unambiguous_flux_inference_is_silent_and_matches_explicit():
+def test_flux_inference_matches_explicit_and_model_class():
     small = {key: value[::20] for key, value in _path_samples().items()}
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        inferred = optimized_contrast_grid(oidata, _composed_binary(), small)
-        legacy = optimized_contrast_grid(
-            oidata,
-            BinaryModelCartesian,
-            {key.split(".")[1]: value for key, value in small.items()},
-        )
-    explicit = optimized_contrast_grid(
+    inferred = optimized_flux_grid(oidata, _composed_binary(), small)
+    legacy_samples = {key.split(".")[1]: value for key, value in small.items()}
+    legacy = optimized_flux_grid(oidata, BinaryModelCartesian, legacy_samples)
+    explicit = optimized_flux_grid(
         oidata, _composed_binary(), small, flux_param="comp.flux"
     )
     assert np.allclose(inferred, explicit)
     # The two models round differently in float32, which moves the optimum
     # by a small fraction of the flux uncertainty.
-    legacy_samples = {key.split(".")[1]: value for key, value in small.items()}
-    sigma = laplace_contrast_uncertainty_grid(
-        None,
-        oidata,
-        BinaryModelCartesian,
-        legacy_samples,
-        flux_param="flux",
-        flux_values=legacy,
+    sigma = laplace_flux_uncertainty_grid(
+        oidata, BinaryModelCartesian, legacy_samples, flux=legacy
     )
     assert onp.all(onp.abs(onp.asarray(legacy - explicit)) < 0.2 * sigma)
 
@@ -370,10 +360,10 @@ def test_flux_param_can_be_any_key_regardless_of_order():
         "comp.ddec": small["comp.ddec"],
     }
     assert np.allclose(
-        optimized_contrast_grid(
+        optimized_flux_grid(
             oidata, _composed_binary(), reordered, flux_param="comp.flux"
         ),
-        optimized_contrast_grid(
+        optimized_flux_grid(
             oidata, _composed_binary(), small, flux_param="comp.flux"
         ),
         rtol=1e-4,
@@ -381,21 +371,10 @@ def test_flux_param_can_be_any_key_regardless_of_order():
 
 
 def test_unknown_flux_param_is_rejected():
-    with pytest.raises(ValueError, match="not a key of samples_dict"):
-        optimized_contrast_grid(
+    with pytest.raises(ValueError, match="is not one of the keys"):
+        optimized_flux_grid(
             oidata, _composed_binary(), _path_samples(), flux_param="flux"
         )
-
-
-def test_model_class_keyword_is_a_deprecated_alias():
-    small = {key: value[::20] for key, value in samples_dict.items()}
-    with pytest.warns(DeprecationWarning, match="renamed 'model'"):
-        legacy = likelihood_grid(
-            oidata, model_class=BinaryModelCartesian, samples_dict=small
-        )
-    assert np.allclose(
-        legacy, likelihood_grid(oidata, BinaryModelCartesian, small)
-    )
 
 
 def test_best_grid_point_returns_named_values():
@@ -441,10 +420,10 @@ def test_absil_limits_with_paths_matches_model_class():
     paths = {f"comp.{key}": value for key, value in small.items()}
     assert np.allclose(
         absil_limits(
-            paths, oidata, _composed_binary(), 3.0, flux_param="comp.flux"
+            oidata, _composed_binary(), paths, 3.0, flux_param="comp.flux"
         ),
         absil_limits(
-            small, oidata, BinaryModelCartesian, 3.0, flux_param="flux"
+            oidata, BinaryModelCartesian, small, 3.0, flux_param="flux"
         ),
         # Limits near the flux_bounds ceiling of 1 are barely constrained,
         # so float32 rounding differences move them by up to a few percent.
@@ -481,7 +460,7 @@ def test_numpyro_model_log_density_is_prior_plus_loglike():
 
 
 def test_binary_angular_is_unchanged_by_composition_machinery():
-    angular = BinaryModelAngular(sep=144.2, pa=123.7, contrast=250.0)
+    angular = BinaryModelAngular(sep=144.2, pa=123.7, flux=1.0 / 250.0)
     assert np.allclose(
         angular.model(U, V, WAVEL),
         angular.to_cartesian().model(U, V, WAVEL),

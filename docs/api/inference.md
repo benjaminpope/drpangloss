@@ -1,10 +1,11 @@
 # `drpangloss.inference`
 
-## Functions
-
 ::: drpangloss.inference
     options:
       members:
+        - laplace_cov
+        - laplace_parameter_uncertainty
+        - fisher
         - hessian_matrix
         - regularized_inverse
         - laplace_covariance

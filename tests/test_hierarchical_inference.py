@@ -6,7 +6,11 @@ import jax
 import jax.numpy as np
 
 from drpangloss.inference import gaussian_fisher
-from drpangloss.models import joint_loglike, joint_prediction, model_loglike
+from drpangloss.likelihood import (
+    joint_loglike,
+    joint_prediction,
+    model_loglike,
+)
 
 
 MODULE_PATH = (

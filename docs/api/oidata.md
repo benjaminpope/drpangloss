@@ -16,7 +16,7 @@ Flagged samples are left out of the observables (see `vis_index` and
 which every likelihood in drpangloss uses.
 
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
-AMIGO DISCO tutorial for a schema-compatible loading example.
+AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
 
 ## Classes
 
@@ -27,12 +27,8 @@ AMIGO DISCO tutorial for a schema-compatible loading example.
       show_attributes: false
       members:
         - __init__
-        - standardize_data
-        - standardize_errors
-        - standardize_model
         - flatten_data
-        - unpack_all
-        - flatten_model
+        - standardize_model
         - to_vis
         - to_phases
         - model
@@ -45,6 +41,5 @@ AMIGO DISCO tutorial for a schema-compatible loading example.
     options:
       show_root_heading: false
       members:
-        - load_oi_data
         - closure_phases
         - cp_indices

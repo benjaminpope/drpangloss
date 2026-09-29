@@ -8,7 +8,7 @@ This is the maintained OIFITS path of drpangloss.
   it). It handles several wavelength channels, several OIFITS tables, several
   epochs, and ``FLAG`` columns.
 * [`write_oifits`][drpangloss.oifits.write_oifits] writes a dictionary of OIFITS tables (the layout used
-  by the legacy [`drpangloss.oifits_implaneia`][drpangloss.oifits_implaneia] writer) to an OIFITS2 file.
+  by the legacy [`drpangloss.legacy.oifits_implaneia`][drpangloss.legacy.oifits_implaneia] writer) to an OIFITS2 file.
 
 Each (baseline, wavelength) sample becomes one element of the flat ``u``,
 ``v`` and ``wavel`` arrays of the record. Samples are ordered by table, then
@@ -24,7 +24,7 @@ import numpy as onp
 from astropy.io import fits
 
 
-__all__ = ["read_oifits", "write_oifits"]
+__all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
 
 # Rows whose MJDs differ by less than this (in days, about 9 seconds) are
@@ -501,7 +501,7 @@ def write_oifits(tables, filename, overwrite=True):
     ----------
     tables : dict
         Mapping of table name to a dict of columns, in the layout used by
-        [`drpangloss.oifits_implaneia.save`][drpangloss.oifits_implaneia.save]:
+        [`drpangloss.legacy.oifits_implaneia.save`][drpangloss.legacy.oifits_implaneia.save]:
 
         * ``"OI_WAVELENGTH"`` (required): ``EFF_WAVE`` and ``EFF_BAND`` in
           metres, one value per channel.
@@ -535,6 +535,17 @@ def write_oifits(tables, filename, overwrite=True):
     """
     import pathlib
 
+    path = pathlib.Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    build_hdulist(tables).writeto(path, overwrite=overwrite)
+    return path
+
+
+def build_hdulist(tables):
+    """Build the OIFITS2 ``HDUList`` that :func:`write_oifits` writes.
+
+    Useful for adding non-standard columns or keywords before writing.
+    """
     info = dict(tables.get("info", {}))
     if "OI_WAVELENGTH" not in tables:
         raise KeyError("tables must contain an 'OI_WAVELENGTH' table.")
@@ -583,10 +594,7 @@ def write_oifits(tables, filename, overwrite=True):
             hdu.header["PHITYP"] = "absolute"
         hdus.append(hdu)
 
-    path = pathlib.Path(filename)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fits.HDUList(hdus).writeto(path, overwrite=overwrite)
-    return path
+    return fits.HDUList(hdus)
 
 
 def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):
@@ -657,9 +665,22 @@ def _target_hdu(target, info):
 
 def _array_hdu(array, info, arrname, tables, data_tables):
     if array is not None:
-        sta_index = onp.atleast_1d(onp.asarray(array["STA_INDEX"], int))
-        staxyz = onp.asarray(array["STAXYZ"], dtype=float).reshape(-1, 3)
-        n = sta_index.size
+        # Station positions are required; the other columns default, so an
+        # array given by positions alone (e.g. from the legacy loader) works.
+        if "STAXYZ" in array:
+            staxyz = onp.asarray(array["STAXYZ"], dtype=float).reshape(-1, 3)
+        else:
+            staxy = onp.asarray(array["STAXY"], dtype=float).reshape(-1, 2)
+            staxyz = onp.column_stack([staxy, onp.zeros(staxy.shape[0])])
+        n = staxyz.shape[0]
+        sta_index = onp.atleast_1d(
+            onp.asarray(array.get("STA_INDEX", onp.arange(1, n + 1)), int)
+        )
+        if sta_index.size != n:
+            raise ValueError(
+                f"OI_ARRAY has {sta_index.size} STA_INDEX values for {n} "
+                "stations."
+            )
         tel_name = array.get("TEL_NAME", [f"T{i}" for i in sta_index])
         sta_name = array.get("STA_NAME", tel_name)
         diameter = array.get("DIAMETER", 0.0)

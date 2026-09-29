@@ -12,18 +12,8 @@ import jax
 import jax.numpy as np
 from jax.flatten_util import ravel_pytree
 
-
-def _concrete(value):
-    """``value`` as a NumPy array, or ``None`` inside a traced computation."""
-    import numpy as onp
-
-    try:
-        return onp.asarray(value)
-    except (
-        jax.errors.TracerArrayConversionError,
-        jax.errors.ConcretizationTypeError,
-    ):
-        return None
+from ._utils import concrete as _concrete
+from .likelihood import loglike
 
 
 def _warn_if_not_positive_definite(matrix, what):
@@ -187,3 +177,112 @@ def fisher_projection(fmat, eps=1e-12):
         )
     safe = np.maximum(evals, floor)
     return evecs * (1.0 / np.sqrt(safe))[None, :]
+
+
+# === MODEL-LEVEL WRAPPERS ===
+
+
+def laplace_cov(values, params, data_obj, model):
+    """
+    Compute the full Laplace covariance matrix for all model parameters jointly.
+
+    Computes the inverse of the Hessian of the negative log-likelihood with
+    respect to all parameters in ``params`` simultaneously, returning an
+    ``N x N`` covariance matrix (where ``N = len(params)``).
+
+    This returns the *full* covariance matrix over all ``N`` parameters. For
+    the uncertainty of one parameter with the others held fixed (e.g. the
+    flux at a fixed position), use :func:`laplace_parameter_uncertainty`.
+
+    Parameters
+    ----------
+    values : array-like
+        Values of the model parameters.
+    params : list
+        List of parameter names.
+    data_obj : OIData
+        Object containing the data to be fitted.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+
+    Returns
+    -------
+    array-like
+        ``N x N`` covariance matrix, where ``N = len(params)``.
+    """
+
+    objective = lambda vals: -loglike(vals, params, data_obj, model)
+    return laplace_covariance(objective, np.asarray(values, dtype=float))
+
+
+def laplace_parameter_uncertainty(
+    values, params, data_obj, model, target_param
+):
+    """Compute scalar Laplace uncertainty for one parameter with all others fixed.
+
+    Parameters
+    ----------
+    values : array-like
+        Parameter values at which to evaluate the curvature.
+    params : list[str]
+        Parameter names corresponding to ``values``.
+    data_obj : OIData
+        Data to fit.
+    model : SourceModel or callable
+        Template model or class, as for [`loglike`][drpangloss.likelihood.loglike].
+    target_param : str
+        The parameter whose uncertainty is returned.
+
+    Returns
+    -------
+    float
+        ``(d² -log L / d target²)^(-1/2)``. It is NaN where the curvature is
+        not positive, i.e. away from a likelihood maximum along
+        ``target_param``.
+    """
+    params = list(params)
+    if target_param not in params:
+        raise ValueError(
+            f"target_param '{target_param}' is not present in params={params}."
+        )
+    idx = params.index(target_param)
+    values = np.asarray(values, dtype=float)
+
+    objective = lambda x: -loglike(
+        values.at[idx].set(x), params, data_obj, model
+    )
+    d2_axis = jax.grad(jax.grad(objective))(values[idx])
+    return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
+
+
+def fisher(values, params, data_obj, model, ridge=0.0):
+    """Observed information (Hessian of ``-log L``) at a parameter point.
+
+    At the maximum-likelihood point this approximates the Fisher matrix.
+
+    Parameters
+    ----------
+    values : array-like
+        Parameter vector at which to evaluate the local curvature.
+    params : list[str]
+        Parameter names corresponding to ``values``.
+    data_obj : OIData
+        Observational data object.
+    model : SourceModel or callable
+        Template model whose parameters at the dot-separated paths ``params``
+        are replaced by ``values``, or a class/callable called as
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+    ridge : float, optional
+        Diagonal regularization term.
+
+    Returns
+    -------
+    array-like
+        Observed information matrix, ``N x N`` for ``N = len(params)``.
+    """
+    objective = lambda vals: -loglike(vals, params, data_obj, model)
+    return fisher_matrix(
+        objective, np.asarray(values, dtype=float), ridge=ridge
+    )

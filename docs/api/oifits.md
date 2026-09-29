@@ -23,3 +23,4 @@ Closure-phase triangles `(a, b, c)` must find their baselines stored as
       members:
         - read_oifits
         - write_oifits
+        - build_hdulist

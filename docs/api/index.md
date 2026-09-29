@@ -1,12 +1,16 @@
 # API Reference
 
-This reference is organized by module origin and split into class and function sections.
+The everyday names are importable from the top level, e.g.
+`from drpangloss import OIData, System, PointSource, likelihood_grid`.
 
-- [OIData](oidata.md)
-- [Models](models/index.md)
-- [Grid Fit](grid_fit.md)
-- [Inference](inference.md)
-- [Plotting](plotting.md)
-- [OIFITS](oifits.md)
-- [SaveFITS (legacy)](savefits.md)
-- [OIFITS ImplaneIA (legacy)](oifits_implaneia.md)
+- [OIData](oidata.md): observables and their conventions
+- [OIFITS](oifits.md): reading and writing OIFITS files
+- [AMIGO](amigo.md): AMIGO mixed-DISCO products
+- [Models](models/index.md): source models and visibilities
+- [Likelihood](likelihood.md): likelihoods and numpyro models
+- [Inference](inference.md): Laplace and Fisher curvature
+- [Grid Fit](grid_fit.md): grid searches
+- [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions
+- [Plotting](plotting.md): figures
+- [Bessel](bessel.md): Bessel functions in JAX
+- [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

@@ -1,23 +1,14 @@
 # `drpangloss.models` Functions
 
+Analytic complex visibilities, in spatial-frequency units (baselines divided
+by wavelength). Likelihoods are in [`drpangloss.likelihood`](../likelihood.md).
+
 ::: drpangloss.models
     options:
       show_root_heading: false
       members:
-        - cvis_binary_angular
         - cvis_binary
+        - cvis_binary_angular
         - cvis_gaussian_disk
         - cvis_uniform_disk
         - cvis_radial_dirac_delta_modulated
-        - model_loglike
-        - joint_prediction
-        - joint_data
-        - joint_errors
-        - joint_loglike
-        - loglike
-        - loglike_nosignal
-        - laplace_cov
-        - laplace_contrast_uncertainty
-        - fisher
-        - chi2ppf
-        - nsigma

@@ -5,19 +5,20 @@ import numpy as onp
 import pytest
 
 import drpangloss.models as models
-from drpangloss.models import (
-    BinaryModelAngular,
-    BinaryModelCartesian,
-    cvis_binary,
-    fisher,
+from drpangloss.inference import fisher, laplace_cov
+from drpangloss.likelihood import (
     joint_data,
     joint_errors,
     joint_loglike,
     joint_prediction,
-    laplace_cov,
     loglike,
     loglike_nosignal,
     model_loglike,
+)
+from drpangloss.models import (
+    BinaryModelAngular,
+    BinaryModelCartesian,
+    cvis_binary,
 )
 from drpangloss.oidata import OIData, closure_phases
 
@@ -27,9 +28,9 @@ from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
 dra, ddec, flux = 0.2, 0.1, 10
 
 
-def test_oidata_compatibility_reexports():
-    assert models.OIData is OIData
-    assert models.closure_phases is closure_phases
+def test_models_no_longer_reexport_data_helpers():
+    assert not hasattr(models, "OIData")
+    assert not hasattr(models, "closure_phases")
 
 
 def test_cvis_binary():
@@ -67,7 +68,7 @@ def test_closure_phases():
 
 
 def test_likelihood():
-    binary = BinaryModelAngular(50, 45, 10)
+    binary = BinaryModelAngular(50, 45, 0.1)
     model_data = oidata.model(binary)
     data, errors = oidata.flatten_data()
 
@@ -90,7 +91,7 @@ def test_BinaryModelCartesian():
 
 
 def test_BinaryModelAngular_to_cartesian_preserves_model():
-    angular = BinaryModelAngular(50.0, 45.0, 10.0)
+    angular = BinaryModelAngular(50.0, 45.0, 0.1)
     cartesian = angular.to_cartesian()
 
     assert isinstance(cartesian, BinaryModelCartesian)
@@ -123,7 +124,7 @@ def test_BinaryModelCartesian_to_angular_roundtrip():
 def test_binary_model_angular_render_follows_north_to_east_pa_convention(
     pa, expected_index
 ):
-    image = BinaryModelAngular(sep=4.0, pa=pa, contrast=1e-6).render(
+    image = BinaryModelAngular(sep=4.0, pa=pa, flux=1e6).render(
         npix=5, fov_mas=10.0
     )
     assert (
@@ -141,9 +142,9 @@ def test_binary_model_angular_matches_cartesian_at_east_position_angle():
     round-trip through to_cartesian()/to_angular() alone would stay
     internally consistent even if both used the same wrong sign.
     """
-    sep, contrast = 40.0, 5.0
-    angular = BinaryModelAngular(sep=sep, pa=90.0, contrast=contrast)
-    cartesian = BinaryModelCartesian(dra=sep, ddec=0.0, flux=1.0 / contrast)
+    sep, flux = 40.0, 0.2
+    angular = BinaryModelAngular(sep=sep, pa=90.0, flux=flux)
+    cartesian = BinaryModelCartesian(dra=sep, ddec=0.0, flux=flux)
 
     assert np.allclose(
         angular.model(oidata.u, oidata.v, oidata.wavel),
@@ -268,8 +269,7 @@ def test_oidata_linear_observables_transform_and_model_alignment():
     assert disco_data.vis.shape == (m_vis,)
     assert disco_data.phi.shape == (m_phi,)
     assert disco_data.observable_kind == "split"
-    assert np.allclose(flattened_data, disco_data.standardize_data())
-    assert np.allclose(errors, disco_data.standardize_errors())
+    assert flattened_data.shape == (m_vis + m_phi,)
     assert np.allclose(model_vector, disco_data.standardize_model(cvis_model))
     assert flattened_data.shape == model_vector.shape
     assert errors.shape == flattened_data.shape

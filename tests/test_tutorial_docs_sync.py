@@ -49,7 +49,7 @@ def test_warning_locations_are_removed_from_published_output():
     raw = (
         "/var/folders/ab/T/ipykernel_86886/1114166516.py:8: RuntimeWarning: "
         "optimizer did not converge\n"
-        "  opt_flux = optimized_contrast_grid(\n"
+        "  opt_flux = optimized_flux_grid(\n"
         "result: 3\n"
     )
     assert module._sanitize_text(raw) == (

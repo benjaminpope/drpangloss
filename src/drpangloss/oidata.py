@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import jax
 import jax.numpy as np
 
@@ -8,22 +6,11 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
 
 
-__all__ = ["OIData", "closure_phases", "cp_indices", "load_oi_data"]
-
-
-_MIXED_DISCO_REQUIRED_FIELDS = (
-    "u",
-    "v",
-    "wavelength_m",
-    "disco_coefficients",
-    "disco_sigma",
-    "disco_covariance",
-    "disco_logamp_model_operator",
-    "disco_phase_model_operator",
-)
+__all__ = ["OIData", "closure_phases", "cp_indices"]
 
 
 class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -116,7 +103,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
               diagonal. Only diagonal uncertainties are propagated.
 
             A record with ``disco_coefficients`` is read as an AMIGO
-            mixed-DISCO product (see [`load_oi_data`][drpangloss.oidata.load_oi_data]); its ``u`` and
+            mixed-DISCO product (see [`load_oi_data`][drpangloss.amigo.load_oi_data]); its ``u`` and
             ``v`` are negated to match the drpangloss sign convention.
         target : str or int, optional
             For OIFITS input, the target to keep.
@@ -126,8 +113,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         elif target is not None:
             raise ValueError("target only applies to OIFITS input.")
 
-        if self._is_mixed_disco_record(data):
-            self._init_mixed_disco(data)
+        if is_mixed_disco_record(data):
+            for name, value in mixed_disco_fields(data).items():
+                setattr(self, name, value)
             return
 
         u = onp.asarray(data["u"], dtype=float)
@@ -243,110 +231,6 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
         )
-
-    @staticmethod
-    def _is_mixed_disco_record(data):
-        return "disco_coefficients" in data
-
-    def _init_mixed_disco(self, data):
-        self._validate_mixed_disco_record(data)
-
-        self.u = -np.asarray(data["u"], dtype=float)
-        self.v = -np.asarray(data["v"], dtype=float)
-        self.wavel = np.asarray(data["wavelength_m"], dtype=float)
-
-        self.vis = np.asarray(data["disco_coefficients"], dtype=float)
-        self.d_vis = np.asarray(data["disco_sigma"], dtype=float)
-        self.phi = np.empty((0,), dtype=float)
-        self.d_phi = np.empty((0,), dtype=float)
-
-        self.i_cps1 = None
-        self.i_cps2 = None
-        self.i_cps3 = None
-        self.vis_mat = np.asarray(
-            data["disco_logamp_model_operator"], dtype=float
-        )
-        self.phi_mat = np.asarray(
-            data["disco_phase_model_operator"], dtype=float
-        )
-        self.vis_index = None
-        self.phi_index = None
-        self.observable_kind = "mixed_log_complex"
-        self.vis_mode = "logamp"
-        self.v2_flag = False
-        self.cp_flag = False
-
-    @staticmethod
-    def _validate_mixed_disco_record(data):
-        missing = [
-            name for name in _MIXED_DISCO_REQUIRED_FIELDS if name not in data
-        ]
-        if missing:
-            raise KeyError(
-                f"AMIGO mixed-DISCO record is missing fields: {missing}"
-            )
-
-        u = onp.asarray(data["u"], dtype=float)
-        v = onp.asarray(data["v"], dtype=float)
-        coefficients = onp.asarray(data["disco_coefficients"], dtype=float)
-        sigma = onp.asarray(data["disco_sigma"], dtype=float)
-        covariance = onp.asarray(data["disco_covariance"], dtype=float)
-        logamp = onp.asarray(data["disco_logamp_model_operator"], dtype=float)
-        phase = onp.asarray(data["disco_phase_model_operator"], dtype=float)
-
-        if u.ndim != 1 or v.shape != u.shape:
-            raise ValueError("AMIGO DISCO u and v must be matching vectors.")
-        if coefficients.ndim != 1 or coefficients.size == 0:
-            raise ValueError(
-                "AMIGO DISCO coefficients must be a non-empty vector."
-            )
-        if sigma.shape != coefficients.shape:
-            raise ValueError(
-                "AMIGO DISCO coefficients and sigma must have matching shapes."
-            )
-        if covariance.shape != (sigma.size, sigma.size):
-            raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
-        expected_operator_shape = (sigma.size, u.size)
-        if (
-            logamp.shape != expected_operator_shape
-            or phase.shape != expected_operator_shape
-        ):
-            raise ValueError(
-                "AMIGO DISCO model operators have inconsistent shapes."
-            )
-        if not all(
-            onp.all(onp.isfinite(value))
-            for value in (u, v, coefficients, sigma, covariance, logamp, phase)
-        ):
-            raise ValueError("AMIGO DISCO arrays must be finite.")
-        if onp.any(sigma <= 0.0):
-            raise ValueError("AMIGO DISCO sigma values must be positive.")
-
-        tolerance = 1e-12 * max(float(onp.max(sigma)), 1.0)
-        if onp.any(onp.diff(sigma) < -tolerance):
-            raise ValueError(
-                "AMIGO DISCO modes must be ordered by increasing uncertainty."
-            )
-
-        covariance_scale = max(
-            float(onp.max(onp.abs(onp.diag(covariance)))),
-            onp.finfo(float).tiny,
-        )
-        off_diagonal = covariance - onp.diag(onp.diag(covariance))
-        relative_off_diagonal = float(
-            onp.max(onp.abs(off_diagonal)) / covariance_scale
-        )
-        if relative_off_diagonal > 1e-10:
-            raise ValueError(
-                "AMIGO DISCO covariance is not diagonal: relative "
-                f"off-diagonal {relative_off_diagonal:.3g}."
-            )
-        if not onp.allclose(
-            onp.diag(covariance), sigma**2, rtol=1e-8, atol=0.0
-        ):
-            raise ValueError(
-                "AMIGO DISCO covariance diagonal does not match sigma squared."
-            )
 
     def _resolve_vis_mode(self, vis_mode):
         """Resolve the visibility channel convention used before linear projection."""
@@ -546,11 +430,16 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Returns
         -------
         tuple[array-like, array-like]
-            ``(standardize_data(), standardize_errors())``: the visibility
-            observables followed by the phases (radians), in the order of
+            The visibility observables followed by the phases (radians),
+            in the order of
             [`model`][drpangloss.oidata.OIData.model], and matching one-sigma uncertainties.
         """
-        return self.standardize_data(), self.standardize_errors()
+        if self.observable_kind == "mixed_log_complex":
+            return self.vis, self.d_vis
+        return (
+            np.concatenate([self.vis, self.phi]),
+            np.concatenate([self.d_vis, self.d_phi]),
+        )
 
     @property
     def _phases_wrap(self):
@@ -566,7 +455,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             Model vector, e.g. from [`model`][drpangloss.oidata.OIData.model].
         reference : array-like, optional
             Vector to compare against; by default the data
-            ([`standardize_data`][drpangloss.oidata.OIData.standardize_data]).
+            (the first vector of :meth:`flatten_data`).
 
         Returns
         -------
@@ -576,7 +465,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             of ``-π + ε`` counts as a small residual rather than ``2π``.
         """
         if reference is None:
-            reference = self.standardize_data()
+            reference = self.flatten_data()[0]
         resid = np.asarray(prediction) - np.asarray(reference)
         if not self._phases_wrap:
             return resid
@@ -584,62 +473,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         phase = np.mod(resid[n_vis:] + np.pi, 2.0 * np.pi) - np.pi
         return np.concatenate([resid[:n_vis], phase])
 
-    def standardize_data(self):
-        """Return observables in the likelihood comparison vector format."""
-        if self.observable_kind == "mixed_log_complex":
-            return self.vis
-        return np.concatenate([self.vis, self.phi])
-
-    def standardize_errors(self):
-        """Return uncertainties matching ``standardize_data``."""
-        if self.observable_kind == "mixed_log_complex":
-            return self.d_vis
-        return np.concatenate([self.d_vis, self.d_phi])
-
-    def unpack_all(self):
-        """
-        Unpack all data for legacy model functions.
-
-        Returns
-        -------
-        tuple
-            ``(u / wavel, v / wavel, phi, d_phi, vis, d_vis, i_cps1, i_cps2,
-            i_cps3)``: spatial frequencies in cycles per radian, then the
-            observables. Flagged samples are not removed from the spatial
-            frequencies; see ``vis_index``.
-        """
-        return (
-            self.u / self.wavel,
-            self.v / self.wavel,
-            self.phi,
-            self.d_phi,
-            self.vis,
-            self.d_vis,
-            self.i_cps1,
-            self.i_cps2,
-            self.i_cps3,
-        )
-
-    def flatten_model(self, cvis):
-        """
-        Flatten model visibilities and phases.
-
-        Parameters
-        ----------
-        cvis : array-like
-            Complex visibilities from a model evaluation.
-
-        Returns
-        -------
-        array-like
-            Concatenated visibility and phase model vector in the same
-            convention/order as ``flatten_data``.
-        """
-
-        return self.standardize_model(cvis)
-
     def standardize_model(self, cvis):
-        """Map complex visibilities into the data comparison vector format."""
+        """Map model complex visibilities (one per sample) to the data vector.
+
+        The result lines up with the first vector of :meth:`flatten_data`.
+        """
         if self.observable_kind == "mixed_log_complex":
             if self.vis_mat is None or self.phi_mat is None:
                 raise ValueError(
@@ -680,7 +518,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Compute the model visibilities and phases for the given model object.
         """
         cvis = model_object.model(self.u, self.v, self.wavel)
-        return self.flatten_model(cvis)
+        return self.standardize_model(cvis)
 
     def with_model(self, model_object, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
@@ -705,34 +543,6 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 phi_key, phi.shape
             )
         return self.set(["vis", "phi"], [vis, phi])
-
-
-def load_oi_data(path, filter_name=None):
-    """Load one or all filters from an AMIGO mixed-DISCO NumPy product.
-
-    The file is a pickled dictionary loaded with ``allow_pickle=True``, which
-    can run arbitrary code: only load files you trust.
-
-    Parameters
-    ----------
-    path : str or os.PathLike
-        ``.npy`` file holding a ``{filter_name: record}`` dictionary.
-    filter_name : str, optional
-        Filter to load. By default every filter is loaded.
-
-    Returns
-    -------
-    OIData or dict[str, OIData]
-        The chosen filter, or a dictionary of all filters.
-    """
-    records = onp.load(Path(path), allow_pickle=True).item()
-    if not isinstance(records, dict):
-        raise TypeError(
-            "Expected a filter-keyed dictionary in the NumPy file."
-        )
-    if filter_name is not None:
-        return OIData(records[filter_name])
-    return {name: OIData(record) for name, record in records.items()}
 
 
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):

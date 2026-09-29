@@ -53,6 +53,8 @@ nav:
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
+      - OIFITS: api/oifits.md
+      - AMIGO: api/amigo.md
       - Models:
           - Overview: api/models/index.md
           - Classes:
@@ -63,9 +65,10 @@ nav:
               - GaussianDiskModel: api/models/classes/gaussian_disk_model.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
-      - Grid Fit: api/grid_fit.md
+      - Likelihood: api/likelihood.md
       - Inference: api/inference.md
+      - Grid Fit: api/grid_fit.md
+      - Limits: api/limits.md
       - Plotting: api/plotting.md
-      - OIFITS: api/oifits.md
-      - SaveFITS (legacy): api/savefits.md
-      - OIFITS ImplaneIA (legacy): api/oifits_implaneia.md
+      - Bessel: api/bessel.md
+      - Legacy: api/legacy.md
