@@ -294,7 +294,9 @@ FINUFFT accuracy on GPU (issue #162).
 
 ## GPU benchmark results
 
-Pending; see `scripts/bench_ft.py` (Stage 2).
+Pending. The job is `scripts/bench_ft_ozstar.sbatch` (setup instructions in
+its header), which runs `scripts/bench_ft.py --gpu`. It must be run by a
+person; results go here.
 
 ## Stage log
 
@@ -333,6 +335,50 @@ generator and ν Hor MATISSE fixture (Stage 4).
 ### Stage 1
 
 ### Stage 2
+
+`Image(..., backend="nufft")` and `image_visibilities(..., backend=)` use
+jax-finufft's type-2 transform, `nufft2(I, t_row, t_col, iflag=+1)` with
+t = 2π·s·f (s the pixel scale, f = u/λ in cycles per mas), times
+exp(+i t/2) along each even-length axis. That is because the pixel centre
+is at (n − 1)/2 but FINUFFT's mode 0 is at n/2. `eps` is fixed by dtype:
+1e-7 in float64 and 1e-5 in float32 (FINUFFT cannot go much below 1e-6 in
+single precision). No user-facing `eps` knob until someone needs one. The
+optional extra is `drpangloss[nufft]`, tested in its own CI job.
+
+Laptop CPU (Apple arm64, jax 0.9.1, jax-finufft 1.3.1 pip wheel), jitted
+value + gradient of Σ|V|², from `scripts/bench_ft.py`; raw numbers in
+`figures/bench_ft_cpu.json`. Another agent was running at the same time,
+so treat single points (e.g. float64 NUFFT at 256²) as noisy.
+
+![DFT against NUFFT timings](figures/bench_ft_cpu.png)
+
+| float32, ms | 10³ pts | 10⁴ | 10⁵ |
+| --- | --- | --- | --- |
+| DFT 64² / NUFFT 64² | 0.41 / 1.3 | 2.6 / 1.7 | 27 / 2.6 |
+| DFT 128² / NUFFT 128² | 0.98 / 1.2 | 8.1 / 1.6 | 84 / 2.4 |
+| DFT 256² / NUFFT 256² | 2.7 / 2.3 | 25 / 2.5 | 278 / 4.1 |
+| DFT 512² / NUFFT 512² | 8.8 / 9.6 | 81 / 9.1 | 886 / 11 |
+
+The NUFFT's largest error against the DFT is 7e-6 in float32 and 3e-8 in
+float64, with V(0) = 1, inside the 3·eps bound that `tests/test_nufft.py`
+enforces.
+
+**Rule of thumb (CPU):** keep the default DFT below ~10³ points or when
+npix² × points ≲ 3 × 10⁷ (AMI, with 47 points per filter, is always DFT). Use
+the NUFFT above that: at 10⁵ points it is 10–80× faster in float32 and
+10–300× in float64. In float32, the DFT is also the more accurate
+(~5e-7 against 1e-5), which matters for AMI-level closure phases (σ ~ 2e-5
+rad). The GPU crossover will be different, and waits on the OzSTAR run.
+
+**Next: a two-sided MFT for gridded uv (Soummer et al. 2007).** When the
+data lie on a regular uv grid, as AMIGO/dorito DISCO products do (a
+half-plane grid of ~1300 points), V = A_v · I · A_uᵀ is the same exact sum
+at N_v·N² + N_u·N_v·N cost instead of M·N², about 25× less at 128². The
+NUFFT is then only for large irregular coverage (VLTI, CHARA, LBT masks).
+To be added before Stage 3; the open question is how data declare their grid.
+Note that the in-repo AMIGO record (`drpangloss-synthetic-mixed-disco-v1`)
+is a synthetic stand-in whose 47 uv points lie on one straight line, not
+real AMI coverage.
 
 ### Stage 3
 

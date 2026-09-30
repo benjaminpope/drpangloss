@@ -581,6 +581,14 @@ class Image(Component):
     dra, ddec : float, optional
         Offset of the image centre in milliarcseconds, positive to the East
         and North.
+    backend : {"dft", "nufft"}, optional
+        How visibilities are computed: ``"dft"`` (default), the exact sum
+        over pixels, or ``"nufft"``, a non-uniform FFT from the optional
+        ``jax-finufft`` package (``pip install 'drpangloss[nufft]'``),
+        which is faster for large images and datasets. The NUFFT error per
+        visibility is below 1e-7 in float64 and 1e-5 in float32 (relative
+        to the zero-baseline visibility); prefer the DFT when phases must
+        be accurate to better than ~1e-4 rad in float32.
 
     Examples
     --------
@@ -592,6 +600,7 @@ class Image(Component):
     log_brightness: jax.Array
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
+    backend: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -601,6 +610,7 @@ class Image(Component):
         flux=1.0,
         dra=0.0,
         ddec=0.0,
+        backend="dft",
     ):
         self.log_brightness = np.asarray(log_brightness, dtype=float)
         if self.log_brightness.ndim != 2:
@@ -618,6 +628,11 @@ class Image(Component):
         self.support = support
         _check_log_brightness(self.log_brightness, support)
         self.pixel_scale_mas = float(pixel_scale_mas)
+        if backend not in ("dft", "nufft"):
+            raise ValueError(
+                f"backend must be 'dft' or 'nufft', not {backend!r}."
+            )
+        self.backend = backend
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
@@ -630,7 +645,7 @@ class Image(Component):
 
         Pixels fainter than ``floor`` times the brightest are raised to that
         level, so that their logarithm is finite. Other keyword arguments
-        (``support``, ``flux``, ``dra``, ``ddec``) go to
+        (``support``, ``flux``, ``dra``, ``ddec``, ``backend``) go to
         [`Image`][drpangloss.models.Image].
         """
         brightness = np.asarray(brightness, dtype=float)
@@ -666,7 +681,7 @@ class Image(Component):
 
     def _centred_cvis(self, uu, vv):
         return image_visibilities(
-            self.brightness, uu, vv, self.pixel_scale_mas
+            self.brightness, uu, vv, self.pixel_scale_mas, self.backend
         )
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
