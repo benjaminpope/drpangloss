@@ -20,19 +20,22 @@ scene and the data; :func:`l_curve` sweeps it.
 
 Closure, kernel and DISCO phases do not fix an image's position. Something
 must: an analytic star at the origin, a [`Centroid`][drpangloss.imaging.Centroid]
-prior, or a centred prior mean.
+prior, or a centred prior mean. [`diagnose`][drpangloss.imaging.diagnose]
+checks a fit for this and other common pitfalls.
 """
 
 import dataclasses
 
 import equinox as eqx
 import jax.numpy as np
+import numpy as onp
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
 from .fitting import fit
-from .models import Image, System
+from .likelihood import whitened_residuals
+from .models import Image, PointSource, System
 
 
 class _ImageRegulariser(eqx.Module):
@@ -371,3 +374,236 @@ def l_curve(make_problem, weights, **fit_options):
         np.asarray(penalty),
         results,
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class Diagnosis:
+    """The result of :func:`diagnose`.
+
+    Attributes
+    ----------
+    checks : dict
+        Check name to value. Checks made per dataset or per Image are lists,
+        in the order of the data or of the Images in the model.
+    warnings : list of str
+        One sentence for each problem found, saying what to do about it.
+        Empty if none.
+    """
+
+    checks: dict
+    warnings: list
+
+    def __str__(self):
+        def show(value):
+            if isinstance(value, (list, tuple)):
+                return "[" + ", ".join(show(v) for v in value) + "]"
+            return f"{value:.3g}" if isinstance(value, float) else str(value)
+
+        width = max(map(len, self.checks))
+        lines = [f"{k:<{width}}  {show(v)}" for k, v in self.checks.items()]
+        if self.warnings:
+            lines += ["", *(f"Warning: {w}" for w in self.warnings)]
+        else:
+            lines += ["", "No warnings."]
+        return "\n".join(lines)
+
+
+def _parts(model, path=None):
+    """``(path, part)`` for ``model`` and everything nested in it.
+
+    The path is ``None`` for the model itself, else e.g. ``"env"``.
+    """
+    found = [(path, model)]
+    if isinstance(model, System):
+        prefix = "" if path is None else path + "."
+        for name, part in model.components.items():
+            found += _parts(part, prefix + name)
+    return found
+
+
+def _map_images(model, fn):
+    """``model`` with ``fn`` applied to each of its Images."""
+    if isinstance(model, Image):
+        return fn(model)
+    if not isinstance(model, System):
+        return model
+    parts = tuple(_map_images(c, fn) for c in model.components.values())
+    return eqx.tree_at(lambda s: tuple(s.components.values()), model, parts)
+
+
+def _rotated_180(image):
+    """The Image turned by 180 degrees about the origin of the sky."""
+    support = image.support
+    return dataclasses.replace(
+        image,
+        log_brightness=image.log_brightness[::-1, ::-1],
+        support=None if support is None else support[::-1, ::-1],
+        dra=-image.dra,
+        ddec=-image.ddec,
+    )
+
+
+def _chi2(model, observations):
+    return [
+        float(np.sum(whitened_residuals(model, d) ** 2)) for d in observations
+    ]
+
+
+def diagnose(model, data, regularisers=()):
+    """Check a model and its data for common imaging pitfalls.
+
+    Nothing is printed or warned: print the returned
+    [`Diagnosis`][drpangloss.imaging.Diagnosis] to read it. Run it on the
+    fitted model, with the regularisers used in the fit.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The model, normally containing at least one
+        [`Image`][drpangloss.models.Image] (the Image checks are skipped
+        otherwise).
+    data : OIData or sequence of OIData
+        The data.
+    regularisers : sequence, optional
+        The regularisers of the fit; a
+        [`Centroid`][drpangloss.imaging.Centroid] fixes the position.
+
+    Returns
+    -------
+    Diagnosis
+        ``checks`` holds, per dataset, ``chi2_red`` (χ² per data point) and
+        ``phase_regime`` (fraction of model visibilities with |arg V| > 0.8π
+        or |V| < 0.05, for projected phases only); per Image,
+        ``pixel_scale_mas``, ``fov_mas`` (the shorter side), ``edge_flux``
+        (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
+        (East, North offset in mas); and ``anchored`` (whether something
+        fixes the position), ``flip_dchi2`` (Δχ² when every Image is
+        rotated by 180° about the origin) and ``backend_error_sigma``
+        (largest difference between an Image's backend and the DFT, in units
+        of the data σ; only when an Image is not a DFT).
+    """
+    observations = list(data) if isinstance(data, (list, tuple)) else [data]
+    parts = _parts(model)
+    images = [(path, part) for path, part in parts if isinstance(part, Image)]
+    checks, warns = {}, []
+
+    chi2 = _chi2(model, observations)
+    checks["chi2_red"] = [
+        c / whitened_residuals(model, d).size
+        for c, d in zip(chi2, observations)
+    ]
+    for i, red in enumerate(checks["chi2_red"]):
+        if red > 2.0:
+            warns.append(
+                f"Dataset {i} has chi2 per point {red:.2f} > 2: the model "
+                "under-fits or the errors are underestimated; refit, or "
+                "check the error bars."
+            )
+        elif red < 0.5:
+            warns.append(
+                f"Dataset {i} has chi2 per point {red:.2f} < 0.5: the model "
+                "over-fits or the errors are overestimated; regularise more "
+                "or check the error bars."
+            )
+
+    checks["anchored"] = (
+        any(isinstance(part, PointSource) for _, part in parts)
+        or any(isinstance(r, Centroid) for r in regularisers)
+        or any(
+            d.observable_kind == "split"
+            and not d.cp_flag
+            and d.phi_mat is None
+            for d in observations
+        )
+    )
+    if images and not checks["anchored"]:
+        warns.append(
+            "Nothing fixes the position of the Image: closure, kernel and "
+            "DISCO phases are blind to a shift. Add a PointSource star or a "
+            "Centroid prior."
+        )
+
+    if images:
+        nyquist = nyquist_pixel_scale(observations)
+        rho = [onp.asarray(np.hypot(d.u, d.v) / d.wavel) for d in observations]
+        largest = 1.0 / (min(float(r[r > 0].min()) for r in rho) * mas2rad)
+        checks["pixel_scale_mas"] = [im.pixel_scale_mas for _, im in images]
+        checks["fov_mas"] = [
+            min(im.log_brightness.shape) * im.pixel_scale_mas
+            for _, im in images
+        ]
+        checks["edge_flux"], checks["centroid_mas"] = [], []
+        for (path, im), scale, fov in zip(
+            images, checks["pixel_scale_mas"], checks["fov_mas"]
+        ):
+            label = path or "the Image"
+            if scale > nyquist:
+                warns.append(
+                    f"{label} has pixels of {scale:.3g} mas, coarser than "
+                    f"the Nyquist scale {nyquist:.3g} mas of the longest "
+                    "baseline; use smaller pixels."
+                )
+            if fov < largest:
+                warns.append(
+                    f"{label} has a field of view of {fov:.3g} mas, smaller "
+                    f"than the largest scale the data probe, {largest:.3g} "
+                    "mas; enlarge the field."
+                )
+            edge = float(1.0 - np.sum(im.brightness[2:-2, 2:-2]))
+            checks["edge_flux"].append(edge)
+            if edge > 0.05:
+                warns.append(
+                    f"{label} has {edge:.0%} of its flux in the outer 2 "
+                    "pixels; enlarge the field or add a support."
+                )
+            x, y = Centroid(1.0, path).centroid(model)
+            checks["centroid_mas"].append((float(x), float(y)))
+
+        flipped = _map_images(model, _rotated_180)
+        checks["flip_dchi2"] = sum(_chi2(flipped, observations)) - sum(chi2)
+        if checks["flip_dchi2"] < 1.0:
+            warns.append(
+                "Rotating the Images by 180 degrees changes chi2 by "
+                f"{checks['flip_dchi2']:.2g} < 1: the data do not constrain "
+                "the orientation (V^2-only data cannot); expect a mirror "
+                "ambiguity."
+            )
+
+        if any(im.backend != "dft" for _, im in images):
+            exact = _map_images(
+                model, lambda im: dataclasses.replace(im, backend="dft")
+            )
+            checks["backend_error_sigma"] = max(
+                float(
+                    np.max(
+                        np.abs(d.model(model) - d.model(exact))
+                        / np.concatenate([d.d_vis, d.d_phi])
+                    )
+                )
+                for d in observations
+            )
+            if checks["backend_error_sigma"] > 0.1:
+                warns.append(
+                    "The Image backend differs from the DFT by "
+                    f"{checks['backend_error_sigma']:.2g} sigma > 0.1; "
+                    "use backend='dft'."
+                )
+
+    regimes = []
+    for d in observations:
+        if d.phi_mat is None and d.observable_kind != "mixed_log_complex":
+            continue
+        cvis = model.model(d.u, d.v, d.wavel)
+        bad = (np.abs(np.angle(cvis)) > 0.8 * np.pi) | (np.abs(cvis) < 0.05)
+        regimes.append(float(np.mean(bad)))
+    if regimes:
+        checks["phase_regime"] = regimes
+        if any(regimes):
+            warns.append(
+                "Some model visibilities have |phase| > 0.8 pi or |V| < "
+                "0.05, where projected (kernel or DISCO) phases, built from "
+                "wrapped phases, are unreliable; use a smaller field or "
+                "fainter extended flux."
+            )
+
+    return Diagnosis(checks, warns)

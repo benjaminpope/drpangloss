@@ -15,3 +15,5 @@ discussed in `design/regulariser_weight_selection.md`.
         - nyquist_pixel_scale
         - l_curve
         - LCurve
+        - diagnose
+        - Diagnosis
