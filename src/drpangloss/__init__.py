@@ -51,6 +51,7 @@ from .likelihood import (  # noqa: E402
     loglike,
     model_loglike,
     numpyro_model,
+    whitened_residuals,
 )
 from .limits import (  # noqa: E402
     absil_limits,
@@ -112,5 +113,6 @@ __all__ = [
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
+    "whitened_residuals",
     "write_oifits",
 ]

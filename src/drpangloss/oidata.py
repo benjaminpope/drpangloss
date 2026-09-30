@@ -465,6 +465,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             Residual vector. Unprojected phase residuals are wrapped into
             ``[-π, π)``, so that a closure phase of ``π - ε`` against a model
             of ``-π + ε`` counts as a small residual rather than ``2π``.
+
+        Notes
+        -----
+        This is for display. Likelihoods and fits use
+        [`whitened_residuals`][drpangloss.likelihood.whitened_residuals],
+        which is smooth where phases wrap.
         """
         if reference is None:
             reference = self.flatten_data()[0]

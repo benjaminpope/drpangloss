@@ -1,10 +1,11 @@
 # `drpangloss.likelihood`
 
-Gaussian likelihoods of source models given data, and numpyro models.
+Likelihoods of source models given data, and numpyro models.
 
 ::: drpangloss.likelihood
     options:
       members:
+        - whitened_residuals
         - build_model
         - model_loglike
         - inflated_errors

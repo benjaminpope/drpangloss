@@ -57,6 +57,15 @@ rely on it — a clean diff keeps review focused on the actual change.
   (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
+  Forward-model code must pass in both float32 and float64. Fourier transforms and
+  matmuls over pixels use `precision=jax.lax.Precision.HIGHEST`, since on A100/H100
+  GPUs the default is TF32 (~1e-3 relative error). Fitting and sampling entry points
+  (planned: `fit`, `Problem`) will default to float64 inside a local
+  `jax.enable_x64(True)` context, with float32 as an option.
+- Every likelihood, grid, limit and fit uses one residual vector,
+  `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
+  a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
+  display.
 - New model code goes in `src/drpangloss/models.py`.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
@@ -69,7 +78,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
-| `likelihood.py` | `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
