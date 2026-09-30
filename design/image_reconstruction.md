@@ -416,15 +416,47 @@ the NUFFT above that: at 10⁵ points it is 10–80× faster in float32 and
 (~5e-7 against 1e-5), which matters for AMI-level closure phases (σ ~ 2e-5
 rad). On a GPU the crossover is much later; see "GPU benchmark results".
 
-**Next: a two-sided MFT for gridded uv (Soummer et al. 2007).** When the
-data lie on a regular uv grid, as AMIGO/dorito DISCO products do (a
-half-plane grid of ~1300 points), V = A_v · I · A_uᵀ is the same exact sum
-at N_v·N² + N_u·N_v·N cost instead of M·N², about 25× less at 128². The
-NUFFT is then only for large irregular coverage (VLTI, CHARA, LBT masks).
-To be added before Stage 3; the open question is how data declare their grid.
-Note that the in-repo AMIGO record (`drpangloss-synthetic-mixed-disco-v1`)
-is a synthetic stand-in whose 47 uv points lie on one straight line, not
-real AMI coverage.
+### Stage 2b: uv lattices and the matrix Fourier transform
+
+AMI DISCO data are sampled on the detector's Fourier grid. For the real
+ν Hor product (F430M), the 1860 uv samples lie exactly on a 61 × 31
+half-plane lattice with a 0.2165 m pitch, rotated on the sky by −6.894°
+(the parallactic angle 353.106°). The two-sided MFT (Soummer et al. 2007),
+V = A_v · I · A_uᵀ, is exact there, and costs N_v·N² + N_u·N_v·N rather
+than M·N². It separates only when the image's pixel lattice A and the uv
+lattice B have BᵀA diagonal. Rotating both by the same angle keeps that,
+but sky-aligned pixels with a rotated uv lattice do not.
+
+- `_geometry.find_uv_grid(u, v)` finds the lattice when data are loaded
+  (to 1e-6 of a cell; otherwise `None`), and `OIData.uv_grid` stores it as
+  a `UVGrid` (axes, sample index, rotation). The AMIGO loader fills it in,
+  so data files need no new fields.
+- `SourceModel.model_on_grid(u, v, wavel, grid)` defaults to `model`, so
+  every analytic model is unchanged. `System` passes it to its parts, and
+  `Image` overrides it with the MFT (`_geometry.grid_visibilities`) when
+  its `rotation_deg` matches the grid's, its backend is the DFT and there
+  is one wavelength. Otherwise it falls back to the exact per-point sum.
+- `Image(rotation_deg=θ)` puts the pixel lattice at position angle θ;
+  `render`, `plot_model` and `from_model` resample to and from North-up.
+- The MFT is ours (it shares its matrices with the DFT, at
+  `Precision.HIGHEST`) rather than `dLux.utils.MFT`, whose matmuls use
+  JAX's default precision (TF32 on A100/H100) and which would move zodiax
+  to 0.5. A one-off check against `dlu.MFT` 0.15.1 agreed to 1e-15
+  (float64, odd and even N) after flipping both image axes (dLux counts x
+  and y up with the column and row index) and a constant normalisation.
+- On the real ν Hor F430M coverage (1860 samples, 833 modes), jitted
+  value + gradient of `model_loglike` for a star + image `System`: 0.31
+  against 0.85 ms at 64², 0.51 against 1.96 ms at 128², and 0.62 against
+  5.16 ms at 256² (MFT against per point; laptop CPU). The DISCO
+  projection (833 × 1860) is then a large share of the cost.
+- `amigo.simulated_disco_record` builds a small AMI-like record: a
+  rotated half-plane lattice out to 6.5 m, log-amplitude modes and
+  shift-invariant phase modes, diagonal errors (default 1e-4, like ν Hor),
+  and no covariance matrix. DISCO errors are independent by construction,
+  so `disco_covariance` is now optional in AMIGO records (still checked
+  when present). The tutorial uses this record instead of the in-repo
+  stand-in (`drpangloss-synthetic-mixed-disco-v1`, whose 47 uv points lie
+  on one line and whose σ are ~3e-11).
 
 ### Stage 3
 

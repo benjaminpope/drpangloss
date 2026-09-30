@@ -1,14 +1,16 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_ami.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging with AMI, part 1: simulating DISCO data from an image
 
-Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for the JWST/NIRISS AMI observations processed by AMIGO, whose data products are "mixed DISCO" coefficients: linear projections of the log-amplitudes and phases of the complex visibilities.
+Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for JWST/NIRISS AMI data as processed by AMIGO, whose products are "mixed DISCO" coefficients: linear combinations of the log-amplitudes and phases of the complex visibilities, with independent errors.
 
-We use the F480M record in `data/calibrated_visibility.npy`, the in-repo synthetic AMIGO-format record. It is a test stand-in whose 47 uv points lie on a line; real DISCO products sample a gridded uv half-plane, so this is *not* realistic AMI coverage. It is still useful here for its DISCO operators and error bars, and we replace its stored coefficients with a simulation. Everything below is simulated; the stored coefficients are never fitted or shown. The pixelised `Image` component and the truth scenes in `drpangloss.scenes` are new, and later parts of this series will fit images to data like these.
+Real DISCO products are large, so we use `drpangloss.amigo.simulated_disco_record`, a small record with the same structure. Its uv samples fill a half-plane of a regular lattice out to 6.5 m, rotated on the sky as AMI data are by the parallactic angle. Its modes are the log-amplitudes, plus combinations of the phases that do not respond to a shift of the source, like kernel phases. Every mode has an error of 1e-4, typical of the ν Hor observations. Everything below is simulated.
 
 ```python
 import sys
+import time
 from pathlib import Path
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -20,18 +22,18 @@ if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
 from drpangloss._geometry import pixel_offsets
-from drpangloss.amigo import load_oi_data
+from drpangloss.amigo import simulated_disco_record
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
+from drpangloss.oidata import OIData
 from drpangloss.plotting import plot_model
 from drpangloss.scenes import ring, spiral
 
-template = load_oi_data(repo_root / "data" / "calibrated_visibility.npy")[
-    "F480M"
-]
+template = OIData(simulated_disco_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
 longest = float(jnp.hypot(template.u, template.v).max())
 fringe_mas = 206265e3 * float(template.wavel) / longest
 print(f"{1e6 * float(template.wavel):.2f} um, {template.u.size} uv points")
 print(f"longest baseline {longest:.1f} m, finest fringes {fringe_mas:.0f} mas")
+print(f"uv lattice rotated by {template.uv_grid.rotation_deg:.1f} deg")
 
 fig, ax = plt.subplots(figsize=(4, 4))
 ax.plot(template.u, template.v, ".")
@@ -40,19 +42,20 @@ plt.show()
 ```
 
 ```text
-4.80 um, 47 uv points
-longest baseline 9.2 m, finest fringes 108 mas
+4.80 um, 156 uv points
+longest baseline 6.5 m, finest fringes 152 mas
+uv lattice rotated by -6.9 deg
 ```
 
 ![imaging_ami output 2.2](generated/imaging_ami_cell002_out02.png)
 
-All the points lie along one direction, so this record only constrains structure along that direction in the sky. That is fine for testing the machinery, but a fit to it would not recover a full image.
+The samples are a lattice rotated by the parallactic angle. drpangloss finds the lattice when the data are loaded (`template.uv_grid`); we will use it at the end.
 
 ## The truth scene
 
-At 4.8 µm the finest fringes have a period of about 100 mas, so structure on a few hundred milliarcseconds is well resolved, and pixels of 10 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
+At 4.8 µm the finest fringes have a period of about 150 mas, so structure on a few hundred milliarcseconds is well resolved, and pixels of 10 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
 
-`drpangloss.scenes.spiral` returns a unit-sum image in the drpangloss orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`. The stored errors of this record are tiny (around 3e-11), so we give the dust a contrast of 1000:1 relative to the star to get a signal-to-noise of order ten.
+`drpangloss.scenes.spiral` returns a unit-sum image in the drpangloss orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
 
 ```python
 npix, pixel_scale = 64, 10.0  # 640 mas field of view
@@ -66,7 +69,7 @@ truth = spiral(
 )
 scene = System(
     star=PointSource(),
-    dust=Image.from_brightness(truth, pixel_scale, flux=1e-3),
+    dust=Image.from_brightness(truth, pixel_scale, flux=0.05),
 )
 
 plot_model(
@@ -105,10 +108,10 @@ print(f"chi^2 of the truth: {chi2:.0f} for {data.size} coefficients")
 ![imaging_ami output 7.1](generated/imaging_ami_cell007_out01.png)
 
 ```text
-chi^2 of the truth: 244 for 194 coefficients
+chi^2 of the truth: 338 for 310 coefficients
 ```
 
-The first coefficients are projections of log-amplitudes and the rest of phases. The data scatter around the model within their error bars, and the chi-squared of the truth is comparable to the number of coefficients (it fluctuates by tens of percent between noise draws), as it should be.
+The first coefficients are the log-amplitudes and the rest are shift-invariant phase combinations. The data scatter around the model within their error bars, and the chi-squared of the truth is comparable to the number of coefficients, as it should be.
 
 ## Check: one bright pixel is a binary
 
@@ -134,11 +137,46 @@ print(f"largest observable: {jnp.abs(template.model(binary)).max():.1e}")
 
 ```text
 companion at dRA = -85 mas, dDec = 115 mas
-largest difference in the DISCO observables: 5.3e-15
-largest observable: 2.1e-08
+largest difference in the DISCO observables: 1.2e-07
+largest observable: 1.0e-01
 ```
 
 The two agree to float32 rounding, so the image and the analytic model are interchangeable in the likelihood.
+
+## Pixels that follow the detector
+
+The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice, and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). That is much faster and gives the same answer. For AMI this means pixels aligned with the detector rather than with North; `render` and `plot_model` still show the image North up.
+
+```python
+rotation = template.uv_grid.rotation_deg
+detector_dust = Image.from_model(
+    scene.dust, npix, pixel_scale, flux=0.05, rotation_deg=rotation
+)
+detector_scene = System(star=PointSource(), dust=detector_dust)
+per_point = eqx.tree_at(
+    lambda d: d.uv_grid, template, None, is_leaf=lambda x: x is None
+)
+
+evaluate = eqx.filter_jit(lambda data_object, model: data_object.model(model))
+for name, data_object in [("lattice (MFT)", template), ("per point", per_point)]:
+    evaluate(data_object, detector_scene).block_until_ready()
+    start = time.perf_counter()
+    for _ in range(100):
+        evaluate(data_object, detector_scene).block_until_ready()
+    print(f"{name}: {10 * (time.perf_counter() - start):.2f} ms per evaluation")
+
+difference = jnp.abs(template.model(detector_scene) - per_point.model(detector_scene))
+print(f"largest difference: {difference.max():.1e}")
+```
+
+```text
+lattice (MFT): 0.07 ms per evaluation
+per point: 0.16 ms per evaluation
+```
+
+```text
+largest difference: 6.3e-08
+```
 
 ## Another scene: a lopsided ring
 
@@ -157,7 +195,7 @@ ring_image = ring(
 )
 ring_scene = System(
     star=PointSource(),
-    dust=Image.from_brightness(ring_image, pixel_scale, flux=1e-3),
+    dust=Image.from_brightness(ring_image, pixel_scale, flux=0.05),
 )
 ring_data = template.with_model(ring_scene, key=jax.random.PRNGKey(1))
 
@@ -177,8 +215,8 @@ plt.tight_layout()
 plt.show()
 ```
 
-![imaging_ami output 13.1](generated/imaging_ami_cell013_out01.png)
+![imaging_ami output 15.1](generated/imaging_ami_cell015_out01.png)
 
 ## Next steps
 
-We now have simulated data, on the stand-in record's sampling, and a truth to compare against. The next stage moves to a small simulated AMI-like record with a gridded uv half-plane. The next parts reconstruct the image from these data, starting from a parametric fit and moving to free pixels with regularisation.
+We now have simulated data and a truth to compare against. The next parts reconstruct the image from data like these, starting from a parametric fit and moving to free pixels with regularisation.

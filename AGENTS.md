@@ -66,6 +66,9 @@ rely on it — a clean diff keeps review focused on the actual change.
   `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
   a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
   display.
+- `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
+  lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
+  `model_on_grid` must return exactly what `model` would, only faster.
 - New model code goes in `src/drpangloss/models.py`.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.

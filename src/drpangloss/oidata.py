@@ -6,6 +6,7 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
 
@@ -43,6 +44,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     Flagged samples are left out of the observables. ``vis_index`` (and
     ``phi_index`` for absolute phases) then lists the samples that are
     observed; they are ``None`` when every sample is used.
+
+    ``uv_grid`` is a [`UVGrid`][drpangloss.oidata.UVGrid] when the samples
+    lie on a regular (possibly rotated) lattice, as AMIGO DISCO products do,
+    and ``None`` otherwise. Models that can use the lattice, such as an
+    [`Image`][drpangloss.models.Image] with matching ``rotation_deg``, then
+    evaluate faster; the results are the same.
     """
 
     u: jax.Array
@@ -59,6 +66,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     phi_mat: jax.Array | None
     vis_index: jax.Array | None
     phi_index: jax.Array | None
+    uv_grid: UVGrid | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
@@ -228,6 +236,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
         self.vis_mode = self._resolve_vis_mode(vis_mode_in)
+        self.uv_grid = None
         self.observable_kind = "split"
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
@@ -525,7 +534,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         Compute the model visibilities and phases for the given model object.
         """
-        cvis = model_object.model(self.u, self.v, self.wavel)
+        if self.uv_grid is None:
+            cvis = model_object.model(self.u, self.v, self.wavel)
+        else:
+            cvis = model_object.model_on_grid(
+                self.u, self.v, self.wavel, self.uv_grid
+            )
         return self.standardize_model(cvis)
 
     def with_model(self, model_object, key=None, noise_scale=1.0):

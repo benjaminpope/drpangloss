@@ -30,10 +30,12 @@ from jax.scipy.signal import fftconvolve
 
 from ._geometry import (
     check_az_prof_nonnegative,
+    grid_visibilities,
     image_coordinates,
     image_visibilities,
     offset_phase,
     pixel_offsets,
+    rotate,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -155,6 +157,18 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             Complex visibilities, normalized to 1 at zero baseline.
         """
         raise NotImplementedError
+
+    def model_on_grid(self, u, v, wavel, grid):
+        """Visibilities at samples ``u, v`` that also lie on a uv ``grid``.
+
+        [`OIData.model`][drpangloss.oidata.OIData.model] calls this when its
+        samples form a regular lattice (a
+        [`UVGrid`][drpangloss.oidata.UVGrid]), so that models able to use
+        the lattice, such as a matching
+        [`Image`][drpangloss.models.Image], can. By default it is
+        [`model`][drpangloss.models.SourceModel.model].
+        """
+        return self.model(u, v, wavel)
 
     def render(self, npix=256, fov_mas=200.0):
         """Render a unit-sum image of the model.
@@ -582,6 +596,13 @@ class Image(Component):
     dra, ddec : float, optional
         Offset of the image centre in milliarcseconds, positive to the East
         and North.
+    rotation_deg : float, optional
+        Position angle (North to East) of the pixel grid's "up" axis, so
+        that pixels can follow a detector rather than the sky; default 0
+        (North up). An image whose rotation matches the uv lattice of its
+        data (``data.uv_grid.rotation_deg``, e.g. AMI data at their
+        parallactic angle) is transformed with an exact two-sided matrix
+        Fourier transform, which is much faster.
     backend : {"dft", "nufft"}, optional
         How visibilities are computed: ``"dft"`` (default), the exact sum
         over pixels, or ``"nufft"``, a non-uniform FFT from the optional
@@ -603,6 +624,7 @@ class Image(Component):
     log_brightness: jax.Array
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
     backend: str = eqx.field(static=True)
 
     def __init__(
@@ -613,6 +635,7 @@ class Image(Component):
         flux=1.0,
         dra=0.0,
         ddec=0.0,
+        rotation_deg=0.0,
         backend="dft",
     ):
         self.log_brightness = np.asarray(log_brightness, dtype=float)
@@ -631,6 +654,7 @@ class Image(Component):
         self.support = support
         _check_log_brightness(self.log_brightness, support)
         self.pixel_scale_mas = float(pixel_scale_mas)
+        self.rotation_deg = float(rotation_deg)
         if backend not in ("dft", "nufft"):
             raise ValueError(
                 f"backend must be 'dft' or 'nufft', not {backend!r}."
@@ -648,7 +672,8 @@ class Image(Component):
 
         Pixels fainter than ``floor`` times the brightest are raised to that
         level, so that their logarithm is finite. Other keyword arguments
-        (``support``, ``flux``, ``dra``, ``ddec``, ``backend``) go to
+        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``,
+        ``backend``) go to
         [`Image`][drpangloss.models.Image].
         """
         brightness = np.asarray(brightness, dtype=float)
@@ -668,11 +693,14 @@ class Image(Component):
     def from_model(cls, model, npix, pixel_scale_mas, **kwargs):
         """Pixelise a model, e.g. a parametric fit, as a starting image.
 
-        The pixels are ``model.render`` on an ``npix`` x ``npix`` grid; see
+        The pixels sample ``model`` on an ``npix`` x ``npix`` grid (rotated
+        by ``rotation_deg``, if given); see
         [`from_brightness`][drpangloss.models.Image.from_brightness] for
         the keyword arguments.
         """
-        image = model.render(npix=npix, fov_mas=npix * pixel_scale_mas)
+        xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
+        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
     @property
@@ -683,12 +711,30 @@ class Image(Component):
         return flat.reshape(self.log_brightness.shape)
 
     def _centred_cvis(self, uu, vv):
+        uu, vv = rotate(uu, vv, -self.rotation_deg)
         return image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.backend
         )
 
+    def model_on_grid(self, u, v, wavel, grid):
+        matched = abs(grid.rotation_deg - self.rotation_deg) < 1e-9
+        if not (matched and self.backend == "dft" and np.size(wavel) == 1):
+            return self.model(u, v, wavel)
+        wavel = np.reshape(wavel, ())
+        vis = grid_visibilities(
+            self.brightness,
+            grid.u_axis / wavel,
+            grid.v_axis / wavel,
+            self.pixel_scale_mas,
+        )
+        uu, vv = u / wavel, v / wavel
+        return vis.ravel()[grid.index] * offset_phase(
+            uu, vv, self.dra, self.ddec
+        )
+
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the pixels, exact at their centres.
+        xx, yy = rotate(xx, yy, -self.rotation_deg)
         nrow, ncol = self.log_brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
@@ -894,9 +940,18 @@ class System(SourceModel):
         return f"System(\n{body}\n)"
 
     def model(self, u, v, wavel):
+        return self._mix(u, v, wavel, lambda c: c.model(u, v, wavel))
+
+    def model_on_grid(self, u, v, wavel, grid):
+        return self._mix(
+            u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
+        )
+
+    def _mix(self, u, v, wavel, part_model):
+        """Flux-weighted mean of ``part_model(part)``, then the offset."""
         weights = [c._weight(wavel) for c in self.parts]
         total = sum(
-            w * c.model(u, v, wavel) for w, c in zip(weights, self.parts)
+            w * part_model(c) for w, c in zip(weights, self.parts)
         ) / sum(weights)
         uu, vv = u / wavel, v / wavel
         return total * offset_phase(uu, vv, self.dra, self.ddec)
