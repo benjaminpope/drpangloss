@@ -102,11 +102,7 @@ chi2 = jnp.sum(((data - prediction) / errors) ** 2)
 print(f"chi^2 of the truth: {chi2:.0f} for {data.size} coefficients")
 ```
 
-```text
-W0930 21:32:08.151379 9748727 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-![imaging_ami output 7.2](generated/imaging_ami_cell007_out02.png)
+![imaging_ami output 7.1](generated/imaging_ami_cell007_out01.png)
 
 ```text
 chi^2 of the truth: 244 for 194 coefficients
@@ -185,4 +181,4 @@ plt.show()
 
 ## Next steps
 
-We now have simulated data with the real AMI sampling and a truth to compare against. The next parts reconstruct the image from these data, starting from a parametric fit and moving to free pixels with regularisation.
+We now have simulated data, on the stand-in record's sampling, and a truth to compare against. The next stage moves to a small simulated AMI-like record with a gridded uv half-plane. The next parts reconstruct the image from these data, starting from a parametric fit and moving to free pixels with regularisation.

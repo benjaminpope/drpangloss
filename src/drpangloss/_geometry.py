@@ -50,16 +50,18 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
         Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
         North up). Not normalised here.
     uu, vv : array-like
-        Spatial frequencies, baseline / wavelength (per radian); any shape.
+        Spatial frequencies, baseline / wavelength (per radian), of
+        broadcastable shapes.
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
 
     Returns
     -------
     array-like
-        Complex visibilities with the shape of ``uu``.
+        Complex visibilities with the broadcast shape of ``uu`` and ``vv``.
     """
     brightness = np.asarray(brightness)
+    uu, vv = np.broadcast_arrays(uu, vv)
     nrow, ncol = brightness.shape
     x = pixel_offsets(ncol, pixel_scale_mas)
     y = pixel_offsets(nrow, pixel_scale_mas)

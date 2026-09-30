@@ -217,3 +217,32 @@ def test_loglike_gradient_wrt_pixels_is_finite_and_nonzero(data):
     assert grad.shape == clump.log_brightness.shape
     assert np.all(np.isfinite(grad))
     assert np.max(np.abs(grad)) > 0.0
+
+
+def test_dft_broadcasts_frequencies():
+    image = np.ones((5, 5)) / 25.0
+    uu = np.linspace(0.0, 2e6, 3)[:, None]
+    vv = np.linspace(-1e6, 1e6, 4)[None, :]
+    grid = image_visibilities(image, uu, vv, 2.0)
+    assert grid.shape == (3, 4)
+    row = image_visibilities(image, uu[1, 0], vv[0], 2.0)
+    assert np.allclose(grid[1], row)
+
+
+def test_log_brightness_must_have_a_finite_supported_pixel():
+    with pytest.raises(ValueError, match="positive"):
+        Image.from_brightness(np.zeros((4, 4)), 1.0)
+    with pytest.raises(ValueError, match="finite"):
+        Image(np.full((4, 4), -np.inf), 1.0)
+    with pytest.raises(ValueError, match="NaN"):
+        Image(np.zeros((4, 4)).at[1, 1].set(np.nan), 1.0)
+    # Pixels outside the support may be anything.
+    support = np.zeros((4, 4), bool).at[2, 2].set(True)
+    Image(np.zeros((4, 4)).at[0, 0].set(np.nan), 1.0, support=support)
+
+
+def test_from_brightness_floor_ignores_pixels_outside_support():
+    brightness = np.array([[1e6, 0.0], [2.0, 1.0]])
+    support = np.array([[False, True], [True, True]])
+    image = Image.from_brightness(brightness, 1.0, support=support)
+    assert np.allclose(image.brightness[1], np.array([2.0, 1.0]) / 3.0)

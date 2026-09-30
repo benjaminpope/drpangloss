@@ -521,6 +521,24 @@ class ModulatedGaussianRim(Component):
         return fftconvolve(ring, psf, mode="same")
 
 
+def _check_log_brightness(log_brightness, support):
+    """Reject log-brightnesses whose softmax over the support is not finite.
+
+    Skipped under ``jax.jit``.
+    """
+    if support is None:
+        support = np.ones(log_brightness.shape, dtype=bool)
+    invalid = np.isnan(log_brightness) | (log_brightness == np.inf)
+    bad = concrete(np.any(support & invalid))
+    if bad:
+        raise ValueError("log_brightness must not be NaN or +inf.")
+    finite = concrete(np.any(support & np.isfinite(log_brightness)))
+    if finite is not None and not bool(finite):
+        raise ValueError(
+            "log_brightness needs at least one finite (supported) pixel."
+        )
+
+
 def circular_support(npix, pixel_scale_mas, radius_mas):
     """Pixels of an ``npix`` x ``npix`` image within ``radius_mas`` of its centre.
 
@@ -598,6 +616,7 @@ class Image(Component):
             if any_pixel is not None and not bool(any_pixel):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
+        _check_log_brightness(self.log_brightness, support)
         self.pixel_scale_mas = float(pixel_scale_mas)
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
@@ -615,7 +634,16 @@ class Image(Component):
         [`Image`][drpangloss.models.Image].
         """
         brightness = np.asarray(brightness, dtype=float)
-        brightness = np.maximum(brightness, floor * np.max(brightness))
+        support = kwargs.get("support")
+        inside = (
+            brightness
+            if support is None
+            else np.where(support, brightness, 0.0)
+        )
+        peak = np.max(inside)
+        if concrete(peak) is not None and not float(peak) > 0.0:
+            raise ValueError("brightness needs a positive (supported) pixel.")
+        brightness = np.maximum(brightness, floor * peak)
         return cls(np.log(brightness), pixel_scale_mas, **kwargs)
 
     @classmethod

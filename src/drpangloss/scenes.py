@@ -60,6 +60,8 @@ def ring(
     jax.Array, shape (npix, npix)
         The ring, summing to one.
     """
+    if not abs(asymmetry) <= 1.0:
+        raise ValueError("asymmetry must be between -1 and 1.")
     x, y = image_coordinates(npix, npix * pixel_scale_mas)
     xt, yt = undo_elliptical_transf_coord(x, y, pa_deg, np.cos(inc_deg * dtor))
     radial = (np.hypot(xt, yt) - radius_mas) / width_mas

@@ -90,3 +90,8 @@ def test_blob_visibility_matches_gaussian_disk_offset():
     assert np.allclose(
         blob.model(u, v, WAVEL), disk.model(u, v, WAVEL), atol=2e-4
     )
+
+
+def test_ring_rejects_asymmetry_beyond_one():
+    with pytest.raises(ValueError, match="asymmetry"):
+        ring(16, 1.0, 5.0, 1.0, asymmetry=1.5)
