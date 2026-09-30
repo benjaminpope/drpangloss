@@ -3,7 +3,7 @@
 
 Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for the JWST/NIRISS AMI observations processed by AMIGO, whose data products are "mixed DISCO" coefficients: linear projections of the log-amplitudes and phases of the complex visibilities.
 
-We use the real uv coverage, DISCO operators and error bars of the F480M record in `data/calibrated_visibility.npy`, and replace its stored coefficients with a simulation. Everything below is simulated; the stored coefficients are never fitted or shown. The pixelised `Image` component and the truth scenes in `drpangloss.scenes` are new, and later parts of this series will fit images to data like these.
+We use the F480M record in `data/calibrated_visibility.npy`, the in-repo synthetic AMIGO-format record. It is a test stand-in whose 47 uv points lie on a line; real DISCO products sample a gridded uv half-plane, so this is *not* realistic AMI coverage. It is still useful here for its DISCO operators and error bars, and we replace its stored coefficients with a simulation. Everything below is simulated; the stored coefficients are never fitted or shown. The pixelised `Image` component and the truth scenes in `drpangloss.scenes` are new, and later parts of this series will fit images to data like these.
 
 ```python
 import sys
@@ -32,12 +32,21 @@ longest = float(jnp.hypot(template.u, template.v).max())
 fringe_mas = 206265e3 * float(template.wavel) / longest
 print(f"{1e6 * float(template.wavel):.2f} um, {template.u.size} uv points")
 print(f"longest baseline {longest:.1f} m, finest fringes {fringe_mas:.0f} mas")
+
+fig, ax = plt.subplots(figsize=(4, 4))
+ax.plot(template.u, template.v, ".")
+ax.set(xlabel="u (m)", ylabel="v (m)", title="uv points", aspect="equal")
+plt.show()
 ```
 
 ```text
 4.80 um, 47 uv points
 longest baseline 9.2 m, finest fringes 108 mas
 ```
+
+![imaging_ami output 2.2](generated/imaging_ami_cell002_out02.png)
+
+All the points lie along one direction, so this record only constrains structure along that direction in the sky. That is fine for testing the machinery, but a fit to it would not recover a full image.
 
 ## The truth scene
 
@@ -69,7 +78,7 @@ plot_model(
 plt.show()
 ```
 
-![imaging_ami output 4.1](generated/imaging_ami_cell004_out01.png)
+![imaging_ami output 5.1](generated/imaging_ami_cell005_out01.png)
 
 ## Simulating noisy data
 
@@ -94,10 +103,10 @@ print(f"chi^2 of the truth: {chi2:.0f} for {data.size} coefficients")
 ```
 
 ```text
-W0930 21:29:24.398294 9743878 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
+W0930 21:32:08.151379 9748727 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
 ```
 
-![imaging_ami output 6.2](generated/imaging_ami_cell006_out02.png)
+![imaging_ami output 7.2](generated/imaging_ami_cell007_out02.png)
 
 ```text
 chi^2 of the truth: 244 for 194 coefficients
@@ -172,7 +181,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![imaging_ami output 12.1](generated/imaging_ami_cell012_out01.png)
+![imaging_ami output 13.1](generated/imaging_ami_cell013_out01.png)
 
 ## Next steps
 
