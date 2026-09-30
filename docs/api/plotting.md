@@ -7,6 +7,7 @@
         - plot_grid_map
         - plot_contrast_curve
         - plot_model
+        - plot_residual_map
         - plot_oidata_overview
         - plot_data_model_correlation
         - plot_trace_panels

@@ -12,6 +12,7 @@ from drpangloss.plotting import (
     plot_grid_map,
     plot_data_model_correlation,
     plot_model,
+    plot_residual_map,
 )
 
 
@@ -600,3 +601,20 @@ def test_contrast_curve_is_independent_of_grid_key_order():
         ax.lines[0].get_ydata(), ax_t.lines[0].get_ydata(), equal_nan=True
     )
     plt.close("all")
+
+
+def test_plot_residual_map_is_symmetric_and_east_left():
+    # A positive residual in the top-left pixel is North-East; the colour
+    # scale is symmetric; with sigma the map shows z-scores.
+    npix, fov = 5, 10.0
+    residual = onp.zeros((npix, npix))
+    residual[0, 0], residual[4, 4] = 2.0, -0.5
+    fig, ax = plt.subplots()
+    plot_residual_map(residual, fov_mas=fov, sigma=0.5, ax=ax)
+    image = ax.get_images()[0]
+    assert image.get_clim() == (-4.0, 4.0)
+    assert ax.get_xlim()[0] > ax.get_xlim()[1]
+    assert ax.get_ylim()[0] < ax.get_ylim()[1]
+    left, right, bottom, top = image.get_extent()
+    assert left > 0 and top > 0  # column 0 is East, row 0 is North
+    plt.close(fig)
