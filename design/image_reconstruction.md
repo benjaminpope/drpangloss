@@ -460,6 +460,55 @@ but sky-aligned pixels with a rotated uv lattice do not.
 
 ### Stage 3
 
+`fitting.Problem(model, data, priors, regularisers)` and `fitting.fit`, with
+`_precision` (local x64 and dtype casting), and in `imaging` the
+regularisers `TSV`, `TV`, `MaxEntropy` and `Centroid`, `image_priors`,
+`nyquist_pixel_scale`, `l_curve` (with `corner` and `discrepancy`) and
+`diagnose`.
+
+**Optimisers.** Both convergence tests had to be changed from the solver
+defaults, because the log-brightness of a pixel that should be dark keeps
+drifting towards −∞ without changing the image, so a test on the parameter
+step never passes:
+
+- LM (optimistix, `Normal(CG)` with 50 fixed inner steps) stops on the RMS
+  relative change of the residuals alone (`rtol = atol = 1e-5`).
+- L-BFGS is optax's (zoom line search), stopped when no gradient component
+  of the loss per data point exceeds `gtol = 1e-4`. optimistix's L-BFGS,
+  with a loss-only test, stopped at the first short line-search step (loss
+  801 against LM's 56 on a test image). A gradient test suits the
+  parametrisation, since a dark pixel's gradient vanishes with its flux.
+- Image fits are slow to converge (L-BFGS took ~13 000 steps, 2.5 s, on a
+  32² MEM fit), because dark pixels respond weakly: the image is final long
+  before the tolerance is met. A preconditioner or the whitened GP latents
+  of Stage 5 should help.
+- `fit` runs in float64 and casts its results back to the ambient
+  precision, because float64 arrays break JAX code running in float32.
+
+**Choosing the weight** (research in `regulariser_weight_selection.md`):
+`l_curve` fits from strong to weak regularisation with warm starts;
+`corner()` is Hansen's maximum curvature of (log χ², log R) against log w
+(ignoring fits that barely moved); `discrepancy(target)` is Morozov's
+principle. A target of 1 + 2√(2/N) (two standard deviations of χ²/N above
+one) worked better than 1, which a regularised fit may never reach.
+Cross-validation, GCV/SURE and the evidence are deferred to Stage 5.
+
+**Recovery on simulated AMI-like data** (`notebooks/mwe/mwe_recovery_sweep`:
+32² × 10 mas pixels, star + 10% extended flux, `simulated_disco_record` at
+4.8 µm, maximum entropy at the discrepancy weight; normalised
+cross-correlation with the truth):
+
+| σ per coefficient | spiral | ring | core + clump |
+| --- | --- | --- | --- |
+| 1e-4 (ν Hor-like) | 0.869 | 0.993 | 0.940 |
+| 3e-4 | 0.801 | 0.985 | 0.882 |
+| 1e-3 | 0.719 | 0.957 | 0.812 |
+
+Across the three regularisers at the best weight of a sweep, MEM was best
+on all three scenes (ring 0.994, against 0.987 for TSV and 0.956 for TV at
+σ = 1e-4); TV makes smooth structure blocky. Charles et al.'s choice of MEM
+for WR 137 is consistent with this.
+
 ### Stage 4
 
 ### Stage 5

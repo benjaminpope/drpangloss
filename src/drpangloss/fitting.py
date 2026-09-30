@@ -266,7 +266,7 @@ def fit(
         such as maximum entropy and total variation; the default otherwise.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
-        Step limit (defaults: 1000 for LM, 5000 for L-BFGS, 2000 for Adam).
+        Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
     rtol, atol : float, optional
         LM's convergence tolerances, on the change of the residuals between
         steps.
@@ -320,7 +320,7 @@ def fit(
             steps = int(solution.stats["num_steps"])
         elif method == "lbfgs":
             z, steps, converged = _lbfgs(
-                problem, z0, scale, max_steps or 5000, gtol
+                problem, z0, scale, max_steps or 20_000, gtol
             )
         elif method == "adam":
             steps = max_steps or 2000
