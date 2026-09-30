@@ -4,7 +4,8 @@
 # that the DFT is not computed in TF32, and measures FINUFFT's GPU accuracy.
 #
 # One-time setup, on a tooarrana login node, in $MYFRED/code/drpangloss
-# (a clone of the repo on the imaging branch). pip wheels of jax-finufft are
+# (a clone of the repo on the imaging-s2-nufft branch or later: `git checkout
+# imaging-s2-nufft`). pip wheels of jax-finufft are
 # CPU-only, so the environment comes from conda-forge, and jax, jaxlib and
 # jax-finufft must all come from there to match each other:
 #
