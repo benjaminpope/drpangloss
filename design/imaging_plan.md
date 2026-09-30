@@ -49,7 +49,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Branching and workflow
 - **Branch.** Create `imaging` in `/Users/benpope/code/drpangloss`, branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
-- **Each stage is a PR** from `imaging/sN-<name>` into `imaging`. Each PR has:
+- **Each stage is a PR** from `imaging-sN-<name>` (git cannot hold both `imaging` and `imaging/…` branches), stacked on the previous stage's branch and retargeted to `imaging` as earlier stages merge. Each PR has:
   - the code;
   - its tests;
   - an MWE notebook (or a section of one) in `notebooks/`, synced to the docs by `scripts/sync_tutorial_docs.py`;
@@ -68,7 +68,6 @@ The design rationale was established in the earlier research: the gauge survey, 
 - `design/image_reconstruction.md`: the decisions above, the research summary, and a deferred list with triggers.
 - `AGENTS.md`: the precision policy; new modules (`fitting.py`, `imaging.py`, `fields.py`) and the import DAG.
 - `likelihood.whitened_residuals`, and `model_loglike` redefined through it (Gaussian-limit normaliser).
-- A small private helper, `_precision.py`: a `run_in(dtype)` context and a `cast_tree(tree, dtype)` function used by the entry points.
 
 **Tests:**
 - The new phase term equals the old for small Δ and is smooth across ±π.
@@ -122,6 +121,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 ## Stage 3: `Problem`, `fit`, regularisers; dorito-style AMI imaging on simulated truth (about 6–9 h)
 **Build:**
 - `fitting.py`: `Problem` and `fit` with `lm`, `lbfgs` and `adam` (§3–4), with loss scaling, unscaled χ² reporting, and `info` (converged flag, steps, χ² per block).
+- A small private helper, `_precision.py`: a `run_in(dtype)` context and a `cast_tree(tree, dtype)` function used by the entry points (moved here from Stage 0, where nothing would use it yet).
 - `imaging.py`:
   - regularisers `MaxEntropy(prior=None)`, `TSV`, `TV` (ε-smoothed) and `Centroid(sigma_mas)`. Each has `value`, an optional `residuals`, and a `probabilistic` flag.
   - `image_priors(scene)`;
@@ -157,6 +157,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 - Only glue and documentation should be needed; this stage tests generality.
 - `Image` inside `System` with an analytic star (SPARCO-style, grey, then a `PowerLaw` spectral index for star and envelope).
 - Multi-file joint fits (a list of `OIData`), the support-hole option under the star, and `from_model` initialisation from a parametric fit.
+- The ν Hor MATISSE coverage fixture and the synthetic-coverage generator `tests/_coverage.py` (see "Coverage fixtures" below; moved here from Stage 0).
 
 **Tests:**
 - Joint multi-file fits.
@@ -292,20 +293,19 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 ```
 C0a design note ─────────────────────────────────────────────┐
 C0b whitened_residuals + model_loglike + regression ──┐       │
-C0c _precision helper ────────────────────────────────┤       │
-C0d coverage fixture + synthetic coverage generator ──┼───────┼──▶ C4 long-baseline MWEs
+C4a coverage fixture + synthetic coverage generator ─────────┼──▶ C4 long-baseline MWEs
 C1a image_visibilities (DFT) ──┬─▶ C1b Image ──┬─▶ C1c tests/MWE (AMI simulation)
                                │               ├─▶ C1d scene library (spiral/ring/star+comp)
                                │               ├─▶ C5a GaussianField (math; can start here)
                                └─▶ C2 NUFFT backend + CPU bench
-C0b + C0c + C1b ─▶ C3a Problem/fit ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
+C0b + C1b ─▶ C3a Problem/fit + _precision ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
 C1b ─▶ C3b regularisers ────────────┘
 C3a + C5a ─▶ C5b image_priors/GN diagonal/sampling MWE
 C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
 ```
 - **Critical path:** C1a → C1b → C3a → C3c/C3d → C4.
 - **Parallel lanes:**
-  - C0a, C0c and C0d run alongside C0b.
+  - C0a runs alongside C0b.
   - C2 runs alongside C1b–C1d.
   - C3b runs alongside C3a.
   - C5a starts as soon as C1b exists, alongside Stage 3.
@@ -323,7 +323,7 @@ C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
 | C1b `Image`, C3b regularisers, C3c `diagnose`, C5b helpers | **Sonnet** | Well specified by this plan; Opus reviews the diff |
 | All tests except the exactness tests, C1d scenes, MWE notebooks, tutorials | **Sonnet** | Clear specs; iterate against running code |
 | C0a design note, C7 docstrings, mkdocs pages | **Sonnet** | Writing from existing material |
-| C0d fixture extraction, running the suite/ruff/docs build, tutorial sync, benchmark runs and reporting | **Haiku** | Mechanical |
+| C4a fixture extraction, running the suite/ruff/docs build, tutorial sync, benchmark runs and reporting | **Haiku** | Mechanical |
 | Every PR's final review before a checkpoint | **Opus** (orchestrator) | Consistency across chunks |
 
 Fable 5.1 is also available in this environment, but I have no evidence about how it compares to Opus on this kind of numerical work. Try it on one Opus-tier chunk, e.g. C5a with its exact tests as the arbiter, before relying on it.
@@ -350,4 +350,4 @@ Orchestration overhead (reviews, integration, fixing cross-chunk mismatches) is 
   - A session per stage keeps context clean. The plan file and `design/image_reconstruction.md` are the handoff between sessions.
 - **Use VS Code (this extension) for checkpoints:** reviewing diffs, running the MWE notebooks and looking at the figures. It is good for that, less so for multi-hour orchestration tied to an open editor window.
 - **For the parallel stages** (0, 1+2, 3), you can say "use a workflow" to have the orchestrator run a scripted multi-agent workflow (a fan-out of chunks, each followed by an Opus review) instead of hand-launching agents. The size guideline is under 10 agents per workflow, which fits these stages.
-- **Checkpoints as GitHub PRs** (`imaging/sN-*` into `imaging`), so you can comment asynchronously; the next session starts by reading those comments.
+- **Checkpoints as GitHub PRs** (`imaging-sN-*`, stacked, into `imaging`), so you can comment asynchronously; the next session starts by reading those comments.

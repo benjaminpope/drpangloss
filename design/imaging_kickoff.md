@@ -9,11 +9,10 @@ Written 2026-09-30 by the planning session. Read this file first, then `design/i
 2. Stage 0 is a set of PR-sized chunks; see "Implementation orchestration" in the plan:
    - **C0a:** `design/image_reconstruction.md` (the decision record). Sections 3–6 below are the source material.
    - **C0b:** `likelihood.whitened_residuals` and a redefined `model_loglike`, with regression tests. **Opus**, because this changes existing behaviour.
-   - **C0c:** `src/drpangloss/_precision.py` (a local x64 context and dtype casting for the entry points).
-   - **C0d:** the coverage fixture and a synthetic-coverage generator. See section 7.
+   - `_precision.py` and the coverage fixture/generator were moved to Stages 3 and 4, where they are first used.
    - Also update `AGENTS.md`: the precision policy, the new modules and the import DAG.
 3. Stage-0 working example: re-run the existing tutorials and show that the results are unchanged. Make a figure of the old and new closure-phase χ² along a slice through a phase-wrap region, showing the kink is gone.
-4. **Checkpoint:** stop and show the user before starting Stage 1. Each stage ends with a PR from `imaging/sN-<name>` into `imaging` and a feedback pause.
+4. **Checkpoint:** stop and show the user before starting Stage 1. Each stage ends with a PR from `imaging-sN-<name>` into `imaging` and a feedback pause.
 
 ## 1. User preferences and constraints (standing)
 - **No ssh to OzSTAR** (the Swinburne HPC cluster) from Claude, ever. Give the user commands to run instead. The one deferred cluster task, a GPU benchmark and TF32 check, is specified in `design/imaging_plan.md` under "Deferred OzSTAR GPU test".
@@ -206,7 +205,7 @@ The benchmark and accuracy scripts from planning were ad hoc. Regenerate them as
   - `2023-12-12T020414_…`
   - `2023-12-13T010931_…`
 
-  C0d extracts **only geometry and noise** (u, v, wavelengths, triangle indices, flags, per-point σ) into `data/coverage_nuhor_matisse.npz`. **Confirm with the user before committing it.**
+  C4a (Stage 4) extracts **only geometry and noise** (u, v, wavelengths, triangle indices, flags, per-point σ) into `data/coverage_nuhor_matisse.npz`. **Confirm with the user before committing it.**
 - **Synthetic coverage:** also write a simple generator (`tests/_coverage.py`: N telescopes, Earth-rotation tracks, channels, σ drawn from ν Hor statistics), so tests don't depend on the fixture.
 - **No real-data imaging anywhere in this project.**
 
