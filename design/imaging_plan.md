@@ -38,7 +38,8 @@ The design rationale was established in the earlier research: the gauge survey, 
    - `log_brightness` is either a plain array (free log-pixels, MAP-only) or an object with `evaluate(pixel_scale_mas=...)`, e.g. `GaussianField` in Stage 5. That is the zodiax 0.6 `Expression` protocol; migrate when it is released.
 6. **Fourier backends.**
    - The separable DFT is the default and the oracle.
-   - jax-finufft is an optional extra, `[nufft]`.
+   - On uv lattices (AMI/AMIGO DISCOs) an `Image` whose `rotation_deg` matches the lattice uses the exact two-sided MFT (Stage 2b).
+   - jax-finufft is an optional extra, `[nufft]`, but is **shelved** (2026-09-30, issue #75): on an A100 it costs a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157), so the DFT is faster except for very large problems. No later stage relies on it; revisit when jax-finufft can reuse plans.
    - Padded FFT plus interpolation is never used.
    - `diagnose` compares any non-DFT backend against the DFT on the user's own data.
 7. **Rules for users:**
@@ -99,6 +100,8 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Checkpoint:** do the image API and the sky conventions read naturally?
 
 ## Stage 2: NUFFT backend and benchmark (about 3–4 h, plus your GPU run)
+**Status:** done (PR #71), including the OzSTAR A100 run. Outcome: the NUFFT is accurate but shelved for speed on GPUs (issue #75); the DFT and MFT are the supported paths.
+
 **Build:**
 - `backend="nufft"` in `image_visibilities`, via jax-finufft `nufft2`:
   - `iflag=+1`; the image rows pair with v; even N gets the half-pixel phase factor;
@@ -117,6 +120,9 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Risk:** jax-finufft's use of private jax internals and the fact that it re-plans every call (#157). The DFT fallback makes this non-blocking.
 
 **Checkpoint:** do you accept the default-backend rule?
+
+## Stage 2b: exact MFT on uv lattices (added after Stage 2)
+**Status:** done (PR #72). AMIGO DISCO data lie exactly on a detector-frame uv lattice rotated by the parallactic angle. `OIData.uv_grid` records it, `SourceModel.model_on_grid` defaults to `model`, and `Image(rotation_deg=...)` matching the lattice uses the two-sided MFT (Soummer et al. 2007): exact, and 3–8× faster on the ν Hor coverage. `amigo.simulated_disco_record` gives a small AMI-like record with diagonal errors, which replaces large fixtures in tests and tutorials; `disco_covariance` is optional.
 
 ## Stage 3: `Problem`, `fit`, regularisers; dorito-style AMI imaging on simulated truth (about 6–9 h)
 **Build:**
@@ -194,7 +200,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **MWE-B:** posterior sampling at 32² (BlackJAX NUTS and MCLMC/MAMS), with marginalised σ and length. Show the posterior mean and standard-deviation maps, hyperparameter posteriors, and chains against wall-clock time on laptop CPU. Optionally repeat on the simulated AMI scene.
 
-**Risk:** sampling cost and multimodality at larger grids. Scope stays at 32–64², and NUFFT and GPU runs are gated on the Stage 2 benchmark.
+**Risk:** sampling cost and multimodality at larger grids. Scope stays at 32–64², with the DFT/MFT (on an A100 the DFT is ~1 ms at 256² × 10⁴ points, so GPU sampling does not need the NUFFT).
 
 **Checkpoint:** is the GP prior worth it compared with classical regularisers, and does sampling go into the docs as supported?
 
@@ -213,7 +219,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **MWE-B:** a MATISSE chromatic disk across the L band, with the star analytic.
 
-**Risk:** this is the least-specified stage, and the NUFFT's per-channel point sets may make the DFT preferable. The Stage 2 benchmark informs that choice.
+**Risk:** this is the least-specified stage, and per-channel transforms use the DFT (or one MFT per channel on lattices); the NUFFT is shelved (issue #75).
 
 **Checkpoint:** **merge milestone 2**.
 
@@ -227,7 +233,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 ---
 
 ## Totals
-- **Stages 0–4** (MAP imaging for AMI and long-baseline data, NUFFT, reproduction of the dorito result): about 18–26 h of agent time.
+- **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
 - **Stages 5–7:** about 17–24 h more.
 - **Overall:** about 35–50 h of agent time, spread over 8 feedback checkpoints.
 
@@ -244,6 +250,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
 | Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
+| The NUFFT backend as a recommended path (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
 
 ## Critical files
 - **New:**
@@ -270,10 +277,10 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 - The MWE notebooks are re-executed locally at every later stage, so earlier examples keep working. The docs-sync test keeps them matched to the docs. Heavy steps (real-data fits, sampling) are cached or reduced so re-running stays quick.
 
 **Scope changes since revision 4:**
-- The OzSTAR GPU benchmark is deferred. Stage 2 benchmarks on the laptop CPU only, and the Slurm script is written but not run. See "Deferred OzSTAR GPU test" below.
+- The OzSTAR GPU benchmark was run on 2026-09-30 (A100; results in `design/image_reconstruction.md`). It confirmed the TF32 fix and led to shelving the NUFFT (issue #75).
 - Coverage comes from (a) a geometry-and-noise fixture extracted from ν Hor and (b) a simple synthetic-coverage generator (`tests/_coverage.py`: N telescopes, Earth-rotation tracks, channels, σ drawn from ν Hor statistics).
 
-### Deferred OzSTAR GPU test (the only cluster work in this project)
+### OzSTAR GPU test (the only cluster work in this project; done 2026-09-30)
 **Who runs it.** Claude never connects to OzSTAR. At the end of Stage 2, the session hands the user (a) conda environment setup commands and (b) an `sbatch` script, and the user runs them. Use the `ozstar` skill to write the job script. The job needs a GPU node with an A100 or H100, because the TF32 behaviour is specific to those cards.
 
 **What `scripts/bench_ft.py --gpu` must report:**

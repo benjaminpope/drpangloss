@@ -120,9 +120,13 @@ Why:
 
 ### 6. Fourier backends
 
-The separable DFT is the default and the oracle. `jax-finufft` is an optional
-extra, `[nufft]`. A padded FFT with interpolation is never used. `diagnose`
-compares any non-DFT backend against the DFT on the user's own data.
+The separable DFT is the default and the oracle, with the exact MFT for data
+on uv lattices (Stage 2b). `jax-finufft` is an optional extra, `[nufft]`,
+**shelved** since 2026-09-30 (issue #75): accurate, but on a GPU its
+per-call planning cost (jax-finufft #157) makes it slower than the DFT except
+for very large problems. A padded FFT with interpolation is never used.
+`diagnose` compares any non-DFT backend against the DFT on the user's own
+data.
 
 Why:
 - The DFT is exact to float32 rounding (accuracy table below) and cheap for
@@ -284,13 +288,10 @@ LM metric with whitened latents gives the same linear algebra.
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
 | Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
-| OzSTAR GPU benchmark | Before relying on NUFFT or GPU for sampling at 128^2 and above, or for large GRAVITY-sized datasets |
+| The NUFFT as a recommended backend (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images; re-run `scripts/bench_ft_ozstar.sbatch`, adding realistic uv tracks |
 
-The GPU benchmark is run by the user, never by Claude. It must report DFT
-against jax-finufft speed on an A100 or H100, the DFT error at `HIGHEST` and
-at the default precision against a float64 CPU reference (to show that the
-TF32 problem exists and that `HIGHEST` fixes it), and float64 and float32
-FINUFFT accuracy on GPU (issue #162).
+The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
+below. Any re-run is done by the user, never by Claude.
 
 ## GPU benchmark results
 
