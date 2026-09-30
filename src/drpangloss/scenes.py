@@ -2,8 +2,7 @@
 
 Each function returns a unit-sum ``(npix, npix)`` array in the drpangloss
 image orientation (East left, North up, centre at the middle of the pixel
-grid; see [`image_coordinates`][drpangloss._geometry.image_coordinates]),
-ready for [`Image.from_brightness`][drpangloss.models.Image.from_brightness].
+grid, as in [`render`][drpangloss.models.SourceModel.render]), ready for [`Image.from_brightness`][drpangloss.models.Image.from_brightness].
 Position angles run North to East. The ring and spiral shapes are inspired by
 the training scenes of Jonah Goldfine's ``frito``
 (https://github.com/JonahDG/frito), re-implemented here in drpangloss

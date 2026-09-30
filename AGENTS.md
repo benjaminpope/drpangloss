@@ -77,12 +77,13 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
-| `models.py` | source models (`SourceModel`, components, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
+| `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`) accepted as a component's `flux` |
+| `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
 | `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
