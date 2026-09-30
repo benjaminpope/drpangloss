@@ -100,3 +100,17 @@ def test_blob_visibility_matches_gaussian_disk_offset():
 def test_ring_rejects_asymmetry_beyond_one():
     with pytest.raises(ValueError, match="asymmetry"):
         ring(16, 1.0, 5.0, 1.0, asymmetry=1.5)
+
+
+def test_spiral_arm_ends_are_rounded():
+    # Just past the outer end of the arm, along its direction of travel, a
+    # radial cut would leave nothing; the rounded cap still has light.
+    step, width, turns = 100.0, 8.0, 0.75  # ends at PA 270 (due West)
+    arm = spiral(NPIX, SCALE, step, width, turns=turns, pa_deg=0.0)
+    x, y = image_coordinates(NPIX, NPIX * SCALE)
+    end = (-step * turns, 0.0)
+    # One arm-width beyond the end, continuing towards increasing PA.
+    probe = (end[0], end[1] + width)
+    distance = np.hypot(x - probe[0], y - probe[1])
+    row, col = np.unravel_index(np.argmin(distance), distance.shape)
+    assert arm[row, col] > 0.2 * arm.max()
