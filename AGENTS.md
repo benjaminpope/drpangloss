@@ -83,7 +83,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
 | `fitting.py` | `Problem` (model, data, priors, regularisers; `residuals`, `loss`, `logdensity`) and `fit` (`lm`, `lbfgs`, `adam`, float64 by default via `_precision`) |
-| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `image_priors`, `nyquist_pixel_scale`, `l_curve` |
+| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `image_priors`, `nyquist_pixel_scale`, `l_curve`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |

@@ -63,12 +63,6 @@ def test_coarse_pixels_warn():
     _only(diagnose(scene, data), "Nyquist")
 
 
-def test_a_small_field_warns():
-    scene = _scene(10.0, sigma=30.0, offset=(20.0, 10.0))
-    data = OIData(RECORD).with_model(scene, key=jax.random.PRNGKey(3))
-    _only(diagnose(scene, data), "field of view")
-
-
 def test_flux_at_the_edge_warns():
     edge = np.zeros((NPIX, NPIX)).at[0, 0].set(1.0)
     scene = System(

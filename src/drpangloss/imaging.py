@@ -28,7 +28,6 @@ import dataclasses
 
 import equinox as eqx
 import jax.numpy as np
-import numpy as onp
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
@@ -474,7 +473,7 @@ def diagnose(model, data, regularisers=()):
         ``checks`` holds, per dataset, ``chi2_red`` (χ² per data point) and
         ``phase_regime`` (fraction of model visibilities with |arg V| > 0.8π
         or |V| < 0.05, for projected phases only); per Image,
-        ``pixel_scale_mas``, ``fov_mas`` (the shorter side), ``edge_flux``
+        ``pixel_scale_mas``, ``edge_flux``
         (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
         (East, North offset in mas); and ``anchored`` (whether something
         fixes the position), ``flip_dchi2`` (Δχ² when every Image is
@@ -525,29 +524,15 @@ def diagnose(model, data, regularisers=()):
 
     if images:
         nyquist = nyquist_pixel_scale(observations)
-        rho = [onp.asarray(np.hypot(d.u, d.v) / d.wavel) for d in observations]
-        largest = 1.0 / (min(float(r[r > 0].min()) for r in rho) * mas2rad)
         checks["pixel_scale_mas"] = [im.pixel_scale_mas for _, im in images]
-        checks["fov_mas"] = [
-            min(im.log_brightness.shape) * im.pixel_scale_mas
-            for _, im in images
-        ]
         checks["edge_flux"], checks["centroid_mas"] = [], []
-        for (path, im), scale, fov in zip(
-            images, checks["pixel_scale_mas"], checks["fov_mas"]
-        ):
+        for (path, im), scale in zip(images, checks["pixel_scale_mas"]):
             label = path or "the Image"
             if scale > nyquist:
                 warns.append(
                     f"{label} has pixels of {scale:.3g} mas, coarser than "
                     f"the Nyquist scale {nyquist:.3g} mas of the longest "
                     "baseline; use smaller pixels."
-                )
-            if fov < largest:
-                warns.append(
-                    f"{label} has a field of view of {fov:.3g} mas, smaller "
-                    f"than the largest scale the data probe, {largest:.3g} "
-                    "mas; enlarge the field."
                 )
             edge = float(1.0 - np.sum(im.brightness[2:-2, 2:-2]))
             checks["edge_flux"].append(edge)
@@ -577,7 +562,7 @@ def diagnose(model, data, regularisers=()):
                 float(
                     np.max(
                         np.abs(d.model(model) - d.model(exact))
-                        / np.concatenate([d.d_vis, d.d_phi])
+                        / d.flatten_data()[1]
                     )
                 )
                 for d in observations
