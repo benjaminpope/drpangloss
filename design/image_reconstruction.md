@@ -294,9 +294,54 @@ FINUFFT accuracy on GPU (issue #162).
 
 ## GPU benchmark results
 
-Pending. The job is `scripts/bench_ft_ozstar.sbatch` (setup instructions in
-its header), which runs `scripts/bench_ft.py --gpu`. It must be run by a
-person; results go here.
+Run 2026-09-30 on OzSTAR (NT) node gina10, one NVIDIA A100-SXM4-80GB,
+jax 0.10.2 with the conda-forge CUDA build of jax-finufft, by
+`scripts/bench_ft_ozstar.sbatch` (job 17776437). Raw results in
+`figures/bench_ft_gpu.json`, log in `figures/bench_ft_gpu.log`. The job
+set `JAX_DEFAULT_MATMUL_PRECISION=default`, so JAX used TF32 unless the
+code asked otherwise.
+
+**Precision** (256² image, 10⁴ points; max |ΔV| against a float64 CPU DFT,
+V(0) = 1):
+
+| Transform | Max \|ΔV\| |
+| --- | --- |
+| DFT, float32, `Precision.HIGHEST` (drpangloss) | 7.9e-7 |
+| DFT, float32, JAX default (TF32) | 2.7e-5 |
+| NUFFT, float32 (eps 1e-5) | 2.9e-6 |
+| NUFFT, float64 (eps 1e-7) | 2.8e-8 |
+
+- `HIGHEST` does its job: the float32 DFT on the A100 is as accurate as on
+  a CPU, and 34× better than the TF32 default. The TF32 error is smaller
+  than the ~1e-3 per-element figure because errors average over pixels,
+  but at 2.7e-5 it is already at AMI's closure-phase requirement (σ ~ 2e-5
+  rad), so the rule stands.
+- FINUFFT's float64 GPU accuracy is fine here (2.8e-8), so the concern
+  from jax-finufft issue #162 does not apply to this build.
+
+**Speed** (jitted value + gradient, ms):
+
+![GPU timings](figures/bench_ft_gpu.png)
+
+| float32, ms | 10³ pts | 10⁴ | 10⁵ |
+| --- | --- | --- | --- |
+| DFT 64² / NUFFT 64² | 0.14 / 6.1 | 0.24 / 6.7 | 0.96 / 6.8 |
+| DFT 128² / NUFFT 128² | 0.15 / 6.8 | 0.41 / 7.1 | 2.3 / 6.8 |
+| DFT 256² / NUFFT 256² | 0.23 / 6.4 | 0.87 / 6.7 | 6.5 / 7.0 |
+| DFT 512² / NUFFT 512² | 0.40 / 7.0 | 2.6 / 6.5 | 20 / 6.9 |
+
+- The NUFFT costs a flat ~7 ms per call, whatever the size: jax-finufft
+  re-plans on every call (its issue #157), and that dominates.
+- The DFT is therefore faster on the GPU everywhere except the largest
+  case, 512² with 10⁵ points (20 against 7 ms; 26 against 7 in float64).
+  They break even at npix² × points ≈ 7 × 10⁹ (256² × 10⁵).
+- The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32
+  (20 against 886 ms).
+
+**Rule of thumb, updated:** use the DFT (or the MFT for lattices) by
+default on both CPU and GPU. Use the NUFFT on a CPU above ~10³ irregular
+points (npix² × points ≳ 3 × 10⁷), and on a GPU only for very large
+problems (npix² × points ≳ 10¹⁰) until jax-finufft can reuse its plans.
 
 ## Stage log
 
@@ -368,7 +413,7 @@ npix² × points ≲ 3 × 10⁷ (AMI, with 47 points per filter, is always DFT).
 the NUFFT above that: at 10⁵ points it is 10–80× faster in float32 and
 10–300× in float64. In float32, the DFT is also the more accurate
 (~5e-7 against 1e-5), which matters for AMI-level closure phases (σ ~ 2e-5
-rad). The GPU crossover will be different, and waits on the OzSTAR run.
+rad). On a GPU the crossover is much later; see "GPU benchmark results".
 
 **Next: a two-sided MFT for gridded uv (Soummer et al. 2007).** When the
 data lie on a regular uv grid, as AMIGO/dorito DISCO products do (a
