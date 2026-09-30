@@ -4,7 +4,7 @@ import numpy as onp
 import pytest
 
 from drpangloss.amigo import simulated_disco_record
-from drpangloss.fitting import Problem, fit
+from drpangloss.fitting import fit
 from drpangloss.imaging import (
     TSV,
     TV,
@@ -123,10 +123,13 @@ def test_centroid_prior_centres_an_image_only_fit():
     truth = _image(gaussian_blob(NPIX, SCALE, 25.0))
     data = DATA.with_model(truth, key=jax.random.PRNGKey(2))
     start = _image(gaussian_blob(NPIX, SCALE, 40.0, dra=30.0, ddec=-20.0))
-    problem = Problem(
-        start, data, image_priors(start), [TSV(1e3), Centroid(1.0)]
+    result = fit(
+        start,
+        image_priors(start),
+        data,
+        [TSV(1e3), Centroid(1.0)],
+        method="lm",
     )
-    result = fit(problem, "lm")
     assert np.all(np.abs(Centroid(1.0).centroid(result.model)) < 3.0)
 
 
@@ -145,7 +148,7 @@ def test_a_star_anchors_the_image_position():
         env=Image.from_model(GaussianDisk(40.0), NPIX, SCALE, flux=0.2),
     )
     result = fit(
-        Problem(start, data, image_priors(start), [TSV(1e3, path="env")]), "lm"
+        start, image_priors(start), data, [TSV(1e3, path="env")], method="lm"
     )
     centroid = Centroid(1.0, path="env").centroid(result.model)
     assert np.allclose(centroid, np.array([36.0, 24.0]), atol=6.0)
@@ -161,17 +164,16 @@ def test_l_curve_trades_chi2_against_the_penalty():
         star=PointSource(), env=_image(np.ones((NPIX, NPIX)), flux=0.2)
     )
     curve = l_curve(
-        lambda w: Problem(
-            start, data, image_priors(start), [TSV(w, path="env")]
-        ),
+        start,
+        image_priors(start),
+        data,
+        TSV(1.0, path="env"),
         [1e1, 1e3, 1e5],
         method="lm",
     )
     assert list(curve.weights) == [1e5, 1e3, 1e1]
     assert np.all(np.diff(curve.chi2) <= 1e-3 * curve.chi2[:-1])  # falls
     assert np.all(np.diff(curve.penalty) >= 0.0)  # rises
-    with pytest.raises(ValueError, match="exactly one"):
-        l_curve(lambda w: Problem(start, data, image_priors(start)), [1.0])
 
 
 def test_corner_and_discrepancy_on_a_known_curve():

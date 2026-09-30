@@ -1,6 +1,6 @@
 """Regularisers and helpers for image reconstruction.
 
-An image fit is a [`Problem`][drpangloss.fitting.Problem] whose model contains an
+An image fit is a call to [`fit`][drpangloss.fitting.fit] whose model contains an
 [`Image`][drpangloss.models.Image], with a prior on its ``log_brightness``
 (see :func:`image_priors`) and usually a regulariser, which adds a penalty
 on the pixel fluxes ``b`` to the loss:
@@ -222,7 +222,7 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Flat priors on the log-brightness of every Image in a scene.
 
-    Returns a dict for [`Problem`][drpangloss.fitting.Problem], e.g.
+    Returns a priors dict for [`fit`][drpangloss.fitting.fit], e.g.
     ``{"env.log_brightness": ImproperUniform(...)}``. The pixels are then
     constrained only by the data and the regularisers. Add priors for any
     other free parameters (fluxes, offsets) to the dict.
@@ -334,8 +334,10 @@ class LCurve:
         return float(np.exp(t[0] + fraction * (t[1] - t[0])))
 
 
-def l_curve(make_problem, weights, **fit_options):
-    """Fit a problem over a range of regularisation weights.
+def l_curve(
+    model, priors, data, regulariser, weights, others=(), **fit_options
+):
+    """Fit a model over a range of weights for one regulariser.
 
     The weights are fitted from largest to smallest, each starting from the
     previous solution, which is faster and more stable than starting every
@@ -349,12 +351,16 @@ def l_curve(make_problem, weights, **fit_options):
 
     Parameters
     ----------
-    make_problem : callable
-        ``make_problem(weight)`` returns the
-        [`Problem`][drpangloss.fitting.Problem] for one weight, with exactly
-        one weighted regulariser.
+    model, priors, data
+        As for [`fit`][drpangloss.fitting.fit].
+    regulariser : TSV, TV or MaxEntropy
+        The regulariser whose ``weight`` is swept (its own weight is
+        ignored).
     weights : sequence of float
         The weights to try.
+    others : sequence, optional
+        Further regularisers kept fixed, e.g. a
+        [`Centroid`][drpangloss.imaging.Centroid] prior.
     **fit_options
         Passed to [`fit`][drpangloss.fitting.fit].
 
@@ -364,24 +370,19 @@ def l_curve(make_problem, weights, **fit_options):
     """
     weights = sorted((float(w) for w in weights), reverse=True)
     results, chi2, chi2_red, penalty = [], [], [], []
-    start = None
+    init = fit_options.pop("init", None)
     for weight in weights:
-        problem = make_problem(weight)
-        weighted = [r for r in problem.regularisers if not r.probabilistic]
-        if len(weighted) != 1:
-            raise ValueError(
-                "l_curve needs exactly one weighted regulariser per problem."
-            )
-        if start is not None:
-            problem = eqx.tree_at(lambda p: p.model, problem, start)
-        result = fit(problem, **fit_options)
-        start = result.model
+        weighted = eqx.tree_at(lambda r: r.weight, regulariser, weight)
+        result = fit(
+            model, priors, data, [weighted, *others], init=init, **fit_options
+        )
+        init = result.values
         results.append(result)
         chi2.append(sum(result.info["chi2"]))
         chi2_red.append(
             [c / n for c, n in zip(result.info["chi2"], result.info["ndata"])]
         )
-        penalty.append(float(weighted[0].value(result.model)) / weight)
+        penalty.append(float(weighted.value(result.model)) / weight)
     return LCurve(
         np.asarray(weights),
         np.asarray(chi2),

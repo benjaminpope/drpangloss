@@ -1,11 +1,10 @@
 # `drpangloss.fitting`
 
-One specification, `Problem`, for fitting and sampling, and `fit` to find its
-maximum a posteriori parameters.
+`fit` finds maximum a posteriori parameters, taking the same arguments as
+[`numpyro_model`](likelihood.md), plus optional regularisers.
 
 ::: drpangloss.fitting
     options:
       members:
-        - Problem
         - fit
         - FitResult

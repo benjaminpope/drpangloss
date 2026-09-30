@@ -308,7 +308,7 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-def numpyro_model(model, priors, data_obj, **options):
+def numpyro_model(model, priors, data_obj, regularisers=(), **options):
     """Return a numpyro model sampling the parameters in ``priors``.
 
     Parameters
@@ -327,6 +327,12 @@ def numpyro_model(model, priors, data_obj, **options):
         in ``.flux``) must have non-negative support.
     data_obj : OIData or sequence of OIData
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
+    regularisers : sequence, optional
+        Log-prior terms on the model, e.g. a
+        [`Centroid`][drpangloss.imaging.Centroid] prior, added with
+        ``numpyro.factor``. Only genuine prior densities
+        (``probabilistic``) are allowed: penalties such as maximum entropy
+        are for [`fit`][drpangloss.fitting.fit].
     **options
         ``vis_error_rel``, ``phi_error`` and ``reject_unphysical``, passed to
         [`model_loglike`][drpangloss.likelihood.model_loglike].
@@ -342,6 +348,12 @@ def numpyro_model(model, priors, data_obj, **options):
     for path in paths:
         if is_flux_param(path):
             _check_positive_flux_prior(path, priors[path])
+    penalties = [type(r).__name__ for r in regularisers if not r.probabilistic]
+    if penalties:
+        raise ValueError(
+            f"{', '.join(penalties)} are penalties, not log prior densities, "
+            "so they cannot be sampled; use fit for regularised MAP images."
+        )
     observations = (
         tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
     )
@@ -353,6 +365,8 @@ def numpyro_model(model, priors, data_obj, **options):
             "loglike",
             sum(model_loglike(source, obs, **options) for obs in observations),
         )
+        for i, regulariser in enumerate(regularisers):
+            numpyro.factor(f"regulariser_{i}", -regulariser.value(source))
 
     return numpyro_fn
 

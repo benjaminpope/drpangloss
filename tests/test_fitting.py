@@ -1,14 +1,15 @@
 import jax
 import jax.numpy as np
 import numpy as onp
+import numpyro
 import numpyro.distributions as dist
 import pytest
 
 from drpangloss._precision import cast_tree, run_in
 from drpangloss.amigo import simulated_disco_record
-from drpangloss.fitting import Problem, fit
+from drpangloss.fitting import _Objective, fit
 from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
-from drpangloss.likelihood import model_loglike
+from drpangloss.likelihood import numpyro_model
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
@@ -22,10 +23,11 @@ PRIORS = {
     "ddec": dist.Uniform(-400.0, 400.0),
     "flux": dist.Uniform(0.0, 0.5),
 }
-BINARY = Problem(BinaryModelCartesian(140.0, -70.0, 0.01), DATA, PRIORS)
+START = BinaryModelCartesian(140.0, -70.0, 0.01)
 
 
-def _image_problem(regularisers, npix=16):
+def _image_fit(npix=16):
+    """A star + Image scene's data, and a flat starting model with priors."""
     data = OIData(simulated_disco_record(max_baseline_m=4.0))
     truth = System(
         star=PointSource(),
@@ -35,16 +37,15 @@ def _image_problem(regularisers, npix=16):
     )
     data = data.with_model(truth, key=jax.random.PRNGKey(1))
     start = System(
-        star=PointSource(),
-        env=Image(np.zeros((npix, npix)), 12.0, flux=0.1),
+        star=PointSource(), env=Image(np.zeros((npix, npix)), 12.0, flux=0.1)
     )
-    return Problem(start, data, image_priors(start), regularisers)
+    return start, image_priors(start), data
 
 
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_recovers_a_binary(method):
     options = {"max_steps": 3000} if method == "adam" else {}
-    result = fit(BINARY, method, **options)
+    result = fit(START, PRIORS, DATA, method=method, **options)
     assert abs(result.values["dra"] - 150.0) < 3.0
     assert abs(result.values["ddec"] + 80.0) < 3.0
     assert abs(result.values["flux"] - 0.02) < 2e-3
@@ -53,113 +54,100 @@ def test_fit_recovers_a_binary(method):
 
 
 def test_optimisers_agree_on_a_binary():
-    lm, lbfgs = fit(BINARY, "lm"), fit(BINARY, "lbfgs")
+    lm = fit(START, PRIORS, DATA, method="lm")
+    lbfgs = fit(START, PRIORS, DATA, method="lbfgs")
     for path in PRIORS:
         assert np.allclose(lm.values[path], lbfgs.values[path], rtol=1e-4)
 
 
+def test_a_function_model_needs_starting_values():
+    def binary(dra, ddec, flux):
+        return BinaryModelCartesian(dra, ddec, flux)
+
+    with pytest.raises(ValueError, match="init"):
+        fit(binary, PRIORS, DATA)
+    init = {"dra": 140.0, "ddec": -70.0, "flux": 0.01}
+    assert abs(fit(binary, PRIORS, DATA, init=init).values["dra"] - 150) < 3
+
+
 def test_float32_and_float64_fits_agree():
-    x64 = fit(BINARY, dtype="float64").values
-    x32 = fit(BINARY, dtype="float32").values
+    x64 = fit(START, PRIORS, DATA, dtype="float64").values
+    x32 = fit(START, PRIORS, DATA, dtype="float32").values
+    ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
     for path in PRIORS:
-        # Results are cast back to the precision outside the fit.
-        ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
-        assert x64[path].dtype == ambient
+        assert x64[path].dtype == ambient  # cast back after the fit
         assert np.allclose(x32[path], x64[path], rtol=1e-3)
 
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
-    problem = _image_problem([TSV(1e3, path="env")])
-    lm = fit(problem, "lm").model.env.brightness
-    lbfgs = fit(problem, "lbfgs", max_steps=20_000).model.env.brightness
+    start, priors, data = _image_fit()
+    regularisers = [TSV(1e3, path="env")]
+    lm = fit(start, priors, data, regularisers, method="lm")
+    lbfgs = fit(start, priors, data, regularisers, method="lbfgs")
+    lm, lbfgs = lm.model.env.brightness, lbfgs.model.env.brightness
     assert np.max(np.abs(lm - lbfgs)) < 0.05 * np.max(lm)
 
 
 def test_bijections_keep_parameters_in_their_support():
-    values = BINARY.constrain(BINARY.init())
-    assert np.allclose(values["flux"], 0.01) and np.allclose(
-        values["dra"], 140.0
-    )
-    far = {path: np.asarray(50.0) for path in PRIORS}
-    stretched = BINARY.constrain(far)
+    objective = _Objective(START, PRIORS, DATA)
+    values = objective.constrain(objective.init())
+    assert np.allclose(values["flux"], 0.01)
+    assert np.allclose(values["dra"], 140.0)
+    stretched = objective.constrain({p: np.asarray(50.0) for p in PRIORS})
     assert 0.0 < stretched["flux"] < 0.5
     assert -400.0 < stretched["dra"] < 400.0
 
 
-def test_residuals_loss_and_logdensity_are_consistent():
-    z0 = BINARY.init()
+def test_residuals_and_loss_are_consistent():
+    objective = _Objective(START, PRIORS, DATA)
+    z0 = objective.init()
     z1 = {k: v + 0.1 for k, v in z0.items()}
-    half_sum = [0.5 * np.sum(BINARY.residuals(z) ** 2) for z in (z0, z1)]
-    loss = [BINARY.loss(z) for z in (z0, z1)]
+    half = [0.5 * np.sum(objective.residuals(z) ** 2) for z in (z0, z1)]
+    loss = [objective.loss(z) for z in (z0, z1)]
     # Uniform priors are flat, so loss = 0.5 Σ r² + const.
-    assert np.allclose(half_sum[1] - half_sum[0], loss[1] - loss[0], rtol=1e-4)
-    # logdensity = log L + log p + log |J|, with the Jacobian of each bijection.
-    model = BINARY.build(z1)
-    values = BINARY.constrain(z1)
-    expected = model_loglike(model, DATA)
-    for path, prior in PRIORS.items():
-        expected += prior.log_prob(values[path])
-        transform = dist.transforms.biject_to(prior.support)
-        expected += transform.log_abs_det_jacobian(z1[path], values[path])
-    # model_loglike has the Gaussian normalisation; logdensity drops it.
-    normalisation = model_loglike(model, DATA) + 0.5 * np.sum(
-        BINARY.residuals(z1) ** 2
-    )
-    assert np.allclose(
-        BINARY.logdensity(z1), expected - normalisation, rtol=1e-5
-    )
+    assert np.allclose(half[1] - half[0], loss[1] - loss[0], rtol=1e-4)
 
 
 def test_normal_priors_are_least_squares_terms():
     priors = dict(PRIORS, dra=dist.Normal(150.0, 2.0))
-    problem = Problem(BinaryModelCartesian(140.0, -70.0, 0.01), DATA, priors)
-    r = problem.residuals(problem.init())
+    objective = _Objective(START, priors, DATA)
+    r = objective.residuals(objective.init())
     assert r.size == DATA.flatten_data()[0].size + 1
     assert np.isclose(r[-1], (140.0 - 150.0) / 2.0)
 
 
 def test_non_least_squares_objectives_default_to_lbfgs():
-    problem = _image_problem([MaxEntropy(1.0, path="env")])
-    assert not problem.has_residuals
+    start, priors, data = _image_fit()
+    regularisers = [MaxEntropy(1.0, path="env")]
+    objective = _Objective(start, priors, data, regularisers)
     with pytest.raises(TypeError, match="lbfgs"):
-        problem.residuals(problem.init())
-    assert fit(problem, max_steps=50).info["method"] == "lbfgs"
-    priors = dict(PRIORS, flux=dist.LogUniform(1e-4, 0.5))
-    problem = Problem(BinaryModelCartesian(140.0, -70.0, 0.01), DATA, priors)
-    assert not problem.has_residuals
+        objective.residuals(objective.init())
+    result = fit(start, priors, data, regularisers, max_steps=50)
+    assert result.info["method"] == "lbfgs"
+    log_uniform = dict(PRIORS, flux=dist.LogUniform(1e-4, 0.5))
+    assert fit(START, log_uniform, DATA).info["method"] == "lbfgs"
 
 
-def test_logdensity_rejects_penalties_and_improper_priors():
-    problem = _image_problem([Centroid(10.0, path="env")])
-    with pytest.raises(ValueError, match="improper"):
-        problem.logdensity(problem.init())
-    # With a proper prior on the pixels (and a Centroid, a genuine prior),
-    # the density is finite; penalties are still rejected.
+def test_numpyro_model_accepts_prior_regularisers_only():
+    start, _, data = _image_fit()
     pixels = dist.Normal(np.zeros((16, 16)), 3.0).to_event(2)
-    proper = Problem(
-        problem.model,
-        problem.data,
-        {"env.log_brightness": pixels},
-        [Centroid(10.0, path="env")],
-    )
-    assert np.isfinite(proper.logdensity(proper.init()))
-    penalised = Problem(
-        problem.model,
-        problem.data,
-        {"env.log_brightness": pixels},
-        [TSV(1.0, path="env")],
-    )
+    priors = {"env.log_brightness": pixels}
     with pytest.raises(ValueError, match="TSV"):
-        penalised.logdensity(penalised.init())
+        numpyro_model(start, priors, data, [TSV(1.0, path="env")])
+    model = numpyro_model(start, priors, data, [Centroid(10.0, path="env")])
+    trace = numpyro.handlers.trace(
+        numpyro.handlers.seed(model, jax.random.PRNGKey(0))
+    ).get_trace()
+    assert {"loglike", "regulariser_0"} <= set(trace)
 
 
-def test_problem_rejects_bad_paths_and_flux_priors():
+def test_fit_rejects_bad_paths_flux_priors_and_methods():
     with pytest.raises(Exception):
-        Problem(TRUTH, DATA, {"nonsense": dist.Uniform(0.0, 1.0)})
+        fit(TRUTH, {"nonsense": dist.Uniform(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="negative"):
-        Problem(TRUTH, DATA, {"flux": dist.Normal(0.0, 1.0)})
+        fit(TRUTH, {"flux": dist.Normal(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="method"):
-        fit(BINARY, "newton")
+        fit(START, PRIORS, DATA, method="newton")
 
 
 def test_precision_helpers():

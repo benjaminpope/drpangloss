@@ -1,23 +1,14 @@
-"""Fitting problems and optimisers.
+"""Maximum a posteriori fits of models, including images.
 
-A [`Problem`][drpangloss.fitting.Problem] is the single specification shared
-by fitting and sampling: a template model, the data, a prior for every free
-parameter, and optional regularisers (see [`drpangloss.imaging`][drpangloss.imaging]).
-Free parameters are exactly the keys of ``priors``, which are numpyro
-distributions; each is optimised or sampled in unconstrained coordinates,
-through the bijection to the prior's support.
-
-The problem exposes three views of the same objective:
-
-* ``residuals(z)``: a vector whose half sum of squares is the loss, for
-  least-squares solvers such as Levenberg–Marquardt;
-* ``loss(z)``: the negative log posterior (up to a constant), with priors
-  and regularisers evaluated in the constrained parameters;
-* ``logdensity(z)``: the log posterior density in the unconstrained
-  coordinates, including the Jacobian of the bijections, for samplers.
-
-[`fit`][drpangloss.fitting.fit] minimises it with Levenberg–Marquardt,
-L-BFGS or Adam, in float64 by default.
+[`fit`][drpangloss.fitting.fit] takes the same arguments as
+[`numpyro_model`][drpangloss.likelihood.numpyro_model]: a model (a template,
+or a function of the parameters), a dict of numpyro priors whose keys are the
+free parameters, and the data, plus optional regularisers (see
+[`drpangloss.imaging`][drpangloss.imaging]). It finds the maximum a
+posteriori parameters with Levenberg–Marquardt, L-BFGS or Adam, optimising
+each parameter in unconstrained coordinates through the bijection to its
+prior's support, in float64 by default. To sample the same posterior, pass
+the same arguments to ``numpyro_model``.
 """
 
 import dataclasses
@@ -32,7 +23,12 @@ import optimistix as optx
 
 from ._precision import cast_tree, run_in
 from ._utils import is_flux_param
-from .likelihood import _check_positive_flux_prior, whitened_residuals
+from .likelihood import (
+    _check_positive_flux_prior,
+    build_model,
+    whitened_residuals,
+)
+from .models import SourceModel
 
 
 def _bijection(distribution):
@@ -60,37 +56,13 @@ def _prior_residuals(path, distribution, value):
     )
 
 
-class Problem(eqx.Module):
-    """A model, data, priors and regularisers: what to fit or sample.
+class _Objective(eqx.Module):
+    """The negative log posterior of a fit, as a loss and as residuals.
 
-    Parameters
-    ----------
-    model : SourceModel
-        Template model. Its leaves at the paths in ``priors`` are the free
-        parameters (they also give the starting point); every other leaf is
-        fixed.
-    data : OIData or sequence of OIData
-        The data, fitted jointly with the one model.
-    priors : dict[str, numpyro.distributions.Distribution]
-        A prior for each free parameter, keyed by its path in ``model``
-        (e.g. ``"env.log_brightness"``, ``"comp.flux"``). Priors on fluxes
-        must have non-negative support.
-    regularisers : sequence, optional
-        Penalties on the model, e.g. from [`drpangloss.imaging`][drpangloss.imaging]. Each
-        has ``value(model)``, added to the loss; ``residuals(model)`` if it
-        can be written as a least-squares term (``value = 0.5 sum r²``);
-        and ``probabilistic``, whether it is a genuine log prior density
-        that may enter ``logdensity``.
-
-    Examples
-    --------
-    >>> problem = Problem(
-    ...     BinaryModelCartesian(100.0, 50.0, 0.01),
-    ...     data,
-    ...     {"dra": dist.Uniform(-300, 300), "ddec": dist.Uniform(-300, 300),
-    ...      "flux": dist.Uniform(0.0, 1.0)},
-    ... )
-    >>> result = fit(problem)
+    ``residuals(z)`` is a vector whose half sum of squares is ``loss(z)``
+    (up to a constant), for least-squares solvers; it raises ``TypeError``
+    if a regulariser or prior has no least-squares form. ``z`` are the
+    unconstrained coordinates of the parameters.
     """
 
     model: object
@@ -98,7 +70,7 @@ class Problem(eqx.Module):
     priors: dict
     regularisers: tuple
 
-    def __init__(self, model, data, priors, regularisers=()):
+    def __init__(self, model, priors, data, regularisers=()):
         self.model = model
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.priors = dict(priors)
@@ -106,7 +78,8 @@ class Problem(eqx.Module):
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
         for path, prior in self.priors.items():
-            model.get(path)  # raises for an unknown path
+            if isinstance(model, SourceModel):
+                model.get(path)  # raises for an unknown path
             if is_flux_param(path):
                 _check_positive_flux_prior(path, prior)
 
@@ -115,21 +88,19 @@ class Problem(eqx.Module):
         """The free parameters' paths, in the order of ``priors``."""
         return tuple(self.priors)
 
-    @property
-    def has_residuals(self):
-        """Whether the whole objective has a least-squares form."""
-        try:
-            self.residuals(self.init())
-        except TypeError:
-            return False
-        return True
-
-    def init(self):
-        """Unconstrained coordinates of the template model's values."""
+    def init(self, values=None):
+        """Unconstrained coordinates of ``values`` (default: the template's)."""
+        values = {} if values is None else dict(values)
         z = {}
         for path, prior in self.priors.items():
-            value = np.asarray(self.model.get(path), dtype=float)
-            z[path] = _bijection(prior).inv(value)
+            if path not in values:
+                if not isinstance(self.model, SourceModel):
+                    raise ValueError(
+                        f"No starting value for {path!r}: pass init= when "
+                        "the model is a function."
+                    )
+                values[path] = self.model.get(path)  # raises if unknown
+            z[path] = _bijection(prior).inv(np.asarray(values[path], float))
         return z
 
     def constrain(self, z):
@@ -142,8 +113,8 @@ class Problem(eqx.Module):
     def build(self, z):
         """The model with the parameters at unconstrained coordinates ``z``."""
         values = self.constrain(z)
-        return self.model.set(
-            list(self.paths), [values[p] for p in self.paths]
+        return build_model(
+            self.model, self.paths, [values[p] for p in self.paths]
         )
 
     def data_residuals(self, model):
@@ -189,48 +160,6 @@ class Problem(eqx.Module):
         )
         return 0.5 * chi2 + penalty - log_prior
 
-    def logdensity(self, z):
-        """Log posterior density in unconstrained coordinates, for samplers.
-
-        Includes the log Jacobian of each bijection. Raises ``ValueError``
-        if a regulariser is not a probability density (e.g. maximum
-        entropy, total variation or total squared variation), or if a prior
-        is improper: flat log-brightness priors leave a direction (adding a
-        constant to every pixel) along which the density never falls off,
-        so it cannot be sampled.
-        """
-        import numpyro.distributions as dist
-
-        flat = [
-            path
-            for path, prior in self.priors.items()
-            if isinstance(prior, dist.ImproperUniform)
-        ]
-        if flat:
-            raise ValueError(
-                f"The priors on {', '.join(flat)} are improper, so the "
-                "posterior cannot be sampled; use proper priors."
-            )
-        improper = [
-            type(r).__name__ for r in self.regularisers if not r.probabilistic
-        ]
-        if improper:
-            raise ValueError(
-                f"{', '.join(improper)} are penalties, not log prior "
-                "densities, so the problem has no posterior to sample."
-            )
-        model = self.build(z)
-        values = self.constrain(z)
-        chi2 = sum(np.sum(r**2) for r in self.data_residuals(model))
-        density = -0.5 * chi2 - sum(r.value(model) for r in self.regularisers)
-        for path, prior in self.priors.items():
-            transform = _bijection(prior)
-            density += np.sum(prior.log_prob(values[path]))
-            density += np.sum(
-                transform.log_abs_det_jacobian(z[path], values[path])
-            )
-        return density
-
 
 @dataclasses.dataclass(frozen=True)
 class FitResult:
@@ -255,9 +184,13 @@ class FitResult:
 
 
 def fit(
-    problem,
-    method=None,
+    model,
+    priors,
+    data,
+    regularisers=(),
     *,
+    init=None,
+    method=None,
     max_steps=None,
     rtol=1e-5,
     atol=1e-5,
@@ -266,18 +199,34 @@ def fit(
     cg_steps=50,
     dtype="float64",
 ):
-    """Find the maximum a posteriori parameters of a problem.
+    """Find the maximum a posteriori parameters of a model given data.
 
     Parameters
     ----------
-    problem : Problem
-        What to fit.
+    model : SourceModel or callable
+        A template model whose leaves at the paths in ``priors`` are fitted
+        (their values are the starting point), or a function called with the
+        parameters as keyword arguments, as for
+        [`numpyro_model`][drpangloss.likelihood.numpyro_model].
+    priors : dict[str, numpyro.distributions.Distribution]
+        A prior for each free parameter, keyed by its path (e.g.
+        ``"comp.flux"`` or ``"env.log_brightness"``; see
+        [`image_priors`][drpangloss.imaging.image_priors]). Priors on
+        fluxes must have non-negative support.
+    data : OIData or sequence of OIData
+        The data, fitted jointly.
+    regularisers : sequence, optional
+        Penalties added to the loss, e.g. from
+        [`drpangloss.imaging`][drpangloss.imaging].
+    init : dict, optional
+        Starting values by path, overriding the template's (required for
+        a function model).
     method : {"lm", "lbfgs", "adam"}, optional
-        ``"lm"``: Levenberg–Marquardt on ``problem.residuals``, with a
+        ``"lm"``: Levenberg–Marquardt on the residuals, with a
         matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
         the normal equations), so the Jacobian is never formed. The default
         when the whole objective has a least-squares form.
-        ``"lbfgs"``: L-BFGS (optax) on ``problem.loss``, for penalties
+        ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
@@ -307,9 +256,11 @@ def fit(
         raised if LM or L-BFGS did not converge.
     """
     with run_in(dtype):
-        problem = cast_tree(problem, dtype)
-        method = method or ("lm" if problem.has_residuals else "lbfgs")
-        z0 = problem.init()
+        problem = cast_tree(
+            _Objective(model, priors, data, regularisers), dtype
+        )
+        z0 = problem.init(cast_tree(init, dtype))
+        method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
         # Optimisers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [int(np.size(d.flatten_data()[0])) for d in problem.data]
@@ -366,6 +317,15 @@ def fit(
     return FitResult(
         cast_tree(model, ambient), cast_tree(values, ambient), info
     )
+
+
+def _has_residuals(problem, z):
+    """Whether the whole objective has a least-squares form."""
+    try:
+        problem.residuals(z)
+    except TypeError:
+        return False
+    return True
 
 
 def _loss_norm(tree):
