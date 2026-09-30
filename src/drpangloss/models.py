@@ -586,8 +586,9 @@ class Image(Component):
         How visibilities are computed: ``"dft"`` (default), the exact sum
         over pixels, or ``"nufft"``, a non-uniform FFT from the optional
         ``jax-finufft`` package (``pip install 'drpangloss[nufft]'``),
-        which is faster for large images and large, irregular datasets
-        (e.g. long-baseline interferometry). It is approximate, with a
+        which is faster on a CPU for large images and large, irregular
+        datasets (e.g. long-baseline interferometry); on a GPU the DFT is
+        faster except for very large problems. It is approximate, with a
         requested relative tolerance of 1e-7 in float64 and 1e-5 in
         float32; prefer the DFT when phases must be accurate to better than
         ~1e-4 rad in float32.
