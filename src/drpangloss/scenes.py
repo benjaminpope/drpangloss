@@ -96,7 +96,7 @@ def spiral(
         Standard deviation of the Gaussian cross-section, measured along the
         radial direction, in milliarcseconds.
     turns : float, optional
-        Number of turns of the arm.
+        Number of turns of the arm, which ends in a rounded cap.
     pa_deg : float, optional
         Position angle, North to East, of the start of the arm, in degrees.
     fade_mas : float, optional
@@ -117,6 +117,14 @@ def spiral(
     distance = r - step_mas * theta / (2.0 * np.pi)
     distance = np.where(theta <= 2.0 * np.pi * turns, distance, np.inf)
     image = np.exp(-0.5 * (distance / width_mas) ** 2).max(axis=-1)
+    # Round off both ends of the arm, rather than cutting them radially.
+    end_pa = pa_deg * dtor + 2.0 * np.pi * turns
+    end_r = step_mas * turns
+    ends = np.minimum(
+        (x - end_r * np.sin(end_pa)) ** 2 + (y - end_r * np.cos(end_pa)) ** 2,
+        x**2 + y**2,
+    )
+    image = np.maximum(image, np.exp(-0.5 * ends / width_mas**2))
     if fade_mas is not None:
         image = image * np.exp(-r[..., 0] / fade_mas)
     return _unit_sum(image)

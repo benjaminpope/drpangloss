@@ -63,7 +63,12 @@ def test_offset_scenes_land_on_the_east_left():
     # A quarter turn starting due East runs East to South: lower left.
     arm = spiral(NPIX, SCALE, 200.0, 6.0, turns=0.25, pa_deg=90.0)
     rows, cols = np.nonzero(arm > 1e-3 * arm.max())
-    assert np.all(cols <= NPIX // 2) and np.all(rows >= NPIX // 2 - 1)
+    # The rounded ends reach up to ~4 widths past the quadrant edges.
+    margin = int(onp.ceil(4 * 6.0 / SCALE))
+    assert np.all(cols <= NPIX // 2 + margin)
+    assert np.all(rows >= NPIX // 2 - 1 - margin)
+    x, y = image_coordinates(NPIX, NPIX * SCALE)
+    assert np.sum(arm * x) > 0.0 and np.sum(arm * y) < 0.0  # East, South
 
 
 def test_spiral_steps_outwards_by_step_per_turn():
