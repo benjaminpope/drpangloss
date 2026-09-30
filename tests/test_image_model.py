@@ -1,19 +1,28 @@
+from pathlib import Path
+
 import jax
 import jax.numpy as np
 import numpy as onp
 import pytest
 
 from drpangloss._geometry import image_visibilities, pixel_offsets
+from drpangloss.amigo import load_oi_data
+from drpangloss.likelihood import model_loglike
 from drpangloss.models import (
+    BinaryModelCartesian,
     GaussianDisk,
     Image,
     PointSource,
     System,
     circular_support,
 )
+from drpangloss.oidata import OIData, cp_indices
 
 MAS2RAD = onp.pi / 180.0 / 3600.0 / 1000.0
 WAVEL = 4.8e-6
+DISCO_PRODUCT = (
+    Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
+)
 
 
 def _baselines(n=60, max_m=6.5, seed=0):
@@ -146,3 +155,65 @@ def test_dft_accuracy_at_long_baselines(x64):
         got = onp.asarray(image_visibilities(np.asarray(image), uu, vv, 0.1))
         tol = 1e-12 if x64 else 2e-5
         assert onp.max(onp.abs(got - expected)) < tol
+
+
+PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
+TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
+STATIONS = onp.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
+
+
+def _array_data(**extra):
+    """Noiseless V² and closure phases of a binary on a 4-station array."""
+    delta = STATIONS[PAIRS[:, 1] - 1] - STATIONS[PAIRS[:, 0] - 1]
+    u, v = delta[:, 0], delta[:, 1]
+    binary = BinaryModelCartesian(60.0, -40.0, 0.05)
+    cvis = onp.asarray(binary.model(u, v, WAVEL))
+    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
+    return {
+        "u": u,
+        "v": v,
+        "wavel": WAVEL,
+        "vis": onp.abs(cvis) ** 2,
+        "d_vis": onp.full(len(u), 1e-3),
+        "phi": onp.angle(cvis[i1] * cvis[i2] / cvis[i3]),
+        "d_phi": onp.full(len(i1), 1e-2),
+        "i_cps1": i1,
+        "i_cps2": i2,
+        "i_cps3": i3,
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(lambda: OIData(_array_data()), id="v2-closure-phases"),
+        pytest.param(lambda: OIData(_array_data(vis_mode="amp")), id="amp"),
+        pytest.param(
+            lambda: OIData(_array_data(vis_mode="logamp")), id="logamp"
+        ),
+        pytest.param(
+            lambda: OIData(_array_data(phi_mat=onp.eye(4)[:2])),
+            id="kernel-phases",
+        ),
+        pytest.param(
+            lambda: load_oi_data(DISCO_PRODUCT)["F480M"], id="mixed-disco"
+        ),
+    ],
+)
+def test_loglike_gradient_wrt_pixels_is_finite_and_nonzero(data):
+    data = data()
+    # A star plus an off-centre clump, which is not the data's binary.
+    clump = Image.from_model(
+        GaussianDisk(sigma=8.0, dra=20.0, ddec=10.0), 24, 5.0, flux=0.3
+    )
+    scene = System(star=PointSource(), env=clump)
+
+    def loglike(log_brightness):
+        moved = scene.set("env.log_brightness", log_brightness)
+        return model_loglike(moved, data)
+
+    grad = jax.grad(loglike)(clump.log_brightness)
+    assert grad.shape == clump.log_brightness.shape
+    assert np.all(np.isfinite(grad))
+    assert np.max(np.abs(grad)) > 0.0
