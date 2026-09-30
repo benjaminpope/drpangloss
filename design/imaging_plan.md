@@ -38,7 +38,8 @@ The design rationale was established in the earlier research: the gauge survey, 
    - `log_brightness` is either a plain array (free log-pixels, MAP-only) or an object with `evaluate(pixel_scale_mas=...)`, e.g. `GaussianField` in Stage 5. That is the zodiax 0.6 `Expression` protocol; migrate when it is released.
 6. **Fourier backends.**
    - The separable DFT is the default and the oracle.
-   - jax-finufft is an optional extra, `[nufft]`.
+   - On uv lattices (AMI/AMIGO DISCOs) an `Image` whose `rotation_deg` matches the lattice uses the exact two-sided MFT (Stage 2b).
+   - jax-finufft is an optional extra, `[nufft]`, but is **shelved** (2026-09-30, issue #75): on an A100 it costs a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157), so the DFT is faster except for very large problems. No later stage relies on it; revisit when jax-finufft can reuse plans.
    - Padded FFT plus interpolation is never used.
    - `diagnose` compares any non-DFT backend against the DFT on the user's own data.
 7. **Rules for users:**
@@ -49,7 +50,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Branching and workflow
 - **Branch.** Create `imaging` in `/Users/benpope/code/drpangloss`, branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
-- **Each stage is a PR** from `imaging/sN-<name>` into `imaging`. Each PR has:
+- **Each stage is a PR** from `imaging-sN-<name>` (git cannot hold both `imaging` and `imaging/…` branches), stacked on the previous stage's branch and retargeted to `imaging` as earlier stages merge. Each PR has:
   - the code;
   - its tests;
   - an MWE notebook (or a section of one) in `notebooks/`, synced to the docs by `scripts/sync_tutorial_docs.py`;
@@ -68,7 +69,6 @@ The design rationale was established in the earlier research: the gauge survey, 
 - `design/image_reconstruction.md`: the decisions above, the research summary, and a deferred list with triggers.
 - `AGENTS.md`: the precision policy; new modules (`fitting.py`, `imaging.py`, `fields.py`) and the import DAG.
 - `likelihood.whitened_residuals`, and `model_loglike` redefined through it (Gaussian-limit normaliser).
-- A small private helper, `_precision.py`: a `run_in(dtype)` context and a `cast_tree(tree, dtype)` function used by the entry points.
 
 **Tests:**
 - The new phase term equals the old for small Δ and is smooth across ±π.
@@ -100,6 +100,8 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Checkpoint:** do the image API and the sky conventions read naturally?
 
 ## Stage 2: NUFFT backend and benchmark (about 3–4 h, plus your GPU run)
+**Status:** done (PR #71), including the OzSTAR A100 run. Outcome: the NUFFT is accurate but shelved for speed on GPUs (issue #75); the DFT and MFT are the supported paths.
+
 **Build:**
 - `backend="nufft"` in `image_visibilities`, via jax-finufft `nufft2`:
   - `iflag=+1`; the image rows pair with v; even N gets the half-pixel phase factor;
@@ -119,9 +121,13 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **Checkpoint:** do you accept the default-backend rule?
 
+## Stage 2b: exact MFT on uv lattices (added after Stage 2)
+**Status:** done (PR #72). AMIGO DISCO data lie exactly on a detector-frame uv lattice rotated by the parallactic angle. `OIData.uv_grid` records it, `SourceModel.model_on_grid` defaults to `model`, and `Image(rotation_deg=...)` matching the lattice uses the two-sided MFT (Soummer et al. 2007): exact, and 3–8× faster on the ν Hor coverage. `amigo.simulated_disco_record` gives a small AMI-like record with diagonal errors, which replaces large fixtures in tests and tutorials; `disco_covariance` is optional.
+
 ## Stage 3: `Problem`, `fit`, regularisers; dorito-style AMI imaging on simulated truth (about 6–9 h)
 **Build:**
 - `fitting.py`: `Problem` and `fit` with `lm`, `lbfgs` and `adam` (§3–4), with loss scaling, unscaled χ² reporting, and `info` (converged flag, steps, χ² per block).
+- A small private helper, `_precision.py`: a `run_in(dtype)` context and a `cast_tree(tree, dtype)` function used by the entry points (moved here from Stage 0, where nothing would use it yet).
 - `imaging.py`:
   - regularisers `MaxEntropy(prior=None)`, `TSV`, `TV` (ε-smoothed) and `Centroid(sigma_mas)`. Each has `value`, an optional `residuals`, and a `probabilistic` flag.
   - `image_priors(scene)`;
@@ -157,6 +163,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 - Only glue and documentation should be needed; this stage tests generality.
 - `Image` inside `System` with an analytic star (SPARCO-style, grey, then a `PowerLaw` spectral index for star and envelope).
 - Multi-file joint fits (a list of `OIData`), the support-hole option under the star, and `from_model` initialisation from a parametric fit.
+- The ν Hor MATISSE coverage fixture and the synthetic-coverage generator `tests/_coverage.py` (see "Coverage fixtures" below; moved here from Stage 0).
 
 **Tests:**
 - Joint multi-file fits.
@@ -193,7 +200,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **MWE-B:** posterior sampling at 32² (BlackJAX NUTS and MCLMC/MAMS), with marginalised σ and length. Show the posterior mean and standard-deviation maps, hyperparameter posteriors, and chains against wall-clock time on laptop CPU. Optionally repeat on the simulated AMI scene.
 
-**Risk:** sampling cost and multimodality at larger grids. Scope stays at 32–64², and NUFFT and GPU runs are gated on the Stage 2 benchmark.
+**Risk:** sampling cost and multimodality at larger grids. Scope stays at 32–64², with the DFT/MFT (on an A100 the DFT is ~1 ms at 256² × 10⁴ points, so GPU sampling does not need the NUFFT).
 
 **Checkpoint:** is the GP prior worth it compared with classical regularisers, and does sampling go into the docs as supported?
 
@@ -212,7 +219,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **MWE-B:** a MATISSE chromatic disk across the L band, with the star analytic.
 
-**Risk:** this is the least-specified stage, and the NUFFT's per-channel point sets may make the DFT preferable. The Stage 2 benchmark informs that choice.
+**Risk:** this is the least-specified stage, and per-channel transforms use the DFT (or one MFT per channel on lattices); the NUFFT is shelved (issue #75).
 
 **Checkpoint:** **merge milestone 2**.
 
@@ -226,7 +233,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 ---
 
 ## Totals
-- **Stages 0–4** (MAP imaging for AMI and long-baseline data, NUFFT, reproduction of the dorito result): about 18–26 h of agent time.
+- **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
 - **Stages 5–7:** about 17–24 h more.
 - **Overall:** about 35–50 h of agent time, spread over 8 feedback checkpoints.
 
@@ -243,6 +250,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
 | Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
+| The NUFFT backend as a recommended path (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
 
 ## Critical files
 - **New:**
@@ -269,10 +277,10 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 - The MWE notebooks are re-executed locally at every later stage, so earlier examples keep working. The docs-sync test keeps them matched to the docs. Heavy steps (real-data fits, sampling) are cached or reduced so re-running stays quick.
 
 **Scope changes since revision 4:**
-- The OzSTAR GPU benchmark is deferred. Stage 2 benchmarks on the laptop CPU only, and the Slurm script is written but not run. See "Deferred OzSTAR GPU test" below.
+- The OzSTAR GPU benchmark was run on 2026-09-30 (A100; results in `design/image_reconstruction.md`). It confirmed the TF32 fix and led to shelving the NUFFT (issue #75).
 - Coverage comes from (a) a geometry-and-noise fixture extracted from ν Hor and (b) a simple synthetic-coverage generator (`tests/_coverage.py`: N telescopes, Earth-rotation tracks, channels, σ drawn from ν Hor statistics).
 
-### Deferred OzSTAR GPU test (the only cluster work in this project)
+### OzSTAR GPU test (the only cluster work in this project; done 2026-09-30)
 **Who runs it.** Claude never connects to OzSTAR. At the end of Stage 2, the session hands the user (a) conda environment setup commands and (b) an `sbatch` script, and the user runs them. Use the `ozstar` skill to write the job script. The job needs a GPU node with an A100 or H100, because the TF32 behaviour is specific to those cards.
 
 **What `scripts/bench_ft.py --gpu` must report:**
@@ -292,20 +300,19 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 ```
 C0a design note ─────────────────────────────────────────────┐
 C0b whitened_residuals + model_loglike + regression ──┐       │
-C0c _precision helper ────────────────────────────────┤       │
-C0d coverage fixture + synthetic coverage generator ──┼───────┼──▶ C4 long-baseline MWEs
+C4a coverage fixture + synthetic coverage generator ─────────┼──▶ C4 long-baseline MWEs
 C1a image_visibilities (DFT) ──┬─▶ C1b Image ──┬─▶ C1c tests/MWE (AMI simulation)
                                │               ├─▶ C1d scene library (spiral/ring/star+comp)
                                │               ├─▶ C5a GaussianField (math; can start here)
                                └─▶ C2 NUFFT backend + CPU bench
-C0b + C0c + C1b ─▶ C3a Problem/fit ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
+C0b + C1b ─▶ C3a Problem/fit + _precision ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
 C1b ─▶ C3b regularisers ────────────┘
 C3a + C5a ─▶ C5b image_priors/GN diagonal/sampling MWE
 C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
 ```
 - **Critical path:** C1a → C1b → C3a → C3c/C3d → C4.
 - **Parallel lanes:**
-  - C0a, C0c and C0d run alongside C0b.
+  - C0a runs alongside C0b.
   - C2 runs alongside C1b–C1d.
   - C3b runs alongside C3a.
   - C5a starts as soon as C1b exists, alongside Stage 3.
@@ -323,7 +330,7 @@ C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
 | C1b `Image`, C3b regularisers, C3c `diagnose`, C5b helpers | **Sonnet** | Well specified by this plan; Opus reviews the diff |
 | All tests except the exactness tests, C1d scenes, MWE notebooks, tutorials | **Sonnet** | Clear specs; iterate against running code |
 | C0a design note, C7 docstrings, mkdocs pages | **Sonnet** | Writing from existing material |
-| C0d fixture extraction, running the suite/ruff/docs build, tutorial sync, benchmark runs and reporting | **Haiku** | Mechanical |
+| C4a fixture extraction, running the suite/ruff/docs build, tutorial sync, benchmark runs and reporting | **Haiku** | Mechanical |
 | Every PR's final review before a checkpoint | **Opus** (orchestrator) | Consistency across chunks |
 
 Fable 5.1 is also available in this environment, but I have no evidence about how it compares to Opus on this kind of numerical work. Try it on one Opus-tier chunk, e.g. C5a with its exact tests as the arbiter, before relying on it.
@@ -350,4 +357,4 @@ Orchestration overhead (reviews, integration, fixing cross-chunk mismatches) is 
   - A session per stage keeps context clean. The plan file and `design/image_reconstruction.md` are the handoff between sessions.
 - **Use VS Code (this extension) for checkpoints:** reviewing diffs, running the MWE notebooks and looking at the figures. It is good for that, less so for multi-hour orchestration tied to an open editor window.
 - **For the parallel stages** (0, 1+2, 3), you can say "use a workflow" to have the orchestrator run a scripted multi-agent workflow (a fan-out of chunks, each followed by an Opus review) instead of hand-launching agents. The size guideline is under 10 agents per workflow, which fits these stages.
-- **Checkpoints as GitHub PRs** (`imaging/sN-*` into `imaging`), so you can comment asynchronously; the next session starts by reading those comments.
+- **Checkpoints as GitHub PRs** (`imaging-sN-*`, stacked, into `imaging`), so you can comment asynchronously; the next session starts by reading those comments.

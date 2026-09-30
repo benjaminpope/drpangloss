@@ -34,6 +34,7 @@ MAPPINGS = {
     "notebooks/source_models.ipynb": "docs/source_models.md",
     "notebooks/composition.ipynb": "docs/composition.md",
     "notebooks/amigo_disco.ipynb": "docs/amigo_disco.md",
+    "notebooks/imaging_ami.ipynb": "docs/imaging_ami.md",
 }
 
 

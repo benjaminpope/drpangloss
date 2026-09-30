@@ -51,6 +51,7 @@ from .likelihood import (  # noqa: E402
     loglike,
     model_loglike,
     numpyro_model,
+    whitened_residuals,
 )
 from .limits import (  # noqa: E402
     absil_limits,
@@ -66,12 +67,14 @@ from .models import (  # noqa: E402
     BinaryModelCartesian,
     GaussianDisk,
     GaussianDiskModel,
+    Image,
     ModulatedGaussianRim,
     PointSource,
     Resolved,
     SourceModel,
     System,
     UniformDisk,
+    circular_support,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
@@ -83,6 +86,7 @@ __all__ = [
     "BinaryModelCartesian",
     "GaussianDisk",
     "GaussianDiskModel",
+    "Image",
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
@@ -92,6 +96,7 @@ __all__ = [
     "System",
     "UniformDisk",
     "absil_limits",
+    "circular_support",
     "best_grid_point",
     "build_model",
     "contrast_to_flux",
@@ -112,5 +117,6 @@ __all__ = [
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
+    "whitened_residuals",
     "write_oifits",
 ]

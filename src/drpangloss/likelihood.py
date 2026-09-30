@@ -1,11 +1,15 @@
-"""Gaussian likelihoods of source models given interferometric data.
+"""Likelihoods of source models given interferometric data.
 
 A model is given either as a template [`SourceModel`][drpangloss.models.SourceModel],
 whose parameters at dot-separated zodiax paths (e.g. ``"comp.flux"``) are
 replaced, or as a class/callable called with the parameters as keyword
-arguments (see [`build_model`][drpangloss.likelihood.build_model]). Phase
-residuals are wrapped into ``[-π, π)`` by
-[`OIData.residuals`][drpangloss.oidata.OIData.residuals].
+arguments (see [`build_model`][drpangloss.likelihood.build_model]).
+
+Every likelihood, grid, limit and fit goes through one residual vector,
+[`whitened_residuals`][drpangloss.likelihood.whitened_residuals]: the
+residuals divided by their uncertainties, with unprojected phases measured
+as a chord, 2 sin(Δ/2), so that the likelihood is smooth where phases
+wrap at ±π.
 """
 
 import jax
@@ -16,9 +20,31 @@ from ._utils import concrete, is_flux_param
 from .models import SourceModel
 
 
-def _gaussian_loglike(residuals, errors):
-    """Sum of independent Gaussian log densities of ``residuals``."""
-    return jax.scipy.stats.norm.logpdf(residuals, loc=0.0, scale=errors).sum()
+def _whiten(data_obj, prediction, reference, errors):
+    """Return ``(prediction - reference) / errors``, with phases as chords.
+
+    An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
+    2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is smooth
+    at ±π, so the Gaussian likelihood built on it is a von Mises likelihood
+    with concentration 1/σ². Projected (kernel or DISCO) phases are linear
+    combinations that are not wrapped, and are left as Δ.
+    """
+    resid = np.asarray(prediction) - np.asarray(reference)
+    if data_obj._phases_wrap:
+        n_vis = np.asarray(data_obj.vis).size
+        resid = np.concatenate(
+            [resid[:n_vis], 2.0 * np.sin(0.5 * resid[n_vis:])]
+        )
+    return resid / errors
+
+
+def _gaussian_loglike(whitened, errors):
+    """Gaussian log density of whitened residuals with uncertainties ``errors``."""
+    return (
+        -0.5 * np.sum(whitened**2)
+        - np.sum(np.log(errors))
+        - 0.5 * whitened.size * np.log(2.0 * np.pi)
+    )
 
 
 def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
@@ -58,6 +84,50 @@ def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
     return np.concatenate([d_vis, d_phi])
 
 
+def _whitened_and_errors(model_object, data_obj, vis_error_rel, phi_error):
+    prediction = data_obj.model(model_object)
+    errors = inflated_errors(data_obj, prediction, vis_error_rel, phi_error)
+    data = data_obj.flatten_data()[0]
+    return _whiten(data_obj, prediction, data, errors), errors
+
+
+def whitened_residuals(
+    model_object, data_obj, *, vis_error_rel=None, phi_error=None
+):
+    """Residuals of a model divided by the data uncertainties.
+
+    This is the one residual vector behind every likelihood in drpangloss:
+    ``model_loglike`` is ``-0.5 * sum(whitened_residuals**2)`` plus the
+    Gaussian normalisation, and least-squares fits minimise its sum of
+    squares.
+
+    Visibility and projected-phase (kernel or DISCO) residuals are
+    ``(model - data) / σ``. Unprojected phase residuals Δ are
+    ``2 sin(Δ/2) / σ``: equal to Δ/σ for small Δ, but smooth where Δ wraps
+    at ±π, so that a χ² surface has no kinks there. The resulting
+    likelihood is a von Mises distribution with concentration 1/σ².
+
+    Parameters
+    ----------
+    model_object : SourceModel
+        Model to evaluate.
+    data_obj : OIData
+        Data to compare with.
+    vis_error_rel, phi_error : float, optional
+        Extra error terms added in quadrature to the uncertainties (see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]).
+
+    Returns
+    -------
+    array-like
+        One dimensionless residual per data point, in the order of
+        [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
+    """
+    return _whitened_and_errors(
+        model_object, data_obj, vis_error_rel, phi_error
+    )[0]
+
+
 def model_loglike(
     model_object,
     data_obj,
@@ -66,10 +136,14 @@ def model_loglike(
     phi_error=None,
     reject_unphysical=False,
 ):
-    """Evaluate a Gaussian log likelihood for an instantiated model object.
+    """Evaluate the log likelihood for an instantiated model object.
 
-    Phase residuals are wrapped into ``[-π, π)`` (see
-    [`residuals`][drpangloss.oidata.OIData.residuals]).
+    This is ``-0.5 * sum(r**2) - sum(log σ) - (n/2) log 2π`` for the
+    residuals ``r`` of
+    [`whitened_residuals`][drpangloss.likelihood.whitened_residuals]:
+    Gaussian in visibilities and projected phases, and von Mises in
+    unprojected phases (with the Gaussian normalisation, which is its
+    small-σ limit).
 
     Parameters
     ----------
@@ -90,9 +164,10 @@ def model_loglike(
         This works inside ``jax.jit``, so samplers can use it as a hard prior
         boundary.
     """
-    prediction = data_obj.model(model_object)
-    errors = inflated_errors(data_obj, prediction, vis_error_rel, phi_error)
-    logl = _gaussian_loglike(data_obj.residuals(prediction), errors)
+    whitened, errors = _whitened_and_errors(
+        model_object, data_obj, vis_error_rel, phi_error
+    )
+    logl = _gaussian_loglike(whitened, errors)
     if reject_unphysical:
         logl = np.where(model_object.is_physical(), logl, -np.inf)
     return logl
@@ -209,7 +284,9 @@ def loglike_nosignal(values, params, data_obj, model):
     unity_cvis = np.ones_like(data_obj.u, dtype=complex)
     null_data = data_obj.standardize_model(unity_cvis)
 
-    return _gaussian_loglike(data_obj.residuals(model_data, null_data), errors)
+    return _gaussian_loglike(
+        _whiten(data_obj, model_data, null_data, errors), errors
+    )
 
 
 def _check_positive_flux_prior(name, distribution):

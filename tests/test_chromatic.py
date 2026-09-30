@@ -116,8 +116,12 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_vis = np.hypot(errors[:n_vis], vis_error_rel * model_data[:n_vis])
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
+    # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
+    # drpangloss.likelihood.whitened_residuals (the original used Δ).
+    resid = data - model_data
+    resid = resid.at[n_vis:].set(2.0 * np.sin(0.5 * resid[n_vis:]))
     return (
-        -0.5 * np.sum((data - model_data) ** 2 / errors**2)
+        -0.5 * np.sum(resid**2 / errors**2)
         - np.sum(np.log(errors))
         - data.size / 2 * np.log(2 * np.pi)
     )

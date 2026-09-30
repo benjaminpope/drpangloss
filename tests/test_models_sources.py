@@ -12,6 +12,7 @@ from drpangloss.models import (
     GaussianDisk,
     GaussianDiskModel,
     HarmonixModel,
+    Image,
     ModulatedGaussianRim,
     PointSource,
     System,
@@ -337,6 +338,10 @@ def test_binary_render_is_available():
         (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
         (
+            Image.from_model(GaussianDisk(4.0), 49, 0.5, dra=6.0, ddec=-3.0),
+            2e-3,
+        ),
+        (
             _star_and_rim(
                 diam=14.0,
                 fwhm=3.0,
@@ -369,6 +374,7 @@ def test_binary_render_is_available():
         "binary_ang",
         "gauss_disk",
         "uniform_disk",
+        "image",
         "rim",
         "nested_system",
     ],

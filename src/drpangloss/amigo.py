@@ -12,6 +12,8 @@ from pathlib import Path
 import jax.numpy as np
 import numpy as onp
 
+from ._geometry import find_uv_grid
+
 
 MIXED_DISCO_REQUIRED_FIELDS = (
     "u",
@@ -19,7 +21,6 @@ MIXED_DISCO_REQUIRED_FIELDS = (
     "wavelength_m",
     "disco_coefficients",
     "disco_sigma",
-    "disco_covariance",
     "disco_logamp_model_operator",
     "disco_phase_model_operator",
 )
@@ -44,7 +45,6 @@ def validate_mixed_disco_record(record):
     v = onp.asarray(record["v"], dtype=float)
     coefficients = onp.asarray(record["disco_coefficients"], dtype=float)
     sigma = onp.asarray(record["disco_sigma"], dtype=float)
-    covariance = onp.asarray(record["disco_covariance"], dtype=float)
     logamp = onp.asarray(record["disco_logamp_model_operator"], dtype=float)
     phase = onp.asarray(record["disco_phase_model_operator"], dtype=float)
 
@@ -58,8 +58,6 @@ def validate_mixed_disco_record(record):
         raise ValueError(
             "AMIGO DISCO coefficients and sigma must have matching shapes."
         )
-    if covariance.shape != (sigma.size, sigma.size):
-        raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
     expected_operator_shape = (sigma.size, u.size)
     if (
         logamp.shape != expected_operator_shape
@@ -70,7 +68,7 @@ def validate_mixed_disco_record(record):
         )
     if not all(
         onp.all(onp.isfinite(value))
-        for value in (u, v, coefficients, sigma, covariance, logamp, phase)
+        for value in (u, v, coefficients, sigma, logamp, phase)
     ):
         raise ValueError("AMIGO DISCO arrays must be finite.")
     if onp.any(sigma <= 0.0):
@@ -82,6 +80,21 @@ def validate_mixed_disco_record(record):
             "AMIGO DISCO modes must be ordered by increasing uncertainty."
         )
 
+    if "disco_covariance" in record:
+        _check_diagonal_covariance(record["disco_covariance"], sigma)
+
+
+def _check_diagonal_covariance(covariance, sigma):
+    """DISCO errors are independent by construction; check a stored matrix.
+
+    Products need not store the covariance: ``disco_sigma`` holds all of
+    it. Older products that do are checked for consistency.
+    """
+    covariance = onp.asarray(covariance, dtype=float)
+    if covariance.shape != (sigma.size, sigma.size):
+        raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
+    if not onp.all(onp.isfinite(covariance)):
+        raise ValueError("AMIGO DISCO arrays must be finite.")
     covariance_scale = max(
         float(onp.max(onp.abs(onp.diag(covariance)))),
         onp.finfo(float).tiny,
@@ -104,9 +117,11 @@ def validate_mixed_disco_record(record):
 def mixed_disco_fields(record):
     """Validate a mixed-DISCO record and return the OIData field values."""
     validate_mixed_disco_record(record)
+    u = -onp.asarray(record["u"], dtype=float)
+    v = -onp.asarray(record["v"], dtype=float)
     return {
-        "u": -np.asarray(record["u"], dtype=float),
-        "v": -np.asarray(record["v"], dtype=float),
+        "u": np.asarray(u),
+        "v": np.asarray(v),
         "wavel": np.asarray(record["wavelength_m"], dtype=float),
         "vis": np.asarray(record["disco_coefficients"], dtype=float),
         "d_vis": np.asarray(record["disco_sigma"], dtype=float),
@@ -123,6 +138,7 @@ def mixed_disco_fields(record):
         ),
         "vis_index": None,
         "phi_index": None,
+        "uv_grid": find_uv_grid(u, v),
         "observable_kind": "mixed_log_complex",
         "vis_mode": "logamp",
         "v2_flag": False,
@@ -158,3 +174,80 @@ def load_oi_data(path, filter_name=None):
     if filter_name is not None:
         return OIData(records[filter_name])
     return {name: OIData(record) for name, record in records.items()}
+
+
+def simulated_disco_record(
+    wavelength_m=4.3e-6,
+    pitch_m=0.65,
+    max_baseline_m=6.5,
+    rotation_deg=0.0,
+    sigma=1e-4,
+):
+    """A small AMIGO-style mixed-DISCO record, for simulations.
+
+    It has the structure of real AMI DISCO products, not their detail: the
+    uv samples are the half-plane of a square lattice out to
+    ``max_baseline_m``, rotated on the sky by ``rotation_deg`` (as AMI data
+    are, by the parallactic angle). The modes are the log-amplitude of every
+    sample, and combinations of the phases that are insensitive to shifts of
+    the source (orthogonal to the phase ramps a shift adds), like kernel
+    phases. All modes have the uncertainty ``sigma`` (errors of real DISCO
+    modes are independent too; ν Hor's are ~5e-5 to 2e-4). The coefficients
+    are zero: fill them with
+    [`OIData.with_model`][drpangloss.oidata.OIData.with_model].
+
+    Parameters
+    ----------
+    wavelength_m : float, optional
+        Wavelength in metres (default 4.3 µm, like F430M).
+    pitch_m : float, optional
+        Lattice spacing in metres. Real products are sampled more finely
+        (ν Hor: 0.2165 m); a coarser lattice keeps simulations small.
+    max_baseline_m : float, optional
+        Longest baseline kept, in metres.
+    rotation_deg : float, optional
+        Position angle, North to East, of the lattice's "up" axis.
+    sigma : float, optional
+        Uncertainty of every mode.
+
+    Returns
+    -------
+    dict
+        A record for [`OIData`][drpangloss.oidata.OIData].
+
+    Examples
+    --------
+    >>> data = OIData(simulated_disco_record(rotation_deg=-6.9))
+    >>> round(data.uv_grid.rotation_deg, 6)
+    -6.9
+    """
+    n = int(onp.ceil(max_baseline_m / pitch_m))
+    col, row = onp.meshgrid(onp.arange(-n, n + 1), onp.arange(-n, n + 1))
+    col, row = col.ravel(), row.ravel()
+    inside = onp.hypot(col, row) * pitch_m <= max_baseline_m * (1 + 1e-12)
+    keep = inside & ((row > 0) | ((row == 0) & (col > 0)))
+    grid_u, grid_v = pitch_m * col[keep], pitch_m * row[keep]
+    c, s = (
+        onp.cos(onp.radians(rotation_deg)),
+        onp.sin(onp.radians(rotation_deg)),
+    )
+    # The record stores -u, -v (see mixed_disco_fields).
+    u, v = -(c * grid_u + s * grid_v), -(-s * grid_u + c * grid_v)
+    npts = u.size
+    # Orthonormal phase combinations with no response to a shift, whose
+    # phase is linear in (u, v).
+    ramps = onp.linalg.qr(onp.stack([u, v], axis=1))[0]
+    basis = onp.linalg.svd(onp.eye(npts) - ramps @ ramps.T)[0][:, : npts - 2]
+    zeros = onp.zeros((npts, npts))
+    logamp = onp.concatenate([onp.eye(npts), zeros[: npts - 2]])
+    phase = onp.concatenate([zeros, basis.T])
+    nmodes = logamp.shape[0]
+    return {
+        "u": u,
+        "v": v,
+        "wavelength_m": onp.asarray(wavelength_m, dtype=float),
+        "disco_coefficients": onp.zeros(nmodes),
+        "disco_sigma": onp.full(nmodes, float(sigma)),
+        "disco_logamp_model_operator": logamp,
+        "disco_phase_model_operator": phase,
+    }
