@@ -59,9 +59,9 @@ rely on it — a clean diff keeps review focused on the actual change.
   never set `jax_enable_x64` globally at import time in a test module.
   Forward-model code must pass in both float32 and float64. Fourier transforms and
   matmuls over pixels use `precision=jax.lax.Precision.HIGHEST`, since on A100/H100
-  GPUs the default is TF32 (~1e-3 relative error). Fitting and sampling entry points
-  (planned: `fit`, `Problem`) will default to float64 inside a local
-  `jax.enable_x64(True)` context, with float32 as an option.
+  GPUs the default is TF32 (~1e-3 relative error). Fitting entry points (`fit`) default
+  to float64 inside a local `jax.enable_x64(True)` context (`_precision.run_in` and
+  `cast_tree`), with float32 as an option.
 - Every likelihood, grid, limit and fit uses one residual vector,
   `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
   a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
@@ -82,6 +82,8 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `fitting.py` | `Problem` (model, data, priors, regularisers; `residuals`, `loss`, `logdensity`) and `fit` (`lm`, `lbfgs`, `adam`, float64 by default via `_precision`) |
+| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `image_priors`, `nyquist_pixel_scale`, `l_curve` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
@@ -92,9 +94,10 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
 
-Imports flow one way: `_utils`/`_geometry`/`bessel` → `oifits`/`amigo`/`oidata`
-→ `models` → `likelihood` → `inference` → `_grid` → (`grid_fit`, `limits`)
-→ `plotting`. `grid_fit` and `limits` do not import each other.
+Imports flow one way: `_utils`/`_geometry`/`bessel`/`_precision` → `oifits`/`amigo`/`oidata`
+→ `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
+(`grid_fit`, `limits`) → `plotting`. `grid_fit` and `limits` do not import each other;
+`scenes` imports only `_geometry` and `_utils`.
 
 ## Flux and contrast
 
