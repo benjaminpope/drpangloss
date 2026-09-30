@@ -57,5 +57,5 @@ jobs:
       # tests/test_nufft.py skip itself.
       - name: NUFFT tests
         run: |
-          uv run --python .venv/bin/python -c "import jax_finufft"
+          .venv/bin/python -c "import jax_finufft"
           uv run --python .venv/bin/python pytest tests/test_nufft.py
