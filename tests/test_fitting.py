@@ -129,12 +129,28 @@ def test_non_least_squares_objectives_default_to_lbfgs():
     assert not problem.has_residuals
 
 
-def test_logdensity_rejects_penalties_but_accepts_centroid_priors():
-    with pytest.raises(ValueError, match="TSV"):
-        problem = _image_problem([TSV(1.0, path="env")])
-        problem.logdensity(problem.init())
+def test_logdensity_rejects_penalties_and_improper_priors():
     problem = _image_problem([Centroid(10.0, path="env")])
-    assert np.isfinite(problem.logdensity(problem.init()))
+    with pytest.raises(ValueError, match="improper"):
+        problem.logdensity(problem.init())
+    # With a proper prior on the pixels (and a Centroid, a genuine prior),
+    # the density is finite; penalties are still rejected.
+    pixels = dist.Normal(np.zeros((16, 16)), 3.0).to_event(2)
+    proper = Problem(
+        problem.model,
+        problem.data,
+        {"env.log_brightness": pixels},
+        [Centroid(10.0, path="env")],
+    )
+    assert np.isfinite(proper.logdensity(proper.init()))
+    penalised = Problem(
+        problem.model,
+        problem.data,
+        {"env.log_brightness": pixels},
+        [TSV(1.0, path="env")],
+    )
+    with pytest.raises(ValueError, match="TSV"):
+        penalised.logdensity(penalised.init())
 
 
 def test_problem_rejects_bad_paths_and_flux_priors():

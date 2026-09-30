@@ -102,7 +102,9 @@ class TV(_ImageRegulariser):
     """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
 
     Favours piecewise-flat images with sharp edges. ``ε`` smooths the
-    penalty where the image is flat, so that it is differentiable.
+    penalty where the image is flat, so that it is differentiable. The
+    penalty is averaged over the four flips of the image, so it has no
+    preferred direction on the sky.
 
     Parameters
     ----------
@@ -124,9 +126,16 @@ class TV(_ImageRegulariser):
 
     def value(self, model):
         b = self.image(model).brightness
-        dx, dy = _differences(b)
         eps = self.epsilon / b.size
-        return self.weight * np.sum(np.sqrt(dx**2 + dy**2 + eps**2))
+
+        def total(image):
+            dx, dy = _differences(image)
+            return np.sum(np.sqrt(dx**2 + dy**2 + eps**2))
+
+        # Forward differences pair each step with a preferred neighbour;
+        # averaging over the four flips of the image removes that bias.
+        flips = [b, b[::-1], b[:, ::-1], b[::-1, ::-1]]
+        return self.weight * sum(total(f) for f in flips) / 4.0
 
 
 class MaxEntropy(_ImageRegulariser):
@@ -262,8 +271,8 @@ class LCurve:
         The regularisation weights, in the order fitted (largest first).
     chi2 : array
         Total χ² of each fit.
-    chi2_red : array
-        Total χ² per data point.
+    chi2_red : array, shape (n_weights, n_datasets)
+        χ² per data point of each dataset.
     penalty : array
         The unweighted regulariser, ``value / weight``, of each fit.
     results : list of FitResult
@@ -304,18 +313,23 @@ class LCurve:
         """The weight at which χ² per data point reaches ``target``.
 
         This is Morozov's discrepancy principle: regularise as strongly as
-        the data allow. It interpolates linearly in ``log w`` between the
+        the data allow. With several datasets, the binding one (the largest
+        χ² per point) must reach the target, so that a well-fitted dataset
+        cannot hide a badly fitted one. It interpolates linearly in ``log w`` between the
         fitted weights, and returns ``None`` if the sweep never crosses the
         target. It relies on correct error bars; with underestimated errors
         it over-regularises.
         """
-        above = self.chi2_red > target
+        binding = np.max(
+            np.reshape(self.chi2_red, (len(self.weights), -1)), axis=1
+        )
+        above = binding > target
         crossings = np.nonzero(above[:-1] & ~above[1:])[0]
         if crossings.size == 0:
             return None
         i = int(crossings[0])
         t = np.log(self.weights[i : i + 2])
-        c = self.chi2_red[i : i + 2]
+        c = binding[i : i + 2]
         fraction = (c[0] - target) / (c[0] - c[1])
         return float(np.exp(t[0] + fraction * (t[1] - t[0])))
 
@@ -364,7 +378,9 @@ def l_curve(make_problem, weights, **fit_options):
         start = result.model
         results.append(result)
         chi2.append(sum(result.info["chi2"]))
-        chi2_red.append(result.info["chi2_red"])
+        chi2_red.append(
+            [c / n for c, n in zip(result.info["chi2"], result.info["ndata"])]
+        )
         penalty.append(float(weighted[0].value(result.model)) / weight)
     return LCurve(
         np.asarray(weights),
@@ -546,12 +562,19 @@ def diagnose(model, data, regularisers=()):
 
         flipped = _map_images(model, _rotated_180)
         checks["flip_dchi2"] = sum(_chi2(flipped, observations)) - sum(chi2)
-        if checks["flip_dchi2"] < 1.0:
+        if abs(checks["flip_dchi2"]) < 1.0:
             warns.append(
                 "Rotating the Images by 180 degrees changes chi2 by "
-                f"{checks['flip_dchi2']:.2g} < 1: the data do not constrain "
+                f"{checks['flip_dchi2']:.2g}: the data do not constrain "
                 "the orientation (V^2-only data cannot); expect a mirror "
                 "ambiguity."
+            )
+        elif checks["flip_dchi2"] <= -1.0:
+            warns.append(
+                "The Images rotated by 180 degrees fit better, by "
+                f"{-checks['flip_dchi2']:.3g} in chi2: the fit may be "
+                "trapped in a mirrored solution; refit from the rotated "
+                "image."
             )
 
         if any(im.backend != "dft" for _, im in images):

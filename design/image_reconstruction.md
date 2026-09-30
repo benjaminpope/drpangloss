@@ -505,7 +505,7 @@ cross-correlation with the truth):
 | 1e-3 | 0.719 | 0.957 | 0.812 |
 
 Across the three regularisers at the best weight of a sweep, MEM was best
-on all three scenes (ring 0.994, against 0.987 for TSV and 0.956 for TV at
+on all three scenes (ring 0.994, against 0.987 for TSV and 0.95 for TV at
 σ = 1e-4); TV makes smooth structure blocky. Charles et al.'s choice of MEM
 for WR 137 is consistent with this.
 

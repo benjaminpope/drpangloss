@@ -42,6 +42,15 @@ def test_tsv_and_tv_penalise_edges_and_structure():
     assert np.isclose(0.5 * np.sum(tsv.residuals(blob) ** 2), tsv.value(blob))
 
 
+def test_tv_has_no_preferred_direction():
+    b = np.array([[1.0, 2.0], [3.0, 7.0]])
+    values = [
+        TV(1.0).value(_image(x))
+        for x in (b, b[::-1], b[:, ::-1], b[::-1, ::-1])
+    ]
+    assert np.allclose(np.array(values), values[0], rtol=1e-5)
+
+
 def test_max_entropy_is_zero_at_the_default_image():
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     assert np.isclose(
@@ -176,3 +185,8 @@ def test_corner_and_discrepancy_on_a_known_curve():
     assert 0.1 <= curve.corner() <= 10.0
     assert np.isclose(curve.discrepancy(target=11.0), 10.0, rtol=0.05)
     assert curve.discrepancy(target=0.5) is None
+    # With two datasets, the worse-fitted one decides.
+    joint = LCurve(
+        w, chi2, np.stack([chi2 / 100.0, chi2 / 200.0], axis=1), penalty, []
+    )
+    assert np.isclose(joint.discrepancy(target=11.0), 10.0, rtol=0.05)

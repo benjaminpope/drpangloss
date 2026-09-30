@@ -17,7 +17,7 @@ dependencies = [
   "zodiax>=0.4",
   "optimistix>=0.0.10",
   "lineax>=0.0.5",
-  "optax>=0.2",
+  "optax>=0.2.3",
   "numpyro>=0.15",
   "numpy",
   "matplotlib",

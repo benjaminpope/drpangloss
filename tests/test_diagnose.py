@@ -120,3 +120,19 @@ def test_an_inaccurate_backend_warns():
     diagnosis = diagnose(scene, tight)
     assert diagnosis.checks["backend_error_sigma"] > 0.1
     assert any("backend" in w for w in diagnosis.warnings)
+
+
+def test_a_mirrored_fit_warns():
+    # A model that is the truth rotated by 180 degrees fits the data worse
+    # than its own rotation, the truth.
+    mirrored = TRUTH.set(
+        "env",
+        Image(
+            TRUTH.env.log_brightness[::-1, ::-1],
+            TRUTH.env.pixel_scale_mas,
+            flux=TRUTH.env.flux,
+        ),
+    )
+    diagnosis = diagnose(mirrored, DATA)
+    assert diagnosis.checks["flip_dchi2"] < -1.0
+    assert any("mirrored" in w for w in diagnosis.warnings)

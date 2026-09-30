@@ -194,8 +194,23 @@ class Problem(eqx.Module):
 
         Includes the log Jacobian of each bijection. Raises ``ValueError``
         if a regulariser is not a probability density (e.g. maximum
-        entropy, total variation or total squared variation).
+        entropy, total variation or total squared variation), or if a prior
+        is improper: flat log-brightness priors leave a direction (adding a
+        constant to every pixel) along which the density never falls off,
+        so it cannot be sampled.
         """
+        import numpyro.distributions as dist
+
+        flat = [
+            path
+            for path, prior in self.priors.items()
+            if isinstance(prior, dist.ImproperUniform)
+        ]
+        if flat:
+            raise ValueError(
+                f"The priors on {', '.join(flat)} are improper, so the "
+                "posterior cannot be sampled; use proper priors."
+            )
         improper = [
             type(r).__name__ for r in self.regularisers if not r.probabilistic
         ]
