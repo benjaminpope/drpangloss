@@ -42,7 +42,7 @@ plt.show()
 ```
 
 ```text
-4.80 um, 156 uv points
+4.80 um, 158 uv points
 longest baseline 6.5 m, finest fringes 152 mas
 uv lattice rotated by -6.9 deg
 ```
@@ -108,7 +108,7 @@ print(f"chi^2 of the truth: {chi2:.0f} for {data.size} coefficients")
 ![imaging_ami output 7.1](generated/imaging_ami_cell007_out01.png)
 
 ```text
-chi^2 of the truth: 338 for 310 coefficients
+chi^2 of the truth: 340 for 314 coefficients
 ```
 
 The first coefficients are the log-amplitudes and the rest are shift-invariant phase combinations. The data scatter around the model within their error bars, and the chi-squared of the truth is comparable to the number of coefficients, as it should be.
@@ -138,7 +138,7 @@ print(f"largest observable: {jnp.abs(template.model(binary)).max():.1e}")
 ```text
 companion at dRA = -85 mas, dDec = 115 mas
 largest difference in the DISCO observables: 1.2e-07
-largest observable: 1.0e-01
+largest observable: 1.2e-01
 ```
 
 The two agree to float32 rounding, so the image and the analytic model are interchangeable in the likelihood.
@@ -171,6 +171,9 @@ print(f"largest difference: {difference.max():.1e}")
 
 ```text
 lattice (MFT): 0.07 ms per evaluation
+```
+
+```text
 per point: 0.16 ms per evaluation
 ```
 

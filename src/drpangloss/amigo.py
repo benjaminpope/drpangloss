@@ -221,12 +221,11 @@ def simulated_disco_record(
     >>> round(data.uv_grid.rotation_deg, 6)
     -6.9
     """
-    n = int(max_baseline_m // pitch_m)
+    n = int(onp.ceil(max_baseline_m / pitch_m))
     col, row = onp.meshgrid(onp.arange(-n, n + 1), onp.arange(-n, n + 1))
     col, row = col.ravel(), row.ravel()
-    keep = (onp.hypot(col, row) * pitch_m <= max_baseline_m) & (
-        (row > 0) | ((row == 0) & (col > 0))
-    )
+    inside = onp.hypot(col, row) * pitch_m <= max_baseline_m * (1 + 1e-12)
+    keep = inside & ((row > 0) | ((row == 0) & (col > 0)))
     grid_u, grid_v = pitch_m * col[keep], pitch_m * row[keep]
     c, s = (
         onp.cos(onp.radians(rotation_deg)),

@@ -7,5 +7,6 @@
       show_attributes: false
       members:
         - model
+        - model_on_grid
         - render
         - is_physical
