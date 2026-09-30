@@ -560,8 +560,9 @@ class Image(Component):
     [`PointSource`][drpangloss.models.PointSource] star) while resolved
     emission goes in the pixels.
 
-    Visibilities are the exact Fourier transform of the pixels, each treated
-    as a point at its centre.
+    Visibilities are the Fourier transform of the pixels, each treated as a
+    point at its centre: exact with the default ``backend="dft"``, and
+    approximate (to a requested tolerance) with ``"nufft"``.
 
     Parameters
     ----------
@@ -585,10 +586,11 @@ class Image(Component):
         How visibilities are computed: ``"dft"`` (default), the exact sum
         over pixels, or ``"nufft"``, a non-uniform FFT from the optional
         ``jax-finufft`` package (``pip install 'drpangloss[nufft]'``),
-        which is faster for large images and datasets. The NUFFT error per
-        visibility is below 1e-7 in float64 and 1e-5 in float32 (relative
-        to the zero-baseline visibility); prefer the DFT when phases must
-        be accurate to better than ~1e-4 rad in float32.
+        which is faster for large images and large, irregular datasets
+        (e.g. long-baseline interferometry). It is approximate, with a
+        requested relative tolerance of 1e-7 in float64 and 1e-5 in
+        float32; prefer the DFT when phases must be accurate to better than
+        ~1e-4 rad in float32.
 
     Examples
     --------

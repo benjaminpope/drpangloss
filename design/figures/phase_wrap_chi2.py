@@ -50,7 +50,9 @@ ax0.set_ylabel(r"$\sigma^2\,\chi^2$ per closure phase")
 ax0.legend(frameon=False)
 ax1.plot(dra, old, label="old")
 ax1.plot(dra, new, label="new")
-ax1.set_xlabel(r"companion $\Delta$RA (mas), $\Delta$Dec = 80 mas (truth: 120 mas)")
+ax1.set_xlabel(
+    r"companion $\Delta$RA (mas), $\Delta$Dec = 80 mas (truth: 120 mas)"
+)
 ax1.set_ylabel(r"closure-phase $\chi^2$")
 ax1.legend(frameon=False)
 fig.tight_layout()

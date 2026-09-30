@@ -57,9 +57,12 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas, backend="dft"):
         at ``Precision.HIGHEST`` (on A100/H100 GPUs the default is TF32,
         with ~1e-3 relative error). ``"nufft"`` uses a non-uniform FFT from
         the optional ``jax-finufft`` package (``pip install
-        'drpangloss[nufft]'``), with a per-point error below
-        ``eps * sum(brightness)`` for ``eps`` = 1e-7 in float64 and 1e-5
-        in float32. It is faster for large images and many frequencies.
+        'drpangloss[nufft]'``). It is approximate, with a requested
+        relative tolerance ``eps`` of 1e-7 in float64 and 1e-5 in float32
+        (FINUFFT's accuracy is relative to the 2-norm of the output, so
+        single visibilities can do worse; ``tests/test_nufft.py`` checks
+        ``3 eps`` per point for unit-sum images). It is faster for large
+        images and many irregularly placed frequencies.
 
     Returns
     -------

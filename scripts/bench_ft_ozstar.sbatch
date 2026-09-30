@@ -24,7 +24,9 @@
 #
 # Then submit from the repository root:
 #
-#   sb scripts/bench_ft_ozstar.sbatch
+#   mkdir -p logs && sbatch scripts/bench_ft_ozstar.sbatch
+#
+# (Slurm does not create the logs/ directory itself.)
 #
 # and send back logs/bench-ft-<jobid>.out and bench_ft_gpu.json.
 
