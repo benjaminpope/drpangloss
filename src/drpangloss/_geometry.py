@@ -24,6 +24,54 @@ def image_coordinates(npix, fov_mas):
     return np.meshgrid(x, y, indexing="xy")
 
 
+def pixel_offsets(npix, pixel_scale_mas):
+    """Sky offsets (mas) of the pixel centres along one image axis.
+
+    Along columns this is ``dra``, decreasing to the right (East left); along
+    rows it is ``ddec``, decreasing downwards (North up). Both are
+    ``(centre - index) * pixel_scale_mas`` with the centre at index
+    ``(npix - 1) / 2``, as in :func:`image_coordinates`.
+    """
+    return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
+
+
+def image_visibilities(brightness, uu, vv, pixel_scale_mas):
+    """Exact Fourier transform of a pixel image at arbitrary frequencies.
+
+    Each pixel is treated as a point at its centre, so
+    ``V(u, v) = sum_{row, col} I[row, col] exp(-2πi (u x_col + v y_row))``
+    with the sign convention of :func:`offset_phase`. The sum is separable
+    into two matrix products, done at ``Precision.HIGHEST`` (on A100/H100
+    GPUs the default is TF32, with ~1e-3 relative error).
+
+    Parameters
+    ----------
+    brightness : array-like, shape (nrow, ncol)
+        Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
+        North up). Not normalised here.
+    uu, vv : array-like
+        Spatial frequencies, baseline / wavelength (per radian); any shape.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibilities with the shape of ``uu``.
+    """
+    brightness = np.asarray(brightness)
+    nrow, ncol = brightness.shape
+    x = pixel_offsets(ncol, pixel_scale_mas)
+    y = pixel_offsets(nrow, pixel_scale_mas)
+    fu = mas2rad * np.ravel(uu)
+    fv = mas2rad * np.ravel(vv)
+    cols = np.exp(-2j * np.pi * np.outer(fu, x))
+    rows = np.exp(-2j * np.pi * np.outer(fv, y))
+    highest = jax.lax.Precision.HIGHEST
+    partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
+    return np.sum(partial * cols, axis=-1).reshape(np.shape(uu))
+
+
 def offset_phase(uu, vv, dra, ddec):
     """Fourier shift factor for an offset of ``(dra, ddec)`` milliarcseconds."""
     arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)

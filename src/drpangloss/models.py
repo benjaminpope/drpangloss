@@ -25,12 +25,15 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import zodiax as zx
+from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
 
 from ._geometry import (
     check_az_prof_nonnegative,
     image_coordinates,
+    image_visibilities,
     offset_phase,
+    pixel_offsets,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -516,6 +519,134 @@ class ModulatedGaussianRim(Component):
         )
         psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
         return fftconvolve(ring, psf, mode="same")
+
+
+def circular_support(npix, pixel_scale_mas, radius_mas):
+    """Pixels of an ``npix`` x ``npix`` image within ``radius_mas`` of its centre.
+
+    Returns a boolean array for the ``support`` of an
+    [`Image`][drpangloss.models.Image].
+    """
+    offsets = pixel_offsets(int(npix), float(pixel_scale_mas))
+    return np.hypot(offsets[None, :], offsets[:, None]) <= radius_mas
+
+
+class Image(Component):
+    """Pixelised brightness distribution, for image reconstruction.
+
+    The pixel fluxes are ``brightness = softmax(log_brightness)`` taken over
+    the pixels in ``support``: positive, summing to one, and exactly zero
+    outside the support. Like any other component, the image has a ``flux``
+    weight and an offset inside a [`System`][drpangloss.models.System], so
+    unresolved sources can stay analytic (e.g. a
+    [`PointSource`][drpangloss.models.PointSource] star) while resolved
+    emission goes in the pixels.
+
+    Visibilities are the exact Fourier transform of the pixels, each treated
+    as a point at its centre.
+
+    Parameters
+    ----------
+    log_brightness : array-like, shape (nrow, ncol)
+        Log pixel fluxes, up to an additive constant, in the orientation of
+        [`render`][drpangloss.models.SourceModel.render]: row 0 is the top
+        (North) and column 0 the left (East) of the image.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds. The image centre, at index
+        ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
+    support : array-like of bool, optional
+        Pixels allowed to carry flux (default: all); see
+        [`circular_support`][drpangloss.models.circular_support].
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1).
+    dra, ddec : float, optional
+        Offset of the image centre in milliarcseconds, positive to the East
+        and North.
+
+    Examples
+    --------
+    >>> image = Image(np.zeros((32, 32)), pixel_scale_mas=2.0)
+    >>> envelope = Image.from_model(GaussianDisk(sigma=8.0), 32, 2.0, flux=0.3)
+    >>> scene = System(star=PointSource(), env=envelope)
+    """
+
+    log_brightness: jax.Array
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        log_brightness,
+        pixel_scale_mas,
+        support=None,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.log_brightness = np.asarray(log_brightness, dtype=float)
+        if self.log_brightness.ndim != 2:
+            raise ValueError("log_brightness must be a 2D array.")
+        if support is not None:
+            support = np.asarray(support, dtype=bool)
+            if support.shape != self.log_brightness.shape:
+                raise ValueError(
+                    f"support has shape {support.shape}, but log_brightness "
+                    f"has shape {self.log_brightness.shape}."
+                )
+            any_pixel = concrete(np.any(support))
+            if any_pixel is not None and not bool(any_pixel):
+                raise ValueError("support must contain at least one pixel.")
+        self.support = support
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    @classmethod
+    def from_brightness(
+        cls, brightness, pixel_scale_mas, *, floor=1e-6, **kwargs
+    ):
+        """Build an image from non-negative pixel fluxes.
+
+        Pixels fainter than ``floor`` times the brightest are raised to that
+        level, so that their logarithm is finite. Other keyword arguments
+        (``support``, ``flux``, ``dra``, ``ddec``) go to
+        [`Image`][drpangloss.models.Image].
+        """
+        brightness = np.asarray(brightness, dtype=float)
+        brightness = np.maximum(brightness, floor * np.max(brightness))
+        return cls(np.log(brightness), pixel_scale_mas, **kwargs)
+
+    @classmethod
+    def from_model(cls, model, npix, pixel_scale_mas, **kwargs):
+        """Pixelise a model, e.g. a parametric fit, as a starting image.
+
+        The pixels are ``model.render`` on an ``npix`` x ``npix`` grid; see
+        [`from_brightness`][drpangloss.models.Image.from_brightness] for
+        the keyword arguments.
+        """
+        image = model.render(npix=npix, fov_mas=npix * pixel_scale_mas)
+        return cls.from_brightness(image, pixel_scale_mas, **kwargs)
+
+    @property
+    def brightness(self):
+        """Pixel fluxes: positive, unit sum, zero outside ``support``."""
+        where = None if self.support is None else self.support.ravel()
+        flat = jax.nn.softmax(self.log_brightness.ravel(), where=where)
+        return flat.reshape(self.log_brightness.shape)
+
+    def _centred_cvis(self, uu, vv):
+        return image_visibilities(
+            self.brightness, uu, vv, self.pixel_scale_mas
+        )
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Bilinear resampling of the pixels, exact at their centres.
+        nrow, ncol = self.log_brightness.shape
+        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
+        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
+        return map_coordinates(self.brightness, [rows, cols], order=1)
 
 
 class Resolved(SourceModel):

@@ -62,6 +62,7 @@ nav:
               - BinaryModelAngular: api/models/classes/binary_model_angular.md
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
               - System and building blocks: api/models/classes/composition.md
+              - Image: api/models/classes/image.md
               - GaussianDiskModel: api/models/classes/gaussian_disk_model.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md

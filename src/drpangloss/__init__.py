@@ -67,12 +67,14 @@ from .models import (  # noqa: E402
     BinaryModelCartesian,
     GaussianDisk,
     GaussianDiskModel,
+    Image,
     ModulatedGaussianRim,
     PointSource,
     Resolved,
     SourceModel,
     System,
     UniformDisk,
+    circular_support,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
@@ -84,6 +86,7 @@ __all__ = [
     "BinaryModelCartesian",
     "GaussianDisk",
     "GaussianDiskModel",
+    "Image",
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
@@ -93,6 +96,7 @@ __all__ = [
     "System",
     "UniformDisk",
     "absil_limits",
+    "circular_support",
     "best_grid_point",
     "build_model",
     "contrast_to_flux",
