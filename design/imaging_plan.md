@@ -231,6 +231,16 @@ The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are l
 - **Compact central emission** just outside the half-beam hole is required by the data. In single fits at the MEM weight (316) started from the parametric ring, χ² per point is 1.06 with a half-beam hole and 1.28 with a one-beam hole. The L-curve's warm-started fit at the same weight reaches 0.94.
 - **Binary:** a parametric secondary has a local minimum at 0.80 mas and about 4% of the flux, matching the paper. The data prefer an equal pair at 0.44 mas, which amounts to a slightly resolved centre. Untangling it needs the secondary's spectrum and the circum-companion emission to be modelled together.
 
+## Stage 4d: a binary star alongside the image (PIONIER)
+The analytic part of the SPARCO scene for IRAS 08544-4431 becomes a binary: two `PointSource`s with λ⁻⁴ spectra, plus the image and a `Resolved` background, all fitted jointly. The MWE is `mwe_pionier_binary`, and no library changes were needed.
+- The fit starts from our parametric binary + ring solution: 4.7% at 0.80 mas, PA 213°.
+- At the MEM weight of 316, the joint fit gives:
+  - a companion with 7.2% of the flux at 0.67 mas, PA 214°;
+  - fractions of 55.7% (primary), 22.6% (image) and 14.5% (background);
+  - a loss 95 lower than the single-star fit.
+- The compact knots next to the star disappear, and the background can be left free.
+- The paper's text gives 3.9% at 0.81 mas. The companion's flux and separation are correlated, and its circumstellar emission is not modelled here.
+
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
 - `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)`:
