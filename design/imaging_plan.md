@@ -288,6 +288,17 @@ A background split off as a `Resolved` component also changes what the image's i
 
 **Checkpoint:** is the GP prior worth it compared with classical regularisers, and does sampling go into the docs as supported?
 
+**Log, 5a (2026-10-01):** this stage is split into three PRs: 5a the GP field, 5b evidence-based weights, and 5c sampling.
+- **Library:** `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)` and `fields.field_spectrum`.
+  - `Image` accepts the field in place of its log-brightness, through the `evaluate(pixel_scale_mas)` protocol, and gains an `eta` property.
+  - `image_priors` gives the latents N(0, 1) priors, so the fit is least squares.
+  - `fit` warns when σ or ℓ is fitted by MAP.
+- **Tests:** the exact covariance against (κ²I + L)^order with the constant mode removed (8×6, orders 1 and 2); `order=1` equals TSV + L2 on η; σ and ℓ calibration; `latent = 0` reproduces the template; finite hyperparameter gradients; an LM fit and `diagnose`; the MAP warning.
+- **MWE-A** (`mwe_gaussian_field`), on the two-night VLTI SPARCO scene:
+  - Levenberg–Marquardt converges in 23–53 steps, a few seconds per fit.
+  - At the discrepancy pair (σ = 4, ℓ = 1 mas): NCC 0.93, ratio 0.511 and index 1.91, against MEM's 0.89, 0.509 and 1.87 (truth 0.5 and 2).
+  - The result is insensitive to σ between 1 and 4.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
