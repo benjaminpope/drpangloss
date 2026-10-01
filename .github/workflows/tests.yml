@@ -13,11 +13,25 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python-version: ["3.11", "3.12"]
+        x64: ["0"]
+        include:
+          # The jax.enable_x64 dtype mix-up fixed in bessel.py surfaced locally
+          # on macOS but not in Linux CI; x64 exercises the float64 paths.
+          - os: macos-latest
+            python-version: "3.12"
+            x64: "0"
+          - os: ubuntu-latest
+            python-version: "3.12"
+            x64: "1"
+    env:
+      JAX_ENABLE_X64: ${{ matrix.x64 }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -29,6 +43,9 @@ jobs:
         run: |
           uv venv --python ${{ matrix.python-version }} .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
+          # Test against the newest JAX the other dependencies allow.
+          uv pip install --python .venv/bin/python --upgrade jax jaxlib
+          .venv/bin/python -c "import jax; print('jax', jax.__version__)"
 
       # Linting lives in lint.yml and docs builds in documentation.yml, so
       # neither blocks the test suite.
