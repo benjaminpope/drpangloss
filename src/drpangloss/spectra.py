@@ -139,12 +139,10 @@ class BlackBody(Spectrum):
             _HC_OVER_K / (wavel * self.temperature),
             _HC_OVER_K / (self.wavel0 * self.temperature),
         )
-        return (
-            self.ratio
-            * (self.wavel0 / wavel) ** 5
-            * np.expm1(x0)
-            / np.expm1(x)
-        )
+        # expm1(x0) / expm1(x), rewritten with negative arguments so that it
+        # cannot overflow at low temperatures.
+        planck = np.exp(x0 - x) * np.expm1(-x0) / np.expm1(-x)
+        return self.ratio * (self.wavel0 / wavel) ** 5 * planck
 
     def is_physical(self):
         return (

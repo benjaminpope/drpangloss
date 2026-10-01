@@ -237,6 +237,13 @@ def test_black_body_is_a_planck_spectrum_normalised_at_wavel0(temperature):
     assert float(spectrum(None)) == pytest.approx(0.3)
 
 
+def test_cold_black_body_does_not_overflow():
+    cold = BlackBody(0.3, 50.0)
+    assert float(cold(1.65e-6)) == pytest.approx(0.3)
+    values = onp.asarray(cold(WAVES))
+    assert onp.all(onp.isfinite(values)) and onp.all(values >= 0.0)
+
+
 def test_hot_black_body_tends_to_rayleigh_jeans():
     hot = BlackBody(1.0, 1e7)(WAVES)
     assert onp.allclose(hot, PowerLaw(1.0, -4.0)(WAVES), rtol=1e-3)
