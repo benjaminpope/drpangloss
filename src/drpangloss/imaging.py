@@ -777,6 +777,56 @@ def log_evidence(model, data, path="env"):
     return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
 
 
+def error_scale(model, data, path="env"):
+    """Re-estimate the scale of the error bars from a Gaussian-field fit.
+
+    At the MAP of an Image whose log-brightness is a
+    [`GaussianField`][drpangloss.fields.GaussianField], this returns MacKay's
+    noise re-estimate
+
+    ``s = sqrt(χ² / (N - γ))``,  ``γ = Σ λ / (1 + λ)``,
+
+    where ``N`` is the number of data, and ``γ`` the effective number of
+    image parameters the data measure. The ``λ`` are the eigenvalues of
+    the Gauss–Newton curvature ``JᵀJ`` in the field's whitened latents, the
+    same as in [`log_evidence`][drpangloss.imaging.log_evidence].
+    ``s < 1`` means the error bars are larger than the scatter of the data
+    about the model, which makes the discrepancy principle, classic MaxEnt
+    and the evidence all over-regularise. Rescale the data with
+    [`OIData.with_error_scale`][drpangloss.oidata.OIData.with_error_scale]
+    and refit; one iteration usually suffices.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The MAP model.
+    data : OIData or sequence of OIData
+        The data it was fitted to.
+    path : str, optional
+        Path of the Image in the model (default ``"env"``).
+
+    Returns
+    -------
+    float
+    """
+    image = model.get(path)
+    if not isinstance(image.log_brightness, GaussianField):
+        raise TypeError(
+            f"error_scale needs an Image with a GaussianField at {path!r}."
+        )
+    jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    with run_in("float64"):
+        model64, datasets = cast_tree((model, datasets), "float64")
+        chi2 = sum(
+            float(np.sum(whitened_residuals(model64, d) ** 2))
+            for d in datasets
+        )
+    curvature = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
+    gamma = float(onp.sum(curvature / (1.0 + curvature)))
+    return float(onp.sqrt(chi2 / (jac.shape[0] - gamma)))
+
+
 def l_curve(
     model, priors, data, regulariser, weights, others=(), **fit_options
 ):
