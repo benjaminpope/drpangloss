@@ -228,7 +228,7 @@ The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are l
   - the resolved background has to be held fixed, because a smooth image is degenerate with it and absorbs it;
   - the deprojected profile peaks at 7.5 mas, against the parametric 7.2 mas;
   - the image's spectral index is 1.55, against the paper's 0.42, probably because of the fixed background.
-- **Compact central emission** just outside the half-beam hole is required by the data: with a one-beam hole, χ² per point rises from 1.06 to 1.28.
+- **Compact central emission** just outside the half-beam hole is required by the data. In single fits at the MEM weight (316) started from the parametric ring, χ² per point is 1.06 with a half-beam hole and 1.28 with a one-beam hole. The L-curve's warm-started fit at the same weight reaches 0.94.
 - **Binary:** a parametric secondary has a local minimum at 0.80 mas and about 4% of the flux, matching the paper. The data prefer an equal pair at 0.44 mas, which amounts to a slightly resolved centre. Untangling it needs the secondary's spectrum and the circum-companion emission to be modelled together.
 
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
