@@ -2,6 +2,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
+import pytest
 
 from drpangloss.coverage import (
     PARANAL_LATITUDE_DEG,
@@ -21,6 +22,7 @@ from drpangloss.models import (
     GaussianDisk,
     Image,
     PointSource,
+    Rotated,
     System,
     circular_support,
 )
@@ -169,3 +171,45 @@ def test_starting_image_can_leave_a_hole_under_the_star():
     centre = image.log_brightness.shape[0] // 2
     assert image.support is not None and not image.support[centre, centre]
     assert np.all(image.brightness[~image.support] == 0.0)
+
+
+def _binary_epochs(dra, ddec, flux, spin):
+    epoch = BinaryModelCartesian(dra, ddec, flux)
+    return [epoch, Rotated(epoch, spin)]
+
+
+def test_a_model_per_epoch_recovers_a_known_and_an_unknown_rotation():
+    truth = _binary_epochs(6.0, -4.0, 0.05, 60.0)
+    nights = [
+        NIGHT.with_model(m, key=jax.random.PRNGKey(k))
+        for k, m in enumerate(truth)
+    ]
+    priors = {
+        "dra": dist.Uniform(-20.0, 20.0),
+        "ddec": dist.Uniform(-20.0, 20.0),
+        "flux": dist.Uniform(0.0, 0.5),
+    }
+    init = {"dra": 5.0, "ddec": -3.0, "flux": 0.03}
+    known = fit(
+        lambda **p: _binary_epochs(**p, spin=60.0), priors, nights, init=init
+    )
+    assert isinstance(known.model[1], Rotated)
+    assert abs(known.values["dra"] - 6.0) < 0.3
+    unknown = fit(
+        _binary_epochs,
+        priors | {"spin": dist.Uniform(-180.0, 180.0)},
+        nights,
+        init=init | {"spin": 50.0},
+    )
+    assert abs(unknown.values["spin"] - 60.0) < 2.0
+    assert abs(unknown.values["ddec"] + 4.0) < 0.3
+
+
+def test_a_model_per_dataset_must_match_the_datasets():
+    with pytest.raises(ValueError, match="2 models for 1 datasets"):
+        fit(
+            lambda dra: _binary_epochs(dra, -4.0, 0.05, 60.0),
+            {"dra": dist.Uniform(-20.0, 20.0)},
+            NIGHT,
+            init={"dra": 5.0},
+        )

@@ -118,8 +118,19 @@ class _Objective(eqx.Module):
         )
 
     def data_residuals(self, model):
-        """Whitened residuals of ``model`` for each dataset, as a list."""
-        return [whitened_residuals(model, d) for d in self.data]
+        """Whitened residuals of ``model`` for each dataset, as a list.
+
+        ``model`` is one model for all the datasets, or a list of them, one
+        per dataset.
+        """
+        if not isinstance(model, (list, tuple)):
+            model = [model] * len(self.data)
+        if len(model) != len(self.data):
+            raise ValueError(
+                f"The model function returned {len(model)} models for "
+                f"{len(self.data)} datasets."
+            )
+        return [whitened_residuals(m, d) for m, d in zip(model, self.data)]
 
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
@@ -136,7 +147,7 @@ class _Objective(eqx.Module):
                     f"{type(regulariser).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
-            parts.append(np.ravel(regulariser.residuals(model)))
+            parts.append(np.ravel(regulariser.residuals(_reference(model))))
         for path, prior in self.priors.items():
             r = _prior_residuals(path, prior, values[path])
             if r is not None:
@@ -153,12 +164,17 @@ class _Objective(eqx.Module):
         model = self.build(z)
         values = self.constrain(z)
         chi2 = sum(np.sum(r**2) for r in self.data_residuals(model))
-        penalty = sum(r.value(model) for r in self.regularisers)
+        penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
             for path, prior in self.priors.items()
         )
         return 0.5 * chi2 + penalty - log_prior
+
+
+def _reference(model):
+    """The model regularisers act on: the first if there is one per dataset."""
+    return model[0] if isinstance(model, (list, tuple)) else model
 
 
 @dataclasses.dataclass(frozen=True)
@@ -167,8 +183,9 @@ class FitResult:
 
     Attributes
     ----------
-    model : SourceModel
-        The fitted model.
+    model : SourceModel or list
+        The fitted model, or models (one per dataset) if the model function
+        returned a list.
     values : dict
         The fitted parameter values, keyed by path.
     info : dict
@@ -205,7 +222,11 @@ def fit(
         A template model whose leaves at the paths in ``priors`` are fitted
         (their values are the starting point), or a function called with the
         parameters as keyword arguments, as for
-        [`numpyro_model`][drpangloss.likelihood.numpyro_model].
+        [`numpyro_model`][drpangloss.likelihood.numpyro_model]. The function
+        may return a list of models, one per dataset, sharing parameters:
+        for example a scene and a [`Rotated`][drpangloss.models.Rotated]
+        copy of it, for two epochs between which it turns. Regularisers
+        then act on the first.
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see

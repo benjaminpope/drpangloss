@@ -33,7 +33,7 @@ from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
-from .fitting import fit
+from .fitting import _reference, fit
 from .likelihood import whitened_residuals
 from .models import Image, PointSource, System, circular_support
 
@@ -671,7 +671,9 @@ def l_curve(
         chi2_red.append(
             [c / n for c, n in zip(result.info["chi2"], result.info["ndata"])]
         )
-        penalty.append(float(weighted.value(result.model)) / weight)
+        penalty.append(
+            float(weighted.value(_reference(result.model))) / weight
+        )
     return LCurve(
         np.asarray(weights),
         np.asarray(chi2),

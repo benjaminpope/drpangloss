@@ -963,6 +963,59 @@ class System(SourceModel):
         _check_non_negative_flux(self.flux, "System")
 
 
+class Rotated(SourceModel):
+    """A model rotated on the sky about the phase centre.
+
+    The rotation is by ``rotation_deg`` from North towards East, and the
+    angle is an ordinary (fittable) parameter, unlike
+    [`Image`][drpangloss.models.Image]'s ``rotation_deg``, which only orients
+    its pixel grid. Use it for a scene seen at several epochs, e.g. a
+    spiral rotating between them (see [`fit`][drpangloss.fitting.fit] with
+    a model per dataset).
+
+    Parameters
+    ----------
+    source : SourceModel
+        The model to rotate.
+    rotation_deg : float
+        Position angle of the rotation, North towards East, in degrees.
+
+    Examples
+    --------
+    A companion to the North, rotated by 90°, lands to the East:
+
+    >>> import jax.numpy as jnp
+    >>> from drpangloss.models import GaussianDisk, Rotated, System
+    >>> north = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, ddec=10.0))
+    >>> east = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, dra=10.0))
+    >>> u, v = jnp.array([3.0, 5.0]), jnp.array([1.0, -2.0])
+    >>> rotated = Rotated(north, 90.0).model(u, v, 1e-6)
+    >>> bool(jnp.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
+    True
+    """
+
+    source: SourceModel
+    rotation_deg: jax.Array
+
+    def __init__(self, source, rotation_deg):
+        self.source = source
+        self.rotation_deg = np.asarray(rotation_deg, dtype=float)
+
+    def model(self, u, v, wavel):
+        u, v = rotate(u, v, -self.rotation_deg)
+        return self.source.model(u, v, wavel)
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        return self.source._image(xx, yy, pixel_scale_mas)
+
+    def _weight(self, wavel=None):
+        return self.source._weight(wavel)
+
+    def is_physical(self):
+        return self.source.is_physical()
+
+
 _RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})
 
 
