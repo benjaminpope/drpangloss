@@ -53,19 +53,19 @@ The samples are a lattice rotated by the parallactic angle. drpangloss finds the
 
 ## The truth scene
 
-At 4.8 µm the finest fringes have a period of about 150 mas, so structure on a few hundred milliarcseconds is well resolved, and pixels of 10 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
+At 4.8 µm the finest fringes have a period of about 150 mas, so structure several hundred milliarcseconds across spans several resolution elements, and pixels of 20 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
 
 `drpangloss.scenes.spiral` returns a unit-sum image in the drpangloss orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
 
 ```python
-npix, pixel_scale = 64, 10.0  # 640 mas field of view
+npix, pixel_scale = 64, 20.0  # 1280 mas field of view
 truth = spiral(
     npix,
     pixel_scale,
-    step_mas=150.0,
-    width_mas=25.0,
+    step_mas=250.0,
+    width_mas=40.0,
     turns=2.0,
-    fade_mas=250.0,
+    fade_mas=500.0,
 )
 scene = System(
     star=PointSource(),
@@ -136,8 +136,8 @@ print(f"largest observable: {jnp.abs(template.model(binary)).max():.1e}")
 ```
 
 ```text
-companion at dRA = -85 mas, dDec = 115 mas
-largest difference in the DISCO observables: 1.3e-07
+companion at dRA = -170 mas, dDec = 230 mas
+largest difference in the DISCO observables: 1.1e-07
 largest observable: 9.0e-02
 ```
 
@@ -171,11 +171,11 @@ print(f"largest difference: {difference.max():.1e}")
 
 ```text
 lattice (MFT): 0.11 ms per evaluation
-per point: 0.25 ms per evaluation
+per point: 0.22 ms per evaluation
 ```
 
 ```text
-largest difference: 9.4e-08
+largest difference: 8.6e-08
 ```
 
 ## Another scene: a lopsided ring
@@ -186,8 +186,8 @@ largest difference: 9.4e-08
 ring_image = ring(
     npix,
     pixel_scale,
-    radius_mas=120.0,
-    width_mas=20.0,
+    radius_mas=240.0,
+    width_mas=36.0,
     inc_deg=50.0,
     pa_deg=30.0,
     asymmetry=0.6,

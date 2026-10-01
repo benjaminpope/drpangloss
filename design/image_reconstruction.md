@@ -516,22 +516,23 @@ z-scores when there are uncertainties), in a field of
 `imaging.field_of_view` (500 mas, or λ/B_min if smaller).
 
 **Recovery on simulated AMI-like data** (`notebooks/mwe/mwe_recovery_sweep`:
-50² × 10 mas pixels, a star plus extended emission with a fraction f of its
+62² × 20 mas pixels (a 1240 mas field, about 8 beams), scenes three to
+four beams across, a star plus extended emission with a fraction f of its
 flux, `ami_grid_record` at 4.8 µm with σ = 1e-4 where the transfer is one,
-maximum entropy at the discrepancy weight; normalised cross-correlation with
-the truth; beam about 154 × 131 mas):
+maximum entropy at the discrepancy weight; normalised cross-correlation
+with the truth; beam about 154 × 131 mas):
 
-| f | spiral (70 mas windings) | wide spiral (160 mas) | ring | core + clump |
-| --- | --- | --- | --- | --- |
-| 10% | 0.748 | 0.834 | 0.892 | 0.745 |
-| 3% | 0.742 | 0.719 | 0.762 | 0.704 |
-| 1% | 0.726 | 0.668 | 0.618 | 0.645 |
+| f | spiral | ring | core + clump |
+| --- | --- | --- | --- |
+| 10% | 0.963 | 0.996 | 0.991 |
+| 3% | 0.914 | 0.985 | 0.980 |
+| 1% | 0.746 | 0.938 | 0.937 |
 
-Structure on the scale of a beam or larger is recovered at 10% (the ring's
-hole, the wide spiral's outer arm, the clump's position); features closer
-than about a beam (the compact spiral's windings, the gap between clump and
-core) are joined at every flux. On the ring, at their discrepancy weights,
-MEM did somewhat better than TSV and TV (`mwe_l_curve`).
+An earlier version with scenes about one beam across (a 500 mas field)
+recovered them badly (NCC 0.62–0.89): with only a few resolution elements
+across the object, the regulariser fills in most of the structure. On the
+ring, at their discrepancy weights, MEM did best (NCC 0.983), then TSV
+(0.967) and TV (0.926) (`mwe_l_curve`).
 
 ### Stage 4
 

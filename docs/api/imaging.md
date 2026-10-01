@@ -12,6 +12,7 @@ discussed in `design/regulariser_weight_selection.md`.
         - MaxEntropy
         - Centroid
         - starting_image
+        - dirty_image
         - image_priors
         - nyquist_pixel_scale
         - field_of_view

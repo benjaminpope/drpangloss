@@ -9,6 +9,7 @@ from drpangloss.imaging import (
     TSV,
     Beam,
     beam,
+    dirty_image,
     field_of_view,
     TV,
     Centroid,
@@ -272,3 +273,55 @@ def test_starting_image_is_sized_from_the_data():
     # Without a star, the result is the Image alone.
     alone = starting_image(DATA.with_model(GaussianDisk(120.0)), star=False)
     assert isinstance(alone, Image)
+
+
+def test_dirty_image_finds_a_companion_once_the_star_is_removed():
+    scene = System(
+        star=PointSource(), comp=PointSource(flux=0.1, dra=200.0, ddec=120.0)
+    )
+    data = DATA.with_model(scene)
+    dirty = dirty_image(data, 64, 20.0, flux_ratio=0.1)
+    row, col = np.unravel_index(np.argmax(dirty), dirty.shape)
+    assert (
+        abs(row - (31.5 - 120 / 20)) <= 1 and abs(col - (31.5 - 200 / 20)) <= 1
+    )
+
+
+def test_dirty_image_uses_absolute_phases_and_refuses_closure_phases():
+    rng = onp.random.default_rng(6)
+    u, v = rng.uniform(-6.0, 6.0, (2, 200))
+    point = PointSource(dra=-110.0, ddec=70.0)  # on a pixel centre
+    cvis = onp.asarray(point.model(u, v, 4.8e-6))
+    data = OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": 4.8e-6,
+            "vis": onp.abs(cvis),
+            "d_vis": onp.full(200, 0.01),
+            "phi": onp.angle(cvis),
+            "d_phi": onp.full(200, 0.01),
+            "v2_flag": False,
+            "cp_flag": False,
+        }
+    )
+    dirty = dirty_image(data, 32, 20.0)
+    row, col = np.unravel_index(np.argmax(dirty), dirty.shape)
+    assert (row, col) == (12, 21)  # 15.5 - 70 / 20, 15.5 + 110 / 20
+    assert np.isclose(dirty.max(), 1.0, atol=0.05)
+    from drpangloss.coverage import nrm_oidata
+
+    with pytest.raises(ValueError, match="complex visibilities"):
+        dirty_image(nrm_oidata(), 32, 20.0)
+
+
+def test_a_dirty_start_is_a_positive_image():
+    truth = System(
+        star=PointSource(),
+        env=_image(gaussian_blob(NPIX, SCALE, 40.0, dra=30.0), flux=0.1),
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
+    start = starting_image(data, start="dirty")
+    assert np.all(start.env.brightness > 0.0)
+    moments = starting_image(data)
+    assert start.env.log_brightness.shape == moments.env.log_brightness.shape

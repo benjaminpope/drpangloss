@@ -283,7 +283,97 @@ def field_of_view(data, largest_mas=500.0):
     return min(float(largest_mas), 1.0 / (shortest * mas2rad))
 
 
-def starting_image(data, star=True, oversample=4.0, largest_mas=None):
+def _complex_visibilities(d):
+    """Visibility estimates at a dataset's uv samples, and their weights.
+
+    AMIGO DISCO data give the least-squares (minimum-norm) estimate of the
+    log visibilities from the modes; data with absolute phases give the
+    visibilities directly. The weights are 1 on samples that the data
+    inform and 0 elsewhere (uniform weighting, as in :func:`beam`).
+    """
+    if d.observable_kind == "mixed_log_complex":
+        sigma = onp.asarray(d.d_vis)[:, None]
+        operator = onp.concatenate(
+            [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
+        )
+        logv = onp.linalg.lstsq(
+            operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
+        )[0]
+        n = operator.shape[1] // 2
+        information = onp.sum((operator / sigma) ** 2, axis=0)
+        informed = (
+            information[:n] + information[n:]
+        ) > 1e-3 * information.max()
+        return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
+    if (
+        d.observable_kind == "split"
+        and not d.cp_flag
+        and d.phi_mat is None
+        and d.vis_mat is None
+        and d.vis_index is None
+        and d.phi_index is None
+    ):
+        amplitude = onp.asarray(d.vis)
+        if d.vis_mode == "v2":
+            amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
+        elif d.vis_mode == "logamp":
+            amplitude = onp.exp(amplitude)
+        vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
+        return vis, onp.ones(vis.size)
+    raise ValueError(
+        "A dirty image needs complex visibilities: AMIGO DISCO data, or "
+        "amplitudes with absolute phases for every sample (closure phases "
+        "do not give the phases)."
+    )
+
+
+def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
+    """The dirty image: direct synthesis of the visibilities, unregularised.
+
+    ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, summing over the
+    samples (each standing for itself and its conjugate) with uniform
+    weights on the informed ones: the image convolved with the dirty beam,
+    plus noise. It peaks at one for a lone point source. For AMIGO DISCO
+    data the visibilities are the least-squares estimate from the modes.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data; see the error raised for data without phases.
+    npix : int
+        Number of pixels on a side.
+    pixel_scale_mas : float
+        Pixel size in mas.
+    flux_ratio : float, optional
+        If the scene is a star at the origin plus extended emission with
+        this flux relative to the star, the star is removed first, so the
+        map shows the extended emission alone.
+
+    Returns
+    -------
+    jax.Array, shape (npix, npix)
+        In the orientation of [`render`][drpangloss.models.SourceModel.render]
+        (East left, North up). It has negative sidelobes.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
+    image, total = onp.zeros((int(npix), int(npix))), 0.0
+    for d in observations:
+        vis, weight = _complex_visibilities(d)
+        if flux_ratio is not None:
+            vis = ((1.0 + flux_ratio) * vis - 1.0) / flux_ratio
+        fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
+        fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
+        cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))  # (k, col)
+        rows = onp.exp(2j * onp.pi * onp.outer(fv, offsets))  # (k, row)
+        image += onp.real(onp.einsum("k,kr,kc->rc", weight * vis, rows, cols))
+        total += weight.sum()
+    return np.asarray(image / total)
+
+
+def starting_image(
+    data, star=True, oversample=4.0, largest_mas=None, start="moments"
+):
     """A starting model for an image fit, sized from the data.
 
     It fits a quick parametric model, an analytic star (if ``star``) plus a
@@ -295,8 +385,12 @@ def starting_image(data, star=True, oversample=4.0, largest_mas=None):
       never larger than the interferometric field of view (λ / B_min) or
       ``largest_mas``;
     * pixels ``oversample`` times finer than the Nyquist scale;
-    * an [`Image`][drpangloss.models.Image] sampled from the fitted
-      Gaussian, with its fitted flux.
+    * an [`Image`][drpangloss.models.Image] with the fitted flux, whose
+      pixels are the fitted Gaussian (``start="moments"``) or the positive
+      part of the :func:`dirty_image` (``start="dirty"``, with the star
+      removed). A dirty start is better when the Fourier coverage is dense
+      (it already has the right shape) and worse when it is sparse (its
+      sidelobes dominate).
 
     Fit it with ``fit(start, image_priors(start), data, regularisers)``.
 
@@ -313,6 +407,8 @@ def starting_image(data, star=True, oversample=4.0, largest_mas=None):
         Pixels per Nyquist pixel.
     largest_mas : float, optional
         A cap on the field of view.
+    start : {"moments", "dirty"}, optional
+        The starting pixels, as above.
 
     Returns
     -------
@@ -349,9 +445,18 @@ def starting_image(data, star=True, oversample=4.0, largest_mas=None):
         fov = min(fov, float(largest_mas))
     scale = nyquist_pixel_scale(data) / float(oversample)
     npix = int(onp.ceil(fov / scale))
-    image = Image.from_model(
-        GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
-    )
+    if start == "moments":
+        image = Image.from_model(
+            GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
+        )
+    elif start == "dirty":
+        ratio = float(envelope.flux) if star else None
+        dirty = dirty_image(data, npix, scale, flux_ratio=ratio)
+        image = Image.from_brightness(
+            np.maximum(dirty, 0.0), scale, floor=1e-3, flux=envelope.flux
+        )
+    else:
+        raise ValueError(f"start must be 'moments' or 'dirty', not {start!r}.")
     return System(star=PointSource(), env=image) if star else image
 
 
