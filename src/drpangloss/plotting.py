@@ -416,10 +416,9 @@ def _draw_beam(ax, beam):
             beam.major_mas,
             beam.minor_mas,
             angle=angle,
-            facecolor="white",
-            edgecolor="black",
-            alpha=0.7,
-            lw=0.8,
+            facecolor=(1.0, 1.0, 1.0, 0.45),
+            edgecolor="white",
+            lw=1.0,
         )
     )
 

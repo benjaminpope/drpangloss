@@ -148,7 +148,7 @@ def ami_grid_record(
     grid_u, grid_v, weight = grid_u[inside], grid_v[inside], weight[inside]
     npts = grid_u.size
     # The record stores -u, -v (see amigo.mixed_disco_fields).
-    u, v = _rotate(grid_u, grid_v, -rotation_deg)
+    u, v = _rotate(grid_u, grid_v, rotation_deg)
     u, v = -u, -v
     # Whitened measurement of (log|V|, arg V) at each cell, and the
     # responses to a change of flux and of position, which the data cannot
@@ -209,7 +209,7 @@ def nrm_oidata(
     """
     holes = onp.asarray(holes, float)
     pairs, baselines = _baselines(holes)
-    u, v = _rotate(baselines[:, 0], baselines[:, 1], -rotation_deg)
+    u, v = _rotate(baselines[:, 0], baselines[:, 1], rotation_deg)
     triangles = list(itertools.combinations(range(len(holes)), 3))
     i1, i2, i3 = cp_indices(pairs, triangles)
     return OIData(

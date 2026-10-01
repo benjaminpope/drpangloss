@@ -43,6 +43,8 @@ The design rationale was established in the earlier research: the gauge survey, 
    - Padded FFT plus interpolation is never used.
    - `diagnose` compares any non-DFT backend against the DFT on the user's own data.
 7. **Rules for users:**
+   - The default field of view is the smaller of 500 mas and the interferometric field of view, λ/B_min (`imaging.field_of_view`); pixels are finer than Nyquist (`imaging.nyquist_pixel_scale`).
+   - Reconstructed images are shown with the beam (`imaging.beam`, the FWHM of the dirty beam's core) shaded in the lower left, and next to a residual map on a symmetric diverging scale: signed residuals for MAP images, z-scores whenever there are uncertainties.
    - Unresolved things are analytic; resolved emission goes in pixels.
    - Something must fix the origin: an analytic star, a `Centroid` prior, or a centred mean.
    - Initialise from a parametric fit.
@@ -158,6 +160,12 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Risk:** the regularisation weight depends on the scene. The SNR sweep shows where each regulariser breaks down.
 
 **Checkpoint:** is the fitting API right, and are the recovery metrics good enough? **Merge milestone candidate.**
+
+## Stage 3c: real AMI data, PDS 70 (once DISCO deconvolution is mature)
+**Data:** the AMIGO DISCO products for PDS 70 in `/Users/benpope/code/nuHor/data/PDS70/` (local only; never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
+**Build:** an agent that deconvolves PDS 70 in each filter, separately and jointly (Stage 6's joint multi-filter machinery when available), with a wide range of options: regularisers (maximum entropy expected best, then TSV, then TV), weights from L-curves (discrepancy and corner), fields of view and pixel scales, starts (flat, parametric fit), analytic star or not, supports, and centroid priors. "Beat it to death": the aim is a general picture of what is robust across choices.
+**Compute:** demo locally first on a reduced set. If the full grid would take hours or exceed the laptop's RAM, hand the user an OzSTAR GPU script (`ozstar` skill) rather than running it here.
+**Report:** a notebook (not in the docs) comparing the reconstructions across options and filters, with beams, residual maps and `diagnose` output.
 
 ## Stage 4: grey long-baseline imaging with closure phases (about 4–6 h)
 **Build:**

@@ -466,48 +466,72 @@ regularisers `TSV`, `TV`, `MaxEntropy` and `Centroid`, `image_priors`,
 `nyquist_pixel_scale`, `l_curve` (with `corner` and `discrepancy`) and
 `diagnose`.
 
-**Optimisers.** Both convergence tests had to be changed from the solver
-defaults, because the log-brightness of a pixel that should be dark keeps
-drifting towards −∞ without changing the image, so a test on the parameter
-step never passes:
+**API.** `fit(model, priors, data, regularisers)` takes the same arguments
+as `numpyro_model`, which gains `regularisers=` for genuine priors (e.g.
+`Centroid`); an earlier `Problem` class duplicated that existing path and
+was removed. The objective is a private helper.
 
-- LM (optimistix, `Normal(CG)` with 50 fixed inner steps) stops on the RMS
-  relative change of the residuals alone (`rtol = atol = 1e-5`).
-- L-BFGS is optax's (zoom line search), stopped when no gradient component
-  of the loss per data point exceeds `gtol = 1e-4`. optimistix's L-BFGS,
-  with a loss-only test, stopped at the first short line-search step (loss
-  801 against LM's 56 on a test image). A gradient test suits the
-  parametrisation, since a dark pixel's gradient vanishes with its flux.
-- Image fits are slow to converge (L-BFGS took ~13 000 steps, 2.5 s, on a
-  32² MEM fit), because dark pixels respond weakly: the image is final long
-  before the tolerance is met. A preconditioner or the whitened GP latents
-  of Stage 5 should help.
-- `fit` runs in float64 and casts its results back to the ambient
-  precision, because float64 arrays break JAX code running in float32.
+**Optimisers and stopping.** Both LM and L-BFGS stop when no gradient
+component of the loss per data point exceeds `gtol = 1e-4`, nor 1/1000 of
+its starting value:
+
+- A test on the parameter step never passes for image fits: the
+  log-brightness of a pixel that should be dark drifts towards −∞ without
+  changing the image.
+- A test on the change of the loss (or residuals) passes at once from a warm
+  start; along an L-curve this froze the weak-regularisation end (fits of
+  1–4 steps with identical images), which made the corner and the
+  discrepancy weights meaningless. The relative condition keeps warm starts
+  going; warm and cold fits then agree down to w ≈ 10 (MEM).
+- LM is optimistix's, with a subclass replacing its `terminate`; L-BFGS is
+  optax's (zoom line search). Regulariser weights are arrays, so a sweep
+  does not recompile for every weight.
+- `fit` runs in float64 and casts its results back to the ambient precision.
+
+**Simulated data.** `amigo.simulated_disco_record` filled a whole uv disc
+with independent log-amplitude and phase modes, a far easier inversion than
+real AMI (which made early reconstructions look much too good). It is
+replaced by `coverage.ami_grid_record`: a uv grid whose information is
+weighted by the mask's transfer function, with flux and position projected
+out and an SVD basis kept to 99% of the precision, after AMIGO's latent
+visibility basis (Desdoigts et al. 2025, arXiv:2510.09806); and
+`coverage.nrm_oidata`, classical V² and closure phases at the splodge
+centres. The real ν Hor F430M product, by comparison, has 833 modes on a
+1860-cell grid whose operators are confined to the splodges.
 
 **Choosing the weight** (research in `regulariser_weight_selection.md`):
 `l_curve` fits from strong to weak regularisation with warm starts;
-`corner()` is Hansen's maximum curvature of (log χ², log R) against log w
-(ignoring fits that barely moved); `discrepancy(target)` is Morozov's
-principle. A target of 1 + 2√(2/N) (two standard deviations of χ²/N above
-one) worked better than 1, which a regularised fit may never reach.
-Cross-validation, GCV/SURE and the evidence are deferred to Stage 5.
+`corner()` is Hansen's maximum curvature of (log χ², log R) against log w;
+`discrepancy(target=1)` is Morozov's principle, with the binding (worst)
+dataset deciding. The truth itself has χ²/N = 1.01 on these data; a target
+of 1 + 2√(2/N), tried first, over-regularised (images with NCC 0.57–0.69
+against 0.71–0.79 at the best weights). Cross-validation, GCV/SURE and the
+evidence are deferred to Stage 5.
+
+**Display.** Reconstructions are shown with the beam (`imaging.beam`: the
+FWHM of a Gaussian matched to the curvature of the dirty beam's core, from
+the uniformly weighted second moments of the informative uv samples) in the
+lower left, next to signed residual maps (`plotting.plot_residual_map`;
+z-scores when there are uncertainties), in a field of
+`imaging.field_of_view` (500 mas, or λ/B_min if smaller).
 
 **Recovery on simulated AMI-like data** (`notebooks/mwe/mwe_recovery_sweep`:
-32² × 10 mas pixels, star + 10% extended flux, `simulated_disco_record` at
-4.8 µm, maximum entropy at the discrepancy weight; normalised
-cross-correlation with the truth):
+50² × 10 mas pixels, a star plus extended emission with a fraction f of its
+flux, `ami_grid_record` at 4.8 µm with σ = 1e-4 where the transfer is one,
+maximum entropy at the discrepancy weight; normalised cross-correlation with
+the truth; beam about 154 × 131 mas):
 
-| σ per coefficient | spiral | ring | core + clump |
-| --- | --- | --- | --- |
-| 1e-4 (ν Hor-like) | 0.869 | 0.993 | 0.940 |
-| 3e-4 | 0.801 | 0.985 | 0.882 |
-| 1e-3 | 0.719 | 0.957 | 0.812 |
+| f | spiral (70 mas windings) | wide spiral (160 mas) | ring | core + clump |
+| --- | --- | --- | --- | --- |
+| 10% | 0.748 | 0.834 | 0.892 | 0.745 |
+| 3% | 0.742 | 0.719 | 0.762 | 0.704 |
+| 1% | 0.726 | 0.668 | 0.618 | 0.645 |
 
-Across the three regularisers at the best weight of a sweep, MEM was best
-on all three scenes (ring 0.994, against 0.987 for TSV and 0.95 for TV at
-σ = 1e-4); TV makes smooth structure blocky. Charles et al.'s choice of MEM
-for WR 137 is consistent with this.
+Structure on the scale of a beam or larger is recovered at 10% (the ring's
+hole, the wide spiral's outer arm, the clump's position); features closer
+than about a beam (the compact spiral's windings, the gap between clump and
+core) are joined at every flux. On the ring, at their discrepancy weights,
+MEM did somewhat better than TSV and TV (`mwe_l_curve`).
 
 ### Stage 4
 

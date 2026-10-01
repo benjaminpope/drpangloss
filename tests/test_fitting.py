@@ -179,5 +179,5 @@ def test_a_warm_start_still_converges():
         start, priors, data, [MaxEntropy(1.0, path="env")], init=strong.values
     )
     cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
-    assert weak.info["steps"] > 10
-    assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-3)
+    assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
+    assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)

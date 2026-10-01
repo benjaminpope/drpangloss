@@ -9,6 +9,7 @@ from drpangloss.imaging import (
     TSV,
     Beam,
     beam,
+    field_of_view,
     TV,
     Centroid,
     LCurve,
@@ -245,3 +246,13 @@ def test_plot_model_draws_the_beam_in_the_lower_left():
     assert x > 0 and y < 0  # East (displayed left) and South (bottom)
     assert np.isclose(patch.width, 60.0) and np.isclose(patch.angle, 45.0)
     plt.close(fig)
+
+
+def test_field_of_view_is_at_most_500_mas_or_lambda_over_b_min():
+    # A ring of 6 m baselines measures nothing larger than λ/B ~ 165 mas.
+    assert np.isclose(
+        field_of_view(_ring_of_baselines(6.0)),
+        4.8e-6 / 6.0 / (onp.pi / 180 / 3600 / 1000),
+        rtol=1e-3,
+    )
+    assert field_of_view(DATA) == 500.0  # AMI-like data reach much further

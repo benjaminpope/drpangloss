@@ -262,6 +262,27 @@ def nyquist_pixel_scale(data):
     return 1.0 / (2.0 * longest * mas2rad)
 
 
+def field_of_view(data, largest_mas=500.0):
+    """The default field of view for an image of ``data``, in mas.
+
+    The smaller of ``largest_mas`` (500 by default) and the interferometric
+    field of view, λ / B over the shortest non-zero baseline B (at the
+    shortest wavelength): structure larger than that is not measured, and on
+    a uv lattice a larger field would alias. Use it with
+    [`nyquist_pixel_scale`][drpangloss.imaging.nyquist_pixel_scale] to
+    choose the image's size and pixels.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    shortest = min(
+        float(onp.min(rho[rho > 0]))
+        for rho in (
+            onp.ravel(onp.asarray(onp.hypot(d.u, d.v) / d.wavel))
+            for d in observations
+        )
+    )
+    return min(float(largest_mas), 1.0 / (shortest * mas2rad))
+
+
 @dataclasses.dataclass(frozen=True)
 class Beam:
     """A Gaussian approximation to the core of the dirty beam.

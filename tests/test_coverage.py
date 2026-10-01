@@ -69,3 +69,16 @@ def test_nrm_oidata_has_v2_and_closure_phases_at_the_splodge_centres():
         np.hypot(data.u, data.v), np.hypot(unrotated.u, unrotated.v), rtol=1e-6
     )
     assert np.isclose(np.degrees(data.d_phi[0]), 0.5)
+
+
+def test_rotation_follows_the_position_angle_convention():
+    from drpangloss._geometry import rotate
+
+    for angle in (-6.9, 20.0):
+        grid = OIData(ami_grid_record(pitch_m=0.5, rotation_deg=angle)).uv_grid
+        assert np.isclose(grid.rotation_deg, angle, atol=1e-6)
+    data, plain = nrm_oidata(rotation_deg=30.0), nrm_oidata()
+    u, v = rotate(plain.u, plain.v, 30.0)
+    assert np.allclose(data.u, u, atol=1e-5) and np.allclose(
+        data.v, v, atol=1e-5
+    )
