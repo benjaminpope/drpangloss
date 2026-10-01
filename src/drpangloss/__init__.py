@@ -75,6 +75,9 @@ from .limits import (  # noqa: E402
 from .models import (  # noqa: E402
     BinaryModelAngular,
     BinaryModelCartesian,
+    FlaredDiskGaussian,
+    FlaredDiskHG,
+    FlaredDiskPowerLaw,
     GaussianDisk,
     GaussianDiskModel,
     Image,
@@ -94,6 +97,9 @@ from .spectra import PowerLaw  # noqa: E402
 __all__ = [
     "BinaryModelAngular",
     "BinaryModelCartesian",
+    "FlaredDiskGaussian",
+    "FlaredDiskHG",
+    "FlaredDiskPowerLaw",
     "GaussianDisk",
     "GaussianDiskModel",
     "Image",

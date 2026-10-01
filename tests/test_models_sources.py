@@ -1,3 +1,4 @@
+import jax
 import numpy as onp
 import pytest
 import jax.numpy as np
@@ -9,6 +10,9 @@ from drpangloss._geometry import image_coordinates as _image_coordinates
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    FlaredDiskGaussian,
+    FlaredDiskHG,
+    FlaredDiskPowerLaw,
     GaussianDisk,
     GaussianDiskModel,
     HarmonixModel,
@@ -21,6 +25,7 @@ from drpangloss.models import (
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
+from drpangloss.likelihood import model_loglike
 from tests._test_data import oidata
 
 # Independent reference conversion (not imported from drpangloss) so the
@@ -368,6 +373,27 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            System(
+                star=PointSource(),
+                disk=FlaredDiskPowerLaw(
+                    n=4.0,
+                    radius=15.0,
+                    fwhm=6.0,
+                    inc=50.0,
+                    pa=30.0,
+                    skew=2.0,
+                    aspect=0.15,
+                    symmetric=0.1,
+                    npix=40,
+                    pixel_scale_mas=2.0,
+                    flux=0.5,
+                    dra=2.0,
+                    ddec=-1.0,
+                ),
+            ),
+            2e-3,
+        ),
     ],
     ids=[
         "binary_cart",
@@ -377,6 +403,7 @@ def test_binary_render_is_available():
         "image",
         "rim",
         "nested_system",
+        "flared_disk",
     ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):
@@ -509,3 +536,59 @@ def test_modulated_ring_visibility_accepts_scalar_baselines():
 
     assert np.shape(scalar) == ()
     assert np.allclose(scalar, vector[0])
+
+
+def _flared_disk(cls=FlaredDiskHG, **kwargs):
+    geometry = dict(
+        radius=20.0, fwhm=6.0, inc=60.0, pa=0.0, npix=64, pixel_scale_mas=1.0
+    )
+    return cls(**{**geometry, **kwargs})
+
+
+def test_flared_disk_forward_scattering_peaks_on_near_side_at_pa_plus_90():
+    # pa=0 puts the major axis North-South and the near side East (+dra).
+    disk = _flared_disk(FlaredDiskPowerLaw, n=8.0)
+    image = onp.asarray(disk.render(npix=64, fov_mas=64.0))
+    xx, yy = (onp.asarray(a) for a in _image_coordinates(64, 64.0))
+
+    assert (image * xx).sum() > 5.0
+    assert abs((image * yy).sum()) < 1e-3
+
+
+def test_flared_disk_surface_height_shifts_ring_towards_far_side():
+    # With isotropic scattering (g=0), only the flared surface breaks the
+    # symmetry, moving the ring towards the far side (West for pa=0).
+    xx = onp.asarray(_image_coordinates(64, 64.0)[0])
+
+    def centroid_dra(aspect):
+        image = onp.asarray(
+            _flared_disk(g=0.0, aspect=aspect).render(64, 64.0)
+        )
+        return (image * xx).sum()
+
+    assert abs(centroid_dra(0.0)) < 1e-3
+    assert centroid_dra(0.2) < -0.5
+
+
+@pytest.mark.parametrize(
+    "disk",
+    [
+        _flared_disk(FlaredDiskHG, g=0.3, aspect=0.1),
+        _flared_disk(FlaredDiskGaussian, sigma_theta=90.0, aspect=0.1),
+        _flared_disk(FlaredDiskPowerLaw, n=5.0, aspect=0.1, skew=3.0),
+    ],
+    ids=["hg", "gaussian", "power_law"],
+)
+def test_flared_disk_loglike_gradients_are_finite(disk):
+    scene = System(star=PointSource(), disk=disk.set("flux", 0.2))
+    grads = jax.grad(model_loglike)(scene, oidata)
+
+    assert all(
+        bool(np.all(np.isfinite(leaf)))
+        for leaf in jax.tree_util.tree_leaves(grads.disk)
+    )
+
+
+def test_flared_disk_needs_an_even_grid():
+    with pytest.raises(ValueError, match="even"):
+        _flared_disk(npix=63, g=0.3)
