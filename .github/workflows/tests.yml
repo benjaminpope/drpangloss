@@ -33,6 +33,20 @@ jobs:
       # Linting lives in lint.yml and docs builds in documentation.yml, so
       # neither blocks the test suite.
 
+      # Most of the suite's time is JAX compiling; JAX's persistent cache
+      # (keyed internally on the JAX version and the code compiled) halves
+      # it on later runs. Each run saves an updated cache.
+      - name: JAX compilation cache
+        uses: actions/cache@v4
+        with:
+          path: .jax-cache
+          key: jax-${{ matrix.python-version }}-${{ github.run_id }}
+          restore-keys: jax-${{ matrix.python-version }}-
+
       # ===== Tests =====
       - name: Test Suite
+        env:
+          JAX_COMPILATION_CACHE_DIR: .jax-cache
+          JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
+          JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
         run: uv run --python .venv/bin/python pytest
