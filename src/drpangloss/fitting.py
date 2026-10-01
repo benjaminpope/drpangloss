@@ -236,7 +236,9 @@ def fit(
         steps.
     gtol : float, optional
         L-BFGS stops when no component of the gradient of the loss per data
-        point exceeds ``gtol``.
+        point exceeds ``gtol``, and none exceeds 1/1000 of its largest
+        starting value (so that a fit started near a solution still
+        converges).
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -352,7 +354,10 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
     # A gradient test suits log-brightness pixels: the gradient for a pixel
     # that should be dark vanishes with its flux, while its value keeps
     # drifting, and a test on the loss change can stop at the first short
-    # line-search step.
+    # line-search step. The gradient must also fall by a factor of 1000 from
+    # where it started, so that a warm start (e.g. along an L-curve, whose
+    # gradient is small from the outset) still converges rather than
+    # stopping at once.
     optimiser = optax.lbfgs()
 
     @eqx.filter_jit
@@ -367,9 +372,11 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
                 np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)])
             )
 
+        tolerance = np.minimum(gtol, 1e-3 * largest(jax.grad(loss)(z0)))
+
         def keep_going(carry):
             step, _, _, gradient = carry
-            return (step < max_steps) & (gradient > gtol)
+            return (step < max_steps) & (gradient > tolerance)
 
         def step(carry):
             count, z, state, _ = carry
@@ -386,7 +393,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
 
         start = (0, z0, optimiser.init(z0), np.asarray(np.inf, dtype=float))
         count, z, _, gradient = jax.lax.while_loop(keep_going, step, start)
-        return z, count, gradient <= gtol
+        return z, count, gradient <= tolerance
 
     z, count, converged = run(problem, z0)
     return z, int(count), bool(converged)

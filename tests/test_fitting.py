@@ -163,3 +163,17 @@ def test_precision_helpers():
         with run_in("float16"):
             pass
     assert onp.asarray(cast_tree(tree, "float32")["a"]).dtype == onp.float32
+
+
+def test_a_warm_start_still_converges():
+    # Starting from the solution at a nearby weight, the gradient is small
+    # from the outset; the fit must still move to the new solution rather
+    # than stopping at once.
+    start, priors, data = _image_fit()
+    strong = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
+    weak = fit(
+        start, priors, data, [MaxEntropy(1.0, path="env")], init=strong.values
+    )
+    cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
+    assert weak.info["steps"] > 10
+    assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-3)

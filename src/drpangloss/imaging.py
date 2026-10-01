@@ -85,7 +85,7 @@ class TSV(_ImageRegulariser):
     """
 
     def __init__(self, weight, path=None):
-        self.weight = float(weight)
+        self.weight = np.asarray(weight, dtype=float)
         self.path = path
 
     def residuals(self, model):
@@ -120,7 +120,7 @@ class TV(_ImageRegulariser):
     epsilon: float
 
     def __init__(self, weight, epsilon=1e-2, path=None):
-        self.weight = float(weight)
+        self.weight = np.asarray(weight, dtype=float)
         self.epsilon = float(epsilon)
         self.path = path
 
@@ -159,7 +159,7 @@ class MaxEntropy(_ImageRegulariser):
     prior: object
 
     def __init__(self, weight, prior=None, path=None):
-        self.weight = float(weight)
+        self.weight = np.asarray(weight, dtype=float)
         self.prior = None if prior is None else np.asarray(prior)
         self.path = path
 
@@ -317,8 +317,9 @@ class LCurve:
         χ² per point) must reach the target, so that a well-fitted dataset
         cannot hide a badly fitted one. It interpolates linearly in ``log w`` between the
         fitted weights, and returns ``None`` if the sweep never crosses the
-        target. It relies on correct error bars; with underestimated errors
-        it over-regularises.
+        target. The truth itself has χ² per point of 1 ± √(2/N), so the
+        default target of 1 is the natural one. It relies on correct error
+        bars; with underestimated errors it over-regularises.
         """
         binding = np.max(
             np.reshape(self.chi2_red, (len(self.weights), -1)), axis=1
@@ -372,7 +373,9 @@ def l_curve(
     results, chi2, chi2_red, penalty = [], [], [], []
     init = fit_options.pop("init", None)
     for weight in weights:
-        weighted = eqx.tree_at(lambda r: r.weight, regulariser, weight)
+        weighted = eqx.tree_at(
+            lambda r: r.weight, regulariser, np.asarray(weight, dtype=float)
+        )
         result = fit(
             model, priors, data, [weighted, *others], init=init, **fit_options
         )
