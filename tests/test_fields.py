@@ -140,3 +140,20 @@ def test_fitting_field_hyperparameters_by_map_warns():
     assert any(
         "hyperparameters of a Gaussian field" in str(w.message) for w in caught
     )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"length_mas": 0.0},
+        {"length_mas": -1.0},
+        {"sigma": -1.0},
+        {"mean": onp.zeros((4, 4))},
+        {"mean": -onp.ones((4, 4))},
+    ],
+)
+def test_bad_field_parameters_are_rejected(bad):
+    with pytest.raises(ValueError):
+        GaussianField(onp.zeros((4, 4)), **bad)
+    with pytest.raises(ValueError, match="pixel_scale_mas"):
+        field_spectrum((4, 4), 0.0, 1.0, 1.0)

@@ -14,10 +14,22 @@ GP prior, and the same parameterisation suits sampling.
 import equinox as eqx
 import jax
 import jax.numpy as np
+import numpy as onp
 import zodiax as zx
 from jax.scipy.fft import idctn
 
+from ._utils import concrete
+
 __all__ = ["GaussianField", "field_spectrum"]
+
+
+def _check_positive(name, value):
+    """Reject a concrete value that is not finite and positive."""
+    value = concrete(value)
+    if value is not None and not (
+        onp.all(onp.isfinite(value)) and onp.all(value > 0.0)
+    ):
+        raise ValueError(f"{name} must be finite and positive, not {value}.")
 
 
 def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
@@ -49,6 +61,8 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
     jax.Array
         Variances, of shape ``shape``.
     """
+    _check_positive("pixel_scale_mas", pixel_scale_mas)
+    _check_positive("length_mas", length_mas)
     eigen = [
         (2.0 / pixel_scale_mas * np.sin(np.pi * np.arange(n) / (2 * n))) ** 2
         for n in shape
@@ -73,7 +87,8 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``μ`` (``mean``, floored at ``ε`` = ``mean_floor`` of its peak). With a
     standard-normal prior on ``latent``, ``η`` is a Gaussian process with
     standard deviation ``sigma`` and correlation length ``length_mas``
-    about the template. ``latent = 0`` gives the template itself.
+    about the template. ``latent = 0`` gives the template raised by the
+    floor, ``μ/max μ + ε``, as an image.
 
     Use it in place of an Image's log-brightness, with priors from
     [`image_priors`][drpangloss.imaging.image_priors]:
@@ -126,6 +141,14 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             raise ValueError("latent must be a 2D array.")
         self.sigma = np.asarray(sigma, dtype=float)
         self.length_mas = np.asarray(length_mas, dtype=float)
+        value = concrete(self.sigma)
+        if value is not None and not (
+            onp.all(onp.isfinite(value)) and onp.all(value >= 0.0)
+        ):
+            raise ValueError(
+                f"sigma must be finite and non-negative, not {value}."
+            )
+        _check_positive("length_mas", self.length_mas)
         self.order = int(order)
         if self.order < 1:
             raise ValueError(f"order must be a positive integer, not {order}.")
@@ -135,6 +158,13 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 raise ValueError(
                     f"mean has shape {mean.shape}, but latent has shape "
                     f"{self.latent.shape}."
+                )
+            value = concrete(mean)
+            if value is not None and not (
+                onp.all(onp.isfinite(value)) and value.max() > 0.0
+            ):
+                raise ValueError(
+                    "mean must be a finite template with a positive peak."
                 )
         self.mean = mean
         self.mean_floor = float(mean_floor)
