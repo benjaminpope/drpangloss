@@ -21,7 +21,7 @@ sceptical astronomer can read.
 ### 1. Numerical precision
 
 Every Fourier transform and matmul uses `precision=lax.Precision.HIGHEST`.
-Fitting and sampling entry points (`Problem`, `fit`) default to
+Fitting entry points (`fit`) default to
 `dtype="float64"` and run inside a local `jax.enable_x64(True)` context,
 casting their inputs; `dtype="float32"` is opt-in. Forward-model code is
 dtype-agnostic and must pass the float32 test suite. x64 is never enabled
@@ -34,8 +34,6 @@ Why:
   samplers should run in float64.
 - Enabling x64 globally would change the behaviour of user code and is
   forbidden in tests by `AGENTS.md`.
-- The `jax-finufft` backend uses complex128 under x64, or complex64 with
-  `eps >= 1e-5` under float32 (see decision 6).
 
 ### 2. One likelihood
 
@@ -59,19 +57,20 @@ Why:
 
 ### 3. One specification for fitting and sampling
 
-`Problem(model, data, priors, regularisers)`. The free parameters are exactly
+`fit(model, priors, data, regularisers)` and `numpyro_model(model, priors,
+data, regularisers)` take the same arguments. The free parameters are exactly
 the keys of `priors`, a dict of NumPyro distributions (NumPyro is used only as
-a distributions library). Support-respecting transforms come from
-`biject_to`. It exposes `problem.residuals`, `problem.loss` and
-`problem.logdensity` (in unconstrained coordinates). `logdensity` raises if a
-non-probabilistic regulariser (MEM, TV, TSV) is present.
+a distributions library), and support-respecting transforms come from
+`biject_to`. `fit` finds the MAP; `numpyro_model` is the posterior for
+samplers and refuses non-probabilistic regularisers (MEM, TV, TSV).
 
 Why:
 - One parameter currency for fitting and sampling avoids a bespoke transform
   library and a sampler wrapper.
+- Reusing `numpyro_model`'s conventions avoids a second fitting API (an
+  earlier `Problem` class did that and was removed).
 - Refusing to build a posterior from a penalty that is not a prior stops users
   quoting credible intervals for something that is not one.
-- `numpyro_model` may later be replaced by `Problem` (deferred).
 
 ### 4. Optimisers
 
@@ -99,7 +98,7 @@ Why:
 ### 5. Image parameterisation
 
 `Image(log_brightness, pixel_scale_mas, support=None, flux, dra, ddec,
-backend="dft"|"nufft")` is a `Component`, with `brightness = softmax(eta,
+rotation_deg=0)` is a `Component`, with `brightness = softmax(eta,
 where=support)`. `log_brightness` is either a plain array (free log-pixels,
 MAP only) or an object with `evaluate(pixel_scale_mas=...)`, such as
 `GaussianField` (Stage 5). That is the zodiax 0.6 `Expression` protocol, so
@@ -120,13 +119,13 @@ Why:
 
 ### 6. Fourier backends
 
-The separable DFT is the default and the oracle, with the exact MFT for data
-on uv lattices (Stage 2b). `jax-finufft` is an optional extra, `[nufft]`,
-**shelved** since 2026-09-30 (issue #75): accurate, but on a GPU its
-per-call planning cost (jax-finufft #157) makes it slower than the DFT except
-for very large problems. A padded FFT with interpolation is never used.
-`diagnose` compares any non-DFT backend against the DFT on the user's own
-data.
+Visibilities are the exact separable DFT, or the exact two-sided MFT for
+data on uv lattices (Stage 2b). A NUFFT backend (jax-finufft) was built and
+benchmarked in Stage 2 and then **removed** (issue #75): accurate, but on a
+GPU its per-call planning cost (jax-finufft #157) made it slower than the
+DFT except for very large problems. Revisit only when jax-finufft can reuse
+plans; its code is in the git history of PR #71. A padded FFT with
+interpolation is never used.
 
 Why:
 - The DFT is exact to float32 rounding (accuracy table below) and cheap for
@@ -140,11 +139,9 @@ Why:
   1e-4 contrast (sigma_CP of about 2e-5 rad). There, use the DFT or float64
   NUFFT.
 - jax-finufft re-plans on every call (issue #157) and uses private JAX
-  internals (fine on 0.9.1, vmap broke on 0.10.2), so it cannot be a hard
-  dependency.
-- Even N is a trap: putting the image centre at (N-1)/2 inside a grid centred
-  on N/2 gives a half-pixel offset. Use odd N or an explicit phase factor,
-  and always check the NUFFT against the DFT.
+  internals (fine on 0.9.1, vmap broke on 0.10.2).
+- Even N is a trap for any FFT-based method: putting the image centre at
+  (N-1)/2 inside a grid centred on N/2 gives a half-pixel offset.
 
 ### 7. Rules for users
 
@@ -162,10 +159,10 @@ Why:
 
 ### 8. Dependencies
 
-`optax` becomes a required dependency. `blackjax` (`[sampling]`) and
-`jax-finufft>=1.3.1` (`[nufft]`) are optional extras. We do not wrap BlackJAX;
-tutorials call it on `problem.logdensity`, with NumPyro
-`NUTS(potential_fn=...)` as the dependency-free alternative.
+`optax` (and `lineax`) become required dependencies; `blackjax`
+(`[sampling]`) will be an optional extra. We do not wrap BlackJAX;
+tutorials sample `numpyro_model` with NumPyro's NUTS, or BlackJAX on the
+potential from `numpyro.infer.util.initialize_model`.
 
 Why:
 - BlackJAX 1.6.2 is Apache-2.0, needs `jax>=0.9`, and all its dependencies are
@@ -205,7 +202,8 @@ are about 0.009.
 | Padded FFT x8, cubic | 4.4e-7 | 1.4e-5 rad |
 
 The padded FFT ran in **float64**, which flatters it: the DFT row is float32.
-These were ad hoc scripts; `scripts/bench_ft.py` (Stage 2) regenerates them.
+These were ad hoc scripts; the Stage 2 benchmark script is in the git
+history of PR #71.
 
 ### Optimiser toy test
 
@@ -287,13 +285,14 @@ LM metric with whitened latents gives the same linear algebra.
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
-| The NUFFT as a recommended backend (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images; re-run `scripts/bench_ft_ozstar.sbatch`, adding realistic uv tracks |
+| Reinstating a NUFFT backend (issue #75; code in PR #71) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
 
 The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
 below. Any re-run is done by the user, never by Claude.
 
 ## GPU benchmark results
+
+The NUFFT backend was removed after Stage 3 (issue #75); its code, tests and benchmark scripts are in the git history of PR #71.
 
 Run 2026-09-30 on OzSTAR (NT) node gina10, one NVIDIA A100-SXM4-80GB,
 jax 0.10.2 with the conda-forge CUDA build of jax-finufft, by
@@ -382,6 +381,8 @@ generator and ν Hor MATISSE fixture (Stage 4).
 
 ### Stage 2
 
+The NUFFT backend was removed after Stage 3 (issue #75); its code, tests and benchmark scripts are in the git history of PR #71.
+
 `Image(..., backend="nufft")` and `image_visibilities(..., backend=)` use
 jax-finufft's type-2 transform, `nufft2(I, t_row, t_col, iflag=+1)` with
 t = 2π·s·f (s the pixel scale, f = u/λ in cycles per mas), times
@@ -449,7 +450,8 @@ but sky-aligned pixels with a rotated uv lattice do not.
   against 0.85 ms at 64², 0.51 against 1.96 ms at 128², and 0.62 against
   5.16 ms at 256² (MFT against per point; laptop CPU). The DISCO
   projection (833 × 1860) is then a large share of the cost.
-- `amigo.simulated_disco_record` builds a small AMI-like record: a
+- `amigo.simulated_disco_record` (replaced in Stage 3 by
+  `coverage.ami_grid_record`) built a small AMI-like record: a
   rotated half-plane lattice out to 6.5 m, log-amplitude modes and
   shift-invariant phase modes, diagonal errors (default 1e-4, like ν Hor),
   and no covariance matrix. DISCO errors are independent by construction,
@@ -460,7 +462,7 @@ but sky-aligned pixels with a rotated uv lattice do not.
 
 ### Stage 3
 
-`fitting.Problem(model, data, priors, regularisers)` and `fitting.fit`, with
+`fitting.fit(model, priors, data, regularisers)`, with
 `_precision` (local x64 and dtype casting), and in `imaging` the
 regularisers `TSV`, `TV`, `MaxEntropy` and `Centroid`, `image_priors`,
 `nyquist_pixel_scale`, `l_curve` (with `corner` and `discrepancy`) and

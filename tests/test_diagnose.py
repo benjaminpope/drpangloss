@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as np
-import pytest
 
 from drpangloss.coverage import ami_grid_record
 from drpangloss.imaging import Centroid, Diagnosis, diagnose
@@ -39,7 +38,6 @@ def test_a_well_fitted_star_and_blob_has_no_warnings():
     assert diagnosis.warnings == []
     assert 0.8 < diagnosis.checks["chi2_red"][0] < 1.2
     assert "chi2_red" in str(diagnosis) and "No warnings" in str(diagnosis)
-    assert "backend_error_sigma" not in diagnosis.checks
     assert isinstance(diagnosis, Diagnosis)
 
 
@@ -105,23 +103,6 @@ def test_wrapped_phases_warn():
     diagnosis = diagnose(scene, data)
     assert diagnosis.checks["phase_regime"][0] > 0.0
     assert any("wrapped" in w for w in diagnosis.warnings)
-
-
-def test_an_inaccurate_backend_warns():
-    pytest.importorskip("jax_finufft")
-    scene = _scene(backend="nufft")
-    diagnosis = diagnose(scene, DATA)
-    assert diagnosis.checks["backend_error_sigma"] < 0.1
-    assert diagnosis.warnings == []
-    # With much smaller errors, the NUFFT tolerance (1e-5 in float32, 1e-7
-    # in float64) is no longer negligible; the data are the DFT model's, so
-    # chi2 also rises.
-    shrink = 1e-9 if jax.config.jax_enable_x64 else 1e-6
-    tight = DATA.set("d_vis", DATA.d_vis * shrink)
-    tight = tight.with_model(_scene(), key=jax.random.PRNGKey(3))
-    diagnosis = diagnose(scene, tight)
-    assert diagnosis.checks["backend_error_sigma"] > 0.1
-    assert any("backend" in w for w in diagnosis.warnings)
 
 
 def test_a_mirrored_fit_warns():

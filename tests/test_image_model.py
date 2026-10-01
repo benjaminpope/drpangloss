@@ -246,12 +246,3 @@ def test_from_brightness_floor_ignores_pixels_outside_support():
     support = np.array([[False, True], [True, True]])
     image = Image.from_brightness(brightness, 1.0, support=support)
     assert np.allclose(image.brightness[1], np.array([2.0, 1.0]) / 3.0)
-
-
-def test_nufft_backend_without_the_extra_raises_clearly(monkeypatch):
-    import sys
-
-    monkeypatch.setitem(sys.modules, "jax_finufft", None)
-    image = Image(np.zeros((4, 4)), 1.0, backend="nufft")
-    with pytest.raises(ImportError, match=r"drpangloss\[nufft\]"):
-        image.model(np.ones(3), np.ones(3), WAVEL)

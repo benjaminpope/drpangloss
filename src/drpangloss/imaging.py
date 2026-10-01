@@ -571,19 +571,13 @@ class LCurve:
         """
         t = np.log(self.weights)
         x, y = np.log(self.chi2), np.log(self.penalty)
-        # Drop fits that barely moved from the previous (warm) start: at weak
-        # regularisation the optimiser can stall, which would add a flat,
-        # spuriously curved tail.
-        moved = np.hypot(np.diff(x), np.diff(y)) > 1e-3 * np.ptp(y)
-        keep = np.concatenate([np.array([True]), moved])
-        t, x, y, weights = t[keep], x[keep], y[keep], self.weights[keep]
         if t.size < 3:
-            raise ValueError("The sweep needs at least three distinct fits.")
+            raise ValueError("The sweep needs at least three weights.")
         dx, dy = np.gradient(x, t), np.gradient(y, t)
         ddx, ddy = np.gradient(dx, t), np.gradient(dy, t)
         curvature = (dx * ddy - ddx * dy) / (dx**2 + dy**2) ** 1.5
         # The end points have one-sided derivatives; leave them out.
-        return float(weights[1 + int(np.argmax(np.abs(curvature[1:-1])))])
+        return float(self.weights[1 + int(np.argmax(np.abs(curvature[1:-1])))])
 
     def discrepancy(self, target=1.0):
         """The weight at which χ² per data point reaches ``target``.
@@ -773,9 +767,7 @@ def diagnose(model, data, regularisers=()):
         (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
         (East, North offset in mas); and ``anchored`` (whether something
         fixes the position), ``flip_dchi2`` (Δχ² when every Image is
-        rotated by 180° about the origin) and ``backend_error_sigma``
-        (largest difference between an Image's backend and the DFT, in units
-        of the data σ; only when an Image is not a DFT).
+        rotated by 180° about the origin).
     """
     observations = list(data) if isinstance(data, (list, tuple)) else [data]
     parts = _parts(model)
@@ -856,26 +848,6 @@ def diagnose(model, data, regularisers=()):
                 "trapped in a mirrored solution; refit from the rotated "
                 "image."
             )
-
-        if any(im.backend != "dft" for _, im in images):
-            exact = _map_images(
-                model, lambda im: dataclasses.replace(im, backend="dft")
-            )
-            checks["backend_error_sigma"] = max(
-                float(
-                    np.max(
-                        np.abs(d.model(model) - d.model(exact))
-                        / d.flatten_data()[1]
-                    )
-                )
-                for d in observations
-            )
-            if checks["backend_error_sigma"] > 0.1:
-                warns.append(
-                    "The Image backend differs from the DFT by "
-                    f"{checks['backend_error_sigma']:.2g} sigma > 0.1; "
-                    "use backend='dft'."
-                )
 
     regimes = []
     for d in observations:

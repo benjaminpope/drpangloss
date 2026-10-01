@@ -36,26 +36,3 @@ jobs:
       # ===== Tests =====
       - name: Test Suite
         run: uv run --python .venv/bin/python pytest
-
-  # The optional NUFFT backend, tested separately so that the main job
-  # checks that drpangloss works without it.
-  nufft:
-    runs-on: ubuntu-latest
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: create environment
-        run: |
-          uv venv --python 3.12 .venv
-          uv pip install --python .venv/bin/python -e ".[dev,nufft]"
-
-      # Fail loudly if the extra does not import, rather than letting
-      # tests/test_nufft.py skip itself.
-      - name: NUFFT tests
-        run: |
-          .venv/bin/python -c "import jax_finufft"
-          uv run --python .venv/bin/python pytest tests/test_nufft.py
