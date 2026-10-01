@@ -192,8 +192,6 @@ def fit(
     init=None,
     method=None,
     max_steps=None,
-    rtol=1e-5,
-    atol=1e-5,
     gtol=1e-4,
     learning_rate=1e-2,
     cg_steps=50,
@@ -222,8 +220,8 @@ def fit(
         Starting values by path, overriding the template's (required for
         a function model).
     method : {"lm", "lbfgs", "adam"}, optional
-        ``"lm"``: Levenberg–Marquardt on the residuals, with a
-        matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
+        ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals, with
+        a matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
         the normal equations), so the Jacobian is never formed. The default
         when the whole objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
@@ -231,14 +229,11 @@ def fit(
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
-    rtol, atol : float, optional
-        LM's convergence tolerances, on the change of the residuals between
-        steps.
     gtol : float, optional
-        L-BFGS stops when no component of the gradient of the loss per data
-        point exceeds ``gtol``, and none exceeds 1/1000 of its largest
-        starting value (so that a fit started near a solution still
-        converges).
+        LM and L-BFGS stop when no component of the gradient of the loss
+        per data point exceeds ``gtol``, nor 1/1000 of its largest starting
+        value (so that a fit started near a solution, e.g. along an
+        L-curve, still converges).
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -268,24 +263,9 @@ def fit(
         ndata = [int(np.size(d.flatten_data()[0])) for d in problem.data]
         scale = float(max(sum(ndata), 1))
         if method == "lm":
-            solver = optx.LevenbergMarquardt(
-                rtol=rtol,
-                atol=atol,
-                norm=_loss_norm,
-                linear_solver=lx.Normal(
-                    lx.CG(rtol=0.0, atol=0.0, max_steps=cg_steps)
-                ),
+            z, steps, converged = _lm(
+                problem, z0, scale, max_steps or 1000, gtol, cg_steps
             )
-            solution = optx.least_squares(
-                lambda z, p: p.residuals(z) / np.sqrt(scale),
-                solver,
-                z0,
-                args=problem,
-                max_steps=max_steps or 1000,
-                throw=False,
-            )
-            z, converged = solution.value, _succeeded(solution)
-            steps = int(solution.stats["num_steps"])
         elif method == "lbfgs":
             z, steps, converged = _lbfgs(
                 problem, z0, scale, max_steps or 20_000, gtol
@@ -330,23 +310,52 @@ def _has_residuals(problem, z):
     return True
 
 
-def _loss_norm(tree):
-    """Norm for the convergence test that looks at the loss, not the parameters.
+def _largest(tree):
+    """The largest absolute value in a pytree of arrays."""
+    return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
 
-    optimistix stops when both the parameter change and the loss change are
-    small. The log-brightnesses of image pixels that should be dark keep
-    drifting towards -inf without changing the image, so the parameter test
-    would never pass; we therefore let only the loss (a residual vector or
-    scalar) decide, through the root-mean-square of its relative change.
-    The parameters are a dict, the loss is an array.
+
+class _GradientStoppedLM(optx.LevenbergMarquardt):
+    """Levenberg-Marquardt that stops when the gradient of the loss is small.
+
+    optimistix's own test, on the change of the residuals, passes at once
+    from a warm start, and a test on the parameters never passes for
+    log-brightness pixels that should be dark (they drift towards -inf
+    without changing the image). This stops like the L-BFGS path instead.
     """
-    if isinstance(tree, dict):
-        return np.asarray(0.0)
-    return optx.rms_norm(tree)
+
+    tolerance: jax.Array
+    scale: float
+
+    def __init__(self, tolerance, scale, cg_steps):
+        super().__init__(
+            rtol=0.0,
+            atol=0.0,
+            linear_solver=lx.Normal(
+                lx.CG(rtol=0.0, atol=0.0, max_steps=cg_steps)
+            ),
+        )
+        self.tolerance = tolerance
+        self.scale = scale
+
+    def terminate(self, fn, y, args, options, state, tags):
+        gradient = jax.grad(lambda z: args.loss(z) / self.scale)(y)
+        return _largest(gradient) <= self.tolerance, optx.RESULTS.successful
 
 
-def _succeeded(solution):
-    return bool(solution.result == optx.RESULTS.successful)
+def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
+    g0 = _largest(jax.grad(lambda z: problem.loss(z) / scale)(z0))
+    solver = _GradientStoppedLM(np.minimum(gtol, 1e-3 * g0), scale, cg_steps)
+    solution = optx.least_squares(
+        lambda z, p: p.residuals(z) / np.sqrt(scale),
+        solver,
+        z0,
+        args=problem,
+        max_steps=max_steps,
+        throw=False,
+    )
+    converged = bool(solution.result == optx.RESULTS.successful)
+    return solution.value, int(solution.stats["num_steps"]), converged
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol):
@@ -367,12 +376,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
 
         value_and_grad = optax.value_and_grad_from_state(loss)
 
-        def largest(tree):
-            return np.max(
-                np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)])
-            )
-
-        tolerance = np.minimum(gtol, 1e-3 * largest(jax.grad(loss)(z0)))
+        tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
 
         def keep_going(carry):
             step, _, _, gradient = carry
@@ -388,7 +392,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
                 count + 1,
                 optax.apply_updates(z, updates),
                 state,
-                largest(grad),
+                _largest(grad),
             )
 
         start = (0, z0, optimiser.init(z0), np.asarray(np.inf, dtype=float))
