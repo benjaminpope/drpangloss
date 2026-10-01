@@ -674,7 +674,7 @@ class LCurve:
             image = result.model.get(path)
             if isinstance(image.log_brightness, GaussianField):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            jac = _residual_jacobian(
+            _, jac = _residual_jacobian(
                 result.model, data, path + ".log_brightness"
             )
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
@@ -699,10 +699,11 @@ class LCurve:
 
 
 def _residual_jacobian(model, data, path):
-    """Jacobian of all the whitened residuals with respect to one leaf.
+    """All the whitened residuals, and their Jacobian with respect to a leaf.
 
-    Returns a NumPy array of shape ``(n_data, leaf.size)``, computed in
-    float64 with whichever of forward or reverse mode is cheaper.
+    Returns NumPy arrays ``(residuals, jacobian)`` of shapes ``(n_data,)``
+    and ``(n_data, leaf.size)``, computed in float64, with whichever of
+    forward or reverse mode is cheaper for the Jacobian.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     with run_in("float64"):
@@ -718,7 +719,10 @@ def _residual_jacobian(model, data, path):
         n_data = sum(int(np.size(d.flatten_data()[0])) for d in datasets)
         mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
         jac = mode(residuals)(leaf)
-        return onp.asarray(jac, dtype=float).reshape(n_data, -1)
+        r = residuals(leaf)
+        return onp.asarray(r, dtype=float), onp.asarray(
+            jac, dtype=float
+        ).reshape(n_data, -1)
 
 
 def _smaller_gram(matrix):
@@ -766,15 +770,9 @@ def log_evidence(model, data, path="env"):
             f"log_evidence needs an Image with a GaussianField at {path!r}."
         )
     latent_path = path + ".log_brightness.latent"
-    jac = _residual_jacobian(model, data, latent_path)
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    with run_in("float64"):
-        model64, datasets = cast_tree((model, datasets), "float64")
-        chi2 = sum(
-            float(np.sum(whitened_residuals(model64, d) ** 2))
-            for d in datasets
-        )
-        z = onp.asarray(model64.get(latent_path), dtype=float)
+    r, jac = _residual_jacobian(model, data, latent_path)
+    chi2 = float(r @ r)
+    z = onp.asarray(model.get(latent_path), dtype=float)
     # I + JᵀJ is symmetric positive definite: its log-determinant from a
     # Cholesky factor.
     gram = _smaller_gram(jac)
@@ -860,14 +858,8 @@ def error_scale(model, data, path="env"):
         raise TypeError(
             f"error_scale needs an Image with a GaussianField at {path!r}."
         )
-    jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    with run_in("float64"):
-        model64, datasets = cast_tree((model, datasets), "float64")
-        chi2 = sum(
-            float(np.sum(whitened_residuals(model64, d) ** 2))
-            for d in datasets
-        )
+    r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    chi2 = float(r @ r)
     curvature = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
     gamma = float(onp.sum(curvature / (1.0 + curvature)))
     return float(onp.sqrt(chi2 / (jac.shape[0] - gamma)))
