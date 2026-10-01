@@ -400,7 +400,9 @@ def starting_image(
       (it already has the right shape) and worse when it is sparse (its
       sidelobes dominate).
 
-    Fit it with ``fit(start, image_priors(start), data, regularisers)``.
+    Fit it with ``fit(start, image_priors(start), data, regularisers)``,
+    adding a prior on ``"env.flux"`` to fit the envelope's flux too (which
+    stops the fit from parking excess flux next to the star).
 
     Parameters
     ----------
@@ -453,16 +455,15 @@ def starting_image(
         fov = min(fov, float(largest_mas))
     scale = nyquist_pixel_scale(data) / float(oversample)
     npix = int(onp.ceil(fov / scale))
+    options = dict(flux=envelope.flux)
     if start == "moments":
-        image = Image.from_model(
-            GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
-        )
+        model = GaussianDisk(envelope.sigma)
+        image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
         dirty = dirty_image(data, npix, scale, flux_ratio=ratio)
-        image = Image.from_brightness(
-            np.maximum(dirty, 0.0), scale, floor=1e-3, flux=envelope.flux
-        )
+        positive = np.maximum(dirty, 0.0)
+        image = Image.from_brightness(positive, scale, floor=1e-3, **options)
     else:
         raise ValueError(f"start must be 'moments' or 'dirty', not {start!r}.")
     return System(star=PointSource(), env=image) if star else image
