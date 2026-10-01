@@ -636,6 +636,10 @@ class Image(Component):
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
+        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
+            raise ValueError(
+                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
+            )
         self.pixel_scale_mas = float(pixel_scale_mas)
         eta = self.eta
         if eta.ndim != 2:

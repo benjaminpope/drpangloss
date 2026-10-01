@@ -36,7 +36,7 @@ from ._utils import mas2rad
 from .fitting import _reference, fit
 from .fields import GaussianField
 from .likelihood import whitened_residuals
-from .models import Image, PointSource, System, circular_support
+from .models import Image, PointSource, Rotated, System, circular_support
 
 
 class _ImageRegulariser(eqx.Module):
@@ -253,6 +253,8 @@ def image_priors(scene):
         elif isinstance(model, System):
             for name, part in model.components.items():
                 visit(part, prefix + name + ".")
+        elif isinstance(model, Rotated):
+            visit(model.source, prefix + "source.")
 
     visit(scene, "")
     if not priors:
@@ -668,6 +670,11 @@ def l_curve(
     LCurve
     """
     weights = sorted((float(w) for w in weights), reverse=True)
+    if not weights or not all(onp.isfinite(w) and w > 0.0 for w in weights):
+        raise ValueError(
+            f"weights must be a non-empty sequence of finite positive numbers, "
+            f"not {weights}."
+        )
     results, chi2, chi2_red, penalty = [], [], [], []
     init = fit_options.pop("init", None)
     for weight in weights:
@@ -733,10 +740,12 @@ def _parts(model, path=None):
     The path is ``None`` for the model itself, else e.g. ``"env"``.
     """
     found = [(path, model)]
+    prefix = "" if path is None else path + "."
     if isinstance(model, System):
-        prefix = "" if path is None else path + "."
         for name, part in model.components.items():
             found += _parts(part, prefix + name)
+    elif isinstance(model, Rotated):
+        found += _parts(model.source, prefix + "source")
     return found
 
 
@@ -744,6 +753,10 @@ def _map_images(model, fn):
     """``model`` with ``fn`` applied to each of its Images."""
     if isinstance(model, Image):
         return fn(model)
+    if isinstance(model, Rotated):
+        return eqx.tree_at(
+            lambda r: r.source, model, _map_images(model.source, fn)
+        )
     if not isinstance(model, System):
         return model
     parts = tuple(_map_images(c, fn) for c in model.components.values())
