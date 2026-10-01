@@ -23,6 +23,7 @@ import optimistix as optx
 
 from ._precision import cast_tree, run_in
 from ._utils import is_flux_param
+from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
     build_model,
@@ -45,6 +46,8 @@ def _prior_residuals(path, distribution, value):
     """
     import numpyro.distributions as dist
 
+    if isinstance(distribution, dist.Independent):
+        distribution = distribution.base_dist
     if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
         return None
     if isinstance(distribution, dist.Normal):
@@ -54,6 +57,20 @@ def _prior_residuals(path, distribution, value):
         "least-squares form; use Normal, Uniform or ImproperUniform "
         "priors, or fit with method='lbfgs' or 'adam'."
     )
+
+
+def _warn_if_field_hyperparameter(model, path):
+    """Warn when a GaussianField's sigma or length is fitted by MAP."""
+    parent, _, name = path.rpartition(".")
+    if name in ("sigma", "length_mas") and parent:
+        if isinstance(model.get(parent), GaussianField):
+            warnings.warn(
+                f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
+                "field are biased at the MAP (towards a flat field). Fix "
+                "them, choose them from the evidence, or sample them.",
+                UserWarning,
+                stacklevel=4,
+            )
 
 
 class _Objective(eqx.Module):
@@ -80,6 +97,7 @@ class _Objective(eqx.Module):
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
+                _warn_if_field_hyperparameter(model, path)
             if is_flux_param(path):
                 _check_positive_flux_prior(path, prior)
 

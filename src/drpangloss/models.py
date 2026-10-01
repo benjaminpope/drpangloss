@@ -584,10 +584,13 @@ class Image(Component):
 
     Parameters
     ----------
-    log_brightness : array-like, shape (nrow, ncol)
+    log_brightness : array-like, shape (nrow, ncol), or GaussianField
         Log pixel fluxes, up to an additive constant, in the orientation of
         [`render`][drpangloss.models.SourceModel.render]: row 0 is the top
-        (North) and column 0 the left (East) of the image.
+        (North) and column 0 the left (East) of the image. Alternatively an
+        object with an ``evaluate(pixel_scale_mas)`` method returning them,
+        such as a [`GaussianField`][drpangloss.fields.GaussianField] (a
+        Gaussian-process prior on the log-brightness).
     pixel_scale_mas : float
         Pixel size in milliarcseconds. The image centre, at index
         ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
@@ -615,7 +618,7 @@ class Image(Component):
     >>> scene = System(star=PointSource(), env=envelope)
     """
 
-    log_brightness: jax.Array
+    log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
@@ -630,22 +633,25 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
     ):
-        self.log_brightness = np.asarray(log_brightness, dtype=float)
-        if self.log_brightness.ndim != 2:
+        if not hasattr(log_brightness, "evaluate"):
+            log_brightness = np.asarray(log_brightness, dtype=float)
+        self.log_brightness = log_brightness
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        eta = self.eta
+        if eta.ndim != 2:
             raise ValueError("log_brightness must be a 2D array.")
         if support is not None:
             support = np.asarray(support, dtype=bool)
-            if support.shape != self.log_brightness.shape:
+            if support.shape != eta.shape:
                 raise ValueError(
                     f"support has shape {support.shape}, but log_brightness "
-                    f"has shape {self.log_brightness.shape}."
+                    f"has shape {eta.shape}."
                 )
             any_pixel = concrete(np.any(support))
             if any_pixel is not None and not bool(any_pixel):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
-        _check_log_brightness(self.log_brightness, support)
-        self.pixel_scale_mas = float(pixel_scale_mas)
+        _check_log_brightness(eta, support)
         self.rotation_deg = float(rotation_deg)
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
@@ -690,12 +696,20 @@ class Image(Component):
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
     @property
+    def eta(self):
+        """The log-brightness array, evaluated if it is a field."""
+        if hasattr(self.log_brightness, "evaluate"):
+            return self.log_brightness.evaluate(self.pixel_scale_mas)
+        return self.log_brightness
+
+    @property
     def brightness(self):
         """Pixel fluxes: positive, unit sum, zero outside ``support``."""
+        eta = self.eta
         # As a mask: some zodiax versions return leaves as floats from get().
         where = None if self.support is None else self.support.ravel() != 0
-        flat = jax.nn.softmax(self.log_brightness.ravel(), where=where)
-        return flat.reshape(self.log_brightness.shape)
+        flat = jax.nn.softmax(eta.ravel(), where=where)
+        return flat.reshape(eta.shape)
 
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
@@ -722,10 +736,11 @@ class Image(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the pixels, exact at their centres.
         xx, yy = rotate(xx, yy, -self.rotation_deg)
-        nrow, ncol = self.log_brightness.shape
+        brightness = self.brightness
+        nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
-        return map_coordinates(self.brightness, [rows, cols], order=1)
+        return map_coordinates(brightness, [rows, cols], order=1)
 
 
 class FlaredDisk(Component):

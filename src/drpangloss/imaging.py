@@ -34,6 +34,7 @@ from jax.scipy.special import xlogy
 from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
 from .fitting import _reference, fit
+from .fields import GaussianField
 from .likelihood import whitened_residuals
 from .models import Image, PointSource, System, circular_support
 
@@ -221,19 +222,30 @@ class Centroid(_ImageRegulariser):
 
 
 def image_priors(scene):
-    """Flat priors on the log-brightness of every Image in a scene.
+    """Priors on the log-brightness of every Image in a scene.
 
-    Returns a priors dict for [`fit`][drpangloss.fitting.fit], e.g.
-    ``{"env.log_brightness": ImproperUniform(...)}``. The pixels are then
-    constrained only by the data and the regularisers. Add priors for any
-    other free parameters (fluxes, offsets) to the dict.
+    Returns a priors dict for [`fit`][drpangloss.fitting.fit]. An Image with
+    a plain log-brightness array gets a flat prior,
+    ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
+    constrained only by the data and the regularisers. An Image with a
+    [`GaussianField`][drpangloss.fields.GaussianField] gets standard-normal
+    priors on the field's latents, ``{"env.log_brightness.latent":
+    Normal(0, 1)}``: the Gaussian-process prior, which needs no regulariser.
+    Add priors for any other free parameters (fluxes, offsets) to the dict.
     """
     import numpyro.distributions as dist
 
     priors = {}
 
     def visit(model, prefix):
-        if isinstance(model, Image):
+        if isinstance(model, Image) and isinstance(
+            model.log_brightness, GaussianField
+        ):
+            shape = model.log_brightness.shape
+            priors[prefix + "log_brightness.latent"] = dist.Normal(
+                np.zeros(shape), 1.0
+            ).to_event(2)
+        elif isinstance(model, Image):
             shape = model.log_brightness.shape
             priors[prefix + "log_brightness"] = dist.ImproperUniform(
                 dist.constraints.real, (), event_shape=shape
@@ -743,7 +755,7 @@ def _rotated_180(image):
     support = image.support
     return dataclasses.replace(
         image,
-        log_brightness=image.log_brightness[::-1, ::-1],
+        log_brightness=image.eta[::-1, ::-1],
         support=None if support is None else support[::-1, ::-1],
         dra=-image.dra,
         ddec=-image.ddec,

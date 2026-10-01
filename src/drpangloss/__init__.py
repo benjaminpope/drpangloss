@@ -32,6 +32,7 @@ from . import (  # noqa: E402
     amigo,
     bessel,
     coverage,
+    fields,
     fitting,
     grid_fit,
     imaging,
@@ -46,6 +47,7 @@ from . import (  # noqa: E402
     spectra,
 )
 from .amigo import load_oi_data  # noqa: E402
+from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -103,6 +105,7 @@ __all__ = [
     "FlaredDiskPowerLaw",
     "GaussianDisk",
     "GaussianDiskModel",
+    "GaussianField",
     "Image",
     "ModulatedGaussianRim",
     "OIData",
