@@ -188,6 +188,24 @@ fetched and summarised, and the appendix figures could not be inspected.)
 - Historic caveat: classic MaxEnt has been criticised for over-fitting with alpha
   from the evidence when the noise is under-estimated. It is only as good as sigma.
 
+### 2.5a The error bars are a hyperparameter too (implemented: `imaging.error_scale`)
+
+Every criterion above assumes the quoted error bars are right. On real PIONIER data they are not: χ² per point is 0.5–0.8 even for smooth images, which makes the discrepancy principle, classic MaxEnt and the evidence all over-regularise.
+
+MacKay's evidence framework treats the noise precision β = 1/s² as one more hyperparameter, alongside the prior's weight, or its σ and ℓ. Maximising the Laplace evidence over β gives the **re-estimation formula**
+
+    s² = χ² / (N − γ),   γ = Σ λᵢ / (1 + λᵢ),
+
+where λᵢ are the eigenvalues of the likelihood's Gauss–Newton curvature in whitened prior coordinates. γ, the effective number of well-measured parameters, is the same quantity that appears in classic MaxEnt's fixed point, 2wR = γ.
+
+The intuition: each well-measured parameter absorbs one datum's worth of scatter, so honest errors give χ² ≈ N − γ rather than N. Using χ²/N would underestimate s², as dividing by N rather than N − 1 does for a sample variance. The formula is MacKay 1992 (Neural Comput. 4, 415, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415)), eq. 4.14, and Bishop 2006, *PRML*, §3.5.2.
+
+In drpangloss:
+- `imaging.error_scale(model, data)` computes s at a `GaussianField` MAP, from the same Jacobian as `log_evidence`.
+- `OIData.with_error_scale(s)` rescales the data, for a refit.
+
+One fixed-point step usually suffices. The estimate assumes the model is adequate, because unmodelled structure inflates s.
+
 ### 2.6 What the codes actually do
 - **BSMEM**: evidence-based automatic alpha as above (see 2.5).
 - **MiRA** (Thiébaut 2008, [arXiv:0807.3020](https://arxiv.org/abs/0807.3020)? title

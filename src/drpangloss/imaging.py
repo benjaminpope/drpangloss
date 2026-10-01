@@ -371,7 +371,12 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     flux_ratio : float, optional
         If the scene is a star at the origin plus extended emission with
         this flux relative to the star, the star is removed first, so the
-        map shows the extended emission alone.
+        map shows the extended emission alone. The star is removed by
+        subtracting the best-fitting point source at the origin (the
+        weighted mean of the visibilities), then scaling by
+        ``(1 + flux_ratio) / flux_ratio``. That is robust to the
+        normalisation of the visibilities, which matters because subtracting
+        a bright star amplifies any error in it by ``1 / flux_ratio``.
 
     Returns
     -------
@@ -385,7 +390,8 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     for d in observations:
         vis, weight = _complex_visibilities(d)
         if flux_ratio is not None:
-            vis = ((1.0 + flux_ratio) * vis - 1.0) / flux_ratio
+            star = onp.sum(weight * onp.real(vis)) / onp.sum(weight)
+            vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
         cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))  # (k, col)
@@ -778,28 +784,53 @@ def log_evidence(model, data, path="env"):
 
 
 def error_scale(model, data, path="env"):
-    """Re-estimate the scale of the error bars from a Gaussian-field fit.
+    r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
-    At the MAP of an Image whose log-brightness is a
-    [`GaussianField`][drpangloss.fields.GaussianField], this returns MacKay's
-    noise re-estimate
+    **What it does.** It estimates the factor ``s`` by which every error
+    bar should be multiplied for the data to be consistent with the fit.
+    ``s < 1`` means the error bars are too large; ``s > 1`` that they are
+    too small, or that the model is missing something.
 
-    ``s = sqrt(χ² / (N - γ))``,  ``γ = Σ λ / (1 + λ)``,
+    **The idea.** In MacKay's evidence framework, the level of the noise is
+    a hyperparameter, like the prior's ``sigma`` and ``length_mas``. Write
+    the noise precision as β = 1/s², so that the likelihood is
+    ``exp(-β χ²/2)``, with χ² computed with the quoted errors. The
+    Laplace-approximated evidence, as a function of β, is maximised when
 
-    where ``N`` is the number of data, and ``γ`` the effective number of
-    image parameters the data measure. The ``λ`` are the eigenvalues of
-    the Gauss–Newton curvature ``JᵀJ`` in the field's whitened latents, the
-    same as in [`log_evidence`][drpangloss.imaging.log_evidence].
-    ``s < 1`` means the error bars are larger than the scatter of the data
-    about the model, which makes the discrepancy principle, classic MaxEnt
-    and the evidence all over-regularise. Rescale the data with
-    [`OIData.with_error_scale`][drpangloss.oidata.OIData.with_error_scale]
-    and refit; one iteration usually suffices.
+    $$\frac{1}{\beta} = s^2 = \frac{\chi^2}{N - \gamma},
+    \qquad \gamma = \sum_i \frac{\lambda_i}{1 + \lambda_i}.$$
+
+    ``N`` is the number of data. ``γ`` is the **effective number of
+    parameters** the data measure: the ``λ_i`` are the eigenvalues of the
+    Gauss–Newton curvature ``JᵀJ`` of the likelihood in the field's
+    whitened latents, in which the prior's curvature is the identity. A
+    direction with ``λ ≫ 1`` is fixed by the data and counts as one
+    parameter; one with ``λ ≪ 1`` is fixed by the prior and counts as none.
+
+    Each measured parameter uses up one datum's worth of scatter. So of the
+    ``N`` residuals, only ``N − γ`` are free to scatter, and an honest error
+    bar gives χ² ≈ N − γ, not N. The ordinary "χ² per point" estimate,
+    ``s² = χ²/N``, is biased low for the same reason as the 1/N estimate of
+    a sample variance; this is its Bayesian, nonlinear generalisation. It is
+    MacKay's re-estimation formula for β (MacKay 1992, eq. 4.14; Bishop
+    2006, eq. 3.95).
+
+    **How to use it.** Fit at your chosen hyperparameters, call this, rescale
+    the data with
+    [`OIData.with_error_scale`][drpangloss.oidata.OIData.with_error_scale],
+    and refit. The estimate depends on the fit, which depends on the errors,
+    so in principle this is a fixed-point iteration; in practice one
+    iteration usually suffices. Error bars that are too large make the
+    discrepancy principle, classic MaxEnt and the evidence all
+    over-regularise, so rescale before choosing hyperparameters with any of
+    them. The estimate assumes the model is adequate: if the data contain
+    structure the model cannot fit, ``s`` absorbs it.
 
     Parameters
     ----------
     model : SourceModel
-        The MAP model.
+        The MAP model, whose Image at ``path`` has a GaussianField
+        log-brightness.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str, optional
@@ -808,6 +839,21 @@ def error_scale(model, data, path="env"):
     Returns
     -------
     float
+        The scale ``s``.
+
+    References
+    ----------
+    - D. J. C. MacKay (1992), "Bayesian interpolation", Neural Computation
+      4, 415–447, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415).
+      It introduces the evidence framework, γ, and the re-estimation of
+      α and β.
+    - C. M. Bishop (2006), *Pattern Recognition and Machine Learning*,
+      §3.5, "The evidence approximation" ([free PDF](https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/)):
+      the same results for linear models, eqs. 3.91–3.95.
+    - S. F. Gull (1989), "Developments in maximum entropy data analysis",
+      in *Maximum Entropy and Bayesian Methods*, Kluwer, 53–71: the same
+      ``N − γ`` argument for maximum entropy, the basis of
+      [`LCurve.classic_maxent`][drpangloss.imaging.LCurve.classic_maxent].
     """
     image = model.get(path)
     if not isinstance(image.log_brightness, GaussianField):
