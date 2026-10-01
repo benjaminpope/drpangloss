@@ -241,6 +241,17 @@ truth for the corresponding `docs/*.md` pages. Edit the notebook, execute it so 
 are current (the sync embeds text and PNG outputs), then run the sync script.
 `tests/test_tutorial_docs_sync.py` fails if the markdown is stale.
 
+Execute notebooks with the repo's own kernel, `drpangloss`, which lives in `.venv`. The
+user-level `python3` kernel may point at another environment.
+
+```bash
+.venv/bin/jupyter-nbconvert --to notebook --execute --inplace NOTEBOOK.ipynb \
+  --ExecutePreprocessor.kernel_name=drpangloss
+```
+
+If the kernel is missing, recreate it with
+`.venv/bin/python -m ipykernel install --sys-prefix --name drpangloss --display-name "drpangloss (.venv)"`.
+
 ## Testing notes
 
 `pytest` is preconfigured with `-q` and `testpaths = ["tests"]`. The JAX suites are slow to

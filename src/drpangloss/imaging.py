@@ -761,8 +761,11 @@ def log_evidence(model, data, path="env"):
         float(np.sum(whitened_residuals(model, d) ** 2)) for d in datasets
     )
     z = onp.asarray(model.get(latent_path), dtype=float)
+    # I + JᵀJ is symmetric positive definite: its log-determinant from a
+    # Cholesky factor.
     gram = _smaller_gram(jac)
-    _, logdet = onp.linalg.slogdet(onp.eye(gram.shape[0]) + gram)
+    factor = onp.linalg.cholesky(onp.eye(gram.shape[0]) + gram)
+    logdet = 2.0 * onp.sum(onp.log(onp.diag(factor)))
     return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
 
 
