@@ -553,14 +553,17 @@ def _check_log_brightness(log_brightness, support):
         )
 
 
-def circular_support(npix, pixel_scale_mas, radius_mas):
+def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
     """Pixels of an ``npix`` x ``npix`` image within ``radius_mas`` of its centre.
 
     Returns a boolean array for the ``support`` of an
-    [`Image`][drpangloss.models.Image].
+    [`Image`][drpangloss.models.Image]. With ``inner_radius_mas``, pixels
+    closer to the centre than that are left out too: a hole under an
+    analytic star, so that the image cannot pile flux onto it.
     """
     offsets = pixel_offsets(int(npix), float(pixel_scale_mas))
-    return np.hypot(offsets[None, :], offsets[:, None]) <= radius_mas
+    radius = np.hypot(offsets[None, :], offsets[:, None])
+    return (radius <= radius_mas) & (radius >= inner_radius_mas)
 
 
 class Image(Component):

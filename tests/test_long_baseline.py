@@ -1,0 +1,135 @@
+import jax
+import jax.numpy as np
+import numpy as onp
+import numpyro.distributions as dist
+
+from drpangloss.coverage import VLTI_UTS, nrm_oidata, vlti_oidata
+from drpangloss.fitting import fit
+from drpangloss.imaging import Centroid, MaxEntropy, image_priors
+from drpangloss.models import (
+    BinaryModelCartesian,
+    GaussianDisk,
+    Image,
+    PointSource,
+    System,
+    circular_support,
+)
+from drpangloss.scenes import gaussian_blob
+from drpangloss.spectra import PowerLaw
+
+NIGHT = vlti_oidata(
+    hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.2e-6, 3.8e-6]
+)
+
+
+def test_vlti_coverage_has_all_baselines_and_triangles():
+    data = vlti_oidata()
+    assert data.vis.size == 6 * 5 * 11 and data.phi.size == 4 * 5 * 11
+    longest = max(
+        onp.hypot(*(VLTI_UTS[j] - VLTI_UTS[i]))
+        for i in range(4)
+        for j in range(i + 1, 4)
+    )
+    # Projection can only shorten a ground baseline.
+    assert np.max(np.hypot(data.u, data.v)) <= longest + 1e-6
+    model = data.model(PointSource(dra=5.0, ddec=-3.0))
+    assert np.allclose(model[: data.vis.size], 1.0)
+    assert np.allclose(model[data.vis.size :], 0.0, atol=1e-5)
+
+
+def test_circular_support_can_leave_a_hole_under_the_star():
+    support = circular_support(21, 1.0, radius_mas=9.0, inner_radius_mas=2.0)
+    assert not support[10, 10] and support[10, 15] and not support[0, 0]
+
+
+def test_a_joint_fit_of_two_nights_recovers_a_binary():
+    truth = BinaryModelCartesian(6.0, -4.0, 0.05)
+    nights = [
+        NIGHT.with_model(truth, key=jax.random.PRNGKey(0)),
+        vlti_oidata(
+            hour_angles_h=(-3.0, 1.0), wavelengths_m=[3.2e-6, 3.8e-6]
+        ).with_model(truth, key=jax.random.PRNGKey(1)),
+    ]
+    priors = {
+        "dra": dist.Uniform(-20.0, 20.0),
+        "ddec": dist.Uniform(-20.0, 20.0),
+        "flux": dist.Uniform(0.0, 0.5),
+    }
+    result = fit(BinaryModelCartesian(5.0, -3.0, 0.03), priors, nights)
+    assert len(result.info["chi2"]) == 2
+    assert abs(result.values["dra"] - 6.0) < 0.3
+    assert abs(result.values["ddec"] + 4.0) < 0.3
+    assert abs(result.values["flux"] - 0.05) < 0.01
+
+
+def test_a_star_anchors_an_image_fitted_to_v2_and_closure_phases():
+    npix, scale = 32, 0.6
+    truth = System(
+        star=PointSource(),
+        env=Image.from_brightness(
+            gaussian_blob(npix, scale, 1.5, dra=4.0, ddec=2.0), scale, flux=0.3
+        ),
+    )
+    data = NIGHT.with_model(truth, key=jax.random.PRNGKey(2))
+    start = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(4.0), npix, scale, flux=0.3),
+    )
+    result = fit(
+        start, image_priors(start), data, [MaxEntropy(10.0, path="env")]
+    )
+    centroid = Centroid(1.0, path="env").centroid(result.model)
+    assert np.allclose(centroid, np.array([4.0, 2.0]), atol=1.0)
+
+
+def test_a_support_hole_keeps_flux_off_the_star():
+    npix, scale = 24, 0.8
+    hole = circular_support(npix, scale, radius_mas=9.0, inner_radius_mas=2.0)
+    start = System(
+        star=PointSource(),
+        env=Image.from_model(
+            GaussianDisk(4.0), npix, scale, flux=0.3, support=hole
+        ),
+    )
+    truth = System(star=PointSource(), env=GaussianDisk(4.0, flux=0.3))
+    data = NIGHT.with_model(truth, key=jax.random.PRNGKey(3))
+    result = fit(
+        start, image_priors(start), data, [MaxEntropy(10.0, path="env")]
+    )
+    assert np.all(result.model.env.brightness[~hole] == 0.0)
+
+
+def test_a_sparco_spectral_index_is_recovered_from_the_channels():
+    # A grey image whose flux relative to the star rises with wavelength.
+    npix, scale = 24, 0.8
+    image = Image.from_model(
+        GaussianDisk(3.0), npix, scale, flux=PowerLaw(0.3, 2.0, 3.5e-6)
+    )
+    truth = System(star=PointSource(), env=image)
+    data = vlti_oidata().with_model(truth, key=jax.random.PRNGKey(4))
+    start = truth.set(["env.flux.ratio", "env.flux.index"], [0.2, 0.0])
+    priors = {
+        "env.flux.ratio": dist.Uniform(0.0, 2.0),
+        "env.flux.index": dist.Uniform(-5.0, 5.0),
+    }
+    result = fit(start, priors, data)
+    assert abs(result.values["env.flux.index"] - 2.0) < 0.3
+    assert abs(result.values["env.flux.ratio"] - 0.3) < 0.03
+
+
+def test_nrm_rolls_combine_into_one_fit():
+    truth = BinaryModelCartesian(120.0, 80.0, 0.05)
+    rolls = [
+        nrm_oidata(rotation_deg=angle).with_model(
+            truth, key=jax.random.PRNGKey(k)
+        )
+        for k, angle in enumerate((0.0, 30.0))
+    ]
+    priors = {
+        "dra": dist.Uniform(-400.0, 400.0),
+        "ddec": dist.Uniform(-400.0, 400.0),
+        "flux": dist.Uniform(0.0, 0.5),
+    }
+    result = fit(BinaryModelCartesian(100.0, 60.0, 0.03), priors, rolls)
+    assert abs(result.values["dra"] - 120.0) < 10.0
+    assert abs(result.values["ddec"] - 80.0) < 10.0

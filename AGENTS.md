@@ -88,7 +88,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`) accepted as a component's `flux` |
-| `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `mask_transfer` |
+| `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
 | `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
