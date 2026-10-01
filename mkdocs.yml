@@ -74,6 +74,7 @@ nav:
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
       - Spectra: api/spectra.md
+      - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Coverage: api/coverage.md
       - Plotting: api/plotting.md

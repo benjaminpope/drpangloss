@@ -27,13 +27,16 @@ checks a fit for this and other common pitfalls.
 import dataclasses
 
 import equinox as eqx
+import jax
 import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
+from ._precision import cast_tree, run_in
 from .fitting import _reference, fit
+from .fields import GaussianField
 from .likelihood import whitened_residuals
 from .models import Image, PointSource, Rotated, System, circular_support
 
@@ -221,19 +224,30 @@ class Centroid(_ImageRegulariser):
 
 
 def image_priors(scene):
-    """Flat priors on the log-brightness of every Image in a scene.
+    """Priors on the log-brightness of every Image in a scene.
 
-    Returns a priors dict for [`fit`][drpangloss.fitting.fit], e.g.
-    ``{"env.log_brightness": ImproperUniform(...)}``. The pixels are then
-    constrained only by the data and the regularisers. Add priors for any
-    other free parameters (fluxes, offsets) to the dict.
+    Returns a priors dict for [`fit`][drpangloss.fitting.fit]. An Image with
+    a plain log-brightness array gets a flat prior,
+    ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
+    constrained only by the data and the regularisers. An Image with a
+    [`GaussianField`][drpangloss.fields.GaussianField] gets standard-normal
+    priors on the field's latents, ``{"env.log_brightness.latent":
+    Normal(0, 1)}``: the Gaussian-process prior, which needs no regulariser.
+    Add priors for any other free parameters (fluxes, offsets) to the dict.
     """
     import numpyro.distributions as dist
 
     priors = {}
 
     def visit(model, prefix):
-        if isinstance(model, Image):
+        if isinstance(model, Image) and isinstance(
+            model.log_brightness, GaussianField
+        ):
+            shape = model.log_brightness.shape
+            priors[prefix + "log_brightness.latent"] = dist.Normal(
+                np.zeros(shape), 1.0
+            ).to_event(2)
+        elif isinstance(model, Image):
             shape = model.log_brightness.shape
             priors[prefix + "log_brightness"] = dist.ImproperUniform(
                 dist.constraints.real, (), event_shape=shape
@@ -622,6 +636,146 @@ class LCurve:
         fraction = (c[0] - target) / (c[0] - c[1])
         return float(np.exp(t[0] + fraction * (t[1] - t[0])))
 
+    def classic_maxent(self, data, path="env"):
+        """The maximum-entropy weight of Gull and Skilling's "classic MaxEnt".
+
+        For a sweep of [`MaxEntropy`][drpangloss.imaging.MaxEntropy] fits,
+        this is the weight ``w`` at which ``-2 w S`` equals the number of
+        well-measured directions in the image, ``N = Σ λ / (λ + w)``
+        (Gull 1989; Skilling & Bryan 1984). Here ``S`` is the entropy (minus
+        the sweep's ``penalty``), and the ``λ`` are the eigenvalues of the
+        data's Gauss–Newton curvature in the entropy metric,
+        ``diag(√b) JᵀJ diag(√b)``, with ``J`` the Jacobian of the whitened
+        residuals with respect to the brightness ``b``. It is the stationary
+        point of the Laplace-approximated evidence in ``w``, and so assumes
+        correct error bars, like the discrepancy principle.
+
+        Both sides are evaluated at each fit in the sweep, and the crossing
+        is interpolated linearly in ``log w``. Returns ``None`` if the sweep
+        does not bracket it.
+
+        Parameters
+        ----------
+        data : OIData or sequence of OIData
+            The data the sweep was fitted to.
+        path : str, optional
+            Path of the regularised Image in the model (default ``"env"``).
+        """
+        gap = []
+        for weight, penalty, result in zip(
+            self.weights, self.penalty, self.results
+        ):
+            image = result.model.get(path)
+            if isinstance(image.log_brightness, GaussianField):
+                raise TypeError("classic_maxent needs a pixel Image.")
+            jac = _residual_jacobian(
+                result.model, data, path + ".log_brightness"
+            )
+            # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
+            with run_in("float64"):
+                b = onp.ravel(
+                    onp.asarray(
+                        cast_tree(image, "float64").brightness, dtype=float
+                    )
+                )
+            scaled = jac[:, b > 0] / onp.sqrt(b[b > 0])
+            curvature = onp.linalg.eigvalsh(_smaller_gram(scaled))
+            n_good = onp.sum(curvature / (curvature + weight))
+            gap.append(2.0 * weight * penalty - n_good)
+        gap = onp.asarray(gap)
+        crossings = onp.nonzero(onp.sign(gap[:-1]) != onp.sign(gap[1:]))[0]
+        if crossings.size == 0:
+            return None
+        i = int(crossings[0])
+        t = onp.log(onp.asarray(self.weights[i : i + 2], dtype=float))
+        fraction = gap[i] / (gap[i] - gap[i + 1])
+        return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
+
+
+def _residual_jacobian(model, data, path):
+    """Jacobian of all the whitened residuals with respect to one leaf.
+
+    Returns a NumPy array of shape ``(n_data, leaf.size)``, computed in
+    float64 with whichever of forward or reverse mode is cheaper.
+    """
+    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    with run_in("float64"):
+        model, datasets = cast_tree((model, datasets), "float64")
+        leaf = model.get(path)
+
+        def residuals(x):
+            changed = model.set(path, x)
+            return np.concatenate(
+                [whitened_residuals(changed, d) for d in datasets]
+            )
+
+        n_data = sum(int(np.size(d.flatten_data()[0])) for d in datasets)
+        mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
+        jac = mode(residuals)(leaf)
+        return onp.asarray(jac, dtype=float).reshape(n_data, -1)
+
+
+def _smaller_gram(matrix):
+    """``A Aᵀ`` or ``Aᵀ A``, whichever is smaller (same nonzero eigenvalues)."""
+    return (
+        matrix @ matrix.T
+        if matrix.shape[0] <= matrix.shape[1]
+        else matrix.T @ matrix
+    )
+
+
+def log_evidence(model, data, path="env"):
+    """Laplace-approximated log evidence of a Gaussian-field image fit.
+
+    For an Image whose log-brightness is a
+    [`GaussianField`][drpangloss.fields.GaussianField] with standard-normal
+    latents ``z``, at the MAP ``model`` from [`fit`][drpangloss.fitting.fit],
+
+    ``log Z ≈ -½ χ² - ½ |z|² - ½ log det(I + JᵀJ)``,
+
+    up to a constant that is the same for every ``sigma`` and
+    ``length_mas`` on a given grid. ``J`` is the Jacobian of the whitened
+    residuals with respect to ``z``, so ``JᵀJ`` is the Gauss–Newton
+    curvature of the likelihood. Other fitted parameters (fluxes, spectra)
+    are held at their MAP values. Compare it across fits with different
+    hyperparameters and choose the largest, as MacKay's evidence framework
+    does; it is exact for a linear model, and assumes correct error bars.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The MAP model.
+    data : OIData or sequence of OIData
+        The data it was fitted to.
+    path : str, optional
+        Path of the Image in the model (default ``"env"``).
+
+    Returns
+    -------
+    float
+    """
+    image = model.get(path)
+    if not isinstance(image.log_brightness, GaussianField):
+        raise TypeError(
+            f"log_evidence needs an Image with a GaussianField at {path!r}."
+        )
+    latent_path = path + ".log_brightness.latent"
+    jac = _residual_jacobian(model, data, latent_path)
+    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    with run_in("float64"):
+        model64, datasets = cast_tree((model, datasets), "float64")
+        chi2 = sum(
+            float(np.sum(whitened_residuals(model64, d) ** 2))
+            for d in datasets
+        )
+        z = onp.asarray(model64.get(latent_path), dtype=float)
+    # I + JᵀJ is symmetric positive definite: its log-determinant from a
+    # Cholesky factor.
+    gram = _smaller_gram(jac)
+    factor = onp.linalg.cholesky(onp.eye(gram.shape[0]) + gram)
+    logdet = 2.0 * onp.sum(onp.log(onp.diag(factor)))
+    return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
+
 
 def l_curve(
     model, priors, data, regulariser, weights, others=(), **fit_options
@@ -756,7 +910,7 @@ def _rotated_180(image):
     support = image.support
     return dataclasses.replace(
         image,
-        log_brightness=image.log_brightness[::-1, ::-1],
+        log_brightness=image.eta[::-1, ::-1],
         support=None if support is None else support[::-1, ::-1],
         dra=-image.dra,
         ddec=-image.ddec,

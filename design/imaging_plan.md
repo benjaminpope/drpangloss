@@ -288,6 +288,32 @@ A background split off as a `Resolved` component also changes what the image's i
 
 **Checkpoint:** is the GP prior worth it compared with classical regularisers, and does sampling go into the docs as supported?
 
+**Log, 5a (2026-10-01):** this stage is split into three PRs: 5a the GP field, 5b evidence-based weights, and 5c sampling.
+- **Library:** `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)` and `fields.field_spectrum`.
+  - `Image` accepts the field in place of its log-brightness, through the `evaluate(pixel_scale_mas)` protocol, and gains an `eta` property.
+  - `image_priors` gives the latents N(0, 1) priors, so the fit is least squares.
+  - `fit` warns when σ or ℓ is fitted by MAP.
+- **Tests:** the exact covariance against (κ²I + L)^order with the constant mode removed (8×6, orders 1 and 2); `order=1` equals TSV + L2 on η; σ and ℓ calibration; `latent = 0` reproduces the template; finite hyperparameter gradients; an LM fit and `diagnose`; the MAP warning.
+- **MWE-A** (`mwe_gaussian_field`), on the two-night VLTI SPARCO scene:
+  - Levenberg–Marquardt converges in 23–53 steps, a few seconds per fit.
+  - At the discrepancy pair (σ = 4, ℓ = 1 mas): NCC 0.93, ratio 0.511 and index 1.91, against MEM's 0.89, 0.509 and 1.87 (truth 0.5 and 2).
+  - The result is insensitive to σ between 1 and 4.
+
+**Log, 5b (2026-10-01):**
+- **Library:**
+  - `imaging.log_evidence(model, data, path)`: the Laplace evidence of a `GaussianField` MAP, −½χ² − ½|z|² − ½ log det(I + JᵀJ). The determinant is computed exactly, from a Cholesky factor in the smaller of the data and latent dimensions; other parameters are held at their MAP values.
+  - `LCurve.classic_maxent(data, path)`: Gull and Skilling's weight, where −2wS = Σ λ/(λ + w), with λ the Gauss–Newton curvature in the entropy metric. It is interpolated in log w across the sweep, and gives `None` if the sweep doesn't bracket it.
+  - Both share `_residual_jacobian`, a dense Jacobian in float64, using forward or reverse mode, whichever is cheaper.
+  - No stochastic log-determinant yet: dense is fine up to about 10⁴ data or pixels.
+- **Tests:**
+  - On data drawn from a GP with σ = 1.5, the evidence prefers σ = 1.5 over 0.3 and 6.
+  - The evidence needs a field.
+  - Classic MaxEnt lies inside a bracketing sweep, and gives `None` otherwise.
+- **MWE** (`mwe_evidence`), on the VLTI scene:
+  - Evidence over σ and ℓ: it picks σ = 2, ℓ = 0.5 mas, which has the best NCC of the 4×5 grid (0.94). Each evaluation takes about 0.2 s.
+  - Classic MaxEnt picks w = 15.7, NCC 0.91. The discrepancy principle picks w = 32.5, NCC 0.88, and the corner w = 100.
+  - All fits converge: the sweep runs w ≥ 3, and refits are allowed 2 × 10⁵ L-BFGS steps.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
