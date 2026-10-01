@@ -199,13 +199,10 @@ The design rationale was established in the earlier research: the gauge survey, 
 - MWE-B (the SNR and coverage stress test) is still to do.
 
 ## Stage 4b: a rotating scene over two epochs
-**Known rotation:** a spiral that rotates by a known 60° between two epochs, fitted jointly. Each epoch needs its own model, built from shared image parameters. `fit` takes a list of per-dataset models or a `model_fn(params, i)`; the second epoch's `Image` gets `rotation_deg=60`, which the exact DFT handles directly.
-**Unknown rotation:** `rotation_deg` becomes a fitted parameter. This needs:
-- a traceable rotation, using the per-point DFT, since the MFT only works for a fixed lattice match;
-- a coarse scan or profile over angle before a joint refinement, because the likelihood is multimodal in angle;
-- a check of the rotation–expansion degeneracy of Archimedean spirals, where a rotation looks like a change of scale.
-
-The MWE fits the angle and compares it with the known value.
+A spiral that turns by 60° between two epochs, fitted jointly with the rotation known and then unknown. For an unknown rotation:
+- the angle must be traceable;
+- the likelihood can be multimodal in angle, so a coarse scan comes before a joint refinement;
+- an Archimedean spiral has a near-degeneracy between rotation and expansion.
 
 **Log (2026-10-01):**
 - `fit` (and so `l_curve`) accepts a model function that returns one model per dataset, sharing parameters; regularisers act on the first.
@@ -214,44 +211,50 @@ The MWE fits the angle and compares it with the known value.
 - With the angle unknown, a 15° scan of fixed-angle fits (warm-started, with a 300-step limit) has a single sharp minimum at 60°. Reconstructing the image again with the angle free (an L-curve started from the scan's best angle) gives 59.89° and the same NCC, 0.92, as with the angle known.
 - No secondary minimum appeared for this spiral: its fading ends break the rotation–expansion degeneracy.
 
-## Stage 4c: real PIONIER data
-The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are local only and never committed. Read only the fields needed.
-- Reconstruct images in a five-cell notebook using `fit`, `l_curve` and `diagnose`.
-- Compare the results with the paper's text, not its images.
+## Stage 4c: real PIONIER data (SPARCO), and the FlaredDisk merge
+Real-data notebooks live in `nuHor/notebooks/`, next to the data, and are not committed here:
+- `pionier_iras08544`: one star;
+- `pionier_binary`: Hillen et al.'s model;
+- `pionier_iwcar`, for Toon.
 
-**Log (2026-10-01):** the target is IRAS 08544-4431 (Hillen et al. 2016): 27 files, three AT configurations, 828 V² and 504 closure phases. The MWE is `mwe_pionier_iras08544`, and no library changes were needed.
-- **Parametric SPARCO fit** (a λ⁻⁴ star, a modulated Gaussian ring and a resolved background), against the paper:
-  - ring diameter 14.37 mas (paper 14.15), FWHM 3.29 mas (3.2), inclination 22° (19°);
-  - star 62%, against 59.7 + 3.9% for the paper's two stars;
-  - ring 21% (20.9%), background 17% (15.5%).
-- **MEM image** at the discrepancy weight (χ² per point 0.94):
-  - the resolved background has to be held fixed, because a smooth image is degenerate with it and absorbs it;
-  - the deprojected profile peaks at 7.5 mas, against the parametric 7.2 mas;
-  - the image's spectral index is 1.55, against the paper's 0.42, probably because of the fixed background.
-- **Compact central emission** just outside the half-beam hole is required by the data. In single fits at the MEM weight (316) started from the parametric ring, χ² per point is 1.06 with a half-beam hole and 1.28 with a one-beam hole. The L-curve's warm-started fit at the same weight reaches 0.94.
-- **Binary:** a parametric secondary has a local minimum at 0.80 mas and about 4% of the flux, matching the paper. The data prefer an equal pair at 0.44 mas, which amounts to a slightly resolved centre. Untangling it needs the secondary's spectrum and the circum-companion emission to be modelled together.
+They compare results with the papers' text, not their images.
 
-## Stage 4d: a binary star alongside the image (PIONIER)
-`mwe_pionier_binary` follows Hillen et al. (2016) for IRAS 08544-4431. The library adds `spectra.BlackBody`, a Planck F_λ spectrum normalised at `wavel0` with a fittable `temperature` (in PR "SPARCO spectra").
+**Library additions:**
+- `spectra.BlackBody`, a Planck F_λ spectrum normalised at `wavel0` with a fittable `temperature`.
+- SPARCO verification tests: the published mixing formula with blackbody components, per-channel weighting of multichannel data, temperature gradients, and the Rayleigh–Jeans limit.
+- PR #80's `FlaredDisk` components (Blakely et al. 2024), merged into this stack. Edge-on inclinations are now rejected, and g < 0 is documented.
 
-**Parametric model:** a 7250 K primary, plus a secondary, a ring with m = 1, 2 modulations and a resolved background, all with blackbody spectra. A model function anchors the ring centre to the centre of mass, at κ = q/(1+q) = 0.75 times the secondary's offset, from the paper's masses. It converges to the same solution from every start:
+**IRAS 08544-4431** (Hillen et al. 2016; 27 files, 828 V² and 504 closure phases):
+- **Parametric model:** a 7250 K primary; a secondary, a ring with m = 1, 2 modulations and a resolved background, all with blackbody spectra; and the ring anchored to the binary's centre of mass (κ = q/(1+q) = 0.75). It converges to one solution with χ² per point 2.50.
+  - Fractions: 57.0 / 6.1 / 20.7 / 16.2%, against the paper's 59.7 / 3.9 / 20.9 / 15.5%.
+  - Temperatures: secondary 3430 K, ring 1098 K, background 2620 K, against 4000, 1120 and 2400 K.
+  - Binary separation 0.72 mas (paper 0.81 mas).
+  - Ring 14.33 mas across, FWHM 3.03 mas, i = 20.1° (paper 14.15 mas, 3.2 mas, 19°).
+- **Images:** a λ⁻⁴ primary and a power-law environment, as in the paper. With the primary alone, the primary has 61.4% (paper 61%). With the binary subtracted, the knot next to the primary is gone.
+- **Open:** the companion's PA is 219°, against the paper's 56°, though the ring's bright side agrees. To raise with Toon.
 
-| | This fit | Paper |
-|---|---|---|
-| Fractions | 57.0 / 6.1 / 20.7 / 16.2% | 59.7 / 3.9 / 20.9 / 15.5% |
-| Temperatures | T_sec 3430 K, T_r 1098 K, T_back 2620 K | 4000, 1120, 2400 K |
-| Binary | 0.72 mas | 0.81 mas |
-| Ring | 14.33 mas, FWHM 3.03 mas, i = 20.1° | 14.15 mas, FWHM 3.2 mas, i = 19° |
-| χ² per point | 2.50 (4.0 with RJ spectra and no secondary) | |
+**IW Car** (De Prins et al. 2026; the 23 files within the paper's 81-day window):
+- No single-ring model fits, as the paper found.
+- The parametric secondary lands at (1.06, −1.69) mas with 2.3% of the flux (paper: (1.12, −1.90) mas, about 2%), with the primary at 62% (paper 63.6%).
+- The SPARCO image recovers the inner arcs at about 5 mas.
 
-- Left free, the ring centre lies at 1.09 times the secondary's offset, consistent with a heavy companion.
-- **Open discrepancy:** the companion's PA is 219°, against the paper's 56 ± 3°. The ring's brightest side (north-east) agrees, so this is not a global closure-phase sign flip. To check with Toon.
+**SPARCO convention (for Toon):** a spectral index of the environment is only defined relative to the star's assumed spectrum, since the ratio goes as λ^(d_env − d_star). Both apparent mismatches with the papers came from this, not from the code:
+- IRAS 08544: a blackbody primary in place of λ⁻⁴ shifts d_env by about 0.7.
+- IW Car: the paper fixes d_prim = −3.17, so their d_rim of 0.89 is 4.06 relative to the star, against our 4.0 with a λ⁻⁴ star.
 
-**Images**, with a λ⁻⁴ primary and a power-law environment that includes the background, as in the paper. L-curves are warm-started down to the discrepancy weight, and all the fits converge:
-- primary only: primary 61.4% (paper 0.61) and d_env 0.25 (paper 0.42);
-- binary subtracted: d_env 0.45, and the knot next to the primary is gone.
+A background split off as a `Resolved` component also changes what the image's index means, and a smooth image is degenerate with a resolved background.
 
-**SPARCO check:** d_env is relative to the stellar spectrum, since the ratio goes as λ^(d_env − d_star). A 7250 K blackbody primary, with an H-band slope of about −3.3, raises d_env by about 0.7. A separately fitted resolved background changes it further.
+## Status after Stage 4, and next steps
+**Done:**
+- AMI and long-baseline MAP imaging: per-dataset models (`Rotated` epochs), SPARCO with power-law and blackbody spectra, the support hole, and synthetic VLTI and NRM coverage.
+- Synthetic MWEs: SAM V² + CP, two-night VLTI, and rotating epochs.
+
+**Next:**
+1. Merge this stack into `imaging`, then `imaging` into `main` (milestone 1).
+2. MWE-B: the SNR and coverage stress test (deferred from Stage 4).
+3. Stage 5: Gaussian-process pixels, sampling (posteriors for the companion's flux and separation, which are correlated), and evidence-based weights.
+4. Stage 3c: PDS 70 (local demo first, then an OzSTAR script if needed).
+5. Cache MFT matrices (Stage 7).
 
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**

@@ -97,6 +97,7 @@ from .spectra import BlackBody, PowerLaw  # noqa: E402
 __all__ = [
     "BinaryModelAngular",
     "BinaryModelCartesian",
+    "BlackBody",
     "FlaredDiskGaussian",
     "FlaredDiskHG",
     "FlaredDiskPowerLaw",
@@ -106,7 +107,6 @@ __all__ = [
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
-    "BlackBody",
     "PowerLaw",
     "Resolved",
     "SourceModel",
