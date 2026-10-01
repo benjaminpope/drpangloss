@@ -7,8 +7,10 @@ i.e. counter-clockwise from the top in a plot with East to the left. This
 matches the coordinate grid produced by :func:`image_coordinates`.
 """
 
+import equinox as eqx
 import jax
 import jax.numpy as np
+import numpy as onp
 
 from ._utils import dtor, mas2rad
 
@@ -22,6 +24,174 @@ def image_coordinates(npix, fov_mas):
     x = -(pixel_indices - center) * pixel_scale_mas
     y = (center - pixel_indices) * pixel_scale_mas
     return np.meshgrid(x, y, indexing="xy")
+
+
+def pixel_offsets(npix, pixel_scale_mas):
+    """Sky offsets (mas) of the pixel centres along one image axis.
+
+    Along columns this is ``dra``, decreasing to the right (East left); along
+    rows it is ``ddec``, decreasing downwards (North up). Both are
+    ``(centre - index) * pixel_scale_mas`` with the centre at index
+    ``(npix - 1) / 2``, as in :func:`image_coordinates`.
+    """
+    return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
+
+
+def image_visibilities(brightness, uu, vv, pixel_scale_mas):
+    """Exact Fourier transform of a pixel image at arbitrary frequencies.
+
+    Each pixel is treated as a point at its centre, so
+    ``V(u, v) = sum_{row, col} I[row, col] exp(-2πi (u x_col + v y_row))``
+    with the sign convention of :func:`offset_phase`. The sum is separable
+    into two matrix products, done at ``Precision.HIGHEST`` (on A100/H100
+    GPUs the default is TF32, with ~1e-3 relative error). On a regular uv
+    grid, :func:`grid_visibilities` does the same sum faster.
+
+    Parameters
+    ----------
+    brightness : array-like, shape (nrow, ncol)
+        Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
+        North up). Not normalised here.
+    uu, vv : array-like
+        Spatial frequencies, baseline / wavelength (per radian), of
+        broadcastable shapes.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibilities with the broadcast shape of ``uu`` and ``vv``.
+    """
+    brightness = np.asarray(brightness)
+    uu, vv = np.broadcast_arrays(uu, vv)
+    vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
+    return vis.reshape(np.shape(uu))
+
+
+def _fourier_matrix(freq_per_rad, npix, pixel_scale_mas):
+    """``exp(-2πi f x)`` for frequencies ``f`` and one axis's pixel offsets."""
+    offsets = pixel_offsets(npix, pixel_scale_mas)
+    return np.exp(-2j * np.pi * np.outer(mas2rad * freq_per_rad, offsets))
+
+
+def _dft(brightness, uu, vv, pixel_scale_mas):
+    nrow, ncol = brightness.shape
+    cols = _fourier_matrix(uu, ncol, pixel_scale_mas)
+    rows = _fourier_matrix(vv, nrow, pixel_scale_mas)
+    highest = jax.lax.Precision.HIGHEST
+    partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
+    return np.sum(partial * cols, axis=-1)
+
+
+def grid_visibilities(brightness, uu_axis, vv_axis, pixel_scale_mas):
+    """Exact Fourier transform of a pixel image onto a regular uv grid.
+
+    The two-sided matrix Fourier transform (Soummer et al. 2007,
+    arXiv:0711.0368): ``V = A_v @ I @ A_u.T``, the same sum as
+    :func:`image_visibilities` but costing ``nv·N² + nv·nu·N`` rather than
+    ``nv·nu·N²`` for an N x N image. Done at ``Precision.HIGHEST``.
+
+    Parameters
+    ----------
+    brightness : array-like, shape (nrow, ncol)
+        Pixel fluxes, oriented as in :func:`pixel_offsets`.
+    uu_axis, vv_axis : array-like, shapes (nu,) and (nv,)
+        The grid's spatial frequencies along each image axis, baseline /
+        wavelength (per radian).
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+
+    Returns
+    -------
+    array-like, shape (nv, nu)
+        ``V[j, i]`` is the visibility at ``(uu_axis[i], vv_axis[j])``.
+    """
+    brightness = np.asarray(brightness)
+    nrow, ncol = brightness.shape
+    cols = _fourier_matrix(np.ravel(uu_axis), ncol, pixel_scale_mas)
+    rows = _fourier_matrix(np.ravel(vv_axis), nrow, pixel_scale_mas)
+    highest = jax.lax.Precision.HIGHEST
+    partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
+    return np.matmul(partial, cols.T, precision=highest)
+
+
+def rotate(x, y, rotation_deg):
+    """Rotate a frame by a position angle, North towards East.
+
+    Returns the sky coordinates of the point ``(x, y)`` of a frame whose
+    "up" axis points at position angle ``rotation_deg``: the frame's
+    ``(0, 1)`` lands at ``(sin θ, cos θ)``. The same matrix maps
+    frequencies, and ``rotate(..., -rotation_deg)`` inverts it.
+    """
+    c, s = np.cos(rotation_deg * dtor), np.sin(rotation_deg * dtor)
+    return c * x + s * y, -s * x + c * y
+
+
+class UVGrid(eqx.Module):
+    """uv samples that lie on a regular lattice, possibly rotated on the sky.
+
+    AMI data, for example, are sampled on the detector's Fourier grid,
+    which is rotated on the sky by the parallactic angle. The sample ``k``
+    is at grid-frame coordinates
+    ``(u_axis[index[k] % nu], v_axis[index[k] // nu])`` (metres), and on
+    the sky at ``rotate(u_g, v_g, rotation_deg)``. Found from the samples by
+    :func:`find_uv_grid`.
+    """
+
+    u_axis: jax.Array
+    v_axis: jax.Array
+    index: jax.Array
+    rotation_deg: float = eqx.field(static=True)
+
+
+def find_uv_grid(u, v, tolerance=1e-6):
+    """Return the lattice that ``(u, v)`` samples lie on, or ``None``.
+
+    The lattice axes are found from the shortest separation between
+    samples, and every sample must lie within ``tolerance`` of a cell of a
+    lattice point (so that a Fourier transform onto the lattice is exact).
+
+    Parameters
+    ----------
+    u, v : array-like
+        Sample coordinates (concrete arrays, e.g. in metres).
+    tolerance : float, optional
+        Largest allowed offset from a lattice point, in cells.
+
+    Returns
+    -------
+    UVGrid or None
+        ``rotation_deg`` is in ``(-45, 45]``.
+    """
+    u, v = onp.asarray(u, dtype=float), onp.asarray(v, dtype=float)
+    if u.ndim != 1 or u.size < 2:
+        return None
+    gap = onp.hypot(u - u[0], v - v[0])
+    gap[0] = onp.inf
+    nearest = int(onp.argmin(gap))
+    angle = onp.degrees(onp.arctan2(v[nearest] - v[0], u[nearest] - u[0]))
+    rotation = float(-(((angle + 45.0) % 90.0) - 45.0))
+    c, s = onp.cos(onp.radians(rotation)), onp.sin(onp.radians(rotation))
+    grid_u, grid_v = c * u - s * v, s * u + c * v  # rotate(u, v, -rotation)
+    axes, cells = [], []
+    for coord in (grid_u, grid_v):
+        start = coord.min()
+        steps = onp.diff(onp.sort(coord))
+        steps = steps[steps > tolerance * gap[nearest]]
+        pitch = steps.min() if steps.size else 1.0
+        cell = (coord - start) / pitch
+        if onp.max(onp.abs(cell - onp.round(cell))) > tolerance:
+            return None
+        cell = onp.round(cell).astype(int)
+        axes.append(start + pitch * onp.arange(cell.max() + 1))
+        cells.append(cell)
+    index = cells[1] * axes[0].size + cells[0]
+    if onp.unique(index).size != index.size:
+        return None
+    return UVGrid(
+        np.asarray(axes[0]), np.asarray(axes[1]), np.asarray(index), rotation
+    )
 
 
 def offset_phase(uu, vv, dra, ddec):

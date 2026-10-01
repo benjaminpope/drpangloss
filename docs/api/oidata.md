@@ -35,6 +35,23 @@ AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
         - residuals
         - with_model
 
+## uv grids
+
+AMIGO DISCO data are sampled on a regular uv lattice; `OIData.uv_grid`
+records it, so that a matching `Image` can use an exact matrix Fourier
+transform.
+
+::: drpangloss.oidata.UVGrid
+    options:
+      show_root_heading: true
+      heading_level: 3
+      show_attributes: false
+
+::: drpangloss.oidata.find_uv_grid
+    options:
+      show_root_heading: true
+      heading_level: 3
+
 ## Functions
 
 ::: drpangloss.oidata

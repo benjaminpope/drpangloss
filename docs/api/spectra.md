@@ -7,5 +7,6 @@ sample's wavelength, as in SPARCO.
 ::: drpangloss.spectra
     options:
       members:
+        - BlackBody
         - PowerLaw
         - Spectrum

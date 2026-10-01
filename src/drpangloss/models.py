@@ -3,7 +3,9 @@
 * Components ([`PointSource`][drpangloss.models.PointSource],
   [`GaussianDisk`][drpangloss.models.GaussianDisk],
   [`UniformDisk`][drpangloss.models.UniformDisk],
-  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]) are
+  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim], and
+  the flared scattered-light disks such as
+  [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw]) are
   single shapes, combined with flux weights in a
   [`System`][drpangloss.models.System].
 * [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian] and
@@ -25,12 +27,17 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import zodiax as zx
+from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
 
 from ._geometry import (
     check_az_prof_nonnegative,
+    grid_visibilities,
     image_coordinates,
+    image_visibilities,
     offset_phase,
+    pixel_offsets,
+    rotate,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -152,6 +159,18 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             Complex visibilities, normalized to 1 at zero baseline.
         """
         raise NotImplementedError
+
+    def model_on_grid(self, u, v, wavel, grid):
+        """Visibilities at samples ``u, v`` that also lie on a uv ``grid``.
+
+        [`OIData.model`][drpangloss.oidata.OIData.model] calls this when its
+        samples form a regular lattice (a
+        [`UVGrid`][drpangloss.oidata.UVGrid]), so that models able to use
+        the lattice, such as a matching
+        [`Image`][drpangloss.models.Image], can. By default it is
+        [`model`][drpangloss.models.SourceModel.model].
+        """
+        return self.model(u, v, wavel)
 
     def render(self, npix=256, fov_mas=200.0):
         """Render a unit-sum image of the model.
@@ -518,6 +537,476 @@ class ModulatedGaussianRim(Component):
         return fftconvolve(ring, psf, mode="same")
 
 
+def _check_log_brightness(log_brightness, support):
+    """Reject log-brightnesses whose softmax over the support is not finite.
+
+    Skipped under ``jax.jit``.
+    """
+    if support is None:
+        support = np.ones(log_brightness.shape, dtype=bool)
+    invalid = np.isnan(log_brightness) | (log_brightness == np.inf)
+    bad = concrete(np.any(support & invalid))
+    if bad:
+        raise ValueError("log_brightness must not be NaN or +inf.")
+    finite = concrete(np.any(support & np.isfinite(log_brightness)))
+    if finite is not None and not bool(finite):
+        raise ValueError(
+            "log_brightness needs at least one finite (supported) pixel."
+        )
+
+
+def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
+    """Pixels of an ``npix`` x ``npix`` image within ``radius_mas`` of its centre.
+
+    Returns a boolean array for the ``support`` of an
+    [`Image`][drpangloss.models.Image]. With ``inner_radius_mas``, pixels
+    closer to the centre than that are left out too: a hole under an
+    analytic star, so that the image cannot pile flux onto it.
+    """
+    offsets = pixel_offsets(int(npix), float(pixel_scale_mas))
+    radius = np.hypot(offsets[None, :], offsets[:, None])
+    return (radius <= radius_mas) & (radius >= inner_radius_mas)
+
+
+class Image(Component):
+    """Pixelised brightness distribution, for image reconstruction.
+
+    The pixel fluxes are ``brightness = softmax(log_brightness)`` taken over
+    the pixels in ``support``: positive, summing to one, and exactly zero
+    outside the support. Like any other component, the image has a ``flux``
+    weight and an offset inside a [`System`][drpangloss.models.System], so
+    unresolved sources can stay analytic (e.g. a
+    [`PointSource`][drpangloss.models.PointSource] star) while resolved
+    emission goes in the pixels.
+
+    Visibilities are the exact Fourier transform of the pixels, each treated
+    as a point at its centre.
+
+    Parameters
+    ----------
+    log_brightness : array-like, shape (nrow, ncol)
+        Log pixel fluxes, up to an additive constant, in the orientation of
+        [`render`][drpangloss.models.SourceModel.render]: row 0 is the top
+        (North) and column 0 the left (East) of the image.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds. The image centre, at index
+        ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
+    support : array-like of bool, optional
+        Pixels allowed to carry flux (default: all); see
+        [`circular_support`][drpangloss.models.circular_support].
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1).
+    dra, ddec : float, optional
+        Offset of the image centre in milliarcseconds, positive to the East
+        and North.
+    rotation_deg : float, optional
+        Position angle (North to East) of the pixel grid's "up" axis, so
+        that pixels can follow a detector rather than the sky; default 0
+        (North up). An image whose rotation matches the uv lattice of its
+        data (``data.uv_grid.rotation_deg``, e.g. AMI data at their
+        parallactic angle) is transformed with an exact two-sided matrix
+        Fourier transform, which is much faster.
+
+    Examples
+    --------
+    >>> image = Image(np.zeros((32, 32)), pixel_scale_mas=2.0)
+    >>> envelope = Image.from_model(GaussianDisk(sigma=8.0), 32, 2.0, flux=0.3)
+    >>> scene = System(star=PointSource(), env=envelope)
+    """
+
+    log_brightness: jax.Array
+    support: jax.Array | None
+    pixel_scale_mas: float = eqx.field(static=True)
+    rotation_deg: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        log_brightness,
+        pixel_scale_mas,
+        support=None,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        rotation_deg=0.0,
+    ):
+        self.log_brightness = np.asarray(log_brightness, dtype=float)
+        if self.log_brightness.ndim != 2:
+            raise ValueError("log_brightness must be a 2D array.")
+        if support is not None:
+            support = np.asarray(support, dtype=bool)
+            if support.shape != self.log_brightness.shape:
+                raise ValueError(
+                    f"support has shape {support.shape}, but log_brightness "
+                    f"has shape {self.log_brightness.shape}."
+                )
+            any_pixel = concrete(np.any(support))
+            if any_pixel is not None and not bool(any_pixel):
+                raise ValueError("support must contain at least one pixel.")
+        self.support = support
+        _check_log_brightness(self.log_brightness, support)
+        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
+            raise ValueError(
+                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
+            )
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        self.rotation_deg = float(rotation_deg)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    @classmethod
+    def from_brightness(
+        cls, brightness, pixel_scale_mas, *, floor=1e-6, **kwargs
+    ):
+        """Build an image from non-negative pixel fluxes.
+
+        Pixels fainter than ``floor`` times the brightest are raised to that
+        level, so that their logarithm is finite. Other keyword arguments
+        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``) go to
+        [`Image`][drpangloss.models.Image].
+        """
+        brightness = np.asarray(brightness, dtype=float)
+        support = kwargs.get("support")
+        inside = (
+            brightness
+            if support is None
+            else np.where(support, brightness, 0.0)
+        )
+        peak = np.max(inside)
+        if concrete(peak) is not None and not float(peak) > 0.0:
+            raise ValueError("brightness needs a positive (supported) pixel.")
+        brightness = np.maximum(brightness, floor * peak)
+        return cls(np.log(brightness), pixel_scale_mas, **kwargs)
+
+    @classmethod
+    def from_model(cls, model, npix, pixel_scale_mas, **kwargs):
+        """Pixelise a model, e.g. a parametric fit, as a starting image.
+
+        The pixels sample ``model`` on an ``npix`` x ``npix`` grid (rotated
+        by ``rotation_deg``, if given); see
+        [`from_brightness`][drpangloss.models.Image.from_brightness] for
+        the keyword arguments.
+        """
+        xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
+        xx, yy = rotate(xx, yy, kwargs.get("rotation_deg", 0.0))
+        image = _normalize_image(model._image(xx, yy, pixel_scale_mas))
+        return cls.from_brightness(image, pixel_scale_mas, **kwargs)
+
+    @property
+    def brightness(self):
+        """Pixel fluxes: positive, unit sum, zero outside ``support``."""
+        # As a mask: some zodiax versions return leaves as floats from get().
+        where = None if self.support is None else self.support.ravel() != 0
+        flat = jax.nn.softmax(self.log_brightness.ravel(), where=where)
+        return flat.reshape(self.log_brightness.shape)
+
+    def _centred_cvis(self, uu, vv):
+        uu, vv = rotate(uu, vv, -self.rotation_deg)
+        return image_visibilities(
+            self.brightness, uu, vv, self.pixel_scale_mas
+        )
+
+    def model_on_grid(self, u, v, wavel, grid):
+        matched = abs(grid.rotation_deg - self.rotation_deg) < 1e-9
+        if not (matched and np.size(wavel) == 1):
+            return self.model(u, v, wavel)
+        wavel = np.reshape(wavel, ())
+        vis = grid_visibilities(
+            self.brightness,
+            grid.u_axis / wavel,
+            grid.v_axis / wavel,
+            self.pixel_scale_mas,
+        )
+        uu, vv = u / wavel, v / wavel
+        return vis.ravel()[grid.index] * offset_phase(
+            uu, vv, self.dra, self.ddec
+        )
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Bilinear resampling of the pixels, exact at their centres.
+        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        nrow, ncol = self.log_brightness.shape
+        rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
+        cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
+        return map_coordinates(self.brightness, [rows, cols], order=1)
+
+
+class FlaredDisk(Component):
+    r"""Flared, inclined scattered-light disk (Blakely et al. 2024, §III).
+
+    The geometrical disk model that Blakely et al. (2024, arXiv:2404.13032)
+    fitted to JWST AMI data of PDS 70: a skewed Gaussian ring on a flared
+    surface, with a forward-scattering peak on its near side. It is an
+    abstract base: use [`FlaredDiskHG`][drpangloss.models.FlaredDiskHG],
+    [`FlaredDiskGaussian`][drpangloss.models.FlaredDiskGaussian] or
+    [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw], which
+    differ only in the azimuthal phase function. The disk contains no star
+    or planets; compose them in a [`System`][drpangloss.models.System], and
+    any over-resolved flux with a [`Resolved`][drpangloss.models.Resolved]
+    component (the paper's $I_o$).
+
+    The brightness has no analytic Fourier transform, so the visibilities
+    are the exact Fourier transform of the brightness sampled on a fixed,
+    centred grid of ``npix`` x ``npix`` pixels of ``pixel_scale_mas``. The
+    grid must cover the whole disk, and its pixels must be small enough to
+    resolve the ring and its sharp inner edge.
+
+    Parameters
+    ----------
+    radius : float or array-like
+        Radius of peak brightness $r_0$ in milliarcseconds (before the
+        skew, which moves the peak outwards).
+    fwhm : float or array-like
+        Radial FWHM of the Gaussian ring, $2\sqrt{2\ln 2}\,\sigma_r$, in
+        milliarcseconds.
+    inc : float or array-like
+        Inclination in degrees, from 0 (face-on) up to but not including
+        90 (edge-on, where the surface cannot be deprojected).
+    pa : float or array-like
+        Position angle of the projected major axis in degrees, North to
+        East. The near side, where forward scattering peaks, is at
+        ``pa + 90``: ``pa`` and ``pa + 180`` are mirror images.
+    npix : int
+        Pixels on a side of the grid the visibilities are computed from;
+        must be even, so that no pixel centre falls on the star, where the
+        surface is singular.
+    pixel_scale_mas : float
+        Pixel size of that grid in milliarcseconds.
+    skew : float or array-like, optional
+        Truncation $\alpha$ of the ring's inner edge (default 0, a
+        symmetric Gaussian ring).
+    aspect : float or array-like, optional
+        Aspect ratio $z/\rho$ of the scattering surface at ``radius``
+        (default 0, a flat disk).
+    flaring : float or array-like, optional
+        Flaring index $\beta$ of the surface (default 1.25).
+    symmetric : float or array-like, optional
+        Brightness of the axisymmetric part relative to the phase function,
+        $A_s/A_a$ in the paper (default 0).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1): the disk/star
+        flux ratio when the star has ``flux=1``.
+    dra, ddec : float or array-like, optional
+        Offset of the disk centre in milliarcseconds, positive to the East
+        and North.
+
+    Notes
+    -----
+    The brightness follows Eqs. 2–9 of the paper. Sky offsets are rotated
+    so that $x$ runs along the major axis and $y$ along the minor axis,
+    positive towards the near side, and $y$ is divided by $\cos i$ to give
+    mid-plane coordinates. The surface height
+    $z = h\,r_0\,(\rho/r_0)^\beta$, with $\rho = \sqrt{x^2 + y^2}$ and
+    $h$ = ``aspect``, raises the apparent radius to
+    $r = \sqrt{x^2 + (y + z\sin i)^2 + z^2}$, which shifts the ring
+    towards the far side. The brightness is
+
+    $$I(r, \theta) = \left(f(\theta) + A_s/A_a\right)
+    \exp\left(-\frac{(r - r_0)^2}{2\sigma_r^2}\right)
+    \frac{1}{2}\left(1 + \mathrm{erf}\left(
+    \frac{\alpha (r - r_0)}{\sqrt{2}\sigma_r}\right)\right),$$
+
+    where $\theta = \arctan(x / y)$ is the mid-plane azimuth from the
+    near-side minor axis and $f$ the phase function. The paper gives the
+    height as $H_{100}$ (au) at 100 au, which is
+    ``aspect`` $= (H_{100} / 100\,\mathrm{au})(r_0 / 100\,\mathrm{au})^{\beta - 1}$
+    with $r_0$ in au; its fitted fluxes $A_a, A_s$ are absolute, and here
+    only their ratio and the disk's total ``flux`` enter.
+    """
+
+    radius: jax.Array
+    fwhm: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    skew: jax.Array
+    aspect: jax.Array
+    flaring: jax.Array
+    symmetric: jax.Array
+    npix: int = eqx.field(static=True)
+    pixel_scale_mas: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius,
+        fwhm,
+        inc,
+        pa,
+        npix,
+        pixel_scale_mas,
+        skew=0.0,
+        aspect=0.0,
+        flaring=1.25,
+        symmetric=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.radius = np.asarray(radius, dtype=float)
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.skew = np.asarray(skew, dtype=float)
+        self.aspect = np.asarray(aspect, dtype=float)
+        self.flaring = np.asarray(flaring, dtype=float)
+        self.symmetric = np.asarray(symmetric, dtype=float)
+        self.npix = int(npix)
+        if self.npix <= 0 or self.npix % 2:
+            raise ValueError(f"npix must be positive and even, got {npix}.")
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        if not (
+            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
+        ):
+            raise ValueError(
+                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
+            )
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _phase_function(self, theta):
+        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side."""
+        raise NotImplementedError
+
+    def is_physical(self):
+        # The ring is divided by its radius and width.
+        return (
+            super().is_physical()
+            & (self.radius > 0.0)
+            & (self.fwhm > 0.0)
+            & (self.symmetric >= 0.0)
+            # Edge-on (and beyond) cannot be deprojected.
+            & (np.abs(self.inc) < 90.0)
+        )
+
+    def _centred_cvis(self, uu, vv):
+        xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
+        pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
+        return image_visibilities(
+            pixels / np.sum(pixels), uu, vv, self.pixel_scale_mas
+        )
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Mid-plane coordinates: x along the major axis, y along the minor
+        # axis (towards the near side, at pa + 90), deprojected.
+        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        y, x = undo_elliptical_transf_coord(xx, yy, self.pa, cos_inc)
+
+        # Flared surface (Eq. 2) and apparent radius (Eq. 3). The floors
+        # keep gradients finite at the star, where both radii vanish.
+        tiny = np.finfo(np.result_type(x, float)).tiny
+        rho = np.sqrt(np.maximum(x**2 + y**2, tiny))
+        z = self.aspect * self.radius * (rho / self.radius) ** self.flaring
+        r2 = x**2 + (y + z * np.sin(self.inc * dtor)) ** 2 + z**2
+        r = np.sqrt(np.maximum(r2, tiny))
+
+        # Skewed Gaussian ring (Eqs. 4-5) times the azimuthal term (Eq. 9).
+        sigma = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        offset = (r - self.radius) / sigma
+        ring = (
+            np.exp(-0.5 * offset**2)
+            * 0.5
+            * (1.0 + jax.scipy.special.erf(self.skew * offset / np.sqrt(2.0)))
+        )
+        theta = np.arctan2(x, y)
+        return (self._phase_function(theta) + self.symmetric) * ring
+
+
+class FlaredDiskHG(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Henyey–Greenstein phase function.
+
+    $f(\theta) = \dfrac{1 - g^2}{4\pi\,(1 + g^2 - 2g\cos\theta)^{3/2}}$
+    (Blakely et al. 2024, Eq. 6).
+
+    Parameters
+    ----------
+    g : float or array-like
+        Asymmetry parameter, with ``-1 < g < 1``: 0 is isotropic, positive
+        values scatter forwards (peaking on the near side) and negative
+        values backwards (peaking on the far side).
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+
+    Examples
+    --------
+    >>> disk = FlaredDiskHG(
+    ...     g=0.3, radius=440.0, fwhm=290.0, inc=52.0, pa=160.0,
+    ...     npix=96, pixel_scale_mas=20.0, flux=0.05,
+    ... )
+    """
+
+    g: jax.Array
+
+    def __init__(self, g, **geometry):
+        self.g = np.asarray(g, dtype=float)
+        super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (np.abs(self.g) < 1.0)
+
+    def _phase_function(self, theta):
+        g = self.g
+        return (1.0 - g**2) / (
+            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * np.cos(theta)) ** 1.5
+        )
+
+
+class FlaredDiskGaussian(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Gaussian phase function.
+
+    $f(\theta) = \exp\left(-\theta^2 / 2\sigma_\theta^2\right)$, with
+    $\theta \in (-180°, 180°]$ (Blakely et al. 2024, Eq. 7).
+
+    Parameters
+    ----------
+    sigma_theta : float or array-like
+        Azimuthal width in degrees.
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+    """
+
+    sigma_theta: jax.Array
+
+    def __init__(self, sigma_theta, **geometry):
+        self.sigma_theta = np.asarray(sigma_theta, dtype=float)
+        super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (self.sigma_theta > 0.0)
+
+    def _phase_function(self, theta):
+        return np.exp(-0.5 * (theta / (self.sigma_theta * dtor)) ** 2)
+
+
+class FlaredDiskPowerLaw(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a power-law phase function.
+
+    $f(\theta) = \cos^N(\theta / 2)$, with $\theta \in (-180°, 180°]$
+    (Blakely et al. 2024, Eq. 8), the best-fitting form for PDS 70.
+
+    Parameters
+    ----------
+    n : float or array-like
+        Power $N$; larger is more concentrated towards the near side.
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+    """
+
+    n: jax.Array
+
+    def __init__(self, n, **geometry):
+        self.n = np.asarray(n, dtype=float)
+        super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (self.n >= 0.0)
+
+    def _phase_function(self, theta):
+        # Clipped: cos(θ/2) rounds to slightly below zero at θ = ±π.
+        return np.maximum(np.cos(0.5 * theta), 0.0) ** self.n
+
+
 class Resolved(SourceModel):
     """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
 
@@ -717,9 +1206,18 @@ class System(SourceModel):
         return f"System(\n{body}\n)"
 
     def model(self, u, v, wavel):
+        return self._mix(u, v, wavel, lambda c: c.model(u, v, wavel))
+
+    def model_on_grid(self, u, v, wavel, grid):
+        return self._mix(
+            u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
+        )
+
+    def _mix(self, u, v, wavel, part_model):
+        """Flux-weighted mean of ``part_model(part)``, then the offset."""
         weights = [c._weight(wavel) for c in self.parts]
         total = sum(
-            w * c.model(u, v, wavel) for w, c in zip(weights, self.parts)
+            w * part_model(c) for w, c in zip(weights, self.parts)
         ) / sum(weights)
         uu, vv = u / wavel, v / wavel
         return total * offset_phase(uu, vv, self.dra, self.ddec)
@@ -745,6 +1243,59 @@ class System(SourceModel):
 
     def __check_init__(self):
         _check_non_negative_flux(self.flux, "System")
+
+
+class Rotated(SourceModel):
+    """A model rotated on the sky about the phase centre.
+
+    The rotation is by ``rotation_deg`` from North towards East, and the
+    angle is an ordinary (fittable) parameter, unlike
+    [`Image`][drpangloss.models.Image]'s ``rotation_deg``, which only orients
+    its pixel grid. Use it for a scene seen at several epochs, e.g. a
+    spiral rotating between them (see [`fit`][drpangloss.fitting.fit] with
+    a model per dataset).
+
+    Parameters
+    ----------
+    source : SourceModel
+        The model to rotate.
+    rotation_deg : float
+        Position angle of the rotation, North towards East, in degrees.
+
+    Examples
+    --------
+    A companion to the North, rotated by 90°, lands to the East:
+
+    >>> import jax.numpy as jnp
+    >>> from drpangloss.models import GaussianDisk, Rotated, System
+    >>> north = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, ddec=10.0))
+    >>> east = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, dra=10.0))
+    >>> u, v = jnp.array([3.0, 5.0]), jnp.array([1.0, -2.0])
+    >>> rotated = Rotated(north, 90.0).model(u, v, 1e-6)
+    >>> bool(jnp.allclose(rotated, east.model(u, v, 1e-6), atol=1e-6))
+    True
+    """
+
+    source: SourceModel
+    rotation_deg: jax.Array
+
+    def __init__(self, source, rotation_deg):
+        self.source = source
+        self.rotation_deg = np.asarray(rotation_deg, dtype=float)
+
+    def model(self, u, v, wavel):
+        u, v = rotate(u, v, -self.rotation_deg)
+        return self.source.model(u, v, wavel)
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        xx, yy = rotate(xx, yy, -self.rotation_deg)
+        return self.source._image(xx, yy, pixel_scale_mas)
+
+    def _weight(self, wavel=None):
+        return self.source._weight(wavel)
+
+    def is_physical(self):
+        return self.source.is_physical()
 
 
 _RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})

@@ -50,6 +50,7 @@ nav:
   - Extended Source Models: source_models.md
   - Composing Models: composition.md
   - AMIGO DISCO: amigo_disco.md
+  - "Imaging: AMI simulation": imaging_ami.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -62,14 +63,19 @@ nav:
               - BinaryModelAngular: api/models/classes/binary_model_angular.md
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
               - System and building blocks: api/models/classes/composition.md
+              - Image: api/models/classes/image.md
               - GaussianDiskModel: api/models/classes/gaussian_disk_model.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
+      - Fitting: api/fitting.md
+      - Imaging: api/imaging.md
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
       - Spectra: api/spectra.md
+      - Scenes: api/scenes.md
+      - Coverage: api/coverage.md
       - Plotting: api/plotting.md
       - Bessel: api/bessel.md
       - Legacy: api/legacy.md

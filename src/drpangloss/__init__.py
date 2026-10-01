@@ -10,6 +10,11 @@ Modules:
   OIFITS files; [`amigo`][drpangloss.amigo]: AMIGO mixed-DISCO products.
 * [`models`][drpangloss.models]: source models and their visibilities.
 * [`likelihood`][drpangloss.likelihood]: likelihoods and numpyro models.
+* [`fitting`][drpangloss.fitting]: `fit`, maximum a posteriori fits with
+  Levenberg–Marquardt, L-BFGS or Adam.
+* [`imaging`][drpangloss.imaging]: regularisers and helpers for image
+  reconstruction; [`scenes`][drpangloss.scenes]: synthetic truth images;
+  [`coverage`][drpangloss.coverage]: synthetic coverage and noise.
 * [`inference`][drpangloss.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][drpangloss.grid_fit]: grid searches.
 * [`limits`][drpangloss.limits]: contrast limits and flux/contrast/Δmag
@@ -26,7 +31,10 @@ name = "drpangloss"
 from . import (  # noqa: E402
     amigo,
     bessel,
+    coverage,
+    fitting,
     grid_fit,
+    imaging,
     inference,
     likelihood,
     limits,
@@ -34,9 +42,11 @@ from . import (  # noqa: E402
     oidata,
     oifits,
     plotting,
+    scenes,
     spectra,
 )
 from .amigo import load_oi_data  # noqa: E402
+from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
     laplace_flux_uncertainty_grid,
@@ -51,6 +61,7 @@ from .likelihood import (  # noqa: E402
     loglike,
     model_loglike,
     numpyro_model,
+    whitened_residuals,
 )
 from .limits import (  # noqa: E402
     absil_limits,
@@ -64,25 +75,35 @@ from .limits import (  # noqa: E402
 from .models import (  # noqa: E402
     BinaryModelAngular,
     BinaryModelCartesian,
+    FlaredDiskGaussian,
+    FlaredDiskHG,
+    FlaredDiskPowerLaw,
     GaussianDisk,
     GaussianDiskModel,
+    Image,
     ModulatedGaussianRim,
     PointSource,
     Resolved,
     SourceModel,
     System,
     UniformDisk,
+    circular_support,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
-from .spectra import PowerLaw  # noqa: E402
+from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
 __all__ = [
     "BinaryModelAngular",
     "BinaryModelCartesian",
+    "BlackBody",
+    "FlaredDiskGaussian",
+    "FlaredDiskHG",
+    "FlaredDiskPowerLaw",
     "GaussianDisk",
     "GaussianDiskModel",
+    "Image",
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
@@ -92,10 +113,12 @@ __all__ = [
     "System",
     "UniformDisk",
     "absil_limits",
+    "circular_support",
     "best_grid_point",
     "build_model",
     "contrast_to_flux",
     "delta_mag_to_flux",
+    "fit",
     "fisher",
     "inflated_errors",
     "flux_to_contrast",
@@ -112,5 +135,6 @@ __all__ = [
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
+    "whitened_residuals",
     "write_oifits",
 ]

@@ -33,7 +33,7 @@ from ._grid import (
     resolve_grid_keys,
     warn_unconverged,
 )
-from .likelihood import build_model
+from .likelihood import build_model, whitened_residuals
 
 
 __all__ = [
@@ -405,13 +405,11 @@ def _absil_limits(
 
     Returns the unclipped limits and whether each reaches ``sigma``.
     """
-    data, errors = data_obj.flatten_data()
-    ndof = data.size
+    ndof = data_obj.flatten_data()[0].size
 
     def reduced_chi2(values):
-        prediction = data_obj.model(build_model(model, params, values))
-        residuals = data_obj.residuals(prediction)
-        return jnp.sum((residuals / errors) ** 2) / ndof
+        source = build_model(model, params, values)
+        return jnp.sum(whitened_residuals(source, data_obj) ** 2) / ndof
 
     null_values = [0.0] * len(params)
     chi2_null = reduced_chi2(null_values)

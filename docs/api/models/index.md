@@ -9,6 +9,7 @@ companion it is the companion/primary flux ratio.
 - [BinaryModelAngular](classes/binary_model_angular.md)
 - [BinaryModelCartesian](classes/binary_model_cartesian.md)
 - [System and building blocks](classes/composition.md)
+- [Image](classes/image.md)
 - [GaussianDiskModel](classes/gaussian_disk_model.md)
 - [HarmonixModel](classes/harmonix_model.md)
 

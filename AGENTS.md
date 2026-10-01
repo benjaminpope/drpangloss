@@ -57,6 +57,18 @@ rely on it — a clean diff keeps review focused on the actual change.
   (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
+  Forward-model code must pass in both float32 and float64. Fourier transforms and
+  matmuls over pixels use `precision=jax.lax.Precision.HIGHEST`, since on A100/H100
+  GPUs the default is TF32 (~1e-3 relative error). Fitting entry points (`fit`) default
+  to float64 inside a local `jax.enable_x64(True)` context (`_precision.run_in` and
+  `cast_tree`), with float32 as an option.
+- Every likelihood, grid, limit and fit uses one residual vector,
+  `likelihood.whitened_residuals` (unprojected phases as the chord 2 sin(Δ/2)/σ,
+  a von Mises likelihood). Do not recompute χ² from `OIData.residuals`, which is for
+  display.
+- `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
+  lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
+  `model_on_grid` must return exactly what `model` would, only faster.
 - New model code goes in `src/drpangloss/models.py`.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
@@ -68,20 +80,25 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
-| `models.py` | source models (`SourceModel`, components, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
-| `likelihood.py` | `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
+| `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
+| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments) |
+| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `beam`, `l_curve`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
-| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`) accepted as a component's `flux` |
+| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`) accepted as a component's `flux` (SPARCO) |
+| `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
+| `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
 | `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
 
-Imports flow one way: `_utils`/`_geometry`/`bessel` → `oifits`/`amigo`/`oidata`
-→ `models` → `likelihood` → `inference` → `_grid` → (`grid_fit`, `limits`)
-→ `plotting`. `grid_fit` and `limits` do not import each other.
+Imports flow one way: `_utils`/`_geometry`/`bessel`/`_precision` → `oifits`/`amigo`/`oidata`
+→ `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
+(`grid_fit`, `limits`) → `plotting`. `grid_fit` and `limits` do not import each other;
+`scenes` imports only `_geometry` and `_utils`.
 
 ## Flux and contrast
 

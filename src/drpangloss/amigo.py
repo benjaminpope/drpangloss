@@ -12,6 +12,8 @@ from pathlib import Path
 import jax.numpy as np
 import numpy as onp
 
+from ._geometry import find_uv_grid
+
 
 MIXED_DISCO_REQUIRED_FIELDS = (
     "u",
@@ -19,7 +21,6 @@ MIXED_DISCO_REQUIRED_FIELDS = (
     "wavelength_m",
     "disco_coefficients",
     "disco_sigma",
-    "disco_covariance",
     "disco_logamp_model_operator",
     "disco_phase_model_operator",
 )
@@ -44,7 +45,6 @@ def validate_mixed_disco_record(record):
     v = onp.asarray(record["v"], dtype=float)
     coefficients = onp.asarray(record["disco_coefficients"], dtype=float)
     sigma = onp.asarray(record["disco_sigma"], dtype=float)
-    covariance = onp.asarray(record["disco_covariance"], dtype=float)
     logamp = onp.asarray(record["disco_logamp_model_operator"], dtype=float)
     phase = onp.asarray(record["disco_phase_model_operator"], dtype=float)
 
@@ -58,8 +58,6 @@ def validate_mixed_disco_record(record):
         raise ValueError(
             "AMIGO DISCO coefficients and sigma must have matching shapes."
         )
-    if covariance.shape != (sigma.size, sigma.size):
-        raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
     expected_operator_shape = (sigma.size, u.size)
     if (
         logamp.shape != expected_operator_shape
@@ -70,7 +68,7 @@ def validate_mixed_disco_record(record):
         )
     if not all(
         onp.all(onp.isfinite(value))
-        for value in (u, v, coefficients, sigma, covariance, logamp, phase)
+        for value in (u, v, coefficients, sigma, logamp, phase)
     ):
         raise ValueError("AMIGO DISCO arrays must be finite.")
     if onp.any(sigma <= 0.0):
@@ -82,6 +80,21 @@ def validate_mixed_disco_record(record):
             "AMIGO DISCO modes must be ordered by increasing uncertainty."
         )
 
+    if "disco_covariance" in record:
+        _check_diagonal_covariance(record["disco_covariance"], sigma)
+
+
+def _check_diagonal_covariance(covariance, sigma):
+    """DISCO errors are independent by construction; check a stored matrix.
+
+    Products need not store the covariance: ``disco_sigma`` holds all of
+    it. Older products that do are checked for consistency.
+    """
+    covariance = onp.asarray(covariance, dtype=float)
+    if covariance.shape != (sigma.size, sigma.size):
+        raise ValueError("AMIGO DISCO covariance has inconsistent shape.")
+    if not onp.all(onp.isfinite(covariance)):
+        raise ValueError("AMIGO DISCO arrays must be finite.")
     covariance_scale = max(
         float(onp.max(onp.abs(onp.diag(covariance)))),
         onp.finfo(float).tiny,
@@ -104,9 +117,11 @@ def validate_mixed_disco_record(record):
 def mixed_disco_fields(record):
     """Validate a mixed-DISCO record and return the OIData field values."""
     validate_mixed_disco_record(record)
+    u = -onp.asarray(record["u"], dtype=float)
+    v = -onp.asarray(record["v"], dtype=float)
     return {
-        "u": -np.asarray(record["u"], dtype=float),
-        "v": -np.asarray(record["v"], dtype=float),
+        "u": np.asarray(u),
+        "v": np.asarray(v),
         "wavel": np.asarray(record["wavelength_m"], dtype=float),
         "vis": np.asarray(record["disco_coefficients"], dtype=float),
         "d_vis": np.asarray(record["disco_sigma"], dtype=float),
@@ -123,6 +138,7 @@ def mixed_disco_fields(record):
         ),
         "vis_index": None,
         "phi_index": None,
+        "uv_grid": find_uv_grid(u, v),
         "observable_kind": "mixed_log_complex",
         "vis_mode": "logamp",
         "v2_flag": False,

@@ -1,0 +1,209 @@
+{
+ "platform": "Linux-5.14.0-687.51.1.el9_8.x86_64-x86_64-with-glibc2.34",
+ "jax": "0.10.2",
+ "devices": [
+  "cuda:0"
+ ],
+ "timings": [
+  {
+   "dtype": "float32",
+   "npix": 64,
+   "npoints": 1000,
+   "dft_ms": 0.13910100096836686,
+   "nufft_ms": 6.09237898606807,
+   "nufft_max_err": 3.0573148706025677e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 64,
+   "npoints": 10000,
+   "dft_ms": 0.23899000370875,
+   "nufft_ms": 6.689263042062521,
+   "nufft_max_err": 3.687651769723743e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 64,
+   "npoints": 100000,
+   "dft_ms": 0.9629729902371764,
+   "nufft_ms": 6.762681994587183,
+   "nufft_max_err": 4.240491307427874e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 128,
+   "npoints": 1000,
+   "dft_ms": 0.1544010010547936,
+   "nufft_ms": 6.827483011875302,
+   "nufft_max_err": 2.724519390540081e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 128,
+   "npoints": 10000,
+   "dft_ms": 0.40717696538195014,
+   "nufft_ms": 7.075189962051809,
+   "nufft_max_err": 3.504054120639921e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 128,
+   "npoints": 100000,
+   "dft_ms": 2.2700930130667984,
+   "nufft_ms": 6.841440044809133,
+   "nufft_max_err": 4.581298071570927e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 256,
+   "npoints": 1000,
+   "dft_ms": 0.226847012527287,
+   "nufft_ms": 6.436096038669348,
+   "nufft_max_err": 8.497835892740113e-07
+  },
+  {
+   "dtype": "float32",
+   "npix": 256,
+   "npoints": 10000,
+   "dft_ms": 0.8739550248719752,
+   "nufft_ms": 6.650420022197068,
+   "nufft_max_err": 2.801445361910737e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 256,
+   "npoints": 100000,
+   "dft_ms": 6.49545801570639,
+   "nufft_ms": 7.021708996035159,
+   "nufft_max_err": 7.471567641914589e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 512,
+   "npoints": 1000,
+   "dft_ms": 0.40190701838582754,
+   "nufft_ms": 6.966735003516078,
+   "nufft_max_err": 8.856919748723158e-07
+  },
+  {
+   "dtype": "float32",
+   "npix": 512,
+   "npoints": 10000,
+   "dft_ms": 2.5532260187901556,
+   "nufft_ms": 6.5417549922131,
+   "nufft_max_err": 5.983253231534036e-06
+  },
+  {
+   "dtype": "float32",
+   "npix": 512,
+   "npoints": 100000,
+   "dft_ms": 19.756012014113367,
+   "nufft_ms": 6.9176729884929955,
+   "nufft_max_err": 4.970375357515877e-06
+  },
+  {
+   "dtype": "float64",
+   "npix": 64,
+   "npoints": 1000,
+   "dft_ms": 0.20834198221564293,
+   "nufft_ms": 6.858030974399298,
+   "nufft_max_err": 3.996665163735788e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 64,
+   "npoints": 10000,
+   "dft_ms": 0.3494380507618189,
+   "nufft_ms": 7.098814006894827,
+   "nufft_max_err": 4.352226221151991e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 64,
+   "npoints": 100000,
+   "dft_ms": 1.351504004560411,
+   "nufft_ms": 7.205052999779582,
+   "nufft_max_err": 4.718957970151976e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 128,
+   "npoints": 1000,
+   "dft_ms": 0.2598489518277347,
+   "nufft_ms": 6.663475011009723,
+   "nufft_max_err": 5.727293248294025e-09
+  },
+  {
+   "dtype": "float64",
+   "npix": 128,
+   "npoints": 10000,
+   "dft_ms": 0.5361990188248456,
+   "nufft_ms": 7.16031901538372,
+   "nufft_max_err": 4.6107786749051726e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 128,
+   "npoints": 100000,
+   "dft_ms": 3.1980409985408187,
+   "nufft_ms": 7.40247598150745,
+   "nufft_max_err": 4.328988692247945e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 256,
+   "npoints": 1000,
+   "dft_ms": 0.34705299185588956,
+   "nufft_ms": 7.238556980155408,
+   "nufft_max_err": 4.3630289155262215e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 256,
+   "npoints": 10000,
+   "dft_ms": 1.16255902685225,
+   "nufft_ms": 6.864663038868457,
+   "nufft_max_err": 2.83046756565213e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 256,
+   "npoints": 100000,
+   "dft_ms": 7.798822014592588,
+   "nufft_ms": 6.871847028378397,
+   "nufft_max_err": 4.35933571118917e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 512,
+   "npoints": 1000,
+   "dft_ms": 0.4611879703588784,
+   "nufft_ms": 6.962949002627283,
+   "nufft_max_err": 7.48546826601434e-09
+  },
+  {
+   "dtype": "float64",
+   "npix": 512,
+   "npoints": 10000,
+   "dft_ms": 3.158687031827867,
+   "nufft_ms": 7.087592966854572,
+   "nufft_max_err": 2.923964207197385e-08
+  },
+  {
+   "dtype": "float64",
+   "npix": 512,
+   "npoints": 100000,
+   "dft_ms": 25.676166987977922,
+   "nufft_ms": 7.246111985296011,
+   "nufft_max_err": 4.313450996752283e-08
+  }
+ ],
+ "gpu_checks": {
+  "reference": "float64 DFT on CPU",
+  "nufft_float64_max_err": 2.8304675712505947e-08,
+  "dft_float32_highest_max_err": 7.892083203611537e-07,
+  "dft_float32_default_max_err": 2.680794489326941e-05,
+  "nufft_float32_max_err": 2.8574181331773335e-06,
+  "tf32_check_passed": true
+ }
+}
