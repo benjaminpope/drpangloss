@@ -392,6 +392,101 @@ class EllipticalGaussian(Component):
         return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
 
 
+class GaussianArc(Component):
+    """A Gaussian ridge bent along a circular arc, e.g. a curved shock front.
+
+    The brightness is a curve convolved with a circular Gaussian of FWHM
+    ``width``. The curve is a circle of ``radius`` about the centre of
+    curvature ``(dra, ddec)``, weighted along its length by a Gaussian of
+    FWHM ``length`` (an arc length, in milliarcseconds) peaking at position
+    angle ``pa`` as seen from the centre. For a large radius it tends to an
+    elliptical Gaussian with FWHMs ``hypot(length, width)`` along the arc
+    and ``width`` across it.
+
+    The visibility is the Fourier transform of the curve, a line integral
+    evaluated by the trapezoidal rule on ``nodes`` points spanning ±3.5σ of
+    the weight, times the Gaussian's. It is accurate while the spacing of
+    the points, ``7 σ / nodes``, is below half the shortest fringe spacing,
+    ``λ / 2 B_max``.
+
+    Parameters
+    ----------
+    radius : float or array-like
+        Radius of curvature in milliarcseconds.
+    width : float or array-like
+        FWHM of the ridge across the arc, in milliarcseconds.
+    length : float or array-like
+        FWHM of the brightness along the arc, as an arc length in
+        milliarcseconds.
+    pa : float or array-like
+        Position angle of the brightest point of the arc, seen from the
+        centre of curvature, in degrees North to East.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre of curvature in milliarcseconds, positive to
+        the East and North. The arc itself lies ``radius`` away from it.
+    nodes : int, optional
+        Quadrature points along the arc (default 128).
+
+    Examples
+    --------
+    >>> shock = GaussianArc(radius=30.0, width=2.0, length=40.0, pa=270.0)
+    """
+
+    radius: jax.Array
+    width: jax.Array
+    length: jax.Array
+    pa: jax.Array
+    nodes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius,
+        width,
+        length,
+        pa=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        nodes=128,
+    ):
+        self.radius = np.asarray(radius, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.length = np.asarray(length, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        self.nodes = int(nodes)
+
+    def curve(self):
+        """Points along the arc (mas, East and North of the centre) and
+        their normalised weights."""
+        sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        s = np.linspace(-3.5, 3.5, self.nodes) * sigma
+        angle = self.pa * dtor + s / self.radius
+        weight = np.exp(-0.5 * (s / sigma) ** 2)
+        x = self.radius * np.sin(angle)
+        y = self.radius * np.cos(angle)
+        return x, y, weight / np.sum(weight)
+
+    def _centred_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        curve = offset_phase(uu, vv, x[None, :], y[None, :]) @ weight
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape(curve * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        x, y, weight = self.curve()
+        width = np.maximum(self.width, pixel_scale_mas)
+        d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+        return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
+
+
 class UniformDisk(Component):
     """Uniformly bright (tophat) circular disk, e.g. a resolved stellar photosphere.
 

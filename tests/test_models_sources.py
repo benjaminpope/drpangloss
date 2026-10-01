@@ -12,6 +12,7 @@ from drpangloss.models import (
     BinaryModelCartesian,
     EllipticalGaussian,
     FlaredDiskGaussian,
+    GaussianArc,
     FlaredDiskHG,
     FlaredDiskPowerLaw,
     GaussianDisk,
@@ -415,6 +416,13 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            System(
+                star=PointSource(),
+                arc=GaussianArc(15.0, 3.0, 20.0, 250.0, flux=0.8, dra=6.0),
+            ),
+            2e-3,
+        ),
     ],
     ids=[
         "binary_cart",
@@ -427,6 +435,7 @@ def test_binary_render_is_available():
         "rotated",
         "flared_disk",
         "elliptical_gaussian",
+        "gaussian_arc",
     ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):
@@ -686,3 +695,38 @@ def test_elliptical_gaussian_pa_45_lies_north_east_to_south_west():
     # North-East is the top left (row 0, column 0), so the major axis is
     # the main diagonal.
     assert onp.trace(image) > onp.trace(image[:, ::-1])
+
+
+def test_gaussian_arc_peaks_at_its_position_angle_from_the_centre():
+    image = onp.asarray(
+        GaussianArc(20.0, 2.0, 10.0, 90.0).render(npix=41, fov_mas=60.0)
+    )
+    row, col = onp.unravel_index(image.argmax(), image.shape)
+    # East of the centre: the left half (columns run East to West).
+    assert row == 20 and col < 20
+    assert abs((20 - col) * 1.5 - 20.0) < 2.0
+
+
+def test_gaussian_arc_bends_towards_its_centre():
+    image = onp.asarray(
+        GaussianArc(20.0, 2.0, 30.0, 90.0).render(npix=81, fov_mas=60.0)
+    )
+    # The arc's ends, North and South of the peak, curve back to the West.
+    ys, xs = onp.nonzero(image > 0.3 * image.max())
+    north, south = xs[ys == ys.min()].mean(), xs[ys == ys.max()].mean()
+    peak = onp.unravel_index(image.argmax(), image.shape)[1]
+    assert north > peak and south > peak
+
+
+def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
+    # Equal up to the truncation of the weight along the arc at ±3.5σ.
+    u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
+    arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
+    ellipse = EllipticalGaussian(
+        onp.hypot(10.0, 3.0), 3.0 / onp.hypot(10.0, 3.0), 120.0
+    )
+    assert onp.allclose(
+        onp.abs(arc.model(u, v, 2.2e-6)),
+        onp.abs(ellipse.model(u, v, 2.2e-6)),
+        atol=1e-3,
+    )
