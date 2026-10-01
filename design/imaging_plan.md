@@ -190,11 +190,11 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Log (2026-10-01):**
 - No new fitting code was needed: `fit` and `l_curve` already take a list of datasets, and the worst-fitted one sets the discrepancy weight.
 - Coverage is synthetic. `coverage.vlti_oidata` gives four-UT Earth-rotation tracks over many channels, and `coverage.nrm_oidata` gives the 21 V² and 35 closure phases of the NIRISS mask. This is the fallback in "Coverage fixtures", so no ν Hor fixture is committed. Stage 4c uses real PIONIER data instead.
-- `models.circular_support(..., inner_radius_mas)` makes the support hole. It is tested, but the MWEs don't use it.
-- Fitting the envelope flux (a prior on `"env.flux"`) turned out to be what removes the spurious spot next to the star. With the flux fixed at `starting_image`'s estimate, the excess piles up at the centre; with the flux fitted, NCC rises from 0.86 to 0.93 in the SAM MWE. A hole under the star made the result worse.
+- `models.circular_support(..., inner_radius_mas)` makes the support hole, and `starting_image(..., hole_mas=...)` applies it. Both MWEs use it, at half the beam's minor axis.
+- Fitting the envelope flux (a prior on `"env.flux"`) turned out to be what removes the spurious spot next to the star. With the flux fixed at `starting_image`'s estimate, the excess piles up at the centre; with the flux fitted, NCC rises from 0.86 to 0.93 in the SAM MWE. A hole of half a beam under the star (`starting_image(..., hole_mas=...)`) then clears the remaining core flux, which is degenerate with the star's. In the VLTI MWE it removes the bias in the SPARCO ratio, which goes from 0.545 to 0.509 against a truth of 0.5.
 - MWEs:
-  - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.97).
-  - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.87; the index comes out at 1.92 against a truth of 2.
+  - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.98).
+  - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.89, with ratio 0.509 against 0.5 and index 1.87 against 2.
 - The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
 - MWE-B (the SNR and coverage stress test) is still to do.
 

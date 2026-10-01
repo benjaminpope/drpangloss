@@ -10,7 +10,12 @@ from drpangloss.coverage import (
     vlti_oidata,
 )
 from drpangloss.fitting import fit
-from drpangloss.imaging import Centroid, MaxEntropy, image_priors
+from drpangloss.imaging import (
+    Centroid,
+    MaxEntropy,
+    image_priors,
+    starting_image,
+)
 from drpangloss.models import (
     BinaryModelCartesian,
     GaussianDisk,
@@ -156,3 +161,11 @@ def test_nrm_rolls_combine_into_one_fit():
     result = fit(BinaryModelCartesian(100.0, 60.0, 0.03), priors, rolls)
     assert abs(result.values["dra"] - 120.0) < 10.0
     assert abs(result.values["ddec"] - 80.0) < 10.0
+
+
+def test_starting_image_can_leave_a_hole_under_the_star():
+    start = starting_image(NIGHT, hole_mas=1.0)
+    image = start.env
+    centre = image.log_brightness.shape[0] // 2
+    assert image.support is not None and not image.support[centre, centre]
+    assert np.all(image.brightness[~image.support] == 0.0)

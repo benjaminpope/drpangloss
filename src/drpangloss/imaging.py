@@ -35,7 +35,7 @@ from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
 from .fitting import fit
 from .likelihood import whitened_residuals
-from .models import Image, PointSource, System
+from .models import Image, PointSource, System, circular_support
 
 
 class _ImageRegulariser(eqx.Module):
@@ -380,7 +380,12 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
 
 
 def starting_image(
-    data, star=True, oversample=4.0, largest_mas=None, start="moments"
+    data,
+    star=True,
+    oversample=4.0,
+    largest_mas=None,
+    start="moments",
+    hole_mas=None,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -420,6 +425,12 @@ def starting_image(
         A cap on the field of view.
     start : {"moments", "dirty"}, optional
         The starting pixels, as above.
+    hole_mas : float, optional
+        Radius of a hole in the image's support under the star. Extended
+        flux within a fraction of a beam of the star is nearly
+        indistinguishable from the star's own, so without a hole the fit can
+        trade the two and bias the flux ratio; half the beam's minor axis
+        (``0.5 * beam(data).minor_mas``) is a good choice.
 
     Returns
     -------
@@ -456,7 +467,10 @@ def starting_image(
         fov = min(fov, float(largest_mas))
     scale = nyquist_pixel_scale(data) / float(oversample)
     npix = int(onp.ceil(fov / scale))
-    options = dict(flux=envelope.flux)
+    support = None
+    if hole_mas is not None:
+        support = circular_support(npix, scale, npix * scale, hole_mas)
+    options = dict(flux=envelope.flux, support=support)
     if start == "moments":
         model = GaussianDisk(envelope.sigma)
         image = Image.from_model(model, npix, scale, **options)
