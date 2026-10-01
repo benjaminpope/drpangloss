@@ -13,7 +13,8 @@ Modules:
 * [`fitting`][drpangloss.fitting]: `fit`, maximum a posteriori fits with
   Levenberg–Marquardt, L-BFGS or Adam.
 * [`imaging`][drpangloss.imaging]: regularisers and helpers for image
-  reconstruction; [`scenes`][drpangloss.scenes]: synthetic truth images.
+  reconstruction; [`scenes`][drpangloss.scenes]: synthetic truth images;
+  [`coverage`][drpangloss.coverage]: synthetic coverage and noise.
 * [`inference`][drpangloss.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][drpangloss.grid_fit]: grid searches.
 * [`limits`][drpangloss.limits]: contrast limits and flux/contrast/Δmag
@@ -30,6 +31,7 @@ name = "drpangloss"
 from . import (  # noqa: E402
     amigo,
     bessel,
+    coverage,
     fitting,
     grid_fit,
     imaging,

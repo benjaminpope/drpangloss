@@ -15,6 +15,7 @@ The everyday names are importable from the top level, e.g.
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
+- [Coverage](coverage.md): synthetic uv coverage and noise for simulations
 - [Plotting](plotting.md): figures
 - [Bessel](bessel.md): Bessel functions in JAX
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

@@ -6,7 +6,7 @@ import numpyro.distributions as dist
 import pytest
 
 from drpangloss._precision import cast_tree, run_in
-from drpangloss.amigo import simulated_disco_record
+from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import _Objective, fit
 from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
 from drpangloss.likelihood import numpyro_model
@@ -28,7 +28,7 @@ START = BinaryModelCartesian(140.0, -70.0, 0.01)
 
 def _image_fit(npix=16):
     """A star + Image scene's data, and a flat starting model with priors."""
-    data = OIData(simulated_disco_record(max_baseline_m=4.0))
+    data = OIData(ami_grid_record(pitch_m=0.5))
     truth = System(
         star=PointSource(),
         env=Image.from_brightness(

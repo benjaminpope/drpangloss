@@ -3,7 +3,7 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss.amigo import simulated_disco_record
+from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import fit
 from drpangloss.imaging import (
     TSV,
@@ -20,7 +20,7 @@ from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
 
 NPIX, SCALE = 16, 12.0
-DATA = OIData(simulated_disco_record(max_baseline_m=4.0))
+DATA = OIData(ami_grid_record(pitch_m=0.5))
 
 
 def _image(brightness, **kwargs):
@@ -99,7 +99,7 @@ def test_image_priors_cover_every_image():
 def test_nyquist_pixel_scale():
     longest = float(np.max(np.hypot(DATA.u, DATA.v)))
     expected = 4.3e-6 / (2 * longest) / (onp.pi / 180 / 3600 / 1000)
-    assert 100.0 < expected < 125.0  # λ / 2B for B just under 4 m
+    assert 60.0 < expected < 90.0  # λ / 2B for B of about 6 m
     assert np.isclose(nyquist_pixel_scale(DATA), expected, rtol=1e-3)
     assert np.isclose(nyquist_pixel_scale([DATA, DATA]), expected, rtol=1e-3)
 

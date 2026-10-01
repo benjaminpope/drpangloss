@@ -2,14 +2,14 @@ import jax
 import jax.numpy as np
 import pytest
 
-from drpangloss.amigo import simulated_disco_record
+from drpangloss.coverage import ami_grid_record
 from drpangloss.imaging import Centroid, Diagnosis, diagnose
 from drpangloss.models import Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
 
 NPIX, SCALE = 24, 60.0
-RECORD = simulated_disco_record(max_baseline_m=4.0)
+RECORD = ami_grid_record(pitch_m=0.5)
 
 
 def _scene(

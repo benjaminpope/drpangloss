@@ -75,6 +75,7 @@ nav:
       - Limits: api/limits.md
       - Spectra: api/spectra.md
       - Scenes: api/scenes.md
+      - Coverage: api/coverage.md
       - Plotting: api/plotting.md
       - Bessel: api/bessel.md
       - Legacy: api/legacy.md
