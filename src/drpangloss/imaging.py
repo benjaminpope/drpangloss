@@ -33,9 +33,9 @@ from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
 from ._utils import mas2rad
-from .fitting import fit
+from .fitting import _reference, fit
 from .likelihood import whitened_residuals
-from .models import Image, PointSource, System
+from .models import Image, PointSource, System, circular_support
 
 
 class _ImageRegulariser(eqx.Module):
@@ -380,7 +380,12 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
 
 
 def starting_image(
-    data, star=True, oversample=4.0, largest_mas=None, start="moments"
+    data,
+    star=True,
+    oversample=4.0,
+    largest_mas=None,
+    start="moments",
+    hole_mas=None,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -400,7 +405,10 @@ def starting_image(
       (it already has the right shape) and worse when it is sparse (its
       sidelobes dominate).
 
-    Fit it with ``fit(start, image_priors(start), data, regularisers)``.
+    Fit it with ``fit(start, image_priors(start), data, regularisers)``,
+    adding a prior on the image's flux, ``"env.flux"`` (or ``"flux"`` with
+    ``star=False``), to fit it too: with a star, this stops the fit from
+    parking excess flux next to it.
 
     Parameters
     ----------
@@ -417,6 +425,12 @@ def starting_image(
         A cap on the field of view.
     start : {"moments", "dirty"}, optional
         The starting pixels, as above.
+    hole_mas : float, optional
+        Radius of a hole in the image's support under the star. Extended
+        flux within a fraction of a beam of the star is nearly
+        indistinguishable from the star's own, so without a hole the fit can
+        trade the two and bias the flux ratio; half the beam's minor axis
+        (``0.5 * beam(data).minor_mas``) is a good choice.
 
     Returns
     -------
@@ -453,16 +467,18 @@ def starting_image(
         fov = min(fov, float(largest_mas))
     scale = nyquist_pixel_scale(data) / float(oversample)
     npix = int(onp.ceil(fov / scale))
+    support = None
+    if hole_mas is not None:
+        support = circular_support(npix, scale, npix * scale, hole_mas)
+    options = dict(flux=envelope.flux, support=support)
     if start == "moments":
-        image = Image.from_model(
-            GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
-        )
+        model = GaussianDisk(envelope.sigma)
+        image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
         dirty = dirty_image(data, npix, scale, flux_ratio=ratio)
-        image = Image.from_brightness(
-            np.maximum(dirty, 0.0), scale, floor=1e-3, flux=envelope.flux
-        )
+        positive = np.maximum(dirty, 0.0)
+        image = Image.from_brightness(positive, scale, floor=1e-3, **options)
     else:
         raise ValueError(f"start must be 'moments' or 'dirty', not {start!r}.")
     return System(star=PointSource(), env=image) if star else image
@@ -655,7 +671,9 @@ def l_curve(
         chi2_red.append(
             [c / n for c, n in zip(result.info["chi2"], result.info["ndata"])]
         )
-        penalty.append(float(weighted.value(result.model)) / weight)
+        penalty.append(
+            float(weighted.value(_reference(result.model))) / weight
+        )
     return LCurve(
         np.asarray(weights),
         np.asarray(chi2),

@@ -187,6 +187,75 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **Checkpoint:** is closure-phase imaging robust enough? **Merge `imaging` into `main`** (milestone 1: MAP imaging for AMI and long-baseline data).
 
+**Log (2026-10-01):**
+- No new fitting code was needed: `fit` and `l_curve` already take a list of datasets, and the worst-fitted one sets the discrepancy weight.
+- Coverage is synthetic. `coverage.vlti_oidata` gives four-UT Earth-rotation tracks over many channels, and `coverage.nrm_oidata` gives the 21 V² and 35 closure phases of the NIRISS mask. This is the fallback in "Coverage fixtures", so no ν Hor fixture is committed. Stage 4c uses real PIONIER data instead.
+- `models.circular_support(..., inner_radius_mas)` makes the support hole, and `starting_image(..., hole_mas=...)` applies it. Both MWEs use it, at half the beam's minor axis.
+- Fitting the envelope flux (a prior on `"env.flux"`) turned out to be what removes the spurious spot next to the star. With the flux fixed at `starting_image`'s estimate, the excess piles up at the centre; with the flux fitted, NCC rises from 0.86 to 0.93 in the SAM MWE. A hole of half a beam under the star (`starting_image(..., hole_mas=...)`) then clears the remaining core flux, which is degenerate with the star's. In the VLTI MWE it removes the bias in the SPARCO ratio, which goes from 0.545 to 0.509 against a truth of 0.5.
+- MWEs:
+  - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.98).
+  - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.89, with ratio 0.509 against 0.5 and index 1.87 against 2.
+- The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
+- MWE-B (the SNR and coverage stress test) is still to do.
+
+## Stage 4b: a rotating scene over two epochs
+A spiral that turns by 60° between two epochs, fitted jointly with the rotation known and then unknown. For an unknown rotation:
+- the angle must be traceable;
+- the likelihood can be multimodal in angle, so a coarse scan comes before a joint refinement;
+- an Archimedean spiral has a near-degeneracy between rotation and expansion.
+
+**Log (2026-10-01):**
+- `fit` (and so `l_curve`) accepts a model function that returns one model per dataset, sharing parameters; regularisers act on the first.
+- `models.Rotated(source, rotation_deg)` wraps any model with a traceable angle. It rotates the uv coordinates, so the MFT is not used for that epoch.
+- In `mwe_rotating_epochs`, two AMI epochs with the known 60° give NCC 0.92, against 0.90 for one epoch at the same weight.
+- With the angle unknown, a 15° scan of fixed-angle fits (warm-started, with a 300-step limit) has a single sharp minimum at 60°. Reconstructing the image again with the angle free (an L-curve started from the scan's best angle) gives 59.89° and the same NCC, 0.92, as with the angle known.
+- No secondary minimum appeared for this spiral: its fading ends break the rotation–expansion degeneracy.
+
+## Stage 4c: real PIONIER data (SPARCO), and the FlaredDisk merge
+Real-data notebooks live in `nuHor/notebooks/`, next to the data, and are not committed here:
+- `pionier_iras08544`: one star;
+- `pionier_binary`: Hillen et al.'s model;
+- `pionier_iwcar`, for Toon.
+
+They compare results with the papers' text, not their images.
+
+**Library additions:**
+- `spectra.BlackBody`, a Planck F_λ spectrum normalised at `wavel0` with a fittable `temperature`.
+- SPARCO verification tests: the published mixing formula with blackbody components, per-channel weighting of multichannel data, temperature gradients, and the Rayleigh–Jeans limit.
+- PR #80's `FlaredDisk` components (Blakely et al. 2024), merged into this stack. Edge-on inclinations are now rejected, and g < 0 is documented.
+
+**IRAS 08544-4431** (Hillen et al. 2016; 27 files, 828 V² and 504 closure phases):
+- **Parametric model:** a 7250 K primary; a secondary, a ring with m = 1, 2 modulations and a resolved background, all with blackbody spectra; and the ring anchored to the binary's centre of mass (κ = q/(1+q) = 0.75). It converges to one solution with χ² per point 2.50.
+  - Fractions: 57.0 / 6.1 / 20.7 / 16.2%, against the paper's 59.7 / 3.9 / 20.9 / 15.5%.
+  - Temperatures: secondary 3430 K, ring 1098 K, background 2620 K, against 4000, 1120 and 2400 K.
+  - Binary separation 0.72 mas (paper 0.81 mas).
+  - Ring 14.33 mas across, FWHM 3.03 mas, i = 20.1° (paper 14.15 mas, 3.2 mas, 19°).
+- **Images:** a λ⁻⁴ primary and a power-law environment, as in the paper. With the primary alone, the primary has 61.4% (paper 61%). With the binary subtracted, the knot next to the primary is gone.
+- **Open:** the companion's PA is 219°, against the paper's 56°, though the ring's bright side agrees. To raise with Toon.
+
+**IW Car** (De Prins et al. 2026; the 23 files within the paper's 81-day window):
+- No single-ring model fits, as the paper found.
+- The parametric secondary lands at (1.06, −1.69) mas with 2.3% of the flux (paper: (1.12, −1.90) mas, about 2%), with the primary at 62% (paper 63.6%).
+- The SPARCO image recovers the inner arcs at about 5 mas.
+
+**SPARCO convention (for Toon):** a spectral index of the environment is only defined relative to the star's assumed spectrum, since the ratio goes as λ^(d_env − d_star). Both apparent mismatches with the papers came from this, not from the code:
+- IRAS 08544: a blackbody primary in place of λ⁻⁴ shifts d_env by about 0.7.
+- IW Car: the paper fixes d_prim = −3.17, so their d_rim of 0.89 is 4.06 relative to the star, against our 4.0 with a λ⁻⁴ star.
+
+A background split off as a `Resolved` component also changes what the image's index means, and a smooth image is degenerate with a resolved background.
+
+## Status after Stage 4, and next steps
+**Done:**
+- AMI and long-baseline MAP imaging: per-dataset models (`Rotated` epochs), SPARCO with power-law and blackbody spectra, the support hole, and synthetic VLTI and NRM coverage.
+- Synthetic MWEs: SAM V² + CP, two-night VLTI, and rotating epochs.
+
+**Next:**
+1. Merge this stack into `imaging`, then `imaging` into `main` (milestone 1).
+2. MWE-B: the SNR and coverage stress test (deferred from Stage 4).
+3. Stage 5: Gaussian-process pixels, sampling (posteriors for the companion's flux and separation, which are correlated), and evidence-based weights.
+4. Stage 3c: PDS 70 (local demo first, then an OzSTAR script if needed).
+5. Cache MFT matrices (Stage 7).
+
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
 - `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)`:

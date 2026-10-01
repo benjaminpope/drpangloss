@@ -10,6 +10,9 @@ computed on the fly, so tests and tutorials need no large data files.
 * :func:`nrm_oidata`: the same mask as a classical non-redundant masking
   observation, with squared visibilities at the splodge centres and closure
   phases (as in AMICAL).
+* :func:`vlti_oidata`: a long-baseline observation, V² and closure phases
+  along Earth-rotation tracks in several spectral channels (VLTI/MATISSE
+  with the four UTs by default).
 """
 
 import itertools
@@ -221,6 +224,105 @@ def nrm_oidata(
             "d_vis": onp.full(len(pairs), float(sigma_v2)),
             "phi": onp.zeros(len(triangles)),
             "d_phi": onp.full(len(triangles), float(sigma_cp_deg)),
+            "phi_unit": "deg",
+            "i_cps1": i1,
+            "i_cps2": i2,
+            "i_cps3": i3,
+        }
+    )
+
+
+# The four VLTI Unit Telescopes in local (East, North) ground coordinates,
+# in metres (ESO's station positions, already converted from the platform's
+# (P, Q) frame). Baselines run from 46.6 m (UT2-UT3) to 130.2 m (UT1-UT4).
+VLTI_UTS = onp.array(
+    [
+        [-9.925, -20.335],
+        [14.887, 30.502],
+        [44.915, 66.183],
+        [103.306, 43.999],
+    ]
+)
+PARANAL_LATITUDE_DEG = -24.6276
+
+
+def vlti_oidata(
+    stations=VLTI_UTS,
+    declination_deg=-50.0,
+    hour_angles_h=(-3.0, -1.5, 0.0, 1.5, 3.0),
+    wavelengths_m=onp.linspace(3.0e-6, 4.0e-6, 11),
+    sigma_v2=0.03,
+    sigma_cp_deg=1.0,
+    latitude_deg=PARANAL_LATITUDE_DEG,
+):
+    """A simulated long-baseline observation: V² and closure phases.
+
+    Every pair of telescopes is observed at each hour angle, as the Earth's
+    rotation carries the baselines along tracks in the uv plane, in every
+    wavelength channel; closure phases come from every triangle at each
+    hour angle. The defaults resemble VLTI/MATISSE in the L band at low
+    spectral resolution with the four UTs. MATISSE's LOW mode (R ~ 30)
+    smears structure further than about R λ / B from the field centre
+    (~170 mas here), which drpangloss does not model.
+
+    Parameters
+    ----------
+    stations : array-like, shape (n_telescopes, 2), optional
+        Telescope positions (East, North) in metres (default: the UTs).
+    declination_deg : float, optional
+        The target's declination.
+    hour_angles_h : sequence of float, optional
+        Hour angles of the snapshots, in hours.
+    wavelengths_m : array-like, optional
+        The spectral channels, in metres.
+    sigma_v2 : float, optional
+        Error of each squared visibility.
+    sigma_cp_deg : float, optional
+        Error of each closure phase, in degrees.
+    latitude_deg : float, optional
+        The array's latitude (default: Paranal).
+
+    Returns
+    -------
+    OIData
+        Data with zero values, for
+        [`with_model`][drpangloss.oidata.OIData.with_model].
+    """
+    stations = onp.asarray(stations, float)
+    n = len(stations)
+    pairs = list(itertools.combinations(range(n), 2))
+    triangles = list(itertools.combinations(range(n), 3))
+    lat, dec = onp.radians(latitude_deg), onp.radians(declination_deg)
+    us, vs, all_pairs, all_triangles = [], [], [], []
+    for epoch, hour in enumerate(hour_angles_h):
+        h = onp.radians(15.0 * hour)
+        for i, j in pairs:
+            east, north = stations[j] - stations[i]
+            # Local (East, North, up=0) to equatorial, then to (u, v)
+            # (Thompson, Moran & Swenson, ch. 4).
+            x, y, z = -onp.sin(lat) * north, east, onp.cos(lat) * north
+            us.append(onp.sin(h) * x + onp.cos(h) * y)
+            vs.append(
+                -onp.sin(dec) * onp.cos(h) * x
+                + onp.sin(dec) * onp.sin(h) * y
+                + onp.cos(dec) * z
+            )
+            all_pairs.append((n * epoch + i, n * epoch + j))
+        all_triangles += [
+            tuple(n * epoch + t for t in tri) for tri in triangles
+        ]
+    i1, i2, i3 = cp_indices(all_pairs, all_triangles)
+    wavelengths = onp.asarray(wavelengths_m, float)
+    n_bl, n_cp, n_wl = len(us), len(all_triangles), wavelengths.size
+    return OIData(
+        {
+            "u": onp.asarray(us),
+            "v": onp.asarray(vs),
+            "wavel": wavelengths,
+            "vis": onp.ones((n_bl, n_wl)),
+            "d_vis": onp.full((n_bl, n_wl), float(sigma_v2)),
+            "phi": onp.zeros((n_cp, n_wl)),
+            "d_phi": onp.full((n_cp, n_wl), float(sigma_cp_deg)),
             "phi_unit": "deg",
             "i_cps1": i1,
             "i_cps2": i2,
