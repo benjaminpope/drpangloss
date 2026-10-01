@@ -6,6 +6,10 @@ total variation (TV) or total squared variation (TSV), minimised by LM or L-BFGS
 Status of the citations: papers marked (read) were opened; others were confirmed only by
 title, authors and abstract in search results, so check details before quoting them.
 
+## Decision (2026-10-01)
+
+Implemented in Stage 3: `l_curve` with `LCurve.corner()` and `LCurve.discrepancy()` (target χ²/N = 1, the worst-fitted dataset deciding). Planned for Stage 5: Laplace evidence for quadratic and GP priors, and Gull–Skilling classic MaxEnt. Not planned for now: cross-validation, GCV/SURE, Deep Probabilistic Imaging, and Top-Set surveys over synthetic truths (the latter are being built separately for PDS 70). The research below is kept as background.
+
 ## Recommendation
 
 1. **Implement now** (all in `imaging.py`, about 150 lines, no new dependencies):

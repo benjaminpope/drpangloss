@@ -163,6 +163,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Stage 3c: real AMI data, PDS 70 (once DISCO deconvolution is mature)
 **Data:** the AMIGO DISCO products for PDS 70 in `/Users/benpope/code/nuHor/data/PDS70/` (local only; never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
+**Scope:** drpangloss supplies a fast JAX library with the features interferometrists expect; synthetic truths for calibrating PDS 70 reconstructions are being built separately, so this stage does not do that.
 **Build:** an agent that deconvolves PDS 70 in each filter, separately and jointly (Stage 6's joint multi-filter machinery when available), with a wide range of options: regularisers (maximum entropy expected best, then TSV, then TV), weights from L-curves (discrepancy and corner), fields of view and pixel scales, starts (flat, parametric fit), analytic star or not, supports, and centroid priors. "Beat it to death": the aim is a general picture of what is robust across choices.
 **Compute:** demo locally first on a reduced set. If the full grid would take hours or exceed the laptop's RAM, hand the user an OzSTAR GPU script (`ozstar` skill) rather than running it here.
 **Report:** a notebook (not in the docs) comparing the reconstructions across options and filters, with beams, residual maps and `diagnose` output.
@@ -194,7 +195,11 @@ The design rationale was established in the earlier research: the gauge survey, 
   - η = log(μ/max μ + ε) + IDCT₂[√S ⊙ latent] (orthonormal);
   - S ∝ (κ² + λ_jk)^(−order) on reflecting-boundary Laplacian eigenvalues, with S₀₀ = 0, scaled to a mean variance of σ².
 - `image_priors` gives N(0,1) latents.
-- `Problem` warns if you MAP the hyperparameters.
+- `fit` warns if you MAP the hyperparameters.
+- **Regularisation weights from the evidence**, building the matrix-free curvature machinery once:
+  - for quadratic and GP priors (TSV, `GaussianField`), the Laplace-approximated evidence as a function of the weight (or σ, length), with the log-determinant of the Gauss–Newton Hessian by stochastic Lanczos quadrature or Hutchinson probes; maximise it, or marginalise when sampling;
+  - for maximum entropy, Gull & Skilling's "classic MaxEnt" choice of the weight (−2αS equal to the number of well-measured directions, from the eigenvalues of the same curvature);
+  - both as helpers alongside `LCurve.corner` / `discrepancy`, returning a weight; `fit` never chooses it silently.
 - `imaging.gauss_newton_diagonal` (a Gauss–Newton–Bartlett estimate, for mass-matrix initialisation).
 - The `[sampling]` extra (blackjax).
 - There is no sampler wrapper: tutorials call BlackJAX on `problem.logdensity` and `problem.init()`, with numpyro `NUTS(potential_fn=...)` shown as the alternative.
@@ -257,6 +262,9 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | Twin-folding helpers | We fit V²-only data routinely |
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
+| Cross-validation for the weight (e.g. held-out DISCO modes) | Not now; discrepancy, L-curve and (Stage 5) evidence suffice |
+| Deep Probabilistic Imaging and learned priors | Not planned; covered by other work in the group |
+| Top-Set surveys over synthetic truths | Not planned here; sophisticated PDS 70 truths are being built separately |
 | Bandwidth-smearing forward model | A real field-of-view need |
 | Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
 | The NUFFT backend as a recommended path (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
