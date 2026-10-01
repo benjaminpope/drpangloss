@@ -37,12 +37,15 @@ def pixel_offsets(npix, pixel_scale_mas):
     return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
 
 
-def image_visibilities(brightness, uu, vv, pixel_scale_mas, backend="dft"):
-    """Fourier transform of a pixel image at arbitrary frequencies.
+def image_visibilities(brightness, uu, vv, pixel_scale_mas):
+    """Exact Fourier transform of a pixel image at arbitrary frequencies.
 
     Each pixel is treated as a point at its centre, so
     ``V(u, v) = sum_{row, col} I[row, col] exp(-2πi (u x_col + v y_row))``
-    with the sign convention of :func:`offset_phase`.
+    with the sign convention of :func:`offset_phase`. The sum is separable
+    into two matrix products, done at ``Precision.HIGHEST`` (on A100/H100
+    GPUs the default is TF32, with ~1e-3 relative error). On a regular uv
+    grid, :func:`grid_visibilities` does the same sum faster.
 
     Parameters
     ----------
@@ -54,17 +57,6 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas, backend="dft"):
         broadcastable shapes.
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
-    backend : {"dft", "nufft"}
-        ``"dft"`` (default) is the exact sum, done as two matrix products
-        at ``Precision.HIGHEST`` (on A100/H100 GPUs the default is TF32,
-        with ~1e-3 relative error). ``"nufft"`` uses a non-uniform FFT from
-        the optional ``jax-finufft`` package (``pip install
-        'drpangloss[nufft]'``). It is approximate, with a requested
-        relative tolerance ``eps`` of 1e-7 in float64 and 1e-5 in float32
-        (FINUFFT's accuracy is relative to the 2-norm of the output, so
-        single visibilities can do worse; ``tests/test_nufft.py`` checks
-        ``3 eps`` per point for unit-sum images). It is faster for large
-        images and many irregularly placed frequencies.
 
     Returns
     -------
@@ -73,13 +65,7 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas, backend="dft"):
     """
     brightness = np.asarray(brightness)
     uu, vv = np.broadcast_arrays(uu, vv)
-    if backend == "dft":
-        vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
-    elif backend == "nufft":
-        fu, fv = mas2rad * np.ravel(uu), mas2rad * np.ravel(vv)
-        vis = _nufft(brightness, fu, fv, pixel_scale_mas)
-    else:
-        raise ValueError(f"backend must be 'dft' or 'nufft', not {backend!r}.")
+    vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
     return vis.reshape(np.shape(uu))
 
 
@@ -206,28 +192,6 @@ def find_uv_grid(u, v, tolerance=1e-6):
     return UVGrid(
         np.asarray(axes[0]), np.asarray(axes[1]), np.asarray(index), rotation
     )
-
-
-def _nufft(brightness, fu, fv, pixel_scale_mas):
-    try:
-        from jax_finufft import nufft2
-    except ImportError as err:
-        raise ImportError(
-            "backend='nufft' needs jax-finufft: pip install "
-            "'drpangloss[nufft]'."
-        ) from err
-    # finufft sums f[k] exp(+i k·t) over modes k = index - n // 2. Our pixel
-    # offsets are (n - 1)/2 - index = -(k + n//2 - (n - 1)/2) pixels, so
-    # t = 2π s f (in radians per pixel), and even n picks up a half-pixel
-    # phase exp(+i t / 2) from the centre at (n - 1)/2 rather than n/2.
-    source = brightness.astype(np.result_type(brightness.dtype, np.complex64))
-    t_col = 2.0 * np.pi * pixel_scale_mas * fu
-    t_row = 2.0 * np.pi * pixel_scale_mas * fv
-    eps = 1e-7 if source.dtype == np.complex128 else 1e-5
-    vis = nufft2(source, t_row, t_col, iflag=1, eps=eps)
-    nrow, ncol = brightness.shape
-    shift = 0.5 * ((1 - nrow % 2) * t_row + (1 - ncol % 2) * t_col)
-    return vis * np.exp(1j * shift)
 
 
 def offset_phase(uu, vv, dra, ddec):

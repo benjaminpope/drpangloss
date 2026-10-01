@@ -10,9 +10,8 @@ from drpangloss._geometry import (
     image_visibilities,
     rotate,
 )
-from drpangloss.amigo import simulated_disco_record
+from drpangloss.coverage import ami_grid_record
 from drpangloss.models import (
-    BinaryModelCartesian,
     GaussianDisk,
     Image,
     PointSource,
@@ -106,7 +105,7 @@ def test_rotated_from_model_matches_the_analytic_model():
 @pytest.mark.parametrize("x64", [False, True])
 def test_grid_path_matches_the_per_point_path(x64):
     with jax.enable_x64(x64):
-        data = OIData(simulated_disco_record(rotation_deg=-6.9))
+        data = OIData(ami_grid_record(rotation_deg=-6.9))
         assert data.uv_grid is not None
         truth = ring(48, 8.0, 80.0, 10.0, 50.0, 30.0, 0.5, 100.0)
         env = Image.from_brightness(
@@ -119,30 +118,7 @@ def test_grid_path_matches_the_per_point_path(x64):
         assert np.max(np.abs(fast - slow)) < tol * np.max(np.abs(slow)) + tol
 
 
-def test_simulated_record_reaches_the_longest_baseline():
-    # 6.5 / 0.65 is 9.999... in floating point; the lattice must still
-    # include the cells at exactly 10 pitches.
-    data = OIData(simulated_disco_record(pitch_m=0.65, max_baseline_m=6.5))
-    assert np.isclose(np.max(np.hypot(data.u, data.v)), 6.5)
-
-
 def test_mismatched_rotation_falls_back_to_the_exact_per_point_path():
-    data = OIData(simulated_disco_record(rotation_deg=-6.9))
+    data = OIData(ami_grid_record(rotation_deg=-6.9))
     scene = System(star=PointSource(), env=Image(np.zeros((9, 9)), 20.0))
     assert np.allclose(data.model(scene), _without_grid(data).model(scene))
-
-
-def test_simulated_record_has_shift_invariant_phase_modes():
-    record = simulated_disco_record(rotation_deg=20.0)
-    assert "disco_covariance" not in record
-    data = OIData(record)
-    n_amp = data.u.size
-    # A shifted point source changes only the phases, linearly in uv.
-    shifted = PointSource(dra=40.0, ddec=-25.0)
-    assert (
-        np.max(np.abs(np.angle(shifted.model(data.u, data.v, data.wavel))))
-        > 1.0
-    )
-    assert np.allclose(data.model(shifted), 0.0, atol=1e-5)
-    binary = BinaryModelCartesian(40.0, -25.0, 0.1)
-    assert np.max(np.abs(data.model(binary)[n_amp:])) > 1e-3

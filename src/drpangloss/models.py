@@ -574,9 +574,8 @@ class Image(Component):
     [`PointSource`][drpangloss.models.PointSource] star) while resolved
     emission goes in the pixels.
 
-    Visibilities are the Fourier transform of the pixels, each treated as a
-    point at its centre: exact with the default ``backend="dft"``, and
-    approximate (to a requested tolerance) with ``"nufft"``.
+    Visibilities are the exact Fourier transform of the pixels, each treated
+    as a point at its centre.
 
     Parameters
     ----------
@@ -603,16 +602,6 @@ class Image(Component):
         data (``data.uv_grid.rotation_deg``, e.g. AMI data at their
         parallactic angle) is transformed with an exact two-sided matrix
         Fourier transform, which is much faster.
-    backend : {"dft", "nufft"}, optional
-        How visibilities are computed: ``"dft"`` (default), the exact sum
-        over pixels, or ``"nufft"``, a non-uniform FFT from the optional
-        ``jax-finufft`` package (``pip install 'drpangloss[nufft]'``),
-        which is faster on a CPU for large images and large, irregular
-        datasets (e.g. long-baseline interferometry); on a GPU the DFT is
-        faster except for very large problems. It is approximate, with a
-        requested relative tolerance of 1e-7 in float64 and 1e-5 in
-        float32; prefer the DFT when phases must be accurate to better than
-        ~1e-4 rad in float32.
 
     Examples
     --------
@@ -625,7 +614,6 @@ class Image(Component):
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
-    backend: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -636,7 +624,6 @@ class Image(Component):
         dra=0.0,
         ddec=0.0,
         rotation_deg=0.0,
-        backend="dft",
     ):
         self.log_brightness = np.asarray(log_brightness, dtype=float)
         if self.log_brightness.ndim != 2:
@@ -655,11 +642,6 @@ class Image(Component):
         _check_log_brightness(self.log_brightness, support)
         self.pixel_scale_mas = float(pixel_scale_mas)
         self.rotation_deg = float(rotation_deg)
-        if backend not in ("dft", "nufft"):
-            raise ValueError(
-                f"backend must be 'dft' or 'nufft', not {backend!r}."
-            )
-        self.backend = backend
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
@@ -672,8 +654,7 @@ class Image(Component):
 
         Pixels fainter than ``floor`` times the brightest are raised to that
         level, so that their logarithm is finite. Other keyword arguments
-        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``,
-        ``backend``) go to
+        (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``) go to
         [`Image`][drpangloss.models.Image].
         """
         brightness = np.asarray(brightness, dtype=float)
@@ -713,12 +694,12 @@ class Image(Component):
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
         return image_visibilities(
-            self.brightness, uu, vv, self.pixel_scale_mas, self.backend
+            self.brightness, uu, vv, self.pixel_scale_mas
         )
 
     def model_on_grid(self, u, v, wavel, grid):
         matched = abs(grid.rotation_deg - self.rotation_deg) < 1e-9
-        if not (matched and self.backend == "dft" and np.size(wavel) == 1):
+        if not (matched and np.size(wavel) == 1):
             return self.model(u, v, wavel)
         wavel = np.reshape(wavel, ())
         vis = grid_visibilities(

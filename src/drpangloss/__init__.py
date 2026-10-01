@@ -10,6 +10,11 @@ Modules:
   OIFITS files; [`amigo`][drpangloss.amigo]: AMIGO mixed-DISCO products.
 * [`models`][drpangloss.models]: source models and their visibilities.
 * [`likelihood`][drpangloss.likelihood]: likelihoods and numpyro models.
+* [`fitting`][drpangloss.fitting]: `fit`, maximum a posteriori fits with
+  Levenberg–Marquardt, L-BFGS or Adam.
+* [`imaging`][drpangloss.imaging]: regularisers and helpers for image
+  reconstruction; [`scenes`][drpangloss.scenes]: synthetic truth images;
+  [`coverage`][drpangloss.coverage]: synthetic coverage and noise.
 * [`inference`][drpangloss.inference]: Laplace and Fisher curvature.
 * [`grid_fit`][drpangloss.grid_fit]: grid searches.
 * [`limits`][drpangloss.limits]: contrast limits and flux/contrast/Δmag
@@ -26,7 +31,10 @@ name = "drpangloss"
 from . import (  # noqa: E402
     amigo,
     bessel,
+    coverage,
+    fitting,
     grid_fit,
+    imaging,
     inference,
     likelihood,
     limits,
@@ -34,9 +42,11 @@ from . import (  # noqa: E402
     oidata,
     oifits,
     plotting,
+    scenes,
     spectra,
 )
 from .amigo import load_oi_data  # noqa: E402
+from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
     laplace_flux_uncertainty_grid,
@@ -101,6 +111,7 @@ __all__ = [
     "build_model",
     "contrast_to_flux",
     "delta_mag_to_flux",
+    "fit",
     "fisher",
     "inflated_errors",
     "flux_to_contrast",

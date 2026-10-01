@@ -1,0 +1,869 @@
+"""Regularisers and helpers for image reconstruction.
+
+An image fit is a call to [`fit`][drpangloss.fitting.fit] whose model contains an
+[`Image`][drpangloss.models.Image], with a prior on its ``log_brightness``
+(see :func:`image_priors`) and usually a regulariser, which adds a penalty
+on the pixel fluxes ``b`` to the loss:
+
+| Regulariser | Penalty | Least squares (LM)? | A prior density? |
+| --- | --- | --- | --- |
+| [`TSV`][drpangloss.imaging.TSV] | ``w Σ (Δx b)² + (Δy b)²`` | yes | no |
+| [`TV`][drpangloss.imaging.TV] | ``w Σ √((Δx b)² + (Δy b)² + ε²)`` | no | no |
+| [`MaxEntropy`][drpangloss.imaging.MaxEntropy] | ``w Σ b log(b / q)`` | no | no |
+| [`Centroid`][drpangloss.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
+
+Differences ``Δ`` are between neighbouring pixels, with zeros beyond the
+edges, so edge pixels are penalised too. TSV (total squared variation)
+favours smooth images, TV (total variation) piecewise-flat ones, and maximum
+entropy images close to a default ``q``. The weight ``w`` depends on the
+scene and the data; :func:`l_curve` sweeps it.
+
+Closure, kernel and DISCO phases do not fix an image's position. Something
+must: an analytic star at the origin, a [`Centroid`][drpangloss.imaging.Centroid]
+prior, or a centred prior mean. [`diagnose`][drpangloss.imaging.diagnose]
+checks a fit for this and other common pitfalls.
+"""
+
+import dataclasses
+
+import equinox as eqx
+import jax.numpy as np
+import numpy as onp
+from jax.scipy.special import xlogy
+
+from ._geometry import pixel_offsets, rotate
+from ._utils import mas2rad
+from .fitting import fit
+from .likelihood import whitened_residuals
+from .models import Image, PointSource, System
+
+
+class _ImageRegulariser(eqx.Module):
+    """A penalty on the pixels of one Image, found at ``path`` in the model."""
+
+    weight: float
+    path: str | None = eqx.field(static=True)
+
+    def image(self, model):
+        """The regularised [`Image`][drpangloss.models.Image] in ``model``."""
+        image = model if self.path is None else model.get(self.path)
+        if not isinstance(image, Image):
+            raise TypeError(
+                f"{type(self).__name__}(path={self.path!r}) found a "
+                f"{type(image).__name__}, not an Image."
+            )
+        return image
+
+    probabilistic = False
+
+
+def _differences(b):
+    """Steps between neighbouring pixels along rows and columns.
+
+    The image is padded with a ring of zeros, so the steps into and out of
+    the image at every edge count. Both arrays have shape ``(N + 1, M + 1)``
+    and line up, pixel by pixel, for total variation.
+    """
+    padded = np.pad(b, 1)
+    dx = padded[:-1, 1:] - padded[:-1, :-1]
+    dy = padded[1:, :-1] - padded[:-1, :-1]
+    return dx, dy
+
+
+class TSV(_ImageRegulariser):
+    """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
+
+    A quadratic smoothness penalty, so it can be fitted by
+    Levenberg–Marquardt.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    path : str, optional
+        Path of the Image in the model (e.g. ``"env"``); ``None`` if the
+        model is the Image itself.
+    """
+
+    def __init__(self, weight, path=None):
+        self.weight = np.asarray(weight, dtype=float)
+        self.path = path
+
+    def residuals(self, model):
+        dx, dy = _differences(self.image(model).brightness)
+        return np.sqrt(2.0 * self.weight) * np.concatenate(
+            [np.ravel(dx), np.ravel(dy)]
+        )
+
+    def value(self, model):
+        return 0.5 * np.sum(self.residuals(model) ** 2)
+
+
+class TV(_ImageRegulariser):
+    """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
+
+    Favours piecewise-flat images with sharp edges. ``ε`` smooths the
+    penalty where the image is flat, so that it is differentiable. The
+    penalty is averaged over the four flips of the image, so it has no
+    preferred direction on the sky.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    epsilon : float, optional
+        Smoothing scale, as a fraction of the mean pixel flux (default
+        1e-2).
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    epsilon: float
+
+    def __init__(self, weight, epsilon=1e-2, path=None):
+        self.weight = np.asarray(weight, dtype=float)
+        self.epsilon = float(epsilon)
+        self.path = path
+
+    def value(self, model):
+        b = self.image(model).brightness
+        eps = self.epsilon / b.size
+
+        def total(image):
+            dx, dy = _differences(image)
+            return np.sum(np.sqrt(dx**2 + dy**2 + eps**2))
+
+        # Forward differences pair each step with a preferred neighbour;
+        # averaging over the four flips of the image removes that bias.
+        flips = [b, b[::-1], b[:, ::-1], b[::-1, ::-1]]
+        return self.weight * sum(total(f) for f in flips) / 4.0
+
+
+class MaxEntropy(_ImageRegulariser):
+    """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
+
+    The relative entropy of the image with respect to a default image ``q``.
+    It is zero for ``b = q`` and positive otherwise.
+
+    Parameters
+    ----------
+    weight : float
+        Strength of the penalty.
+    prior : array-like, optional
+        The default image ``q``, with the image's shape and positive where
+        the image's support is; normalised here. Default: flat over the
+        support.
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    prior: object
+
+    def __init__(self, weight, prior=None, path=None):
+        self.weight = np.asarray(weight, dtype=float)
+        self.prior = None if prior is None else np.asarray(prior)
+        self.path = path
+
+    def value(self, model):
+        image = self.image(model)
+        b = image.brightness
+        if self.prior is None:
+            inside = (
+                np.ones(b.shape, bool)
+                if image.support is None
+                else image.support
+            )
+            q = inside / np.sum(inside)
+        else:
+            q = np.asarray(self.prior) / np.sum(self.prior)
+        q = np.where(b > 0.0, q, 1.0)  # 0 log 0 = 0 outside the support
+        return self.weight * np.sum(xlogy(b, b) - xlogy(b, q))
+
+
+class Centroid(_ImageRegulariser):
+    """A Gaussian prior centring an Image's flux on the origin.
+
+    The penalty is ``½ |c / sigma_mas|²``, where ``c`` is the flux-weighted
+    centroid of the Image on the sky, including its ``dra``/``ddec``. This
+    is a genuine prior density, so it may be used when sampling.
+
+    Parameters
+    ----------
+    sigma_mas : float
+        Standard deviation of the centroid, in milliarcseconds.
+    path : str, optional
+        Path of the Image in the model.
+    """
+
+    sigma_mas: float
+    probabilistic = True
+
+    def __init__(self, sigma_mas, path=None):
+        self.weight = 1.0
+        self.sigma_mas = float(sigma_mas)
+        self.path = path
+
+    def centroid(self, model):
+        """The Image's flux-weighted centroid ``(dra, ddec)`` in mas."""
+        image = self.image(model)
+        b = image.brightness
+        nrow, ncol = b.shape
+        x = np.sum(b, axis=0) @ pixel_offsets(ncol, image.pixel_scale_mas)
+        y = np.sum(b, axis=1) @ pixel_offsets(nrow, image.pixel_scale_mas)
+        x, y = rotate(x, y, image.rotation_deg)
+        return np.stack([x + image.dra, y + image.ddec])
+
+    def residuals(self, model):
+        return self.centroid(model) / self.sigma_mas
+
+    def value(self, model):
+        return 0.5 * np.sum(self.residuals(model) ** 2)
+
+
+def image_priors(scene):
+    """Flat priors on the log-brightness of every Image in a scene.
+
+    Returns a priors dict for [`fit`][drpangloss.fitting.fit], e.g.
+    ``{"env.log_brightness": ImproperUniform(...)}``. The pixels are then
+    constrained only by the data and the regularisers. Add priors for any
+    other free parameters (fluxes, offsets) to the dict.
+    """
+    import numpyro.distributions as dist
+
+    priors = {}
+
+    def visit(model, prefix):
+        if isinstance(model, Image):
+            shape = model.log_brightness.shape
+            priors[prefix + "log_brightness"] = dist.ImproperUniform(
+                dist.constraints.real, (), event_shape=shape
+            )
+        elif isinstance(model, System):
+            for name, part in model.components.items():
+                visit(part, prefix + name + ".")
+
+    visit(scene, "")
+    if not priors:
+        raise ValueError("The scene contains no Image.")
+    return priors
+
+
+def nyquist_pixel_scale(data):
+    """The largest pixel scale (mas) that samples the data's finest fringes.
+
+    That is λ / (2 B) for the longest baseline B in units of wavelength,
+    over all samples of ``data`` (an OIData or a sequence of them).
+    Reconstructions normally use pixels 2–4 times smaller.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    longest = max(
+        float(np.max(np.hypot(d.u, d.v) / d.wavel)) for d in observations
+    )
+    return 1.0 / (2.0 * longest * mas2rad)
+
+
+def field_of_view(data, largest_mas=500.0):
+    """The default field of view for an image of ``data``, in mas.
+
+    The smaller of ``largest_mas`` (500 by default) and the interferometric
+    field of view, λ / B over the shortest non-zero baseline B (at the
+    shortest wavelength): structure larger than that is not measured, and on
+    a uv lattice a larger field would alias. Use it with
+    [`nyquist_pixel_scale`][drpangloss.imaging.nyquist_pixel_scale] to
+    choose the image's size and pixels.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    shortest = min(
+        float(onp.min(rho[rho > 0]))
+        for rho in (
+            onp.ravel(onp.asarray(onp.hypot(d.u, d.v) / d.wavel))
+            for d in observations
+        )
+    )
+    return min(float(largest_mas), 1.0 / (shortest * mas2rad))
+
+
+def _complex_visibilities(d):
+    """Visibility estimates at a dataset's uv samples, and their weights.
+
+    AMIGO DISCO data give the least-squares (minimum-norm) estimate of the
+    log visibilities from the modes; data with absolute phases give the
+    visibilities directly. The weights are 1 on samples that the data
+    inform and 0 elsewhere (uniform weighting, as in :func:`beam`).
+    """
+    if d.observable_kind == "mixed_log_complex":
+        sigma = onp.asarray(d.d_vis)[:, None]
+        operator = onp.concatenate(
+            [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
+        )
+        logv = onp.linalg.lstsq(
+            operator / sigma, onp.asarray(d.vis) / sigma[:, 0], rcond=1e-8
+        )[0]
+        n = operator.shape[1] // 2
+        information = onp.sum((operator / sigma) ** 2, axis=0)
+        informed = (
+            information[:n] + information[n:]
+        ) > 1e-3 * information.max()
+        # The modes are blind to the total flux, so the log-amplitudes have
+        # an arbitrary offset: fix it so that |V| = 1 on average on the
+        # shortest informed baselines, as for any normalised source.
+        rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
+        shortest = rho <= onp.quantile(rho, 0.1)
+        logv[:n] -= onp.mean(logv[:n][informed][shortest])
+        return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
+    if (
+        d.observable_kind == "split"
+        and not d.cp_flag
+        and d.phi_mat is None
+        and d.vis_mat is None
+        and d.vis_index is None
+        and d.phi_index is None
+    ):
+        amplitude = onp.asarray(d.vis)
+        if d.vis_mode == "v2":
+            amplitude = onp.sqrt(onp.maximum(amplitude, 0.0))
+        elif d.vis_mode == "logamp":
+            amplitude = onp.exp(amplitude)
+        vis = amplitude * onp.exp(1j * onp.asarray(d.phi))
+        return vis, onp.ones(vis.size)
+    raise ValueError(
+        "A dirty image needs complex visibilities: AMIGO DISCO data, or "
+        "amplitudes with absolute phases for every sample (closure phases "
+        "do not give the phases)."
+    )
+
+
+def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
+    """The dirty image: direct synthesis of the visibilities, unregularised.
+
+    ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, summing over the
+    samples (each standing for itself and its conjugate) with uniform
+    weights on the informed ones: the image convolved with the dirty beam,
+    plus noise. It peaks at one for a lone point source. For AMIGO DISCO
+    data the visibilities are the least-squares estimate from the modes;
+    since the modes are blind to the total flux, the estimate is
+    normalised to |V| = 1 on average on the shortest baselines.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data; see the error raised for data without phases.
+    npix : int
+        Number of pixels on a side.
+    pixel_scale_mas : float
+        Pixel size in mas.
+    flux_ratio : float, optional
+        If the scene is a star at the origin plus extended emission with
+        this flux relative to the star, the star is removed first, so the
+        map shows the extended emission alone.
+
+    Returns
+    -------
+    jax.Array, shape (npix, npix)
+        In the orientation of [`render`][drpangloss.models.SourceModel.render]
+        (East left, North up). It has negative sidelobes.
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
+    image, total = onp.zeros((int(npix), int(npix))), 0.0
+    for d in observations:
+        vis, weight = _complex_visibilities(d)
+        if flux_ratio is not None:
+            vis = ((1.0 + flux_ratio) * vis - 1.0) / flux_ratio
+        fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
+        fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
+        cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))  # (k, col)
+        rows = onp.exp(2j * onp.pi * onp.outer(fv, offsets))  # (k, row)
+        image += onp.real(onp.einsum("k,kr,kc->rc", weight * vis, rows, cols))
+        total += weight.sum()
+    return np.asarray(image / total)
+
+
+def starting_image(
+    data, star=True, oversample=4.0, largest_mas=None, start="moments"
+):
+    """A starting model for an image fit, sized from the data.
+
+    It fits a quick parametric model, an analytic star (if ``star``) plus a
+    circular Gaussian envelope with free flux and width, a low-order
+    description of the visibilities, from a few starting widths. Then it
+    chooses the image:
+
+    * a field of about six FWHMs of the envelope, but at least 500 mas, and
+      never larger than the interferometric field of view (λ / B_min) or
+      ``largest_mas``;
+    * pixels ``oversample`` times finer than the Nyquist scale;
+    * an [`Image`][drpangloss.models.Image] with the fitted flux, whose
+      pixels are the fitted Gaussian (``start="moments"``) or the positive
+      part of the :func:`dirty_image` (``start="dirty"``, with the star
+      removed). A dirty start is better when the Fourier coverage is dense
+      (it already has the right shape) and worse when it is sparse (its
+      sidelobes dominate).
+
+    Fit it with ``fit(start, image_priors(start), data, regularisers)``.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+    star : bool, optional
+        Whether the scene has an unresolved star at the origin (which also
+        fixes the image's position). Without one, the result is the Image
+        alone, and a [`Centroid`][drpangloss.imaging.Centroid] prior
+        should fix its position.
+    oversample : float, optional
+        Pixels per Nyquist pixel.
+    largest_mas : float, optional
+        A cap on the field of view.
+    start : {"moments", "dirty"}, optional
+        The starting pixels, as above.
+
+    Returns
+    -------
+    SourceModel
+        ``System(star=PointSource(), env=Image(...))``, or the Image alone.
+    """
+    import numpyro.distributions as dist
+
+    from .models import GaussianDisk
+
+    resolution = beam(data).major_mas
+    widest = field_of_view(data, largest_mas=onp.inf)
+    best = None
+    for width in (0.25 * resolution, resolution, 4.0 * resolution):
+        sigma = min(width, widest / 6.0) / 2.3548
+        if star:
+            model = System(
+                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
+            )
+            priors = {
+                "env.sigma": dist.Uniform(1e-3 * resolution, widest),
+                "env.flux": dist.Uniform(0.0, 100.0),
+            }
+        else:
+            model = GaussianDisk(sigma)
+            priors = {"sigma": dist.Uniform(1e-3 * resolution, widest)}
+        result = fit(model, priors, data)
+        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
+            best = result
+    envelope = best.model.env if star else best.model
+    fwhm = 2.3548 * float(envelope.sigma)
+    fov = min(max(500.0, 6.0 * fwhm), widest)
+    if largest_mas is not None:
+        fov = min(fov, float(largest_mas))
+    scale = nyquist_pixel_scale(data) / float(oversample)
+    npix = int(onp.ceil(fov / scale))
+    if start == "moments":
+        image = Image.from_model(
+            GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
+        )
+    elif start == "dirty":
+        ratio = float(envelope.flux) if star else None
+        dirty = dirty_image(data, npix, scale, flux_ratio=ratio)
+        image = Image.from_brightness(
+            np.maximum(dirty, 0.0), scale, floor=1e-3, flux=envelope.flux
+        )
+    else:
+        raise ValueError(f"start must be 'moments' or 'dirty', not {start!r}.")
+    return System(star=PointSource(), env=image) if star else image
+
+
+@dataclasses.dataclass(frozen=True)
+class Beam:
+    """A Gaussian approximation to the core of the dirty beam.
+
+    Attributes
+    ----------
+    major_mas, minor_mas : float
+        Full widths at half maximum along the major and minor axes, in mas.
+    pa_deg : float
+        Position angle of the major axis, North to East, in degrees.
+    """
+
+    major_mas: float
+    minor_mas: float
+    pa_deg: float
+
+
+def beam(data):
+    """The resolution of a dataset: the FWHM ellipse of its beam's core.
+
+    The dirty beam is the image of a point source made by the data's uv
+    sampling. Near its peak it falls off as ``1 - 2π² xᵀ M x``, where ``M``
+    is the weighted mean of ``u uᵀ`` over the samples, which matches a
+    Gaussian of covariance ``M⁻¹ / 4π²``. Its FWHM ellipse is the standard
+    "beam" drawn on interferometric images: roughly λ/B, and elongated where
+    the coverage is. For complicated coverage the real beam can look quite
+    different, but the ellipse still shows the size and shape of a
+    resolution element.
+
+    Every sample that carries information is weighted equally ("uniform
+    weighting"); in AMIGO DISCO data those are the uv points on which the
+    modes have weight (at least 1e-3 of the largest), i.e. the splodges.
+    Weighting by information instead would let the low-frequency central
+    splodge dominate, and give a broader beam.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+
+    Returns
+    -------
+    Beam
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    u, v, w = [], [], []
+    for d in observations:
+        fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
+        fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
+        weight = onp.ones_like(fu)
+        if d.observable_kind == "mixed_log_complex":
+            sigma = onp.asarray(d.d_vis)[:, None]
+            information = onp.sum(
+                (onp.asarray(d.vis_mat) ** 2 + onp.asarray(d.phi_mat) ** 2)
+                / sigma**2,
+                axis=0,
+            )
+            weight = (information > 1e-3 * information.max()).astype(float)
+        u.append(fu), v.append(fv), w.append(weight)
+    u, v, w = (onp.concatenate(x) for x in (u, v, w))
+    m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
+    covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
+    variance, axes = onp.linalg.eigh(covariance)
+    fwhm = 2.0 * onp.sqrt(2.0 * onp.log(2.0) * variance)
+    x, y = axes[:, 1]  # the major axis, in (East, North)
+    pa = onp.degrees(onp.arctan2(x, y)) % 180.0
+    return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
+
+
+@dataclasses.dataclass(frozen=True)
+class LCurve:
+    """The result of :func:`l_curve`.
+
+    Attributes
+    ----------
+    weights : array
+        The regularisation weights, in the order fitted (largest first).
+    chi2 : array
+        Total χ² of each fit.
+    chi2_red : array, shape (n_weights, n_datasets)
+        χ² per data point of each dataset.
+    penalty : array
+        The unweighted regulariser, ``value / weight``, of each fit.
+    results : list of FitResult
+        The fits.
+    """
+
+    weights: object
+    chi2: object
+    chi2_red: object
+    penalty: object
+    results: list
+
+    def corner(self):
+        """The weight at the L-curve's corner, where it bends most sharply.
+
+        The curve is ``(log χ², log penalty)`` parametrised by ``log w``;
+        the corner is the interior point of largest curvature (Hansen &
+        O'Leary 1993). Check it by eye: the curvature of a sparse or noisy
+        sweep is itself noisy, and a smooth curve has no clear corner.
+        """
+        t = np.log(self.weights)
+        x, y = np.log(self.chi2), np.log(self.penalty)
+        if t.size < 3:
+            raise ValueError("The sweep needs at least three weights.")
+        dx, dy = np.gradient(x, t), np.gradient(y, t)
+        ddx, ddy = np.gradient(dx, t), np.gradient(dy, t)
+        curvature = (dx * ddy - ddx * dy) / (dx**2 + dy**2) ** 1.5
+        # The end points have one-sided derivatives; leave them out.
+        return float(self.weights[1 + int(np.argmax(np.abs(curvature[1:-1])))])
+
+    def discrepancy(self, target=1.0):
+        """The weight at which χ² per data point reaches ``target``.
+
+        This is Morozov's discrepancy principle: regularise as strongly as
+        the data allow. With several datasets, the binding one (the largest
+        χ² per point) must reach the target, so that a well-fitted dataset
+        cannot hide a badly fitted one. It interpolates linearly in ``log w`` between the
+        fitted weights, and returns ``None`` if the sweep never crosses the
+        target. The truth itself has χ² per point of 1 ± √(2/N), so the
+        default target of 1 is the natural one. It relies on correct error
+        bars; with underestimated errors it over-regularises.
+        """
+        binding = np.max(
+            np.reshape(self.chi2_red, (len(self.weights), -1)), axis=1
+        )
+        above = binding > target
+        crossings = np.nonzero(above[:-1] & ~above[1:])[0]
+        if crossings.size == 0:
+            return None
+        i = int(crossings[0])
+        t = np.log(self.weights[i : i + 2])
+        c = binding[i : i + 2]
+        fraction = (c[0] - target) / (c[0] - c[1])
+        return float(np.exp(t[0] + fraction * (t[1] - t[0])))
+
+
+def l_curve(
+    model, priors, data, regulariser, weights, others=(), **fit_options
+):
+    """Fit a model over a range of weights for one regulariser.
+
+    The weights are fitted from largest to smallest, each starting from the
+    previous solution, which is faster and more stable than starting every
+    fit afresh. Plot ``penalty`` against ``chi2`` (both on log axes) to see
+    the trade-off between fitting the data and regularising the image, and
+    compare [`LCurve.corner`][drpangloss.imaging.LCurve.corner] and
+    [`LCurve.discrepancy`][drpangloss.imaging.LCurve.discrepancy] with
+    the images either side: there is usually a wide range of good weights.
+    Other ways of choosing the weight are compared in
+    ``design/regulariser_weight_selection.md``.
+
+    Parameters
+    ----------
+    model, priors, data
+        As for [`fit`][drpangloss.fitting.fit].
+    regulariser : TSV, TV or MaxEntropy
+        The regulariser whose ``weight`` is swept (its own weight is
+        ignored).
+    weights : sequence of float
+        The weights to try.
+    others : sequence, optional
+        Further regularisers kept fixed, e.g. a
+        [`Centroid`][drpangloss.imaging.Centroid] prior.
+    **fit_options
+        Passed to [`fit`][drpangloss.fitting.fit].
+
+    Returns
+    -------
+    LCurve
+    """
+    weights = sorted((float(w) for w in weights), reverse=True)
+    results, chi2, chi2_red, penalty = [], [], [], []
+    init = fit_options.pop("init", None)
+    for weight in weights:
+        weighted = eqx.tree_at(
+            lambda r: r.weight, regulariser, np.asarray(weight, dtype=float)
+        )
+        result = fit(
+            model, priors, data, [weighted, *others], init=init, **fit_options
+        )
+        init = result.values
+        results.append(result)
+        chi2.append(sum(result.info["chi2"]))
+        chi2_red.append(
+            [c / n for c, n in zip(result.info["chi2"], result.info["ndata"])]
+        )
+        penalty.append(float(weighted.value(result.model)) / weight)
+    return LCurve(
+        np.asarray(weights),
+        np.asarray(chi2),
+        np.asarray(chi2_red),
+        np.asarray(penalty),
+        results,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class Diagnosis:
+    """The result of :func:`diagnose`.
+
+    Attributes
+    ----------
+    checks : dict
+        Check name to value. Checks made per dataset or per Image are lists,
+        in the order of the data or of the Images in the model.
+    warnings : list of str
+        One sentence for each problem found, saying what to do about it.
+        Empty if none.
+    """
+
+    checks: dict
+    warnings: list
+
+    def __str__(self):
+        def show(value):
+            if isinstance(value, (list, tuple)):
+                return "[" + ", ".join(show(v) for v in value) + "]"
+            return f"{value:.3g}" if isinstance(value, float) else str(value)
+
+        width = max(map(len, self.checks))
+        lines = [f"{k:<{width}}  {show(v)}" for k, v in self.checks.items()]
+        if self.warnings:
+            lines += ["", *(f"Warning: {w}" for w in self.warnings)]
+        else:
+            lines += ["", "No warnings."]
+        return "\n".join(lines)
+
+
+def _parts(model, path=None):
+    """``(path, part)`` for ``model`` and everything nested in it.
+
+    The path is ``None`` for the model itself, else e.g. ``"env"``.
+    """
+    found = [(path, model)]
+    if isinstance(model, System):
+        prefix = "" if path is None else path + "."
+        for name, part in model.components.items():
+            found += _parts(part, prefix + name)
+    return found
+
+
+def _map_images(model, fn):
+    """``model`` with ``fn`` applied to each of its Images."""
+    if isinstance(model, Image):
+        return fn(model)
+    if not isinstance(model, System):
+        return model
+    parts = tuple(_map_images(c, fn) for c in model.components.values())
+    return eqx.tree_at(lambda s: tuple(s.components.values()), model, parts)
+
+
+def _rotated_180(image):
+    """The Image turned by 180 degrees about the origin of the sky."""
+    support = image.support
+    return dataclasses.replace(
+        image,
+        log_brightness=image.log_brightness[::-1, ::-1],
+        support=None if support is None else support[::-1, ::-1],
+        dra=-image.dra,
+        ddec=-image.ddec,
+    )
+
+
+def _chi2(model, observations):
+    return [
+        float(np.sum(whitened_residuals(model, d) ** 2)) for d in observations
+    ]
+
+
+def diagnose(model, data, regularisers=()):
+    """Check a model and its data for common imaging pitfalls.
+
+    Nothing is printed or warned: print the returned
+    [`Diagnosis`][drpangloss.imaging.Diagnosis] to read it. Run it on the
+    fitted model, with the regularisers used in the fit.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The model, normally containing at least one
+        [`Image`][drpangloss.models.Image] (the Image checks are skipped
+        otherwise).
+    data : OIData or sequence of OIData
+        The data.
+    regularisers : sequence, optional
+        The regularisers of the fit; a
+        [`Centroid`][drpangloss.imaging.Centroid] fixes the position.
+
+    Returns
+    -------
+    Diagnosis
+        ``checks`` holds, per dataset, ``chi2_red`` (χ² per data point) and
+        ``phase_regime`` (fraction of model visibilities with |arg V| > 0.8π
+        or |V| < 0.05, for projected phases only); per Image,
+        ``pixel_scale_mas``, ``edge_flux``
+        (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
+        (East, North offset in mas); and ``anchored`` (whether something
+        fixes the position), ``flip_dchi2`` (Δχ² when every Image is
+        rotated by 180° about the origin).
+    """
+    observations = list(data) if isinstance(data, (list, tuple)) else [data]
+    parts = _parts(model)
+    images = [(path, part) for path, part in parts if isinstance(part, Image)]
+    checks, warns = {}, []
+
+    chi2 = _chi2(model, observations)
+    checks["chi2_red"] = [
+        c / whitened_residuals(model, d).size
+        for c, d in zip(chi2, observations)
+    ]
+    for i, red in enumerate(checks["chi2_red"]):
+        if red > 2.0:
+            warns.append(
+                f"Dataset {i} has chi2 per point {red:.2f} > 2: the model "
+                "under-fits or the errors are underestimated; refit, or "
+                "check the error bars."
+            )
+        elif red < 0.5:
+            warns.append(
+                f"Dataset {i} has chi2 per point {red:.2f} < 0.5: the model "
+                "over-fits or the errors are overestimated; regularise more "
+                "or check the error bars."
+            )
+
+    checks["anchored"] = (
+        any(isinstance(part, PointSource) for _, part in parts)
+        or any(isinstance(r, Centroid) for r in regularisers)
+        or any(
+            d.observable_kind == "split"
+            and not d.cp_flag
+            and d.phi_mat is None
+            for d in observations
+        )
+    )
+    if images and not checks["anchored"]:
+        warns.append(
+            "Nothing fixes the position of the Image: closure, kernel and "
+            "DISCO phases are blind to a shift. Add a PointSource star or a "
+            "Centroid prior."
+        )
+
+    if images:
+        nyquist = nyquist_pixel_scale(observations)
+        checks["pixel_scale_mas"] = [im.pixel_scale_mas for _, im in images]
+        checks["edge_flux"], checks["centroid_mas"] = [], []
+        for (path, im), scale in zip(images, checks["pixel_scale_mas"]):
+            label = path or "the Image"
+            if scale > nyquist:
+                warns.append(
+                    f"{label} has pixels of {scale:.3g} mas, coarser than "
+                    f"the Nyquist scale {nyquist:.3g} mas of the longest "
+                    "baseline; use smaller pixels."
+                )
+            edge = float(1.0 - np.sum(im.brightness[2:-2, 2:-2]))
+            checks["edge_flux"].append(edge)
+            if edge > 0.05:
+                warns.append(
+                    f"{label} has {edge:.0%} of its flux in the outer 2 "
+                    "pixels; enlarge the field or add a support."
+                )
+            x, y = Centroid(1.0, path).centroid(model)
+            checks["centroid_mas"].append((float(x), float(y)))
+
+        flipped = _map_images(model, _rotated_180)
+        checks["flip_dchi2"] = sum(_chi2(flipped, observations)) - sum(chi2)
+        if abs(checks["flip_dchi2"]) < 1.0:
+            warns.append(
+                "Rotating the Images by 180 degrees changes chi2 by "
+                f"{checks['flip_dchi2']:.2g}: the data do not constrain "
+                "the orientation (V^2-only data cannot); expect a mirror "
+                "ambiguity."
+            )
+        elif checks["flip_dchi2"] <= -1.0:
+            warns.append(
+                "The Images rotated by 180 degrees fit better, by "
+                f"{-checks['flip_dchi2']:.3g} in chi2: the fit may be "
+                "trapped in a mirrored solution; refit from the rotated "
+                "image."
+            )
+
+    regimes = []
+    for d in observations:
+        if d.phi_mat is None and d.observable_kind != "mixed_log_complex":
+            continue
+        cvis = model.model(d.u, d.v, d.wavel)
+        bad = (np.abs(np.angle(cvis)) > 0.8 * np.pi) | (np.abs(cvis) < 0.05)
+        regimes.append(float(np.mean(bad)))
+    if regimes:
+        checks["phase_regime"] = regimes
+        if any(regimes):
+            warns.append(
+                "Some model visibilities have |phase| > 0.8 pi or |V| < "
+                "0.05, where projected (kernel or DISCO) phases, built from "
+                "wrapped phases, are unreliable; use a smaller field or "
+                "fainter extended flux."
+            )
+
+    return Diagnosis(checks, warns)

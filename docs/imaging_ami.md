@@ -3,7 +3,7 @@
 
 Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for JWST/NIRISS AMI data as processed by AMIGO, whose products are "mixed DISCO" coefficients: linear combinations of the log-amplitudes and phases of the complex visibilities, with independent errors.
 
-Real DISCO products are large, so we use `drpangloss.amigo.simulated_disco_record`, a small record with the same structure. Its uv samples fill a half-plane of a regular lattice out to 6.5 m, rotated on the sky as AMI data are by the parallactic angle. Its modes are the log-amplitudes, plus combinations of the phases that do not respond to a shift of the source, like kernel phases. Every mode has an error of 1e-4, typical of the ν Hor observations. Everything below is simulated.
+Real DISCO products are large, so we use `drpangloss.coverage.ami_grid_record`, a small record built the same way, computed on the fly. Its complex visibilities live on a fine uv grid, rotated on the sky as AMI data are by the parallactic angle, and only the cells inside the mask's splodges carry information, weighted by the mask's transfer function. That information is compressed, as in AMIGO, into orthonormal modes that are blind to the source's flux and position, keeping 99% of the precision. Everything below is simulated.
 
 ```python
 import sys
@@ -22,13 +22,13 @@ if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
 from drpangloss._geometry import pixel_offsets
-from drpangloss.amigo import simulated_disco_record
+from drpangloss.coverage import ami_grid_record
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.plotting import plot_model
 from drpangloss.scenes import ring, spiral
 
-template = OIData(simulated_disco_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
+template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
 longest = float(jnp.hypot(template.u, template.v).max())
 fringe_mas = 206265e3 * float(template.wavel) / longest
 print(f"{1e6 * float(template.wavel):.2f} um, {template.u.size} uv points")
@@ -42,8 +42,8 @@ plt.show()
 ```
 
 ```text
-4.80 um, 158 uv points
-longest baseline 6.5 m, finest fringes 152 mas
+4.80 um, 412 uv points
+longest baseline 5.9 m, finest fringes 167 mas
 uv lattice rotated by -6.9 deg
 ```
 
@@ -53,19 +53,19 @@ The samples are a lattice rotated by the parallactic angle. drpangloss finds the
 
 ## The truth scene
 
-At 4.8 µm the finest fringes have a period of about 150 mas, so structure on a few hundred milliarcseconds is well resolved, and pixels of 10 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
+At 4.8 µm the finest fringes have a period of about 150 mas, so structure several hundred milliarcseconds across spans several resolution elements, and pixels of 20 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
 
 `drpangloss.scenes.spiral` returns a unit-sum image in the drpangloss orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
 
 ```python
-npix, pixel_scale = 64, 10.0  # 640 mas field of view
+npix, pixel_scale = 64, 20.0  # 1280 mas field of view
 truth = spiral(
     npix,
     pixel_scale,
-    step_mas=150.0,
-    width_mas=25.0,
+    step_mas=250.0,
+    width_mas=40.0,
     turns=2.0,
-    fade_mas=250.0,
+    fade_mas=500.0,
 )
 scene = System(
     star=PointSource(),
@@ -108,7 +108,7 @@ print(f"chi^2 of the truth: {chi2:.0f} for {data.size} coefficients")
 ![imaging_ami output 7.1](generated/imaging_ami_cell007_out01.png)
 
 ```text
-chi^2 of the truth: 340 for 314 coefficients
+chi^2 of the truth: 595 for 588 coefficients
 ```
 
 The first coefficients are the log-amplitudes and the rest are shift-invariant phase combinations. The data scatter around the model within their error bars, and the chi-squared of the truth is comparable to the number of coefficients, as it should be.
@@ -136,9 +136,9 @@ print(f"largest observable: {jnp.abs(template.model(binary)).max():.1e}")
 ```
 
 ```text
-companion at dRA = -85 mas, dDec = 115 mas
-largest difference in the DISCO observables: 1.2e-07
-largest observable: 1.2e-01
+companion at dRA = -170 mas, dDec = 230 mas
+largest difference in the DISCO observables: 1.1e-07
+largest observable: 9.0e-02
 ```
 
 The two agree to float32 rounding, so the image and the analytic model are interchangeable in the likelihood.
@@ -170,15 +170,12 @@ print(f"largest difference: {difference.max():.1e}")
 ```
 
 ```text
-lattice (MFT): 0.07 ms per evaluation
+lattice (MFT): 0.11 ms per evaluation
+per point: 0.22 ms per evaluation
 ```
 
 ```text
-per point: 0.16 ms per evaluation
-```
-
-```text
-largest difference: 6.3e-08
+largest difference: 8.6e-08
 ```
 
 ## Another scene: a lopsided ring
@@ -189,8 +186,8 @@ largest difference: 6.3e-08
 ring_image = ring(
     npix,
     pixel_scale,
-    radius_mas=120.0,
-    width_mas=20.0,
+    radius_mas=240.0,
+    width_mas=36.0,
     inc_deg=50.0,
     pa_deg=30.0,
     asymmetry=0.6,

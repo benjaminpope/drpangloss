@@ -68,11 +68,14 @@ nav:
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
+      - Fitting: api/fitting.md
+      - Imaging: api/imaging.md
       - Inference: api/inference.md
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
       - Spectra: api/spectra.md
       - Scenes: api/scenes.md
+      - Coverage: api/coverage.md
       - Plotting: api/plotting.md
       - Bessel: api/bessel.md
       - Legacy: api/legacy.md

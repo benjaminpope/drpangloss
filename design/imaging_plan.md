@@ -16,37 +16,37 @@ The design rationale was established in the earlier research: the gauge survey, 
 ## Standing design decisions
 1. **Numerical precision.**
    - Every Fourier transform and matmul uses `precision=lax.Precision.HIGHEST`, which defeats TF32 on A100/H100 GPUs.
-   - Fitting and sampling entry points (`Problem`, `fit`) take `dtype="float64"` by default and run inside a local `jax.enable_x64(True)` context, casting inputs. `dtype="float32"` is opt-in.
+   - Fitting entry points (`fit`) take `dtype="float64"` by default and run inside a local `jax.enable_x64(True)` context, casting inputs. `dtype="float32"` is opt-in.
    - Forward-model code is dtype-agnostic and still passes the float32 test suite; x64 is never set globally.
    - `AGENTS.md` is updated to say that library code works in both precisions and that imaging entry points default to local x64.
-   - The `jax-finufft` backend uses complex128 under x64, or complex64 with a floor of `eps ≥ 1e-5` under float32.
 2. **One likelihood.** `whitened_residuals(model, data)` returns:
    - (model − data)/σ, and Δ/σ for projected (kernel/DISCO) phases;
    - **2 sin(Δ/2)/σ** for unprojected closure phases, which is exactly a von Mises likelihood and is smooth at ±π.
 
    `model_loglike` is redefined on top of it, so grids, limits, `numpyro_model` and fitting all share it.
-3. **One specification for fitting and sampling.** `Problem(model, data, priors, regularisers)`:
+3. **One specification for fitting and sampling.** `fit(model, priors, data, regularisers)` and `numpyro_model(model, priors, data, regularisers)` take the same arguments:
    - Free parameters are exactly the keys of `priors`, a dict of NumPyro *distributions*; numpyro is used only as a distributions library.
    - Support-respecting transforms come from `biject_to`.
-   - It exposes `problem.residuals` (least squares), `problem.loss`, and `problem.logdensity` in unconstrained coordinates. `logdensity` raises if non-probabilistic regularisers (MEM, TV, TSV) are present.
-4. **Optimisers:** `fit(problem, method=...)` with:
+   - `fit` finds the MAP; `numpyro_model` is the posterior for samplers, and accepts only genuine prior regularisers (it rejects MEM, TV and TSV).
+4. **Optimisers:** `fit(..., method=...)` with:
    - `"lm"`: optimistix Levenberg–Marquardt with a matrix-free, fixed-length `lx.Normal(lx.CG)` or `lx.LSMR` inner solve. It never materialises a Jacobian and is the default when residuals exist.
    - `"lbfgs"`: optimistix LBFGS, for MEM, TV and free error inflation.
    - `"adam"`: optax, now a declared runtime dependency.
 5. **Image parameterisation.**
-   - `Image(log_brightness, pixel_scale_mas, support=None, flux, dra, ddec, backend="dft"|"nufft")` is a `Component`, and `brightness = softmax(η, where=support)`.
+   - `Image(log_brightness, pixel_scale_mas, support=None, flux, dra, ddec, rotation_deg=0)` is a `Component`, and `brightness = softmax(η, where=support)`.
    - `log_brightness` is either a plain array (free log-pixels, MAP-only) or an object with `evaluate(pixel_scale_mas=...)`, e.g. `GaussianField` in Stage 5. That is the zodiax 0.6 `Expression` protocol; migrate when it is released.
 6. **Fourier backends.**
    - The separable DFT is the default and the oracle.
    - On uv lattices (AMI/AMIGO DISCOs) an `Image` whose `rotation_deg` matches the lattice uses the exact two-sided MFT (Stage 2b).
-   - jax-finufft is an optional extra, `[nufft]`, but is **shelved** (2026-09-30, issue #75): on an A100 it costs a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157), so the DFT is faster except for very large problems. No later stage relies on it; revisit when jax-finufft can reuse plans.
+   - A NUFFT backend (jax-finufft) was built in Stage 2 and **removed** after Stage 3 (issue #75): on an A100 it cost a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157). Its code is in the git history of PR #71; revisit only when jax-finufft can reuse plans.
    - Padded FFT plus interpolation is never used.
-   - `diagnose` compares any non-DFT backend against the DFT on the user's own data.
 7. **Rules for users:**
+   - The default field of view is the smaller of 500 mas and the interferometric field of view, λ/B_min (`imaging.field_of_view`); pixels are finer than Nyquist (`imaging.nyquist_pixel_scale`).
+   - Reconstructed images are shown with the beam (`imaging.beam`, the FWHM of the dirty beam's core) shaded in the lower left, and next to a residual map on a symmetric diverging scale: signed residuals for MAP images, z-scores whenever there are uncertainties.
    - Unresolved things are analytic; resolved emission goes in pixels.
    - Something must fix the origin: an analytic star, a `Centroid` prior, or a centred mean.
    - Initialise from a parametric fit.
-8. **Dependencies:** optax becomes required. `blackjax` (`[sampling]`) and `jax-finufft` (`[nufft]`) are optional extras. zodiax stays at `>=0.4`.
+8. **Dependencies:** optax (and lineax) become required. `blackjax` (`[sampling]`) is an optional extra. zodiax stays at `>=0.4`.
 
 ## Branching and workflow
 - **Branch.** Create `imaging` in `/Users/benpope/code/drpangloss`, branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
@@ -100,7 +100,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Checkpoint:** do the image API and the sky conventions read naturally?
 
 ## Stage 2: NUFFT backend and benchmark (about 3–4 h, plus your GPU run)
-**Status:** done (PR #71), including the OzSTAR A100 run. Outcome: the NUFFT is accurate but shelved for speed on GPUs (issue #75); the DFT and MFT are the supported paths.
+**Status:** done (PR #71), including the OzSTAR A100 run. Outcome: the NUFFT is accurate but too slow on GPUs (issue #75), and was removed after Stage 3; the DFT and MFT are the supported paths.
 
 **Build:**
 - `backend="nufft"` in `image_visibilities`, via jax-finufft `nufft2`:
@@ -124,9 +124,10 @@ The design rationale was established in the earlier research: the gauge survey, 
 ## Stage 2b: exact MFT on uv lattices (added after Stage 2)
 **Status:** done (PR #72). AMIGO DISCO data lie exactly on a detector-frame uv lattice rotated by the parallactic angle. `OIData.uv_grid` records it, `SourceModel.model_on_grid` defaults to `model`, and `Image(rotation_deg=...)` matching the lattice uses the two-sided MFT (Soummer et al. 2007): exact, and 3–8× faster on the ν Hor coverage. `amigo.simulated_disco_record` gives a small AMI-like record with diagonal errors, which replaces large fixtures in tests and tutorials; `disco_covariance` is optional.
 
-## Stage 3: `Problem`, `fit`, regularisers; dorito-style AMI imaging on simulated truth (about 6–9 h)
+## Stage 3: `fit`, regularisers; dorito-style AMI imaging on simulated truth (about 6–9 h)
+**Status:** implemented on `imaging-s3-fitting` (see the design note's Stage 3 log). Differences from the plan below: L-BFGS uses optax (gradient stopping) rather than optimistix; `l_curve` has `corner` and `discrepancy` criteria; `diagnose` has no field-of-view check (on a uv lattice the shortest spacing bounds the useful field from above); MWE-B uses `amigo.simulated_disco_record` with ν Hor-like errors rather than the real ν Hor operators (large files); the dorito recipe (Adam then BFGS, MEM weight 1e5) is not reproduced literally, since MEM with L-BFGS at an L-curve weight does the same job.
 **Build:**
-- `fitting.py`: `Problem` and `fit` with `lm`, `lbfgs` and `adam` (§3–4), with loss scaling, unscaled χ² reporting, and `info` (converged flag, steps, χ² per block).
+- `fitting.py`: `fit` with `lm`, `lbfgs` and `adam` (§3–4), with loss scaling, unscaled χ² reporting, and `info` (converged flag, steps, χ² per block).
 - A small private helper, `_precision.py`: a `run_in(dtype)` context and a `cast_tree(tree, dtype)` function used by the entry points (moved here from Stage 0, where nothing would use it yet).
 - `imaging.py`:
   - regularisers `MaxEntropy(prior=None)`, `TSV`, `TV` (ε-smoothed) and `Centroid(sigma_mas)`. Each has `value`, an optional `residuals`, and a `probabilistic` flag.
@@ -139,7 +140,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 - LM and L-BFGS agree on a TSV problem.
 - Gauge: rolling the image leaves the CP loss invariant; a `Centroid` fit stays centred; a star-anchored offset is recovered.
 - Positivity transforms work.
-- `logdensity` rejects MEM, TV and TSV.
+- `numpyro_model` rejects MEM, TV and TSV.
 - Every `diagnose` warning fires on a constructed bad case.
 - float32 and x64 paths agree to tolerance.
 
@@ -157,6 +158,13 @@ The design rationale was established in the earlier research: the gauge survey, 
 **Risk:** the regularisation weight depends on the scene. The SNR sweep shows where each regulariser breaks down.
 
 **Checkpoint:** is the fitting API right, and are the recovery metrics good enough? **Merge milestone candidate.**
+
+## Stage 3c: real AMI data, PDS 70 (once DISCO deconvolution is mature)
+**Data:** the AMIGO DISCO products for PDS 70 in `/Users/benpope/code/nuHor/data/PDS70/` (local only; never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
+**Scope:** drpangloss supplies a fast JAX library with the features interferometrists expect; synthetic truths for calibrating PDS 70 reconstructions are being built separately, so this stage does not do that.
+**Build:** an agent that deconvolves PDS 70 in each filter, separately and jointly (Stage 6's joint multi-filter machinery when available), with a wide range of options: regularisers (maximum entropy expected best, then TSV, then TV), weights from L-curves (discrepancy and corner), fields of view and pixel scales, starts (flat, parametric fit), analytic star or not, supports, and centroid priors. "Beat it to death": the aim is a general picture of what is robust across choices.
+**Compute:** demo locally first on a reduced set. If the full grid would take hours or exceed the laptop's RAM, hand the user an OzSTAR GPU script (`ozstar` skill) rather than running it here.
+**Report:** a notebook (not in the docs) comparing the reconstructions across options and filters, with beams, residual maps and `diagnose` output.
 
 ## Stage 4: grey long-baseline imaging with closure phases (about 4–6 h)
 **Build:**
@@ -185,10 +193,14 @@ The design rationale was established in the earlier research: the gauge survey, 
   - η = log(μ/max μ + ε) + IDCT₂[√S ⊙ latent] (orthonormal);
   - S ∝ (κ² + λ_jk)^(−order) on reflecting-boundary Laplacian eigenvalues, with S₀₀ = 0, scaled to a mean variance of σ².
 - `image_priors` gives N(0,1) latents.
-- `Problem` warns if you MAP the hyperparameters.
+- `fit` warns if you MAP the hyperparameters.
+- **Regularisation weights from the evidence**, building the matrix-free curvature machinery once:
+  - for quadratic and GP priors (TSV, `GaussianField`), the Laplace-approximated evidence as a function of the weight (or σ, length), with the log-determinant of the Gauss–Newton Hessian by stochastic Lanczos quadrature or Hutchinson probes; maximise it, or marginalise when sampling;
+  - for maximum entropy, Gull & Skilling's "classic MaxEnt" choice of the weight (−2αS equal to the number of well-measured directions, from the eigenvalues of the same curvature);
+  - both as helpers alongside `LCurve.corner` / `discrepancy`, returning a weight; `fit` never chooses it silently.
 - `imaging.gauss_newton_diagonal` (a Gauss–Newton–Bartlett estimate, for mass-matrix initialisation).
 - The `[sampling]` extra (blackjax).
-- There is no sampler wrapper: tutorials call BlackJAX on `problem.logdensity` and `problem.init()`, with numpyro `NUTS(potential_fn=...)` shown as the alternative.
+- There is no sampler wrapper: tutorials sample `numpyro_model` with numpyro's NUTS, and show BlackJAX on the potential from `numpyro.infer.util.initialize_model` as the alternative.
 
 **Tests:**
 - Exact 8×8 covariance against the inverse of (κ²I + L)^order; `order=1` equals TSV + L2 on η.
@@ -207,7 +219,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
-2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). This needs per-observation models in `Problem`, i.e. a `model_fn(values, index)`, like `joint_loglike`.
+2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). This needs per-observation models in `fit`, i.e. a `model_fn(values, index)`, like `joint_loglike`.
 3. **`ImageCube`.** Per-channel log-brightness with a GP along wavelength: a separable DCT field over (λ, y, x). The translation gauge is fixed per channel (one centroid per channel), unless an analytic star anchors it.
 
 **Tests:**
@@ -225,7 +237,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Stage 7: hardening and release (about 3–4 h)
 - API review for consistency and naming, with docstrings (units and examples) for every public object.
-- A mkdocs API page and a "choosing a regulariser, prior and backend" guide.
+- A mkdocs API page and a "choosing a regulariser and prior" guide.
 - Update `design/chromatic_sources.md` to mark `Image` as done.
 - Remove any leftovers, and do a final full-suite run under float32 and x64.
 - A version bump and a changelog entry.
@@ -248,28 +260,29 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 | Twin-folding helpers | We fit V²-only data routinely |
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
+| Cross-validation for the weight (e.g. held-out DISCO modes) | Not now; discrepancy, L-curve and (Stage 5) evidence suffice |
+| Deep Probabilistic Imaging and learned priors | Not planned; covered by other work in the group |
+| Top-Set surveys over synthetic truths | Not planned here; sophisticated PDS 70 truths are being built separately |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| Replacing `numpyro_model` with `Problem` | After Stage 5, if users agree |
-| The NUFFT backend as a recommended path (issue #75) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
+| Reinstating a NUFFT backend (issue #75; code in PR #71) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
 
 ## Critical files
 - **New:**
   - `src/drpangloss/fitting.py`, `src/drpangloss/imaging.py`, `src/drpangloss/fields.py`, `src/drpangloss/_precision.py`
-  - `design/image_reconstruction.md`, `scripts/bench_ft.py`
-  - `tests/test_image_model.py`, `tests/test_fitting.py`, `tests/test_imaging.py`, `tests/test_fields.py`, `tests/test_nufft.py`
+  - `design/image_reconstruction.md`
+  - `tests/test_image_model.py`, `tests/test_fitting.py`, `tests/test_imaging.py`, `tests/test_fields.py`
   - Notebooks: `imaging_ami.ipynb` (Stages 1–3), `imaging_long_baseline.ipynb` (Stage 4), `imaging_gp_sampling.ipynb` (Stage 5), `imaging_chromatic.ipynb` (Stage 6)
 - **Modified:**
   - `models.py`: `Image`, later `ImageCube`.
   - `_geometry.py`: `image_visibilities`.
   - `likelihood.py`: `whitened_residuals`, `model_loglike`.
-  - `__init__.py`, `pyproject.toml` (optax; `[nufft]`, `[sampling]` extras), `AGENTS.md`, `mkdocs.yml`, `scripts/sync_tutorial_docs.py`, `design/chromatic_sources.md`.
+  - `__init__.py`, `pyproject.toml` (optax, lineax; `[sampling]` extra), `AGENTS.md`, `mkdocs.yml`, `scripts/sync_tutorial_docs.py`, `design/chromatic_sources.md`.
 - **Reused unchanged:** `OIData` (including `with_model`), `amigo.load_oi_data`, `build_model`, `System`, `spectra.PowerLaw`, `plot_model`, `inference.gaussian_fisher` (for parametric uncertainties), `_grid.warn_unconverged`.
 
 ## Verification
 - Each stage has its tests plus a green full suite (float32 and x64), `ruff`, the tutorial sync test, and the docs build.
 - **Stage-specific quantitative gates:**
   - Stage 0: regression tolerances.
-  - Stage 2: NUFFT against the DFT, |ΔV| ≤ 3·eps·V(0).
   - Stage 3: synthetic recovery metrics and recovery metrics against simulated truth (AMI).
   - Stage 4: star-anchored recovery and the SNR/coverage sweep on ν Hor coverage.
   - Stage 5: exact GP covariance and sampling coverage.
@@ -280,17 +293,8 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 - The OzSTAR GPU benchmark was run on 2026-09-30 (A100; results in `design/image_reconstruction.md`). It confirmed the TF32 fix and led to shelving the NUFFT (issue #75).
 - Coverage comes from (a) a geometry-and-noise fixture extracted from ν Hor and (b) a simple synthetic-coverage generator (`tests/_coverage.py`: N telescopes, Earth-rotation tracks, channels, σ drawn from ν Hor statistics).
 
-### OzSTAR GPU test (the only cluster work in this project; done 2026-09-30)
-**Who runs it.** Claude never connects to OzSTAR. At the end of Stage 2, the session hands the user (a) conda environment setup commands and (b) an `sbatch` script, and the user runs them. Use the `ozstar` skill to write the job script. The job needs a GPU node with an A100 or H100, because the TF32 behaviour is specific to those cards.
-
-**What `scripts/bench_ft.py --gpu` must report:**
-1. **Speed:** DFT against jax-finufft, jitted value+grad, npix ∈ {64, 128, 256, 512} × M ∈ {10³, 10⁴, 10⁵}, in float32 and float64. The output sets the documented rule for when to switch backends. On GPU the DFT may win for small problems, because jax-finufft re-plans on every call (#157).
-2. **TF32 check:** the maximum error of the DFT with `precision=HIGHEST` against a float64 CPU reference. It must be about 1e-7 in float32 and must not show TF32-level error (about 1e-3). For contrast, also report the DEFAULT-precision error, to show that the problem exists and that HIGHEST fixes it. **This is the only reason a GPU test is needed.**
-3. **FINUFFT GPU accuracy:** float64 `nufft` on GPU against the DFT, because issue #162 reports that GPU float64 is no better than CPU float32. Also check float32 at eps = 1e-5.
-
-**Environment.** pip wheels of jax-finufft are CPU-only. The GPU build comes from conda-forge (`jax-finufft=*=cuda*`: `cuda129`/`cuda130`, linux-64), or from a source build against `jax[cuda12-local]`. Match the CUDA version to the jax build.
-
-**Timing.** Nothing before Stage 5 depends on the result; the laptop CPU benchmark sets the defaults until then. Run it before relying on the NUFFT or GPU for sampling at 128² and above, or for large GRAVITY-sized datasets. Record the results in `design/image_reconstruction.md`.
+### OzSTAR GPU test (done 2026-09-30)
+Run by the user (Claude never connects to OzSTAR) on an A100. It confirmed that `Precision.HIGHEST` gives float32-accurate DFTs on the GPU (7.9e-7, against 2.7e-5 with TF32), and that the jax-finufft NUFFT was too slow there, which led to its removal. Results and figures are in `design/image_reconstruction.md`; the scripts are in the git history of PR #71.
 
 ---
 
@@ -305,7 +309,7 @@ C1a image_visibilities (DFT) ──┬─▶ C1b Image ──┬─▶ C1c tests
                                │               ├─▶ C1d scene library (spiral/ring/star+comp)
                                │               ├─▶ C5a GaussianField (math; can start here)
                                └─▶ C2 NUFFT backend + CPU bench
-C0b + C1b ─▶ C3a Problem/fit + _precision ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
+C0b + C1b ─▶ C3a fit + _precision ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
 C1b ─▶ C3b regularisers ────────────┘
 C3a + C5a ─▶ C5b image_priors/GN diagonal/sampling MWE
 C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
@@ -324,7 +328,7 @@ C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
 | C0b likelihood unification | **Opus** | Changes existing semantics; the regression judgement is subtle |
 | C1a DFT conventions and precision | **Opus** | Sign and orientation errors are the historical bug source |
 | C2 NUFFT convention mapping | **Opus** | Half-pixel factors, axis pairing, eps floors |
-| C3a `Problem`/`fit` (transforms, LM pitfalls, dtype policy) | **Opus** | The core API; numerical subtleties |
+| C3a `fit` (transforms, LM pitfalls, dtype policy) | **Opus** | The core API; numerical subtleties |
 | C5a `GaussianField` (DCT spectrum, normalisation, exact-covariance test) | **Opus** | Mathematical correctness |
 | C6 polychromatic design | **Opus** (orchestrator) | Open design questions |
 | C1b `Image`, C3b regularisers, C3c `diagnose`, C5b helpers | **Sonnet** | Well specified by this plan; Opus reviews the diff |

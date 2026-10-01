@@ -345,6 +345,7 @@ def plot_model(
     title=None,
     saturate=None,
     cmap="magma",
+    beam=None,
 ):
     """Show a source model's rendered image with sky axes.
 
@@ -368,6 +369,11 @@ def plot_model(
         that faint structure next to a bright star is visible.
     cmap : str, optional
         Matplotlib colour map.
+    beam : Beam, optional
+        The data's resolution, from
+        [`imaging.beam`][drpangloss.imaging.beam], drawn as a shaded FWHM
+        ellipse in the lower-left corner, as is usual on reconstructed
+        images.
 
     Returns
     -------
@@ -386,6 +392,94 @@ def plot_model(
         cmap=cmap,
         vmax=vmax,
     )
+    ax.set(xlabel="ΔRA (mas)", ylabel="ΔDec (mas)")
+    if title is not None:
+        ax.set_title(title)
+    _enforce_sky_orientation(ax)
+    if beam is not None:
+        _draw_beam(ax, beam)
+    return ax
+
+
+def _draw_beam(ax, beam):
+    """Draw a beam's FWHM ellipse, shaded, in the lower-left corner."""
+    from matplotlib.patches import Ellipse
+
+    (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()  # (left, right), ...
+    inset = max(0.1, 0.6 * beam.major_mas / abs(x1 - x0))
+    centre = (x0 + inset * (x1 - x0), y0 + inset * (y1 - y0))
+    # In (ΔRA, ΔDec) the major axis points along (sin PA, cos PA).
+    angle = 90.0 - beam.pa_deg
+    ax.add_patch(
+        Ellipse(
+            centre,
+            beam.major_mas,
+            beam.minor_mas,
+            angle=angle,
+            facecolor=(1.0, 1.0, 1.0, 0.45),
+            edgecolor="white",
+            lw=1.0,
+        )
+    )
+
+
+@_styled
+def plot_residual_map(
+    residual,
+    fov_mas,
+    sigma=None,
+    ax=None,
+    title=None,
+    cmap="RdBu_r",
+):
+    """Show a signed residual image on a symmetric, diverging colour scale.
+
+    Use it next to an image and its reconstruction (or data and a model)
+    to see where they agree. Without ``sigma`` the map is the plain signed
+    residual, as for a maximum a posteriori image with no uncertainty.
+    With ``sigma`` it is the z-score ``residual / sigma``. The colour scale
+    is centred on zero in either case, with East to the left and North up.
+
+    Parameters
+    ----------
+    residual : array-like, shape (npix, npix)
+        E.g. ``reconstruction.render(npix, fov) - truth.render(npix, fov)``,
+        in the orientation of [`render`][drpangloss.models.SourceModel.render].
+    fov_mas : float
+        Width of the field of view in milliarcseconds.
+    sigma : array-like or float, optional
+        Uncertainty of the residual, per pixel or overall; if given, the
+        map shows z-scores.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on; a new figure is made if omitted.
+    title : str, optional
+        Axes title.
+    cmap : str, optional
+        A diverging Matplotlib colour map.
+
+    Returns
+    -------
+    matplotlib.axes.Axes
+        The axes drawn on (with a colour bar).
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5, 4))
+    values = np.asarray(residual, dtype=float)
+    label = "residual"
+    if sigma is not None:
+        values = values / np.asarray(sigma, dtype=float)
+        label = "z-score"
+    limit = float(np.nanmax(np.abs(values))) or 1.0
+    half = float(fov_mas) / 2.0
+    mappable = ax.imshow(
+        values,
+        extent=[half, -half, -half, half],
+        origin="upper",
+        cmap=cmap,
+        vmin=-limit,
+        vmax=limit,
+    )
+    ax.figure.colorbar(mappable, ax=ax, label=label)
     ax.set(xlabel="ΔRA (mas)", ylabel="ΔDec (mas)")
     if title is not None:
         ax.set_title(title)
