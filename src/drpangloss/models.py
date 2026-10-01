@@ -692,7 +692,8 @@ class Image(Component):
     @property
     def brightness(self):
         """Pixel fluxes: positive, unit sum, zero outside ``support``."""
-        where = None if self.support is None else self.support.ravel()
+        # As a mask: some zodiax versions return leaves as floats from get().
+        where = None if self.support is None else self.support.ravel() != 0
         flat = jax.nn.softmax(self.log_brightness.ravel(), where=where)
         return flat.reshape(self.log_brightness.shape)
 

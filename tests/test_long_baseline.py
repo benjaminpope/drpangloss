@@ -213,3 +213,13 @@ def test_a_model_per_dataset_must_match_the_datasets():
             NIGHT,
             init={"dra": 5.0},
         )
+
+
+def test_an_image_support_may_arrive_as_floats():
+    # zodiax >= 0.5 returns leaves as floats from get(); the support must
+    # still act as a mask.
+    support = circular_support(16, 1.0, 8.0, inner_radius_mas=2.0)
+    image = Image.from_model(GaussianDisk(3.0), 16, 1.0, support=support)
+    as_floats = image.set("support", support.astype(float))
+    assert np.allclose(as_floats.brightness, image.brightness)
+    assert np.all(as_floats.brightness[~support] == 0.0)
