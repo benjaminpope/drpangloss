@@ -232,10 +232,9 @@ def nrm_oidata(
     )
 
 
-# The four VLTI Unit Telescopes in the VLTI platform coordinates (P, Q), in
-# metres, used here as (East, North); the platform is rotated by about 19
-# degrees from East-North, which only rotates the coverage. Baselines run
-# from 46.6 m (UT2-UT3) to 130.2 m (UT1-UT4).
+# The four VLTI Unit Telescopes in local (East, North) ground coordinates,
+# in metres (ESO's station positions, already converted from the platform's
+# (P, Q) frame). Baselines run from 46.6 m (UT2-UT3) to 130.2 m (UT1-UT4).
 VLTI_UTS = onp.array(
     [
         [-9.925, -20.335],

@@ -3,7 +3,12 @@ import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
 
-from drpangloss.coverage import VLTI_UTS, nrm_oidata, vlti_oidata
+from drpangloss.coverage import (
+    PARANAL_LATITUDE_DEG,
+    VLTI_UTS,
+    nrm_oidata,
+    vlti_oidata,
+)
 from drpangloss.fitting import fit
 from drpangloss.imaging import Centroid, MaxEntropy, image_priors
 from drpangloss.models import (
@@ -35,6 +40,24 @@ def test_vlti_coverage_has_all_baselines_and_triangles():
     model = data.model(PointSource(dra=5.0, ddec=-3.0))
     assert np.allclose(model[: data.vis.size], 1.0)
     assert np.allclose(model[data.vis.size :], 0.0, atol=1e-5)
+
+
+def test_a_baseline_at_transit_through_the_zenith_projects_to_east_north():
+    # At transit (hour angle 0) of a source at the zenith (declination =
+    # latitude), the projected baseline is the ground baseline (East, North).
+    stations = [[0.0, 0.0], [10.0, 0.0], [0.0, 20.0]]
+    data = vlti_oidata(
+        stations,
+        declination_deg=PARANAL_LATITUDE_DEG,
+        hour_angles_h=(0.0,),
+        wavelengths_m=[3.5e-6],
+    )
+    assert np.allclose(
+        np.ravel(data.u), np.array([10.0, 0.0, -10.0]), atol=1e-5
+    )
+    assert np.allclose(
+        np.ravel(data.v), np.array([0.0, 20.0, 20.0]), atol=1e-5
+    )
 
 
 def test_circular_support_can_leave_a_hole_under_the_star():

@@ -401,8 +401,9 @@ def starting_image(
       sidelobes dominate).
 
     Fit it with ``fit(start, image_priors(start), data, regularisers)``,
-    adding a prior on ``"env.flux"`` to fit the envelope's flux too (which
-    stops the fit from parking excess flux next to the star).
+    adding a prior on the image's flux, ``"env.flux"`` (or ``"flux"`` with
+    ``star=False``), to fit it too: with a star, this stops the fit from
+    parking excess flux next to it.
 
     Parameters
     ----------
