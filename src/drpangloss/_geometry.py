@@ -24,6 +24,64 @@ def image_coordinates(npix, fov_mas):
     return np.meshgrid(x, y, indexing="xy")
 
 
+def pixel_offsets(npix, pixel_scale_mas):
+    """Sky offsets (mas) of the pixel centres along one image axis.
+
+    Along columns this is ``dra``, decreasing to the right (East left); along
+    rows it is ``ddec``, decreasing downwards (North up). Both are
+    ``(centre - index) * pixel_scale_mas`` with the centre at index
+    ``(npix - 1) / 2``, as in :func:`image_coordinates`.
+    """
+    return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
+
+
+def image_visibilities(brightness, uu, vv, pixel_scale_mas):
+    """Exact Fourier transform of a pixel image at arbitrary frequencies.
+
+    Each pixel is treated as a point at its centre, so
+    ``V(u, v) = sum_{row, col} I[row, col] exp(-2πi (u x_col + v y_row))``
+    with the sign convention of :func:`offset_phase`. The sum is separable
+    into two matrix products, done at ``Precision.HIGHEST`` (on A100/H100
+    GPUs the default is TF32, with ~1e-3 relative error). On a regular uv
+    grid, :func:`grid_visibilities` does the same sum faster.
+
+    Parameters
+    ----------
+    brightness : array-like, shape (nrow, ncol)
+        Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
+        North up). Not normalised here.
+    uu, vv : array-like
+        Spatial frequencies, baseline / wavelength (per radian), of
+        broadcastable shapes.
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibilities with the broadcast shape of ``uu`` and ``vv``.
+    """
+    brightness = np.asarray(brightness)
+    uu, vv = np.broadcast_arrays(uu, vv)
+    vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
+    return vis.reshape(np.shape(uu))
+
+
+def _fourier_matrix(freq_per_rad, npix, pixel_scale_mas):
+    """``exp(-2πi f x)`` for frequencies ``f`` and one axis's pixel offsets."""
+    offsets = pixel_offsets(npix, pixel_scale_mas)
+    return np.exp(-2j * np.pi * np.outer(mas2rad * freq_per_rad, offsets))
+
+
+def _dft(brightness, uu, vv, pixel_scale_mas):
+    nrow, ncol = brightness.shape
+    cols = _fourier_matrix(uu, ncol, pixel_scale_mas)
+    rows = _fourier_matrix(vv, nrow, pixel_scale_mas)
+    highest = jax.lax.Precision.HIGHEST
+    partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
+    return np.sum(partial * cols, axis=-1)
+
+
 def offset_phase(uu, vv, dra, ddec):
     """Fourier shift factor for an offset of ``(dra, ddec)`` milliarcseconds."""
     arg = 2.0 * np.pi * mas2rad * (uu * dra + vv * ddec)

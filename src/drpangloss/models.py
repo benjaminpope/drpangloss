@@ -3,7 +3,9 @@
 * Components ([`PointSource`][drpangloss.models.PointSource],
   [`GaussianDisk`][drpangloss.models.GaussianDisk],
   [`UniformDisk`][drpangloss.models.UniformDisk],
-  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]) are
+  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim], and
+  the flared scattered-light disks such as
+  [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw]) are
   single shapes, combined with flux weights in a
   [`System`][drpangloss.models.System].
 * [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian] and
@@ -30,6 +32,7 @@ from jax.scipy.signal import fftconvolve
 from ._geometry import (
     check_az_prof_nonnegative,
     image_coordinates,
+    image_visibilities,
     offset_phase,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
@@ -516,6 +519,262 @@ class ModulatedGaussianRim(Component):
         )
         psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
         return fftconvolve(ring, psf, mode="same")
+
+
+class FlaredDisk(Component):
+    r"""Flared, inclined scattered-light disk (Blakely et al. 2024, §III).
+
+    The geometrical disk model that Blakely et al. (2024, arXiv:2404.13032)
+    fitted to JWST AMI data of PDS 70: a skewed Gaussian ring on a flared
+    surface, with a forward-scattering peak on its near side. It is an
+    abstract base: use [`FlaredDiskHG`][drpangloss.models.FlaredDiskHG],
+    [`FlaredDiskGaussian`][drpangloss.models.FlaredDiskGaussian] or
+    [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw], which
+    differ only in the azimuthal phase function. The disk contains no star
+    or planets; compose them in a [`System`][drpangloss.models.System], and
+    any over-resolved flux with a [`Resolved`][drpangloss.models.Resolved]
+    component (the paper's $I_o$).
+
+    The brightness has no analytic Fourier transform, so the visibilities
+    are the exact Fourier transform of the brightness sampled on a fixed,
+    centred grid of ``npix`` x ``npix`` pixels of ``pixel_scale_mas``. The
+    grid must cover the whole disk, and its pixels must be small enough to
+    resolve the ring and its sharp inner edge.
+
+    Parameters
+    ----------
+    radius : float or array-like
+        Radius of peak brightness $r_0$ in milliarcseconds (before the
+        skew, which moves the peak outwards).
+    fwhm : float or array-like
+        Radial FWHM of the Gaussian ring, $2\sqrt{2\ln 2}\,\sigma_r$, in
+        milliarcseconds.
+    inc : float or array-like
+        Inclination in degrees (0 is face-on).
+    pa : float or array-like
+        Position angle of the projected major axis in degrees, North to
+        East. The near side, where forward scattering peaks, is at
+        ``pa + 90``: ``pa`` and ``pa + 180`` are mirror images.
+    npix : int
+        Pixels on a side of the grid the visibilities are computed from;
+        must be even, so that no pixel centre falls on the star, where the
+        surface is singular.
+    pixel_scale_mas : float
+        Pixel size of that grid in milliarcseconds.
+    skew : float or array-like, optional
+        Truncation $\alpha$ of the ring's inner edge (default 0, a
+        symmetric Gaussian ring).
+    aspect : float or array-like, optional
+        Aspect ratio $z/\rho$ of the scattering surface at ``radius``
+        (default 0, a flat disk).
+    flaring : float or array-like, optional
+        Flaring index $\beta$ of the surface (default 1.25).
+    symmetric : float or array-like, optional
+        Brightness of the axisymmetric part relative to the phase function,
+        $A_s/A_a$ in the paper (default 0).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1): the disk/star
+        flux ratio when the star has ``flux=1``.
+    dra, ddec : float or array-like, optional
+        Offset of the disk centre in milliarcseconds, positive to the East
+        and North.
+
+    Notes
+    -----
+    The brightness follows Eqs. 2–9 of the paper. Sky offsets are rotated
+    so that $x$ runs along the major axis and $y$ along the minor axis,
+    positive towards the near side, and $y$ is divided by $\cos i$ to give
+    mid-plane coordinates. The surface height
+    $z = h\,r_0\,(\rho/r_0)^\beta$, with $\rho = \sqrt{x^2 + y^2}$ and
+    $h$ = ``aspect``, raises the apparent radius to
+    $r = \sqrt{x^2 + (y + z\sin i)^2 + z^2}$, which shifts the ring
+    towards the far side. The brightness is
+
+    $$I(r, \theta) = \left(f(\theta) + A_s/A_a\right)
+    \exp\left(-\frac{(r - r_0)^2}{2\sigma_r^2}\right)
+    \frac{1}{2}\left(1 + \mathrm{erf}\left(
+    \frac{\alpha (r - r_0)}{\sqrt{2}\sigma_r}\right)\right),$$
+
+    where $\theta = \arctan(x / y)$ is the mid-plane azimuth from the
+    near-side minor axis and $f$ the phase function. The paper gives the
+    height as $H_{100}$ (au) at 100 au, which is
+    ``aspect`` $= (H_{100} / 100\,\mathrm{au})(r_0 / 100\,\mathrm{au})^{\beta - 1}$
+    with $r_0$ in au; its fitted fluxes $A_a, A_s$ are absolute, and here
+    only their ratio and the disk's total ``flux`` enter.
+    """
+
+    radius: jax.Array
+    fwhm: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    skew: jax.Array
+    aspect: jax.Array
+    flaring: jax.Array
+    symmetric: jax.Array
+    npix: int = eqx.field(static=True)
+    pixel_scale_mas: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius,
+        fwhm,
+        inc,
+        pa,
+        npix,
+        pixel_scale_mas,
+        skew=0.0,
+        aspect=0.0,
+        flaring=1.25,
+        symmetric=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+    ):
+        self.radius = np.asarray(radius, dtype=float)
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.skew = np.asarray(skew, dtype=float)
+        self.aspect = np.asarray(aspect, dtype=float)
+        self.flaring = np.asarray(flaring, dtype=float)
+        self.symmetric = np.asarray(symmetric, dtype=float)
+        self.npix = int(npix)
+        if self.npix % 2:
+            raise ValueError(f"npix must be even, got {self.npix}.")
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _phase_function(self, theta):
+        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side."""
+        raise NotImplementedError
+
+    def is_physical(self):
+        return super().is_physical() & (self.symmetric >= 0.0)
+
+    def _centred_cvis(self, uu, vv):
+        xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
+        pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
+        return image_visibilities(
+            pixels / np.sum(pixels), uu, vv, self.pixel_scale_mas
+        )
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        # Mid-plane coordinates: x along the major axis, y along the minor
+        # axis (towards the near side, at pa + 90), deprojected.
+        cos_inc = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        y, x = undo_elliptical_transf_coord(xx, yy, self.pa, cos_inc)
+
+        # Flared surface (Eq. 2) and apparent radius (Eq. 3). The floors
+        # keep gradients finite at the star, where both radii vanish.
+        tiny = np.finfo(np.result_type(x, float)).tiny
+        rho = np.sqrt(np.maximum(x**2 + y**2, tiny))
+        z = self.aspect * self.radius * (rho / self.radius) ** self.flaring
+        r2 = x**2 + (y + z * np.sin(self.inc * dtor)) ** 2 + z**2
+        r = np.sqrt(np.maximum(r2, tiny))
+
+        # Skewed Gaussian ring (Eqs. 4-5) times the azimuthal term (Eq. 9).
+        sigma = self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        offset = (r - self.radius) / sigma
+        ring = (
+            np.exp(-0.5 * offset**2)
+            * 0.5
+            * (1.0 + jax.scipy.special.erf(self.skew * offset / np.sqrt(2.0)))
+        )
+        theta = np.arctan2(x, y)
+        return (self._phase_function(theta) + self.symmetric) * ring
+
+
+class FlaredDiskHG(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Henyey–Greenstein phase function.
+
+    $f(\theta) = \dfrac{1 - g^2}{4\pi\,(1 + g^2 - 2g\cos\theta)^{3/2}}$
+    (Blakely et al. 2024, Eq. 6).
+
+    Parameters
+    ----------
+    g : float or array-like
+        Asymmetry parameter, from 0 (isotropic) towards 1 (strongly
+        forward scattering).
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+
+    Examples
+    --------
+    >>> disk = FlaredDiskHG(
+    ...     g=0.3, radius=440.0, fwhm=290.0, inc=52.0, pa=160.0,
+    ...     npix=96, pixel_scale_mas=20.0, flux=0.05,
+    ... )
+    """
+
+    g: jax.Array
+
+    def __init__(self, g, **geometry):
+        self.g = np.asarray(g, dtype=float)
+        super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (np.abs(self.g) < 1.0)
+
+    def _phase_function(self, theta):
+        g = self.g
+        return (1.0 - g**2) / (
+            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * np.cos(theta)) ** 1.5
+        )
+
+
+class FlaredDiskGaussian(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Gaussian phase function.
+
+    $f(\theta) = \exp\left(-\theta^2 / 2\sigma_\theta^2\right)$, with
+    $\theta \in (-180°, 180°]$ (Blakely et al. 2024, Eq. 7).
+
+    Parameters
+    ----------
+    sigma_theta : float or array-like
+        Azimuthal width in degrees.
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+    """
+
+    sigma_theta: jax.Array
+
+    def __init__(self, sigma_theta, **geometry):
+        self.sigma_theta = np.asarray(sigma_theta, dtype=float)
+        super().__init__(**geometry)
+
+    def _phase_function(self, theta):
+        return np.exp(-0.5 * (theta / (self.sigma_theta * dtor)) ** 2)
+
+
+class FlaredDiskPowerLaw(FlaredDisk):
+    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a power-law phase function.
+
+    $f(\theta) = \cos^N(\theta / 2)$, with $\theta \in (-180°, 180°]$
+    (Blakely et al. 2024, Eq. 8), the best-fitting form for PDS 70.
+
+    Parameters
+    ----------
+    n : float or array-like
+        Power $N$; larger is more concentrated towards the near side.
+    **geometry
+        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+    """
+
+    n: jax.Array
+
+    def __init__(self, n, **geometry):
+        self.n = np.asarray(n, dtype=float)
+        super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (self.n >= 0.0)
+
+    def _phase_function(self, theta):
+        # Clipped: cos(θ/2) rounds to slightly below zero at θ = ±π.
+        return np.maximum(np.cos(0.5 * theta), 0.0) ** self.n
 
 
 class Resolved(SourceModel):
