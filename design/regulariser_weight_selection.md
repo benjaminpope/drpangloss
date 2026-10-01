@@ -249,21 +249,24 @@ One fixed-point step usually suffices. The estimate assumes the model is adequat
 - For a single regulariser there is one knob. With a centroid prior and a MEM prior
   together (dorito's recipe) fix the secondary weight and sweep the primary one.
 
-## 4. Suggested API sketch
+## 4. The API as built (Stages 3 and 5)
+
+The sketch originally proposed here, `weight_sweep`/`WeightSweep` with a spline corner and cross-validation, became the following.
 
 ```python
-sweep = weight_sweep(lambda w: Problem(model, data, priors, [TV(weight=w)]),
-                     weights=jnp.logspace(-2, 4, 11), method="lbfgs")
-sweep.plot()                       # log chi2 vs log R, points labelled by w
-w_corner = sweep.corner()          # max curvature of a spline through the sweep
-w_disc = sweep.discrepancy(1.0)    # per-block chi2_red = 1 crossing (largest block wins)
+curve = l_curve(start, priors, data, MaxEntropy(1.0, path="env"),
+                weights=jnp.logspace(3.5, 1.0, 11))      # strong to weak, warm-started
+curve.discrepancy()          # χ²/N = 1, on the binding dataset; None if not crossed
+curve.corner()               # maximum curvature of (log χ², log R), by finite differences
+curve.classic_maxent(data)   # Gull–Skilling: −2wS = Σ λ/(λ + w); MaxEntropy sweeps only
+
+log_evidence(gp_fit.model, data)   # Laplace evidence of a GaussianField MAP; compare over σ, ℓ
+error_scale(gp_fit.model, data)    # MacKay's s = √(χ²/(N − γ)); then data.with_error_scale(s)
 ```
 
-- Return a warning (not an error) if `corner()` finds no interior maximum, if the two
-  criteria differ by more than a decade, or if any fit did not converge.
-- Tests: a synthetic problem with a known optimum weight (quadratic R, linear model)
-  so `corner()` and `discrepancy()` can be checked against the analytic answer; a
-  test that a truncated sweep raises the warning.
+- Every criterion is a helper that returns a number; `fit` never chooses a weight.
+- Cross-validation was dropped by decision (2026-10-01).
+- The tutorials `imaging_rml` and `imaging_gp` show the workflow.
 
 ## 5. Costs summary
 
