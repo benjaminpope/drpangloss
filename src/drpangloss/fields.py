@@ -37,7 +37,11 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
 
     ``S_jk ∝ (κ² + λ_jk)^(-order)``, with ``κ = 1 / length_mas`` and
     ``λ_jk`` the eigenvalues of the reflecting-boundary (Neumann) Laplacian
-    on the pixel grid, ``(2/h)² [sin²(πj/2n) + sin²(πk/2m)]``. The constant
+    on the pixel grid, ``(2/h)² [sin²(πj/2n) + sin²(πk/2m)]``. With two
+    lengths ``(ℓ_row, ℓ_col)`` the field is anisotropic,
+    ``S_jk ∝ (1 + ℓ_row² λ_j + ℓ_col² λ_k)^(-order)``: correlated over
+    ``ℓ_row`` along the image's columns (down a column, from row to row) and
+    over ``ℓ_col`` along its rows. One length gives the isotropic case. The constant
     mode is set to zero, since a softmax image does not depend on it, and
     the spectrum is scaled so that the field's variance, averaged over
     pixels, is ``sigma²``.
@@ -50,8 +54,9 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
         Pixel size ``h`` in milliarcseconds.
     sigma : float or array-like
         Standard deviation of the field, in units of log-brightness.
-    length_mas : float or array-like
-        Correlation length ``1/κ`` in milliarcseconds.
+    length_mas : float or array-like, shape () or (2,)
+        Correlation length ``1/κ`` in milliarcseconds, or the pair
+        ``(ℓ_row, ℓ_col)`` for an anisotropic field.
     order : int, optional
         Exponent of the spectrum (default 2). ``order=1`` makes the prior
         exactly a total-squared-variation plus L2 penalty on the field.
@@ -67,8 +72,21 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
         (2.0 / pixel_scale_mas * np.sin(np.pi * np.arange(n) / (2 * n))) ** 2
         for n in shape
     ]
-    laplacian = eigen[0][:, None] + eigen[1][None, :]
-    spectrum = (length_mas**-2.0 + laplacian) ** (-float(order))
+    length_mas = np.asarray(length_mas)
+    if length_mas.ndim == 0:
+        laplacian = eigen[0][:, None] + eigen[1][None, :]
+        spectrum = (length_mas**-2.0 + laplacian) ** (-float(order))
+    elif length_mas.shape == (2,):
+        stretched = (
+            length_mas[0] ** 2 * eigen[0][:, None]
+            + length_mas[1] ** 2 * eigen[1][None, :]
+        )
+        spectrum = (1.0 + stretched) ** (-float(order))
+    else:
+        raise ValueError(
+            "length_mas must be one length or a pair (row, column), not "
+            f"shape {length_mas.shape}."
+        )
     spectrum = spectrum.at[0, 0].set(0.0)
     return sigma**2 * spectrum * spectrum.size / np.sum(spectrum)
 
@@ -87,7 +105,10 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``μ`` (``mean``, floored at ``ε`` = ``mean_floor`` of its peak). With a
     standard-normal prior on ``latent``, ``η`` is a Gaussian process with
     standard deviation ``sigma`` and correlation length ``length_mas``
-    about the template. ``latent = 0`` gives the template raised by the
+    about the template. Two lengths make it anisotropic: with the Image's
+    ``rotation_deg`` set to a structure's position angle, ``(ℓ_along,
+    ℓ_across)`` correlates the field along the structure (the grid's "up"
+    axis) and across it, which suits filaments. ``latent = 0`` gives the template raised by the
     floor, ``μ/max μ + ε``, as an image.
 
     Use it in place of an Image's log-brightness, with priors from
@@ -110,7 +131,9 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     sigma : float or array-like, optional
         Standard deviation of the field (default 1).
     length_mas : float or array-like, optional
-        Correlation length in milliarcseconds (default 1).
+        Correlation length in milliarcseconds (default 1), or a pair
+        ``(ℓ_row, ℓ_col)``: correlated over ``ℓ_row`` along the image's
+        vertical axis and ``ℓ_col`` along its horizontal axis.
     order : int, optional
         Exponent of the spectrum (default 2).
     mean : array-like, optional
@@ -149,6 +172,11 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 f"sigma must be finite and non-negative, not {value}."
             )
         _check_positive("length_mas", self.length_mas)
+        if self.length_mas.shape not in ((), (2,)):
+            raise ValueError(
+                "length_mas must be one length or a pair (row, column), "
+                f"not shape {self.length_mas.shape}."
+            )
         self.order = int(order)
         if self.order < 1:
             raise ValueError(f"order must be a positive integer, not {order}.")
