@@ -47,8 +47,25 @@ def _gaussian_loglike(whitened, errors):
     )
 
 
-def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
-    """The data uncertainties with extra error terms added in quadrature.
+# Error-inflation terms, as accepted by ``inflated_errors``, the likelihoods,
+# and the ``noise`` argument of ``fit`` and ``numpyro_model``.
+NOISE_TERMS = ("vis_scale", "phi_scale", "vis_error_rel", "phi_error")
+
+
+def inflated_errors(
+    data_obj,
+    prediction,
+    vis_error_rel=None,
+    phi_error=None,
+    vis_scale=None,
+    phi_scale=None,
+):
+    """The data uncertainties, scaled and with extra terms in quadrature.
+
+    The visibility errors become ``hypot(vis_scale σ, vis_error_rel V)``,
+    for the model visibility observable ``V``, and the phase errors
+    ``hypot(phi_scale σ, phi_error)``. Terms left as ``None`` are not
+    applied.
 
     Parameters
     ----------
@@ -58,9 +75,12 @@ def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
         Model vector, e.g. from [`OIData.model`][drpangloss.oidata.OIData.model].
     vis_error_rel : float, optional
         Extra visibility error, as a fraction of the *model* visibility
-        observable (e.g. of the model V² for squared visibilities).
+        observable (e.g. of the model V² for squared visibilities): a
+        calibration error.
     phi_error : float, optional
         Extra phase error in radians.
+    vis_scale, phi_scale : float, optional
+        Factors multiplying the visibility and phase uncertainties.
 
     Returns
     -------
@@ -68,15 +88,22 @@ def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
         Uncertainties matching [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
     """
     _, errors = data_obj.flatten_data()
-    if vis_error_rel is None and phi_error is None:
+    terms = (vis_error_rel, phi_error, vis_scale, phi_scale)
+    if all(term is None for term in terms):
         return errors
-    if data_obj.vis_mat is not None or data_obj.phi_mat is not None:
+    projected = data_obj.vis_mat is not None or data_obj.phi_mat is not None
+    if projected and (vis_error_rel is not None or phi_error is not None):
         raise ValueError(
             "Extra error terms are defined for the observed visibilities and "
-            "phases, not for projected (vis_mat/phi_mat) observables."
+            "phases, not for projected (vis_mat/phi_mat) observables; scale "
+            "their errors with vis_scale/phi_scale instead."
         )
     n_vis = np.asarray(data_obj.vis).size
     d_vis, d_phi = errors[:n_vis], errors[n_vis:]
+    if vis_scale is not None:
+        d_vis = vis_scale * d_vis
+    if phi_scale is not None:
+        d_phi = phi_scale * d_phi
     if vis_error_rel is not None:
         d_vis = np.hypot(d_vis, vis_error_rel * np.asarray(prediction)[:n_vis])
     if phi_error is not None:
@@ -84,16 +111,66 @@ def inflated_errors(data_obj, prediction, vis_error_rel=None, phi_error=None):
     return np.concatenate([d_vis, d_phi])
 
 
-def _whitened_and_errors(model_object, data_obj, vis_error_rel, phi_error):
+def noise_sites(noise, n_datasets):
+    """Expand a ``noise`` specification into named sites.
+
+    ``noise`` maps error-inflation terms (``NOISE_TERMS``) to priors and
+    applies to every dataset, giving sites ``"noise.<term>"``; a list of such
+    dicts, one per dataset, gives sites ``"noise[i].<term>"``.
+
+    Returns
+    -------
+    dict
+        ``{site: (prior, datasets, term)}``, ``datasets`` being the indices
+        of the datasets the term applies to.
+    """
+    if noise is None:
+        return {}
+    if isinstance(noise, dict):
+        specs = [("noise", tuple(range(n_datasets)), noise)]
+    else:
+        noise = list(noise)
+        if len(noise) != n_datasets:
+            raise ValueError(
+                f"noise has {len(noise)} entries for {n_datasets} datasets; "
+                "pass one dict per dataset, or one dict for all of them."
+            )
+        specs = [(f"noise[{i}]", (i,), n) for i, n in enumerate(noise)]
+    sites = {}
+    for prefix, datasets, terms in specs:
+        for term, prior in terms.items():
+            if term not in NOISE_TERMS:
+                raise ValueError(
+                    f"Unknown noise term {term!r}; use one of {NOISE_TERMS}."
+                )
+            lower = getattr(prior.support, "lower_bound", None)
+            value = None if lower is None else concrete(lower)
+            if value is None or onp.any(value < 0.0):
+                raise ValueError(
+                    f"The prior on noise term {term!r} must have "
+                    "non-negative support, e.g. dist.Uniform(0, ...)."
+                )
+            sites[f"{prefix}.{term}"] = (prior, datasets, term)
+    return sites
+
+
+def noise_for(sites, values, index):
+    """The error-inflation terms of dataset ``index``, from site values."""
+    return {
+        term: values[site]
+        for site, (_, datasets, term) in sites.items()
+        if index in datasets
+    }
+
+
+def _whitened_and_errors(model_object, data_obj, noise):
     prediction = data_obj.model(model_object)
-    errors = inflated_errors(data_obj, prediction, vis_error_rel, phi_error)
+    errors = inflated_errors(data_obj, prediction, **noise)
     data = data_obj.flatten_data()[0]
     return _whiten(data_obj, prediction, data, errors), errors
 
 
-def whitened_residuals(
-    model_object, data_obj, *, vis_error_rel=None, phi_error=None
-):
+def whitened_residuals(model_object, data_obj, **noise):
     """Residuals of a model divided by the data uncertainties.
 
     This is the one residual vector behind every likelihood in drpangloss:
@@ -113,8 +190,9 @@ def whitened_residuals(
         Model to evaluate.
     data_obj : OIData
         Data to compare with.
-    vis_error_rel, phi_error : float, optional
-        Extra error terms added in quadrature to the uncertainties (see
+    **noise
+        Error-inflation terms, ``vis_scale``, ``phi_scale``,
+        ``vis_error_rel`` and ``phi_error`` (see
         [`inflated_errors`][drpangloss.likelihood.inflated_errors]).
 
     Returns
@@ -123,19 +201,10 @@ def whitened_residuals(
         One dimensionless residual per data point, in the order of
         [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
     """
-    return _whitened_and_errors(
-        model_object, data_obj, vis_error_rel, phi_error
-    )[0]
+    return _whitened_and_errors(model_object, data_obj, noise)[0]
 
 
-def model_loglike(
-    model_object,
-    data_obj,
-    *,
-    vis_error_rel=None,
-    phi_error=None,
-    reject_unphysical=False,
-):
+def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
     """Evaluate the log likelihood for an instantiated model object.
 
     This is ``-0.5 * sum(r**2) - sum(log σ) - (n/2) log 2π`` for the
@@ -151,22 +220,21 @@ def model_loglike(
         Model to evaluate.
     data_obj : OIData
         Data to compare with.
-    vis_error_rel, phi_error : float, optional
-        Extra error terms added in quadrature to the data uncertainties,
-        e.g. fitted as nuisance parameters: a visibility error relative to
-        the model visibility, and a phase error in radians (see
-        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). The
-        Gaussian normalization uses the inflated errors.
     reject_unphysical : bool, optional
         If True, return ``-inf`` when
         [`is_physical`][drpangloss.models.SourceModel.is_physical] is false,
         e.g. for a negative flux or a rim whose brightness goes negative.
         This works inside ``jax.jit``, so samplers can use it as a hard prior
         boundary.
+    **noise
+        Error-inflation terms, e.g. fitted as nuisance parameters:
+        ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
+        ``vis_error_rel`` (relative to the model visibility) and
+        ``phi_error`` (radians) are added in quadrature (see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). The
+        Gaussian normalization uses the inflated errors.
     """
-    whitened, errors = _whitened_and_errors(
-        model_object, data_obj, vis_error_rel, phi_error
-    )
+    whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
     logl = _gaussian_loglike(whitened, errors)
     if reject_unphysical:
         logl = np.where(model_object.is_physical(), logl, -np.inf)
@@ -204,7 +272,7 @@ def joint_errors(observations):
 def joint_loglike(params, observations, model_fn, **options):
     """Sum independent Gaussian log likelihoods over multiple observations.
 
-    ``options`` (``vis_error_rel``, ``phi_error``, ``reject_unphysical``) are
+    ``options`` (error terms and ``reject_unphysical``) are
     passed to [`model_loglike`][drpangloss.likelihood.model_loglike].
     """
     return sum(
@@ -242,7 +310,7 @@ def loglike(values, params, data_obj, model, **options):
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
     **options
-        ``vis_error_rel``, ``phi_error`` and ``reject_unphysical``, passed to
+        Error terms and ``reject_unphysical``, passed to
         [`model_loglike`][drpangloss.likelihood.model_loglike].
 
     Returns
@@ -308,7 +376,9 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-def numpyro_model(model, priors, data_obj, regularisers=(), **options):
+def numpyro_model(
+    model, priors, data_obj, regularisers=(), noise=None, **options
+):
     """Return a numpyro model sampling the parameters in ``priors``.
 
     Parameters
@@ -333,8 +403,14 @@ def numpyro_model(model, priors, data_obj, regularisers=(), **options):
         ``numpyro.factor``. Only genuine prior densities
         (``probabilistic``) are allowed: penalties such as maximum entropy
         are for [`fit`][drpangloss.fitting.fit].
+    noise : dict or list of dict, optional
+        Priors on error-inflation terms (``vis_scale``, ``phi_scale``,
+        ``vis_error_rel``, ``phi_error``; see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]),
+        sampled as sites ``"noise.<term>"``. A list gives each dataset its
+        own terms, as sites ``"noise[i].<term>"``.
     **options
-        ``vis_error_rel``, ``phi_error`` and ``reject_unphysical``, passed to
+        Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][drpangloss.likelihood.model_loglike].
 
     Returns
@@ -358,12 +434,20 @@ def numpyro_model(model, priors, data_obj, regularisers=(), **options):
         tuple(data_obj) if isinstance(data_obj, (list, tuple)) else (data_obj,)
     )
 
+    sites = noise_sites(noise, len(observations))
+
     def numpyro_fn():
         values = [numpyro.sample(path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
+        terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}
         numpyro.factor(
             "loglike",
-            sum(model_loglike(source, obs, **options) for obs in observations),
+            sum(
+                model_loglike(
+                    source, obs, **options, **noise_for(sites, terms, i)
+                )
+                for i, obs in enumerate(observations)
+            ),
         )
         for i, regulariser in enumerate(regularisers):
             numpyro.factor(f"regulariser_{i}", -regulariser.value(source))

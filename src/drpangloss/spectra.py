@@ -9,22 +9,32 @@ module, which gives its weight at each wavelength. Inside a
 star = UniformDisk(0.5, flux=PowerLaw(1.0, index=-4.0, wavel0=1.65e-6))
 disk = GaussianDisk(5.0, flux=PowerLaw(0.3, index=1.0, wavel0=1.65e-6))
 ring = GaussianDisk(5.0, flux=BlackBody(0.3, temperature=1200.0))
+line = PointSource(flux=Tabulated(ratios, channel_wavelengths))
 ```
 
 Spectrum parameters are reached by path like any other, e.g.
-``"disk.flux.ratio"``, ``"disk.flux.index"`` or ``"ring.flux.temperature"``.
+``"disk.flux.ratio"``, ``"disk.flux.index"`` or ``"ring.flux.temperature"``
+(for `Tabulated`, ``"line.flux.ratio"`` is one value per channel).
 Flux ratios are relative: component ``i``'s fraction of the total at the
 reference wavelength is ``ratio_i / Σ ratio``, as SPARCO's ``f_i``.
 """
 
 import jax
 import jax.numpy as np
+import numpy as onp
 import zodiax as zx
 
 from ._utils import concrete
 
 
-__all__ = ["BlackBody", "PowerLaw", "Spectrum", "flux_at", "reference_flux"]
+__all__ = [
+    "BlackBody",
+    "PowerLaw",
+    "Spectrum",
+    "Tabulated",
+    "flux_at",
+    "reference_flux",
+]
 
 
 class Spectrum(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -163,6 +173,63 @@ class BlackBody(Spectrum):
                     f"BlackBody {name} {value.tolist()} must be "
                     + ("non-negative." if name == "ratio" else "positive.")
                 )
+
+
+class Tabulated(Spectrum):
+    """A free flux in every spectral channel, interpolated linearly between.
+
+    For fitting a spectrum channel by channel, e.g. a companion's flux ratio
+    across emission lines: give ``wavel`` the data's channel wavelengths and
+    fit ``ratio`` (one value per channel) with a prior of that shape.
+
+    Parameters
+    ----------
+    ratio : array-like, shape (n,)
+        Flux at each node, relative to the other components.
+    wavel : array-like, shape (n,)
+        Node wavelengths in metres, increasing. Beyond the end nodes the flux
+        is constant.
+
+    Notes
+    -----
+    The reference flux (``wavel=None``, used when rendering) is the mean
+    over the nodes.
+
+    Examples
+    --------
+    >>> spectrum = Tabulated([0.2, 0.4], [2.0e-6, 2.2e-6])
+    >>> round(float(spectrum(2.1e-6)), 6)
+    0.3
+    """
+
+    ratio: jax.Array
+    # Traceable, like PowerLaw.wavel0.
+    wavel: jax.Array
+
+    def __init__(self, ratio, wavel):
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.wavel = np.asarray(wavel, dtype=float)
+
+    def __call__(self, wavel=None):
+        if wavel is None:
+            return np.mean(self.ratio)
+        return np.interp(np.asarray(wavel), self.wavel, self.ratio)
+
+    def __check_init__(self):
+        if self.ratio.shape != self.wavel.shape or self.ratio.ndim != 1:
+            raise ValueError(
+                f"Tabulated needs 1D ratio and wavel of the same length, not "
+                f"shapes {self.ratio.shape} and {self.wavel.shape}."
+            )
+        value = concrete(self.ratio)
+        if value is not None and (value < 0.0).any():
+            raise ValueError(
+                "Tabulated ratios must be non-negative; fluxes cannot be "
+                "negative."
+            )
+        wavel = concrete(self.wavel)
+        if wavel is not None and (onp.diff(wavel) <= 0.0).any():
+            raise ValueError("Tabulated wavel must be strictly increasing.")
 
 
 # Planck's second radiation constant h c / k, in metre kelvin.

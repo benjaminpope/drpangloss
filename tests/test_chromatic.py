@@ -15,6 +15,7 @@ from drpangloss import (
     PowerLaw,
     Resolved,
     System,
+    Tabulated,
     UniformDisk,
     write_oifits,
 )
@@ -326,3 +327,34 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert onp.isfinite(float(jax.grad(v2)(3000.0)))
     assert float(jax.grad(v2)(3000.0)) != 0.0
     assert not is_flux_param("secondary.flux.temperature")
+
+
+def test_tabulated_interpolates_between_channels():
+    spectrum = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert np.allclose(spectrum(WAVES), np.array([0.2, 0.4, 0.1]))
+    assert np.isclose(spectrum(1.60e-6), 0.3)
+    assert np.isclose(spectrum(1.0e-6), 0.2)  # constant beyond the ends
+    assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
+
+
+def test_tabulated_rejects_bad_tables():
+    with pytest.raises(ValueError, match="non-negative"):
+        Tabulated([0.2, -0.1, 0.1], WAVES)
+    with pytest.raises(ValueError, match="increasing"):
+        Tabulated([0.2, 0.1, 0.1], WAVES[::-1])
+    with pytest.raises(ValueError, match="same length"):
+        Tabulated([0.2, 0.1], WAVES)
+
+
+def test_tabulated_flux_per_channel_matches_achromatic_scenes():
+    u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
+    ratios = onp.array([0.05, 0.3, 0.1])
+    chromatic = System(
+        star=PointSource(),
+        comp=PointSource(flux=Tabulated(ratios, WAVES), dra=5.0),
+    )
+    for wavel, ratio in zip(WAVES, ratios):
+        plain = System(star=PointSource(), comp=PointSource(ratio, dra=5.0))
+        assert np.allclose(
+            chromatic.model(u, v, wavel), plain.model(u, v, wavel)
+        )

@@ -342,6 +342,56 @@ class GaussianDisk(Component):
         return np.exp(-0.5 * (xx**2 + yy**2) / sigma**2)
 
 
+class EllipticalGaussian(Component):
+    """Elliptical Gaussian brightness distribution.
+
+    Parameters
+    ----------
+    fwhm : float or array-like
+        Full width at half maximum along the major axis, in
+        milliarcseconds.
+    ratio : float or array-like
+        Minor-to-major axis ratio, in (0, 1]; 1 is a circular Gaussian.
+    pa : float or array-like
+        Position angle of the major axis in degrees, North to East.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System], or a spectrum from
+        [`drpangloss.spectra`][drpangloss.spectra] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre in milliarcseconds, positive to the East and
+        North.
+
+    Examples
+    --------
+    >>> plume = EllipticalGaussian(fwhm=30.0, ratio=0.5, pa=20.0, flux=2.0)
+    """
+
+    fwhm: jax.Array
+    ratio: jax.Array
+    pa: jax.Array
+
+    def __init__(self, fwhm, ratio=1.0, pa=0.0, flux=1.0, dra=0.0, ddec=0.0):
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        # In the frame where the ellipse is a circle of the major axis's
+        # width, the visibility is that of a circular Gaussian.
+        ut, vt = undo_elliptical_transf_spat_freq(uu, vv, self.pa, self.ratio)
+        return _cvis_gaussian_envelope(ut, vt, self.fwhm)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        ratio = np.maximum(self.ratio, 1e-9)
+        xt, yt = undo_elliptical_transf_coord(xx, yy, self.pa, ratio)
+        fwhm = np.maximum(self.fwhm, 1e-9)
+        return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
+
+
 class UniformDisk(Component):
     """Uniformly bright (tophat) circular disk, e.g. a resolved stellar photosphere.
 

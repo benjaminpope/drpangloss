@@ -9,6 +9,8 @@ Likelihoods of source models given data, and numpyro models.
         - build_model
         - model_loglike
         - inflated_errors
+        - noise_sites
+        - noise_for
         - loglike
         - loglike_nosignal
         - joint_prediction

@@ -10,6 +10,7 @@ from drpangloss._geometry import image_coordinates as _image_coordinates
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    EllipticalGaussian,
     FlaredDiskGaussian,
     FlaredDiskHG,
     FlaredDiskPowerLaw,
@@ -405,6 +406,15 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            System(
+                star=PointSource(),
+                env=EllipticalGaussian(
+                    12.0, 0.4, 30.0, flux=0.7, dra=3.0, ddec=-2.0
+                ),
+            ),
+            2e-3,
+        ),
     ],
     ids=[
         "binary_cart",
@@ -416,6 +426,7 @@ def test_binary_render_is_available():
         "nested_system",
         "rotated",
         "flared_disk",
+        "elliptical_gaussian",
     ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):
@@ -643,3 +654,35 @@ def test_backward_scattering_moves_the_flared_disk_peak_to_the_far_side():
     xx = onp.asarray(_image_coordinates(64, 64.0)[0])
     image = onp.asarray(_flared_disk(g=-0.6).render(npix=64, fov_mas=64.0))
     assert (image * xx).sum() < -1.0
+
+
+def test_elliptical_gaussian_at_unit_ratio_is_a_gaussian_disk():
+    u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
+    fwhm = 8.0
+    ellipse = EllipticalGaussian(fwhm, 1.0, 37.0, dra=2.0, ddec=-1.0)
+    disk = GaussianDisk(fwhm / 2.3548200450309493, dra=2.0, ddec=-1.0)
+    assert onp.allclose(ellipse.model(u, v, 2.2e-6), disk.model(u, v, 2.2e-6))
+
+
+@pytest.mark.parametrize(
+    ("pa", "long_axis"), [(0.0, "north_south"), (90.0, "east_west")]
+)
+def test_elliptical_gaussian_major_axis_follows_north_to_east_pa(
+    pa, long_axis
+):
+    image = onp.asarray(
+        EllipticalGaussian(20.0, 0.3, pa).render(npix=41, fov_mas=60.0)
+    )
+    centre = image.shape[0] // 2
+    column, row = image[:, centre].sum(), image[centre, :].sum()
+    # Row index runs North to South, column index East to West.
+    assert (column > row) == (long_axis == "north_south")
+
+
+def test_elliptical_gaussian_pa_45_lies_north_east_to_south_west():
+    image = onp.asarray(
+        EllipticalGaussian(20.0, 0.3, 45.0).render(npix=41, fov_mas=60.0)
+    )
+    # North-East is the top left (row 0, column 0), so the major axis is
+    # the main diagonal.
+    assert onp.trace(image) > onp.trace(image[:, ::-1])

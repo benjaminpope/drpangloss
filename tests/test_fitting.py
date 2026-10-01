@@ -182,3 +182,46 @@ def test_a_warm_start_still_converges():
     cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
     assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)
+
+
+def test_fit_recovers_error_scales():
+    # Noise twice the stated errors: the fitted scales should be near 2.
+    data = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=2.0)
+    noise = {
+        "vis_scale": dist.Uniform(0.0, 10.0),
+        "phi_scale": dist.Uniform(0.0, 10.0),
+    }
+    result = fit(START, PRIORS, data, noise=noise)
+    assert result.info["method"] == "lbfgs"
+    for term in ("vis_scale", "phi_scale"):
+        assert 1.5 < result.values[f"noise.{term}"] < 2.6
+    # χ² is computed with the inflated errors.
+    assert abs(result.info["chi2_red"] - 1.0) < 0.05
+    assert abs(result.values["dra"] - 150.0) < 5.0
+
+
+def test_fit_noise_per_dataset_and_validation():
+    noise = [{"phi_error": dist.Uniform(0.0, 1.0)}, {}]
+    result = fit(START, PRIORS, [DATA, DATA], noise=noise)
+    assert set(result.values) == set(PRIORS) | {"noise[0].phi_error"}
+    with pytest.raises(ValueError, match="2 datasets"):
+        fit(START, PRIORS, [DATA, DATA], noise=[{}])
+    with pytest.raises(ValueError, match="Unknown noise term"):
+        fit(START, PRIORS, DATA, noise={"jitter": dist.Uniform(0.0, 1.0)})
+    with pytest.raises(ValueError, match="non-negative"):
+        fit(START, PRIORS, DATA, noise={"vis_scale": dist.Normal(1.0, 1.0)})
+    with pytest.raises(TypeError, match="least-squares"):
+        fit(
+            START,
+            PRIORS,
+            DATA,
+            method="lm",
+            noise={"vis_scale": dist.Uniform(0.0, 5.0)},
+        )
+
+
+def test_numpyro_model_samples_noise_terms():
+    noise = {"vis_scale": dist.Uniform(0.0, 5.0)}
+    model = numpyro_model(START, PRIORS, DATA, noise=noise)
+    trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
+    assert "noise.vis_scale" in trace
