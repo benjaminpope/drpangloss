@@ -187,6 +187,31 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **Checkpoint:** is closure-phase imaging robust enough? **Merge `imaging` into `main`** (milestone 1: MAP imaging for AMI and long-baseline data).
 
+**Log (2026-10-01):**
+- No new fitting code was needed: `fit` and `l_curve` already take a list of datasets, and the worst-fitted one sets the discrepancy weight.
+- Coverage is synthetic. `coverage.vlti_oidata` gives four-UT Earth-rotation tracks over many channels, and `coverage.nrm_oidata` gives the 21 V² and 35 closure phases of the NIRISS mask. This is the fallback in "Coverage fixtures", so no ν Hor fixture is committed. Stage 4c uses real PIONIER data instead.
+- `models.circular_support(..., inner_radius_mas)` makes the support hole. It is tested, but the MWEs don't use it.
+- Fitting the envelope flux (a prior on `"env.flux"`) turned out to be what removes the spurious spot next to the star. With the flux fixed at `starting_image`'s estimate, the excess piles up at the centre; with the flux fitted, NCC rises from 0.86 to 0.93 in the SAM MWE. A hole under the star made the result worse.
+- MWEs:
+  - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.97).
+  - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.87; the index comes out at 1.92 against a truth of 2.
+- The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
+- MWE-B (the SNR and coverage stress test) is still to do.
+
+## Stage 4b: a rotating scene over two epochs
+**Known rotation:** a spiral that rotates by a known 60° between two epochs, fitted jointly. Each epoch needs its own model, built from shared image parameters. `fit` takes a list of per-dataset models or a `model_fn(params, i)`; the second epoch's `Image` gets `rotation_deg=60`, which the exact DFT handles directly.
+**Unknown rotation:** `rotation_deg` becomes a fitted parameter. This needs:
+- a traceable rotation, using the per-point DFT, since the MFT only works for a fixed lattice match;
+- a coarse scan or profile over angle before a joint refinement, because the likelihood is multimodal in angle;
+- a check of the rotation–expansion degeneracy of Archimedean spirals, where a rotation looks like a change of scale.
+
+The MWE fits the angle and compares it with the known value.
+
+## Stage 4c: real PIONIER data
+The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are local only and never committed. Read only the fields needed.
+- Reconstruct images in a five-cell notebook using `fit`, `l_curve` and `diagnose`.
+- Compare the results with the paper's text, not its images.
+
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
 - `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)`:
