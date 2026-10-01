@@ -219,6 +219,18 @@ The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are l
 - Reconstruct images in a five-cell notebook using `fit`, `l_curve` and `diagnose`.
 - Compare the results with the paper's text, not its images.
 
+**Log (2026-10-01):** the target is IRAS 08544-4431 (Hillen et al. 2016): 27 files, three AT configurations, 828 V² and 504 closure phases. The MWE is `mwe_pionier_iras08544`, and no library changes were needed.
+- **Parametric SPARCO fit** (a λ⁻⁴ star, a modulated Gaussian ring and a resolved background), against the paper:
+  - ring diameter 14.37 mas (paper 14.15), FWHM 3.29 mas (3.2), inclination 22° (19°);
+  - star 62%, against 59.7 + 3.9% for the paper's two stars;
+  - ring 21% (20.9%), background 17% (15.5%).
+- **MEM image** at the discrepancy weight (χ² per point 0.94):
+  - the resolved background has to be held fixed, because a smooth image is degenerate with it and absorbs it;
+  - the deprojected profile peaks at 7.5 mas, against the parametric 7.2 mas;
+  - the image's spectral index is 1.55, against the paper's 0.42, probably because of the fixed background.
+- **Compact central emission** just outside the half-beam hole is required by the data: with a one-beam hole, χ² per point rises from 1.06 to 1.28.
+- **Binary:** a parametric secondary has a local minimum at 0.80 mas and about 4% of the flux, matching the paper. The data prefer an equal pair at 0.44 mas, which amounts to a slightly resolved centre. Untangling it needs the secondary's spectrum and the circum-companion emission to be modelled together.
+
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
 - `fields.GaussianField(latent, sigma, length_mas, order=2, mean=None, mean_floor=1e-3)`:
