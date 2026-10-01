@@ -11,6 +11,7 @@ discussed in `design/regulariser_weight_selection.md`.
         - TV
         - MaxEntropy
         - Centroid
+        - starting_image
         - image_priors
         - nyquist_pixel_scale
         - field_of_view

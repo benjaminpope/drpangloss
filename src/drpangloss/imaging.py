@@ -283,6 +283,78 @@ def field_of_view(data, largest_mas=500.0):
     return min(float(largest_mas), 1.0 / (shortest * mas2rad))
 
 
+def starting_image(data, star=True, oversample=4.0, largest_mas=None):
+    """A starting model for an image fit, sized from the data.
+
+    It fits a quick parametric model, an analytic star (if ``star``) plus a
+    circular Gaussian envelope with free flux and width, a low-order
+    description of the visibilities, from a few starting widths. Then it
+    chooses the image:
+
+    * a field of about six FWHMs of the envelope, but at least 500 mas, and
+      never larger than the interferometric field of view (λ / B_min) or
+      ``largest_mas``;
+    * pixels ``oversample`` times finer than the Nyquist scale;
+    * an [`Image`][drpangloss.models.Image] sampled from the fitted
+      Gaussian, with its fitted flux.
+
+    Fit it with ``fit(start, image_priors(start), data, regularisers)``.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+    star : bool, optional
+        Whether the scene has an unresolved star at the origin (which also
+        fixes the image's position). Without one, the result is the Image
+        alone, and a [`Centroid`][drpangloss.imaging.Centroid] prior
+        should fix its position.
+    oversample : float, optional
+        Pixels per Nyquist pixel.
+    largest_mas : float, optional
+        A cap on the field of view.
+
+    Returns
+    -------
+    SourceModel
+        ``System(star=PointSource(), env=Image(...))``, or the Image alone.
+    """
+    import numpyro.distributions as dist
+
+    from .models import GaussianDisk
+
+    resolution = beam(data).major_mas
+    widest = field_of_view(data, largest_mas=onp.inf)
+    best = None
+    for width in (0.25 * resolution, resolution, 4.0 * resolution):
+        sigma = min(width, widest / 6.0) / 2.3548
+        if star:
+            model = System(
+                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
+            )
+            priors = {
+                "env.sigma": dist.Uniform(1e-3 * resolution, widest),
+                "env.flux": dist.Uniform(0.0, 100.0),
+            }
+        else:
+            model = GaussianDisk(sigma)
+            priors = {"sigma": dist.Uniform(1e-3 * resolution, widest)}
+        result = fit(model, priors, data)
+        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
+            best = result
+    envelope = best.model.env if star else best.model
+    fwhm = 2.3548 * float(envelope.sigma)
+    fov = min(max(500.0, 6.0 * fwhm), widest)
+    if largest_mas is not None:
+        fov = min(fov, float(largest_mas))
+    scale = nyquist_pixel_scale(data) / float(oversample)
+    npix = int(onp.ceil(fov / scale))
+    image = Image.from_model(
+        GaussianDisk(envelope.sigma), npix, scale, flux=envelope.flux
+    )
+    return System(star=PointSource(), env=image) if star else image
+
+
 @dataclasses.dataclass(frozen=True)
 class Beam:
     """A Gaussian approximation to the core of the dirty beam.

@@ -17,6 +17,7 @@ from drpangloss.imaging import (
     image_priors,
     l_curve,
     nyquist_pixel_scale,
+    starting_image,
 )
 from drpangloss.models import GaussianDisk, Image, PointSource, System
 from drpangloss.oidata import OIData
@@ -256,3 +257,18 @@ def test_field_of_view_is_at_most_500_mas_or_lambda_over_b_min():
         rtol=1e-3,
     )
     assert field_of_view(DATA) == 500.0  # AMI-like data reach much further
+
+
+def test_starting_image_is_sized_from_the_data():
+    truth = System(star=PointSource(), env=GaussianDisk(120.0, flux=0.1))
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(5))
+    start = starting_image(data)
+    env = start.env
+    assert isinstance(start.star, PointSource) and isinstance(env, Image)
+    assert np.isclose(env.flux, 0.1, rtol=0.1)
+    fov = env.log_brightness.shape[0] * env.pixel_scale_mas
+    assert fov >= 6 * 2.3548 * 120.0 * 0.8
+    assert env.pixel_scale_mas <= nyquist_pixel_scale(data) / 4 + 1e-9
+    # Without a star, the result is the Image alone.
+    alone = starting_image(DATA.with_model(GaussianDisk(120.0)), star=False)
+    assert isinstance(alone, Image)
