@@ -672,7 +672,12 @@ class LCurve:
                 result.model, data, path + ".log_brightness"
             )
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
-            b = onp.ravel(onp.asarray(image.brightness, dtype=float))
+            with run_in("float64"):
+                b = onp.ravel(
+                    onp.asarray(
+                        cast_tree(image, "float64").brightness, dtype=float
+                    )
+                )
             scaled = jac[:, b > 0] / onp.sqrt(b[b > 0])
             curvature = onp.linalg.eigvalsh(_smaller_gram(scaled))
             n_good = onp.sum(curvature / (curvature + weight))
@@ -757,10 +762,13 @@ def log_evidence(model, data, path="env"):
     latent_path = path + ".log_brightness.latent"
     jac = _residual_jacobian(model, data, latent_path)
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    chi2 = sum(
-        float(np.sum(whitened_residuals(model, d) ** 2)) for d in datasets
-    )
-    z = onp.asarray(model.get(latent_path), dtype=float)
+    with run_in("float64"):
+        model64, datasets = cast_tree((model, datasets), "float64")
+        chi2 = sum(
+            float(np.sum(whitened_residuals(model64, d) ** 2))
+            for d in datasets
+        )
+        z = onp.asarray(model64.get(latent_path), dtype=float)
     # I + JᵀJ is symmetric positive definite: its log-determinant from a
     # Cholesky factor.
     gram = _smaller_gram(jac)
