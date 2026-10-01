@@ -7,6 +7,7 @@ import numpyro.distributions as dist
 import pytest
 
 from drpangloss import (
+    BlackBody,
     GaussianDisk,
     ModulatedGaussianRim,
     OIData,
@@ -216,3 +217,105 @@ def test_power_law_reference_wavelength_must_be_positive():
     )
     assert bool(traced(1.65e-6))
     assert not bool(traced(-1.65e-6))
+
+
+# Planck's law written out independently of drpangloss.spectra.
+_H, _C, _K = 6.62607015e-34, 2.99792458e8, 1.380649e-23
+
+
+def _planck(wavel, temperature):
+    return wavel**-5.0 / onp.expm1(_H * _C / (wavel * _K * temperature))
+
+
+@pytest.mark.parametrize("temperature", [1120.0, 2400.0, 7250.0])
+def test_black_body_is_a_planck_spectrum_normalised_at_wavel0(temperature):
+    spectrum = BlackBody(0.3, temperature, 1.65e-6)
+    expected = (
+        0.3 * _planck(WAVES, temperature) / _planck(1.65e-6, temperature)
+    )
+    assert onp.allclose(onp.asarray(spectrum(WAVES)), expected, rtol=1e-5)
+    assert float(spectrum(None)) == pytest.approx(0.3)
+
+
+def test_hot_black_body_tends_to_rayleigh_jeans():
+    hot = BlackBody(1.0, 1e7)(WAVES)
+    assert onp.allclose(hot, PowerLaw(1.0, -4.0)(WAVES), rtol=1e-3)
+
+
+def test_black_body_rejects_non_positive_temperature():
+    with pytest.raises(ValueError, match="temperature"):
+        BlackBody(0.1, 0.0)
+    assert not bool(
+        BlackBody(0.1, 1000.0).set("temperature", -5.0).is_physical()
+    )
+
+
+def test_sparco_fractions_and_temperatures_match_the_published_formula():
+    # Hillen et al. (2016), eq. 1: V = Σ f_i Λ_i V_i / Σ f_i Λ_i, with
+    # Σ f_i = 1 and every Λ_i = 1 at 1.65 µm. Relative ratios that are not
+    # normalised give the same visibilities.
+    fractions = {"pri": 0.597, "sec": 0.039, "ring": 0.209, "back": 0.155}
+    temperatures = {"sec": 4000.0, "ring": 1120.0, "back": 2400.0}
+    rim = ModulatedGaussianRim(14.15, 3.2, 19.0, 6.0, az_amps=0.4, az_pas=60.0)
+    scale = 2.0  # unnormalised ratios
+    scene = System(
+        pri=PointSource(flux=PowerLaw(scale * fractions["pri"], -4.0)),
+        sec=PointSource(
+            flux=BlackBody(scale * fractions["sec"], temperatures["sec"]),
+            dra=0.67,
+            ddec=0.45,
+        ),
+        ring=rim.set("flux", BlackBody(scale * fractions["ring"], 1120.0)),
+        back=Resolved(flux=BlackBody(scale * fractions["back"], 2400.0)),
+    )
+    u, v = onp.array([30.0, -20.0, 5.0]), onp.array([10.0, 40.0, -60.0])
+    for wavel in WAVES:
+        lam = {"pri": (wavel / 1.65e-6) ** -4.0}
+        for name, temperature in temperatures.items():
+            lam[name] = _planck(wavel, temperature) / _planck(
+                1.65e-6, temperature
+            )
+        unit = {
+            "pri": 1.0,
+            "sec": scene.sec.set("flux", 1.0).model(u, v, wavel),
+            "ring": rim.model(u, v, wavel),
+            "back": 0.0,
+        }
+        expected = sum(
+            fractions[n] * lam[n] * unit[n] for n in fractions
+        ) / sum(fractions[n] * lam[n] for n in fractions)
+        assert np.allclose(scene.model(u, v, wavel), expected, atol=1e-5)
+
+
+def test_each_channel_of_a_multichannel_dataset_gets_its_own_weights():
+    # V² and closure phases of a SPARCO scene observed in several channels at
+    # once equal those of the scene observed one channel at a time.
+    from drpangloss.coverage import vlti_oidata
+
+    scene = _scene(flux_s=BlackBody(0.05, 3000.0))
+    together = vlti_oidata(hour_angles_h=(0.0, 2.0), wavelengths_m=WAVES)
+    joint = onp.asarray(together.model(scene))
+    n_vis = together.vis.size
+    for k, wavel in enumerate(WAVES):
+        single = vlti_oidata(hour_angles_h=(0.0, 2.0), wavelengths_m=[wavel])
+        model = onp.asarray(single.model(scene))
+        nv = single.vis.size
+        assert onp.allclose(
+            joint[:n_vis][k :: len(WAVES)], model[:nv], atol=1e-6
+        )
+        assert onp.allclose(
+            joint[n_vis:][k :: len(WAVES)], model[nv:], atol=1e-5
+        )
+
+
+def test_temperatures_have_gradients_and_are_not_fluxes():
+    scene = _scene(flux_s=BlackBody(0.05, 3000.0))
+    u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
+
+    def v2(temperature):
+        model = scene.set("secondary.flux.temperature", temperature)
+        return np.sum(np.abs(model.model(u, v, 1.55e-6)) ** 2)
+
+    assert onp.isfinite(float(jax.grad(v2)(3000.0)))
+    assert float(jax.grad(v2)(3000.0)) != 0.0
+    assert not is_flux_param("secondary.flux.temperature")

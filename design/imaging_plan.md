@@ -232,14 +232,26 @@ The PIONIER (H band, four ATs) data in `nuHor/data/ep1` (arXiv:1603.03023) are l
 - **Binary:** a parametric secondary has a local minimum at 0.80 mas and about 4% of the flux, matching the paper. The data prefer an equal pair at 0.44 mas, which amounts to a slightly resolved centre. Untangling it needs the secondary's spectrum and the circum-companion emission to be modelled together.
 
 ## Stage 4d: a binary star alongside the image (PIONIER)
-The analytic part of the SPARCO scene for IRAS 08544-4431 becomes a binary: two `PointSource`s with λ⁻⁴ spectra, plus the image and a `Resolved` background, all fitted jointly. The MWE is `mwe_pionier_binary`, and no library changes were needed.
-- The fit starts from our parametric binary + ring solution: 4.7% at 0.80 mas, PA 213°.
-- At the MEM weight of 316, the joint fit gives:
-  - a companion with 7.2% of the flux at 0.67 mas, PA 214°;
-  - fractions of 55.7% (primary), 22.6% (image) and 14.5% (background);
-  - a loss 95 lower than the single-star fit.
-- The compact knots next to the star disappear, and the background can be left free.
-- The paper's text gives 3.9% at 0.81 mas. The companion's flux and separation are correlated, and its circumstellar emission is not modelled here.
+`mwe_pionier_binary` follows Hillen et al. (2016) for IRAS 08544-4431. The library adds `spectra.BlackBody`, a Planck F_λ spectrum normalised at `wavel0` with a fittable `temperature` (in PR "SPARCO spectra").
+
+**Parametric model:** a 7250 K primary, plus a secondary, a ring with m = 1, 2 modulations and a resolved background, all with blackbody spectra. A model function anchors the ring centre to the centre of mass, at κ = q/(1+q) = 0.75 times the secondary's offset, from the paper's masses. It converges to the same solution from every start:
+
+| | This fit | Paper |
+|---|---|---|
+| Fractions | 57.0 / 6.1 / 20.7 / 16.2% | 59.7 / 3.9 / 20.9 / 15.5% |
+| Temperatures | T_sec 3430 K, T_r 1098 K, T_back 2620 K | 4000, 1120, 2400 K |
+| Binary | 0.72 mas | 0.81 mas |
+| Ring | 14.33 mas, FWHM 3.03 mas, i = 20.1° | 14.15 mas, FWHM 3.2 mas, i = 19° |
+| χ² per point | 2.50 (4.0 with RJ spectra and no secondary) | |
+
+- Left free, the ring centre lies at 1.09 times the secondary's offset, consistent with a heavy companion.
+- **Open discrepancy:** the companion's PA is 219°, against the paper's 56 ± 3°. The ring's brightest side (north-east) agrees, so this is not a global closure-phase sign flip. To check with Toon.
+
+**Images**, with a λ⁻⁴ primary and a power-law environment that includes the background, as in the paper. L-curves are warm-started down to the discrepancy weight, and all the fits converge:
+- primary only: primary 61.4% (paper 0.61) and d_env 0.25 (paper 0.42);
+- binary subtracted: d_env 0.45, and the knot next to the primary is gone.
+
+**SPARCO check:** d_env is relative to the stellar spectrum, since the ratio goes as λ^(d_env − d_star). A 7250 K blackbody primary, with an H-band slope of about −3.3, raises d_env by about 0.7. A separately fitted resolved background changes it further.
 
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**

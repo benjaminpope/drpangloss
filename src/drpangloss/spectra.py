@@ -8,10 +8,13 @@ module, which gives its weight at each wavelength. Inside a
 ```python
 star = UniformDisk(0.5, flux=PowerLaw(1.0, index=-4.0, wavel0=1.65e-6))
 disk = GaussianDisk(5.0, flux=PowerLaw(0.3, index=1.0, wavel0=1.65e-6))
+ring = GaussianDisk(5.0, flux=BlackBody(0.3, temperature=1200.0))
 ```
 
 Spectrum parameters are reached by path like any other, e.g.
-``"disk.flux.ratio"`` and ``"disk.flux.index"``.
+``"disk.flux.ratio"``, ``"disk.flux.index"`` or ``"ring.flux.temperature"``.
+Flux ratios are relative: component ``i``'s fraction of the total at the
+reference wavelength is ``ratio_i / Σ ratio``, as SPARCO's ``f_i``.
 """
 
 import jax
@@ -21,7 +24,7 @@ import zodiax as zx
 from ._utils import concrete
 
 
-__all__ = ["PowerLaw", "Spectrum", "flux_at", "reference_flux"]
+__all__ = ["BlackBody", "PowerLaw", "Spectrum", "flux_at", "reference_flux"]
 
 
 class Spectrum(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -58,7 +61,7 @@ class PowerLaw(Spectrum):
 
     Examples
     --------
-    >>> float(PowerLaw(0.2, index=-4.0, wavel0=1.6e-6)(3.2e-6))
+    >>> round(float(PowerLaw(0.2, index=-4.0, wavel0=1.6e-6)(3.2e-6)), 6)
     0.0125
     """
 
@@ -94,6 +97,78 @@ class PowerLaw(Spectrum):
                 f"PowerLaw wavel0 {wavel0.tolist()} must be a positive "
                 "wavelength (in metres)."
             )
+
+
+class BlackBody(Spectrum):
+    """Planck spectrum ``ratio * B_λ(T, λ) / B_λ(T, wavel0)``.
+
+    The shape of a blackbody at ``temperature`` in F_λ, normalised to
+    ``ratio`` at ``wavel0``, as SPARCO uses for dust and companions (e.g.
+    Hillen et al. 2016). At long wavelengths (``hc/λkT`` small) it tends to
+    the Rayleigh-Jeans ``PowerLaw`` with index -4.
+
+    Parameters
+    ----------
+    ratio : float or array-like
+        Flux at the reference wavelength, relative to the other components.
+    temperature : float or array-like
+        Temperature in kelvin.
+    wavel0 : float or array-like, optional
+        Reference wavelength in metres (default 1.65e-6, H band).
+
+    Examples
+    --------
+    >>> round(float(BlackBody(0.2, 1500.0)(1.65e-6)), 6)
+    0.2
+    """
+
+    ratio: jax.Array
+    temperature: jax.Array
+    wavel0: jax.Array
+
+    def __init__(self, ratio, temperature, wavel0=1.65e-6):
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.temperature = np.asarray(temperature, dtype=float)
+        self.wavel0 = np.asarray(wavel0, dtype=float)
+
+    def __call__(self, wavel=None):
+        if wavel is None:
+            return self.ratio
+        wavel = np.asarray(wavel)
+        x, x0 = (
+            _HC_OVER_K / (wavel * self.temperature),
+            _HC_OVER_K / (self.wavel0 * self.temperature),
+        )
+        return (
+            self.ratio
+            * (self.wavel0 / wavel) ** 5
+            * np.expm1(x0)
+            / np.expm1(x)
+        )
+
+    def is_physical(self):
+        return (
+            np.all(self.ratio >= 0.0)
+            & np.all(self.temperature > 0.0)
+            & np.all(self.wavel0 > 0.0)
+        )
+
+    def __check_init__(self):
+        for name, value, ok in (
+            ("ratio", self.ratio, lambda x: x >= 0.0),
+            ("temperature", self.temperature, lambda x: x > 0.0),
+            ("wavel0", self.wavel0, lambda x: x > 0.0),
+        ):
+            value = concrete(value)
+            if value is not None and not ok(value).all():
+                raise ValueError(
+                    f"BlackBody {name} {value.tolist()} must be "
+                    + ("non-negative." if name == "ratio" else "positive.")
+                )
+
+
+# Planck's second radiation constant h c / k, in metre kelvin.
+_HC_OVER_K = 1.438776877e-2
 
 
 def flux_at(flux, wavel=None):
