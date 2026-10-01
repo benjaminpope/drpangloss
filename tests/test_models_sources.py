@@ -15,6 +15,7 @@ from drpangloss.models import (
     Image,
     ModulatedGaussianRim,
     PointSource,
+    Rotated,
     System,
     UniformDisk,
     cvis_gaussian_disk,
@@ -368,6 +369,16 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            Rotated(
+                System(
+                    star=PointSource(),
+                    comp=GaussianDisk(2.0, flux=0.3, dra=8.0, ddec=-3.0),
+                ),
+                70.0,
+            ),
+            2e-3,
+        ),
     ],
     ids=[
         "binary_cart",
@@ -377,6 +388,7 @@ def test_binary_render_is_available():
         "image",
         "rim",
         "nested_system",
+        "rotated",
     ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):
@@ -509,3 +521,11 @@ def test_modulated_ring_visibility_accepts_scalar_baselines():
 
     assert np.shape(scalar) == ()
     assert np.allclose(scalar, vector[0])
+
+
+def test_rotated_turns_north_towards_east():
+    # A blob 10 mas North, turned by 90 degrees, lands 10 mas East: on the
+    # left of the rendered image (column 0 is the most positive dra).
+    image = Rotated(GaussianDisk(1.0, ddec=10.0), 90.0).render(21, 42.0)
+    row, col = onp.unravel_index(onp.argmax(onp.asarray(image)), (21, 21))
+    assert (row, col) == (10, 5)

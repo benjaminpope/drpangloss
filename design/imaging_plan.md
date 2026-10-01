@@ -211,7 +211,7 @@ The MWE fits the angle and compares it with the known value.
 - `fit` (and so `l_curve`) accepts a model function that returns one model per dataset, sharing parameters; regularisers act on the first.
 - `models.Rotated(source, rotation_deg)` wraps any model with a traceable angle. It rotates the uv coordinates, so the MFT is not used for that epoch.
 - In `mwe_rotating_epochs`, two AMI epochs with the known 60° give NCC 0.92, against 0.90 for one epoch at the same weight.
-- With the angle unknown, a 15° scan of fixed-angle fits (warm-started, with a 300-step limit) has a single sharp minimum at 60°. A free-angle refinement then gives 59.83°.
+- With the angle unknown, a 15° scan of fixed-angle fits (warm-started, with a 300-step limit) has a single sharp minimum at 60°. Reconstructing the image again with the angle free (an L-curve started from the scan's best angle) gives 59.89° and the same NCC, 0.92, as with the angle known.
 - No secondary minimum appeared for this spiral: its fading ends break the rotation–expansion degeneracy.
 
 ## Stage 4c: real PIONIER data
