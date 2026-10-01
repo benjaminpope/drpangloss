@@ -196,10 +196,11 @@ The design rationale was established in the earlier research: the gauge survey, 
   - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.98).
   - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.89, with ratio 0.509 against 0.5 and index 1.87 against 2.
 - The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
-- **MWE-B** (`mwe_stress_test`): the VLTI scene at three coverages × five noise levels (0.5–8× the default errors), each reconstructed with a hole and MEM at the discrepancy weight.
-  - Full coverage: NCC falls from 0.86 at 0.5× to 0.72 at 4×, then to 0.39 at 8×, where the image becomes a smooth floor.
-  - Two hour angles, or three UTs: NCC 0.6–0.7 even at low noise.
-  - χ² per point reached one in every case, so it says nothing about fidelity. `diagnose`'s edge-flux warning tracks the degradation.
+- **MWE-B** (`mwe_stress_test`): the VLTI scene at three coverages × five noise levels (0.5–8× the default errors), with one noise draw per coverage scaled across the levels. Each case is reconstructed with a hole and MEM at the discrepancy weight.
+  - Full coverage: NCC 0.86 at 0.5× and 1×, 0.77 at 4×, and 0.64 at 8×.
+  - Two hour angles, or three UTs: NCC about 0.6 even at low noise.
+  - χ² per point reached one in every case, so it says nothing about fidelity.
+  - `diagnose`'s edge-flux warning flags noise-driven spreading to the edge of the field, but not coverage-driven failures (three UTs at 0.5×: NCC 0.62, no warning).
 
 ## Stage 4b: a rotating scene over two epochs
 A spiral that turns by 60° between two epochs, fitted jointly with the rotation known and then unknown. For an unknown rotation:
