@@ -645,6 +645,10 @@ class Image(Component):
                 raise ValueError("support must contain at least one pixel.")
         self.support = support
         _check_log_brightness(self.log_brightness, support)
+        if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
+            raise ValueError(
+                f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
+            )
         self.pixel_scale_mas = float(pixel_scale_mas)
         self.rotation_deg = float(rotation_deg)
         self.flux = _as_flux(flux)

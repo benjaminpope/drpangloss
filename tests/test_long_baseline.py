@@ -223,3 +223,37 @@ def test_an_image_support_may_arrive_as_floats():
     as_floats = image.set("support", support.astype(float))
     assert np.allclose(as_floats.brightness, image.brightness)
     assert np.all(as_floats.brightness[~support] == 0.0)
+
+
+def test_imaging_helpers_see_images_inside_rotated_scenes():
+    from drpangloss.imaging import diagnose
+
+    scene = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(3.0), 16, 1.0, flux=0.3),
+    )
+    rotated = Rotated(scene, 30.0)
+    assert list(image_priors(rotated)) == ["source.env.log_brightness"]
+    report = diagnose(rotated, NIGHT.with_model(rotated))
+    assert report.checks["pixel_scale_mas"] and "flip_dchi2" in report.checks
+
+
+def test_bad_weights_and_pixel_scales_are_rejected():
+    from drpangloss.imaging import l_curve
+
+    scene = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(3.0), 8, 1.0, flux=0.3),
+    )
+    for weights in ([], [0.0, 1.0], [-1.0], [float("nan")]):
+        with pytest.raises(ValueError, match="weights"):
+            l_curve(
+                scene,
+                image_priors(scene),
+                NIGHT,
+                MaxEntropy(1.0, path="env"),
+                weights,
+            )
+    for scale in (0.0, -1.0, float("inf")):
+        with pytest.raises(ValueError, match="pixel_scale_mas"):
+            Image(np.zeros((4, 4)), scale)
