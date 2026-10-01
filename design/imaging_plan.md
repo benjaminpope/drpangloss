@@ -196,7 +196,10 @@ The design rationale was established in the earlier research: the gauge survey, 
   - `mwe_sam_v2_cp`: two NRM rolls, compared with AMIGO-style modes (NCC 0.93 against 0.98).
   - `mwe_vlti`: two nights, eleven channels, with a SPARCO `PowerLaw` ratio and index fitted together with the pixels. NCC 0.89, with ratio 0.509 against 0.5 and index 1.87 against 2.
 - The field is limited to λ/B_min, so VLTI scenes are only 2–3 beams across.
-- MWE-B (the SNR and coverage stress test) is still to do.
+- **MWE-B** (`mwe_stress_test`): the VLTI scene at three coverages × five noise levels (0.5–8× the default errors), each reconstructed with a hole and MEM at the discrepancy weight.
+  - Full coverage: NCC falls from 0.86 at 0.5× to 0.72 at 4×, then to 0.39 at 8×, where the image becomes a smooth floor.
+  - Two hour angles, or three UTs: NCC 0.6–0.7 even at low noise.
+  - χ² per point reached one in every case, so it says nothing about fidelity. `diagnose`'s edge-flux warning tracks the degradation.
 
 ## Stage 4b: a rotating scene over two epochs
 A spiral that turns by 60° between two epochs, fitted jointly with the rotation known and then unknown. For an unknown rotation:
@@ -251,10 +254,9 @@ A background split off as a `Resolved` component also changes what the image's i
 
 **Next:**
 1. Merge this stack into `imaging`, then `imaging` into `main` (milestone 1).
-2. MWE-B: the SNR and coverage stress test (deferred from Stage 4).
-3. Stage 5: Gaussian-process pixels, sampling (posteriors for the companion's flux and separation, which are correlated), and evidence-based weights.
-4. Stage 3c: PDS 70 (local demo first, then an OzSTAR script if needed).
-5. Cache MFT matrices (Stage 7).
+2. Stage 5: Gaussian-process pixels, sampling (posteriors for the companion's flux and separation, which are correlated), and evidence-based weights.
+3. Stage 3c: PDS 70 (local demo first, then an OzSTAR script if needed).
+4. Cache MFT matrices (Stage 7).
 
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
