@@ -13,6 +13,8 @@ discussed in `design/regulariser_weight_selection.md`.
         - Centroid
         - image_priors
         - nyquist_pixel_scale
+        - beam
+        - Beam
         - l_curve
         - LCurve
         - diagnose

@@ -345,6 +345,7 @@ def plot_model(
     title=None,
     saturate=None,
     cmap="magma",
+    beam=None,
 ):
     """Show a source model's rendered image with sky axes.
 
@@ -368,6 +369,11 @@ def plot_model(
         that faint structure next to a bright star is visible.
     cmap : str, optional
         Matplotlib colour map.
+    beam : Beam, optional
+        The data's resolution, from
+        [`imaging.beam`][drpangloss.imaging.beam], drawn as a shaded FWHM
+        ellipse in the lower-left corner, as is usual on reconstructed
+        images.
 
     Returns
     -------
@@ -390,7 +396,32 @@ def plot_model(
     if title is not None:
         ax.set_title(title)
     _enforce_sky_orientation(ax)
+    if beam is not None:
+        _draw_beam(ax, beam)
     return ax
+
+
+def _draw_beam(ax, beam):
+    """Draw a beam's FWHM ellipse, shaded, in the lower-left corner."""
+    from matplotlib.patches import Ellipse
+
+    (x0, x1), (y0, y1) = ax.get_xlim(), ax.get_ylim()  # (left, right), ...
+    inset = max(0.1, 0.6 * beam.major_mas / abs(x1 - x0))
+    centre = (x0 + inset * (x1 - x0), y0 + inset * (y1 - y0))
+    # In (ΔRA, ΔDec) the major axis points along (sin PA, cos PA).
+    angle = 90.0 - beam.pa_deg
+    ax.add_patch(
+        Ellipse(
+            centre,
+            beam.major_mas,
+            beam.minor_mas,
+            angle=angle,
+            facecolor="white",
+            edgecolor="black",
+            alpha=0.7,
+            lw=0.8,
+        )
+    )
 
 
 @_styled

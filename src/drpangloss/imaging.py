@@ -28,6 +28,7 @@ import dataclasses
 
 import equinox as eqx
 import jax.numpy as np
+import numpy as onp
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
@@ -259,6 +260,75 @@ def nyquist_pixel_scale(data):
         float(np.max(np.hypot(d.u, d.v) / d.wavel)) for d in observations
     )
     return 1.0 / (2.0 * longest * mas2rad)
+
+
+@dataclasses.dataclass(frozen=True)
+class Beam:
+    """A Gaussian approximation to the core of the dirty beam.
+
+    Attributes
+    ----------
+    major_mas, minor_mas : float
+        Full widths at half maximum along the major and minor axes, in mas.
+    pa_deg : float
+        Position angle of the major axis, North to East, in degrees.
+    """
+
+    major_mas: float
+    minor_mas: float
+    pa_deg: float
+
+
+def beam(data):
+    """The resolution of a dataset: the FWHM ellipse of its beam's core.
+
+    The dirty beam is the image of a point source made by the data's uv
+    sampling. Near its peak it falls off as ``1 - 2π² xᵀ M x``, where ``M``
+    is the weighted mean of ``u uᵀ`` over the samples, which matches a
+    Gaussian of covariance ``M⁻¹ / 4π²``. Its FWHM ellipse is the standard
+    "beam" drawn on interferometric images: roughly λ/B, and elongated where
+    the coverage is. For complicated coverage the real beam can look quite
+    different, but the ellipse still shows the size and shape of a
+    resolution element.
+
+    Every sample that carries information is weighted equally ("uniform
+    weighting"); in AMIGO DISCO data those are the uv points on which the
+    modes have weight (at least 1e-3 of the largest), i.e. the splodges.
+    Weighting by information instead would let the low-frequency central
+    splodge dominate, and give a broader beam.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+
+    Returns
+    -------
+    Beam
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    u, v, w = [], [], []
+    for d in observations:
+        fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
+        fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
+        weight = onp.ones_like(fu)
+        if d.observable_kind == "mixed_log_complex":
+            sigma = onp.asarray(d.d_vis)[:, None]
+            information = onp.sum(
+                (onp.asarray(d.vis_mat) ** 2 + onp.asarray(d.phi_mat) ** 2)
+                / sigma**2,
+                axis=0,
+            )
+            weight = (information > 1e-3 * information.max()).astype(float)
+        u.append(fu), v.append(fv), w.append(weight)
+    u, v, w = (onp.concatenate(x) for x in (u, v, w))
+    m = onp.array([[w @ (u * u), w @ (u * v)], [w @ (u * v), w @ (v * v)]])
+    covariance = onp.linalg.inv(m / onp.sum(w)) / (4 * onp.pi**2)
+    variance, axes = onp.linalg.eigh(covariance)
+    fwhm = 2.0 * onp.sqrt(2.0 * onp.log(2.0) * variance)
+    x, y = axes[:, 1]  # the major axis, in (East, North)
+    pa = onp.degrees(onp.arctan2(x, y)) % 180.0
+    return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
 
 
 @dataclasses.dataclass(frozen=True)

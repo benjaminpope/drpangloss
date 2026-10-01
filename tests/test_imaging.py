@@ -7,6 +7,8 @@ from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import fit
 from drpangloss.imaging import (
     TSV,
+    Beam,
+    beam,
     TV,
     Centroid,
     LCurve,
@@ -17,6 +19,7 @@ from drpangloss.imaging import (
 )
 from drpangloss.models import GaussianDisk, Image, PointSource, System
 from drpangloss.oidata import OIData
+from drpangloss.plotting import plot_model
 from drpangloss.scenes import gaussian_blob
 
 NPIX, SCALE = 16, 12.0
@@ -192,3 +195,53 @@ def test_corner_and_discrepancy_on_a_known_curve():
         w, chi2, np.stack([chi2 / 100.0, chi2 / 200.0], axis=1), penalty, []
     )
     assert np.isclose(joint.discrepancy(target=11.0), 10.0, rtol=0.05)
+
+
+def _ring_of_baselines(radius_m, n=36, stretch=1.0):
+    angle = onp.linspace(0.0, onp.pi, n, endpoint=False)
+    u, v = radius_m * onp.cos(angle) * stretch, radius_m * onp.sin(angle)
+    return OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": 4.8e-6,
+            "vis": onp.ones(n),
+            "d_vis": onp.full(n, 0.01),
+            "phi": onp.zeros(n),
+            "d_phi": onp.full(n, 0.1),
+        }
+    )
+
+
+def test_beam_of_a_ring_of_baselines_is_round_and_about_lambda_over_b():
+    result = beam(_ring_of_baselines(6.0))
+    b = 6.0 / 4.8e-6 * onp.pi / 180 / 3600 / 1000  # cycles per mas
+    expected = 2 * onp.sqrt(2 * onp.log(2)) / (onp.pi * onp.sqrt(2) * b)
+    assert np.isclose(result.major_mas, expected, rtol=1e-3)
+    assert np.isclose(result.minor_mas, expected, rtol=1e-3)
+
+
+def test_beam_is_long_across_the_long_baselines():
+    # Baselines stretched East-West resolve finely East-West, so the beam's
+    # major axis points North-South (PA 0 or 180).
+    result = beam(_ring_of_baselines(4.0, stretch=2.0))
+    assert result.major_mas > 1.5 * result.minor_mas
+    assert min(result.pa_deg, 180.0 - result.pa_deg) < 1.0
+
+
+def test_plot_model_draws_the_beam_in_the_lower_left():
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    plot_model(
+        _image(np.ones((NPIX, NPIX))),
+        fov_mas=NPIX * SCALE,
+        npix=NPIX,
+        ax=ax,
+        beam=Beam(60.0, 30.0, 45.0),
+    )
+    (patch,) = ax.patches
+    x, y = patch.center
+    assert x > 0 and y < 0  # East (displayed left) and South (bottom)
+    assert np.isclose(patch.width, 60.0) and np.isclose(patch.angle, 45.0)
+    plt.close(fig)
