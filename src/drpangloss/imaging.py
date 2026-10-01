@@ -304,6 +304,12 @@ def _complex_visibilities(d):
         informed = (
             information[:n] + information[n:]
         ) > 1e-3 * information.max()
+        # The modes are blind to the total flux, so the log-amplitudes have
+        # an arbitrary offset: fix it so that |V| = 1 on average on the
+        # shortest informed baselines, as for any normalised source.
+        rho = onp.hypot(onp.asarray(d.u), onp.asarray(d.v))[informed]
+        shortest = rho <= onp.quantile(rho, 0.1)
+        logv[:n] -= onp.mean(logv[:n][informed][shortest])
         return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
     if (
         d.observable_kind == "split"
@@ -334,7 +340,9 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     samples (each standing for itself and its conjugate) with uniform
     weights on the informed ones: the image convolved with the dirty beam,
     plus noise. It peaks at one for a lone point source. For AMIGO DISCO
-    data the visibilities are the least-squares estimate from the modes.
+    data the visibilities are the least-squares estimate from the modes;
+    since the modes are blind to the total flux, the estimate is
+    normalised to |V| = 1 on average on the shortest baselines.
 
     Parameters
     ----------

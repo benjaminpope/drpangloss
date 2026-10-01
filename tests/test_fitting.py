@@ -82,11 +82,12 @@ def test_float32_and_float64_fits_agree():
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
     start, priors, data = _image_fit()
     regularisers = [TSV(1e3, path="env")]
-    lm = fit(start, priors, data, regularisers, method="lm")
-    lbfgs = fit(start, priors, data, regularisers, method="lbfgs")
-    # Both meet the gradient tolerance; they may differ along directions
-    # the data barely constrain, but not in the image or the loss.
-    assert np.isclose(lm.info["loss"], lbfgs.info["loss"], rtol=5e-3)
+    # A tight tolerance, so that this tests the solution, not the stopping
+    # rule (at the default tolerance their losses can differ by ~2%).
+    options = {"gtol": 1e-7, "max_steps": 20_000}
+    lm = fit(start, priors, data, regularisers, method="lm", **options)
+    lbfgs = fit(start, priors, data, regularisers, method="lbfgs", **options)
+    assert np.isclose(lm.info["loss"], lbfgs.info["loss"], rtol=2e-3)
     a, b = lm.model.env.brightness, lbfgs.model.env.brightness
     a, b = a - a.mean(), b - b.mean()
     assert np.sum(a * b) / np.sqrt(np.sum(a * a) * np.sum(b * b)) > 0.99

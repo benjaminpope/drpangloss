@@ -113,9 +113,11 @@ def test_an_inaccurate_backend_warns():
     diagnosis = diagnose(scene, DATA)
     assert diagnosis.checks["backend_error_sigma"] < 0.1
     assert diagnosis.warnings == []
-    # With errors a million times smaller, the NUFFT tolerance is no longer
-    # negligible; the data are the DFT model's, so chi2 also rises.
-    tight = DATA.set("d_vis", DATA.d_vis * 1e-6)
+    # With much smaller errors, the NUFFT tolerance (1e-5 in float32, 1e-7
+    # in float64) is no longer negligible; the data are the DFT model's, so
+    # chi2 also rises.
+    shrink = 1e-9 if jax.config.jax_enable_x64 else 1e-6
+    tight = DATA.set("d_vis", DATA.d_vis * shrink)
     tight = tight.with_model(_scene(), key=jax.random.PRNGKey(3))
     diagnosis = diagnose(scene, tight)
     assert diagnosis.checks["backend_error_sigma"] > 0.1
