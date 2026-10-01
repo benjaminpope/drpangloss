@@ -629,9 +629,17 @@ def test_flared_disk_needs_a_valid_grid(grid, match):
         (FlaredDiskHG, {"g": 0.3, "radius": 0.0}),
         (FlaredDiskHG, {"g": 0.3, "fwhm": 0.0}),
         (FlaredDiskHG, {"g": 1.0}),
+        (FlaredDiskHG, {"g": 0.3, "inc": 90.0}),
         (FlaredDiskGaussian, {"sigma_theta": 0.0}),
         (FlaredDiskPowerLaw, {"n": -1.0}),
     ],
 )
 def test_flared_disk_is_physical_rejects_singular_parameters(cls, bad):
     assert not bool(_flared_disk(cls, **bad).is_physical())
+
+
+def test_backward_scattering_moves_the_flared_disk_peak_to_the_far_side():
+    # pa=0 puts the near side East (+dra); g < 0 scatters backwards, West.
+    xx = onp.asarray(_image_coordinates(64, 64.0)[0])
+    image = onp.asarray(_flared_disk(g=-0.6).render(npix=64, fov_mas=64.0))
+    assert (image * xx).sum() < -1.0

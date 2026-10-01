@@ -756,7 +756,8 @@ class FlaredDisk(Component):
         Radial FWHM of the Gaussian ring, $2\sqrt{2\ln 2}\,\sigma_r$, in
         milliarcseconds.
     inc : float or array-like
-        Inclination in degrees (0 is face-on).
+        Inclination in degrees, from 0 (face-on) up to but not including
+        90 (edge-on, where the surface cannot be deprojected).
     pa : float or array-like
         Position angle of the projected major axis in degrees, North to
         East. The near side, where forward scattering peaks, is at
@@ -870,6 +871,8 @@ class FlaredDisk(Component):
             & (self.radius > 0.0)
             & (self.fwhm > 0.0)
             & (self.symmetric >= 0.0)
+            # Edge-on (and beyond) cannot be deprojected.
+            & (np.abs(self.inc) < 90.0)
         )
 
     def _centred_cvis(self, uu, vv):
@@ -914,8 +917,9 @@ class FlaredDiskHG(FlaredDisk):
     Parameters
     ----------
     g : float or array-like
-        Asymmetry parameter, from 0 (isotropic) towards 1 (strongly
-        forward scattering).
+        Asymmetry parameter, with ``-1 < g < 1``: 0 is isotropic, positive
+        values scatter forwards (peaking on the near side) and negative
+        values backwards (peaking on the far side).
     **geometry
         The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
 
