@@ -640,9 +640,15 @@ class FlaredDisk(Component):
         self.flaring = np.asarray(flaring, dtype=float)
         self.symmetric = np.asarray(symmetric, dtype=float)
         self.npix = int(npix)
-        if self.npix % 2:
-            raise ValueError(f"npix must be even, got {self.npix}.")
+        if self.npix <= 0 or self.npix % 2:
+            raise ValueError(f"npix must be positive and even, got {npix}.")
         self.pixel_scale_mas = float(pixel_scale_mas)
+        if not (
+            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
+        ):
+            raise ValueError(
+                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
+            )
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
@@ -652,7 +658,13 @@ class FlaredDisk(Component):
         raise NotImplementedError
 
     def is_physical(self):
-        return super().is_physical() & (self.symmetric >= 0.0)
+        # The ring is divided by its radius and width.
+        return (
+            super().is_physical()
+            & (self.radius > 0.0)
+            & (self.fwhm > 0.0)
+            & (self.symmetric >= 0.0)
+        )
 
     def _centred_cvis(self, uu, vv):
         xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
@@ -744,6 +756,9 @@ class FlaredDiskGaussian(FlaredDisk):
     def __init__(self, sigma_theta, **geometry):
         self.sigma_theta = np.asarray(sigma_theta, dtype=float)
         super().__init__(**geometry)
+
+    def is_physical(self):
+        return super().is_physical() & (self.sigma_theta > 0.0)
 
     def _phase_function(self, theta):
         return np.exp(-0.5 * (theta / (self.sigma_theta * dtor)) ** 2)

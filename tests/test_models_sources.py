@@ -583,6 +583,29 @@ def test_flared_disk_loglike_gradients_are_finite(disk):
     )
 
 
-def test_flared_disk_needs_an_even_grid():
-    with pytest.raises(ValueError, match="even"):
-        _flared_disk(npix=63, g=0.3)
+@pytest.mark.parametrize(
+    ("grid", "match"),
+    [
+        ({"npix": 63}, "even"),
+        ({"npix": 0}, "even"),
+        ({"pixel_scale_mas": 0.0}, "pixel_scale_mas"),
+        ({"pixel_scale_mas": float("nan")}, "pixel_scale_mas"),
+    ],
+)
+def test_flared_disk_needs_a_valid_grid(grid, match):
+    with pytest.raises(ValueError, match=match):
+        _flared_disk(g=0.3, **grid)
+
+
+@pytest.mark.parametrize(
+    ("cls", "bad"),
+    [
+        (FlaredDiskHG, {"g": 0.3, "radius": 0.0}),
+        (FlaredDiskHG, {"g": 0.3, "fwhm": 0.0}),
+        (FlaredDiskHG, {"g": 1.0}),
+        (FlaredDiskGaussian, {"sigma_theta": 0.0}),
+        (FlaredDiskPowerLaw, {"n": -1.0}),
+    ],
+)
+def test_flared_disk_is_physical_rejects_singular_parameters(cls, bad):
+    assert not bool(_flared_disk(cls, **bad).is_physical())
