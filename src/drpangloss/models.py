@@ -1869,8 +1869,13 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
     # Get length of baseline and baseline projection angle (i.e. counterclockwise
     # angle in uv-plane, turning from top, i.e. positive v, to left, i.e. positive u).
-    base_norm = np.hypot(u, v)
-    base_proj_ang_rad = np.arctan2(u, v)
+    # At u = v = 0 (e.g. flagged samples) hypot and arctan2 have undefined
+    # derivatives; the double where keeps gradients finite there, where the
+    # visibility is exactly 1.
+    origin = (u == 0) & (v == 0)
+    u_safe, v_safe = np.where(origin, 1.0, u), np.where(origin, 1.0, v)
+    base_norm = np.where(origin, 0.0, np.hypot(u_safe, v_safe))
+    base_proj_ang_rad = np.where(origin, 0.0, np.arctan2(u_safe, v_safe))
 
     az_order_max = np.size(az_orders) - 1
     xbes = 2.0 * np.pi * base_norm * r0_rad

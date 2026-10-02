@@ -730,3 +730,24 @@ def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
         onp.abs(ellipse.model(u, v, 2.2e-6)),
         atol=1e-3,
     )
+
+
+def test_rim_gradients_are_finite_at_zero_baseline():
+    # Flagged samples can sit at u = v = 0; their gradients must not be NaN.
+    u, v = np.array([0.0, 20.0]), np.array([0.0, -10.0])
+
+    def power(inc, pa):
+        rim = ModulatedGaussianRim(
+            30.0,
+            4.0,
+            inc,
+            pa,
+            az_amps=np.array([0.3]),
+            az_pas=np.array([40.0]),
+        )
+        return np.sum(np.abs(rim.model(u, v, 2.2e-6)) ** 2)
+
+    grads = jax.grad(power, argnums=(0, 1))(60.0, 10.0)
+    assert all(onp.isfinite(float(g)) for g in grads)
+    rim = ModulatedGaussianRim(30.0, 4.0, 60.0, 10.0)
+    assert onp.isclose(complex(rim.model(u, v, 2.2e-6)[0]), 1.0)
