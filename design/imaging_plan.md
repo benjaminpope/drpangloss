@@ -324,10 +324,19 @@ A background split off as a `Resolved` component also changes what the image's i
   - **`imaging_gp`:** prior draws, an LM MAP fit, the evidence over σ and ℓ gridded in units of the beam, the `error_scale` check (s = 1.04 with honest errors, 0.52 with errors overstated twofold, and 0.99 after rescaling), and a comparison with MEM.
   - **`imaging_composite`:** a ring around a binary. With one star, the image absorbs the companion as a knot (NCC 0.22). The knot locates it, and the binary fit recovers it (0.080 at (1.47, −0.99) mas, against a truth of 0.080 at (1.5, −1.0)) and the ring (NCC 0.96). The evidence prefers the binary by Δlog Z ≈ 28, although χ² differs by only 3.
 - **Real data** (nuHor, run on OzSTAR A100s in about 6 min each, against more than 30 min on the laptop):
-  - IRAS 08544: GP d_env 0.37 and MEM 0.45, against the paper's 0.42.
-  - IW Car: GP d_env 0.83 and MEM 0.87, against the paper's d_rim 0.89.
+  - IRAS 08544: GP d_env 0.45 and MEM 0.45, against the paper's 0.42 (0.37 for the GP before the errors were rescaled).
+  - IW Car: GP d_env 0.82 and MEM 0.88, against the paper's d_rim 0.89.
   - The notebooks now rescale the errors first, grid ℓ in units of the beam, and run converged sweeps.
 - **Not done:** the `gauss_newton_diagonal` mass-matrix helper, and a sampling MWE at 32–64². At 41², NUTS saturates its tree depth, so the helper is the next step for sampling.
+
+**Checkpoint (2026-10-02):**
+- **The GP prior is worth it, and it becomes the recommended prior.** The reasons:
+  - The evidence chooses σ and ℓ with no L-curve.
+  - `error_scale` calibrates PIONIER's conservative errors.
+  - LM fits converge in tens of steps, where MEM sweeps need up to 2 × 10⁵ L-BFGS steps.
+  - On real data the GP matches or beats MEM: on IRAS 08544 it is the only image that shows the compact emission near the binary.
+  - MEM and TSV stay supported, as the classical comparison.
+- **Sampling is not yet supported in the docs.** It becomes supported once `gauss_newton_diagonal` initialises the NUTS mass matrix and a 32² MWE converges on the laptop. That is Stage 5d, and Stage 6 builds on `GaussianField`.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
