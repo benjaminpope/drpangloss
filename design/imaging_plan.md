@@ -327,7 +327,7 @@ A background split off as a `Resolved` component also changes what the image's i
   - IRAS 08544: GP d_env 0.45 and MEM 0.45, against the paper's 0.42 (0.37 for the GP before the errors were rescaled).
   - IW Car: GP d_env 0.82 and MEM 0.88, against the paper's d_rim 0.89.
   - The notebooks now rescale the errors first, grid ℓ in units of the beam, and run converged sweeps.
-- **Not done:** the `gauss_newton_diagonal` mass-matrix helper, and a sampling MWE at 32–64². At 41², NUTS saturates its tree depth, so the helper is the next step for sampling.
+- **Not done:** a sampling MWE at 32–64², which is Stage 5d.
 
 **Checkpoint (2026-10-02):**
 - **The GP prior is worth it, and it becomes the recommended prior.** The reasons:
@@ -336,7 +336,12 @@ A background split off as a `Resolved` component also changes what the image's i
   - LM fits converge in tens of steps, where MEM sweeps need up to 2 × 10⁵ L-BFGS steps.
   - On real data the GP matches or beats MEM: on IRAS 08544 it is the only image that shows the compact emission near the binary.
   - MEM and TSV stay supported, as the classical comparison.
-- **Sampling is not yet supported in the docs.** It becomes supported once `gauss_newton_diagonal` initialises the NUTS mass matrix and a 32² MWE converges on the laptop. That is Stage 5d, and Stage 6 builds on `GaussianField`.
+- **Sampling needs no mass-matrix helper, so `gauss_newton_diagonal` is dropped.** Plain NUTS was tested with σ and ℓ marginalised, on 150 VLTI points with 500 warmup steps:
+  - At 32², 48² and 64², NUTS uses 127 leapfrog steps per draw and has no divergences. σ and ℓ have an ESS of 100–200 per 300 draws.
+  - 64² takes about 30 s on the laptop.
+  - A diagonal Gauss–Newton start changes nothing. A dense one is worse: about 3–20 ESS per 300 draws and 6 divergences. It is built at fixed σ and ℓ, but the posterior's shape moves with them.
+  - The 41² tree-depth saturation was specific to one scene, and is revisited only if a real dataset shows it.
+- **Sampling enters the docs as supported** once a tutorial exists (Stage 5d): posterior mean and standard-deviation maps, and the posteriors of σ and ℓ. Stage 6 builds on `GaussianField`.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
