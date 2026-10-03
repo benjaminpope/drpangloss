@@ -18,6 +18,12 @@ favours smooth images, TV (total variation) piecewise-flat ones, and maximum
 entropy images close to a default ``q``. The weight ``w`` depends on the
 scene and the data; :func:`l_curve` sweeps it.
 
+When [`fit`][virgil.fitting.fit]'s model function returns one model per
+dataset, every regulariser acts on the **first model only**. That is right
+when the later models are transformed copies of the same scene (e.g. a
+[`Rotated`][virgil.models.Rotated] epoch), but an Image that appears only in
+a later model is not regularised at all.
+
 Closure, kernel and DISCO phases do not fix an image's position. Something
 must: an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]
 prior, or a centred prior mean. [`diagnose`][virgil.imaging.diagnose]
@@ -34,9 +40,9 @@ from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
-from ._utils import mas2rad
+from ._utils import _reference, mas2rad
 from ._precision import cast_tree, run_in
-from .fitting import _reference, fit
+from .fitting import FitResult, fit
 from .fields import GaussianField
 from .likelihood import whitened_residuals
 from .models import Image, PointSource, Rotated, System, circular_support
@@ -722,7 +728,7 @@ class LCurve:
         For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits,
         this is the weight ``w`` at which ``-2 w S`` equals the number of
         well-measured directions in the image, ``N = Σ λ / (λ + w)``
-        (Gull 1989; Skilling & Bryan 1984). Here ``S`` is the entropy (minus
+        (Gull 1989; Skilling 1989). Here ``S`` is the entropy (minus
         the sweep's ``penalty``), and the ``λ`` are the eigenvalues of the
         data's Gauss–Newton curvature in the entropy metric,
         ``diag(√b) JᵀJ diag(√b)``, with ``J`` the Jacobian of the whitened
@@ -732,7 +738,9 @@ class LCurve:
 
         Both sides are evaluated at each fit in the sweep, and the crossing
         is interpolated linearly in ``log w``. Returns ``None`` if the sweep
-        does not bracket it.
+        does not bracket it. Like :func:`log_evidence`, it uses the data's
+        quoted errors, so it rejects a sweep fitted with ``noise=`` terms
+        or with one model per dataset.
 
         Parameters
         ----------
@@ -740,17 +748,25 @@ class LCurve:
             The data the sweep was fitted to.
         path : str, optional
             Path of the regularised Image in the model (default ``"env"``).
+
+        References
+        ----------
+        - S. F. Gull (1989), "Developments in maximum entropy data
+          analysis", in *Maximum Entropy and Bayesian Methods*, Kluwer,
+          53–71.
+        - J. Skilling (1989), "Classic maximum entropy", in *Maximum
+          Entropy and Bayesian Methods*, Kluwer, 45–52. (Skilling & Bryan
+          1984 is the earlier "historic" MaxEnt, which stops at χ² = N.)
         """
         gap = []
         for weight, penalty, result in zip(
             self.weights, self.penalty, self.results
         ):
-            image = result.model.get(path)
+            model = _single_model(result, "classic_maxent")
+            image = model.get(path)
             if isinstance(image.log_brightness, GaussianField):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            _, jac = _residual_jacobian(
-                result.model, data, path + ".log_brightness"
-            )
+            _, jac = _residual_jacobian(model, data, path + ".log_brightness")
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
             with run_in("float64"):
                 b = onp.ravel(
@@ -808,6 +824,35 @@ def _smaller_gram(matrix):
     )
 
 
+def _single_model(model, caller):
+    """The one model of a fit, for the evidence helpers.
+
+    ``model`` is a model or a [`FitResult`][virgil.fitting.FitResult].
+    The helpers use the data's quoted errors and set the Image in one
+    model, so fitted ``noise=`` terms (found only in a FitResult) and
+    per-dataset model lists are rejected rather than silently mishandled.
+    """
+    if isinstance(model, FitResult):
+        noise = [
+            site
+            for site in model.values
+            if site.startswith(("noise.", "noise["))
+        ]
+        if noise:
+            raise ValueError(
+                f"{caller} uses the data's quoted errors, but this fit has "
+                f"fitted error terms {noise}. Fit without noise=, after "
+                "rescaling the errors with OIData.with_error_scale if needed."
+            )
+        model = model.model
+    if isinstance(model, (list, tuple)):
+        raise TypeError(
+            f"{caller} needs a single model, not a list of models (one per "
+            "dataset)."
+        )
+    return model
+
+
 def log_evidence(model, data, path="env"):
     """Laplace-approximated log evidence of a Gaussian-field image fit.
 
@@ -824,11 +869,15 @@ def log_evidence(model, data, path="env"):
     are held at their MAP values. Compare it across fits with different
     hyperparameters and choose the largest, as MacKay's evidence framework
     does; it is exact for a linear model, and assumes correct error bars.
+    It uses the data's quoted errors, so it does not support fits with
+    ``noise=`` terms, nor fits with one model per dataset.
 
     Parameters
     ----------
-    model : SourceModel
-        The MAP model.
+    model : SourceModel or FitResult
+        The MAP model, or better the [`FitResult`][virgil.fitting.FitResult]
+        itself, so that fitted ``noise=`` terms are caught (a ``ValueError``).
+        A list of models raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str, optional
@@ -838,6 +887,7 @@ def log_evidence(model, data, path="env"):
     -------
     float
     """
+    model = _single_model(model, "log_evidence")
     image = model.get(path)
     if not isinstance(image.log_brightness, GaussianField):
         raise TypeError(
@@ -870,29 +920,33 @@ def error_scale(model, data, path="env"):
     Laplace-approximated evidence, as a function of β, is maximised when
 
     $$\frac{1}{\beta} = s^2 = \frac{\chi^2}{N - \gamma},
-    \qquad \gamma = \sum_i \frac{\lambda_i}{1 + \lambda_i}.$$
+    \qquad \gamma = \sum_i \frac{\beta\lambda_i}{1 + \beta\lambda_i}.$$
 
     ``N`` is the number of data. ``γ`` is the **effective number of
     parameters** the data measure: the ``λ_i`` are the eigenvalues of the
-    Gauss–Newton curvature ``JᵀJ`` of the likelihood in the field's
-    whitened latents, in which the prior's curvature is the identity. A
-    direction with ``λ ≫ 1`` is fixed by the data and counts as one
-    parameter; one with ``λ ≪ 1`` is fixed by the prior and counts as none.
+    Gauss–Newton curvature ``JᵀJ`` of the likelihood (with the quoted
+    errors) in the field's whitened latents, in which the prior's curvature
+    is the identity, so that ``βλ_i`` are those of the rescaled likelihood.
+    A direction with ``βλ ≫ 1`` is fixed by the data and counts as one
+    parameter; one with ``βλ ≪ 1`` is fixed by the prior and counts as none.
+    Since ``γ`` depends on ``β``, the equation is solved for ``β`` at the
+    fitted model (by Newton's method, which converges monotonically from
+    ``β = 0`` because ``γ`` is concave in ``β``).
 
     Each measured parameter uses up one datum's worth of scatter. So of the
     ``N`` residuals, only ``N − γ`` are free to scatter, and an honest error
     bar gives χ² ≈ N − γ, not N. The ordinary "χ² per point" estimate,
     ``s² = χ²/N``, is biased low for the same reason as the 1/N estimate of
     a sample variance; this is its Bayesian, nonlinear generalisation. It is
-    MacKay's re-estimation formula for β (MacKay 1992, eq. 4.14; Bishop
-    2006, eq. 3.95).
+    MacKay's re-estimation formula for β (MacKay 1992, eq. 4.10, with γ
+    from eq. 4.9; Bishop 2006, eqs. 3.91–3.95).
 
     **How to use it.** Fit at your chosen hyperparameters, call this, rescale
     the data with
     [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale],
-    and refit. The estimate depends on the fit, which depends on the errors,
-    so in principle this is a fixed-point iteration; in practice one
-    iteration usually suffices. Error bars that are too large make the
+    and refit. The fit itself depends on the errors, so in principle
+    fitting and rescaling is a fixed-point iteration; in practice one
+    rescaling usually suffices. Error bars that are too large make the
     discrepancy principle, classic MaxEnt and the evidence all
     over-regularise, so rescale before choosing hyperparameters with any of
     them. The estimate assumes the model is adequate: if the data contain
@@ -904,11 +958,18 @@ def error_scale(model, data, path="env"):
     ``s`` by a fraction of about 1/(2N). That is negligible while such
     parameters are few compared with the data, as in every SPARCO fit.
 
+    It uses the data's quoted errors, so it does not support fits with
+    ``noise=`` terms (which estimate the errors another way), nor fits with
+    one model per dataset.
+
     Parameters
     ----------
-    model : SourceModel
+    model : SourceModel or FitResult
         The MAP model, whose Image at ``path`` has a GaussianField
-        log-brightness.
+        log-brightness, or better the
+        [`FitResult`][virgil.fitting.FitResult] itself, so that fitted
+        ``noise=`` terms are caught (a ``ValueError``). A list of models
+        raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str, optional
@@ -933,6 +994,7 @@ def error_scale(model, data, path="env"):
       ``N − γ`` argument for maximum entropy, the basis of
       [`LCurve.classic_maxent`][virgil.imaging.LCurve.classic_maxent].
     """
+    model = _single_model(model, "error_scale")
     image = model.get(path)
     if not isinstance(image.log_brightness, GaussianField):
         raise TypeError(
@@ -940,9 +1002,19 @@ def error_scale(model, data, path="env"):
         )
     r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
     chi2 = float(r @ r)
-    curvature = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
-    gamma = float(onp.sum(curvature / (1.0 + curvature)))
-    return float(onp.sqrt(chi2 / (jac.shape[0] - gamma)))
+    lam = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
+    # Solve g(β) = β χ² + γ(β) − N = 0. g is increasing and concave, so
+    # Newton's method from β = 0 (where g = −N) rises monotonically to the
+    # root.
+    beta = 0.0
+    for _ in range(100):
+        g = beta * chi2 + onp.sum(beta * lam / (1.0 + beta * lam))
+        slope = chi2 + onp.sum(lam / (1.0 + beta * lam) ** 2)
+        step = (g - jac.shape[0]) / slope
+        beta -= step
+        if abs(step) <= 1e-12 * beta:
+            break
+    return float(1.0 / onp.sqrt(beta))
 
 
 def l_curve(

@@ -24,7 +24,7 @@ import optax
 import optimistix as optx
 
 from ._precision import cast_tree, run_in
-from ._utils import is_flux_param
+from ._utils import _reference, is_flux_param
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
@@ -230,11 +230,6 @@ class _Objective(eqx.Module):
         return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
-def _reference(model):
-    """The model regularisers act on: the first if there is one per dataset."""
-    return model[0] if isinstance(model, (list, tuple)) else model
-
-
 @dataclasses.dataclass(frozen=True)
 class FitResult:
     """The result of [`fit`][virgil.fitting.fit].
@@ -287,7 +282,8 @@ def fit(
         may return a list of models, one per dataset, sharing parameters:
         for example a scene and a [`Rotated`][virgil.models.Rotated]
         copy of it, for two epochs between which it turns. Regularisers
-        then act on the first.
+        then act on the first model only: an Image that appears only in a
+        later model is not regularised.
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see
