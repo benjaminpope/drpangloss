@@ -15,10 +15,14 @@ scripts in `examples/`, and tests in `tests/`.
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[dev]"
+uv pip install --python .venv/bin/python --upgrade jax jaxlib
 pre-commit install
 ```
 
 Cloud agents get this environment from `.github/workflows/copilot-setup-steps.yml`.
+CI tests against the newest JAX (`.github/workflows/tests.yml`), so rerun the
+`--upgrade jax jaxlib` line when an existing `.venv` is behind: a stale JAX can
+hide failures that only appear in newer releases.
 
 ## Commands
 

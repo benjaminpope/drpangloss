@@ -18,6 +18,9 @@ uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
 ```
 
+CI tests against the newest JAX, so if you reuse an existing `.venv`, upgrade it first
+with `uv pip install --python .venv/bin/python --upgrade jax jaxlib`.
+
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you
 have another ruff on your `PATH`, call the one in `.venv` explicitly.
