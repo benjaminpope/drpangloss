@@ -136,7 +136,7 @@ class TV(_ImageRegulariser):
 
     def __init__(self, weight, epsilon=1e-2, path=None):
         self.weight = np.asarray(weight, dtype=float)
-        self.epsilon = float(epsilon)
+        self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
 
     def value(self, model):
@@ -214,7 +214,7 @@ class Centroid(_ImageRegulariser):
 
     def __init__(self, sigma_mas, path=None):
         self.weight = 1.0
-        self.sigma_mas = float(sigma_mas)
+        self.sigma_mas = np.asarray(sigma_mas, dtype=float)
         self.path = path
 
     def centroid(self, model):
@@ -788,6 +788,27 @@ class LCurve:
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
 
 
+@eqx.filter_jit
+def _jitted_residual_jacobian(model, datasets, path):
+    """Jitted body of :func:`_residual_jacobian`.
+
+    Jitted once at module level, with the model and data as arguments, so
+    that a new fit of the same shape reuses the compilation; run eagerly,
+    the Jacobian compiles hundreds of small operations one at a time.
+    """
+    leaf = model.get(path)
+
+    def residuals(x):
+        changed = model.set(path, x)
+        return np.concatenate(
+            [whitened_residuals(changed, d) for d in datasets]
+        )
+
+    n_data = sum(d.n_independent for d in datasets)
+    mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
+    return residuals(leaf), mode(residuals)(leaf).reshape(n_data, -1)
+
+
 def _residual_jacobian(model, data, path):
     """All the whitened residuals, and their Jacobian with respect to a leaf.
 
@@ -798,21 +819,8 @@ def _residual_jacobian(model, data, path):
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
-        leaf = model.get(path)
-
-        def residuals(x):
-            changed = model.set(path, x)
-            return np.concatenate(
-                [whitened_residuals(changed, d) for d in datasets]
-            )
-
-        n_data = sum(d.n_independent for d in datasets)
-        mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
-        jac = mode(residuals)(leaf)
-        r = residuals(leaf)
-        return onp.asarray(r, dtype=float), onp.asarray(
-            jac, dtype=float
-        ).reshape(n_data, -1)
+        r, jac = _jitted_residual_jacobian(model, datasets, path)
+        return onp.asarray(r, dtype=float), onp.asarray(jac, dtype=float)
 
 
 def _smaller_gram(matrix):
@@ -1157,10 +1165,16 @@ def _rotated_180(image):
     )
 
 
+@eqx.filter_jit
+def _jitted_chi2(model, observations):
+    return np.stack(
+        [np.sum(whitened_residuals(model, d) ** 2) for d in observations]
+    )
+
+
 def _chi2(model, observations):
-    return [
-        float(np.sum(whitened_residuals(model, d) ** 2)) for d in observations
-    ]
+    """χ² of each dataset, jitted so that :func:`diagnose` compiles once."""
+    return [float(c) for c in _jitted_chi2(model, tuple(observations))]
 
 
 def diagnose(model, data, regularisers=()):
@@ -1201,8 +1215,7 @@ def diagnose(model, data, regularisers=()):
 
     chi2 = _chi2(model, observations)
     checks["chi2_red"] = [
-        c / whitened_residuals(model, d).size
-        for c, d in zip(chi2, observations)
+        c / d.n_independent for c, d in zip(chi2, observations)
     ]
     for i, red in enumerate(checks["chi2_red"]):
         if red > 2.0:
