@@ -185,13 +185,15 @@ def _query_simbad(name):
     """Return SIMBAD ``(ra, dec, spectyp, pmra, pmdec, plx)`` for OI_TARGET.
 
     Coordinates are in degrees, proper motions in deg/yr and the parallax in
-    degrees, as OIFITS requires (SIMBAD gives mas/yr and mas). Any failure,
-    including a network error or an unknown target, gives zeros.
+    degrees, as OIFITS requires (SIMBAD gives mas/yr and mas). A failed
+    query, such as a network error or an unknown target, gives zeros; a
+    missing ``astroquery`` raises, with an install hint.
     """
     unknown = [0], [0], ["unknown"], [0], [0], [0]
     mas_to_deg = 1.0 / 3.6e6
+    simbad = _simbad()
     try:
-        custom_simbad = _simbad()()
+        custom_simbad = simbad()
         custom_simbad.add_votable_fields(
             "propermotions", "sp_type", "parallax"
         )

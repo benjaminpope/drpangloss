@@ -154,7 +154,8 @@ def test_numpyro_model_accepts_prior_regularisers_only():
 
 
 def test_fit_rejects_bad_paths_flux_priors_and_methods():
-    with pytest.raises(ValueError, match="nonsense"):
+    # zodiax raises ValueError (0.4.1) or KeyError (newer) for unknown paths.
+    with pytest.raises((KeyError, ValueError), match="nonsense"):
         fit(TRUTH, {"nonsense": dist.Uniform(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="negative"):
         fit(TRUTH, {"flux": dist.Normal(0.0, 1.0)}, DATA)
