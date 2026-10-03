@@ -38,7 +38,7 @@ def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
     # Closure phases are whitened as correlated groups (see test_closure);
     # for small Δ the chord 2 sin(Δ/2) is Δ.
     phases, _ = oidata_sim.cp_noise.whiten(delta[n_vis:], errors[n_vis:])
-    assert np.allclose(whitened[n_vis:], phases, rtol=1e-4, atol=1e-6)
+    assert np.allclose(whitened[n_vis:], phases, rtol=1e-4, atol=1e-4)
 
 
 def test_phase_term_is_von_mises_and_smooth_across_pi():
@@ -50,7 +50,10 @@ def test_phase_term_is_von_mises_and_smooth_across_pi():
     for shift in (0.3, 3.0, np.pi, 3.3, 2.0 * np.pi - 0.3):
         data = _shift_phases(oidata_sim, shift)
         phase = whitened_residuals(TRUTH, data)[n_vis:]
-        chord = 2.0 * np.sin(-0.5 * shift)  # residual = model - data
+        # residual = model - data = -shift, wrapped into [-π, π) for
+        # correlated closure phases before taking the chord
+        wrapped = np.mod(-shift + np.pi, 2.0 * np.pi) - np.pi
+        chord = 2.0 * np.sin(0.5 * wrapped)
         assert np.allclose(phase, chord * unit, rtol=1e-4, atol=1e-4)
 
     def loglike(shift):

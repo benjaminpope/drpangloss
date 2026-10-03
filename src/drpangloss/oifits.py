@@ -164,7 +164,7 @@ def _select_insname(tables, insname):
         raise ValueError(
             f"No tables have INSNAME {missing}; this file has {names}."
         )
-    return {
+    selected = {
         extname: [
             hdu
             for hdu in hdus
@@ -172,6 +172,9 @@ def _select_insname(tables, insname):
         ]
         for extname, hdus in tables.items()
     }
+    # Drop emptied table types: the reader decides which observables to use
+    # from which table types are present.
+    return {extname: hdus for extname, hdus in selected.items() if hdus}
 
 
 def _wavelength_tables(tables):
@@ -462,6 +465,9 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     for hdu in tables["OI_VIS"]:
         if "VISPHI" not in hdu.columns.names:
             continue
+        mask = _row_mask(hdu, target_id)
+        if not onp.any(mask):
+            continue  # another target's table
         phityp = str(hdu.header.get("PHITYP", "absolute")).strip().lower()
         if phityp != "absolute":
             raise ValueError(
@@ -473,7 +479,6 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
             )
         wave = _table_wavelengths(hdu, wavelengths)
         nwave = wave.size
-        mask = _row_mask(hdu, target_id)
         scale = _phase_scale(hdu, "VISPHI")
         values = _column(hdu, "VISPHI", mask, nwave) * scale
         errors = _column(hdu, "VISPHIERR", mask, nwave) * scale

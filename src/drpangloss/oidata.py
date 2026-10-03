@@ -236,12 +236,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.phi_index = None if phi_index is None else np.asarray(phi_index)
         # Closure phases of triangles sharing baselines are correlated, and
         # only some of them are independent: whiten them as a group (see
-        # _closure). Projected phases (kernel phases, DISCOs) already are.
-        self.cp_noise = (
-            ClosureNoise.from_indices(*indices)
-            if cp_flag and phi_mat is None
-            else None
-        )
+        # _closure). A phase operator applied to them gets their full
+        # covariance instead (_transform_observed_channels).
+        closure = ClosureNoise.from_indices(*indices) if cp_flag else None
+        self.cp_noise = closure if phi_mat is None else None
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
@@ -251,6 +249,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
+            closure=closure,
         )
 
     def _resolve_vis_mode(self, vis_mode):
@@ -327,11 +326,19 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return operator @ np.asarray(values, dtype=float).reshape(-1)
 
     @classmethod
-    def _diagonalised(cls, operator, channel_sigma):
+    def _diagonalised(cls, operator, channel_sigma, correlation=None):
         """An operator whose outputs are independent, and their errors.
 
-        The outputs of ``operator`` have covariance A D Aᵀ, with D the
-        diagonal of ``channel_sigma``². If that is diagonal, the operator is
+        Projected outputs are linear combinations of the input angles and
+        are not wrapped (as for kernel phases and DISCOs), so a projection
+        of closure phases is not invariant to shifting one input by 2π;
+        prefer unprojected closure phases, which are whitened with wrapping
+        (``cp_noise``).
+
+        The outputs of ``operator`` have covariance A D^½ R D^½ Aᵀ, with D
+        the diagonal of ``channel_sigma``² and R the inputs' correlation
+        (the identity unless given, e.g. for correlated closure phases). If
+        that is diagonal, the operator is
         kept and the errors are its square-rooted diagonal. Otherwise the
         outputs are correlated, and using only the diagonal would count
         shared information more than once: the operator is rotated onto
@@ -341,12 +348,21 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         operator = np.asarray(operator, dtype=float)
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
         weighted = operator * sigma[None, :]
-        covariance = weighted @ weighted.T
+        if correlation is None:
+            covariance = weighted @ weighted.T
+        else:
+            covariance = weighted @ np.asarray(correlation) @ weighted.T
         diagonal = np.diag(covariance)
+        # A tolerance relative to the covariance's own scale, so that
+        # rescaling an operator or its errors cannot bypass this check.
         scale = float(np.max(np.abs(diagonal)))
         off = covariance - np.diag(diagonal)
-        if float(np.max(np.abs(off))) <= max(1e-12, 1e-7 * scale):
-            return operator, np.sqrt(diagonal)
+        if scale == 0.0 or float(np.max(np.abs(off))) <= 1e-7 * scale:
+            # Already independent; drop outputs with no variance (e.g. a
+            # closure relation of correlated closure phases), which carry
+            # no measurement and would divide 0 by 0.
+            keep = diagonal > 1e-10 * scale
+            return operator[keep], np.sqrt(diagonal[keep])
         variance, vectors = np.linalg.eigh(covariance)
         keep = variance > 1e-10 * float(np.max(variance))
         return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
@@ -407,7 +423,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return d_vis
 
     def _transform_observed_channels(
-        self, validate_vis_covariance=False, validate_phi_covariance=False
+        self,
+        validate_vis_covariance=False,
+        validate_phi_covariance=False,
+        closure=None,
     ):
         """Convert observed channels to ``vis_mode`` and apply operators.
 
@@ -444,8 +463,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 self._validate_diagonal_covariance(
                     phi_sigma, self.phi_mat, "disco_phi_mat"
                 )
+            correlation = (
+                None if closure is None else closure.correlation(n_phi)
+            )
             self.phi_mat, self.d_phi = self._diagonalised(
-                self.phi_mat, phi_sigma
+                self.phi_mat, phi_sigma, correlation
             )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
 
