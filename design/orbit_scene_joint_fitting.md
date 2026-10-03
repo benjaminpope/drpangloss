@@ -49,7 +49,7 @@ jaxoplanet's `OrbitalBody.relative_position(t)` returns (X, Y, Z) with X North, 
 | `radial_velocity(t)` | `radial_velocity` (positive = redshift, for the primary) |
 
 **Pitfalls found in jaxoplanet 0.1.0:**
-1. **`parallax=` scales wrongly.** A 1 au orbit at a parallax of 0.1″ returns a separation of 4624, not 0.1. It multiplies by the au-to-R☉ factor instead of dividing (the code is marked `TODO`). **Never pass `parallax`.** Divide by `semimajor` and multiply by `a_mas` instead, as in the sketch. Worth an upstream issue (ask Ben first).
+1. **`parallax=` scales wrongly.** A 1 au orbit at a parallax of 0.1″ returns a separation of 4624, not 0.1. It multiplies by the au-to-R☉ factor instead of dividing (the code is marked `TODO`). **Never pass `parallax`.** Divide by `semimajor` and multiply by `a_mas` instead, as in the sketch. Not yet reported upstream.
 2. **Units are R☉, M☉ and days, with G built in.** Fixing `period` and a dummy central mass, then dividing by `semimajor`, gives positions in units of a, independent of mass.
 3. **Time precision.** jaxoplanet takes whatever times it is given. In float32, MJD ≈ 60000 resolves to only about 0.004 d. Always pass `mjd − t_ref`, with `t_ref` a static float64.
 
@@ -73,12 +73,13 @@ Read in jaxoplanet's convention (ω = 10° for the primary), White et al.'s elem
 - GRAVITY can tell them apart without new code. The predicted change over 2023.7–2025.5 is 0.6°. The statistical PA error per epoch is about 0.013/28 rad ≈ 0.03°, which is still ≲ 0.2° even after the 2–7× error inflation.
 - The orbit also predicts the separation growing by 0.22 mas over the same interval (the sketch: 27.96 → 28.19 mas), which is likewise measurable.
 - **Action (no code):** refit the binary per epoch with the cone shared, and compare dPA/dt and d(sep)/dt with ±0.33°/yr and +0.12 mas/yr. A 0.1% wavelength-scale error per epoch (0.03 mas) does not mask the separation trend.
+- **Status (2026-10-03).** White et al.'s Ω and ω conventions are unknown. Ben will ask the first author in person. The question was passed to the Apep workspace in `~/data/apep_gravity/notes/omega_convention_question.md`. Until it is answered, use the JWST elements only as axial priors on Ω (R5), never as a fixed Ω.
 
 ## 3. Engine: jaxoplanet, under a drpangloss orbit module
 - **Use** `jaxoplanet.orbits.keplerian.Body` / `OrbitalBody` for positions, velocities and radial velocities. That way the Kepler solver (with its custom derivatives) and the radial-velocity sign live in one tested place.
 - **Do not expose** jaxoplanet objects as fitted parameters. A drpangloss `KeplerOrbit` (an equinox/zodiax module) holds *our* parameters (§2.1), and builds a jaxoplanet `OrbitalBody` inside each call. This keeps the parameter paths ours (`"orbit.omega"`), confines the ω offset to one function, and insulates us from 0.x API changes.
 - **Where it lives.** A new `src/drpangloss/orbits.py`, imported by `models` (where `Attached` goes, per `AGENTS.md`). The import order becomes `_utils` → `orbits` → `models`.
-- **Dependency.** jaxoplanet needs only `jax` and `equinox`. `AGENTS.md` requires asking before adding runtime dependencies. Recommendation: an optional extra, `drpangloss[orbits]`, imported lazily inside `orbits.py`.
+- **Dependency (decided 2026-10-03).** jaxoplanet is an **optional** dependency: the extra `drpangloss[orbits]`, imported lazily inside `orbits.py`, with an error naming the extra if it is missing. It needs only `jax` and `equinox`. Tests that use it skip when it is absent, and CI installs the extra.
 
 ## 4. Requirements and proposed interfaces
 
@@ -179,7 +180,7 @@ fake = simulate(scene, template, errors="template", key=key,
 ### 5.1 Reference ephemerides
 1. **An independent evaluator.** A NumPy-only implementation (SciPy's root finder for Kepler's equation, Thiele–Innes, §2.4) against `KeplerOrbit.relative` over a grid of (e, i, ω, Ω, phase), in float64 to 1e-10 relative. In float32 with `t_ref`, to 1e-5. This is how §2.4 was checked.
 2. **A published visual binary with radial velocities, so that Ω is absolute.** Proposal: **α Cen AB**. Its orbit is in Pourbaix & Boffin (2016, A&A 586, A90) and Akeson et al. (2021, AJ 162, 14). Test the predicted (separation, PA) against their tabulated or plotted epochs, with each paper's stated ω (of B relative to A, or of A) and Ω conventions mapped to §2.1. **The values must be copied from the papers when the test is written, not from memory.**
-3. **A second, interferometric visual binary** with a published orbit from VLTI or CHARA data, to check an interferometrist's convention against ours. Ben to pick (open question 6).
+3. **A second, interferometric visual binary** with a published orbit from VLTI or CHARA data, to check an interferometrist's convention against ours. **To be chosen; see the reminder in §7.**
 
 ### 5.2 Convention unit tests (fast)
 1. i < 90° ⇒ PA increases. i → 180° − i reverses it.
@@ -199,7 +200,7 @@ NACO's 274–278° is GRAVITY's 96° reversed. Closure-phase sign conventions (O
    - a GRAVITY-layout file. For this, the column layout and `STA_INDEX` ordering of a real GRAVITY product are copied, and its data replaced.
 
    Each file is read with `read_oifits`, refitted, and checked: PA within 1° of 96° (not 276°), and the flux ratio below 1.
-2. **Real anchors, one per instrument path.** A binary with a well-known orbit observed with GRAVITY, and one with NACO/SPHERE masking (reduced by AMICAL, see the masking workflow). Each is fitted with drpangloss, and its PA compared with the orbit's prediction. Only a real anchor tests the *pipeline's* convention, as opposed to our writer's. Ben to choose the targets.
+2. **Real anchors, one per instrument path.** A binary with a well-known orbit observed with GRAVITY, and one with NACO/SPHERE masking (reduced by AMICAL, see the masking workflow). Each is fitted with drpangloss, and its PA compared with the orbit's prediction. Only a real anchor tests the *pipeline's* convention, as opposed to our writer's. **The targets are not chosen yet; see the reminder in §7.**
 3. **The OIFITS v2 sign convention.** Check `read_oifits`'s phase sign against the OIFITS v2 standard (Duvert et al. 2017) explicitly. Do this once, in a docstring and a test, since every instrument path depends on it.
 
 ### 5.4 End to end
@@ -222,12 +223,34 @@ NACO's 274–278° is GRAVITY's 96° reversed. Closure-phase sign conventions (O
 | PA round-trip tests (5.3.1, 5.3.3); real anchors (5.3.2) | new | 2, then 2 per anchor | AMICAL optional |
 | Per-epoch PA and separation rates on Apep (§2.5 action) | science, no code | 1 | — |
 
-## 7. Open questions for Ben
-1. **jaxoplanet as an optional extra** (`drpangloss[orbits]`, recommended) or a hard dependency? And may I file the `parallax=` scaling bug (§2.2) upstream?
-2. **ω convention exposed to users:** the secondary's (the visual-binary convention, recommended, matching Thiele–Innes), or jaxoplanet's (the primary's)?
-3. **dz sign:** away from the observer (recommended: right-handed with (dra, ddec), and the same sign as radial velocity) or toward (jaxoplanet)?
-4. **White et al. 2025's Ω:** is it measured from North through East, or counterclockwise from the RA axis? The second gives 106° against the measured 96° (§2.5). The 2023→2025 PA trend decides it either way. Shall I run the per-epoch fits?
-5. **Time dependence through the snapshot method `at(mjd)`** (recommended), or by adding `mjd` to every `model()` signature?
-6. **Real anchors** for the round-trip and ephemeris tests: α Cen AB, plus which GRAVITY and which masking binary?
-7. **Physical orbital skew** now, or a fitted `dpa` only until a system near periastron needs it?
-8. **End to end:** simulated Apep first, then real (recommended), or straight to real Apep?
+## 7. Decisions and open questions
+
+### Decided (Ben, 2026-10-03)
+1. **jaxoplanet is an optional dependency** (`drpangloss[orbits]`; §3).
+2. **The user-facing conventions are those of §2.1:**
+   - ω is the secondary's (the visual-binary convention, matching Thiele–Innes);
+   - Ω is the PA of the receding node;
+   - dz is positive away from the observer (right-handed with (dra, ddec), with the same sign as radial velocity);
+   - i < 90° means the PA increases.
+
+   jaxoplanet's conventions stay internal to `KeplerOrbit`.
+3. **Orbits are built here,** in drpangloss, not in a separate package or by Toon.
+4. **No orbitize! or orvara:** neither as converters nor as dependencies.
+
+### Pending
+1. **White et al. 2025's Ω and ω convention.** Ben will ask the first author (§2.5). Until then, the JWST elements enter only as axial priors.
+
+### Reminder for Ben: choose the real anchor binaries
+Before the tests in §5.1.2–3 and §5.3.2 are written, choose:
+- a visual binary with radial velocities, so that Ω is absolute (α Cen AB is proposed);
+- an interferometric visual binary with a published VLTI or CHARA orbit;
+- a binary with a well-known orbit **observed with GRAVITY**;
+- one **observed with NACO or SPHERE masking** (reduced with AMICAL).
+
+The synthetic round trips in §5.3.1 and §5.3.3, and the unit tests in §5.2, do not wait for these.
+
+### Still open (defaults in force until Ben says otherwise)
+1. **Time dependence:** the snapshot method `at(mjd)` (default), not an `mjd` argument on every `model()`.
+2. **Physical orbital skew:** a fitted `dpa` only (default), until a system near periastron needs the physical skew.
+3. **End to end:** simulated Apep first, then real Apep (default).
+4. **Filing the jaxoplanet `parallax=` bug upstream:** ask first.

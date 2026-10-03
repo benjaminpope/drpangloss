@@ -67,13 +67,13 @@ This note extends Stage 6a ([`imaging_plan.md`](imaging_plan.md), [`pmoired_pari
 2. **Do not use the photocentre approximation for resolved systems.** The approximation φ_diff ≈ −2π **u**·Δ**p**(λ) holds only when the line-emitting structure is unresolved (|Δp| ≪ λ/B). On Apep, λ/B ≈ 3.3 mas at 130 m, much smaller than the 28 mas separation. 6a's planned test, "against the analytic photocentre shift", should be joined by a test in the resolved regime: a binary with a line in one star, against the exact arg V.
 3. **Join with closure phase.** When VISPHI and T3PHI come from the same frame, VISPHI's closure (the closure of the differential phases) is the closure phase minus its own continuum mean, so it duplicates the chromatic part of T3PHI. 6a's "closure phase with VISPHI in one dataset" must not double-count it. Either drop one triangle's worth of differential phases per frame, or document that the closure phase is the independent part. Recommendation: keep closure phases and use VISPHI only in the line windows, after continuum normalisation. There, both are needed.
 
-### 2.4 Calibration nuisances correlated across channels (new; Stage 8's "spectral correlations", brought forward)
+### 2.4 Calibration nuisances correlated across channels (new Stage 6d, after 6a; Stage 8's "spectral correlations", brought forward)
 **Seen.**
 - Calibrated errors were underestimated by 2–7×.
 - Per-epoch additive terms (`noise=`) beat multiplicative ones by ΔlogL ≈ 700.
 - Both are diagonal. GRAVITY's systematics are mostly **common to all channels of one frame and baseline**: transfer-function jitter between calibrator frames, and the calibrator scatter that `calibrate.py` adds in quadrature *per channel*. That scatter is in fact one number per frame and baseline.
 
-This is the dataset that Stage 8 said would trigger spectral correlations. Recommendation: do it now, in this form.
+This is the dataset that Stage 8 said would trigger spectral correlations. **Decided (2026-10-03): this becomes its own stage, 6d, after 6a,** in the form below.
 
 **Model.** Per block b, with one block per (frame, baseline) for V² and one per (frame, triangle) for closure phase:
 - **V²:** V²_obs = g_b V²_model(λ) + noise. The gains g_b − 1 ~ N(0, τ_V²) are shared by every channel of the block.
@@ -149,19 +149,30 @@ R ≈ 130–240 after binning, with up to 8 fringes across the field on 130 m ba
 | 2.2a | OI_FLUX/NFLUX, `System.total_spectrum`, `flux_scale` | 6a (as planned) | +0.5 for `total_spectrum` | 2.1 |
 | 2.2b | A prior on the reference spectrum; docs on the degeneracy | new, small | 1 | 2.2a |
 | 2.3 | VISPHI with pipeline-matched normalisation; resolved-regime test; no double counting with T3 | 6a (as planned, plus tests) | +1 | 2.5 |
-| 2.4 | Rank-one correlated nuisances (`vis_gain`, `phi_offset`), analytic marginalisation | new "6d", or Stage 8 brought forward | 5–7 | 2.5 (`frame`) |
+| 2.4 | Rank-one correlated nuisances (`vis_gain`, `phi_offset`), analytic marginalisation | **Stage 6d** (decided), after 6a | 5–7 | 6a; 2.5 (`frame`) |
 | 2.5 | `mjd` and `frame` in `OIData`; INT_TIME matching; `epochs()` | new, before 6a's VISPHI | 2–3 | — |
 | 2.6 | `wavel_scale`; the `noise=` vocabulary; `with_error_floor` sharing `inflated_errors` | new (small) and 6a | 1–2 | `apep-gravity` PR |
 | 2.7 | Dual-field calibration example and docs | new | 3–4 | 2.4 (known τ), 2.5 |
 | 2.8 | Smearing check on Apep | 6a's MWE extension | 0.5 | 6a smearing |
 
-**Order.** First 2.5 (small; unblocks 2.3, 2.4 and the orbits). Then the `apep-gravity` PR, reconciled with 6a's `Nodes` and floors. Then 2.4 and 2.6, and 2.7 last. The 6a agent needs only the "+" items folded into its plan.
+**Order.**
+1. 2.5 (small; it unblocks 2.3, 2.4 and the orbits).
+2. 6a's spectra and error floors.
+3. **Then** the `apep-gravity` PR (decided: it merges *after* 6a's spectra), reconciled with 6a's `Nodes` and floors.
+4. Stage 6d (2.4) and 2.6.
+5. 2.7 last.
 
-## 4. Open questions for Ben
+The 6a agent needs only the "+" items folded into its plan.
 
-1. **Bring 2.4 forward?** Recommendation: yes, as its own stage ("6d") after 6a. The analytic rank-one marginalisation keeps it cheap and keeps one residual vector.
-2. **Should `noise=` grow into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), or should those get a separate `nuisance=` argument? Recommendation: one argument, keeping the name `noise=` for now.
-3. **Which reference flux for node spectra:** the node mean (as `Tabulated` does) or the value at `wavel0` (as `PowerLaw` does)? Recommendation: `wavel0` for all spectra.
-4. **VISPHI or closure phases where both exist?** Recommendation: closure phase everywhere, plus continuum-normalised VISPHI in the line windows only.
-5. **The dual-field recipe:** an example script (recommended), or a small `drpangloss.gravity` helper module, despite "GRAVITY-specific tools not planned"?
-6. **Merge order:** should the `apep-gravity` commits (`0688f34`, `c4ef79d`, `3a6c682`, `37bddad`) go to `imaging` before or after 6a's spectra land? The reconciliation in 2.1 and 2.6 is simpler if 6a lands first.
+## 4. Decisions and open questions
+
+### Decided (Ben, 2026-10-03)
+1. **Correlated channel nuisances (2.4) are their own stage, 6d, after 6a.**
+2. **The `apep-gravity` commits** (`0688f34`, `c4ef79d`, `3a6c682`, `37bddad`) **merge into `imaging` after 6a's spectra land.** That PR then replaces `Tabulated` with 6a's `Nodes` and routes `noise=` through the same function as 6a's error floors (2.1, 2.6).
+
+### Still open (defaults in force until Ben says otherwise)
+1. **`noise=` grows into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), keeping its name (default), rather than a separate `nuisance=` argument.
+2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
+3. **Closure phase everywhere,** plus continuum-normalised VISPHI in the line windows only (default).
+4. **The dual-field recipe:** an example script and docs (default), not a `drpangloss.gravity` module.
+5. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.

@@ -391,6 +391,22 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 
 **MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
 
+## Stage 6d: calibration nuisances correlated across channels (after 6a; about 5–7 h)
+Decided 2026-10-03, from Apep's GRAVITY data, whose systematics are common to all channels of a frame. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
+
+**Build:**
+- A V² gain per (frame, baseline) and a closure-phase offset per (frame, triangle), shared by all channels of the block.
+- Both are marginalised analytically as rank-one blocks, so the likelihood keeps one whitened residual vector plus a log-determinant.
+- Fitted or known widths (`vis_gain`, `phi_offset` in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
+
+**Tests:**
+- The whitened residuals' squared norm and the log-determinant against a dense covariance.
+- A simulated GRAVITY-like dataset with injected per-frame gains: the widths are recovered, and parameter errors are calibrated where the diagonal model's are not.
+
+**MWE:** the Apep cone refitted with 6d against the per-epoch additive terms, comparing the parameter errors.
+
+**Merge order.** The `apep-gravity` library commits (`EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
@@ -425,7 +441,7 @@ See [`pmoired_parity.md`](pmoired_parity.md). [`orbit_scene_joint_fitting.md`](o
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
 - **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
 - **Keplerian orbits.** Elements or Thiele–Innes constants drive a component's position from each datum's MJD, so `OIData` must carry MJD. Radial velocities enter as an extra likelihood term.
-- **Spectral correlations between channels.** Only once a dataset needs them. Apep's GRAVITY data now do; see the new items below.
+- **Spectral correlations between channels.** Only once a dataset needs them. Apep's GRAVITY data now do: this is Stage 6d.
 
 **Tests:**
 - Hankel profiles against analytic UD, Gaussian and ring visibilities.
@@ -439,13 +455,17 @@ Proposed in [`spectro_interferometry_workflow.md`](spectro_interferometry_workfl
 | Item | Note | Effort |
 |---|---|---|
 | `OIData.mjd` and `frame` per sample; triangles matched by frame (`INT_TIME`), not by exact MJD; `epochs()`. A prerequisite for most of the items below | S §2.5 | 2–3 |
-| Calibration nuisances correlated across channels: a V² gain per (frame, baseline) and a closure-phase offset per (frame, triangle), marginalised analytically as rank-one blocks | S §2.4 | 5–7 |
 | A per-dataset wavelength-scale nuisance (`wavel_scale`) | S §2.6 | 1–2 |
 | Dual-field (in-field) calibrator recipe: an example and docs | S §2.7 | 3–4 |
 | `simulate(scene, template)` and `bias_test`, for cross-instrument bias tests and planning | O R8 | 2–3 |
 | Binary-frame attachment: `SourceModel.at(mjd)` and `Attached(component, orbit, anchor, dpa)` | O R2, R3 | 6–7 |
 | Moving `TruncatedCone` into the library (from `~/data/apep_gravity/scripts`) | O §6 | 3–4 |
 | OIFITS position-angle round-trip tests (GRAVITY layout, AMICAL and drpangloss writers; real anchors) | O §5.3 | 2, then 2 per anchor |
+| Orbits (`orbits.py` on jaxoplanet, an optional `[orbits]` extra; conventions in O §2.1); built here, not by Toon | O §3, §6 | see O §6 |
+
+**Reminder for Ben:** choose the real anchor binaries (a visual binary with radial velocities; one observed with GRAVITY; one with NACO or SPHERE masking) before the ephemeris and round-trip tests are written. See O §7.
+
+**Pending:** White et al. 2025's Ω and ω convention (O §2.5); Ben is asking the first author.
 
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
