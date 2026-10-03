@@ -23,7 +23,7 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
 from virgil.grid_fit import likelihood_grid
-from virgil.inference import fisher_matrix, fisher_projection
+from virgil.inference import fisher_projection, hessian_matrix
 from virgil.likelihood import loglike, posterior_predictive_summary
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
@@ -227,7 +227,7 @@ def objective(x):
     return -loglike(values, params, data, BinaryModelCartesian)
 
 
-F = fisher_matrix(objective, x0, ridge=1e-8)
+F = hessian_matrix(objective, x0)
 P = fisher_projection(F)
 
 
