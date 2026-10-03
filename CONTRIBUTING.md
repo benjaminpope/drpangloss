@@ -11,12 +11,17 @@ Firstly, you will need to fork the repository to your own GitHub account. This w
 Next, you will need to clone the repository to your local machine. To do this, open a terminal and navigate to the directory you would like to clone the repository to. Then run the following command:
 
 ```bash
-git clone https://github.com/your-username-here/virgil.git
+git clone --filter=blob:none https://github.com/your-username-here/virgil.git
 cd virgil
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
 ```
+
+`--filter=blob:none` makes a partial clone: it downloads every commit, so `git log`,
+`git blame` and pushing work as usual, but fetches old versions of files only when you
+look at them. The history holds large data files that are no longer used, so this cuts
+the download from about 280 MB to about 15 MB.
 
 CI tests against the newest JAX, so if you reuse an existing `.venv`, upgrade it first
 with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`. Upgrading

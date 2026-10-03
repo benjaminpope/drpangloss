@@ -21,11 +21,18 @@ virgil is hosted on PyPI; the easiest way to install it is:
 pip install virgil-astro
 ```
 
-You can also build from source. To do so, clone the git repo, enter the directory, and run
+You can also build from source. To do so, clone the git repo and enter the directory:
 
 ```
+git clone --filter=blob:none https://github.com/benjaminpope/virgil
+cd virgil
 pip install .
 ```
+
+`--filter=blob:none` makes a partial clone: you get the full history, but old
+versions of files are fetched only if you ask for them. It skips large data
+files that are no longer used, so the download is about 15 MB rather than
+about 280 MB.
 
 We recommend using a virtual environment to avoid dependency conflicts.
 
