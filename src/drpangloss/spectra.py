@@ -135,14 +135,9 @@ class BlackBody(Spectrum):
         if wavel is None:
             return self.ratio
         wavel = np.asarray(wavel)
-        x, x0 = (
-            _HC_OVER_K / (wavel * self.temperature),
-            _HC_OVER_K / (self.wavel0 * self.temperature),
+        return self.ratio * _planck_ratio(
+            wavel, self.temperature, self.wavel0, self.temperature
         )
-        # expm1(x0) / expm1(x), rewritten with negative arguments so that it
-        # cannot overflow at low temperatures.
-        planck = np.exp(x0 - x) * np.expm1(-x0) / np.expm1(-x)
-        return self.ratio * (self.wavel0 / wavel) ** 5 * planck
 
     def is_physical(self):
         return (
@@ -167,6 +162,27 @@ class BlackBody(Spectrum):
 
 # Planck's second radiation constant h c / k, in metre kelvin.
 _HC_OVER_K = 1.438776877e-2
+
+
+def _planck_ratio(wavel, temperature, wavel0, temperature0):
+    """``B_λ(wavel, temperature) / B_λ(wavel0, temperature0)``, no overflow.
+
+    Wavelengths in metres, temperatures in kelvin; all broadcast together.
+    """
+    x = _HC_OVER_K / (wavel * temperature)
+    x0 = _HC_OVER_K / (wavel0 * temperature0)
+    # (wavel0 / wavel)**5 * expm1(x0) / expm1(x), formed entirely in log
+    # space: expm1(x) = exp(x) * -expm1(-x), so its log is
+    # x + log(-expm1(-x)) without overflow. Exponentiating only the total
+    # keeps the result finite whenever it is representable (in float32 the
+    # factors alone can overflow when the ratio does not).
+    log_ratio = (
+        5.0 * np.log(wavel0 / wavel)
+        + (x0 - x)
+        + np.log(-np.expm1(-x0))
+        - np.log(-np.expm1(-x))
+    )
+    return np.exp(log_ratio)
 
 
 def flux_at(flux, wavel=None):

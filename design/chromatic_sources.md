@@ -1,10 +1,11 @@
 # Design note: chromatic sources and SPARCO
 
 Status: **partly implemented.** Multi-channel `OIData` (prerequisite 1),
-`Resolved` (prerequisite 3) and the `PowerLaw` spectrum (prerequisite 4, in
-`drpangloss.spectra`) exist, and `Component`/`System` accept a spectrum as
-`flux`. Still to do: the `Image` component (prerequisite 2), `Blackbody` and
-`Tabulated` spectra, and rendering at a given wavelength.
+the `Image` component (prerequisite 2), `Resolved` (prerequisite 3) and the
+`PowerLaw` and `BlackBody` spectra (prerequisite 4, in `drpangloss.spectra`)
+exist, and `Component`/`System` accept a spectrum as `flux`. The first
+component with a chromatic *shape*, `GravityDarkenedStar`, is described
+below. Still to do: `Tabulated` spectra and rendering at a given wavelength.
 
 ## Goal
 
@@ -101,6 +102,46 @@ complement its priors. Once spectra exist, rewrite the tutorial in two steps:
    baseline, i.e. it contributes only to the normalization.
 4. **Spectrum modules** as above, with `_weight(wavel)` implemented on
    `Component` by evaluating `self.flux` when it is a spectrum.
+
+## Surface-resolved chromatic components
+
+Spectra make a component's *weight* chromatic, but its *shape* stays grey:
+`Component._centred_cvis(uu, vv)` never sees the wavelength. A
+gravity-darkened star (`GravityDarkenedStar`, Espinosa Lara & Rieutord 2011,
+ported from Shashank Dholakia's jax-interferometry) is the first component
+whose shape depends on wavelength. Its hot pole and cool equator have
+different spectra, so the pole-to-equator contrast rises towards short
+wavelengths.
+
+- **Grey mode (`t_pole=None`, the default).** This is Dholakia's model. Each
+  surface triangle is weighted by its bolometric flux times its projected
+  area, the same at every wavelength, and wavelength enters only through
+  `u / wavel`.
+- **Chromatic mode (`t_pole` in kelvin).**
+  - Each triangle has `T = t_pole * Teff_ratio / Teff_ratio(pole)`.
+  - Its intensity is the Planck function `B_λ(T)`.
+  - The weights are `projected area * B_λ(T)`, with shape
+    `(n_wavel_samples or 1, n_triangles)`.
+  - `model(u, v, wavel)` is overridden to normalise each row separately, so
+    every sample is evaluated at its own wavelength.
+  - Memory is `n_samples × n_triangles`, about 200 MB of complex64 for 10⁴
+    samples at the default `n_lat = 32`.
+- **The star supplies its own spectrum to `System`.**
+  - In chromatic mode, `_weight(wavel) = flux * SED(λ) / SED(wavel0)`, where
+    `SED(λ) = Σ area * B_λ(T)` over the visible triangles.
+  - A companion with `flux=BlackBody(...)` then gets physically consistent
+    flux ratios at every wavelength, with no separate stellar spectrum.
+  - This follows `BlackBody`'s convention: normalised to `flux` at `wavel0`,
+    with `wavel=None` giving `flux`.
+  - `flux` must therefore be a number, not a `Spectrum`, which would count
+    the spectrum twice.
+- **`render()`** shows the chromatic star at `wavel0`.
+- **One Planck implementation.** `spectra._planck_ratio(wavel, temperature,
+  wavel0, temperature0)` returns `B(λ, T) / B(λ0, T0)` without overflow.
+  `BlackBody` calls it with `T0 = T`.
+- **Not handled:**
+  - limb darkening, grey or temperature-dependent;
+  - bandwidth smearing, which is a scene-level wrapper (see below).
 
 ## Open questions
 

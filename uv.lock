@@ -130,7 +130,7 @@ wheels = [
 
 [[package]]
 name = "blackjax"
-version = "1.6.2"
+version = "1.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
@@ -140,9 +140,9 @@ dependencies = [
     { name = "scipy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/bc/423d304810d0defb54906d220468730895207c9c908cc0ea67d925b463b5/blackjax-1.6.2.tar.gz", hash = "sha256:ad3c97ff6c77cfa17310a68de665d1a48f9d47ff1ac39725082ab235517406ee", size = 5302867, upload-time = "2026-07-16T13:10:25.422Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/fc/dca22cc8b84c7c50bb2733181112c1a12988b3fa1f96b7062813f9cab9a3/blackjax-1.7.1.tar.gz", hash = "sha256:5e15e5d574afc40d59cfcf2b7fb4561f24bfa7169d846209ecf2a3b3725cc519", size = 5496902, upload-time = "2026-10-02T20:43:51.788Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/13/fc2be5e0c9a68c18eb0ea8ece9a0f3b078a513fd8a695f00d506de08db97/blackjax-1.6.2-py3-none-any.whl", hash = "sha256:2989786202cdfc9b0a84f8215c24f2c7985b40ae432136282c3776d979d1236e", size = 4915114, upload-time = "2026-07-16T13:10:23.466Z" },
+    { url = "https://files.pythonhosted.org/packages/99/a0/24f50e0cfd432b47103677c6fc6b220acc716c4b20dc9d6021a01d7924fa/blackjax-1.7.1-py3-none-any.whl", hash = "sha256:be2c7f982f4ab3afef2dd5f075dae271023fdec3d9c5d8b599ba7f2f281524fa", size = 4994604, upload-time = "2026-10-02T20:43:50.363Z" },
 ]
 
 [[package]]
@@ -502,6 +502,7 @@ dependencies = [
     { name = "chainconsumer" },
     { name = "equinox" },
     { name = "jax" },
+    { name = "jaxbessel" },
     { name = "lineax" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -510,6 +511,7 @@ dependencies = [
     { name = "optimistix" },
     { name = "pandas" },
     { name = "pyoifits" },
+    { name = "scipy" },
     { name = "termcolor" },
     { name = "zodiax" },
 ]
@@ -521,6 +523,7 @@ dev = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "pre-commit" },
     { name = "pytest" },
+    { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "scipy" },
     { name = "zensical" },
@@ -542,6 +545,7 @@ requires-dist = [
     { name = "equinox", specifier = ">=0.11" },
     { name = "ipywidgets", marker = "extra == 'notebooks'" },
     { name = "jax", specifier = ">=0.4.30" },
+    { name = "jaxbessel", specifier = ">=0.1.0" },
     { name = "lineax", specifier = ">=0.0.5" },
     { name = "matplotlib" },
     { name = "mkdocs", marker = "extra == 'dev'" },
@@ -555,7 +559,9 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pyoifits" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.11.0" },
+    { name = "scipy" },
     { name = "scipy", marker = "extra == 'dev'" },
     { name = "termcolor" },
     { name = "tqdm", marker = "extra == 'notebooks'" },
@@ -577,6 +583,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2d/80/1704c3375a9c3cae4713a1be12b59dbd8ddff03808862264be622b333cd1/equinox-0.13.4.tar.gz", hash = "sha256:d4eed5d7f981a5ddcb7bc70e601707769fb4da20f777703cc6e01a6248af9758", size = 140981, upload-time = "2026-01-26T22:29:19.417Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/4c/eea4860010ba31d6793038073c66f2e1755c80d0adb704c4926d549e724a/equinox-0.13.4-py3-none-any.whl", hash = "sha256:8203b6b84c1641a58aad07c040c171fc5a38e2c3bc90c5feb2f221d398354378", size = 181231, upload-time = "2026-01-26T22:29:17.859Z" },
+]
+
+[[package]]
+name = "execnet"
+version = "2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bf/89/780e11f9588d9e7128a3f87788354c7946a9cbb1401ad38a48c4db9a4f07/execnet-2.1.2.tar.gz", hash = "sha256:63d83bfdd9a23e35b9c6a3261412324f964c2ec8dcd8d3c6916ee9373e0befcd", size = 166622, upload-time = "2025-11-12T09:56:37.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/84/02fc1827e8cdded4aa65baef11296a9bbe595c474f0d6d758af082d849fd/execnet-2.1.2-py3-none-any.whl", hash = "sha256:67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec", size = 40708, upload-time = "2025-11-12T09:56:36.333Z" },
 ]
 
 [[package]]
@@ -819,6 +834,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/25/4d/f45853fdc2b811e78b866d5f80b8a21a848278361f66c066706132f415cf/jax-0.9.1.tar.gz", hash = "sha256:ce1b82477ee192f0b1d9801b095aa0cf3839bc1fe0cbc071c961a24b3ff30361", size = 2625994, upload-time = "2026-03-02T11:24:18.382Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/80/e4/88778c6a23b65224e5088e68fd0924e5bde2196a26e76edb3ea3543fed6a/jax-0.9.1-py3-none-any.whl", hash = "sha256:d11cb53d362912253013e8c4d6926cb9f3a4b59ab5b25a7dc08123567067d088", size = 3062162, upload-time = "2026-03-02T11:22:05.089Z" },
+]
+
+[[package]]
+name = "jaxbessel"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/2f/1d8fb3dbf567bbb3c518292dee6147d1243c36febf56bea336526d54cacd/jaxbessel-0.1.0.tar.gz", hash = "sha256:4b679acc2f82299b4f4a29c05ec1639c6a31b09422dcb79bfa390e41c969dc68", size = 13365, upload-time = "2026-10-03T05:57:49.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/86/cf561d3bcddc52e17f10801ca1a9668f1ce1e0fd23860adc3a8d70130b49/jaxbessel-0.1.0-py3-none-any.whl", hash = "sha256:11f6bbf36e1b7eb79872dd764249f943619b1807b49a435ade0e874a72fb2a12", size = 11343, upload-time = "2026-10-03T05:57:50.45Z" },
 ]
 
 [[package]]
@@ -1986,6 +2014,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+]
+
+[[package]]
+name = "pytest-xdist"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "execnet" },
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
 ]
 
 [[package]]

@@ -7,12 +7,17 @@ requires-python =">=3.11"
 license = {file = "LICENSE"}
 authors = [
   {name = "Benjamin Pope", email = "benjamin.pope@mq.edu.au"},
-  {name = "Dori Blakely", email = "blakelyd@uvic.ca"}
+  {name = "Dori Blakely", email = "blakelyd@uvic.ca"},
+  {name = "Shashank Dholakia", email = "shashankdholakia1@gmail.com"},
+  {name = "Max Charles"},
+  {name = "Toon De Prins", email = "toon.deprins@protonmail.com"},
+  {name = "Louis Desdoigts", email = "ldes9555@uni.sydney.edu.au"},
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
 urls = {repository = "https://github.com/benjaminpope/drpangloss"}
 dependencies = [
   "jax>=0.4.30",
+  "jaxbessel>=0.1.0",
   "equinox>=0.11",
   "zodiax>=0.4",
   "optimistix>=0.0.10",
@@ -20,6 +25,9 @@ dependencies = [
   "optax>=0.2.4",
   "numpyro>=0.15",
   "numpy",
+  # scipy.spatial.ConvexHull triangulates the stellar mesh in _elr.py
+  # (jax already depends on scipy).
+  "scipy",
   "matplotlib",
   "pandas",
   "chainconsumer",
@@ -52,6 +60,7 @@ dev = [
   "ruff==0.11.0",
   "pre-commit",
   "pytest",
+  "pytest-xdist",
   "scipy",
   "mkdocs",
   "mkdocs-material",

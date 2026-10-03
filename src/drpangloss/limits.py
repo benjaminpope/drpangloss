@@ -357,7 +357,7 @@ def absil_limits(
             f"The flux axis {flux_key!r} needs at least one positive value "
             "to start the log-flux optimizer from."
         )
-    ndof = int(np.asarray(data_obj.flatten_data()[0]).size)
+    ndof = data_obj.n_independent
     floor = float(nsigma(1.0, 1.0, ndof))
     if not float(sigma) > floor:
         raise ValueError(
@@ -407,7 +407,7 @@ def _absil_limits(
 
     Returns the unclipped limits and whether each reaches ``sigma``.
     """
-    ndof = data_obj.flatten_data()[0].size
+    ndof = data_obj.n_independent
 
     def reduced_chi2(values):
         source = build_model(model, params, values)

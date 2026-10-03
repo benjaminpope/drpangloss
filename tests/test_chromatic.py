@@ -118,13 +118,19 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
     # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # drpangloss.likelihood.whitened_residuals (the original used Δ).
-    resid = data - model_data
-    resid = resid.at[n_vis:].set(2.0 * np.sin(0.5 * resid[n_vis:]))
+    # drpangloss.likelihood.whitened_residuals (the original used Δ). The
+    # original also treated the four closure phases of each frame and
+    # channel as independent, counting them 4/3 times; they are whitened
+    # as correlated groups instead (OIData.cp_noise; see test_closure).
+    resid = model_data - data
+    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
+    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors_phi)
+    whitened = np.concatenate([resid[:n_vis] / errors_vis, phase])
+    errors = np.concatenate([errors_vis, phase_errors])
     return (
-        -0.5 * np.sum(resid**2 / errors**2)
+        -0.5 * np.sum(whitened**2)
         - np.sum(np.log(errors))
-        - data.size / 2 * np.log(2 * np.pi)
+        - whitened.size / 2 * np.log(2 * np.pi)
     )
 
 
@@ -326,3 +332,28 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert onp.isfinite(float(jax.grad(v2)(3000.0)))
     assert float(jax.grad(v2)(3000.0)) != 0.0
     assert not is_flux_param("secondary.flux.temperature")
+
+
+@pytest.mark.skipif(
+    jax.config.jax_enable_x64,
+    reason="the overflow is specific to float32; x64 is on globally",
+)
+def test_blackbody_ratio_finite_when_representable_in_float32():
+    # x0 - x = 90 overflows exp() in float32, but the whole ratio is
+    # exp(~78.5), which is representable: it must come out finite.
+    temperature, wavel0, wavel = 143.88, 1.0e-6, 10.0e-6
+    got = BlackBody(1.0, temperature, wavel0)(np.float32(wavel))
+    assert got.dtype == np.float32
+    x, x0 = (
+        1.438776877e-2 / (wavel * temperature),
+        1.438776877e-2 / (wavel0 * temperature),
+    )
+    expected = onp.exp(
+        5 * onp.log(wavel0 / wavel)
+        + x0
+        - x
+        + onp.log(-onp.expm1(-x0))
+        - onp.log(-onp.expm1(-x))
+    )
+    assert onp.isfinite(got)
+    onp.testing.assert_allclose(float(got), expected, rtol=1e-4)

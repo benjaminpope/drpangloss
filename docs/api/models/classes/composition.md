@@ -36,6 +36,13 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
+::: drpangloss.models.GravityDarkenedStar
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - plot_surface
+
 ::: drpangloss.models.ModulatedGaussianRim
     options:
       show_root_heading: true
