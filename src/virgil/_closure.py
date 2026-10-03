@@ -17,6 +17,16 @@ diagonal and ±1/3 between triangles sharing a baseline. C keeps every
 reported error, is never indefinite, and scales with the errors, so
 rescaled or inflated errors carry through.
 
+This is an approximation whenever the σ within a group differ. True
+closure phases are exact closures T b of baseline phases b, so their noise
+lies in the column space of T, while C spans D^½ times it: the two agree
+only for equal σ. With unequal σ the χ² of real closure-phase noise is
+slightly off its nominal distribution (for four telescopes with one noisy
+baseline, a mean of 2.87 against the 3 expected for three independent
+closure phases), and :meth:`ClosureNoise.sample` draws noise from C that is
+not the closure of any set of baseline phases. The exact model would be
+C = T diag(s) Tᵀ with baseline variances s chosen to reproduce σ².
+
 ``ClosureNoise`` groups the triangles that share baselines (one frame and
 channel each). It whitens residuals r by dividing by σ, projecting onto an
 orthonormal basis Q of the column space of T (the independent combinations)
@@ -67,7 +77,13 @@ def _incidence(group, i1, i2, i3):
 
 
 class ClosureNoise(eqx.Module):
-    """Correlated closure-phase noise from equal noise on every baseline."""
+    """Correlated closure-phase noise from equal noise on every baseline.
+
+    The arrays are NumPy, built once and reused in either x64 mode. JAX
+    caches the converted copy of a NumPy array by identity, whatever the
+    mode it was made in (JAX 0.10), so the indices are int32, which is the
+    same in both modes, and the floats are cast to the data's dtype at use.
+    """
 
     groups: onp.ndarray  # (n_group, m) closure-phase indices, padded with 0
     mask: onp.ndarray  # (n_group, m) True for real triangles
@@ -97,7 +113,7 @@ class ClosureNoise(eqx.Module):
         k = max(b[2].shape[0] for b in blocks)
         n = len(blocks)
         out = {
-            "groups": onp.zeros((n, m), dtype=int),
+            "groups": onp.zeros((n, m), dtype=onp.int32),
             "mask": onp.zeros((n, m), dtype=bool),
             "incidence": onp.zeros((n, m, n_base)),
             "basis": onp.zeros((n, k, m)),
@@ -112,7 +128,8 @@ class ClosureNoise(eqx.Module):
             out["basis"][j, :r, : g.size] = q
             out["chol"][j, :r, :r] = m_chol
             out["valid"][j, :r] = True
-        return cls(**out, keep=onp.flatnonzero(out["valid"].reshape(-1)))
+        keep = onp.flatnonzero(out["valid"].reshape(-1)).astype(onp.int32)
+        return cls(**out, keep=keep)
 
     @property
     def size(self):
@@ -139,20 +156,22 @@ class ClosureNoise(eqx.Module):
         x = np.where(
             self.mask, np.asarray(residuals)[self.groups] / sigma, 0.0
         )
-        a = np.einsum("gkm,gm->gk", self.basis, x)
-        w = jsl.solve_triangular(self.chol, a[..., None], lower=True)[..., 0]
+        basis, chol = (np.asarray(a, x.dtype) for a in (self.basis, self.chol))
+        a = np.einsum("gkm,gm->gk", basis, x)
+        w = jsl.solve_triangular(chol, a[..., None], lower=True)[..., 0]
         var = np.where(self.mask, sigma**2, 0.0)
-        qdq = np.einsum("gkm,gm,glm->gkl", self.basis, var, self.basis)
+        qdq = np.einsum("gkm,gm,glm->gkl", basis, var, basis)
         pad = 1.0 - self.valid.astype(qdq.dtype)
         qdq = qdq + pad[:, :, None] * np.eye(pad.shape[1])
         scale = np.diagonal(np.linalg.cholesky(qdq), axis1=1, axis2=2)
-        errors = np.diagonal(self.chol, axis1=1, axis2=2) * scale
+        errors = np.diagonal(chol, axis1=1, axis2=2) * scale
         return w.reshape(-1)[self.keep], errors.reshape(-1)[self.keep]
 
     def sample(self, key, sigma, n_phase):
         """Closure-phase noise with the covariance used by :meth:`whiten`."""
         e = jax.random.normal(key, self.incidence.shape[::2])
-        noise = np.einsum("gmb,gb->gm", self.incidence, e)
+        incidence = np.asarray(self.incidence, e.dtype)
+        noise = np.einsum("gmb,gb->gm", incidence, e)
         noise = noise * np.asarray(sigma)[self.groups]
         # Each closure phase sits in exactly one group; padded slots add 0.
         out = np.zeros(n_phase, dtype=noise.dtype)
