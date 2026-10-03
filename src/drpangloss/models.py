@@ -1467,7 +1467,9 @@ class HarmonixModel(SourceModel):
     render_method : str, optional
         Name of a ``render(npix, fov_mas)`` method used by [`render`][drpangloss.models.HarmonixModel.render]
         (default ``"render"``). Sources without one but with a ``surface``
-        (harmonix stars) are rendered from ``surface.render``.
+        and a ``radius`` in milliarcseconds (harmonix stars) are drawn on the
+        sky from the surface's intensity, East left and North up, like every
+        other model.
     expects_wavelength_units : bool, optional
         If True (default), pass spatial frequencies ``u / wavel``,
         ``v / wavel``; otherwise pass ``u``, ``v`` in metres.
@@ -1477,15 +1479,20 @@ class HarmonixModel(SourceModel):
 
     Notes
     -----
-    ``source`` and ``observation_time`` are static (hashable) fields: the
-    wrapped model's parameters cannot be fitted through zodiax paths, and
-    array-valued ``observation_time`` values are not supported under
-    ``jax.jit``. A wrapped source has weight 1 inside a
-    [System][drpangloss.models.System], and cannot be drawn there (only on
-    its own, with [`render`][drpangloss.models.HarmonixModel.render]).
+    ``source`` is an ordinary field, so a source that is a pytree (such as a
+    harmonix ``Harmonix``, an equinox module) has parameters that zodiax
+    paths reach and fits can vary, e.g. ``"source.radius"`` (mas) or
+    ``"source.data"`` (harmonix's map coefficients for l >= 1, with
+    Y00 = 1). Sources that are not pytrees need ``eqx.filter_jit`` rather
+    than ``jax.jit``. ``observation_time`` is static (hashable):
+    array-valued times are not supported under ``jax.jit``.
+
+    A wrapped source has weight 1 inside a
+    [System][drpangloss.models.System]; only harmonix stars can be drawn
+    there.
     """
 
-    source: Any = eqx.field(static=True)
+    source: Any
     visibility_method: str = eqx.field(static=True)
     render_method: str = eqx.field(static=True)
     expects_wavelength_units: bool = eqx.field(static=True)
@@ -1515,25 +1522,45 @@ class HarmonixModel(SourceModel):
         return np.asarray(method(*args))
 
     def render(self, npix=256, fov_mas=200.0):
-        if not hasattr(self.source, self.render_method):
-            if hasattr(self.source, "surface"):
-                theta = 0.0
-                if hasattr(self.source, "rotational_phase"):
-                    theta = self.source.rotational_phase(
-                        0.0
-                        if self.observation_time is None
-                        else self.observation_time
-                    )
-                image = np.asarray(
-                    self.source.surface.render(res=npix, theta=theta)
-                )
-                return _normalize_image(image)
+        if hasattr(self.source, self.render_method):
+            return _normalize_image(
+                getattr(self.source, self.render_method)(npix, fov_mas)
+            )
+        return super().render(npix, fov_mas)
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        source = self.source
+        if not (hasattr(source, "surface") and hasattr(source, "radius")):
             raise NotImplementedError(
                 "Wrapped source does not expose a compatible render method."
             )
-        return _normalize_image(
-            getattr(self.source, self.render_method)(npix, fov_mas)
+        theta = 0.0
+        if hasattr(source, "rotational_phase"):
+            theta = source.rotational_phase(
+                0.0 if self.observation_time is None else self.observation_time
+            )
+        # harmonix's visibilities use the sign convention of offset_phase
+        # with the surface's x (East) and y (North) in stellar radii, so the
+        # intensity at sky offset (dra, ddec) is the surface's at
+        # (dra, ddec) / radius. (jaxoplanet's Surface.render puts East on
+        # the right instead.)
+        surface = source.surface
+        if hasattr(source, "data"):
+            # harmonix reads the map from ``data`` (the l >= 1 coefficients,
+            # with Y00 = 1) rather than ``surface.y``, so draw that map.
+            y00 = np.ones((1,), dtype=source.data.dtype)
+            ylm = type(surface.y).from_dense(
+                np.concatenate([y00, source.data]), normalize=False
+            )
+            surface = eqx.tree_at(lambda s: s.y, surface, ylm)
+        x, y = xx / source.radius, yy / source.radius
+        on_disk = x**2 + y**2 < 1.0
+        x, y = np.where(on_disk, x, 0.0), np.where(on_disk, y, 0.0)
+        z = np.sqrt(1.0 - x**2 - y**2)
+        intensity = surface._intensity(
+            x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
+        return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
 
 
 def cvis_binary_angular(u, v, sep, pa, flux):

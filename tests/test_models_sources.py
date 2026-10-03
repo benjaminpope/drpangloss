@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import numpy as onp
 import pytest
@@ -7,6 +8,7 @@ from scipy.special import j1 as scipy_j1
 from scipy.special import jn_zeros
 
 from drpangloss._geometry import image_coordinates as _image_coordinates
+from drpangloss._geometry import offset_phase
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -499,6 +501,166 @@ def test_harmonix_model_for_external_visibility_models():
     assert image.shape == (20, 20)
     assert np.all(np.isfinite(image))
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
+
+
+class _BlobYlm(eqx.Module):
+    data: jax.Array
+
+    @classmethod
+    def from_dense(cls, y, normalize=True):
+        return cls(np.asarray(y))
+
+
+class _BlobSurface(eqx.Module):
+    """A surface whose map is a Gaussian blob at (y[1], y[2]) stellar radii."""
+
+    y: _BlobYlm
+    sigma: float = 0.1
+
+    def _intensity(self, x, y, z, theta=0.0):
+        x0 = self.y.data[1] + theta
+        y0 = self.y.data[2]
+        return np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * self.sigma**2))
+
+
+class _BlobStar(eqx.Module):
+    """A harmonix-like star with analytic visibilities and no dependencies.
+
+    Like harmonix, it reads its map from ``data`` (here the blob's centre),
+    not from ``surface.y``, and rotation moves the blob East.
+    """
+
+    surface: _BlobSurface
+    radius: float
+    data: jax.Array
+
+    def rotational_phase(self, time):
+        return 0.1 * time
+
+    def model(self, u, v, time):
+        dra = (self.data[0] + self.rotational_phase(time)) * self.radius
+        ddec = self.data[1] * self.radius
+        sigma_rad = _MAS2RAD_REF * self.surface.sigma * self.radius
+        envelope = np.exp(-2 * np.pi**2 * sigma_rad**2 * (u**2 + v**2))
+        return envelope * offset_phase(u, v, dra, ddec)
+
+
+def _blob_star(radius=2.0, centre=(0.3, -0.2)):
+    data = np.asarray(centre)
+    return _BlobStar(_BlobSurface(_BlobYlm(np.zeros(3))), radius, data)
+
+
+def _blob_baselines():
+    rng = onp.random.default_rng(2)
+    return rng.uniform(-1e8, 1e8, 40), rng.uniform(-1e8, 1e8, 40)
+
+
+def test_harmonix_like_star_is_drawn_on_the_sky_at_its_radius():
+    # Runs without harmonix: a star with a surface and a radius is drawn
+    # from the surface's intensity at sky offset / radius, East left and
+    # North up, so its Fourier transform reproduces its visibilities (the
+    # mirror image does not), at the rotation of observation_time.
+    model = HarmonixModel(_blob_star(), observation_time=1.0)
+    u, v = _blob_baselines()
+    cvis_model = onp.asarray(model.model(np.asarray(u), np.asarray(v), 1.0))
+    cvis_render = _render_visibilities(model, u, v, 128, 6.0)
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < 1e-3
+    mirrored = _render_visibilities(model, -u, v, 128, 6.0)
+    assert onp.max(onp.abs(mirrored - cvis_model)) > 0.1
+
+
+def test_harmonix_like_star_is_drawn_from_its_data():
+    model = HarmonixModel(_blob_star(), observation_time=0.0)
+    moved = model.set("source.data", np.array([-0.3, 0.35]))
+    u, v = _blob_baselines()
+    cvis_model = onp.asarray(moved.model(np.asarray(u), np.asarray(v), 1.0))
+    cvis_render = _render_visibilities(moved, u, v, 128, 6.0)
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < 1e-3
+
+
+def test_harmonix_like_star_parameters_are_reachable_through_paths():
+    model = HarmonixModel(_blob_star(), observation_time=0.5)
+    u, v = (np.asarray(a) for a in _blob_baselines())
+
+    def power(m):
+        return np.sum(np.abs(m.model(u, v, 1.0)) ** 2)
+
+    assert np.allclose(eqx.filter_jit(power)(model), power(model))
+    grad_radius = jax.grad(lambda r: power(model.set("source.radius", r)))(2.0)
+    assert np.isfinite(grad_radius) and grad_radius < 0
+
+
+def _spotted_harmonix_star(radius=2.0):
+    harmonix_module = pytest.importorskip(
+        "harmonix.harmonix",
+        reason="harmonix integration tests require a compatible harmonix install",
+    )
+    starry_module = pytest.importorskip("jaxoplanet.starry")
+    from jaxoplanet.starry.ylm import ylm_spot
+
+    y = ylm_spot(4)(0.8, 0.5, 0.4, 0.7).todense()
+    surface = starry_module.Surface(
+        y=starry_module.Ylm.from_dense(y, normalize=False),
+        inc=1.0,
+        obl=0.3,
+        period=1.0,
+        u=[0.3, 0.2],
+        normalize=False,
+    )
+    return harmonix_module.Harmonix(surface, radius)
+
+
+def _render_visibilities(model, u, v, npix, fov_mas):
+    image = onp.asarray(model.render(npix=npix, fov_mas=fov_mas)).ravel()
+    xx, yy = (
+        onp.asarray(a).ravel() for a in _image_coordinates(npix, fov_mas)
+    )
+    phase = onp.exp(
+        -2j * onp.pi * _MAS2RAD_REF * (onp.outer(u, xx) + onp.outer(v, yy))
+    )
+    return phase @ image
+
+
+def test_harmonix_render_fourier_transform_matches_model_visibilities():
+    # The rendered star must be on the sky (East left, North up) at its
+    # radius: its Fourier transform reproduces harmonix's visibilities, and
+    # the mirror image (jaxoplanet's own plotting orientation) does not.
+    model = HarmonixModel(_spotted_harmonix_star(), observation_time=0.2)
+    rng = onp.random.default_rng(1)
+    u = rng.uniform(-1.5e2, 1.5e2, 40) / 1.65e-6
+    v = rng.uniform(-1.5e2, 1.5e2, 40) / 1.65e-6
+    cvis_model = onp.asarray(model.model(np.asarray(u), np.asarray(v), 1.0))
+    cvis_render = _render_visibilities(model, u, v, 128, 5.0)
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < 5e-3
+    mirrored = _render_visibilities(model, -u, v, 128, 5.0)
+    assert onp.max(onp.abs(mirrored - cvis_model)) > 2e-2
+
+    # The image follows the map harmonix fits ("source.data").
+    data = model.get("source.data")
+    changed = model.set("source.data", -data)
+    cvis_changed = onp.asarray(
+        changed.model(np.asarray(u), np.asarray(v), 1.0)
+    )
+    render_changed = _render_visibilities(changed, u, v, 128, 5.0)
+    assert onp.max(onp.abs(render_changed - cvis_changed)) < 5e-3
+    assert onp.max(onp.abs(cvis_changed - cvis_model)) > 1e-2
+
+
+def test_harmonix_parameters_are_reachable_through_paths():
+    model = HarmonixModel(_spotted_harmonix_star(), observation_time=0.2)
+    u = np.linspace(1e7, 7e7, 8)
+    v = np.linspace(-3e7, 4e7, 8)
+
+    def power(m):
+        return np.sum(np.abs(m.model(u, v, 1.0)) ** 2)
+
+    assert np.allclose(eqx.filter_jit(power)(model), power(model))
+    grad_radius = jax.grad(lambda r: power(model.set("source.radius", r)))(2.0)
+    grad_map = jax.grad(lambda d: power(model.set("source.data", d)))(
+        model.get("source.data")
+    )
+    assert np.isfinite(grad_radius) and grad_radius < 0
+    assert np.all(np.isfinite(grad_map)) and np.any(grad_map != 0)
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
