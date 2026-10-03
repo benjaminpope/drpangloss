@@ -137,7 +137,7 @@ So:
 Both go through one function (`likelihood.inflated_errors`, merged in PR #124 without the `where=` and `combine=` arguments yet), with `where="data" | "model"` and `combine="max" | "quadrature"`, so that the two cannot drift apart.
 
 ### 2.7 The in-field (dual-field) calibrator recipe (done in virgil-vlti, not the core)
-In dual-field instruments (GRAVITY's dual-field mode), archival data often include frames on the fringe-tracking star, interleaved with the target. When that star is unresolved, it is a calibrator observed minutes apart, in the same mode, with no separate calibration needed. GRAVITY-specific tools are "not planned" in [`pmoired_parity.md`](pmoired_parity.md), so this is a recipe, not a reader:
+In dual-field instruments (GRAVITY's dual-field mode), archival data often include frames on the fringe-tracking star, interleaved with the target. When that star is unresolved, it is a calibrator observed minutes apart, in the same mode, with no separate calibration needed. GRAVITY-specific tools were "not planned" in [`pmoired_parity.md`](pmoired_parity.md) when this was written, so it was planned as a recipe, not a reader. Those tools now belong to [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), which implements the recipe:
 1. Classify frames by `SOBJ` offset: ≈ 0 means the fringe-tracking star (the calibrator); otherwise the target.
 2. Per baseline and channel, interpolate the calibrator's V² transfer function in time to each target frame. Average its closure phases as unit vectors and subtract them.
 3. Record the calibrator scatter as the **known τ** of §2.4, not as a per-channel error.
@@ -177,10 +177,10 @@ The 6a agent needs only the "+" items folded into its plan.
 ### Decided (Ben, 2026-10-03)
 1. **Correlated channel nuisances (2.4) are their own stage, 6d, after 6a.**
 2. **The `apep-gravity` library commits** were to merge into `imaging` after 6a's spectra; they were instead merged in PR #124, with `Tabulated` provisional. Those are `0688f34` (`EllipticalGaussian`, `Tabulated`, `noise=`), `c4ef79d` (anisotropic `GaussianField`), `3a6c682` (`GaussianArc`) and `37bddad` (finite rim gradients at u = v = 0). That PR replaces `Tabulated` with 6a's `Nodes`, and routes `noise=` through the same function as 6a's error floors (2.1, 2.6).
+3. **The dual-field recipe** lives in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), not in a `virgil.gravity` module (decided 2026-10-04).
 
 ### Still open (defaults in force until Ben says otherwise)
 1. **`noise=` grows into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), keeping its name (default), rather than a separate `nuisance=` argument.
 2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
 3. **Closure phase everywhere,** plus the closure-free projection of continuum-normalised VISPHI in the line windows (default; §2.3).
-4. **The dual-field recipe:** resolved 2026-10-04: it lives in virgil-vlti, not in a `virgil.gravity` module.
-5. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.
+4. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.

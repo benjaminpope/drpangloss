@@ -68,8 +68,8 @@ match, and the precision expected.
 
 ## Instrument-specific work
 
-Calibration and error models for one VLTI instrument (GRAVITY, PIONIER,
-MATISSE) live in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti),
+Calibration and error models specific to the VLTI instruments (GRAVITY,
+PIONIER, MATISSE) live in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti),
 together with the GRAVITY calibration review. virgil keeps the generic
 machinery (readers, likelihoods, nuisance modes) and never imports virgil-vlti;
 see that repository's `PLAN.md` for the boundary.
