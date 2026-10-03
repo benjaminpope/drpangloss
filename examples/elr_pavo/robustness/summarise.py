@@ -145,7 +145,6 @@ def do_profile(star, data, out, md):
     # Delta chi2 is measured from the unrestricted best fit (the multistart
     # optimum), not from each map's best grid cell, which can miss it.
     ms = multistart.load(out, star)
-    best = None if ms is None else float(np.nanmin(ms["chi2"]))
     maps = {}
     for pair, names in profile.PAIRS.items():
         m = profile.assemble(out, star, pair)
@@ -154,13 +153,26 @@ def do_profile(star, data, out, md):
     if not maps:
         return
     md.append("### Profile likelihood\n")
+    # One zero point for every map: the best chi2 known anywhere (multistart
+    # and all maps). Without multistart there is no unrestricted optimum, so
+    # each map is shown relative to its own minimum and gets no contours.
+    best = None
+    if ms is not None:
+        ms_best = float(np.nanmin(ms["chi2"]))
+        map_best = min(float(np.nanmin(m[2])) for m in maps.values())
+        best = min(ms_best, map_best)
+        if map_best < ms_best - 1e-6:
+            md.append(
+                f"- A profile map beats the multistart optimum by "
+                f"{ms_best - map_best:.2f} in chi2: the multistart search "
+                "missed the best fit.\n"
+            )
     fig, axes = plt.subplots(
         1, len(maps), figsize=(5 * len(maps), 4), squeeze=False
     )
     for ax, (pair, (a0, a1, chi2, conv)) in zip(axes[0], maps.items()):
         names = profile.PAIRS[pair]
-        floor = np.nanmin(chi2) if best is None else min(best, np.nanmin(chi2))
-        d = chi2 - floor
+        d = chi2 - (np.nanmin(chi2) if best is None else best)
         norm = matplotlib.colors.LogNorm(0.1, max(np.nanmax(d), 1e3))
         mesh = ax.pcolormesh(
             a0,
@@ -240,7 +252,7 @@ def local_minima(d, wrap0=False):
         if np.isnan(d[i, j]):
             continue
         rows = (
-            [(i + k) % n0 for k in (-1, 0, 1)]
+            sorted({(i + k) % n0 for k in (-1, 0, 1)})  # unique if n0 < 3
             if wrap0
             else list(range(max(i - 1, 0), min(i + 2, n0)))
         )
