@@ -9,7 +9,7 @@ from drpangloss._precision import cast_tree, run_in
 from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import _Objective, fit
 from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
-from drpangloss.likelihood import numpyro_model
+from drpangloss.likelihood import numpyro_model, whitened_residuals
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
@@ -250,8 +250,21 @@ def test_fit_recovers_error_scales():
     }
     result = fit(START, PRIORS, data, noise=noise)
     assert result.info["method"] == "lbfgs"
-    for term in ("vis_scale", "phi_scale"):
-        assert 1.5 < result.values[f"noise.{term}"] < 2.6
+    # The maximum-likelihood scale is the rms of the residuals at the truth,
+    # whitened by the stated errors. There are only 15 independent closure
+    # phases, so one draw scatters by ~20% about the injected 2: compare
+    # with this draw's own rms rather than with 2.
+    whitened = onp.asarray(whitened_residuals(TRUTH, data))
+    n_vis = onp.size(data.vis)
+    rms = {
+        "vis_scale": onp.sqrt(onp.mean(whitened[:n_vis] ** 2)),
+        "phi_scale": onp.sqrt(onp.mean(whitened[n_vis:] ** 2)),
+    }
+    for term, expected in rms.items():
+        assert result.values[f"noise.{term}"] == pytest.approx(
+            expected, rel=0.15
+        )
+    assert result.values["noise.vis_scale"] > 1.4  # 2x noise, well sampled
     # χ² is computed with the inflated errors.
     assert abs(result.info["chi2_red"] - 1.0) < 0.05
     assert abs(result.values["dra"] - 150.0) < 5.0
