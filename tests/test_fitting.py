@@ -212,15 +212,34 @@ def test_repeated_fits_do_not_recompile(method):
     # defined inside each call, every fit recompiled, which took most of
     # its time.
     compiles = []
-    jax.monitoring.register_event_duration_secs_listener(
-        lambda event, duration, **kwargs: compiles.append(event)
-        if event.endswith("backend_compile_duration")
-        else None
-    )
+
+    def count(event, duration, **kwargs):
+        if event.endswith("backend_compile_duration"):
+            compiles.append(event)
+
     start, priors, data = _image_fit()
     options = {"max_steps": 20} if method == "adam" else {}
-    fit(start, priors, data, [TSV(10.0, path="env")], method=method, **options)
-    before = len(compiles)
     again = data.with_model(start, key=jax.random.PRNGKey(2))
-    fit(start, priors, again, [TSV(3.0, path="env")], method=method, **options)
+
+    def fit_tsv(data, weight):
+        regs = [TSV(weight, path="env")]
+        return fit(start, priors, data, regs, method=method, **options)
+
+    jax.monitoring.register_event_duration_secs_listener(count)
+    try:
+        fit_tsv(data, 10.0)
+        before = len(compiles)
+        fit_tsv(again, 3.0)
+    finally:
+        # The listener is process-global. Older JAX only has the private
+        # helper.
+        unregister = getattr(
+            jax.monitoring,
+            "unregister_event_duration_listener",
+            None,
+        ) or getattr(
+            jax._src.monitoring,
+            "_unregister_event_duration_listener_by_callback",
+        )
+        unregister(count)
     assert len(compiles) == before
