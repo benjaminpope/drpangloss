@@ -343,8 +343,32 @@ A background split off as a `Resolved` component also changes what the image's i
   - The 41² tree-depth saturation was specific to one scene, and is revisited only if a real dataset shows it.
 - **Sampling enters the docs as supported** once a tutorial exists (Stage 5d): posterior mean and standard-deviation maps, and the posteriors of σ and ℓ. Stage 6 builds on `GaussianField`.
 
+## Stage 6a: spectro-interferometry, matching PMOIRED (about 8–10 h)
+This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_parity.md) compares the two packages feature by feature. It comes before 6b and 6c, because 6b's per-filter fluxes are node spectra.
+
+**Build:**
+- **Spectra.** New `Spectrum` types:
+  - Gaussian and Lorentzian lines (`wl0`, FWHM, amplitude; emission or absorption);
+  - node spectra (linear or cubic spline through free fluxes at fixed wavelengths);
+  - sums, so that continuum plus lines is one spectrum.
+- **Observables.**
+  - Read and model T3AMP, OI_FLUX (FLUX and NFLUX), differential phase, normalised |V| and V², and correlated flux.
+  - Allow V² with |V|, and closure phase with VISPHI, in one dataset.
+  - Normalisation uses continuum ranges, or the analytic continuum of the lines.
+- **Instrumental effects.** A spectral-resolution kernel, and bandwidth smearing by oversampling in wavelength.
+- **Errors.** `OIData` error floors (absolute and relative) and flags, alongside `with_error_scale`.
+
+**Tests:**
+- A line's flux integral and centroid.
+- Node spectra interpolate their nodes.
+- Differential phase of an offset line-emitting component, against the analytic photocentre shift.
+- Smearing against brute-force integration over the band.
+- OIFITS round-trips for each new table.
+
+**MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
-**Build**, in increasing order of complexity; stop where the science needs stop:
+**Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
 2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). The per-observation models this needs exist since Stage 4b: `fit` accepts a model function returning one model per dataset.
 3. **`ImageCube`.** Per-channel log-brightness with a GP along wavelength: a separable DCT field over (λ, y, x). The translation gauge is fixed per channel (one centroid per channel), unless an analytic star anchors it.
@@ -371,9 +395,24 @@ A background split off as a `Resolved` component also changes what the image's i
 
 ---
 
+## Stage 8: parametric parity with PMOIRED (after milestone 2; about 10–14 h)
+See [`pmoired_parity.md`](pmoired_parity.md).
+- **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
+- **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
+- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
+- **Keplerian orbits.** Elements or Thiele–Innes constants drive a component's position from each datum's MJD, so `OIData` must carry MJD. Radial velocities enter as an extra likelihood term.
+- **Spectral correlations between channels.** Only once a dataset needs them.
+
+**Tests:**
+- Hankel profiles against analytic UD, Gaussian and ring visibilities.
+- `Projected` against inclined analytic models.
+- Orbit positions against a reference ephemeris.
+- Bootstrap spreads against the Laplace errors on a simple fit.
+
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
-- **Stages 5–7:** about 17–24 h more.
+- **Stages 5–7:** about 17–24 h more, plus 6a (8–10 h).
+- **Stage 8** (PMOIRED parity): about 10–14 h.
 - **Overall:** about 35–50 h of agent time, spread over 8 feedback checkpoints.
 
 External waits: only the OzSTAR GPU benchmark run, which you launch. All test data are simulated using ν Hor baselines and noise.
