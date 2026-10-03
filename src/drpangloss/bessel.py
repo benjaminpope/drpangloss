@@ -34,6 +34,19 @@ __all__ = ["bessel_jn", "j0", "j1"]
 #
 # The coefficient tables are NumPy arrays, not JAX arrays, so they stay float64
 # even when drpangloss is imported before ``jax_enable_x64`` is set.
+# ``_polyval`` casts them to the argument's dtype at trace time.
+
+
+def _polyval(coeffs, z):
+    """``jnp.polyval`` with the coefficients cast to ``z``'s dtype.
+
+    Mixing NumPy float64 coefficients with a JAX argument leaves the dtype of
+    the coefficients to JAX's canonicalisation, which can disagree with the
+    argument's dtype (e.g. under ``jax.enable_x64``) and fail to lower in
+    JAX >= 0.10.
+    """
+    return np.polyval(np.asarray(coeffs, dtype=z.dtype), z)
+
 
 RP1 = onp.array(
     [
@@ -137,7 +150,7 @@ SQ2OPI = 0.79788456080286535588  # sqrt(2/pi)
 
 def j1_small(x):
     z = x * x
-    w = np.polyval(RP1, z) / np.polyval(RQ1, z)
+    w = _polyval(RP1, z) / _polyval(RQ1, z)
     w = w * x * (z - Z1) * (z - Z2)
     return w
 
@@ -145,8 +158,8 @@ def j1_small(x):
 def j1_large_c(x):
     w = 5.0 / x
     z = w * w
-    p = np.polyval(PP1, z) / np.polyval(PQ1, z)
-    q = np.polyval(QP1, z) / np.polyval(QQ1, z)
+    p = _polyval(PP1, z) / _polyval(PQ1, z)
+    q = _polyval(QP1, z) / _polyval(QQ1, z)
     xn = x - THPIO4
     p = p * np.cos(xn) - w * q * np.sin(xn)
     return p * SQ2OPI / np.sqrt(x)
@@ -175,7 +188,7 @@ def _j1_over_x(x):
     # directly, so there is no division near 0.
     xs = np.where(small, x, 0.0)
     z = xs * xs
-    w_small = np.polyval(RP1, z) / np.polyval(RQ1, z) * (z - Z1) * (z - Z2)
+    w_small = _polyval(RP1, z) / _polyval(RQ1, z) * (z - Z1) * (z - Z2)
     xl = np.where(small, 5.0, ax)
     return np.where(small, w_small, j1_large_c(xl) / xl)
 
@@ -289,7 +302,7 @@ def j0_small(x):
     """Implementation of J0 for x < 5."""
     z = x * x
     p = (z - DR10) * (z - DR20)
-    p = p * np.polyval(RP0, z) / np.polyval(RQ0, z)
+    p = p * _polyval(RP0, z) / _polyval(RQ0, z)
     return np.where(x < 1e-5, 1 - z / 4.0, p)
 
 
@@ -297,8 +310,8 @@ def j0_large(x):
     """Implementation of J0 for x >= 5."""
     w = 5.0 / x
     q = 25.0 / (x * x)
-    p = np.polyval(PP0, q) / np.polyval(PQ0, q)
-    q = np.polyval(QP0, q) / np.polyval(QQ0, q)
+    p = _polyval(PP0, q) / _polyval(PQ0, q)
+    q = _polyval(QP0, q) / _polyval(QQ0, q)
     xn = x - PIO4
     p = p * np.cos(xn) - w * q * np.sin(xn)
     return p * SQ2OPI / np.sqrt(x)
@@ -346,11 +359,12 @@ def _bessel_jn_trig(n, x, nodes):
     w_sin = onp.zeros((n + 1, nodes // 4 + 1))
     onp.add.at(w_cos.T, quarter, (onp.cos(orders * t) / nodes).T)
     onp.add.at(w_sin.T, quarter, (sign * onp.sin(orders * t) / nodes).T)
-    weights = np.asarray(onp.concatenate([w_cos, w_sin], axis=1))
-
-    arg = x[..., None] * np.sin(
-        2.0 * np.pi * onp.arange(nodes // 4 + 1) / nodes
+    weights = np.asarray(
+        onp.concatenate([w_cos, w_sin], axis=1), dtype=x.dtype
     )
+
+    sin_t = onp.sin(2.0 * onp.pi * onp.arange(nodes // 4 + 1) / nodes)
+    arg = x[..., None] * np.asarray(sin_t, dtype=x.dtype)
     trig = np.concatenate([np.cos(arg), np.sin(arg)], axis=-1)
     return np.moveaxis(trig @ weights.T, -1, 0)
 

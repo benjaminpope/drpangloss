@@ -63,10 +63,6 @@ print(f"beam {resolution.major_mas:.0f} × {resolution.minor_mas:.0f} mas; Nyqui
 ```
 
 ```text
-W1001 23:03:19.252200 11314505 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 588 data (DISCO coefficients)
 beam 154 × 131 mas; Nyquist pixel 84 mas; interferometric field of view 3300 mas
 ```
@@ -81,9 +77,7 @@ The dirty image is the truth convolved with the **dirty beam**, the response to 
 dirty = dirty_image(data, npix, pixel_scale, flux_ratio=0.05)
 fig, axes = plt.subplots(1, 2, figsize=(10, 4.2))
 plot_model(truth.dust, fov_mas=fov, npix=npix, ax=axes[0], title="truth")
-im = axes[1].imshow(dirty, origin="upper", extent=[fov / 2, -fov / 2, -fov / 2, fov / 2], cmap="RdBu_r", vmin=-abs(dirty).max(), vmax=abs(dirty).max())
-axes[1].set(title="dirty image (star removed)", xlabel="ΔRA (mas)", ylabel="ΔDec (mas)")
-plt.colorbar(im, ax=axes[1])
+plot_residual_map(dirty, fov, ax=axes[1], title="dirty image (star removed)")
 plt.tight_layout()
 plt.show()
 ```

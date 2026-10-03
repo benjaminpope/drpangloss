@@ -173,12 +173,17 @@ def test_precision_helpers():
 def test_a_warm_start_still_converges():
     # Starting from the solution at a nearby weight, the gradient is small
     # from the outset; the fit must still move to the new solution rather
-    # than stopping at once.
+    # than stopping at once. Weights below ~100 are avoided: there a cold
+    # start collapses onto a few pixels, at a minimum that varies by platform.
     start, priors, data = _image_fit()
-    strong = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
+    strong = fit(start, priors, data, [MaxEntropy(1000.0, path="env")])
     weak = fit(
-        start, priors, data, [MaxEntropy(1.0, path="env")], init=strong.values
+        start,
+        priors,
+        data,
+        [MaxEntropy(100.0, path="env")],
+        init=strong.values,
     )
-    cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
+    cold = fit(start, priors, data, [MaxEntropy(100.0, path="env")])
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
-    assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)
+    assert weak.info["loss"] == pytest.approx(cold.info["loss"], rel=1e-3)

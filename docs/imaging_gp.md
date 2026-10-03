@@ -54,10 +54,6 @@ print(f"{n}² pixels of {h:.1f} mas; beam {resolution.major_mas:.0f} × {resolut
 ```
 
 ```text
-W1001 23:24:17.098215 11342472 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-```text
 62² pixels of 20.9 mas; beam 154 × 131 mas
 ```
 
