@@ -530,7 +530,7 @@ requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "numpyro", specifier = ">=0.15" },
-    { name = "optax", specifier = ">=0.2.3" },
+    { name = "optax", specifier = ">=0.2.4" },
     { name = "optimistix", specifier = ">=0.0.10" },
     { name = "pandas" },
     { name = "pre-commit", marker = "extra == 'dev'" },
