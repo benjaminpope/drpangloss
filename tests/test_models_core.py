@@ -48,7 +48,7 @@ def test_cvis_binary():
 
 
 def test_cvis_binary_argument_order_matches_other_cvis_functions():
-    # dra before ddec, as in cvis_gaussian_disk and cvis_uniform_disk.
+    # dra before ddec, as in cvis_uniform_disk.
     uu, vv = u / oidata.wavel, v / oidata.wavel
     assert np.allclose(
         cvis_binary(uu, vv, dra=150.0, ddec=-40.0, flux=1e-2),
