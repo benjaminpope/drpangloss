@@ -517,9 +517,10 @@ def test_legacy_savefits_writes_a_readable_file(tmp_path):
 
 def test_transposed_operator_is_rejected_with_a_hint():
     data = _base_dict(cp_flag=False, i_cps1=None, i_cps2=None, i_cps3=None)
+    operator = onp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 1.0]])
     with pytest.raises(ValueError, match="transposed"):
-        OIData({**data, "vis_mat": onp.ones((3, 2))})
-    projected = OIData({**data, "vis_mat": onp.ones((2, 3))})
+        OIData({**data, "vis_mat": operator.T})
+    projected = OIData({**data, "vis_mat": operator})
     assert projected.vis.shape == (2,)
 
 

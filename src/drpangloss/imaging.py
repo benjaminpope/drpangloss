@@ -785,7 +785,7 @@ def _residual_jacobian(model, data, path):
                 [whitened_residuals(changed, d) for d in datasets]
             )
 
-        n_data = sum(int(np.size(d.flatten_data()[0])) for d in datasets)
+        n_data = sum(d.n_independent for d in datasets)
         mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
         jac = mode(residuals)(leaf)
         r = residuals(leaf)

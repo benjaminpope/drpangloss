@@ -15,6 +15,13 @@ Flagged samples are left out of the observables (see `vis_index` and
 `phi_index`). Phase residuals are wrapped into `[-π, π)` by `residuals`,
 which every likelihood in drpangloss uses.
 
+Closure phases from four or more telescopes are correlated: the triangles
+of one frame and channel share baselines, and only some of them are
+independent (three of four, for four telescopes). The likelihood keeps only
+the independent combinations and whitens them with their covariance, built
+from independent noise on the baseline phases. `n_independent` counts the
+observables that remain.
+
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
 AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
 
@@ -28,6 +35,7 @@ AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
       members:
         - __init__
         - flatten_data
+        - n_independent
         - standardize_model
         - to_vis
         - to_phases

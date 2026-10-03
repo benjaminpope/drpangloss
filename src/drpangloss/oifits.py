@@ -38,7 +38,7 @@ _DEFAULT_PHASE_UNIT = "deg"
 # === READING ===
 
 
-def read_oifits(source, target=None):
+def read_oifits(source, target=None, insname=None):
     """Read an OIFITS file into a record for [`OIData`][drpangloss.oidata.OIData].
 
     Parameters
@@ -51,6 +51,16 @@ def read_oifits(source, target=None):
         Target to keep, by ``OI_TARGET`` name or ``TARGET_ID``. Required when
         a file contains data on more than one target. With several files it
         must be the name, since ``TARGET_ID`` numbering is per file.
+    insname : str or sequence of str, optional
+        Keep only the tables (``OI_WAVELENGTH``, ``OI_VIS``, ``OI_VIS2``,
+        ``OI_T3``, ``OI_FLUX``) with this ``INSNAME``, or one of these. A
+        GRAVITY product holds fringe-tracker tables (``GRAVITY_FT``, a few
+        low-resolution channels) beside the science channel (``GRAVITY_SC``,
+        or ``GRAVITY_SC_P1``/``_P2`` in split polarisation). These are
+        different measurements of the same baselines and must not be
+        merged: reading such a file without ``insname`` raises an error.
+        The two polarisations of the science channel are independent
+        measurements and may be read together.
 
     Returns
     -------
@@ -93,11 +103,13 @@ def read_oifits(source, target=None):
                 f"values are local to each file, so target={target!r} could "
                 "select different stars in different files."
             )
-        return _concat_records([read_oifits(s, target) for s in source])
+        return _concat_records(
+            [read_oifits(s, target, insname) for s in source]
+        )
     if isinstance(source, (str, os.PathLike)):
         with fits.open(source, memmap=False) as hdul:
-            return _read_hdulist(hdul, target)
-    return _read_hdulist(source, target)
+            return _read_hdulist(hdul, target, insname)
+    return _read_hdulist(source, target, insname)
 
 
 def _extname(hdu):
@@ -117,6 +129,49 @@ def _collect_tables(hdul):
         if name.startswith("OI_") and getattr(hdu, "data", None) is not None:
             tables.setdefault(name, []).append(hdu)
     return tables
+
+
+_INSNAME_TABLES = ("OI_WAVELENGTH", "OI_VIS", "OI_VIS2", "OI_T3", "OI_FLUX")
+
+
+def _select_insname(tables, insname):
+    """Keep the tables with the chosen ``INSNAME`` (see ``read_oifits``)."""
+    names = sorted(
+        {
+            _insname(hdu)
+            for extname in _INSNAME_TABLES
+            for hdu in tables.get(extname, [])
+            if _insname(hdu) is not None
+        }
+    )
+    if insname is None:
+        fringe_tracker = [
+            n for n in names if n.upper().startswith("GRAVITY_FT")
+        ]
+        science = [n for n in names if n.upper().startswith("GRAVITY_SC")]
+        if fringe_tracker and science:
+            raise ValueError(
+                "This GRAVITY file holds fringe-tracker tables "
+                f"{fringe_tracker} and science-channel tables {science}, "
+                "which measure the same baselines and must not be merged. "
+                "Choose with insname=, e.g. insname="
+                f"{science[0]!r} (or both polarisations, {science!r})."
+            )
+        return tables
+    wanted = {insname} if isinstance(insname, str) else set(insname)
+    missing = sorted(wanted - set(names))
+    if missing:
+        raise ValueError(
+            f"No tables have INSNAME {missing}; this file has {names}."
+        )
+    return {
+        extname: [
+            hdu
+            for hdu in hdus
+            if extname not in _INSNAME_TABLES or _insname(hdu) in wanted
+        ]
+        for extname, hdus in tables.items()
+    }
 
 
 def _wavelength_tables(tables):
@@ -407,6 +462,15 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     for hdu in tables["OI_VIS"]:
         if "VISPHI" not in hdu.columns.names:
             continue
+        phityp = str(hdu.header.get("PHITYP", "absolute")).strip().lower()
+        if phityp != "absolute":
+            raise ValueError(
+                f"VISPHI in this OI_VIS table has PHITYP = {phityp!r}. A "
+                "differential phase has had a mean phase and delay removed "
+                "across the band, so it cannot be fitted as an absolute "
+                "phase. Use the closure phases (OI_T3), or select a table "
+                "with absolute phases."
+            )
         wave = _table_wavelengths(hdu, wavelengths)
         nwave = wave.size
         mask = _row_mask(hdu, target_id)
@@ -441,8 +505,8 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     }
 
 
-def _read_hdulist(hdul, target):
-    tables = _collect_tables(hdul)
+def _read_hdulist(hdul, target, insname=None):
+    tables = _select_insname(_collect_tables(hdul), insname)
     wavelengths = _wavelength_tables(tables)
     target_id = _select_target(tables, target, ("OI_VIS2", "OI_VIS", "OI_T3"))
 

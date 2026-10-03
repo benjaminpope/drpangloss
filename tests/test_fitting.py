@@ -118,7 +118,7 @@ def test_normal_priors_are_least_squares_terms():
     priors = dict(PRIORS, dra=dist.Normal(150.0, 2.0))
     objective = _Objective(START, priors, DATA)
     r = objective.residuals(objective.init())
-    assert r.size == DATA.flatten_data()[0].size + 1
+    assert r.size == DATA.n_independent + 1
     assert np.isclose(r[-1], (140.0 - 150.0) / 2.0)
 
 
