@@ -366,26 +366,28 @@ The last two came out of fitting GRAVITY data on Apep, but are written as genera
 2. **6a.1: orbits and binary-frame scenes.** Decided 2026-10-03: they are needed now, for the Apep analysis.
 3. **6a: spectro-interferometry.**
 4. **The Apep agent's library commits.** These were merged in PR #124 (they sat on the local branch `apep-gravity`): `EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc` and the rim-gradient fix. `Tabulated` is provisional and private, and 6a's `Nodes` and error floors replace it (decided).
-5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance and the dual-field recipe.
+5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance. (The dual-field recipe is done, in virgil-vlti.)
 6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
 7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
 
 ## Stage 6.0: urgent reader and likelihood fixes (done; PR #120)
-From [`gravity_calibration_review.md`](gravity_calibration_review.md), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
+From the GRAVITY calibration review ([`gravity_calibration_review.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/gravity_calibration_review.md), now in virgil-vlti), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
 - **Only independent closure phases, with their covariance diagonalised first.** Triangles that share baselines (one frame and channel) are grouped. Their covariance is modelled as C = D^½ R D^½ with R = T Tᵀ/3 (Kammerer et al. 2020's equal-noise approximation: the reported σ on the diagonal, and correlations of ±1/3 between triangles that share a baseline), not T diag(s) Tᵀ from per-baseline errors, as an earlier draft of this plan had it. The likelihood whitens the independent combinations (`OIData.cp_noise`, `n_independent`). Three-telescope data are unchanged.
 - **`read_oifits(insname=...)`.** GRAVITY FT and SC tables are never merged silently, and FT data are skipped.
 - **`PHITYP`.** A differential VISPHI is never read as an absolute phase.
 - **No silent diagonal truncation.** A linear operator whose outputs correlate is rotated onto independent outputs.
 - **Follow-up:** re-run the PIONIER (nuHor, Toon) and Apep GRAVITY analyses, and re-execute the docs tutorials before the release.
 
-## The GRAVITY project (separate; after the core of virgil works)
-Decided 2026-10-03: serious GRAVITY-specific development is its own project, started once the core package works. It covers:
+## virgil-vlti: the instrument project (separate)
+Decided 2026-10-03: serious GRAVITY-specific development is its own project. On 2026-10-04 it became the repository [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), widened to PIONIER and MATISSE, and the GRAVITY review, the calibrator-PCA plan and the questions for the GRAVITY team moved there. Its [`PLAN.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/PLAN.md) sets the boundary with virgil. It covers:
 - empirical covariances from the per-DIT products;
-- the archival-calibrator PCA of systematics ([`gravity_calibrator_pca.md`](gravity_calibrator_pca.md));
+- calibration from pipeline products, including the dual-field (in-field) calibrator recipe, generalised from Apep (done there);
+- the archival-calibrator PCA of systematics ([`gravity_calibrator_pca.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/gravity_calibrator_pca.md));
 - the GRAVITY-specific parts of fibre injection;
-- telluric and wavelength calibration.
+- telluric and wavelength calibration;
+- PIONIER error models, and a MATISSE review.
 
-The core keeps generic interfaces: a primary beam (6a), low-rank nuisance modes (6d), and an `insname` selector. Questions for the instrument team are in [`questions_for_gravity_team.md`](questions_for_gravity_team.md).
+The core keeps generic interfaces: a primary beam (6a), low-rank nuisance modes (6d), and an `insname` selector. It never imports virgil-vlti. Questions for the instrument team are in [`questions_for_gravity_team.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/questions_for_gravity_team.md).
 
 ## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
 From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
@@ -499,7 +501,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **Also in 6d:**
 - **`wavel_scale`** (and `wavel_offset`). A per-dataset wavelength nuisance in `noise=` (S §2.6; 1–2 h). The GRAVITY default is λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴) and δ = 0 unless lines constrain it.
-- **The dual-field (in-field) calibrator recipe.** An example script and docs, not a module (S §2.7; 3–4 h). It uses 6d's known-width gains.
+- **The dual-field (in-field) calibrator recipe.** Done in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti) (`virgil-vlti-calibrate --dual-field`), not in the core (S §2.7). Its transfer-function error should become 6d's known-width gains.
 
 **Merge order (historical).** The Apep agent's library commits (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) were merged in PR #124, before 6a. 6a's node spectra will replace `Tabulated`, and 6d extends `noise=`.
 

@@ -66,6 +66,14 @@ virgil-validation (https://github.com/benjaminpope/virgil-validation/issues)
 detailing the request: the model or function, the independent result it should
 match, and the precision expected.
 
+## Instrument-specific work
+
+Calibration and error models specific to the VLTI instruments (GRAVITY,
+PIONIER, MATISSE) live in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti),
+together with the GRAVITY calibration review. virgil keeps the generic
+machinery (readers, likelihoods, nuisance modes) and never imports virgil-vlti;
+see that repository's `PLAN.md` for the boundary.
+
 ## Conventions
 
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`
