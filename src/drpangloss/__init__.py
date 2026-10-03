@@ -21,7 +21,6 @@ Modules:
   conversions.
 * [`spectra`][drpangloss.spectra]: wavelength-dependent fluxes.
 * [`plotting`][drpangloss.plotting]: figures.
-* [`bessel`][drpangloss.bessel]: Bessel functions in JAX.
 
 The legacy ImPlaneIA tools in ``drpangloss.legacy`` are not imported here.
 """
@@ -30,7 +29,6 @@ name = "drpangloss"
 
 from . import (  # noqa: E402
     amigo,
-    bessel,
     coverage,
     fields,
     fitting,
@@ -82,6 +80,7 @@ from .models import (  # noqa: E402
     FlaredDiskPowerLaw,
     GaussianDisk,
     GaussianDiskModel,
+    GravityDarkenedStar,
     Image,
     ModulatedGaussianRim,
     PointSource,
@@ -106,6 +105,7 @@ __all__ = [
     "GaussianDisk",
     "GaussianDiskModel",
     "GaussianField",
+    "GravityDarkenedStar",
     "Image",
     "ModulatedGaussianRim",
     "OIData",

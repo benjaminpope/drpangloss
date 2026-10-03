@@ -76,9 +76,9 @@ def test_likelihood_grid():
 
 def test_likelihood_grid_axis_order_tracks_key_order():
     reduced_samples = {
-        "dra": samples_dict["dra"][::40],
-        "ddec": samples_dict["ddec"][::40],
-        "flux": samples_dict["flux"][::40],
+        "dra": samples_dict["dra"][::12],
+        "ddec": samples_dict["ddec"][::12],
+        "flux": samples_dict["flux"][::12],
     }
     ordered = likelihood_grid(oidata, BinaryModelCartesian, reduced_samples)
 
@@ -117,9 +117,9 @@ def test_optimized_likelihood_grid():
 
 def test_optimized_likelihood_grid_axis_order_tracks_key_order():
     reduced_samples = {
-        "dra": samples_dict["dra"][::40],
-        "ddec": samples_dict["ddec"][::40],
-        "flux": samples_dict["flux"][::40],
+        "dra": samples_dict["dra"][::12],
+        "ddec": samples_dict["ddec"][::12],
+        "flux": samples_dict["flux"][::12],
     }
     ordered = optimized_likelihood_grid(
         oidata, BinaryModelCartesian, reduced_samples, flux_param="flux"
@@ -160,9 +160,9 @@ def test_optimized():
 
 def test_optimized_flux_grid_axis_order_tracks_key_order():
     reduced_samples = {
-        "dra": samples_dict["dra"][::40],
-        "ddec": samples_dict["ddec"][::40],
-        "flux": samples_dict["flux"][::40],
+        "dra": samples_dict["dra"][::12],
+        "ddec": samples_dict["ddec"][::12],
+        "flux": samples_dict["flux"][::12],
     }
     ordered = optimized_flux_grid(
         oidata_sim, BinaryModelCartesian, reduced_samples
@@ -201,7 +201,7 @@ def test_laplace():
     )
     assert np.all(np.isfinite(laplace_sigma_grid))
     # By default the curvature is taken at the optimized flux.
-    small = {key: value[::20] for key, value in samples_dict.items()}
+    small = {key: value[::6] for key, value in samples_dict.items()}
     assert np.allclose(
         laplace_flux_uncertainty_grid(oidata_sim, BinaryModelCartesian, small),
         laplace_flux_uncertainty_grid(
@@ -223,9 +223,9 @@ def test_laplace():
 
 def test_laplace_grid_axis_order_tracks_key_order():
     reduced_samples = {
-        "dra": samples_dict["dra"][::40],
-        "ddec": samples_dict["ddec"][::40],
-        "flux": samples_dict["flux"][::40],
+        "dra": samples_dict["dra"][::12],
+        "ddec": samples_dict["ddec"][::12],
+        "flux": samples_dict["flux"][::12],
     }
     ordered = laplace_flux_uncertainty_grid(
         oidata_sim, BinaryModelCartesian, reduced_samples
