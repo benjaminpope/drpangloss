@@ -9,7 +9,7 @@ from drpangloss._precision import cast_tree, run_in
 from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import _Objective, fit
 from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
-from drpangloss.likelihood import numpyro_model
+from drpangloss.likelihood import numpyro_model, whitened_residuals
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
@@ -239,3 +239,59 @@ def test_repeated_fits_do_not_recompile(method):
     with count_compiles() as compiles:
         fit_tsv(again, 3.0)
     assert not compiles
+
+
+def test_fit_recovers_error_scales():
+    # Noise twice the stated errors: the fitted scales should be near 2.
+    data = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=2.0)
+    noise = {
+        "vis_scale": dist.Uniform(0.0, 10.0),
+        "phi_scale": dist.Uniform(0.0, 10.0),
+    }
+    result = fit(START, PRIORS, data, noise=noise)
+    assert result.info["method"] == "lbfgs"
+    # The maximum-likelihood scale is the rms of the residuals at the truth,
+    # whitened by the stated errors. There are only 15 independent closure
+    # phases, so one draw scatters by ~20% about the injected 2: compare
+    # with this draw's own rms rather than with 2.
+    whitened = onp.asarray(whitened_residuals(TRUTH, data))
+    n_vis = onp.size(data.vis)
+    rms = {
+        "vis_scale": onp.sqrt(onp.mean(whitened[:n_vis] ** 2)),
+        "phi_scale": onp.sqrt(onp.mean(whitened[n_vis:] ** 2)),
+    }
+    for term, expected in rms.items():
+        assert result.values[f"noise.{term}"] == pytest.approx(
+            expected, rel=0.15
+        )
+    assert result.values["noise.vis_scale"] > 1.4  # 2x noise, well sampled
+    # χ² is computed with the inflated errors.
+    assert abs(result.info["chi2_red"] - 1.0) < 0.05
+    assert abs(result.values["dra"] - 150.0) < 5.0
+
+
+def test_fit_noise_per_dataset_and_validation():
+    noise = [{"phi_error": dist.Uniform(0.0, 1.0)}, {}]
+    result = fit(START, PRIORS, [DATA, DATA], noise=noise)
+    assert set(result.values) == set(PRIORS) | {"noise[0].phi_error"}
+    with pytest.raises(ValueError, match="2 datasets"):
+        fit(START, PRIORS, [DATA, DATA], noise=[{}])
+    with pytest.raises(ValueError, match="Unknown noise term"):
+        fit(START, PRIORS, DATA, noise={"jitter": dist.Uniform(0.0, 1.0)})
+    with pytest.raises(ValueError, match="non-negative"):
+        fit(START, PRIORS, DATA, noise={"vis_scale": dist.Normal(1.0, 1.0)})
+    with pytest.raises(TypeError, match="least-squares"):
+        fit(
+            START,
+            PRIORS,
+            DATA,
+            method="lm",
+            noise={"vis_scale": dist.Uniform(0.0, 5.0)},
+        )
+
+
+def test_numpyro_model_samples_noise_terms():
+    noise = {"vis_scale": dist.Uniform(0.0, 5.0)}
+    model = numpyro_model(START, PRIORS, DATA, noise=noise)
+    trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
+    assert "noise.vis_scale" in trace

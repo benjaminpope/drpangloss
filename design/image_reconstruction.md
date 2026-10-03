@@ -564,6 +564,15 @@ On simulated VLTI and AMI data the GP image matches or beats maximum entropy. On
 
 ### Stage 6
 
+Additions driven by VLTI/GRAVITY data on Apep, a dusty Wolf–Rayet binary (branch `apep-gravity`):
+- `EllipticalGaussian` and `GaussianArc` (a Gaussian ridge along a circular arc, by quadrature), both in the render↔model test;
+- an anisotropic `GaussianField` (`length_mas=(row, col)`);
+- `Tabulated`, a free flux per spectral channel, provisional until 6a's `Nodes`;
+- fitted error inflation, `fit(..., noise=...)` and `numpyro_model(..., noise=...)`: scales (`vis_scale`, `phi_scale`) and terms added in quadrature (`vis_error_rel`, `phi_error`), per dataset, with the likelihood's normalisation included. On Apep the calibrated errors were underestimated two- to sevenfold, and the additive terms fitted better than scales;
+- `ModulatedGaussianRim` gradients made finite at zero baseline.
+
+The lessons for spectro-interferometry and for fitting orbits with a scene are in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) and [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
+
 ### Stage 7
 
 ## References

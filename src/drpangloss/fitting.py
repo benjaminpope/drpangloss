@@ -28,8 +28,10 @@ from ._utils import is_flux_param
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
+    _whitened_and_errors,
     build_model,
-    whitened_residuals,
+    noise_for,
+    noise_sites,
 )
 from .models import SourceModel
 
@@ -80,20 +82,23 @@ class _Objective(eqx.Module):
 
     ``residuals(z)`` is a vector whose half sum of squares is ``loss(z)``
     (up to a constant), for least-squares solvers; it raises ``TypeError``
-    if a regulariser or prior has no least-squares form. ``z`` are the
-    unconstrained coordinates of the parameters.
+    if a regulariser or prior has no least-squares form, or if error terms
+    are fitted. ``z`` are the unconstrained coordinates of the parameters
+    and of any error terms (keyed by their ``noise`` sites).
     """
 
     model: object
     data: tuple
     priors: dict
     regularisers: tuple
+    noise: dict
 
-    def __init__(self, model, priors, data, regularisers=()):
+    def __init__(self, model, priors, data, regularisers=(), noise=None):
         self.model = model
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.priors = dict(priors)
         self.regularisers = tuple(regularisers)
+        self.noise = noise_sites(noise, len(self.data))
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
         for path, prior in self.priors.items():
@@ -109,9 +114,18 @@ class _Objective(eqx.Module):
         return tuple(self.priors)
 
     def init(self, values=None):
-        """Unconstrained coordinates of ``values`` (default: the template's)."""
+        """Unconstrained coordinates of ``values`` (default: the template's).
+
+        Error terms start at 1 (scales) or 0.01 (added errors), or at their
+        prior's mean if that is outside the prior's support.
+        """
         values = {} if values is None else dict(values)
         z = {}
+        for site, (prior, _, term) in self.noise.items():
+            start = values.get(site, 1.0 if term.endswith("scale") else 0.01)
+            if not bool(prior.support(np.asarray(start, float))):
+                start = prior.mean
+            z[site] = _bijection(prior).inv(np.asarray(start, float))
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):
@@ -124,11 +138,14 @@ class _Objective(eqx.Module):
         return z
 
     def constrain(self, z):
-        """Map unconstrained coordinates to parameter values."""
-        return {
+        """Map unconstrained coordinates to parameter and error-term values."""
+        values = {
             path: _bijection(prior)(z[path])
             for path, prior in self.priors.items()
         }
+        for site, (prior, _, _) in self.noise.items():
+            values[site] = _bijection(prior)(z[site])
+        return values
 
     def build(self, z):
         """The model with the parameters at unconstrained coordinates ``z``."""
@@ -137,12 +154,16 @@ class _Objective(eqx.Module):
             self.model, self.paths, [values[p] for p in self.paths]
         )
 
-    def data_residuals(self, model):
+    def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
 
         ``model`` is one model for all the datasets, or a list of them, one
-        per dataset.
+        per dataset; ``values`` holds the error terms, if any are fitted.
         """
+        return [w for w, _ in self._whitened(model, values)]
+
+    def _whitened(self, model, values=None):
+        """(whitened residuals, inflated errors) for each dataset."""
         if not isinstance(model, (list, tuple)):
             model = [model] * len(self.data)
         if len(model) != len(self.data):
@@ -150,7 +171,11 @@ class _Objective(eqx.Module):
                 f"The model function returned {len(model)} models for "
                 f"{len(self.data)} datasets."
             )
-        return [whitened_residuals(m, d) for m, d in zip(model, self.data)]
+        values = {} if values is None else values
+        return [
+            _whitened_and_errors(m, d, noise_for(self.noise, values, i))
+            for i, (m, d) in enumerate(zip(model, self.data))
+        ]
 
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
@@ -158,6 +183,12 @@ class _Objective(eqx.Module):
         Raises ``TypeError`` if a regulariser or prior has no least-squares
         form (then use L-BFGS or Adam).
         """
+        if self.noise:
+            raise TypeError(
+                "Fitted error terms have no least-squares form (the "
+                "likelihood's normalisation depends on them); fit with "
+                "method='lbfgs' or 'adam'."
+            )
         model = self.build(z)
         values = self.constrain(z)
         parts = self.data_residuals(model)
@@ -183,13 +214,20 @@ class _Objective(eqx.Module):
         """
         model = self.build(z)
         values = self.constrain(z)
-        chi2 = sum(np.sum(r**2) for r in self.data_residuals(model))
+        whitened = self._whitened(model, values)
+        chi2 = sum(np.sum(w**2) for w, _ in whitened)
+        # With fitted error terms, the normalisation of the Gaussian
+        # likelihood, sum(log σ), is no longer a constant.
+        log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
+        log_norm = log_norm if self.noise else 0.0
         penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
             for path, prior in self.priors.items()
         )
-        return 0.5 * chi2 + penalty - log_prior
+        for site, (prior, _, _) in self.noise.items():
+            log_prior = log_prior + np.sum(prior.log_prob(values[site]))
+        return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
 def _reference(model):
@@ -212,7 +250,8 @@ class FitResult:
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset; and ``chi2_red``,
-        the total χ² per data point.
+        the total χ² per data point. With fitted error terms, χ² uses the
+        inflated errors, and ``values`` holds the terms too.
     """
 
     model: object
@@ -226,6 +265,7 @@ def fit(
     data,
     regularisers=(),
     *,
+    noise=None,
     init=None,
     method=None,
     max_steps=None,
@@ -258,9 +298,21 @@ def fit(
     regularisers : sequence, optional
         Penalties added to the loss, e.g. from
         [`drpangloss.imaging`][drpangloss.imaging].
+    noise : dict or list of dict, optional
+        Priors on error-inflation terms to fit with the parameters:
+        ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
+        ``vis_error_rel`` (a fraction of the model visibility) and
+        ``phi_error`` (radians) are added in quadrature (see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). A dict
+        applies to every dataset (values ``"noise.<term>"``); a list gives
+        each dataset its own (``"noise[i].<term>"``). The loss is then the
+        full Gaussian negative log likelihood, including ``Σ log σ``, so the
+        default method is L-BFGS. Fitting error terms with an image is
+        degenerate (a smoother image with larger errors fits as well):
+        estimate them with a parametric model first.
     init : dict, optional
-        Starting values by path, overriding the template's (required for
-        a function model).
+        Starting values by path (or ``noise`` site), overriding the
+        template's (required for a function model).
     method : {"lm", "lbfgs", "adam"}, optional
         ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals, with
         a matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
@@ -311,7 +363,7 @@ def fit(
         )
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularisers), dtype
+            _Objective(model, priors, data, regularisers, noise), dtype
         )
         z0 = problem.init(cast_tree(init, dtype))
         method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
@@ -457,8 +509,12 @@ def _has_residuals(problem, z):
 
 @eqx.filter_jit
 def _summary(problem, z):
-    """The loss and each dataset's chi-squared at ``z``."""
-    chi2 = [np.sum(r**2) for r in problem.data_residuals(problem.build(z))]
+    """The loss and each dataset's chi-squared at ``z``.
+
+    With fitted error terms, chi-squared uses the inflated errors.
+    """
+    residuals = problem.data_residuals(problem.build(z), problem.constrain(z))
+    chi2 = [np.sum(r**2) for r in residuals]
     return problem.loss(z), chi2
 
 

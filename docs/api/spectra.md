@@ -10,3 +10,4 @@ sample's wavelength, as in SPARCO.
         - BlackBody
         - PowerLaw
         - Spectrum
+        - Tabulated
