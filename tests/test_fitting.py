@@ -173,17 +173,32 @@ def test_precision_helpers():
 def test_a_warm_start_still_converges():
     # Starting from the solution at a nearby weight, the gradient is small
     # from the outset; the fit must still move to the new solution rather
-    # than stopping at once. Weights below ~100 are avoided: there a cold
-    # start collapses onto a few pixels, at a minimum that varies by platform.
+    # than stopping at once.
     start, priors, data = _image_fit()
-    strong = fit(start, priors, data, [MaxEntropy(1000.0, path="env")])
+    strong = fit(start, priors, data, [MaxEntropy(100.0, path="env")])
     weak = fit(
-        start,
-        priors,
-        data,
-        [MaxEntropy(100.0, path="env")],
-        init=strong.values,
+        start, priors, data, [MaxEntropy(10.0, path="env")], init=strong.values
     )
-    cold = fit(start, priors, data, [MaxEntropy(100.0, path="env")])
+    cold = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
     assert weak.info["loss"] == pytest.approx(cold.info["loss"], rel=1e-3)
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_a_cold_maxent_fit_does_not_collapse(dtype):
+    # From a flat image, a weakly regularised fit once took a first
+    # quasi-Newton step of ~10 in log-brightness, switching most pixels
+    # off for good (their gradients vanish with their flux): it stopped on
+    # a few bright pixels with χ² ≈ 1330, where a strongly regularised fit
+    # reaches ≈ 245. A weaker penalty must fit the data at least as well.
+    # (In float32 the line search runs out of precision near the minimum,
+    # so that fit may stop unconverged.)
+    start, priors, data = _image_fit()
+    weak, strong = (
+        fit(start, priors, data, [MaxEntropy(w, path="env")], dtype=dtype)
+        for w in (1.0, 100.0)
+    )
+    assert weak.info["chi2"][0] <= strong.info["chi2"][0]
+    b = weak.model.env.brightness
+    assert np.mean(b > 1e-3 * np.max(b)) > 0.1  # collapsed fits: 2%

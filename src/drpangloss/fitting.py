@@ -265,6 +265,8 @@ def fit(
         when the whole objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
+        No unconstrained coordinate moves by more than 1 per step, so that
+        log-brightness pixels cannot be switched off by one long step.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
@@ -406,7 +408,26 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
     # where it started, so that a warm start (e.g. along an L-curve, whose
     # gradient is small from the outset) still converges rather than
     # stopping at once.
-    optimiser = optax.lbfgs()
+    #
+    # No coordinate may move by more than 1 per step (the clip, and a line
+    # search that may not lengthen the step), i.e. a factor of e in a
+    # brightness or flux. Otherwise an early quasi-Newton step, built from
+    # one or two gradients, can move log-brightness pixels by 10 or more:
+    # their gradients vanish with their flux, so they never come back, and
+    # the fit stops on a few bright pixels (e.g. a cold-started MaxEntropy
+    # image at weak weights). The fit also stops, unconverged, when a step
+    # no longer changes the parameters (the line search has run out of
+    # precision, as can happen in float32).
+    optimiser = optax.chain(
+        optax.scale_by_lbfgs(),
+        optax.scale(-1.0),
+        optax.clip(1.0),
+        optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=20,
+            max_learning_rate=1.0,
+            initial_guess_strategy="one",
+        ),
+    )
 
     @eqx.filter_jit
     def run(problem, z0):
@@ -418,24 +439,25 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
         tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
 
         def keep_going(carry):
-            step, _, _, gradient = carry
-            return (step < max_steps) & (gradient > tolerance)
+            step, _, _, gradient, moved = carry
+            return (step < max_steps) & (gradient > tolerance) & moved
 
         def step(carry):
-            count, z, state, _ = carry
+            count, z, state, _, _ = carry
             value, grad = value_and_grad(z, state=state)
             updates, state = optimiser.update(
                 grad, state, z, value=value, grad=grad, value_fn=loss
             )
-            return (
-                count + 1,
-                optax.apply_updates(z, updates),
-                state,
-                _largest(grad),
+            new = optax.apply_updates(z, updates)
+            moved = jax.tree.reduce(
+                np.logical_or,
+                jax.tree.map(lambda a, b: np.any(a != b), new, z),
             )
+            return count + 1, new, state, _largest(grad), moved
 
-        start = (0, z0, optimiser.init(z0), np.asarray(np.inf, dtype=float))
-        count, z, _, gradient = jax.lax.while_loop(keep_going, step, start)
+        inf = np.asarray(np.inf, dtype=float)
+        start = (0, z0, optimiser.init(z0), inf, np.asarray(True))
+        count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
         return z, count, gradient <= tolerance
 
     z, count, converged = run(problem, z0)
