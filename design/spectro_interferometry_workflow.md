@@ -60,6 +60,7 @@ Only a measurement of the total spectrum breaks this. (Apep: with the reference 
 1. 6a reads OI_FLUX (FLUX and NFLUX). **One representation:** each component's `flux` is that component's own spectrum fᵢ(λ), up to one grey scale common to all. This is what `System` already assumes, since a common factor cancels in V. The model of the total spectrum is then F(λ) = k Σ fᵢ(λ), with k the grey scale.
    - Add `System.total_spectrum(wavel) -> Σ fᵢ(λ)`, so the same scene object predicts OI_FLUX.
    - The SPARCO habit of a grey reference star (`flux=1`) with the other components' spectra *relative* to it is the special case where the star's spectral shape is left out. Then `total_spectrum` predicts F(λ)/S_ref(λ). Compare it with NFLUX divided by a model spectrum of the reference, or give the reference its own spectrum (item 2), not both.
+   - **Intrinsic against coupled flux.** `total_spectrum` is the *intrinsic* total, Σ fᵢ(λ). What a single-mode instrument measures is the flux *coupled into each telescope's fibre*: F_k(λ) = k Σ fᵢ(λ) ηₖ(xᵢ, λ), where ηₖ is that telescope's coupling at the component's position (integrated over the brightness of an extended component). The same weights enter every visibility's normalisation √(F_k F_l). With the optional primary beam of the GRAVITY review (§1), photometry and visibilities must use one coupling model. Without it, η = 1, which holds only for a scene much smaller than the fibre beam.
    - **FLUX:** one grey scale nuisance per dataset (absolute calibration and fibre injection), optionally times a low-order polynomial in λ.
    - **NFLUX:** normalised by the same continuum ranges as the data, with one helper shared with differential phase.
 2. **New:** a prior on the reference spectrum instead of a fixed shape. The reference component gets its own `PowerLaw` or `BlackBody`, with its index or temperature freed under a prior from a model atmosphere. The other components' spectra are then absolute, as in item 1. No library change is needed beyond documentation. The docs must say that, without OI_FLUX, this prior *is* the systematic on every other component's colour.
@@ -69,7 +70,7 @@ Only a measurement of the total spectrum breaks this. (Apep: with the reference 
 **Requirements on 6a's differential phase:**
 1. **Model arg V(λ) directly.** Apply the *same* continuum normalisation operator as the pipeline: subtract the mean, or the mean and slope, over the continuum channels, per baseline and frame. This is a linear operator on phases, so it fits `OIData`'s existing linear-operator machinery (`phi_mat`).
 2. **Do not use the photocentre approximation for resolved systems.** φ_diff ≈ −2π **u**·Δ**p**(λ) holds only when the line-emitting structure is unresolved (|Δp| ≪ λ/B). 6a's planned test "against the analytic photocentre shift" should be joined by a test in the resolved regime: a binary with a line in one star, against the exact arg V. (Apep: a 28 mas binary against λ/B ≈ 3.3 mas at 130 m, where the WC star's share of the flux triples across C IV.)
-3. **Join with closure phase.** When VISPHI and T3PHI come from the same frame, VISPHI's closure (the closure of the differential phases) is the closure phase minus its own continuum mean, so it duplicates the chromatic part of T3PHI. 6a's "closure phase with VISPHI in one dataset" must not double-count it. Restricting VISPHI to the line windows does not avoid this, because T3PHI is used in those channels too. **Default:** closure phase everywhere, plus, in the line windows, the part of the continuum-normalised VISPHI that has no closure. Per frame and channel, the baseline phases are projected onto the (N − 1)-dimensional subspace of telescope-differenced phases (φᵢⱼ = aᵢ − aⱼ), which is orthogonal to the closures. That projection is one more linear operator (`phi_mat`), with its projected covariance. Modelling the joint covariance of VISPHI and T3PHI is the alternative, if the pipeline provides it.
+3. **Join with closure phase.** When VISPHI and T3PHI come from the same frame, VISPHI's closure (the closure of the differential phases) is the closure phase minus its own continuum mean, so it duplicates the chromatic part of T3PHI. 6a's "closure phase with VISPHI in one dataset" must not double-count it. **A closure-null projection alone is not statistical independence.** After continuum normalisation N, the VISPHI covariance is N D Nᵀ, not D. The projection must use that propagated covariance, including the cross-covariance with T3PHI, and whiten the combined spectral-and-baseline operator as one block (GRAVITY review §3c). Restricting VISPHI to the line windows does not avoid this, because T3PHI is used in those channels too. **Default:** closure phase everywhere, plus, in the line windows, the part of the continuum-normalised VISPHI that has no closure. Per frame and channel, the baseline phases are projected onto the (N − 1)-dimensional subspace of telescope-differenced phases (φᵢⱼ = aᵢ − aⱼ), which is orthogonal to the closures. That projection is one more linear operator (`phi_mat`), with its projected covariance. Modelling the joint covariance of VISPHI and T3PHI is the alternative, if the pipeline provides it.
 
 ### 2.4 Calibration nuisances correlated across channels (Stage 6d, after 6a)
 **Problem.** For most spectro-interferometers, the dominant systematics are **common to all channels of one frame and baseline**: transfer-function jitter between calibrator frames, piston and injection drifts. Diagonal error inflation (a scale, or an additive term) does not describe them. Binning channels by hand only hides them. (Apep: errors underestimated by 2–7×. Additive per-epoch terms beat multiplicative ones by ΔlogL ≈ 700, but both are diagonal. The calibrator scatter is one number per frame and baseline, yet it was added to every channel.)
@@ -77,13 +78,13 @@ Only a measurement of the total spectrum breaks this. (Apep: with the reference 
 This is the trigger that Stage 8's "spectral correlations" was waiting for. **Decided (2026-10-03): it becomes Stage 6d, after 6a.**
 
 **Model.** Per block b, with one block per (frame, baseline) for V² and one per (frame, triangle) for closure phase:
-- **V²:** V²_obs = g_b V²_model(λ) + noise. The gains g_b − 1 ~ N(0, τ_V²) are shared by every channel of the block.
+- **V²:** the gain is on the **amplitude** |V|, in log space (decided; GRAVITY review §12): |V|_obs = e^{a_b} |V|_model, so V²_obs = e^{2a_b} V²_model, with a_b ~ N(0, τ²) shared by every channel of the block. Linearised for small gains, δV² ≈ 2 a_b V²_model, so the mode vector is m = 2 V²_model and a 10% width on |V| is about 20% on V². The Gaussian marginal below is therefore a **small-log-gain approximation** (τ ≲ 0.2), not exact. The GRAVITY review §4(c) generalises this rank-one block to low rank per frame: telescope-based, per baseline, and chromatic.
 - **Closure phase:** φ_obs = φ_model(λ) + δ_b + noise, with offsets δ_b ~ N(0, τ_φ²) shared by every channel of the block.
 - **Optionally,** a slope across the band per block, for chromatic drift.
 
 **Marginalise analytically.** Each block's covariance is a diagonal matrix plus a rank-one term, C_b = D + τ² m mᵀ:
 - for closure phase, m = 1;
-- for V², m = V²_model, so C_b depends on the model.
+- for V², m = 2 V²_model (the linearised log-gain on |V|), so C_b depends on the model.
 
 With x = D^{−1/2} r, w = D^{−1/2} m, s = wᵀw and β = (1 + τ²s)^{−1/2}:
 
@@ -114,7 +115,9 @@ So:
 ### 2.6 A wavelength-scale nuisance per instrument (new, small)
 **Problem.** Instruments and epochs have wavelength scales good to about 0.1%. That scales every angular size by the same factor, which can exceed the statistical error of a precise fit. (Apep: 0.028 mas on a 28.05 mas separation, twice its 0.013 mas statistical error.) Position angles are unaffected.
 
-**Proposal.** `u` and `v` are stored in metres and models divide by `wavel` (`Component.model`). So a scale nuisance s only has to evaluate the model at `wavel·s`. That rescales the spatial frequencies and the spectra together, which is physically right. It is one line in `OIData.model`, or `OIData.with_wavelength_scale(s)`, plus a per-dataset term `wavel_scale` with a prior such as `Normal(1, 1e-3)`. With one dataset it is degenerate with every angular size, so the prior *is* the systematic. Report it.
+**Proposal.** `u` and `v` are stored in metres and models divide by `wavel` (`Component.model`). So a scale nuisance s only has to evaluate the model at `wavel·s`. That rescales the spatial frequencies and the spectra together, which is physically right. It is one line in `OIData.model`, or `OIData.with_wavelength_scale(s)`, plus a per-dataset term `wavel_scale` (a generic example prior is `Normal(1, 1e-3)`). With one dataset it is degenerate with every angular size, so the prior *is* the systematic. Report it.
+
+**The GRAVITY default (interim, GRAVITY review §6 and §12):** λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴), and the offset δ fixed at zero unless spectral lines constrain it. That is five times narrower than the generic example, and is under review with the GRAVITY team.
 
 **One per-dataset nuisance vocabulary.** `noise=` (on `apep-gravity`) takes one dict of priors per dataset. It grows, under the same name, into the per-dataset nuisance specification:
 
@@ -122,8 +125,9 @@ So:
 |---|---|---|
 | `vis_scale`, `phi_scale` | multiply σ | on `apep-gravity` |
 | `vis_error_rel`, `phi_error` | add in quadrature (relative to the **model** V², and absolute) | on `apep-gravity` |
-| `vis_gain`, `phi_offset` | rank-one correlated blocks, marginalised (§2.4) | Stage 6d |
-| `wavel_scale` | evaluate at λ·s | new |
+| `vis_gain` | low-rank correlated blocks on log \|V\|, marginalised (§2.4; GRAVITY review §4c) | Stage 6d |
+| `phi_offset` | baseline-based closure offsets, **off by default**, only if calibrators need them (GRAVITY review §13) | Stage 6d, optional |
+| `wavel_scale` (+ `wavel_offset`) | evaluate at λ(1 + s) + δ; GRAVITY default s ~ N(0, 2×10⁻⁴), δ = 0 | Stage 6d |
 | `flux_scale` (+ `flux_poly`) | OI_FLUX calibration (§2.2) | 6a/new |
 
 **Reconciling with 6a's error floors.** Floors (PMOIRED's `min error`, `min relative error`) are *fixed* changes to the data and belong on `OIData` (`with_error_floor`, like `with_error_scale`). `noise=` is the *fitted* counterpart, in the likelihood. Two differences must be explicit:
