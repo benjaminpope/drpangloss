@@ -190,7 +190,9 @@ def fisher_projection(fmat, eps=1e-12):
 
 @eqx.filter_jit
 def _neg_loglike_hessian(values, params, data_obj, model):
-    return jax.hessian(lambda x: -loglike(x, params, data_obj, model))(values)
+    return hessian_matrix(
+        lambda x: -loglike(x, params, data_obj, model), values
+    )
 
 
 @eqx.filter_jit

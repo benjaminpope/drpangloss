@@ -184,12 +184,17 @@ def test_laplace_and_fisher_wrappers_are_finite():
 def test_laplace_wrappers_match_closures_and_compile_once():
     # The model-level curvatures must agree with the generic, closure-based
     # helpers. They are jitted once at module level, so a call at new values
-    # reuses the compilation; a jit defined inside each call would compile
-    # every time. (Unjitted, eager code also compiles nothing on a repeat
-    # call, but runs ~200x slower; this test does not catch that.)
+    # neither recompiles (as a jit defined inside each call would) nor runs
+    # the model in Python again (as eager code would, ~200x slower).
     params = ["dra", "ddec", "flux"]
     values = np.array([120.0, -80.0, 2e-3])
-    args = (params, oidata, BinaryModelCartesian)
+    calls = []
+
+    def binary(dra, ddec, flux):
+        calls.append(1)
+        return BinaryModelCartesian(dra, ddec, flux)
+
+    args = (params, oidata, binary)
     objective = lambda x: -loglike(x, *args)
 
     cov = laplace_cov(values, *args)
@@ -199,11 +204,23 @@ def test_laplace_wrappers_match_closures_and_compile_once():
     assert np.allclose(sigma, hess[2, 2] ** -0.5, rtol=1e-4)
 
     moved = values * 1.01
+    calls.clear()
     with count_compiles() as compiles:
         laplace_cov(moved, *args)
         fisher(moved, *args)
         laplace_parameter_uncertainty(moved, *args, "flux")
     assert not compiles
+    assert not calls
+
+
+def test_laplace_wrappers_need_a_1d_parameter_vector():
+    with pytest.raises(ValueError, match="1D parameter vector"):
+        laplace_cov(
+            np.array([[120.0], [-80.0], [2e-3]]),
+            ["dra", "ddec", "flux"],
+            oidata,
+            BinaryModelCartesian,
+        )
 
 
 def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
