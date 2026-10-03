@@ -150,6 +150,9 @@ def test_fitting_field_hyperparameters_by_map_warns():
         {"sigma": -1.0},
         {"mean": onp.zeros((4, 4))},
         {"mean": -onp.ones((4, 4))},
+        {"mean_floor": 0.0},
+        {"mean_floor": -1e-3},
+        {"mean_floor": float("nan")},
     ],
 )
 def test_bad_field_parameters_are_rejected(bad):
