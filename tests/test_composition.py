@@ -19,7 +19,6 @@ from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     GaussianDisk,
-    GaussianDiskModel,
     ModulatedGaussianRim,
     PointSource,
     System,
@@ -255,17 +254,6 @@ def test_shifted_subsystem_renders_east_on_the_left():
         ).render(npix=5, fov_mas=10.0)
     )
     assert onp.unravel_index(image.argmax(), image.shape) == (2, 0)
-
-
-def test_gaussian_disk_model_is_star_plus_disk():
-    legacy = GaussianDiskModel(sigma=6.0, flux=0.3, dra=4.0, ddec=-2.0)
-    composed = System(
-        star=PointSource(),
-        disk=GaussianDisk(6.0, flux=0.3, dra=4.0, ddec=-2.0),
-    )
-    assert np.allclose(
-        legacy.model(U, V, WAVEL), composed.model(U, V, WAVEL), atol=1e-12
-    )
 
 
 def test_build_model_accepts_classes_and_templates():

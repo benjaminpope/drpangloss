@@ -173,6 +173,9 @@ class BlackBody(Spectrum):
 class Tabulated(Spectrum):
     """A free flux in every spectral channel, interpolated linearly between.
 
+    **Provisional**: not exported from the top-level ``virgil`` namespace, and
+    to be replaced by the node spectra of Stage 6a.
+
     For fitting a spectrum channel by channel, e.g. a companion's flux ratio
     across emission lines: give ``wavel`` the data's channel wavelengths and
     fit ``ratio`` (one value per channel) with a prior of that shape.

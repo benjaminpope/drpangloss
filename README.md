@@ -20,11 +20,22 @@ virgil is hosted on PyPI; the easiest way to install it is:
 pip install virgil-astro
 ```
 
-You can also build from source. To do so, clone the git repo, enter the directory, and run
+Optional extras add the corner-plot helpers in `virgil.plotting`
+(`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery).
+
+You can also build from source. To do so, clone the git repo and enter the directory:
 
 ```
+git clone --filter=blob:none https://github.com/benjaminpope/virgil
+cd virgil
 pip install .
 ```
+
+`--filter=blob:none` makes a partial clone: you get the full history, but old
+versions of files are fetched only if you ask for them. It skips large data
+files that are no longer used, so the download is about 15 MB rather than
+about 280 MB.
 
 We recommend using a virtual environment to avoid dependency conflicts.
 
@@ -33,7 +44,7 @@ Using `uv` (recommended):
 ```bash
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e . pytest
+uv pip install --python .venv/bin/python -e ".[test]"
 uv run --python .venv/bin/python pytest -q
 ```
 
@@ -67,7 +78,7 @@ virgil's own tests mostly check virgil against itself. The companion repository 
 
 ## Collaboration & Development
 
-We welcome collaboration and development contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request workflow.
+We welcome collaboration and development contributions. See [CONTRIBUTING.md](https://github.com/benjaminpope/virgil/blob/main/CONTRIBUTING.md) for development setup, testing, and pull request workflow. Release notes are in the [changelog](https://github.com/benjaminpope/virgil/blob/main/CHANGELOG.md).
 
 ## Name
 

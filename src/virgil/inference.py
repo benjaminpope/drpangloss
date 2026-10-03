@@ -14,6 +14,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.flatten_util import ravel_pytree
 
+from ._precision import cast_tree, run_in
 from ._utils import concrete as _concrete
 from .likelihood import loglike
 from .models import SourceModel
@@ -72,28 +73,6 @@ def laplace_covariance(objective, x, ridge=1e-10):
     """
     hess = hessian_matrix(objective, x)
     return regularized_inverse(hess, ridge=ridge)
-
-
-def observed_information(objective, x, ridge=0.0):
-    """Return observed information from the Hessian of a negative log likelihood.
-
-    Unlike expected Fisher information, this quantity depends on the observed
-    residuals and includes curvature of a nonlinear forward model. No ridge
-    is added by default (compare [`laplace_covariance`][virgil.inference.laplace_covariance]).
-    """
-    information = hessian_matrix(objective, x)
-    ident = np.eye(information.shape[-1], dtype=information.dtype)
-    return information + np.maximum(ridge, 0.0) * ident
-
-
-def fisher_matrix(objective, x, ridge=0.0):
-    """Return observed information for backward compatibility.
-
-    This historical name computes the Hessian of ``objective``. Use
-    [`observed_information`][virgil.inference.observed_information] when the distinction from expected Fisher
-    information matters.
-    """
-    return observed_information(objective, x, ridge=ridge)
 
 
 def gaussian_fisher(prediction_fn, params, errors, ridge=0.0):
@@ -240,7 +219,27 @@ def _neg_loglike_curvature(values, idx, params, data_obj, model, shapes=None):
     return jax.grad(jax.grad(objective))(values[idx])
 
 
-def laplace_cov(values, params, data_obj, model):
+def _hessian_then(finish, values, params, data_obj, model, dtype):
+    """``finish(H)`` for the Hessian ``H`` of ``-log L``, computed in ``dtype``.
+
+    As in [`fit`][virgil.fitting.fit], the inputs are cast to ``dtype``
+    inside a local ``jax.enable_x64`` context, and the result is cast back
+    to JAX's precision outside it (float32, unless x64 is enabled).
+    """
+    ambient = "float64" if jax.config.jax_enable_x64 else "float32"
+    shapes = _leaf_shapes(params, model)
+    with run_in(dtype):
+        values, data_obj, model = cast_tree(
+            (np.asarray(values, dtype=float), data_obj, model), dtype
+        )
+        hess = _neg_loglike_hessian(
+            values, tuple(params), data_obj, model, shapes
+        )
+        result = finish(hess)
+    return cast_tree(result, ambient)
+
+
+def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
     """
     Compute the full Laplace covariance matrix for all model parameters jointly.
 
@@ -273,20 +272,24 @@ def laplace_cov(values, params, data_obj, model):
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
         ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
+    dtype : {"float64", "float32"}, optional
+        Precision of the calculation, as for [`fit`][virgil.fitting.fit]:
+        float64 by default, inside a local ``jax.enable_x64`` context. The
+        result is returned in JAX's precision outside it.
 
     Returns
     -------
     array-like
         ``N x N`` covariance matrix over the flattened parameter elements.
     """
-    hess = _neg_loglike_hessian(
-        np.asarray(values, dtype=float),
-        tuple(params),
+    return _hessian_then(
+        lambda hess: regularized_inverse(hess, ridge=1e-10),
+        values,
+        params,
         data_obj,
         model,
-        _leaf_shapes(params, model),
+        dtype,
     )
-    return regularized_inverse(hess, ridge=1e-10)
 
 
 def laplace_parameter_uncertainty(
@@ -342,7 +345,7 @@ def laplace_parameter_uncertainty(
     return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
 
-def fisher(values, params, data_obj, model, ridge=0.0):
+def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
     """Observed information (Hessian of ``-log L``) at a parameter point.
 
     At the maximum-likelihood point this approximates the Fisher matrix.
@@ -363,6 +366,8 @@ def fisher(values, params, data_obj, model, ridge=0.0):
         ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
     ridge : float, optional
         Diagonal regularization term.
+    dtype : {"float64", "float32"}, optional
+        Precision of the calculation, as for [`laplace_cov`][virgil.inference.laplace_cov].
 
     Returns
     -------
@@ -370,12 +375,9 @@ def fisher(values, params, data_obj, model, ridge=0.0):
         Observed information matrix, ``N x N`` for ``N`` the total number
         of parameter elements.
     """
-    information = _neg_loglike_hessian(
-        np.asarray(values, dtype=float),
-        tuple(params),
-        data_obj,
-        model,
-        _leaf_shapes(params, model),
-    )
-    ident = np.eye(information.shape[-1], dtype=information.dtype)
-    return information + np.maximum(ridge, 0.0) * ident
+
+    def add_ridge(information):
+        ident = np.eye(information.shape[-1], dtype=information.dtype)
+        return information + np.maximum(ridge, 0.0) * ident
+
+    return _hessian_then(add_ridge, values, params, data_obj, model, dtype)
