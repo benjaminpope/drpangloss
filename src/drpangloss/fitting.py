@@ -19,15 +19,19 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import lineax as lx
+import numpy as onp
 import optax
 import optimistix as optx
 
 from ._precision import cast_tree, run_in
 from ._utils import is_flux_param
+from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
+    _whitened_and_errors,
     build_model,
-    whitened_residuals,
+    noise_for,
+    noise_sites,
 )
 from .models import SourceModel
 
@@ -46,6 +50,8 @@ def _prior_residuals(path, distribution, value):
     """
     import numpyro.distributions as dist
 
+    if isinstance(distribution, dist.Independent):
+        distribution = distribution.base_dist
     if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
         return None
     if isinstance(distribution, dist.Normal):
@@ -57,30 +63,48 @@ def _prior_residuals(path, distribution, value):
     )
 
 
+def _warn_if_field_hyperparameter(model, path):
+    """Warn when a GaussianField's sigma or length is fitted by MAP."""
+    parent, _, name = path.rpartition(".")
+    if name in ("sigma", "length_mas") and parent:
+        if isinstance(model.get(parent), GaussianField):
+            warnings.warn(
+                f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
+                "field are biased at the MAP (towards a flat field). Fix "
+                "them, choose them from the evidence, or sample them.",
+                UserWarning,
+                stacklevel=4,
+            )
+
+
 class _Objective(eqx.Module):
     """The negative log posterior of a fit, as a loss and as residuals.
 
     ``residuals(z)`` is a vector whose half sum of squares is ``loss(z)``
     (up to a constant), for least-squares solvers; it raises ``TypeError``
-    if a regulariser or prior has no least-squares form. ``z`` are the
-    unconstrained coordinates of the parameters.
+    if a regulariser or prior has no least-squares form, or if error terms
+    are fitted. ``z`` are the unconstrained coordinates of the parameters
+    and of any error terms (keyed by their ``noise`` sites).
     """
 
     model: object
     data: tuple
     priors: dict
     regularisers: tuple
+    noise: dict
 
-    def __init__(self, model, priors, data, regularisers=()):
+    def __init__(self, model, priors, data, regularisers=(), noise=None):
         self.model = model
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
         self.priors = dict(priors)
         self.regularisers = tuple(regularisers)
+        self.noise = noise_sites(noise, len(self.data))
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
         for path, prior in self.priors.items():
             if isinstance(model, SourceModel):
                 model.get(path)  # raises for an unknown path
+                _warn_if_field_hyperparameter(model, path)
             if is_flux_param(path):
                 _check_positive_flux_prior(path, prior)
 
@@ -90,9 +114,18 @@ class _Objective(eqx.Module):
         return tuple(self.priors)
 
     def init(self, values=None):
-        """Unconstrained coordinates of ``values`` (default: the template's)."""
+        """Unconstrained coordinates of ``values`` (default: the template's).
+
+        Error terms start at 1 (scales) or 0.01 (added errors), or at their
+        prior's mean if that is outside the prior's support.
+        """
         values = {} if values is None else dict(values)
         z = {}
+        for site, (prior, _, term) in self.noise.items():
+            start = values.get(site, 1.0 if term.endswith("scale") else 0.01)
+            if not bool(prior.support(np.asarray(start, float))):
+                start = prior.mean
+            z[site] = _bijection(prior).inv(np.asarray(start, float))
         for path, prior in self.priors.items():
             if path not in values:
                 if not isinstance(self.model, SourceModel):
@@ -105,11 +138,14 @@ class _Objective(eqx.Module):
         return z
 
     def constrain(self, z):
-        """Map unconstrained coordinates to parameter values."""
-        return {
+        """Map unconstrained coordinates to parameter and error-term values."""
+        values = {
             path: _bijection(prior)(z[path])
             for path, prior in self.priors.items()
         }
+        for site, (prior, _, _) in self.noise.items():
+            values[site] = _bijection(prior)(z[site])
+        return values
 
     def build(self, z):
         """The model with the parameters at unconstrained coordinates ``z``."""
@@ -118,12 +154,16 @@ class _Objective(eqx.Module):
             self.model, self.paths, [values[p] for p in self.paths]
         )
 
-    def data_residuals(self, model):
+    def data_residuals(self, model, values=None):
         """Whitened residuals of ``model`` for each dataset, as a list.
 
         ``model`` is one model for all the datasets, or a list of them, one
-        per dataset.
+        per dataset; ``values`` holds the error terms, if any are fitted.
         """
+        return [w for w, _ in self._whitened(model, values)]
+
+    def _whitened(self, model, values=None):
+        """(whitened residuals, inflated errors) for each dataset."""
         if not isinstance(model, (list, tuple)):
             model = [model] * len(self.data)
         if len(model) != len(self.data):
@@ -131,7 +171,11 @@ class _Objective(eqx.Module):
                 f"The model function returned {len(model)} models for "
                 f"{len(self.data)} datasets."
             )
-        return [whitened_residuals(m, d) for m, d in zip(model, self.data)]
+        values = {} if values is None else values
+        return [
+            _whitened_and_errors(m, d, noise_for(self.noise, values, i))
+            for i, (m, d) in enumerate(zip(model, self.data))
+        ]
 
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
@@ -139,6 +183,12 @@ class _Objective(eqx.Module):
         Raises ``TypeError`` if a regulariser or prior has no least-squares
         form (then use L-BFGS or Adam).
         """
+        if self.noise:
+            raise TypeError(
+                "Fitted error terms have no least-squares form (the "
+                "likelihood's normalisation depends on them); fit with "
+                "method='lbfgs' or 'adam'."
+            )
         model = self.build(z)
         values = self.constrain(z)
         parts = self.data_residuals(model)
@@ -164,13 +214,20 @@ class _Objective(eqx.Module):
         """
         model = self.build(z)
         values = self.constrain(z)
-        chi2 = sum(np.sum(r**2) for r in self.data_residuals(model))
+        whitened = self._whitened(model, values)
+        chi2 = sum(np.sum(w**2) for w, _ in whitened)
+        # With fitted error terms, the normalisation of the Gaussian
+        # likelihood, sum(log σ), is no longer a constant.
+        log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
+        log_norm = log_norm if self.noise else 0.0
         penalty = sum(r.value(_reference(model)) for r in self.regularisers)
         log_prior = sum(
             np.sum(prior.log_prob(values[path]))
             for path, prior in self.priors.items()
         )
-        return 0.5 * chi2 + penalty - log_prior
+        for site, (prior, _, _) in self.noise.items():
+            log_prior = log_prior + np.sum(prior.log_prob(values[site]))
+        return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
 def _reference(model):
@@ -193,7 +250,8 @@ class FitResult:
         ``method``; ``converged`` (``None`` for Adam, which has no
         convergence test); ``steps``; ``loss`` (the unscaled negative log
         posterior); ``chi2`` and ``ndata``, per dataset; and ``chi2_red``,
-        the total χ² per data point.
+        the total χ² per data point. With fitted error terms, χ² uses the
+        inflated errors, and ``values`` holds the terms too.
     """
 
     model: object
@@ -207,6 +265,7 @@ def fit(
     data,
     regularisers=(),
     *,
+    noise=None,
     init=None,
     method=None,
     max_steps=None,
@@ -239,9 +298,21 @@ def fit(
     regularisers : sequence, optional
         Penalties added to the loss, e.g. from
         [`drpangloss.imaging`][drpangloss.imaging].
+    noise : dict or list of dict, optional
+        Priors on error-inflation terms to fit with the parameters:
+        ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
+        ``vis_error_rel`` (a fraction of the model visibility) and
+        ``phi_error`` (radians) are added in quadrature (see
+        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). A dict
+        applies to every dataset (values ``"noise.<term>"``); a list gives
+        each dataset its own (``"noise[i].<term>"``). The loss is then the
+        full Gaussian negative log likelihood, including ``Σ log σ``, so the
+        default method is L-BFGS. Fitting error terms with an image is
+        degenerate (a smoother image with larger errors fits as well):
+        estimate them with a parametric model first.
     init : dict, optional
-        Starting values by path, overriding the template's (required for
-        a function model).
+        Starting values by path (or ``noise`` site), overriding the
+        template's (required for a function model).
     method : {"lm", "lbfgs", "adam"}, optional
         ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals, with
         a matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
@@ -249,6 +320,9 @@ def fit(
         when the whole objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
+        No unconstrained coordinate moves by more than ``max_step_size``
+        per step, so that log-brightness pixels cannot be switched off by
+        one long step.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
@@ -289,13 +363,13 @@ def fit(
         )
     with run_in(dtype):
         problem = cast_tree(
-            _Objective(model, priors, data, regularisers), dtype
+            _Objective(model, priors, data, regularisers, noise), dtype
         )
         z0 = problem.init(cast_tree(init, dtype))
         method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
         # Optimisers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
-        ndata = [int(np.size(d.flatten_data()[0])) for d in problem.data]
+        ndata = [d.n_independent for d in problem.data]
         scale = float(max(sum(ndata), 1))
         if method == "lm":
             z, steps, converged = _lm(
@@ -320,12 +394,13 @@ def fit(
             )
         model = problem.build(z)
         values = problem.constrain(z)
-        chi2 = [float(np.sum(r**2)) for r in problem.data_residuals(model)]
+        loss, chi2 = _summary(problem, z)
+        chi2 = [float(c) for c in chi2]
         info = {
             "method": method,
             "converged": converged,
             "steps": steps,
-            "loss": float(problem.loss(z)),
+            "loss": float(loss),
             "chi2": chi2,
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
@@ -336,18 +411,120 @@ def fit(
     )
 
 
+def gauss_newton_mass(model, priors, data, values):
+    """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
+
+    Near the maximum a posteriori, the posterior is close to a Gaussian
+    whose precision, in the unconstrained coordinates z that numpyro samples,
+    is the Gauss–Newton matrix JᵀJ. Here J is the Jacobian of the
+    whitened residuals with respect to z, including the residuals of the
+    priors (so a standard-normal prior adds the identity). Giving NUTS the
+    inverse, (JᵀJ)⁻¹, as its inverse mass matrix whitens that Gaussian.
+    Directions the data fix tightly then take the same step size as those
+    left to the prior. Without it, the step size shrinks to suit the
+    tightest direction, and NUTS needs its full tree depth (1023 leapfrog
+    steps) per draw. On a 62² Gaussian-field image fitted to 588 AMI
+    observables, it cut the cost to 63 steps per draw.
+
+    Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
+    [`log_evidence`][drpangloss.imaging.log_evidence]). The curvature
+    depends on them, so a matrix computed at one σ and ℓ is wrong when
+    they move. Every sampled parameter must be in ``priors``: a
+    tightly constrained one left out (such as an image's flux) keeps its
+    identity mass and its tiny step size.
+
+    Parameters
+    ----------
+    model, priors, data
+        As for [`fit`][drpangloss.fitting.fit]. The priors must have a
+        least-squares form (Normal, Uniform or ImproperUniform), as for
+        ``fit``'s Levenberg–Marquardt.
+    values : dict
+        The parameter values at which to take the curvature, normally
+        ``fit(model, priors, data).values``.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for ``numpyro.infer.NUTS``:
+        ``inverse_mass_matrix``, ``dense_mass``, and
+        ``adapt_mass_matrix=False``. Warmup adaptation is switched off
+        because a dense covariance estimated from a few hundred draws in
+        thousands of dimensions is far worse than this matrix.
+
+    Examples
+    --------
+    >>> result = fit(scene, priors, data)
+    >>> kernel = NUTS(numpyro_model(result.model, priors, data),
+    ...               init_strategy=init_to_value(values=result.values),
+    ...               **gauss_newton_mass(scene, priors, data, result.values))
+    """
+    with run_in("float64"):
+        problem = cast_tree(_Objective(model, priors, data), "float64")
+        z = problem.init(cast_tree(values, "float64"))
+        paths = problem.paths
+        shapes = [np.shape(z[p]) for p in paths]
+        sizes = [int(np.size(z[p])) for p in paths]
+        flat = np.concatenate([np.ravel(z[p]) for p in paths])
+
+        def residuals(x):
+            pieces = np.split(x, onp.cumsum(sizes)[:-1])
+            return problem.residuals(
+                {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+            )
+
+        n_residuals = int(np.size(residuals(flat)))
+        mode = jax.jacrev if n_residuals < flat.size else jax.jacfwd
+        jac = onp.asarray(mode(residuals)(flat), dtype=float)
+    try:
+        onp.linalg.cholesky(jac.T @ jac)
+    except onp.linalg.LinAlgError:
+        raise ValueError(
+            "The Gauss–Newton curvature is singular: a parameter in priors "
+            "is constrained by neither the data nor a Normal prior."
+        ) from None
+    covariance = onp.linalg.inv(jac.T @ jac)
+    return {
+        "inverse_mass_matrix": {paths: covariance},
+        "dense_mass": [paths],
+        "adapt_mass_matrix": False,
+    }
+
+
 def _has_residuals(problem, z):
     """Whether the whole objective has a least-squares form."""
     try:
-        problem.residuals(z)
+        jax.eval_shape(problem.residuals, z)
     except TypeError:
         return False
     return True
 
 
+# The solvers below are jitted at module level, with the problem as an
+# argument, so that repeated fits of problems with the same structure (an
+# L-curve, a grid of hyperparameters, a fit per dataset) reuse one
+# compilation. A function defined inside the call would be a new function
+# each time and recompile.
+
+
+@eqx.filter_jit
+def _summary(problem, z):
+    """The loss and each dataset's chi-squared at ``z``.
+
+    With fitted error terms, chi-squared uses the inflated errors.
+    """
+    residuals = problem.data_residuals(problem.build(z), problem.constrain(z))
+    chi2 = [np.sum(r**2) for r in residuals]
+    return problem.loss(z), chi2
+
+
 def _largest(tree):
     """The largest absolute value in a pytree of arrays."""
     return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
+
+
+def _scaled_loss(problem, scale):
+    return lambda z: problem.loss(z) / scale
 
 
 class _GradientStoppedLM(optx.LevenbergMarquardt):
@@ -360,9 +537,8 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
     """
 
     tolerance: jax.Array
-    scale: float
 
-    def __init__(self, tolerance, scale, cg_steps):
+    def __init__(self, tolerance, cg_steps):
         super().__init__(
             rtol=0.0,
             atol=0.0,
@@ -371,21 +547,32 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
             ),
         )
         self.tolerance = tolerance
-        self.scale = scale
 
     def terminate(self, fn, y, args, options, state, tags):
-        gradient = jax.grad(lambda z: args.loss(z) / self.scale)(y)
+        problem, scale = args
+        gradient = jax.grad(_scaled_loss(problem, scale))(y)
         return _largest(gradient) <= self.tolerance, optx.RESULTS.successful
 
 
+def _lm_residuals(z, args):
+    problem, scale = args
+    return problem.residuals(z) / np.sqrt(scale)
+
+
+@eqx.filter_jit
+def _lm_tolerance(problem, z0, scale, gtol):
+    gradient = jax.grad(_scaled_loss(problem, scale))(z0)
+    return np.minimum(gtol, 1e-3 * _largest(gradient))
+
+
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
-    g0 = _largest(jax.grad(lambda z: problem.loss(z) / scale)(z0))
-    solver = _GradientStoppedLM(np.minimum(gtol, 1e-3 * g0), scale, cg_steps)
+    tolerance = _lm_tolerance(problem, z0, scale, gtol)
+    solver = _GradientStoppedLM(tolerance, cg_steps)
     solution = optx.least_squares(
-        lambda z, p: p.residuals(z) / np.sqrt(scale),
+        _lm_residuals,
         solver,
         z0,
-        args=problem,
+        args=(problem, scale),
         max_steps=max_steps,
         throw=False,
     )
@@ -402,6 +589,8 @@ def _capped_lbfgs(max_step_size):
     Without the cap, a softmax image can take a step of ~20 in its
     log-brightnesses that sends most pixels to ~exp(-20): their gradient,
     proportional to their brightness, then vanishes, and the fit stalls.
+    Scaling the whole step, rather than clipping each coordinate, keeps the
+    quasi-Newton direction.
     """
 
     def cap(updates, state, params=None):
@@ -420,7 +609,8 @@ def _capped_lbfgs(max_step_size):
     )
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
+@eqx.filter_jit
+def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     # optax's L-BFGS (with a zoom line search, and capped steps; see
     # _capped_lbfgs), stopped on the gradient.
     # A gradient test suits log-brightness pixels: the gradient for a pixel
@@ -429,58 +619,59 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
     # line-search step. The gradient must also fall by a factor of 1000 from
     # where it started, so that a warm start (e.g. along an L-curve, whose
     # gradient is small from the outset) still converges rather than
-    # stopping at once.
+    # stopping at once. The fit also stops, unconverged, when a step no
+    # longer changes the parameters (the line search has run out of
+    # precision, as can happen in float32).
     optimiser = _capped_lbfgs(max_step_size)
+    loss = _scaled_loss(problem, scale)
+    value_and_grad = optax.value_and_grad_from_state(loss)
+    tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
 
-    @eqx.filter_jit
-    def run(problem, z0):
-        def loss(z):
-            return problem.loss(z) / scale
+    def keep_going(carry):
+        step, _, _, gradient, moved = carry
+        return (step < max_steps) & (gradient > tolerance) & moved
 
-        value_and_grad = optax.value_and_grad_from_state(loss)
+    def step(carry):
+        count, z, state, _, _ = carry
+        value, grad = value_and_grad(z, state=state)
+        updates, state = optimiser.update(
+            grad, state, z, value=value, grad=grad, value_fn=loss
+        )
+        new = optax.apply_updates(z, updates)
+        moved = jax.tree.reduce(
+            np.logical_or,
+            jax.tree.map(lambda a, b: np.any(a != b), new, z),
+        )
+        return count + 1, new, state, _largest(grad), moved
 
-        tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
+    inf = np.asarray(np.inf, dtype=float)
+    start = (0, z0, optimiser.init(z0), inf, np.asarray(True))
+    count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
+    return z, count, gradient <= tolerance
 
-        def keep_going(carry):
-            step, _, _, gradient = carry
-            return (step < max_steps) & (gradient > tolerance)
 
-        def step(carry):
-            count, z, state, _ = carry
-            value, grad = value_and_grad(z, state=state)
-            updates, state = optimiser.update(
-                grad, state, z, value=value, grad=grad, value_fn=loss
-            )
-            return (
-                count + 1,
-                optax.apply_updates(z, updates),
-                state,
-                _largest(grad),
-            )
-
-        start = (0, z0, optimiser.init(z0), np.asarray(np.inf, dtype=float))
-        count, z, _, gradient = jax.lax.while_loop(keep_going, step, start)
-        return z, count, gradient <= tolerance
-
-    z, count, converged = run(problem, z0)
+def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
+    z, count, converged = _lbfgs_run(
+        problem, z0, scale, max_steps, gtol, max_step_size
+    )
     return z, int(count), bool(converged)
 
 
-def _adam(problem, z0, scale, learning_rate, steps):
+@eqx.filter_jit
+def _adam_run(problem, z0, scale, learning_rate, steps):
     optimiser = optax.adam(learning_rate)
+    grad = jax.grad(_scaled_loss(problem, scale))
 
-    @eqx.filter_jit
-    def run(problem, z0):
-        grad = jax.grad(lambda z: problem.loss(z) / scale)
+    def step(carry, _):
+        z, state = carry
+        updates, state = optimiser.update(grad(z), state, z)
+        return (optax.apply_updates(z, updates), state), None
 
-        def step(carry, _):
-            z, state = carry
-            updates, state = optimiser.update(grad(z), state, z)
-            return (optax.apply_updates(z, updates), state), None
+    (z, _), _ = jax.lax.scan(
+        step, (z0, optimiser.init(z0)), None, length=steps
+    )
+    return z
 
-        (z, _), _ = jax.lax.scan(
-            step, (z0, optimiser.init(z0)), None, length=steps
-        )
-        return z
 
-    return run(problem, z0), None
+def _adam(problem, z0, scale, learning_rate, steps):
+    return _adam_run(problem, z0, scale, learning_rate, steps), None

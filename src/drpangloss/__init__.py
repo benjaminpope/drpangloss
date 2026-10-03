@@ -30,6 +30,7 @@ name = "drpangloss"
 from . import (  # noqa: E402
     amigo,
     coverage,
+    fields,
     fitting,
     grid_fit,
     imaging,
@@ -44,6 +45,7 @@ from . import (  # noqa: E402
     spectra,
 )
 from .amigo import load_oi_data  # noqa: E402
+from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -73,9 +75,11 @@ from .limits import (  # noqa: E402
 from .models import (  # noqa: E402
     BinaryModelAngular,
     BinaryModelCartesian,
+    EllipticalGaussian,
     FlaredDiskGaussian,
     FlaredDiskHG,
     FlaredDiskPowerLaw,
+    GaussianArc,
     GaussianDisk,
     GaussianDiskModel,
     GravityDarkenedStar,
@@ -90,18 +94,21 @@ from .models import (  # noqa: E402
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
-from .spectra import BlackBody, PowerLaw  # noqa: E402
+from .spectra import BlackBody, PowerLaw, Tabulated  # noqa: E402
 
 
 __all__ = [
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
+    "EllipticalGaussian",
     "FlaredDiskGaussian",
     "FlaredDiskHG",
     "FlaredDiskPowerLaw",
+    "GaussianArc",
     "GaussianDisk",
     "GaussianDiskModel",
+    "GaussianField",
     "GravityDarkenedStar",
     "Image",
     "ModulatedGaussianRim",
@@ -111,6 +118,7 @@ __all__ = [
     "Resolved",
     "SourceModel",
     "System",
+    "Tabulated",
     "UniformDisk",
     "absil_limits",
     "circular_support",

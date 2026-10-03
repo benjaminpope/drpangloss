@@ -14,6 +14,16 @@ From source:
 pip install .
 ```
 
+## Using these docs
+
+The tabs at the top group worked examples on simulated and bundled data:
+- **Data Handling:** reading OIFITS files into `OIData`, and AMIGO's DISCO data from JWST aperture masking.
+- **Sources:** visibility models, extended sources, composing scenes from components, and spotted stars.
+- **Binaries:** searching for companions, detection limits, and fitting several datasets together.
+- **Imaging:** image reconstruction in five parts, from simulating data to sampling the posterior.
+
+**Background** explains the ideas behind the methods and credits the people and projects drpangloss builds on. **API Reference** documents every public class and function.
+
 ## Development
 
 See the repository contribution guide on GitHub for contribution and testing workflow.

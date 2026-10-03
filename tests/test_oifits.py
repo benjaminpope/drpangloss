@@ -215,11 +215,13 @@ def test_vis_mode_converts_data_without_an_operator():
 
 
 def test_pre_projected_closure_phases_are_not_projected_again():
+    # One triangle: any two of four share a baseline, so their outputs
+    # correlate and are rotated (see test_closure).
     raw = _dict_data()
-    phi_mat = onp.eye(len(TRIANGLES))[:2]
+    phi_mat = onp.eye(len(TRIANGLES))[:1]
     projected = OIData({**raw, "phi_mat": phi_mat})
     again = OIData({**raw, "phi": phi_mat @ raw["phi"], "phi_mat": phi_mat})
-    assert projected.phi.shape == again.phi.shape == (2,)
+    assert projected.phi.shape == again.phi.shape == (1,)
     assert np.allclose(projected.phi, again.phi)
     assert again.model(TRUTH).shape == again.flatten_data()[0].shape
 
@@ -296,3 +298,104 @@ def test_closure_phase_only_file_round_trips(tmp_path):
     assert data.u.size == len(PAIRS) * waves.size
     assert np.allclose(data.model(TRUTH), data.flatten_data()[0], atol=1e-5)
     assert np.isfinite(model_loglike(TRUTH, data))
+
+
+def _two_instrument_file(names):
+    """One HDUList holding the same tables under two INSNAMEs."""
+    from drpangloss.oifits import build_hdulist
+
+    hduls = []
+    for name, waves in zip(names, ((2.2e-6,), (2.0e-6, 2.2e-6, 2.4e-6))):
+        tables = _tables(waves=waves)
+        tables["info"]["INSNAME"] = name
+        hduls.append(build_hdulist(tables))
+    combined = fits.HDUList([hdu.copy() for hdu in hduls[0]])
+    for hdu in hduls[1]:
+        if hdu.header.get("EXTNAME", "").strip() in {
+            "OI_WAVELENGTH",
+            "OI_VIS2",
+            "OI_T3",
+        }:
+            combined.append(hdu.copy())
+    return combined
+
+
+def test_gravity_fringe_tracker_and_science_tables_are_not_merged():
+    hdul = _two_instrument_file(["GRAVITY_FT", "GRAVITY_SC"])
+    with pytest.raises(ValueError, match="insname="):
+        read_oifits(hdul)
+    record = read_oifits(hdul, insname="GRAVITY_SC")
+    assert onp.unique(record["wavel"]).size == 3  # the SC table's channels
+    with pytest.raises(ValueError, match="No tables have INSNAME"):
+        read_oifits(hdul, insname="GRAVITY_SC_P1")
+
+
+def test_insname_selects_tables_from_other_instruments():
+    hdul = _two_instrument_file(["PIONIER_A", "PIONIER_B"])
+    both = read_oifits(hdul)  # not GRAVITY FT + SC: merged as before
+    one = read_oifits(hdul, insname=["PIONIER_A"])
+    assert both["u"].size == 4 * one["u"].size  # 1 + 3 channels against 1
+
+
+def test_differential_visphi_is_not_read_as_absolute(tmp_path):
+    from drpangloss.oifits import build_hdulist
+
+    tables = _tables()
+    u, v = _baselines()
+    tables["OI_VIS"] = {
+        "VISAMP": onp.ones(u.size),
+        "VISAMPERR": onp.full(u.size, 1e-3),
+        "VISPHI": onp.zeros(u.size),
+        "VISPHIERR": onp.full(u.size, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+    }
+    del tables["OI_T3"]
+    hdul = build_hdulist(tables)
+    for hdu in hdul:
+        if hdu.header.get("EXTNAME", "").strip() == "OI_VIS":
+            hdu.header["PHITYP"] = "differential"
+    with pytest.raises(ValueError, match="PHITYP"):
+        read_oifits(hdul)
+
+
+def test_insname_selection_drops_emptied_table_types():
+    from drpangloss.oifits import _collect_tables, _select_insname
+
+    hdul = _two_instrument_file(["PIONIER_A", "PIONIER_B"])
+    for hdu in hdul:
+        if hdu.header.get("EXTNAME", "").strip() == "OI_T3" and (
+            hdu.header.get("INSNAME", "").strip() == "PIONIER_B"
+        ):
+            hdu.header["EXTNAME"] = "OI_IGNORED"  # B has no closure phases
+    tables = _select_insname(_collect_tables(hdul), ["PIONIER_B"])
+    assert "OI_T3" not in tables
+    assert len(tables["OI_VIS2"]) == 1
+
+
+def test_phityp_is_checked_only_for_the_chosen_target():
+    from drpangloss.oifits import build_hdulist
+
+    tables = _tables()
+    u, v = _baselines()
+    tables["OI_VIS"] = {
+        "VISAMP": onp.ones(u.size),
+        "VISAMPERR": onp.full(u.size, 1e-3),
+        "VISPHI": onp.zeros(u.size),
+        "VISPHIERR": onp.full(u.size, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+    }
+    del tables["OI_T3"]
+    hdul = build_hdulist(tables)
+    vis = next(
+        h for h in hdul if h.header.get("EXTNAME", "").strip() == "OI_VIS"
+    )
+    other = vis.copy()
+    other.data["TARGET_ID"] = 99  # rows of another target
+    other.header["PHITYP"] = "differential"
+    hdul.append(other)
+    record = read_oifits(hdul, target="STAR")  # its table is absolute
+    assert onp.isfinite(record["phi"]).all()

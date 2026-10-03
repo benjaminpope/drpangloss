@@ -19,6 +19,10 @@ pre-commit install
 ```
 
 Cloud agents get this environment from `.github/workflows/copilot-setup-steps.yml`.
+CI tests against the newest JAX (`.github/workflows/tests.yml`), and a stale JAX
+can hide failures that only appear in newer releases. Bring an existing `.venv`
+up to date with `uv pip install --python .venv/bin/python --upgrade -e ".[dev]"`;
+upgrading `jax` alone can leave optax, equinox etc. too old for it.
 
 ## Commands
 
@@ -89,7 +93,8 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
-| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`) accepted as a component's `flux` (SPARCO) |
+| `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
+| `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, and `Tabulated` for a free flux per channel, provisional until Stage 6a's `Nodes`) accepted as a component's `flux` (SPARCO) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
@@ -176,8 +181,8 @@ to that test.
 ## Model composition
 
 - There are two kinds of `SourceModel`. **Components** (`Component`
-  subclasses: `PointSource`, `GaussianDisk`, `UniformDisk`,
-  `ModulatedGaussianRim`) are pure shapes normalized to unit flux, with
+  subclasses: `PointSource`, `GaussianDisk`, `EllipticalGaussian`,
+  `GaussianArc`, `UniformDisk`, `ModulatedGaussianRim`, and others) are pure shapes normalized to unit flux, with
   `flux`, `dra`, `ddec`; their `flux` is a relative weight. **Scenes**
   (`System`, the binaries, `HarmonixModel`) are whole normalized skies with
   weight 1 inside a `System`, unless they carry their own `flux` weight as
@@ -241,6 +246,17 @@ The notebooks listed in `MAPPINGS` in `scripts/sync_tutorial_docs.py` are the so
 truth for the corresponding `docs/*.md` pages. Edit the notebook, execute it so outputs
 are current (the sync embeds text and PNG outputs), then run the sync script.
 `tests/test_tutorial_docs_sync.py` fails if the markdown is stale.
+
+Execute notebooks with the repo's own kernel, `drpangloss`, which lives in `.venv`. The
+user-level `python3` kernel may point at another environment.
+
+```bash
+.venv/bin/jupyter-nbconvert --to notebook --execute --inplace NOTEBOOK.ipynb \
+  --ExecutePreprocessor.kernel_name=drpangloss
+```
+
+If the kernel is missing, recreate it with
+`.venv/bin/python -m ipykernel install --sys-prefix --name drpangloss --display-name "drpangloss (.venv)"`.
 
 ## Testing notes
 

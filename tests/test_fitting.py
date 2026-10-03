@@ -9,11 +9,12 @@ from drpangloss._precision import cast_tree, run_in
 from drpangloss.coverage import ami_grid_record
 from drpangloss.fitting import _Objective, fit
 from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
-from drpangloss.likelihood import numpyro_model
+from drpangloss.likelihood import numpyro_model, whitened_residuals
 from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
 
+from ._compiles import count_compiles
 from ._test_data import oidata
 
 TRUTH = BinaryModelCartesian(150.0, -80.0, 0.02)
@@ -117,7 +118,7 @@ def test_normal_priors_are_least_squares_terms():
     priors = dict(PRIORS, dra=dist.Normal(150.0, 2.0))
     objective = _Objective(START, priors, DATA)
     r = objective.residuals(objective.init())
-    assert r.size == DATA.flatten_data()[0].size + 1
+    assert r.size == DATA.n_independent + 1
     assert np.isclose(r[-1], (140.0 - 150.0) / 2.0)
 
 
@@ -197,3 +198,100 @@ def test_a_warm_start_still_converges(dtype):
     # (χ²_red ~ 3-6, at a loss that varied by 2x across platforms).
     assert weak.info["chi2_red"] < 1.5
     assert cold.info["chi2_red"] < 1.5
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_a_cold_maxent_fit_does_not_collapse(dtype):
+    # From a flat image, a weakly regularised fit once took a first
+    # quasi-Newton step of ~10 in log-brightness, switching most pixels
+    # off for good (their gradients vanish with their flux): it stopped on
+    # a few bright pixels with χ² ≈ 1330, where a strongly regularised fit
+    # reaches ≈ 245. A weaker penalty must fit the data at least as well.
+    # (In float32 the line search runs out of precision near the minimum,
+    # so that fit may stop unconverged.)
+    start, priors, data = _image_fit()
+    weak, strong = (
+        fit(start, priors, data, [MaxEntropy(w, path="env")], dtype=dtype)
+        for w in (1.0, 100.0)
+    )
+    assert weak.info["chi2"][0] <= strong.info["chi2"][0]
+    b = weak.model.env.brightness
+    assert np.mean(b > 1e-3 * np.max(b)) > 0.1  # collapsed fits: 2%
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
+def test_repeated_fits_do_not_recompile(method):
+    # The solvers are jitted once at module level, so a second fit of a
+    # problem with the same structure (another start, regulariser weight
+    # or dataset of the same size) reuses the compilation. When they were
+    # defined inside each call, every fit recompiled, which took most of
+    # its time.
+    start, priors, data = _image_fit()
+    options = {"max_steps": 20} if method == "adam" else {}
+    again = data.with_model(start, key=jax.random.PRNGKey(2))
+
+    def fit_tsv(data, weight):
+        regs = [TSV(weight, path="env")]
+        return fit(start, priors, data, regs, method=method, **options)
+
+    fit_tsv(data, 10.0)
+    with count_compiles() as compiles:
+        fit_tsv(again, 3.0)
+    assert not compiles
+
+
+def test_fit_recovers_error_scales():
+    # Noise twice the stated errors: the fitted scales should be near 2.
+    data = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=2.0)
+    noise = {
+        "vis_scale": dist.Uniform(0.0, 10.0),
+        "phi_scale": dist.Uniform(0.0, 10.0),
+    }
+    result = fit(START, PRIORS, data, noise=noise)
+    assert result.info["method"] == "lbfgs"
+    # The maximum-likelihood scale is the rms of the residuals at the truth,
+    # whitened by the stated errors. There are only 15 independent closure
+    # phases, so one draw scatters by ~20% about the injected 2: compare
+    # with this draw's own rms rather than with 2.
+    whitened = onp.asarray(whitened_residuals(TRUTH, data))
+    n_vis = onp.size(data.vis)
+    rms = {
+        "vis_scale": onp.sqrt(onp.mean(whitened[:n_vis] ** 2)),
+        "phi_scale": onp.sqrt(onp.mean(whitened[n_vis:] ** 2)),
+    }
+    for term, expected in rms.items():
+        assert result.values[f"noise.{term}"] == pytest.approx(
+            expected, rel=0.15
+        )
+    assert result.values["noise.vis_scale"] > 1.4  # 2x noise, well sampled
+    # χ² is computed with the inflated errors.
+    assert abs(result.info["chi2_red"] - 1.0) < 0.05
+    assert abs(result.values["dra"] - 150.0) < 5.0
+
+
+def test_fit_noise_per_dataset_and_validation():
+    noise = [{"phi_error": dist.Uniform(0.0, 1.0)}, {}]
+    result = fit(START, PRIORS, [DATA, DATA], noise=noise)
+    assert set(result.values) == set(PRIORS) | {"noise[0].phi_error"}
+    with pytest.raises(ValueError, match="2 datasets"):
+        fit(START, PRIORS, [DATA, DATA], noise=[{}])
+    with pytest.raises(ValueError, match="Unknown noise term"):
+        fit(START, PRIORS, DATA, noise={"jitter": dist.Uniform(0.0, 1.0)})
+    with pytest.raises(ValueError, match="non-negative"):
+        fit(START, PRIORS, DATA, noise={"vis_scale": dist.Normal(1.0, 1.0)})
+    with pytest.raises(TypeError, match="least-squares"):
+        fit(
+            START,
+            PRIORS,
+            DATA,
+            method="lm",
+            noise={"vis_scale": dist.Uniform(0.0, 5.0)},
+        )
+
+
+def test_numpyro_model_samples_noise_terms():
+    noise = {"vis_scale": dist.Uniform(0.0, 5.0)}
+    model = numpyro_model(START, PRIORS, DATA, noise=noise)
+    trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
+    assert "noise.vis_scale" in trace

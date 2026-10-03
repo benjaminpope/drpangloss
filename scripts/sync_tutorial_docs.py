@@ -35,7 +35,12 @@ MAPPINGS = {
     "notebooks/composition.ipynb": "docs/composition.md",
     "notebooks/amigo_disco.ipynb": "docs/amigo_disco.md",
     "notebooks/imaging_ami.ipynb": "docs/imaging_ami.md",
+    "notebooks/imaging_rml.ipynb": "docs/imaging_rml.md",
+    "notebooks/imaging_gp.ipynb": "docs/imaging_gp.md",
+    "notebooks/imaging_composite.ipynb": "docs/imaging_composite.md",
+    "notebooks/imaging_sampling.ipynb": "docs/imaging_sampling.md",
     "notebooks/harmonix.ipynb": "docs/harmonix.md",
+    "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
 }
 
 

@@ -129,6 +129,23 @@ wheels = [
 ]
 
 [[package]]
+name = "blackjax"
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "numpy" },
+    { name = "optax" },
+    { name = "scipy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/91/fc/dca22cc8b84c7c50bb2733181112c1a12988b3fa1f96b7062813f9cab9a3/blackjax-1.7.1.tar.gz", hash = "sha256:5e15e5d574afc40d59cfcf2b7fb4561f24bfa7169d846209ecf2a3b3725cc519", size = 5496902, upload-time = "2026-10-02T20:43:51.788Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/a0/24f50e0cfd432b47103677c6fc6b220acc716c4b20dc9d6021a01d7924fa/blackjax-1.7.1-py3-none-any.whl", hash = "sha256:be2c7f982f4ab3afef2dd5f075dae271023fdec3d9c5d8b599ba7f2f281524fa", size = 4994604, upload-time = "2026-10-02T20:43:50.363Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -515,11 +532,15 @@ notebooks = [
     { name = "ipywidgets" },
     { name = "tqdm" },
 ]
+sampling = [
+    { name = "blackjax" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "astropy" },
     { name = "astroquery" },
+    { name = "blackjax", marker = "extra == 'sampling'" },
     { name = "chainconsumer" },
     { name = "equinox", specifier = ">=0.11" },
     { name = "ipywidgets", marker = "extra == 'notebooks'" },
@@ -547,7 +568,7 @@ requires-dist = [
     { name = "zensical", marker = "extra == 'dev'" },
     { name = "zodiax", specifier = ">=0.4" },
 ]
-provides-extras = ["notebooks", "dev"]
+provides-extras = ["notebooks", "sampling", "dev"]
 
 [[package]]
 name = "equinox"

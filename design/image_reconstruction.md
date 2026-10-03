@@ -538,9 +538,40 @@ ring, at their discrepancy weights, MEM did best (NCC 0.983), then TSV
 
 ### Stage 4
 
+Long-baseline imaging needed no new fitting code: `fit` and `l_curve` already took lists of datasets.
+
+- **Added:**
+  - synthetic VLTI and NRM coverage;
+  - a hole in the support under the star, and a fitted image flux, which together remove the spurious central spot and the SPARCO ratio bias;
+  - `Rotated` scenes, and models per dataset in `fit` (4b);
+  - `BlackBody` spectra, and the `FlaredDisk` family (from #80).
+- **SPARCO check:** the environment's spectral index is only defined relative to the star's assumed spectrum. Both apparent mismatches with published PIONIER analyses came from that, not from the code.
+- **Stress test:** χ² per point reached one in every case, so it says nothing about fidelity. Coverage costs more than noise.
+
+The details are in the plan's Stage 4 log.
+
 ### Stage 5
 
+The Gaussian-process prior, `fields.GaussianField`, implements decision 5:
+- a DCT field with a Matérn-like spectrum;
+- whitened latents with N(0, 1) priors, so its MAP is a Levenberg–Marquardt fit in a few dozen steps.
+
+Its hyperparameters, and the maximum-entropy weight, can be chosen from the evidence:
+- `log_evidence` and `LCurve.classic_maxent` use the Gauss–Newton curvature, computed densely, which is fine up to about 10⁴ data or pixels;
+- `error_scale` re-estimates the error bars from the same curvature (MacKay's β).
+
+On simulated VLTI and AMI data the GP image matches or beats maximum entropy. On PIONIER data it gives the cleanest images, with spectral indices bracketing the published values. Sampling works with `numpyro_model` and numpyro's NUTS, and its coverage is calibrated at 16². At about 40², sampling needs a better mass matrix. The details are in the plan's Stage 5 logs.
+
 ### Stage 6
+
+Additions driven by VLTI/GRAVITY data on Apep, a dusty Wolf–Rayet binary (branch `apep-gravity`):
+- `EllipticalGaussian` and `GaussianArc` (a Gaussian ridge along a circular arc, by quadrature), both in the render↔model test;
+- an anisotropic `GaussianField` (`length_mas=(row, col)`);
+- `Tabulated`, a free flux per spectral channel, provisional until 6a's `Nodes`;
+- fitted error inflation, `fit(..., noise=...)` and `numpyro_model(..., noise=...)`: scales (`vis_scale`, `phi_scale`) and terms added in quadrature (`vis_error_rel`, `phi_error`), per dataset, with the likelihood's normalisation included. On Apep the calibrated errors were underestimated two- to sevenfold, and the additive terms fitted better than scales;
+- `ModulatedGaussianRim` gradients made finite at zero baseline.
+
+The lessons for spectro-interferometry and for fitting orbits with a scene are in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) and [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
 
 ### Stage 7
 

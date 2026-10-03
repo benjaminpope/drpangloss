@@ -102,6 +102,24 @@ def _check_non_negative_flux(flux, owner):
         )
 
 
+def _check_shape_params(owner, checks):
+    """Reject concrete shape parameters outside their valid ranges.
+
+    ``checks`` holds ``(name, value, valid, requirement)`` with ``valid`` a
+    function of the concrete array. NaN and infinite values fail every
+    check, since ``valid`` uses comparisons. Traced values are skipped; the
+    model's ``is_physical`` covers them.
+    """
+    for name, value, valid, requirement in checks:
+        value = concrete(value)
+        if value is not None and not (
+            onp.all(onp.isfinite(value)) and onp.all(valid(value))
+        ):
+            raise ValueError(
+                f"{owner} has {name} {value.tolist()}; it must be {requirement}."
+            )
+
+
 def _check_non_negative_modulation(az_amps, az_pas):
     """Raise if concrete azimuthal modulations make the brightness negative."""
     amps, pas = concrete(az_amps), concrete(az_pas)
@@ -341,6 +359,197 @@ class GaussianDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         sigma = np.maximum(self.sigma, 1e-9)
         return np.exp(-0.5 * (xx**2 + yy**2) / sigma**2)
+
+
+class EllipticalGaussian(Component):
+    """Elliptical Gaussian brightness distribution.
+
+    Parameters
+    ----------
+    fwhm : float or array-like
+        Full width at half maximum along the major axis, in
+        milliarcseconds.
+    ratio : float or array-like
+        Minor-to-major axis ratio, in (0, 1]; 1 is a circular Gaussian.
+    pa : float or array-like
+        Position angle of the major axis in degrees, North to East.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System], or a spectrum from
+        [`drpangloss.spectra`][drpangloss.spectra] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre in milliarcseconds, positive to the East and
+        North.
+
+    Examples
+    --------
+    >>> plume = EllipticalGaussian(fwhm=30.0, ratio=0.5, pa=20.0, flux=2.0)
+    """
+
+    fwhm: jax.Array
+    ratio: jax.Array
+    pa: jax.Array
+
+    def __init__(self, fwhm, ratio=1.0, pa=0.0, flux=1.0, dra=0.0, ddec=0.0):
+        self.fwhm = np.asarray(fwhm, dtype=float)
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def __check_init__(self):
+        super().__check_init__()
+        _check_shape_params(
+            type(self).__name__,
+            (
+                ("fwhm", self.fwhm, lambda x: x > 0.0, "positive"),
+                (
+                    "ratio",
+                    self.ratio,
+                    lambda x: (x > 0.0) & (x <= 1.0),
+                    "in (0, 1]",
+                ),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all(self.fwhm > 0.0)
+            & np.all((self.ratio > 0.0) & (self.ratio <= 1.0))
+        )
+
+    def _centred_cvis(self, uu, vv):
+        # In the frame where the ellipse is a circle of the major axis's
+        # width, the visibility is that of a circular Gaussian.
+        ut, vt = undo_elliptical_transf_spat_freq(uu, vv, self.pa, self.ratio)
+        return _cvis_gaussian_envelope(ut, vt, self.fwhm)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        ratio = np.maximum(self.ratio, 1e-9)
+        xt, yt = undo_elliptical_transf_coord(xx, yy, self.pa, ratio)
+        fwhm = np.maximum(self.fwhm, 1e-9)
+        return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
+
+
+class GaussianArc(Component):
+    """A Gaussian ridge bent along a circular arc, e.g. a curved shock front.
+
+    The brightness is a curve convolved with a circular Gaussian of FWHM
+    ``width``. The curve is a circle of ``radius`` about the centre of
+    curvature ``(dra, ddec)``, weighted along its length by a Gaussian of
+    FWHM ``length`` (an arc length, in milliarcseconds) peaking at position
+    angle ``pa`` as seen from the centre. For a large radius it tends to an
+    elliptical Gaussian with FWHMs ``hypot(length, width)`` along the arc
+    and ``width`` across it.
+
+    The visibility is the Fourier transform of the curve, a line integral
+    evaluated by the trapezoidal rule on ``nodes`` equally spaced points
+    spanning ±3.5σ of the weight, times the Gaussian's. It is accurate
+    while the spacing of the points, ``7 σ / (nodes - 1)``, is below half
+    the shortest fringe spacing, ``λ / 2 B_max``.
+
+    Parameters
+    ----------
+    radius : float or array-like
+        Radius of curvature in milliarcseconds.
+    width : float or array-like
+        FWHM of the ridge across the arc, in milliarcseconds.
+    length : float or array-like
+        FWHM of the brightness along the arc, as an arc length in
+        milliarcseconds.
+    pa : float or array-like
+        Position angle of the brightest point of the arc, seen from the
+        centre of curvature, in degrees North to East.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre of curvature in milliarcseconds, positive to
+        the East and North. The arc itself lies ``radius`` away from it.
+    nodes : int, optional
+        Quadrature points along the arc, at least 2 (default 128).
+
+    Examples
+    --------
+    >>> shock = GaussianArc(radius=30.0, width=2.0, length=40.0, pa=270.0)
+    """
+
+    radius: jax.Array
+    width: jax.Array
+    length: jax.Array
+    pa: jax.Array
+    nodes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        radius,
+        width,
+        length,
+        pa=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        nodes=128,
+    ):
+        self.radius = np.asarray(radius, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.length = np.asarray(length, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+            raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
+        self.nodes = int(nodes)
+
+    def __check_init__(self):
+        super().__check_init__()
+        positive = lambda x: x > 0.0  # noqa: E731
+        _check_shape_params(
+            type(self).__name__,
+            (
+                ("radius", self.radius, positive, "positive"),
+                ("width", self.width, positive, "positive"),
+                ("length", self.length, positive, "positive"),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all(self.radius > 0.0)
+            & np.all(self.width > 0.0)
+            & np.all(self.length > 0.0)
+        )
+
+    def curve(self):
+        """Points along the arc (mas, East and North of the centre) and
+        their normalised trapezoidal-rule weights."""
+        sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+        s = np.linspace(-3.5, 3.5, self.nodes) * sigma
+        angle = self.pa * dtor + s / self.radius
+        # Trapezoidal rule: the end points carry half weight.
+        ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
+        weight = ends * np.exp(-0.5 * (s / sigma) ** 2)
+        x = self.radius * np.sin(angle)
+        y = self.radius * np.cos(angle)
+        return x, y, weight / np.sum(weight)
+
+    def _centred_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        curve = offset_phase(uu, vv, x[None, :], y[None, :]) @ weight
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape(curve * envelope, shape)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        x, y, weight = self.curve()
+        width = np.maximum(self.width, pixel_scale_mas)
+        d2 = (xx[..., None] - x) ** 2 + (yy[..., None] - y) ** 2
+        return np.sum(weight * np.exp(-4.0 * np.log(2.0) * d2 / width**2), -1)
 
 
 class UniformDisk(Component):
@@ -877,10 +1086,13 @@ class Image(Component):
 
     Parameters
     ----------
-    log_brightness : array-like, shape (nrow, ncol)
+    log_brightness : array-like, shape (nrow, ncol), or GaussianField
         Log pixel fluxes, up to an additive constant, in the orientation of
         [`render`][drpangloss.models.SourceModel.render]: row 0 is the top
-        (North) and column 0 the left (East) of the image.
+        (North) and column 0 the left (East) of the image. Alternatively an
+        object with an ``evaluate(pixel_scale_mas)`` method returning them,
+        such as a [`GaussianField`][drpangloss.fields.GaussianField] (a
+        Gaussian-process prior on the log-brightness).
     pixel_scale_mas : float
         Pixel size in milliarcseconds. The image centre, at index
         ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
@@ -908,7 +1120,7 @@ class Image(Component):
     >>> scene = System(star=PointSource(), env=envelope)
     """
 
-    log_brightness: jax.Array
+    log_brightness: Any
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
@@ -923,26 +1135,29 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
     ):
-        self.log_brightness = np.asarray(log_brightness, dtype=float)
-        if self.log_brightness.ndim != 2:
-            raise ValueError("log_brightness must be a 2D array.")
-        if support is not None:
-            support = np.asarray(support, dtype=bool)
-            if support.shape != self.log_brightness.shape:
-                raise ValueError(
-                    f"support has shape {support.shape}, but log_brightness "
-                    f"has shape {self.log_brightness.shape}."
-                )
-            any_pixel = concrete(np.any(support))
-            if any_pixel is not None and not bool(any_pixel):
-                raise ValueError("support must contain at least one pixel.")
-        self.support = support
-        _check_log_brightness(self.log_brightness, support)
+        if not hasattr(log_brightness, "evaluate"):
+            log_brightness = np.asarray(log_brightness, dtype=float)
+        self.log_brightness = log_brightness
         if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0.0):
             raise ValueError(
                 f"pixel_scale_mas must be finite and positive, not {pixel_scale_mas}."
             )
         self.pixel_scale_mas = float(pixel_scale_mas)
+        eta = self.eta
+        if eta.ndim != 2:
+            raise ValueError("log_brightness must be a 2D array.")
+        if support is not None:
+            support = np.asarray(support, dtype=bool)
+            if support.shape != eta.shape:
+                raise ValueError(
+                    f"support has shape {support.shape}, but log_brightness "
+                    f"has shape {eta.shape}."
+                )
+            any_pixel = concrete(np.any(support))
+            if any_pixel is not None and not bool(any_pixel):
+                raise ValueError("support must contain at least one pixel.")
+        self.support = support
+        _check_log_brightness(eta, support)
         self.rotation_deg = float(rotation_deg)
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
@@ -987,12 +1202,20 @@ class Image(Component):
         return cls.from_brightness(image, pixel_scale_mas, **kwargs)
 
     @property
+    def eta(self):
+        """The log-brightness array, evaluated if it is a field."""
+        if hasattr(self.log_brightness, "evaluate"):
+            return self.log_brightness.evaluate(self.pixel_scale_mas)
+        return self.log_brightness
+
+    @property
     def brightness(self):
         """Pixel fluxes: positive, unit sum, zero outside ``support``."""
+        eta = self.eta
         # As a mask: some zodiax versions return leaves as floats from get().
         where = None if self.support is None else self.support.ravel() != 0
-        flat = jax.nn.softmax(self.log_brightness.ravel(), where=where)
-        return flat.reshape(self.log_brightness.shape)
+        flat = jax.nn.softmax(eta.ravel(), where=where)
+        return flat.reshape(eta.shape)
 
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
@@ -1019,10 +1242,11 @@ class Image(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         # Bilinear resampling of the pixels, exact at their centres.
         xx, yy = rotate(xx, yy, -self.rotation_deg)
-        nrow, ncol = self.log_brightness.shape
+        brightness = self.brightness
+        nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
-        return map_coordinates(self.brightness, [rows, cols], order=1)
+        return map_coordinates(brightness, [rows, cols], order=1)
 
 
 class FlaredDisk(Component):
@@ -2029,8 +2253,13 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
     # Get length of baseline and baseline projection angle (i.e. counterclockwise
     # angle in uv-plane, turning from top, i.e. positive v, to left, i.e. positive u).
-    base_norm = np.hypot(u, v)
-    base_proj_ang_rad = np.arctan2(u, v)
+    # At u = v = 0 (e.g. flagged samples) hypot and arctan2 have undefined
+    # derivatives; the double where keeps gradients finite there, where the
+    # visibility is exactly 1.
+    origin = (u == 0) & (v == 0)
+    u_safe, v_safe = np.where(origin, 1.0, u), np.where(origin, 1.0, v)
+    base_norm = np.where(origin, 0.0, np.hypot(u_safe, v_safe))
+    base_proj_ang_rad = np.where(origin, 0.0, np.arctan2(u_safe, v_safe))
 
     az_order_max = np.size(az_orders) - 1
     xbes = 2.0 * np.pi * base_norm * r0_rad

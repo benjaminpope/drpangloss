@@ -335,8 +335,10 @@ def absil_limits(
         return them unclipped, e.g. for [`System`][drpangloss.models.System]
         weights that may exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once (default 256). Larger is
-        faster for small models; smaller bounds memory for large ones.
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 model visibilities on a CPU and 2**23 on other backends
+        (GPU, TPU), and at least 256. Larger can be faster for small data;
+        smaller bounds memory for large models.
 
     Returns
     -------
@@ -355,7 +357,7 @@ def absil_limits(
             f"The flux axis {flux_key!r} needs at least one positive value "
             "to start the log-flux optimizer from."
         )
-    ndof = int(np.asarray(data_obj.flatten_data()[0]).size)
+    ndof = data_obj.n_independent
     floor = float(nsigma(1.0, 1.0, ndof))
     if not float(sigma) > floor:
         raise ValueError(
@@ -370,7 +372,7 @@ def absil_limits(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
     warn_unconverged(success, "absil_limits")
     if flux_bounds is None:
@@ -405,7 +407,7 @@ def _absil_limits(
 
     Returns the unclipped limits and whether each reaches ``sigma``.
     """
-    ndof = data_obj.flatten_data()[0].size
+    ndof = data_obj.n_independent
 
     def reduced_chi2(values):
         source = build_model(model, params, values)

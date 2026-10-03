@@ -15,6 +15,7 @@ from drpangloss import (
     PowerLaw,
     Resolved,
     System,
+    Tabulated,
     UniformDisk,
     write_oifits,
 )
@@ -118,13 +119,19 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
     # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # drpangloss.likelihood.whitened_residuals (the original used Δ).
-    resid = data - model_data
-    resid = resid.at[n_vis:].set(2.0 * np.sin(0.5 * resid[n_vis:]))
+    # drpangloss.likelihood.whitened_residuals (the original used Δ). The
+    # original also treated the four closure phases of each frame and
+    # channel as independent, counting them 4/3 times; they are whitened
+    # as correlated groups instead (OIData.cp_noise; see test_closure).
+    resid = model_data - data
+    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
+    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors_phi)
+    whitened = np.concatenate([resid[:n_vis] / errors_vis, phase])
+    errors = np.concatenate([errors_vis, phase_errors])
     return (
-        -0.5 * np.sum(resid**2 / errors**2)
+        -0.5 * np.sum(whitened**2)
         - np.sum(np.log(errors))
-        - data.size / 2 * np.log(2 * np.pi)
+        - whitened.size / 2 * np.log(2 * np.pi)
     )
 
 
@@ -326,3 +333,76 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert onp.isfinite(float(jax.grad(v2)(3000.0)))
     assert float(jax.grad(v2)(3000.0)) != 0.0
     assert not is_flux_param("secondary.flux.temperature")
+
+
+def test_tabulated_interpolates_between_channels():
+    spectrum = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert np.allclose(spectrum(WAVES), np.array([0.2, 0.4, 0.1]))
+    assert np.isclose(spectrum(1.60e-6), 0.3)
+    assert np.isclose(spectrum(1.0e-6), 0.2)  # constant beyond the ends
+    assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
+
+
+def test_tabulated_rejects_bad_tables():
+    with pytest.raises(ValueError, match="non-negative"):
+        Tabulated([0.2, -0.1, 0.1], WAVES)
+    with pytest.raises(ValueError, match="increasing"):
+        Tabulated([0.2, 0.1, 0.1], WAVES[::-1])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        Tabulated([0.2, onp.nan, 0.1], WAVES)
+    with pytest.raises(ValueError, match="positive"):
+        Tabulated([0.2, 0.1, 0.1], onp.array([-1.0e-6, 1.6e-6, 1.7e-6]))
+    with pytest.raises(ValueError, match="finite"):
+        Tabulated([0.2, 0.1, 0.1], onp.array([1.5e-6, onp.nan, 1.7e-6]))
+    with pytest.raises(ValueError, match="non-empty"):
+        Tabulated([], [])
+
+
+def test_tabulated_is_physical_checks_traced_tables():
+    good = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert bool(good.is_physical())
+    assert not bool(
+        good.set("ratio", np.array([0.2, -0.4, 0.1])).is_physical()
+    )
+    assert not bool(good.set("wavel", WAVES[::-1]).is_physical())
+    with pytest.raises(ValueError, match="same length"):
+        Tabulated([0.2, 0.1], WAVES)
+
+
+def test_tabulated_flux_per_channel_matches_achromatic_scenes():
+    u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
+    ratios = onp.array([0.05, 0.3, 0.1])
+    chromatic = System(
+        star=PointSource(),
+        comp=PointSource(flux=Tabulated(ratios, WAVES), dra=5.0),
+    )
+    for wavel, ratio in zip(WAVES, ratios):
+        plain = System(star=PointSource(), comp=PointSource(ratio, dra=5.0))
+        assert np.allclose(
+            chromatic.model(u, v, wavel), plain.model(u, v, wavel)
+        )
+
+
+@pytest.mark.skipif(
+    jax.config.jax_enable_x64,
+    reason="the overflow is specific to float32; x64 is on globally",
+)
+def test_blackbody_ratio_finite_when_representable_in_float32():
+    # x0 - x = 90 overflows exp() in float32, but the whole ratio is
+    # exp(~78.5), which is representable: it must come out finite.
+    temperature, wavel0, wavel = 143.88, 1.0e-6, 10.0e-6
+    got = BlackBody(1.0, temperature, wavel0)(np.float32(wavel))
+    assert got.dtype == np.float32
+    x, x0 = (
+        1.438776877e-2 / (wavel * temperature),
+        1.438776877e-2 / (wavel0 * temperature),
+    )
+    expected = onp.exp(
+        5 * onp.log(wavel0 / wavel)
+        + x0
+        - x
+        + onp.log(-onp.expm1(-x0))
+        - onp.log(-onp.expm1(-x))
+    )
+    assert onp.isfinite(got)
+    onp.testing.assert_allclose(float(got), expected, rtol=1e-4)

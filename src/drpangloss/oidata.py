@@ -6,6 +6,7 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from ._closure import ClosureNoise
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import read_oifits
@@ -67,6 +68,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     vis_index: jax.Array | None
     phi_index: jax.Array | None
     uv_grid: UVGrid | None
+    cp_noise: ClosureNoise | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
@@ -232,6 +234,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.phi_mat = None if phi_mat is None else np.asarray(phi_mat)
         self.vis_index = None if vis_index is None else np.asarray(vis_index)
         self.phi_index = None if phi_index is None else np.asarray(phi_index)
+        # Closure phases of triangles sharing baselines are correlated, and
+        # only some of them are independent: whiten them as a group (see
+        # _closure). A phase operator applied to them gets their full
+        # covariance instead (_transform_observed_channels).
+        closure = ClosureNoise.from_indices(*indices) if cp_flag else None
+        self.cp_noise = closure if phi_mat is None else None
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
@@ -241,6 +249,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
+            closure=closure,
         )
 
     def _resolve_vis_mode(self, vis_mode):
@@ -317,12 +326,46 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return operator @ np.asarray(values, dtype=float).reshape(-1)
 
     @classmethod
-    def _propagate_uncertainty(cls, channel_sigma, operator):
-        """Propagate diagonal uncertainties through a linear operator."""
+    def _diagonalised(cls, operator, channel_sigma, correlation=None):
+        """An operator whose outputs are independent, and their errors.
+
+        Projected outputs are linear combinations of the input angles and
+        are not wrapped (as for kernel phases and DISCOs), so a projection
+        of closure phases is not invariant to shifting one input by 2π;
+        prefer unprojected closure phases, which are whitened with wrapping
+        (``cp_noise``).
+
+        The outputs of ``operator`` have covariance A D^½ R D^½ Aᵀ, with D
+        the diagonal of ``channel_sigma``² and R the inputs' correlation
+        (the identity unless given, e.g. for correlated closure phases). If
+        that is diagonal, the operator is
+        kept and the errors are its square-rooted diagonal. Otherwise the
+        outputs are correlated, and using only the diagonal would count
+        shared information more than once: the operator is rotated onto
+        the eigenvectors of A D Aᵀ, keeping those with non-zero variance,
+        so that the new outputs are independent with errors √λ.
+        """
+        operator = np.asarray(operator, dtype=float)
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
-        if operator is None:
-            return sigma
-        return np.sqrt(np.sum((operator * sigma[None, :]) ** 2, axis=1))
+        weighted = operator * sigma[None, :]
+        if correlation is None:
+            covariance = weighted @ weighted.T
+        else:
+            covariance = weighted @ np.asarray(correlation) @ weighted.T
+        diagonal = np.diag(covariance)
+        # A tolerance relative to the covariance's own scale, so that
+        # rescaling an operator or its errors cannot bypass this check.
+        scale = float(np.max(np.abs(diagonal)))
+        off = covariance - np.diag(diagonal)
+        if scale == 0.0 or float(np.max(np.abs(off))) <= 1e-7 * scale:
+            # Already independent; drop outputs with no variance (e.g. a
+            # closure relation of correlated closure phases), which carry
+            # no measurement and would divide 0 by 0.
+            keep = diagonal > 1e-10 * scale
+            return operator[keep], np.sqrt(diagonal[keep])
+        variance, vectors = np.linalg.eigh(covariance)
+        keep = variance > 1e-10 * float(np.max(variance))
+        return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
 
     @classmethod
     def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
@@ -380,7 +423,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return d_vis
 
     def _transform_observed_channels(
-        self, validate_vis_covariance=False, validate_phi_covariance=False
+        self,
+        validate_vis_covariance=False,
+        validate_phi_covariance=False,
+        closure=None,
     ):
         """Convert observed channels to ``vis_mode`` and apply operators.
 
@@ -404,11 +450,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     self._validate_diagonal_covariance(
                         vis_sigma, self.vis_mat, "disco_vis_mat"
                     )
+                self.vis_mat, self.d_vis = self._diagonalised(
+                    self.vis_mat, vis_sigma
+                )
                 self.vis = self._apply_linear_operator(
                     vis_channel, self.vis_mat
-                )
-                self.d_vis = self._propagate_uncertainty(
-                    vis_sigma, self.vis_mat
                 )
 
         if self.phi_mat is not None and np.asarray(self.phi).size == n_phi:
@@ -417,8 +463,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 self._validate_diagonal_covariance(
                     phi_sigma, self.phi_mat, "disco_phi_mat"
                 )
+            correlation = (
+                None if closure is None else closure.correlation(n_phi)
+            )
+            self.phi_mat, self.d_phi = self._diagonalised(
+                self.phi_mat, phi_sigma, correlation
+            )
             self.phi = self._apply_linear_operator(self.phi, self.phi_mat)
-            self.d_phi = self._propagate_uncertainty(phi_sigma, self.phi_mat)
 
     def _n_vis_samples(self):
         """Number of visibility samples before any projection."""
@@ -433,6 +484,20 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if self.phi_index is not None:
             return int(np.asarray(self.phi_index).size)
         return int(np.asarray(self.u).size)
+
+    @property
+    def n_independent(self):
+        """Number of independent observables: the length of the residuals.
+
+        Equal to the size of :meth:`flatten_data`, except for closure phases
+        from four or more telescopes, where only the independent
+        combinations count (three of the four triangles of a frame and
+        channel, for four telescopes).
+        """
+        n = int(np.asarray(self.vis).size) + int(np.asarray(self.phi).size)
+        if self.cp_noise is not None:
+            n += self.cp_noise.size - int(np.asarray(self.phi).size)
+        return n
 
     def flatten_data(self):
         """
@@ -542,6 +607,31 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return self.standardize_model(cvis)
 
+    def with_error_scale(self, factor):
+        """A copy of the data with every uncertainty multiplied by ``factor``.
+
+        Use it when the error bars are known to be too large or too small
+        overall, for example with a factor from
+        [`error_scale`][drpangloss.imaging.error_scale]. The uncertainties
+        are those of the observables as fitted (after any projection), so
+        the whitened residuals simply scale by ``1 / factor``.
+
+        Parameters
+        ----------
+        factor : float
+            Positive scale for ``d_vis`` and ``d_phi``.
+        """
+        factor = float(factor)
+        if not (onp.isfinite(factor) and factor > 0.0):
+            raise ValueError(
+                f"factor must be finite and positive, not {factor}."
+            )
+        return eqx.tree_at(
+            lambda d: (d.d_vis, d.d_phi),
+            self,
+            (self.d_vis * factor, self.d_phi * factor),
+        )
+
     def with_model(self, model_object, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
 
@@ -561,9 +651,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             vis = vis + noise_scale * self.d_vis * jax.random.normal(
                 vis_key, vis.shape
             )
-            phi = phi + noise_scale * self.d_phi * jax.random.normal(
-                phi_key, phi.shape
-            )
+            if self.cp_noise is None:
+                phi_noise = self.d_phi * jax.random.normal(phi_key, phi.shape)
+            else:
+                phi_noise = self.cp_noise.sample(phi_key, self.d_phi, phi.size)
+            phi = phi + noise_scale * phi_noise
         return self.set(["vis", "phi"], [vis, phi])
 
 

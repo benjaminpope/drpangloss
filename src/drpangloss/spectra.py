@@ -9,22 +9,32 @@ module, which gives its weight at each wavelength. Inside a
 star = UniformDisk(0.5, flux=PowerLaw(1.0, index=-4.0, wavel0=1.65e-6))
 disk = GaussianDisk(5.0, flux=PowerLaw(0.3, index=1.0, wavel0=1.65e-6))
 ring = GaussianDisk(5.0, flux=BlackBody(0.3, temperature=1200.0))
+line = PointSource(flux=Tabulated(ratios, channel_wavelengths))
 ```
 
 Spectrum parameters are reached by path like any other, e.g.
-``"disk.flux.ratio"``, ``"disk.flux.index"`` or ``"ring.flux.temperature"``.
+``"disk.flux.ratio"``, ``"disk.flux.index"`` or ``"ring.flux.temperature"``
+(for `Tabulated`, ``"line.flux.ratio"`` is one value per channel).
 Flux ratios are relative: component ``i``'s fraction of the total at the
 reference wavelength is ``ratio_i / Σ ratio``, as SPARCO's ``f_i``.
 """
 
 import jax
 import jax.numpy as np
+import numpy as onp
 import zodiax as zx
 
 from ._utils import concrete
 
 
-__all__ = ["BlackBody", "PowerLaw", "Spectrum", "flux_at", "reference_flux"]
+__all__ = [
+    "BlackBody",
+    "PowerLaw",
+    "Spectrum",
+    "Tabulated",
+    "flux_at",
+    "reference_flux",
+]
 
 
 class Spectrum(zx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -160,6 +170,84 @@ class BlackBody(Spectrum):
                 )
 
 
+class Tabulated(Spectrum):
+    """A free flux in every spectral channel, interpolated linearly between.
+
+    For fitting a spectrum channel by channel, e.g. a companion's flux ratio
+    across emission lines: give ``wavel`` the data's channel wavelengths and
+    fit ``ratio`` (one value per channel) with a prior of that shape.
+
+    Parameters
+    ----------
+    ratio : array-like, shape (n,)
+        Flux at each node, relative to the other components: finite and
+        non-negative, with n >= 1.
+    wavel : array-like, shape (n,)
+        Node wavelengths in metres: finite, positive and strictly
+        increasing. Beyond the end nodes the flux is constant.
+
+    Notes
+    -----
+    The reference flux (``wavel=None``, used when rendering) is the mean
+    over the nodes.
+
+    Examples
+    --------
+    >>> spectrum = Tabulated([0.2, 0.4], [2.0e-6, 2.2e-6])
+    >>> round(float(spectrum(2.1e-6)), 6)
+    0.3
+    """
+
+    ratio: jax.Array
+    # Traceable, like PowerLaw.wavel0.
+    wavel: jax.Array
+
+    def __init__(self, ratio, wavel):
+        self.ratio = np.asarray(ratio, dtype=float)
+        self.wavel = np.asarray(wavel, dtype=float)
+
+    def __call__(self, wavel=None):
+        if wavel is None:
+            return np.mean(self.ratio)
+        return np.interp(np.asarray(wavel), self.wavel, self.ratio)
+
+    def is_physical(self):
+        return (
+            np.all(self.ratio >= 0.0)
+            & np.all(self.wavel > 0.0)
+            & np.all(np.diff(self.wavel) > 0.0)
+        )
+
+    def __check_init__(self):
+        if (
+            self.ratio.shape != self.wavel.shape
+            or self.ratio.ndim != 1
+            or self.ratio.size == 0
+        ):
+            raise ValueError(
+                f"Tabulated needs non-empty 1D ratio and wavel of the same "
+                f"length, not shapes {self.ratio.shape} and {self.wavel.shape}."
+            )
+        value = concrete(self.ratio)
+        if value is not None and not (
+            onp.isfinite(value).all() and (value >= 0.0).all()
+        ):
+            raise ValueError(
+                "Tabulated ratios must be finite and non-negative; fluxes "
+                "cannot be negative."
+            )
+        wavel = concrete(self.wavel)
+        if wavel is not None and not (
+            onp.isfinite(wavel).all()
+            and (wavel > 0.0).all()
+            and (onp.diff(wavel) > 0.0).all()
+        ):
+            raise ValueError(
+                "Tabulated wavel must be finite, positive and strictly "
+                "increasing."
+            )
+
+
 # Planck's second radiation constant h c / k, in metre kelvin.
 _HC_OVER_K = 1.438776877e-2
 
@@ -171,10 +259,18 @@ def _planck_ratio(wavel, temperature, wavel0, temperature0):
     """
     x = _HC_OVER_K / (wavel * temperature)
     x0 = _HC_OVER_K / (wavel0 * temperature0)
-    # expm1(x0) / expm1(x), rewritten with negative arguments so that it
-    # cannot overflow at low temperatures.
-    planck = np.exp(x0 - x) * np.expm1(-x0) / np.expm1(-x)
-    return (wavel0 / wavel) ** 5 * planck
+    # (wavel0 / wavel)**5 * expm1(x0) / expm1(x), formed entirely in log
+    # space: expm1(x) = exp(x) * -expm1(-x), so its log is
+    # x + log(-expm1(-x)) without overflow. Exponentiating only the total
+    # keeps the result finite whenever it is representable (in float32 the
+    # factors alone can overflow when the ratio does not).
+    log_ratio = (
+        5.0 * np.log(wavel0 / wavel)
+        + (x0 - x)
+        + np.log(-np.expm1(-x0))
+        - np.log(-np.expm1(-x))
+    )
+    return np.exp(log_ratio)
 
 
 def flux_at(flux, wavel=None):

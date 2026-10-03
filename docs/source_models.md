@@ -299,7 +299,7 @@ plt.show()
 
 `GravityDarkenedStar` models a star spinning close to break-up, using the Roche shape and gravity darkening of [Espinosa Lara & Rieutord (2011)](https://doi.org/10.1051/0004-6361/201117252), which needs no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX (from his `jax-interferometry` code), brought into `drpangloss` with his `ELR_Model` as its grey mode. Its parameters are the equatorial angular diameter `diam_eq` in mas, the rotation rate `omega` as a fraction of the critical rate (0 is a sphere), the inclination `inc` in degrees (0 is pole-on, 90 equator-on), and `pa`, the position angle of the visible rotation pole, North through East. The mesh resolution is set by `n_lat`.
 
-By default the star is grey: its brightness pattern is the same at every wavelength. Passing `t_pole`, the pole's effective temperature in kelvin, switches on a chromatic mode in which each patch of the surface radiates as a black body, so the contrast between the hot pole and the cool equator grows towards short wavelengths; `wavel0` is the wavelength at which `render` draws it. Like the other components it can be placed in a `System`, for example with a companion. See the [MWE notebook](https://github.com/benjaminpope/drpangloss/blob/main/notebooks/mwe/mwe_gravity_darkened_star.ipynb) for a fit to simulated multi-channel VLTI data.
+By default the star is grey: its brightness pattern is the same at every wavelength. Passing `t_pole`, the pole's effective temperature in kelvin, switches on a chromatic mode in which each patch of the surface radiates as a black body, so the contrast between the hot pole and the cool equator grows towards short wavelengths; `wavel0` is the wavelength at which `render` draws it. Like the other components it can be placed in a `System`, for example with a companion. See the [MWE notebook](gravity_darkened_star.md) for a fit to simulated multi-channel VLTI data.
 
 ```python
 from drpangloss.models import GravityDarkenedStar
@@ -331,19 +331,20 @@ cvis_star = star.model(u, v, wavel)
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, is the same shape with the equator much dimmer than the pole.
 
 ```python
+from drpangloss.plotting import plot_model
+
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
 star.plot_surface(ax=axes[0])
 axes[0].set_title("Grey star: visible surface")
 
-image_hot = np.asarray(hot_star.render(npix=40, fov_mas=1.2))
-im = axes[1].imshow(
-    image_hot, extent=[0.6, -0.6, -0.6, 0.6], cmap="magma"
+plot_model(
+    hot_star,
+    fov_mas=1.2,
+    npix=40,
+    ax=axes[1],
+    title="Chromatic star (9000 K pole) at 0.6 micron",
 )
-axes[1].set_xlabel(r"$\Delta$RA (mas)")
-axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("Chromatic star (9000 K pole) at 0.6 micron")
-fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
 
 plt.tight_layout()
 plt.show()

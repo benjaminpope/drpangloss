@@ -115,7 +115,7 @@ print(f"initial log-likelihood: {float(initial_loglike)}, optimal: {float(truth_
 ```
 
 ```text
-initial log-likelihood: -5654.1227453063275, optimal: 682.2989893515023
+initial log-likelihood: -5654.11919129586, optimal: 682.2989910028463
 ```
 
 ## Joint grid initialization

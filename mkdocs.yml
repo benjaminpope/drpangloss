@@ -22,6 +22,9 @@ theme:
     scheme: slate
   icon:
     logo: material/telescope
+  features:
+    - navigation.tabs
+    - navigation.sections
 
 # ===== Plugins =====
 plugins:
@@ -42,16 +45,28 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
-  - Binary Search: binary_search.md
-  - Contrast Limits: contrast_limits.md
-  - Hierarchical Inference: hierarchical_inference.md
-  - Data I/O: data_io.md
-  - Visibility Models: model_syntax.md
-  - Extended Source Models: source_models.md
-  - Composing Models: composition.md
-  - "Spotted Stars: harmonix": harmonix.md
-  - AMIGO DISCO: amigo_disco.md
-  - "Imaging: AMI simulation": imaging_ami.md
+  - Data Handling:
+      - "Reading data: OIFITS and OIData": data_io.md
+      - "AMIGO DISCO data": amigo_disco.md
+  - Sources:
+      - "Visibility models": model_syntax.md
+      - "Extended source models": source_models.md
+      - "Composing models": composition.md
+      - "Spotted stars with harmonix": harmonix.md
+      - "Gravity-darkened stars": gravity_darkened_star.md
+  - Binaries:
+      - "Binary search": binary_search.md
+      - "Contrast limits": contrast_limits.md
+      - "Hierarchical inference across filters": hierarchical_inference.md
+  - Imaging:
+      - "1. Simulating AMI data": imaging_ami.md
+      - "2. Regularised maximum likelihood": imaging_rml.md
+      - "3. Gaussian-process priors": imaging_gp.md
+      - "4. A ring around a binary": imaging_composite.md
+      - "5. Sampling the posterior": imaging_sampling.md
+  - Background:
+      - "Gaussian processes and information field theory": gp_and_ift.md
+      - Contributors: contributors.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -75,6 +90,7 @@ nav:
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
       - Spectra: api/spectra.md
+      - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Coverage: api/coverage.md
       - Plotting: api/plotting.md

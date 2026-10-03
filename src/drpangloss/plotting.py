@@ -346,6 +346,7 @@ def plot_model(
     saturate=None,
     cmap="magma",
     beam=None,
+    convolve=False,
 ):
     """Show a source model's rendered image with sky axes.
 
@@ -374,6 +375,10 @@ def plot_model(
         [`imaging.beam`][drpangloss.imaging.beam], drawn as a shaded FWHM
         ellipse in the lower-left corner, as is usual on reconstructed
         images.
+    convolve : bool, optional
+        If ``True``, show the image convolved with ``beam`` (see
+        [`imaging.convolve_beam`][drpangloss.imaging.convolve_beam]): what
+        the data resolve, rather than the super-resolved image.
 
     Returns
     -------
@@ -382,7 +387,14 @@ def plot_model(
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 4))
-    image = np.asarray(model.render(npix=npix, fov_mas=fov_mas))
+    image = model.render(npix=npix, fov_mas=fov_mas)
+    if convolve:
+        if beam is None:
+            raise ValueError("convolve=True needs a beam.")
+        from .imaging import convolve_beam
+
+        image = convolve_beam(image, float(fov_mas) / npix, beam)
+    image = np.asarray(image)
     vmax = None if saturate is None else np.quantile(image, saturate)
     half = float(fov_mas) / 2.0
     ax.imshow(
@@ -519,6 +531,7 @@ def plot_chainconsumer_diagnostics(
         instance and the two figures it drew.
     """
     from chainconsumer import ChainConsumer, Chain, Truth
+    from chainconsumer.statistics import SummaryStatistic
 
     if colors is None:
         colors = matplotlib.colormaps["tab10"].colors
@@ -535,6 +548,11 @@ def plot_chainconsumer_diagnostics(
                 color=colors[idx % len(colors)],
                 plot_point=False,
                 plot_cloud=False,
+                # Median and quantiles. ChainConsumer's default ("max")
+                # searches a smoothed histogram for an iso-density interval
+                # and, on a bumpy histogram, can fail and report a
+                # well-sampled parameter as "not constrained".
+                statistics=SummaryStatistic.CUMULATIVE,
             )
         )
     if truth is not None:

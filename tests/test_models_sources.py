@@ -12,7 +12,9 @@ from drpangloss._geometry import offset_phase
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
+    EllipticalGaussian,
     FlaredDiskGaussian,
+    GaussianArc,
     FlaredDiskHG,
     FlaredDiskPowerLaw,
     GaussianDisk,
@@ -409,6 +411,22 @@ def test_binary_render_is_available():
             2e-3,
         ),
         (
+            System(
+                star=PointSource(),
+                env=EllipticalGaussian(
+                    12.0, 0.4, 30.0, flux=0.7, dra=3.0, ddec=-2.0
+                ),
+            ),
+            2e-3,
+        ),
+        (
+            System(
+                star=PointSource(),
+                arc=GaussianArc(15.0, 3.0, 20.0, 250.0, flux=0.8, dra=6.0),
+            ),
+            2e-3,
+        ),
+        (
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
             ),
@@ -425,6 +443,8 @@ def test_binary_render_is_available():
         "nested_system",
         "rotated",
         "flared_disk",
+        "elliptical_gaussian",
+        "gaussian_arc",
         "gravity_darkened_star",
     ],
 )
@@ -813,3 +833,142 @@ def test_backward_scattering_moves_the_flared_disk_peak_to_the_far_side():
     xx = onp.asarray(_image_coordinates(64, 64.0)[0])
     image = onp.asarray(_flared_disk(g=-0.6).render(npix=64, fov_mas=64.0))
     assert (image * xx).sum() < -1.0
+
+
+def test_elliptical_gaussian_at_unit_ratio_is_a_gaussian_disk():
+    u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
+    fwhm = 8.0
+    ellipse = EllipticalGaussian(fwhm, 1.0, 37.0, dra=2.0, ddec=-1.0)
+    disk = GaussianDisk(fwhm / 2.3548200450309493, dra=2.0, ddec=-1.0)
+    assert onp.allclose(ellipse.model(u, v, 2.2e-6), disk.model(u, v, 2.2e-6))
+
+
+@pytest.mark.parametrize(
+    ("pa", "long_axis"), [(0.0, "north_south"), (90.0, "east_west")]
+)
+def test_elliptical_gaussian_major_axis_follows_north_to_east_pa(
+    pa, long_axis
+):
+    image = onp.asarray(
+        EllipticalGaussian(20.0, 0.3, pa).render(npix=41, fov_mas=60.0)
+    )
+    centre = image.shape[0] // 2
+    column, row = image[:, centre].sum(), image[centre, :].sum()
+    # Row index runs North to South, column index East to West.
+    assert (column > row) == (long_axis == "north_south")
+
+
+def test_elliptical_gaussian_pa_45_lies_north_east_to_south_west():
+    image = onp.asarray(
+        EllipticalGaussian(20.0, 0.3, 45.0).render(npix=41, fov_mas=60.0)
+    )
+    # North-East is the top left (row 0, column 0), so the major axis is
+    # the main diagonal.
+    assert onp.trace(image) > onp.trace(image[:, ::-1])
+
+
+def test_gaussian_arc_peaks_at_its_position_angle_from_the_centre():
+    image = onp.asarray(
+        GaussianArc(20.0, 2.0, 10.0, 90.0).render(npix=41, fov_mas=60.0)
+    )
+    row, col = onp.unravel_index(image.argmax(), image.shape)
+    # East of the centre: the left half (columns run East to West).
+    assert row == 20 and col < 20
+    assert abs((20 - col) * 1.5 - 20.0) < 2.0
+
+
+def test_gaussian_arc_bends_towards_its_centre():
+    image = onp.asarray(
+        GaussianArc(20.0, 2.0, 30.0, 90.0).render(npix=81, fov_mas=60.0)
+    )
+    # The arc's ends, North and South of the peak, curve back to the West.
+    ys, xs = onp.nonzero(image > 0.3 * image.max())
+    north, south = xs[ys == ys.min()].mean(), xs[ys == ys.max()].mean()
+    peak = onp.unravel_index(image.argmax(), image.shape)[1]
+    assert north > peak and south > peak
+
+
+def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
+    # Equal up to the truncation of the weight along the arc at ±3.5σ.
+    u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
+    arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
+    ellipse = EllipticalGaussian(
+        onp.hypot(10.0, 3.0), 3.0 / onp.hypot(10.0, 3.0), 120.0
+    )
+    assert onp.allclose(
+        onp.abs(arc.model(u, v, 2.2e-6)),
+        onp.abs(ellipse.model(u, v, 2.2e-6)),
+        atol=1e-3,
+    )
+
+
+def test_rim_gradients_are_finite_at_zero_baseline():
+    # Flagged samples can sit at u = v = 0; their gradients must not be NaN.
+    u, v = np.array([0.0, 20.0]), np.array([0.0, -10.0])
+
+    def power(inc, pa):
+        rim = ModulatedGaussianRim(
+            30.0,
+            4.0,
+            inc,
+            pa,
+            az_amps=np.array([0.3]),
+            az_pas=np.array([40.0]),
+        )
+        return np.sum(np.abs(rim.model(u, v, 2.2e-6)) ** 2)
+
+    grads = jax.grad(power, argnums=(0, 1))(60.0, 10.0)
+    assert all(onp.isfinite(float(g)) for g in grads)
+    rim = ModulatedGaussianRim(30.0, 4.0, 60.0, 10.0)
+    assert onp.isclose(complex(rim.model(u, v, 2.2e-6)[0]), 1.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"fwhm": 0.0}, "fwhm"),
+        ({"fwhm": -3.0}, "fwhm"),
+        ({"fwhm": onp.nan}, "fwhm"),
+        ({"ratio": 0.0}, "ratio"),
+        ({"ratio": 1.5}, "ratio"),
+    ],
+)
+def test_elliptical_gaussian_rejects_invalid_shapes(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        EllipticalGaussian(**({"fwhm": 10.0, "ratio": 0.5} | kwargs))
+
+
+def test_elliptical_gaussian_is_physical_checks_traced_shapes():
+    good = EllipticalGaussian(10.0, 0.5, 30.0)
+    assert bool(good.is_physical())
+    assert not bool(good.set("fwhm", np.array(-1.0)).is_physical())
+    assert not bool(good.set("ratio", np.array(1.2)).is_physical())
+
+
+@pytest.mark.parametrize("name", ["radius", "width", "length"])
+@pytest.mark.parametrize("value", [0.0, -2.0, onp.inf])
+def test_gaussian_arc_rejects_invalid_shapes(name, value):
+    kwargs = {"radius": 20.0, "width": 2.0, "length": 15.0} | {name: value}
+    with pytest.raises(ValueError, match=name):
+        GaussianArc(**kwargs)
+
+
+def test_gaussian_arc_needs_two_nodes_and_checks_traced_shapes():
+    with pytest.raises(ValueError, match="nodes"):
+        GaussianArc(20.0, 2.0, 15.0, nodes=1)
+    good = GaussianArc(20.0, 2.0, 15.0)
+    assert bool(good.is_physical())
+    assert not bool(good.set("radius", np.array(-1.0)).is_physical())
+
+
+def test_gaussian_arc_uses_the_trapezoidal_rule():
+    # Equally spaced nodes; the end points carry half the weight of an
+    # interior point of the same height, and the weights sum to one.
+    arc = GaussianArc(20.0, 2.0, 15.0, nodes=9)
+    x, y, w = (onp.asarray(a) for a in arc.curve())
+    s = onp.linspace(-3.5, 3.5, 9)
+    gauss = onp.exp(-0.5 * s**2)
+    assert onp.isclose(w.sum(), 1.0)
+    assert onp.allclose(
+        w / gauss, (w / gauss)[1] * onp.r_[0.5, onp.ones(7), 0.5]
+    )

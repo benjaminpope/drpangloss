@@ -5,7 +5,12 @@ import numpy as onp
 import pytest
 
 import drpangloss.models as models
-from drpangloss.inference import fisher, laplace_cov
+from drpangloss.inference import (
+    fisher,
+    laplace_cov,
+    laplace_covariance,
+    laplace_parameter_uncertainty,
+)
 from drpangloss.likelihood import (
     joint_data,
     joint_errors,
@@ -22,6 +27,7 @@ from drpangloss.models import (
 )
 from drpangloss.oidata import OIData, closure_phases
 
+from tests._compiles import count_compiles
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
 
 
@@ -152,6 +158,25 @@ def test_binary_model_angular_matches_cartesian_at_east_position_angle():
     )
 
 
+def _reference_logpdf(data_obj, prediction, reference):
+    """Gaussian log density of ``prediction`` about ``reference``, by hand.
+
+    Visibilities are independent; closure phases enter as chords
+    2 sin(Δ/2), whitened as correlated groups (see test_closure).
+    """
+    _, errors = data_obj.flatten_data()
+    n_vis = data_obj.vis.size
+    resid = np.asarray(prediction) - np.asarray(reference)
+    vis = jsp.stats.norm.logpdf(resid[:n_vis], scale=errors[:n_vis]).sum()
+    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
+    whitened, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
+    return (
+        vis
+        + jsp.stats.norm.logpdf(whitened).sum()
+        - np.sum(np.log(phase_errors))
+    )
+
+
 def test_laplace_and_fisher_wrappers_are_finite():
     params = ["dra", "ddec", "flux"]
     values = np.array([120.0, -80.0, 2e-3])
@@ -162,9 +187,7 @@ def test_laplace_and_fisher_wrappers_are_finite():
     cov = laplace_cov(values, params, oidata, BinaryModelCartesian)
     fmat = fisher(values, params, oidata, BinaryModelCartesian, ridge=1e-10)
     like = loglike(values, params, oidata, BinaryModelCartesian)
-    expected_like = jsp.stats.norm.logpdf(
-        model_data, loc=data, scale=errors
-    ).sum()
+    expected_like = _reference_logpdf(oidata, model_data, data)
 
     assert cov.shape == (3, 3)
     assert fmat.shape == (3, 3)
@@ -173,6 +196,48 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.allclose(fmat, fmat.T)
     assert np.isfinite(like)
     assert np.allclose(like, expected_like)
+
+
+def test_laplace_wrappers_match_closures_and_compile_once():
+    # The model-level curvatures must agree with the generic, closure-based
+    # helpers. They are jitted once at module level, so a call at new values
+    # neither recompiles (as a jit defined inside each call would) nor runs
+    # the model in Python again (as eager code would, ~200x slower).
+    params = ["dra", "ddec", "flux"]
+    values = np.array([120.0, -80.0, 2e-3])
+    calls = []
+
+    def binary(dra, ddec, flux):
+        calls.append(1)
+        return BinaryModelCartesian(dra, ddec, flux)
+
+    args = (params, oidata, binary)
+    objective = lambda x: -loglike(x, *args)
+
+    cov = laplace_cov(values, *args)
+    assert np.allclose(cov, laplace_covariance(objective, values), rtol=1e-4)
+    hess = fisher(values, *args)
+    sigma = laplace_parameter_uncertainty(values, *args, "flux")
+    assert np.allclose(sigma, hess[2, 2] ** -0.5, rtol=1e-4)
+
+    moved = values * 1.01
+    calls.clear()
+    with count_compiles() as compiles:
+        laplace_cov(moved, *args)
+        fisher(moved, *args)
+        laplace_parameter_uncertainty(moved, *args, "flux")
+    assert not compiles
+    assert not calls
+
+
+def test_laplace_wrappers_need_a_1d_parameter_vector():
+    with pytest.raises(ValueError, match="1D parameter vector"):
+        laplace_cov(
+            np.array([[120.0], [-80.0], [2e-3]]),
+            ["dra", "ddec", "flux"],
+            oidata,
+            BinaryModelCartesian,
+        )
 
 
 def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
@@ -186,9 +251,7 @@ def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
     )
 
     like = loglike_nosignal(values, params, oidata, BinaryModelCartesian)
-    expected_like = jsp.stats.norm.logpdf(
-        model_data, loc=null_data, scale=errors
-    ).sum()
+    expected_like = _reference_logpdf(oidata, model_data, null_data)
 
     assert np.isfinite(like)
     assert np.allclose(like, expected_like)

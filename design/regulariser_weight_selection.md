@@ -188,6 +188,24 @@ fetched and summarised, and the appendix figures could not be inspected.)
 - Historic caveat: classic MaxEnt has been criticised for over-fitting with alpha
   from the evidence when the noise is under-estimated. It is only as good as sigma.
 
+### 2.5a The error bars are a hyperparameter too (implemented: `imaging.error_scale`)
+
+Every criterion above assumes the quoted error bars are right. On real PIONIER data they are not: χ² per point is 0.5–0.8 even for smooth images, which makes the discrepancy principle, classic MaxEnt and the evidence all over-regularise.
+
+MacKay's evidence framework treats the noise precision β = 1/s² as one more hyperparameter, alongside the prior's weight, or its σ and ℓ. Maximising the Laplace evidence over β gives the **re-estimation formula**
+
+    s² = χ² / (N − γ),   γ = Σ λᵢ / (1 + λᵢ),
+
+where λᵢ are the eigenvalues of the likelihood's Gauss–Newton curvature in whitened prior coordinates. γ, the effective number of well-measured parameters, is the same quantity that appears in classic MaxEnt's fixed point, 2wR = γ.
+
+The intuition: each well-measured parameter absorbs one datum's worth of scatter, so honest errors give χ² ≈ N − γ rather than N. Using χ²/N would underestimate s², as dividing by N rather than N − 1 does for a sample variance. The formula is MacKay 1992 (Neural Comput. 4, 415, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415)), eq. 4.14, and Bishop 2006, *PRML*, §3.5.2.
+
+In drpangloss:
+- `imaging.error_scale(model, data)` computes s at a `GaussianField` MAP, from the same Jacobian as `log_evidence`.
+- `OIData.with_error_scale(s)` rescales the data, for a refit.
+
+One fixed-point step usually suffices. The estimate assumes the model is adequate, because unmodelled structure inflates s.
+
 ### 2.6 What the codes actually do
 - **BSMEM**: evidence-based automatic alpha as above (see 2.5).
 - **MiRA** (Thiébaut 2008, [arXiv:0807.3020](https://arxiv.org/abs/0807.3020)? title
@@ -231,21 +249,24 @@ fetched and summarised, and the appendix figures could not be inspected.)
 - For a single regulariser there is one knob. With a centroid prior and a MEM prior
   together (dorito's recipe) fix the secondary weight and sweep the primary one.
 
-## 4. Suggested API sketch
+## 4. The API as built (Stages 3 and 5)
+
+The sketch originally proposed here, `weight_sweep`/`WeightSweep` with a spline corner and cross-validation, became the following.
 
 ```python
-sweep = weight_sweep(lambda w: Problem(model, data, priors, [TV(weight=w)]),
-                     weights=jnp.logspace(-2, 4, 11), method="lbfgs")
-sweep.plot()                       # log chi2 vs log R, points labelled by w
-w_corner = sweep.corner()          # max curvature of a spline through the sweep
-w_disc = sweep.discrepancy(1.0)    # per-block chi2_red = 1 crossing (largest block wins)
+curve = l_curve(start, priors, data, MaxEntropy(1.0, path="env"),
+                weights=jnp.logspace(3.5, 1.0, 11))      # strong to weak, warm-started
+curve.discrepancy()          # χ²/N = 1, on the binding dataset; None if not crossed
+curve.corner()               # maximum curvature of (log χ², log R), by finite differences
+curve.classic_maxent(data)   # Gull–Skilling: −2wS = Σ λ/(λ + w); MaxEntropy sweeps only
+
+log_evidence(gp_fit.model, data)   # Laplace evidence of a GaussianField MAP; compare over σ, ℓ
+error_scale(gp_fit.model, data)    # MacKay's s = √(χ²/(N − γ)); then data.with_error_scale(s)
 ```
 
-- Return a warning (not an error) if `corner()` finds no interior maximum, if the two
-  criteria differ by more than a decade, or if any fit did not converge.
-- Tests: a synthetic problem with a known optimum weight (quadratic R, linear model)
-  so `corner()` and `discrepancy()` can be checked against the analytic answer; a
-  test that a truncated sweep raises the warning.
+- Every criterion is a helper that returns a number; `fit` never chooses a weight.
+- Cross-validation was dropped by decision (2026-10-01).
+- The tutorials `imaging_rml` and `imaging_gp` show the workflow.
 
 ## 5. Costs summary
 
