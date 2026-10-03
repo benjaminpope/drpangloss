@@ -108,8 +108,12 @@ class TV(_ImageRegulariser):
 
     Favours piecewise-flat images with sharp edges. ``ε`` smooths the
     penalty where the image is flat, so that it is differentiable. The
-    penalty is averaged over the four flips of the image, so it has no
-    preferred direction on the sky.
+    penalty is averaged over the four flips of the image, so it does not
+    depend on which neighbour each forward difference pairs a pixel with,
+    and is the same for an image and its mirror images. It is not
+    isotropic: as for any total variation built from pixel differences,
+    a sharp edge along a diagonal costs about a fifth more per unit
+    length than one along a pixel axis.
 
     Parameters
     ----------
@@ -283,9 +287,10 @@ def field_of_view(data, largest_mas=500.0):
     """The default field of view for an image of ``data``, in mas.
 
     The smaller of ``largest_mas`` (500 by default) and the interferometric
-    field of view, λ / B over the shortest non-zero baseline B (at the
-    shortest wavelength): structure larger than that is not measured, and on
-    a uv lattice a larger field would alias. Use it with
+    field of view, the largest λ / B over all samples with a non-zero
+    baseline B (the shortest baseline at the longest wavelength, where they
+    are observed together): structure larger than that is not measured,
+    and on a uv lattice a larger field would alias. Use it with
     [`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale] to
     choose the image's size and pixels.
     """
