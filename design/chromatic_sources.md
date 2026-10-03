@@ -5,7 +5,8 @@ the `Image` component (prerequisite 2), `Resolved` (prerequisite 3) and the
 `PowerLaw` and `BlackBody` spectra (prerequisite 4, in `drpangloss.spectra`)
 exist, and `Component`/`System` accept a spectrum as `flux`. The first
 component with a chromatic *shape*, `GravityDarkenedStar`, is described
-below. Still to do: `Tabulated` spectra and rendering at a given wavelength.
+below. `Tabulated` (a free flux per channel) exists, provisionally: Stage 6a's
+`Nodes` will replace it. Still to do: rendering at a given wavelength.
 
 ## Goal
 

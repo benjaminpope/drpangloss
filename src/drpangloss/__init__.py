@@ -75,9 +75,11 @@ from .limits import (  # noqa: E402
 from .models import (  # noqa: E402
     BinaryModelAngular,
     BinaryModelCartesian,
+    EllipticalGaussian,
     FlaredDiskGaussian,
     FlaredDiskHG,
     FlaredDiskPowerLaw,
+    GaussianArc,
     GaussianDisk,
     GaussianDiskModel,
     GravityDarkenedStar,
@@ -92,16 +94,18 @@ from .models import (  # noqa: E402
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
-from .spectra import BlackBody, PowerLaw  # noqa: E402
+from .spectra import BlackBody, PowerLaw, Tabulated  # noqa: E402
 
 
 __all__ = [
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
+    "EllipticalGaussian",
     "FlaredDiskGaussian",
     "FlaredDiskHG",
     "FlaredDiskPowerLaw",
+    "GaussianArc",
     "GaussianDisk",
     "GaussianDiskModel",
     "GaussianField",
@@ -114,6 +118,7 @@ __all__ = [
     "Resolved",
     "SourceModel",
     "System",
+    "Tabulated",
     "UniformDisk",
     "absil_limits",
     "circular_support",

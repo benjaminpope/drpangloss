@@ -160,3 +160,21 @@ def test_bad_field_parameters_are_rejected(bad):
         GaussianField(onp.zeros((4, 4)), **bad)
     with pytest.raises(ValueError, match="pixel_scale_mas"):
         field_spectrum((4, 4), 0.0, 1.0, 1.0)
+
+
+def test_equal_anisotropic_lengths_are_the_isotropic_field():
+    iso = field_spectrum((12, 16), 1.5, 2.0, 3.0)
+    pair = field_spectrum((12, 16), 1.5, 2.0, np.array([3.0, 3.0]))
+    assert onp.allclose(iso, pair, rtol=1e-5)
+
+
+def test_anisotropic_field_is_correlated_along_its_long_axis():
+    n, h = 16, 1.0
+    field = GaussianField(onp.zeros((n, n)), 1.0, np.array([6.0, 1.0]))
+    cov = _covariance(field, h)
+    i = (n // 2) * n + n // 2  # flattened row-major: +1 is a column step
+    corr = cov / onp.sqrt(onp.outer(onp.diag(cov), onp.diag(cov)))
+    # Long along the columns (row to row), short along the rows.
+    assert corr[i, i + n] > 0.9 > 0.6 > corr[i, i + 1]
+    with pytest.raises(ValueError, match="pair"):
+        GaussianField(onp.zeros((n, n)), 1.0, np.array([1.0, 2.0, 3.0]))
