@@ -30,7 +30,7 @@ __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 # A closure-phase row is matched to the nearest-MJD visibility row of the same
 # exposure. OIFITS records only each row's MJD and INT_TIME, not the span of
 # the exposure, so the MJDs may differ by up to twice the longest INT_TIME in
-# either table, and always by this much (in days, about 9 seconds) for files
+# the visibility table, and always by this much (in days, about 9 seconds) for files
 # with no INT_TIME. GRAVITY's reduced products, for instance, average
 # different subsets of an exposure's frames for T3 and VIS2 (8 x 30 s DITs
 # with 120 s of valid frames can give MJDs 131 s apart). The closure phase
@@ -91,8 +91,8 @@ def read_oifits(source, target=None, insname=None):
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
     and nearest ``MJD``, within its own file. The MJDs must agree to within
-    twice the longest ``INT_TIME`` in either table (or about 9 seconds if
-    there is none), since pipelines such as GRAVITY's average different
+    twice the longest ``INT_TIME`` in the visibility table (or about 9
+    seconds if there is none), since pipelines such as GRAVITY's average different
     frames of one exposure for each table. The baselines must be stored in
     that orientation.
 
@@ -312,16 +312,16 @@ class _BaselineLookup:
         row = (float(mjd), exposure, start, nwave)
         self._rows.setdefault(key, []).append(row)
 
-    def find(self, ins, pair, mjd, exposure=0.0):
+    def find(self, ins, pair, mjd):
         """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
 
-        The row must overlap in time: see ``_MJD_TOLERANCE``.
+        The row must be from the same exposure: see ``_MJD_TOLERANCE``.
         """
         rows = self._rows.get((ins, int(pair[0]), int(pair[1])), [])
         if not rows:
             return None
         best = min(rows, key=lambda row: abs(row[0] - mjd))
-        window = max(_MJD_TOLERANCE, 2.0 * best[1], 2.0 * exposure)
+        window = max(_MJD_TOLERANCE, 2.0 * best[1])
         if abs(best[0] - mjd) > window:
             return None
         return best[2], best[3]
@@ -401,7 +401,6 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
         u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         for row, (a, b, c) in enumerate(sta_index):
             legs = (
@@ -410,9 +409,11 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
                 ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
             )
             for pair, uu, vv in legs:
-                if lookup.find(ins, pair, mjd[row], exposure) is not None:
+                if lookup.find(ins, pair, mjd[row]) is not None:
                     continue
-                lookup.add(ins, pair, mjd[row], exposure, start, nwave)
+                # Each T3 row carries its own (u, v), so rows of different
+                # times stay separate samples: no exposure window here.
+                lookup.add(ins, pair, mjd[row], 0.0, start, nwave)
                 start += nwave
                 u.append(onp.full(nwave, uu))
                 v.append(onp.full(nwave, vv))
@@ -444,16 +445,13 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         channels = onp.arange(nwave)
         for row, (a, b, c) in enumerate(sta_index):
             for leg, pair in zip(i_cps, ((a, b), (b, c), (a, c))):
-                found = lookup.find(ins, pair, mjd[row], exposure)
+                found = lookup.find(ins, pair, mjd[row])
                 if found is None or found[1] != nwave:
-                    reversed_found = lookup.find(
-                        ins, pair[::-1], mjd[row], exposure
-                    )
+                    reversed_found = lookup.find(ins, pair[::-1], mjd[row])
                     hint = (
                         f" It is stored reversed as {tuple(pair[::-1])};"
                         " reversed closure-phase legs are not supported yet."
@@ -511,14 +509,13 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
-        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         for row, pair in enumerate(sta_index):
             sign = 1.0
-            found = lookup.find(ins, pair, mjd[row], exposure)
+            found = lookup.find(ins, pair, mjd[row])
             if found is None:
                 # The phase of the reversed baseline is the negated phase.
-                found = lookup.find(ins, pair[::-1], mjd[row], exposure)
+                found = lookup.find(ins, pair[::-1], mjd[row])
                 sign = -1.0
             if found is None or found[1] != nwave:
                 continue
