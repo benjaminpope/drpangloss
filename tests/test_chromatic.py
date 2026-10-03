@@ -328,6 +328,10 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert not is_flux_param("secondary.flux.temperature")
 
 
+@pytest.mark.skipif(
+    jax.config.jax_enable_x64,
+    reason="the overflow is specific to float32; x64 is on globally",
+)
 def test_blackbody_ratio_finite_when_representable_in_float32():
     # x0 - x = 90 overflows exp() in float32, but the whole ratio is
     # exp(~78.5), which is representable: it must come out finite.
