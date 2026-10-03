@@ -93,7 +93,7 @@ print(f"one star: converged {single_fit.info['converged']}, chi2 per point {sing
 ```
 
 ```text
-one star: converged True, chi2 per point 0.942, image flux 0.438 (ring truth 0.35)
+one star: converged True, chi2 per point 0.931, image flux 0.441 (ring truth 0.35)
 ```
 
 ## Finding the companion
@@ -122,8 +122,8 @@ print(f"companion {float(v['secondary.flux']):.3f} at ({float(v['secondary.dra']
 
 ```text
 knot at (1.25, -0.75) mas
-binary: converged True, chi2 per point 0.936
-companion 0.080 at (1.47, -0.99) mas (truth 0.080 at (1.50, -1.00)); image flux 0.351 (truth 0.35)
+binary: converged True, chi2 per point 0.922
+companion 0.083 at (1.43, -0.98) mas (truth 0.080 at (1.50, -1.00)); image flux 0.353 (truth 0.35)
 ```
 
 ## One star against two
@@ -169,8 +169,8 @@ for name, r in (("one star", single_fit), ("binary", binary_fit)):
 ```
 
 ```text
-one star : chi2    565.0, |z|²    57.1, log evidence   -452.5
-binary   : chi2    561.6, |z|²    16.1, log evidence   -424.1
+one star : chi2    502.5, |z|²    61.2, log evidence   -418.7
+binary   : chi2    497.7, |z|²    17.6, log evidence   -388.3
 ```
 
 ## Summary

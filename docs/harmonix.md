@@ -267,9 +267,9 @@ for name in priors:
 ```
 
 ```text
-reduced chi2 = 1.04 after 233 steps
-contrast: start  0.500   fit  0.699   truth  0.700
-    size: start  0.200   fit  0.300   truth  0.300
+reduced chi2 = 1.04 after 41 steps
+contrast: start  0.500   fit  0.702   truth  0.700
+    size: start  0.200   fit  0.299   truth  0.300
      lat: start  0.200   fit  0.450   truth  0.450
      lon: start  0.100   fit -1.000   truth -1.000
   radius: start  1.268   fit  1.270   truth  1.270
