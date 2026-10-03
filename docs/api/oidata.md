@@ -16,8 +16,10 @@ Flagged samples are left out of the observables (see `vis_index` and
 Likelihoods and fits use
 [`whitened_residuals`][virgil.likelihood.whitened_residuals] instead. For
 ordinary unprojected phases, chord residuals `2 sin(Δ/2)` give a squared
-contribution that is smooth across phase wraps; correlated closure phases are
-wrapped, combined, and whitened separately.
+contribution that is smooth across phase wraps. Correlated closure phases are
+the exception: their residuals are wrapped into `[-π, π)`, combined, and
+whitened together, so the likelihood is unchanged by 2π but jumps where a
+residual crosses ±π.
 
 Closure phases from four or more telescopes are correlated: the triangles
 of one frame and channel share baselines, and only some of them are

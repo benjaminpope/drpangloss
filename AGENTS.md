@@ -239,6 +239,8 @@ to that test.
 - `docs/generated/` and `data/*.npy` — generated or fixture data.
 - `docs/*.md` pages listed in `scripts/sync_tutorial_docs.py::MAPPINGS` — generated from
   notebooks (see below).
+- `docs/index.md` — generated from `README.md` by `scripts/sync_tutorial_docs.py`; edit
+  `README.md`, then run the script.
 - `notebooks/archive/` — old exploratory notebooks, git-ignored; do not read or edit.
 - `.venv/`, `.lint-logs/`.
 
