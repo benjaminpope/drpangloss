@@ -26,6 +26,7 @@ ROOTS = (
     "self-consistency",
 )
 KINDS = ("check", "control", "finding", "upstream", "reference", "guard")
+TIERS = ("A", "B", "C")
 
 
 def pytest_configure(config):
@@ -47,7 +48,14 @@ def pytest_collection_modifyitems(config, items):
                 for r in roots
                 if r not in ROOTS and not r.startswith("golden:")
             ]
-            if not mark.args or not roots or bad or kind not in KINDS:
+            tier = mark.kwargs.get("tier", "A")
+            if (
+                not mark.args
+                or not roots
+                or bad
+                or kind not in KINDS
+                or tier not in TIERS
+            ):
                 raise pytest.UsageError(
                     f"{item.nodeid}: malformed validates marker"
                 )
@@ -55,6 +63,6 @@ def pytest_collection_modifyitems(config, items):
                 "objects": list(mark.args),
                 "roots": roots,
                 "kind": kind,
-                "tier": mark.kwargs.get("tier", "A"),
+                "tier": tier,
             }
             item.user_properties.append(("validates", json.dumps(claim)))
