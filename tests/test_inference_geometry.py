@@ -1,3 +1,4 @@
+import pytest
 import jax.numpy as np
 
 from virgil.inference import (
@@ -8,6 +9,11 @@ from virgil.inference import (
 )
 
 
+@pytest.mark.validates(
+    "virgil.inference.fisher",
+    "virgil.inference.laplace_cov",
+    roots=["self-consistency"],
+)
 def test_hessian_shape_and_symmetry():
     objective = lambda x: (x[0] - 1.0) ** 2 + 3.0 * (x[1] + 2.0) ** 2
     x0 = np.array([0.2, -1.1])
@@ -60,6 +66,11 @@ def test_gaussian_fisher_supports_parameter_pytrees():
     assert np.all(np.linalg.eigvalsh(fmat) >= -1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.inference.fisher",
+    "virgil.inference.laplace_cov",
+    roots=["self-consistency"],
+)
 def test_expected_fisher_matches_noiseless_observed_information():
     params = np.array([0.7, -0.2])
     errors = np.array([0.3, 0.5])
@@ -77,6 +88,11 @@ def test_expected_fisher_matches_noiseless_observed_information():
     assert np.allclose(expected, observed, rtol=1e-5, atol=1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.inference.fisher",
+    "virgil.inference.laplace_cov",
+    roots=["self-consistency"],
+)
 def test_nonlinear_residual_curvature_changes_observed_information():
     params = np.array([0.7, -0.2])
     errors = np.array([0.3, 0.5])

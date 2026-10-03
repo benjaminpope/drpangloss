@@ -52,6 +52,9 @@ def test_array_of_size_one_matches_scalar_only_covariance():
         assert np.all(np.isfinite(scalar))
 
 
+@pytest.mark.validates(
+    "virgil.inference.laplace_cov", roots=["self-consistency"]
+)
 def test_array_path_of_size_two_is_flattened():
     with jax.enable_x64(True):
         model, data = _setup(2)
@@ -78,6 +81,11 @@ def test_array_path_of_size_two_is_flattened():
             laplace_cov(values[:-1], paths, data, model)
 
 
+@pytest.mark.validates(
+    "virgil.inference.laplace_cov",
+    "virgil.inference.fisher",
+    roots=["mathematics"],
+)
 def test_information_matches_finite_difference_hessian():
     with jax.enable_x64(True):
         model, data = _setup(2)

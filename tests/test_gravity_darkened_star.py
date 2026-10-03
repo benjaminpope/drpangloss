@@ -54,6 +54,9 @@ def _rms_widths(image, fov_mas):
 # --- 1. golden values ----------------------------------------------------
 
 
+@pytest.mark.validates(
+    "virgil.models.GravityDarkenedStar", roots=["golden:dholakia"]
+)
 def test_matches_original_code_golden_values():
     golden = onp.load(_GOLDEN)
     with jax.enable_x64():
@@ -88,6 +91,9 @@ def _ud_error(n_lat):
     )
 
 
+@pytest.mark.validates(
+    "virgil.models.GravityDarkenedStar", roots=["mathematics"]
+)
 def test_omega_zero_matches_uniform_disk():
     assert _ud_error(32) < 1e-2
 

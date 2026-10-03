@@ -97,7 +97,19 @@ jobs:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
-        run: .venv/bin/python -m pytest -n auto -rs
+        # The JUnit report carries the validates markers (tests/conftest.py)
+        # as evidence for virgil-validation; xunit1 keeps test properties.
+        run: >-
+          .venv/bin/python -m pytest -n auto -rs
+          --junitxml=junit-evidence.xml -o junit_family=xunit1
+
+      - name: upload evidence
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: virgil-evidence-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
+          path: junit-evidence.xml
+          if-no-files-found: ignore
 
       - name: save JAX compilation cache
         if: github.event_name == 'push'

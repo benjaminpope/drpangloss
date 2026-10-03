@@ -60,6 +60,11 @@ def test_indices_are_int32_and_whiten_in_either_precision():
     assert onp.allclose(out[0], out[2])
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_whitening_matches_the_dense_pseudo_inverse():
     # Equal errors give baseline variances σ²/3, so C = (σ²/3) T Tᵀ, of
     # rank 3 per frame; χ² is Δᵀ C⁺ Δ and the normalisation its pseudo-det.
@@ -85,6 +90,11 @@ def test_whitening_matches_the_dense_pseudo_inverse():
     )
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_three_telescopes_are_unchanged():
     # One triangle per frame and channel: nothing correlates, and the
     # likelihood is the per-triangle chord one, as before.
@@ -97,6 +107,9 @@ def test_three_telescopes_are_unchanged():
     assert data.n_independent == data.vis.size + data.phi.size
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals", roots=["statistics"]
+)
 def test_simulated_noise_comes_from_baseline_phases():
     # Closure-phase noise drawn from baseline-phase noise satisfies the one
     # closure relation of four telescopes in every frame: the alternating
@@ -113,6 +126,11 @@ def test_simulated_noise_comes_from_baseline_phases():
     assert onp.linalg.norm(noise) > 0.0
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_rescaled_errors_carry_through_the_whitening():
     data = _four_telescopes()
     n_vis = data.vis.size
@@ -126,6 +144,11 @@ def test_rescaled_errors_carry_through_the_whitening():
     assert onp.isfinite(plain) and onp.isfinite(inflated)
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_a_flagged_closure_phase_leaves_the_rest_independent():
     data = _four_telescopes()
     record = {
@@ -155,6 +178,11 @@ def test_gradients_are_finite():
     assert onp.isfinite(grad)
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_a_correlating_operator_is_rotated_to_independent_outputs():
     # Two overlapping differences of three phases share one input, so their
     # outputs correlate. Keeping only the diagonal would count that input
@@ -204,6 +232,9 @@ def _record(data, **changes):
     return record | changes
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals", roots=["statistics"]
+)
 def test_unequal_errors_are_kept_and_simulation_matches_whitening():
     # σ² ∝ (1, 1, 3, 3): a minimum-norm split into baseline variances goes
     # negative here. The covariance keeps every reported variance, and
@@ -230,6 +261,11 @@ def test_unequal_errors_are_kept_and_simulation_matches_whitening():
     assert onp.allclose(onp.cov(whitened.T), onp.eye(3), atol=0.1)
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_a_phase_shifted_by_two_pi_gives_the_same_likelihood():
     data = _four_telescopes()
     shifted = eqx.tree_at(
@@ -245,6 +281,11 @@ def test_a_phase_shifted_by_two_pi_gives_the_same_likelihood():
     )
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_a_phase_operator_on_closure_phases_keeps_their_correlations():
     # An identity phi_mat on four-telescope closure phases must not count
     # four independent values per frame.
@@ -271,6 +312,11 @@ def test_tiny_but_identical_operator_rows_are_still_merged():
     assert data.phi.size == 1
 
 
+@pytest.mark.validates(
+    "virgil.oidata.OIData",
+    "virgil.likelihood.whitened_residuals",
+    roots=["self-consistency"],
+)
 def test_a_zero_variance_closure_relation_is_dropped():
     # The four closure phases of one frame satisfy one closure relation:
     # an operator row along it has zero variance and is dropped, not kept
