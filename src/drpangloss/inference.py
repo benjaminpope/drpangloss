@@ -8,6 +8,7 @@ matrices) are skipped inside ``jax.jit``.
 
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 from jax.flatten_util import ravel_pytree
@@ -181,6 +182,26 @@ def fisher_projection(fmat, eps=1e-12):
 
 # === MODEL-LEVEL WRAPPERS ===
 
+# The model-level curvatures are jitted once at module level, with the data
+# and model as arguments, so repeated calls reuse one compilation. Without
+# jit, jax.hessian runs hundreds of small operations one at a time (~50 ms
+# per call for a binary); a jitted closure would recompile on every call.
+
+
+@eqx.filter_jit
+def _neg_loglike_hessian(values, params, data_obj, model):
+    return jax.hessian(lambda x: -loglike(x, params, data_obj, model))(values)
+
+
+@eqx.filter_jit
+def _neg_loglike_curvature(values, idx, params, data_obj, model):
+    """``d² -log L / d values[idx]²``, the others held fixed."""
+
+    def objective(x):
+        return -loglike(values.at[idx].set(x), params, data_obj, model)
+
+    return jax.grad(jax.grad(objective))(values[idx])
+
 
 def laplace_cov(values, params, data_obj, model):
     """
@@ -212,9 +233,10 @@ def laplace_cov(values, params, data_obj, model):
     array-like
         ``N x N`` covariance matrix, where ``N = len(params)``.
     """
-
-    objective = lambda vals: -loglike(vals, params, data_obj, model)
-    return laplace_covariance(objective, np.asarray(values, dtype=float))
+    hess = _neg_loglike_hessian(
+        np.asarray(values, dtype=float), tuple(params), data_obj, model
+    )
+    return regularized_inverse(hess, ridge=1e-10)
 
 
 def laplace_parameter_uncertainty(
@@ -250,10 +272,9 @@ def laplace_parameter_uncertainty(
     idx = params.index(target_param)
     values = np.asarray(values, dtype=float)
 
-    objective = lambda x: -loglike(
-        values.at[idx].set(x), params, data_obj, model
+    d2_axis = _neg_loglike_curvature(
+        values, idx, tuple(params), data_obj, model
     )
-    d2_axis = jax.grad(jax.grad(objective))(values[idx])
     return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
 
@@ -282,7 +303,8 @@ def fisher(values, params, data_obj, model, ridge=0.0):
     array-like
         Observed information matrix, ``N x N`` for ``N = len(params)``.
     """
-    objective = lambda vals: -loglike(vals, params, data_obj, model)
-    return fisher_matrix(
-        objective, np.asarray(values, dtype=float), ridge=ridge
+    information = _neg_loglike_hessian(
+        np.asarray(values, dtype=float), tuple(params), data_obj, model
     )
+    ident = np.eye(information.shape[-1], dtype=information.dtype)
+    return information + np.maximum(ridge, 0.0) * ident

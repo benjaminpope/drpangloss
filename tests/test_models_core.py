@@ -5,7 +5,12 @@ import numpy as onp
 import pytest
 
 import drpangloss.models as models
-from drpangloss.inference import fisher, laplace_cov
+from drpangloss.inference import (
+    fisher,
+    laplace_cov,
+    laplace_covariance,
+    laplace_parameter_uncertainty,
+)
 from drpangloss.likelihood import (
     joint_data,
     joint_errors,
@@ -22,6 +27,7 @@ from drpangloss.models import (
 )
 from drpangloss.oidata import OIData, closure_phases
 
+from tests._compiles import count_compiles
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v
 
 
@@ -173,6 +179,31 @@ def test_laplace_and_fisher_wrappers_are_finite():
     assert np.allclose(fmat, fmat.T)
     assert np.isfinite(like)
     assert np.allclose(like, expected_like)
+
+
+def test_laplace_wrappers_match_closures_and_compile_once():
+    # The model-level curvatures must agree with the generic, closure-based
+    # helpers. They are jitted once at module level, so a call at new values
+    # reuses the compilation; a jit defined inside each call would compile
+    # every time. (Unjitted, eager code also compiles nothing on a repeat
+    # call, but runs ~200x slower; this test does not catch that.)
+    params = ["dra", "ddec", "flux"]
+    values = np.array([120.0, -80.0, 2e-3])
+    args = (params, oidata, BinaryModelCartesian)
+    objective = lambda x: -loglike(x, *args)
+
+    cov = laplace_cov(values, *args)
+    assert np.allclose(cov, laplace_covariance(objective, values), rtol=1e-4)
+    hess = fisher(values, *args)
+    sigma = laplace_parameter_uncertainty(values, *args, "flux")
+    assert np.allclose(sigma, hess[2, 2] ** -0.5, rtol=1e-4)
+
+    moved = values * 1.01
+    with count_compiles() as compiles:
+        laplace_cov(moved, *args)
+        fisher(moved, *args)
+        laplace_parameter_uncertainty(moved, *args, "flux")
+    assert not compiles
 
 
 def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
