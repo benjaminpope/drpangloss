@@ -42,6 +42,7 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
+  - Contributors: contributors.md
   - Binary Search: binary_search.md
   - Contrast Limits: contrast_limits.md
   - Hierarchical Inference: hierarchical_inference.md
@@ -51,7 +52,12 @@ nav:
   - Composing Models: composition.md
   - "Spotted Stars: harmonix": harmonix.md
   - AMIGO DISCO: amigo_disco.md
-  - "Imaging: AMI simulation": imaging_ami.md
+  - Imaging:
+      - "1. Simulating AMI data": imaging_ami.md
+      - "2. Regularised maximum likelihood": imaging_rml.md
+      - "3. Gaussian-process priors": imaging_gp.md
+      - "4. A ring around a binary": imaging_composite.md
+      - "5. Sampling the posterior": imaging_sampling.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
@@ -75,6 +81,7 @@ nav:
       - Grid Fit: api/grid_fit.md
       - Limits: api/limits.md
       - Spectra: api/spectra.md
+      - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Coverage: api/coverage.md
       - Plotting: api/plotting.md

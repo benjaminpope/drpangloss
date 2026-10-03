@@ -12,7 +12,7 @@ The everyday names are importable from the top level, e.g.
 - [Grid Fit](grid_fit.md): grid searches
 - [Limits](limits.md): contrast limits and flux/contrast/Δmag conversions
 - [Spectra](spectra.md): wavelength-dependent fluxes
-- [Fitting](fitting.md): `fit`, maximum a posteriori fits
+- [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
 - [Imaging](imaging.md): regularisers and helpers for image reconstruction
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations

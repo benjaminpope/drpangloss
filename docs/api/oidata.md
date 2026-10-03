@@ -34,6 +34,7 @@ AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
         - model
         - residuals
         - with_model
+        - with_error_scale
 
 ## uv grids
 
