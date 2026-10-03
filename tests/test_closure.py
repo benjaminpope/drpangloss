@@ -44,6 +44,22 @@ def test_four_telescopes_keep_three_closure_phases_per_frame():
     assert whitened_residuals(MODEL, data).size == data.n_independent
 
 
+def test_indices_are_int32_and_whiten_in_either_precision():
+    # int64 indices became int32 in float32 runs, and JAX 0.11 then reused
+    # that copy in float64 code compiled for int64 (a float32 L-curve then
+    # a float64 refit). int32 is the same in both modes.
+    data = _four_telescopes()
+    noise = data.cp_noise
+    assert noise.groups.dtype == onp.int32
+    assert noise.keep.dtype == onp.int32
+    out = []
+    for x64 in (False, True, False):
+        with jax.enable_x64(x64):
+            out.append(onp.asarray(whitened_residuals(MODEL, data)))
+    assert onp.allclose(out[0], out[1], rtol=1e-5)
+    assert onp.allclose(out[0], out[2])
+
+
 def test_whitening_matches_the_dense_pseudo_inverse():
     # Equal errors give baseline variances σ²/3, so C = (σ²/3) T Tᵀ, of
     # rank 3 per frame; χ² is Δᵀ C⁺ Δ and the normalisation its pseudo-det.

@@ -69,6 +69,10 @@ def _incidence(group, i1, i2, i3):
 class ClosureNoise(eqx.Module):
     """Correlated closure-phase noise from equal noise on every baseline."""
 
+    # The index arrays are int32, which JAX keeps as int32 whether or not
+    # 64-bit mode is on. As int64 they became int32 in float32 fits, and
+    # JAX 0.11 could then hand that copy to a float64 fit compiled for
+    # int64 (a float32 L-curve followed by a float64 refit).
     groups: onp.ndarray  # (n_group, m) closure-phase indices, padded with 0
     mask: onp.ndarray  # (n_group, m) True for real triangles
     incidence: onp.ndarray  # (n_group, m, n_base) T / √3, for sampling
@@ -97,7 +101,7 @@ class ClosureNoise(eqx.Module):
         k = max(b[2].shape[0] for b in blocks)
         n = len(blocks)
         out = {
-            "groups": onp.zeros((n, m), dtype=int),
+            "groups": onp.zeros((n, m), dtype=onp.int32),
             "mask": onp.zeros((n, m), dtype=bool),
             "incidence": onp.zeros((n, m, n_base)),
             "basis": onp.zeros((n, k, m)),
@@ -112,7 +116,8 @@ class ClosureNoise(eqx.Module):
             out["basis"][j, :r, : g.size] = q
             out["chol"][j, :r, :r] = m_chol
             out["valid"][j, :r] = True
-        return cls(**out, keep=onp.flatnonzero(out["valid"].reshape(-1)))
+        keep = onp.flatnonzero(out["valid"].reshape(-1)).astype(onp.int32)
+        return cls(**out, keep=keep)
 
     @property
     def size(self):
