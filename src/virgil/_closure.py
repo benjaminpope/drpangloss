@@ -61,7 +61,10 @@ def _groups(i1, i2, i3):
             else:
                 owner[b] = t
     roots = onp.array([find(t) for t in range(n)])
-    return [onp.flatnonzero(roots == r) for r in onp.unique(roots)]
+    # Split by root with one stable sort: groups in root order, each sorted.
+    order = onp.argsort(roots, kind="stable")
+    _, starts = onp.unique(roots[order], return_index=True)
+    return onp.split(order, starts[1:])
 
 
 def _incidence(group, i1, i2, i3):
@@ -100,14 +103,19 @@ class ClosureNoise(eqx.Module):
         groups = _groups(i1, i2, i3)
         if all(g.size == 1 for g in groups):
             return None  # three telescopes: nothing to decorrelate
+        # Groups mostly repeat a few incidence patterns (one per frame and
+        # channel), so factorise each distinct T only once.
+        factors = {}
         blocks = []
         for g in groups:
             t = _incidence(g, i1, i2, i3) / onp.sqrt(3.0)
-            left, singular, _ = onp.linalg.svd(t, full_matrices=False)
-            rank = int(onp.sum(singular > 1e-9 * singular.max()))
-            q = left[:, :rank].T
-            m_chol = onp.linalg.cholesky(q @ (t @ t.T) @ q.T)
-            blocks.append((g, t, q, m_chol))
+            key = (t.shape, t.tobytes())
+            if key not in factors:
+                left, singular, _ = onp.linalg.svd(t, full_matrices=False)
+                rank = int(onp.sum(singular > 1e-9 * singular.max()))
+                q = left[:, :rank].T
+                factors[key] = q, onp.linalg.cholesky(q @ (t @ t.T) @ q.T)
+            blocks.append((g, t, *factors[key]))
         m = max(b[0].size for b in blocks)
         n_base = max(b[1].shape[1] for b in blocks)
         k = max(b[2].shape[0] for b in blocks)
