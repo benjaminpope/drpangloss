@@ -9,6 +9,7 @@ from drpangloss.imaging import (
     TSV,
     Beam,
     beam,
+    convolve_beam,
     dirty_image,
     field_of_view,
     TV,
@@ -247,6 +248,79 @@ def test_plot_model_draws_the_beam_in_the_lower_left():
     x, y = patch.center
     assert x > 0 and y < 0  # East (displayed left) and South (bottom)
     assert np.isclose(patch.width, 60.0) and np.isclose(patch.angle, 45.0)
+    plt.close(fig)
+
+
+def _point(npix=21):
+    return np.zeros((npix, npix)).at[npix // 2, npix // 2].set(1.0)
+
+
+def test_convolve_beam_keeps_flux_and_centre():
+    smooth = convolve_beam(_point(), 1.0, Beam(4.0, 2.0, 30.0))
+    assert np.isclose(smooth.sum(), 1.0, atol=1e-5)
+    assert np.unravel_index(np.argmax(smooth), smooth.shape) == (10, 10)
+    assert np.allclose(smooth, smooth[::-1, ::-1], atol=1e-7)  # unshifted
+
+
+def test_convolve_beam_follows_north_to_east_pa():
+    # Row 0 is North and column 0 is East. A beam at PA 45° spreads a
+    # point to the North-East (up-left) and South-West, not North-West.
+    smooth = convolve_beam(_point(), 1.0, Beam(6.0, 1.0, 45.0))
+    assert smooth[8, 8] > 10 * smooth[8, 12]  # NE vs NW
+    assert np.isclose(smooth[8, 8], smooth[12, 12])  # NE = SW
+    # At PA 0° it spreads North-South (along a column).
+    smooth = convolve_beam(_point(), 1.0, Beam(6.0, 1.0, 0.0))
+    assert smooth[7, 10] > 10 * smooth[10, 7]
+
+
+def test_convolve_beam_widths_are_the_fwhms():
+    # Major axis East-West (PA 90°): the row's second moment is the major
+    # axis's variance, and the column's the minor axis's.
+    smooth = onp.asarray(convolve_beam(_point(41), 0.5, Beam(6.0, 3.0, 90.0)))
+    offsets = (onp.arange(41) - 20) * 0.5
+    sigma_per_fwhm = 1.0 / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))
+    across_row, down_column = smooth.sum(axis=0), smooth.sum(axis=1)
+    assert np.isclose(
+        onp.sqrt(across_row @ offsets**2), 6.0 * sigma_per_fwhm, rtol=1e-3
+    )
+    assert np.isclose(
+        onp.sqrt(down_column @ offsets**2), 3.0 * sigma_per_fwhm, rtol=1e-3
+    )
+
+
+@pytest.mark.parametrize("npix", [48, 49])
+def test_convolve_beam_of_a_gaussian_adds_variances(npix):
+    # Even and odd grids: a round beam of FWHM f turns a Gaussian of σ into
+    # one of √(σ² + (f / 2.355)²), in place. The field reaches 6σ, so
+    # little flux is lost over the edge.
+    fwhm, sigma, scale = 3.0, 1.5, 0.5
+    sigma_beam = fwhm / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))
+    fov = npix * scale
+    smooth = convolve_beam(
+        GaussianDisk(sigma).render(npix, fov), scale, Beam(fwhm, fwhm, 0.0)
+    )
+    wider = GaussianDisk(onp.hypot(sigma, sigma_beam)).render(npix, fov)
+    assert np.allclose(smooth, wider, atol=1e-4 * wider.max())
+
+
+def test_convolve_beam_rejects_bad_input():
+    with pytest.raises(ValueError, match="2D"):
+        convolve_beam(np.ones(5), 1.0, Beam(2.0, 1.0, 0.0))
+    with pytest.raises(ValueError, match="positive"):
+        convolve_beam(np.ones((5, 5)), 1.0, Beam(2.0, 0.0, 0.0))
+
+
+def test_plot_model_convolve_shows_the_convolved_image():
+    import matplotlib.pyplot as plt
+
+    disk = GaussianDisk(1.0)
+    b = Beam(4.0, 2.0, 30.0)
+    fig, ax = plt.subplots()
+    plot_model(disk, fov_mas=16.0, npix=32, ax=ax, beam=b, convolve=True)
+    expected = convolve_beam(disk.render(32, 16.0), 0.5, b)
+    assert onp.allclose(ax.images[0].get_array().filled(), expected)
+    with pytest.raises(ValueError, match="beam"):
+        plot_model(disk, fov_mas=16.0, npix=32, ax=ax, convolve=True)
     plt.close(fig)
 
 

@@ -30,6 +30,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
@@ -573,6 +574,60 @@ def beam(data):
     x, y = axes[:, 1]  # the major axis, in (East, North)
     pa = onp.degrees(onp.arctan2(x, y)) % 180.0
     return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
+
+
+def convolve_beam(image, pixel_scale_mas, beam):
+    """An image convolved with a Gaussian beam: the image at the data's resolution.
+
+    Reconstructed images are super-resolved. A regularised image can put
+    structure on scales finer than the beam, where the data constrain it
+    only weakly, so it often looks clumpy or streaky. Convolved with the
+    beam (the "restored" image of radio astronomy), it shows only what the
+    data resolve. That is the fair way to compare two reconstructions, or a
+    reconstruction with a model: convolve both.
+
+    The kernel is an elliptical Gaussian with the beam's FWHMs and position
+    angle (North to East), normalised to unit sum so that the total flux
+    is unchanged. It is sampled on an odd grid centred on a pixel, so the
+    convolution does not shift the image. Flux beyond the edge of the image
+    is taken to be zero, so structure near the edge is dimmed.
+
+    Parameters
+    ----------
+    image : array-like, shape (ny, nx)
+        The image, in the orientation of
+        [`render`][drpangloss.models.SourceModel.render] (East left, North
+        up).
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+    beam : Beam
+        The beam, usually [`beam(data)`][drpangloss.imaging.beam].
+
+    Returns
+    -------
+    jax.Array, shape (ny, nx)
+        The convolved image.
+    """
+    image = np.asarray(image)
+    if image.ndim != 2:
+        raise ValueError(f"image must be 2D, not of shape {image.shape}.")
+    if not (beam.major_mas > 0 and beam.minor_mas > 0):
+        raise ValueError(f"The beam's FWHMs must be positive, not {beam}.")
+    ny, nx = image.shape
+    x = pixel_offsets(nx + 1 - nx % 2, pixel_scale_mas)[None, :]  # East
+    y = pixel_offsets(ny + 1 - ny % 2, pixel_scale_mas)[:, None]  # North
+    pa = np.deg2rad(beam.pa_deg)
+    along = x * np.sin(pa) + y * np.cos(pa)  # the major axis is (sin, cos)
+    across = x * np.cos(pa) - y * np.sin(pa)
+    fwhm_per_sigma = 2.0 * onp.sqrt(2.0 * onp.log(2.0))
+    kernel = np.exp(
+        -0.5
+        * (
+            (along * fwhm_per_sigma / beam.major_mas) ** 2
+            + (across * fwhm_per_sigma / beam.minor_mas) ** 2
+        )
+    ).astype(image.dtype)
+    return fftconvolve(image, kernel / np.sum(kernel), mode="same")
 
 
 @dataclasses.dataclass(frozen=True)

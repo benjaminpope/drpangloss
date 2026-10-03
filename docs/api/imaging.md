@@ -20,6 +20,7 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - field_of_view
         - beam
         - Beam
+        - convolve_beam
         - l_curve
         - LCurve
         - log_evidence
