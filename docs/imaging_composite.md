@@ -181,3 +181,5 @@ When an image sits next to analytic sources, what is analytic and what is in the
 - **Choosing between models.** χ² barely changes between the two, so the image's prior, through the evidence, is what prefers the right model.
 
 The same composition works with any analytic component: disks, rims, resolved backgrounds and spectra (`drpangloss.spectra`). It works for real data too: the SPARCO-style analyses of PIONIER data in the companion notebooks follow this pattern.
+
+Part 5 goes beyond the single MAP image, and samples the posterior to map each pixel's uncertainty.

@@ -18,6 +18,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import lineax as lx
+import numpy as onp
 import optax
 import optimistix as optx
 
@@ -341,6 +342,86 @@ def fit(
     return FitResult(
         cast_tree(model, ambient), cast_tree(values, ambient), info
     )
+
+
+def gauss_newton_mass(model, priors, data, values):
+    """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
+
+    Near the maximum a posteriori, the posterior is close to a Gaussian
+    whose precision, in the unconstrained coordinates z that numpyro samples,
+    is the Gauss–Newton matrix JᵀJ. Here J is the Jacobian of the
+    whitened residuals with respect to z, including the residuals of the
+    priors (so a standard-normal prior adds the identity). Giving NUTS the
+    inverse, (JᵀJ)⁻¹, as its inverse mass matrix whitens that Gaussian.
+    Directions the data fix tightly then take the same step size as those
+    left to the prior. Without it, the step size shrinks to suit the
+    tightest direction, and NUTS needs its full tree depth (1023 leapfrog
+    steps) per draw. On a 62² Gaussian-field image fitted to 588 AMI
+    observables, it cut the cost to 63 steps per draw.
+
+    Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
+    [`log_evidence`][drpangloss.imaging.log_evidence]). The curvature
+    depends on them, so a matrix computed at one σ and ℓ is wrong when
+    they move. Every sampled parameter must be in ``priors``: a
+    tightly constrained one left out (such as an image's flux) keeps its
+    identity mass and its tiny step size.
+
+    Parameters
+    ----------
+    model, priors, data
+        As for [`fit`][drpangloss.fitting.fit]. The priors must have a
+        least-squares form (Normal, Uniform or ImproperUniform), as for
+        ``fit``'s Levenberg–Marquardt.
+    values : dict
+        The parameter values at which to take the curvature, normally
+        ``fit(model, priors, data).values``.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for ``numpyro.infer.NUTS``:
+        ``inverse_mass_matrix``, ``dense_mass``, and
+        ``adapt_mass_matrix=False``. Warmup adaptation is switched off
+        because a dense covariance estimated from a few hundred draws in
+        thousands of dimensions is far worse than this matrix.
+
+    Examples
+    --------
+    >>> result = fit(scene, priors, data)
+    >>> kernel = NUTS(numpyro_model(result.model, priors, data),
+    ...               init_strategy=init_to_value(values=result.values),
+    ...               **gauss_newton_mass(scene, priors, data, result.values))
+    """
+    with run_in("float64"):
+        problem = cast_tree(_Objective(model, priors, data), "float64")
+        z = problem.init(cast_tree(values, "float64"))
+        paths = problem.paths
+        shapes = [np.shape(z[p]) for p in paths]
+        sizes = [int(np.size(z[p])) for p in paths]
+        flat = np.concatenate([np.ravel(z[p]) for p in paths])
+
+        def residuals(x):
+            pieces = np.split(x, onp.cumsum(sizes)[:-1])
+            return problem.residuals(
+                {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+            )
+
+        n_residuals = int(np.size(residuals(flat)))
+        mode = jax.jacrev if n_residuals < flat.size else jax.jacfwd
+        jac = onp.asarray(mode(residuals)(flat), dtype=float)
+    try:
+        onp.linalg.cholesky(jac.T @ jac)
+    except onp.linalg.LinAlgError:
+        raise ValueError(
+            "The Gauss–Newton curvature is singular: a parameter in priors "
+            "is constrained by neither the data nor a Normal prior."
+        ) from None
+    covariance = onp.linalg.inv(jac.T @ jac)
+    return {
+        "inverse_mass_matrix": {paths: covariance},
+        "dense_mass": [paths],
+        "adapt_mass_matrix": False,
+    }
 
 
 def _has_residuals(problem, z):
