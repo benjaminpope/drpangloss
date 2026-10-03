@@ -261,6 +261,8 @@ def _recover_hmc(
     oidata: OIData,
     seed: int = 2026,
     init: dict[str, float] | None = None,
+    num_warmup: int = 800,
+    num_samples: int = 2000,
 ) -> tuple[dict[str, float], dict[str, float]]:
     params = ["dra", "ddec", "flux"]
 
@@ -290,8 +292,8 @@ def _recover_hmc(
     kernel = NUTS(model_hmc, init_strategy=init_to_value(values=init_values))
     mcmc = MCMC(
         kernel,
-        num_warmup=800,
-        num_samples=2000,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
         num_chains=1,
         progress_bar=False,
     )
@@ -317,6 +319,8 @@ def _recover_hmc_fisher(
     oidata: OIData,
     init: dict[str, float],
     seed: int = 2027,
+    num_warmup: int = 800,
+    num_samples: int = 2000,
 ) -> tuple[dict[str, float], dict[str, float]]:
     params = ["dra", "ddec", "flux"]
 
@@ -367,8 +371,8 @@ def _recover_hmc_fisher(
     kernel = NUTS(model_hmc)
     mcmc = MCMC(
         kernel,
-        num_warmup=800,
-        num_samples=2000,
+        num_warmup=num_warmup,
+        num_samples=num_samples,
         num_chains=1,
         progress_bar=False,
     )
@@ -390,8 +394,12 @@ def _recover_hmc_fisher(
 
 def run_synthetic_binary_demo(
     output_path: str | Path = "docs/generated/synthetic_binary.oifits",
+    num_warmup: int = 800,
+    num_samples: int = 2000,
 ) -> RecoverySummary:
     """Generate synthetic OIFITS data and run grid/HMC recovery checks.
+
+    ``num_warmup`` and ``num_samples`` set the length of both HMC runs.
 
     The generated file stores OIFITS phase channels in degrees while
     ``OIData`` normalizes loaded phases to internal radians.
@@ -406,8 +414,11 @@ def run_synthetic_binary_demo(
     oidata = OIData(output_path)
 
     grid_est = _recover_grid(oidata)
-    hmc_median, hmc_std = _recover_hmc(oidata, init=grid_est)
-    fisher_hmc_median, fisher_hmc_std = _recover_hmc_fisher(oidata, grid_est)
+    chain = {"num_warmup": num_warmup, "num_samples": num_samples}
+    hmc_median, hmc_std = _recover_hmc(oidata, init=grid_est, **chain)
+    fisher_hmc_median, fisher_hmc_std = _recover_hmc_fisher(
+        oidata, grid_est, **chain
+    )
 
     return RecoverySummary(
         truth=truth,
