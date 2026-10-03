@@ -12,7 +12,7 @@ rows with |D/sigma| > 0.5 are flagged with `*`.
 
 ## upsUMa (HD_84999)
 
-Not re-fitted here: the comparison covers υ Tau and ε Cep, which reproduce Shashank's posteriors (the λ Boo and υ UMa runs use the same scripts).
+Not re-fitted for this comparison (no `upsUMa_summary.json` in the output directory).
 
 ## epsCep (HD_211336)
 
@@ -28,7 +28,7 @@ Not re-fitted here: the comparison covers υ Tau and ε Cep, which reproduce Sha
 
 ## lamBoo (HD_125162)
 
-Not re-fitted here: the comparison covers υ Tau and ε Cep, which reproduce Shashank's posteriors (the λ Boo and υ UMa runs use the same scripts).
+Not re-fitted for this comparison (no `lamBoo_summary.json` in the output directory).
 
 ## upsTau (HD_28024)
 

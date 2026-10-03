@@ -11,17 +11,17 @@ import warnings
 import equinox as eqx
 import jax
 import jax.numpy as np
+import numpy as onp
 from jax.flatten_util import ravel_pytree
 
 from ._precision import cast_tree, run_in
 from ._utils import concrete as _concrete
 from .likelihood import loglike
+from .models import SourceModel
 
 
 def _warn_if_not_positive_definite(matrix, what):
     """Warn if a concrete symmetric ``matrix`` has non-positive eigenvalues."""
-    import numpy as onp
-
     value = _concrete(matrix)
     if value is None or not onp.all(onp.isfinite(value)):
         return
@@ -167,19 +167,54 @@ def fisher_projection(fmat, eps=1e-12):
 # per call for a binary); a jitted closure would recompile on every call.
 
 
+def _leaf_shapes(params, model):
+    """Static shapes of the template leaves at ``params``, or ``None``.
+
+    ``None`` means every parameter is a scalar (or ``model`` is a callable
+    with no template), so ``values`` is used as given and the compiled
+    scalar-only path is unchanged.
+    """
+    if not isinstance(model, SourceModel):
+        return None
+    shapes = tuple(tuple(onp.shape(model.get(p))) for p in params)
+    return None if all(s == () for s in shapes) else shapes
+
+
+def _split(values, shapes):
+    """Cut a flat ``values`` into one array per path (``shapes`` not None)."""
+    sizes = [int(onp.prod(shape, dtype=int)) for shape in shapes]
+    if sum(sizes) != values.shape[0]:
+        raise ValueError(
+            f"values has {values.shape[0]} entries but the parameter paths "
+            f"take {sum(sizes)} (the total size of their template leaves)."
+        )
+    out, start = [], 0
+    for shape, size in zip(shapes, sizes):
+        out.append(values[start : start + size].reshape(shape))
+        start += size
+    return out
+
+
+def _unpack(values, shapes):
+    return values if shapes is None else _split(values, shapes)
+
+
 @eqx.filter_jit
-def _neg_loglike_hessian(values, params, data_obj, model):
+def _neg_loglike_hessian(values, params, data_obj, model, shapes=None):
     return hessian_matrix(
-        lambda x: -loglike(x, params, data_obj, model), values
+        lambda x: -loglike(_unpack(x, shapes), params, data_obj, model),
+        values,
     )
 
 
 @eqx.filter_jit
-def _neg_loglike_curvature(values, idx, params, data_obj, model):
+def _neg_loglike_curvature(values, idx, params, data_obj, model, shapes=None):
     """``d² -log L / d values[idx]²``, the others held fixed."""
 
     def objective(x):
-        return -loglike(values.at[idx].set(x), params, data_obj, model)
+        return -loglike(
+            _unpack(values.at[idx].set(x), shapes), params, data_obj, model
+        )
 
     return jax.grad(jax.grad(objective))(values[idx])
 
@@ -192,11 +227,14 @@ def _hessian_then(finish, values, params, data_obj, model, dtype):
     to JAX's precision outside it (float32, unless x64 is enabled).
     """
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
+    shapes = _leaf_shapes(params, model)
     with run_in(dtype):
         values, data_obj, model = cast_tree(
             (np.asarray(values, dtype=float), data_obj, model), dtype
         )
-        hess = _neg_loglike_hessian(values, tuple(params), data_obj, model)
+        hess = _neg_loglike_hessian(
+            values, tuple(params), data_obj, model, shapes
+        )
         result = finish(hess)
     return cast_tree(result, ambient)
 
@@ -207,16 +245,25 @@ def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
 
     Computes the inverse of the Hessian of the negative log-likelihood with
     respect to all parameters in ``params`` simultaneously, returning an
-    ``N x N`` covariance matrix (where ``N = len(params)``).
+    ``N x N`` covariance matrix.
 
-    This returns the *full* covariance matrix over all ``N`` parameters. For
+    A path in ``params`` may be array-valued (e.g. ``"rim.az_amps"``). Then
+    ``values`` is the flat concatenation of every path's elements, in the
+    order of ``params`` (each array flattened C-order), and ``N`` is the
+    total number of elements (``N = len(params)`` when all are scalars). The
+    covariance is over those flattened elements. Array paths need a
+    [`SourceModel`][virgil.models.SourceModel] template, whose leaves give
+    the sizes; a callable ``model`` takes scalar parameters only.
+
+    This returns the *full* covariance matrix over all ``N`` elements. For
     the uncertainty of one parameter with the others held fixed (e.g. the
     flux at a fixed position), use :func:`laplace_parameter_uncertainty`.
 
     Parameters
     ----------
     values : array-like
-        Values of the model parameters.
+        1D flat parameter vector: the elements of each path in ``params``,
+        concatenated in order.
     params : list
         List of parameter names.
     data_obj : OIData
@@ -233,7 +280,7 @@ def laplace_cov(values, params, data_obj, model, *, dtype="float64"):
     Returns
     -------
     array-like
-        ``N x N`` covariance matrix, where ``N = len(params)``.
+        ``N x N`` covariance matrix over the flattened parameter elements.
     """
     return _hessian_then(
         lambda hess: regularized_inverse(hess, ridge=1e-10),
@@ -253,15 +300,18 @@ def laplace_parameter_uncertainty(
     Parameters
     ----------
     values : array-like
-        Parameter values at which to evaluate the curvature.
+        Flat parameter vector at which to evaluate the curvature (the
+        elements of every path in ``params``, concatenated in order, as for
+        [`laplace_cov`][virgil.inference.laplace_cov]).
     params : list[str]
-        Parameter names corresponding to ``values``.
+        Parameter paths corresponding to ``values``.
     data_obj : OIData
         Data to fit.
     model : SourceModel or callable
         Template model or class, as for [`loglike`][virgil.likelihood.loglike].
     target_param : str
-        The parameter whose uncertainty is returned.
+        The scalar parameter whose uncertainty is returned (a path whose
+        template leaf has more than one element is rejected).
 
     Returns
     -------
@@ -275,11 +325,22 @@ def laplace_parameter_uncertainty(
         raise ValueError(
             f"target_param '{target_param}' is not present in params={params}."
         )
-    idx = params.index(target_param)
+    shapes = _leaf_shapes(params, model)
+    if shapes is None:
+        idx = params.index(target_param)
+    else:
+        sizes = [int(onp.prod(sh, dtype=int)) for sh in shapes]
+        k = params.index(target_param)
+        if sizes[k] != 1:
+            raise ValueError(
+                f"target_param '{target_param}' has {sizes[k]} elements; "
+                "it must be a single scalar parameter."
+            )
+        idx = sum(sizes[:k])
     values = np.asarray(values, dtype=float)
 
     d2_axis = _neg_loglike_curvature(
-        values, idx, tuple(params), data_obj, model
+        values, idx, tuple(params), data_obj, model, shapes
     )
     return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
 
@@ -292,9 +353,11 @@ def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
     Parameters
     ----------
     values : array-like
-        Parameter vector at which to evaluate the local curvature.
+        Flat parameter vector at which to evaluate the local curvature (the
+        elements of every path in ``params``, concatenated in order, as for
+        [`laplace_cov`][virgil.inference.laplace_cov]).
     params : list[str]
-        Parameter names corresponding to ``values``.
+        Parameter paths corresponding to ``values``.
     data_obj : OIData
         Observational data object.
     model : SourceModel or callable
@@ -309,7 +372,8 @@ def fisher(values, params, data_obj, model, ridge=0.0, *, dtype="float64"):
     Returns
     -------
     array-like
-        Observed information matrix, ``N x N`` for ``N = len(params)``.
+        Observed information matrix, ``N x N`` for ``N`` the total number
+        of parameter elements.
     """
 
     def add_ridge(information):

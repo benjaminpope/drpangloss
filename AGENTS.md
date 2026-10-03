@@ -53,6 +53,19 @@ Before committing:
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
 them, so lint before you push.
 
+## Independent validation
+
+Tests in this repository were largely written by AI agents and mostly compare
+virgil with itself. Independent checks live in
+[virgil-validation](https://github.com/benjaminpope/virgil-validation), which
+simulates data with its own first-principles code and dLux and must not import
+or copy virgil. When you change a model's conventions, its Fourier transform or
+the OIFITS reader, run that suite against your branch. If someone wants a
+validation that is not covered there, ask them to open an Issue on
+virgil-validation (https://github.com/benjaminpope/virgil-validation/issues)
+detailing the request: the model or function, the independent result it should
+match, and the precision expected.
+
 ## Conventions
 
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`

@@ -53,7 +53,8 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
 
 AMIGO DISCO data are sampled on a regular uv lattice; `OIData.uv_grid`
 records it, so that a matching `Image` can use an exact matrix Fourier
-transform.
+transform. Other data get `uv_grid=None`, even on a lattice; set it with
+`find_uv_grid` (see `OIData`) to use the fast transform for them.
 
 ::: virgil.oidata.UVGrid
     options:

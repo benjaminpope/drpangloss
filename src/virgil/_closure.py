@@ -80,9 +80,11 @@ class ClosureNoise(eqx.Module):
     """Correlated closure-phase noise from equal noise on every baseline.
 
     The arrays are NumPy, built once and reused in either x64 mode. JAX
-    caches the converted copy of a NumPy array by identity, whatever the
-    mode it was made in (JAX 0.10), so the indices are int32, which is the
-    same in both modes, and the floats are cast to the data's dtype at use.
+    (0.10 and later) caches the converted copy of a NumPy array by identity,
+    whatever the mode it was made in, so a float32 fit followed by a float64
+    one could be handed int indices of the wrong width. The indices are
+    therefore int32, which is the same in both modes, and the floats are
+    cast to the data's dtype at use.
     """
 
     groups: onp.ndarray  # (n_group, m) closure-phase indices, padded with 0

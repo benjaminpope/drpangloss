@@ -444,11 +444,21 @@ class GaussianArc(Component):
     elliptical Gaussian with FWHMs ``hypot(length, width)`` along the arc
     and ``width`` across it.
 
+    The weight is a Gaussian in the arc length ``s`` from ``pa``, taken
+    once round the circle, ``-π radius <= s <= π radius``: it is cut off
+    at the antipode of ``pa``, where the two tails meet, and never wraps
+    round the circle more than once. The quadrature covers ``±6σ`` (the
+    part beyond, a fraction 2e-9 of the flux, is dropped), or the whole
+    circle once ``6σ >= π radius``, i.e. ``length >= 0.39 π radius``.
+    The cut at the antipode matters only for longer arcs: at ``length =
+    π radius`` it removes 2 % of the Gaussian, and as ``length`` grows
+    the brightness tends to a uniform ring.
+
     The visibility is the Fourier transform of the curve, a line integral
     evaluated by the trapezoidal rule on ``nodes`` equally spaced points
-    spanning ±3.5σ of the weight, times the Gaussian's. It is accurate
-    while the spacing of the points, ``7 σ / (nodes - 1)``, is below half
-    the shortest fringe spacing, ``λ / 2 B_max``.
+    spanning ``±min(6σ, π radius)``, times the Gaussian's. It is accurate
+    while the spacing of the points, ``2 min(6σ, π radius) / (nodes -
+    1)``, is below half the shortest fringe spacing, ``λ / 2 B_max``.
 
     Parameters
     ----------
@@ -528,7 +538,11 @@ class GaussianArc(Component):
         """Points along the arc (mas, East and North of the centre) and
         their normalised trapezoidal-rule weights."""
         sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-        s = np.linspace(-3.5, 3.5, self.nodes) * sigma
+        # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
+        # arc is longer: then both ends sit at the antipode of pa, and their
+        # half weights add to one full trapezoidal weight.
+        span = np.minimum(6.0 * sigma, np.pi * self.radius)
+        s = np.linspace(-1.0, 1.0, self.nodes) * span
         angle = self.pa * dtor + s / self.radius
         # Trapezoidal rule: the end points carry half weight.
         ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
@@ -895,15 +909,18 @@ def _modulation_array(values, name):
 
 class ModulatedGaussianRim(Component):
     r"""
-    Azimuthally modulated, infinitely thin rim convolved with an isotropic 2D
-    Gaussian, optionally inclined and rotated.
+    Azimuthally modulated, infinitely thin rim convolved with a 2D Gaussian
+    that is isotropic in the plane of the rim, optionally inclined and
+    rotated.
 
     Parameters
     ----------
     diam : float or array-like
         Diameter of the rim in milliarcseconds.
     fwhm : float or array-like
-        Gaussian FWHM of the rim in milliarcseconds.
+        Gaussian FWHM of the rim in milliarcseconds, measured in the plane of
+        the rim. On the sky this is the FWHM along the projected major axis;
+        along the minor axis it is ``fwhm * cos(inc)``.
     inc : float or array-like
         Apparent inclination of the rim in degrees.
     pa : float or array-like
@@ -919,8 +936,10 @@ class ModulatedGaussianRim(Component):
         amplitudes can also be valid. Concrete values are checked when the
         model is built.
     az_pas : float or array-like, optional
-        Position angles of the cosine azimuthal modulations in degrees, North
-        to East, one per entry of ``az_amps``.
+        Azimuths of the cosine azimuthal modulations in degrees, one per entry
+        of ``az_amps``, measured in the plane of the rim in the same sense
+        as position angle, with ``pa`` on the major axis (see Notes). For an
+        inclined rim these are not on-sky position angles.
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a [`System`][virgil.models.System],
         or a spectrum from [`virgil.spectra`][virgil.spectra]
@@ -934,11 +953,26 @@ class ModulatedGaussianRim(Component):
 
     Notes
     -----
-    The intensity profile is separable into a symmetric radial profile and cosine
-    azimuthal modulations, meaning the image intensity can be described in polar image
-    coordinates as $I(r, \theta) = f(r) \left( 1 + \sum_{m=1}^{n}
-    A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
-    profile convolved with an isotropic Gaussian.
+    The rim is defined in its own plane and then inclined. In polar
+    coordinates $(r, \phi)$ in the plane of the rim, the thin ring is
+    $\delta(r - \mathrm{diam}/2) \left( 1 + \sum_{m=1}^{n}
+    A_m \cos{(m(\phi - \mathrm{pa}_m))} \right)$, convolved with an
+    isotropic Gaussian of FWHM ``fwhm`` in that same plane. The in-plane
+    azimuth $\phi$ is counted in the same sense as position angle, with
+    $\phi = \mathrm{pa}$ along the major axis. This face-on image is then
+    compressed by $\cos(\mathrm{inc})$ along the minor axis, so on the sky
+    the blur is an elliptical Gaussian with FWHM ``fwhm`` along the major
+    axis and ``fwhm * cos(inc)`` along the minor axis. An unmodulated rim
+    therefore has the same peak brightness all the way round, without
+    bright ansae at the ends of the major axis.
+
+    So ``az_pas`` are in-plane (deprojected) angles, not on-sky position
+    angles. A point at in-plane azimuth $\phi$ appears at the on-sky
+    position angle $\theta$ with $\tan(\theta - \mathrm{pa}) =
+    \cos(\mathrm{inc}) \tan(\phi - \mathrm{pa})$, in the same quadrant.
+    The two agree for a face-on rim (``inc = 0``) and along the major and
+    minor axes. Otherwise a peak at ``az_pas`` appears on the sky at a
+    position angle closer to the major axis.
 
     This model is achromatic: it does not represent any spectral dependence.
     The rim contains no star; put it in a [`System`][virgil.models.System] with a
@@ -1035,7 +1069,20 @@ class ModulatedGaussianRim(Component):
         sigma_mas = np.maximum(
             self.fwhm / (2.0 * np.sqrt(2.0 * np.log(2.0))), 1e-9
         )
-        psf = np.exp(-0.5 * (kx**2 + ky**2) / sigma_mas**2)
+        # Gaussian kernel that is isotropic in the rim plane: on the sky it
+        # has sigma_mas along the major axis and sigma_mas * stretch along
+        # the minor axis. The stretch is floored so that the sky-plane
+        # minor-axis sigma stays at least half a pixel, or sigma_mas if that
+        # is smaller (a near edge-on kernel then cannot fall between pixel
+        # centres), and capped at 1 so that a face-on rim keeps its
+        # isotropic sky kernel.
+        psf_stretch = np.minimum(
+            np.maximum(stretch, 0.5 * pixel_scale_mas / sigma_mas), 1.0
+        )
+        kx_ell, ky_ell = undo_elliptical_transf_coord(
+            kx, ky, self.pa, psf_stretch
+        )
+        psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
         return fftconvolve(ring, psf, mode="same")
 
 
@@ -2242,7 +2289,8 @@ def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
     as the convolution kernel of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. Not offered as a public
     function: this is a plain Gaussian envelope
-    with no point-source/companion mixture.
+    with no point-source/companion mixture. The rim evaluates it on deprojected
+    spatial frequencies, so the kernel is isotropic in the rim plane.
     """
     fwhm_rad = fwhm * mas2rad
     base_norm = np.hypot(u, v)
@@ -2253,7 +2301,7 @@ def _cvis_gaussian_envelope(u, v, fwhm):
 
 
 def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
-    """Unit-flux visibility of a Gaussian-blurred, inclined, modulated thin ring at the origin."""
+    """Unit-flux visibility of an inclined, modulated thin ring at the origin, blurred by a Gaussian that is isotropic in the rim plane."""
     # Transform spatial frequency coordinates to the frame of reference where the
     # model rim is uninclined and the major axis is pointed North.
     stretch_factor = np.maximum(np.cos(inc * dtor), 1e-8)
@@ -2263,5 +2311,7 @@ def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
         ut, vt, diam / 2.0, az_amps, az_phis
     )
 
-    # Image-plane Gaussian blur, evaluated in the original (untransformed) frame.
-    return cvis * _cvis_gaussian_envelope(u, v, fwhm)
+    # Gaussian blur that is isotropic in the rim plane, so it is evaluated in
+    # the same (deprojected) frame as the ring; on the sky it is an elliptical
+    # Gaussian that is narrower along the minor axis.
+    return cvis * _cvis_gaussian_envelope(ut, vt, fwhm)

@@ -46,11 +46,16 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``phi_index`` for absolute phases) then lists the samples that are
     observed; they are ``None`` when every sample is used.
 
-    ``uv_grid`` is a [`UVGrid`][virgil.oidata.UVGrid] when the samples
-    lie on a regular (possibly rotated) lattice, as AMIGO DISCO products do,
-    and ``None`` otherwise. Models that can use the lattice, such as an
-    [`Image`][virgil.models.Image] with matching ``rotation_deg``, then
-    evaluate faster; the results are the same.
+    ``uv_grid`` is a [`UVGrid`][virgil.oidata.UVGrid] for AMIGO DISCO
+    products, whose samples lie on a regular (possibly rotated) lattice,
+    and ``None`` for all other data, even if their samples happen to lie
+    on a lattice: virgil does not search ordinary data for one. Models
+    that can use the lattice, such as an [`Image`][virgil.models.Image]
+    with matching ``rotation_deg``, then evaluate faster; the results are
+    the same. To use it for other lattice-sampled data, set it with
+    [`find_uv_grid`][virgil.oidata.find_uv_grid], e.g.
+    ``eqx.tree_at(lambda d: d.uv_grid, data, find_uv_grid(data.u, data.v),
+    is_leaf=lambda x: x is None)``.
     """
 
     u: jax.Array
