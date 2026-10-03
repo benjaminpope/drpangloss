@@ -133,3 +133,26 @@ Keep `mkdocs.yml` as the shared configuration until migration cutover is complet
 ## Contributing the Changes
 
 After these steps have been completed, you can commit your changes and push them to your forked repository. These changes should have its formatting and linting checked by the pre-commit hooks. If there are any issues, you will need to fix them before you can commit your changes. Once you have pushed your changes to your forked repository, you can submit a pull request to the main repository. This will allow the maintainers to review your changes and merge them into the main repository!
+
+---
+
+## Releasing
+
+Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.github/workflows/publish.yml`, which uses PyPI trusted publishing. No tokens are involved.
+
+**One-time setup** (maintainer):
+1. On pypi.org, under *Your account → Publishing*, add a pending trusted publisher with these settings:
+   - PyPI project name `virgil-astro`;
+   - owner `benjaminpope`;
+   - repository `virgil`;
+   - workflow `publish.yml`;
+   - environment `pypi`.
+2. On GitHub, under *Settings → Environments*, create the environment `pypi`. Adding yourself as a required reviewer makes every upload wait for your approval.
+
+**Each release:**
+1. Bump `version` in `pyproject.toml`, run `uv lock`, and merge to `main` with CI green.
+2. Check the build locally:
+   ```bash
+   uv build && uvx twine check --strict dist/*
+   ```
+3. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on `main`, write the notes, and publish it. The workflow checks that the tag matches the version, builds and checks the distributions, and uploads them.

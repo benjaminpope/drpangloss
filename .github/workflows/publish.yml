@@ -1,0 +1,58 @@
+# Publish virgil-astro to PyPI when a GitHub release is published.
+#
+# Uses PyPI trusted publishing (OIDC): no API tokens are stored anywhere.
+# One-time setup, on pypi.org: add a (pending) trusted publisher for the
+# project `virgil-astro` with owner `benjaminpope`, repository `virgil`,
+# workflow `publish.yml` and environment `pypi`. On GitHub, create the
+# environment `pypi` (Settings -> Environments), optionally requiring a
+# reviewer. See CONTRIBUTING.md, "Releasing".
+
+name: publish to PyPI
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      # The release tag must match the package version (tag v0.2.0 for
+      # version 0.2.0), so that what is published is what was tagged.
+      - name: check the tag against the version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "Release tag ${GITHUB_REF_NAME} does not match pyproject version ${version}."
+            exit 1
+          fi
+
+      - name: build the wheel and sdist
+        run: uv build
+
+      - name: check the distributions
+        run: uvx twine check --strict dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/virgil-astro
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
