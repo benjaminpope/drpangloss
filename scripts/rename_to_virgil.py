@@ -282,7 +282,11 @@ def migrate_branch() -> None:
         text=True,
     )
     if r.returncode:
-        sys.exit(f"STOP: still mentions drpangloss:\n{r.stdout}")
+        sys.exit(
+            f"STOP: the final --check failed (exit {r.returncode}); either the "
+            f"branch still mentions the old name or the check itself errored:\n"
+            f"{r.stdout}{r.stderr}"
+        )
     print(
         "done. Next: reinstall, run ruff and pytest, then push "
         "(plain `git push`, never --force)."
