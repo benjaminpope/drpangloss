@@ -93,6 +93,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
+| `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
 
