@@ -3,9 +3,9 @@
 
 Long-baseline interferometers resolve the nearest giant stars well enough to map spots on their surfaces: CHARA/MIRC imaged the starspots of the RS CVn giant ζ Andromedae over a full rotation ([Roettenbacher et al. 2016](https://doi.org/10.1038/nature17444)). A natural model for such a star expands its surface brightness in spherical harmonics, as [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (after *starry*) does for light curves. [harmonix](https://github.com/shashankdholakia/harmonix) ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) gives the interferometric visibilities of such a map analytically, including limb darkening and rotation, and differentiably in JAX.
 
-`drpangloss` wraps a harmonix star in `HarmonixModel`, so that it works like any other source model: it simulates data, draws images on the sky, and is fitted through parameter paths. This tutorial builds a spotted, ζ And-like giant, draws it, looks at its visibilities, simulates three nights of CHARA-like data as it rotates, and fits the spot back.
+`virgil` wraps a harmonix star in `HarmonixModel`, so that it works like any other source model: it simulates data, draws images on the sky, and is fitted through parameter paths. This tutorial builds a spotted, ζ And-like giant, draws it, looks at its visibilities, simulates three nights of CHARA-like data as it rotates, and fits the spot back.
 
-harmonix and jaxoplanet are not dependencies of drpangloss. This page needs harmonix 0.1.0 or later, which runs on current JAX (jaxoplanet comes with it):
+harmonix and jaxoplanet are not dependencies of virgil. This page needs harmonix 0.1.0 or later, which runs on current JAX (jaxoplanet comes with it):
 
 ```bash
 pip install "harmonix>=0.1.0"
@@ -37,11 +37,11 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.coverage import vlti_oidata
-from drpangloss.fitting import fit
-from drpangloss.likelihood import whitened_residuals
-from drpangloss.models import HarmonixModel
-from drpangloss.plotting import plot_model
+from virgil.coverage import vlti_oidata
+from virgil.fitting import fit
+from virgil.likelihood import whitened_residuals
+from virgil.models import HarmonixModel
+from virgil.plotting import plot_model
 
 # Importing harmonix turns on float64, which its solutions need.
 print("float64:", jax.config.jax_enable_x64)
@@ -55,7 +55,7 @@ float64: True
 
 A jaxoplanet `Surface` holds the spherical-harmonic map (`y`), the orientation of the rotation axis (inclination `inc` from the line of sight, obliquity `obl` on the sky), the rotation `period` and polynomial limb-darkening coefficients `u`. `ylm_spot(ydeg)` expands a circular spot to degree `ydeg`: its arguments are the spot's contrast (1 for a black centre), its angular radius, and its latitude and longitude, all in radians.
 
-`Harmonix(surface, radius)` adds the angular radius in milliarcseconds, and `HarmonixModel` makes it a drpangloss model observed at `observation_time` (in the same units as the period).
+`Harmonix(surface, radius)` adds the angular radius in milliarcseconds, and `HarmonixModel` makes it a virgil model observed at `observation_time` (in the same units as the period).
 
 Our star is ζ And-like: a limb-darkened diameter of 2.54 mas, an inclination of 70°, and a rotation period of 17.8 days, with one large spot. Degree 8 resolves a spot of this size; higher degrees give sharper spots but slower fits.
 
@@ -83,7 +83,7 @@ model = HarmonixModel(star, observation_time=0.0)
 
 ## Drawing the star
 
-jaxoplanet's `show_surface` draws the map as a globe with a latitude–longitude graticule. It puts the surface's $x$ axis to the right, but harmonix's visibilities treat $x$ as East, so on the sky the globe appears mirrored; flipping the horizontal axis puts East to the left, the usual orientation. `HarmonixModel.render` (and so `plot_model`) draws the star on the sky directly, at its angular size, East left and North up, like every drpangloss model.
+jaxoplanet's `show_surface` draws the map as a globe with a latitude–longitude graticule. It puts the surface's $x$ axis to the right, but harmonix's visibilities treat $x$ as East, so on the sky the globe appears mirrored; flipping the horizontal axis puts East to the left, the usual orientation. `HarmonixModel.render` (and so `plot_model`) draws the star on the sky directly, at its angular size, East left and North up, like every virgil model.
 
 Over one rotation, the spot crosses the disk and disappears over the limb.
 

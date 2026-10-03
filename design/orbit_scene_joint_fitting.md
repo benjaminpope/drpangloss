@@ -1,8 +1,8 @@
-# Keplerian orbits in drpangloss: alone, and jointly with the scene
+# Keplerian orbits in virgil: alone, and jointly with the scene
 
-Status: **design**, 2026-10-03. Orbits are to be built in drpangloss, with the Kepler solver and orbital geometry from [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0) as an optional dependency. No orbit code exists yet.
+Status: **design**, 2026-10-03. Orbits are to be built in virgil, with the Kepler solver and orbital geometry from [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0) as an optional dependency. No orbit code exists yet.
 
-This note is the design of Stage 6a.1, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument drpangloss reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
+This note is the design of Stage 6a.1, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument virgil reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
 
 The colliding-wind binary Apep (VLTI/GRAVITY, 2023–25) is a worked example. It exposed most of the requirements below. Its science and Apep-specific scripts live with the analysis, in `~/data/apep_gravity` (`notes/lessons_for_drpangloss.md`, `notes/omega_convention_question.md`, `scripts/attached_cone_sketch.py`).
 
@@ -25,7 +25,7 @@ The colliding-wind binary Apep (VLTI/GRAVITY, 2023–25) is a worked example. It
 
 ## 2. Conventions
 
-### 2.1 Definitions (drpangloss; decided 2026-10-03)
+### 2.1 Definitions (virgil; decided 2026-10-03)
 All quantities below are verified numerically against jaxoplanet, as §5.2's tests 1–6 will check.
 
 | Quantity | Definition |
@@ -47,7 +47,7 @@ All quantities below are verified numerically against jaxoplanet, as §5.2's tes
 ### 2.2 Mapping to jaxoplanet
 jaxoplanet's `OrbitalBody.relative_position(t)` returns (X, Y, Z) with X North, Y East and Z **toward** the observer.
 
-| drpangloss | jaxoplanet |
+| virgil | jaxoplanet |
 |---|---|
 | (dra, ddec, dz) | (Y, X, −Z) × a_mas / `semimajor` |
 | `omega` (secondary) | `omega_peri` + 180° (jaxoplanet's ω is the primary's, the radial-velocity convention: with ω = 0 the relative periastron lies at the descending node) |
@@ -86,11 +86,11 @@ Two real cases from Apep show what goes wrong.
 - External elements enter as priors only after their convention is pinned. Until then, use an axial (mod 180°) prior (R5).
 - Every instrument path needs a position-angle round-trip test (§5.3).
 
-## 3. Engine: jaxoplanet, under a drpangloss orbit module
+## 3. Engine: jaxoplanet, under a virgil orbit module
 - **Use** `jaxoplanet.orbits.keplerian.Body` / `OrbitalBody` for positions, velocities and radial velocities. That way the Kepler solver (with its custom derivatives) and the radial-velocity sign live in one tested place.
-- **Do not expose** jaxoplanet objects as fitted parameters. A drpangloss `KeplerOrbit` (an equinox/zodiax module) holds the §2.1 parameters, and builds a jaxoplanet `OrbitalBody` inside each call. This keeps the parameter paths ours (`"orbit.omega"`), confines the ω offset to one function, and insulates us from 0.x API changes.
-- **Where it lives.** A new `src/drpangloss/orbits.py`, imported by `models` (where `Attached` goes, per `AGENTS.md`). The import order becomes `_utils` → `orbits` → `models`.
-- **Dependency (decided).** jaxoplanet is **optional**: the extra `drpangloss[orbits]`, imported lazily inside `orbits.py`, with an error naming the extra if it is missing. It needs only `jax` and `equinox`. Tests that use it skip when it is absent, and CI installs the extra.
+- **Do not expose** jaxoplanet objects as fitted parameters. A virgil `KeplerOrbit` (an equinox/zodiax module) holds the §2.1 parameters, and builds a jaxoplanet `OrbitalBody` inside each call. This keeps the parameter paths ours (`"orbit.omega"`), confines the ω offset to one function, and insulates us from 0.x API changes.
+- **Where it lives.** A new `src/virgil/orbits.py`, imported by `models` (where `Attached` goes, per `AGENTS.md`). The import order becomes `_utils` → `orbits` → `models`.
+- **Dependency (decided).** jaxoplanet is **optional**: the extra `virgil-astro[orbits]`, imported lazily inside `orbits.py`, with an error naming the extra if it is missing. It needs only `jax` and `equinox`. Tests that use it skip when it is absent, and CI installs the extra.
 
 ## 4. Requirements and proposed interfaces
 
@@ -228,12 +228,12 @@ fake = simulate(scene, template, errors="template", key=key,
 ### 5.3 OIFITS closure-phase signs: round trips to catch 180° flips
 Closure-phase sign conventions (OI_T3 baseline order, the instrument's conjugation, the sign of u and v) and the choice of "brighter" star each flip a binary by 180°.
 1. **Synthetic.** A binary with unequal fluxes, so that a flip is visible, is simulated on long-baseline, masking and AMI coverage. It is then written through each available writer:
-   - drpangloss `write_oifits`;
+   - virgil `write_oifits`;
    - AMICAL's OIFITS writer, when AMICAL is installed (skip otherwise);
    - a GRAVITY-layout file. For this, the column layout and `STA_INDEX` ordering of a real GRAVITY product are copied, and its data replaced.
 
    Each file is read with `read_oifits`, refitted, and checked: PA within 1° of the truth (not 180° off), and the flux ratio below 1.
-2. **Real anchors, one per instrument path:** a binary with a well-known orbit observed with GRAVITY, and one with NACO/SPHERE masking (reduced by AMICAL). Each is fitted with drpangloss and its PA compared with the orbit's prediction. Only a real anchor tests the *pipeline's* convention, as opposed to our writer's. **The targets are not chosen yet; see the reminder in §7.**
+2. **Real anchors, one per instrument path:** a binary with a well-known orbit observed with GRAVITY, and one with NACO/SPHERE masking (reduced by AMICAL). Each is fitted with virgil and its PA compared with the orbit's prediction. Only a real anchor tests the *pipeline's* convention, as opposed to our writer's. **The targets are not chosen yet; see the reminder in §7.**
 3. **The OIFITS v2 sign convention.** Check `read_oifits`'s phase sign against the OIFITS v2 standard (Duvert et al. 2017) explicitly, once, in a docstring and a test.
 
 ### 5.4 End to end
@@ -264,8 +264,8 @@ Closure-phase sign conventions (OI_T3 baseline order, the instrument's conjugati
 ## 7. Decisions and open questions
 
 ### Decided (Ben, 2026-10-03)
-1. **Orbits are built in drpangloss,** not in a separate package or by another contributor.
-2. **jaxoplanet is an optional dependency** (`drpangloss[orbits]`; §3). No orbitize! or orvara: neither as converters nor as dependencies.
+1. **Orbits are built in virgil,** not in a separate package or by another contributor.
+2. **jaxoplanet is an optional dependency** (`virgil-astro[orbits]`; §3). No orbitize! or orvara: neither as converters nor as dependencies.
 3. **The user-facing conventions are those of §2.1:**
    - ω is the secondary's;
    - Ω is the PA of the receding node;

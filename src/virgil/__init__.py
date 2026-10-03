@@ -1,31 +1,31 @@
-"""drpangloss: the best of all possible interferometry models.
+"""virgil: the best of all possible interferometry models.
 
 The everyday names are available at the top level::
 
-    from drpangloss import OIData, System, PointSource, likelihood_grid
+    from virgil import OIData, System, PointSource, likelihood_grid
 
 Modules:
 
-* [`oidata`][drpangloss.oidata] and [`oifits`][drpangloss.oifits]: data and
-  OIFITS files; [`amigo`][drpangloss.amigo]: AMIGO mixed-DISCO products.
-* [`models`][drpangloss.models]: source models and their visibilities.
-* [`likelihood`][drpangloss.likelihood]: likelihoods and numpyro models.
-* [`fitting`][drpangloss.fitting]: `fit`, maximum a posteriori fits with
+* [`oidata`][virgil.oidata] and [`oifits`][virgil.oifits]: data and
+  OIFITS files; [`amigo`][virgil.amigo]: AMIGO mixed-DISCO products.
+* [`models`][virgil.models]: source models and their visibilities.
+* [`likelihood`][virgil.likelihood]: likelihoods and numpyro models.
+* [`fitting`][virgil.fitting]: `fit`, maximum a posteriori fits with
   Levenberg–Marquardt, L-BFGS or Adam.
-* [`imaging`][drpangloss.imaging]: regularisers and helpers for image
-  reconstruction; [`scenes`][drpangloss.scenes]: synthetic truth images;
-  [`coverage`][drpangloss.coverage]: synthetic coverage and noise.
-* [`inference`][drpangloss.inference]: Laplace and Fisher curvature.
-* [`grid_fit`][drpangloss.grid_fit]: grid searches.
-* [`limits`][drpangloss.limits]: contrast limits and flux/contrast/Δmag
+* [`imaging`][virgil.imaging]: regularisers and helpers for image
+  reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
+  [`coverage`][virgil.coverage]: synthetic coverage and noise.
+* [`inference`][virgil.inference]: Laplace and Fisher curvature.
+* [`grid_fit`][virgil.grid_fit]: grid searches.
+* [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
   conversions.
-* [`spectra`][drpangloss.spectra]: wavelength-dependent fluxes.
-* [`plotting`][drpangloss.plotting]: figures.
+* [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
+* [`plotting`][virgil.plotting]: figures.
 
-The legacy ImPlaneIA tools in ``drpangloss.legacy`` are not imported here.
+The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 """
 
-name = "drpangloss"
+name = "virgil"
 
 from . import (  # noqa: E402
     amigo,

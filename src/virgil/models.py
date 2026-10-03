@@ -1,21 +1,21 @@
 """Source models: sky-brightness distributions and their visibilities.
 
-* Components ([`PointSource`][drpangloss.models.PointSource],
-  [`GaussianDisk`][drpangloss.models.GaussianDisk],
-  [`UniformDisk`][drpangloss.models.UniformDisk],
-  [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim], and
+* Components ([`PointSource`][virgil.models.PointSource],
+  [`GaussianDisk`][virgil.models.GaussianDisk],
+  [`UniformDisk`][virgil.models.UniformDisk],
+  [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim], and
   the flared scattered-light disks such as
-  [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw]) are
+  [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]) are
   single shapes, combined with flux weights in a
-  [`System`][drpangloss.models.System].
-* [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian] and
-  [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular] are fast
+  [`System`][virgil.models.System].
+* [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian] and
+  [`BinaryModelAngular`][virgil.models.BinaryModelAngular] are fast
   forms of a primary plus a point-source companion.
 * The ``cvis_*`` functions are the analytic visibilities behind them.
 
 Every flux is relative: for a companion it is the companion/primary flux
 ratio. Likelihoods of these models are in
-[`drpangloss.likelihood`][drpangloss.likelihood].
+[`virgil.likelihood`][virgil.likelihood].
 """
 
 import dataclasses
@@ -146,20 +146,20 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     There are two kinds of source model.
 
-    * **Components** ([`Component`][drpangloss.models.Component] subclasses such as
-      [`PointSource`][drpangloss.models.PointSource]) are single shapes normalized to unit flux. Their
+    * **Components** ([`Component`][virgil.models.Component] subclasses such as
+      [`PointSource`][virgil.models.PointSource]) are single shapes normalized to unit flux. Their
       ``flux`` is a *relative weight*, which only matters once they are mixed
-      together in a [`System`][drpangloss.models.System].
-    * **Scenes** ([`System`][drpangloss.models.System], [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian],
-      [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular], [`HarmonixModel`][drpangloss.models.HarmonixModel]) describe a whole,
-      normalized sky. A scene placed inside a [`System`][drpangloss.models.System] has weight 1,
-      unless it carries its own ``flux`` weight as [`System`][drpangloss.models.System] does.
+      together in a [`System`][virgil.models.System].
+    * **Scenes** ([`System`][virgil.models.System], [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian],
+      [`BinaryModelAngular`][virgil.models.BinaryModelAngular], [`HarmonixModel`][virgil.models.HarmonixModel]) describe a whole,
+      normalized sky. A scene placed inside a [`System`][virgil.models.System] has weight 1,
+      unless it carries its own ``flux`` weight as [`System`][virgil.models.System] does.
 
     The binary models' ``flux`` is their companion/primary flux ratio, which
     is the same thing as a companion's weight in a System whose primary
     has ``flux=1``.
 
-    Subclasses implement [`model`][drpangloss.models.SourceModel.model], and ``_image`` if they can be drawn.
+    Subclasses implement [`model`][virgil.models.SourceModel.model], and ``_image`` if they can be drawn.
     """
 
     def model(self, u, v, wavel):
@@ -182,12 +182,12 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     def model_on_grid(self, u, v, wavel, grid):
         """Visibilities at samples ``u, v`` that also lie on a uv ``grid``.
 
-        [`OIData.model`][drpangloss.oidata.OIData.model] calls this when its
+        [`OIData.model`][virgil.oidata.OIData.model] calls this when its
         samples form a regular lattice (a
-        [`UVGrid`][drpangloss.oidata.UVGrid]), so that models able to use
+        [`UVGrid`][virgil.oidata.UVGrid]), so that models able to use
         the lattice, such as a matching
-        [`Image`][drpangloss.models.Image], can. By default it is
-        [`model`][drpangloss.models.SourceModel.model].
+        [`Image`][virgil.models.Image], can. By default it is
+        [`model`][virgil.models.SourceModel.model].
         """
         return self.model(u, v, wavel)
 
@@ -197,7 +197,7 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         The image is ``npix`` x ``npix`` pixels spanning ``fov_mas``
         milliarcseconds, with East to the left (column 0 is the most
         positive ``dra``) and North up (row 0 is the most positive ``ddec``).
-        Use [`drpangloss.plotting.plot_model`][drpangloss.plotting.plot_model] to display it with the
+        Use [`virgil.plotting.plot_model`][virgil.plotting.plot_model] to display it with the
         correct axes.
         """
         xx, yy = image_coordinates(npix, fov_mas)
@@ -206,12 +206,12 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
 
     def _weight(self, wavel=None):
-        """Relative flux of this model inside a [`System`][drpangloss.models.System].
+        """Relative flux of this model inside a [`System`][virgil.models.System].
 
         ``wavel`` is the wavelength in metres at which the flux is wanted
         (broadcastable against the baselines), or ``None`` for the model's
         reference flux, as used when rendering. Components and systems whose
-        ``flux`` is a spectrum (see [`drpangloss.spectra`][drpangloss.spectra])
+        ``flux`` is a spectrum (see [`virgil.spectra`][virgil.spectra])
         evaluate it here.
         """
         return 1.0
@@ -222,7 +222,7 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Unlike the checks made when a model is built, this works inside
         ``jax.jit`` and on models changed with ``set``, so likelihoods can
         reject invalid models (see ``reject_unphysical`` in
-        [`model_loglike`][drpangloss.likelihood.model_loglike]). The base
+        [`model_loglike`][virgil.likelihood.model_loglike]). The base
         class has no constraints.
         """
         return np.asarray(True)
@@ -243,11 +243,11 @@ class Component(SourceModel):
     """Base class for single shapes with ``flux``, ``dra`` and ``ddec``.
 
     A component on its own is normalized to unit flux. Inside a
-    [`System`][drpangloss.models.System], ``flux`` is its weight relative to the other components,
+    [`System`][virgil.models.System], ``flux`` is its weight relative to the other components,
     and ``dra``/``ddec`` place its centre (milliarcseconds, positive ``dra``
     to the East, positive ``ddec`` to the North).
 
-    New shapes subclass [`Component`][drpangloss.models.Component] and implement ``_centred_cvis``
+    New shapes subclass [`Component`][virgil.models.Component] and implement ``_centred_cvis``
     (the unit-flux visibility of the shape at the origin) and
     ``_centred_image`` (an un-normalized image of the shape at the origin);
     offsets and mixing are handled here.
@@ -292,8 +292,8 @@ class PointSource(Component):
     Parameters
     ----------
     flux : float, array-like or Spectrum, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System],
-        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
+        Weight relative to the other components of a [`System`][virgil.models.System],
+        or a spectrum from [`virgil.spectra`][virgil.spectra]
         (default 1). Keep the reference star at ``flux=1`` and a companion's
         ``flux`` is then its companion/star flux ratio.
     dra : float or array-like, optional
@@ -329,8 +329,8 @@ class GaussianDisk(Component):
         Standard deviation of the Gaussian in milliarcseconds
         (FWHM = 2.3548 ``sigma``).
     flux : float, array-like or Spectrum, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System],
-        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
+        Weight relative to the other components of a [`System`][virgil.models.System],
+        or a spectrum from [`virgil.spectra`][virgil.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -375,8 +375,8 @@ class EllipticalGaussian(Component):
         Position angle of the major axis in degrees, North to East.
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System], or a spectrum from
-        [`drpangloss.spectra`][drpangloss.spectra] (default 1).
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
     dra, ddec : float or array-like, optional
         Offset of the centre in milliarcseconds, positive to the East and
         North.
@@ -464,7 +464,7 @@ class GaussianArc(Component):
         centre of curvature, in degrees North to East.
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System] (default 1).
+        [`System`][virgil.models.System] (default 1).
     dra, ddec : float or array-like, optional
         Offset of the centre of curvature in milliarcseconds, positive to
         the East and North. The arc itself lies ``radius`` away from it.
@@ -560,8 +560,8 @@ class UniformDisk(Component):
     diam : float or array-like
         Angular diameter in milliarcseconds.
     flux : float, array-like or Spectrum, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System],
-        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
+        Weight relative to the other components of a [`System`][virgil.models.System],
+        or a spectrum from [`virgil.spectra`][virgil.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the centre in milliarcseconds, positive to
@@ -600,7 +600,7 @@ class GravityDarkenedStar(Component):
     $\beta$. The brightness is proportional to that local flux (no limb
     darkening yet), summed over the visible triangles of a surface mesh.
     Ported from Shashank Dholakia's jax-interferometry (`ELR_Model`, commit
-    70689ed); the physics lives in ``drpangloss._elr``.
+    70689ed); the physics lives in ``virgil._elr``.
 
     Parameters
     ----------
@@ -619,7 +619,7 @@ class GravityDarkenedStar(Component):
         rotation pole on the sky (default 0).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System] (default 1).
+        [`System`][virgil.models.System] (default 1).
     dra, ddec : float or array-like, optional
         Offset of the centre in milliarcseconds, positive to the East and
         North.
@@ -632,7 +632,7 @@ class GravityDarkenedStar(Component):
     wavel0 : float or array-like, optional
         Reference wavelength in metres (default 1.65e-6, H band), at which
         the star's spectrum is normalised to ``flux`` and which
-        [`render`][drpangloss.models.SourceModel.render] shows. Only used
+        [`render`][virgil.models.SourceModel.render] shows. Only used
         when ``t_pole`` is set.
 
     Notes
@@ -652,11 +652,11 @@ class GravityDarkenedStar(Component):
     ``n_lat``.
 
     In chromatic mode the star supplies its own spectrum to a
-    [`System`][drpangloss.models.System]: its weight is ``flux`` times the
+    [`System`][virgil.models.System]: its weight is ``flux`` times the
     summed Planck flux of its visible surface, relative to that at
     ``wavel0``. A companion then gets a physically consistent flux ratio at
     every wavelength with no separate stellar spectrum, and ``flux`` must be a
-    number, not a [`Spectrum`][drpangloss.spectra.Spectrum], which would
+    number, not a [`Spectrum`][virgil.spectra.Spectrum], which would
     count the spectrum twice:
 
     ```python
@@ -856,7 +856,7 @@ class GravityDarkenedStar(Component):
 
         That is the bolometric flux in grey mode, and the Planck intensity at
         ``wavel0`` in chromatic mode. East is to the left and North up, as in
-        [`plot_model`][drpangloss.plotting.plot_model]; the offset
+        [`plot_model`][virgil.plotting.plot_model]; the offset
         ``dra``, ``ddec`` is not applied. Returns the matplotlib collection.
         """
         import matplotlib.pyplot as plt
@@ -922,8 +922,8 @@ class ModulatedGaussianRim(Component):
         Position angles of the cosine azimuthal modulations in degrees, North
         to East, one per entry of ``az_amps``.
     flux : float, array-like or Spectrum, optional
-        Weight relative to the other components of a [`System`][drpangloss.models.System],
-        or a spectrum from [`drpangloss.spectra`][drpangloss.spectra]
+        Weight relative to the other components of a [`System`][virgil.models.System],
+        or a spectrum from [`virgil.spectra`][virgil.spectra]
         (default 1).
     dra : float or array-like, optional
         Right-ascension offset of the rim's center in milliarcseconds,
@@ -941,8 +941,8 @@ class ModulatedGaussianRim(Component):
     profile convolved with an isotropic Gaussian.
 
     This model is achromatic: it does not represent any spectral dependence.
-    The rim contains no star; put it in a [`System`][drpangloss.models.System] with a
-    [`PointSource`][drpangloss.models.PointSource] for that.
+    The rim contains no star; put it in a [`System`][virgil.models.System] with a
+    [`PointSource`][virgil.models.PointSource] for that.
 
     Examples
     --------
@@ -1061,7 +1061,7 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
     """Pixels of an ``npix`` x ``npix`` image within ``radius_mas`` of its centre.
 
     Returns a boolean array for the ``support`` of an
-    [`Image`][drpangloss.models.Image]. With ``inner_radius_mas``, pixels
+    [`Image`][virgil.models.Image]. With ``inner_radius_mas``, pixels
     closer to the centre than that are left out too: a hole under an
     analytic star, so that the image cannot pile flux onto it.
     """
@@ -1076,9 +1076,9 @@ class Image(Component):
     The pixel fluxes are ``brightness = softmax(log_brightness)`` taken over
     the pixels in ``support``: positive, summing to one, and exactly zero
     outside the support. Like any other component, the image has a ``flux``
-    weight and an offset inside a [`System`][drpangloss.models.System], so
+    weight and an offset inside a [`System`][virgil.models.System], so
     unresolved sources can stay analytic (e.g. a
-    [`PointSource`][drpangloss.models.PointSource] star) while resolved
+    [`PointSource`][virgil.models.PointSource] star) while resolved
     emission goes in the pixels.
 
     Visibilities are the exact Fourier transform of the pixels, each treated
@@ -1088,20 +1088,20 @@ class Image(Component):
     ----------
     log_brightness : array-like, shape (nrow, ncol), or GaussianField
         Log pixel fluxes, up to an additive constant, in the orientation of
-        [`render`][drpangloss.models.SourceModel.render]: row 0 is the top
+        [`render`][virgil.models.SourceModel.render]: row 0 is the top
         (North) and column 0 the left (East) of the image. Alternatively an
         object with an ``evaluate(pixel_scale_mas)`` method returning them,
-        such as a [`GaussianField`][drpangloss.fields.GaussianField] (a
+        such as a [`GaussianField`][virgil.fields.GaussianField] (a
         Gaussian-process prior on the log-brightness).
     pixel_scale_mas : float
         Pixel size in milliarcseconds. The image centre, at index
         ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
     support : array-like of bool, optional
         Pixels allowed to carry flux (default: all); see
-        [`circular_support`][drpangloss.models.circular_support].
+        [`circular_support`][virgil.models.circular_support].
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System] (default 1).
+        [`System`][virgil.models.System] (default 1).
     dra, ddec : float, optional
         Offset of the image centre in milliarcseconds, positive to the East
         and North.
@@ -1172,7 +1172,7 @@ class Image(Component):
         Pixels fainter than ``floor`` times the brightest are raised to that
         level, so that their logarithm is finite. Other keyword arguments
         (``support``, ``flux``, ``dra``, ``ddec``, ``rotation_deg``) go to
-        [`Image`][drpangloss.models.Image].
+        [`Image`][virgil.models.Image].
         """
         brightness = np.asarray(brightness, dtype=float)
         support = kwargs.get("support")
@@ -1193,7 +1193,7 @@ class Image(Component):
 
         The pixels sample ``model`` on an ``npix`` x ``npix`` grid (rotated
         by ``rotation_deg``, if given); see
-        [`from_brightness`][drpangloss.models.Image.from_brightness] for
+        [`from_brightness`][virgil.models.Image.from_brightness] for
         the keyword arguments.
         """
         xx, yy = image_coordinates(npix, npix * pixel_scale_mas)
@@ -1255,12 +1255,12 @@ class FlaredDisk(Component):
     The geometrical disk model that Blakely et al. (2024, arXiv:2404.13032)
     fitted to JWST AMI data of PDS 70: a skewed Gaussian ring on a flared
     surface, with a forward-scattering peak on its near side. It is an
-    abstract base: use [`FlaredDiskHG`][drpangloss.models.FlaredDiskHG],
-    [`FlaredDiskGaussian`][drpangloss.models.FlaredDiskGaussian] or
-    [`FlaredDiskPowerLaw`][drpangloss.models.FlaredDiskPowerLaw], which
+    abstract base: use [`FlaredDiskHG`][virgil.models.FlaredDiskHG],
+    [`FlaredDiskGaussian`][virgil.models.FlaredDiskGaussian] or
+    [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw], which
     differ only in the azimuthal phase function. The disk contains no star
-    or planets; compose them in a [`System`][drpangloss.models.System], and
-    any over-resolved flux with a [`Resolved`][drpangloss.models.Resolved]
+    or planets; compose them in a [`System`][virgil.models.System], and
+    any over-resolved flux with a [`Resolved`][virgil.models.Resolved]
     component (the paper's $I_o$).
 
     The brightness has no analytic Fourier transform, so the visibilities
@@ -1303,7 +1303,7 @@ class FlaredDisk(Component):
         $A_s/A_a$ in the paper (default 0).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System] (default 1): the disk/star
+        [`System`][virgil.models.System] (default 1): the disk/star
         flux ratio when the star has ``flux=1``.
     dra, ddec : float or array-like, optional
         Offset of the disk centre in milliarcseconds, positive to the East
@@ -1431,7 +1431,7 @@ class FlaredDisk(Component):
 
 
 class FlaredDiskHG(FlaredDisk):
-    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Henyey–Greenstein phase function.
+    r"""[`FlaredDisk`][virgil.models.FlaredDisk] with a Henyey–Greenstein phase function.
 
     $f(\theta) = \dfrac{1 - g^2}{4\pi\,(1 + g^2 - 2g\cos\theta)^{3/2}}$
     (Blakely et al. 2024, Eq. 6).
@@ -1443,7 +1443,7 @@ class FlaredDiskHG(FlaredDisk):
         values scatter forwards (peaking on the near side) and negative
         values backwards (peaking on the far side).
     **geometry
-        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+        The parameters of [`FlaredDisk`][virgil.models.FlaredDisk].
 
     Examples
     --------
@@ -1470,7 +1470,7 @@ class FlaredDiskHG(FlaredDisk):
 
 
 class FlaredDiskGaussian(FlaredDisk):
-    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a Gaussian phase function.
+    r"""[`FlaredDisk`][virgil.models.FlaredDisk] with a Gaussian phase function.
 
     $f(\theta) = \exp\left(-\theta^2 / 2\sigma_\theta^2\right)$, with
     $\theta \in (-180°, 180°]$ (Blakely et al. 2024, Eq. 7).
@@ -1480,7 +1480,7 @@ class FlaredDiskGaussian(FlaredDisk):
     sigma_theta : float or array-like
         Azimuthal width in degrees.
     **geometry
-        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+        The parameters of [`FlaredDisk`][virgil.models.FlaredDisk].
     """
 
     sigma_theta: jax.Array
@@ -1497,7 +1497,7 @@ class FlaredDiskGaussian(FlaredDisk):
 
 
 class FlaredDiskPowerLaw(FlaredDisk):
-    r"""[`FlaredDisk`][drpangloss.models.FlaredDisk] with a power-law phase function.
+    r"""[`FlaredDisk`][virgil.models.FlaredDisk] with a power-law phase function.
 
     $f(\theta) = \cos^N(\theta / 2)$, with $\theta \in (-180°, 180°]$
     (Blakely et al. 2024, Eq. 8), the best-fitting form for PDS 70.
@@ -1507,7 +1507,7 @@ class FlaredDiskPowerLaw(FlaredDisk):
     n : float or array-like
         Power $N$; larger is more concentrated towards the near side.
     **geometry
-        The parameters of [`FlaredDisk`][drpangloss.models.FlaredDisk].
+        The parameters of [`FlaredDisk`][virgil.models.FlaredDisk].
     """
 
     n: jax.Array
@@ -1528,21 +1528,21 @@ class Resolved(SourceModel):
     """Fully resolved (over-resolved) flux, e.g. a large, diffuse envelope.
 
     Its visibility is 0 on every non-zero baseline, so inside a
-    [`System`][drpangloss.models.System] it only adds to the normalization,
+    [`System`][virgil.models.System] it only adds to the normalization,
     lowering every other component's visibility by the same factor.
 
     Parameters
     ----------
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
-        [`System`][drpangloss.models.System] (default 1), or a spectrum from
-        [`drpangloss.spectra`][drpangloss.spectra].
+        [`System`][virgil.models.System] (default 1), or a spectrum from
+        [`virgil.spectra`][virgil.spectra].
 
     Notes
     -----
     A resolved component spreads its light far beyond any image, so it
     cannot be rendered on its own, and a rendered
-    [`System`][drpangloss.models.System] shows only its other components,
+    [`System`][virgil.models.System] shows only its other components,
     renormalized to unit sum. The Fourier transform of such an image is
     therefore the visibility of the unresolved components alone, i.e.
     ``model()`` divided by the unresolved fraction of the flux, not
@@ -1586,7 +1586,7 @@ class Resolved(SourceModel):
 class System(SourceModel):
     r"""Flux-weighted mixture of named source models.
 
-    A [`System`][drpangloss.models.System] is how you describe a scene with more than one part:
+    A [`System`][virgil.models.System] is how you describe a scene with more than one part:
     a star with a disk, a binary inside a ring, a companion with its own
     circumstellar material. Each component is given a name, and the
     visibility is the flux-weighted mean
@@ -1598,10 +1598,10 @@ class System(SourceModel):
     Components are reached by name, both as attributes (``system.comp.flux``)
     and as zodiax paths (``system.get("comp.flux")``,
     ``system.set("comp.flux", 0.02)``). These paths are how the fitting tools
-    in [`drpangloss.grid_fit`][drpangloss.grid_fit] and [`numpyro_model`][drpangloss.likelihood.numpyro_model] address
+    in [`virgil.grid_fit`][virgil.grid_fit] and [`numpyro_model`][virgil.likelihood.numpyro_model] address
     parameters. Components keep the order in which they were given.
 
-    A [`System`][drpangloss.models.System] can itself be a component. Its own ``flux`` is then the
+    A [`System`][virgil.models.System] can itself be a component. Its own ``flux`` is then the
     total flux of the group relative to its siblings, and ``dra``/``ddec``
     move the whole group together.
 
@@ -1612,14 +1612,14 @@ class System(SourceModel):
         pass them as keyword arguments instead.
     flux : float or array-like, optional
         Weight of the whole system when nested inside another
-        [`System`][drpangloss.models.System] (default 1). It has no effect at the top level.
+        [`System`][virgil.models.System] (default 1). It has no effect at the top level.
     dra, ddec : float or array-like, optional
         Offset of the whole system in milliarcseconds (positive to the East
         and North).
     **named : SourceModel
         Components as keyword arguments, e.g. ``star=PointSource()``. Names
         must be valid Python identifiers that do not start with ``_`` and do
-        not clash with a [`System`][drpangloss.models.System] attribute (``model``, ``render``,
+        not clash with a [`System`][virgil.models.System] attribute (``model``, ``render``,
         ``set``, ``flux``, ...).
 
     Notes
@@ -1629,7 +1629,7 @@ class System(SourceModel):
     concrete values; changing values afterwards with ``set`` is not
     checked. Inside a traced computation (a fit or grid search) the
     values cannot be checked, so positivity is the job of the priors and grid
-    axes: [`numpyro_model`][drpangloss.likelihood.numpyro_model] rejects flux priors that allow negative
+    axes: [`numpyro_model`][virgil.likelihood.numpyro_model] rejects flux priors that allow negative
     values, and the grid tools reject negative flux axes.
 
     Examples
@@ -1767,9 +1767,9 @@ class Rotated(SourceModel):
 
     The rotation is by ``rotation_deg`` from North towards East, and the
     angle is an ordinary (fittable) parameter, unlike
-    [`Image`][drpangloss.models.Image]'s ``rotation_deg``, which only orients
+    [`Image`][virgil.models.Image]'s ``rotation_deg``, which only orients
     its pixel grid. Use it for a scene seen at several epochs, e.g. a
-    spiral rotating between them (see [`fit`][drpangloss.fitting.fit] with
+    spiral rotating between them (see [`fit`][virgil.fitting.fit] with
     a model per dataset).
 
     Parameters
@@ -1784,7 +1784,7 @@ class Rotated(SourceModel):
     A companion to the North, rotated by 90°, lands to the East:
 
     >>> import jax.numpy as jnp
-    >>> from drpangloss.models import GaussianDisk, Rotated, System
+    >>> from virgil.models import GaussianDisk, Rotated, System
     >>> north = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, ddec=10.0))
     >>> east = System(a=GaussianDisk(1.0), b=GaussianDisk(1.0, dra=10.0))
     >>> u, v = jnp.array([3.0, 5.0]), jnp.array([1.0, -2.0])
@@ -1847,7 +1847,7 @@ def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
     (``sigma``, ``flux``, ``dra``, ``ddec``) to the fitting tools.
 
     ``GaussianDiskModel`` used to be a class. It now returns a
-    [`System`][drpangloss.models.System], so ``isinstance(model, GaussianDiskModel)`` no longer
+    [`System`][virgil.models.System], so ``isinstance(model, GaussianDiskModel)`` no longer
     works.
     """
     return System(
@@ -1869,11 +1869,11 @@ class BinaryModelAngular(SourceModel):
     flux : float or array-like
         Companion/primary flux ratio (e.g. 0.01 for a companion 100 times
         fainter, i.e. contrast 100 or 5 mag; see
-        [`flux_to_contrast`][drpangloss.limits.flux_to_contrast]).
+        [`flux_to_contrast`][virgil.limits.flux_to_contrast]).
 
     Notes
     -----
-    Equivalent to [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian]
+    Equivalent to [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]
     at ``dra = sep sin(pa)``, ``ddec = sep cos(pa)``; convenient for
     reporting astrometry directly in separation and position angle.
     """
@@ -1888,7 +1888,7 @@ class BinaryModelAngular(SourceModel):
         self.flux = np.asarray(flux, dtype=float)
 
     def to_cartesian(self):
-        """Return the equivalent [`BinaryModelCartesian`][drpangloss.models.BinaryModelCartesian]."""
+        """Return the equivalent [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]."""
         th = self.pa * dtor
         return BinaryModelCartesian(
             self.sep * np.sin(th), self.sep * np.cos(th), self.flux
@@ -1939,7 +1939,7 @@ class BinaryModelCartesian(SourceModel):
         self.flux = np.asarray(flux, dtype=float)
 
     def to_angular(self):
-        """Return the equivalent [`BinaryModelAngular`][drpangloss.models.BinaryModelAngular]."""
+        """Return the equivalent [`BinaryModelAngular`][virgil.models.BinaryModelAngular]."""
         sep = np.sqrt(self.dra**2 + self.ddec**2)
         pa = np.mod(np.rad2deg(np.arctan2(self.dra, self.ddec)), 360.0)
         return BinaryModelAngular(sep, pa, self.flux)
@@ -1955,7 +1955,7 @@ class BinaryModelCartesian(SourceModel):
     def to_system(self):
         """Return the equivalent ``System(primary=..., companion=...)``.
 
-        The [`System`][drpangloss.models.System] form is slower to evaluate
+        The [`System`][virgil.models.System] form is slower to evaluate
         but can be extended, e.g. by adding a disk around the primary.
         """
         return System(
@@ -1982,7 +1982,7 @@ class HarmonixModel(SourceModel):
     visibility_method : str, optional
         Name of the visibility method (default ``"model"``).
     render_method : str, optional
-        Name of a ``render(npix, fov_mas)`` method used by [`render`][drpangloss.models.HarmonixModel.render]
+        Name of a ``render(npix, fov_mas)`` method used by [`render`][virgil.models.HarmonixModel.render]
         (default ``"render"``). Sources without one but with a ``surface``
         and a ``radius`` in milliarcseconds (harmonix stars) are drawn on the
         sky from the surface's intensity, East left and North up, like every
@@ -2005,7 +2005,7 @@ class HarmonixModel(SourceModel):
     array-valued times are not supported under ``jax.jit``.
 
     A wrapped source has weight 1 inside a
-    [System][drpangloss.models.System]; only harmonix stars can be drawn
+    [System][virgil.models.System]; only harmonix stars can be drawn
     there.
     """
 
@@ -2145,7 +2145,7 @@ def cvis_gaussian_disk(
 ):
     """Compute complex visibilities for a Gaussian-disk companion mixed with
     an unresolved point source, using the ``flux`` companion/primary flux ratio
-    convention shared with [`cvis_binary`][drpangloss.models.cvis_binary].
+    convention shared with [`cvis_binary`][virgil.models.cvis_binary].
     """
     sigma_rad = mas2rad * sigma
     rho2 = u**2 + v**2
@@ -2282,8 +2282,8 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
 def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
-    as the convolution kernel of [`ModulatedGaussianRim`][drpangloss.models.ModulatedGaussianRim]. Not offered as a public
-    function: unlike [`cvis_gaussian_disk`][drpangloss.models.cvis_gaussian_disk], this is a plain Gaussian envelope
+    as the convolution kernel of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. Not offered as a public
+    function: unlike [`cvis_gaussian_disk`][virgil.models.cvis_gaussian_disk], this is a plain Gaussian envelope
     with no point-source/companion mixture.
     """
     fwhm_rad = fwhm * mas2rad

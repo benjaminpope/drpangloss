@@ -4,7 +4,7 @@
     "commit": "70689ed3dba338d59c98d02e8126a07a3b4e86da",
     "author": "Shashank Dholakia"
   },
-  "conventions": "Raw variables from Dholakia's NUTS samples: diam (mas), omega, inc (rad; 0=equator-on), obl (rad), logsig. Converted to drpangloss: diam_eq=diam, omega=omega, inc_deg=90-degrees(inc), pa_deg=degrees(obl), jitter_v2=exp(logsig).",
+  "conventions": "Raw variables from Dholakia's NUTS samples: diam (mas), omega, inc (rad; 0=equator-on), obl (rad), logsig. Converted to virgil: diam_eq=diam, omega=omega, inc_deg=90-degrees(inc), pa_deg=degrees(obl), jitter_v2=exp(logsig).",
   "stars": {
     "HD_84999": {
       "raw": {
@@ -46,7 +46,7 @@
         "n_chains": 2.0,
         "n_draws": 2500.0
       },
-      "drpangloss": {
+      "virgil": {
         "diam_eq": {
           "median": 1.09231,
           "p16": 1.06976,
@@ -126,7 +126,7 @@
         "n_chains": 2.0,
         "n_draws": 2500.0
       },
-      "drpangloss": {
+      "virgil": {
         "diam_eq": {
           "median": 0.796208,
           "p16": 0.783502,
@@ -206,7 +206,7 @@
         "n_chains": 2.0,
         "n_draws": 2500.0
       },
-      "drpangloss": {
+      "virgil": {
         "diam_eq": {
           "median": 0.645974,
           "p16": 0.623987,
@@ -286,7 +286,7 @@
         "n_chains": 2.0,
         "n_draws": 2500.0
       },
-      "drpangloss": {
+      "virgil": {
         "diam_eq": {
           "median": 0.859988,
           "p16": 0.820296,

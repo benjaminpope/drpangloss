@@ -15,7 +15,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from drpangloss.plotting import set_style
+from virgil.plotting import set_style
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -24,10 +24,10 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.likelihood import loglike
-from drpangloss.limits import flux_to_contrast, flux_to_delta_mag
-from drpangloss.models import BinaryModelAngular, BinaryModelCartesian
-from drpangloss.oidata import OIData
+from virgil.likelihood import loglike
+from virgil.limits import flux_to_contrast, flux_to_delta_mag
+from virgil.models import BinaryModelAngular, BinaryModelCartesian
+from virgil.oidata import OIData
 
 set_style()  # the figure style used throughout the docs
 ```
@@ -152,7 +152,7 @@ $$
 \mathrm{PA} = \mathrm{atan2}(\Delta\mathrm{RA}, \Delta\mathrm{Dec})
 $$
 
-Results are usually reported as a contrast $C = 1/f$ (primary/companion) or $\Delta m = 2.5 \log_{10} C$: a companion 100 times fainter has $f = 0.01$, $C = 100$ and $\Delta m = 5$ mag. `drpangloss.limits.flux_to_contrast` and `flux_to_delta_mag` do the conversion.
+Results are usually reported as a contrast $C = 1/f$ (primary/companion) or $\Delta m = 2.5 \log_{10} C$: a companion 100 times fainter has $f = 0.01$, $C = 100$ and $\Delta m = 5$ mag. `virgil.limits.flux_to_contrast` and `flux_to_delta_mag` do the conversion.
 
 ```python
 dra = float(truth_cart["dra"])

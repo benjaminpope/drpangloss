@@ -22,12 +22,12 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 from numpyro.infer.initialization import init_to_value
 
-from drpangloss.grid_fit import likelihood_grid
-from drpangloss.inference import fisher_matrix, fisher_projection
-from drpangloss.likelihood import loglike, posterior_predictive_summary
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
-from drpangloss.plotting import (
+from virgil.grid_fit import likelihood_grid
+from virgil.inference import fisher_matrix, fisher_projection
+from virgil.likelihood import loglike, posterior_predictive_summary
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
+from virgil.plotting import (
     set_style,
     plot_data_model_correlation,
     plot_grid_map,
@@ -41,7 +41,7 @@ set_style()  # the figure style used throughout the docs
 
 ## Simulate Data
 
-We're going simulate $V^2$ and phase observables from a known binary model, add realistic noise, and wrap this into the `OIData` object that `drpangloss` uses to handle data.
+We're going simulate $V^2$ and phase observables from a known binary model, add realistic noise, and wrap this into the `OIData` object that `virgil` uses to handle data.
 
 ```python
 rng = onp.random.default_rng(42)
@@ -206,7 +206,7 @@ HMC estimate from diagnostics table: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
 ## Fisher Reparametrization
-If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `drpangloss`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
+If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `virgil`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
 
 See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb) for more information!
 

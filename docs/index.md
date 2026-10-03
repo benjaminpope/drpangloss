@@ -1,11 +1,11 @@
-# drpangloss
+# virgil
 
-drpangloss is a package for modelling optical interferometry data in JAX.
+virgil is a package for modelling optical interferometry data in JAX.
 
 ## Installation
 
 ```bash
-pip install drpangloss
+pip install virgil-astro
 ```
 
 From source:
@@ -22,7 +22,7 @@ The tabs at the top group worked examples on simulated and bundled data:
 - **Binaries:** searching for companions, detection limits, and fitting several datasets together.
 - **Imaging:** image reconstruction in five parts, from simulating data to sampling the posterior.
 
-**Background** explains the ideas behind the methods and credits the people and projects drpangloss builds on. **API Reference** documents every public class and function.
+**Background** explains the ideas behind the methods and credits the people and projects virgil builds on. **API Reference** documents every public class and function.
 
 ## Development
 

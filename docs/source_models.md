@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `drpangloss`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
+This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `virgil`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
 We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. See the composition tutorial for how to combine these building blocks into more complex scenes.
 
@@ -13,7 +13,7 @@ import numpy as np
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
-from drpangloss.plotting import set_style
+from virgil.plotting import set_style
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -22,14 +22,14 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.models import (
+from virgil.models import (
     GaussianDiskModel,
     ModulatedGaussianRim,
     PointSource,
     System,
     UniformDisk,
 )
-from drpangloss.oidata import OIData
+from virgil.oidata import OIData
 
 set_style()  # the figure style used throughout the docs
 ```
@@ -156,7 +156,7 @@ plt.show()
 
 ## Spotted stars with harmonix
 
-`HarmonixModel` wraps a star from [harmonix](https://github.com/shashankdholakia/harmonix), which computes the visibilities of a spherical-harmonic surface map analytically, so that it simulates, draws and fits like any other drpangloss model. See [Spotted stars with harmonix](harmonix.md) for a worked example.
+`HarmonixModel` wraps a star from [harmonix](https://github.com/shashankdholakia/harmonix), which computes the visibilities of a spherical-harmonic surface map analytically, so that it simulates, draws and fits like any other virgil model. See [Spotted stars with harmonix](harmonix.md) for a worked example.
 
 ## Simulate a uniform disk
 
@@ -297,12 +297,12 @@ plt.show()
 
 ## A rapidly rotating star: `GravityDarkenedStar`
 
-`GravityDarkenedStar` models a star spinning close to break-up, using the Roche shape and gravity darkening of [Espinosa Lara & Rieutord (2011)](https://doi.org/10.1051/0004-6361/201117252), which needs no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX (from his `jax-interferometry` code), brought into `drpangloss` with his `ELR_Model` as its grey mode. Its parameters are the equatorial angular diameter `diam_eq` in mas, the rotation rate `omega` as a fraction of the critical rate (0 is a sphere), the inclination `inc` in degrees (0 is pole-on, 90 equator-on), and `pa`, the position angle of the visible rotation pole, North through East. The mesh resolution is set by `n_lat`.
+`GravityDarkenedStar` models a star spinning close to break-up, using the Roche shape and gravity darkening of [Espinosa Lara & Rieutord (2011)](https://doi.org/10.1051/0004-6361/201117252), which needs no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX (from his `jax-interferometry` code), brought into `virgil` with his `ELR_Model` as its grey mode. Its parameters are the equatorial angular diameter `diam_eq` in mas, the rotation rate `omega` as a fraction of the critical rate (0 is a sphere), the inclination `inc` in degrees (0 is pole-on, 90 equator-on), and `pa`, the position angle of the visible rotation pole, North through East. The mesh resolution is set by `n_lat`.
 
 By default the star is grey: its brightness pattern is the same at every wavelength. Passing `t_pole`, the pole's effective temperature in kelvin, switches on a chromatic mode in which each patch of the surface radiates as a black body, so the contrast between the hot pole and the cool equator grows towards short wavelengths; `wavel0` is the wavelength at which `render` draws it. Like the other components it can be placed in a `System`, for example with a companion. See the [MWE notebook](gravity_darkened_star.md) for a fit to simulated multi-channel VLTI data.
 
 ```python
-from drpangloss.models import GravityDarkenedStar
+from virgil.models import GravityDarkenedStar
 
 star = GravityDarkenedStar(1.0, omega=0.9, inc=50.0, pa=30.0, n_lat=64)
 hot_star = GravityDarkenedStar(
@@ -331,7 +331,7 @@ cvis_star = star.model(u, v, wavel)
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, is the same shape with the equator much dimmer than the pole.
 
 ```python
-from drpangloss.plotting import plot_model
+from virgil.plotting import plot_model
 
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 

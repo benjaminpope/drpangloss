@@ -6,13 +6,13 @@ from matplotlib import get_backend
 import matplotlib.pyplot as plt
 import pytest
 
-from drpangloss.grid_fit import (
+from virgil.grid_fit import (
     laplace_flux_uncertainty_grid,
     likelihood_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
-from drpangloss.limits import (
+from virgil.limits import (
     absil_limits,
     delta_mag_to_flux,
     flux_to_contrast,
@@ -21,9 +21,9 @@ from drpangloss.limits import (
     radial_profile,
     ruffio_upperlimit,
 )
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
-from drpangloss.plotting import (
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
+from virgil.plotting import (
     diagnostics_table_from_samples,
     plot_contrast_curve,
     plot_grid_map,

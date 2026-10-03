@@ -200,7 +200,7 @@ where λᵢ are the eigenvalues of the likelihood's Gauss–Newton curvature in 
 
 The intuition: each well-measured parameter absorbs one datum's worth of scatter, so honest errors give χ² ≈ N − γ rather than N. Using χ²/N would underestimate s², as dividing by N rather than N − 1 does for a sample variance. The formula is MacKay 1992 (Neural Comput. 4, 415, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415)), eq. 4.14, and Bishop 2006, *PRML*, §3.5.2.
 
-In drpangloss:
+In virgil:
 - `imaging.error_scale(model, data)` computes s at a `GaussianField` MAP, from the same Jacobian as `log_evidence`.
 - `OIData.with_error_scale(s)` rescales the data, for a refit.
 
@@ -234,7 +234,7 @@ One fixed-point step usually suffices. The estimate assumes the model is adequat
   hierarchical CHIBI idea is at [arXiv:2606.04094](https://arxiv.org/abs/2606.04094),
   seen in search results only).
 
-## 3. What suits drpangloss
+## 3. What suits virgil
 
 - Data: 10^2 to 10^5 points, mostly closure-type, with correlated errors in
   DISCO/kernel phases. Discrepancy and L-curve work with the residuals we already have

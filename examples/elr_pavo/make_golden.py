@@ -4,7 +4,7 @@ This runs the ORIGINAL, unmodified ``core/ELR.py`` and ``core/utils.py`` from
 https://github.com/shashankdholakia/jax-interferometry at commit 70689ed
 (full sha 70689ed3dba338d59c98d02e8126a07a3b4e86da) in a legacy environment
 (his code uses ``from jax.config import config``, removed in modern jax), so a
-port into drpangloss can be checked against it. It does not import drpangloss.
+port into virgil can be checked against it. It does not import virgil.
 No patch to his code is needed with the pins below. His module enables x64
 globally; all golden values are float64.
 

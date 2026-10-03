@@ -1,4 +1,4 @@
-"""Independent, whitened closure phases (``drpangloss._closure``)."""
+"""Independent, whitened closure phases (``virgil._closure``)."""
 
 import equinox as eqx
 import jax
@@ -6,10 +6,10 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss.coverage import VLTI_UTS, vlti_oidata
-from drpangloss.likelihood import model_loglike, whitened_residuals
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
+from virgil.coverage import VLTI_UTS, vlti_oidata
+from virgil.likelihood import model_loglike, whitened_residuals
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 
 TRUTH = BinaryModelCartesian(dra=5.0, ddec=3.0, flux=0.1)
 MODEL = BinaryModelCartesian(dra=4.0, ddec=3.5, flux=0.08)

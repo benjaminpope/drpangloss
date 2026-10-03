@@ -1,7 +1,7 @@
 # API Reference
 
 The everyday names are importable from the top level, e.g.
-`from drpangloss import OIData, System, PointSource, likelihood_grid`.
+`from virgil import OIData, System, PointSource, likelihood_grid`.
 
 - [OIData](oidata.md): observables and their conventions
 - [OIFITS](oifits.md): reading and writing OIFITS files

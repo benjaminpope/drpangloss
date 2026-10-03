@@ -1,14 +1,14 @@
 # Matching PMOIRED's features
 
-PMOIRED (Mérand 2022, [arXiv:2207.11047](https://arxiv.org/abs/2207.11047); [GitHub](https://github.com/amerand/PMOIRED)) is the standard VLTI code for parametric spectro-interferometric modelling. This note compares its features with drpangloss's as of 2026-10-03 and assigns the gaps to stages.
+PMOIRED (Mérand 2022, [arXiv:2207.11047](https://arxiv.org/abs/2207.11047); [GitHub](https://github.com/amerand/PMOIRED)) is the standard VLTI code for parametric spectro-interferometric modelling. This note compares its features with virgil's as of 2026-10-03 and assigns the gaps to stages.
 
-drpangloss does not copy PMOIRED's interface.
-- **Models are Python objects, not string expressions.** PMOIRED builds models from a string language such as `'$inner,fwhm'`. drpangloss models are equinox modules. Tied parameters come from a model function (as `fit` already accepts), and extra residuals come from regularisers.
+virgil does not copy PMOIRED's interface.
+- **Models are Python objects, not string expressions.** PMOIRED builds models from a string language such as `'$inner,fwhm'`. virgil models are equinox modules. Tied parameters come from a model function (as `fit` already accepts), and extra residuals come from regularisers.
 - **Priors are numpyro distributions.** PMOIRED expresses priors as inequality penalties.
 
-## Already in drpangloss, or better
+## Already in virgil, or better
 
-| Feature | PMOIRED | drpangloss |
+| Feature | PMOIRED | virgil |
 |---|---|---|
 | Uniform disk, Gaussian, resolved background, offsets, fluxes | `ud`, `fwhm`, no size, `x`/`y`, `f` | `UniformDisk`, `GaussianDisk`, `Resolved`, `dra`/`ddec`, `flux` |
 | Inclined ring with azimuthal harmonics | `diam`+`fwhmin`/`fwhmout`, `az ampN`, `incl`, `projang` | `ModulatedGaussianRim` (Gaussian radial profile only) |

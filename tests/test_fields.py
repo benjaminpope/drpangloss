@@ -6,11 +6,11 @@ import numpy as onp
 import numpyro.distributions as dist
 import pytest
 
-from drpangloss.coverage import vlti_oidata
-from drpangloss.fields import GaussianField, field_spectrum
-from drpangloss.fitting import fit
-from drpangloss.imaging import diagnose, image_priors
-from drpangloss.models import GaussianDisk, Image, PointSource, System
+from virgil.coverage import vlti_oidata
+from virgil.fields import GaussianField, field_spectrum
+from virgil.fitting import fit
+from virgil.imaging import diagnose, image_priors
+from virgil.models import GaussianDisk, Image, PointSource, System
 
 
 def _neumann_laplacian(n, h):

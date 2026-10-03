@@ -5,8 +5,8 @@ import sys
 import jax
 import jax.numpy as np
 
-from drpangloss.inference import gaussian_fisher
-from drpangloss.likelihood import (
+from virgil.inference import gaussian_fisher
+from virgil.likelihood import (
     joint_loglike,
     joint_prediction,
     model_loglike,

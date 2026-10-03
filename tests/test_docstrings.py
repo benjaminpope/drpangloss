@@ -2,13 +2,13 @@ import doctest
 
 import pytest
 
-import drpangloss.grid_fit
-import drpangloss.models
+import virgil.grid_fit
+import virgil.models
 
 
 @pytest.mark.parametrize(
     "module",
-    [drpangloss.models, drpangloss.grid_fit],
+    [virgil.models, virgil.grid_fit],
     ids=lambda m: m.__name__,
 )
 def test_docstring_examples_run(module):

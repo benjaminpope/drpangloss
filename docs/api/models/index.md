@@ -1,4 +1,4 @@
-# `drpangloss.models`
+# `virgil.models`
 
 Source models and their analytic visibilities. Every flux is relative: for a
 companion it is the companion/primary flux ratio.

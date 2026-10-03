@@ -1,5 +1,5 @@
 [project]
-name = "drpangloss"
+name = "virgil-astro"
 version = "0.1.1"
 description = "Python package to fit interferometric data, accelerated using Jax."
 readme = "README.md"
@@ -13,8 +13,8 @@ authors = [
   {name = "Toon De Prins", email = "toon.deprins@protonmail.com"},
   {name = "Louis Desdoigts", email = "ldes9555@uni.sydney.edu.au"},
 ]
-keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "drpangloss"]
-urls = {repository = "https://github.com/benjaminpope/drpangloss"}
+keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "virgil"]
+urls = {repository = "https://github.com/benjaminpope/virgil"}
 dependencies = [
   "jax>=0.4.30",
   "jaxbessel>=0.1.0",
@@ -84,7 +84,7 @@ select = ["E", "F"]
 ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 
 [tool.ruff.lint.per-file-ignores]
-"src/drpangloss/__init__.py" = ["F401"]
+"src/virgil/__init__.py" = ["F401"]
 "notebooks/contrast_limits.ipynb" = ["E702"]
 
 [tool.ruff.format]

@@ -2,7 +2,7 @@
 
 Design sketch for design/orbit_scene_joint_fitting.md, not library code. It
 shows the proposed ``KeplerOrbit.relative`` (on jaxoplanet, an optional
-dependency) and ``Attached(...).at(mjd)``, using only existing drpangloss
+dependency) and ``Attached(...).at(mjd)``, using only existing virgil
 components: a companion whose position follows the orbit, and a disc around
 the secondary that lies in the orbital plane (its projected major axis along
 the line of nodes, inclined by i) and is brighter on the side facing the
@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxoplanet.orbits.keplerian import Body, Central, OrbitalBody
 
-from drpangloss.models import ModulatedGaussianRim, PointSource, System
+from virgil.models import ModulatedGaussianRim, PointSource, System
 
 jax.config.update("jax_enable_x64", True)
 DEG = np.pi / 180.0

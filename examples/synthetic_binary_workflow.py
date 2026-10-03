@@ -13,12 +13,12 @@ from jax.flatten_util import ravel_pytree
 from numpyro.infer.initialization import init_to_value
 from numpyro.infer import MCMC, NUTS
 
-from drpangloss.inference import fisher_matrix, fisher_projection
-from drpangloss.grid_fit import likelihood_grid
-from drpangloss.likelihood import loglike
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData, closure_phases, cp_indices
-from drpangloss.oifits import write_oifits
+from virgil.inference import fisher_matrix, fisher_projection
+from virgil.grid_fit import likelihood_grid
+from virgil.likelihood import loglike
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData, closure_phases, cp_indices
+from virgil.oifits import write_oifits
 
 
 @dataclass(frozen=True)
@@ -103,7 +103,7 @@ def _build_synthetic_oifits_dict(
 
     Notes
     -----
-    ``drpangloss.oidata`` computes phases internally in radians. OIFITS phase
+    ``virgil.oidata`` computes phases internally in radians. OIFITS phase
     channels in this helper are written in degrees (``VISPHI``, ``T3PHI``) so
     they match the standard OIFITS convention expected by downstream readers.
     """
@@ -183,7 +183,7 @@ def _build_synthetic_oifits_dict(
             "FILT": "F480M",
             "DATE-OBS": "2000-01-01",
             "TELESCOP": "SIM",
-            "OBSERVER": "drpangloss-docs",
+            "OBSERVER": "virgil-docs",
             "INSMODE": "NRM",
             "PA": 0.0,
             "MJD": 61000.0,

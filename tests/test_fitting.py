@@ -5,14 +5,14 @@ import numpyro
 import numpyro.distributions as dist
 import pytest
 
-from drpangloss._precision import cast_tree, run_in
-from drpangloss.coverage import ami_grid_record
-from drpangloss.fitting import _Objective, fit
-from drpangloss.imaging import TSV, Centroid, MaxEntropy, image_priors
-from drpangloss.likelihood import numpyro_model, whitened_residuals
-from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.scenes import gaussian_blob
+from virgil._precision import cast_tree, run_in
+from virgil.coverage import ami_grid_record
+from virgil.fitting import _Objective, fit
+from virgil.imaging import TSV, Centroid, MaxEntropy, image_priors
+from virgil.likelihood import numpyro_model, whitened_residuals
+from virgil.models import BinaryModelCartesian, Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.scenes import gaussian_blob
 
 from ._compiles import count_compiles
 from ._test_data import oidata

@@ -10,9 +10,9 @@ import jax
 import jax.numpy as np
 import matplotlib.pyplot as plt
 
-from drpangloss.likelihood import whitened_residuals
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
+from virgil.likelihood import whitened_residuals
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 
 warnings.filterwarnings("ignore")
 oidata = OIData("data/NuHor_F480M.oifits")

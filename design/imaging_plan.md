@@ -1,7 +1,7 @@
-# drpangloss imaging: staged execution plan (revision 4)
+# virgil imaging: staged execution plan (revision 4)
 
 ## Context
-We are adding regularised maximum-likelihood image reconstruction, and optional Bayesian sampling, to drpangloss.
+We are adding regularised maximum-likelihood image reconstruction, and optional Bayesian sampling, to virgil.
 - **Data:** AMIGO DISCO data from JWST AMI, closure phases from long-baseline interferometers (VLTI, CHARA), and aperture-masking data.
 - **Composition:** analytic components (stars, companions) stay analytic, and the image is one more component of a `System`.
 - **Build strategy:** incremental, with a **minimal working example (MWE) that does something scientifically useful at every stage**, and a feedback checkpoint on each before the next begins.
@@ -49,7 +49,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 8. **Dependencies:** optax (and lineax) become required. `blackjax` (`[sampling]`) is an optional extra. zodiax stays at `>=0.4`.
 
 ## Branching and workflow
-- **Branch.** Create `imaging` in `/Users/benpope/code/drpangloss`, branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
+- **Branch.** Create `imaging` in `/Users/benpope/code/virgil`, branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
 - **Each stage is a PR** from `imaging-sN-<name>` (git cannot hold both `imaging` and `imaging/…` branches), stacked on the previous stage's branch and retargeted to `imaging` as earlier stages merge. Each PR has:
   - the code;
   - its tests;
@@ -106,7 +106,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 - `backend="nufft"` in `image_visibilities`, via jax-finufft `nufft2`:
   - `iflag=+1`; the image rows pair with v; even N gets the half-pixel phase factor;
   - `eps` defaults to 1e-7 under x64, and must be ≥ 1e-5 under float32 (below that it raises).
-- The `drpangloss[nufft]` extra, with a lazy import and a clear error if it is missing.
+- The `virgil-astro[nufft]` extra, with a lazy import and a clear error if it is missing.
 - `scripts/bench_ft.py` (DFT against jax-finufft, value+grad, npix 64–512, M 10³–10⁵, both dtypes).
 
 **Tests** (skipped without the extra): agreement with the DFT per point, |ΔV| ≤ 3·eps·V(0), including phases on low-|V| baselines; odd and even N; orientation; `check_grads`; vmap; inside `System` with CP and DISCO data. A CI job with the extra installed.
@@ -161,7 +161,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Stage 3c: real AMI data, PDS 70 (once DISCO deconvolution is mature)
 **Data:** the AMIGO DISCO products for PDS 70 in `/Users/benpope/code/nuHor/data/PDS70/` (local only; never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
-**Scope:** drpangloss supplies a fast JAX library with the features interferometrists expect; synthetic truths for calibrating PDS 70 reconstructions are being built separately, so this stage does not do that.
+**Scope:** virgil supplies a fast JAX library with the features interferometrists expect; synthetic truths for calibrating PDS 70 reconstructions are being built separately, so this stage does not do that.
 **Build:** an agent that deconvolves PDS 70 in each filter, separately and jointly (Stage 6's joint multi-filter machinery when available), with a wide range of options: regularisers (maximum entropy expected best, then TSV, then TV), weights from L-curves (discrepancy and corner), fields of view and pixel scales, starts (flat, parametric fit), analytic star or not, supports, and centroid priors. "Beat it to death": the aim is a general picture of what is robust across choices.
 **Compute:** demo locally first on a reduced set. If the full grid would take hours or exceed the laptop's RAM, hand the user an OzSTAR GPU script (`ozstar` skill) rather than running it here.
 **Report:** a notebook (not in the docs) comparing the reconstructions across options and filters, with beams, residual maps and `diagnose` output.
@@ -362,7 +362,7 @@ A background split off as a `Resolved` component also changes what the image's i
 
 ## Order of work after Stage 5 (updated 2026-10-03)
 These stages draw on three notes:
-- [`pmoired_parity.md`](pmoired_parity.md), which compares drpangloss with PMOIRED;
+- [`pmoired_parity.md`](pmoired_parity.md), which compares virgil with PMOIRED;
 - [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) (S);
 - [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
@@ -408,7 +408,7 @@ From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-
 Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Decided (2026-10-03):**
-- Orbits are built in drpangloss.
+- Orbits are built in virgil.
 - They run on jaxoplanet, as an optional `[orbits]` extra. Neither orbitize! nor orvara is used.
 - The user-facing conventions are those of O §2.1.
 
@@ -429,7 +429,7 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
 | `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
 | `TruncatedCone`, a thin conical shell (analytic, with an elliptical cross-section option and a render ↔ model test; the prototype is in the Apep data folder) | 3–4 |
-| OIFITS position-angle round trips (GRAVITY layout; AMICAL and drpangloss writers) | 2, then 2 per real anchor |
+| OIFITS position-angle round trips (GRAVITY layout; AMICAL and virgil writers) | 2, then 2 per real anchor |
 
 **Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
 
@@ -586,7 +586,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 
 ## Critical files
 - **New:**
-  - `src/drpangloss/fitting.py`, `src/drpangloss/imaging.py`, `src/drpangloss/fields.py`, `src/drpangloss/_precision.py`
+  - `src/virgil/fitting.py`, `src/virgil/imaging.py`, `src/virgil/fields.py`, `src/virgil/_precision.py`
   - `design/image_reconstruction.md`
   - `tests/test_image_model.py`, `tests/test_fitting.py`, `tests/test_imaging.py`, `tests/test_fields.py`
   - Notebooks: `imaging_ami.ipynb` (Stages 1–3), `imaging_long_baseline.ipynb` (Stage 4), `imaging_gp_sampling.ipynb` (Stage 5), `imaging_chromatic.ipynb` (Stage 6)
@@ -674,7 +674,7 @@ These are agent time only, excluding your checkpoint reviews. The serial estimat
 Orchestration overhead (reviews, integration, fixing cross-chunk mismatches) is included, at about 20% per stage. The main risk to these numbers is iteration on numerical issues in C1a, C3a and C5a, which could add 1–3 h each.
 
 ### Recommended interface
-- **Run the orchestrator in the Claude Code CLI or the desktop app, one session per stage,** in `/Users/benpope/code/drpangloss`:
+- **Run the orchestrator in the Claude Code CLI or the desktop app, one session per stage,** in `/Users/benpope/code/virgil`:
   - They handle long autonomous runs, background sub-agents and `isolation: "worktree"` (each parallel chunk gets its own git worktree and branch) better than an editor-bound session.
   - A session per stage keeps context clean. The plan file and `design/image_reconstruction.md` are the handoff between sessions.
 - **Use VS Code (this extension) for checkpoints:** reviewing diffs, running the MWE notebooks and looking at the figures. It is good for that, less so for multi-hour orchestration tied to an open editor window.

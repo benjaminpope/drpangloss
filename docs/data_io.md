@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 # Data I/O
 
-`drpangloss` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `drpangloss.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `drpangloss.legacy.oifits_implaneia`, are still available for existing scripts.
+`virgil` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `virgil.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `virgil.legacy.oifits_implaneia`, are still available for existing scripts.
 
 ```python
 import copy
@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
-from drpangloss.oidata import OIData
-from drpangloss.oifits import write_oifits
+from virgil.oidata import OIData
+from virgil.oifits import write_oifits
 
 notebook_dir = (
     (Path.cwd() / "notebooks")

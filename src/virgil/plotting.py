@@ -1,9 +1,9 @@
-"""Plotting functions for drpangloss models, data and grid results.
+"""Plotting functions for virgil models, data and grid results.
 
-* [`plot_grid_map`][drpangloss.plotting.plot_grid_map] draws any grid
+* [`plot_grid_map`][virgil.plotting.plot_grid_map] draws any grid
   result (log likelihood, best-fit flux, uncertainty, S/N, contrast limit)
   with defaults chosen by ``kind=``, and
-  [`plot_contrast_curve`][drpangloss.plotting.plot_contrast_curve] draws
+  [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve] draws
   radial contrast curves.
 * Contrasts can be shown as flux ratios (companion/primary), as contrasts
   (primary/companion, e.g. 100) or in magnitudes (e.g. 5 mag), with
@@ -11,8 +11,8 @@
 
 Sky images follow the package convention: East (positive ``dra``) to the
 left and North (positive ``ddec``) up. Importing this module does not change
-matplotlib's global settings; call [`set_style`][drpangloss.plotting.set_style] to opt in to the
-drpangloss look for every figure.
+matplotlib's global settings; call [`set_style`][virgil.plotting.set_style] to opt in to the
+virgil look for every figure.
 """
 
 import contextlib
@@ -36,7 +36,7 @@ STYLE = {
 
 
 def set_style():
-    """Apply the drpangloss matplotlib style globally.
+    """Apply the virgil matplotlib style globally.
 
     The plotting functions in this module already use this style for the
     figures they create, without touching global settings. Call this to use
@@ -64,7 +64,7 @@ def _style_context(style=None):
 
 
 def _styled(fn):
-    """Run ``fn`` with the drpangloss style applied."""
+    """Run ``fn`` with the virgil style applied."""
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
@@ -144,7 +144,7 @@ def _range_aware_float_formatter(
 
 def _enforce_sky_orientation(ax):
     """Ensure the displayed x-axis increases toward the left (East) and
-    the y-axis increases toward the top (North), matching drpangloss's
+    the y-axis increases toward the top (North), matching virgil's
     image coordinate convention. Works regardless of
     whether the plotted array's ``dra``/``ddec`` axis was built ascending
     or descending, since it corrects the axes' final displayed limits
@@ -351,7 +351,7 @@ def plot_model(
     """Show a source model's rendered image with sky axes.
 
     East is to the left and North is up, matching the orientation of
-    [`render`][drpangloss.models.SourceModel.render].
+    [`render`][virgil.models.SourceModel.render].
 
     Parameters
     ----------
@@ -372,12 +372,12 @@ def plot_model(
         Matplotlib colour map.
     beam : Beam, optional
         The data's resolution, from
-        [`imaging.beam`][drpangloss.imaging.beam], drawn as a shaded FWHM
+        [`imaging.beam`][virgil.imaging.beam], drawn as a shaded FWHM
         ellipse in the lower-left corner, as is usual on reconstructed
         images.
     convolve : bool, optional
         If ``True``, show the image convolved with ``beam`` (see
-        [`imaging.convolve_beam`][drpangloss.imaging.convolve_beam]): what
+        [`imaging.convolve_beam`][virgil.imaging.convolve_beam]): what
         the data resolve, rather than the super-resolved image.
 
     Returns
@@ -456,7 +456,7 @@ def plot_residual_map(
     ----------
     residual : array-like, shape (npix, npix)
         E.g. ``reconstruction.render(npix, fov) - truth.render(npix, fov)``,
-        in the orientation of [`render`][drpangloss.models.SourceModel.render].
+        in the orientation of [`render`][virgil.models.SourceModel.render].
     fov_mas : float
         Width of the field of view in milliarcseconds.
     sigma : array-like or float, optional
@@ -915,9 +915,9 @@ def plot_grid_map(
     values : array-like
         Grid result with one axis per coordinate key of ``samples_dict``
         (every key except the flux), in key order, as returned by
-        [`drpangloss.grid_fit`][drpangloss.grid_fit] and
-        [`drpangloss.limits`][drpangloss.limits]. A full
-        [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid] (with the
+        [`virgil.grid_fit`][virgil.grid_fit] and
+        [`virgil.limits`][virgil.limits]. A full
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid] (with the
         flux axis) is reduced to its maximum over flux. One coordinate gives
         a line plot.
     samples_dict : dict[str, array-like]
@@ -1128,9 +1128,9 @@ def plot_contrast_curve(
     values : array-like or dict
         A limit map (companion/primary flux ratios, with one axis per
         coordinate key of ``samples_dict`` in key order, as from
-        [`absil_limits`][drpangloss.limits.absil_limits] or
-        [`ruffio_upperlimit`][drpangloss.limits.ruffio_upperlimit]), or a
-        [`radial_profile`][drpangloss.limits.radial_profile] of one.
+        [`absil_limits`][virgil.limits.absil_limits] or
+        [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit]), or a
+        [`radial_profile`][virgil.limits.radial_profile] of one.
     samples_dict : dict[str, array-like], optional
         The grid axes of a limit map; it must contain ``dra`` and ``ddec``
         axes (also as paths such as ``"comp.dra"``).
@@ -1147,7 +1147,7 @@ def plot_contrast_curve(
         ``(dra, ddec, flux)`` of a detected companion to mark.
     center, r_max, bins : optional
         Annuli, passed to
-        [`radial_profile`][drpangloss.limits.radial_profile].
+        [`radial_profile`][virgil.limits.radial_profile].
     ax : matplotlib.axes.Axes, optional
         Axes to draw on, e.g. to overlay several curves.
     color : optional

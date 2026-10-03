@@ -1,8 +1,8 @@
-# `drpangloss.likelihood`
+# `virgil.likelihood`
 
 Likelihoods of source models given data, and numpyro models.
 
-::: drpangloss.likelihood
+::: virgil.likelihood
     options:
       members:
         - whitened_residuals

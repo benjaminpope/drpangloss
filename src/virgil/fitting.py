@@ -1,10 +1,10 @@
 """Maximum a posteriori fits of models, including images.
 
-[`fit`][drpangloss.fitting.fit] takes the same arguments as
-[`numpyro_model`][drpangloss.likelihood.numpyro_model]: a model (a template,
+[`fit`][virgil.fitting.fit] takes the same arguments as
+[`numpyro_model`][virgil.likelihood.numpyro_model]: a model (a template,
 or a function of the parameters), a dict of numpyro priors whose keys are the
 free parameters, and the data, plus optional regularisers (see
-[`drpangloss.imaging`][drpangloss.imaging]). It finds the maximum a
+[`virgil.imaging`][virgil.imaging]). It finds the maximum a
 posteriori parameters with Levenberg–Marquardt, L-BFGS or Adam, optimising
 each parameter in unconstrained coordinates through the bijection to its
 prior's support, in float64 by default. To sample the same posterior, pass
@@ -237,7 +237,7 @@ def _reference(model):
 
 @dataclasses.dataclass(frozen=True)
 class FitResult:
-    """The result of [`fit`][drpangloss.fitting.fit].
+    """The result of [`fit`][virgil.fitting.fit].
 
     Attributes
     ----------
@@ -283,27 +283,27 @@ def fit(
         A template model whose leaves at the paths in ``priors`` are fitted
         (their values are the starting point), or a function called with the
         parameters as keyword arguments, as for
-        [`numpyro_model`][drpangloss.likelihood.numpyro_model]. The function
+        [`numpyro_model`][virgil.likelihood.numpyro_model]. The function
         may return a list of models, one per dataset, sharing parameters:
-        for example a scene and a [`Rotated`][drpangloss.models.Rotated]
+        for example a scene and a [`Rotated`][virgil.models.Rotated]
         copy of it, for two epochs between which it turns. Regularisers
         then act on the first.
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see
-        [`image_priors`][drpangloss.imaging.image_priors]). Priors on
+        [`image_priors`][virgil.imaging.image_priors]). Priors on
         fluxes must have non-negative support.
     data : OIData or sequence of OIData
         The data, fitted jointly.
     regularisers : sequence, optional
         Penalties added to the loss, e.g. from
-        [`drpangloss.imaging`][drpangloss.imaging].
+        [`virgil.imaging`][virgil.imaging].
     noise : dict or list of dict, optional
         Priors on error-inflation terms to fit with the parameters:
         ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
         ``vis_error_rel`` (a fraction of the model visibility) and
         ``phi_error`` (radians) are added in quadrature (see
-        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). A dict
+        [`inflated_errors`][virgil.likelihood.inflated_errors]). A dict
         applies to every dataset (values ``"noise.<term>"``); a list gives
         each dataset its own (``"noise[i].<term>"``). The loss is then the
         full Gaussian negative log likelihood, including ``Σ log σ``, so the
@@ -427,7 +427,7 @@ def gauss_newton_mass(model, priors, data, values):
     observables, it cut the cost to 63 steps per draw.
 
     Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
-    [`log_evidence`][drpangloss.imaging.log_evidence]). The curvature
+    [`log_evidence`][virgil.imaging.log_evidence]). The curvature
     depends on them, so a matrix computed at one σ and ℓ is wrong when
     they move. Every sampled parameter must be in ``priors``: a
     tightly constrained one left out (such as an image's flux) keeps its
@@ -436,7 +436,7 @@ def gauss_newton_mass(model, priors, data, values):
     Parameters
     ----------
     model, priors, data
-        As for [`fit`][drpangloss.fitting.fit]. The priors must have a
+        As for [`fit`][virgil.fitting.fit]. The priors must have a
         least-squares form (Normal, Uniform or ImproperUniform), as for
         ``fit``'s Levenberg–Marquardt.
     values : dict

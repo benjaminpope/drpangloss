@@ -1,6 +1,6 @@
 # Class: `SourceModel`
 
-::: drpangloss.models.SourceModel
+::: virgil.models.SourceModel
     options:
       show_root_heading: false
       heading_level: 3

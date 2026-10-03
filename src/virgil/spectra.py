@@ -2,7 +2,7 @@
 
 A component's ``flux`` is either a number (achromatic) or a spectrum from this
 module, which gives its weight at each wavelength. Inside a
-[`System`][drpangloss.models.System] the visibility is then
+[`System`][virgil.models.System] the visibility is then
 ``V(λ) = Σ f_i(λ) V_i / Σ f_i(λ)``, as in SPARCO (Kluska et al. 2014):
 
 ```python

@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/gravity_darkened_star.ipynb by scripts/sync_tutorial_docs.py. -->
 # Gravity-darkened stars: `GravityDarkenedStar`
 
-A star spinning close to its break-up rate is flattened at the poles and darkened at the equator, because the surface gravity, and with it the emergent flux, falls towards the equator. Long-baseline interferometers resolve exactly this: an oblate disk whose brighter pole leans in a particular direction on the sky. `drpangloss.models.GravityDarkenedStar` models it with the Espinosa Lara and Rieutord (2011, ELR11) Roche shape and gravity darkening, which has no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX, from his `jax-interferometry` code, brought into drpangloss with his `ELR_Model` as its grey mode and extended with a chromatic mode, in which every patch of the surface radiates as a black body at its own temperature.
+A star spinning close to its break-up rate is flattened at the poles and darkened at the equator, because the surface gravity, and with it the emergent flux, falls towards the equator. Long-baseline interferometers resolve exactly this: an oblate disk whose brighter pole leans in a particular direction on the sky. `virgil.models.GravityDarkenedStar` models it with the Espinosa Lara and Rieutord (2011, ELR11) Roche shape and gravity darkening, which has no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX, from his `jax-interferometry` code, brought into virgil with his `ELR_Model` as its grey mode and extended with a chromatic mode, in which every patch of the surface radiates as a black body at its own temperature.
 
-This notebook builds such a star, compares it with a uniform disk of the same size, shows how the chromatic mode changes the picture with wavelength, and then simulates VLTI-like multi-channel data from a chromatic star and fits the rotation rate, inclination, pole position angle and size back from a perturbed start. You should come away knowing how to construct the model, what its parameters mean, and how to fit it with the same `fit` call as any other drpangloss model.
+This notebook builds such a star, compares it with a uniform disk of the same size, shows how the chromatic mode changes the picture with wavelength, and then simulates VLTI-like multi-channel data from a chromatic star and fits the rotation rate, inclination, pole position angle and size back from a perturbed start. You should come away knowing how to construct the model, what its parameters mean, and how to fit it with the same `fit` call as any other virgil model.
 
 ## Building a star
 
@@ -24,10 +24,10 @@ import numpy as np
 import numpyro.distributions as dist
 from tqdm.auto import tqdm
 
-from drpangloss.coverage import vlti_oidata
-from drpangloss.fitting import fit
-from drpangloss.models import GravityDarkenedStar, UniformDisk
-from drpangloss.plotting import plot_data_model_correlation, plot_model
+from virgil.coverage import vlti_oidata
+from virgil.fitting import fit
+from virgil.models import GravityDarkenedStar, UniformDisk
+from virgil.plotting import plot_data_model_correlation, plot_model
 
 star = GravityDarkenedStar(4.0, omega=0.9, inc=50.0, pa=30.0, n_lat=64)
 fig, ax = plt.subplots(figsize=(4.5, 4))
@@ -92,7 +92,7 @@ plt.show()
 
 ## Simulating and fitting multi-channel data
 
-Now for a fit. `vlti_oidata` makes an empty dataset with VLTI-like uv coverage, here three snapshots of the four unit telescopes in six channels from 1.6 to 2.4 microns, with small errors on V² and the closure phases. A star of 4 mas is well resolved by baselines of up to 130 m at these wavelengths, which have a resolution of about 3 mas, and the longest baselines in the shortest channels reach the first null of the visibility. We fill the dataset with the observables of a chromatic star with the same truth as before, plus seeded Gaussian noise, using `with_model`. We then call `fit`, exactly as for any other drpangloss model, with a Uniform prior on each of the four parameters we want and a deliberately wrong starting star, and it returns the maximum a posteriori model. A coarser mesh (`n_lat=16`) keeps the visibilities cheap, and the temperature and reference wavelength are held fixed. The printed table compares the truth with the fit.
+Now for a fit. `vlti_oidata` makes an empty dataset with VLTI-like uv coverage, here three snapshots of the four unit telescopes in six channels from 1.6 to 2.4 microns, with small errors on V² and the closure phases. A star of 4 mas is well resolved by baselines of up to 130 m at these wavelengths, which have a resolution of about 3 mas, and the longest baselines in the shortest channels reach the first null of the visibility. We fill the dataset with the observables of a chromatic star with the same truth as before, plus seeded Gaussian noise, using `with_model`. We then call `fit`, exactly as for any other virgil model, with a Uniform prior on each of the four parameters we want and a deliberately wrong starting star, and it returns the maximum a posteriori model. A coarser mesh (`n_lat=16`) keeps the visibilities cheap, and the temperature and reference wavelength are held fixed. The printed table compares the truth with the fit.
 
 ```python
 truth = GravityDarkenedStar(
@@ -163,6 +163,6 @@ plt.show()
 
 ## Summary
 
-`GravityDarkenedStar` gives drpangloss a physically motivated rapid rotator, with Dholakia's grey ELR11 model as the default and a chromatic mode, switched on by `t_pole`, in which the pole-to-equator contrast changes with wavelength. It renders, evaluates visibilities and fits like every other component, and so can also be placed in a `System` with a companion. Once the star is resolved, the squared visibilities constrain its size and flattening and the closure phases, which come from the asymmetry that the bright pole gives an inclined star, constrain its orientation and help to break the degeneracy between inclination and rotation rate. A star of about a milliarcsecond would be barely resolved by the VLTI in the H and K bands, its closure phases would be near zero, and those parameters would be much more weakly constrained.
+`GravityDarkenedStar` gives virgil a physically motivated rapid rotator, with Dholakia's grey ELR11 model as the default and a chromatic mode, switched on by `t_pole`, in which the pole-to-equator contrast changes with wavelength. It renders, evaluates visibilities and fits like every other component, and so can also be placed in a `System` with a companion. Once the star is resolved, the squared visibilities constrain its size and flattening and the closure phases, which come from the asymmetry that the bright pole gives an inclined star, constrain its orientation and help to break the degeneracy between inclination and rotation rate. A star of about a milliarcsecond would be barely resolved by the VLTI in the H and K bands, its closure phases would be near zero, and those parameters would be much more weakly constrained.
 
-For a fuller application, simulating CHARA-like data on a rapid rotator and retrieving its size, spin and orientation, see the notebook [`mwe_elr_chara`](https://github.com/benjaminpope/drpangloss/blob/main/notebooks/mwe/mwe_elr_chara.ipynb).
+For a fuller application, simulating CHARA-like data on a rapid rotator and retrieving its size, spin and orientation, see the notebook [`mwe_elr_chara`](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_elr_chara.ipynb).

@@ -13,7 +13,7 @@ import numpy as onp
 import pytest
 from scipy.special import j1
 
-from drpangloss import _elr
+from virgil import _elr
 
 GOLDEN = pathlib.Path(__file__).parent.parent / "data" / "elr_golden.npz"
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0

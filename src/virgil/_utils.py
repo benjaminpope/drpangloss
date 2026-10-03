@@ -1,4 +1,4 @@
-"""Small helpers shared across drpangloss: unit constants, traced-value
+"""Small helpers shared across virgil: unit constants, traced-value
 checks, and the rules for naming flux parameters."""
 
 import jax

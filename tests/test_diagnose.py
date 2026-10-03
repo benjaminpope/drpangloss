@@ -1,11 +1,11 @@
 import jax
 import jax.numpy as np
 
-from drpangloss.coverage import ami_grid_record
-from drpangloss.imaging import Centroid, Diagnosis, diagnose
-from drpangloss.models import Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.scenes import gaussian_blob
+from virgil.coverage import ami_grid_record
+from virgil.imaging import Centroid, Diagnosis, diagnose
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.scenes import gaussian_blob
 
 NPIX, SCALE = 24, 60.0
 RECORD = ami_grid_record(pitch_m=0.5)

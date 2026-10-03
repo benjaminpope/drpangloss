@@ -1,14 +1,14 @@
 """Read and write OIFITS files using only ``astropy.io.fits``.
 
-This is the maintained OIFITS path of drpangloss.
+This is the maintained OIFITS path of virgil.
 
-* [`read_oifits`][drpangloss.oifits.read_oifits] turns an OIFITS file into the record that
-  [`drpangloss.oidata.OIData`][drpangloss.oidata.OIData] is built from. It accepts a file path or
+* [`read_oifits`][virgil.oifits.read_oifits] turns an OIFITS file into the record that
+  [`virgil.oidata.OIData`][virgil.oidata.OIData] is built from. It accepts a file path or
   any astropy ``HDUList``, including ``pyoifits`` objects (which subclass
   it). It handles several wavelength channels, several OIFITS tables, several
   epochs, and ``FLAG`` columns.
-* [`write_oifits`][drpangloss.oifits.write_oifits] writes a dictionary of OIFITS tables (the layout used
-  by the legacy [`drpangloss.legacy.oifits_implaneia`][drpangloss.legacy.oifits_implaneia] writer) to an OIFITS2 file.
+* [`write_oifits`][virgil.oifits.write_oifits] writes a dictionary of OIFITS tables (the layout used
+  by the legacy [`virgil.legacy.oifits_implaneia`][virgil.legacy.oifits_implaneia] writer) to an OIFITS2 file.
 
 Each (baseline, wavelength) sample becomes one element of the flat ``u``,
 ``v`` and ``wavel`` arrays of the record. Samples are ordered by table, then
@@ -39,7 +39,7 @@ _DEFAULT_PHASE_UNIT = "deg"
 
 
 def read_oifits(source, target=None, insname=None):
-    """Read an OIFITS file into a record for [`OIData`][drpangloss.oidata.OIData].
+    """Read an OIFITS file into a record for [`OIData`][virgil.oidata.OIData].
 
     Parameters
     ----------
@@ -630,7 +630,7 @@ def write_oifits(tables, filename, overwrite=True):
     ----------
     tables : dict
         Mapping of table name to a dict of columns, in the layout used by
-        [`drpangloss.legacy.oifits_implaneia.save`][drpangloss.legacy.oifits_implaneia.save]:
+        [`virgil.legacy.oifits_implaneia.save`][virgil.legacy.oifits_implaneia.save]:
 
         * ``"OI_WAVELENGTH"`` (required): ``EFF_WAVE`` and ``EFF_BAND`` in
           metres, one value per channel.
@@ -684,8 +684,8 @@ def build_hdulist(tables):
             "tables must contain at least one of OI_VIS, OI_VIS2 or OI_T3."
         )
 
-    insname = str(info.get("INSNAME", info.get("INSTRUME", "DRPANGLOSS")))
-    arrname = str(info.get("ARRNAME", info.get("MASK", "DRPANGLOSS")))
+    insname = str(info.get("INSNAME", info.get("INSTRUME", "VIRGIL")))
+    arrname = str(info.get("ARRNAME", info.get("MASK", "VIRGIL")))
     date_obs = str(info.get("DATE-OBS", "2000-01-01"))
 
     wave = tables["OI_WAVELENGTH"]
@@ -741,7 +741,7 @@ def _primary_hdu(info):
     hdu = fits.PrimaryHDU()
     header = hdu.header
     header["CONTENT"] = "OIFITS2"
-    header["ORIGIN"] = str(info.get("ORIGIN", "drpangloss"))
+    header["ORIGIN"] = str(info.get("ORIGIN", "virgil"))
     header["DATE"] = datetime.date.today().isoformat()
     # Keywords that OIFITS2 requires in the primary header.
     header["DATE-OBS"] = str(info.get("DATE-OBS", "2000-01-01"))

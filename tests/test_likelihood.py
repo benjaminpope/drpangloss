@@ -5,9 +5,9 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
-from drpangloss.amigo import load_oi_data
-from drpangloss.likelihood import model_loglike, whitened_residuals
-from drpangloss.models import BinaryModelCartesian
+from virgil.amigo import load_oi_data
+from virgil.likelihood import model_loglike, whitened_residuals
+from virgil.models import BinaryModelCartesian
 
 from ._test_data import oidata_sim, true_values
 

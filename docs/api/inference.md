@@ -1,6 +1,6 @@
-# `drpangloss.inference`
+# `virgil.inference`
 
-::: drpangloss.inference
+::: virgil.inference
     options:
       members:
         - laplace_cov

@@ -8,12 +8,12 @@ import pytest
 from numpyro.infer import MCMC, NUTS, init_to_value
 from numpyro.infer.util import initialize_model
 
-from drpangloss.coverage import vlti_oidata
-from drpangloss.fields import GaussianField
-from drpangloss.fitting import fit, gauss_newton_mass
-from drpangloss.imaging import image_priors
-from drpangloss.likelihood import numpyro_model
-from drpangloss.models import GaussianDisk, Image, PointSource, System
+from virgil.coverage import vlti_oidata
+from virgil.fields import GaussianField
+from virgil.fitting import fit, gauss_newton_mass
+from virgil.imaging import image_priors
+from virgil.likelihood import numpyro_model
+from virgil.models import GaussianDisk, Image, PointSource, System
 
 N, H = 16, 1.0
 TEMPLATE = onp.asarray(GaussianDisk(4.0).render(N, N * H))

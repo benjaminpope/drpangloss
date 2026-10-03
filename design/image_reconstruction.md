@@ -8,7 +8,7 @@ stage.
 ## Purpose and scope
 
 We are adding regularised maximum-a-posteriori (MAP) image reconstruction to
-drpangloss, with optional Bayesian sampling of the same objective. The image
+virgil, with optional Bayesian sampling of the same objective. The image
 is one more `Component` in a `System`: analytic pieces (stars, companions)
 stay analytic, and only resolved emission goes into pixels. The target data
 are AMIGO DISCO products from JWST AMI, closure phases from long-baseline
@@ -306,7 +306,7 @@ V(0) = 1):
 
 | Transform | Max \|ΔV\| |
 | --- | --- |
-| DFT, float32, `Precision.HIGHEST` (drpangloss) | 7.9e-7 |
+| DFT, float32, `Precision.HIGHEST` (virgil) | 7.9e-7 |
 | DFT, float32, JAX default (TF32) | 2.7e-5 |
 | NUFFT, float32 (eps 1e-5) | 2.9e-6 |
 | NUFFT, float64 (eps 1e-7) | 2.8e-8 |
@@ -390,7 +390,7 @@ exp(+i t/2) along each even-length axis. That is because the pixel centre
 is at (n − 1)/2 but FINUFFT's mode 0 is at n/2. `eps` is fixed by dtype:
 1e-7 in float64 and 1e-5 in float32 (FINUFFT cannot go much below 1e-6 in
 single precision). No user-facing `eps` knob until someone needs one. The
-optional extra is `drpangloss[nufft]`, tested in its own CI job.
+optional extra is `virgil-astro[nufft]`, tested in its own CI job.
 
 Laptop CPU (Apple arm64, jax 0.9.1, jax-finufft 1.3.1 pip wheel), jitted
 value + gradient of Σ|V|², from `scripts/bench_ft.py`; raw numbers in

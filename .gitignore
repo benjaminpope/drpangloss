@@ -4,7 +4,7 @@ __pycache__/
 .lint-logs/
 
 *.egg-info/
-src/drpangloss.egg-info/
+src/virgil.egg-info/
 
 # Ignore files meant for personal agents for session context retention
 REVIEW_NOTES.md

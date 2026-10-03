@@ -6,7 +6,7 @@ import numpy as onp
 import numpyro.distributions as dist
 import pytest
 
-from drpangloss import (
+from virgil import (
     BlackBody,
     GaussianDisk,
     ModulatedGaussianRim,
@@ -19,8 +19,8 @@ from drpangloss import (
     UniformDisk,
     write_oifits,
 )
-from drpangloss._utils import is_flux_param, resolve_flux_param
-from drpangloss.likelihood import (
+from virgil._utils import is_flux_param, resolve_flux_param
+from virgil.likelihood import (
     joint_loglike,
     model_loglike,
     numpyro_model,
@@ -119,7 +119,7 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
     # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # drpangloss.likelihood.whitened_residuals (the original used Δ). The
+    # virgil.likelihood.whitened_residuals (the original used Δ). The
     # original also treated the four closure phases of each frame and
     # channel as independent, counting them 4/3 times; they are whitened
     # as correlated groups instead (OIData.cp_noise; see test_closure).
@@ -226,7 +226,7 @@ def test_power_law_reference_wavelength_must_be_positive():
     assert not bool(traced(-1.65e-6))
 
 
-# Planck's law written out independently of drpangloss.spectra.
+# Planck's law written out independently of virgil.spectra.
 _H, _C, _K = 6.62607015e-34, 2.99792458e8, 1.380649e-23
 
 
@@ -304,7 +304,7 @@ def test_sparco_fractions_and_temperatures_match_the_published_formula():
 def test_each_channel_of_a_multichannel_dataset_gets_its_own_weights():
     # V² and closure phases of a SPARCO scene observed in several channels at
     # once equal those of the scene observed one channel at a time.
-    from drpangloss.coverage import vlti_oidata
+    from virgil.coverage import vlti_oidata
 
     scene = _scene(flux_s=BlackBody(0.05, 3000.0))
     together = vlti_oidata(hour_angles_h=(0.0, 2.0), wavelengths_m=WAVES)

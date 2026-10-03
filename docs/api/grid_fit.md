@@ -1,8 +1,8 @@
-# `drpangloss.grid_fit`
+# `virgil.grid_fit`
 
-Grid searches. Contrast limits built on them are in [`drpangloss.limits`](limits.md).
+Grid searches. Contrast limits built on them are in [`virgil.limits`](limits.md).
 
-::: drpangloss.grid_fit
+::: virgil.grid_fit
     options:
       members:
         - likelihood_grid

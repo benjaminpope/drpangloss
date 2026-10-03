@@ -1,14 +1,14 @@
 import jax.numpy as np
 import numpy as onp
 
-from drpangloss.coverage import (
+from virgil.coverage import (
     NIRISS_AMI_HOLES,
     ami_grid_record,
     mask_transfer,
     nrm_oidata,
 )
-from drpangloss.models import BinaryModelCartesian, PointSource
-from drpangloss.oidata import OIData
+from virgil.models import BinaryModelCartesian, PointSource
+from virgil.oidata import OIData
 
 
 def test_mask_transfer_has_splodges_at_the_baselines():
@@ -72,7 +72,7 @@ def test_nrm_oidata_has_v2_and_closure_phases_at_the_splodge_centres():
 
 
 def test_rotation_follows_the_position_angle_convention():
-    from drpangloss._geometry import rotate
+    from virgil._geometry import rotate
 
     for angle in (-6.9, 20.0):
         grid = OIData(ami_grid_record(pitch_m=0.5, rotation_deg=angle)).uv_grid

@@ -1,6 +1,6 @@
 # Class: `HarmonixModel`
 
-::: drpangloss.models.HarmonixModel
+::: virgil.models.HarmonixModel
     options:
       show_root_heading: false
       heading_level: 3
