@@ -5,10 +5,16 @@ Long-baseline interferometers resolve the nearest giant stars well enough to map
 
 `drpangloss` wraps a harmonix star in `HarmonixModel`, so that it works like any other source model: it simulates data, draws images on the sky, and is fitted through parameter paths. This tutorial builds a spotted, ζ And-like giant, draws it, looks at its visibilities, simulates three nights of CHARA-like data as it rotates, and fits the spot back.
 
-harmonix and jaxoplanet are not dependencies of drpangloss. This page needs harmonix with the fixes for current JAX in [shashankdholakia/harmonix#1](https://github.com/shashankdholakia/harmonix/pull/1) and [#2](https://github.com/shashankdholakia/harmonix/pull/2); until they are released, install it from GitHub:
+harmonix and jaxoplanet are not dependencies of drpangloss. This page needs harmonix 0.1.0 or later, which runs on current JAX (jaxoplanet comes with it):
 
 ```bash
-pip install jaxoplanet "harmonix @ git+https://github.com/benjaminpope/harmonix@modern-jax"
+pip install "harmonix>=0.1.0"
+```
+
+Until 0.1.0 is on PyPI, install it from GitHub instead:
+
+```bash
+pip install "harmonix @ git+https://github.com/shashankdholakia/harmonix"
 ```
 
 ```python
