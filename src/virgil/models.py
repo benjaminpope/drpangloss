@@ -444,11 +444,20 @@ class GaussianArc(Component):
     elliptical Gaussian with FWHMs ``hypot(length, width)`` along the arc
     and ``width`` across it.
 
+    The weight is a Gaussian in the arc length ``s`` from ``pa``, taken
+    once round the circle, ``-π radius <= s <= π radius``. While the arc
+    is short compared with the circle it is the full Gaussian (the part
+    beyond 6σ, a fraction 2e-9 of the flux, is dropped). Once the length
+    FWHM exceeds about ``π radius`` the Gaussian is cut off at the
+    antipode of ``pa``, where the two tails meet, and the brightness
+    tends to a uniform ring as ``length`` grows; it never wraps round the
+    circle more than once.
+
     The visibility is the Fourier transform of the curve, a line integral
     evaluated by the trapezoidal rule on ``nodes`` equally spaced points
-    spanning ±3.5σ of the weight, times the Gaussian's. It is accurate
-    while the spacing of the points, ``7 σ / (nodes - 1)``, is below half
-    the shortest fringe spacing, ``λ / 2 B_max``.
+    spanning ``±min(6σ, π radius)``, times the Gaussian's. It is accurate
+    while the spacing of the points, ``2 min(6σ, π radius) / (nodes -
+    1)``, is below half the shortest fringe spacing, ``λ / 2 B_max``.
 
     Parameters
     ----------
@@ -528,7 +537,11 @@ class GaussianArc(Component):
         """Points along the arc (mas, East and North of the centre) and
         their normalised trapezoidal-rule weights."""
         sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
-        s = np.linspace(-3.5, 3.5, self.nodes) * sigma
+        # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
+        # arc is longer: then both ends sit at the antipode of pa, and their
+        # half weights add to one full trapezoidal weight.
+        span = np.minimum(6.0 * sigma, np.pi * self.radius)
+        s = np.linspace(-1.0, 1.0, self.nodes) * span
         angle = self.pa * dtor + s / self.radius
         # Trapezoidal rule: the end points carry half weight.
         ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
@@ -919,8 +932,10 @@ class ModulatedGaussianRim(Component):
         amplitudes can also be valid. Concrete values are checked when the
         model is built.
     az_pas : float or array-like, optional
-        Position angles of the cosine azimuthal modulations in degrees, North
-        to East, one per entry of ``az_amps``.
+        Azimuths of the cosine azimuthal modulations in degrees, one per entry
+        of ``az_amps``, measured in the plane of the rim in the same sense
+        as position angle, with ``pa`` on the major axis (see Notes). For an
+        inclined rim these are not on-sky position angles.
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a [`System`][virgil.models.System],
         or a spectrum from [`virgil.spectra`][virgil.spectra]
@@ -934,11 +949,22 @@ class ModulatedGaussianRim(Component):
 
     Notes
     -----
-    The intensity profile is separable into a symmetric radial profile and cosine
-    azimuthal modulations, meaning the image intensity can be described in polar image
-    coordinates as $I(r, \theta) = f(r) \left( 1 + \sum_{m=1}^{n}
-    A_m \cos{(m(\theta - \mathrm{pa}_m))} \right)$, where $f(r)$ is a thin ring radial
-    profile convolved with an isotropic Gaussian.
+    The rim is defined in its own plane and then inclined. In polar
+    coordinates $(r, \phi)$ in the plane of the rim, the thin ring is
+    $\delta(r - \mathrm{diam}/2) \left( 1 + \sum_{m=1}^{n}
+    A_m \cos{(m(\phi - \mathrm{pa}_m))} \right)$. The in-plane azimuth
+    $\phi$ is counted in the same sense as position angle, with
+    $\phi = \mathrm{pa}$ along the major axis. The ring is then compressed
+    by $\cos(\mathrm{inc})$ along the minor axis and convolved on the sky
+    with an isotropic Gaussian of FWHM ``fwhm``.
+
+    So ``az_pas`` are in-plane (deprojected) angles, not on-sky position
+    angles. A point at in-plane azimuth $\phi$ appears at the on-sky
+    position angle $\theta$ with $\tan(\theta - \mathrm{pa}) =
+    \cos(\mathrm{inc}) \tan(\phi - \mathrm{pa})$, in the same quadrant.
+    The two agree for a face-on rim (``inc = 0``) and along the major and
+    minor axes. Otherwise a peak at ``az_pas`` appears on the sky at a
+    position angle closer to the major axis.
 
     This model is achromatic: it does not represent any spectral dependence.
     The rim contains no star; put it in a [`System`][virgil.models.System] with a
