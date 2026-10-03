@@ -74,6 +74,21 @@ def test_bessel_jn_accepts_scalars():
     assert onp.allclose(bessel_jn(3, 2.5), [jv(m, 2.5) for m in range(4)])
 
 
+@pytest.mark.parametrize("x64, dtype, atol", BESSEL_PRECISIONS)
+def test_bessel_integer_inputs_are_promoted_to_float(x64, dtype, atol):
+    # The coefficient tables are cast to the argument's dtype, so integer
+    # arguments must reach them already promoted to float.
+    xs = onp.arange(-12, 13)
+    with jax.enable_x64(x64):
+        x = np.asarray(xs)
+        assert onp.allclose(j0(x), jv(0, xs), rtol=0, atol=atol)
+        assert onp.allclose(j1(x), jv(1, xs), rtol=0, atol=atol)
+        result = bessel_jn(4, x)
+    assert result.dtype == dtype
+    expected = [jv(m, xs) for m in range(5)]
+    assert onp.allclose(result, expected, rtol=0, atol=atol)
+
+
 # Include x = 0, the CEPHES switch at |x| = 5 and the trig/recurrence switch at
 # |x| = n + 2 for the orders tested.
 DERIV_XS = onp.unique(
