@@ -199,8 +199,10 @@ for dt in (0.0, 120.0, 240.0):
         f"  {float(attached.az_pas[0]) % 360:6.1f}"
     )
 
-# Orientation check: the disc must brighten towards the primary on the sky. At this orbit's 50° inclination, binding the sky angle to az_pas
-# without deprojecting it would miss by up to ~10°.
+# Orientation check: the disc must brighten towards the primary on the sky.
+# At this orbit's 50° inclination the deprojected rim angle differs from the
+# sky angle by up to ~13° (the table above), so binding the sky angle to
+# az_pas directly would aim the modulation that far off.
 npix, fov = 128, 8.0
 xs = (np.arange(npix) - npix / 2 + 0.5) * fov / npix
 for dt in (0.0, 120.0, 240.0):
