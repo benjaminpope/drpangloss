@@ -133,6 +133,7 @@ def fit_star(name, args):
         num_warmup=args.num_warmup,
         num_samples=args.num_samples,
         num_chains=args.chains,
+        chain_method=args.chain_method,
         progress_bar=args.progress_bar,
     )
     t0 = time.time()
@@ -259,6 +260,12 @@ def main():
         "--download-only",
         action="store_true",
         help="fetch any missing data files and exit (e.g. on a login node)",
+    )
+    p.add_argument(
+        "--chain-method",
+        default="parallel",
+        choices=("parallel", "vectorized", "sequential"),
+        help="how numpyro runs the chains; 'vectorized' avoids pmap",
     )
     p.add_argument(
         "--no-progress-bar",

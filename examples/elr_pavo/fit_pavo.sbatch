@@ -28,7 +28,11 @@ echo "task=${SLURM_ARRAY_TASK_ID} star=${STAR} host=$(hostname)"
 
 # Use this checkout's source, whatever drpangloss the env has installed.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
-# CPU job: keep JAX off any GPU.
+# CPU job: keep JAX off any GPU. Chains are vectorized (vmap) rather than
+# parallel (pmap): with the env's jax/equinox, pmap breaks optimistix's
+# root finder ("Closure-converted function called with different dynamic
+# arguments").
 export JAX_PLATFORMS=cpu
 
-srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" --no-progress-bar
+srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" --no-progress-bar \
+  --chain-method vectorized
