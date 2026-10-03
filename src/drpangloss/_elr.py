@@ -218,7 +218,10 @@ def solve_ELR(omega, theta):  # eq.26, 27, 28; solve the ELR11 equations
     return rtw, Teff_ratio, Flux_ratio
 
 
-solve_ELR_vec = jax.vmap(solve_ELR, in_axes=[None, 0])
+# Jitted once here: run eagerly (tests, notebooks), the bisection loops
+# dispatch op by op and take ~0.5 s per call instead of ~1 ms. Inside an
+# outer jit this is a no-op.
+solve_ELR_vec = jax.jit(jax.vmap(solve_ELR, in_axes=[None, 0]))
 
 
 # === utils.py ===
@@ -411,6 +414,11 @@ def visibilities(x, y, weight, uu, vv):
     ``u / wavel``) and ``x``, ``y`` are in mas. The phase sign is that of
     ``drpangloss._geometry.offset_phase``. Normalised by ``weight.sum()``.
     Returns an array of shape ``uu.shape``.
+
+    ``weight`` is 1D (one weight per triangle, shared by all samples) or 2D
+    with shape ``(n, n_tri)`` or ``(1, n_tri)``, where ``n = uu.size`` (a
+    weight per flattened sample, e.g. one spectrum per wavelength); each row
+    is normalised by its own sum.
     """
     dtype = jnp.result_type(float, x, y, weight, uu, vv)
     uu = jnp.asarray(uu, dtype)
@@ -425,8 +433,15 @@ def visibilities(x, y, weight, uu, vv):
     # triangles is a real matmul at HIGHEST precision
     arg = 2.0 * jnp.pi * (jnp.outer(u, x) + jnp.outer(v, y))
     w = jnp.asarray(weight, dtype)
-    w = w / w.sum()
+    if w.ndim == 2 and w.shape[0] == 1:
+        w = w[0]
     hi = jax.lax.Precision.HIGHEST
-    re = jnp.dot(jnp.cos(arg), w, precision=hi)
-    im = -jnp.dot(jnp.sin(arg), w, precision=hi)
+    if w.ndim == 1:
+        w = w / w.sum()
+        re = jnp.dot(jnp.cos(arg), w, precision=hi)
+        im = -jnp.dot(jnp.sin(arg), w, precision=hi)
+    else:
+        w = w / w.sum(axis=1, keepdims=True)
+        re = jnp.einsum("nt,nt->n", jnp.cos(arg), w, precision=hi)
+        im = -jnp.einsum("nt,nt->n", jnp.sin(arg), w, precision=hi)
     return jax.lax.complex(re, im).reshape(shape)

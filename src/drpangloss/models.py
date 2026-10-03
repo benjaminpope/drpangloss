@@ -44,7 +44,7 @@ from ._geometry import (
 )
 from . import _elr
 from ._utils import concrete, dtor, mas2rad
-from .spectra import Spectrum, flux_at, reference_flux
+from .spectra import Spectrum, _planck_ratio, flux_at, reference_flux
 
 
 def _normalize_image(image):
@@ -417,9 +417,47 @@ class GravityDarkenedStar(Component):
     n_lat : int, optional
         Number of latitude rings of the surface mesh (default 32, giving
         2520 triangles). Visibilities cost O(``n_lat``$^2$) per baseline.
+    t_pole : float or array-like, optional
+        Effective temperature of the pole in kelvin. The default ``None`` is
+        the grey model; a value switches on the chromatic model (see Notes).
+    wavel0 : float or array-like, optional
+        Reference wavelength in metres (default 1.65e-6, H band), at which
+        the star's spectrum is normalised to ``flux`` and which
+        [`render`][drpangloss.models.SourceModel.render] shows. Only used
+        when ``t_pole`` is set.
 
     Notes
     -----
+    **Grey mode** (``t_pole=None``, Dholakia's model): each triangle is
+    weighted by its bolometric flux times its projected area, the same at
+    every wavelength, so wavelength enters only through ``u / wavel``.
+
+    **Chromatic mode** (``t_pole`` set): each triangle has temperature
+    $T = T_\mathrm{pole}\,T_\mathrm{eff}/T_\mathrm{eff,pole}$ from the ELR11
+    gravity darkening, radiates the Planck function $B_\lambda(T)$, and is
+    weighted by its projected area times that, at each sample's own
+    wavelength. The hot pole and cool equator then have a contrast that
+    rises towards short wavelengths. Limb darkening and bandwidth smearing
+    are not modelled. The weights have shape ``(n_samples, n_triangles)``,
+    so memory is about 200 MB of complex64 for 10^4 samples at the default
+    ``n_lat``.
+
+    In chromatic mode the star supplies its own spectrum to a
+    [`System`][drpangloss.models.System]: its weight is ``flux`` times the
+    summed Planck flux of its visible surface, relative to that at
+    ``wavel0``. A companion then gets a physically consistent flux ratio at
+    every wavelength with no separate stellar spectrum, and ``flux`` must be a
+    number, not a [`Spectrum`][drpangloss.spectra.Spectrum], which would
+    count the spectrum twice:
+
+    ```python
+    star = GravityDarkenedStar(
+        1.0, omega=0.9, inc=45.0, t_pole=9000.0
+    )
+    companion = PointSource(flux=BlackBody(0.01, 3000.0))
+    system = System(star=star, companion=companion)
+    ```
+
     Dholakia's ``ELR_Model`` parameters map onto these as follows (his
     angles are in radians):
 
@@ -436,6 +474,13 @@ class GravityDarkenedStar(Component):
     >>> v0 = star.model(np.zeros(1), np.zeros(1), 1.65e-6)
     >>> round(float(np.abs(v0)[0]), 3)
     1.0
+
+    The chromatic model's pole-to-equator contrast depends on wavelength:
+
+    >>> hot = GravityDarkenedStar(2.0, omega=0.9, inc=45.0, t_pole=9000.0)
+    >>> w = hot._weight(np.array([1.0e-6, 2.2e-6]))
+    >>> bool(w[0] > 1.0 > w[1])
+    True
     """
 
     diam_eq: jax.Array
@@ -443,6 +488,8 @@ class GravityDarkenedStar(Component):
     inc: jax.Array
     pa: jax.Array
     n_lat: int = eqx.field(static=True)
+    t_pole: jax.Array | None
+    wavel0: jax.Array
 
     def __init__(
         self,
@@ -454,6 +501,8 @@ class GravityDarkenedStar(Component):
         dra=0.0,
         ddec=0.0,
         n_lat=32,
+        t_pole=None,
+        wavel0=1.65e-6,
     ):
         self.diam_eq = np.asarray(diam_eq, dtype=float)
         self.omega = np.asarray(omega, dtype=float)
@@ -465,10 +514,24 @@ class GravityDarkenedStar(Component):
         if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
             raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
         self.n_lat = int(n_lat)
+        self.t_pole = None if t_pole is None else np.asarray(t_pole, float)
+        self.wavel0 = np.asarray(wavel0, dtype=float)
 
     def __check_init__(self):
         super().__check_init__()
         name = type(self).__name__
+        if self.t_pole is not None and isinstance(self.flux, Spectrum):
+            raise ValueError(
+                f"{name} with t_pole supplies its own spectrum, so flux "
+                "must be a number, not a Spectrum (it would be counted "
+                "twice)."
+            )
+        for key, value in (("t_pole", self.t_pole), ("wavel0", self.wavel0)):
+            value = None if value is None else concrete(value)
+            if value is not None and onp.any(value <= 0.0):
+                raise ValueError(
+                    f"{name} has {key} {value.tolist()}; it must be positive."
+                )
         diam, omega = concrete(self.diam_eq), concrete(self.omega)
         inc = concrete(self.inc)
         if diam is not None and onp.any(diam <= 0.0):
@@ -491,6 +554,11 @@ class GravityDarkenedStar(Component):
             & np.all(self.diam_eq > 0.0)
             & np.all((self.omega >= 0.0) & (self.omega < 1.0))
             & np.all((self.inc >= 0.0) & (self.inc <= 90.0))
+            & (
+                True
+                if self.t_pole is None
+                else np.all(self.t_pole > 0.0) & np.all(self.wavel0 > 0.0)
+            )
         )
 
     def _surface(self, **kwargs):
@@ -504,12 +572,56 @@ class GravityDarkenedStar(Component):
             **kwargs,
         )
 
+    def _planck_weights(self, wavel):
+        """Chromatic mode: ``(x, y, weights)``, weights of shape (*wavel.shape, n_tri).
+
+        Each triangle's temperature is ``t_pole`` times its ELR11 ``Teff``
+        over the pole's; its weight is projected area times
+        ``B_λ(T) / B_λ(t_pole)`` at ``wavel``, so numbers stay O(1).
+        """
+        x, y, _, teff, (_, _, cosine, _) = self._surface(return_mesh=True)
+        area = np.heaviside(cosine, 0.0) * cosine
+        # the pole, theta = 0, through the jitted vectorised solver
+        teff_pole = _elr.solve_ELR_vec(self.omega, np.zeros(1))[1][0]
+        temperature = self.t_pole * teff / teff_pole
+        wavel = np.asarray(wavel)[..., None]
+        planck = _planck_ratio(wavel, temperature, self.wavel0, self.t_pole)
+        return x, y, area * planck
+
+    def model(self, u, v, wavel):
+        if self.t_pole is None:
+            return super().model(u, v, wavel)
+        uu, vv = u / wavel, v / wavel
+        wavel = np.asarray(wavel)
+        # one wavelength for all samples, or one per (flattened) sample
+        if wavel.size == 1:
+            lam = wavel.reshape(1)
+        else:
+            lam = np.broadcast_to(wavel, uu.shape).reshape(-1)
+        x, y, w = self._planck_weights(lam)
+        return _elr.visibilities(x, y, w, uu, vv) * offset_phase(
+            uu, vv, self.dra, self.ddec
+        )
+
+    def _weight(self, wavel=None):
+        if self.t_pole is None:
+            return super()._weight(wavel)
+        if wavel is None:
+            return flux_at(self.flux)
+        # SED(λ) = sum of area * B_λ(T) over the surface, relative to wavel0
+        sed = self._planck_weights(wavel)[2].sum(axis=-1)
+        sed0 = self._planck_weights(self.wavel0)[2].sum(axis=-1)
+        return flux_at(self.flux) * sed / sed0
+
     def _centred_cvis(self, uu, vv):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        x, y, w, _ = self._surface()
+        if self.t_pole is None:
+            x, y, w, _ = self._surface()
+        else:  # drawn at wavel0
+            x, y, w = self._planck_weights(self.wavel0)
         # Index formulas inverted from image_coordinates: x falls with the
         # column and y with the row, from the (0, 0) pixel.
         col = (xx[0, 0] - x) / pixel_scale_mas
