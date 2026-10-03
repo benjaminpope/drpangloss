@@ -27,9 +27,15 @@ from astropy.io import fits
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
 
-# Rows whose MJDs differ by less than this (in days, about 9 seconds) are
-# treated as the same epoch when matching closure-phase triangles to
-# visibility baselines.
+# A closure-phase row is matched to the nearest-MJD visibility row of the same
+# exposure. OIFITS records only each row's MJD and INT_TIME, not the span of
+# the exposure, so the MJDs may differ by up to twice the longest INT_TIME in
+# either table, and always by this much (in days, about 9 seconds) for files
+# with no INT_TIME. GRAVITY's reduced products, for instance, average
+# different subsets of an exposure's frames for T3 and VIS2 (8 x 30 s DITs
+# with 120 s of valid frames can give MJDs 131 s apart). The closure phase
+# then uses the visibility rows' (u, v), which have rotated slightly.
+# TODO(Stage 6a.0): build closure-phase legs from the OI_T3 coordinates.
 _MJD_TOLERANCE = 1e-4
 
 _DEFAULT_PHASE_UNIT = "deg"
@@ -84,7 +90,10 @@ def read_oifits(source, target=None, insname=None):
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
-    and nearest ``MJD``, within its own file. The baselines must be stored in
+    and nearest ``MJD``, within its own file. The MJDs must agree to within
+    twice the longest ``INT_TIME`` in either table (or about 9 seconds if
+    there is none), since pipelines such as GRAVITY's average different
+    frames of one exposure for each table. The baselines must be stored in
     that orientation.
 
     All files in a list must hold the same kinds of observable (squared
@@ -272,6 +281,13 @@ def _mjd(hdu, mask):
     return onp.zeros(int(mask.sum()))
 
 
+def _exposure_time(hdu, mask):
+    """Longest ``INT_TIME`` in a table, in days (zero if there is none)."""
+    if "INT_TIME" in hdu.columns.names and mask.any():
+        return float(onp.max(_column(hdu, "INT_TIME", mask))) / 86400.0
+    return 0.0
+
+
 def _phase_scale(hdu, column):
     """Factor converting a phase column to radians, from its TUNIT."""
     unit = hdu.columns[column].unit or _DEFAULT_PHASE_UNIT
@@ -291,19 +307,24 @@ class _BaselineLookup:
     def __init__(self):
         self._rows = {}
 
-    def add(self, ins, pair, mjd, start, nwave):
+    def add(self, ins, pair, mjd, exposure, start, nwave):
         key = (ins, int(pair[0]), int(pair[1]))
-        self._rows.setdefault(key, []).append((float(mjd), start, nwave))
+        row = (float(mjd), exposure, start, nwave)
+        self._rows.setdefault(key, []).append(row)
 
-    def find(self, ins, pair, mjd):
-        """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``."""
+    def find(self, ins, pair, mjd, exposure=0.0):
+        """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
+
+        The row must overlap in time: see ``_MJD_TOLERANCE``.
+        """
         rows = self._rows.get((ins, int(pair[0]), int(pair[1])), [])
         if not rows:
             return None
         best = min(rows, key=lambda row: abs(row[0] - mjd))
-        if abs(best[0] - mjd) > _MJD_TOLERANCE:
+        window = max(_MJD_TOLERANCE, 2.0 * best[1], 2.0 * exposure)
+        if abs(best[0] - mjd) > window:
             return None
-        return best[1], best[2]
+        return best[2], best[3]
 
 
 def _read_visibilities(tables, wavelengths, target_id):
@@ -336,9 +357,10 @@ def _read_visibilities(tables, wavelengths, target_id):
         vcoord = _column(hdu, "VCOORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         for row in range(values.shape[0]):
-            lookup.add(ins, sta_index[row], mjd[row], start, nwave)
+            lookup.add(ins, sta_index[row], mjd[row], exposure, start, nwave)
             start += nwave
         u.append(onp.repeat(ucoord, nwave))
         v.append(onp.repeat(vcoord, nwave))
@@ -379,6 +401,7 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
         u2, v2 = _column(hdu, "U2COORD", mask), _column(hdu, "V2COORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         for row, (a, b, c) in enumerate(sta_index):
             legs = (
@@ -387,9 +410,9 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
                 ((a, c), u1[row] + u2[row], v1[row] + v2[row]),
             )
             for pair, uu, vv in legs:
-                if lookup.find(ins, pair, mjd[row]) is not None:
+                if lookup.find(ins, pair, mjd[row], exposure) is not None:
                     continue
-                lookup.add(ins, pair, mjd[row], start, nwave)
+                lookup.add(ins, pair, mjd[row], exposure, start, nwave)
                 start += nwave
                 u.append(onp.full(nwave, uu))
                 v.append(onp.full(nwave, vv))
@@ -421,13 +444,16 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         channels = onp.arange(nwave)
         for row, (a, b, c) in enumerate(sta_index):
             for leg, pair in zip(i_cps, ((a, b), (b, c), (a, c))):
-                found = lookup.find(ins, pair, mjd[row])
+                found = lookup.find(ins, pair, mjd[row], exposure)
                 if found is None or found[1] != nwave:
-                    reversed_found = lookup.find(ins, pair[::-1], mjd[row])
+                    reversed_found = lookup.find(
+                        ins, pair[::-1], mjd[row], exposure
+                    )
                     hint = (
                         f" It is stored reversed as {tuple(pair[::-1])};"
                         " reversed closure-phase legs are not supported yet."
@@ -485,13 +511,14 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
         flag = _flags(hdu, mask, nwave, values, errors)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
+        exposure = _exposure_time(hdu, mask)
         ins = _insname(hdu)
         for row, pair in enumerate(sta_index):
             sign = 1.0
-            found = lookup.find(ins, pair, mjd[row])
+            found = lookup.find(ins, pair, mjd[row], exposure)
             if found is None:
                 # The phase of the reversed baseline is the negated phase.
-                found = lookup.find(ins, pair[::-1], mjd[row])
+                found = lookup.find(ins, pair[::-1], mjd[row], exposure)
                 sign = -1.0
             if found is None or found[1] != nwave:
                 continue
