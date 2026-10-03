@@ -16,6 +16,8 @@ from virgil.imaging import (
 )
 from virgil.models import GaussianDisk, Image, PointSource, System
 
+from ._compiles import count_compiles
+
 DATA = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
 N, H = 16, 1.0
 TEMPLATE = onp.asarray(GaussianDisk(4.0).render(N, N * H))
@@ -204,3 +206,23 @@ def test_evidence_helpers_reject_fitted_noise_and_model_lists():
     )
     with pytest.raises(ValueError, match="noise"):
         curve.classic_maxent(DATA)
+
+
+def test_the_evidence_jacobian_compiles_once():
+    # The residual Jacobian is jitted once at module level. Run eagerly, it
+    # compiled hundreds of small operations one at a time on its first call
+    # (about 340 here); jitted, it is a handful of compilations.
+    n = 11  # a grid size no other test uses, so nothing is cached
+
+    def scene(sigma):
+        field = GaussianField(onp.zeros((n, n)), sigma, 2.0)
+        return System(star=PointSource(), env=Image(field, H, flux=0.4))
+
+    first, second = scene(1.5), scene(3.0)
+    with count_compiles() as compiles:
+        log_evidence(first, DATA)
+    assert len(compiles) < 20
+    with count_compiles() as compiles:
+        log_evidence(second, DATA)
+        error_scale(second, DATA)
+    assert not compiles

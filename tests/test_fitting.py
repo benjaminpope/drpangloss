@@ -248,6 +248,33 @@ def test_repeated_fits_do_not_recompile(method):
     assert not compiles
 
 
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("lm", [{"gtol": 1e-4}, {"gtol": 2e-4}, {"gtol": 3e-4}]),
+        ("lbfgs", [{}, {"gtol": 2e-4}, {"max_step_size": 1.5}]),
+        ("lbfgs", [{"max_steps": 100}, {"max_steps": 200}, {}]),
+        ("adam", [{"learning_rate": r} for r in (1e-2, 2e-2, 3e-2)]),
+    ],
+)
+def test_new_prior_bounds_and_options_do_not_recompile(method, options):
+    # Python numbers in the priors (here a Uniform's lower bound) and in
+    # fit's options were static in the jitted solvers, so each new value
+    # recompiled the fit (~1.2 s each for a small model, ~4 s on a 64²
+    # image). They are now traced arrays. (LM's and Adam's max_steps set a
+    # loop's length and stay static.)
+    def fit_with(low, extra):
+        priors = dict(PRIORS, flux=dist.Uniform(low, 0.5))
+        steps = {"max_steps": 50} if method == "adam" else {}
+        return fit(START, priors, DATA, method=method, **steps, **extra)
+
+    fit_with(0.0, options[0])
+    with count_compiles() as compiles:
+        fit_with(1e-4, options[1])
+        fit_with(1e-3, options[2])
+    assert not compiles
+
+
 def test_fit_recovers_error_scales():
     # Noise twice the stated errors: the fitted scales should be near 2.
     data = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=2.0)
