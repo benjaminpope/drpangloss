@@ -1,12 +1,12 @@
 """Likelihoods of source models given interferometric data.
 
-A model is given either as a template [`SourceModel`][drpangloss.models.SourceModel],
+A model is given either as a template [`SourceModel`][virgil.models.SourceModel],
 whose parameters at dot-separated zodiax paths (e.g. ``"comp.flux"``) are
 replaced, or as a class/callable called with the parameters as keyword
-arguments (see [`build_model`][drpangloss.likelihood.build_model]).
+arguments (see [`build_model`][virgil.likelihood.build_model]).
 
 Every likelihood, grid, limit and fit goes through one residual vector,
-[`whitened_residuals`][drpangloss.likelihood.whitened_residuals]: the
+[`whitened_residuals`][virgil.likelihood.whitened_residuals]: the
 residuals divided by their uncertainties, with unprojected phases measured
 as a chord, 2 sin(Δ/2), so that the likelihood is smooth where phases
 wrap at ±π. Closure phases from four or more telescopes are correlated:
@@ -103,7 +103,7 @@ def inflated_errors(
     data_obj : OIData
         Data whose uncertainties are inflated.
     prediction : array-like
-        Model vector, e.g. from [`OIData.model`][drpangloss.oidata.OIData.model].
+        Model vector, e.g. from [`OIData.model`][virgil.oidata.OIData.model].
     vis_error_rel : float, optional
         Extra visibility error, as a fraction of the *model* visibility
         observable (e.g. of the model V² for squared visibilities): a
@@ -116,7 +116,7 @@ def inflated_errors(
     Returns
     -------
     array-like
-        Uncertainties matching [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
+        Uncertainties matching [`flatten_data`][virgil.oidata.OIData.flatten_data].
     """
     _, errors = data_obj.flatten_data()
     terms = (vis_error_rel, phi_error, vis_scale, phi_scale)
@@ -204,7 +204,7 @@ def _whitened_and_errors(model_object, data_obj, noise):
 def whitened_residuals(model_object, data_obj, **noise):
     """Residuals of a model divided by the data uncertainties.
 
-    This is the one residual vector behind every likelihood in drpangloss:
+    This is the one residual vector behind every likelihood in virgil:
     ``model_loglike`` is ``-0.5 * sum(whitened_residuals**2)`` plus the
     Gaussian normalisation, and least-squares fits minimise its sum of
     squares.
@@ -231,15 +231,15 @@ def whitened_residuals(model_object, data_obj, **noise):
     **noise
         Error-inflation terms, ``vis_scale``, ``phi_scale``,
         ``vis_error_rel`` and ``phi_error`` (see
-        [`inflated_errors`][drpangloss.likelihood.inflated_errors]).
+        [`inflated_errors`][virgil.likelihood.inflated_errors]).
 
     Returns
     -------
     array-like
         One dimensionless residual per independent observable
-        ([`n_independent`][drpangloss.oidata.OIData.n_independent] of
+        ([`n_independent`][virgil.oidata.OIData.n_independent] of
         them), in the order of
-        [`flatten_data`][drpangloss.oidata.OIData.flatten_data]; correlated
+        [`flatten_data`][virgil.oidata.OIData.flatten_data]; correlated
         closure phases are replaced by their whitened independent
         combinations.
     """
@@ -251,7 +251,7 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
 
     This is ``-0.5 * sum(r**2) - sum(log σ) - (n/2) log 2π`` for the
     residuals ``r`` of
-    [`whitened_residuals`][drpangloss.likelihood.whitened_residuals]:
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals]:
     Gaussian in visibilities and projected phases, and von Mises in
     unprojected phases (with the Gaussian normalisation, which is its
     small-σ limit).
@@ -264,7 +264,7 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         Data to compare with.
     reject_unphysical : bool, optional
         If True, return ``-inf`` when
-        [`is_physical`][drpangloss.models.SourceModel.is_physical] is false,
+        [`is_physical`][virgil.models.SourceModel.is_physical] is false,
         e.g. for a negative flux or a rim whose brightness goes negative.
         This works inside ``jax.jit``, so samplers can use it as a hard prior
         boundary.
@@ -273,7 +273,7 @@ def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
         ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
         ``vis_error_rel`` (relative to the model visibility) and
         ``phi_error`` (radians) are added in quadrature (see
-        [`inflated_errors`][drpangloss.likelihood.inflated_errors]). The
+        [`inflated_errors`][virgil.likelihood.inflated_errors]). The
         Gaussian normalization uses the inflated errors.
     """
     whitened, errors = _whitened_and_errors(model_object, data_obj, noise)
@@ -315,7 +315,7 @@ def joint_loglike(params, observations, model_fn, **options):
     """Sum independent Gaussian log likelihoods over multiple observations.
 
     ``options`` (error terms and ``reject_unphysical``) are
-    passed to [`model_loglike`][drpangloss.likelihood.model_loglike].
+    passed to [`model_loglike`][virgil.likelihood.model_loglike].
     """
     return sum(
         model_loglike(model_fn(params, index), observation, **options)
@@ -327,7 +327,7 @@ def build_model(model, params, values):
     """Build a model from parameter names and values.
 
     ``model`` is either a class/callable, called as ``model(**dict(zip(params,
-    values)))``, or a [`SourceModel`][drpangloss.models.SourceModel] instance used as a template whose
+    values)))``, or a [`SourceModel`][virgil.models.SourceModel] instance used as a template whose
     leaves at the (dot-separated) paths ``params`` are replaced by ``values``.
     """
     if isinstance(model, SourceModel):
@@ -350,10 +350,10 @@ def loglike(values, params, data_obj, model, **options):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
     **options
         Error terms and ``reject_unphysical``, passed to
-        [`model_loglike`][drpangloss.likelihood.model_loglike].
+        [`model_loglike`][virgil.likelihood.model_loglike].
 
     Returns
     -------
@@ -381,7 +381,7 @@ def loglike_nosignal(values, params, data_obj, model):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
 
     Returns
     -------
@@ -426,10 +426,10 @@ def numpyro_model(
     model : SourceModel or callable
         Either a template model whose leaves at the paths in ``priors`` are
         sampled, or a function called with the sampled values as keyword
-        arguments that returns a [`SourceModel`][drpangloss.models.SourceModel]. A function lets you
+        arguments that returns a [`SourceModel`][virgil.models.SourceModel]. A function lets you
         sample parameters that are not leaves of the model, such as a
         separation and position angle, or one inclination shared by two
-        components (see [`build_model`][drpangloss.likelihood.build_model]).
+        components (see [`build_model`][virgil.likelihood.build_model]).
     priors : dict[str, numpyro.distributions.Distribution]
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
@@ -439,19 +439,19 @@ def numpyro_model(
         Data whose Gaussian log likelihood is added with ``numpyro.factor``.
     regularisers : sequence, optional
         Log-prior terms on the model, e.g. a
-        [`Centroid`][drpangloss.imaging.Centroid] prior, added with
+        [`Centroid`][virgil.imaging.Centroid] prior, added with
         ``numpyro.factor``. Only genuine prior densities
         (``probabilistic``) are allowed: penalties such as maximum entropy
-        are for [`fit`][drpangloss.fitting.fit].
+        are for [`fit`][virgil.fitting.fit].
     noise : dict or list of dict, optional
         Priors on error-inflation terms (``vis_scale``, ``phi_scale``,
         ``vis_error_rel``, ``phi_error``; see
-        [`inflated_errors`][drpangloss.likelihood.inflated_errors]),
+        [`inflated_errors`][virgil.likelihood.inflated_errors]),
         sampled as sites ``"noise.<term>"``. A list gives each dataset its
         own terms, as sites ``"noise[i].<term>"``.
     **options
         Fixed error terms and ``reject_unphysical``, passed to
-        [`model_loglike`][drpangloss.likelihood.model_loglike].
+        [`model_loglike`][virgil.likelihood.model_loglike].
 
     Returns
     -------

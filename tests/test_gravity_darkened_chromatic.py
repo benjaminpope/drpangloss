@@ -16,7 +16,7 @@ import pytest
 
 matplotlib.use("Agg")
 
-from drpangloss import (  # noqa: E402
+from virgil import (  # noqa: E402
     BlackBody,
     GravityDarkenedStar,
     PointSource,
@@ -24,11 +24,11 @@ from drpangloss import (  # noqa: E402
     System,
     _elr,
 )
-from drpangloss._geometry import image_coordinates  # noqa: E402
-from drpangloss.coverage import vlti_oidata  # noqa: E402
-from drpangloss.likelihood import model_loglike  # noqa: E402
+from virgil._geometry import image_coordinates  # noqa: E402
+from virgil.coverage import vlti_oidata  # noqa: E402
+from virgil.likelihood import model_loglike  # noqa: E402
 
-# Independent constants (not imported from drpangloss).
+# Independent constants (not imported from virgil).
 _MAS2RAD = onp.pi / 180.0 / 3600.0 / 1000.0
 _H, _C, _K = 6.62607015e-34, 299792458.0, 1.380649e-23
 

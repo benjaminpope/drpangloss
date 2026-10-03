@@ -1,11 +1,11 @@
-# drpangloss
+# virgil
 
-drpangloss is a package for modelling optical interferometry data in JAX.
+virgil is a package for modelling optical interferometry data in JAX.
 
 ## Installation
 
 ```bash
-pip install drpangloss
+pip install virgil-astro
 ```
 
 From source:
@@ -22,7 +22,7 @@ The tabs at the top group worked examples on simulated and bundled data:
 - **Binaries:** searching for companions, detection limits, and fitting several datasets together.
 - **Imaging:** image reconstruction in five parts, from simulating data to sampling the posterior.
 
-**Background** explains the ideas behind the methods and credits the people and projects drpangloss builds on. **API Reference** documents every public class and function.
+**Background** explains the ideas behind the methods and credits the people and projects virgil builds on. **API Reference** documents every public class and function.
 
 ## Development
 
@@ -32,4 +32,7 @@ The project is actively being modernized for improved reliability, testing cover
 
 ## Name
 
-The leading optical interferometry model fitting code is [CANDID](https://github.com/amerand/CANDID). In Voltaire's *Candide*, Dr Pangloss' belief that we live in the best of all possible worlds is a satire of Leibniz' theodicy. In a world with JAX, at least we can optimize our fits.
+VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary. In Dante's *Divine Comedy*, the poet Virgil is Dante's guide through the Inferno and Purgatory. In Virgil's own *Aeneid*, when Aeneas enters the underworld he draws his sword on the monsters crowding its threshold. His guide, the Cumaean Sibyl, warns him that they are only thin, bodiless lives flitting in a hollow semblance of form (*Aeneid* VI.292–294). Image reconstruction from sparse interferometric data is full of false visions like these: artefacts that look like structure but have no substance in the data. VIRGIL aims to help you tell the difference. The acronym is Jonah Goldfine's.
+
+Until version 0.1.1 the package was named after Voltaire's Dr Pangloss, a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID); it is now distributed on PyPI as `virgil-astro`.
+

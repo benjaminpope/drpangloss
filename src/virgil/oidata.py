@@ -46,10 +46,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     ``phi_index`` for absolute phases) then lists the samples that are
     observed; they are ``None`` when every sample is used.
 
-    ``uv_grid`` is a [`UVGrid`][drpangloss.oidata.UVGrid] when the samples
+    ``uv_grid`` is a [`UVGrid`][virgil.oidata.UVGrid] when the samples
     lie on a regular (possibly rotated) lattice, as AMIGO DISCO products do,
     and ``None`` otherwise. Models that can use the lattice, such as an
-    [`Image`][drpangloss.models.Image] with matching ``rotation_deg``, then
+    [`Image`][virgil.models.Image] with matching ``rotation_deg``, then
     evaluate faster; the results are the same.
     """
 
@@ -82,7 +82,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         ----------
         data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
             An OIFITS file or a list of them, read with
-            [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits]
+            [`virgil.oifits.read_oifits`][virgil.oifits.read_oifits]
             (several files, wavelength channels, tables and epochs, and
             ``FLAG`` columns, are supported). Or a dictionary with keys:
 
@@ -115,8 +115,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
               diagonal. Only diagonal uncertainties are propagated.
 
             A record with ``disco_coefficients`` is read as an AMIGO
-            mixed-DISCO product (see [`load_oi_data`][drpangloss.amigo.load_oi_data]); its ``u`` and
-            ``v`` are negated to match the drpangloss sign convention.
+            mixed-DISCO product (see [`load_oi_data`][virgil.amigo.load_oi_data]); its ``u`` and
+            ``v`` are negated to match the virgil sign convention.
         target : str or int, optional
             For OIFITS input, the target to keep.
         """
@@ -508,7 +508,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         tuple[array-like, array-like]
             The visibility observables followed by the phases (radians),
             in the order of
-            [`model`][drpangloss.oidata.OIData.model], and matching one-sigma uncertainties.
+            [`model`][virgil.oidata.OIData.model], and matching one-sigma uncertainties.
         """
         if self.observable_kind == "mixed_log_complex":
             return self.vis, self.d_vis
@@ -528,7 +528,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Parameters
         ----------
         prediction : array-like
-            Model vector, e.g. from [`model`][drpangloss.oidata.OIData.model].
+            Model vector, e.g. from [`model`][virgil.oidata.OIData.model].
         reference : array-like, optional
             Vector to compare against; by default the data
             (the first vector of :meth:`flatten_data`).
@@ -543,7 +543,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Notes
         -----
         This is for display. Likelihoods and fits use
-        [`whitened_residuals`][drpangloss.likelihood.whitened_residuals],
+        [`whitened_residuals`][virgil.likelihood.whitened_residuals],
         which is smooth where phases wrap.
         """
         if reference is None:
@@ -612,7 +612,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Use it when the error bars are known to be too large or too small
         overall, for example with a factor from
-        [`error_scale`][drpangloss.imaging.error_scale]. The uncertainties
+        [`error_scale`][virgil.imaging.error_scale]. The uncertainties
         are those of the observables as fitted (after any projection), so
         the whitened residuals simply scale by ``1 / factor``.
 
@@ -720,7 +720,7 @@ def cp_indices(vis_sta_index, cp_sta_index):
     Notes
     -----
     Baselines are matched on station indices alone. For data with several
-    epochs or wavelength channels use [`drpangloss.oifits.read_oifits`][drpangloss.oifits.read_oifits],
+    epochs or wavelength channels use [`virgil.oifits.read_oifits`][virgil.oifits.read_oifits],
     which also matches on instrument and MJD.
     """
     vis_sta_index = onp.asarray(vis_sta_index, dtype=int).reshape(-1, 2)

@@ -31,9 +31,9 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.coverage import ami_grid_record
-from drpangloss.fitting import fit
-from drpangloss.imaging import (
+from virgil.coverage import ami_grid_record
+from virgil.fitting import fit
+from virgil.imaging import (
     MaxEntropy,
     beam,
     diagnose,
@@ -44,10 +44,10 @@ from drpangloss.imaging import (
     nyquist_pixel_scale,
     starting_image,
 )
-from drpangloss.models import Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_model, plot_residual_map
-from drpangloss.scenes import ring
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.plotting import plot_model, plot_residual_map
+from virgil.scenes import ring
 
 # The scene of part 1: a lopsided ring with 5% of the flux, next to a star.
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
@@ -69,7 +69,7 @@ beam 154 × 131 mas; Nyquist pixel 84 mas; interferometric field of view 3300 ma
 
 ## The dirty image and the beam
 
-The simplest image is the **dirty image**, the inverse Fourier transform of the data with every unmeasured frequency set to zero. drpangloss's `dirty_image` computes it by least squares from the data's uv samples. Passing the star's flux ratio (`flux_ratio`) removes the star, so that only the extended emission is left.
+The simplest image is the **dirty image**, the inverse Fourier transform of the data with every unmeasured frequency set to zero. virgil's `dirty_image` computes it by least squares from the data's uv samples. Passing the star's flux ratio (`flux_ratio`) removes the star, so that only the extended emission is left.
 
 The dirty image is the truth convolved with the **dirty beam**, the response to a point source. The beam's core sets the resolution. `beam(data)` approximates that core by an ellipse; its FWHM is shaded in the lower-left corner of every reconstructed image. The dirty image shows the ring, but it is not the answer: it is blurred by the beam, and its sidelobes add negative and spurious structure. Subtracting a star that is 20 times brighter than the ring also amplifies any small error in the data's normalisation. So `dirty_image` removes the star by subtracting the best-fitting point source rather than a fixed one.
 

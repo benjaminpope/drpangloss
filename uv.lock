@@ -493,84 +493,6 @@ wheels = [
 ]
 
 [[package]]
-name = "drpangloss"
-version = "0.1.1"
-source = { editable = "." }
-dependencies = [
-    { name = "astropy" },
-    { name = "astroquery" },
-    { name = "chainconsumer" },
-    { name = "equinox" },
-    { name = "jax" },
-    { name = "jaxbessel" },
-    { name = "lineax" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "numpyro" },
-    { name = "optax" },
-    { name = "optimistix" },
-    { name = "pandas" },
-    { name = "pyoifits" },
-    { name = "scipy" },
-    { name = "termcolor" },
-    { name = "zodiax" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "scipy" },
-    { name = "zensical" },
-]
-notebooks = [
-    { name = "ipywidgets" },
-    { name = "tqdm" },
-]
-sampling = [
-    { name = "blackjax" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "astropy" },
-    { name = "astroquery" },
-    { name = "blackjax", marker = "extra == 'sampling'" },
-    { name = "chainconsumer" },
-    { name = "equinox", specifier = ">=0.11" },
-    { name = "ipywidgets", marker = "extra == 'notebooks'" },
-    { name = "jax", specifier = ">=0.4.30" },
-    { name = "jaxbessel", specifier = ">=0.1.0" },
-    { name = "lineax", specifier = ">=0.0.5" },
-    { name = "matplotlib" },
-    { name = "mkdocs", marker = "extra == 'dev'" },
-    { name = "mkdocs-material", marker = "extra == 'dev'" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
-    { name = "numpy" },
-    { name = "numpyro", specifier = ">=0.15" },
-    { name = "optax", specifier = ">=0.2.4" },
-    { name = "optimistix", specifier = ">=0.0.10" },
-    { name = "pandas" },
-    { name = "pre-commit", marker = "extra == 'dev'" },
-    { name = "pyoifits" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-xdist", marker = "extra == 'dev'" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.11.0" },
-    { name = "scipy" },
-    { name = "scipy", marker = "extra == 'dev'" },
-    { name = "termcolor" },
-    { name = "tqdm", marker = "extra == 'notebooks'" },
-    { name = "zensical", marker = "extra == 'dev'" },
-    { name = "zodiax", specifier = ">=0.4" },
-]
-provides-extras = ["notebooks", "sampling", "dev"]
-
-[[package]]
 name = "equinox"
 version = "0.13.4"
 source = { registry = "https://pypi.org/simple" }
@@ -2468,6 +2390,84 @@ sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
 ]
+
+[[package]]
+name = "virgil-astro"
+version = "0.2.0"
+source = { editable = "." }
+dependencies = [
+    { name = "astropy" },
+    { name = "astroquery" },
+    { name = "chainconsumer" },
+    { name = "equinox" },
+    { name = "jax" },
+    { name = "jaxbessel" },
+    { name = "lineax" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "numpyro" },
+    { name = "optax" },
+    { name = "optimistix" },
+    { name = "pandas" },
+    { name = "pyoifits" },
+    { name = "scipy" },
+    { name = "termcolor" },
+    { name = "zodiax" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "scipy" },
+    { name = "zensical" },
+]
+notebooks = [
+    { name = "ipywidgets" },
+    { name = "tqdm" },
+]
+sampling = [
+    { name = "blackjax" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "astropy" },
+    { name = "astroquery" },
+    { name = "blackjax", marker = "extra == 'sampling'" },
+    { name = "chainconsumer" },
+    { name = "equinox", specifier = ">=0.11" },
+    { name = "ipywidgets", marker = "extra == 'notebooks'" },
+    { name = "jax", specifier = ">=0.4.30" },
+    { name = "jaxbessel", specifier = ">=0.1.0" },
+    { name = "lineax", specifier = ">=0.0.5" },
+    { name = "matplotlib" },
+    { name = "mkdocs", marker = "extra == 'dev'" },
+    { name = "mkdocs-material", marker = "extra == 'dev'" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
+    { name = "numpy" },
+    { name = "numpyro", specifier = ">=0.15" },
+    { name = "optax", specifier = ">=0.2.4" },
+    { name = "optimistix", specifier = ">=0.0.10" },
+    { name = "pandas" },
+    { name = "pre-commit", marker = "extra == 'dev'" },
+    { name = "pyoifits" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-xdist", marker = "extra == 'dev'" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.11.0" },
+    { name = "scipy" },
+    { name = "scipy", marker = "extra == 'dev'" },
+    { name = "termcolor" },
+    { name = "tqdm", marker = "extra == 'notebooks'" },
+    { name = "zensical", marker = "extra == 'dev'" },
+    { name = "zodiax", specifier = ">=0.4" },
+]
+provides-extras = ["notebooks", "sampling", "dev"]
 
 [[package]]
 name = "virtualenv"

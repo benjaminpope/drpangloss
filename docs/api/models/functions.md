@@ -1,9 +1,9 @@
-# `drpangloss.models` Functions
+# `virgil.models` Functions
 
 Analytic complex visibilities, in spatial-frequency units (baselines divided
-by wavelength). Likelihoods are in [`drpangloss.likelihood`](../likelihood.md).
+by wavelength). Likelihoods are in [`virgil.likelihood`](../likelihood.md).
 
-::: drpangloss.models
+::: virgil.models
     options:
       show_root_heading: false
       members:

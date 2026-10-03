@@ -7,18 +7,18 @@ import jax.numpy as np
 import matplotlib.pyplot as plt
 import numpy as onp
 
-import drpangloss
-from drpangloss import BinaryModelCartesian, PointSource, System
-from drpangloss.likelihood import posterior_predictive_summary
-from drpangloss.plotting import plot_oidata_overview
+import virgil
+from virgil import BinaryModelCartesian, PointSource, System
+from virgil.likelihood import posterior_predictive_summary
+from virgil.plotting import plot_oidata_overview
 from tests._test_data import oidata
 
-SRC = Path(drpangloss.__file__).parent
+SRC = Path(virgil.__file__).parent
 
 
 def test_everyday_names_are_top_level():
-    for name in drpangloss.__all__:
-        assert hasattr(drpangloss, name), name
+    for name in virgil.__all__:
+        assert hasattr(virgil, name), name
 
 
 def test_limits_do_not_depend_on_grid_fit():

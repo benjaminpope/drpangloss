@@ -4,21 +4,21 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss._geometry import (
+from virgil._geometry import (
     find_uv_grid,
     grid_visibilities,
     image_visibilities,
     rotate,
 )
-from drpangloss.coverage import ami_grid_record
-from drpangloss.models import (
+from virgil.coverage import ami_grid_record
+from virgil.models import (
     GaussianDisk,
     Image,
     PointSource,
     System,
 )
-from drpangloss.oidata import OIData
-from drpangloss.scenes import ring
+from virgil.oidata import OIData
+from virgil.scenes import ring
 
 WAVEL = 4.3e-6
 

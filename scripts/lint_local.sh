@@ -4,7 +4,7 @@ set -eo pipefail
 
 show_help() {
   cat <<'EOF'
-Low-noise local lint runner for drpangloss.
+Low-noise local lint runner for virgil.
 
 Usage:
   scripts/lint_local.sh [--fix] [--no-notebooks] [--changed]

@@ -3,7 +3,7 @@ import numpy as onp
 import pytest
 import jax.numpy as np
 
-from drpangloss._geometry import (
+from virgil._geometry import (
     apply_elliptical_transf_coord,
     apply_elliptical_transf_spat_freq,
     check_az_prof_nonnegative,

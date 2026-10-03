@@ -4,20 +4,20 @@ import numpy as onp
 import numpyro.distributions as dist
 import pytest
 
-from drpangloss.coverage import (
+from virgil.coverage import (
     PARANAL_LATITUDE_DEG,
     VLTI_UTS,
     nrm_oidata,
     vlti_oidata,
 )
-from drpangloss.fitting import fit
-from drpangloss.imaging import (
+from virgil.fitting import fit
+from virgil.imaging import (
     Centroid,
     MaxEntropy,
     image_priors,
     starting_image,
 )
-from drpangloss.models import (
+from virgil.models import (
     BinaryModelCartesian,
     GaussianDisk,
     Image,
@@ -26,8 +26,8 @@ from drpangloss.models import (
     System,
     circular_support,
 )
-from drpangloss.scenes import gaussian_blob
-from drpangloss.spectra import PowerLaw
+from virgil.scenes import gaussian_blob
+from virgil.spectra import PowerLaw
 
 NIGHT = vlti_oidata(
     hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.2e-6, 3.8e-6]
@@ -226,7 +226,7 @@ def test_an_image_support_may_arrive_as_floats():
 
 
 def test_imaging_helpers_see_images_inside_rotated_scenes():
-    from drpangloss.imaging import diagnose
+    from virgil.imaging import diagnose
 
     scene = System(
         star=PointSource(),
@@ -239,7 +239,7 @@ def test_imaging_helpers_see_images_inside_rotated_scenes():
 
 
 def test_bad_weights_and_pixel_scales_are_rejected():
-    from drpangloss.imaging import l_curve
+    from virgil.imaging import l_curve
 
     scene = System(
         star=PointSource(),

@@ -4,14 +4,14 @@ import jax.scipy as jsp
 import numpy as onp
 import pytest
 
-import drpangloss.models as models
-from drpangloss.inference import (
+import virgil.models as models
+from virgil.inference import (
     fisher,
     laplace_cov,
     laplace_covariance,
     laplace_parameter_uncertainty,
 )
-from drpangloss.likelihood import (
+from virgil.likelihood import (
     joint_data,
     joint_errors,
     joint_loglike,
@@ -20,12 +20,12 @@ from drpangloss.likelihood import (
     loglike_nosignal,
     model_loglike,
 )
-from drpangloss.models import (
+from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     cvis_binary,
 )
-from drpangloss.oidata import OIData, closure_phases
+from virgil.oidata import OIData, closure_phases
 
 from tests._compiles import count_compiles
 from tests._test_data import i_cps1, i_cps2, i_cps3, oidata, u, v

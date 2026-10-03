@@ -3,17 +3,17 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss.coverage import vlti_oidata
-from drpangloss.fields import GaussianField
-from drpangloss.fitting import fit
-from drpangloss.imaging import (
+from virgil.coverage import vlti_oidata
+from virgil.fields import GaussianField
+from virgil.fitting import fit
+from virgil.imaging import (
     MaxEntropy,
     error_scale,
     image_priors,
     l_curve,
     log_evidence,
 )
-from drpangloss.models import GaussianDisk, Image, PointSource, System
+from virgil.models import GaussianDisk, Image, PointSource, System
 
 DATA = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
 N, H = 16, 1.0
@@ -75,8 +75,8 @@ def test_classic_maxent_matches_an_independent_calculation():
     # mode Jacobian with respect to log-brightness, the full pixel-space
     # curvature diag(1/√b) JᵀJ diag(1/√b), and its eigenvalues; then
     # interpolate the gap's zero crossing in log w.
-    from drpangloss._precision import cast_tree, run_in
-    from drpangloss.likelihood import whitened_residuals
+    from virgil._precision import cast_tree, run_in
+    from virgil.likelihood import whitened_residuals
 
     truth = System(
         star=PointSource(), env=GaussianDisk(3.0, dra=2.0, flux=0.4)

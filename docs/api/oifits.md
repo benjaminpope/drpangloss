@@ -1,4 +1,4 @@
-# `drpangloss.oifits`
+# `virgil.oifits`
 
 Read and write OIFITS files with `astropy.io.fits` alone. This is the
 maintained OIFITS path; [`OIData`](oidata.md) uses `read_oifits` whenever it
@@ -18,7 +18,7 @@ Closure-phase triangles `(a, b, c)` must find their baselines stored as
 
 ## Functions
 
-::: drpangloss.oifits
+::: virgil.oifits
     options:
       members:
         - read_oifits

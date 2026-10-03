@@ -29,15 +29,15 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.coverage import ami_grid_record
-from drpangloss.fields import GaussianField
-from drpangloss.fitting import fit, gauss_newton_mass
-from drpangloss.imaging import beam, image_priors, starting_image
-from drpangloss.likelihood import numpyro_model
-from drpangloss.models import Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_model, plot_residual_map
-from drpangloss.scenes import ring
+from virgil.coverage import ami_grid_record
+from virgil.fields import GaussianField
+from virgil.fitting import fit, gauss_newton_mass
+from virgil.imaging import beam, image_priors, starting_image
+from virgil.likelihood import numpyro_model
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.plotting import plot_model, plot_residual_map
+from virgil.scenes import ring
 
 # The same scene and data as parts 1-3.
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))

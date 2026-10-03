@@ -5,10 +5,10 @@ import pytest
 from astropy.io import fits
 from matplotlib.ticker import FuncFormatter
 
-from drpangloss.limits import chi2ppf
-from drpangloss.models import GaussianDisk
-from drpangloss.oidata import OIData, closure_phases
-from drpangloss.plotting import (
+from virgil.limits import chi2ppf
+from virgil.models import GaussianDisk
+from virgil.oidata import OIData, closure_phases
+from virgil.plotting import (
     plot_grid_map,
     plot_data_model_correlation,
     plot_model,
@@ -339,7 +339,7 @@ def test_plotting_leaves_global_rcparams_alone():
 
     import matplotlib
 
-    import drpangloss.plotting as plotting
+    import virgil.plotting as plotting
 
     before = dict(matplotlib.rcParams)
     importlib.reload(plotting)
@@ -396,7 +396,7 @@ def test_grid_map_kinds_set_defaults_and_accept_overrides():
 
 
 def test_ruffio_upperlimit_accepts_scalars_and_keeps_axis_order():
-    from drpangloss.limits import ruffio_upperlimit
+    from virgil.limits import ruffio_upperlimit
 
     scalar = ruffio_upperlimit(1e-3, 1e-3, 0.5)
     assert np.shape(scalar) == ()
@@ -407,7 +407,7 @@ def test_ruffio_upperlimit_accepts_scalars_and_keeps_axis_order():
 
 
 def test_radial_profile_counts_and_statistics():
-    from drpangloss.limits import radial_profile
+    from virgil.limits import radial_profile
 
     axis = onp.linspace(-4.0, 4.0, 9)
     values = onp.ones((9, 9))
@@ -419,7 +419,7 @@ def test_radial_profile_counts_and_statistics():
 
 
 def test_best_grid_point_rejects_reduced_grids():
-    from drpangloss.grid_fit import best_grid_point
+    from virgil.grid_fit import best_grid_point
 
     samples = {"dra": onp.arange(3.0), "ddec": onp.arange(4.0)}
     samples["flux"] = onp.array([1e-3, 1e-2])
@@ -436,7 +436,7 @@ def test_best_grid_point_rejects_reduced_grids():
 
 
 def test_legacy_savefits_writes_a_readable_file(tmp_path):
-    from drpangloss.legacy import savefits
+    from virgil.legacy import savefits
 
     phi = onp.array([10.0, -5.0, 3.0])
     dic = {
@@ -528,7 +528,7 @@ def test_chainconsumer_diagnostics_return_their_figures():
     import pandas as pd
     from matplotlib.figure import Figure
 
-    from drpangloss.plotting import plot_chainconsumer_diagnostics
+    from virgil.plotting import plot_chainconsumer_diagnostics
 
     rng = onp.random.default_rng(0)
     chain = pd.DataFrame(rng.normal(size=(400, 2)), columns=["dra", "ddec"])
@@ -540,8 +540,8 @@ def test_chainconsumer_diagnostics_return_their_figures():
 
 
 def test_batched_grid_matches_unbatched():
-    from drpangloss.grid_fit import likelihood_grid
-    from drpangloss.models import BinaryModelCartesian
+    from virgil.grid_fit import likelihood_grid
+    from virgil.models import BinaryModelCartesian
     from tests._test_data import oidata
 
     samples = {
@@ -564,8 +564,8 @@ def test_batched_grid_matches_unbatched():
 def test_default_batch_size_scales_with_data_size(
     monkeypatch, backend, budget
 ):
-    from drpangloss import _grid
-    from drpangloss._grid import MIN_BATCH_SIZE, batch_size_or_default
+    from virgil import _grid
+    from virgil._grid import MIN_BATCH_SIZE, batch_size_or_default
 
     monkeypatch.setattr(_grid.jax, "default_backend", lambda: backend)
 
@@ -589,7 +589,7 @@ def test_styled_plotting_keeps_other_figures_open():
     # close every open figure before it is shown.
     import matplotlib
 
-    from drpangloss.plotting import plot_model
+    from virgil.plotting import plot_model
 
     backend = matplotlib.rcParams["backend"]
     existing = plt.figure()
@@ -601,7 +601,7 @@ def test_styled_plotting_keeps_other_figures_open():
 
 
 def test_legacy_load_then_save_round_trips(tmp_path):
-    from drpangloss.legacy import oifits_implaneia
+    from virgil.legacy import oifits_implaneia
 
     first = tmp_path / "first"
     test_legacy_savefits_writes_a_readable_file(first)
@@ -615,7 +615,7 @@ def test_legacy_load_then_save_round_trips(tmp_path):
 
 
 def test_contrast_curve_is_independent_of_grid_key_order():
-    from drpangloss.plotting import plot_contrast_curve
+    from virgil.plotting import plot_contrast_curve
 
     dra = onp.linspace(-20.0, 20.0, 9)
     ddec = onp.linspace(-10.0, 10.0, 5)

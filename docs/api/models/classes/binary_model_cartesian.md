@@ -1,6 +1,6 @@
 # Class: `BinaryModelCartesian`
 
-::: drpangloss.models.BinaryModelCartesian
+::: virgil.models.BinaryModelCartesian
     options:
       show_root_heading: false
       heading_level: 3

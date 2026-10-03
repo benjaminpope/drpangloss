@@ -1,7 +1,7 @@
 """Extract and convert PAVO reference posteriors from Shashank Dholakia's NUTS samples.
 
 Downloads the posterior .h5 files from the jax-interferometry repository,
-extracts summary statistics, converts to drpangloss conventions, and writes
+extracts summary statistics, converts to virgil conventions, and writes
 a JSON file with medians, percentiles, means, and standard deviations.
 
 Run with:
@@ -30,7 +30,7 @@ STARS = {
 
 CONVENTIONS = (
     "Raw variables from Dholakia's NUTS samples: diam (mas), omega, inc (rad; 0=equator-on), "
-    "obl (rad), logsig. Converted to drpangloss: diam_eq=diam, omega=omega, "
+    "obl (rad), logsig. Converted to virgil: diam_eq=diam, omega=omega, "
     "inc_deg=90-degrees(inc), pa_deg=degrees(obl), jitter_v2=exp(logsig)."
 )
 
@@ -94,7 +94,7 @@ def extract_stats(idata, var_names):
 
 
 def convert_samples(idata, raw_stats):
-    """Convert samples from Dholakia conventions to drpangloss."""
+    """Convert samples from Dholakia conventions to virgil."""
     converted = {}
 
     # diam_eq = diam (no change)
@@ -208,12 +208,12 @@ def main():
                 idata, ["diam", "omega", "inc", "obl", "logsig"]
             )
 
-            # Convert to drpangloss conventions
+            # Convert to virgil conventions
             converted_stats = convert_samples(idata, raw_stats)
 
             data["stars"][hd] = {
                 "raw": round_dict(raw_stats),
-                "drpangloss": round_dict(converted_stats),
+                "virgil": round_dict(converted_stats),
             }
 
         # Write JSON

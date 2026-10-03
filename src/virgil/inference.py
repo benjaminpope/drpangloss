@@ -1,7 +1,7 @@
 """Local curvature tools: Hessians, Laplace covariances and Fisher matrices.
 
 Objectives are negative log likelihoods of a flat 1D parameter vector,
-except for [`gaussian_fisher`][drpangloss.inference.gaussian_fisher], which accepts any parameter pytree.
+except for [`gaussian_fisher`][virgil.inference.gaussian_fisher], which accepts any parameter pytree.
 Checks that need concrete values (positive errors, positive-definite
 matrices) are skipped inside ``jax.jit``.
 """
@@ -79,7 +79,7 @@ def observed_information(objective, x, ridge=0.0):
 
     Unlike expected Fisher information, this quantity depends on the observed
     residuals and includes curvature of a nonlinear forward model. No ridge
-    is added by default (compare [`laplace_covariance`][drpangloss.inference.laplace_covariance]).
+    is added by default (compare [`laplace_covariance`][virgil.inference.laplace_covariance]).
     """
     information = hessian_matrix(objective, x)
     ident = np.eye(information.shape[-1], dtype=information.dtype)
@@ -90,7 +90,7 @@ def fisher_matrix(objective, x, ridge=0.0):
     """Return observed information for backward compatibility.
 
     This historical name computes the Hessian of ``objective``. Use
-    [`observed_information`][drpangloss.inference.observed_information] when the distinction from expected Fisher
+    [`observed_information`][virgil.inference.observed_information] when the distinction from expected Fisher
     information matters.
     """
     return observed_information(objective, x, ridge=ridge)
@@ -228,7 +228,7 @@ def laplace_cov(values, params, data_obj, model):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
 
     Returns
     -------
@@ -255,7 +255,7 @@ def laplace_parameter_uncertainty(
     data_obj : OIData
         Data to fit.
     model : SourceModel or callable
-        Template model or class, as for [`loglike`][drpangloss.likelihood.loglike].
+        Template model or class, as for [`loglike`][virgil.likelihood.loglike].
     target_param : str
         The parameter whose uncertainty is returned.
 
@@ -296,7 +296,7 @@ def fisher(values, params, data_obj, model, ridge=0.0):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][drpangloss.likelihood.build_model]).
+        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
     ridge : float, optional
         Diagonal regularization term.
 

@@ -3,7 +3,7 @@
 
 Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for JWST/NIRISS AMI data as processed by AMIGO, whose products are "mixed DISCO" coefficients: linear combinations of the log-amplitudes and phases of the complex visibilities, with independent errors.
 
-Real DISCO products are large, so we use `drpangloss.coverage.ami_grid_record`, a small record built the same way, computed on the fly. Its complex visibilities live on a fine uv grid, rotated on the sky as AMI data are by the parallactic angle, and only the cells inside the mask's splodges carry information, weighted by the mask's transfer function. That information is compressed, as in AMIGO, into orthonormal modes that are blind to the source's flux and position, keeping 99% of the precision. Everything below is simulated.
+Real DISCO products are large, so we use `virgil.coverage.ami_grid_record`, a small record built the same way, computed on the fly. Its complex visibilities live on a fine uv grid, rotated on the sky as AMI data are by the parallactic angle, and only the cells inside the mask's splodges carry information, weighted by the mask's transfer function. That information is compressed, as in AMIGO, into orthonormal modes that are blind to the source's flux and position, keeping 99% of the precision. Everything below is simulated.
 
 ```python
 import sys
@@ -21,12 +21,12 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss._geometry import pixel_offsets
-from drpangloss.coverage import ami_grid_record
-from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_model
-from drpangloss.scenes import ring, spiral
+from virgil._geometry import pixel_offsets
+from virgil.coverage import ami_grid_record
+from virgil.models import BinaryModelCartesian, Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.plotting import plot_model
+from virgil.scenes import ring, spiral
 
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))
 longest = float(jnp.hypot(template.u, template.v).max())
@@ -49,13 +49,13 @@ uv lattice rotated by -6.9 deg
 
 ![imaging_ami output 2.2](generated/imaging_ami_cell002_out02.png)
 
-The samples are a lattice rotated by the parallactic angle. drpangloss finds the lattice when the data are loaded (`template.uv_grid`); we will use it at the end.
+The samples are a lattice rotated by the parallactic angle. virgil finds the lattice when the data are loaded (`template.uv_grid`); we will use it at the end.
 
 ## The truth scene
 
 At 4.8 µm the finest fringes have a period of about 150 mas, so structure several hundred milliarcseconds across spans several resolution elements, and pixels of 20 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
 
-`drpangloss.scenes.spiral` returns a unit-sum image in the drpangloss orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
+`virgil.scenes.spiral` returns a unit-sum image in the virgil orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
 
 ```python
 npix, pixel_scale = 64, 20.0  # 1280 mas field of view
@@ -180,7 +180,7 @@ largest difference: 8.6e-08
 
 ## Another scene: a lopsided ring
 
-`drpangloss.scenes` also has an inclined ring with one brighter side, and a Gaussian blob for clumps or companions. Position angles are measured from North towards East, so the brightest part of this ring, at position angle 90 degrees, lies to the left of the image.
+`virgil.scenes` also has an inclined ring with one brighter side, and a Gaussian blob for clumps or companions. Position angles are measured from North towards East, so the brightest part of this ring, at position angle 90 degrees, lies to the left of the image.
 
 ```python
 ring_image = ring(

@@ -7,15 +7,15 @@ import jax.numpy as jnp
 import optimistix as optx
 from jax.flatten_util import ravel_pytree
 
-from drpangloss.inference import (
+from virgil.inference import (
     fisher_projection,
     gaussian_fisher,
     observed_information,
     regularized_inverse,
 )
-from drpangloss.likelihood import joint_loglike, joint_prediction
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
+from virgil.likelihood import joint_loglike, joint_prediction
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 
 
 WAVELENGTHS = jnp.array([800e-9, 1.0e-6, 1.2e-6])

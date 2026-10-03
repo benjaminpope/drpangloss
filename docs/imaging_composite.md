@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_composite.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 4: a ring around a binary star
 
-Images rarely stand alone. The scenes interferometers observe often mix unresolved sources, such as stars or companions, with resolved emission, such as discs or envelopes. drpangloss composes the two:
+Images rarely stand alone. The scenes interferometers observe often mix unresolved sources, such as stars or companions, with resolved emission, such as discs or envelopes. virgil composes the two:
 - a `System` can hold analytic components, like `PointSource` stars, alongside an `Image`;
 - all the parameters are fitted together.
 
@@ -28,12 +28,12 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.coverage import VLTI_UTS, vlti_oidata
-from drpangloss.fields import GaussianField
-from drpangloss.fitting import fit
-from drpangloss.imaging import beam, field_of_view, image_priors, log_evidence
-from drpangloss.models import Image, ModulatedGaussianRim, PointSource, System, circular_support
-from drpangloss.plotting import plot_model, plot_residual_map
+from virgil.coverage import VLTI_UTS, vlti_oidata
+from virgil.fields import GaussianField
+from virgil.fitting import fit
+from virgil.imaging import beam, field_of_view, image_priors, log_evidence
+from virgil.models import Image, ModulatedGaussianRim, PointSource, System, circular_support
+from virgil.plotting import plot_model, plot_residual_map
 
 # Two array configurations, as PIONIER uses: the four UTs, and a compact
 # array a quarter of their size (a stand-in for the short AT baselines).
@@ -180,6 +180,6 @@ When an image sits next to analytic sources, what is analytic and what is in the
 - **The fix.** Composing the scene as a `System` of `PointSource`s and an `Image` puts the companion where it belongs. The knot itself gives its starting position, and the fit measures its flux and offset alongside the ring.
 - **Choosing between models.** χ² barely changes between the two, so the image's prior, through the evidence, is what prefers the right model.
 
-The same composition works with any analytic component: disks, rims, resolved backgrounds and spectra (`drpangloss.spectra`). It works for real data too: the SPARCO-style analyses of PIONIER data in the companion notebooks follow this pattern.
+The same composition works with any analytic component: disks, rims, resolved backgrounds and spectra (`virgil.spectra`). It works for real data too: the SPARCO-style analyses of PIONIER data in the companion notebooks follow this pattern.
 
 Part 5 goes beyond the single MAP image, and samples the posterior to map each pixel's uncertainty.

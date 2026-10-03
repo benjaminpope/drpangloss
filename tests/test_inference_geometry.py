@@ -1,6 +1,6 @@
 import jax.numpy as np
 
-from drpangloss.inference import (
+from virgil.inference import (
     fisher_matrix,
     fisher_projection,
     gaussian_fisher,

@@ -5,10 +5,10 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss._geometry import image_visibilities, pixel_offsets
-from drpangloss.amigo import load_oi_data
-from drpangloss.likelihood import model_loglike
-from drpangloss.models import (
+from virgil._geometry import image_visibilities, pixel_offsets
+from virgil.amigo import load_oi_data
+from virgil.likelihood import model_loglike
+from virgil.models import (
     BinaryModelCartesian,
     GaussianDisk,
     Image,
@@ -16,7 +16,7 @@ from drpangloss.models import (
     System,
     circular_support,
 )
-from drpangloss.oidata import OIData, cp_indices
+from virgil.oidata import OIData, cp_indices
 
 MAS2RAD = onp.pi / 180.0 / 3600.0 / 1000.0
 WAVEL = 4.8e-6

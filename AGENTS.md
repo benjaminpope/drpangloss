@@ -1,12 +1,14 @@
 # AGENTS.md
 
+> The import package is `virgil`; the PyPI distribution is `virgil-astro` (`pip install virgil-astro`; `pip install virgil` installs an unrelated package).
+
 Guidance for AI coding agents (Copilot, Claude Code, and similar) working in this
 repository. Humans should read [CONTRIBUTING.md](CONTRIBUTING.md) instead.
 
 ## Project overview
 
-`drpangloss` fits interferometric (AMI/OIFITS) data with JAX- and zodiax-based models.
-Library code lives in `src/drpangloss/`, tutorials in `notebooks/`, reusable end-to-end
+`virgil` fits interferometric (AMI/OIFITS) data with JAX- and zodiax-based models.
+Library code lives in `src/virgil/`, tutorials in `notebooks/`, reusable end-to-end
 scripts in `examples/`, and tests in `tests/`.
 
 ## Setup
@@ -57,7 +59,7 @@ rely on it — a clean diff keeps review focused on the actual change.
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
 - Line length 79, double quotes, rules `E` + `F` (see `pyproject.toml` for ignores).
-- drpangloss does not enable float64: library code must work in JAX's default float32
+- virgil does not enable float64: library code must work in JAX's default float32
   (e.g. use `jnp.finfo(x.dtype)`, not `np.finfo(float)`). Tests run in float32 unless
   they opt in locally with `with jax.enable_x64(True):` (as `tests/test_utils.py` does);
   never set `jax_enable_x64` globally at import time in a test module.
@@ -73,9 +75,9 @@ rely on it — a clean diff keeps review focused on the actual change.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
-- New model code goes in `src/drpangloss/models.py`.
+- New model code goes in `src/virgil/models.py`.
 - Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
-  shared with harmonix; fix or extend them there, not in drpangloss.
+  shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
 
@@ -100,7 +102,7 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
-| `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
+| `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
 Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`oidata`
 → `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
@@ -113,7 +115,7 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`oi
 0.01 for a companion 100 times fainter). Reports and plots follow the
 astronomical convention instead: **contrast** is primary/companion (100) and
 **Δmag** is `2.5 log10(contrast)` (5 mag). Convert with
-`drpangloss.limits.flux_to_contrast` / `flux_to_delta_mag`, and plot with
+`virgil.limits.flux_to_contrast` / `flux_to_delta_mag`, and plot with
 `units="flux" | "contrast" | "delta_mag"`. Never name a model parameter
 `contrast`.
 
@@ -144,7 +146,7 @@ finiteness/normalization check.
   i.e. **North-to-East**: PA=0° points North, PA=90° points East.
 
 The canonical, tested reference implementation is `image_coordinates` in
-`src/drpangloss/_geometry.py` (image-plane pixel coordinates) and the elliptical
+`src/virgil/_geometry.py` (image-plane pixel coordinates) and the elliptical
 rotation/stretch helpers in the same module (`undo_`/`apply_elliptical_transf_coord`
 and `..._spat_freq`). Every geometric `SourceModel`'s `model()`/`render()` must
 be dimensionally consistent with these, and should have a direct regression
@@ -160,7 +162,7 @@ increasing toward the top (North) *regardless of how the underlying
 array/extent/origin was constructed*. Do not assume a particular `dra`/`ddec`
 axis ordering (ascending vs. descending) — different parts of this codebase
 build these axes both ways. Use `_enforce_sky_orientation` in
-`src/drpangloss/plotting.py`, which corrects an `Axes`' final displayed limits
+`src/virgil/plotting.py`, which corrects an `Axes`' final displayed limits
 regardless of the plotted array's construction, rather than hand-tuning
 `origin`/`extent` per call site.
 
@@ -247,16 +249,16 @@ truth for the corresponding `docs/*.md` pages. Edit the notebook, execute it so 
 are current (the sync embeds text and PNG outputs), then run the sync script.
 `tests/test_tutorial_docs_sync.py` fails if the markdown is stale.
 
-Execute notebooks with the repo's own kernel, `drpangloss`, which lives in `.venv`. The
+Execute notebooks with the repo's own kernel, `virgil`, which lives in `.venv`. The
 user-level `python3` kernel may point at another environment.
 
 ```bash
 .venv/bin/jupyter-nbconvert --to notebook --execute --inplace NOTEBOOK.ipynb \
-  --ExecutePreprocessor.kernel_name=drpangloss
+  --ExecutePreprocessor.kernel_name=virgil
 ```
 
 If the kernel is missing, recreate it with
-`.venv/bin/python -m ipykernel install --sys-prefix --name drpangloss --display-name "drpangloss (.venv)"`.
+`.venv/bin/python -m ipykernel install --sys-prefix --name virgil --display-name "virgil (.venv)"`.
 
 ## Testing notes
 

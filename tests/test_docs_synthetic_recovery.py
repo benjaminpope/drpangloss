@@ -5,9 +5,9 @@ import sys
 import jax.numpy as jnp
 import numpy as np
 
-from drpangloss.legacy import oifits_implaneia
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import closure_phases, cp_indices
+from virgil.legacy import oifits_implaneia
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import closure_phases, cp_indices
 
 
 MODULE_PATH = (

@@ -1,16 +1,16 @@
 """Regularisers and helpers for image reconstruction.
 
-An image fit is a call to [`fit`][drpangloss.fitting.fit] whose model contains an
-[`Image`][drpangloss.models.Image], with a prior on its ``log_brightness``
+An image fit is a call to [`fit`][virgil.fitting.fit] whose model contains an
+[`Image`][virgil.models.Image], with a prior on its ``log_brightness``
 (see :func:`image_priors`) and usually a regulariser, which adds a penalty
 on the pixel fluxes ``b`` to the loss:
 
 | Regulariser | Penalty | Least squares (LM)? | A prior density? |
 | --- | --- | --- | --- |
-| [`TSV`][drpangloss.imaging.TSV] | ``w Σ (Δx b)² + (Δy b)²`` | yes | no |
-| [`TV`][drpangloss.imaging.TV] | ``w Σ √((Δx b)² + (Δy b)² + ε²)`` | no | no |
-| [`MaxEntropy`][drpangloss.imaging.MaxEntropy] | ``w Σ b log(b / q)`` | no | no |
-| [`Centroid`][drpangloss.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
+| [`TSV`][virgil.imaging.TSV] | ``w Σ (Δx b)² + (Δy b)²`` | yes | no |
+| [`TV`][virgil.imaging.TV] | ``w Σ √((Δx b)² + (Δy b)² + ε²)`` | no | no |
+| [`MaxEntropy`][virgil.imaging.MaxEntropy] | ``w Σ b log(b / q)`` | no | no |
+| [`Centroid`][virgil.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
 
 Differences ``Δ`` are between neighbouring pixels, with zeros beyond the
 edges, so edge pixels are penalised too. TSV (total squared variation)
@@ -19,8 +19,8 @@ entropy images close to a default ``q``. The weight ``w`` depends on the
 scene and the data; :func:`l_curve` sweeps it.
 
 Closure, kernel and DISCO phases do not fix an image's position. Something
-must: an analytic star at the origin, a [`Centroid`][drpangloss.imaging.Centroid]
-prior, or a centred prior mean. [`diagnose`][drpangloss.imaging.diagnose]
+must: an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]
+prior, or a centred prior mean. [`diagnose`][virgil.imaging.diagnose]
 checks a fit for this and other common pitfalls.
 """
 
@@ -49,7 +49,7 @@ class _ImageRegulariser(eqx.Module):
     path: str | None = eqx.field(static=True)
 
     def image(self, model):
-        """The regularised [`Image`][drpangloss.models.Image] in ``model``."""
+        """The regularised [`Image`][virgil.models.Image] in ``model``."""
         image = model if self.path is None else model.get(self.path)
         if not isinstance(image, Image):
             raise TypeError(
@@ -227,11 +227,11 @@ class Centroid(_ImageRegulariser):
 def image_priors(scene):
     """Priors on the log-brightness of every Image in a scene.
 
-    Returns a priors dict for [`fit`][drpangloss.fitting.fit]. An Image with
+    Returns a priors dict for [`fit`][virgil.fitting.fit]. An Image with
     a plain log-brightness array gets a flat prior,
     ``{"env.log_brightness": ImproperUniform(...)}``, so that its pixels are
     constrained only by the data and the regularisers. An Image with a
-    [`GaussianField`][drpangloss.fields.GaussianField] gets standard-normal
+    [`GaussianField`][virgil.fields.GaussianField] gets standard-normal
     priors on the field's latents, ``{"env.log_brightness.latent":
     Normal(0, 1)}``: the Gaussian-process prior, which needs no regulariser.
     Add priors for any other free parameters (fluxes, offsets) to the dict.
@@ -286,7 +286,7 @@ def field_of_view(data, largest_mas=500.0):
     field of view, λ / B over the shortest non-zero baseline B (at the
     shortest wavelength): structure larger than that is not measured, and on
     a uv lattice a larger field would alias. Use it with
-    [`nyquist_pixel_scale`][drpangloss.imaging.nyquist_pixel_scale] to
+    [`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale] to
     choose the image's size and pixels.
     """
     observations = data if isinstance(data, (list, tuple)) else [data]
@@ -382,7 +382,7 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     Returns
     -------
     jax.Array, shape (npix, npix)
-        In the orientation of [`render`][drpangloss.models.SourceModel.render]
+        In the orientation of [`render`][virgil.models.SourceModel.render]
         (East left, North up). It has negative sidelobes.
     """
     observations = data if isinstance(data, (list, tuple)) else [data]
@@ -421,7 +421,7 @@ def starting_image(
       never larger than the interferometric field of view (λ / B_min) or
       ``largest_mas``;
     * pixels ``oversample`` times finer than the Nyquist scale;
-    * an [`Image`][drpangloss.models.Image] with the fitted flux, whose
+    * an [`Image`][virgil.models.Image] with the fitted flux, whose
       pixels are the fitted Gaussian (``start="moments"``) or the positive
       part of the :func:`dirty_image` (``start="dirty"``, with the star
       removed). A dirty start is better when the Fourier coverage is dense
@@ -440,7 +440,7 @@ def starting_image(
     star : bool, optional
         Whether the scene has an unresolved star at the origin (which also
         fixes the image's position). Without one, the result is the Image
-        alone, and a [`Centroid`][drpangloss.imaging.Centroid] prior
+        alone, and a [`Centroid`][virgil.imaging.Centroid] prior
         should fix its position.
     oversample : float, optional
         Pixels per Nyquist pixel.
@@ -598,12 +598,12 @@ def convolve_beam(image, pixel_scale_mas, beam):
     ----------
     image : array-like, shape (ny, nx)
         The image, in the orientation of
-        [`render`][drpangloss.models.SourceModel.render] (East left, North
+        [`render`][virgil.models.SourceModel.render] (East left, North
         up).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     beam : Beam
-        The beam, usually [`beam(data)`][drpangloss.imaging.beam].
+        The beam, usually [`beam(data)`][virgil.imaging.beam].
 
     Returns
     -------
@@ -714,7 +714,7 @@ class LCurve:
     def classic_maxent(self, data, path="env"):
         """The maximum-entropy weight of Gull and Skilling's "classic MaxEnt".
 
-        For a sweep of [`MaxEntropy`][drpangloss.imaging.MaxEntropy] fits,
+        For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits,
         this is the weight ``w`` at which ``-2 w S`` equals the number of
         well-measured directions in the image, ``N = Σ λ / (λ + w)``
         (Gull 1989; Skilling & Bryan 1984). Here ``S`` is the entropy (minus
@@ -807,8 +807,8 @@ def log_evidence(model, data, path="env"):
     """Laplace-approximated log evidence of a Gaussian-field image fit.
 
     For an Image whose log-brightness is a
-    [`GaussianField`][drpangloss.fields.GaussianField] with standard-normal
-    latents ``z``, at the MAP ``model`` from [`fit`][drpangloss.fitting.fit],
+    [`GaussianField`][virgil.fields.GaussianField] with standard-normal
+    latents ``z``, at the MAP ``model`` from [`fit`][virgil.fitting.fit],
 
     ``log Z ≈ -½ χ² - ½ |z|² - ½ log det(I + JᵀJ)``,
 
@@ -884,7 +884,7 @@ def error_scale(model, data, path="env"):
 
     **How to use it.** Fit at your chosen hyperparameters, call this, rescale
     the data with
-    [`OIData.with_error_scale`][drpangloss.oidata.OIData.with_error_scale],
+    [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale],
     and refit. The estimate depends on the fit, which depends on the errors,
     so in principle this is a fixed-point iteration; in practice one
     iteration usually suffices. Error bars that are too large make the
@@ -926,7 +926,7 @@ def error_scale(model, data, path="env"):
     - S. F. Gull (1989), "Developments in maximum entropy data analysis",
       in *Maximum Entropy and Bayesian Methods*, Kluwer, 53–71: the same
       ``N − γ`` argument for maximum entropy, the basis of
-      [`LCurve.classic_maxent`][drpangloss.imaging.LCurve.classic_maxent].
+      [`LCurve.classic_maxent`][virgil.imaging.LCurve.classic_maxent].
     """
     image = model.get(path)
     if not isinstance(image.log_brightness, GaussianField):
@@ -949,8 +949,8 @@ def l_curve(
     previous solution, which is faster and more stable than starting every
     fit afresh. Plot ``penalty`` against ``chi2`` (both on log axes) to see
     the trade-off between fitting the data and regularising the image, and
-    compare [`LCurve.corner`][drpangloss.imaging.LCurve.corner] and
-    [`LCurve.discrepancy`][drpangloss.imaging.LCurve.discrepancy] with
+    compare [`LCurve.corner`][virgil.imaging.LCurve.corner] and
+    [`LCurve.discrepancy`][virgil.imaging.LCurve.discrepancy] with
     the images either side: there is usually a wide range of good weights.
     Other ways of choosing the weight are compared in
     ``design/regulariser_weight_selection.md``.
@@ -958,7 +958,7 @@ def l_curve(
     Parameters
     ----------
     model, priors, data
-        As for [`fit`][drpangloss.fitting.fit].
+        As for [`fit`][virgil.fitting.fit].
     regulariser : TSV, TV or MaxEntropy
         The regulariser whose ``weight`` is swept (its own weight is
         ignored).
@@ -966,9 +966,9 @@ def l_curve(
         The weights to try.
     others : sequence, optional
         Further regularisers kept fixed, e.g. a
-        [`Centroid`][drpangloss.imaging.Centroid] prior.
+        [`Centroid`][virgil.imaging.Centroid] prior.
     **fit_options
-        Passed to [`fit`][drpangloss.fitting.fit].
+        Passed to [`fit`][virgil.fitting.fit].
 
     Returns
     -------
@@ -1090,20 +1090,20 @@ def diagnose(model, data, regularisers=()):
     """Check a model and its data for common imaging pitfalls.
 
     Nothing is printed or warned: print the returned
-    [`Diagnosis`][drpangloss.imaging.Diagnosis] to read it. Run it on the
+    [`Diagnosis`][virgil.imaging.Diagnosis] to read it. Run it on the
     fitted model, with the regularisers used in the fit.
 
     Parameters
     ----------
     model : SourceModel
         The model, normally containing at least one
-        [`Image`][drpangloss.models.Image] (the Image checks are skipped
+        [`Image`][virgil.models.Image] (the Image checks are skipped
         otherwise).
     data : OIData or sequence of OIData
         The data.
     regularisers : sequence, optional
         The regularisers of the fit; a
-        [`Centroid`][drpangloss.imaging.Centroid] fixes the position.
+        [`Centroid`][virgil.imaging.Centroid] fixes the position.
 
     Returns
     -------

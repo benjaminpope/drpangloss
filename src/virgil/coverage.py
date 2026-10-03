@@ -1,7 +1,7 @@
 """Synthetic uv coverage and noise, for simulating data from a known truth.
 
 Each function returns data whose values are zero, to be filled from a model
-with [`OIData.with_model`][drpangloss.oidata.OIData.with_model]. They are
+with [`OIData.with_model`][virgil.oidata.OIData.with_model]. They are
 computed on the fly, so tests and tutorials need no large data files.
 
 * :func:`ami_grid_record`: AMI as AMIGO represents it, with complex
@@ -114,7 +114,7 @@ def ami_grid_record(
     coefficients of the record, with independent errors.
 
     The coefficients are zero: fill them with
-    [`OIData.with_model`][drpangloss.oidata.OIData.with_model].
+    [`OIData.with_model`][virgil.oidata.OIData.with_model].
 
     Parameters
     ----------
@@ -136,7 +136,7 @@ def ami_grid_record(
     Returns
     -------
     dict
-        A record for [`OIData`][drpangloss.oidata.OIData].
+        A record for [`OIData`][virgil.oidata.OIData].
     """
     holes = onp.asarray(holes, float)
     _, baselines = _baselines(holes)
@@ -208,7 +208,7 @@ def nrm_oidata(
     -------
     OIData
         Data with zero values, for
-        [`with_model`][drpangloss.oidata.OIData.with_model].
+        [`with_model`][virgil.oidata.OIData.with_model].
     """
     holes = onp.asarray(holes, float)
     pairs, baselines = _baselines(holes)
@@ -263,7 +263,7 @@ def vlti_oidata(
     hour angle. The defaults resemble VLTI/MATISSE in the L band at low
     spectral resolution with the four UTs. MATISSE's LOW mode (R ~ 30)
     smears structure further than about R λ / B from the field centre
-    (~170 mas here), which drpangloss does not model.
+    (~170 mas here), which virgil does not model.
 
     Parameters
     ----------
@@ -286,7 +286,7 @@ def vlti_oidata(
     -------
     OIData
         Data with zero values, for
-        [`with_model`][drpangloss.oidata.OIData.with_model].
+        [`with_model`][virgil.oidata.OIData.with_model].
     """
     stations = onp.asarray(stations, float)
     n = len(stations)

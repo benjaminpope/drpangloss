@@ -28,11 +28,11 @@ src_path = repo_root / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from drpangloss.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
-from drpangloss.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_contrast_curve, plot_grid_map, set_style
+from virgil.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
+from virgil.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
+from virgil.plotting import plot_contrast_curve, plot_grid_map, set_style
 
 set_style()  # the figure style used throughout the docs
 ```

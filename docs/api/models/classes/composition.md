@@ -2,7 +2,7 @@
 
 See the [Composing Models](../../../composition.md) tutorial for usage.
 
-::: drpangloss.models.System
+::: virgil.models.System
     options:
       show_root_heading: true
       heading_level: 2
@@ -11,91 +11,91 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
         - model
         - render
 
-::: drpangloss.models.Component
+::: virgil.models.Component
     options:
       show_root_heading: true
       heading_level: 2
       show_attributes: false
       members: false
 
-::: drpangloss.models.PointSource
+::: virgil.models.PointSource
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.GaussianDisk
+::: virgil.models.GaussianDisk
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.EllipticalGaussian
+::: virgil.models.EllipticalGaussian
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.GaussianArc
+::: virgil.models.GaussianArc
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.UniformDisk
+::: virgil.models.UniformDisk
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.GravityDarkenedStar
+::: virgil.models.GravityDarkenedStar
     options:
       show_root_heading: true
       heading_level: 2
       members:
         - plot_surface
 
-::: drpangloss.models.ModulatedGaussianRim
+::: virgil.models.ModulatedGaussianRim
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.FlaredDisk
+::: virgil.models.FlaredDisk
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.FlaredDiskHG
+::: virgil.models.FlaredDiskHG
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.FlaredDiskGaussian
+::: virgil.models.FlaredDiskGaussian
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.FlaredDiskPowerLaw
+::: virgil.models.FlaredDiskPowerLaw
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.Resolved
+::: virgil.models.Resolved
     options:
       show_root_heading: true
       heading_level: 2
       members: false
 
-::: drpangloss.models.Rotated
+::: virgil.models.Rotated
     options:
       show_root_heading: true
       heading_level: 2
       show_attributes: false
 
-Models are fitted through [`drpangloss.likelihood`](../../likelihood.md)
+Models are fitted through [`virgil.likelihood`](../../likelihood.md)
 (`build_model`, `loglike`, `numpyro_model`).

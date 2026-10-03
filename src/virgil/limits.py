@@ -1,6 +1,6 @@
 """Contrast limits, significance, and flux/contrast/Δmag conversions.
 
-drpangloss parameterizes a companion by its **flux** relative to the primary
+virgil parameterizes a companion by its **flux** relative to the primary
 (companion/primary, so 0.01 for a companion 100 times fainter). Results are
 usually reported instead as a **contrast**, primary/companion (100 here), or
 as a magnitude difference ``Δmag = 2.5 log10(contrast)`` (5 mag here), which
@@ -176,7 +176,7 @@ def chi2ppf(p, df):
     -----
     ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
     the result stays finite. Near ``p = 1`` this loses precision; to convert
-    small tail probabilities, use [`nsigma`][drpangloss.limits.nsigma], which works with the upper
+    small tail probabilities, use [`nsigma`][virgil.limits.nsigma], which works with the upper
     tail directly.
     """
     p = jnp.asarray(p, dtype=float)
@@ -247,11 +247,11 @@ def ruffio_upperlimit(mean, sigma, percentile):
     Parameters
     ----------
     mean : float or array-like
-        Unconstrained best-fit flux, e.g. from [`optimized_flux_grid`][drpangloss.grid_fit.optimized_flux_grid].
+        Unconstrained best-fit flux, e.g. from [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid].
         It may be negative.
     sigma : float or array-like
         Laplace uncertainty of the flux, e.g. from
-        [`laplace_flux_uncertainty_grid`][drpangloss.grid_fit.laplace_flux_uncertainty_grid], broadcastable to ``mean``.
+        [`laplace_flux_uncertainty_grid`][virgil.grid_fit.laplace_flux_uncertainty_grid], broadcastable to ``mean``.
     percentile : float or array-like
         Quantile(s) of the truncated posterior to return, between 0 and 1.
 
@@ -306,7 +306,7 @@ def absil_limits(
     Following Absil et al. (2011), at each grid position this finds the flux
     at which the model fits the data worse than the no-companion model by a
     chi-squared ratio corresponding to ``sigma`` (see
-    [nsigma][drpangloss.limits.nsigma]). Brighter companions at that
+    [nsigma][virgil.limits.nsigma]). Brighter companions at that
     position are excluded at ``sigma``: with ``sigma=3`` the result is a
     3-sigma upper limit on the flux.
 
@@ -316,7 +316,7 @@ def absil_limits(
         Data to fit.
     model : SourceModel or class
         Template model or model class, as for
-        [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]. The
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
         no-companion model sets every parameter in ``samples_dict`` to zero.
     samples_dict : dict[str, array-like]
         Grid axes, as a mapping from parameter name or path to 1D values
@@ -332,7 +332,7 @@ def absil_limits(
     flux_bounds : tuple[float, float] or None, optional
         Limits are clipped to this range (default ``(1e-6, 1.0)``), and a
         ``RuntimeWarning`` reports how many were clipped. Pass ``None`` to
-        return them unclipped, e.g. for [`System`][drpangloss.models.System]
+        return them unclipped, e.g. for [`System`][virgil.models.System]
         weights that may exceed 1.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for

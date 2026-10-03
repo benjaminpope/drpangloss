@@ -7,9 +7,9 @@ from scipy.special import j0 as scipy_j0
 from scipy.special import j1 as scipy_j1
 from scipy.special import jn_zeros
 
-from drpangloss._geometry import image_coordinates as _image_coordinates
-from drpangloss._geometry import offset_phase
-from drpangloss.models import (
+from virgil._geometry import image_coordinates as _image_coordinates
+from virgil._geometry import offset_phase
+from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     EllipticalGaussian,
@@ -31,10 +31,10 @@ from drpangloss.models import (
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
-from drpangloss.likelihood import model_loglike
+from virgil.likelihood import model_loglike
 from tests._test_data import oidata
 
-# Independent reference conversion (not imported from drpangloss) so the
+# Independent reference conversion (not imported from virgil) so the
 # analytic checks below don't just re-test the module's own constant.
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 

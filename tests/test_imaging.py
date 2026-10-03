@@ -3,9 +3,9 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss.coverage import ami_grid_record
-from drpangloss.fitting import fit
-from drpangloss.imaging import (
+from virgil.coverage import ami_grid_record
+from virgil.fitting import fit
+from virgil.imaging import (
     TSV,
     Beam,
     beam,
@@ -21,10 +21,10 @@ from drpangloss.imaging import (
     nyquist_pixel_scale,
     starting_image,
 )
-from drpangloss.models import GaussianDisk, Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_model
-from drpangloss.scenes import gaussian_blob
+from virgil.models import GaussianDisk, Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.plotting import plot_model
+from virgil.scenes import gaussian_blob
 
 NPIX, SCALE = 16, 12.0
 DATA = OIData(ami_grid_record(pitch_m=0.5))
@@ -389,7 +389,7 @@ def test_removing_the_star_leaves_no_residual_point_at_the_centre():
     # DISCO data are normalised on the shortest baselines, where a resolved
     # ring makes |V| < 1. Subtracting the best-fitting point source keeps
     # the star's residual small, although 1/flux_ratio amplifies any error.
-    from drpangloss.scenes import ring
+    from virgil.scenes import ring
 
     image = ring(64, 20.0, radius_mas=240.0, width_mas=36.0, inc_deg=50.0)
     scene = System(
@@ -425,7 +425,7 @@ def test_dirty_image_uses_absolute_phases_and_refuses_closure_phases():
     row, col = np.unravel_index(np.argmax(dirty), dirty.shape)
     assert (row, col) == (12, 21)  # 15.5 - 70 / 20, 15.5 + 110 / 20
     assert np.isclose(dirty.max(), 1.0, atol=0.05)
-    from drpangloss.coverage import nrm_oidata
+    from virgil.coverage import nrm_oidata
 
     with pytest.raises(ValueError, match="complex visibilities"):
         dirty_image(nrm_oidata(), 32, 20.0)
