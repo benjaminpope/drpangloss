@@ -52,7 +52,10 @@ def main():
     for name, hd in STARS.items():
         path = Path(args.out) / f"{name}_summary.json"
         if not path.exists():
-            lines.append(f"## {name} ({hd})\n\nNo summary found.\n")
+            lines.append(
+                f"## {name} ({hd})\n\nNot re-fitted for this comparison "
+                f"(no `{path.name}` in the output directory).\n"
+            )
             continue
         ours = json.loads(path.read_text())
         s = ours["settings"]

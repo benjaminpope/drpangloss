@@ -44,7 +44,7 @@ import numpyro.distributions as dist  # noqa: E402
 from fit_pavo import MAX_DIAM, N_LAT, STARS, load_pavo  # noqa: E402,F401
 from scipy.stats import qmc  # noqa: E402
 
-from virgil import GravityDarkenedStar, OIData  # noqa: E402
+from virgil import GravityDarkenedStar, OIData, UniformDisk  # noqa: E402
 from virgil.fitting import fit  # noqa: E402
 
 OUT = HERE / "output"
@@ -126,6 +126,11 @@ class Dataset:
     def v2_model(self, **p):
         star = GravityDarkenedStar(**p, n_lat=N_LAT)
         return np.asarray(jnp.abs(star.model(self.u, self.v, self.wavel)) ** 2)
+
+    def v2_disk(self, diam):
+        """Exact uniform-disk V^2: an orientation-free null with no mesh."""
+        disk = UniformDisk(diam)
+        return np.asarray(jnp.abs(disk.model(self.u, self.v, self.wavel)) ** 2)
 
     def chi2(self, v2, **p):
         """chi2 of ``v2`` against the model at ``p`` (all four parameters)."""

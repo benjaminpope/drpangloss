@@ -75,12 +75,22 @@ def main():
     rec["chi2_starts"] = []
     for k in mine:
         true, rng = truth(k, args.seed, args.null, diam)
-        v2 = data.v2_model(**true) + rng.normal(0.0, data.sigma)
+        # The null is an exact uniform disk, not GravityDarkenedStar at
+        # omega = 0: its mesh is slightly anisotropic, so the drawn inc and
+        # pa could imprint an orientation on the fake data.
+        v2_true = (
+            data.v2_disk(true["diam_eq"])
+            if args.null
+            else data.v2_model(**true)
+        )
+        v2 = v2_true + rng.normal(0.0, data.sigma)
         starts = c.start_design(args.n_starts, args.seed * 100003 + int(k))
         fits = [c.fit_ml(data, v2, c.as_init(s)) for s in starts]
         best = min(fits, key=lambda f: f["chi2"])
         rec["index"].append(k)
-        rec["chi2_true"].append(data.chi2(v2, **true))
+        rec["chi2_true"].append(
+            float((((v2 - v2_true) / data.sigma) ** 2).sum())
+        )
         rec["chi2_starts"].append([f["chi2"] for f in fits])
         rec["seconds"].append(sum(f["seconds"] for f in fits))
         for key in ("chi2", "converged", "steps"):
@@ -109,7 +119,13 @@ def main():
     c.save(
         args.out,
         f"injection_{args.star}_{tag(args.null)}_{args.task_index}",
-        {k: np.asarray(v) for k, v in rec.items()},
+        {
+            **{k: np.asarray(v) for k, v in rec.items()},
+            # an empty task keeps the (0, n_starts) shape so tasks concatenate
+            "chi2_starts": np.asarray(rec["chi2_starts"]).reshape(
+                -1, args.n_starts
+            ),
+        },
         meta,
     )
 
