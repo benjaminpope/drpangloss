@@ -317,7 +317,7 @@ def fit(
         method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
         # Optimisers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
-        ndata = [int(np.size(d.flatten_data()[0])) for d in problem.data]
+        ndata = [d.n_independent for d in problem.data]
         scale = float(max(sum(ndata), 1))
         if method == "lm":
             z, steps, converged = _lm(
