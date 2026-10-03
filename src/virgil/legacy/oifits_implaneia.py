@@ -16,10 +16,9 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 
-import jax.numpy as jnp
 
 # cp_indices is re-exported here for existing imports.
-from ..oidata import OIData, cp_indices  # noqa: F401
+from ..oidata import cp_indices  # noqa: F401
 
 
 # astroquery is imported only when save() queries SIMBAD; tests may replace
@@ -391,31 +390,3 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
     del fitsHandler
 
     return dic
-
-
-def load_oifits(filename, directory):
-    """Load a single OIFITS file and return flattened AMI-ready observables.
-
-    Prefer [`OIData`][virgil.oidata.OIData], which reads the same file
-    with phases in radians, several wavelength channels and flags.
-
-    Returns
-    -------
-    tuple
-        ``(u, v, cp, cp_err, vis2, vis2_err, i_cps1, i_cps2, i_cps3)``:
-        spatial frequencies in cycles per radian, closure phases and their
-        errors in **degrees**, squared visibilities and their errors, and the
-        closure-phase baseline indices.
-    """
-    data = OIData(os.path.join(directory, filename))
-    return (
-        data.u / data.wavel,
-        data.v / data.wavel,
-        jnp.rad2deg(data.phi),
-        jnp.rad2deg(data.d_phi),
-        data.vis,
-        data.d_vis,
-        data.i_cps1,
-        data.i_cps2,
-        data.i_cps3,
-    )

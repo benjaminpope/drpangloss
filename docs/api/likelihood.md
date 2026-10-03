@@ -12,7 +12,6 @@ Likelihoods of source models given data, and numpyro models.
         - noise_sites
         - noise_for
         - loglike
-        - loglike_nosignal
         - joint_prediction
         - joint_data
         - joint_errors

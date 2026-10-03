@@ -17,7 +17,6 @@ from virgil.likelihood import (
     joint_loglike,
     joint_prediction,
     loglike,
-    loglike_nosignal,
     model_loglike,
 )
 from virgil.models import (
@@ -238,23 +237,6 @@ def test_laplace_wrappers_need_a_1d_parameter_vector():
             oidata,
             BinaryModelCartesian,
         )
-
-
-def test_loglike_nosignal_matches_normalized_gaussian_logpdf():
-    params = ["dra", "ddec", "flux"]
-    values = np.array([120.0, -80.0, 2e-3])
-    param_dict = dict(zip(params, values))
-    model_data = oidata.model(BinaryModelCartesian(**param_dict))
-    _, errors = oidata.flatten_data()
-    null_data = np.concatenate(
-        [np.ones_like(oidata.vis), np.zeros_like(oidata.phi)]
-    )
-
-    like = loglike_nosignal(values, params, oidata, BinaryModelCartesian)
-    expected_like = _reference_logpdf(oidata, model_data, null_data)
-
-    assert np.isfinite(like)
-    assert np.allclose(like, expected_like)
 
 
 def test_model_and_joint_loglike_helpers_match_legacy_loglike():

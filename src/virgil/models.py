@@ -1837,25 +1837,6 @@ def _check_component_name(name):
         )
 
 
-def GaussianDiskModel(sigma, flux, dra=0.0, ddec=0.0):
-    """Point source at the origin plus a Gaussian disk with disk/star ratio ``flux``.
-
-    Convenience constructor equivalent to
-    ``System(star=PointSource(), disk=GaussianDisk(sigma, flux, dra, ddec))``,
-    whose parameters are addressed as ``"disk.sigma"``, ``"disk.flux"`` etc.
-    It can still be passed as a model class with plain parameter names
-    (``sigma``, ``flux``, ``dra``, ``ddec``) to the fitting tools.
-
-    ``GaussianDiskModel`` used to be a class. It now returns a
-    [`System`][virgil.models.System], so ``isinstance(model, GaussianDiskModel)`` no longer
-    works.
-    """
-    return System(
-        star=PointSource(),
-        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
-    )
-
-
 class BinaryModelAngular(SourceModel):
     """
     A primary star and a point-source companion, in polar coordinates.
@@ -1900,7 +1881,7 @@ class BinaryModelAngular(SourceModel):
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
         uu, vv = u / wavel, v / wavel
-        return cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
+        return _cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
@@ -2080,7 +2061,7 @@ class HarmonixModel(SourceModel):
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
 
 
-def cvis_binary_angular(u, v, sep, pa, flux):
+def _cvis_binary_angular(u, v, sep, pa, flux):
     """Complex visibilities of a binary in polar coordinates.
 
     Parameters
@@ -2133,29 +2114,6 @@ def cvis_binary(u, v, dra, ddec, flux):
     companion = flux / (1.0 + flux)
 
     return primary + companion * offset_phase(u, v, dra, ddec)
-
-
-def cvis_gaussian_disk(
-    u,
-    v,
-    sigma,
-    flux,
-    dra: jax.Array | float = 0.0,
-    ddec: jax.Array | float = 0.0,
-):
-    """Compute complex visibilities for a Gaussian-disk companion mixed with
-    an unresolved point source, using the ``flux`` companion/primary flux ratio
-    convention shared with [`cvis_binary`][virgil.models.cvis_binary].
-    """
-    sigma_rad = mas2rad * sigma
-    rho2 = u**2 + v**2
-    envelope = np.exp(-2.0 * (np.pi**2) * (sigma_rad**2) * rho2)
-
-    phase = offset_phase(u, v, dra, ddec)
-
-    l2 = flux / (flux + 1.0)
-    l1 = 1.0 - l2
-    return l1 + l2 * envelope * phase
 
 
 def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
@@ -2283,7 +2241,7 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 def _cvis_gaussian_envelope(u, v, fwhm):
     """Complex visibility envelope of a centered isotropic 2D Gaussian PSF, used
     as the convolution kernel of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]. Not offered as a public
-    function: unlike [`cvis_gaussian_disk`][virgil.models.cvis_gaussian_disk], this is a plain Gaussian envelope
+    function: this is a plain Gaussian envelope
     with no point-source/companion mixture.
     """
     fwhm_rad = fwhm * mas2rad

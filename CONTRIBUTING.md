@@ -108,8 +108,8 @@ Typical helper usage patterns:
 
 - Grid and map visuals: `plot_grid_map(values, grid, kind=...)` (kinds `loglike`, `flux`, `sigma`, `snr`, `limit`) and `plot_contrast_curve`
 - Data: `plot_oidata_overview`, `plot_model`
-- Posterior diagnostics: `plot_chainconsumer_diagnostics`, `plot_trace_panels`
-- Recovery/correlation summaries: `plot_recovery_residuals`, `plot_data_model_correlation`
+- Posterior diagnostics: `plot_chainconsumer_diagnostics`
+- Correlation summaries: `plot_data_model_correlation`
 
 To build the documentation locally and make sure everything is working correctly, you can run the following command:
 
