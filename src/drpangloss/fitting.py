@@ -12,6 +12,7 @@ the same arguments to ``numpyro_model``.
 """
 
 import dataclasses
+import math
 import warnings
 
 import equinox as eqx
@@ -210,6 +211,7 @@ def fit(
     method=None,
     max_steps=None,
     gtol=1e-4,
+    max_step_size=2.0,
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
@@ -255,6 +257,14 @@ def fit(
         per data point exceeds ``gtol``, nor 1/1000 of its largest starting
         value (so that a fit started near a solution, e.g. along an
         L-curve, still converges).
+    max_step_size : float, optional
+        L-BFGS moves no unconstrained coordinate by more than this per step
+        (for a log-brightness pixel, a factor ``exp(max_step_size)``).
+        Uncapped, its line search accepts steps that drive pixels so dark
+        that their gradient vanishes and they never recover, leaving the fit
+        at a spurious stationary point far above the minimum. Coordinates
+        with real support (e.g. a position under a Normal prior) are in
+        their own units, so raise this if they must move far.
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -273,6 +283,10 @@ def fit(
         The fitted model, parameter values and diagnostics. A warning is
         raised if LM or L-BFGS did not converge.
     """
+    if not math.isfinite(max_step_size) or max_step_size <= 0:
+        raise ValueError(
+            f"max_step_size must be finite and positive, not {max_step_size}."
+        )
     with run_in(dtype):
         problem = cast_tree(
             _Objective(model, priors, data, regularisers), dtype
@@ -289,7 +303,7 @@ def fit(
             )
         elif method == "lbfgs":
             z, steps, converged = _lbfgs(
-                problem, z0, scale, max_steps or 20_000, gtol
+                problem, z0, scale, max_steps or 20_000, gtol, max_step_size
             )
         elif method == "adam":
             steps = max_steps or 2000
@@ -379,8 +393,36 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
     return solution.value, int(solution.stats["num_steps"]), converged
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol):
-    # optax's L-BFGS (with a zoom line search), stopped on the gradient.
+def _capped_lbfgs(max_step_size):
+    """optax's L-BFGS, with no coordinate moving more than ``max_step_size``.
+
+    The L-BFGS direction is scaled down to the cap before the zoom line
+    search, whose step is then at most 1, so the line search evaluates the
+    points actually taken (as ``optax.value_and_grad_from_state`` needs).
+    Without the cap, a softmax image can take a step of ~20 in its
+    log-brightnesses that sends most pixels to ~exp(-20): their gradient,
+    proportional to their brightness, then vanishes, and the fit stalls.
+    """
+
+    def cap(updates, state, params=None):
+        factor = np.minimum(1.0, max_step_size / _largest(updates))
+        return jax.tree.map(lambda u: u * factor, updates), state
+
+    return optax.chain(
+        optax.scale_by_lbfgs(),
+        optax.scale(-1.0),
+        optax.GradientTransformation(lambda params: optax.EmptyState(), cap),
+        optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=20,
+            max_learning_rate=1.0,
+            initial_guess_strategy="one",
+        ),
+    )
+
+
+def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
+    # optax's L-BFGS (with a zoom line search, and capped steps; see
+    # _capped_lbfgs), stopped on the gradient.
     # A gradient test suits log-brightness pixels: the gradient for a pixel
     # that should be dark vanishes with its flux, while its value keeps
     # drifting, and a test on the loss change can stop at the first short
@@ -388,7 +430,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
     # where it started, so that a warm start (e.g. along an L-curve, whose
     # gradient is small from the outset) still converges rather than
     # stopping at once.
-    optimiser = optax.lbfgs()
+    optimiser = _capped_lbfgs(max_step_size)
 
     @eqx.filter_jit
     def run(problem, z0):
