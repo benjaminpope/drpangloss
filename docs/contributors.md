@@ -20,6 +20,7 @@ Much of the package implements methods from the literature, which we cite in the
 - chromatic scenes of stars and an environment with their own spectra, following SPARCO ([Kluska et al. 2014](https://arxiv.org/abs/1403.3343));
 - maximum-entropy imaging, and the choice of its weight by Gull and Skilling's "classic MaxEnt" (Gull 1989; Skilling & Bryan 1984);
 - the Bayesian evidence for regularisation hyperparameters and the re-estimation of error bars, following MacKay (1992);
+- correlated closure phases: only the independent combinations, with correlations of ±1/3 between triangles that share a baseline, following Jens Kammerer and collaborators ([Kammerer et al. 2020](https://arxiv.org/abs/2011.01209));
 - the matrix Fourier transform of [Soummer et al. (2007)](https://arxiv.org/abs/0711.0368).
 
 ## Software

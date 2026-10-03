@@ -1,26 +1,32 @@
 """Independent, whitened closure phases.
 
-The closure phase of triangle (a, b, c) is φ_ab + φ_bc − φ_ac. If the noise
-on the baseline phases φ is independent with variances s_b, the closure
-phases of triangles that share baselines are correlated, with covariance
-
-    C = T diag(s) Tᵀ,
-
-where T is the triangle-by-baseline matrix of +1, +1, −1 entries. With four
-telescopes, the four triangles of one frame and channel span only three
-independent combinations, and C has rank 3; with equal noise, neighbouring
-triangles correlate at ±1/3 (Kammerer et al. 2020, A&A 644, A110, §2.2).
+The closure phase of triangle (a, b, c) is φ_ab + φ_bc − φ_ac. Noise on the
+baseline phases makes the closure phases of triangles that share a baseline
+correlated, and with N telescopes only (N−1)(N−2)/2 of the triangles of one
+frame and channel are independent: three of four, for four telescopes.
 Treating all four as independent counts the closure phases 4/3 times.
 
+The covariance model is that of Kammerer et al. (2020, A&A 644, A110,
+§2.2): the reported variances σ² on the diagonal, and a fixed correlation
+between triangles from equal noise on every baseline,
+
+    C = D^½ R D^½,   R = T Tᵀ / 3,   D = diag(σ²),
+
+where T is the triangle-by-baseline matrix of +1, +1, −1 entries; R has unit
+diagonal and ±1/3 between triangles sharing a baseline. C keeps every
+reported error, is never indefinite, and scales with the errors, so
+rescaled or inflated errors carry through.
+
 ``ClosureNoise`` groups the triangles that share baselines (one frame and
-channel each), keeps the independent combinations Q (an orthonormal basis of
-the column space of T), and whitens them with the Cholesky factor of
-Q C Qᵀ. The baseline variances s are the minimum-norm solution of
-Σ_{b∈t} s_b = σ_t² for the reported closure-phase errors σ_t, a linear map
-P with s = P σ², so that rescaled or inflated errors carry through.
+channel each). It whitens residuals r by dividing by σ, projecting onto an
+orthonormal basis Q of the column space of T (the independent combinations)
+and solving with the Cholesky factor of M = Q R Qᵀ, which is fixed. For r in
+the column space of C this is exactly rᵀ C⁺ r, and the normalisation is
+½ log pdet C = ½ (log det M + log det Q D Qᵀ).
 """
 
 import equinox as eqx
+import jax
 import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
@@ -48,14 +54,26 @@ def _groups(i1, i2, i3):
     return [onp.flatnonzero(roots == r) for r in onp.unique(roots)]
 
 
+def _incidence(group, i1, i2, i3):
+    """The group's triangle-by-baseline matrix T."""
+    baselines = onp.unique(onp.concatenate([i1[group], i2[group], i3[group]]))
+    col = {b: j for j, b in enumerate(baselines)}
+    t = onp.zeros((group.size, baselines.size))
+    for row, tri in enumerate(group):
+        t[row, col[i1[tri]]] += 1.0
+        t[row, col[i2[tri]]] += 1.0
+        t[row, col[i3[tri]]] -= 1.0
+    return t
+
+
 class ClosureNoise(eqx.Module):
-    """Correlated noise of closure phases from independent baseline noise."""
+    """Correlated closure-phase noise from equal noise on every baseline."""
 
     groups: onp.ndarray  # (n_group, m) closure-phase indices, padded with 0
     mask: onp.ndarray  # (n_group, m) True for real triangles
-    incidence: onp.ndarray  # (n_group, m, n_base) T
-    variance_map: onp.ndarray  # (n_group, n_base, m) P: s = P σ²
+    incidence: onp.ndarray  # (n_group, m, n_base) T / √3, for sampling
     basis: onp.ndarray  # (n_group, k, m) Q, orthonormal rows
+    chol: onp.ndarray  # (n_group, k, k) Cholesky factor of Q R Qᵀ
     valid: onp.ndarray  # (n_group, k) True for real basis rows
     keep: onp.ndarray  # flat indices of the real rows, in group order
 
@@ -68,84 +86,74 @@ class ClosureNoise(eqx.Module):
             return None  # three telescopes: nothing to decorrelate
         blocks = []
         for g in groups:
-            baselines = onp.unique(onp.concatenate([i1[g], i2[g], i3[g]]))
-            col = {b: j for j, b in enumerate(baselines)}
-            t = onp.zeros((g.size, baselines.size))
-            for row, tri in enumerate(g):
-                t[row, col[i1[tri]]] += 1.0
-                t[row, col[i2[tri]]] += 1.0
-                t[row, col[i3[tri]]] -= 1.0
+            t = _incidence(g, i1, i2, i3) / onp.sqrt(3.0)
             left, singular, _ = onp.linalg.svd(t, full_matrices=False)
             rank = int(onp.sum(singular > 1e-9 * singular.max()))
-            blocks.append((g, t, onp.linalg.pinv(t**2), left[:, :rank].T))
+            q = left[:, :rank].T
+            m_chol = onp.linalg.cholesky(q @ (t @ t.T) @ q.T)
+            blocks.append((g, t, q, m_chol))
         m = max(b[0].size for b in blocks)
         n_base = max(b[1].shape[1] for b in blocks)
-        k = max(b[3].shape[0] for b in blocks)
+        k = max(b[2].shape[0] for b in blocks)
         n = len(blocks)
-        groups_out = onp.zeros((n, m), dtype=int)
-        mask = onp.zeros((n, m), dtype=bool)
-        incidence = onp.zeros((n, m, n_base))
-        variance_map = onp.zeros((n, n_base, m))
-        basis = onp.zeros((n, k, m))
-        valid = onp.zeros((n, k), dtype=bool)
-        for j, (g, t, p, q) in enumerate(blocks):
-            groups_out[j, : g.size] = g
-            mask[j, : g.size] = True
-            incidence[j, : g.size, : t.shape[1]] = t
-            variance_map[j, : t.shape[1], : g.size] = p
-            basis[j, : q.shape[0], : g.size] = q
-            valid[j, : q.shape[0]] = True
-        return cls(
-            groups_out,
-            mask,
-            incidence,
-            variance_map,
-            basis,
-            valid,
-            onp.flatnonzero(valid.reshape(-1)),
-        )
+        out = {
+            "groups": onp.zeros((n, m), dtype=int),
+            "mask": onp.zeros((n, m), dtype=bool),
+            "incidence": onp.zeros((n, m, n_base)),
+            "basis": onp.zeros((n, k, m)),
+            "chol": onp.tile(onp.eye(k), (n, 1, 1)),
+            "valid": onp.zeros((n, k), dtype=bool),
+        }
+        for j, (g, t, q, m_chol) in enumerate(blocks):
+            r = q.shape[0]
+            out["groups"][j, : g.size] = g
+            out["mask"][j, : g.size] = True
+            out["incidence"][j, : g.size, : t.shape[1]] = t
+            out["basis"][j, :r, : g.size] = q
+            out["chol"][j, :r, :r] = m_chol
+            out["valid"][j, :r] = True
+        return cls(**out, keep=onp.flatnonzero(out["valid"].reshape(-1)))
 
     @property
     def size(self):
         """Number of independent closure phases."""
         return int(self.keep.size)
 
-    def _cholesky(self, sigma):
-        var = np.where(self.mask, np.asarray(sigma)[self.groups] ** 2, 0.0)
-        s = np.einsum("gbm,gm->gb", self.variance_map, var)
-        # The minimum-norm baseline variances can dip below zero when the
-        # closure-phase errors are very unequal; floor them.
-        floor = 1e-6 * np.max(var, axis=1, keepdims=True)
-        s = np.maximum(s, floor)
-        cov = np.einsum("gmb,gb,gnb->gmn", self.incidence, s, self.incidence)
-        cov_q = np.einsum("gkm,gmn,gln->gkl", self.basis, cov, self.basis)
-        pad = 1.0 - self.valid.astype(cov_q.dtype)
-        cov_q = cov_q + pad[:, :, None] * np.eye(pad.shape[1])
-        return np.linalg.cholesky(cov_q)
+    def correlation(self, n_phase):
+        """The dense correlation matrix R of all ``n_phase`` closure phases."""
+        r = onp.zeros((n_phase, n_phase))
+        for g, mask, t in zip(self.groups, self.mask, self.incidence):
+            idx = g[mask]
+            tt = t[mask]
+            r[onp.ix_(idx, idx)] = tt @ tt.T
+        return r
 
     def whiten(self, residuals, sigma):
         """Whitened independent combinations, and their effective errors.
 
         ``residuals`` and ``sigma`` have one entry per closure phase. The
-        returned errors (the Cholesky diagonal) give the Gaussian
-        normalisation: their log-sum is ½ log det of the covariance.
+        returned errors give the Gaussian normalisation: their log-sum is
+        ½ log of the pseudo-determinant of the covariance.
         """
-        chol = self._cholesky(sigma)
-        r = np.where(self.mask, np.asarray(residuals)[self.groups], 0.0)
-        y = np.einsum("gkm,gm->gk", self.basis, r)
-        w = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
-        d = np.diagonal(chol, axis1=1, axis2=2)
-        return w.reshape(-1)[self.keep], d.reshape(-1)[self.keep]
+        sigma = np.asarray(sigma)[self.groups]
+        x = np.where(
+            self.mask, np.asarray(residuals)[self.groups] / sigma, 0.0
+        )
+        a = np.einsum("gkm,gm->gk", self.basis, x)
+        w = jsl.solve_triangular(self.chol, a[..., None], lower=True)[..., 0]
+        var = np.where(self.mask, sigma**2, 0.0)
+        qdq = np.einsum("gkm,gm,glm->gkl", self.basis, var, self.basis)
+        pad = 1.0 - self.valid.astype(qdq.dtype)
+        qdq = qdq + pad[:, :, None] * np.eye(pad.shape[1])
+        scale = np.diagonal(np.linalg.cholesky(qdq), axis1=1, axis2=2)
+        errors = np.diagonal(self.chol, axis1=1, axis2=2) * scale
+        return w.reshape(-1)[self.keep], errors.reshape(-1)[self.keep]
 
     def sample(self, key, sigma, n_phase):
-        """Closure-phase noise drawn from independent baseline-phase noise."""
-        import jax
-
-        var = np.where(self.mask, np.asarray(sigma)[self.groups] ** 2, 0.0)
-        s = np.einsum("gbm,gm->gb", self.variance_map, var)
-        s = np.maximum(s, 0.0)
-        e = np.sqrt(s) * jax.random.normal(key, s.shape)
+        """Closure-phase noise with the covariance used by :meth:`whiten`."""
+        e = jax.random.normal(key, self.incidence.shape[::2])
         noise = np.einsum("gmb,gb->gm", self.incidence, e)
+        noise = noise * np.asarray(sigma)[self.groups]
         # Each closure phase sits in exactly one group; padded slots add 0.
         out = np.zeros(n_phase, dtype=noise.dtype)
         return out.at[self.groups].add(np.where(self.mask, noise, 0.0))

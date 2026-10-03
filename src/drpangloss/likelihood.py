@@ -33,21 +33,28 @@ def _whiten(data_obj, prediction, reference, errors):
       phases are linear combinations that are not wrapped, and are left
       as Δ.
     - Closure phases from four or more telescopes are correlated, and only
-      some are independent. Their chord residuals are mapped to the
-      independent combinations and whitened with their covariance
-      (``OIData.cp_noise``), so there are fewer of them than closure
-      phases. ``errors_out`` then holds the Cholesky diagonal for those
-      rows, whose log-sum is ½ log det of the covariance.
+      some are independent. Their residuals are wrapped into [-π, π),
+      taken as chords, mapped to the independent combinations and
+      whitened with their covariance (``OIData.cp_noise``), so there are
+      fewer of them than closure phases. ``errors_out`` then holds
+      effective errors for those rows, whose log-sum is ½ log of the
+      covariance's pseudo-determinant.
     """
     resid = np.asarray(prediction) - np.asarray(reference)
     errors = np.asarray(errors)
     if not data_obj._phases_wrap:
         return resid / errors, errors
     n_vis = np.asarray(data_obj.vis).size
-    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
     if data_obj.cp_noise is None:
+        chord = 2.0 * np.sin(0.5 * resid[n_vis:])
         whitened = np.concatenate([resid[:n_vis], chord]) / errors
         return whitened, errors
+    # Correlated closure phases mix their residuals, so each sign matters:
+    # wrap each residual into [-π, π) before taking its chord, so that a
+    # phase shifted by 2π gives the same likelihood. The likelihood then
+    # jumps only where a residual crosses ±π, a 180° misfit.
+    wrapped = np.mod(resid[n_vis:] + np.pi, 2.0 * np.pi) - np.pi
+    chord = 2.0 * np.sin(0.5 * wrapped)
     phase, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
     return (
         np.concatenate([resid[:n_vis] / errors[:n_vis], phase]),

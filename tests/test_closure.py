@@ -1,5 +1,6 @@
 """Independent, whitened closure phases (``drpangloss._closure``)."""
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -168,3 +169,87 @@ def test_a_correlating_operator_is_rotated_to_independent_outputs():
     chi2_dense = y @ onp.linalg.solve(cov, y)
     chi2 = onp.sum((onp.asarray(data.phi) / onp.asarray(data.d_phi)) ** 2)
     assert chi2 == pytest.approx(chi2_dense, rel=1e-6)
+
+
+def _record(data, **changes):
+    """``data`` as an OIData input record, with ``changes``."""
+    record = {
+        "u": data.u,
+        "v": data.v,
+        "wavel": data.wavel,
+        "vis": data.vis,
+        "d_vis": data.d_vis,
+        "phi": data.phi,
+        "d_phi": data.d_phi,
+        "i_cps1": data.i_cps1,
+        "i_cps2": data.i_cps2,
+        "i_cps3": data.i_cps3,
+    }
+    return record | changes
+
+
+def test_unequal_errors_are_kept_and_simulation_matches_whitening():
+    # σ² ∝ (1, 1, 3, 3): a minimum-norm split into baseline variances goes
+    # negative here. The covariance keeps every reported variance, and
+    # noise simulated from it whitens to unit variance.
+    one = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
+    sigma = 0.05 * onp.sqrt(onp.array([1.0, 1.0, 3.0, 3.0]))
+    data = OIData(_record(one, d_phi=sigma))
+    corr = data.cp_noise.correlation(4)
+    cov = sigma[:, None] * corr * sigma[None, :]
+    assert onp.allclose(onp.diag(cov), sigma**2)
+    assert onp.all(onp.linalg.eigvalsh(cov) > -1e-12)
+
+    keys = jax.random.split(jax.random.PRNGKey(4), 4000)
+    noise = onp.stack(
+        [onp.asarray(data.cp_noise.sample(k, data.d_phi, 4)) for k in keys]
+    )
+    assert onp.allclose(noise.var(axis=0), sigma**2, rtol=0.1)
+    whitened = onp.stack(
+        [
+            onp.asarray(data.cp_noise.whiten(np.asarray(n), data.d_phi)[0])
+            for n in noise
+        ]
+    )
+    assert onp.allclose(onp.cov(whitened.T), onp.eye(3), atol=0.1)
+
+
+def test_a_phase_shifted_by_two_pi_gives_the_same_likelihood():
+    data = _four_telescopes()
+    shifted = eqx.tree_at(
+        lambda d: d.phi, data, data.phi.at[0].add(2.0 * np.pi)
+    )
+    assert onp.allclose(
+        whitened_residuals(MODEL, data),
+        whitened_residuals(MODEL, shifted),
+        atol=1e-4,
+    )
+    assert model_loglike(MODEL, data) == pytest.approx(
+        model_loglike(MODEL, shifted), rel=1e-5
+    )
+
+
+def test_a_phase_operator_on_closure_phases_keeps_their_correlations():
+    # An identity phi_mat on four-telescope closure phases must not count
+    # four independent values per frame.
+    data = _four_telescopes()
+    projected = OIData(_record(data, phi_mat=onp.eye(data.phi.size)))
+    assert projected.cp_noise is None
+    assert projected.phi.size == 9  # three frames, three each
+
+
+def test_tiny_but_identical_operator_rows_are_still_merged():
+    data = OIData(
+        {
+            "u": onp.ones(3),
+            "v": onp.zeros(3),
+            "wavel": 1e-6,
+            "vis": onp.ones(3),
+            "d_vis": onp.full(3, 0.1),
+            "phi": onp.zeros(3),
+            "d_phi": onp.full(3, 0.1),
+            "phi_mat": onp.array([[1e-6, 0.0, 0.0], [1e-6, 0.0, 0.0]]),
+            "cp_flag": False,
+        }
+    )
+    assert data.phi.size == 1
