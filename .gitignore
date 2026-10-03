@@ -14,6 +14,7 @@ HANDOFF.md
 site/
 docs/generated/_tmp_*
 dist/
+build/
 
 # Proprietary AMIGO reduction product used only to generate the public fixture.
 data/calibrated_visibility_private.npy

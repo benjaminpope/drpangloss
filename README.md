@@ -20,6 +20,10 @@ virgil is hosted on PyPI; the easiest way to install it is:
 pip install virgil-astro
 ```
 
+Optional extras add the corner-plot helpers in `virgil.plotting`
+(`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
+SIMBAD lookups in `virgil.legacy` (`[legacy]`, for astroquery).
+
 You can also build from source. To do so, clone the git repo, enter the directory, and run
 
 ```
@@ -33,7 +37,7 @@ Using `uv` (recommended):
 ```bash
 uv python install 3.11
 uv venv --python 3.11 .venv
-uv pip install --python .venv/bin/python -e . pytest
+uv pip install --python .venv/bin/python -e ".[test]"
 uv run --python .venv/bin/python pytest -q
 ```
 

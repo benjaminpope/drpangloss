@@ -22,6 +22,13 @@ CI tests against the newest JAX, so if you reuse an existing `.venv`, upgrade it
 with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`. Upgrading
 `jax` on its own can leave optax, equinox etc. too old for it.
 
+The extras are `plots` (pandas and ChainConsumer, for the corner-plot helpers in
+`virgil.plotting`), `legacy` (astroquery, for `virgil.legacy`), `integrations`
+(jaxoplanet, for `HarmonixModel`), `test`, `docs`, `notebooks` and `dev` (`test` and
+`docs` plus the tools). harmonix itself is not yet on PyPI in a version virgil works
+with; to run its tests, install it from GitHub as CI does:
+`uv pip install --python .venv/bin/python "harmonix @ git+https://github.com/shashankdholakia/harmonix"`.
+
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you
 have another ruff on your `PATH`, call the one in `.venv` explicitly.
@@ -84,7 +91,14 @@ This will run all tests in the `tests` directory. If you would like to run a spe
 uv run --python .venv/bin/python pytest tests/test_file.py
 ```
 
-Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions runs CI checks for consistency across environments.
+Note that passing locally does not guarantee cross-platform compatibility. On every pull
+request, GitHub Actions (`.github/workflows/tests.yml`) runs the suite on Linux with
+Python 3.12 (in float32 and float64) and 3.13, on macOS with Python 3.11, and once with
+every dependency at the oldest version `pyproject.toml` allows; it also builds the wheel
+and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
+environment. Raising a dependency floor means editing `pyproject.toml`, which that last
+job then tests. The lint workflow only checks: fix what it reports with
+`bash scripts/lint_local.sh --fix` and push again.
 
 **Documentation**
 

@@ -31,7 +31,13 @@ def _simbad():
     """The astroquery ``Simbad`` class, imported on first use."""
     if Simbad is not None:
         return Simbad
-    from astroquery.simbad import Simbad as simbad_class
+    try:
+        from astroquery.simbad import Simbad as simbad_class
+    except ImportError as err:
+        raise ImportError(
+            "Looking targets up in SIMBAD needs astroquery, which is not "
+            "installed. Install it with: pip install 'virgil-astro[legacy]'"
+        ) from err
 
     return simbad_class
 
