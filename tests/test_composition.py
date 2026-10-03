@@ -153,7 +153,7 @@ def test_absil_limits_zero_starting_flux_uses_smallest_positive_flux():
 
     # Just above the smallest reachable significance (a chi-squared ratio
     # of 1), so the zero flux is the best starting point.
-    ndof = oidata.flatten_data()[0].size
+    ndof = oidata.n_independent
     sigma = float(nsigma(1.0, 1.0, ndof)) + 1e-3
     assert np.allclose(
         absil_limits(oidata, template, with_zero, sigma, **kwargs),

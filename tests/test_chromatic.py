@@ -119,13 +119,19 @@ def _toon_loglike(model, data_obj, vis_error_rel, phi_error):
     errors_phi = np.hypot(errors[n_vis:], phi_error)
     errors = np.concatenate([errors_vis, errors_phi])
     # Closure-phase residuals Δ enter as the chord 2 sin(Δ/2), as in
-    # drpangloss.likelihood.whitened_residuals (the original used Δ).
-    resid = data - model_data
-    resid = resid.at[n_vis:].set(2.0 * np.sin(0.5 * resid[n_vis:]))
+    # drpangloss.likelihood.whitened_residuals (the original used Δ). The
+    # original also treated the four closure phases of each frame and
+    # channel as independent, counting them 4/3 times; they are whitened
+    # as correlated groups instead (OIData.cp_noise; see test_closure).
+    resid = model_data - data
+    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
+    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors_phi)
+    whitened = np.concatenate([resid[:n_vis] / errors_vis, phase])
+    errors = np.concatenate([errors_vis, phase_errors])
     return (
-        -0.5 * np.sum(resid**2 / errors**2)
+        -0.5 * np.sum(whitened**2)
         - np.sum(np.log(errors))
-        - data.size / 2 * np.log(2 * np.pi)
+        - whitened.size / 2 * np.log(2 * np.pi)
     )
 
 

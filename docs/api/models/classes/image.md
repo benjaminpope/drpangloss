@@ -11,6 +11,7 @@ the pixels. The design is recorded in `design/image_reconstruction.md`.
       show_attributes: false
       members:
         - brightness
+        - eta
         - from_brightness
         - from_model
 

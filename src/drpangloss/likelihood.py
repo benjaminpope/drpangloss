@@ -21,21 +21,38 @@ from .models import SourceModel
 
 
 def _whiten(data_obj, prediction, reference, errors):
-    """Return ``(prediction - reference) / errors``, with phases as chords.
+    """Whitened residuals, and the errors that normalise their likelihood.
 
-    An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
-    2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is smooth
-    at ±π, so the Gaussian likelihood built on it is a von Mises likelihood
-    with concentration 1/σ². Projected (kernel or DISCO) phases are linear
-    combinations that are not wrapped, and are left as Δ.
+    Returns ``(whitened, errors_out)``. Residuals are
+    ``(prediction - reference) / errors``, except:
+
+    - An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
+      2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is
+      smooth at ±π, so the Gaussian likelihood built on it is a von Mises
+      likelihood with concentration 1/σ². Projected (kernel or DISCO)
+      phases are linear combinations that are not wrapped, and are left
+      as Δ.
+    - Closure phases from four or more telescopes are correlated, and only
+      some are independent. Their chord residuals are mapped to the
+      independent combinations and whitened with their covariance
+      (``OIData.cp_noise``), so there are fewer of them than closure
+      phases. ``errors_out`` then holds the Cholesky diagonal for those
+      rows, whose log-sum is ½ log det of the covariance.
     """
     resid = np.asarray(prediction) - np.asarray(reference)
-    if data_obj._phases_wrap:
-        n_vis = np.asarray(data_obj.vis).size
-        resid = np.concatenate(
-            [resid[:n_vis], 2.0 * np.sin(0.5 * resid[n_vis:])]
-        )
-    return resid / errors
+    errors = np.asarray(errors)
+    if not data_obj._phases_wrap:
+        return resid / errors, errors
+    n_vis = np.asarray(data_obj.vis).size
+    chord = 2.0 * np.sin(0.5 * resid[n_vis:])
+    if data_obj.cp_noise is None:
+        whitened = np.concatenate([resid[:n_vis], chord]) / errors
+        return whitened, errors
+    phase, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
+    return (
+        np.concatenate([resid[:n_vis] / errors[:n_vis], phase]),
+        np.concatenate([errors[:n_vis], phase_errors]),
+    )
 
 
 def _gaussian_loglike(whitened, errors):
@@ -167,7 +184,7 @@ def _whitened_and_errors(model_object, data_obj, noise):
     prediction = data_obj.model(model_object)
     errors = inflated_errors(data_obj, prediction, **noise)
     data = data_obj.flatten_data()[0]
-    return _whiten(data_obj, prediction, data, errors), errors
+    return _whiten(data_obj, prediction, data, errors)
 
 
 def whitened_residuals(model_object, data_obj, **noise):
@@ -198,8 +215,12 @@ def whitened_residuals(model_object, data_obj, **noise):
     Returns
     -------
     array-like
-        One dimensionless residual per data point, in the order of
-        [`flatten_data`][drpangloss.oidata.OIData.flatten_data].
+        One dimensionless residual per independent observable
+        ([`n_independent`][drpangloss.oidata.OIData.n_independent] of
+        them), in the order of
+        [`flatten_data`][drpangloss.oidata.OIData.flatten_data]; correlated
+        closure phases are replaced by their whitened independent
+        combinations.
     """
     return _whitened_and_errors(model_object, data_obj, noise)[0]
 
@@ -352,9 +373,7 @@ def loglike_nosignal(values, params, data_obj, model):
     unity_cvis = np.ones_like(data_obj.u, dtype=complex)
     null_data = data_obj.standardize_model(unity_cvis)
 
-    return _gaussian_loglike(
-        _whiten(data_obj, model_data, null_data, errors), errors
-    )
+    return _gaussian_loglike(*_whiten(data_obj, model_data, null_data, errors))
 
 
 def _check_positive_flux_prior(name, distribution):

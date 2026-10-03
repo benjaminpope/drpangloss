@@ -195,6 +195,7 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "mean must be a finite template with a positive peak."
                 )
         self.mean = mean
+        _check_positive("mean_floor", mean_floor)
         self.mean_floor = float(mean_floor)
 
     @property
