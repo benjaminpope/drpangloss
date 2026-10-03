@@ -114,12 +114,21 @@ def test_golden_surface_and_visibilities_float64(x64, k):
             onp.asarray(got)[oi], _GOLD[key][k][gi], rtol=1e-8, atol=1e-10
         )
     uu, vv = _uv()
-    cv = _elr.visibilities(x, y, w, jnp.asarray(uu), jnp.asarray(vv))
+    uu, vv = jnp.asarray(uu), jnp.asarray(vv)
+    # His DFT, exactly: our visibilities of his own barycentres and weights.
+    cv = _elr.visibilities(
+        _GOLD["bary_x"][k], _GOLD["bary_y"][k], _GOLD["weight"][k], uu, vv
+    )
     assert cv.dtype == jnp.complex128
     onp.testing.assert_allclose(cv, _GOLD["cvis"][k], rtol=1e-9, atol=1e-9)
     onp.testing.assert_allclose(
         jnp.abs(cv) ** 2, _GOLD["vis2"][k], rtol=1e-9, atol=1e-9
     )
+    # The whole model: qhull splits the near-cospherical equatorial quads
+    # differently across platforms and versions, which moves the
+    # visibilities by up to ~3e-5.
+    cv = _elr.visibilities(x, y, w, uu, vv)
+    onp.testing.assert_allclose(cv, _GOLD["cvis"][k], atol=1e-4)
 
 
 # ---------------------------------------------------- 2. golden in float32
@@ -149,7 +158,8 @@ def test_golden_eq32_float32():
 def test_golden_surface_and_visibilities_float32(k):
     om, req, inc, obl = _GOLD["vis_params"][k]
     x, y, w, t = _elr.surface(om, req, inc, obl)
-    assert x.dtype == w.dtype == t.dtype == jnp.float32
+    # float32 unless the run has enabled x64 globally
+    assert x.dtype == w.dtype == t.dtype == jnp.asarray(1.0).dtype
     oi, gi = _common_triangles()
     scale = _GOLD["weight"][k].max()
     onp.testing.assert_allclose(
@@ -169,7 +179,7 @@ def test_golden_surface_and_visibilities_float32(k):
     )
     uu, vv = _uv()
     cv = _elr.visibilities(x, y, w, jnp.asarray(uu), jnp.asarray(vv))
-    assert cv.dtype == jnp.complex64
+    assert cv.dtype == jnp.asarray(1j).dtype
     onp.testing.assert_allclose(cv, _GOLD["cvis"][k], atol=1e-4)
     onp.testing.assert_allclose(jnp.abs(cv) ** 2, _GOLD["vis2"][k], atol=1e-4)
 
