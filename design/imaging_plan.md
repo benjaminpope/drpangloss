@@ -501,7 +501,15 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 
 **Checkpoint:** **merge milestone 2**.
 
-## Stage 7: hardening and release (about 3–4 h)
+## Stage 7: hardening and release (about 8–11 h)
+- **Maximum-entropy preconditioning and better solvers** (Ben, 2026-10-03; important in the long run).
+  - **The symptom.** At weak weights, MEM's L-BFGS fits are badly conditioned: faint pixels are almost unconstrained, so steps along those flat directions are tiny. One weight in `mwe_gaussian_field`'s sweep did not converge in 200,000 steps. The tutorials and MWEs keep their sweeps to w ≳ 3 with up to 2–5 × 10⁴ steps, which works around the problem rather than fixing it. The GP prior doesn't have it, because LM converges in 20–50 steps in whitened coordinates.
+  - **Options:**
+    - precondition L-BFGS in the entropy metric (diag 1/b, as Skilling & Bryan 1984 do), or in a basis whitened by the default image;
+    - a Skilling–Bryan-style subspace solver;
+    - a least-squares (LM) form of the entropy term;
+    - a looser, better-founded stopping rule.
+  - **Success test:** an L-curve from w = 0.1 to 10⁴ that converges at every weight within the default step limit, in float32 and float64.
 - API review for consistency and naming, with docstrings (units and examples) for every public object.
 - A mkdocs API page and a "choosing a regulariser and prior" guide.
 - Update `design/chromatic_sources.md` to mark `Image` as done.
@@ -524,7 +532,7 @@ See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now
 
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
-- **Stages 5–7:** about 17–24 h more, plus:
+- **Stages 5–7:** about 22–31 h more (Stage 7 now includes MEM preconditioning), plus:
   - 6a.0 and 6a: about 12–16 h;
   - 6a.1 (orbits and binary-frame scenes): about 23–28 h;
   - 6d: about 9–13 h.
