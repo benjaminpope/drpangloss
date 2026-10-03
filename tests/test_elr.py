@@ -366,3 +366,23 @@ def test_pole_orientation_obl_ninety():
     hx, hy = _hot(0.5, onp.pi / 2)
     assert hx > 0
     assert abs(hy) < 0.05 * 0.4
+
+
+def test_switching_x64_mode_reuses_the_mesh():
+    # The cached mesh is shared by every call. JAX 0.10 caches the
+    # canonical (x64-dependent) copy of a NumPy array by identity while it
+    # is alive, so a 64-bit mesh index array used in one mode came back
+    # with the wrong width in the other, and a compiled jnp.repeat
+    # rejected it. Alternate the modes with the mesh in use throughout.
+    def use():
+        x, y, weight, teff = _elr.surface(0.7, 1.0, 0.6, 0.3)
+        return weight
+
+    held = []
+    for x64 in (False, True, False, True):
+        with jax.enable_x64(x64):
+            held.append(jax.jit(use))
+            held[-1]()
+            dtype = jnp.float64 if x64 else jnp.float32
+            assert use().dtype == dtype
+            assert use().dtype == dtype
