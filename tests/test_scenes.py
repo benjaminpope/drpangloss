@@ -2,9 +2,9 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from drpangloss._geometry import image_coordinates
-from drpangloss.models import GaussianDisk, Image
-from drpangloss.scenes import gaussian_blob, ring, spiral
+from virgil._geometry import image_coordinates
+from virgil.models import GaussianDisk, Image
+from virgil.scenes import gaussian_blob, ring, spiral
 
 NPIX, SCALE = 64, 4.0
 WAVEL = 4.8e-6

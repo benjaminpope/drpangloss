@@ -6,10 +6,10 @@ import pyoifits
 import pytest
 from astropy.io import fits
 
-from drpangloss.likelihood import loglike, model_loglike
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData, closure_phases, cp_indices
-from drpangloss.oifits import read_oifits, write_oifits
+from virgil.likelihood import loglike, model_loglike
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData, closure_phases, cp_indices
+from virgil.oifits import read_oifits, write_oifits
 
 
 STATIONS = onp.array([[0.0, 0.0], [3.2, 0.2], [1.4, 2.6], [-1.1, 1.8]])
@@ -302,7 +302,7 @@ def test_closure_phase_only_file_round_trips(tmp_path):
 
 def _two_instrument_file(names):
     """One HDUList holding the same tables under two INSNAMEs."""
-    from drpangloss.oifits import build_hdulist
+    from virgil.oifits import build_hdulist
 
     hduls = []
     for name, waves in zip(names, ((2.2e-6,), (2.0e-6, 2.2e-6, 2.4e-6))):
@@ -338,7 +338,7 @@ def test_insname_selects_tables_from_other_instruments():
 
 
 def test_differential_visphi_is_not_read_as_absolute(tmp_path):
-    from drpangloss.oifits import build_hdulist
+    from virgil.oifits import build_hdulist
 
     tables = _tables()
     u, v = _baselines()
@@ -361,7 +361,7 @@ def test_differential_visphi_is_not_read_as_absolute(tmp_path):
 
 
 def test_insname_selection_drops_emptied_table_types():
-    from drpangloss.oifits import _collect_tables, _select_insname
+    from virgil.oifits import _collect_tables, _select_insname
 
     hdul = _two_instrument_file(["PIONIER_A", "PIONIER_B"])
     for hdu in hdul:
@@ -375,7 +375,7 @@ def test_insname_selection_drops_emptied_table_types():
 
 
 def test_phityp_is_checked_only_for_the_chosen_target():
-    from drpangloss.oifits import build_hdulist
+    from virgil.oifits import build_hdulist
 
     tables = _tables()
     u, v = _baselines()

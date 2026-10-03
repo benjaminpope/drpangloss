@@ -1,10 +1,10 @@
-# `drpangloss.fitting`
+# `virgil.fitting`
 
 `fit` finds maximum a posteriori parameters, taking the same arguments as
 [`numpyro_model`](likelihood.md), plus optional regularisers. `gauss_newton_mass` turns a fit into a dense
 mass matrix for numpyro's NUTS, for sampling large images.
 
-::: drpangloss.fitting
+::: virgil.fitting
     options:
       members:
         - fit

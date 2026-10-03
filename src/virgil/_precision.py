@@ -1,7 +1,7 @@
 """Local numerical precision for fitting and sampling entry points.
 
-drpangloss never enables float64 globally. Entry points such as
-[`fit`][drpangloss.fitting.fit] instead run inside :func:`run_in`, a local
+virgil never enables float64 globally. Entry points such as
+[`fit`][virgil.fitting.fit] instead run inside :func:`run_in`, a local
 ``jax.enable_x64`` context, after casting their inputs with
 :func:`cast_tree`. Forward-model code works in either precision.
 """

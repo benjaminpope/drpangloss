@@ -1,7 +1,7 @@
 """Compare our PAVO posteriors with Dholakia's; writes ``comparison.md``.
 
 Reads ``output/<star>_summary.json`` (from ``fit_pavo.py``) and the
-``"drpangloss"`` block of ``reference_posteriors.json``, which was extracted
+``"virgil"`` block of ``reference_posteriors.json``, which was extracted
 from his own ``_NUTS.h5`` files at commit 70689ed.
 
     .venv/bin/python examples/elr_pavo/compare.py [--out DIR]
@@ -29,9 +29,9 @@ PARAMS = [
     ("jitter_v2", "jitter", "jitter (V^2)"),
 ]
 HEADER = """\
-# PAVO rapid-rotator re-analysis: drpangloss vs Dholakia
+# PAVO rapid-rotator re-analysis: virgil vs Dholakia
 
-Ours: `drpangloss.GravityDarkenedStar` (grey, `n_lat=32`) fitted by
+Ours: `virgil.GravityDarkenedStar` (grey, `n_lat=32`) fitted by
 `fit_pavo.py` with his priors, likelihood and NUTS settings (see its
 docstring). His: the posteriors in his own `_NUTS.h5` files in
 [jax-interferometry](https://github.com/shashankdholakia/jax-interferometry)
@@ -66,7 +66,7 @@ def main():
             "| --- | --- | --- | --- | --- | --- |",
         ]
         for rk, ok, label in PARAMS:
-            a = ref["stars"][hd]["drpangloss"][rk]
+            a = ref["stars"][hd]["virgil"][rk]
             b = ours["posterior"][ok]
             z = (b["median"] - a["median"]) / np.hypot(a["sd"], b["sd"])
             flag = " *" if abs(z) > 0.5 else ""

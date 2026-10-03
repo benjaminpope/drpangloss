@@ -1,9 +1,9 @@
 """Old name for the legacy ImPlaneIA writer.
 
-Re-exports [`save`][drpangloss.legacy.oifits_implaneia.save] and its helpers
-from [`drpangloss.legacy.oifits_implaneia`][drpangloss.legacy.oifits_implaneia]
+Re-exports [`save`][virgil.legacy.oifits_implaneia.save] and its helpers
+from [`virgil.legacy.oifits_implaneia`][virgil.legacy.oifits_implaneia]
 under their old names. New code should use
-[`drpangloss.oifits.write_oifits`][drpangloss.oifits.write_oifits].
+[`virgil.oifits.write_oifits`][virgil.oifits.write_oifits].
 
 TODO: remove once downstream scripts no longer import it.
 """

@@ -1,6 +1,6 @@
 # Contributing Guide
 
-drpangloss is an open-source package and welcomes contributions via pull requests.
+virgil is an open-source package and welcomes contributions via pull requests.
 
 ---
 
@@ -11,8 +11,8 @@ Firstly, you will need to fork the repository to your own GitHub account. This w
 Next, you will need to clone the repository to your local machine. To do this, open a terminal and navigate to the directory you would like to clone the repository to. Then run the following command:
 
 ```bash
-git clone https://github.com/your-username-here/drpangloss.git
-cd drpangloss
+git clone https://github.com/your-username-here/virgil.git
+cd virgil
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
@@ -100,8 +100,8 @@ Notebook style conventions for tutorials:
 
 - Keep explanatory markdown between major code blocks (zodiax sandbox style).
 - Keep imports in the top import cell; avoid repeated imports in later cells.
-- Prefer shared plotting helpers from `src/drpangloss/plotting.py` over long notebook-local plotting scripts.
-- When a plotting helper is missing, add/extend it in `src/drpangloss/plotting.py` first, then call it from the notebook.
+- Prefer shared plotting helpers from `src/virgil/plotting.py` over long notebook-local plotting scripts.
+- When a plotting helper is missing, add/extend it in `src/virgil/plotting.py` first, then call it from the notebook.
 - Keep notebook plotting cells short and declarative (prepare inputs, call helper, show figure).
 
 Typical helper usage patterns:

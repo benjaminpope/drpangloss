@@ -1,7 +1,7 @@
 """Machinery shared by the grid searches and the contrast limits (private).
 
-Both [`drpangloss.grid_fit`][drpangloss.grid_fit] and
-[`drpangloss.limits`][drpangloss.limits] import from here, so neither
+Both [`virgil.grid_fit`][virgil.grid_fit] and
+[`virgil.limits`][virgil.limits] import from here, so neither
 depends on the other's internals.
 """
 

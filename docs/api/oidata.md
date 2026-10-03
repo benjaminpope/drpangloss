@@ -1,4 +1,4 @@
-# `drpangloss.oidata`
+# `virgil.oidata`
 
 Data containers and observable helpers for interferometric observations.
 
@@ -13,7 +13,7 @@ Every (baseline, wavelength) sample is one entry of `u`, `v` and `wavel`, so
 data with several wavelength channels need no special handling in models.
 Flagged samples are left out of the observables (see `vis_index` and
 `phi_index`). Phase residuals are wrapped into `[-π, π)` by `residuals`,
-which every likelihood in drpangloss uses.
+which every likelihood in virgil uses.
 
 Closure phases from four or more telescopes are correlated: the triangles
 of one frame and channel share baselines, and only some of them are
@@ -23,11 +23,11 @@ from independent noise on the baseline phases. `n_independent` counts the
 observables that remain.
 
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
-AMIGO DISCO tutorial and [`drpangloss.amigo`](amigo.md) for loading it.
+AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
 
 ## Classes
 
-::: drpangloss.oidata.OIData
+::: virgil.oidata.OIData
     options:
       show_root_heading: false
       heading_level: 3
@@ -50,20 +50,20 @@ AMIGO DISCO data are sampled on a regular uv lattice; `OIData.uv_grid`
 records it, so that a matching `Image` can use an exact matrix Fourier
 transform.
 
-::: drpangloss.oidata.UVGrid
+::: virgil.oidata.UVGrid
     options:
       show_root_heading: true
       heading_level: 3
       show_attributes: false
 
-::: drpangloss.oidata.find_uv_grid
+::: virgil.oidata.find_uv_grid
     options:
       show_root_heading: true
       heading_level: 3
 
 ## Functions
 
-::: drpangloss.oidata
+::: virgil.oidata
     options:
       show_root_heading: false
       members:

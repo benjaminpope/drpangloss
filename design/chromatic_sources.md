@@ -2,7 +2,7 @@
 
 Status: **partly implemented.** Multi-channel `OIData` (prerequisite 1),
 the `Image` component (prerequisite 2), `Resolved` (prerequisite 3) and the
-`PowerLaw` and `BlackBody` spectra (prerequisite 4, in `drpangloss.spectra`)
+`PowerLaw` and `BlackBody` spectra (prerequisite 4, in `virgil.spectra`)
 exist, and `Component`/`System` accept a spectrum as `flux`. The first
 component with a chromatic *shape*, `GravityDarkenedStar`, is described
 below. `Tabulated` (a free flux per channel) exists, provisionally: Stage 6a's

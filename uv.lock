@@ -493,7 +493,7 @@ wheels = [
 ]
 
 [[package]]
-name = "drpangloss"
+name = "virgil-astro"
 version = "0.1.1"
 source = { editable = "." }
 dependencies = [

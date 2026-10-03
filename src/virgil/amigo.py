@@ -3,7 +3,7 @@
 An AMIGO reduction stores, per filter, a record of DISCO coefficients (linear
 combinations of log-amplitudes and phases whose errors are independent) with
 the operators that map model visibilities to them. :func:`load_oi_data` reads
-such a product into [`OIData`][drpangloss.oidata.OIData] objects;
+such a product into [`OIData`][virgil.oidata.OIData] objects;
 ``OIData(record)`` also accepts a single record directly.
 """
 

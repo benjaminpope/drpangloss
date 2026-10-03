@@ -1,13 +1,13 @@
 """Gaussian-process log-brightness fields for pixel images.
 
-A [`GaussianField`][drpangloss.fields.GaussianField] can stand in for the
-``log_brightness`` array of an [`Image`][drpangloss.models.Image]. The image's
+A [`GaussianField`][virgil.fields.GaussianField] can stand in for the
+``log_brightness`` array of an [`Image`][virgil.models.Image]. The image's
 log-brightness is then a stationary Gaussian process with a Matérn-like
 spectrum, written in its whitened form: independent standard-normal
 ``latent`` coefficients on the image's cosine (DCT-II) basis. This is the
 basis that diagonalises the Laplacian with reflecting boundaries. Fitting the
 latents under a standard-normal prior (from
-[`image_priors`][drpangloss.imaging.image_priors]) is MAP estimation with a
+[`image_priors`][virgil.imaging.image_priors]) is MAP estimation with a
 GP prior, and the same parameterisation suits sampling.
 """
 
@@ -92,7 +92,7 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
 
 
 class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
-    r"""A Gaussian-process log-brightness for an [`Image`][drpangloss.models.Image].
+    r"""A Gaussian-process log-brightness for an [`Image`][virgil.models.Image].
 
     The log-brightness is
 
@@ -100,7 +100,7 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     + \mathrm{IDCT}\left[\sqrt{S} \odot z\right],$$
 
     with the orthonormal inverse DCT-II, the spectrum ``S`` of
-    [`field_spectrum`][drpangloss.fields.field_spectrum], latent
+    [`field_spectrum`][virgil.fields.field_spectrum], latent
     coefficients ``z`` (``latent``) and an optional positive template image
     ``μ`` (``mean``, floored at ``ε`` = ``mean_floor`` of its peak). With a
     standard-normal prior on ``latent``, ``η`` is a Gaussian process with
@@ -112,7 +112,7 @@ class GaussianField(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     floor, ``μ/max μ + ε``, as an image.
 
     Use it in place of an Image's log-brightness, with priors from
-    [`image_priors`][drpangloss.imaging.image_priors]:
+    [`image_priors`][virgil.imaging.image_priors]:
 
     ```python
     field = GaussianField(np.zeros((32, 32)), sigma=2.0, length_mas=3.0,

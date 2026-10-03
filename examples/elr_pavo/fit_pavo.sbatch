@@ -20,13 +20,13 @@
 #SBATCH --mem=8G
 
 module -q load conda
-conda activate drpangloss
+conda activate virgil
 
 STARS=(upsTau upsUMa epsCep lamBoo)
 STAR=${STARS[$SLURM_ARRAY_TASK_ID]}
 echo "task=${SLURM_ARRAY_TASK_ID} star=${STAR} host=$(hostname)"
 
-# Use this checkout's source, whatever drpangloss the env has installed.
+# Use this checkout's source, whatever virgil the env has installed.
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 # CPU job: keep JAX off any GPU. Chains are vectorized (vmap) rather than
 # parallel (pmap): with the env's jax/equinox, pmap breaks optimistix's

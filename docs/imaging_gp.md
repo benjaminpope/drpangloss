@@ -6,7 +6,7 @@ Part 2 reconstructed the ring with maximum entropy, a penalty whose weight had t
 - **ℓ**, the correlation length: how far apart two pixels must be before they vary independently.
 
 Three things make this attractive:
-1. **The MAP is a least-squares fit.** drpangloss writes the field in whitened form, so the prior on its coefficients is a standard normal and becomes ordinary residuals. `fit` then uses Levenberg–Marquardt, which converges in a few dozen steps.
+1. **The MAP is a least-squares fit.** virgil writes the field in whitened form, so the prior on its coefficients is a standard normal and becomes ordinary residuals. `fit` then uses Levenberg–Marquardt, which converges in a few dozen steps.
 2. **The hyperparameters come from the data.** The **Bayesian evidence**, the probability of the data with the image integrated over, ranks pairs of σ and ℓ. There is no L-curve to read.
 3. **The error bars can be checked.** The same machinery re-estimates whether they are too large or too small.
 
@@ -27,14 +27,14 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.coverage import ami_grid_record
-from drpangloss.fields import GaussianField
-from drpangloss.fitting import fit
-from drpangloss.imaging import MaxEntropy, beam, error_scale, image_priors, l_curve, log_evidence, starting_image
-from drpangloss.models import Image, PointSource, System
-from drpangloss.oidata import OIData
-from drpangloss.plotting import plot_model, plot_residual_map
-from drpangloss.scenes import ring
+from virgil.coverage import ami_grid_record
+from virgil.fields import GaussianField
+from virgil.fitting import fit
+from virgil.imaging import MaxEntropy, beam, error_scale, image_priors, l_curve, log_evidence, starting_image
+from virgil.models import Image, PointSource, System
+from virgil.oidata import OIData
+from virgil.plotting import plot_model, plot_residual_map
+from virgil.scenes import ring
 
 # The same scene and data as parts 1 and 2.
 template = OIData(ami_grid_record(wavelength_m=4.8e-6, rotation_deg=-6.9))

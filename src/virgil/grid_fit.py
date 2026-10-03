@@ -4,14 +4,14 @@ Grids are built with ``indexing="ij"``: every output has one axis per grid
 key, in the order of ``samples_dict``. For ``{"dra", "ddec", ...}`` axis 0 is
 ``dra`` (East offset) and axis 1 is ``ddec`` (North offset), so 2D maps need
 a transpose to be shown as images with North up;
-[`plot_grid_map`][drpangloss.plotting.plot_grid_map] handles this.
+[`plot_grid_map`][virgil.plotting.plot_grid_map] handles this.
 
 The functions that optimize a flux at every grid position find it as the one
 key whose last part is ``flux`` (``flux``, ``comp.flux``, ...), unless
 ``flux_param`` says otherwise. Fluxes are relative to the primary (at flux
 1), so for a companion the flux is its companion/primary flux ratio; see
-[`drpangloss.limits`][drpangloss.limits] for converting to contrast or Δmag.
-Contrast limits (Ruffio, Absil) are in [`drpangloss.limits`][drpangloss.limits].
+[`virgil.limits`][virgil.limits] for converting to contrast or Δmag.
+Contrast limits (Ruffio, Absil) are in [`virgil.limits`][virgil.limits].
 """
 
 import equinox as eqx
@@ -137,7 +137,7 @@ def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
         Data to fit.
     model : SourceModel or class
         Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a [System][drpangloss.models.System] with paths such as
+        varied (e.g. a [System][virgil.models.System] with paths such as
         ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``).
     samples_dict : dict[str, array-like]
@@ -173,7 +173,7 @@ def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
 
 @eqx.filter_jit
 def _likelihood_grid(data_obj, model, samples_dict, params, batch_size):
-    """Jitted implementation of [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid]."""
+    """Jitted implementation of [`likelihood_grid`][virgil.grid_fit.likelihood_grid]."""
 
     vals_vec, grid_shape = meshgrid_vectors(samples_dict, params)
 
@@ -191,7 +191,7 @@ _OPTIMIZED_PARAMS_DOC = """
         Data to fit.
     model : SourceModel or class
         Template model whose parameters at the paths in ``samples_dict`` are
-        varied (e.g. a [System][drpangloss.models.System] with paths such as
+        varied (e.g. a [System][virgil.models.System] with paths such as
         ``"comp.dra"``), or a model class called with ``samples_dict``'s keys
         as keyword arguments (e.g. ``BinaryModelCartesian``).
     samples_dict : dict[str, array-like]
@@ -270,7 +270,7 @@ optimized_flux_grid.__doc__ = (
     A grid search over ``flux_param`` gives the starting point, which BFGS
     then refines with the coordinates held fixed. The flux is not
     constrained to be positive, as
-    [`ruffio_upperlimit`][drpangloss.limits.ruffio_upperlimit] expects. A
+    [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] expects. A
     ``RuntimeWarning`` is raised if the optimizer fails to converge
     anywhere.
 """
@@ -308,7 +308,7 @@ def laplace_flux_uncertainty_grid(
         Flux at which to evaluate the curvature, with one axis per
         coordinate key. By default this is the best fit from
         :func:`optimized_flux_grid`, which is also the mean that
-        [`ruffio_upperlimit`][drpangloss.limits.ruffio_upperlimit] expects;
+        [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] expects;
         pass it if you have already computed it.
     flux_param : str, optional
         The key of ``samples_dict`` holding the flux. By default, the one key
@@ -384,7 +384,7 @@ def best_grid_point(loglike_grid, samples_dict):
     Parameters
     ----------
     loglike_grid : array-like
-        Output of [`likelihood_grid`][drpangloss.grid_fit.likelihood_grid] for ``samples_dict``, with one axis
+        Output of [`likelihood_grid`][virgil.grid_fit.likelihood_grid] for ``samples_dict``, with one axis
         per key. NaNs are ignored.
     samples_dict : dict[str, array-like]
         The grid axes used to compute ``loglike_grid``.

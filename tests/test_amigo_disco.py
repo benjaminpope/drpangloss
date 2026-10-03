@@ -5,10 +5,10 @@ import jax.scipy as jsp
 import numpy as onp
 import pytest
 
-from drpangloss.amigo import load_oi_data
-from drpangloss.likelihood import loglike_nosignal, model_loglike
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.oidata import OIData
+from virgil.amigo import load_oi_data
+from virgil.likelihood import loglike_nosignal, model_loglike
+from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 
 
 PRODUCT = (

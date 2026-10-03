@@ -25,15 +25,15 @@ if not (repo_root / "src").exists():
 if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
-from drpangloss.grid_fit import (
+from virgil.grid_fit import (
     best_grid_point,
     laplace_flux_uncertainty_grid,
     likelihood_grid,
     optimized_flux_grid,
 )
-from drpangloss.inference import laplace_cov
-from drpangloss.likelihood import numpyro_model
-from drpangloss.models import (
+from virgil.inference import laplace_cov
+from virgil.likelihood import numpyro_model
+from virgil.models import (
     BinaryModelCartesian,
     GaussianDisk,
     ModulatedGaussianRim,
@@ -41,15 +41,15 @@ from drpangloss.models import (
     System,
     UniformDisk,
 )
-from drpangloss.oidata import OIData, cp_indices
-from drpangloss.plotting import plot_grid_map, plot_model, set_style
+from virgil.oidata import OIData, cp_indices
+from virgil.plotting import plot_grid_map, plot_model, set_style
 
 set_style()  # the figure style used throughout the docs
 ```
 
 ## Shapes
 
-`drpangloss` offers several shapes, among them an unresolved `PointSource`, a `GaussianDisk`, an `EllipticalGaussian`, a `UniformDisk`, a `GaussianArc` (a Gaussian ridge bent along a circular arc), and a `ModulatedGaussianRim`, which is a thin ring that can be blurred, inclined and made brighter on one side. Four of them are drawn below.
+`virgil` offers several shapes, among them an unresolved `PointSource`, a `GaussianDisk`, an `EllipticalGaussian`, a `UniformDisk`, a `GaussianArc` (a Gaussian ridge bent along a circular arc), and a `ModulatedGaussianRim`, which is a thin ring that can be blurred, inclined and made brighter on one side. Four of them are drawn below.
 
 Every shape has three placement parameters. `dra` and `ddec` are offsets in milliarcseconds, positive to the East and North. `flux` says how bright the shape is *relative to the other parts of a scene*. On its own, every shape is normalized to unit flux, so a lone shape's `flux` has no effect.
 
@@ -118,7 +118,7 @@ $$V = \frac{\sum_i f_i V_i}{\sum_i f_i}.$$
 
 Dividing by the total flux reflects how interferometric data work: visibilities are normalized to one at zero baseline, so we can only ever measure how bright the parts are *compared to each other*, never in absolute terms. The convention is therefore to keep one reference part (usually the star) at `flux=1`. Every other `flux` is then a flux ratio relative to the star.
 
-The simplest scene is a binary: a star and a fainter point source. `drpangloss` has always had a dedicated `BinaryModelCartesian` for this, and a `System` gives the same answer:
+The simplest scene is a binary: a star and a fainter point source. `virgil` has always had a dedicated `BinaryModelCartesian` for this, and a `System` gives the same answer:
 
 ```python
 binary = BinaryModelCartesian(dra=60.0, ddec=-40.0, flux=0.02)
@@ -288,7 +288,7 @@ plt.show()
 
 ![composition output 18.1](generated/composition_cell018_out01.png)
 
-The companion stands out clearly above the aliases. The dark patch at the mirror-image position is worth understanding. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `drpangloss` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because that is what the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
+The companion stands out clearly above the aliases. The dark patch at the mirror-image position is worth understanding. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `virgil` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because that is what the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
 
 ## Letting the rim vary: Laplace and HMC
 

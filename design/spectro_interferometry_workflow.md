@@ -2,7 +2,7 @@
 
 Status: **design**, 2026-10-03. Nothing here is implemented, except where it says it is on the local branch `apep-gravity` (not pushed).
 
-This note describes an end-to-end workflow for fitting multi-channel long-baseline data (V², closure phase, differential phase, spectra), the gaps in drpangloss, and proposed APIs. It extends Stage 6a ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) and does not replace it: another agent is building 6a. Orbits are in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
+This note describes an end-to-end workflow for fitting multi-channel long-baseline data (V², closure phase, differential phase, spectra), the gaps in virgil, and proposed APIs. It extends Stage 6a ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) and does not replace it: another agent is building 6a. Orbits are in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
 
 The colliding-wind binary Apep (VLTI/GRAVITY, three epochs) is the worked example that exposed the gaps. It is a hard case for this workflow:
 - a binary with strong emission lines;
@@ -14,7 +14,7 @@ The analysis and its scripts are in `~/data/apep_gravity` (`notes/lessons_for_dr
 
 ## 1. A reference workflow
 
-| Step | What to do | What drpangloss has | Example (Apep) |
+| Step | What to do | What virgil has | Example (Apep) |
 |---|---|---|---|
 | 1. Calibrate | Divide V² by a transfer function interpolated in time per baseline and channel. Subtract the calibrator's closure phases, averaged as unit vectors | Nothing (pipeline products are read as given) | The in-field calibrator recipe, §2.7 |
 | 2. Times and frames | Give each frame one time, shared by V² and T3. Keep it per datum | Triangles matched to baselines within 1e-4 d; no times kept | GRAVITY stamps baselines up to 12 s apart, so triangles failed to match (§2.5) |
@@ -182,5 +182,5 @@ The 6a agent needs only the "+" items folded into its plan.
 1. **`noise=` grows into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), keeping its name (default), rather than a separate `nuisance=` argument.
 2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
 3. **Closure phase everywhere,** plus the closure-free projection of continuum-normalised VISPHI in the line windows (default; §2.3).
-4. **The dual-field recipe:** an example script and docs (default), not a `drpangloss.gravity` module.
+4. **The dual-field recipe:** an example script and docs (default), not a `virgil.gravity` module.
 5. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.

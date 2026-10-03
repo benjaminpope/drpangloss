@@ -2,10 +2,10 @@
 
 :func:`load` reads an OIFITS file into an ImPlaneIA dictionary (``info``,
 ``OI_VIS``, ``OI_VIS2``, ``OI_T3``, ...) and :func:`save` writes one, on top
-of [`drpangloss.oifits.write_oifits`][drpangloss.oifits.write_oifits]. Phases
+of [`virgil.oifits.write_oifits`][virgil.oifits.write_oifits]. Phases
 in these dictionaries are in **degrees**, as in OIFITS. New code should read
-files with [`OIData`][drpangloss.oidata.OIData] and plot them with
-[`plot_oidata_overview`][drpangloss.plotting.plot_oidata_overview].
+files with [`OIData`][virgil.oidata.OIData] and plot them with
+[`plot_oidata_overview`][virgil.plotting.plot_oidata_overview].
 """
 
 import copy
@@ -88,7 +88,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
     """
     Save an ImPlaneIA dictionary as an OIFITS2 file.
 
-    This is [`drpangloss.oifits.write_oifits`][drpangloss.oifits.write_oifits]
+    This is [`virgil.oifits.write_oifits`][virgil.oifits.write_oifits]
     plus the ImPlaneIA extras: the ``CTRS_EQT`` column and ``PSCALE``/``ISZ``
     keywords in ``OI_ARRAY``, a filename built from ``info``, and target
     coordinates queried from SIMBAD.
@@ -238,7 +238,7 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
     dict
         ImPlaneIA dictionary of the tables and metadata. Only the last table
         of each type is kept, and phases stay in degrees. To fit the data,
-        use [`drpangloss.oidata.OIData`][drpangloss.oidata.OIData] on the file instead.
+        use [`virgil.oidata.OIData`][virgil.oidata.OIData] on the file instead.
     """
     with fits.open(filename, mode="readonly", memmap=False) as hdulist:
         fitsHandler = copy.deepcopy(hdulist)
@@ -396,7 +396,7 @@ def load(filename, target=None, ins=None, mask=None, include_vis=True):
 def load_oifits(filename, directory):
     """Load a single OIFITS file and return flattened AMI-ready observables.
 
-    Prefer [`OIData`][drpangloss.oidata.OIData], which reads the same file
+    Prefer [`OIData`][virgil.oidata.OIData], which reads the same file
     with phases in radians, several wavelength channels and flags.
 
     Returns

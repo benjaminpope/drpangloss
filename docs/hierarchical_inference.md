@@ -32,21 +32,21 @@ for path in (repo_root, repo_root / "src"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from drpangloss.inference import (
+from virgil.inference import (
     fisher_projection,
     gaussian_fisher,
     observed_information,
     regularized_inverse,
 )
-from drpangloss.likelihood import (
+from virgil.likelihood import (
     joint_data,
     joint_errors,
     joint_loglike,
     joint_prediction,
     posterior_predictive_summary,
 )
-from drpangloss.models import BinaryModelCartesian
-from drpangloss.plotting import (
+from virgil.models import BinaryModelCartesian
+from virgil.plotting import (
     set_style,
     plot_chainconsumer_diagnostics,
     plot_data_model_correlation,

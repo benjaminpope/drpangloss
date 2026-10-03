@@ -5,17 +5,17 @@ import numpyro.distributions as dist
 import pytest
 from numpyro.infer.util import log_density
 
-from drpangloss.grid_fit import (
+from virgil.grid_fit import (
     best_grid_point,
     laplace_flux_uncertainty_grid,
     likelihood_grid,
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
-from drpangloss.inference import laplace_cov
-from drpangloss.likelihood import build_model, loglike, numpyro_model
-from drpangloss.limits import absil_limits, nsigma
-from drpangloss.models import (
+from virgil.inference import laplace_cov
+from virgil.likelihood import build_model, loglike, numpyro_model
+from virgil.limits import absil_limits, nsigma
+from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
     GaussianDisk,
@@ -326,7 +326,7 @@ def test_flux_inference_matches_explicit_and_model_class():
 
 
 def test_new_template_values_do_not_recompile(monkeypatch):
-    import drpangloss.grid_fit as grid_fit
+    import virgil.grid_fit as grid_fit
 
     traces = []
     real_loglike = grid_fit.loglike

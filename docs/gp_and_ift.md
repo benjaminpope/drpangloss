@@ -1,23 +1,23 @@
 # Gaussian-process priors and information field theory
 
-drpangloss's Gaussian-process (GP) image prior, [`GaussianField`][drpangloss.fields.GaussianField], takes its main ideas from information field theory (IFT). IFT was developed by Torsten Enßlin's group, who implement it in the package NIFTy. IFT formulates Bayesian inference on fields in the language of statistical field theory, with terms such as Hamiltonian, propagator, source and free energy. That framing connects inference to methods from physics, such as perturbation theory, and it extends naturally to non-Gaussian and nonlinear problems. For Gaussian priors, though, many of its objects are the same as those of Gaussian-process regression, which statistics and machine learning describe in different terms (e.g. Rasmussen & Williams 2006). A reader who knows one vocabulary can therefore find it difficult to recognise the same ideas in the other, and to see how drpangloss relates to both. This page translates between them.
+virgil's Gaussian-process (GP) image prior, [`GaussianField`][virgil.fields.GaussianField], takes its main ideas from information field theory (IFT). IFT was developed by Torsten Enßlin's group, who implement it in the package NIFTy. IFT formulates Bayesian inference on fields in the language of statistical field theory, with terms such as Hamiltonian, propagator, source and free energy. That framing connects inference to methods from physics, such as perturbation theory, and it extends naturally to non-Gaussian and nonlinear problems. For Gaussian priors, though, many of its objects are the same as those of Gaussian-process regression, which statistics and machine learning describe in different terms (e.g. Rasmussen & Williams 2006). A reader who knows one vocabulary can therefore find it difficult to recognise the same ideas in the other, and to see how virgil relates to both. This page translates between them.
 
-This page is for two kinds of reader: those who know GPs and want to follow the IFT papers, and those who met IFT first and want to see what drpangloss does in GP terminology. It covers:
+This page is for two kinds of reader: those who know GPs and want to follow the IFT papers, and those who met IFT first and want to see what virgil does in GP terminology. It covers:
 
-1. what drpangloss does, in GP terminology;
-2. a dictionary from IFT terms to GP terminology, with the corresponding drpangloss code;
-3. where drpangloss differs from NIFTy;
+1. what virgil does, in GP terminology;
+2. a dictionary from IFT terms to GP terminology, with the corresponding virgil code;
+3. where virgil differs from NIFTy;
 4. what to read next.
 
 For a worked example, see [Imaging, part 3](imaging_gp.md).
 
-**In brief.** drpangloss puts a Gaussian-process prior on the logarithm of the image's brightness. The prior's covariance is a Matérn-like kernel in the image, with an amplitude σ and a correlation length ℓ in milliarcseconds. To make the computation cheap, the covariance is applied in the image's cosine (DCT) basis, where it is diagonal. The fitted parameters are standard-normal latent variables that this covariance maps to the image. σ and ℓ are chosen by maximising the Bayesian evidence. In IFT's vocabulary, these are a "signal field" with a "power spectrum", written in "standardised coordinates", with hyperparameters chosen from the "partition function".
+**In brief.** virgil puts a Gaussian-process prior on the logarithm of the image's brightness. The prior's covariance is a Matérn-like kernel in the image, with an amplitude σ and a correlation length ℓ in milliarcseconds. To make the computation cheap, the covariance is applied in the image's cosine (DCT) basis, where it is diagonal. The fitted parameters are standard-normal latent variables that this covariance maps to the image. σ and ℓ are chosen by maximising the Bayesian evidence. In IFT's vocabulary, these are a "signal field" with a "power spectrum", written in "standardised coordinates", with hyperparameters chosen from the "partition function".
 
-## What drpangloss does
+## What virgil does
 
 ### The image
 
-An [`Image`][drpangloss.models.Image] has a log-brightness $\eta_i$ in each pixel $i$. The pixel fluxes are
+An [`Image`][virgil.models.Image] has a log-brightness $\eta_i$ in each pixel $i$. The pixel fluxes are
 
 $$b_i = F \, \frac{e^{\eta_i}}{\sum_j e^{\eta_j}},$$
 
@@ -43,9 +43,9 @@ The kernel is close to a Matérn kernel; the next section explains the differenc
 
 ### Computing with it
 
-An n × m image has nm pixels, so Σ is an nm × nm matrix. Storing it, let alone inverting it, is expensive. A stationary covariance avoids this, because it is diagonal in a Fourier basis, and drpangloss's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal in that basis is the **power spectrum**, which is the Fourier transform of the kernel.
+An n × m image has nm pixels, so Σ is an nm × nm matrix. Storing it, let alone inverting it, is expensive. A stationary covariance avoids this, because it is diagonal in a Fourier basis, and virgil's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal in that basis is the **power spectrum**, which is the Fourier transform of the kernel.
 
-drpangloss uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge is adjacent to the right edge and strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so the image does not wrap around: opposite edges are no longer adjacent, and are only as correlated as their distance apart allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries. It is translation-invariant only far from the edges: near an edge, a pixel is correlated with its own mirror image across it, so its variance and correlations differ slightly from those in the interior. Writing C for the orthonormal DCT matrix, the covariance is
+virgil uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge is adjacent to the right edge and strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so the image does not wrap around: opposite edges are no longer adjacent, and are only as correlated as their distance apart allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries. It is translation-invariant only far from the edges: near an edge, a pixel is correlated with its own mirror image across it, so its variance and correlations differ slightly from those in the interior. Writing C for the orthonormal DCT matrix, the covariance is
 
 $$\Sigma = C^\top \mathrm{diag}(S)\, C, \qquad S_{jk} \propto \left(\frac{1}{\ell^2} + \lambda_{jk}\right)^{-\mathrm{order}}.$$
 
@@ -55,7 +55,7 @@ $$\lambda_{jk} = \left(\frac{2}{h}\right)^2 \left[\sin^2\frac{\pi j}{2n} + \sin^
 
 For modes much coarser than a pixel, $\lambda_{jk} \approx q^2$, where q is the mode's angular wavenumber (in radians per mas). S is then the continuum Matérn spectrum, $(1/\ell^2 + q^2)^{-\mathrm{order}}$. At the finest scales the sines make S differ slightly from the continuum spectrum, which is why the kernel is "Matérn-like" rather than exactly Matérn.
 
-Two adjustments complete S. Both are made in [`field_spectrum`][drpangloss.fields.field_spectrum]:
+Two adjustments complete S. Both are made in [`field_spectrum`][virgil.fields.field_spectrum]:
 
 - **Normalisation.** S is rescaled so that the variance of η, averaged over pixels, is σ². This uses the fact that the DCT is orthonormal, so that the sum of the per-pixel variances equals the sum of the $S_{jk}$.
 - **The constant mode.** $S_{00}$, the variance of the mode that raises every pixel equally, is set to zero, because the softmax ignores it.
@@ -66,13 +66,13 @@ This Fourier space belongs to the image. It is not the interferometer's (u, v) p
 
 ### Whitening
 
-The parameters that drpangloss fits are not the log-brightnesses η. They are **latent variables** z, one per cosine mode, each with an independent standard-normal prior. The field maps them to η by scaling each mode by its prior standard deviation $\sqrt{S_{jk}}$ and transforming back to pixels:
+The parameters that virgil fits are not the log-brightnesses η. They are **latent variables** z, one per cosine mode, each with an independent standard-normal prior. The field maps them to η by scaling each mode by its prior standard deviation $\sqrt{S_{jk}}$ and transforming back to pixels:
 
 $$\eta = \log\left(\frac{\mu}{\max\mu} + \epsilon\right) + C^\top\left(\sqrt{S} \odot z\right),$$
 
 where ⊙ is elementwise multiplication. If z ~ N(0, I), then η has exactly the prior above. Statisticians call this the **non-centred parameterisation**; the machine-learning literature calls it **whitening**. It has three practical benefits:
 
-- **The MAP fit is least squares.** The prior's negative log density is $\tfrac{1}{2}\lVert z\rVert^2$, a sum of squares, just like the data's $\tfrac{1}{2}\chi^2$. The whole objective is therefore a nonlinear least-squares problem, and [`fit`][drpangloss.fitting.fit] solves it with the Levenberg–Marquardt (LM) algorithm, which converges in a few dozen steps.
+- **The MAP fit is least squares.** The prior's negative log density is $\tfrac{1}{2}\lVert z\rVert^2$, a sum of squares, just like the data's $\tfrac{1}{2}\chi^2$. The whole objective is therefore a nonlinear least-squares problem, and [`fit`][virgil.fitting.fit] solves it with the Levenberg–Marquardt (LM) algorithm, which converges in a few dozen steps.
 - **The hyperparameters do not change the prior on the fitted parameters.** σ and ℓ appear only in the map from z to η, not in the prior on z. This is what makes it practical to sample σ and ℓ together with z. In the alternative "centred" form, the prior on η itself depends on σ and ℓ, and that coupling creates the funnel-shaped posteriors that defeat samplers.
 - **Directions the data do not constrain are already well scaled.** In those directions the posterior of z equals its prior, N(0, 1), so it has unit width in every such direction. This helps samplers such as NUTS (`likelihood.numpyro_model`), which work best when the posterior has a similar width in every direction.
 
@@ -82,7 +82,7 @@ The **evidence**, or marginal likelihood, is the probability of the data given �
 
 $$Z(\sigma, \ell) = p(\mathrm{data} \mid \sigma, \ell) = \int p(\mathrm{data} \mid z)\, p(z)\, dz.$$
 
-It rewards hyperparameters under which the observed data are probable. A prior too tight to fit the data scores badly, and so does a prior so loose that it spreads its probability over many images the data rule out. [`log_evidence`][drpangloss.imaging.log_evidence] evaluates it with the Laplace approximation, which approximates the posterior by a Gaussian at the MAP:
+It rewards hyperparameters under which the observed data are probable. A prior too tight to fit the data scores badly, and so does a prior so loose that it spreads its probability over many images the data rule out. [`log_evidence`][virgil.imaging.log_evidence] evaluates it with the Laplace approximation, which approximates the posterior by a Gaussian at the MAP:
 
 $$\log Z \approx -\tfrac{1}{2}\chi^2 - \tfrac{1}{2}\lVert z\rVert^2 - \tfrac{1}{2}\log\det\left(I + J^\top J\right),$$
 
@@ -92,13 +92,13 @@ up to a constant that is the same for every σ and ℓ. Each quantity is evaluat
 - $\lVert z\rVert^2$ is the prior penalty;
 - J is the Jacobian of the whitened residuals with respect to z, so $J^\top J$ measures how strongly the data constrain each direction of z. The log-determinant is the Occam factor, which penalises a prior that leaves many directions for the data to fix.
 
-The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximise Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][drpangloss.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small. Alternatively, σ and ℓ can be given priors and sampled together with z.
+The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximise Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small. Alternatively, σ and ℓ can be given priors and sampled together with z.
 
 ### Relation to TSV and Gaussian Markov random fields
 
 Some imaging codes (e.g. Tiede et al. 2026, HIBI) use Gaussian Markov random field (GMRF) priors. These are usually described by "neighbouring pixels are correlated", which can make them look different from a kernel with a correlation length. They are not different. A GMRF is specified by its **precision matrix** Q = Σ⁻¹, the inverse of the covariance. Q is sparse: each pixel is coupled to its neighbours only. Its inverse Σ is dense: every pair of pixels is correlated, by an amount that decays with separation over a correlation length. "Only neighbours are coupled" describes Q, not Σ.
 
-drpangloss's prior is a GMRF of this kind. Write κ = 1/ℓ, and let L be the grid's Laplacian matrix, defined by
+virgil's prior is a GMRF of this kind. Write κ = 1/ℓ, and let L be the grid's Laplacian matrix, defined by
 
 $$\eta^\top L\, \eta = \frac{1}{h^2}\sum_{\text{neighbouring pairs } (i, j)} (\eta_i - \eta_j)^2,$$
 
@@ -111,7 +111,7 @@ This is the link between Matérn kernels and GMRFs found by Lindgren, Rue & Lind
 
 $$(\kappa^2 - \nabla^2)^{\mathrm{order}/2}\, \eta = \text{white noise},$$
 
-and that discretising the SPDE on a grid gives a sparse GMRF. The kernel's smoothness parameter is ν = order − d/2, where d = 2 is the dimension of the image. The default `order=2` therefore gives ν = 1. `order=1` gives ν = 0, an edge case. In the continuum, a ν = 0 field in two dimensions has infinite variance at every point: the variance grows logarithmically as the pixels shrink. drpangloss's σ normalisation hides this, but the price is that the prior's correlation at a fixed separation then depends on the pixel size as well as on ℓ.
+and that discretising the SPDE on a grid gives a sparse GMRF. The kernel's smoothness parameter is ν = order − d/2, where d = 2 is the dimension of the image. The default `order=2` therefore gives ν = 1. `order=1` gives ν = 0, an edge case. In the continuum, a ν = 0 field in two dimensions has infinite variance at every point: the variance grows logarithmically as the pixels shrink. virgil's σ normalisation hides this, but the price is that the prior's correlation at a fixed separation then depends on the pixel size as well as on ℓ.
 
 ## A dictionary of IFT terms
 
@@ -122,9 +122,9 @@ The IFT papers write s for the signal (the unknown field), d for the data, R for
 
 IFT writes † for the adjoint, which for real matrices is the transpose ᵀ.
 
-The "GP terminology" column follows Rasmussen & Williams (2006) where that book covers the concept, and the wider statistics and machine-learning literature otherwise (for example for variational inference). The "In drpangloss" column names the code that implements or corresponds to each object. In it, `env` stands for the name of an `Image` component in a `System`, and `field` for its `GaussianField`, so that `env.log_brightness` is `field`.
+The "GP terminology" column follows Rasmussen & Williams (2006) where that book covers the concept, and the wider statistics and machine-learning literature otherwise (for example for variational inference). The "In virgil" column names the code that implements or corresponds to each object. In it, `env` stands for the name of an `Image` component in a `System`, and `field` for its `GaussianField`, so that `env.log_brightness` is `field`.
 
-| IFT / NIFTy term | GP terminology | In drpangloss |
+| IFT / NIFTy term | GP terminology | In virgil |
 |---|---|---|
 | signal field, s | the unknown function; the latent function of a GP | the log-brightness η: the array `env.eta`, which calls `field.evaluate(pixel_scale_mas)` |
 | response, R | forward model, measurement operator | `OIData.model(scene)`, which computes the observables of a `SourceModel` |
@@ -139,10 +139,10 @@ The "GP terminology" column follows Rasmussen & Williams (2006) where that book 
 | classical solution; minimum of H | MAP (maximum a posteriori) estimate | `fit(scene, priors, data)`, which returns the MAP as `FitResult.model` and `FitResult.values` |
 | information source, j = R†N⁻¹d | back-projected, noise-weighted data; for a linear response, a dirty image | not formed. The closest analogue is `dirty_image(data, npix, pixel_scale_mas)`, which weights the data uniformly rather than by their errors |
 | information propagator, D = (S⁻¹ + R†N⁻¹R)⁻¹ | posterior covariance | not returned for the latents. Its Laplace approximation, $(I + J^\top J)^{-1}$, is what `log_evidence` and `error_scale` use, through the determinant and eigenvalues of $J^\top J$ |
-| Wiener filter, m = Dj | GP posterior mean; kriging | `FitResult.model`, the MAP. The MAP equals the posterior mean only for a linear model with Gaussian noise, and drpangloss's model is nonlinear |
+| Wiener filter, m = Dj | GP posterior mean; kriging | `FitResult.model`, the MAP. The MAP equals the posterior mean only for a linear model with Gaussian noise, and virgil's model is nonlinear |
 | (Gibbs) free energy | variational free energy, the negative evidence lower bound (ELBO) | not computed |
 | Fisher metric, M = J†N⁻¹J + 1 | Gauss–Newton curvature of the loss: the data's part plus the prior's (the identity, in whitened coordinates) | $J^\top J + I$, where J is the Jacobian of `whitened_residuals` with respect to `field.latent`. It is the matrix in each step of `fit(..., method="lm")`; because `whitened_residuals` already divides by the errors, N⁻¹ does not appear |
-| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented. drpangloss uses `fit` with the Laplace approximation, or NUTS through `numpyro_model` |
+| MGVI (metric Gaussian variational inference) | variational inference with a Gaussian approximation whose covariance is the inverse Fisher metric | not implemented. virgil uses `fit` with the Laplace approximation, or NUTS through `numpyro_model` |
 | geoVI (geometric variational inference) | variational inference after a nonlinear change of coordinates that makes the posterior closer to Gaussian | not implemented |
 | critical filter | empirical-Bayes estimate of the power spectrum | a grid of `fit` and `log_evidence` over `sigma` and `length_mas`, as in [Imaging, part 3](imaging_gp.md); the spectral shape is fixed |
 | correlated field model | a GP whose power spectrum is itself unknown and inferred, under a hierarchical prior | not implemented; `field_spectrum` has a fixed Matérn-like shape |
@@ -154,11 +154,11 @@ Two terms are easy to misread:
 - **Field.** A field is a function on a continuous domain, such as the sky. In practice it is discretised on a grid. A Gaussian random field and a Gaussian process are the same mathematical object, a probability distribution over functions. "Random field" is the name used in spatial statistics and physics, "Gaussian process" the one used in machine learning.
 - **Free energy.** In statistical mechanics the free energy is −ln Z, minus the log of the partition function. IFT borrows the term. Variational inference approximates the posterior p(s | d) by a simpler distribution q, by minimising $\mathrm{KL}(q \,\Vert\, p(s \mid d)) - \ln Z$, which is the negative ELBO. That quantity is also called the variational free energy. Since the KL divergence is never negative, it is at least −ln Z, and equal to it when q is the exact posterior.
 
-## Where drpangloss differs from NIFTy
+## Where virgil differs from NIFTy
 
-drpangloss takes two ideas from IFT: whitened latents, and a stationary field computed in a Fourier basis. It does not use the NIFTy package. Compared with NIFTy's standard prior for images, the "correlated field model", it differs in four ways:
+virgil takes two ideas from IFT: whitened latents, and a stationary field computed in a Fourier basis. It does not use the NIFTy package. Compared with NIFTy's standard prior for images, the "correlated field model", it differs in four ways:
 
-| | drpangloss | NIFTy's correlated field |
+| | virgil | NIFTy's correlated field |
 |---|---|---|
 | Spectrum | a fixed Matérn-like shape with two hyperparameters, σ and ℓ (`field_spectrum`) | inferred from the data: a power law plus smooth departures from it, controlled by hyperparameters named `fluctuations`, `flexibility`, `asperity` and `loglogavgslope` |
 | Basis and edges | DCT-II, with reflecting edges (`idctn(..., type=2, norm="ortho")` in `field.evaluate`) | FFT, which is periodic, usually with zero-padding to keep the edges apart |

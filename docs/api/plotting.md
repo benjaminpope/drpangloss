@@ -1,6 +1,6 @@
-# `drpangloss.plotting`
+# `virgil.plotting`
 
-::: drpangloss.plotting
+::: virgil.plotting
     options:
       members:
         - set_style

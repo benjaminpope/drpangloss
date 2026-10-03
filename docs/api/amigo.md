@@ -1,6 +1,6 @@
-# `drpangloss.amigo`
+# `virgil.amigo`
 
-::: drpangloss.amigo
+::: virgil.amigo
     options:
       members:
         - load_oi_data

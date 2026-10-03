@@ -15,13 +15,13 @@ import pytest
 
 matplotlib.use("Agg")
 
-from drpangloss import GravityDarkenedStar  # noqa: E402
-from drpangloss._geometry import image_coordinates  # noqa: E402
-from drpangloss.coverage import nrm_oidata  # noqa: E402
-from drpangloss.likelihood import model_loglike  # noqa: E402
-from drpangloss.models import PointSource, System, UniformDisk  # noqa: E402
+from virgil import GravityDarkenedStar  # noqa: E402
+from virgil._geometry import image_coordinates  # noqa: E402
+from virgil.coverage import nrm_oidata  # noqa: E402
+from virgil.likelihood import model_loglike  # noqa: E402
+from virgil.models import PointSource, System, UniformDisk  # noqa: E402
 
-# Independent reference constant (not imported from drpangloss).
+# Independent reference constant (not imported from virgil).
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 
 _GOLDEN = os.path.join(

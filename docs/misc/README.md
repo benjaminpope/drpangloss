@@ -5,7 +5,7 @@ This package was developed with Claude Code. To keep the workflow transparent,
 readable Markdown/HTML (Python 3.8+, no dependencies).
 
 ```bash
-python3 docs/misc/export_claude_chats.py -k drpangloss virgil -o ~/Desktop/virgil_chats
+python3 docs/misc/export_claude_chats.py -k virgil virgil -o ~/Desktop/virgil_chats
 ```
 
 Use `--list` to preview matching sessions, `--help` for all options. Home paths

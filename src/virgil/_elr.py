@@ -28,7 +28,7 @@ his; the changes made in this port are:
 Conventions of this module are Dholakia's: ``inc`` is in radians with
 ``inc = 0`` equator-on, ``obl`` is in radians, ``r_eq`` is in mas, and the
 axes are x, y, z with y the spin axis before rotation and z towards the
-observer. The public model class maps drpangloss conventions onto these.
+observer. The public model class maps virgil conventions onto these.
 """
 
 import functools
@@ -412,9 +412,9 @@ def visibilities(x, y, weight, uu, vv):
     """Complex visibilities of the triangle-barycentre point sources.
 
     His ``compute_DFTM1`` + ``apply_DFTM1``. ``uu``, ``vv`` are spatial
-    frequencies in cycles per radian (any equal shape; drpangloss passes
+    frequencies in cycles per radian (any equal shape; virgil passes
     ``u / wavel``) and ``x``, ``y`` are in mas. The phase sign is that of
-    ``drpangloss._geometry.offset_phase``. Normalised by ``weight.sum()``.
+    ``virgil._geometry.offset_phase``. Normalised by ``weight.sum()``.
     Returns an array of shape ``uu.shape``.
 
     ``weight`` is 1D (one weight per triangle, shared by all samples) or 2D

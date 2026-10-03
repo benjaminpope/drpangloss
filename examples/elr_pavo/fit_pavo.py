@@ -4,8 +4,8 @@ This reproduces the analysis of Shashank Dholakia (``core/elr_fit.py`` in
 https://github.com/shashankdholakia/jax-interferometry, commit 70689ed): NUTS
 fits of the Espinosa Lara & Rieutord (2011) gravity-darkened star to PAVO
 squared visibilities of upsilon UMa, epsilon Cep, lambda Boo and upsilon Tau.
-The forward model is drpangloss's port of his ``ELR_Model``,
-``drpangloss.GravityDarkenedStar`` (grey mode, ``n_lat=32``). Data cuts,
+The forward model is virgil's port of his ``ELR_Model``,
+``virgil.GravityDarkenedStar`` (grey mode, ``n_lat=32``). Data cuts,
 priors, likelihood and sampler settings follow his script; the data (his
 ``pavlist_l1l2.csv`` files, not committed) are read from ``data/pavo/<star>/``
 and downloaded from his repository at the pinned commit if missing.
@@ -76,7 +76,7 @@ def load_pavo(name):
 def make_model(data):
     """His numpyro model, with ``GravityDarkenedStar`` as the forward model.
 
-    Once drpangloss has an absolute ``vis_error`` noise term, this could be
+    Once virgil has an absolute ``vis_error`` noise term, this could be
     ``numpyro_model(..., noise=...)``; today its likelihood only inflates the
     errors relatively, so the jitter is written out here.
     """
@@ -84,7 +84,7 @@ def make_model(data):
     import numpyro
     import numpyro.distributions as dist
 
-    from drpangloss import GravityDarkenedStar
+    from virgil import GravityDarkenedStar
 
     u, v, wavel = (jnp.asarray(data[k]) for k in ("u", "v", "wavel"))
     v2, v2_err = jnp.asarray(data["v2"]), jnp.asarray(data["v2_err"])
@@ -182,8 +182,8 @@ def make_plots(name, data, samples, post, out):
     import matplotlib.pyplot as plt
     import jax.numpy as jnp
 
-    from drpangloss import GravityDarkenedStar
-    from drpangloss.plotting import plot_model
+    from virgil import GravityDarkenedStar
+    from virgil.plotting import plot_model
 
     label = STARS[name][1]
     med = {k: post[k]["median"] for k in VARS}

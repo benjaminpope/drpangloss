@@ -6,7 +6,7 @@ For each design element: **(a)** what the literature does, **(b)** whether our d
 
 ## 0. Footguns to avoid, in priority order
 
-Each item is something the GRAVITY literature, the pipeline manual or our own reader shows to be wrong or misleading. The first four affect drpangloss **today**, before any new stage.
+Each item is something the GRAVITY literature, the pipeline manual or our own reader shows to be wrong or misleading. The first four affect virgil **today**, before any new stage.
 
 1. **Mixing fringe-tracker and science-channel tables.** A GRAVITY product holds `OI_VIS`, `OI_VIS2`, `OI_T3` and `OI_FLUX` for `INSNAME = GRAVITY_FT` (6 channels, R ≈ 20) *and* `GRAVITY_SC` (e.g. 233 channels at MEDIUM), and in split-polarisation mode `_P1` and `_P2` versions of each ([PM] §8.2; checked on an archival product, §11). `read_oifits` reads every table regardless of `INSNAME` and concatenates them. FT and SC samples then share one error model, one smearing kernel and one set of nuisances. **Fix:** an `insname=` selector that is required when a file holds more than one `INSNAME`. FT data, if used, form a separate dataset (§9). **Fixed in Stage 6.0:** `read_oifits(insname=...)`; a file with GRAVITY FT and SC tables raises unless one is chosen; FT data are skipped (§12).
 2. **Reading VISPHI without its `PHITYP`.** In dual-field products the SC `VISPHI` is `PHITYP = absolute`: phase-referenced to the FT through the metrology. In the same file the FT `VISPHI` is `differential`, with `PHIORDER = 1` (both checked on the archival product). In single-field products the pipeline's default removes "the mean group-delay and mean phases" over **all** channels, lines included ([PM] §6 `--output-phase-sc`, §9.16; [GC18b] Methods). `read_oifits` reads any `VISPHI` as an absolute phase. **Fix:** read `PHITYP`, `AMPTYP`, `PHIORDER` and `VISREFMAP` ([D17] §5), and refuse to treat differential phases as absolute. **Partly fixed in Stage 6.0:** VISPHI whose `PHITYP` is not `absolute` is refused; reading the other keywords, and fitting differential phases, are Stage 6a.
@@ -226,7 +226,7 @@ The model is **incomplete** in four ways:
   - `OI_VIS2` STA_INDEX rows run (K0,J2), (K0,G1), (K0,A0), (J2,G1), (J2,A0), (G1,A0), i.e. beam pairs 12, 13, 14, 23, 24, 34, with beam 1 on the highest station index;
   - `OI_T3` triangles are beams (1,2,3), (1,2,4), (1,3,4), (2,3,4);
   - each triangle's (a,b), (b,c) and (a,c) baselines appear in `OI_VIS2` in that orientation, which is what `read_oifits` assumes.
-- The exoplanet papers model GRAVITY's phase-referenced visibility as S(λ) exp(−i 2π/λ (Δα U + Δδ V)) ([N20a] eq. A.16), with astrometry that agrees with independent orbits. drpangloss's `offset_phase` uses the same sign, exp(−2πi(u·dra + v·ddec)).
+- The exoplanet papers model GRAVITY's phase-referenced visibility as S(λ) exp(−i 2π/λ (Δα U + Δδ V)) ([N20a] eq. A.16), with astrometry that agrees with independent orbits. virgil's `offset_phase` uses the same sign, exp(−2πi(u·dra + v·ddec)).
 - OIFITS2 defines the differential phase as a polynomial in 1/λ ([D17] §3.2). I did not find an explicit statement of the complex-visibility sign convention in [D17]; it defers to OIFITS1 (Pauls et al. 2005), which I did not read **[unverified]**.
 
 **(b) Verdict.** The plan **agrees**. The synthetic "GRAVITY-layout" writer should copy the beam ordering above. The sign agreement with [N20a] is encouraging, but it is not a substitute for the real anchor binary that O §5.3 item 2 requires.
