@@ -348,6 +348,23 @@ def test_tabulated_rejects_bad_tables():
         Tabulated([0.2, -0.1, 0.1], WAVES)
     with pytest.raises(ValueError, match="increasing"):
         Tabulated([0.2, 0.1, 0.1], WAVES[::-1])
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        Tabulated([0.2, onp.nan, 0.1], WAVES)
+    with pytest.raises(ValueError, match="positive"):
+        Tabulated([0.2, 0.1, 0.1], onp.array([-1.0e-6, 1.6e-6, 1.7e-6]))
+    with pytest.raises(ValueError, match="finite"):
+        Tabulated([0.2, 0.1, 0.1], onp.array([1.5e-6, onp.nan, 1.7e-6]))
+    with pytest.raises(ValueError, match="non-empty"):
+        Tabulated([], [])
+
+
+def test_tabulated_is_physical_checks_traced_tables():
+    good = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert bool(good.is_physical())
+    assert not bool(
+        good.set("ratio", np.array([0.2, -0.4, 0.1])).is_physical()
+    )
+    assert not bool(good.set("wavel", WAVES[::-1]).is_physical())
     with pytest.raises(ValueError, match="same length"):
         Tabulated([0.2, 0.1], WAVES)
 

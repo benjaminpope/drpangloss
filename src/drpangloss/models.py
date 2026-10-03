@@ -102,6 +102,24 @@ def _check_non_negative_flux(flux, owner):
         )
 
 
+def _check_shape_params(owner, checks):
+    """Reject concrete shape parameters outside their valid ranges.
+
+    ``checks`` holds ``(name, value, valid, requirement)`` with ``valid`` a
+    function of the concrete array. NaN and infinite values fail every
+    check, since ``valid`` uses comparisons. Traced values are skipped; the
+    model's ``is_physical`` covers them.
+    """
+    for name, value, valid, requirement in checks:
+        value = concrete(value)
+        if value is not None and not (
+            onp.all(onp.isfinite(value)) and onp.all(valid(value))
+        ):
+            raise ValueError(
+                f"{owner} has {name} {value.tolist()}; it must be {requirement}."
+            )
+
+
 def _check_non_negative_modulation(az_amps, az_pas):
     """Raise if concrete azimuthal modulations make the brightness negative."""
     amps, pas = concrete(az_amps), concrete(az_pas)
@@ -380,6 +398,28 @@ class EllipticalGaussian(Component):
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
 
+    def __check_init__(self):
+        super().__check_init__()
+        _check_shape_params(
+            type(self).__name__,
+            (
+                ("fwhm", self.fwhm, lambda x: x > 0.0, "positive"),
+                (
+                    "ratio",
+                    self.ratio,
+                    lambda x: (x > 0.0) & (x <= 1.0),
+                    "in (0, 1]",
+                ),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all(self.fwhm > 0.0)
+            & np.all((self.ratio > 0.0) & (self.ratio <= 1.0))
+        )
+
     def _centred_cvis(self, uu, vv):
         # In the frame where the ellipse is a circle of the major axis's
         # width, the visibility is that of a circular Gaussian.
@@ -405,10 +445,10 @@ class GaussianArc(Component):
     and ``width`` across it.
 
     The visibility is the Fourier transform of the curve, a line integral
-    evaluated by the trapezoidal rule on ``nodes`` points spanning ±3.5σ of
-    the weight, times the Gaussian's. It is accurate while the spacing of
-    the points, ``7 σ / nodes``, is below half the shortest fringe spacing,
-    ``λ / 2 B_max``.
+    evaluated by the trapezoidal rule on ``nodes`` equally spaced points
+    spanning ±3.5σ of the weight, times the Gaussian's. It is accurate
+    while the spacing of the points, ``7 σ / (nodes - 1)``, is below half
+    the shortest fringe spacing, ``λ / 2 B_max``.
 
     Parameters
     ----------
@@ -429,7 +469,7 @@ class GaussianArc(Component):
         Offset of the centre of curvature in milliarcseconds, positive to
         the East and North. The arc itself lies ``radius`` away from it.
     nodes : int, optional
-        Quadrature points along the arc (default 128).
+        Quadrature points along the arc, at least 2 (default 128).
 
     Examples
     --------
@@ -460,15 +500,39 @@ class GaussianArc(Component):
         self.flux = _as_flux(flux)
         self.dra = np.asarray(dra, dtype=float)
         self.ddec = np.asarray(ddec, dtype=float)
+        if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
+            raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
+
+    def __check_init__(self):
+        super().__check_init__()
+        positive = lambda x: x > 0.0  # noqa: E731
+        _check_shape_params(
+            type(self).__name__,
+            (
+                ("radius", self.radius, positive, "positive"),
+                ("width", self.width, positive, "positive"),
+                ("length", self.length, positive, "positive"),
+            ),
+        )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all(self.radius > 0.0)
+            & np.all(self.width > 0.0)
+            & np.all(self.length > 0.0)
+        )
 
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
-        their normalised weights."""
+        their normalised trapezoidal-rule weights."""
         sigma = self.length / (2.0 * np.sqrt(2.0 * np.log(2.0)))
         s = np.linspace(-3.5, 3.5, self.nodes) * sigma
         angle = self.pa * dtor + s / self.radius
-        weight = np.exp(-0.5 * (s / sigma) ** 2)
+        # Trapezoidal rule: the end points carry half weight.
+        ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
+        weight = ends * np.exp(-0.5 * (s / sigma) ** 2)
         x = self.radius * np.sin(angle)
         y = self.radius * np.cos(angle)
         return x, y, weight / np.sum(weight)

@@ -921,3 +921,54 @@ def test_rim_gradients_are_finite_at_zero_baseline():
     assert all(onp.isfinite(float(g)) for g in grads)
     rim = ModulatedGaussianRim(30.0, 4.0, 60.0, 10.0)
     assert onp.isclose(complex(rim.model(u, v, 2.2e-6)[0]), 1.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"fwhm": 0.0}, "fwhm"),
+        ({"fwhm": -3.0}, "fwhm"),
+        ({"fwhm": onp.nan}, "fwhm"),
+        ({"ratio": 0.0}, "ratio"),
+        ({"ratio": 1.5}, "ratio"),
+    ],
+)
+def test_elliptical_gaussian_rejects_invalid_shapes(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        EllipticalGaussian(**({"fwhm": 10.0, "ratio": 0.5} | kwargs))
+
+
+def test_elliptical_gaussian_is_physical_checks_traced_shapes():
+    good = EllipticalGaussian(10.0, 0.5, 30.0)
+    assert bool(good.is_physical())
+    assert not bool(good.set("fwhm", np.array(-1.0)).is_physical())
+    assert not bool(good.set("ratio", np.array(1.2)).is_physical())
+
+
+@pytest.mark.parametrize("name", ["radius", "width", "length"])
+@pytest.mark.parametrize("value", [0.0, -2.0, onp.inf])
+def test_gaussian_arc_rejects_invalid_shapes(name, value):
+    kwargs = {"radius": 20.0, "width": 2.0, "length": 15.0} | {name: value}
+    with pytest.raises(ValueError, match=name):
+        GaussianArc(**kwargs)
+
+
+def test_gaussian_arc_needs_two_nodes_and_checks_traced_shapes():
+    with pytest.raises(ValueError, match="nodes"):
+        GaussianArc(20.0, 2.0, 15.0, nodes=1)
+    good = GaussianArc(20.0, 2.0, 15.0)
+    assert bool(good.is_physical())
+    assert not bool(good.set("radius", np.array(-1.0)).is_physical())
+
+
+def test_gaussian_arc_uses_the_trapezoidal_rule():
+    # Equally spaced nodes; the end points carry half the weight of an
+    # interior point of the same height, and the weights sum to one.
+    arc = GaussianArc(20.0, 2.0, 15.0, nodes=9)
+    x, y, w = (onp.asarray(a) for a in arc.curve())
+    s = onp.linspace(-3.5, 3.5, 9)
+    gauss = onp.exp(-0.5 * s**2)
+    assert onp.isclose(w.sum(), 1.0)
+    assert onp.allclose(
+        w / gauss, (w / gauss)[1] * onp.r_[0.5, onp.ones(7), 0.5]
+    )

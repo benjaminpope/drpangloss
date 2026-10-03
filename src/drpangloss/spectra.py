@@ -180,10 +180,11 @@ class Tabulated(Spectrum):
     Parameters
     ----------
     ratio : array-like, shape (n,)
-        Flux at each node, relative to the other components.
+        Flux at each node, relative to the other components: finite and
+        non-negative, with n >= 1.
     wavel : array-like, shape (n,)
-        Node wavelengths in metres, increasing. Beyond the end nodes the flux
-        is constant.
+        Node wavelengths in metres: finite, positive and strictly
+        increasing. Beyond the end nodes the flux is constant.
 
     Notes
     -----
@@ -210,21 +211,41 @@ class Tabulated(Spectrum):
             return np.mean(self.ratio)
         return np.interp(np.asarray(wavel), self.wavel, self.ratio)
 
+    def is_physical(self):
+        return (
+            np.all(self.ratio >= 0.0)
+            & np.all(self.wavel > 0.0)
+            & np.all(np.diff(self.wavel) > 0.0)
+        )
+
     def __check_init__(self):
-        if self.ratio.shape != self.wavel.shape or self.ratio.ndim != 1:
+        if (
+            self.ratio.shape != self.wavel.shape
+            or self.ratio.ndim != 1
+            or self.ratio.size == 0
+        ):
             raise ValueError(
-                f"Tabulated needs 1D ratio and wavel of the same length, not "
-                f"shapes {self.ratio.shape} and {self.wavel.shape}."
+                f"Tabulated needs non-empty 1D ratio and wavel of the same "
+                f"length, not shapes {self.ratio.shape} and {self.wavel.shape}."
             )
         value = concrete(self.ratio)
-        if value is not None and (value < 0.0).any():
+        if value is not None and not (
+            onp.isfinite(value).all() and (value >= 0.0).all()
+        ):
             raise ValueError(
-                "Tabulated ratios must be non-negative; fluxes cannot be "
-                "negative."
+                "Tabulated ratios must be finite and non-negative; fluxes "
+                "cannot be negative."
             )
         wavel = concrete(self.wavel)
-        if wavel is not None and (onp.diff(wavel) <= 0.0).any():
-            raise ValueError("Tabulated wavel must be strictly increasing.")
+        if wavel is not None and not (
+            onp.isfinite(wavel).all()
+            and (wavel > 0.0).all()
+            and (onp.diff(wavel) > 0.0).all()
+        ):
+            raise ValueError(
+                "Tabulated wavel must be finite, positive and strictly "
+                "increasing."
+            )
 
 
 # Planck's second radiation constant h c / k, in metre kelvin.
