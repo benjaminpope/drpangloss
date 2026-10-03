@@ -336,9 +336,9 @@ def absil_limits(
         weights that may exceed 1.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on a GPU, and at
-        least 256. Larger can be faster for small data; smaller bounds
-        memory for large models.
+        about 2**20 model visibilities on a CPU and 2**23 on other backends
+        (GPU, TPU), and at least 256. Larger can be faster for small data;
+        smaller bounds memory for large models.
 
     Returns
     -------
