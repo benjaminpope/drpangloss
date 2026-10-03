@@ -445,13 +445,14 @@ class GaussianArc(Component):
     and ``width`` across it.
 
     The weight is a Gaussian in the arc length ``s`` from ``pa``, taken
-    once round the circle, ``-π radius <= s <= π radius``. While the arc
-    is short compared with the circle it is the full Gaussian (the part
-    beyond 6σ, a fraction 2e-9 of the flux, is dropped). Once the length
-    FWHM exceeds about ``π radius`` the Gaussian is cut off at the
-    antipode of ``pa``, where the two tails meet, and the brightness
-    tends to a uniform ring as ``length`` grows; it never wraps round the
-    circle more than once.
+    once round the circle, ``-π radius <= s <= π radius``: it is cut off
+    at the antipode of ``pa``, where the two tails meet, and never wraps
+    round the circle more than once. The quadrature covers ``±6σ`` (the
+    part beyond, a fraction 2e-9 of the flux, is dropped), or the whole
+    circle once ``6σ >= π radius``, i.e. ``length >= 0.39 π radius``.
+    The cut at the antipode matters only for longer arcs: at ``length =
+    π radius`` it removes 2 % of the Gaussian, and as ``length`` grows
+    the brightness tends to a uniform ring.
 
     The visibility is the Fourier transform of the curve, a line integral
     evaluated by the trapezoidal rule on ``nodes`` equally spaced points
