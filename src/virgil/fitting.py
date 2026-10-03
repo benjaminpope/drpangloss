@@ -523,6 +523,17 @@ def _largest(tree):
     return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
 
 
+def _stopping_tolerance(gtol, start_gradient):
+    """The gradient size below which LM and L-BFGS stop.
+
+    ``gtol``, or 1/1000 of the starting gradient if that is smaller (so a
+    warm start still converges). The relative part is floored at
+    ``1e-6 * gtol``: a start exactly at a zero-residual optimum has a
+    gradient of rounding noise, which no purely relative test can reach.
+    """
+    return np.maximum(np.minimum(gtol, 1e-3 * start_gradient), 1e-6 * gtol)
+
+
 def _scaled_loss(problem, scale):
     return lambda z: problem.loss(z) / scale
 
@@ -562,7 +573,7 @@ def _lm_residuals(z, args):
 @eqx.filter_jit
 def _lm_tolerance(problem, z0, scale, gtol):
     gradient = jax.grad(_scaled_loss(problem, scale))(z0)
-    return np.minimum(gtol, 1e-3 * _largest(gradient))
+    return _stopping_tolerance(gtol, _largest(gradient))
 
 
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
@@ -625,7 +636,7 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     optimiser = _capped_lbfgs(max_step_size)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
-    tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
+    tolerance = _stopping_tolerance(gtol, _largest(jax.grad(loss)(z0)))
 
     def keep_going(carry):
         step, _, _, gradient, moved = carry
@@ -644,8 +655,9 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
         )
         return count + 1, new, state, _largest(grad), moved
 
-    inf = np.asarray(np.inf, dtype=float)
-    start = (0, z0, optimiser.init(z0), inf, np.asarray(True))
+    # The start itself may already be a stationary point.
+    start_gradient = _largest(jax.grad(loss)(z0))
+    start = (0, z0, optimiser.init(z0), start_gradient, np.asarray(True))
     count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
     return z, count, gradient <= tolerance
 
