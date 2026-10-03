@@ -52,7 +52,7 @@ These are what GRAVITY and MATISSE line data need.
   - It covers thick rings, power-law and limb-darkened disks (I(μ)), doughnuts, and harmonics on any profile.
   - Crescents (`crin`, `crout`, `croff`) are the difference of two offset disks, so they need no new class.
 - **Bootstrap.** `bootstrap_fit(model, priors, data, n)` resamples by date and baseline, keeping spectral vectors whole.
-- **Orbits** are now Stage 9, designed in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
+- **Orbits** are now Stage 6a.1, designed in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
 - **Spectral correlations** between channels are now Stage 6d, because GRAVITY data need them ([`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4).
 
 ## Not planned

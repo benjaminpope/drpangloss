@@ -368,20 +368,16 @@ These stages draw on three notes:
 
 The last two came out of fitting GRAVITY data on Apep, but are written as general capabilities.
 
-1. **6a.0: times and frames in `OIData`** (S §2.5). A small PR, which unblocks VISPHI, Stage 6d and the orbits.
-2. **6a: spectro-interferometry.**
-3. **The `apep-gravity` library PR**, reconciled with 6a's `Nodes` and error floors (decided).
-4. **6d: correlated channel nuisances,** then the wavelength-scale nuisance and the dual-field recipe.
-5. **Stage 9: orbits and binary-frame scenes.** It can start in parallel once 6a.0 has landed.
+1. **6a.0: times and frames in `OIData`** (S §2.5). A small PR, which unblocks the orbits, VISPHI and Stage 6d.
+2. **6a.1: orbits and binary-frame scenes.** Decided 2026-10-03: they are needed now, for the Apep analysis.
+3. **6a: spectro-interferometry.**
+4. **The Apep agent's library commits.** These sit on the local branch `apep-gravity`: `EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc` and the rim-gradient fix. They merge once they are reconciled with 6a's `Nodes` and error floors (decided).
+5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance and the dual-field recipe.
 6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
 7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
 
-**Open for Ben:**
-- Whether Stage 9 goes ahead of 6b and 6c, as listed. The science driving it (Apep) is active now; 6b and 6c have no dataset waiting.
-- The real anchor binaries for the orbit and position-angle tests (O §7).
-
 ## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
-From S §2.5. It comes first because VISPHI (6a), the per-frame nuisances (6d) and orbits (Stage 9) all need it.
+From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
 - **Per-sample times and frames.** `OIData` gains `mjd` and `frame` per sample.
 - **Triangle matching.** Closure triangles are matched to baselines by frame (`INT_TIME`), not by nearest MJD.
 - **`epochs()`** splits a dataset by night.
@@ -389,6 +385,44 @@ From S §2.5. It comes first because VISPHI (6a), the per-frame nuisances (6d) a
 **Tests:**
 - Multi-file round trips keep `mjd` and `frame`.
 - Triangles match correctly on files whose MJDs differ slightly between OI_VIS2 and OI_T3.
+
+## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 23–28 h)
+Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+
+**Decided (2026-10-03):**
+- Orbits are built in drpangloss.
+- They run on jaxoplanet, as an optional `[orbits]` extra. Neither orbitize! nor orvara is used.
+- The user-facing conventions are those of O §2.1.
+
+**Defaults in force** (O §7, until Ben says otherwise):
+- time dependence through a snapshot, `at(mjd)`;
+- a fitted offset for orbital skew, rather than the physical one;
+- simulated systems first, then real data.
+
+**Build**, in this order (agent hours from O §6):
+
+| Item | Effort |
+|---|---|
+| `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
+| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
+| `StateVectorOrbit` and its regular forms, for short arcs | 3 |
+| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
+| `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
+| `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
+| `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
+| `TruncatedCone`, a thin conical shell (analytic, with an elliptical cross-section option and a render ↔ model test; the prototype is in the Apep data folder) | 3–4 |
+| OIFITS position-angle round trips (GRAVITY layout; AMICAL and drpangloss writers) | 2, then 2 per real anchor |
+
+**Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
+
+**Tests:**
+- Conventions and ephemerides: O §5.1–5.2.
+- Synthetic position-angle round trips: O §5.3.1 and §5.3.3. These need no real data.
+- End to end on simulated systems: O §5.4, where Apep is optional as the real-data case.
+
+**MWE:** a companion on its orbit with a disc attached to it, every data point evaluated at its own time. This is the sketch in `design/sketches/orbit_attached.py`.
+
+**Real anchor binaries** for the ephemeris and position-angle tests (O §5.1.2–3, §5.3.2) will be found in the ESO archive (Ben). They don't block the rest of the stage.
 
 ## Stage 6a: spectro-interferometry, matching PMOIRED (about 10–13 h)
 This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_parity.md) compares the two packages feature by feature. It comes before 6b and 6c, because 6b's per-filter fluxes are node spectra.
@@ -428,7 +462,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 
 **MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
 
-## Stage 6d: calibration nuisances correlated across channels (after 6a and the `apep-gravity` PR; about 9–13 h)
+## Stage 6d: calibration nuisances correlated across channels (after 6a and the Apep agent's library commits; about 9–13 h)
 Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitter, piston and injection drifts) are mostly common to all channels of a frame, which diagonal error inflation does not describe; GRAVITY data on Apep are the first dataset here that needs this. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
 
 **Build:**
@@ -446,7 +480,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 - **`wavel_scale`.** A per-dataset wavelength-scale nuisance in `noise=` (S §2.6; 1–2 h).
 - **The dual-field (in-field) calibrator recipe.** An example script and docs, not a module (S §2.7; 3–4 h). It uses 6d's known-width gains.
 
-**Merge order.** The library commits on the local branch `apep-gravity` (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
+**Merge order.** The Apep agent's library commits, on the local branch `apep-gravity` (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
@@ -477,7 +511,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 ---
 
 ## Stage 8: parametric parity with PMOIRED (after milestone 2; about 8–11 h)
-See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now Stage 9.
+See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now Stage 6a.1.
 - **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
 - **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
@@ -488,55 +522,13 @@ See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now
 - `Projected` against inclined analytic models.
 - Bootstrap spreads against the Laplace errors on a simple fit.
 
-## Stage 9: orbits and binary-frame scenes (after 6a.0; about 23–28 h)
-Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
-
-**Decided (2026-10-03):**
-- Orbits are built in drpangloss.
-- They run on jaxoplanet, as an optional `[orbits]` extra. Neither orbitize! nor orvara is used.
-- The user-facing conventions are those of O §2.1.
-
-**Defaults in force** (O §7, until Ben says otherwise):
-- time dependence through a snapshot, `at(mjd)`;
-- a fitted offset for orbital skew, rather than the physical one;
-- simulated systems first, then real data.
-
-**Build**, in this order (agent hours from O §6):
-
-| Item | Effort |
-|---|---|
-| `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
-| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
-| `StateVectorOrbit` and its regular forms, for short arcs | 3 |
-| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
-| `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
-| `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
-| `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
-| `TruncatedCone`, a thin conical shell (analytic, with an elliptical cross-section option and a render ↔ model test; the prototype is in the Apep data folder) | 3–4 |
-| OIFITS position-angle round trips (GRAVITY layout; AMICAL and drpangloss writers) | 2, then 2 per real anchor |
-
-**Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
-
-**Tests:**
-- Conventions and ephemerides: O §5.1–5.2.
-- Synthetic position-angle round trips: O §5.3.1 and §5.3.3. These need no real data.
-- End to end on simulated systems: O §5.4, where Apep is optional as the real-data case.
-
-**MWE:** a companion on its orbit with a disc attached to it, every data point evaluated at its own time. This is the sketch in `design/sketches/orbit_attached.py`.
-
-**Reminder for Ben:** before the real-anchor tests (O §5.1.2–3, §5.3.2), choose:
-- a visual binary with radial velocities;
-- an interferometric binary with a published orbit;
-- one observed with GRAVITY;
-- one observed with NACO or SPHERE masking.
-
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
 - **Stages 5–7:** about 17–24 h more, plus:
   - 6a.0 and 6a: about 12–16 h;
+  - 6a.1 (orbits and binary-frame scenes): about 23–28 h;
   - 6d: about 9–13 h.
 - **Stage 8** (the rest of the PMOIRED parity): about 8–11 h.
-- **Stage 9** (orbits and binary-frame scenes): about 23–28 h.
 - **Overall:** about 35–50 h of agent time, spread over 8 feedback checkpoints.
 
 External waits: only the OzSTAR GPU benchmark run, which you launch. All test data are simulated using ν Hor baselines and noise.
