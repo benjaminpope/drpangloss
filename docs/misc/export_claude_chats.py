@@ -9,7 +9,7 @@ and writes one Markdown and/or HTML file per session plus an index.
 
 Usage (on your Mac, no dependencies beyond Python 3.8+):
 
-    python3 export_claude_chats.py -k virgil virgil apep -o ~/Desktop/virgil_chats
+    python3 export_claude_chats.py -k virgil pangloss apep -o ~/Desktop/virgil_chats
 
     # everything since a date, HTML only, include full tool output
     python3 export_claude_chats.py -k virgil --since 2026-06-01 --format html --max-tool-lines 0

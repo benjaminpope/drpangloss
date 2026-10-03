@@ -55,3 +55,26 @@ def test_warning_locations_are_removed_from_published_output():
     assert module._sanitize_text(raw) == (
         "RuntimeWarning: optimizer did not converge\nresult: 3\n"
     )
+
+
+def test_landing_page_is_generated_from_the_readme():
+    repo_root = Path(__file__).resolve().parents[1]
+    module = _load_sync_module(repo_root)
+    readme, index = (repo_root / path for path in module.LANDING_PAGE)
+    assert index.read_text(encoding="utf-8") == module.render_landing_page(
+        readme.read_text(encoding="utf-8")
+    ), (
+        "docs/index.md is out of sync with README.md: run scripts/sync_tutorial_docs.py."
+    )
+
+
+def test_landing_page_links_stay_inside_the_docs():
+    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    url = module.DOCS_URL
+    page = module.render_landing_page(
+        f"[a]({url}data_io/) [b]({url}api/) [c]({url}) [d](CONTRIBUTING.md)"
+    )
+    assert "[a](data_io.md)" in page
+    assert "[b](api/index.md)" in page
+    assert f"[c]({url})" in page
+    assert f"[d]({module.REPO_FILE_URL}CONTRIBUTING.md)" in page

@@ -43,6 +43,10 @@ SKIP_FILES = {
     # The project's history names the original package; its present-tense
     # mentions are edited by hand in the rename's commit B.
     "docs/contributors.md",
+    # The README (and the docs landing page generated from it) says what the
+    # package used to be called, and points to its final release.
+    "README.md",
+    "docs/index.md",
 }
 SKIP_SUFFIXES = {".log", ".npy", ".oifits", ".fits", ".png", ".pdf"}
 

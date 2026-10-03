@@ -12,8 +12,10 @@ predictions into the same comparison basis", not z-score normalization.
 Every (baseline, wavelength) sample is one entry of `u`, `v` and `wavel`, so
 data with several wavelength channels need no special handling in models.
 Flagged samples are left out of the observables (see `vis_index` and
-`phi_index`). Phase residuals are wrapped into `[-π, π)` by `residuals`,
-which every likelihood in virgil uses.
+`phi_index`). `residuals` wraps phase residuals into `[-π, π)` for display.
+Likelihoods and fits use
+[`whitened_residuals`][virgil.likelihood.whitened_residuals] instead, which
+measures unprojected phases as chords, 2 sin(Δ/2), smooth where they wrap.
 
 Closure phases from four or more telescopes are correlated: the triangles
 of one frame and channel share baselines, and only some of them are
