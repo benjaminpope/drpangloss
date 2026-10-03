@@ -336,7 +336,7 @@ def fit(
         inner solve is a dense QR of the Jacobian for up to 200 unconstrained
         coordinates, and otherwise matrix-free (``cg_steps``
         conjugate-gradient steps on the normal equations), so that the
-        Jacobian of an image is never formed. The default when the whole
+        Jacobian of a larger image is never formed. The default when the whole
         objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
@@ -556,8 +556,10 @@ def _gauss_newton_covariance(problem, z):
         [np.zeros(n) if c is None else c for n, c in zip(sizes, curvatures)]
     )
     flat = np.concatenate([np.ravel(z[p]) for p in paths])
-    jac = jax.jacrev(data_residuals)(flat)
-    n_data, n = jac.shape
+    # Forward mode costs a pass per parameter, reverse a pass per residual.
+    n, n_data = flat.size, jax.eval_shape(data_residuals, flat).size
+    jacobian = jax.jacfwd if n_data >= n else jax.jacrev
+    jac = jacobian(data_residuals)(flat)
     if n_data >= n:
         factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(d))
         covariance = jax.scipy.linalg.cho_solve(factor, np.eye(n))
