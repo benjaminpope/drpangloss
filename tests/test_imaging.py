@@ -287,6 +287,24 @@ def test_dirty_image_finds_a_companion_once_the_star_is_removed():
     )
 
 
+def test_removing_the_star_leaves_no_residual_point_at_the_centre():
+    # DISCO data are normalised on the shortest baselines, where a resolved
+    # ring makes |V| < 1. Subtracting the best-fitting point source keeps
+    # the star's residual small, although 1/flux_ratio amplifies any error.
+    from drpangloss.scenes import ring
+
+    image = ring(64, 20.0, radius_mas=240.0, width_mas=36.0, inc_deg=50.0)
+    scene = System(
+        star=PointSource(), dust=Image.from_brightness(image, 20.0, flux=0.05)
+    )
+    dirty = onp.asarray(
+        dirty_image(DATA.with_model(scene), 64, 20.0, flux_ratio=0.05)
+    )
+    centre = dirty[30:34, 30:34].mean()
+    on_ring = dirty[onp.asarray(image) > 0.5 * float(image.max())].mean()
+    assert abs(centre) < 0.2 * on_ring
+
+
 def test_dirty_image_uses_absolute_phases_and_refuses_closure_phases():
     rng = onp.random.default_rng(6)
     u, v = rng.uniform(-6.0, 6.0, (2, 200))

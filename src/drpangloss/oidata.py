@@ -542,6 +542,31 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return self.standardize_model(cvis)
 
+    def with_error_scale(self, factor):
+        """A copy of the data with every uncertainty multiplied by ``factor``.
+
+        Use it when the error bars are known to be too large or too small
+        overall, for example with a factor from
+        [`error_scale`][drpangloss.imaging.error_scale]. The uncertainties
+        are those of the observables as fitted (after any projection), so
+        the whitened residuals simply scale by ``1 / factor``.
+
+        Parameters
+        ----------
+        factor : float
+            Positive scale for ``d_vis`` and ``d_phi``.
+        """
+        factor = float(factor)
+        if not (onp.isfinite(factor) and factor > 0.0):
+            raise ValueError(
+                f"factor must be finite and positive, not {factor}."
+            )
+        return eqx.tree_at(
+            lambda d: (d.d_vis, d.d_phi),
+            self,
+            (self.d_vis * factor, self.d_phi * factor),
+        )
+
     def with_model(self, model_object, key=None, noise_scale=1.0):
         """Return a copy populated from a model with optional Gaussian noise.
 

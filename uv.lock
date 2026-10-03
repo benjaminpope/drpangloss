@@ -129,6 +129,23 @@ wheels = [
 ]
 
 [[package]]
+name = "blackjax"
+version = "1.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "jaxlib" },
+    { name = "numpy" },
+    { name = "optax" },
+    { name = "scipy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/12/bc/423d304810d0defb54906d220468730895207c9c908cc0ea67d925b463b5/blackjax-1.6.2.tar.gz", hash = "sha256:ad3c97ff6c77cfa17310a68de665d1a48f9d47ff1ac39725082ab235517406ee", size = 5302867, upload-time = "2026-07-16T13:10:25.422Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/39/13/fc2be5e0c9a68c18eb0ea8ece9a0f3b078a513fd8a695f00d506de08db97/blackjax-1.6.2-py3-none-any.whl", hash = "sha256:2989786202cdfc9b0a84f8215c24f2c7985b40ae432136282c3776d979d1236e", size = 4915114, upload-time = "2026-07-16T13:10:23.466Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -477,7 +494,7 @@ wheels = [
 
 [[package]]
 name = "drpangloss"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -485,9 +502,11 @@ dependencies = [
     { name = "chainconsumer" },
     { name = "equinox" },
     { name = "jax" },
+    { name = "lineax" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "numpyro" },
+    { name = "optax" },
     { name = "optimistix" },
     { name = "pandas" },
     { name = "pyoifits" },
@@ -510,21 +529,27 @@ notebooks = [
     { name = "ipywidgets" },
     { name = "tqdm" },
 ]
+sampling = [
+    { name = "blackjax" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "astropy" },
     { name = "astroquery" },
+    { name = "blackjax", marker = "extra == 'sampling'" },
     { name = "chainconsumer" },
     { name = "equinox", specifier = ">=0.11" },
     { name = "ipywidgets", marker = "extra == 'notebooks'" },
     { name = "jax", specifier = ">=0.4.30" },
+    { name = "lineax", specifier = ">=0.0.5" },
     { name = "matplotlib" },
     { name = "mkdocs", marker = "extra == 'dev'" },
     { name = "mkdocs-material", marker = "extra == 'dev'" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "numpyro", specifier = ">=0.15" },
+    { name = "optax", specifier = ">=0.2.3" },
     { name = "optimistix", specifier = ">=0.0.10" },
     { name = "pandas" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -537,7 +562,7 @@ requires-dist = [
     { name = "zensical", marker = "extra == 'dev'" },
     { name = "zodiax", specifier = ">=0.4" },
 ]
-provides-extras = ["notebooks", "dev"]
+provides-extras = ["notebooks", "sampling", "dev"]
 
 [[package]]
 name = "equinox"

@@ -6,7 +6,13 @@ import pytest
 from drpangloss.coverage import vlti_oidata
 from drpangloss.fields import GaussianField
 from drpangloss.fitting import fit
-from drpangloss.imaging import MaxEntropy, image_priors, l_curve, log_evidence
+from drpangloss.imaging import (
+    MaxEntropy,
+    error_scale,
+    image_priors,
+    l_curve,
+    log_evidence,
+)
 from drpangloss.models import GaussianDisk, Image, PointSource, System
 
 DATA = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
@@ -112,3 +118,33 @@ def test_classic_maxent_matches_an_independent_calculation():
         t[0] + gaps[i] / (gaps[i] - gaps[i + 1]) * (t[1] - t[0])
     )
     assert curve.classic_maxent(data) == pytest.approx(expected, rel=1e-4)
+
+
+def test_error_scale_recovers_overestimated_errors():
+    # Data simulated with errors twice the noise actually added: the scale
+    # re-estimate is close to 1/2, and rescaling brings it back to 1.
+    rich = vlti_oidata(
+        hour_angles_h=(-3.0, -1.5, 0.0, 1.5, 3.0),
+        wavelengths_m=[3.2e-6, 3.5e-6, 3.8e-6],
+    )
+    latent = jax.random.normal(jax.random.PRNGKey(4), (N, N))
+    noisy = rich.with_model(
+        _gp_scene(latent, 1.5), key=jax.random.PRNGKey(5), noise_scale=0.5
+    )
+    start = _gp_scene(onp.zeros((N, N)), 1.5)
+    result = fit(start, image_priors(start), noisy)
+    scale = error_scale(result.model, noisy)
+    assert 0.4 < scale < 0.6
+    rescaled = noisy.with_error_scale(scale)
+    again = fit(start, image_priors(start), rescaled)
+    assert 0.9 < error_scale(again.model, rescaled) < 1.1
+
+
+def test_error_scale_rejects_bad_factors_and_pixel_images():
+    with pytest.raises(ValueError, match="factor"):
+        DATA.with_error_scale(0.0)
+    scene = System(
+        star=PointSource(), env=Image.from_model(GaussianDisk(3.0), N, H)
+    )
+    with pytest.raises(TypeError, match="GaussianField"):
+        error_scale(scene, DATA)
