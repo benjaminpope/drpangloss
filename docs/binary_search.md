@@ -323,9 +323,13 @@ plot_chainconsumer_diagnostics(
 );
 ```
 
-![binary_search output 19.1](generated/binary_search_cell019_out01.png)
+```text
+Parameter ddec in chain Fisher-HMC Cartesian is not constrained
+```
 
 ![binary_search output 19.2](generated/binary_search_cell019_out02.png)
+
+![binary_search output 19.3](generated/binary_search_cell019_out03.png)
 
 And in polar coordinates:
 

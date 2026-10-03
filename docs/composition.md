@@ -47,6 +47,11 @@ from drpangloss.plotting import plot_grid_map, plot_model, set_style
 set_style()  # the figure style used throughout the docs
 ```
 
+```text
+/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+```
+
 ## Shapes
 
 `drpangloss` currently offers four shapes: an unresolved `PointSource`, a `GaussianDisk`, a `UniformDisk`, and a `ModulatedGaussianRim`, which is a thin ring that can be blurred, inclined and made brighter on one side.
@@ -257,7 +262,7 @@ plt.show()
 ```
 
 ```text
-best grid point: {'comp.dra': 43.3333, 'comp.ddec': 33.3333, 'comp.flux': 0.01}
+best grid point: {'comp.dra': 46.6667, 'comp.ddec': 30.0, 'comp.flux': 0.01}
 ```
 
 ![composition output 16.2](generated/composition_cell016_out02.png)
@@ -340,11 +345,11 @@ parameter     truth                HMC  Laplace σ  σ, rim fixed
 ```
 
 ```text
-comp.dra    45.0000   44.9272 ± 1.0927     1.0649        1.0422
-comp.ddec   30.0000   32.6506 ± 1.1473     1.3602        1.0782
-comp.flux    0.0100    0.0096 ± 0.0007     0.0008        0.0006
-rim.flux     0.5000    0.4553 ± 0.0223     0.0286             -
-rim.diam    40.0000   41.5851 ± 0.9025     0.9892             -
+comp.dra    45.0000   47.2135 ± 1.6597     1.6414        1.5873
+comp.ddec   30.0000   29.3558 ± 1.7582     1.8541        1.5850
+comp.flux    0.0100    0.0101 ± 0.0012     0.0013        0.0008
+rim.flux     0.5000    0.5043 ± 0.0372     0.0430             -
+rim.diam    40.0000   39.8406 ± 1.2641     1.5042             -
 ```
 
 The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. That is exactly the check you would want to make before believing a detection.
@@ -384,8 +389,8 @@ print(f"position angle {polar_best['pa']:6.2f} ± {polar_sigma['pa']:.2f} deg  (
 ```
 
 ```text
-separation      55.54 ± 1.06 mas  (HMC spread 1.05)
-position angle  53.99 ± 1.23 deg  (HMC spread 1.23)
+separation      55.60 ± 1.59 mas  (HMC spread 1.58)
+position angle  58.13 ± 1.92 deg  (HMC spread 1.88)
 ```
 
 The Laplace uncertainties in separation and position angle agree with the spread of the HMC samples converted to the same quantities. The function works everywhere a template does: in `numpyro_model` (with priors keyed by argument name), `laplace_cov`, and the grid tools.

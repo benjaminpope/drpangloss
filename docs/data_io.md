@@ -27,6 +27,11 @@ repo_root = find_repo_root()
 module = load_synthetic_workflow_module(repo_root)
 ```
 
+```text
+/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+```
+
 ## Simulate Data
 Let's simulate some synthetic data and save it to an `.oifits` file. The synthetic data are a dictionary of OIFITS tables (`OI_WAVELENGTH`, `OI_VIS`, `OI_VIS2`, `OI_T3`, plus an `info` dictionary for the header), with phases in degrees as in OIFITS:
 
@@ -81,6 +86,16 @@ OIData(
   phi_mat=None,
   vis_index=None,
   phi_index=None,
+  uv_grid=None,
+  cp_noise=ClosureNoise(
+    groups=i64[1,4](numpy),
+    mask=bool[1,4](numpy),
+    incidence=f64[1,4,6](numpy),
+    basis=f64[1,3,4](numpy),
+    chol=f64[1,3,3](numpy),
+    valid=bool[1,3](numpy),
+    keep=i64[3](numpy)
+  ),
   observable_kind='split',
   vis_mode='v2',
   v2_flag=True,
