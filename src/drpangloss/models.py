@@ -581,12 +581,15 @@ class GravityDarkenedStar(Component):
         """
         x, y, _, teff, (_, _, cosine, _) = self._surface(return_mesh=True)
         area = np.heaviside(cosine, 0.0) * cosine
+        return x, y, area * self._planck_intensity(teff, wavel)
+
+    def _planck_intensity(self, teff, wavel):
+        """``B_λ(T) / B_λ(t_pole)`` at ``wavel`` for triangles of ``teff``."""
         # the pole, theta = 0, through the jitted vectorised solver
         teff_pole = _elr.solve_ELR_vec(self.omega, np.zeros(1))[1][0]
         temperature = self.t_pole * teff / teff_pole
         wavel = np.asarray(wavel)[..., None]
-        planck = _planck_ratio(wavel, temperature, self.wavel0, self.t_pole)
-        return x, y, area * planck
+        return _planck_ratio(wavel, temperature, self.wavel0, self.t_pole)
 
     def model(self, u, v, wavel):
         if self.t_pole is None:
@@ -640,9 +643,10 @@ class GravityDarkenedStar(Component):
         return image
 
     def plot_surface(self, ax=None, cmap="plasma"):
-        """Plot the visible surface, coloured by local flux ratio.
+        """Plot the visible surface, coloured by its local brightness.
 
-        East is to the left and North up, as in
+        That is the bolometric flux in grey mode, and the Planck intensity at
+        ``wavel0`` in chromatic mode. East is to the left and North up, as in
         [`plot_model`][drpangloss.plotting.plot_model]; the offset
         ``dra``, ``ddec`` is not applied. Returns the matplotlib collection.
         """
@@ -651,7 +655,11 @@ class GravityDarkenedStar(Component):
 
         if ax is None:
             _, ax = plt.subplots()
-        *_, (pts, tri, cosine, intensity) = self._surface(return_mesh=True)
+        *_, teff, (pts, tri, cosine, intensity) = self._surface(
+            return_mesh=True
+        )
+        if self.t_pole is not None:  # chromatic: as seen at wavel0
+            intensity = self._planck_intensity(teff, self.wavel0)
         pts, tri = onp.asarray(pts), onp.asarray(tri)
         visible = onp.asarray(cosine) > 0
         triang = mtri.Triangulation(pts[:, 0], pts[:, 1], tri[visible])
