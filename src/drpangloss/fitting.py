@@ -12,6 +12,7 @@ the same arguments to ``numpyro_model``.
 """
 
 import dataclasses
+import math
 import warnings
 
 import equinox as eqx
@@ -282,6 +283,10 @@ def fit(
         The fitted model, parameter values and diagnostics. A warning is
         raised if LM or L-BFGS did not converge.
     """
+    if not math.isfinite(max_step_size) or max_step_size <= 0:
+        raise ValueError(
+            f"max_step_size must be finite and positive, not {max_step_size}."
+        )
     with run_in(dtype):
         problem = cast_tree(
             _Objective(model, priors, data, regularisers), dtype

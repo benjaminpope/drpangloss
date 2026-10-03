@@ -153,6 +153,9 @@ def test_fit_rejects_bad_paths_flux_priors_and_methods():
         fit(TRUTH, {"flux": dist.Normal(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="method"):
         fit(START, PRIORS, DATA, method="newton")
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="max_step_size"):
+            fit(START, PRIORS, DATA, method="lbfgs", max_step_size=bad)
 
 
 def test_precision_helpers():
@@ -170,16 +173,24 @@ def test_precision_helpers():
     assert onp.asarray(cast_tree(tree, "float32")["a"]).dtype == onp.float32
 
 
-def test_a_warm_start_still_converges():
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_a_warm_start_still_converges(dtype):
     # Starting from the solution at a nearby weight, the gradient is small
     # from the outset; the fit must still move to the new solution rather
     # than stopping at once.
     start, priors, data = _image_fit()
-    strong = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
-    weak = fit(
-        start, priors, data, [MaxEntropy(1.0, path="env")], init=strong.values
+    strong = fit(
+        start, priors, data, [MaxEntropy(10.0, path="env")], dtype=dtype
     )
-    cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
+    weak = fit(
+        start,
+        priors,
+        data,
+        [MaxEntropy(1.0, path="env")],
+        init=strong.values,
+        dtype=dtype,
+    )
+    cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")], dtype=dtype)
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
     assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)
     # Both reach the minimum, not a stationary point with most pixels dark
