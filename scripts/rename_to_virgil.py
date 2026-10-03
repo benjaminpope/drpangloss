@@ -65,16 +65,27 @@ FILE_RULES = {
 # Applied to every text file, in order.
 RULES = [
     # Install commands: pip install [-U ...] drpangloss, uv add drpangloss.
-    (re.compile(r"((?:pip|pip3|uv pip|uv) (?:install|add)(?: +-[-\w]+)* +)"
-                r"drpangloss\b"), rf"\g<1>{DIST}"),
+    (
+        re.compile(
+            r"((?:pip|pip3|uv pip|uv) (?:install|add)(?: +-[-\w]+)* +)"
+            r"drpangloss\b"
+        ),
+        rf"\g<1>{DIST}",
+    ),
     # Extras: drpangloss[nufft] -> virgil-astro[nufft].
     (re.compile(r"\bdrpangloss\["), f"{DIST}["),
     # PyPI URLs and badges.
-    (re.compile(r"(pypi\.org/project/|pypi/[a-z]+/)drpangloss\b"),
-     rf"\g<1>{DIST}"),
+    (
+        re.compile(r"(pypi\.org/project/|pypi/[a-z]+/)drpangloss\b"),
+        rf"\g<1>{DIST}",
+    ),
     # importlib.metadata lookups by distribution name.
-    (re.compile(r"""((?:version|metadata|distribution)\(\s*["'])drpangloss(["'])"""),
-     rf"\g<1>{DIST}\g<2>"),
+    (
+        re.compile(
+            r"""((?:version|metadata|distribution)\(\s*["'])drpangloss(["'])"""
+        ),
+        rf"\g<1>{DIST}\g<2>",
+    ),
     # Everything else is the import / repo / docs name. The bundled fixture
     # data/calibrated_visibility.npy carries the tag
     # "drpangloss-synthetic-mixed-disco-v1" inside the pickle; text quoting
@@ -93,7 +104,9 @@ def git(*args: str) -> str:
 def move_package() -> list[str]:
     """git mv src/drpangloss -> src/virgil, file by file (idempotent)."""
     moved = []
-    tracked = [p for p in git("ls-files", "--", str(OLD_PKG)).splitlines() if p]
+    tracked = [
+        p for p in git("ls-files", "--", str(OLD_PKG)).splitlines() if p
+    ]
     for old in tracked:
         new = str(NEW_PKG / Path(old).relative_to(OLD_PKG))
         if Path(new).exists():
@@ -160,13 +173,21 @@ def verify_rename_tag() -> None:
         git("worktree", "add", "--detach", wt, BASE_TAG)
         try:
             subprocess.run(
-                [sys.executable, str(Path(wt) / "scripts/rename_to_virgil.py")],
-                cwd=wt, check=True, capture_output=True,
+                [
+                    sys.executable,
+                    str(Path(wt) / "scripts/rename_to_virgil.py"),
+                ],
+                cwd=wt,
+                check=True,
+                capture_output=True,
             )
             subprocess.run(["git", "add", "-A"], cwd=wt, check=True)
             got = subprocess.run(
-                ["git", "write-tree"], cwd=wt, check=True,
-                capture_output=True, text=True,
+                ["git", "write-tree"],
+                cwd=wt,
+                check=True,
+                capture_output=True,
+                text=True,
             ).stdout.strip()
         finally:
             git("worktree", "remove", "--force", wt)
@@ -204,22 +225,38 @@ def migrate_branch() -> None:
         verify_rename_tag()
         move_package()
         if OLD_PKG.exists():
-            junk = [f for f in OLD_PKG.rglob("*") if f.is_file()
-                    and "__pycache__" not in f.parts]
+            junk = [
+                f
+                for f in OLD_PKG.rglob("*")
+                if f.is_file() and "__pycache__" not in f.parts
+            ]
             if junk:
-                sys.exit(f"STOP: untracked files in {OLD_PKG}: {junk}. "
-                         "Move them into src/virgil/ or delete, then rerun.")
+                sys.exit(
+                    f"STOP: untracked files in {OLD_PKG}: {junk}. "
+                    "Move them into src/virgil/ or delete, then rerun."
+                )
             shutil.rmtree(OLD_PKG)
         rewrite_text(check=False)
         git("add", "-A")
         if git("status", "--porcelain", "--untracked-files=no").strip():
-            git("commit", "-q", "-m",
+            git(
+                "commit",
+                "-q",
+                "-m",
                 "Apply drpangloss -> virgil rename "
-                "(scripts/rename_to_virgil.py)")
+                "(scripts/rename_to_virgil.py)",
+            )
         # 3. Record the rename commit as merged; its content is already here.
-        git("merge", "-q", "-s", "ours", "--no-edit", "-m",
+        git(
+            "merge",
+            "-q",
+            "-s",
+            "ours",
+            "--no-edit",
+            "-m",
             f"Merge {RENAME_TAG} (applied by scripts/rename_to_virgil.py)",
-            RENAME_TAG)
+            RENAME_TAG,
+        )
         print(f"recorded {RENAME_TAG} on {branch}.")
 
     # 4. Bring in whatever landed on main after the rename (normal merge).
@@ -231,20 +268,29 @@ def migrate_branch() -> None:
             "conflicts, not rename conflicts. Resolve, run the tests, "
             "`git commit`, then rerun this command to finish."
         )
-    leftovers = rewrite_text(check=True) + git(
-        "ls-files", "--", str(OLD_PKG)).split()
+    leftovers = (
+        rewrite_text(check=True) + git("ls-files", "--", str(OLD_PKG)).split()
+    )
     if leftovers:
         sys.exit(f"STOP: still mentions drpangloss: {leftovers}")
-    print("done. Next: reinstall, run ruff and pytest, then push "
-          "(plain `git push`, never --force).")
+    print(
+        "done. Next: reinstall, run ruff and pytest, then push "
+        "(plain `git push`, never --force)."
+    )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--check", action="store_true",
-                    help="report only; exit 1 if the rename is incomplete")
-    ap.add_argument("--migrate-branch", action="store_true",
-                    help="bring the current feature branch across the rename")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="report only; exit 1 if the rename is incomplete",
+    )
+    ap.add_argument(
+        "--migrate-branch",
+        action="store_true",
+        help="bring the current feature branch across the rename",
+    )
     args = ap.parse_args()
 
     if not Path(".git").exists() or not Path("pyproject.toml").exists():
@@ -266,8 +312,11 @@ def main() -> None:
     # otherwise `import drpangloss` would still succeed as an empty
     # namespace package and hide missed imports.
     if OLD_PKG.exists():
-        junk = [f for f in OLD_PKG.rglob("*") if f.is_file()
-                and "__pycache__" not in f.parts]
+        junk = [
+            f
+            for f in OLD_PKG.rglob("*")
+            if f.is_file() and "__pycache__" not in f.parts
+        ]
         if junk:
             print(f"WARNING: untracked files left in {OLD_PKG}: {junk}")
         else:
