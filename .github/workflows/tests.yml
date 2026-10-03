@@ -22,8 +22,9 @@ jobs:
         python-version: ["3.11", "3.12"]
         x64: ["0"]
         include:
-          # The jax.enable_x64 dtype mix-up fixed in bessel.py surfaced locally
-          # on macOS but not in Linux CI; x64 exercises the float64 paths.
+          # The jax.enable_x64 dtype mix-up fixed in the Bessel functions (now
+          # jaxbessel) surfaced locally on macOS but not in Linux CI; x64
+          # exercises the float64 paths.
           - os: macos-latest
             python-version: "3.12"
             x64: "0"
