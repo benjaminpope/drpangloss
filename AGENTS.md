@@ -50,8 +50,8 @@ Before committing:
    `pytest tests/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `mkdocs build --strict`.
 
-CI also autofixes formatting on same-repo PRs (`.github/workflows/lint.yml`), but do not
-rely on it — a clean diff keeps review focused on the actual change.
+CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
+them, so lint before you push.
 
 ## Independent validation
 
@@ -107,12 +107,13 @@ see that repository's `PLAN.md` for the boundary.
 | Module | Contents |
 | --- | --- |
 | `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
+| `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals` (private) |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `posterior_predictive_summary` |
-| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments) |
-| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `beam`, `l_curve`, `diagnose` |
+| `fitting.py` | `fit(model, priors, data, regularisers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
+| `imaging.py` | regularisers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `error_scale`, `diagnose` |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
@@ -125,10 +126,13 @@ see that repository's `PLAN.md` for the boundary.
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
-Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`oidata`
-→ `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
-(`grid_fit`, `limits`) → `plotting`. `grid_fit` and `limits` do not import each other;
-`scenes` imports only `_geometry` and `_utils`.
+Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_closure`
+→ `oidata` → `coverage`. Separately, `_utils` → `spectra` and `fields`, and
+`_elr`/`spectra` → `models` → `likelihood` → `fitting` (which also imports `fields`) →
+`imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
+`inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
+`_grid`, which imports only `_utils`, and do not import each other; `limits` →
+`plotting`. `scenes` imports only `_geometry` and `_utils`.
 
 ## Flux and contrast
 

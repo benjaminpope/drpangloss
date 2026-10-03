@@ -283,3 +283,30 @@ def test_a_zero_variance_closure_relation_is_dropped():
     projected = OIData(_record(one, phi_mat=operator))
     assert projected.phi.size == 1
     assert onp.all(onp.asarray(projected.d_phi) > 0.0)
+
+
+def test_switching_x64_mode_keeps_the_index_dtypes():
+    # JAX 0.10 caches the canonical (x64-dependent) copy of a NumPy array by
+    # identity for as long as that copy is alive, whatever the mode. Index
+    # arrays held as int64 and first used inside a 64-bit fit came back
+    # int64 in a later 32-bit with_model, which failed in JAX's indexing.
+    # Use the noise model in one mode, keep that computation alive, then
+    # use it in the other.
+    data = _four_telescopes()
+    noise, key, n_phase = data.cp_noise, jax.random.PRNGKey(5), data.phi.size
+
+    def use():
+        sigma = np.asarray(onp.asarray(data.d_phi, dtype=float))
+        residuals = noise.sample(key, sigma, n_phase)
+        return (residuals,) + noise.whiten(residuals, sigma)
+
+    for first, second in ((True, False), (False, True)):
+        with jax.enable_x64(first):
+            held = jax.jit(use)
+            held()
+            use()
+        with jax.enable_x64(second):
+            dtype = np.float64 if second else np.float32
+            assert all(out.dtype == dtype for out in use())
+            assert all(out.dtype == dtype for out in jax.jit(use)())
+        del held

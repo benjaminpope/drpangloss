@@ -6,7 +6,6 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
       members:
         - model
         - render
@@ -15,7 +14,6 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
       members: false
 
 ::: virgil.models.PointSource
@@ -95,7 +93,6 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
     options:
       show_root_heading: true
       heading_level: 2
-      show_attributes: false
 
 Models are fitted through [`virgil.likelihood`](../../likelihood.md)
 (`build_model`, `loglike`, `numpyro_model`).

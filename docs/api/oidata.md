@@ -37,7 +37,6 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
     options:
       show_root_heading: false
       heading_level: 3
-      show_attributes: false
       members:
         - __init__
         - flatten_data
@@ -61,7 +60,6 @@ transform. Other data get `uv_grid=None`, even on a lattice; set it with
     options:
       show_root_heading: true
       heading_level: 3
-      show_attributes: false
 
 ::: virgil.oidata.find_uv_grid
     options:

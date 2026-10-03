@@ -24,7 +24,7 @@ import optax
 import optimistix as optx
 
 from ._precision import cast_tree, run_in
-from ._utils import is_flux_param
+from ._utils import _reference, is_flux_param
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
@@ -63,6 +63,23 @@ def _prior_residuals(path, distribution, value):
     )
 
 
+def _traced(prior):
+    """``prior`` with its Python-number parameters as JAX arrays.
+
+    The jitted solvers take the problem as an argument, and equinox treats
+    Python numbers in it as static, so that every new prior bound (say
+    ``Uniform(lo, 50.0)`` for a new ``lo``) would recompile the fit. Arrays
+    are traced instead.
+    """
+
+    def to_array(leaf):
+        if isinstance(leaf, (int, float)) and not isinstance(leaf, bool):
+            return np.asarray(float(leaf))
+        return leaf
+
+    return jax.tree.map(to_array, prior)
+
+
 def _warn_if_field_hyperparameter(model, path):
     """Warn when a GaussianField's sigma or length is fitted by MAP."""
     parent, _, name = path.rpartition(".")
@@ -96,9 +113,14 @@ class _Objective(eqx.Module):
     def __init__(self, model, priors, data, regularisers=(), noise=None):
         self.model = model
         self.data = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-        self.priors = dict(priors)
+        self.priors = {path: _traced(p) for path, p in priors.items()}
         self.regularisers = tuple(regularisers)
-        self.noise = noise_sites(noise, len(self.data))
+        self.noise = {
+            site: (_traced(prior), datasets, term)
+            for site, (prior, datasets, term) in noise_sites(
+                noise, len(self.data)
+            ).items()
+        }
         if not self.priors:
             raise ValueError("priors must name at least one free parameter.")
         for path, prior in self.priors.items():
@@ -230,11 +252,6 @@ class _Objective(eqx.Module):
         return 0.5 * chi2 + log_norm + penalty - log_prior
 
 
-def _reference(model):
-    """The model regularisers act on: the first if there is one per dataset."""
-    return model[0] if isinstance(model, (list, tuple)) else model
-
-
 @dataclasses.dataclass(frozen=True)
 class FitResult:
     """The result of [`fit`][virgil.fitting.fit].
@@ -287,7 +304,8 @@ def fit(
         may return a list of models, one per dataset, sharing parameters:
         for example a scene and a [`Rotated`][virgil.models.Rotated]
         copy of it, for two epochs between which it turns. Regularisers
-        then act on the first.
+        then act on the first model only: an Image that appears only in a
+        later model is not regularised.
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path (e.g.
         ``"comp.flux"`` or ``"env.log_brightness"``; see
@@ -314,10 +332,12 @@ def fit(
         Starting values by path (or ``noise`` site), overriding the
         template's (required for a function model).
     method : {"lm", "lbfgs", "adam"}, optional
-        ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals, with
-        a matrix-free inner solve (``cg_steps`` conjugate-gradient steps on
-        the normal equations), so the Jacobian is never formed. The default
-        when the whole objective has a least-squares form.
+        ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals. Its
+        inner solve is a dense QR of the Jacobian for up to 200 unconstrained
+        coordinates, and otherwise matrix-free (``cg_steps``
+        conjugate-gradient steps on the normal equations), so that the
+        Jacobian of a larger image is never formed. The default when the whole
+        objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
         No unconstrained coordinate moves by more than ``max_step_size``
@@ -326,11 +346,15 @@ def fit(
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
+        It sets the length of LM's and Adam's loops, so a new value
+        recompiles them (not L-BFGS); other numbers do not.
     gtol : float, optional
         LM and L-BFGS stop when no component of the gradient of the loss
         per data point exceeds ``gtol``, nor 1/1000 of its largest starting
         value (so that a fit started near a solution, e.g. along an
-        L-curve, still converges).
+        L-curve, still converges). The tolerance is never below √eps of the
+        dtype times that starting value (3.5e-4 times it in float32), which
+        rounding errors in the gradient would not let the fit reach.
     max_step_size : float, optional
         L-BFGS moves no unconstrained coordinate by more than this per step
         (for a log-brightness pixel, a factor ``exp(max_step_size)``).
@@ -342,9 +366,10 @@ def fit(
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
-        Conjugate-gradient steps per LM step. The inner solve runs for
-        exactly this many steps (its tolerances are zero), because an inner
-        solve that stops at a step limit would abort the outer one.
+        Conjugate-gradient steps per LM step, for more than 200 coordinates.
+        The inner solve runs for exactly this many steps, or as many as
+        there are coordinates if fewer: its tolerances are zero, because an
+        inner solve that stops at a step limit would abort the outer one.
     dtype : {"float64", "float32"}, optional
         Precision of the fit. The default runs in float64 inside a local
         ``jax.enable_x64`` context. The returned model and values are cast
@@ -371,17 +396,28 @@ def fit(
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
         scale = float(max(sum(ndata), 1))
+        # Numbers go to the jitted solvers as arrays, which are traced, so
+        # that new values do not recompile. The step limits of LM and Adam
+        # set a loop's length, so they stay static.
+        traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         if method == "lm":
             z, steps, converged = _lm(
-                problem, z0, scale, max_steps or 1000, gtol, cg_steps
+                problem, z0, traced_scale, max_steps or 1000, gtol, cg_steps
             )
         elif method == "lbfgs":
             z, steps, converged = _lbfgs(
-                problem, z0, scale, max_steps or 20_000, gtol, max_step_size
+                problem,
+                z0,
+                traced_scale,
+                np.asarray(max_steps or 20_000),
+                gtol,
+                np.asarray(max_step_size),
             )
         elif method == "adam":
             steps = max_steps or 2000
-            z, converged = _adam(problem, z0, scale, learning_rate, steps)
+            z, converged = _adam(
+                problem, z0, traced_scale, np.asarray(learning_rate), steps
+            )
         else:
             raise ValueError(
                 f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
@@ -462,33 +498,92 @@ def gauss_newton_mass(model, priors, data, values):
     with run_in("float64"):
         problem = cast_tree(_Objective(model, priors, data), "float64")
         z = problem.init(cast_tree(values, "float64"))
-        paths = problem.paths
-        shapes = [np.shape(z[p]) for p in paths]
-        sizes = [int(np.size(z[p])) for p in paths]
-        flat = np.concatenate([np.ravel(z[p]) for p in paths])
-
-        def residuals(x):
-            pieces = np.split(x, onp.cumsum(sizes)[:-1])
-            return problem.residuals(
-                {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
-            )
-
-        n_residuals = int(np.size(residuals(flat)))
-        mode = jax.jacrev if n_residuals < flat.size else jax.jacfwd
-        jac = onp.asarray(mode(residuals)(flat), dtype=float)
-    try:
-        onp.linalg.cholesky(jac.T @ jac)
-    except onp.linalg.LinAlgError:
+        covariance, ok = _gauss_newton_covariance(problem, z)
+        covariance = onp.asarray(covariance)
+    if not ok:
         raise ValueError(
             "The Gauss–Newton curvature is singular: a parameter in priors "
             "is constrained by neither the data nor a Normal prior."
-        ) from None
-    covariance = onp.linalg.inv(jac.T @ jac)
+        )
+    paths = problem.paths
     return {
         "inverse_mass_matrix": {paths: covariance},
         "dense_mass": [paths],
         "adapt_mass_matrix": False,
     }
+
+
+@eqx.filter_jit
+def _gauss_newton_covariance(problem, z):
+    """(JᵀJ)⁻¹ over the parameters, in the order of ``problem.paths``.
+
+    J is the Jacobian of the residuals, the data's and the priors', with
+    respect to the unconstrained coordinates ``z``. The priors' residuals
+    are elementwise, so they add a diagonal D to JᵀJ, and only the data's
+    rows are differentiated (in reverse mode, one pass per datum). Returns
+    the covariance and whether JᵀJ + D was positive definite.
+    """
+    paths = problem.paths
+    shapes = [np.shape(z[p]) for p in paths]
+    sizes = [math.prod(shape) for shape in shapes]
+
+    def unflatten(x):
+        pieces = np.split(x, onp.cumsum(sizes)[:-1])
+        return {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+
+    def data_residuals(x):
+        model = problem.build(unflatten(x))
+        return np.concatenate(problem.data_residuals(model))
+
+    def prior_curvature(path):
+        prior = problem.priors[path]
+        if _prior_residuals(path, prior, z[path]) is None:
+            return None  # a flat prior
+        bijection = _bijection(prior)
+
+        def residuals(v):
+            return _prior_residuals(path, prior, bijection(v))
+
+        ones = np.ones_like(z[path])
+        return jax.jvp(residuals, (z[path],), (ones,))[1] ** 2
+
+    curvatures = [prior_curvature(p) for p in paths]
+    # Which coordinates have flat priors is known when tracing.
+    flat_prior = onp.concatenate(
+        [onp.full(n, c is None) for n, c in zip(sizes, curvatures)]
+    )
+    d = np.concatenate(
+        [np.zeros(n) if c is None else c for n, c in zip(sizes, curvatures)]
+    )
+    flat = np.concatenate([np.ravel(z[p]) for p in paths])
+    # Forward mode costs a pass per parameter, reverse a pass per residual.
+    n, n_data = flat.size, jax.eval_shape(data_residuals, flat).size
+    jacobian = jax.jacfwd if n_data >= n else jax.jacrev
+    jac = jacobian(data_residuals)(flat)
+    if n_data >= n:
+        factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(d))
+        covariance = jax.scipy.linalg.cho_solve(factor, np.eye(n))
+        ok = np.all(np.isfinite(factor[0])) & np.all(np.diag(factor[0]) > 0)
+        return covariance, ok
+    # Fewer data than parameters (an image's latents): by Woodbury,
+    # (D + JᵀJ)⁻¹ = W (I - Kᵀ(I + KKᵀ)⁻¹K) W with W = D^-1/2 and K = JW,
+    # which solves a system the size of the data, not of the parameters.
+    # Coordinates with flat priors (a few, e.g. a flux) have no D: give
+    # them D = 1, then take that back off, (A - EᵀE)⁻¹ = A⁻¹ +
+    # A⁻¹Eᵀ(I - EA⁻¹Eᵀ)⁻¹EA⁻¹ with E picking them out of A = D + JᵀJ.
+    w = 1 / np.sqrt(np.where(flat_prior, 1.0, d))
+    k = jac * w
+    inner = jax.scipy.linalg.cho_factor(np.eye(n_data) + k @ k.T)
+    shrink = k.T @ jax.scipy.linalg.cho_solve(inner, k)
+    a_inv = w[:, None] * (np.eye(n) - shrink) * w[None, :]
+    flats = onp.flatnonzero(flat_prior)
+    if flats.size == 0:
+        return a_inv, np.asarray(True)  # D + JᵀJ is positive definite
+    columns = a_inv[:, flats]
+    schur = jax.scipy.linalg.cho_factor(np.eye(flats.size) - columns[flats])
+    covariance = a_inv + columns @ jax.scipy.linalg.cho_solve(schur, columns.T)
+    ok = np.all(np.isfinite(schur[0])) & np.all(np.diag(schur[0]) > 0)
+    return covariance, ok
 
 
 def _has_residuals(problem, z):
@@ -527,6 +622,24 @@ def _scaled_loss(problem, scale):
     return lambda z: problem.loss(z) / scale
 
 
+def _tolerance(gradient, gtol):
+    """The gradient tolerance of LM and L-BFGS, from the starting gradient.
+
+    It is ``gtol``, or 1/1000 of the starting gradient's largest component
+    if that is smaller (so that a warm start still converges), but no less
+    than √eps times it. The gradient is a sum of terms that cancel at the
+    minimum, and rounding them leaves it a floor which, relative to the
+    starting gradient, is about eps times the data's signal-to-noise ratio
+    over the starting residuals: up to ~1e-4 in float32 (eps ≈ 1.2e-7),
+    where a fixed ``gtol = 1e-4`` was out of reach and LM ran all its
+    steps. The √eps floor (3.5e-4 in float32, 1.5e-8 in float64) clears
+    it, and is the usual stopping limit for finite-precision optimisers.
+    """
+    largest = _largest(gradient)
+    floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
+    return np.maximum(np.minimum(gtol, 1e-3 * largest), floor)
+
+
 class _GradientStoppedLM(optx.LevenbergMarquardt):
     """Levenberg-Marquardt that stops when the gradient of the loss is small.
 
@@ -538,14 +651,8 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
 
     tolerance: jax.Array
 
-    def __init__(self, tolerance, cg_steps):
-        super().__init__(
-            rtol=0.0,
-            atol=0.0,
-            linear_solver=lx.Normal(
-                lx.CG(rtol=0.0, atol=0.0, max_steps=cg_steps)
-            ),
-        )
+    def __init__(self, tolerance, linear_solver):
+        super().__init__(rtol=0.0, atol=0.0, linear_solver=linear_solver)
         self.tolerance = tolerance
 
     def terminate(self, fn, y, args, options, state, tags):
@@ -562,12 +669,31 @@ def _lm_residuals(z, args):
 @eqx.filter_jit
 def _lm_tolerance(problem, z0, scale, gtol):
     gradient = jax.grad(_scaled_loss(problem, scale))(z0)
-    return np.minimum(gtol, 1e-3 * _largest(gradient))
+    return _tolerance(gradient, gtol)
+
+
+# Up to this many unconstrained coordinates, LM's inner solve is a dense QR
+# of the Jacobian, which costs one Jacobian-vector product per coordinate.
+_DENSE_LM = 200
+
+
+def _lm_linear_solver(z0, cg_steps):
+    """QR for a few coordinates, else CG on the normal equations.
+
+    CG runs for exactly ``cg_steps`` steps (its tolerances are zero),
+    because an inner solve that stops at a step limit would abort the outer
+    one; it is exact after as many steps as there are coordinates, so it
+    runs no more than that.
+    """
+    n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
+    if n <= _DENSE_LM:
+        return lx.QR()
+    return lx.Normal(lx.CG(rtol=0.0, atol=0.0, max_steps=min(cg_steps, n)))
 
 
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
-    solver = _GradientStoppedLM(tolerance, cg_steps)
+    solver = _GradientStoppedLM(tolerance, _lm_linear_solver(z0, cg_steps))
     solution = optx.least_squares(
         _lm_residuals,
         solver,
@@ -625,7 +751,7 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     optimiser = _capped_lbfgs(max_step_size)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
-    tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
+    tolerance = _tolerance(jax.grad(loss)(z0), gtol)
 
     def keep_going(carry):
         step, _, _, gradient, moved = carry

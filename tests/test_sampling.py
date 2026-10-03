@@ -10,7 +10,8 @@ from numpyro.infer.util import initialize_model
 
 from virgil.coverage import vlti_oidata
 from virgil.fields import GaussianField
-from virgil.fitting import fit, gauss_newton_mass
+from virgil._precision import cast_tree, run_in
+from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.imaging import image_priors
 from virgil.likelihood import numpyro_model
 from virgil.models import GaussianDisk, Image, PointSource, System
@@ -81,6 +82,57 @@ def test_gauss_newton_mass_matches_the_curvature_and_its_layout():
     start = 1 if paths[0] == "env.flux" else 0
     variances = onp.diag(covariance)[start : start + N * N]
     assert onp.all(variances <= 1.0 + 1e-9) and variances.min() < 0.5
+
+
+def _dense_gauss_newton(model, priors, data, values):
+    """(JᵀJ)⁻¹ with J the full Jacobian of the residuals, priors included."""
+    with run_in("float64"):
+        problem = cast_tree(_Objective(model, priors, data), "float64")
+        z = problem.init(cast_tree(values, "float64"))
+        paths = problem.paths
+        shapes = [np.shape(z[p]) for p in paths]
+        flat = np.concatenate([np.ravel(z[p]) for p in paths])
+
+        def residuals(x):
+            sizes = onp.cumsum([int(onp.prod(s)) for s in shapes])[:-1]
+            pieces = np.split(x, sizes)
+            zz = {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+            return problem.residuals(zz)
+
+        jac = onp.asarray(jax.jacfwd(residuals)(flat))
+    return onp.linalg.inv(jac.T @ jac)
+
+
+@pytest.mark.parametrize("case", ["latents", "latents and flux", "disk"])
+def test_gauss_newton_mass_is_the_inverse_curvature(case):
+    # The covariance is computed from the data's Jacobian and the priors'
+    # diagonal curvature: by Woodbury when there are fewer data than
+    # parameters (an image, with or without a flat-prior flux), else
+    # directly. Each must equal (JᵀJ)⁻¹ from the full Jacobian.
+    data = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
+    ).with_model(_scene(onp.zeros((N, N)), 1.5, 2.0))
+    if case == "disk":
+        scene = System(star=PointSource(), env=GaussianDisk(3.0, flux=0.3))
+        priors = {
+            "env.sigma": dist.Normal(3.0, 1.0),
+            "env.flux": dist.Uniform(0.0, 1.0),
+        }
+        values = {"env.sigma": 3.2, "env.flux": 0.35}
+    else:
+        scene = _scene(onp.zeros((N, N)), 1.5, 2.0)
+        priors = image_priors(scene)
+        if case == "latents and flux":
+            priors |= {"env.flux": dist.Uniform(0.0, 1.0)}
+        latent = jax.random.normal(jax.random.PRNGKey(3), (N, N))
+        values = {"env.log_brightness.latent": 0.3 * latent, "env.flux": 0.4}
+        values = {k: v for k, v in values.items() if k in priors}
+    mass = gauss_newton_mass(scene, priors, data, values)
+    (paths,) = mass["dense_mass"]
+    covariance = mass["inverse_mass_matrix"][paths]
+    expected = _dense_gauss_newton(scene, priors, data, values)
+    scale = onp.max(onp.abs(expected))
+    onp.testing.assert_allclose(covariance, expected, atol=1e-9 * scale)
 
 
 def test_gauss_newton_mass_rejects_an_unconstrained_parameter():

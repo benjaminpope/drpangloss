@@ -27,3 +27,8 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - error_scale
         - diagnose
         - Diagnosis
+
+::: virgil._geometry
+    options:
+      members:
+        - pixel_offsets

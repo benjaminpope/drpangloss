@@ -214,6 +214,28 @@ def test_vis_mode_converts_data_without_an_operator():
     assert np.allclose(amp.model(TRUTH), amp.flatten_data()[0], atol=1e-5)
 
 
+def test_v2_near_zero_gives_bounded_amplitude_errors():
+    # Review 1.5: V² -> amplitude errors were ½σ/√V² with V² floored at
+    # 1e-30, so V² = 1e-4 ± 0.01 became |V| = 0.01 ± 0.5 and V² <= 0 gave
+    # errors of ~5e12. The data are now floored at their own error.
+    raw = _dict_data()
+    v2 = onp.array(raw["vis"])
+    v2[:4] = [1e-4, 0.0, -0.02, 0.49]
+    d_v2 = onp.full(v2.size, 1e-2)
+    amp = OIData({**raw, "vis": v2, "d_vis": d_v2, "vis_mode": "amp"})
+    floored = onp.maximum(v2[:4], 1e-2)
+    assert onp.allclose(amp.vis[:4], onp.sqrt(onp.maximum(v2[:4], 0.0)))
+    assert onp.allclose(amp.d_vis[:4], 0.5e-2 / onp.sqrt(floored))
+    assert float(np.max(amp.d_vis)) <= 0.5 * onp.sqrt(1e-2) + 1e-7
+
+    log = OIData({**raw, "vis": v2, "d_vis": d_v2, "vis_mode": "logamp"})
+    assert onp.allclose(log.vis[:4], 0.5 * onp.log(floored))
+    assert onp.allclose(log.d_vis[:4], 0.5e-2 / floored)
+    assert float(np.max(log.d_vis)) <= 0.5 + 1e-7
+    # Far from zero the propagation is unchanged.
+    assert onp.isclose(float(amp.d_vis[3]), 0.5e-2 / 0.7, rtol=1e-6)
+
+
 def test_pre_projected_closure_phases_are_not_projected_again():
     # One triangle: any two of four share a baseline, so their outputs
     # correlate and are rotated (see test_closure).

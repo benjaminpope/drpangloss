@@ -19,7 +19,6 @@ from virgil.models import (
     FlaredDiskHG,
     FlaredDiskPowerLaw,
     GaussianDisk,
-    GaussianDiskModel,
     GravityDarkenedStar,
     HarmonixModel,
     Image,
@@ -28,7 +27,6 @@ from virgil.models import (
     Rotated,
     System,
     UniformDisk,
-    cvis_gaussian_disk,
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
@@ -40,23 +38,21 @@ from tests._test_data import oidata
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 
 
+def _star_and_disk(sigma, flux, dra=0.0, ddec=0.0):
+    return System(
+        star=PointSource(),
+        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
+    )
+
+
 def _star_and_rim(flux, **rim_kwargs):
     return System(
         star=PointSource(), rim=ModulatedGaussianRim(flux=flux, **rim_kwargs)
     )
 
 
-def test_cvis_gaussian_disk_is_well_behaved():
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_disk(uu, vv, sigma=20.0, flux=0.1, dra=5.0, ddec=-3.0)
-    assert cvis.shape == uu.shape
-    assert np.all(np.isfinite(cvis))
-    assert np.all(np.abs(cvis) <= 1.0 + 1e-12)
-
-
 def test_gaussian_disk_oidata_and_render():
-    model = GaussianDiskModel(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
+    model = _star_and_disk(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
     model_vec = oidata.model(model)
     image = model.render(npix=64, fov_mas=150.0)
 
@@ -68,7 +64,7 @@ def test_gaussian_disk_oidata_and_render():
 
 
 def test_gaussian_disk_render_remains_finite_for_narrow_shifted_disk():
-    image = GaussianDiskModel(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
+    image = _star_and_disk(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
         npix=32, fov_mas=20.0
     )
 
@@ -433,7 +429,7 @@ def test_binary_render_is_available():
     [
         (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
         (BinaryModelAngular(20.0, 60.0, 1.0 / 3.0), 2e-3),
-        (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
+        (_star_and_disk(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
         (
             Image.from_model(GaussianDisk(4.0), 49, 0.5, dra=6.0, ddec=-3.0),
@@ -575,7 +571,7 @@ def test_image_coordinates_use_pixel_centers(npix, fov_mas, expected):
 
 
 def test_gaussian_disk_render_uses_interferometric_image_orientation():
-    image = GaussianDiskModel(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
+    image = _star_and_disk(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
         npix=5, fov_mas=10.0
     )
 
