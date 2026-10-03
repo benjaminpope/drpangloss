@@ -194,9 +194,10 @@ def make_plots(name, data, samples, post, out):
         jnp.abs(star.model(data["u"], data["v"], data["wavel"])) ** 2
     )
     sigma = np.hypot(data["v2_err"], med["jitter"])
-    # V^2 against baseline / wavelength, coloured by baseline angle
+    # V^2 against baseline / wavelength, coloured by baseline position angle
+    # (East of North: u is East, v is North)
     bl = np.hypot(data["u"], data["v"]) / data["wavel"]
-    theta = np.degrees(np.arctan2(data["v"], data["u"])) % 180
+    theta = np.degrees(np.arctan2(data["u"], data["v"])) % 180
     fig, (a0, a1) = plt.subplots(
         2, 1, figsize=(8, 6), sharex=True, height_ratios=[3, 1]
     )
@@ -205,7 +206,7 @@ def make_plots(name, data, samples, post, out):
     a0.plot(bl, vis2, "k.", ms=2, label="median model")
     a0.set(ylabel=r"$V^2$", title=label)
     a0.legend()
-    fig.colorbar(sc, ax=[a0, a1], label="baseline angle (deg)")
+    fig.colorbar(sc, ax=[a0, a1], label="baseline PA, E of N (deg)")
     a1.errorbar(bl, data["v2"] - vis2, sigma, fmt=".", ms=3, lw=0.5)
     a1.axhline(0, c="k", lw=0.5)
     a1.set(xlabel=r"baseline / $\lambda$", ylabel="residual")
