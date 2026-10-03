@@ -26,10 +26,12 @@ i_cps1, i_cps2, i_cps3 = oidata.i_cps1, oidata.i_cps2, oidata.i_cps3
 
 params = ["dra", "ddec", "flux"]
 
+# Coarse on purpose: the grid tests check shapes, axis order and agreement
+# between code paths, not detection limits, and every point costs a fit.
 samples_dict = {
-    "dra": np.linspace(600.0, -600.0, 100),
-    "ddec": np.linspace(-600.0, 600.0, 101),
-    "flux": 10 ** np.linspace(-6, -1, 102),
+    "dra": np.linspace(600.0, -600.0, 30),
+    "ddec": np.linspace(-600.0, 600.0, 31),
+    "flux": 10 ** np.linspace(-6, -1, 32),
 }
 
 true_values = [250.0, 150.0, 5e-4]

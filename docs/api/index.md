@@ -17,5 +17,4 @@ The everyday names are importable from the top level, e.g.
 - [Scenes](scenes.md): synthetic truth images for testing reconstructions
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations
 - [Plotting](plotting.md): figures
-- [Bessel](bessel.md): Bessel functions in JAX
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

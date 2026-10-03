@@ -12,6 +12,7 @@ the same arguments to ``numpyro_model``.
 """
 
 import dataclasses
+import math
 import warnings
 
 import equinox as eqx
@@ -269,6 +270,7 @@ def fit(
     method=None,
     max_steps=None,
     gtol=1e-4,
+    max_step_size=2.0,
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
@@ -318,8 +320,9 @@ def fit(
         when the whole objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
-        No unconstrained coordinate moves by more than 1 per step, so that
-        log-brightness pixels cannot be switched off by one long step.
+        No unconstrained coordinate moves by more than ``max_step_size``
+        per step, so that log-brightness pixels cannot be switched off by
+        one long step.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
@@ -328,6 +331,14 @@ def fit(
         per data point exceeds ``gtol``, nor 1/1000 of its largest starting
         value (so that a fit started near a solution, e.g. along an
         L-curve, still converges).
+    max_step_size : float, optional
+        L-BFGS moves no unconstrained coordinate by more than this per step
+        (for a log-brightness pixel, a factor ``exp(max_step_size)``).
+        Uncapped, its line search accepts steps that drive pixels so dark
+        that their gradient vanishes and they never recover, leaving the fit
+        at a spurious stationary point far above the minimum. Coordinates
+        with real support (e.g. a position under a Normal prior) are in
+        their own units, so raise this if they must move far.
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -346,6 +357,10 @@ def fit(
         The fitted model, parameter values and diagnostics. A warning is
         raised if LM or L-BFGS did not converge.
     """
+    if not math.isfinite(max_step_size) or max_step_size <= 0:
+        raise ValueError(
+            f"max_step_size must be finite and positive, not {max_step_size}."
+        )
     with run_in(dtype):
         problem = cast_tree(
             _Objective(model, priors, data, regularisers, noise), dtype
@@ -362,7 +377,7 @@ def fit(
             )
         elif method == "lbfgs":
             z, steps, converged = _lbfgs(
-                problem, z0, scale, max_steps or 20_000, gtol
+                problem, z0, scale, max_steps or 20_000, gtol, max_step_size
             )
         elif method == "adam":
             steps = max_steps or 2000
@@ -565,36 +580,49 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
     return solution.value, int(solution.stats["num_steps"]), converged
 
 
-@eqx.filter_jit
-def _lbfgs_run(problem, z0, scale, max_steps, gtol):
-    # optax's L-BFGS (with a zoom line search), stopped on the gradient.
-    # A gradient test suits log-brightness pixels: the gradient for a pixel
-    # that should be dark vanishes with its flux, while its value keeps
-    # drifting, and a test on the loss change can stop at the first short
-    # line-search step. The gradient must also fall by a factor of 1000 from
-    # where it started, so that a warm start (e.g. along an L-curve, whose
-    # gradient is small from the outset) still converges rather than
-    # stopping at once.
-    #
-    # No coordinate may move by more than 1 per step (the clip, and a line
-    # search that may not lengthen the step), i.e. a factor of e in a
-    # brightness or flux. Otherwise an early quasi-Newton step, built from
-    # one or two gradients, can move log-brightness pixels by 10 or more:
-    # their gradients vanish with their flux, so they never come back, and
-    # the fit stops on a few bright pixels (e.g. a cold-started MaxEntropy
-    # image at weak weights). The fit also stops, unconverged, when a step
-    # no longer changes the parameters (the line search has run out of
-    # precision, as can happen in float32).
-    optimiser = optax.chain(
+def _capped_lbfgs(max_step_size):
+    """optax's L-BFGS, with no coordinate moving more than ``max_step_size``.
+
+    The L-BFGS direction is scaled down to the cap before the zoom line
+    search, whose step is then at most 1, so the line search evaluates the
+    points actually taken (as ``optax.value_and_grad_from_state`` needs).
+    Without the cap, a softmax image can take a step of ~20 in its
+    log-brightnesses that sends most pixels to ~exp(-20): their gradient,
+    proportional to their brightness, then vanishes, and the fit stalls.
+    Scaling the whole step, rather than clipping each coordinate, keeps the
+    quasi-Newton direction.
+    """
+
+    def cap(updates, state, params=None):
+        factor = np.minimum(1.0, max_step_size / _largest(updates))
+        return jax.tree.map(lambda u: u * factor, updates), state
+
+    return optax.chain(
         optax.scale_by_lbfgs(),
         optax.scale(-1.0),
-        optax.clip(1.0),
+        optax.GradientTransformation(lambda params: optax.EmptyState(), cap),
         optax.scale_by_zoom_linesearch(
             max_linesearch_steps=20,
             max_learning_rate=1.0,
             initial_guess_strategy="one",
         ),
     )
+
+
+@eqx.filter_jit
+def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
+    # optax's L-BFGS (with a zoom line search, and capped steps; see
+    # _capped_lbfgs), stopped on the gradient.
+    # A gradient test suits log-brightness pixels: the gradient for a pixel
+    # that should be dark vanishes with its flux, while its value keeps
+    # drifting, and a test on the loss change can stop at the first short
+    # line-search step. The gradient must also fall by a factor of 1000 from
+    # where it started, so that a warm start (e.g. along an L-curve, whose
+    # gradient is small from the outset) still converges rather than
+    # stopping at once. The fit also stops, unconverged, when a step no
+    # longer changes the parameters (the line search has run out of
+    # precision, as can happen in float32).
+    optimiser = _capped_lbfgs(max_step_size)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
     tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
@@ -622,8 +650,10 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol):
     return z, count, gradient <= tolerance
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol):
-    z, count, converged = _lbfgs_run(problem, z0, scale, max_steps, gtol)
+def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
+    z, count, converged = _lbfgs_run(
+        problem, z0, scale, max_steps, gtol, max_step_size
+    )
     return z, int(count), bool(converged)
 
 

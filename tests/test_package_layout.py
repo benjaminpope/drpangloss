@@ -21,16 +21,6 @@ def test_everyday_names_are_top_level():
         assert hasattr(drpangloss, name), name
 
 
-def test_bessel_module_is_self_contained():
-    # bessel.py is meant to become its own package: it must not import
-    # anything else from drpangloss.
-    tree = ast.parse((SRC / "bessel.py").read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            assert not node.level, f"relative import of {node.module}"
-            assert not (node.module or "").startswith("drpangloss")
-
-
 def test_limits_do_not_depend_on_grid_fit():
     # Both share the private _grid machinery instead.
     tree = ast.parse((SRC / "limits.py").read_text())

@@ -298,7 +298,7 @@ def _two_flux_template():
 
 
 def test_ambiguous_flux_needs_flux_param():
-    small = {key: value[::20] for key, value in _path_samples().items()}
+    small = {key: value[::6] for key, value in _path_samples().items()}
     grid = {"disk.flux": np.array([0.05, 0.1]), **small}
     with pytest.raises(ValueError, match="Pass flux_param"):
         optimized_flux_grid(oidata, _two_flux_template(), grid)
@@ -309,7 +309,7 @@ def test_ambiguous_flux_needs_flux_param():
 
 
 def test_flux_inference_matches_explicit_and_model_class():
-    small = {key: value[::20] for key, value in _path_samples().items()}
+    small = {key: value[::6] for key, value in _path_samples().items()}
     inferred = optimized_flux_grid(oidata, _composed_binary(), small)
     legacy_samples = {key.split(".")[1]: value for key, value in small.items()}
     legacy = optimized_flux_grid(oidata, BinaryModelCartesian, legacy_samples)
@@ -353,7 +353,7 @@ def test_new_template_values_do_not_recompile(monkeypatch):
 
 
 def test_flux_param_can_be_any_key_regardless_of_order():
-    small = {key: value[::20] for key, value in _path_samples().items()}
+    small = {key: value[::6] for key, value in _path_samples().items()}
     reordered = {
         "comp.flux": small["comp.flux"],
         "comp.dra": small["comp.dra"],
@@ -416,7 +416,7 @@ def test_optimized_likelihood_grid_with_paths_matches_model_class():
 
 
 def test_absil_limits_with_paths_matches_model_class():
-    small = {key: value[::10] for key, value in samples_dict.items()}
+    small = {key: value[::3] for key, value in samples_dict.items()}
     paths = {f"comp.{key}": value for key, value in small.items()}
     assert np.allclose(
         absil_limits(
