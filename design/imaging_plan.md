@@ -368,6 +368,7 @@ These stages draw on three notes:
 
 The last two came out of fitting GRAVITY data on Apep, but are written as general capabilities.
 
+0. **6.0: urgent reader and likelihood fixes** (PR #120; from the GRAVITY review). These come first because GRAVITY and PIONIER are in active use.
 1. **6a.0: times and frames in `OIData`** (S §2.5). A small PR, which unblocks the orbits, VISPHI and Stage 6d.
 2. **6a.1: orbits and binary-frame scenes.** Decided 2026-10-03: they are needed now, for the Apep analysis.
 3. **6a: spectro-interferometry.**
@@ -375,6 +376,23 @@ The last two came out of fitting GRAVITY data on Apep, but are written as genera
 5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance and the dual-field recipe.
 6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
 7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
+
+## Stage 6.0: urgent reader and likelihood fixes (done; PR #120)
+From [`gravity_calibration_review.md`](gravity_calibration_review.md), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
+- **Only independent closure phases, with their covariance diagonalised first.** Triangles that share baselines (one frame and channel) are grouped. Their covariance is T diag(s) Tᵀ from independent baseline-phase noise. The likelihood whitens the independent combinations (`OIData.cp_noise`, `n_independent`). Three-telescope data are unchanged.
+- **`read_oifits(insname=...)`.** GRAVITY FT and SC tables are never merged silently, and FT data are skipped.
+- **`PHITYP`.** A differential VISPHI is never read as an absolute phase.
+- **No silent diagonal truncation.** A linear operator whose outputs correlate is rotated onto independent outputs.
+- **Follow-up:** re-run the PIONIER (nuHor, Toon) and Apep GRAVITY analyses, and re-execute the docs tutorials before the release.
+
+## The GRAVITY project (separate; after the core of virgil works)
+Decided 2026-10-03: serious GRAVITY-specific development is its own project, started once the core package works. It covers:
+- empirical covariances from the per-DIT products;
+- the archival-calibrator PCA of systematics ([`gravity_calibrator_pca.md`](gravity_calibrator_pca.md));
+- the GRAVITY-specific parts of fibre injection;
+- telluric and wavelength calibration.
+
+The core keeps generic interfaces: a primary beam (6a), low-rank nuisance modes (6d), and an `insname` selector. Questions for the instrument team are in [`questions_for_gravity_team.md`](questions_for_gravity_team.md).
 
 ## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
 From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
