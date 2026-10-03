@@ -318,5 +318,11 @@ def test_a_start_at_an_exact_optimum_is_converged(method):
             warnings.simplefilter("error")
             result = fit(truth, priors, clean, method=method)
     assert result.info["converged"] is True
-    assert result.info["steps"] <= 3
+    # L-BFGS tests the starting gradient before its first step, so an
+    # optimal start must not be moved at all
+    assert (
+        result.info["steps"] == 0
+        if method == "lbfgs"
+        else result.info["steps"] <= 3
+    )
     assert onp.max(result.info["chi2"]) < 1e-12

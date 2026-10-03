@@ -330,7 +330,9 @@ def fit(
         LM and L-BFGS stop when no component of the gradient of the loss
         per data point exceeds ``gtol``, nor 1/1000 of its largest starting
         value (so that a fit started near a solution, e.g. along an
-        L-curve, still converges).
+        L-curve, still converges), but never require it below
+        ``1e-6 * gtol``: a fit started exactly at a zero-residual
+        optimum, whose gradient is rounding noise, is converged at once.
     max_step_size : float, optional
         L-BFGS moves no unconstrained coordinate by more than this per step
         (for a log-brightness pixel, a factor ``exp(max_step_size)``).
