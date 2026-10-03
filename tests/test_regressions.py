@@ -557,12 +557,16 @@ def test_batched_grid_matches_unbatched():
         likelihood_grid(oidata, BinaryModelCartesian, samples, batch_size=0)
 
 
-def test_default_batch_size_scales_with_data_size():
-    from drpangloss._grid import (
-        BATCH_VISIBILITIES,
-        MIN_BATCH_SIZE,
-        batch_size_or_default,
-    )
+@pytest.mark.parametrize(
+    "backend, budget", [("cpu", 2**20), ("gpu", 2**23), ("tpu", 2**23)]
+)
+def test_default_batch_size_scales_with_data_size(
+    monkeypatch, backend, budget
+):
+    from drpangloss import _grid
+    from drpangloss._grid import MIN_BATCH_SIZE, batch_size_or_default
+
+    monkeypatch.setattr(_grid.jax, "default_backend", lambda: backend)
 
     def data_with(n_vis):
         values = {
@@ -570,12 +574,11 @@ def test_default_batch_size_scales_with_data_size():
         }
         return OIData({**_base_dict(), **values, "d_phi": np.ones(n_vis)})
 
-    # Small data get a batch of ~BATCH_VISIBILITIES model visibilities.
-    assert batch_size_or_default(None, data_with(24)) == (
-        BATCH_VISIBILITIES // 24
-    )
+    # Small data get a batch of ~budget model visibilities.
+    assert batch_size_or_default(None, data_with(24)) == budget // 24
     # Large data keep the minimum, bounding memory as before.
-    assert batch_size_or_default(None, data_with(10_000)) == MIN_BATCH_SIZE
+    n_large = budget // MIN_BATCH_SIZE + 1
+    assert batch_size_or_default(None, data_with(n_large)) == MIN_BATCH_SIZE
     # An explicit batch size is used as given.
     assert batch_size_or_default(7, data_with(24)) == 7
 
