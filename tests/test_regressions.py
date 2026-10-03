@@ -435,10 +435,8 @@ def test_best_grid_point_rejects_reduced_grids():
     }
 
 
-def test_legacy_save_writes_a_readable_file(tmp_path):
-    from virgil.legacy import oifits_implaneia
-
-    phi = onp.array([10.0, -5.0, 3.0])
+def _legacy_dic(phi):
+    """A three-hole dictionary for the legacy ImPlaneIA writer."""
     dic = {
         "info": {
             "TARGET": "UNKNOWN",
@@ -501,6 +499,14 @@ def test_legacy_save_writes_a_readable_file(tmp_path):
         STA_INDEX=dic["OI_VIS"]["STA_INDEX"],
         FLAG=onp.zeros(3, dtype=bool),
     )
+    return dic
+
+
+def test_legacy_save_writes_a_readable_file(tmp_path):
+    from virgil.legacy import oifits_implaneia
+
+    phi = onp.array([10.0, -5.0, 3.0])
+    dic = _legacy_dic(phi)
     original_mjd = list(dic["info"]["MJD"])
 
     oifits_implaneia.save(dic, datadir=tmp_path)
@@ -513,6 +519,22 @@ def test_legacy_save_writes_a_readable_file(tmp_path):
         assert hdul[0].header["MASK"] == "MASK3"
         assert hdul["OI_ARRAY"].data["FOV"][0] == pytest.approx(0.065 * 81 / 2)
     assert np.allclose(OIData(path).phi, onp.deg2rad(12.0))
+
+
+def test_legacy_save_needs_astroquery_for_a_named_target(
+    tmp_path, monkeypatch
+):
+    # Without the [legacy] extra a named target must not be written with
+    # placeholder coordinates.
+    import sys
+
+    from virgil.legacy import oifits_implaneia
+
+    dic = _legacy_dic(onp.array([10.0, -5.0, 3.0]))
+    dic["info"]["TARGET"] = "HD 1"
+    monkeypatch.setitem(sys.modules, "astroquery.simbad", None)
+    with pytest.raises(ImportError, match=r"virgil-astro\[legacy\]"):
+        oifits_implaneia.save(dic, datadir=tmp_path)
 
 
 def test_transposed_operator_is_rejected_with_a_hint():
