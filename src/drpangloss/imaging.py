@@ -371,7 +371,12 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     flux_ratio : float, optional
         If the scene is a star at the origin plus extended emission with
         this flux relative to the star, the star is removed first, so the
-        map shows the extended emission alone.
+        map shows the extended emission alone. The star is removed by
+        subtracting the best-fitting point source at the origin (the
+        weighted mean of the visibilities), then scaling by
+        ``(1 + flux_ratio) / flux_ratio``. That is robust to the
+        normalisation of the visibilities, which matters because subtracting
+        a bright star amplifies any error in it by ``1 / flux_ratio``.
 
     Returns
     -------
@@ -385,7 +390,8 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     for d in observations:
         vis, weight = _complex_visibilities(d)
         if flux_ratio is not None:
-            vis = ((1.0 + flux_ratio) * vis - 1.0) / flux_ratio
+            star = onp.sum(weight * onp.real(vis)) / onp.sum(weight)
+            vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
         cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))  # (k, col)
@@ -668,7 +674,7 @@ class LCurve:
             image = result.model.get(path)
             if isinstance(image.log_brightness, GaussianField):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            jac = _residual_jacobian(
+            _, jac = _residual_jacobian(
                 result.model, data, path + ".log_brightness"
             )
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
@@ -693,10 +699,11 @@ class LCurve:
 
 
 def _residual_jacobian(model, data, path):
-    """Jacobian of all the whitened residuals with respect to one leaf.
+    """All the whitened residuals, and their Jacobian with respect to a leaf.
 
-    Returns a NumPy array of shape ``(n_data, leaf.size)``, computed in
-    float64 with whichever of forward or reverse mode is cheaper.
+    Returns NumPy arrays ``(residuals, jacobian)`` of shapes ``(n_data,)``
+    and ``(n_data, leaf.size)``, computed in float64, with whichever of
+    forward or reverse mode is cheaper for the Jacobian.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     with run_in("float64"):
@@ -712,7 +719,10 @@ def _residual_jacobian(model, data, path):
         n_data = sum(int(np.size(d.flatten_data()[0])) for d in datasets)
         mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
         jac = mode(residuals)(leaf)
-        return onp.asarray(jac, dtype=float).reshape(n_data, -1)
+        r = residuals(leaf)
+        return onp.asarray(r, dtype=float), onp.asarray(
+            jac, dtype=float
+        ).reshape(n_data, -1)
 
 
 def _smaller_gram(matrix):
@@ -760,21 +770,105 @@ def log_evidence(model, data, path="env"):
             f"log_evidence needs an Image with a GaussianField at {path!r}."
         )
     latent_path = path + ".log_brightness.latent"
-    jac = _residual_jacobian(model, data, latent_path)
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    with run_in("float64"):
-        model64, datasets = cast_tree((model, datasets), "float64")
-        chi2 = sum(
-            float(np.sum(whitened_residuals(model64, d) ** 2))
-            for d in datasets
-        )
-        z = onp.asarray(model64.get(latent_path), dtype=float)
+    r, jac = _residual_jacobian(model, data, latent_path)
+    chi2 = float(r @ r)
+    z = onp.asarray(model.get(latent_path), dtype=float)
     # I + JᵀJ is symmetric positive definite: its log-determinant from a
     # Cholesky factor.
     gram = _smaller_gram(jac)
     factor = onp.linalg.cholesky(onp.eye(gram.shape[0]) + gram)
     logdet = 2.0 * onp.sum(onp.log(onp.diag(factor)))
     return float(-0.5 * chi2 - 0.5 * onp.sum(z**2) - 0.5 * logdet)
+
+
+def error_scale(model, data, path="env"):
+    r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
+
+    **What it does.** It estimates the factor ``s`` by which every error
+    bar should be multiplied for the data to be consistent with the fit.
+    ``s < 1`` means the error bars are too large; ``s > 1`` that they are
+    too small, or that the model is missing something.
+
+    **The idea.** In MacKay's evidence framework, the level of the noise is
+    a hyperparameter, like the prior's ``sigma`` and ``length_mas``. Write
+    the noise precision as β = 1/s², so that the likelihood is
+    ``exp(-β χ²/2)``, with χ² computed with the quoted errors. The
+    Laplace-approximated evidence, as a function of β, is maximised when
+
+    $$\frac{1}{\beta} = s^2 = \frac{\chi^2}{N - \gamma},
+    \qquad \gamma = \sum_i \frac{\lambda_i}{1 + \lambda_i}.$$
+
+    ``N`` is the number of data. ``γ`` is the **effective number of
+    parameters** the data measure: the ``λ_i`` are the eigenvalues of the
+    Gauss–Newton curvature ``JᵀJ`` of the likelihood in the field's
+    whitened latents, in which the prior's curvature is the identity. A
+    direction with ``λ ≫ 1`` is fixed by the data and counts as one
+    parameter; one with ``λ ≪ 1`` is fixed by the prior and counts as none.
+
+    Each measured parameter uses up one datum's worth of scatter. So of the
+    ``N`` residuals, only ``N − γ`` are free to scatter, and an honest error
+    bar gives χ² ≈ N − γ, not N. The ordinary "χ² per point" estimate,
+    ``s² = χ²/N``, is biased low for the same reason as the 1/N estimate of
+    a sample variance; this is its Bayesian, nonlinear generalisation. It is
+    MacKay's re-estimation formula for β (MacKay 1992, eq. 4.14; Bishop
+    2006, eq. 3.95).
+
+    **How to use it.** Fit at your chosen hyperparameters, call this, rescale
+    the data with
+    [`OIData.with_error_scale`][drpangloss.oidata.OIData.with_error_scale],
+    and refit. The estimate depends on the fit, which depends on the errors,
+    so in principle this is a fixed-point iteration; in practice one
+    iteration usually suffices. Error bars that are too large make the
+    discrepancy principle, classic MaxEnt and the evidence all
+    over-regularise, so rescale before choosing hyperparameters with any of
+    them. The estimate assumes the model is adequate: if the data contain
+    structure the model cannot fit, ``s`` absorbs it.
+
+    Only the field's latents are counted in ``γ``. Each other fitted
+    parameter (the image's flux, a star's position, a spectral index) that
+    the data measure lowers ``N − γ`` by about one more, and so raises
+    ``s`` by a fraction of about 1/(2N). That is negligible while such
+    parameters are few compared with the data, as in every SPARCO fit.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The MAP model, whose Image at ``path`` has a GaussianField
+        log-brightness.
+    data : OIData or sequence of OIData
+        The data it was fitted to.
+    path : str, optional
+        Path of the Image in the model (default ``"env"``).
+
+    Returns
+    -------
+    float
+        The scale ``s``.
+
+    References
+    ----------
+    - D. J. C. MacKay (1992), "Bayesian interpolation", Neural Computation
+      4, 415–447, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415).
+      It introduces the evidence framework, γ, and the re-estimation of
+      α and β.
+    - C. M. Bishop (2006), *Pattern Recognition and Machine Learning*,
+      §3.5, "The evidence approximation" ([free PDF](https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/)):
+      the same results for linear models, eqs. 3.91–3.95.
+    - S. F. Gull (1989), "Developments in maximum entropy data analysis",
+      in *Maximum Entropy and Bayesian Methods*, Kluwer, 53–71: the same
+      ``N − γ`` argument for maximum entropy, the basis of
+      [`LCurve.classic_maxent`][drpangloss.imaging.LCurve.classic_maxent].
+    """
+    image = model.get(path)
+    if not isinstance(image.log_brightness, GaussianField):
+        raise TypeError(
+            f"error_scale needs an Image with a GaussianField at {path!r}."
+        )
+    r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    chi2 = float(r @ r)
+    curvature = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
+    gamma = float(onp.sum(curvature / (1.0 + curvature)))
+    return float(onp.sqrt(chi2 / (jac.shape[0] - gamma)))
 
 
 def l_curve(

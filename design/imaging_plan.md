@@ -30,7 +30,7 @@ The design rationale was established in the earlier research: the gauge survey, 
    - `fit` finds the MAP; `numpyro_model` is the posterior for samplers, and accepts only genuine prior regularisers (it rejects MEM, TV and TSV).
 4. **Optimisers:** `fit(..., method=...)` with:
    - `"lm"`: optimistix Levenberg–Marquardt with a matrix-free, fixed-length `lx.Normal(lx.CG)` or `lx.LSMR` inner solve. It never materialises a Jacobian and is the default when residuals exist.
-   - `"lbfgs"`: optimistix LBFGS, for MEM, TV and free error inflation.
+   - `"lbfgs"`: optax L-BFGS with a zoom line search (stopped on the gradient), for MEM, TV and free error inflation.
    - `"adam"`: optax, now a declared runtime dependency.
 5. **Image parameterisation.**
    - `Image(log_brightness, pixel_scale_mas, support=None, flux, dra, ddec, rotation_deg=0)` is a `Component`, and `brightness = softmax(η, where=support)`.
@@ -314,10 +314,39 @@ A background split off as a `Resolved` component also changes what the image's i
   - Classic MaxEnt picks w = 15.7, NCC 0.91. The discrepancy principle picks w = 32.5, NCC 0.88, and the corner w = 100.
   - All fits converge: the sweep runs w ≥ 3, and refits are allowed 2 × 10⁵ L-BFGS steps.
 
+**Log, 5c (2026-10-01):** this PR covers the GP prior in practice, sampling basics and the imaging tutorials.
+- **Library:**
+  - `imaging.error_scale(model, data)` is MacKay's noise re-estimate, s = √(χ²/(N − γ)) with γ = Σ λ/(1 + λ), and `OIData.with_error_scale(s)` rescales a dataset. The docstring gives the derivation and references (MacKay 1992; Bishop 2006 §3.5; Gull 1989). It was motivated by PIONIER's conservative errors, χ²/N ≈ 0.5–0.8.
+  - `dirty_image(flux_ratio=...)` now removes the star by subtracting the best-fitting point source. Subtracting a fixed one amplified the DISCO normalisation error by 1/f and left a residual star at the centre.
+  - The `sampling` extra (blackjax), and a 16² NUTS test that the injected σ lies in its 90% interval (x64 only). An eight-seed check gave 68% coverage in 6/8 runs and 90% in 8/8.
+- **Docs tutorials** on simulated data (Imaging parts 2–4):
+  - **`imaging_rml`:** the dirty image, moments against dirty starts, the L-curve, the discrepancy principle and the corner, and `diagnose`. Both starts reach NCC 0.98.
+  - **`imaging_gp`:** prior draws, an LM MAP fit, the evidence over σ and ℓ gridded in units of the beam, the `error_scale` check (s = 1.04 with honest errors, 0.52 with errors overstated twofold, and 0.99 after rescaling), and a comparison with MEM.
+  - **`imaging_composite`:** a ring around a binary. With one star, the image absorbs the companion as a knot (NCC 0.22). The knot locates it, and the binary fit recovers it (0.080 at (1.47, −0.99) mas, against a truth of 0.080 at (1.5, −1.0)) and the ring (NCC 0.96). The evidence prefers the binary by Δlog Z ≈ 28, although χ² differs by only 3.
+- **Real data** (nuHor, run on OzSTAR A100s in about 6 min each, against more than 30 min on the laptop):
+  - IRAS 08544: GP d_env 0.45 and MEM 0.45, against the paper's 0.42 (0.37 for the GP before the errors were rescaled).
+  - IW Car: GP d_env 0.82 and MEM 0.88, against the paper's d_rim 0.89.
+  - The notebooks now rescale the errors first, grid ℓ in units of the beam, and run converged sweeps.
+- **Not done:** a sampling MWE at 32–64², which is Stage 5d.
+
+**Checkpoint (2026-10-02):**
+- **The GP prior is worth it, and it becomes the recommended prior.** The reasons:
+  - The evidence chooses σ and ℓ with no L-curve.
+  - `error_scale` calibrates PIONIER's conservative errors.
+  - LM fits converge in tens of steps, where MEM sweeps need up to 2 × 10⁵ L-BFGS steps.
+  - On real data the GP matches or beats MEM: on IRAS 08544 it is the only image that shows the compact emission near the binary.
+  - MEM and TSV stay supported, as the classical comparison.
+- **Sampling needs no mass-matrix helper, so `gauss_newton_diagonal` is dropped.** Plain NUTS was tested with σ and ℓ marginalised, on 150 VLTI points with 500 warmup steps:
+  - At 32², 48² and 64², NUTS uses 127 leapfrog steps per draw and has no divergences. σ and ℓ have an ESS of 100–200 per 300 draws.
+  - 64² takes about 30 s on the laptop.
+  - A diagonal Gauss–Newton start changes nothing. A dense one is worse: about 3–20 ESS per 300 draws and 6 divergences. It is built at fixed σ and ℓ, but the posterior's shape moves with them.
+  - The 41² tree-depth saturation was specific to one scene, and is revisited only if a real dataset shows it.
+- **Sampling enters the docs as supported** once a tutorial exists (Stage 5d): posterior mean and standard-deviation maps, and the posteriors of σ and ℓ. Stage 6 builds on `GaussianField`.
+
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop:
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
-2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). This needs per-observation models in `fit`, i.e. a `model_fn(values, index)`, like `joint_loglike`.
+2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). The per-observation models this needs exist since Stage 4b: `fit` accepts a model function returning one model per dataset.
 3. **`ImageCube`.** Per-channel log-brightness with a GP along wavelength: a separable DCT field over (λ, y, x). The translation gauge is fixed per channel (one centroid per channel), unless an analytic star anchors it.
 
 **Tests:**
@@ -389,7 +418,7 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 
 **Scope changes since revision 4:**
 - The OzSTAR GPU benchmark was run on 2026-09-30 (A100; results in `design/image_reconstruction.md`). It confirmed the TF32 fix and led to shelving the NUFFT (issue #75).
-- Coverage comes from (a) a geometry-and-noise fixture extracted from ν Hor and (b) a simple synthetic-coverage generator (`tests/_coverage.py`: N telescopes, Earth-rotation tracks, channels, σ drawn from ν Hor statistics).
+- Coverage is synthetic, the fallback named under "Coverage fixtures": `coverage.vlti_oidata` (four-telescope Earth-rotation tracks over many channels) and `coverage.nrm_oidata`. No ν Hor fixture was committed, and real data (PIONIER) are analysed in nuHor instead.
 
 ### OzSTAR GPU test (done 2026-09-30)
 Run by the user (Claude never connects to OzSTAR) on an A100. It confirmed that `Precision.HIGHEST` gives float32-accurate DFTs on the GPU (7.9e-7, against 2.7e-5 with TF32), and that the jax-finufft NUFFT was too slow there, which led to its removal. Results and figures are in `design/image_reconstruction.md`; the scripts are in the git history of PR #71.
