@@ -14,25 +14,38 @@ import numpy as np
 from ._utils import concrete, is_flux_param, resolve_flux_param
 
 
-# Grid points are evaluated in batches of this many, which bounds memory on
-# large grids: each point holds a full model evaluation and, in the
-# optimizers, a BFGS state. 256 keeps multi-component float64 models over
-# DISCO data within a laptop's memory. The public functions take
-# ``batch_size=`` to change it, e.g. larger for small models.
-DEFAULT_BATCH_SIZE = 256
+# Grid points are evaluated in batches, which bounds memory on large grids:
+# each point holds a full model evaluation and, in the optimizers, a BFGS
+# state, so memory per point grows with the number of model visibilities
+# (measured on CPU: ~25 bytes per visibility for a float32 likelihood grid,
+# up to ~450 for a float64 flux optimization of a three-component System).
+# By default a batch holds about BATCH_VISIBILITIES model visibilities
+# (~0.5 GB in that worst case), and never fewer than MIN_BATCH_SIZE points,
+# the earlier fixed default, so large data use as little memory as before.
+# On an M4 CPU, warm grid times stop improving at ~1e6 visibilities per
+# batch; small data such as 24 baselines run 2-4x faster than at 256
+# points, because each batch is a loop iteration with fixed overheads. The
+# public functions take ``batch_size=`` to override it.
+BATCH_VISIBILITIES = 2**20
+MIN_BATCH_SIZE = 256
 
 
-def batch_size_or_default(batch_size):
-    """Validate a ``batch_size`` argument, defaulting to 256."""
+def batch_size_or_default(batch_size, data_obj):
+    """Validate a ``batch_size`` argument, or choose one for ``data_obj``.
+
+    The default holds about ``BATCH_VISIBILITIES`` model visibilities per
+    batch, and at least ``MIN_BATCH_SIZE`` grid points.
+    """
     if batch_size is None:
-        return DEFAULT_BATCH_SIZE
+        n_vis = max(np.size(data_obj.u), np.size(data_obj.wavel), 1)
+        return max(MIN_BATCH_SIZE, BATCH_VISIBILITIES // n_vis)
     batch_size = int(batch_size)
     if batch_size < 1:
         raise ValueError(f"batch_size must be positive; got {batch_size}.")
     return batch_size
 
 
-def map_points(fn, *xs, batch_size=DEFAULT_BATCH_SIZE):
+def map_points(fn, *xs, batch_size):
     """Apply ``fn`` to every row of ``xs``, ``batch_size`` rows at a time."""
     return jax.lax.map(lambda args: fn(*args), xs, batch_size=batch_size)
 

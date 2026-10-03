@@ -557,6 +557,29 @@ def test_batched_grid_matches_unbatched():
         likelihood_grid(oidata, BinaryModelCartesian, samples, batch_size=0)
 
 
+def test_default_batch_size_scales_with_data_size():
+    from drpangloss._grid import (
+        BATCH_VISIBILITIES,
+        MIN_BATCH_SIZE,
+        batch_size_or_default,
+    )
+
+    def data_with(n_vis):
+        values = {
+            key: np.ones(n_vis) for key in ("u", "v", "vis", "d_vis", "phi")
+        }
+        return OIData({**_base_dict(), **values, "d_phi": np.ones(n_vis)})
+
+    # Small data get a batch of ~BATCH_VISIBILITIES model visibilities.
+    assert batch_size_or_default(None, data_with(24)) == (
+        BATCH_VISIBILITIES // 24
+    )
+    # Large data keep the minimum, bounding memory as before.
+    assert batch_size_or_default(None, data_with(10_000)) == MIN_BATCH_SIZE
+    # An explicit batch size is used as given.
+    assert batch_size_or_default(7, data_with(24)) == 7
+
+
 def test_styled_plotting_keeps_other_figures_open():
     # plt.rc_context restores the backend on exit, which in Jupyter can
     # close every open figure before it is shown.

@@ -146,8 +146,10 @@ def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
         companion/primary flux ratio). The output has one axis per key, in
         this order.
     batch_size : int, optional
-        Number of grid points evaluated at once (default 256). Larger is
-        faster for small models; smaller bounds memory for large ones.
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 (a million) model visibilities, and at least 256. Larger
+        can be faster for small data; smaller bounds memory for large
+        models.
 
     Returns
     -------
@@ -165,7 +167,7 @@ def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
         model,
         samples_dict,
         params=params,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
 
 
@@ -203,8 +205,10 @@ _OPTIMIZED_PARAMS_DOC = """
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once (default 256). Larger is
-        faster for small models; smaller bounds memory for large ones.
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 (a million) model visibilities, and at least 256. Larger
+        can be faster for small data; smaller bounds memory for large
+        models.
 """
 
 
@@ -219,7 +223,7 @@ def optimized_likelihood_grid(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
     warn_unconverged(success, "optimized_likelihood_grid")
     return best_loglike
@@ -254,7 +258,7 @@ def optimized_flux_grid(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
     warn_unconverged(success, "optimized_flux_grid")
     return best_flux
@@ -310,8 +314,10 @@ def laplace_flux_uncertainty_grid(
         The key of ``samples_dict`` holding the flux. By default, the one key
         whose last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once (default 256). Larger is
-        faster for small models; smaller bounds memory for large ones.
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 (a million) model visibilities, and at least 256. Larger
+        can be faster for small data; smaller bounds memory for large
+        models.
 
     Returns
     -------
@@ -337,7 +343,7 @@ def laplace_flux_uncertainty_grid(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
 
 
