@@ -494,6 +494,7 @@ dependencies = [
     { name = "optimistix" },
     { name = "pandas" },
     { name = "pyoifits" },
+    { name = "scipy" },
     { name = "termcolor" },
     { name = "zodiax" },
 ]
@@ -539,6 +540,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-xdist", marker = "extra == 'dev'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.11.0" },
+    { name = "scipy" },
     { name = "scipy", marker = "extra == 'dev'" },
     { name = "termcolor" },
     { name = "tqdm", marker = "extra == 'notebooks'" },
