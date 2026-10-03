@@ -1,7 +1,7 @@
 [project]
 name = "virgil-astro"
-version = "0.1.1"
-description = "Python package to fit interferometric data, accelerated using Jax."
+version = "0.2.0"
+description = "VIRGIL, the Versatile Interferometric Reconstruction and Gradient-based Inference Library: modelling and imaging interferometric data in JAX."
 readme = "README.md"
 requires-python =">=3.11"
 license = {file = "LICENSE"}

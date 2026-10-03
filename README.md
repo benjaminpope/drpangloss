@@ -1,10 +1,10 @@
 # virgil
-[![PyPI version](https://badge.fury.io/py/virgil.svg)](https://badge.fury.io/py/virgil)
+[![PyPI version](https://badge.fury.io/py/virgil-astro.svg)](https://badge.fury.io/py/virgil-astro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
 [![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
 
-The best of all possible interferometry models.
+Versatile Interferometric Reconstruction and Gradient-based Inference Library.
 
 Contributors: [Dori Blakely](https://github.com/blakelyd), [Benjamin Pope](https://github.com/benjaminpope)
 
@@ -59,4 +59,7 @@ We welcome collaboration and development contributions. See [CONTRIBUTING.md](CO
 
 Why is it called virgil?
 
-The leading optical interferometry model fitting code is [CANDID](https://github.com/amerand/CANDID). In Voltaire's *Candide*, Dr Pangloss' belief that we live in the best of all possible worlds is a satire of Leibniz' theodicy. But we *do* live in a world with Jax, so that if we can't optimize the world, at least we can optimize our fits to VLTI data.  
+VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary. In Dante's *Divine Comedy*, the poet Virgil is Dante's guide through the Inferno and Purgatory. In Virgil's own *Aeneid*, when Aeneas enters the underworld he draws his sword on the monsters crowding its threshold. His guide, the Cumaean Sibyl, warns him that they are only thin, bodiless lives flitting in a hollow semblance of form (*Aeneid* VI.292–294). Image reconstruction from sparse interferometric data is full of false visions like these: artefacts that look like structure but have no substance in the data. VIRGIL aims to help you tell the difference. The acronym is Jonah Goldfine's.
+
+Until version 0.1.1 the package was named after Voltaire's Dr Pangloss, a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID); it is now distributed on PyPI as `virgil-astro`.
+

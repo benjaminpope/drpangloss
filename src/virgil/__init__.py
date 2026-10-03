@@ -1,4 +1,4 @@
-"""virgil: the best of all possible interferometry models.
+"""virgil: the Versatile Interferometric Reconstruction and Gradient-based Inference Library.
 
 The everyday names are available at the top level::
 

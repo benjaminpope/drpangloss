@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> The import package is `virgil`; the PyPI distribution is `virgil-astro` (`pip install virgil-astro`; `pip install virgil` installs an unrelated package).
+
 Guidance for AI coding agents (Copilot, Claude Code, and similar) working in this
 repository. Humans should read [CONTRIBUTING.md](CONTRIBUTING.md) instead.
 
