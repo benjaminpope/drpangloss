@@ -62,11 +62,7 @@ plt.show()
 print(f"beam {resolution.major_mas:.1f} × {resolution.minor_mas:.1f} mas; interferometric field of view {field_of_view(data):.0f} mas")
 ```
 
-```text
-W1001 22:52:07.235138 11304389 cpp_gen_intrinsics.cc:74] Empty bitcode string provided for eigen. Optimizations relying on this IR will be disabled.
-```
-
-![imaging_composite output 2.2](generated/imaging_composite_cell002_out02.png)
+![imaging_composite output 2.1](generated/imaging_composite_cell002_out01.png)
 
 ```text
 beam 4.4 × 2.5 mas; interferometric field of view 42 mas

@@ -824,6 +824,12 @@ def error_scale(model, data, path="env"):
     them. The estimate assumes the model is adequate: if the data contain
     structure the model cannot fit, ``s`` absorbs it.
 
+    Only the field's latents are counted in ``γ``. Each other fitted
+    parameter (the image's flux, a star's position, a spectral index) that
+    the data measure lowers ``N − γ`` by about one more, and so raises
+    ``s`` by a fraction of about 1/(2N). That is negligible while such
+    parameters are few compared with the data, as in every SPARCO fit.
+
     Parameters
     ----------
     model : SourceModel
