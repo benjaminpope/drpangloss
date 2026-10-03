@@ -5,19 +5,6 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
-## Unreleased / in review
-
-A codebase review in October 2026 found a set of correctness, documentation
-and performance problems. The fixes are in review and will be listed here as
-they merge:
-
-- correctness fixes found by the review;
-- corrections to docstrings, references, design notes and contributor docs;
-- performance work.
-
-Changes to the GRAVITY reader (matching OI_VIS and OI_FLUX exposures) are part
-of the correctness fixes.
-
 ## 0.2.0 (not yet released)
 
 ### Renamed: drpangloss is now virgil
@@ -54,11 +41,13 @@ of the correctness fixes.
 
 ### Added
 
-- **Readers.** `read_oifits(insname=...)` selects an instrument table, and the
-  GRAVITY fringe-tracker (FT) and science (SC) tables are never merged
-  silently: FT data are skipped. `PHITYP` is checked, so a differential VISPHI
-  is never read as an absolute phase. (The reader matches the exposures of
-  GRAVITY tables; that part is in review, see above.)
+- **Readers.** `read_oifits(insname=...)` selects an instrument's tables. A
+  GRAVITY file holding both fringe-tracker (FT) and science (SC) tables must
+  be read with `insname=`: the two are never merged. `PHITYP` is checked, so a
+  differential VISPHI is never read as an absolute phase. Closure phases are
+  matched to visibilities of the same exposure, within twice the longest
+  `INT_TIME`, since GRAVITY's pipeline averages different frames for each
+  table (before, 50 of 136 reads of archival GRAVITY files failed).
 - **Image reconstruction.** An `Image` component (a pixel map in a `System`,
   with an exact DFT, and an exact matrix Fourier transform on the uv lattices of
   AMIGO DISCO data), `fit` (Levenberg-Marquardt, L-BFGS or Adam, in float64 by
@@ -94,8 +83,47 @@ of the correctness fixes.
 - Solvers and curvature functions compile once rather than on every call, grid
   tools size their batches by data size, and the test suite is faster.
 
+### Fixed after the October 2026 codebase review
+
+- The rim's non-negativity check (`ModulatedGaussianRim`, `is_physical`) no
+  longer passes negative brightness when the top azimuthal order is zero.
+- Independent phases use the exact von Mises normaliser, so fitted phase
+  errors are no longer biased at large sigma (a true 1.8 rad used to fit as
+  1.3 rad). Small-sigma likelihoods are unchanged.
+- Converting V^2 to amplitudes or log-amplitudes floors the data at their own
+  error, so points near or below zero no longer get enormous or tiny errors.
+- Levenberg-Marquardt and L-BFGS in float32 converge instead of running to
+  `max_steps`: the gradient tolerance is floored at sqrt(eps) of the starting
+  gradient.
+- `laplace_cov` and `fisher` compute in float64, like `fit`.
+- `error_scale` solves MacKay's self-consistent equation instead of
+  evaluating it at beta = 1; `log_evidence`, `error_scale` and
+  `classic_maxent` accept a `FitResult` and refuse fits with fitted noise
+  terms or per-dataset model lists, which they cannot handle.
+- Index arrays cached under one x64 mode no longer break the other on JAX
+  0.10 (closure-phase noise and the gravity-darkened star mesh).
+- Corrected citations: MacKay (1992) eq. 4.10; classic MaxEnt is Gull (1989)
+  with Skilling (1989).
+- `virgil.__version__`; true minimum dependency versions (`jax>=0.8`), tested
+  in CI; pandas, ChainConsumer and astroquery moved to the `plots` and
+  `legacy` extras; CI on macOS with Python 3.11, Python 3.13, the lowest
+  versions, and a wheel build.
+
 ### Removed
 
 - The experimental NUFFT backend (`backend="nufft"`, the `nufft` extra): on a
   GPU it was slower than the DFT. Its code is in the history of PR #71.
 - `amigo.simulated_disco_record`, replaced by `coverage.ami_grid_record`.
+- Before the first release, these names were removed from the public API:
+  `GaussianDiskModel` (use `System(star=PointSource(), disk=GaussianDisk(...))`),
+  `cvis_gaussian_disk`, `cvis_binary_angular` (now private),
+  `loglike_nosignal`, `fisher_matrix` and `observed_information` (use
+  `fisher` and `inference.hessian_matrix`), `plotting.plot_trace_panels`,
+  `plotting.plot_recovery_residuals`, the `legacy.savefits` module and
+  `legacy.oifits_implaneia.load_oifits`.
+- `Tabulated` and `load_oi_data` are no longer top-level names: they are
+  `virgil.spectra.Tabulated` (provisional, to be replaced) and
+  `virgil.amigo.load_oi_data`. `pixel_offsets` and `HarmonixModel` are new
+  top-level names.
+- The unused `termcolor` dependency and `sampling` extra, and the unused
+  `data/chi2_ppf*.npy` tables.
