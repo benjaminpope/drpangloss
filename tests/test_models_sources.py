@@ -889,7 +889,7 @@ def test_gaussian_arc_bends_towards_its_centre():
 
 
 def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
-    # Equal up to the truncation of the weight along the arc at ±3.5σ.
+    # Equal up to the curvature of the arc.
     u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
     arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
     ellipse = EllipticalGaussian(
@@ -900,6 +900,34 @@ def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
         onp.abs(ellipse.model(u, v, 2.2e-6)),
         atol=1e-3,
     )
+
+
+@pytest.mark.parametrize(
+    "radius, length",
+    [(5.0, 4.0), (15.0, 20.0), (5.0, 40.0)],
+    ids=["short", "long", "longer_than_circle"],
+)
+def test_gaussian_arc_matches_a_gaussian_once_round_the_circle(radius, length):
+    # Independent reference: a dense sum round the whole circle, weighted
+    # by a Gaussian in arc length wrapped to [-π R, π R).
+    width, pa, wavel = 0.6, 250.0, 1.6e-6
+    rng = onp.random.default_rng(3)
+    u, v = rng.uniform(-100.0, 100.0, (2, 50))
+    psi = 2.0 * onp.pi * onp.arange(65536) / 65536
+    s = radius * onp.angle(onp.exp(1j * (psi - onp.deg2rad(pa))))
+    sigma = length / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))
+    weight = onp.exp(-0.5 * (s / sigma) ** 2)
+    x, y = radius * onp.sin(psi), radius * onp.cos(psi)
+    fu, fv = u / wavel * _MAS2RAD_REF, v / wavel * _MAS2RAD_REF
+    curve = onp.exp(-2j * onp.pi * (onp.outer(fu, x) + onp.outer(fv, y)))
+    blur = onp.exp(
+        -((onp.pi * width) ** 2) * (fu**2 + fv**2) / (4 * onp.log(2))
+    )
+    expected = curve @ weight / weight.sum() * blur
+    with jax.enable_x64(True):
+        arc = GaussianArc(radius, width, length, pa, nodes=4096)
+        got = onp.asarray(arc.model(u, v, wavel))
+    assert onp.max(onp.abs(got - expected)) < 1e-6
 
 
 def test_rim_gradients_are_finite_at_zero_baseline():
@@ -966,9 +994,20 @@ def test_gaussian_arc_uses_the_trapezoidal_rule():
     # interior point of the same height, and the weights sum to one.
     arc = GaussianArc(20.0, 2.0, 15.0, nodes=9)
     x, y, w = (onp.asarray(a) for a in arc.curve())
-    s = onp.linspace(-3.5, 3.5, 9)
+    s = onp.linspace(-6.0, 6.0, 9)
     gauss = onp.exp(-0.5 * s**2)
     assert onp.isclose(w.sum(), 1.0)
     assert onp.allclose(
         w / gauss, (w / gauss)[1] * onp.r_[0.5, onp.ones(7), 0.5]
     )
+
+
+def test_gaussian_arc_longer_than_the_circle_goes_round_it_once():
+    # 6σ exceeds π R: the nodes span the circle, both ends at the antipode.
+    arc = GaussianArc(5.0, 1.0, 40.0, pa=30.0, nodes=9)
+    x, y, _ = (onp.asarray(a) for a in arc.curve())
+    antipode = 5.0 * onp.array(
+        [onp.sin(onp.radians(210.0)), onp.cos(onp.radians(210.0))]
+    )
+    assert onp.allclose([x[0], y[0]], antipode, atol=1e-5)
+    assert onp.allclose([x[-1], y[-1]], antipode, atol=1e-5)
