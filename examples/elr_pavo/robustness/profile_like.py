@@ -1,7 +1,7 @@
 """Profile-likelihood maps of the PAVO fit: chi2 minimised over the other
 parameters on a grid of two of them.
 
-    python profile.py --star upsTau --pair pa,inc [--task-index i --n-tasks k]
+    python profile_like.py --star upsTau --pair pa,inc [--task-index i --n-tasks k]
 
 Pairs and grids: ``pa,inc`` (5 deg steps, pa 0-175, inc 0-90), ``omega,inc``
 (0.05 steps in omega up to 0.99, inc as before) and ``diam,omega`` (0.02 mas
@@ -119,6 +119,9 @@ def main():
         f"profile_{args.star}_{tag}_{args.task_index}",
         {
             **{k: np.asarray(v) for k, v in rec.items()},
+            # integer indices even for an empty task (np.asarray([]) is float)
+            "i": np.asarray(rec["i"], dtype=int),
+            "j": np.asarray(rec["j"], dtype=int),
             "axis0": axes[0],
             "axis1": axes[1],
         },

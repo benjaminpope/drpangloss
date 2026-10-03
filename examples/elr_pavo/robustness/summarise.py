@@ -142,6 +142,10 @@ def do_multistart(star, data, out, md):
 # --------------------------------------------------------------- profile
 def do_profile(star, data, out, md):
     ref = c.ref_median(star)
+    # Delta chi2 is measured from the unrestricted best fit (the multistart
+    # optimum), not from each map's best grid cell, which can miss it.
+    ms = multistart.load(out, star)
+    best = None if ms is None else float(np.nanmin(ms["chi2"]))
     maps = {}
     for pair, names in profile.PAIRS.items():
         m = profile.assemble(out, star, pair)
@@ -155,7 +159,8 @@ def do_profile(star, data, out, md):
     )
     for ax, (pair, (a0, a1, chi2, conv)) in zip(axes[0], maps.items()):
         names = profile.PAIRS[pair]
-        d = chi2 - np.nanmin(chi2)
+        floor = np.nanmin(chi2) if best is None else min(best, np.nanmin(chi2))
+        d = chi2 - floor
         norm = matplotlib.colors.LogNorm(0.1, max(np.nanmax(d), 1e3))
         mesh = ax.pcolormesh(
             a0,
@@ -165,7 +170,8 @@ def do_profile(star, data, out, md):
             norm=norm,
             cmap="viridis_r",
         )
-        if min(d.shape) > 2:
+        # confidence contours only against the unrestricted best fit
+        if best is not None and min(d.shape) > 2:
             ax.contour(
                 a0,
                 a1,
@@ -183,7 +189,12 @@ def do_profile(star, data, out, md):
             label="his median",
         )
         ax.set(xlabel=names[0], ylabel=names[1])
-        fig.colorbar(mesh, ax=ax, label=r"$\Delta\chi^2$")
+        fig.colorbar(
+            mesh,
+            ax=ax,
+            label=r"$\Delta\chi^2$"
+            + ("" if best is not None else " (from the map's own minimum)"),
+        )
         i, j = np.unravel_index(np.nanargmin(chi2), chi2.shape)
         md.append(
             f"- `{pair}`: grid {len(a0)}x{len(a1)}, min chi2 "
@@ -192,7 +203,11 @@ def do_profile(star, data, out, md):
             f"missing, {int((~conv & ~np.isnan(chi2)).sum())} unconverged."
         )
         # local minima of the map: grid cells below all 8 neighbours
-        loc = local_minima(d)
+        loc = [
+            (i, j)
+            for i, j in local_minima(d, wrap0=names[0] == "pa")
+            if d[i, j] <= 6.2
+        ]
         md.append(
             f"  {len(loc)} grid-local minima with dchi2 <= 6.2: "
             + (
@@ -213,13 +228,23 @@ def do_profile(star, data, out, md):
     md.append(f"\n![profile]({star}_profile.png)\n")
 
 
-def local_minima(d):
-    """Cells of a 2-d map that are no larger than all 8 neighbours."""
+def local_minima(d, wrap0=False):
+    """Cells of a 2-d map that are no larger than all 8 neighbours.
+
+    With ``wrap0`` the first axis is periodic (pa, modulo 180 degrees), so
+    its first and last rows are neighbours.
+    """
     out = []
+    n0 = d.shape[0]
     for i, j in np.ndindex(d.shape):
         if np.isnan(d[i, j]):
             continue
-        win = d[max(i - 1, 0) : i + 2, max(j - 1, 0) : j + 2]
+        rows = (
+            [(i + k) % n0 for k in (-1, 0, 1)]
+            if wrap0
+            else list(range(max(i - 1, 0), min(i + 2, n0)))
+        )
+        win = d[rows, max(j - 1, 0) : j + 2]
         if d[i, j] <= np.nanmin(win) and np.sum(win == d[i, j]) == 1:
             out.append((i, j))
     return out
@@ -251,7 +276,7 @@ def do_injection(star, data, out, md):
         )
         md.append(
             f"- omega error (fit - true): median {np.median(real['fit_omega'] - real['true_omega']):+.3f}, "
-            f"rms {np.std(real['fit_omega'] - real['true_omega']):.3f}; "
+            f"rms {np.sqrt(np.mean((real['fit_omega'] - real['true_omega']) ** 2)):.3f}; "
             f"{np.mean(real['fit_omega'] > 0.98):.0%} of fits at the omega = 0.99 bound."
         )
         md.append(
@@ -291,7 +316,7 @@ def do_injection(star, data, out, md):
             f"pa {d_fit.mean():.2f} +/- {d_fit.std() / np.sqrt(n):.2f}, at "
             f"pa+90 {d_perp.mean():.2f} +/- {d_perp.std() / np.sqrt(n):.2f} "
             "(1 = no preference); mean resultant length of 2 pa "
-            f"{rbar:.2f} (expected {1 / np.sqrt(n):.2f} for uniform)."
+            f"{rbar:.2f} (expected {np.sqrt(np.pi / n) / 2:.2f} for uniform)."
         )
         md.append(
             "- among fits with omega > 0.3 only: density at the fitted pa "
