@@ -25,7 +25,15 @@ Modules:
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 """
 
+import importlib.metadata as _metadata
+
 name = "virgil"
+
+try:
+    __version__ = _metadata.version("virgil-astro")
+except _metadata.PackageNotFoundError:
+    # Running from a source tree that was never installed.
+    __version__ = "unknown"
 
 from . import (  # noqa: E402
     amigo,

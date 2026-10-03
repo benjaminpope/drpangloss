@@ -27,4 +27,4 @@ Much of the package implements methods from the literature, which we cite in the
 
 ## Software
 
-`virgil` is built on [JAX](https://github.com/jax-ml/jax), and on Patrick Kidger's [equinox](https://github.com/patrick-kidger/equinox), [optimistix](https://github.com/patrick-kidger/optimistix) and [lineax](https://github.com/patrick-kidger/lineax), together with [optax](https://github.com/google-deepmind/optax), [numpyro](https://github.com/pyro-ppl/numpyro) and, optionally, [blackjax](https://github.com/blackjax-devs/blackjax).
+`virgil` is built on [JAX](https://github.com/jax-ml/jax), and on Patrick Kidger's [equinox](https://github.com/patrick-kidger/equinox), [optimistix](https://github.com/patrick-kidger/optimistix) and [lineax](https://github.com/patrick-kidger/lineax), together with [optax](https://github.com/google-deepmind/optax) and [numpyro](https://github.com/pyro-ppl/numpyro).

@@ -21,11 +21,23 @@ import functools
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from matplotlib.ticker import FuncFormatter
 
 from ._utils import is_flux_param, resolve_flux_param
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
+
+
+def _require_plots_extra(module):
+    """Import an optional plotting dependency, or explain how to get it."""
+    import importlib
+
+    try:
+        return importlib.import_module(module)
+    except ImportError as err:
+        raise ImportError(
+            f"This function needs {module.split('.')[0]}, which is not "
+            "installed. Install it with: pip install 'virgil-astro[plots]'"
+        ) from err
 
 
 STYLE = {
@@ -490,6 +502,7 @@ def plot_chainconsumer_diagnostics(
         ``(consumer, corner_fig, walks_fig)``: the configured ChainConsumer
         instance and the two figures it drew.
     """
+    _require_plots_extra("chainconsumer")
     from chainconsumer import ChainConsumer, Chain, Truth
     from chainconsumer.statistics import SummaryStatistic
 
@@ -552,6 +565,7 @@ def diagnostics_table_from_samples(
     pandas.DataFrame
         Table with ``dra``, ``ddec``, ``flux``, ``sep``, and ``pa`` columns.
     """
+    pd = _require_plots_extra("pandas")
     dra = np.asarray(samples[dra_key], dtype=float)
     ddec = np.asarray(samples[ddec_key], dtype=float)
     flux_raw = np.asarray(samples[flux_key], dtype=float)

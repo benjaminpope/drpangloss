@@ -50,8 +50,8 @@ Before committing:
    `pytest tests/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `mkdocs build --strict`.
 
-CI also autofixes formatting on same-repo PRs (`.github/workflows/lint.yml`), but do not
-rely on it — a clean diff keeps review focused on the actual change.
+CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
+them, so lint before you push.
 
 ## Conventions
 
