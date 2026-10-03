@@ -114,13 +114,30 @@ class Attached(eqx.Module):
         out = eqx.tree_at(
             lambda c: (c.dra, c.ddec), self.component, (dra, ddec)
         )
-        for attr, quantity in self.bind:
+        # Bind the geometry (pa, inc, ...) first: azimuthal angles depend on it.
+        for attr, quantity in sorted(
+            self.bind, key=lambda b: b[0] == "az_pas"
+        ):
             old = getattr(out, attr)
-            new = jnp.broadcast_to(
-                frame[quantity] + self.offsets[attr], jnp.shape(old)
-            )
+            value = frame[quantity] + self.offsets[attr]
+            if attr == "az_pas":
+                value = _disc_angle(value, out.pa, out.inc)
+            new = jnp.broadcast_to(value, jnp.shape(old))
             out = eqx.tree_at(lambda c: getattr(c, attr), out, new)
         return out
+
+
+def _disc_angle(sky_pa, pa, inc):
+    """The rim angle whose projection points at sky position angle ``sky_pa``.
+
+    ``ModulatedGaussianRim`` measures ``az_pas - pa`` in the deprojected
+    disc, then compresses the minor axis by cos(inc); a sky angle must be
+    deprojected first, or a modulation aimed at the primary misses it.
+    """
+    d = (sky_pa - pa) * DEG
+    return pa + jnp.degrees(
+        jnp.arctan2(jnp.sin(d) / jnp.cos(inc * DEG), jnp.cos(d))
+    )
 
 
 T_REF = 60500.0
@@ -181,3 +198,29 @@ for dt in (0.0, 120.0, 240.0):
         f"  {float(attached.inc):4.0f}"
         f"  {float(attached.az_pas[0]) % 360:6.1f}"
     )
+
+# Orientation check: the disc must brighten towards the primary on the sky. At this orbit's 50° inclination, binding the sky angle to az_pas
+# without deprojecting it would miss by up to ~10°.
+npix, fov = 128, 8.0
+xs = (np.arange(npix) - npix / 2 + 0.5) * fov / npix
+for dt in (0.0, 120.0, 240.0):
+    t = T_REF + dt
+    attached = disc.at(t)
+    centred = eqx.tree_at(lambda c: (c.dra, c.ddec), attached, (0.0, 0.0))
+    image = np.asarray(centred.render(npix, fov))
+    # render(): column 0 is the most positive dra (East left), row 0 North.
+    # The flux-weighted centroid of a ring modulated as 1 + a cos(θ - φ)
+    # points along the projection of φ (projection is linear; the brightest
+    # pixel is not, being pulled towards the minor axis).
+    dra = (-xs)[None, :] * np.ones((npix, 1))
+    ddec = (-xs)[:, None] * np.ones((1, npix))
+    bright_pa = (
+        np.degrees(np.arctan2(np.sum(image * dra), np.sum(image * ddec))) % 360
+    )
+    want = float(orbit.frame(t)["towards_primary"]) % 360
+    miss = (bright_pa - want + 180) % 360 - 180
+    print(
+        f"MJD - t_ref {dt:5.0f}: disc brightens towards PA {bright_pa:5.1f};"
+        f" the primary is at {want:5.1f}"
+    )
+    assert abs(miss) < 2.0, miss

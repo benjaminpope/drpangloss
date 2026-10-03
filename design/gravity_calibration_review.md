@@ -35,7 +35,7 @@ Each item is something the GRAVITY literature, the pipeline manual or our own re
 - *A per-dataset grey scale is too coarse.* Injection varies per telescope and per exposure: that is the γ of [W21] and the G(t)/G(t*) of [N20b].
 
 **(c) Changes.**
-1. `flux_scale` becomes one grey factor per (frame, telescope) under a log-normal prior. Its width comes from the scatter of the FT fluxes, which the reader can supply. It is marginalised like the gains of §4, since FLUX is linear in it. `flux_poly` stays one low-order polynomial per dataset.
+1. `flux_scale` becomes one grey factor per (frame, telescope) under a log-normal prior. Its width comes from the scatter of the FT fluxes, which the reader can supply. It is marginalised like the gains of §4. FLUX is linear in it, but a log-normal prior makes the marginal non-Gaussian. So the Gaussian marginal (covariance plus log-determinant) is a **small-log-gain approximation**, good for widths ≲ 0.2. For larger widths, sample the factors or integrate them numerically. `flux_poly` stays one low-order polynomial per dataset.
 2. Add an optional instrument-level primary beam (fibre coupling) to `OIData`: a Gaussian of FWHM ≈ λ/D, optionally smoothed by tip-tilt jitter ([GC20] App. A.3 uses ≈15 mas rms per axis at the GC). It is applied to component fluxes before both `total_spectrum` and the visibility. Default off. Turning it on is required when any component lies beyond about ⅓ of the fibre FWHM **[threshold is my estimate]**.
 3. Document that `OI_FLUX` is uncalibrated in GRAVITY products. Recommend dividing by a calibrator spectrum (or a telluric model, as PMOIRED does) before using FLUX, and fitting NFLUX rather than FLUX unless the user has flux-calibrated the data.
 4. Read OIFITS2 `FLUXDATA`, falling back to v1 `FLUX` ([PM] §6, `--oifits2`; [D17] §7).
@@ -81,7 +81,7 @@ Each item is something the GRAVITY literature, the pipeline manual or our own re
 
 **(c) Changes.**
 1. Express the closure-free part as three telescope phases per (frame, channel), â = (AᵀD⁻¹A)⁻¹AᵀD⁻¹(Nφ), with one telescope fixed. Their covariance is (AᵀD⁻¹A)⁻¹. Whiten with its Cholesky factor, giving three residuals per (frame, channel), each independent of T3PHI.
-2. Apply N (§2) before the projection, since N acts per baseline. N then commutes with the telescope decomposition when B is the same on every baseline.
+2. Apply N (§2) before the projection, since N acts per baseline. **Use the propagated covariance, not D.** After continuum normalisation the covariance is N D Nᵀ: removing even one continuum channel doubles the variance of the others and correlates them. The telescope projection's metric must therefore be N D Nᵀ, not D. N and the projection commute only when the polynomial basis, the weights and the masks are identical on every baseline, which is not guaranteed. In general, build the combined spectral-and-baseline operator, propagate the full covariance through it (including the cross-covariance with T3PHI), and whiten the result as one block. Stage 6.0's operator diagonalisation does this for linear operators. A closure-null projection alone does **not** make the outputs statistically independent.
 3. Test: on simulated data with unequal per-baseline errors, the joint χ² from (T3PHI, projected VISPHI) equals the dense generalised-least-squares χ² of the six VISPHI and four T3PHI with their exact joint covariance.
 4. Keep "closure phase everywhere, projected VISPHI in the line windows" as the default (S §4, open question 3). Note in the docs that the GC teams chose either closures only or both with heuristic weights, so this default has no published precedent.
 
@@ -298,7 +298,7 @@ The open questions as asked, and the answers.
 **Recommendation.**
 1. Leave closure offsets out by default.
 2. Test the need empirically: the closure phases of unresolved calibrators should be zero. Compare their scatter, per frame, with the reported errors, over many calibrators (this fits naturally into the calibrator PCA).
-3. If calibrators do show a non-closing excess, add the baseline-based form δ = T e with e_b ~ N(0, τ²), τ ≲ 1°, optionally with a 1/λ (group-delay-like) shape. It fits the low-rank machinery of §4(c), marginalised exactly.
+3. If calibrators do show a non-closing excess, add the baseline-based form δ = T e with e_b ~ N(0, τ²), τ ≲ 1°, optionally with a 1/λ (group-delay-like) shape. It fits the low-rank machinery of §4(c). The marginalisation is **exact only for linear residuals**. The closure-phase likelihood uses chords, 2 sin(Δ/2), so an additive offset enters non-linearly, and the Gaussian low-rank marginal is a small-phase approximation, good while the offsets are ≲ 0.3 rad (S §2.4). It is not an exact circular marginal.
 
 
 

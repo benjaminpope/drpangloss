@@ -469,6 +469,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
   - Allow V² with |V|, and closure phase with VISPHI, in one dataset.
   - Normalisation uses continuum ranges, or the analytic continuum of the lines.
 - **Instrumental effects.** A spectral-resolution kernel, and bandwidth smearing by oversampling in wavelength.
+- **Primary beam (fibre coupling), optional** (GRAVITY review §1; decided 2026-10-03). A Gaussian coupling of FWHM ≈ λ/D, optionally broadened by tip-tilt jitter, per telescope. It weights each component's flux, integrated over its brightness for extended components, by its position. One coupling model feeds both the coupled photometry (OI_FLUX) and the visibilities' normalisation. `System.total_spectrum` stays the *intrinsic* total.
 - **Errors.** `OIData` error floors (absolute and relative) and flags, alongside `with_error_scale`.
 
 **Tests:**
@@ -476,6 +477,10 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 - Node spectra interpolate their nodes.
 - Differential phase of an offset line-emitting component, against the analytic photocentre shift.
 - Smearing against brute-force integration over the band.
+- The primary beam:
+  - an offset point source loses flux and visibility amplitude consistently;
+  - the attenuation is chromatic, scaling with λ/D;
+  - photometry and visibilities agree for an extended component.
 - OIFITS round-trips for each new table.
 
 **MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
@@ -484,9 +489,14 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitter, piston and injection drifts) are mostly common to all channels of a frame, which diagonal error inflation does not describe; GRAVITY data on Apep are the first dataset here that needs this. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
 
 **Build:**
-- A V² gain per (frame, baseline) and a closure-phase offset per (frame, triangle), shared by all channels of the block.
-- Both are marginalised analytically as rank-one blocks, so the likelihood keeps one whitened residual vector plus a log-determinant.
-- Fitted or known widths (`vis_gain`, `phi_offset` in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
+- **Gains on log |V|** (decided), with low-rank blocks per frame (GRAVITY review §4c):
+  - telescope-based gains;
+  - per-baseline gains;
+  - a chromatic mode from coherence loss, exp(−a/λ²).
+
+  They are marginalised analytically by Woodbury, as a small-log-gain approximation, so the likelihood keeps one whitened residual vector plus a log-determinant.
+- **No closure-phase offsets by default.** If calibrators show non-closing errors, use the baseline-based form T·e, a small-phase approximation under the chord likelihood (GRAVITY review §13).
+- **Widths** are fitted or known (`vis_gain`, and optionally `phi_offset`, in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
 
 **Tests:**
 - The whitened residuals' squared norm and the log-determinant against a dense covariance.
@@ -495,7 +505,7 @@ Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitte
 **MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
 
 **Also in 6d:**
-- **`wavel_scale`.** A per-dataset wavelength-scale nuisance in `noise=` (S §2.6; 1–2 h).
+- **`wavel_scale`** (and `wavel_offset`). A per-dataset wavelength nuisance in `noise=` (S §2.6; 1–2 h). The GRAVITY default is λ′ = λ(1 + s) + δ, with s ~ N(0, 2×10⁻⁴) and δ = 0 unless lines constrain it.
 - **The dual-field (in-field) calibrator recipe.** An example script and docs, not a module (S §2.7; 3–4 h). It uses 6d's known-width gains.
 
 **Merge order.** The Apep agent's library commits, on the local branch `apep-gravity` (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
