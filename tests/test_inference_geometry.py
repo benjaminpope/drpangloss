@@ -125,7 +125,9 @@ def test_laplace_cov_and_fisher_run_in_float64_by_default():
         assert cov64.dtype == onp.float64
     cov = laplace_cov(values, params, data, truth)
     info = fisher(values, params, data, truth)
-    assert cov.dtype == np.float32 and info.dtype == np.float32
+    # Results come back in the ambient precision (float64 in the x64 CI job).
+    ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
+    assert cov.dtype == ambient and info.dtype == ambient
 
     def close(a, b):
         return onp.allclose(a, b, rtol=1e-5, atol=1e-6 * onp.abs(b).max())
