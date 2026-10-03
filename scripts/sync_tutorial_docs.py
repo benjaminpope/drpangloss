@@ -38,6 +38,7 @@ MAPPINGS = {
     "notebooks/imaging_rml.ipynb": "docs/imaging_rml.md",
     "notebooks/imaging_gp.ipynb": "docs/imaging_gp.md",
     "notebooks/imaging_composite.ipynb": "docs/imaging_composite.md",
+    "notebooks/imaging_sampling.ipynb": "docs/imaging_sampling.md",
 }
 
 

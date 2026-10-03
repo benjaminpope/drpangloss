@@ -336,12 +336,29 @@ A background split off as a `Resolved` component also changes what the image's i
   - LM fits converge in tens of steps, where MEM sweeps need up to 2 × 10⁵ L-BFGS steps.
   - On real data the GP matches or beats MEM: on IRAS 08544 it is the only image that shows the compact emission near the binary.
   - MEM and TSV stay supported, as the classical comparison.
-- **Sampling needs no mass-matrix helper, so `gauss_newton_diagonal` is dropped.** Plain NUTS was tested with σ and ℓ marginalised, on 150 VLTI points with 500 warmup steps:
-  - At 32², 48² and 64², NUTS uses 127 leapfrog steps per draw and has no divergences. σ and ℓ have an ESS of 100–200 per 300 draws.
-  - 64² takes about 30 s on the laptop.
-  - A diagonal Gauss–Newton start changes nothing. A dense one is worse: about 3–20 ESS per 300 draws and 6 divergences. It is built at fixed σ and ℓ, but the posterior's shape moves with them.
-  - The 41² tree-depth saturation was specific to one scene, and is revisited only if a real dataset shows it.
-- **Sampling enters the docs as supported** once a tutorial exists (Stage 5d): posterior mean and standard-deviation maps, and the posteriors of σ and ℓ. Stage 6 builds on `GaussianField`.
+- **Sampling large images needs a mass matrix.** This reverses an earlier version of this checkpoint, which was based on a low signal-to-noise VLTI scene. On 150 VLTI points, plain NUTS took 127 leapfrog steps per draw at 32²–64². On part 3's 588 AMI points at 62², it saturated the tree depth (1023), as at 41² before. Stage 5d adds the helper, in its dense form (see the 5d log).
+
+**Log, 5d (2026-10-03):** sampling, with a dense Gauss–Newton mass matrix.
+- **Study** (OzSTAR job 17937020, A100, part 3's 62² AMI ring, 300 warmup steps and 300 draws):
+
+  | Mass matrix | σ, ℓ | Flux | Steps per draw | Sampling time | Pixel ESS (5th–50th percentile) |
+  |---|---|---|---|---|---|
+  | Identity | sampled | sampled | 1023 | 243 s | 146–269 (σ 75, ℓ 96) |
+  | Identity | fixed | fixed | 1023 | 194 s | 238–427 |
+  | Diagonal | fixed | fixed | 1023 | 172 s | 346–666 |
+  | **Dense Gauss–Newton** | **fixed** | **fixed** | **63** | **33 s** | **195–263** |
+  | Dense, flux outside the block | fixed | sampled | 1023 | 359 s | 149–212 |
+  | Dense, adapted in warmup | fixed | fixed | 1023 | 307 s | 3–6 |
+
+  The dense matrix whitens the posterior, but only if every sampled parameter is in its block (the flux is measured to about 1%) and warmup adaptation is off. With σ and ℓ sampled it doesn't fit, because the curvature depends on them.
+- **Library:** `fitting.gauss_newton_mass(model, priors, data, values)` returns NUTS's arguments: the inverse of JᵀJ (data and prior residuals) in numpyro's unconstrained coordinates, as one dense block over all sites, with adaptation off. It raises on a singular curvature. `gauss_newton_diagonal` is not added, since the diagonal didn't help.
+- **Tests:** the block's layout, symmetry and prior bound; rejection of an unconstrained parameter; and on a 16² scene, the steps per draw falling from 255 to 31 (x64).
+- **MWE** (`imaging_sampling`, Imaging part 5):
+  - NUTS at the evidence's σ and ℓ, with the flux sampled.
+  - 63 steps per draw, with no divergences; 7 min on the laptop.
+  - The flux is 0.0503, with a 90% interval of 0.0500–0.0507 (truth 0.05).
+  - Shows the posterior mean, the standard deviation and z-score residuals. The z-scores are within ±1, apart from a few at about −2.5.
+  - Sampling σ and ℓ is described, with the GPU timing, but not run.
 
 ## Stage 6a: spectro-interferometry, matching PMOIRED (about 8–10 h)
 This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_parity.md) compares the two packages feature by feature. It comes before 6b and 6c, because 6b's per-filter fluxes are node spectra.
