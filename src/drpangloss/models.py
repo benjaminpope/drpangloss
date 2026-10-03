@@ -29,6 +29,7 @@ import numpy as onp
 import zodiax as zx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
+from jaxbessel import bessel_jn
 
 from ._geometry import (
     check_az_prof_nonnegative,
@@ -42,7 +43,6 @@ from ._geometry import (
     undo_elliptical_transf_spat_freq,
 )
 from ._utils import concrete, dtor, mas2rad
-from .bessel import bessel_jn
 from .spectra import Spectrum, flux_at, reference_flux
 
 

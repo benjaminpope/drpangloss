@@ -477,7 +477,7 @@ wheels = [
 
 [[package]]
 name = "drpangloss"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "astropy" },
@@ -485,9 +485,12 @@ dependencies = [
     { name = "chainconsumer" },
     { name = "equinox" },
     { name = "jax" },
+    { name = "jaxbessel" },
+    { name = "lineax" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "numpyro" },
+    { name = "optax" },
     { name = "optimistix" },
     { name = "pandas" },
     { name = "pyoifits" },
@@ -519,12 +522,15 @@ requires-dist = [
     { name = "equinox", specifier = ">=0.11" },
     { name = "ipywidgets", marker = "extra == 'notebooks'" },
     { name = "jax", specifier = ">=0.4.30" },
+    { name = "jaxbessel", specifier = ">=0.1.0" },
+    { name = "lineax", specifier = ">=0.0.5" },
     { name = "matplotlib" },
     { name = "mkdocs", marker = "extra == 'dev'" },
     { name = "mkdocs-material", marker = "extra == 'dev'" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'" },
     { name = "numpy" },
     { name = "numpyro", specifier = ">=0.15" },
+    { name = "optax", specifier = ">=0.2.3" },
     { name = "optimistix", specifier = ">=0.0.10" },
     { name = "pandas" },
     { name = "pre-commit", marker = "extra == 'dev'" },
@@ -794,6 +800,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/25/4d/f45853fdc2b811e78b866d5f80b8a21a848278361f66c066706132f415cf/jax-0.9.1.tar.gz", hash = "sha256:ce1b82477ee192f0b1d9801b095aa0cf3839bc1fe0cbc071c961a24b3ff30361", size = 2625994, upload-time = "2026-03-02T11:24:18.382Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/80/e4/88778c6a23b65224e5088e68fd0924e5bde2196a26e76edb3ea3543fed6a/jax-0.9.1-py3-none-any.whl", hash = "sha256:d11cb53d362912253013e8c4d6926cb9f3a4b59ab5b25a7dc08123567067d088", size = 3062162, upload-time = "2026-03-02T11:22:05.089Z" },
+]
+
+[[package]]
+name = "jaxbessel"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/2f/1d8fb3dbf567bbb3c518292dee6147d1243c36febf56bea336526d54cacd/jaxbessel-0.1.0.tar.gz", hash = "sha256:4b679acc2f82299b4f4a29c05ec1639c6a31b09422dcb79bfa390e41c969dc68", size = 13365, upload-time = "2026-10-03T05:57:49.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/86/cf561d3bcddc52e17f10801ca1a9668f1ce1e0fd23860adc3a8d70130b49/jaxbessel-0.1.0-py3-none-any.whl", hash = "sha256:11f6bbf36e1b7eb79872dd764249f943619b1807b49a435ade0e874a72fb2a12", size = 11343, upload-time = "2026-10-03T05:57:50.45Z" },
 ]
 
 [[package]]

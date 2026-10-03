@@ -70,6 +70,8 @@ rely on it — a clean diff keeps review focused on the actual change.
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
 - New model code goes in `src/drpangloss/models.py`.
+- Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
+  shared with harmonix; fix or extend them there, not in drpangloss.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
 
@@ -91,11 +93,10 @@ rely on it — a clean diff keeps review focused on the actual change.
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
-| `bessel.py` | Bessel functions; depends only on JAX/NumPy (to become a standalone package) |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import drpangloss` |
 
-Imports flow one way: `_utils`/`_geometry`/`bessel`/`_precision` → `oifits`/`amigo`/`oidata`
+Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`oidata`
 → `models` → `likelihood` → `fitting` → `imaging`, and `likelihood` → `inference` → `_grid` →
 (`grid_fit`, `limits`) → `plotting`. `grid_fit` and `limits` do not import each other;
 `scenes` imports only `_geometry` and `_utils`.
