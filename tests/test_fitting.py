@@ -14,6 +14,7 @@ from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
 
+from ._compiles import count_compiles
 from ._test_data import oidata
 
 TRUTH = BinaryModelCartesian(150.0, -80.0, 0.02)
@@ -211,12 +212,6 @@ def test_repeated_fits_do_not_recompile(method):
     # or dataset of the same size) reuses the compilation. When they were
     # defined inside each call, every fit recompiled, which took most of
     # its time.
-    compiles = []
-
-    def count(event, duration, **kwargs):
-        if event.endswith("backend_compile_duration"):
-            compiles.append(event)
-
     start, priors, data = _image_fit()
     options = {"max_steps": 20} if method == "adam" else {}
     again = data.with_model(start, key=jax.random.PRNGKey(2))
@@ -225,21 +220,7 @@ def test_repeated_fits_do_not_recompile(method):
         regs = [TSV(weight, path="env")]
         return fit(start, priors, data, regs, method=method, **options)
 
-    jax.monitoring.register_event_duration_secs_listener(count)
-    try:
-        fit_tsv(data, 10.0)
-        before = len(compiles)
+    fit_tsv(data, 10.0)
+    with count_compiles() as compiles:
         fit_tsv(again, 3.0)
-    finally:
-        # The listener is process-global. Older JAX only has the private
-        # helper.
-        unregister = getattr(
-            jax.monitoring,
-            "unregister_event_duration_listener",
-            None,
-        ) or getattr(
-            jax._src.monitoring,
-            "_unregister_event_duration_listener_by_callback",
-        )
-        unregister(count)
-    assert len(compiles) == before
+    assert not compiles
