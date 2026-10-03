@@ -439,7 +439,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 **Defaults in force** (S §4, until Ben says otherwise):
 - `noise=` grows into the general per-dataset nuisance argument;
 - every spectrum's reference flux is its value at `wavel0`;
-- closure phases are used everywhere, plus continuum-normalised VISPHI in the line windows only.
+- closure phases are used everywhere, plus the closure-free part of continuum-normalised VISPHI in the line windows (S §2.3), so nothing is counted twice.
 
 **Build:**
 - **Spectra.** New `Spectrum` types:

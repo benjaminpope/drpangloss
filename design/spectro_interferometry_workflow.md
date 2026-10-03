@@ -57,18 +57,19 @@ The analysis and its scripts are in `~/data/apep_gravity` (`notes/lessons_for_dr
 Only a measurement of the total spectrum breaks this. (Apep: with the reference star fixed at λ⁻⁴, the dust temperature depended on the geometric model, 2200 K against 2990 K, and was degenerate with the halo's index.)
 
 **Proposal.**
-1. 6a reads OI_FLUX (FLUX and NFLUX). The model of the total spectrum is F(λ) = S_ref(λ) Σ fᵢ(λ), where S_ref is the reference component's spectral shape.
+1. 6a reads OI_FLUX (FLUX and NFLUX). **One representation:** each component's `flux` is that component's own spectrum fᵢ(λ), up to one grey scale common to all. This is what `System` already assumes, since a common factor cancels in V. The model of the total spectrum is then F(λ) = k Σ fᵢ(λ), with k the grey scale.
    - Add `System.total_spectrum(wavel) -> Σ fᵢ(λ)`, so the same scene object predicts OI_FLUX.
+   - The SPARCO habit of a grey reference star (`flux=1`) with the other components' spectra *relative* to it is the special case where the star's spectral shape is left out. Then `total_spectrum` predicts F(λ)/S_ref(λ). Compare it with NFLUX divided by a model spectrum of the reference, or give the reference its own spectrum (item 2), not both.
    - **FLUX:** one grey scale nuisance per dataset (absolute calibration and fibre injection), optionally times a low-order polynomial in λ.
    - **NFLUX:** normalised by the same continuum ranges as the data, with one helper shared with differential phase.
-2. **New:** a prior on the reference spectrum instead of a fixed shape. The reference's `PowerLaw.index` (or a `BlackBody` T) is freed with a prior from a model atmosphere. No library change is needed beyond documentation. The docs must say that, without OI_FLUX, this prior *is* the systematic on every other component's colour.
+2. **New:** a prior on the reference spectrum instead of a fixed shape. The reference component gets its own `PowerLaw` or `BlackBody`, with its index or temperature freed under a prior from a model atmosphere. The other components' spectra are then absolute, as in item 1. No library change is needed beyond documentation. The docs must say that, without OI_FLUX, this prior *is* the systematic on every other component's colour.
 3. **Calibrator spectra.** Any calibrator observed through the same optics gives F_target/F_cal(λ). Times a model spectrum of the calibrator, that is an NFLUX-quality spectrum of the target, with the injection ratio as a grey nuisance (§2.7).
 
 ### 2.3 Differential phase (VISPHI) (6a)
 **Requirements on 6a's differential phase:**
 1. **Model arg V(λ) directly.** Apply the *same* continuum normalisation operator as the pipeline: subtract the mean, or the mean and slope, over the continuum channels, per baseline and frame. This is a linear operator on phases, so it fits `OIData`'s existing linear-operator machinery (`phi_mat`).
 2. **Do not use the photocentre approximation for resolved systems.** φ_diff ≈ −2π **u**·Δ**p**(λ) holds only when the line-emitting structure is unresolved (|Δp| ≪ λ/B). 6a's planned test "against the analytic photocentre shift" should be joined by a test in the resolved regime: a binary with a line in one star, against the exact arg V. (Apep: a 28 mas binary against λ/B ≈ 3.3 mas at 130 m, where the WC star's share of the flux triples across C IV.)
-3. **Join with closure phase.** When VISPHI and T3PHI come from the same frame, VISPHI's closure (the closure of the differential phases) is the closure phase minus its own continuum mean, so it duplicates the chromatic part of T3PHI. 6a's "closure phase with VISPHI in one dataset" must not double-count it. Default: closure phase everywhere, plus continuum-normalised VISPHI in the line windows only.
+3. **Join with closure phase.** When VISPHI and T3PHI come from the same frame, VISPHI's closure (the closure of the differential phases) is the closure phase minus its own continuum mean, so it duplicates the chromatic part of T3PHI. 6a's "closure phase with VISPHI in one dataset" must not double-count it. Restricting VISPHI to the line windows does not avoid this, because T3PHI is used in those channels too. **Default:** closure phase everywhere, plus, in the line windows, the part of the continuum-normalised VISPHI that has no closure. Per frame and channel, the baseline phases are projected onto the (N − 1)-dimensional subspace of telescope-differenced phases (φᵢⱼ = aᵢ − aⱼ), which is orthogonal to the closures. That projection is one more linear operator (`phi_mat`), with its projected covariance. Modelling the joint covariance of VISPHI and T3PHI is the alternative, if the pipeline provides it.
 
 ### 2.4 Calibration nuisances correlated across channels (Stage 6d, after 6a)
 **Problem.** For most spectro-interferometers, the dominant systematics are **common to all channels of one frame and baseline**: transfer-function jitter between calibrator frames, piston and injection drifts. Diagonal error inflation (a scale, or an additive term) does not describe them. Binning channels by hand only hides them. (Apep: errors underestimated by 2–7×. Additive per-epoch terms beat multiplicative ones by ΔlogL ≈ 700, but both are diagonal. The calibrator scatter is one number per frame and baseline, yet it was added to every channel.)
@@ -86,11 +87,14 @@ This is the trigger that Stage 8's "spectral correlations" was waiting for. **De
 
 With x = D^{−1/2} r, w = D^{−1/2} m, s = wᵀw and β = (1 + τ²s)^{−1/2}:
 
-  r_w = x − ((1 − β)/s) w (wᵀx),  ‖r_w‖² = rᵀC_b⁻¹r,  log det C_b = Σ log σᵢ² + log(1 + τ²s).
+  r_w = x − (τ² / (q(q + 1))) w (wᵀx),  with q = √(1 + τ²s) = 1/β,
+  ‖r_w‖² = rᵀC_b⁻¹r,  log det C_b = Σ log σᵢ² + log(1 + τ²s).
+
+The coefficient τ²/(q(q + 1)) equals (1 − β)/s, but it is finite at s = 0 (a block whose model V² is zero) and has no cancellation when τ²s is small, which matters in float32.
 
 So:
 - The correlated model still produces **one whitened residual vector**, preserving the rule in `AGENTS.md`, plus a log-determinant. That log-determinant is the same kind of Σ log σ term that `noise=` already adds.
-- LM still works when τ is fixed. With τ fitted, use L-BFGS or NUTS.
+- **Which optimiser.** For closure phase (m = 1) with τ fixed, C_b doesn't depend on the parameters, so the whitened residuals are the whole likelihood and LM works. For V², m = V²_model, so log det C_b depends on the scene even with τ fixed: least squares on r_w would optimise a different objective. Use L-BFGS or NUTS on the full likelihood for `vis_gain`, and whenever τ is fitted.
 - No per-block parameters are sampled; every block is integrated out exactly.
 - With unprojected closure phases, the chord residual 2 sin(Δ/2)/σ makes δ enter non-linearly. Applying the rank-one whitening to the chord residuals is then an approximation, good while the offsets are small (δ ≲ 0.3 rad). Document the limit.
 
@@ -173,6 +177,6 @@ The 6a agent needs only the "+" items folded into its plan.
 ### Still open (defaults in force until Ben says otherwise)
 1. **`noise=` grows into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), keeping its name (default), rather than a separate `nuisance=` argument.
 2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
-3. **Closure phase everywhere,** plus continuum-normalised VISPHI in the line windows only (default).
+3. **Closure phase everywhere,** plus the closure-free projection of continuum-normalised VISPHI in the line windows (default; §2.3).
 4. **The dual-field recipe:** an example script and docs (default), not a `drpangloss.gravity` module.
 5. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.

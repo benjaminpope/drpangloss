@@ -39,7 +39,7 @@ All quantities below are verified numerically against jaxoplanet, as §5.2's tes
 | `inc` | 0 ≤ i < 180°. **i < 90° means the position angle increases with time** (counterclockwise on the sky, North through East) |
 | `Omega` (Ω) | PA of the **ascending node**, defined as the node where the secondary *recedes* (dz increasing). Visual data alone fix Ω only modulo 180° (§2.3) |
 | `omega` (ω) | The **secondary's** argument of periastron, measured from the ascending node in the direction of motion. This is the visual-binary convention; the spectroscopic ω of the primary is ω − 180° |
-| `t_peri` | MJD of periastron |
+| `dt_peri` | Time of periastron minus `t_ref`, in days. It is stored relative to `t_ref` because float32 resolves MJD ≈ 60000 to only about 0.004 d (§2.2); the MJD of periastron, t_ref + dt_peri, is reported in float64 |
 | `period` | days (reported in years) |
 | `a_mas` | Angular semimajor axis of the **relative** orbit, in mas |
 | Tilt β | arcsin(dz/\|r\|), the line of centres' elevation out of the sky plane: positive when the secondary is the farther star |
@@ -53,7 +53,7 @@ jaxoplanet's `OrbitalBody.relative_position(t)` returns (X, Y, Z) with X North, 
 | `omega` (secondary) | `omega_peri` + 180° (jaxoplanet's ω is the primary's, the radial-velocity convention: with ω = 0 the relative periastron lies at the descending node) |
 | `Omega` | `asc_node` (the receding node: identical) |
 | `inc` | `inclination` (identical; i < 90° turns the position angle forward) |
-| `t_peri` − `t_ref` | `time_peri` (days) |
+| `dt_peri` | `time_peri` (days) |
 | `radial_velocity(t)` | `radial_velocity` (positive = redshift, for the primary) |
 
 **Pitfalls in jaxoplanet 0.1.0:**
@@ -65,7 +65,7 @@ jaxoplanet's `OrbitalBody.relative_position(t)` returns (X, Y, Z) with X North, 
 1. (Ω, ω) → (Ω + 180°, ω + 180°): identical sky positions, and dz changes sign. Visual orbits cannot tell these apart; radial velocities, or a scene component that is not front–back symmetric, can.
 2. ω → ω + 180° alone: r → −r at all times. This is the same as swapping which star is the reference, so a "which star is primary" error and an "ω of which star" error are the same 180° flip.
 3. i → 180° − i: reverses the sense of rotation.
-4. For a nearly face-on orbit near apastron, PA ≈ Ω (mod 180°) whatever ω is.
+4. For a face-on orbit, positions depend on Ω and ω only through their sum, the longitude of periastron ϖ = Ω + ω (at apastron, PA = ϖ + 180°). Astrometry of a nearly face-on orbit measures ϖ well, and Ω and ω separately poorly.
 
 ### 2.4 Thiele–Innes constants (in the conventions above, verified against jaxoplanet)
 With X = cos E − e and Y = √(1 − e²) sin E:
@@ -104,7 +104,7 @@ Two real cases from Apep show what goes wrong.
 
 ### R1. An orbit that exposes the 3-D relative vector
 ```python
-orbit = KeplerOrbit(period=..., t_peri=..., ecc=..., inc=..., omega=...,
+orbit = KeplerOrbit(period=..., dt_peri=..., ecc=..., inc=..., omega=...,
                     Omega=..., a_mas=..., t_ref=60500.0)  # t_ref static
 dra, ddec, dz = orbit.relative(mjd)            # mas
 vra, vdec, vz = orbit.relative_velocity(mjd)   # mas / day
@@ -116,7 +116,7 @@ orbit.frame(mjd)  # line_pa, towards_primary, line_tilt, node_pa, inc (deg)
 ### R2. Components attached to the binary frame
 ```python
 disc = Attached(ModulatedGaussianRim(...), orbit, anchor="secondary",
-                bind={"pa": "node_pa", "inc": "inc",
+                bind={"pa": "node_pa", "inc": "apparent_inc",
                       "az_pas": "towards_primary"},
                 offsets={"az_pas": 0.0})
 scene_at_t = disc.at(mjd)   # the component, with dra, ddec and angles set
@@ -130,10 +130,11 @@ scene_at_t = disc.at(mjd)   # the component, with dra, ddec and angles set
   | `towards_primary` | `line_pa` + 180° |
   | `line_tilt` | β |
   | `node_pa` | Ω, the orbital plane's line of nodes |
-  | `inc` | the orbit's inclination |
+  | `inc` | the orbit's physical inclination, 0–180° |
+  | `apparent_inc` | arccos(|cos i|), 0–90°: the projected tilt, for components such as `ModulatedGaussianRim` whose `inc` is an apparent inclination (they use cos(inc) clipped at zero, so binding a retrograde i = 130° there would render nearly edge-on instead of at 50°) |
 
   `offsets` adds fitted offsets, such as a skew.
-  - **Examples.** A disc in the orbital plane binds `pa → node_pa` and `inc → inc`, as in the sketch. Apep's dust cone binds its axis `pa → line_pa` (plus a 0.4° skew) and its tilt `tilt → line_tilt`. That gives the tilt's sign, which an optically thin cone cannot measure, from the orbit.
+  - **Examples.** A disc in the orbital plane binds `pa → node_pa` and `inc → apparent_inc`, as in the sketch. For a retrograde orbit, which side of the disc is near is then set by the PA binding, not by the inclination. Apep's dust cone binds its axis `pa → line_pa` (plus a 0.4° skew) and its tilt `tilt → line_tilt`. That gives the tilt's sign, which an optically thin cone cannot measure, from the orbit.
 - **Orbital skew.** The default is a fitted offset. Optionally, a physical aberration: the axis follows v_wind n̂ − Δv⊥, with Δv the stars' relative velocity. That needs physical velocities and so a distance (R6). It lies in the orbital plane, so for a nearly face-on orbit it shows up as a PA offset. It is small for wide orbits but dominant near periastron in eccentric colliding-wind binaries (WR 140). Its sign needs its own test before it is offered.
 - **Time dependence goes through a snapshot method.** Any `SourceModel` may implement `at(mjd) -> SourceModel`. The default returns `self`; `System.at` maps over its children. Model signatures do **not** gain an `mjd` argument, so the binary classes and every static scene keep the current fast path.
 
@@ -148,15 +149,15 @@ Sampling Campbell elements (a, e, i, ω, Ω, T, P) over an arc that is a small f
 
 | Class | Parameters | When |
 |---|---|---|
-| `KeplerOrbit` | P, t_peri, e, i, ω, Ω, a_mas; samplers see √e cos ω, √e sin ω, cos i, and Ω ± ω for nearly face-on orbits | Well-covered orbits; external element priors |
-| `ThieleInnesOrbit` | A, B, F, G (+ C, H, if dz is wanted), P, t_peri, e | Positions are **linear** in A, B, F, G at fixed (P, e, t_peri), which gives the starting orbits of R0 and good sampling geometry; the Ω/ω degeneracy at small i disappears |
+| `KeplerOrbit` | P, dt_peri, e, i, ω, Ω, a_mas; samplers see √e cos ω, √e sin ω, cos i, and Ω ± ω for nearly face-on orbits | Well-covered orbits; external element priors |
+| `ThieleInnesOrbit` | A, B, F, G (+ C, H, if dz is wanted), P, dt_peri, e | Positions are **linear** in A, B, F, G at fixed (P, e, t_peri), which gives the starting orbits of R0 and good sampling geometry; the Ω/ω degeneracy at small i disappears |
 | `StateVectorOrbit` | At `t_ref`: (dra, ddec) [mas], (vra, vdec) [mas/yr], and dz, vz; plus μ = 4π² a_mas³/P² [mas³ yr⁻²] | **Short arcs.** The measured quantities (position and its rate) are parameters with near-Gaussian posteriors; dz, vz and μ carry the physical priors. Converted to elements analytically, by the standard state-vector → elements relations written from first principles |
 
 - Notes on `StateVectorOrbit`:
   - μ is distance-free, and couples to mass only through D (R6).
   - The conversion has removable singularities at e = 0 and i = 0. Use the (h, k) = e(sin ϖ, cos ϖ) and (p, q) = tan(i/2)(sin Ω, cos Ω) forms internally, with tests near both.
   - Unbound states are outside the prior support.
-- **What a short arc constrains.** The rate of the position angle depends only on e, P and the orbital phase, not on a, M or D. So even a short arc constrains the phase and the sense of rotation.
+- **What a short arc constrains.** The rate of the position angle does not depend on the angular scale, so it is free of a, M and D. It does depend on the projection (i, ω, Ω) as well as on e, P and the orbital phase: an edge-on orbit has no continuous PA rate at all. So a short arc constrains a combination of phase and projection, and the sense of rotation unless the orbit is close to edge-on. The short-arc parameterisation and its priors must not assume more.
 
 ### R5. External priors and radial velocities
 - **Element priors** are numpyro distributions on `KeplerOrbit` paths, as for any parameter. For other parameterisations, a prior on a *derived* element goes in through a model function plus a log-density term. Today that is a regulariser in `fit`, and it must also be accepted by `numpyro_model` as a genuine prior. Document that such a prior does not include the Jacobian of the reparameterisation.

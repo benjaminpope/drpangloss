@@ -34,7 +34,9 @@ class KeplerOrbit(eqx.Module):
     """Relative orbit of a secondary about a primary, in angular units."""
 
     period: jax.Array  # days
-    t_peri: jax.Array  # MJD - t_ref
+    dt_peri: (
+        jax.Array
+    )  # days after t_ref (relative, so float32 keeps it precise)
     ecc: jax.Array
     inc: jax.Array  # deg; < 90 means the position angle increases
     omega: jax.Array  # deg, the secondary's argument of periastron
@@ -48,7 +50,7 @@ class KeplerOrbit(eqx.Module):
         # axis; never pass its parallax argument (it scales by au, not 1/au).
         body = Body(
             period=self.period,
-            time_peri=self.t_peri,
+            time_peri=self.dt_peri,
             eccentricity=self.ecc,
             omega_peri=(self.omega - 180.0) * DEG,
             inclination=self.inc * DEG,
@@ -72,7 +74,12 @@ class KeplerOrbit(eqx.Module):
             towards_primary=line_pa + 180.0,
             line_tilt=jnp.degrees(jnp.arctan2(dz, jnp.hypot(dra, ddec))),
             node_pa=self.Omega + 0.0 * line_pa,
-            inc=self.inc + 0.0 * line_pa,
+            inc=self.inc + 0.0 * line_pa,  # physical, 0-180
+            # The projected tilt, for components whose inc is apparent (0-90).
+            apparent_inc=jnp.degrees(
+                jnp.arccos(jnp.abs(jnp.cos(self.inc * DEG)))
+            )
+            + 0.0 * line_pa,
         )
 
 
@@ -119,7 +126,7 @@ class Attached(eqx.Module):
 T_REF = 60500.0
 orbit = KeplerOrbit(
     period=jnp.asarray(2.0 * YEAR),
-    t_peri=jnp.asarray(-100.0),
+    dt_peri=jnp.asarray(-100.0),  # periastron at MJD T_REF - 100
     ecc=jnp.asarray(0.3),
     inc=jnp.asarray(50.0),
     omega=jnp.asarray(60.0),
@@ -132,7 +139,7 @@ disc = Attached(
         3.0, 1.0, 0.0, 0.0, az_amps=0.5, az_pas=0.0, flux=0.05
     ),
     orbit,
-    bind={"pa": "node_pa", "inc": "inc", "az_pas": "towards_primary"},
+    bind={"pa": "node_pa", "inc": "apparent_inc", "az_pas": "towards_primary"},
 )
 
 
