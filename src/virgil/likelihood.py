@@ -366,37 +366,6 @@ def loglike(values, params, data_obj, model, **options):
     )
 
 
-def loglike_nosignal(values, params, data_obj, model):
-    """
-    Gaussian log-likelihood of the no-signal (unresolved point source) data under a model, assuming Gaussian errors.
-
-    Parameters
-    ----------
-    values : array-like
-        Values of the model parameters.
-    params : list
-        List of parameter names.
-    data_obj : OIData
-        Object containing the data to be fitted.
-    model : SourceModel or callable
-        Template model whose parameters at the dot-separated paths ``params``
-        are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
-
-    Returns
-    -------
-    float
-        Log-likelihood value.
-    """
-
-    model_data = data_obj.model(build_model(model, params, values))
-    _, errors = data_obj.flatten_data()
-    unity_cvis = np.ones_like(data_obj.u, dtype=complex)
-    null_data = data_obj.standardize_model(unity_cvis)
-
-    return _gaussian_loglike(*_whiten(data_obj, model_data, null_data, errors))
-
-
 def _check_positive_flux_prior(name, distribution):
     """Reject flux priors whose support includes negative values."""
     from numpyro.distributions import constraints

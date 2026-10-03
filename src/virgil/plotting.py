@@ -297,46 +297,6 @@ def plot_data_model_correlation(
 
 
 @_styled
-def plot_trace_panels(samples_dict, keys, title, color="C0", figsize=(10, 6)):
-    """
-    Plot simple one-dimensional trace panels for selected sample keys.
-
-    Parameters
-    ----------
-    samples_dict : dict
-        Mapping from key name to one-dimensional sample arrays.
-    keys : list
-        Ordered list of keys to plot.
-    title : str
-        Figure title.
-    color : str, optional
-        Line color.
-    figsize : tuple, optional
-        Figure size.
-
-    Returns
-    -------
-    tuple
-        ``(fig, axes)``.
-    """
-    fig, axes = plt.subplots(len(keys), 1, figsize=figsize, sharex=True)
-    if len(keys) == 1:
-        axes = [axes]
-    for ax, key in zip(axes, keys):
-        ax.plot(
-            np.asarray(samples_dict[key]).reshape(-1),
-            lw=0.8,
-            alpha=0.9,
-            color=color,
-        )
-        ax.set_ylabel(key)
-    axes[-1].set_xlabel("Sample")
-    fig.suptitle(title)
-    fig.tight_layout()
-    return fig, axes
-
-
-@_styled
 def plot_model(
     model,
     fov_mas,
@@ -699,82 +659,6 @@ def plot_hmc_fisher_chainconsumer(
 
 
 @_styled
-def plot_recovery_residuals(
-    params,
-    truth,
-    estimates_by_label,
-    std_by_label,
-    figsize=(8, 4),
-):
-    """
-    Plot parameter recovery and normalized residuals for multiple estimators.
-
-    Parameters
-    ----------
-    params : list[str]
-        Parameter names.
-    truth : array-like
-        Truth values in the same order as ``params``.
-    estimates_by_label : dict
-        Mapping of label to posterior median arrays.
-    std_by_label : dict
-        Mapping of label to posterior standard-deviation arrays.
-    figsize : tuple, optional
-        Base figure size.
-
-    Returns
-    -------
-    tuple
-        ``((fig1, ax1), (fig2, ax2))`` for recovery and residual panels.
-    """
-    x = np.arange(len(params))
-    labels = list(estimates_by_label.keys())
-    n_labels = max(1, len(labels))
-    offsets = np.linspace(-0.3, 0.3, n_labels) if n_labels > 1 else np.zeros(1)
-
-    fig1, ax1 = plt.subplots(figsize=figsize)
-    for idx, label in enumerate(labels):
-        ax1.errorbar(
-            x + offsets[idx],
-            np.asarray(estimates_by_label[label], dtype=float),
-            yerr=np.asarray(std_by_label[label], dtype=float),
-            fmt="o",
-            capsize=4,
-            label=label,
-        )
-    ax1.scatter(
-        x,
-        np.asarray(truth, dtype=float),
-        marker="x",
-        s=80,
-        linewidths=2,
-        label="Truth",
-    )
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(params)
-    ax1.set_title("Synthetic recovery: truth vs posterior medians")
-    ax1.legend()
-    fig1.tight_layout()
-
-    fig2, ax2 = plt.subplots(figsize=(figsize[0], 3.5))
-    ax2.axhline(0.0, color="k", lw=1)
-    ax2.axhline(2.0, color="gray", lw=1, ls="--")
-    ax2.axhline(-2.0, color="gray", lw=1, ls="--")
-    for label in labels:
-        residual = (
-            np.asarray(estimates_by_label[label], dtype=float)
-            - np.asarray(truth, dtype=float)
-        ) / np.maximum(np.asarray(std_by_label[label], dtype=float), 1e-12)
-        ax2.plot(x, residual, "o-", label=f"{label} z-residual")
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(params)
-    ax2.set_ylabel("(estimate - truth) / σ")
-    ax2.set_title("Normalized recovery residuals")
-    ax2.legend()
-    fig2.tight_layout()
-    return (fig1, ax1), (fig2, ax2)
-
-
 def _reversed_cmap(cmap):
     """Reverse a colour map given by name or as a ``Colormap``.
 

@@ -435,8 +435,8 @@ def test_best_grid_point_rejects_reduced_grids():
     }
 
 
-def test_legacy_savefits_writes_a_readable_file(tmp_path):
-    from virgil.legacy import savefits
+def test_legacy_save_writes_a_readable_file(tmp_path):
+    from virgil.legacy import oifits_implaneia
 
     phi = onp.array([10.0, -5.0, 3.0])
     dic = {
@@ -503,7 +503,7 @@ def test_legacy_savefits_writes_a_readable_file(tmp_path):
     )
     original_mjd = list(dic["info"]["MJD"])
 
-    savefits.save(dic, datadir=tmp_path)
+    oifits_implaneia.save(dic, datadir=tmp_path)
 
     # The caller's dictionary is untouched, and the file reads back.
     assert dic["info"]["MJD"] == original_mjd
@@ -604,7 +604,7 @@ def test_legacy_load_then_save_round_trips(tmp_path):
     from virgil.legacy import oifits_implaneia
 
     first = tmp_path / "first"
-    test_legacy_savefits_writes_a_readable_file(first)
+    test_legacy_save_writes_a_readable_file(first)
     (path,) = first.glob("*.oifits")
     loaded = oifits_implaneia.load(path)
     oifits_implaneia.save(loaded, datadir=tmp_path / "second")

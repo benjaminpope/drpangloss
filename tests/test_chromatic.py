@@ -15,11 +15,11 @@ from virgil import (
     PowerLaw,
     Resolved,
     System,
-    Tabulated,
     UniformDisk,
     write_oifits,
 )
 from virgil._utils import is_flux_param, resolve_flux_param
+from virgil.spectra import Tabulated
 from virgil.likelihood import (
     joint_loglike,
     model_loglike,

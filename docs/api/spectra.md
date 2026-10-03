@@ -11,3 +11,9 @@ sample's wavelength, as in SPARCO.
         - PowerLaw
         - Spectrum
         - Tabulated
+        - flux_at
+        - reference_flux
+
+`Tabulated` is **provisional**: it is not exported from the top-level
+`virgil` namespace (import it from `virgil.spectra`), and it will be replaced
+by the node spectra of Stage 6a.

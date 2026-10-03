@@ -33,7 +33,7 @@ dependencies = [
   "chainconsumer",
   "astropy",
   "pyoifits",
-  # Only needed by the legacy writers in savefits.py / oifits_implaneia.py.
+  # Only needed by the legacy writer in oifits_implaneia.py.
   "astroquery",
   "termcolor",
 ]

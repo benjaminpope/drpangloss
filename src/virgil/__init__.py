@@ -44,7 +44,7 @@ from . import (  # noqa: E402
     scenes,
     spectra,
 )
-from .amigo import load_oi_data  # noqa: E402
+from ._geometry import pixel_offsets  # noqa: E402
 from .fields import GaussianField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
@@ -81,8 +81,8 @@ from .models import (  # noqa: E402
     FlaredDiskPowerLaw,
     GaussianArc,
     GaussianDisk,
-    GaussianDiskModel,
     GravityDarkenedStar,
+    HarmonixModel,
     Image,
     ModulatedGaussianRim,
     PointSource,
@@ -94,7 +94,7 @@ from .models import (  # noqa: E402
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
-from .spectra import BlackBody, PowerLaw, Tabulated  # noqa: E402
+from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
 __all__ = [
@@ -107,9 +107,9 @@ __all__ = [
     "FlaredDiskPowerLaw",
     "GaussianArc",
     "GaussianDisk",
-    "GaussianDiskModel",
     "GaussianField",
     "GravityDarkenedStar",
+    "HarmonixModel",
     "Image",
     "ModulatedGaussianRim",
     "OIData",
@@ -118,7 +118,6 @@ __all__ = [
     "Resolved",
     "SourceModel",
     "System",
-    "Tabulated",
     "UniformDisk",
     "absil_limits",
     "circular_support",
@@ -134,12 +133,12 @@ __all__ = [
     "laplace_cov",
     "laplace_flux_uncertainty_grid",
     "likelihood_grid",
-    "load_oi_data",
     "loglike",
     "model_loglike",
     "numpyro_model",
     "optimized_flux_grid",
     "optimized_likelihood_grid",
+    "pixel_offsets",
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
