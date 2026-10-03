@@ -42,6 +42,7 @@ from ._geometry import (
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
+from . import _elr
 from ._utils import concrete, dtor, mas2rad
 from .spectra import Spectrum, flux_at, reference_flux
 
@@ -379,6 +380,178 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+class GravityDarkenedStar(Component):
+    r"""Rapidly rotating star: Roche shape and gravity darkening (ELR11).
+
+    The model of Espinosa Lara & Rieutord (2011, A&A 533, A43): a rigidly
+    rotating star has the oblate Roche shape, and its local bolometric flux
+    follows the effective gravity without a free gravity-darkening exponent
+    $\beta$. The brightness is proportional to that local flux (no limb
+    darkening yet), summed over the visible triangles of a surface mesh.
+    Ported from Shashank Dholakia's jax-interferometry (`ELR_Model`, commit
+    70689ed); the physics lives in ``drpangloss._elr``.
+
+    Parameters
+    ----------
+    diam_eq : float or array-like
+        Equatorial angular diameter in milliarcseconds.
+    omega : float or array-like, optional
+        Angular velocity as a fraction of the Keplerian (critical) rate at
+        the equator, $\Omega/\Omega_K$, in [0, 1) (default 0, a sphere).
+    inc : float or array-like, optional
+        Inclination in degrees, from 0 (pole-on) to 90 (equator-on, the
+        default). The star is symmetric about its equator, so ``inc`` and
+        ``180 - inc`` give the same image with the pole flipped; the range
+        [0, 90] keeps ``pa`` unambiguous.
+    pa : float or array-like, optional
+        Position angle in degrees, North through East, of the visible
+        rotation pole on the sky (default 0).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][drpangloss.models.System] (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the centre in milliarcseconds, positive to the East and
+        North.
+    n_lat : int, optional
+        Number of latitude rings of the surface mesh (default 32, giving
+        2520 triangles). Visibilities cost O(``n_lat``$^2$) per baseline.
+
+    Notes
+    -----
+    Dholakia's ``ELR_Model`` parameters map onto these as follows (his
+    angles are in radians):
+
+    | his | here |
+    | --- | --- |
+    | ``diam`` | ``diam_eq`` (his ``r_eq`` is ``diam_eq / 2``) |
+    | ``omega`` | ``omega`` |
+    | ``inc`` (0 = equator-on) | ``90 - inc`` degrees |
+    | ``obl`` | ``pa`` degrees |
+
+    Examples
+    --------
+    >>> star = GravityDarkenedStar(2.0, omega=0.8, inc=60.0, pa=30.0)
+    >>> v0 = star.model(np.zeros(1), np.zeros(1), 1.65e-6)
+    >>> round(float(np.abs(v0)[0]), 3)
+    1.0
+    """
+
+    diam_eq: jax.Array
+    omega: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    n_lat: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        diam_eq,
+        omega=0.0,
+        inc=90.0,
+        pa=0.0,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        n_lat=32,
+    ):
+        self.diam_eq = np.asarray(diam_eq, dtype=float)
+        self.omega = np.asarray(omega, dtype=float)
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+        if isinstance(n_lat, bool) or int(n_lat) != n_lat or n_lat < 4:
+            raise ValueError(f"n_lat must be an integer >= 4, got {n_lat}.")
+        self.n_lat = int(n_lat)
+
+    def __check_init__(self):
+        super().__check_init__()
+        name = type(self).__name__
+        diam, omega = concrete(self.diam_eq), concrete(self.omega)
+        inc = concrete(self.inc)
+        if diam is not None and onp.any(diam <= 0.0):
+            raise ValueError(
+                f"{name} has diam_eq {diam.tolist()}; it must be positive."
+            )
+        if omega is not None and onp.any((omega < 0.0) | (omega >= 1.0)):
+            raise ValueError(
+                f"{name} has omega {omega.tolist()}; it must be in [0, 1)."
+            )
+        if inc is not None and onp.any((inc < 0.0) | (inc > 90.0)):
+            raise ValueError(
+                f"{name} has inc {inc.tolist()}; it must be in [0, 90] "
+                "degrees (90 = equator-on, 0 = pole-on)."
+            )
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.all(self.diam_eq > 0.0)
+            & np.all((self.omega >= 0.0) & (self.omega < 1.0))
+            & np.all((self.inc >= 0.0) & (self.inc <= 90.0))
+        )
+
+    def _surface(self, **kwargs):
+        # his inc = 0 is equator-on; his obl is the pole position angle
+        return _elr.surface(
+            self.omega,
+            self.diam_eq / 2.0,
+            (90.0 - self.inc) * dtor,
+            self.pa * dtor,
+            self.n_lat,
+            **kwargs,
+        )
+
+    def _centred_cvis(self, uu, vv):
+        x, y, w, _ = self._surface()
+        return _elr.visibilities(x, y, w, uu, vv)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        x, y, w, _ = self._surface()
+        # Index formulas inverted from image_coordinates: x falls with the
+        # column and y with the row, from the (0, 0) pixel.
+        col = (xx[0, 0] - x) / pixel_scale_mas
+        row = (yy[0, 0] - y) / pixel_scale_mas
+        nrow, ncol = xx.shape
+        c0, r0 = np.floor(col), np.floor(row)
+        fc, fr = col - c0, row - r0
+        image = np.zeros(xx.shape, dtype=w.dtype)
+        for dr, wr in ((0, 1.0 - fr), (1, fr)):
+            for dc, wc in ((0, 1.0 - fc), (1, fc)):
+                rr, cc = r0.astype(int) + dr, c0.astype(int) + dc
+                inside = (rr >= 0) & (rr < nrow) & (cc >= 0) & (cc < ncol)
+                image = image.at[
+                    np.clip(rr, 0, nrow - 1), np.clip(cc, 0, ncol - 1)
+                ].add(np.where(inside, w * wr * wc, 0.0))
+        return image
+
+    def plot_surface(self, ax=None, cmap="plasma"):
+        """Plot the visible surface, coloured by local flux ratio.
+
+        East is to the left and North up, as in
+        [`plot_model`][drpangloss.plotting.plot_model]; the offset
+        ``dra``, ``ddec`` is not applied. Returns the matplotlib collection.
+        """
+        import matplotlib.pyplot as plt
+        import matplotlib.tri as mtri
+
+        if ax is None:
+            _, ax = plt.subplots()
+        *_, (pts, tri, cosine, intensity) = self._surface(return_mesh=True)
+        pts, tri = onp.asarray(pts), onp.asarray(tri)
+        visible = onp.asarray(cosine) > 0
+        triang = mtri.Triangulation(pts[:, 0], pts[:, 1], tri[visible])
+        coll = ax.tripcolor(
+            triang, facecolors=onp.asarray(intensity)[visible], cmap=cmap
+        )
+        ax.set_aspect("equal")
+        if not ax.xaxis_inverted():
+            ax.invert_xaxis()
+        ax.set(xlabel="ΔRA (mas)", ylabel="ΔDec (mas)")
+        ax.figure.colorbar(coll, ax=ax, label="Relative local flux")
+        return coll
 
 
 def _modulation_array(values, name):

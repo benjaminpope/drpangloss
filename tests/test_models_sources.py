@@ -17,6 +17,7 @@ from drpangloss.models import (
     FlaredDiskPowerLaw,
     GaussianDisk,
     GaussianDiskModel,
+    GravityDarkenedStar,
     HarmonixModel,
     Image,
     ModulatedGaussianRim,
@@ -407,6 +408,12 @@ def test_binary_render_is_available():
             ),
             2e-3,
         ),
+        (
+            GravityDarkenedStar(
+                12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
+            ),
+            2e-4,
+        ),
     ],
     ids=[
         "binary_cart",
@@ -418,6 +425,7 @@ def test_binary_render_is_available():
         "nested_system",
         "rotated",
         "flared_disk",
+        "gravity_darkened_star",
     ],
 )
 def test_render_fourier_transform_matches_model_visibilities(model, atol):

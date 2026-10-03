@@ -342,12 +342,18 @@ def mesh(n_lat):
     return out
 
 
-def surface(omega, r_eq, inc, obl, n_lat=32):
+def surface(omega, r_eq, inc, obl, n_lat=32, return_mesh=False):
     """Body of his ``ELR_Model.__call__`` up to the Fourier transform.
 
     Returns ``(x, y, weight, teff_ratio)`` per triangle: barycentre sky
     coordinates in mas, the visible-flux weight, and the mean ``Teff / Teff_pole``
     (he computes this in ``plot``).
+
+    With ``return_mesh=True`` a fifth item is returned, for plotting:
+    ``(points_rotated, triangulation, cosine, intensity)``, the rotated
+    vertices (n_vertices, 3), triangle vertex indices, the (unnormalised)
+    z component of each normal (visible where positive) and the flux ratio
+    of each triangle.
     """
     m = mesh(n_lat)
     dtype = jnp.result_type(float, omega, r_eq, inc, obl)
@@ -386,6 +392,14 @@ def surface(omega, r_eq, inc, obl, n_lat=32):
     # apply a step function weight along with the contribution of flux
     # towards the observer; zeroes the non-visible portion of the star
     weight = jnp.heaviside(cosine, 0) * cosine * intensity
+    if return_mesh:
+        return (
+            bary[:, 0],
+            bary[:, 1],
+            weight,
+            teff_ratio,
+            (points_rotated, triangulation, cosine, intensity),
+        )
     return bary[:, 0], bary[:, 1], weight, teff_ratio
 
 
