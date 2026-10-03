@@ -215,7 +215,10 @@ def make_plots(name, data, samples, post, out):
     fig, ax = plt.subplots(1, 2, figsize=(11, 4.5))
     star.plot_surface(ax=ax[0])
     ax[0].set_title(f"{label}: surface")
-    plot_model(star, fov_mas=2.5 * med["diam"], ax=ax[1], title="render")
+    # coarse pixels: the render deposits triangle centres, ~40 px across
+    plot_model(
+        star, fov_mas=1.5 * med["diam"], npix=40, ax=ax[1], title="render"
+    )
     fig.savefig(out / f"{name}_star.png", dpi=150)
     plt.close(fig)
 
