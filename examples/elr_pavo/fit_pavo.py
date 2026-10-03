@@ -129,7 +129,7 @@ def fit_star(name, args):
     data = load_pavo(name)
     print(f"{name}: {len(data['v2'])} samples")
     sampler = MCMC(
-        NUTS(make_model(data)),
+        NUTS(make_model(data), dense_mass=args.dense_mass),
         num_warmup=args.num_warmup,
         num_samples=args.num_samples,
         num_chains=args.chains,
@@ -162,6 +162,8 @@ def fit_star(name, args):
             num_warmup=args.num_warmup,
             num_samples=args.num_samples,
             chains=args.chains,
+            chain_method=args.chain_method,
+            dense_mass=args.dense_mass,
         ),
         posterior=summarise(samples, extra),
     )
@@ -260,6 +262,12 @@ def main():
         "--download-only",
         action="store_true",
         help="fetch any missing data files and exit (e.g. on a login node)",
+    )
+    p.add_argument(
+        "--dense-mass",
+        action="store_true",
+        help="learn a dense mass matrix in warmup (his runs used diagonal); "
+        "much faster on the strongly correlated diameter-omega posterior",
     )
     p.add_argument(
         "--chain-method",

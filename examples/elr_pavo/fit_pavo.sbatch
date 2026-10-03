@@ -36,5 +36,7 @@ export JAX_PLATFORMS=cpu
 export PYTHONUNBUFFERED=1  # log progress as it happens
 export TQDM_MININTERVAL=60  # progress bar: one update a minute in the log
 
+# A dense mass matrix only changes the sampler's efficiency, not the
+# posterior; the default diagonal one made upsilon Tau take many hours.
 srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" \
-  --chain-method vectorized
+  --chain-method vectorized --dense-mass
