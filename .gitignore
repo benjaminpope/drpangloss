@@ -25,3 +25,5 @@ notebooks/archive/
 
 # ELR PAVO re-analysis outputs
 examples/elr_pavo/output/
+# ELR PAVO robustness outputs
+examples/elr_pavo/robustness/output/
