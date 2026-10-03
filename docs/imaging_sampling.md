@@ -96,7 +96,7 @@ print(f"300 warmup + 300 draws in {time.time() - t0:.0f} s; median {onp.median(s
 ```
 
 ```text
-300 warmup + 300 draws in 407 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
+300 warmup + 300 draws in 347 s; median 63 leapfrog steps per draw (at most 1023); 0 divergences
 ```
 
 ## Are the draws trustworthy?
@@ -117,19 +117,20 @@ flux 0.0503 (90%: 0.0500–0.0507; truth 0.05), ESS 334; latent ESS: 5th percent
 
 ## The posterior mean and standard deviation
 
-Each draw is a complete image. Rendering them all gives the posterior mean, which is a better summary than the MAP (it averages over the images the data allow), and the standard deviation of each pixel.
+Each draw is a complete image: a brightness distribution and its flux. Rendering them all gives the posterior mean, which is a better summary than the MAP (it averages over the images the data allow), and the standard deviation of each pixel.
 
 The third panel is new compared with parts 2–4. With a standard deviation, the difference between the mean and the truth can be shown as a **z-score**, the difference in units of the uncertainty. If the uncertainties are honest, it should look like noise of order one with no structure. Pixels where the posterior has almost no flux, outside the ring and under the star, have almost no spread and are left blank.
 
 The standard-deviation map looks like the mean because the field is in log-brightness. Its uncertainty is fractional, so the absolute spread follows the brightness, and the bright knots on the ring are the most uncertain in absolute terms. The z-scores are mostly within ±1 and show no structure following the ring, which is what honest uncertainties look like. A few pixels at the faint south-western edge reach about −2.5, where the mean is slightly fainter than the truth.
 
 ```python
-images = onp.stack([onp.asarray(result.model.set("env.log_brightness.latent", z).set("env.flux", f).env.render(npix, fov)) for z, f in zip(tqdm(samples["env.log_brightness.latent"], desc="rendering draws"), samples["env.flux"])])
+# render() gives a unit-sum image, so scale each draw by its sampled flux.
+images = onp.stack([float(f) * onp.asarray(result.model.set("env.log_brightness.latent", z).env.render(npix, fov)) for z, f in zip(tqdm(samples["env.log_brightness.latent"], desc="rendering draws"), samples["env.flux"])])
 mean, std = images.mean(0), images.std(0)
 fig, axes = plt.subplots(1, 3, figsize=(16, 4.4))
 plot_model(Image.from_brightness(mean, pixel_scale, flux=float(mean.sum())), fov_mas=fov, npix=npix, ax=axes[0], title="posterior mean", beam=resolution)
 plot_model(Image.from_brightness(std, pixel_scale, flux=float(std.sum())), fov_mas=fov, npix=npix, ax=axes[1], title="posterior standard deviation", beam=resolution)
-plot_residual_map(mean - truth_image, fov_mas=fov, sigma=onp.where(std > 0.05 * std.max(), std, onp.nan), ax=axes[2], title="(mean − truth) / standard deviation")
+plot_residual_map(mean - 0.05 * truth_image, fov_mas=fov, sigma=onp.where(std > 0.05 * std.max(), std, onp.nan), ax=axes[2], title="(mean − truth) / standard deviation")
 plt.tight_layout()
 plt.show()
 ```

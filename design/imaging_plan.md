@@ -352,7 +352,7 @@ A background split off as a `Resolved` component also changes what the image's i
 
   The dense matrix whitens the posterior, but only if every sampled parameter is in its block (the flux is measured to about 1%) and warmup adaptation is off. With σ and ℓ sampled it doesn't fit, because the curvature depends on them.
 - **Library:** `fitting.gauss_newton_mass(model, priors, data, values)` returns NUTS's arguments: the inverse of JᵀJ (data and prior residuals) in numpyro's unconstrained coordinates, as one dense block over all sites, with adaptation off. It raises on a singular curvature. `gauss_newton_diagonal` is not added, since the diagonal didn't help.
-- **Tests:** the block's layout, symmetry and prior bound; rejection of an unconstrained parameter; and on a 16² scene, the steps per draw falling from 255 to 31 (x64).
+- **Tests:** the block's layout, symmetry and prior bound; rejection of an unconstrained parameter; and on a 16² scene, the matrix whitening the exact Hessian of numpyro's potential at the MAP: eigenvalues 0.7–2.0, against a raw condition number of about 10⁴ (x64). A test that counted NUTS steps per draw was brittle: 255 → 31 on macOS, but 127 → 63 on Linux CI.
 - **MWE** (`imaging_sampling`, Imaging part 5):
   - NUTS at the evidence's σ and ℓ, with the flux sampled.
   - 63 steps per draw, with no divergences; 7 min on the laptop.

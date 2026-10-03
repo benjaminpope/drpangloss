@@ -6,6 +6,7 @@ import numpy as onp
 import numpyro.distributions as dist
 import pytest
 from numpyro.infer import MCMC, NUTS, init_to_value
+from numpyro.infer.util import initialize_model
 
 from drpangloss.coverage import vlti_oidata
 from drpangloss.fields import GaussianField
@@ -92,12 +93,12 @@ def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
 
 
 @pytest.mark.skipif(
-    not jax.config.jax_enable_x64, reason="NUTS on an image needs x64"
+    not jax.config.jax_enable_x64, reason="the Hessian check needs x64"
 )
-def test_gauss_newton_mass_shortens_nuts_trajectories():
+def test_gauss_newton_mass_whitens_the_posterior():
     # The data make the posterior much narrower in the measured directions
-    # than in the rest, so plain NUTS needs long trajectories (255 steps
-    # per draw here); the Gauss–Newton mass matrix makes them short (31).
+    # than in the rest, so its Hessian is badly conditioned; the Gauss-Newton
+    # covariance, used as NUTS's inverse mass matrix, whitens it near the MAP.
     truth = _scene(jax.random.normal(jax.random.PRNGKey(10), (N, N)), 1.5, 2.0)
     data = vlti_oidata(
         hour_angles_h=(-3.0, -1.5, 0.0, 1.5, 3.0),
@@ -107,22 +108,30 @@ def test_gauss_newton_mass_shortens_nuts_trajectories():
     priors = image_priors(scene) | {"env.flux": dist.Uniform(0.0, 1.0)}
     result = fit(scene, priors, data)
 
-    def median_steps(**kw):
-        mcmc = MCMC(
-            NUTS(
-                numpyro_model(result.model, priors, data),
-                init_strategy=init_to_value(values=result.values),
-                **kw,
-            ),
-            num_warmup=100,
-            num_samples=100,
-            progress_bar=False,
-        )
-        mcmc.run(jax.random.PRNGKey(1), extra_fields=("num_steps",))
-        return float(onp.median(mcmc.get_extra_fields()["num_steps"]))
-
-    plain = median_steps()
-    whitened = median_steps(
-        **gauss_newton_mass(scene, priors, data, result.values)
+    info = initialize_model(
+        jax.random.PRNGKey(1),
+        numpyro_model(result.model, priors, data),
+        init_strategy=init_to_value(values=result.values),
     )
-    assert whitened < plain / 4
+    mass = gauss_newton_mass(scene, priors, data, result.values)
+    (paths,) = mass["dense_mass"]
+    cov = mass["inverse_mass_matrix"][paths]
+
+    # The dense block is the sites in `paths` order, each raveled row-major.
+    z = info.param_info.z
+    shapes = [z[k].shape for k in paths]
+    sizes = [int(onp.prod(s)) for s in shapes]
+
+    def potential(flat):
+        parts = np.split(flat, onp.cumsum(sizes)[:-1])
+        return info.potential_fn(
+            {k: p.reshape(s) for k, p, s in zip(paths, parts, shapes)}
+        )
+
+    flat = np.concatenate([np.ravel(z[k]) for k in paths])
+    hess = onp.asarray(jax.hessian(potential)(flat))
+    chol = onp.linalg.cholesky(onp.asarray(cov))
+    raw = onp.linalg.eigvalsh(hess)
+    white = onp.linalg.eigvalsh(chol.T @ hess @ chol)
+    assert raw[-1] / raw[0] > 1e3
+    assert 0.25 < white[0] and white[-1] < 4
