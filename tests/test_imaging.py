@@ -303,11 +303,35 @@ def test_convolve_beam_of_a_gaussian_adds_variances(npix):
     assert np.allclose(smooth, wider, atol=1e-4 * wider.max())
 
 
-def test_convolve_beam_rejects_bad_input():
+def test_convolve_beam_promotes_integer_images():
+    # An integer or boolean image must not truncate the Gaussian kernel.
+    point = _point()
+    b = Beam(4.0, 2.0, 30.0)
+    expected = convolve_beam(point, 1.0, b)
+    for image in (point.astype(int), point.astype(bool)):
+        smooth = convolve_beam(image, 1.0, b)
+        assert np.issubdtype(smooth.dtype, np.floating)
+        assert np.allclose(smooth, expected)
+
+
+@pytest.mark.parametrize(
+    "scale, b, match",
+    [
+        (1.0, Beam(2.0, 0.0, 0.0), "FWHMs"),
+        (1.0, Beam(np.inf, 1.0, 0.0), "FWHMs"),
+        (1.0, Beam(2.0, 1.0, np.nan), "PA"),
+        (0.0, Beam(2.0, 1.0, 0.0), "pixel_scale"),
+        (np.nan, Beam(2.0, 1.0, 0.0), "pixel_scale"),
+    ],
+)
+def test_convolve_beam_rejects_bad_geometry(scale, b, match):
+    with pytest.raises(ValueError, match=match):
+        convolve_beam(np.ones((5, 5)), scale, b)
+
+
+def test_convolve_beam_rejects_images_that_are_not_2d():
     with pytest.raises(ValueError, match="2D"):
         convolve_beam(np.ones(5), 1.0, Beam(2.0, 1.0, 0.0))
-    with pytest.raises(ValueError, match="positive"):
-        convolve_beam(np.ones((5, 5)), 1.0, Beam(2.0, 0.0, 0.0))
 
 
 def test_plot_model_convolve_shows_the_convolved_image():

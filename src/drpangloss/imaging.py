@@ -587,10 +587,12 @@ def convolve_beam(image, pixel_scale_mas, beam):
     reconstruction with a model: convolve both.
 
     The kernel is an elliptical Gaussian with the beam's FWHMs and position
-    angle (North to East), normalised to unit sum so that the total flux
-    is unchanged. It is sampled on an odd grid centred on a pixel, so the
-    convolution does not shift the image. Flux beyond the edge of the image
-    is taken to be zero, so structure near the edge is dimmed.
+    angle (North to East), normalised to unit sum. It is sampled on an odd
+    grid centred on a pixel, so the convolution does not shift the image.
+    Flux beyond the edge of the image is taken to be zero, and the result
+    is cropped to the image, so the total flux is kept only for structure
+    more than about a beam from the edge; structure nearer the edge is
+    dimmed.
 
     Parameters
     ----------
@@ -609,10 +611,22 @@ def convolve_beam(image, pixel_scale_mas, beam):
         The convolved image.
     """
     image = np.asarray(image)
+    image = image.astype(np.promote_types(image.dtype, np.float32))
     if image.ndim != 2:
         raise ValueError(f"image must be 2D, not of shape {image.shape}.")
-    if not (beam.major_mas > 0 and beam.minor_mas > 0):
-        raise ValueError(f"The beam's FWHMs must be positive, not {beam}.")
+    pixel_scale_mas = float(pixel_scale_mas)
+    if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0):
+        raise ValueError(
+            f"pixel_scale_mas must be finite and positive, not "
+            f"{pixel_scale_mas}."
+        )
+    widths = onp.array([beam.major_mas, beam.minor_mas], dtype=float)
+    if not (onp.all(onp.isfinite(widths)) and onp.all(widths > 0)):
+        raise ValueError(
+            f"The beam's FWHMs must be finite and positive: {beam}."
+        )
+    if not onp.isfinite(beam.pa_deg):
+        raise ValueError(f"The beam's PA must be finite: {beam}.")
     ny, nx = image.shape
     x = pixel_offsets(nx + 1 - nx % 2, pixel_scale_mas)[None, :]  # East
     y = pixel_offsets(ny + 1 - ny % 2, pixel_scale_mas)[:, None]  # North
