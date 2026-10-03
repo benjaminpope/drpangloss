@@ -50,7 +50,11 @@ def _prior_residuals(path, distribution, value):
     """
     import numpyro.distributions as dist
 
-    if isinstance(distribution, dist.Independent):
+    # Unwrap .expand(...) and .to_event(...): they change the shape, not
+    # the density's form (a flat prior stays flat, a Normal stays Normal).
+    while isinstance(
+        distribution, (dist.Independent, dist.ExpandedDistribution)
+    ):
         distribution = distribution.base_dist
     if isinstance(distribution, (dist.Uniform, dist.ImproperUniform)):
         return None
