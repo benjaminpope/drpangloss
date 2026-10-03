@@ -38,7 +38,7 @@ def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
     # Closure phases are whitened as correlated groups (see test_closure);
     # for small Δ the chord 2 sin(Δ/2) is Δ.
     phases, _ = oidata_sim.cp_noise.whiten(delta[n_vis:], errors[n_vis:])
-    assert np.allclose(whitened[n_vis:], phases, rtol=1e-3, atol=1e-3)
+    assert np.allclose(whitened[n_vis:], phases, rtol=1e-4, atol=1e-4)
 
 
 def test_phase_term_is_von_mises_and_smooth_across_pi():

@@ -329,6 +329,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     def _diagonalised(cls, operator, channel_sigma, correlation=None):
         """An operator whose outputs are independent, and their errors.
 
+        Projected outputs are linear combinations of the input angles and
+        are not wrapped (as for kernel phases and DISCOs), so a projection
+        of closure phases is not invariant to shifting one input by 2π;
+        prefer unprojected closure phases, which are whitened with wrapping
+        (``cp_noise``).
+
         The outputs of ``operator`` have covariance A D^½ R D^½ Aᵀ, with D
         the diagonal of ``channel_sigma``² and R the inputs' correlation
         (the identity unless given, e.g. for correlated closure phases). If
@@ -352,7 +358,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         scale = float(np.max(np.abs(diagonal)))
         off = covariance - np.diag(diagonal)
         if scale == 0.0 or float(np.max(np.abs(off))) <= 1e-7 * scale:
-            return operator, np.sqrt(diagonal)
+            # Already independent; drop outputs with no variance (e.g. a
+            # closure relation of correlated closure phases), which carry
+            # no measurement and would divide 0 by 0.
+            keep = diagonal > 1e-10 * scale
+            return operator[keep], np.sqrt(diagonal[keep])
         variance, vectors = np.linalg.eigh(covariance)
         keep = variance > 1e-10 * float(np.max(variance))
         return vectors[:, keep].T @ operator, np.sqrt(variance[keep])

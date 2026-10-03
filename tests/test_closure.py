@@ -253,3 +253,17 @@ def test_tiny_but_identical_operator_rows_are_still_merged():
         }
     )
     assert data.phi.size == 1
+
+
+def test_a_zero_variance_closure_relation_is_dropped():
+    # The four closure phases of one frame satisfy one closure relation:
+    # an operator row along it has zero variance and is dropped, not kept
+    # with an error of zero.
+    one = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6]).with_model(
+        TRUTH
+    )
+    null = onp.linalg.svd(_incidence(one).T)[2][-1]  # the closure relation
+    operator = onp.stack([null, onp.eye(4)[0]])
+    projected = OIData(_record(one, phi_mat=operator))
+    assert projected.phi.size == 1
+    assert onp.all(onp.asarray(projected.d_phi) > 0.0)

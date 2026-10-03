@@ -9,7 +9,10 @@ Every likelihood, grid, limit and fit goes through one residual vector,
 [`whitened_residuals`][drpangloss.likelihood.whitened_residuals]: the
 residuals divided by their uncertainties, with unprojected phases measured
 as a chord, 2 sin(Δ/2), so that the likelihood is smooth where phases
-wrap at ±π.
+wrap at ±π. Closure phases from four or more telescopes are correlated:
+their independent combinations are whitened together, after each residual
+is wrapped into [-π, π), so that likelihood is unchanged by 2π but jumps
+where a residual crosses ±π (a 180° misfit).
 """
 
 import jax
@@ -53,7 +56,11 @@ def _whiten(data_obj, prediction, reference, errors):
     # wrap each residual into [-π, π) before taking its chord, so that a
     # phase shifted by 2π gives the same likelihood. The likelihood then
     # jumps only where a residual crosses ±π, a 180° misfit.
-    wrapped = np.mod(resid[n_vis:] + np.pi, 2.0 * np.pi) - np.pi
+    # (Subtracting whole turns, rather than mod(Δ + π) - π, leaves a
+    # residual already inside the interval exactly as it was, which keeps
+    # small residuals precise in float32.)
+    phase = resid[n_vis:]
+    wrapped = phase - 2.0 * np.pi * np.round(phase / (2.0 * np.pi))
     chord = 2.0 * np.sin(0.5 * wrapped)
     phase, phase_errors = data_obj.cp_noise.whiten(chord, errors[n_vis:])
     return (
@@ -130,6 +137,13 @@ def whitened_residuals(
     ``2 sin(Δ/2) / σ``: equal to Δ/σ for small Δ, but smooth where Δ wraps
     at ±π, so that a χ² surface has no kinks there. The resulting
     likelihood is a von Mises distribution with concentration 1/σ².
+
+    Closure phases from four or more telescopes are the exception: they are
+    correlated, so their chords (of residuals first wrapped into [-π, π))
+    are whitened together and replaced by their independent combinations.
+    That likelihood is a Gaussian approximation to a correlated circular
+    one: it is unchanged by 2π, but jumps where a residual crosses ±π, a
+    180° misfit, rather than being smooth there.
 
     Parameters
     ----------
