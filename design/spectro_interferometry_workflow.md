@@ -136,7 +136,7 @@ So:
 
 Both go through one function (`inflated_errors` on `apep-gravity`), with `where="data" | "model"` and `combine="max" | "quadrature"`, so that the two cannot drift apart.
 
-### 2.7 The in-field (dual-field) calibrator recipe (new: example and docs, not library)
+### 2.7 The in-field (dual-field) calibrator recipe (done in virgil-vlti, not the core)
 In dual-field instruments (GRAVITY's dual-field mode), archival data often include frames on the fringe-tracking star, interleaved with the target. When that star is unresolved, it is a calibrator observed minutes apart, in the same mode, with no separate calibration needed. GRAVITY-specific tools are "not planned" in [`pmoired_parity.md`](pmoired_parity.md), so this is a recipe, not a reader:
 1. Classify frames by `SOBJ` offset: ≈ 0 means the fringe-tracking star (the calibrator); otherwise the target.
 2. Per baseline and channel, interpolate the calibrator's V² transfer function in time to each target frame. Average its closure phases as unit vectors and subtract them.
@@ -144,7 +144,7 @@ In dual-field instruments (GRAVITY's dual-field mode), archival data often inclu
 4. Unify MJD per frame (§2.5) before writing.
 5. Optionally, produce F_target/F_cal(λ) for NFLUX (§2.2).
 
-**Deliverable:** `examples/gravity_dual_field_calibration.py`, generalised from Apep's `scripts/calibrate.py`, and a docs page. **Caveat for the docs:** the calibrator must be unresolved, and close enough on the sky that the transfer function is shared.
+**Done (2026-10-04)** in [virgil-vlti](https://github.com/benjaminpope/virgil-vlti), as `virgil-vlti-calibrate --dual-field`, generalised from Apep's `scripts/calibrate.py`. Its known τ is a leave-one-out prediction error, as the GRAVITY review (§7, now in virgil-vlti) recommends. **Caveat for the docs:** the calibrator must be unresolved, and close enough on the sky that the transfer function is shared.
 
 ### 2.8 Smearing (6a)
 Once 6a's smearing exists, its docs should give the rule for when it matters: the number of fringes across the scene's extent, B·θ/λ, compared with the resolving power R. They should also include a check on real data near the limit. (Apep: R ≈ 130–240 after binning, with up to 8 fringes across the scene on 130 m baselines. Refitting with smearing on should move the separation by ≲ 0.01 mas.)
@@ -160,7 +160,7 @@ Once 6a's smearing exists, its docs should give the rule for when it matters: th
 | 2.4 | Rank-one correlated nuisances (`vis_gain`, `phi_offset`), analytic marginalisation | **Stage 6d** (decided), after 6a | 5–7 | 6a; 2.5 (`frame`) |
 | 2.5 | `mjd` and `frame` in `OIData`; INT_TIME matching; `epochs()` | 6a.0 | 2–3 | — |
 | 2.6 | `wavel_scale`; the `noise=` vocabulary; `with_error_floor` sharing `inflated_errors` | 6a (`with_error_floor`) and 6d (`wavel_scale`) | 1–2 | the `apep-gravity` PR |
-| 2.7 | Dual-field calibration example and docs | 6d | 3–4 | 2.4 (known τ), 2.5 |
+| 2.7 | Dual-field calibration | done in virgil-vlti | — | — |
 | 2.8 | Smearing rule and a real-data check | 6a's docs | 0.5 | 6a smearing |
 
 **Order.**
@@ -168,7 +168,7 @@ Once 6a's smearing exists, its docs should give the rule for when it matters: th
 2. 6a's spectra and error floors.
 3. **Then** the `apep-gravity` PR (decided: it merges *after* 6a's spectra), reconciled with 6a's `Nodes` and floors.
 4. Stage 6d (2.4) and 2.6.
-5. 2.7 last.
+5. 2.7 is done, in virgil-vlti.
 
 The 6a agent needs only the "+" items folded into its plan.
 
@@ -182,5 +182,5 @@ The 6a agent needs only the "+" items folded into its plan.
 1. **`noise=` grows into the general per-dataset nuisance argument** (gains, offsets, wavelength scale, flux scale), keeping its name (default), rather than a separate `nuisance=` argument.
 2. **Reference flux for every spectrum:** the value at `wavel0` (default), not the node mean.
 3. **Closure phase everywhere,** plus the closure-free projection of continuum-normalised VISPHI in the line windows (default; §2.3).
-4. **The dual-field recipe:** an example script and docs (default), not a `virgil.gravity` module.
+4. **The dual-field recipe:** resolved 2026-10-04: it lives in virgil-vlti, not in a `virgil.gravity` module.
 5. **Real anchor binaries** for the position-angle round trips are not chosen yet; see the reminder in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) §7.
