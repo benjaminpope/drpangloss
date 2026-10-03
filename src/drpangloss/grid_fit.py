@@ -147,9 +147,9 @@ def likelihood_grid(data_obj, model, samples_dict, batch_size=None):
         this order.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
-        about 2**20 (a million) model visibilities, and at least 256. Larger
-        can be faster for small data; smaller bounds memory for large
-        models.
+        about 2**20 model visibilities on a CPU and 2**23 on a GPU, and at
+        least 256. Larger can be faster for small data; smaller bounds
+        memory for large models.
 
     Returns
     -------
@@ -206,9 +206,9 @@ _OPTIMIZED_PARAMS_DOC = """
         part is ``flux``.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
-        about 2**20 (a million) model visibilities, and at least 256. Larger
-        can be faster for small data; smaller bounds memory for large
-        models.
+        about 2**20 model visibilities on a CPU and 2**23 on a GPU, and at
+        least 256. Larger can be faster for small data; smaller bounds
+        memory for large models.
 """
 
 
@@ -315,9 +315,9 @@ def laplace_flux_uncertainty_grid(
         whose last part is ``flux``.
     batch_size : int, optional
         Number of grid points evaluated at once. By default, enough for
-        about 2**20 (a million) model visibilities, and at least 256. Larger
-        can be faster for small data; smaller bounds memory for large
-        models.
+        about 2**20 model visibilities on a CPU and 2**23 on a GPU, and at
+        least 256. Larger can be faster for small data; smaller bounds
+        memory for large models.
 
     Returns
     -------
