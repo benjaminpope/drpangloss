@@ -18,6 +18,7 @@ where a residual crosses ±π (a 180° misfit).
 import jax
 import jax.numpy as np
 import numpy as onp
+from jax.scipy.special import i0e
 
 from ._utils import concrete, is_flux_param
 from .models import SourceModel
@@ -32,16 +33,21 @@ def _whiten(data_obj, prediction, reference, errors):
     - An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
       2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is
       smooth at ±π, so the Gaussian likelihood built on it is a von Mises
-      likelihood with concentration 1/σ². Projected (kernel or DISCO)
-      phases are linear combinations that are not wrapped, and are left
-      as Δ.
+      likelihood with concentration κ = 1/σ². Its exact normaliser,
+      -log(2π I₀(κ)) + κ = -log 2π - log i0e(κ), is returned as the
+      effective error √(2π) i0e(κ), so that ``_gaussian_loglike`` gives a
+      density normalised on the circle; for σ ≪ 1 this is σ. Projected
+      (kernel or DISCO) phases are linear combinations that are not
+      wrapped, and are left as Δ.
     - Closure phases from four or more telescopes are correlated, and only
       some are independent. Their residuals are wrapped into [-π, π),
       taken as chords, mapped to the independent combinations and
       whitened with their covariance (``OIData.cp_noise``), so there are
       fewer of them than closure phases. ``errors_out`` then holds
       effective errors for those rows, whose log-sum is ½ log of the
-      covariance's pseudo-determinant.
+      covariance's pseudo-determinant. This keeps the Gaussian
+      normaliser: a correlated von Mises density has no closed-form
+      normaliser, and the Gaussian is its limit for σ ≪ 1.
     """
     resid = np.asarray(prediction) - np.asarray(reference)
     errors = np.asarray(errors)
@@ -51,7 +57,9 @@ def _whiten(data_obj, prediction, reference, errors):
     if data_obj.cp_noise is None:
         chord = 2.0 * np.sin(0.5 * resid[n_vis:])
         whitened = np.concatenate([resid[:n_vis], chord]) / errors
-        return whitened, errors
+        phase_errors = errors[n_vis:]
+        von_mises = np.sqrt(2.0 * np.pi) * i0e(1.0 / phase_errors**2)
+        return whitened, np.concatenate([errors[:n_vis], von_mises])
     # Correlated closure phases mix their residuals, so each sign matters:
     # wrap each residual into [-π, π) before taking its chord, so that a
     # phase shifted by 2π gives the same likelihood. The likelihood then
@@ -213,7 +221,8 @@ def whitened_residuals(model_object, data_obj, **noise):
     ``(model - data) / σ``. Unprojected phase residuals Δ are
     ``2 sin(Δ/2) / σ``: equal to Δ/σ for small Δ, but smooth where Δ wraps
     at ±π, so that a χ² surface has no kinks there. The resulting
-    likelihood is a von Mises distribution with concentration 1/σ².
+    likelihood is a von Mises distribution with concentration 1/σ²,
+    normalised exactly on the circle.
 
     Closure phases from four or more telescopes are the exception: they are
     correlated, so their chords (of residuals first wrapped into [-π, π))
@@ -249,12 +258,16 @@ def whitened_residuals(model_object, data_obj, **noise):
 def model_loglike(model_object, data_obj, *, reject_unphysical=False, **noise):
     """Evaluate the log likelihood for an instantiated model object.
 
-    This is ``-0.5 * sum(r**2) - sum(log σ) - (n/2) log 2π`` for the
-    residuals ``r`` of
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals]:
-    Gaussian in visibilities and projected phases, and von Mises in
-    unprojected phases (with the Gaussian normalisation, which is its
-    small-σ limit).
+    This is ``-0.5 * sum(r**2)`` for the residuals ``r`` of
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals], plus
+    each density's normalisation: Gaussian in visibilities and projected
+    phases, ``-log σ - ½ log 2π``; von Mises with concentration
+    κ = 1/σ² in uncorrelated unprojected phases, ``-log 2π - log i0e(κ)``,
+    which is the Gaussian one for σ ≪ 1 but stays a normalised density
+    on the circle when σ is large (e.g. a fitted ``phi_error``).
+    Correlated closure phases (``OIData.cp_noise``) keep the Gaussian
+    normalisation, their small-σ limit, since a correlated circular
+    density has no closed-form normaliser.
 
     Parameters
     ----------

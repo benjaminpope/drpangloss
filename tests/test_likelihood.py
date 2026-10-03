@@ -8,6 +8,7 @@ import numpy as onp
 from virgil.amigo import load_oi_data
 from virgil.likelihood import model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
+from virgil.oidata import OIData
 
 from ._test_data import oidata_sim, true_values
 
@@ -95,3 +96,69 @@ def test_projected_phases_are_plain_residuals_over_sigma():
     observed, errors = data.flatten_data()
     expected = (data.model(model) - observed) / errors
     assert onp.allclose(whitened_residuals(model, data), expected)
+
+
+def _absolute_phase_data(n, phase_offsets, phase_error, seed=0):
+    """Uncorrelated absolute phases: TRUTH's, plus ``phase_offsets``."""
+    rng = onp.random.default_rng(seed)
+    u, v = rng.uniform(-5.0, 5.0, (2, n))
+    cvis = onp.asarray(TRUTH.model(u, v, 4.8e-6))
+    return OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": 4.8e-6,
+            "vis": onp.abs(cvis) ** 2,
+            "d_vis": onp.full(n, 1e-2),
+            "phi": onp.angle(cvis) - phase_offsets,
+            "d_phi": onp.full(n, phase_error),
+            "v2_flag": True,
+            "cp_flag": False,
+        }
+    )
+
+
+def test_uncorrelated_phase_likelihood_is_normalised_on_the_circle():
+    # Review 1.2: with the Gaussian normaliser -log σ the von Mises
+    # "density" integrated to 1.17 over the circle at σ = 1.
+    deltas = np.linspace(-np.pi, np.pi, 4000, endpoint=False)
+    for sigma in (0.1, 0.5, 1.0, 2.0, 5.0):
+        data = _absolute_phase_data(1, onp.zeros(1), sigma)
+        assert data.cp_noise is None and data._phases_wrap
+
+        def loglike(delta, data=data):
+            shifted = eqx.tree_at(lambda d: d.phi, data, data.phi - delta)
+            return model_loglike(TRUTH, shifted)
+
+        # The visibility is exact: its Gaussian density at zero residual.
+        log_vis = -np.log(1e-2) - 0.5 * np.log(2.0 * np.pi)
+        density = np.exp(jax.vmap(loglike)(deltas) - log_vis)
+        integral = np.sum(density) * (2.0 * np.pi / deltas.size)
+        assert abs(float(integral) - 1.0) < 1e-3, (sigma, integral)
+
+
+def test_fitted_phase_error_scale_recovers_large_noise():
+    # Review 1.2: with the Gaussian normaliser, the maximum-likelihood
+    # phase-error scale for von Mises noise of σ = 1.8 rad came out as 1.31.
+    sigma = 1.8
+    rng = onp.random.default_rng(2)
+    noise = rng.vonmises(0.0, 1.0 / sigma**2, 10_000)
+    data = _absolute_phase_data(noise.size, noise, 1.0, seed=3)
+    scales = np.linspace(1.0, 3.0, 201)
+    profile = jax.vmap(lambda s: model_loglike(TRUTH, data, phi_scale=s))(
+        scales
+    )
+    best = float(scales[np.argmax(profile)])
+    assert abs(best - sigma) < 0.15, best
+
+
+def test_small_phase_errors_keep_the_gaussian_normaliser():
+    data = _absolute_phase_data(20, onp.full(20, 0.01), 1e-2)
+    r = whitened_residuals(TRUTH, data)
+    _, errors = data.flatten_data()
+    gaussian = (
+        -0.5 * np.sum(r**2)
+        - np.sum(np.log(errors))
+        - 0.5 * r.size * np.log(2.0 * np.pi)
+    )
+    assert np.allclose(model_loglike(TRUTH, data), gaussian, atol=1e-3)
