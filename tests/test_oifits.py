@@ -399,3 +399,44 @@ def test_phityp_is_checked_only_for_the_chosen_target():
     hdul.append(other)
     record = read_oifits(hdul, target="STAR")  # its table is absolute
     assert onp.isfinite(record["phi"]).all()
+
+
+def test_closure_phases_match_visibilities_within_an_exposure():
+    # GRAVITY averages different frames of one exposure for OI_T3 and
+    # OI_VIS2, so their MJDs can differ by more than a row's INT_TIME.
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    vis2, t3 = hdul["OI_VIS2"].data, hdul["OI_T3"].data
+    vis2["INT_TIME"] = 120.0
+    t3["INT_TIME"] = 30.0
+    t3["MJD"] = vis2["MJD"][0] + 131.0 / 86400.0
+    assert read_oifits(hdul)["i_cps1"].size == len(TRIANGLES)
+
+    # A different exposure (beyond twice the longest INT_TIME) is not used.
+    t3["MJD"] = vis2["MJD"][0] + 300.0 / 86400.0
+    with pytest.raises(ValueError, match="needs baseline"):
+        read_oifits(hdul)
+
+
+def test_closure_only_rows_of_different_times_keep_their_own_baselines():
+    # Without a visibility table, each T3 row's legs come from its own
+    # coordinates, so two epochs within the exposure window stay separate.
+    from virgil.oifits import build_hdulist
+
+    tables = _tables()
+    del tables["OI_VIS2"]
+    hdul = build_hdulist(tables)
+    t3 = hdul["OI_T3"]
+    n = len(t3.data)
+    later = fits.BinTableHDU.from_columns(t3.columns, nrows=2 * n)
+    for name in t3.columns.names:
+        later.data[name][n:] = t3.data[name]
+    later.data["INT_TIME"] = 120.0
+    later.data["MJD"][n:] += 131.0 / 86400.0
+    later.header.update(t3.header)
+    hdul["OI_T3"] = later
+
+    record = read_oifits(hdul)
+    assert record["u"].size == 2 * len(PAIRS)
+    assert record["i_cps1"].size == 2 * n
