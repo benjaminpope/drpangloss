@@ -56,7 +56,7 @@ git rev-parse --verify virgil-rename-base virgil-rename
 
 If your branch was created from `main` *after* the rename, skip this step: it is already on `virgil`.
 
-Otherwise, with a clean working tree on your feature branch:
+Otherwise, with a clean working tree on your feature branch (**including no untracked files**: the copy of the script you get from `virgil-rename-base` stages everything, so move untracked files out of the repository or `git stash -u` them first):
 
 ```bash
 git fetch origin --tags
@@ -73,6 +73,8 @@ If the first merge conflicts, those are ordinary content conflicts with pre-rena
 3. records the rename with `git merge -s ours virgil-rename`. Its content is already on your branch, so this avoids conflicts on lines both sides renamed;
 4. merges `origin/main` normally, to pick up anything that landed after the rename;
 5. checks that no `drpangloss` references remain.
+
+**Known false alarm.** If step 5 prints `STOP: still mentions drpangloss: ['README.md', 'docs/index.md']`, those are `main`'s intentional "Formerly drpangloss" note. The copy of the script running from `virgil-rename-base` doesn't yet know `main` skips them. Run `python3 scripts/rename_to_virgil.py --check`, which uses the script just merged from `main`. If it exits 0, the migration is complete. Later copies of the script (on `main`) stage only tracked files and run this check themselves.
 
 If step 4 prints `STOP: conflicts merging origin/main`, they are ordinary conflicts. Resolve them, `git commit`, and rerun `--migrate-branch`. It is idempotent.
 

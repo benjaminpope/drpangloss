@@ -241,7 +241,9 @@ def migrate_branch() -> None:
                 )
             shutil.rmtree(OLD_PKG)
         rewrite_text(check=False)
-        git("add", "-A")
+        # Stage only tracked files (the rewrites; git mv staged the moves),
+        # so that untracked files in the worktree never enter the commit.
+        git("add", "-u")
         if git("status", "--porcelain", "--untracked-files=no").strip():
             git(
                 "commit",
@@ -272,11 +274,19 @@ def migrate_branch() -> None:
             "conflicts, not rename conflicts. Resolve, run the tests, "
             "`git commit`, then rerun this command to finish."
         )
-    leftovers = (
-        rewrite_text(check=True) + git("ls-files", "--", str(OLD_PKG)).split()
+    # 5. Check with the script as it now is on this branch (just merged from
+    # main), not the copy running here: main may skip more files since.
+    r = subprocess.run(
+        [sys.executable, "scripts/rename_to_virgil.py", "--check"],
+        capture_output=True,
+        text=True,
     )
-    if leftovers:
-        sys.exit(f"STOP: still mentions drpangloss: {leftovers}")
+    if r.returncode:
+        sys.exit(
+            f"STOP: the final --check failed (exit {r.returncode}); either the "
+            f"branch still mentions the old name or the check itself errored:\n"
+            f"{r.stdout}{r.stderr}"
+        )
     print(
         "done. Next: reinstall, run ruff and pytest, then push "
         "(plain `git push`, never --force)."
