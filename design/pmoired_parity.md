@@ -52,11 +52,8 @@ These are what GRAVITY and MATISSE line data need.
   - It covers thick rings, power-law and limb-darkened disks (I(μ)), doughnuts, and harmonics on any profile.
   - Crescents (`crin`, `crout`, `croff`) are the difference of two offset disks, so they need no new class.
 - **Bootstrap.** `bootstrap_fit(model, priors, data, n)` resamples by date and baseline, keeping spectral vectors whole.
-- **Orbits.**
-  - A Keplerian position (P, T0, e, i, ω, Ω, a), or Thiele–Innes constants, driving a component's `dra`/`ddec` from each datum's MJD.
-  - Radial velocities enter as an extra likelihood term.
-  - This needs MJD carried per datum in `OIData`.
-- **Spectral correlations** between channels. Do this only once a dataset shows they matter, since drpangloss's errors are diagonal.
+- **Orbits** are now Stage 9, designed in [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md).
+- **Spectral correlations** between channels are now Stage 6d, because GRAVITY data need them ([`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4).
 
 ## Not planned
 - **The string expression language.** Python functions do the same job.

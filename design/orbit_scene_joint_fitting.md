@@ -2,7 +2,7 @@
 
 Status: **design**, 2026-10-03. Orbits are to be built in drpangloss, with the Kepler solver and orbital geometry from [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0) as an optional dependency. No orbit code exists yet.
 
-This note expands the "Keplerian orbits" item of Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument drpangloss reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
+This note is the design of Stage 9, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument drpangloss reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
 
 The colliding-wind binary Apep (VLTI/GRAVITY, 2023–25) is a worked example. It exposed most of the requirements below. Its science and Apep-specific scripts live with the analysis, in `~/data/apep_gravity` (`notes/lessons_for_drpangloss.md`, `notes/omega_convention_question.md`, `scripts/attached_cone_sketch.py`).
 
@@ -247,17 +247,17 @@ Closure-phase sign conventions (OI_T3 baseline order, the instrument's conjugati
 
 | Item | Goes in | Effort (agent h) | Depends on |
 |---|---|---|---|
-| `orbits.py`: `KeplerOrbit`, `ThieleInnesOrbit`, converters to and from jaxoplanet, the `[orbits]` extra; tests 5.1.1 and 5.2 | Stage 8 (Keplerian orbits), brought forward | 4–5 | — |
-| Starting orbits: per-epoch positions → Thiele–Innes grid solve; `PositionData` | Stage 8 | 2–3 | `orbits.py` |
-| `StateVectorOrbit` and its regular forms | Stage 8 | 3 | `orbits.py` |
-| `SourceModel.at` and time-dependent `OIData.model` | new | 3–4 | `OIData.mjd`/`frame` (spectro §2.5) |
-| `Attached` (anchor, bind, offsets); orientation test | new (binary-frame attachment) | 3 | `at`, `orbits.py` |
-| Physical skew (aberration) | new, later | 2 | `Attached`, R6 |
-| `RVData`, axial priors | Stage 8 | 2 | `orbits.py` |
-| `distance_pc` and derived mass; reporting | Stage 8 | 1 | — |
-| `simulate`, `bias_test` | new | 2–3 | `at`; 6a smearing optional |
-| A `TruncatedCone` component (a thin conical shell of J₀ rings, from the Apep analysis), with an elliptical cross-section option and a render ↔ model test | new | 3–4 | — |
-| PA round-trip tests (5.3.1, 5.3.3); real anchors (5.3.2) | new | 2, then 2 per anchor | AMICAL optional |
+| `orbits.py`: `KeplerOrbit`, `ThieleInnesOrbit`, converters to and from jaxoplanet, the `[orbits]` extra; tests 5.1.1 and 5.2 | Stage 9 | 4–5 | — |
+| Starting orbits: per-epoch positions → Thiele–Innes grid solve; `PositionData` | Stage 9 | 2–3 | `orbits.py` |
+| `StateVectorOrbit` and its regular forms | Stage 9 | 3 | `orbits.py` |
+| `SourceModel.at` and time-dependent `OIData.model` | Stage 9 | 3–4 | `OIData.mjd`/`frame` (spectro §2.5) |
+| `Attached` (anchor, bind, offsets); orientation test | Stage 9 | 3 | `at`, `orbits.py` |
+| Physical skew (aberration) | Stage 9, later | 2 | `Attached`, R6 |
+| `RVData`, axial priors | Stage 9 | 2 | `orbits.py` |
+| `distance_pc` and derived mass; reporting | Stage 9 | 1 | — |
+| `simulate`, `bias_test` | Stage 9 | 2–3 | `at`; 6a smearing optional |
+| A `TruncatedCone` component (a thin conical shell of J₀ rings, from the Apep analysis), with an elliptical cross-section option and a render ↔ model test | Stage 9 | 3–4 | — |
+| PA round-trip tests (5.3.1, 5.3.3); real anchors (5.3.2) | Stage 9 | 2, then 2 per anchor | AMICAL optional |
 
 ## 7. Decisions and open questions
 

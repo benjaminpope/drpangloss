@@ -147,12 +147,12 @@ Once 6a's smearing exists, its docs should give the rule for when it matters: th
 |---|---|---|---|---|
 | 2.1 | `Sum` and `Nodes(outside=0.0)`; positivity on the total; `Tabulated` → `Nodes`; one reference-flux rule | 6a (as planned) | +0.5 | — |
 | 2.2a | OI_FLUX/NFLUX, `System.total_spectrum`, `flux_scale` | 6a (as planned) | +0.5 for `total_spectrum` | 2.1 |
-| 2.2b | A prior on the reference spectrum; docs on the degeneracy | new, small | 1 | 2.2a |
+| 2.2b | A prior on the reference spectrum; docs on the degeneracy | 6a | 1 | 2.2a |
 | 2.3 | VISPHI with pipeline-matched normalisation; resolved-regime test; no double counting with T3 | 6a (as planned, plus tests) | +1 | 2.5 |
 | 2.4 | Rank-one correlated nuisances (`vis_gain`, `phi_offset`), analytic marginalisation | **Stage 6d** (decided), after 6a | 5–7 | 6a; 2.5 (`frame`) |
-| 2.5 | `mjd` and `frame` in `OIData`; INT_TIME matching; `epochs()` | new, before 6a's VISPHI | 2–3 | — |
-| 2.6 | `wavel_scale`; the `noise=` vocabulary; `with_error_floor` sharing `inflated_errors` | new (small) and 6a | 1–2 | the `apep-gravity` PR |
-| 2.7 | Dual-field calibration example and docs | new | 3–4 | 2.4 (known τ), 2.5 |
+| 2.5 | `mjd` and `frame` in `OIData`; INT_TIME matching; `epochs()` | 6a.0 | 2–3 | — |
+| 2.6 | `wavel_scale`; the `noise=` vocabulary; `with_error_floor` sharing `inflated_errors` | 6a (`with_error_floor`) and 6d (`wavel_scale`) | 1–2 | the `apep-gravity` PR |
+| 2.7 | Dual-field calibration example and docs | 6d | 3–4 | 2.4 (known τ), 2.5 |
 | 2.8 | Smearing rule and a real-data check | 6a's docs | 0.5 | 6a smearing |
 
 **Order.**
