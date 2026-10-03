@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `drpangloss`: `GaussianDiskModel` (a star plus a Gaussian disk), the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `HarmonixModel`.
+This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `drpangloss`: `GaussianDiskModel` (a star plus a Gaussian disk), and the `UniformDisk` and `ModulatedGaussianRim` building blocks. Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
 We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally wrap a harmonix-style external source object to show how the visibility and rendering interfaces fit together. See the composition tutorial for how to combine these building blocks into more complex scenes.
 
@@ -24,7 +24,6 @@ if str(src_path) not in sys.path:
 
 from drpangloss.models import (
     GaussianDiskModel,
-    HarmonixModel,
     ModulatedGaussianRim,
     PointSource,
     System,
@@ -155,76 +154,9 @@ plt.show()
 
 ![source_models output 8.1](generated/source_models_cell008_out01.png)
 
-## Wrap a harmonix-style external source
+## Spotted stars with harmonix
 
-`HarmonixModel` is the bridge between `drpangloss` and external source objects that already know how to evaluate visibilities. In the real package this can wrap a harmonix source with a `model(u, v, t)` method. Here we use a compact toy object with the same calling convention so the data flow is completely explicit.
-
-```python
-class ToySurface:
-    def render(self, res, theta):
-        coords = jnp.linspace(-1.0, 1.0, res)
-        xx, yy = jnp.meshgrid(coords, coords, indexing="xy")
-        c, s = jnp.cos(theta), jnp.sin(theta)
-        xr = c * xx + s * yy
-        yr = -s * xx + c * yy
-        image = jnp.exp(-0.5 * ((xr / 0.35) ** 2 + (yr / 0.18) ** 2))
-        return image / jnp.sum(image)
-
-
-class ToyHarmonixSource:
-    def __init__(self):
-        self.surface = ToySurface()
-
-    def rotational_phase(self, time):
-        return 2.0 * jnp.pi * time
-
-    def model(self, uu, vv, time):
-        rho = jnp.sqrt((uu / 8.0e7) ** 2 + (vv / 5.0e7) ** 2)
-        envelope = jnp.exp(-(rho**2))
-        phase = jnp.exp(-2j * jnp.pi * time * uu / 2.0e8)
-        return envelope * phase
-
-
-wrapped = HarmonixModel(ToyHarmonixSource(), observation_time=0.2)
-cvis_ext = wrapped.model(u, v, wavel)
-image_ext = np.asarray(wrapped.render(npix=128, fov_mas=40.0))
-
-{
-    "cvis_shape": tuple(cvis_ext.shape),
-    "all_finite": bool(jnp.all(jnp.isfinite(cvis_ext))),
-    "render_sum": float(np.sum(image_ext)),
-}
-```
-
-```text
-{'cvis_shape': (32,), 'all_finite': True, 'render_sum': 0.9999998211860657}
-```
-
-```python
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-
-axes[0].scatter(baseline, np.asarray(jnp.abs(cvis_ext)), color="tab:green")
-axes[0].set_xlabel("Baseline length (m)")
-axes[0].set_ylabel("|V|")
-axes[0].set_title("`HarmonixModel.model(...)`")
-
-im = axes[1].imshow(
-    image_ext,
-    extent=[20.0, -20.0, -20.0, 20.0],
-    cmap="viridis",
-)
-axes[1].set_xlabel(r"$\Delta$RA (mas)")
-axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("Wrapped surface render")
-fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-
-plt.tight_layout()
-plt.show()
-```
-
-![source_models output 11.1](generated/source_models_cell011_out01.png)
-
-This is the same pattern you would use with a real harmonix object: instantiate the external source, wrap it in `HarmonixModel`, and then call `model(...)` or `render(...)` through the common `SourceModel` interface.
+`HarmonixModel` wraps a star from [harmonix](https://github.com/shashankdholakia/harmonix), which computes the visibilities of a spherical-harmonic surface map analytically, so that it simulates, draws and fits like any other drpangloss model. See [Spotted stars with harmonix](harmonix.md) for a worked example.
 
 ## Simulate a uniform disk
 
@@ -281,7 +213,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![source_models output 16.1](generated/source_models_cell016_out01.png)
+![source_models output 13.1](generated/source_models_cell013_out01.png)
 
 ## Simulate an azimuthally modulated rim
 
@@ -361,4 +293,4 @@ plt.tight_layout()
 plt.show()
 ```
 
-![source_models output 20.1](generated/source_models_cell020_out01.png)
+![source_models output 17.1](generated/source_models_cell017_out01.png)

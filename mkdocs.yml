@@ -49,6 +49,7 @@ nav:
   - Visibility Models: model_syntax.md
   - Extended Source Models: source_models.md
   - Composing Models: composition.md
+  - "Spotted Stars: harmonix": harmonix.md
   - AMIGO DISCO: amigo_disco.md
   - "Imaging: AMI simulation": imaging_ami.md
   - API Reference:
