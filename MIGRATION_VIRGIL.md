@@ -103,7 +103,8 @@ Restart any Python kernels or long-running processes: they still have `drpanglos
   - the string `drpangloss-synthetic-mixed-disco-v1`: the tag stored inside `data/calibrated_visibility.npy`;
   - historical `.log` files and binary data (FITS headers in the bundled `.oifits` files);
   - this file and `scripts/rename_to_virgil.py`.
-  - `docs/contributors.md`, whose history names the original package (its present-tense mentions were edited by hand).
+  - `docs/contributors.md`, whose history names the original package (its present-tense mentions were edited by hand);
+  - `README.md` and `docs/index.md` (generated from it), which say what the package used to be called.
 
 ## For the coordinator only
 

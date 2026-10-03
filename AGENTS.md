@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> The import package is `virgil`; the PyPI distribution is `virgil-astro` (`pip install virgil-astro`; `pip install virgil` installs an unrelated package).
+
 Guidance for AI coding agents (Copilot, Claude Code, and similar) working in this
 repository. Humans should read [CONTRIBUTING.md](CONTRIBUTING.md) instead.
 
@@ -237,6 +239,8 @@ to that test.
 - `docs/generated/` and `data/*.npy` — generated or fixture data.
 - `docs/*.md` pages listed in `scripts/sync_tutorial_docs.py::MAPPINGS` — generated from
   notebooks (see below).
+- `docs/index.md` — generated from `README.md` by `scripts/sync_tutorial_docs.py`; edit
+  `README.md`, then run the script.
 - `notebooks/archive/` — old exploratory notebooks, git-ignored; do not read or edit.
 - `.venv/`, `.lint-logs/`.
 

@@ -1,35 +1,78 @@
+<!-- AUTO-GENERATED FROM README.md by scripts/sync_tutorial_docs.py. Edit README.md, not this file. -->
 # virgil
+[![PyPI version](https://badge.fury.io/py/virgil-astro.svg)](https://badge.fury.io/py/virgil-astro)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![integration](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml/badge.svg)](https://github.com/benjaminpope/virgil/actions/workflows/tests.yml)
+[![Documentation](https://github.com/benjaminpope/virgil/actions/workflows/zensical-pages.yml/badge.svg)](https://benjaminpope.github.io/virgil/)
+
+Versatile Interferometric Reconstruction and Gradient-based Inference Library.
+
+Contributors: [Dori Blakely](https://github.com/blakelyd), [Benjamin Pope](https://github.com/benjaminpope), [Louis Desdoigts](https://github.com/LouisDesdoigts), [Shashank Dholakia](https://github.com/shashankdholakia), [Toon De Prins](https://github.com/DePrinsT), [Jonah Goldfine](https://github.com/JonahDG), [Max Charles](https://github.com/maxecharles), [Anand Sivaramakrishnan](https://github.com/anand0xff), [Ian Czekala](https://github.com/iancze) and [Jens Kammerer](https://github.com/kammerje). The [Contributors](contributors.md) page says who did what.
+
+## What is virgil?
 
 virgil is a package for modelling optical interferometry data in JAX.
 
 ## Installation
 
-```bash
+virgil is hosted on PyPI; the easiest way to install it is:
+
+```
 pip install virgil-astro
 ```
 
-From source:
+You can also build from source. To do so, clone the git repo, enter the directory, and run
 
-```bash
+```
 pip install .
 ```
 
-## Using these docs
+We recommend using a virtual environment to avoid dependency conflicts.
 
-The tabs at the top group worked examples on simulated and bundled data:
-- **Data Handling:** reading OIFITS files into `OIData`, and AMIGO's DISCO data from JWST aperture masking.
-- **Sources:** visibility models, extended sources, composing scenes from components, and spotted stars.
-- **Binaries:** searching for companions, detection limits, and fitting several datasets together.
-- **Imaging:** image reconstruction in five parts, from simulating data to sampling the posterior.
+Using `uv` (recommended):
 
-**Background** explains the ideas behind the methods and credits the people and projects virgil builds on. **API Reference** documents every public class and function.
+```bash
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e . pytest
+uv run --python .venv/bin/python pytest -q
+```
 
-## Development
 
-See the repository contribution guide on GitHub for contribution and testing workflow.
+## Use & Documentation
 
-The project is actively being modernized for improved reliability, testing coverage, and model extensibility.
+Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpope.github.io/virgil/).
+
+### Using these docs
+
+The sections in the sidebar hold worked examples on simulated and bundled data:
+- **Background:** [who contributed what](contributors.md), and [Gaussian-process priors and information field theory](gp_and_ift.md).
+- **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md).
+- **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), and [fitting several datasets together](hierarchical_inference.md).
+- **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md) and [gravity-darkened stars](gravity_darkened_star.md).
+- **Imaging:** image reconstruction in five parts: [simulating data](imaging_ami.md), [regularised maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md) and [sampling the posterior](imaging_sampling.md).
+- **[API Reference](api/index.md)** documents every public class and function.
+
+Documentation tooling is currently migrating from MkDocs to Zensical. During this transition, both builders are supported from the same configuration file.
+
+Local docs checks:
+
+```bash
+uv run --python .venv/bin/python mkdocs build --strict
+uv run --python .venv/bin/python zensical build --clean
+```
+
+## Collaboration & Development
+
+We welcome collaboration and development contributions. See [CONTRIBUTING.md](https://github.com/benjaminpope/virgil/blob/main/CONTRIBUTING.md) for development setup, testing, and pull request workflow.
 
 ## Name
 
-The leading optical interferometry model fitting code is [CANDID](https://github.com/amerand/CANDID). In Voltaire's *Candide*, Dr Pangloss' belief that we live in the best of all possible worlds is a satire of Leibniz' theodicy. In a world with JAX, at least we can optimize our fits.
+Why is it called virgil?
+
+VIRGIL is the **V**ersatile **I**nterferometric **R**econstruction and **G**radient-based **I**nference **L**ibrary. In Dante's *Divine Comedy*, the poet Virgil is Dante's guide through the Inferno and Purgatory. In Virgil's own *Aeneid*, when Aeneas enters the underworld he draws his sword on the monsters crowding its threshold. His guide, the Cumaean Sibyl, warns him that they are only thin, bodiless lives flitting in a hollow semblance of form (*Aeneid* VI.292–294). Image reconstruction from sparse interferometric data is full of false visions like these: artefacts that look like structure but have no substance in the data. VIRGIL aims to help you tell the difference. The acronym is Jonah Goldfine's.
+
+### Formerly drpangloss
+
+Until version 0.1.1 this package was called **drpangloss**, after Voltaire's Dr Pangloss and as a nod to Antoine Mérand's [CANDID](https://github.com/amerand/CANDID). From version 0.2.0 it is **virgil**: `import virgil`, installed with `pip install virgil-astro`. A final release of `drpangloss` under its own name will depend on `virgil-astro` and point here, so old installs find the new package.
+

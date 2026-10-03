@@ -147,8 +147,48 @@ def render_notebook_markdown(
     return "\n".join(lines).rstrip() + "\n"
 
 
+DOCS_URL = "https://benjaminpope.github.io/virgil/"
+REPO_FILE_URL = "https://github.com/benjaminpope/virgil/blob/main/"
+LANDING_PAGE = ("README.md", "docs/index.md")
+
+
+def render_landing_page(readme_text: str) -> str:
+    """The docs landing page, generated from ``README.md``.
+
+    Links into the docs site become links between pages, so that they stay
+    inside the site; links to files in the repository (e.g.
+    ``CONTRIBUTING.md``) become links to them on GitHub. The site's root
+    URL (in the badges) is kept as it is.
+    """
+
+    def docs_page(match: re.Match) -> str:
+        page = match.group(1).strip("/")
+        return f"]({page}/index.md)" if page == "api" else f"]({page}.md)"
+
+    # Repository files first: the docs pages produced next are relative too.
+    text = re.sub(
+        r"\]\((?!https?://|#|mailto:)([^)]+)\)",
+        lambda m: f"]({REPO_FILE_URL}{m.group(1)})",
+        readme_text,
+    )
+    text = re.sub(rf"\]\({re.escape(DOCS_URL)}([^)#]+)\)", docs_page, text)
+    header = (
+        f"<!-- AUTO-GENERATED FROM {LANDING_PAGE[0]} by "
+        "scripts/sync_tutorial_docs.py. Edit README.md, not this file. -->\n"
+    )
+    return header + text
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
+
+    readme, index = (repo_root / path for path in LANDING_PAGE)
+    landing = render_landing_page(readme.read_text("utf-8"))
+    if index.exists() and index.read_text("utf-8") == landing:
+        print(f"unchanged {LANDING_PAGE[1]}")
+    else:
+        index.write_text(landing, encoding="utf-8")
+        print(f"synced {LANDING_PAGE[1]} <- {LANDING_PAGE[0]}")
 
     for nb_rel, doc_rel in MAPPINGS.items():
         nb_path = repo_root / nb_rel

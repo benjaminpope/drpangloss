@@ -13,7 +13,7 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-site_name: virgil - the best of all possible interferometry models
+site_name: "VIRGIL: Versatile Interferometric Reconstruction and Gradient-based Inference Library"
 repo_url: https://github.com/benjaminpope/virgil
 
 theme:
@@ -23,7 +23,6 @@ theme:
   icon:
     logo: material/telescope
   features:
-    - navigation.tabs
     - navigation.sections
 
 # ===== Plugins =====
@@ -45,28 +44,28 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
+  - Background:
+      - Contributors: contributors.md
+      - "Gaussian processes and information field theory": gp_and_ift.md
   - Data Handling:
       - "Reading data: OIFITS and OIData": data_io.md
       - "AMIGO DISCO data": amigo_disco.md
+  - Binaries:
+      - "Binary search": binary_search.md
+      - "Contrast limits": contrast_limits.md
+      - "Hierarchical inference across filters": hierarchical_inference.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
       - "Spotted stars with harmonix": harmonix.md
       - "Gravity-darkened stars": gravity_darkened_star.md
-  - Binaries:
-      - "Binary search": binary_search.md
-      - "Contrast limits": contrast_limits.md
-      - "Hierarchical inference across filters": hierarchical_inference.md
   - Imaging:
       - "1. Simulating AMI data": imaging_ami.md
       - "2. Regularised maximum likelihood": imaging_rml.md
       - "3. Gaussian-process priors": imaging_gp.md
       - "4. A ring around a binary": imaging_composite.md
       - "5. Sampling the posterior": imaging_sampling.md
-  - Background:
-      - "Gaussian processes and information field theory": gp_and_ift.md
-      - Contributors: contributors.md
   - API Reference:
       - Overview: api/index.md
       - OIData: api/oidata.md
