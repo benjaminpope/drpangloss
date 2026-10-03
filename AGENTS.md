@@ -19,6 +19,10 @@ pre-commit install
 ```
 
 Cloud agents get this environment from `.github/workflows/copilot-setup-steps.yml`.
+CI tests against the newest JAX (`.github/workflows/tests.yml`), and a stale JAX
+can hide failures that only appear in newer releases. Bring an existing `.venv`
+up to date with `uv pip install --python .venv/bin/python --upgrade -e ".[dev]"`;
+upgrading `jax` alone can leave optax, equinox etc. too old for it.
 
 ## Commands
 
