@@ -326,7 +326,9 @@ def fit(
         LM and L-BFGS stop when no component of the gradient of the loss
         per data point exceeds ``gtol``, nor 1/1000 of its largest starting
         value (so that a fit started near a solution, e.g. along an
-        L-curve, still converges).
+        L-curve, still converges). The tolerance is never below √eps of the
+        dtype times that starting value (3.5e-4 times it in float32), which
+        rounding errors in the gradient would not let the fit reach.
     max_step_size : float, optional
         L-BFGS moves no unconstrained coordinate by more than this per step
         (for a log-brightness pixel, a factor ``exp(max_step_size)``).
@@ -523,6 +525,24 @@ def _scaled_loss(problem, scale):
     return lambda z: problem.loss(z) / scale
 
 
+def _tolerance(gradient, gtol):
+    """The gradient tolerance of LM and L-BFGS, from the starting gradient.
+
+    It is ``gtol``, or 1/1000 of the starting gradient's largest component
+    if that is smaller (so that a warm start still converges), but no less
+    than √eps times it. The gradient is a sum of terms that cancel at the
+    minimum, and rounding them leaves it a floor which, relative to the
+    starting gradient, is about eps times the data's signal-to-noise ratio
+    over the starting residuals: up to ~1e-4 in float32 (eps ≈ 1.2e-7),
+    where a fixed ``gtol = 1e-4`` was out of reach and LM ran all its
+    steps. The √eps floor (3.5e-4 in float32, 1.5e-8 in float64) clears
+    it, and is the usual stopping limit for finite-precision optimisers.
+    """
+    largest = _largest(gradient)
+    floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
+    return np.maximum(np.minimum(gtol, 1e-3 * largest), floor)
+
+
 class _GradientStoppedLM(optx.LevenbergMarquardt):
     """Levenberg-Marquardt that stops when the gradient of the loss is small.
 
@@ -558,7 +578,7 @@ def _lm_residuals(z, args):
 @eqx.filter_jit
 def _lm_tolerance(problem, z0, scale, gtol):
     gradient = jax.grad(_scaled_loss(problem, scale))(z0)
-    return np.minimum(gtol, 1e-3 * _largest(gradient))
+    return _tolerance(gradient, gtol)
 
 
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
@@ -621,7 +641,7 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     optimiser = _capped_lbfgs(max_step_size)
     loss = _scaled_loss(problem, scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
-    tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
+    tolerance = _tolerance(jax.grad(loss)(z0), gtol)
 
     def keep_going(carry):
         step, _, _, gradient, moved = carry

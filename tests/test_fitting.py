@@ -72,12 +72,18 @@ def test_a_function_model_needs_starting_values():
 
 
 def test_float32_and_float64_fits_agree():
-    x64 = fit(START, PRIORS, DATA, dtype="float64").values
-    x32 = fit(START, PRIORS, DATA, dtype="float32").values
+    x64 = fit(START, PRIORS, DATA, dtype="float64")
+    x32 = fit(START, PRIORS, DATA, dtype="float32")
     ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
     for path in PRIORS:
-        assert x64[path].dtype == ambient  # cast back after the fit
-        assert np.allclose(x32[path], x64[path], rtol=1e-3)
+        assert x64.values[path].dtype == ambient  # cast back after the fit
+        assert np.allclose(x32.values[path], x64.values[path], rtol=1e-3)
+    # Both converge. With a fixed gtol = 1e-4, below what rounding lets the
+    # float32 gradient reach, the float32 fit ran all 1000 LM steps (where
+    # float64 takes 7).
+    for result in (x64, x32):
+        assert result.info["converged"] is True
+        assert result.info["steps"] < 50
 
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
@@ -148,7 +154,7 @@ def test_numpyro_model_accepts_prior_regularisers_only():
 
 
 def test_fit_rejects_bad_paths_flux_priors_and_methods():
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="nonsense"):
         fit(TRUTH, {"nonsense": dist.Uniform(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="negative"):
         fit(TRUTH, {"flux": dist.Normal(0.0, 1.0)}, DATA)
