@@ -531,6 +531,7 @@ def plot_chainconsumer_diagnostics(
         instance and the two figures it drew.
     """
     from chainconsumer import ChainConsumer, Chain, Truth
+    from chainconsumer.statistics import SummaryStatistic
 
     if colors is None:
         colors = matplotlib.colormaps["tab10"].colors
@@ -547,6 +548,11 @@ def plot_chainconsumer_diagnostics(
                 color=colors[idx % len(colors)],
                 plot_point=False,
                 plot_cloud=False,
+                # Median and quantiles. ChainConsumer's default ("max")
+                # searches a smoothed histogram for an iso-density interval
+                # and, on a bumpy histogram, can fail and report a
+                # well-sampled parameter as "not constrained".
+                statistics=SummaryStatistic.CUMULATIVE,
             )
         )
     if truth is not None:

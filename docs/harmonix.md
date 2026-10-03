@@ -48,11 +48,6 @@ print("float64:", jax.config.jax_enable_x64)
 ```
 
 ```text
-/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
-```text
 float64: True
 ```
 

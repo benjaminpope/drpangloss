@@ -62,12 +62,7 @@ plt.show()
 print(f"beam {resolution.major_mas:.1f} × {resolution.minor_mas:.1f} mas; interferometric field of view {field_of_view(data):.0f} mas")
 ```
 
-```text
-/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
-![imaging_composite output 2.2](generated/imaging_composite_cell002_out02.png)
+![imaging_composite output 2.1](generated/imaging_composite_cell002_out01.png)
 
 ```text
 beam 4.4 × 2.5 mas; interferometric field of view 42 mas

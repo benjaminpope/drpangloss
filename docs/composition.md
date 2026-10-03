@@ -47,11 +47,6 @@ from drpangloss.plotting import plot_grid_map, plot_model, set_style
 set_style()  # the figure style used throughout the docs
 ```
 
-```text
-/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
 ## Shapes
 
 `drpangloss` offers several shapes, among them an unresolved `PointSource`, a `GaussianDisk`, an `EllipticalGaussian`, a `UniformDisk`, a `GaussianArc` (a Gaussian ridge bent along a circular arc), and a `ModulatedGaussianRim`, which is a thin ring that can be blurred, inclined and made brighter on one side. Four of them are drawn below.

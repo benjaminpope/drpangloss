@@ -60,11 +60,6 @@ from examples.hierarchical_binary_workflow import (
 set_style()  # the figure style used throughout the docs
 ```
 
-```text
-/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
 ## Simulate three observations
 
 The three `OIData` objects have the same baseline sampling and uncertainties but wavelengths of 800 nm, 1.0 micron, and 1.2 microns.

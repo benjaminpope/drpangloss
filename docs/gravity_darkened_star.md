@@ -36,12 +36,7 @@ ax.set_title("Gravity-darkened star: visible surface")
 plt.show()
 ```
 
-```text
-/Users/benpope/code/drpangloss/.venv/lib/python3.11/site-packages/tqdm/auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
-![gravity_darkened_star output 3.2](generated/gravity_darkened_star_cell003_out02.png)
+![gravity_darkened_star output 3.1](generated/gravity_darkened_star_cell003_out01.png)
 
 ## Oblateness and the bright pole in the image
 

@@ -34,7 +34,7 @@ $$\eta \sim \mathcal{N}\left(\log\left(\frac{\mu}{\max\mu} + \epsilon\right),\ \
 
 The template μ is any positive image you supply (`mean`), such as a Gaussian of roughly the right size. ε (`mean_floor`, default $10^{-3}$) keeps the logarithm finite where the template is zero. With no template, the prior mean is zero, which is a flat image.
 
-The covariance Σ is **stationary**: the covariance of the log-brightness in two pixels depends only on the separation between them, not on where they are. It has two hyperparameters, and both are defined in the image:
+The covariance Σ is **approximately stationary**: away from the image's edges, the covariance of the log-brightness in two pixels depends only on the separation between them, not on where they are. Near the edges it departs from this, because the edges are reflecting (see below). It has two hyperparameters, and both are defined in the image:
 
 - **σ** (`sigma`) is the typical size of the departures of η from the template, in units of log-brightness. Precisely, σ² is the variance of η averaged over all pixels. A departure of 1 in η changes a pixel's brightness, relative to the rest of the image, by a factor of e ≈ 2.7.
 - **ℓ** (`length_mas`) is the correlation length in milliarcseconds. Pixels much closer together than ℓ brighten and fade together. Pixels much farther apart than ℓ vary independently.
@@ -43,9 +43,9 @@ The kernel is close to a Matérn kernel; the next section explains the differenc
 
 ### Computing with it
 
-An n × m image has nm pixels, so Σ is an nm × nm matrix. Storing it, let alone inverting it, is expensive. A stationary covariance avoids this, because it is diagonal in a Fourier basis. Its diagonal in that basis is the **power spectrum**, which is the Fourier transform of the kernel.
+An n × m image has nm pixels, so Σ is an nm × nm matrix. Storing it, let alone inverting it, is expensive. A stationary covariance avoids this, because it is diagonal in a Fourier basis, and drpangloss's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal in that basis is the **power spectrum**, which is the Fourier transform of the kernel.
 
-drpangloss uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge is correlated with the right edge. The DCT is the Fourier series of the image reflected at its edges, so opposite edges are not correlated with each other. Writing C for the orthonormal DCT matrix, the covariance is
+drpangloss uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge is adjacent to the right edge and strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so the image does not wrap around: opposite edges are no longer adjacent, and are only as correlated as their distance apart allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries. It is translation-invariant only far from the edges: near an edge, a pixel is correlated with its own mirror image across it, so its variance and correlations differ slightly from those in the interior. Writing C for the orthonormal DCT matrix, the covariance is
 
 $$\Sigma = C^\top \mathrm{diag}(S)\, C, \qquad S_{jk} \propto \left(\frac{1}{\ell^2} + \lambda_{jk}\right)^{-\mathrm{order}}.$$
 
@@ -104,7 +104,7 @@ $$\eta^\top L\, \eta = \frac{1}{h^2}\sum_{\text{neighbouring pairs } (i, j)} (\e
 
 where the sum runs over horizontally and vertically adjacent pixels inside the image. This sum is the **total squared variation** (TSV) of η. Then:
 
-- **With `order=1`,** Q is proportional to κ²I + L. The negative log prior, $\tfrac{1}{2}\eta^\top Q\, \eta$, is therefore a weighted sum of an L2 penalty, $\kappa^2 \sum_i \eta_i^2$, and the TSV of η. The DCT diagonalises L exactly, with eigenvalues $\lambda_{jk}$, because both treat the image edges as reflecting. The equivalence is therefore exact, apart from the removed constant mode and the overall σ normalisation.
+- **With `order=1`,** Q is proportional to κ²I + L. With the prior mean $\bar\eta = \log(\mu/\max\mu + \epsilon)$ from the template, the negative log prior, $\tfrac{1}{2}(\eta - \bar\eta)^\top Q\, (\eta - \bar\eta)$, is therefore a weighted sum of an L2 penalty, $\kappa^2 \sum_i (\eta_i - \bar\eta_i)^2$, and the TSV of the departure η − η̄. The penalty acts on departures from the template, not on η itself; with no template, η̄ = 0. The DCT diagonalises L exactly, with eigenvalues $\lambda_{jk}$, because both treat the image edges as reflecting. The equivalence is therefore exact, apart from the removed constant mode and the overall σ normalisation.
 - **With `order=2`** (the default), Q is proportional to (κ²I + L)², which couples each pixel to its neighbours' neighbours. It is still sparse.
 
 This is the link between Matérn kernels and GMRFs found by Lindgren, Rue & Lindström (2011). They showed that a Matérn field is the solution of a stochastic partial differential equation (SPDE),
