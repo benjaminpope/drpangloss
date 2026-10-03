@@ -326,3 +326,28 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert onp.isfinite(float(jax.grad(v2)(3000.0)))
     assert float(jax.grad(v2)(3000.0)) != 0.0
     assert not is_flux_param("secondary.flux.temperature")
+
+
+@pytest.mark.skipif(
+    jax.config.jax_enable_x64,
+    reason="the overflow is specific to float32; x64 is on globally",
+)
+def test_blackbody_ratio_finite_when_representable_in_float32():
+    # x0 - x = 90 overflows exp() in float32, but the whole ratio is
+    # exp(~78.5), which is representable: it must come out finite.
+    temperature, wavel0, wavel = 143.88, 1.0e-6, 10.0e-6
+    got = BlackBody(1.0, temperature, wavel0)(np.float32(wavel))
+    assert got.dtype == np.float32
+    x, x0 = (
+        1.438776877e-2 / (wavel * temperature),
+        1.438776877e-2 / (wavel0 * temperature),
+    )
+    expected = onp.exp(
+        5 * onp.log(wavel0 / wavel)
+        + x0
+        - x
+        + onp.log(-onp.expm1(-x0))
+        - onp.log(-onp.expm1(-x))
+    )
+    assert onp.isfinite(got)
+    onp.testing.assert_allclose(float(got), expected, rtol=1e-4)

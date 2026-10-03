@@ -331,19 +331,20 @@ cvis_star = star.model(u, v, wavel)
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, is the same shape with the equator much dimmer than the pole.
 
 ```python
+from drpangloss.plotting import plot_model
+
 fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
 star.plot_surface(ax=axes[0])
 axes[0].set_title("Grey star: visible surface")
 
-image_hot = np.asarray(hot_star.render(npix=40, fov_mas=1.2))
-im = axes[1].imshow(
-    image_hot, extent=[0.6, -0.6, -0.6, 0.6], cmap="magma"
+plot_model(
+    hot_star,
+    fov_mas=1.2,
+    npix=40,
+    ax=axes[1],
+    title="Chromatic star (9000 K pole) at 0.6 micron",
 )
-axes[1].set_xlabel(r"$\Delta$RA (mas)")
-axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("Chromatic star (9000 K pole) at 0.6 micron")
-fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
 
 plt.tight_layout()
 plt.show()

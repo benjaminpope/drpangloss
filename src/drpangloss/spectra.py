@@ -171,10 +171,18 @@ def _planck_ratio(wavel, temperature, wavel0, temperature0):
     """
     x = _HC_OVER_K / (wavel * temperature)
     x0 = _HC_OVER_K / (wavel0 * temperature0)
-    # expm1(x0) / expm1(x), rewritten with negative arguments so that it
-    # cannot overflow at low temperatures.
-    planck = np.exp(x0 - x) * np.expm1(-x0) / np.expm1(-x)
-    return (wavel0 / wavel) ** 5 * planck
+    # (wavel0 / wavel)**5 * expm1(x0) / expm1(x), formed entirely in log
+    # space: expm1(x) = exp(x) * -expm1(-x), so its log is
+    # x + log(-expm1(-x)) without overflow. Exponentiating only the total
+    # keeps the result finite whenever it is representable (in float32 the
+    # factors alone can overflow when the ratio does not).
+    log_ratio = (
+        5.0 * np.log(wavel0 / wavel)
+        + (x0 - x)
+        + np.log(-np.expm1(-x0))
+        - np.log(-np.expm1(-x))
+    )
+    return np.exp(log_ratio)
 
 
 def flux_at(flux, wavel=None):

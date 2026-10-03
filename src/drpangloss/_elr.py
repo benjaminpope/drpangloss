@@ -15,7 +15,9 @@ his; the changes made in this port are:
   valid and differentiable; the root is unchanged.
 - The pole and equator special cases of ``solve_ELR`` use the double-``where``
   trick, so the branch not taken yields neither NaN values nor NaN gradients.
-- No global ``jax_enable_x64`` and no module-level ``jax.jit`` decorators.
+- No global ``jax_enable_x64``. The vectorised solver ``solve_ELR_vec`` is
+  jitted once at module level, because run eagerly its bisection loops are
+  slow; inside an outer jit that is a no-op.
 - The mesh is built once per ``n_lat`` in pure NumPy and cached, instead of in
   a class constructor (``mesh``); the body of ``ELR_Model.__call__`` is split
   into ``surface`` and ``visibilities``.
