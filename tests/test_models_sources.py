@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import numpy as onp
 import pytest
@@ -7,6 +8,7 @@ from scipy.special import j1 as scipy_j1
 from scipy.special import jn_zeros
 
 from drpangloss._geometry import image_coordinates as _image_coordinates
+from drpangloss._geometry import offset_phase
 from drpangloss.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -501,6 +503,93 @@ def test_harmonix_model_for_external_visibility_models():
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
 
 
+class _BlobYlm(eqx.Module):
+    data: jax.Array
+
+    @classmethod
+    def from_dense(cls, y, normalize=True):
+        return cls(np.asarray(y))
+
+
+class _BlobSurface(eqx.Module):
+    """A surface whose map is a Gaussian blob at (y[1], y[2]) stellar radii."""
+
+    y: _BlobYlm
+    sigma: float = 0.1
+
+    def _intensity(self, x, y, z, theta=0.0):
+        x0 = self.y.data[1] + theta
+        y0 = self.y.data[2]
+        return np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * self.sigma**2))
+
+
+class _BlobStar(eqx.Module):
+    """A harmonix-like star with analytic visibilities and no dependencies.
+
+    Like harmonix, it reads its map from ``data`` (here the blob's centre),
+    not from ``surface.y``, and rotation moves the blob East.
+    """
+
+    surface: _BlobSurface
+    radius: float
+    data: jax.Array
+
+    def rotational_phase(self, time):
+        return 0.1 * time
+
+    def model(self, u, v, time):
+        dra = (self.data[0] + self.rotational_phase(time)) * self.radius
+        ddec = self.data[1] * self.radius
+        sigma_rad = _MAS2RAD_REF * self.surface.sigma * self.radius
+        envelope = np.exp(-2 * np.pi**2 * sigma_rad**2 * (u**2 + v**2))
+        return envelope * offset_phase(u, v, dra, ddec)
+
+
+def _blob_star(radius=2.0, centre=(0.3, -0.2)):
+    data = np.asarray(centre)
+    return _BlobStar(_BlobSurface(_BlobYlm(np.zeros(3))), radius, data)
+
+
+def _blob_baselines():
+    rng = onp.random.default_rng(2)
+    return rng.uniform(-1e8, 1e8, 40), rng.uniform(-1e8, 1e8, 40)
+
+
+def test_harmonix_like_star_is_drawn_on_the_sky_at_its_radius():
+    # Runs without harmonix: a star with a surface and a radius is drawn
+    # from the surface's intensity at sky offset / radius, East left and
+    # North up, so its Fourier transform reproduces its visibilities (the
+    # mirror image does not), at the rotation of observation_time.
+    model = HarmonixModel(_blob_star(), observation_time=1.0)
+    u, v = _blob_baselines()
+    cvis_model = onp.asarray(model.model(np.asarray(u), np.asarray(v), 1.0))
+    cvis_render = _render_visibilities(model, u, v, 128, 6.0)
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < 1e-3
+    mirrored = _render_visibilities(model, -u, v, 128, 6.0)
+    assert onp.max(onp.abs(mirrored - cvis_model)) > 0.1
+
+
+def test_harmonix_like_star_is_drawn_from_its_data():
+    model = HarmonixModel(_blob_star(), observation_time=0.0)
+    moved = model.set("source.data", np.array([-0.3, 0.35]))
+    u, v = _blob_baselines()
+    cvis_model = onp.asarray(moved.model(np.asarray(u), np.asarray(v), 1.0))
+    cvis_render = _render_visibilities(moved, u, v, 128, 6.0)
+    assert onp.max(onp.abs(cvis_render - cvis_model)) < 1e-3
+
+
+def test_harmonix_like_star_parameters_are_reachable_through_paths():
+    model = HarmonixModel(_blob_star(), observation_time=0.5)
+    u, v = (np.asarray(a) for a in _blob_baselines())
+
+    def power(m):
+        return np.sum(np.abs(m.model(u, v, 1.0)) ** 2)
+
+    assert np.allclose(eqx.filter_jit(power)(model), power(model))
+    grad_radius = jax.grad(lambda r: power(model.set("source.radius", r)))(2.0)
+    assert np.isfinite(grad_radius) and grad_radius < 0
+
+
 def _spotted_harmonix_star(radius=2.0):
     harmonix_module = pytest.importorskip(
         "harmonix.harmonix",
@@ -558,8 +647,6 @@ def test_harmonix_render_fourier_transform_matches_model_visibilities():
 
 
 def test_harmonix_parameters_are_reachable_through_paths():
-    import equinox as eqx
-
     model = HarmonixModel(_spotted_harmonix_star(), observation_time=0.2)
     u = np.linspace(1e7, 7e7, 8)
     v = np.linspace(-3e7, 4e7, 8)
