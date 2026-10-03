@@ -9,6 +9,7 @@ from scipy.special import jn_zeros
 
 from virgil._geometry import image_coordinates as _image_coordinates
 from virgil._geometry import offset_phase
+from virgil._geometry import undo_elliptical_transf_spat_freq
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -330,6 +331,92 @@ def test_modulated_gaussian_rim_render_follows_north_to_east_pa_convention(
         "south": image[center + 1 :, :].sum(),
     }
     assert halves[bright_half] > halves[faint_half]
+
+
+def _rim_baselines():
+    rng = onp.random.default_rng(3)
+    return rng.uniform(-60.0, 60.0, 40), rng.uniform(-60.0, 60.0, 40), 2.2e-6
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_unmodulated_rim_visibility_is_blurred_in_the_rim_plane(x64):
+    """An unmodulated rim is a thin ring times a Gaussian envelope, both
+    evaluated on the deprojected spatial frequencies (ut, vt): the blur is
+    isotropic in the plane of the rim, not on the sky. Checked against
+    independent scipy.special.j0 and numpy calls.
+    """
+    diam, fwhm, inc, pa = 30.0, 6.0, 55.0, 25.0
+    u, v, wavel = _rim_baselines()
+    with jax.enable_x64(x64):
+        cvis = ModulatedGaussianRim(diam, fwhm, inc, pa).model(u, v, wavel)
+
+    pa_rad, inc_rad = onp.deg2rad(pa), onp.deg2rad(inc)
+    uu, vv = u / wavel, v / wavel
+    ut = (uu * onp.cos(pa_rad) - vv * onp.sin(pa_rad)) * onp.cos(inc_rad)
+    vt = uu * onp.sin(pa_rad) + vv * onp.cos(pa_rad)
+    q = onp.hypot(ut, vt)
+    fwhm_rad = fwhm * _MAS2RAD_REF
+    expected = scipy_j0(
+        2.0 * onp.pi * q * (diam / 2.0) * _MAS2RAD_REF
+    ) * onp.exp(-(onp.pi**2) * fwhm_rad**2 * q**2 / (4.0 * onp.log(2.0)))
+
+    assert onp.allclose(onp.asarray(cvis).real, expected, atol=1e-6)
+    assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-6)
+
+
+def test_inclined_rim_visibility_is_the_face_on_rim_in_the_rim_plane():
+    """Inclining and rotating a modulated rim only changes the frame: its
+    visibility is that of the face-on (inc=0, pa=0) rim, with modulation
+    angles az_pas - pa, sampled at the deprojected frequencies.
+    """
+    diam, fwhm, inc, pa = 25.0, 4.0, 65.0, 40.0
+    az_amps = np.array([0.5, 0.3])
+    az_pas = np.array([100.0, 20.0])
+    u, v, wavel = _rim_baselines()
+
+    cvis = ModulatedGaussianRim(
+        diam, fwhm, inc, pa, az_amps=az_amps, az_pas=az_pas
+    ).model(u, v, wavel)
+    ut, vt = undo_elliptical_transf_spat_freq(
+        u, v, pa, max(onp.cos(onp.deg2rad(inc)), 1e-8)
+    )
+    face_on = ModulatedGaussianRim(
+        diam, fwhm, 0.0, 0.0, az_amps=az_amps, az_pas=az_pas - pa
+    ).model(ut, vt, wavel)
+
+    assert onp.allclose(onp.asarray(cvis), onp.asarray(face_on), atol=1e-6)
+
+
+def test_inclined_unmodulated_rim_render_has_no_bright_ansae():
+    """With the blur isotropic in the rim plane, an inclined unmodulated
+    rim is the face-on blurred ring compressed along its minor axis, so its
+    peak brightness is the same on the major and the minor axis. A blur
+    that is isotropic on the sky instead gives ansae about 2.5 times
+    brighter at inc=70.
+    """
+    npix = 201
+    image = onp.asarray(
+        ModulatedGaussianRim(diam=40.0, fwhm=8.0, inc=70.0, pa=0.0).render(
+            npix=npix, fov_mas=100.5
+        )
+    )
+    center = npix // 2
+    # pa=0: the major axis runs North-South (a column), the minor axis
+    # East-West (a row).
+    major_peak = image[:, center].max()
+    minor_peak = image[center, :].max()
+
+    assert abs(major_peak / minor_peak - 1.0) < 0.05
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_edge_on_rotated_rim_render_is_finite_and_normalized(x64):
+    with jax.enable_x64(x64):
+        image = ModulatedGaussianRim(
+            diam=40.0, fwhm=2.0, inc=90.0, pa=37.0
+        ).render(npix=64, fov_mas=100.0)
+        assert np.all(np.isfinite(image))
+        assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
 
 
 def test_binary_render_is_available():
