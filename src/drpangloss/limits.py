@@ -335,8 +335,10 @@ def absil_limits(
         return them unclipped, e.g. for [`System`][drpangloss.models.System]
         weights that may exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once (default 256). Larger is
-        faster for small models; smaller bounds memory for large ones.
+        Number of grid points evaluated at once. By default, enough for
+        about 2**20 model visibilities on a CPU and 2**23 on other backends
+        (GPU, TPU), and at least 256. Larger can be faster for small data;
+        smaller bounds memory for large models.
 
     Returns
     -------
@@ -370,7 +372,7 @@ def absil_limits(
         params=params,
         coord_keys=coord_keys,
         flux_key=flux_key,
-        batch_size=batch_size_or_default(batch_size),
+        batch_size=batch_size_or_default(batch_size, data_obj),
     )
     warn_unconverged(success, "absil_limits")
     if flux_bounds is None:

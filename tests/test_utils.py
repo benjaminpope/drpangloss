@@ -74,6 +74,43 @@ def test_bessel_jn_accepts_scalars():
     assert onp.allclose(bessel_jn(3, 2.5), [jv(m, 2.5) for m in range(4)])
 
 
+@pytest.mark.parametrize("x64, dtype, atol", BESSEL_PRECISIONS)
+def test_bessel_integer_inputs_are_promoted_to_float(x64, dtype, atol):
+    # The coefficient tables are cast to the argument's dtype, so integer
+    # arguments must reach them already promoted to float.
+    xs = onp.arange(-12, 13)
+    with jax.enable_x64(x64):
+        x = np.asarray(xs)
+        assert onp.allclose(j0(x), jv(0, xs), rtol=0, atol=atol)
+        assert onp.allclose(j1(x), jv(1, xs), rtol=0, atol=atol)
+        result = bessel_jn(4, x)
+    assert result.dtype == dtype
+    expected = [jv(m, xs) for m in range(5)]
+    assert onp.allclose(result, expected, rtol=0, atol=atol)
+
+
+def test_bessel_jn_float32_after_float64_call():
+    # A fit runs in float64 inside jax.enable_x64 and the model is then
+    # evaluated in float32. On JAX 0.10 this reused a float64 polyval
+    # lowering for the float32 call and failed MLIR verification. The odd
+    # size keeps the traces fresh whatever other tests ran first.
+    xs = onp.linspace(-12.0, 12.0, 37)
+    expected = onp.array([jv(m, xs) for m in range(5)])
+    expected_grad = 0.5 * (jv(0, xs) - jv(2, xs))
+    grad_j1 = jax.vmap(jax.grad(lambda z: bessel_jn(4, z)[1]))
+    for x64, dtype, atol in [
+        (True, "float64", 1e-14),
+        (False, "float32", 2e-6),
+    ]:
+        with jax.enable_x64(x64):
+            x = np.asarray(xs, dtype=dtype)
+            result = bessel_jn(4, x)
+            grad = grad_j1(x)
+        assert result.dtype == grad.dtype == dtype
+        assert onp.allclose(result, expected, rtol=0, atol=atol)
+        assert onp.allclose(grad, expected_grad, rtol=0, atol=atol)
+
+
 # Include x = 0, the CEPHES switch at |x| = 5 and the trig/recurrence switch at
 # |x| = n + 2 for the orders tested.
 DERIV_XS = onp.unique(

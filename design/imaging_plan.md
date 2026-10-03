@@ -324,13 +324,166 @@ A background split off as a `Resolved` component also changes what the image's i
   - **`imaging_gp`:** prior draws, an LM MAP fit, the evidence over σ and ℓ gridded in units of the beam, the `error_scale` check (s = 1.04 with honest errors, 0.52 with errors overstated twofold, and 0.99 after rescaling), and a comparison with MEM.
   - **`imaging_composite`:** a ring around a binary. With one star, the image absorbs the companion as a knot (NCC 0.22). The knot locates it, and the binary fit recovers it (0.080 at (1.47, −0.99) mas, against a truth of 0.080 at (1.5, −1.0)) and the ring (NCC 0.96). The evidence prefers the binary by Δlog Z ≈ 28, although χ² differs by only 3.
 - **Real data** (nuHor, run on OzSTAR A100s in about 6 min each, against more than 30 min on the laptop):
-  - IRAS 08544: GP d_env 0.37 and MEM 0.45, against the paper's 0.42.
-  - IW Car: GP d_env 0.83 and MEM 0.87, against the paper's d_rim 0.89.
+  - IRAS 08544: GP d_env 0.45 and MEM 0.45, against the paper's 0.42 (0.37 for the GP before the errors were rescaled).
+  - IW Car: GP d_env 0.82 and MEM 0.88, against the paper's d_rim 0.89.
   - The notebooks now rescale the errors first, grid ℓ in units of the beam, and run converged sweeps.
-- **Not done:** the `gauss_newton_diagonal` mass-matrix helper, and a sampling MWE at 32–64². At 41², NUTS saturates its tree depth, so the helper is the next step for sampling.
+- **Not done:** a sampling MWE at 32–64², which is Stage 5d.
+
+**Checkpoint (2026-10-02):**
+- **The GP prior is worth it, and it becomes the recommended prior.** The reasons:
+  - The evidence chooses σ and ℓ with no L-curve.
+  - `error_scale` calibrates PIONIER's conservative errors.
+  - LM fits converge in tens of steps, where MEM sweeps need up to 2 × 10⁵ L-BFGS steps.
+  - On real data the GP matches or beats MEM: on IRAS 08544 it is the only image that shows the compact emission near the binary.
+  - MEM and TSV stay supported, as the classical comparison.
+- **Sampling large images needs a mass matrix.** This reverses an earlier version of this checkpoint, which was based on a low signal-to-noise VLTI scene. On 150 VLTI points, plain NUTS took 127 leapfrog steps per draw at 32²–64². On part 3's 588 AMI points at 62², it saturated the tree depth (1023), as at 41² before. Stage 5d adds the helper, in its dense form (see the 5d log).
+
+**Log, 5d (2026-10-03):** sampling, with a dense Gauss–Newton mass matrix.
+- **Study** (OzSTAR job 17937020, A100, part 3's 62² AMI ring, 300 warmup steps and 300 draws):
+
+  | Mass matrix | σ, ℓ | Flux | Steps per draw | Sampling time | Pixel ESS (5th–50th percentile) |
+  |---|---|---|---|---|---|
+  | Identity | sampled | sampled | 1023 | 243 s | 146–269 (σ 75, ℓ 96) |
+  | Identity | fixed | fixed | 1023 | 194 s | 238–427 |
+  | Diagonal | fixed | fixed | 1023 | 172 s | 346–666 |
+  | **Dense Gauss–Newton** | **fixed** | **fixed** | **63** | **33 s** | **195–263** |
+  | Dense, flux outside the block | fixed | sampled | 1023 | 359 s | 149–212 |
+  | Dense, adapted in warmup | fixed | fixed | 1023 | 307 s | 3–6 |
+
+  The dense matrix whitens the posterior, but only if every sampled parameter is in its block (the flux is measured to about 1%) and warmup adaptation is off. With σ and ℓ sampled it doesn't fit, because the curvature depends on them.
+- **Library:** `fitting.gauss_newton_mass(model, priors, data, values)` returns NUTS's arguments: the inverse of JᵀJ (data and prior residuals) in numpyro's unconstrained coordinates, as one dense block over all sites, with adaptation off. It raises on a singular curvature. `gauss_newton_diagonal` is not added, since the diagonal didn't help.
+- **Tests:** the block's layout, symmetry and prior bound; rejection of an unconstrained parameter; and on a 16² scene, the matrix whitening the exact Hessian of numpyro's potential at the MAP: eigenvalues 0.7–2.0, against a raw condition number of about 10⁴ (x64). A test that counted NUTS steps per draw was brittle: 255 → 31 on macOS, but 127 → 63 on Linux CI.
+- **MWE** (`imaging_sampling`, Imaging part 5):
+  - NUTS at the evidence's σ and ℓ, with the flux sampled.
+  - 63 steps per draw, with no divergences; 7 min on the laptop.
+  - The flux is 0.0503, with a 90% interval of 0.0500–0.0507 (truth 0.05).
+  - Shows the posterior mean, the standard deviation and z-score residuals. The z-scores are within ±1, apart from a few at about −2.5.
+  - Sampling σ and ℓ is described, with the GPU timing, but not run.
+
+## Order of work after Stage 5 (updated 2026-10-03)
+These stages draw on three notes:
+- [`pmoired_parity.md`](pmoired_parity.md), which compares drpangloss with PMOIRED;
+- [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) (S);
+- [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+
+The last two came out of fitting GRAVITY data on Apep, but are written as general capabilities.
+
+1. **6a.0: times and frames in `OIData`** (S §2.5). A small PR, which unblocks the orbits, VISPHI and Stage 6d.
+2. **6a.1: orbits and binary-frame scenes.** Decided 2026-10-03: they are needed now, for the Apep analysis.
+3. **6a: spectro-interferometry.**
+4. **The Apep agent's library commits.** These sit on the local branch `apep-gravity`: `EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc` and the rim-gradient fix. They merge once they are reconciled with 6a's `Nodes` and error floors (decided).
+5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance and the dual-field recipe.
+6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
+7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
+
+## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
+From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
+- **Per-sample times and frames.** `OIData` gains `mjd` and `frame` per sample.
+- **Triangle matching.** Closure triangles are matched to baselines by frame (`INT_TIME`), not by nearest MJD.
+- **`epochs()`** splits a dataset by night.
+
+**Tests:**
+- Multi-file round trips keep `mjd` and `frame`.
+- Triangles match correctly on files whose MJDs differ slightly between OI_VIS2 and OI_T3.
+
+## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 23–28 h)
+Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+
+**Decided (2026-10-03):**
+- Orbits are built in drpangloss.
+- They run on jaxoplanet, as an optional `[orbits]` extra. Neither orbitize! nor orvara is used.
+- The user-facing conventions are those of O §2.1.
+
+**Defaults in force** (O §7, until Ben says otherwise):
+- time dependence through a snapshot, `at(mjd)`;
+- a fitted offset for orbital skew, rather than the physical one;
+- simulated systems first, then real data.
+
+**Build**, in this order (agent hours from O §6):
+
+| Item | Effort |
+|---|---|
+| `orbits.py`: `KeplerOrbit` and `ThieleInnesOrbit`, converters to and from jaxoplanet, convention unit tests and a reference ephemeris | 4–5 |
+| Starting orbits: per-epoch positions from the existing binary tools, then a Thiele–Innes least-squares solve on a grid of (P, e, T₀); `PositionData` | 2–3 |
+| `StateVectorOrbit` and its regular forms, for short arcs | 3 |
+| `RVData` and axial priors; `distance_pc` and the derived mass | 3 |
+| `SourceModel.at(mjd)` and time-dependent `OIData.model` | 3–4 |
+| `Attached(component, orbit, anchor, bind, offsets)`: any component's angles tied to the binary's frame (line of centres, nodes, inclination, "facing the primary") | 3 |
+| `simulate(scene, template)` and `bias_test`, for bias tests across instruments and for planning | 2–3 |
+| `TruncatedCone`, a thin conical shell (analytic, with an elliptical cross-section option and a render ↔ model test; the prototype is in the Apep data folder) | 3–4 |
+| OIFITS position-angle round trips (GRAVITY layout; AMICAL and drpangloss writers) | 2, then 2 per real anchor |
+
+**Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
+
+**Tests:**
+- Conventions and ephemerides: O §5.1–5.2.
+- Synthetic position-angle round trips: O §5.3.1 and §5.3.3. These need no real data.
+- End to end on simulated systems: O §5.4, where Apep is optional as the real-data case.
+
+**MWE:** a companion on its orbit with a disc attached to it, every data point evaluated at its own time. This is the sketch in `design/sketches/orbit_attached.py`.
+
+**Real anchor binaries** for the ephemeris and position-angle tests (O §5.1.2–3, §5.3.2) will be found in the ESO archive (Ben). They don't block the rest of the stage.
+
+## Stage 6a: spectro-interferometry, matching PMOIRED (about 10–13 h)
+This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_parity.md) compares the two packages feature by feature. It comes before 6b and 6c, because 6b's per-filter fluxes are node spectra.
+
+**Workflow and additions.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) sets out an end-to-end spectro-interferometric workflow (worked example: GRAVITY data on Apep) and adds to 6a:
+- `Nodes(..., outside=0.0)` for line excesses on a continuum, with positivity checked on the total; `Tabulated` (branch `apep-gravity`) becomes a node spectrum;
+- `System.total_spectrum` for OI_FLUX;
+- VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime;
+- error floors sharing one function with the fitted `noise=` terms;
+- a documented rule for when smearing matters, with a real-data check;
+- a prior on the reference component's spectrum, and docs on its degeneracy with the others (S §2.2b);
+- `with_error_floor`, sharing `likelihood.inflated_errors` (S §2.6).
+
+**Defaults in force** (S §4, until Ben says otherwise):
+- `noise=` grows into the general per-dataset nuisance argument;
+- every spectrum's reference flux is its value at `wavel0`;
+- closure phases are used everywhere, plus the closure-free part of continuum-normalised VISPHI in the line windows (S §2.3), so nothing is counted twice.
+
+**Build:**
+- **Spectra.** New `Spectrum` types:
+  - Gaussian and Lorentzian lines (`wl0`, FWHM, amplitude; emission or absorption);
+  - node spectra (linear or cubic spline through free fluxes at fixed wavelengths);
+  - sums, so that continuum plus lines is one spectrum.
+- **Observables.**
+  - Read and model T3AMP, OI_FLUX (FLUX and NFLUX), differential phase, normalised |V| and V², and correlated flux.
+  - Allow V² with |V|, and closure phase with VISPHI, in one dataset.
+  - Normalisation uses continuum ranges, or the analytic continuum of the lines.
+- **Instrumental effects.** A spectral-resolution kernel, and bandwidth smearing by oversampling in wavelength.
+- **Errors.** `OIData` error floors (absolute and relative) and flags, alongside `with_error_scale`.
+
+**Tests:**
+- A line's flux integral and centroid.
+- Node spectra interpolate their nodes.
+- Differential phase of an offset line-emitting component, against the analytic photocentre shift.
+- Smearing against brute-force integration over the band.
+- OIFITS round-trips for each new table.
+
+**MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
+
+## Stage 6d: calibration nuisances correlated across channels (after 6a and the Apep agent's library commits; about 9–13 h)
+Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitter, piston and injection drifts) are mostly common to all channels of a frame, which diagonal error inflation does not describe; GRAVITY data on Apep are the first dataset here that needs this. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
+
+**Build:**
+- A V² gain per (frame, baseline) and a closure-phase offset per (frame, triangle), shared by all channels of the block.
+- Both are marginalised analytically as rank-one blocks, so the likelihood keeps one whitened residual vector plus a log-determinant.
+- Fitted or known widths (`vis_gain`, `phi_offset` in the per-dataset `noise=` specification). This needs `OIData.frame` (§2.5 of the same note).
+
+**Tests:**
+- The whitened residuals' squared norm and the log-determinant against a dense covariance.
+- A simulated GRAVITY-like dataset with injected per-frame gains: the widths are recovered, and parameter errors are calibrated where the diagonal model's are not.
+
+**MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
+
+**Also in 6d:**
+- **`wavel_scale`.** A per-dataset wavelength-scale nuisance in `noise=` (S §2.6; 1–2 h).
+- **The dual-field (in-field) calibrator recipe.** An example script and docs, not a module (S §2.7; 3–4 h). It uses 6d's known-width gains.
+
+**Merge order.** The Apep agent's library commits, on the local branch `apep-gravity` (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
-**Build**, in increasing order of complexity; stop where the science needs stop:
+**Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
 1. **Grey image with a spectral index.** This already works through `flux=PowerLaw(...)`. Add documentation and an MWE only.
 2. **Joint multi-filter AMI.** Several filters (F380M/F430M/F480M) share one image, with per-filter flux ratios (the analogue of dorito PR #32's `JointResolvedDiscoModel`). The per-observation models this needs exist since Stage 4b: `fit` accepts a model function returning one model per dataset.
 3. **`ImageCube`.** Per-channel log-brightness with a GP along wavelength: a separable DCT field over (λ, y, x). The translation gauge is fixed per channel (one centroid per channel), unless an analytic star anchors it.
@@ -357,9 +510,25 @@ A background split off as a `Resolved` component also changes what the image's i
 
 ---
 
+## Stage 8: parametric parity with PMOIRED (after milestone 2; about 8–11 h)
+See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now Stage 6a.1.
+- **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
+- **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
+- **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
+- **Spectral correlations between channels.** Now Stage 6d, because GRAVITY data need them.
+
+**Tests:**
+- Hankel profiles against analytic UD, Gaussian and ring visibilities.
+- `Projected` against inclined analytic models.
+- Bootstrap spreads against the Laplace errors on a simple fit.
+
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
-- **Stages 5–7:** about 17–24 h more.
+- **Stages 5–7:** about 17–24 h more, plus:
+  - 6a.0 and 6a: about 12–16 h;
+  - 6a.1 (orbits and binary-frame scenes): about 23–28 h;
+  - 6d: about 9–13 h.
+- **Stage 8** (the rest of the PMOIRED parity): about 8–11 h.
 - **Overall:** about 35–50 h of agent time, spread over 8 feedback checkpoints.
 
 External waits: only the OzSTAR GPU benchmark run, which you launch. All test data are simulated using ν Hor baselines and noise.

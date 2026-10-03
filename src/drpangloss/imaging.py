@@ -30,6 +30,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
 from ._geometry import pixel_offsets, rotate
@@ -575,6 +576,74 @@ def beam(data):
     return Beam(float(fwhm[1]), float(fwhm[0]), float(pa))
 
 
+def convolve_beam(image, pixel_scale_mas, beam):
+    """An image convolved with a Gaussian beam: the image at the data's resolution.
+
+    Reconstructed images are super-resolved. A regularised image can put
+    structure on scales finer than the beam, where the data constrain it
+    only weakly, so it often looks clumpy or streaky. Convolved with the
+    beam (the "restored" image of radio astronomy), it shows only what the
+    data resolve. That is the fair way to compare two reconstructions, or a
+    reconstruction with a model: convolve both.
+
+    The kernel is an elliptical Gaussian with the beam's FWHMs and position
+    angle (North to East), normalised to unit sum. It is sampled on an odd
+    grid centred on a pixel, so the convolution does not shift the image.
+    Flux beyond the edge of the image is taken to be zero, and the result
+    is cropped to the image, so the total flux is kept only for structure
+    more than about a beam from the edge; structure nearer the edge is
+    dimmed.
+
+    Parameters
+    ----------
+    image : array-like, shape (ny, nx)
+        The image, in the orientation of
+        [`render`][drpangloss.models.SourceModel.render] (East left, North
+        up).
+    pixel_scale_mas : float
+        Pixel size in milliarcseconds.
+    beam : Beam
+        The beam, usually [`beam(data)`][drpangloss.imaging.beam].
+
+    Returns
+    -------
+    jax.Array, shape (ny, nx)
+        The convolved image.
+    """
+    image = np.asarray(image)
+    image = image.astype(np.promote_types(image.dtype, np.float32))
+    if image.ndim != 2:
+        raise ValueError(f"image must be 2D, not of shape {image.shape}.")
+    pixel_scale_mas = float(pixel_scale_mas)
+    if not (onp.isfinite(pixel_scale_mas) and pixel_scale_mas > 0):
+        raise ValueError(
+            f"pixel_scale_mas must be finite and positive, not "
+            f"{pixel_scale_mas}."
+        )
+    widths = onp.array([beam.major_mas, beam.minor_mas], dtype=float)
+    if not (onp.all(onp.isfinite(widths)) and onp.all(widths > 0)):
+        raise ValueError(
+            f"The beam's FWHMs must be finite and positive: {beam}."
+        )
+    if not onp.isfinite(beam.pa_deg):
+        raise ValueError(f"The beam's PA must be finite: {beam}.")
+    ny, nx = image.shape
+    x = pixel_offsets(nx + 1 - nx % 2, pixel_scale_mas)[None, :]  # East
+    y = pixel_offsets(ny + 1 - ny % 2, pixel_scale_mas)[:, None]  # North
+    pa = np.deg2rad(beam.pa_deg)
+    along = x * np.sin(pa) + y * np.cos(pa)  # the major axis is (sin, cos)
+    across = x * np.cos(pa) - y * np.sin(pa)
+    fwhm_per_sigma = 2.0 * onp.sqrt(2.0 * onp.log(2.0))
+    kernel = np.exp(
+        -0.5
+        * (
+            (along * fwhm_per_sigma / beam.major_mas) ** 2
+            + (across * fwhm_per_sigma / beam.minor_mas) ** 2
+        )
+    ).astype(image.dtype)
+    return fftconvolve(image, kernel / np.sum(kernel), mode="same")
+
+
 @dataclasses.dataclass(frozen=True)
 class LCurve:
     """The result of :func:`l_curve`.
@@ -674,7 +743,7 @@ class LCurve:
             image = result.model.get(path)
             if isinstance(image.log_brightness, GaussianField):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            jac = _residual_jacobian(
+            _, jac = _residual_jacobian(
                 result.model, data, path + ".log_brightness"
             )
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
@@ -699,10 +768,11 @@ class LCurve:
 
 
 def _residual_jacobian(model, data, path):
-    """Jacobian of all the whitened residuals with respect to one leaf.
+    """All the whitened residuals, and their Jacobian with respect to a leaf.
 
-    Returns a NumPy array of shape ``(n_data, leaf.size)``, computed in
-    float64 with whichever of forward or reverse mode is cheaper.
+    Returns NumPy arrays ``(residuals, jacobian)`` of shapes ``(n_data,)``
+    and ``(n_data, leaf.size)``, computed in float64, with whichever of
+    forward or reverse mode is cheaper for the Jacobian.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     with run_in("float64"):
@@ -718,7 +788,10 @@ def _residual_jacobian(model, data, path):
         n_data = sum(int(np.size(d.flatten_data()[0])) for d in datasets)
         mode = jax.jacrev if n_data < np.size(leaf) else jax.jacfwd
         jac = mode(residuals)(leaf)
-        return onp.asarray(jac, dtype=float).reshape(n_data, -1)
+        r = residuals(leaf)
+        return onp.asarray(r, dtype=float), onp.asarray(
+            jac, dtype=float
+        ).reshape(n_data, -1)
 
 
 def _smaller_gram(matrix):
@@ -766,15 +839,9 @@ def log_evidence(model, data, path="env"):
             f"log_evidence needs an Image with a GaussianField at {path!r}."
         )
     latent_path = path + ".log_brightness.latent"
-    jac = _residual_jacobian(model, data, latent_path)
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    with run_in("float64"):
-        model64, datasets = cast_tree((model, datasets), "float64")
-        chi2 = sum(
-            float(np.sum(whitened_residuals(model64, d) ** 2))
-            for d in datasets
-        )
-        z = onp.asarray(model64.get(latent_path), dtype=float)
+    r, jac = _residual_jacobian(model, data, latent_path)
+    chi2 = float(r @ r)
+    z = onp.asarray(model.get(latent_path), dtype=float)
     # I + JᵀJ is symmetric positive definite: its log-determinant from a
     # Cholesky factor.
     gram = _smaller_gram(jac)
@@ -826,6 +893,12 @@ def error_scale(model, data, path="env"):
     them. The estimate assumes the model is adequate: if the data contain
     structure the model cannot fit, ``s`` absorbs it.
 
+    Only the field's latents are counted in ``γ``. Each other fitted
+    parameter (the image's flux, a star's position, a spectral index) that
+    the data measure lowers ``N − γ`` by about one more, and so raises
+    ``s`` by a fraction of about 1/(2N). That is negligible while such
+    parameters are few compared with the data, as in every SPARCO fit.
+
     Parameters
     ----------
     model : SourceModel
@@ -860,14 +933,8 @@ def error_scale(model, data, path="env"):
         raise TypeError(
             f"error_scale needs an Image with a GaussianField at {path!r}."
         )
-    jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
-    with run_in("float64"):
-        model64, datasets = cast_tree((model, datasets), "float64")
-        chi2 = sum(
-            float(np.sum(whitened_residuals(model64, d) ** 2))
-            for d in datasets
-        )
+    r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    chi2 = float(r @ r)
     curvature = onp.clip(onp.linalg.eigvalsh(_smaller_gram(jac)), 0.0, None)
     gamma = float(onp.sum(curvature / (1.0 + curvature)))
     return float(onp.sqrt(chi2 / (jac.shape[0] - gamma)))

@@ -34,3 +34,5 @@ jobs:
         run: |
           uv venv --python 3.11 .venv
           uv pip install --python .venv/bin/python -e ".[dev]"
+          # Match tests.yml, which tests against the newest JAX.
+          uv pip install --python .venv/bin/python --upgrade jax jaxlib

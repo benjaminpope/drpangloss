@@ -18,6 +18,7 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import lineax as lx
+import numpy as onp
 import optax
 import optimistix as optx
 
@@ -317,6 +318,8 @@ def fit(
         when the whole objective has a least-squares form.
         ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
         such as maximum entropy and total variation; the default otherwise.
+        No unconstrained coordinate moves by more than 1 per step, so that
+        log-brightness pixels cannot be switched off by one long step.
         ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
@@ -376,14 +379,13 @@ def fit(
             )
         model = problem.build(z)
         values = problem.constrain(z)
-        chi2 = [
-            float(np.sum(r**2)) for r in problem.data_residuals(model, values)
-        ]
+        loss, chi2 = _summary(problem, z)
+        chi2 = [float(c) for c in chi2]
         info = {
             "method": method,
             "converged": converged,
             "steps": steps,
-            "loss": float(problem.loss(z)),
+            "loss": float(loss),
             "chi2": chi2,
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
@@ -394,18 +396,120 @@ def fit(
     )
 
 
+def gauss_newton_mass(model, priors, data, values):
+    """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
+
+    Near the maximum a posteriori, the posterior is close to a Gaussian
+    whose precision, in the unconstrained coordinates z that numpyro samples,
+    is the Gauss–Newton matrix JᵀJ. Here J is the Jacobian of the
+    whitened residuals with respect to z, including the residuals of the
+    priors (so a standard-normal prior adds the identity). Giving NUTS the
+    inverse, (JᵀJ)⁻¹, as its inverse mass matrix whitens that Gaussian.
+    Directions the data fix tightly then take the same step size as those
+    left to the prior. Without it, the step size shrinks to suit the
+    tightest direction, and NUTS needs its full tree depth (1023 leapfrog
+    steps) per draw. On a 62² Gaussian-field image fitted to 588 AMI
+    observables, it cut the cost to 63 steps per draw.
+
+    Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
+    [`log_evidence`][drpangloss.imaging.log_evidence]). The curvature
+    depends on them, so a matrix computed at one σ and ℓ is wrong when
+    they move. Every sampled parameter must be in ``priors``: a
+    tightly constrained one left out (such as an image's flux) keeps its
+    identity mass and its tiny step size.
+
+    Parameters
+    ----------
+    model, priors, data
+        As for [`fit`][drpangloss.fitting.fit]. The priors must have a
+        least-squares form (Normal, Uniform or ImproperUniform), as for
+        ``fit``'s Levenberg–Marquardt.
+    values : dict
+        The parameter values at which to take the curvature, normally
+        ``fit(model, priors, data).values``.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for ``numpyro.infer.NUTS``:
+        ``inverse_mass_matrix``, ``dense_mass``, and
+        ``adapt_mass_matrix=False``. Warmup adaptation is switched off
+        because a dense covariance estimated from a few hundred draws in
+        thousands of dimensions is far worse than this matrix.
+
+    Examples
+    --------
+    >>> result = fit(scene, priors, data)
+    >>> kernel = NUTS(numpyro_model(result.model, priors, data),
+    ...               init_strategy=init_to_value(values=result.values),
+    ...               **gauss_newton_mass(scene, priors, data, result.values))
+    """
+    with run_in("float64"):
+        problem = cast_tree(_Objective(model, priors, data), "float64")
+        z = problem.init(cast_tree(values, "float64"))
+        paths = problem.paths
+        shapes = [np.shape(z[p]) for p in paths]
+        sizes = [int(np.size(z[p])) for p in paths]
+        flat = np.concatenate([np.ravel(z[p]) for p in paths])
+
+        def residuals(x):
+            pieces = np.split(x, onp.cumsum(sizes)[:-1])
+            return problem.residuals(
+                {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
+            )
+
+        n_residuals = int(np.size(residuals(flat)))
+        mode = jax.jacrev if n_residuals < flat.size else jax.jacfwd
+        jac = onp.asarray(mode(residuals)(flat), dtype=float)
+    try:
+        onp.linalg.cholesky(jac.T @ jac)
+    except onp.linalg.LinAlgError:
+        raise ValueError(
+            "The Gauss–Newton curvature is singular: a parameter in priors "
+            "is constrained by neither the data nor a Normal prior."
+        ) from None
+    covariance = onp.linalg.inv(jac.T @ jac)
+    return {
+        "inverse_mass_matrix": {paths: covariance},
+        "dense_mass": [paths],
+        "adapt_mass_matrix": False,
+    }
+
+
 def _has_residuals(problem, z):
     """Whether the whole objective has a least-squares form."""
     try:
-        problem.residuals(z)
+        jax.eval_shape(problem.residuals, z)
     except TypeError:
         return False
     return True
 
 
+# The solvers below are jitted at module level, with the problem as an
+# argument, so that repeated fits of problems with the same structure (an
+# L-curve, a grid of hyperparameters, a fit per dataset) reuse one
+# compilation. A function defined inside the call would be a new function
+# each time and recompile.
+
+
+@eqx.filter_jit
+def _summary(problem, z):
+    """The loss and each dataset's chi-squared at ``z``.
+
+    With fitted error terms, chi-squared uses the inflated errors.
+    """
+    residuals = problem.data_residuals(problem.build(z), problem.constrain(z))
+    chi2 = [np.sum(r**2) for r in residuals]
+    return problem.loss(z), chi2
+
+
 def _largest(tree):
     """The largest absolute value in a pytree of arrays."""
     return np.max(np.stack([np.max(np.abs(x)) for x in jax.tree.leaves(tree)]))
+
+
+def _scaled_loss(problem, scale):
+    return lambda z: problem.loss(z) / scale
 
 
 class _GradientStoppedLM(optx.LevenbergMarquardt):
@@ -418,9 +522,8 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
     """
 
     tolerance: jax.Array
-    scale: float
 
-    def __init__(self, tolerance, scale, cg_steps):
+    def __init__(self, tolerance, cg_steps):
         super().__init__(
             rtol=0.0,
             atol=0.0,
@@ -429,21 +532,32 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
             ),
         )
         self.tolerance = tolerance
-        self.scale = scale
 
     def terminate(self, fn, y, args, options, state, tags):
-        gradient = jax.grad(lambda z: args.loss(z) / self.scale)(y)
+        problem, scale = args
+        gradient = jax.grad(_scaled_loss(problem, scale))(y)
         return _largest(gradient) <= self.tolerance, optx.RESULTS.successful
 
 
+def _lm_residuals(z, args):
+    problem, scale = args
+    return problem.residuals(z) / np.sqrt(scale)
+
+
+@eqx.filter_jit
+def _lm_tolerance(problem, z0, scale, gtol):
+    gradient = jax.grad(_scaled_loss(problem, scale))(z0)
+    return np.minimum(gtol, 1e-3 * _largest(gradient))
+
+
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
-    g0 = _largest(jax.grad(lambda z: problem.loss(z) / scale)(z0))
-    solver = _GradientStoppedLM(np.minimum(gtol, 1e-3 * g0), scale, cg_steps)
+    tolerance = _lm_tolerance(problem, z0, scale, gtol)
+    solver = _GradientStoppedLM(tolerance, cg_steps)
     solution = optx.least_squares(
-        lambda z, p: p.residuals(z) / np.sqrt(scale),
+        _lm_residuals,
         solver,
         z0,
-        args=problem,
+        args=(problem, scale),
         max_steps=max_steps,
         throw=False,
     )
@@ -451,7 +565,8 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps):
     return solution.value, int(solution.stats["num_steps"]), converged
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol):
+@eqx.filter_jit
+def _lbfgs_run(problem, z0, scale, max_steps, gtol):
     # optax's L-BFGS (with a zoom line search), stopped on the gradient.
     # A gradient test suits log-brightness pixels: the gradient for a pixel
     # that should be dark vanishes with its flux, while its value keeps
@@ -460,57 +575,73 @@ def _lbfgs(problem, z0, scale, max_steps, gtol):
     # where it started, so that a warm start (e.g. along an L-curve, whose
     # gradient is small from the outset) still converges rather than
     # stopping at once.
-    optimiser = optax.lbfgs()
+    #
+    # No coordinate may move by more than 1 per step (the clip, and a line
+    # search that may not lengthen the step), i.e. a factor of e in a
+    # brightness or flux. Otherwise an early quasi-Newton step, built from
+    # one or two gradients, can move log-brightness pixels by 10 or more:
+    # their gradients vanish with their flux, so they never come back, and
+    # the fit stops on a few bright pixels (e.g. a cold-started MaxEntropy
+    # image at weak weights). The fit also stops, unconverged, when a step
+    # no longer changes the parameters (the line search has run out of
+    # precision, as can happen in float32).
+    optimiser = optax.chain(
+        optax.scale_by_lbfgs(),
+        optax.scale(-1.0),
+        optax.clip(1.0),
+        optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=20,
+            max_learning_rate=1.0,
+            initial_guess_strategy="one",
+        ),
+    )
+    loss = _scaled_loss(problem, scale)
+    value_and_grad = optax.value_and_grad_from_state(loss)
+    tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
 
-    @eqx.filter_jit
-    def run(problem, z0):
-        def loss(z):
-            return problem.loss(z) / scale
+    def keep_going(carry):
+        step, _, _, gradient, moved = carry
+        return (step < max_steps) & (gradient > tolerance) & moved
 
-        value_and_grad = optax.value_and_grad_from_state(loss)
+    def step(carry):
+        count, z, state, _, _ = carry
+        value, grad = value_and_grad(z, state=state)
+        updates, state = optimiser.update(
+            grad, state, z, value=value, grad=grad, value_fn=loss
+        )
+        new = optax.apply_updates(z, updates)
+        moved = jax.tree.reduce(
+            np.logical_or,
+            jax.tree.map(lambda a, b: np.any(a != b), new, z),
+        )
+        return count + 1, new, state, _largest(grad), moved
 
-        tolerance = np.minimum(gtol, 1e-3 * _largest(jax.grad(loss)(z0)))
+    inf = np.asarray(np.inf, dtype=float)
+    start = (0, z0, optimiser.init(z0), inf, np.asarray(True))
+    count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
+    return z, count, gradient <= tolerance
 
-        def keep_going(carry):
-            step, _, _, gradient = carry
-            return (step < max_steps) & (gradient > tolerance)
 
-        def step(carry):
-            count, z, state, _ = carry
-            value, grad = value_and_grad(z, state=state)
-            updates, state = optimiser.update(
-                grad, state, z, value=value, grad=grad, value_fn=loss
-            )
-            return (
-                count + 1,
-                optax.apply_updates(z, updates),
-                state,
-                _largest(grad),
-            )
-
-        start = (0, z0, optimiser.init(z0), np.asarray(np.inf, dtype=float))
-        count, z, _, gradient = jax.lax.while_loop(keep_going, step, start)
-        return z, count, gradient <= tolerance
-
-    z, count, converged = run(problem, z0)
+def _lbfgs(problem, z0, scale, max_steps, gtol):
+    z, count, converged = _lbfgs_run(problem, z0, scale, max_steps, gtol)
     return z, int(count), bool(converged)
 
 
-def _adam(problem, z0, scale, learning_rate, steps):
+@eqx.filter_jit
+def _adam_run(problem, z0, scale, learning_rate, steps):
     optimiser = optax.adam(learning_rate)
+    grad = jax.grad(_scaled_loss(problem, scale))
 
-    @eqx.filter_jit
-    def run(problem, z0):
-        grad = jax.grad(lambda z: problem.loss(z) / scale)
+    def step(carry, _):
+        z, state = carry
+        updates, state = optimiser.update(grad(z), state, z)
+        return (optax.apply_updates(z, updates), state), None
 
-        def step(carry, _):
-            z, state = carry
-            updates, state = optimiser.update(grad(z), state, z)
-            return (optax.apply_updates(z, updates), state), None
+    (z, _), _ = jax.lax.scan(
+        step, (z0, optimiser.init(z0)), None, length=steps
+    )
+    return z
 
-        (z, _), _ = jax.lax.scan(
-            step, (z0, optimiser.init(z0)), None, length=steps
-        )
-        return z
 
-    return run(problem, z0), None
+def _adam(problem, z0, scale, learning_rate, steps):
+    return _adam_run(problem, z0, scale, learning_rate, steps), None

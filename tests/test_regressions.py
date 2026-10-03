@@ -557,6 +557,32 @@ def test_batched_grid_matches_unbatched():
         likelihood_grid(oidata, BinaryModelCartesian, samples, batch_size=0)
 
 
+@pytest.mark.parametrize(
+    "backend, budget", [("cpu", 2**20), ("gpu", 2**23), ("tpu", 2**23)]
+)
+def test_default_batch_size_scales_with_data_size(
+    monkeypatch, backend, budget
+):
+    from drpangloss import _grid
+    from drpangloss._grid import MIN_BATCH_SIZE, batch_size_or_default
+
+    monkeypatch.setattr(_grid.jax, "default_backend", lambda: backend)
+
+    def data_with(n_vis):
+        values = {
+            key: np.ones(n_vis) for key in ("u", "v", "vis", "d_vis", "phi")
+        }
+        return OIData({**_base_dict(), **values, "d_phi": np.ones(n_vis)})
+
+    # Small data get a batch of ~budget model visibilities.
+    assert batch_size_or_default(None, data_with(24)) == budget // 24
+    # Large data keep the minimum, bounding memory as before.
+    n_large = budget // MIN_BATCH_SIZE + 1
+    assert batch_size_or_default(None, data_with(n_large)) == MIN_BATCH_SIZE
+    # An explicit batch size is used as given.
+    assert batch_size_or_default(7, data_with(24)) == 7
+
+
 def test_styled_plotting_keeps_other_figures_open():
     # plt.rc_context restores the backend on exit, which in Jupyter can
     # close every open figure before it is shown.

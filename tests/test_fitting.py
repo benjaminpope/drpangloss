@@ -14,6 +14,7 @@ from drpangloss.models import BinaryModelCartesian, Image, PointSource, System
 from drpangloss.oidata import OIData
 from drpangloss.scenes import gaussian_blob
 
+from ._compiles import count_compiles
 from ._test_data import oidata
 
 TRUTH = BinaryModelCartesian(150.0, -80.0, 0.02)
@@ -175,13 +176,54 @@ def test_a_warm_start_still_converges():
     # from the outset; the fit must still move to the new solution rather
     # than stopping at once.
     start, priors, data = _image_fit()
-    strong = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
+    strong = fit(start, priors, data, [MaxEntropy(100.0, path="env")])
     weak = fit(
-        start, priors, data, [MaxEntropy(1.0, path="env")], init=strong.values
+        start, priors, data, [MaxEntropy(10.0, path="env")], init=strong.values
     )
-    cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
+    cold = fit(start, priors, data, [MaxEntropy(10.0, path="env")])
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
-    assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)
+    assert weak.info["loss"] == pytest.approx(cold.info["loss"], rel=1e-3)
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+@pytest.mark.parametrize("dtype", ["float32", "float64"])
+def test_a_cold_maxent_fit_does_not_collapse(dtype):
+    # From a flat image, a weakly regularised fit once took a first
+    # quasi-Newton step of ~10 in log-brightness, switching most pixels
+    # off for good (their gradients vanish with their flux): it stopped on
+    # a few bright pixels with χ² ≈ 1330, where a strongly regularised fit
+    # reaches ≈ 245. A weaker penalty must fit the data at least as well.
+    # (In float32 the line search runs out of precision near the minimum,
+    # so that fit may stop unconverged.)
+    start, priors, data = _image_fit()
+    weak, strong = (
+        fit(start, priors, data, [MaxEntropy(w, path="env")], dtype=dtype)
+        for w in (1.0, 100.0)
+    )
+    assert weak.info["chi2"][0] <= strong.info["chi2"][0]
+    b = weak.model.env.brightness
+    assert np.mean(b > 1e-3 * np.max(b)) > 0.1  # collapsed fits: 2%
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
+def test_repeated_fits_do_not_recompile(method):
+    # The solvers are jitted once at module level, so a second fit of a
+    # problem with the same structure (another start, regulariser weight
+    # or dataset of the same size) reuses the compilation. When they were
+    # defined inside each call, every fit recompiled, which took most of
+    # its time.
+    start, priors, data = _image_fit()
+    options = {"max_steps": 20} if method == "adam" else {}
+    again = data.with_model(start, key=jax.random.PRNGKey(2))
+
+    def fit_tsv(data, weight):
+        regs = [TSV(weight, path="env")]
+        return fit(start, priors, data, regs, method=method, **options)
+
+    fit_tsv(data, 10.0)
+    with count_compiles() as compiles:
+        fit_tsv(again, 3.0)
+    assert not compiles
 
 
 def test_fit_recovers_error_scales():
