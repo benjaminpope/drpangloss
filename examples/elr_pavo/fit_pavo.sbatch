@@ -34,6 +34,7 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 # arguments").
 export JAX_PLATFORMS=cpu
 export PYTHONUNBUFFERED=1  # log progress as it happens
+export TQDM_MININTERVAL=60  # progress bar: one update a minute in the log
 
-srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" --no-progress-bar \
+srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" \
   --chain-method vectorized
