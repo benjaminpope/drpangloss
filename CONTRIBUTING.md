@@ -19,7 +19,8 @@ uv pip install --python .venv/bin/python -e ".[dev,notebooks]"
 ```
 
 CI tests against the newest JAX, so if you reuse an existing `.venv`, upgrade it first
-with `uv pip install --python .venv/bin/python --upgrade jax jaxlib`.
+with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`. Upgrading
+`jax` on its own can leave optax, equinox etc. too old for it.
 
 Ruff is pinned to an exact version in `pyproject.toml` (`required-version`) so that local
 runs and CI format identically; installing the `dev` extra gives you the right one. If you
