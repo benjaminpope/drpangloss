@@ -182,3 +182,7 @@ def test_a_warm_start_still_converges():
     cold = fit(start, priors, data, [MaxEntropy(1.0, path="env")])
     assert weak.info["steps"] > 4  # stalled fits took 1-4 steps
     assert weak.info["loss"] <= cold.info["loss"] * (1 + 1e-2)
+    # Both reach the minimum, not a stationary point with most pixels dark
+    # (χ²_red ~ 3-6, at a loss that varied by 2x across platforms).
+    assert weak.info["chi2_red"] < 1.5
+    assert cold.info["chi2_red"] < 1.5
