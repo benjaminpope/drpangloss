@@ -19,7 +19,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.11", "3.12"]
+        # 3.11, the oldest supported version, runs on pushes to main only;
+        # pull requests test 3.12.
+        python-version: >-
+          ${{ fromJSON(github.event_name == 'push'
+          && '["3.11", "3.12"]' || '["3.12"]') }}
         x64: ["0"]
         include:
           # The jax.enable_x64 dtype mix-up fixed in the Bessel functions (now
@@ -58,13 +62,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .jax-cache
-          key: jax-${{ matrix.python-version }}-${{ github.run_id }}
-          restore-keys: jax-${{ matrix.python-version }}-
+          # One cache per job: compiled code differs by OS and by x64.
+          key: jax-${{ matrix.os }}-${{ matrix.python-version }}-x64${{ matrix.x64 }}-${{ github.run_id }}
+          restore-keys: jax-${{ matrix.os }}-${{ matrix.python-version }}-x64${{ matrix.x64 }}-
 
       # ===== Tests =====
+      # pytest-xdist runs one worker per core; the suite is many small,
+      # compile-bound tests, so this roughly halves its time.
       - name: Test Suite
         env:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
-        run: uv run --python .venv/bin/python pytest
+        run: uv run --python .venv/bin/python pytest -n auto

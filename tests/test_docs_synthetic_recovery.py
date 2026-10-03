@@ -54,7 +54,10 @@ def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
     fisher_within_three_sigma = module.fisher_within_three_sigma
 
     output = tmp_path / "synthetic_binary_docs.oifits"
-    summary = run_synthetic_binary_demo(output)
+    # Short chains: a 3-parameter binary needs far fewer than the docs' 2000.
+    summary = run_synthetic_binary_demo(
+        output, num_warmup=300, num_samples=500
+    )
 
     checks = within_two_sigma(summary)
     fisher_checks = fisher_within_three_sigma(summary)

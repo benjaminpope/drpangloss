@@ -40,6 +40,5 @@ jobs:
       - name: build documentation (zensical)
         run: uv run --python .venv/bin/python zensical build --clean
 
-      - name: validate synthetic docs workflow
-        run: uv run --python .venv/bin/python pytest tests/test_docs_synthetic_recovery.py
+      # tests/test_docs_synthetic_recovery.py runs in tests.yml.
 
