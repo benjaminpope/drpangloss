@@ -202,3 +202,25 @@ def test_a_cold_maxent_fit_does_not_collapse(dtype):
     assert weak.info["chi2"][0] <= strong.info["chi2"][0]
     b = weak.model.env.brightness
     assert np.mean(b > 1e-3 * np.max(b)) > 0.1  # collapsed fits: 2%
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
+def test_repeated_fits_do_not_recompile(method):
+    # The solvers are jitted once at module level, so a second fit of a
+    # problem with the same structure (another start, regulariser weight
+    # or dataset of the same size) reuses the compilation. When they were
+    # defined inside each call, every fit recompiled, which took most of
+    # its time.
+    compiles = []
+    jax.monitoring.register_event_duration_secs_listener(
+        lambda event, duration, **kwargs: compiles.append(event)
+        if event.endswith("backend_compile_duration")
+        else None
+    )
+    start, priors, data = _image_fit()
+    options = {"max_steps": 20} if method == "adam" else {}
+    fit(start, priors, data, [TSV(10.0, path="env")], method=method, **options)
+    before = len(compiles)
+    again = data.with_model(start, key=jax.random.PRNGKey(2))
+    fit(start, priors, again, [TSV(3.0, path="env")], method=method, **options)
+    assert len(compiles) == before
