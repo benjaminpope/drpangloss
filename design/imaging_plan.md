@@ -363,12 +363,12 @@ A background split off as a `Resolved` component also changes what the image's i
 ## Stage 6a: spectro-interferometry, matching PMOIRED (about 8–10 h)
 This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_parity.md) compares the two packages feature by feature. It comes before 6b and 6c, because 6b's per-filter fluxes are node spectra.
 
-**Apep lessons.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) records the GRAVITY workflow that worked on Apep and how it changes 6a:
+**Workflow and additions.** [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) sets out an end-to-end spectro-interferometric workflow (worked example: GRAVITY data on Apep) and adds to 6a:
 - `Nodes(..., outside=0.0)` for line excesses on a continuum, with positivity checked on the total; `Tabulated` (branch `apep-gravity`) becomes a node spectrum;
 - `System.total_spectrum` for OI_FLUX;
 - VISPHI with the pipeline's continuum normalisation, and a test in the resolved regime;
 - error floors sharing one function with the fitted `noise=` terms;
-- a smearing check on Apep.
+- a documented rule for when smearing matters, with a real-data check.
 
 **Build:**
 - **Spectra.** New `Spectrum` types:
@@ -392,7 +392,7 @@ This stage matches PMOIRED's spectral modelling. [`pmoired_parity.md`](pmoired_p
 **MWE:** a GRAVITY-like Brγ disk: continuum star plus a line-emitting Gaussian offset with velocity, fitted to simulated V², differential phase and NFLUX.
 
 ## Stage 6d: calibration nuisances correlated across channels (after 6a; about 5–7 h)
-Decided 2026-10-03, from Apep's GRAVITY data, whose systematics are common to all channels of a frame. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
+Decided 2026-10-03. Spectro-interferometric systematics (transfer-function jitter, piston and injection drifts) are mostly common to all channels of a frame, which diagonal error inflation does not describe; GRAVITY data on Apep are the first dataset here that needs this. The design is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) §2.4.
 
 **Build:**
 - A V² gain per (frame, baseline) and a closure-phase offset per (frame, triangle), shared by all channels of the block.
@@ -403,9 +403,9 @@ Decided 2026-10-03, from Apep's GRAVITY data, whose systematics are common to al
 - The whitened residuals' squared norm and the log-determinant against a dense covariance.
 - A simulated GRAVITY-like dataset with injected per-frame gains: the widths are recovered, and parameter errors are calibrated where the diagonal model's are not.
 
-**MWE:** the Apep cone refitted with 6d against the per-epoch additive terms, comparing the parameter errors.
+**MWE:** a simulated multi-channel binary with an extended component and injected per-frame gains, fitted with 6d and with diagonal error terms, comparing the parameter errors with the truth. A real-data check (e.g. Apep's GRAVITY data) is optional.
 
-**Merge order.** The `apep-gravity` library commits (`EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
+**Merge order.** The library commits on the local branch `apep-gravity` (`EllipticalGaussian`, `Tabulated`, fitted error terms `noise=`, the anisotropic `GaussianField`, `GaussianArc`, the rim-gradient fix) merge into `imaging` **after 6a's spectra**, replacing `Tabulated` with 6a's node spectra, and before 6d, which extends `noise=`.
 
 ## Stage 6: polychromatic imaging (about 8–12 h; design is finalised at the Stage 5 checkpoint)
 **Build**, in increasing order of complexity; stop where the science needs stop: Item 2 is Stage 6b and item 3 is Stage 6c. Both use 6a's node spectra for per-filter or per-channel fluxes.
@@ -436,12 +436,12 @@ Decided 2026-10-03, from Apep's GRAVITY data, whose systematics are common to al
 ---
 
 ## Stage 8: parametric parity with PMOIRED (after milestone 2; about 10–14 h)
-See [`pmoired_parity.md`](pmoired_parity.md). [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) expands the orbit item: conventions, jaxoplanet as the engine, short-arc parameterisations, binary-frame components, and tests. Apep is the worked example.
+See [`pmoired_parity.md`](pmoired_parity.md). [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) expands the orbit item into a general capability: conventions, jaxoplanet (optional) as the engine, starting orbits, short-arc parameterisations, radial velocities, components attached to the binary frame, fits across instruments, and tests.
 - **`Projected(source, inc, pa)`.** A wrapper that stretches uv, like `Rotated`. It makes any component elliptical, and replaces per-class `inc`/`pa`.
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
 - **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole.
 - **Keplerian orbits.** Elements or Thiele–Innes constants drive a component's position from each datum's MJD, so `OIData` must carry MJD. Radial velocities enter as an extra likelihood term.
-- **Spectral correlations between channels.** Only once a dataset needs them. Apep's GRAVITY data now do: this is Stage 6d.
+- **Spectral correlations between channels.** Only once a dataset needs them. A dataset now does (GRAVITY): this is Stage 6d.
 
 **Tests:**
 - Hankel profiles against analytic UD, Gaussian and ring visibilities.
@@ -449,7 +449,7 @@ See [`pmoired_parity.md`](pmoired_parity.md). [`orbit_scene_joint_fitting.md`](o
 - Orbit positions against a reference ephemeris.
 - Bootstrap spreads against the Laplace errors on a simple fit.
 
-## New items from the Apep analysis (unclaimed)
+## New items from the spectro-interferometry and orbit notes (unclaimed)
 Proposed in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) (S) and [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O). None is assigned to a stage yet. Effort is agent hours.
 
 | Item | Note | Effort |
@@ -458,14 +458,13 @@ Proposed in [`spectro_interferometry_workflow.md`](spectro_interferometry_workfl
 | A per-dataset wavelength-scale nuisance (`wavel_scale`) | S §2.6 | 1–2 |
 | Dual-field (in-field) calibrator recipe: an example and docs | S §2.7 | 3–4 |
 | `simulate(scene, template)` and `bias_test`, for cross-instrument bias tests and planning | O R8 | 2–3 |
-| Binary-frame attachment: `SourceModel.at(mjd)` and `Attached(component, orbit, anchor, dpa)` | O R2, R3 | 6–7 |
-| Moving `TruncatedCone` into the library (from `~/data/apep_gravity/scripts`) | O §6 | 3–4 |
+| Binary-frame attachment: `SourceModel.at(mjd)` and `Attached(component, orbit, anchor, bind, offsets)` | O R2, R3 | 6–7 |
+| A `TruncatedCone` component (thin conical shell, analytic; prototype in `~/data/apep_gravity/scripts`) | O §6 | 3–4 |
 | OIFITS position-angle round-trip tests (GRAVITY layout, AMICAL and drpangloss writers; real anchors) | O §5.3 | 2, then 2 per anchor |
-| Orbits (`orbits.py` on jaxoplanet, an optional `[orbits]` extra; conventions in O §2.1); built here, not by Toon | O §3, §6 | see O §6 |
+| Orbits: `orbits.py` on jaxoplanet (an optional `[orbits]` extra), conventions in O §2.1, starting orbits, RVs; built in drpangloss | O §3, §6 | see O §6 |
 
 **Reminder for Ben:** choose the real anchor binaries (a visual binary with radial velocities; one observed with GRAVITY; one with NACO or SPHERE masking) before the ephemeris and round-trip tests are written. See O §7.
 
-**Pending:** White et al. 2025's Ω and ω convention (O §2.5); Ben is asking the first author.
 
 ## Totals
 - **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
