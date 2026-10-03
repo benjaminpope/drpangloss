@@ -12,6 +12,7 @@ Status: 2026-10-03. The docs group the worked tutorials into the tabs Data Handl
 | | Extended source models | disks, rims, extended components |
 | | Composing models | `System`, fluxes, composition |
 | | Spotted stars with harmonix | `HarmonixModel` |
+| | Gravity-darkened stars | `GravityDarkenedStar` (Shashank Dholakia's ELR11 port), grey and chromatic |
 | Binaries | Binary search | grid searches |
 | | Contrast limits | Absil and Ruffio limits |
 | | Hierarchical inference across filters | a shared binary geometry with per-filter fluxes, sampled with numpyro |
@@ -28,12 +29,11 @@ Status: 2026-10-03. The docs group the worked tutorials into the tabs Data Handl
 | 5 | **Multi-epoch fits** | `Rotated`, model functions returning one model per dataset | `notebooks/mwe/mwe_rotating_epochs` | Becomes part of the orbit examples (6a.1) |
 | 6 | **Disks and rims** | `ModulatedGaussianRim`, `FlaredDisk` (Blakely et al. 2024) | The PDS 70 notebooks on the unmerged branch `pds70-disk` | Needs `pds70-disk` reviewed and merged first |
 | 7 | **Kernel-phase data** | kernel phases through `phi_mat` | None | Waits on a kernel-phase reader (`pmoired_parity.md`, KPFITS) |
-| 8 | **Gravity-darkened stars** | `GravityDarkenedStar` | Arrives with the ELR stack (#99) | Owned by the ELR session |
-| 9 | **Orbits** | `KeplerOrbit`, starting orbits, radial velocities, `Attached` | None | Written with Stage 6a.1 |
-| 10 | **Spectro-interferometry** | lines, node spectra, differential phase, NFLUX | None | Written with Stage 6a (the Brγ disk MWE) |
-| 11 | **Correlated calibration errors** | Stage 6d's low-rank nuisances | None | Written with Stage 6d |
+| 8 | **Orbits** | `KeplerOrbit`, starting orbits, radial velocities, `Attached` | None | Written with Stage 6a.1 |
+| 9 | **Spectro-interferometry** | lines, node spectra, differential phase, NFLUX | None | Written with Stage 6a (the Brγ disk MWE) |
+| 10 | **Correlated calibration errors** | Stage 6d's low-rank nuisances | None | Written with Stage 6d |
 
-Items 1–4 need no new library code and should be written before the 0.2.0 release if time allows. Items 5–11 come with the stages and branches named.
+Items 1–4 need no new library code and should be written before the 0.2.0 release if time allows. Items 5–10 come with the stages and branches named.
 
 ## Also worth doing
 - Promote the best developer demos in `notebooks/mwe/` (`mwe_fit`, `mwe_vlti`, `mwe_rotating_epochs`, `mwe_uv_lattice_mft`) into examples or into the items above, rather than keeping two parallel sets.

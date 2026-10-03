@@ -53,6 +53,7 @@ nav:
       - "Extended source models": source_models.md
       - "Composing models": composition.md
       - "Spotted stars with harmonix": harmonix.md
+      - "Gravity-darkened stars": gravity_darkened_star.md
   - Binaries:
       - "Binary search": binary_search.md
       - "Contrast limits": contrast_limits.md
