@@ -33,6 +33,7 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
 # root finder ("Closure-converted function called with different dynamic
 # arguments").
 export JAX_PLATFORMS=cpu
+export PYTHONUNBUFFERED=1  # log progress as it happens
 
 srun python examples/elr_pavo/fit_pavo.py --stars "$STAR" --no-progress-bar \
   --chain-method vectorized
