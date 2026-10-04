@@ -46,6 +46,26 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       heading_level: 2
       members: false
 
+::: virgil.models.LimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members: false
+
+::: virgil.models.QuadraticLimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - from_u
+
+::: virgil.models.SquareRootLimbDarkenedDisk
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - from_cd
+
 ::: virgil.models.GravityDarkenedStar
     options:
       show_root_heading: true

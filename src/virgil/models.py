@@ -2,7 +2,8 @@
 
 * Components ([`PointSource`][virgil.models.PointSource],
   [`GaussianDisk`][virgil.models.GaussianDisk],
-  [`UniformDisk`][virgil.models.UniformDisk],
+  [`UniformDisk`][virgil.models.UniformDisk], the limb-darkened disks such
+  as [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
   [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim], and
   the flared scattered-light disks such as
   [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]) are
@@ -19,6 +20,7 @@ ratio. Likelihoods of these models are in
 """
 
 import dataclasses
+import math
 import textwrap
 from typing import Any
 
@@ -29,7 +31,7 @@ import numpy as onp
 import zodiax as zx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
-from jaxbessel import bessel_jn
+from jaxbessel import bessel_jn, bessel_jv_over_xv
 
 from ._geometry import (
     check_az_prof_nonnegative,
@@ -603,6 +605,266 @@ class UniformDisk(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
         return np.where(xx**2 + yy**2 <= radius**2, 1.0, 0.0)
+
+
+class _LimbDarkenedDisk(Component):
+    r"""Circular disk whose brightness is a sum of powers of $\mu$.
+
+    Subclasses give the profile $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with
+    $\mu = \sqrt{1 - (r / R)^2}$, through ``_profile``, which returns the
+    coefficients $a_\nu$ (traceable) and the powers $\nu$ (a static tuple);
+    the visibility is then
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk].
+    """
+
+    diam: jax.Array
+
+    def _profile(self):
+        r"""``(coeffs, powers)`` of $I(\mu) = \sum a_\nu \mu^\nu$."""
+        raise NotImplementedError
+
+    def _set_position(self, diam, flux, dra, ddec):
+        self.diam = np.asarray(diam, dtype=float)
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def _centred_cvis(self, uu, vv):
+        coeffs, powers = self._profile()
+        return cvis_limb_darkened_disk(uu, vv, self.diam, coeffs, powers)
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        coeffs, powers = self._profile()
+        radius = np.maximum(self.diam / 2.0, 0.5 * pixel_scale_mas)
+        r2 = (xx**2 + yy**2) / radius**2
+        inside = r2 <= 1.0
+        # mu = 0 at the limb; keep it positive so mu**nu has finite gradients
+        tiny = np.finfo(r2.dtype).tiny
+        mu = np.sqrt(np.where(inside, np.maximum(1.0 - r2, tiny), 1.0))
+        brightness = sum(a * mu**nu for a, nu in zip(coeffs, powers))
+        return np.where(inside, brightness, 0.0)
+
+    def is_physical(self):
+        return super().is_physical() & np.all(self.diam > 0.0)
+
+
+class LimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with polynomial limb darkening of any order.
+
+    The brightness is
+    $I(\mu) / I(1) = 1 - \sum_{n=1}^{N} u_n (1 - \mu)^n$, with
+    $\mu = \sqrt{1 - (r / R)^2}$ the cosine of the angle between the line of
+    sight and the surface normal. This is the convention of jaxoplanet,
+    *starry* and harmonix, so ``u`` is the same as a jaxoplanet
+    ``Surface``'s ``u``: ``u=(u1,)`` is the linear law, ``u=(u1, u2)`` the
+    quadratic law, and the default ``u=()`` a uniform disk. To fit the
+    quadratic law with priors that cover exactly the physical profiles, use
+    [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk].
+
+    The visibility is analytic (Quirrenbach et al. 1996, eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+    harmonix ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433))
+    generalises the same result to limb-darkened spherical-harmonic maps.
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter (of the stellar limb) in
+        milliarcseconds.
+    u : sequence of float, optional
+        Limb-darkening coefficients $u_1, \ldots, u_N$ (default: none, a
+        uniform disk). A 1D array; its length, the order of the law, is fixed.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> linear = LimbDarkenedDisk(3.0, u=[0.6])
+    >>> quadratic = LimbDarkenedDisk(3.0, u=[0.4, 0.25])
+    """
+
+    u: jax.Array
+
+    def __init__(self, diam, u=(), flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.u = np.asarray(u, dtype=float).reshape(-1)
+
+    def _profile(self):
+        # (1 - mu)^n = sum_k C(n, k) (-mu)^k
+        order = self.u.shape[0]
+        expand = onp.zeros((order, order + 1))
+        for n in range(1, order + 1):
+            for k in range(n + 1):
+                expand[n - 1, k] = math.comb(n, k) * (-1.0) ** k
+        coeffs = np.zeros(order + 1).at[0].set(1.0) - self.u @ expand
+        return coeffs, tuple(float(k) for k in range(order + 1))
+
+
+class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with quadratic limb darkening in Kipping's (2013) $q_1, q_2$.
+
+    The brightness is $I(\mu) / I(1) = 1 - u_1 (1 - \mu) - u_2 (1 - \mu)^2$,
+    with
+    $u_1 = 2 \sqrt{q_1}\, q_2$ and $u_2 = \sqrt{q_1}\,(1 - 2 q_2)$
+    ([Kipping 2013](https://doi.org/10.1093/mnras/stt1435), eqs. 15-16).
+    Every $(q_1, q_2)$ in the unit square gives a profile that is positive
+    and decreases from the centre to the limb, and every such profile has one,
+    so uniform priors on $[0, 1]$ for both are uninformative over exactly the
+    physical laws. The visibility is analytic (Quirrenbach et al. 1996,
+    eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter in milliarcseconds.
+    q1, q2 : float or array-like, optional
+        Kipping's coefficients, each in $[0, 1]$ (default 0: a uniform disk).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> import numpyro.distributions as dist
+    >>> star = QuadraticLimbDarkenedDisk(3.0, q1=0.4, q2=0.3)
+    >>> priors = {
+    ...     "diam": dist.Uniform(2.0, 4.0),
+    ...     "q1": dist.Uniform(0.0, 1.0),
+    ...     "q2": dist.Uniform(0.0, 1.0),
+    ... }
+
+    From tabulated $u_1, u_2$ (e.g. Claret's tables):
+
+    >>> star = QuadraticLimbDarkenedDisk.from_u(3.0, u1=0.4, u2=0.25)
+    """
+
+    q1: jax.Array
+    q2: jax.Array
+
+    def __init__(self, diam, q1=0.0, q2=0.0, flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.q1 = np.asarray(q1, dtype=float)
+        self.q2 = np.asarray(q2, dtype=float)
+
+    @classmethod
+    def from_u(cls, diam, u1, u2, **kwargs):
+        """Build from the usual $u_1, u_2$ (Kipping 2013, eqs. 17-18)."""
+        total = u1 + u2
+        q2 = np.where(
+            total == 0, 0.0, u1 / (2.0 * np.where(total == 0, 1.0, total))
+        )
+        return cls(diam, q1=total**2, q2=q2, **kwargs)
+
+    @property
+    def u1(self):
+        return 2.0 * np.sqrt(self.q1) * self.q2
+
+    @property
+    def u2(self):
+        return np.sqrt(self.q1) * (1.0 - 2.0 * self.q2)
+
+    def _profile(self):
+        u1, u2 = self.u1, self.u2
+        # 1 - u1 (1 - mu) - u2 (1 - mu)^2, expanded in powers of mu
+        coeffs = np.stack([1.0 - u1 - u2, u1 + 2.0 * u2, -u2])
+        return coeffs, (0.0, 1.0, 2.0)
+
+    def is_physical(self):
+        return super().is_physical() & _in_unit_square(self.q1, self.q2)
+
+
+class SquareRootLimbDarkenedDisk(_LimbDarkenedDisk):
+    r"""Circular disk with square-root limb darkening in Kipping's (2013) $q_1, q_2$.
+
+    The brightness is
+    $I(\mu) / I(1) = 1 - c (1 - \mu) - d (1 - \sqrt{\mu})$
+    (Díaz-Cordovés & Giménez 1992), which suits late-type stars in the
+    near-infrared better than the quadratic law (van Hamme 1993), with
+    $c = \sqrt{q_1}\,(1 - 2 q_2)$ and $d = 2 \sqrt{q_1}\, q_2$, inverting
+    [Kipping (2013)](https://doi.org/10.1093/mnras/stt1435), eqs. 23-24. As
+    for [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
+    the unit square in $(q_1, q_2)$ is exactly the set of positive profiles
+    that decrease towards the limb, so uniform priors on $[0, 1]$ are
+    uninformative over the physical laws. The $\sqrt{\mu}$ term needs a
+    Bessel function of order $5/4$ in the analytic visibility (Quirrenbach
+    et al. 1996, eq. 3; see
+    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk]).
+
+    Parameters
+    ----------
+    diam : float or array-like
+        Limb-darkened angular diameter in milliarcseconds.
+    q1, q2 : float or array-like, optional
+        Kipping's coefficients, each in $[0, 1]$ (default 0: a uniform disk).
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a
+        [`System`][virgil.models.System], or a spectrum from
+        [`virgil.spectra`][virgil.spectra] (default 1).
+    dra : float or array-like, optional
+        Right-ascension offset of the centre in milliarcseconds, positive to
+        the East.
+    ddec : float or array-like, optional
+        Declination offset of the centre in milliarcseconds, positive to the
+        North.
+
+    Examples
+    --------
+    >>> star = SquareRootLimbDarkenedDisk(3.0, q1=0.5, q2=0.4)
+    >>> same = SquareRootLimbDarkenedDisk.from_cd(3.0, c=star.c, d=star.d)
+    """
+
+    q1: jax.Array
+    q2: jax.Array
+
+    def __init__(self, diam, q1=0.0, q2=0.0, flux=1.0, dra=0.0, ddec=0.0):
+        self._set_position(diam, flux, dra, ddec)
+        self.q1 = np.asarray(q1, dtype=float)
+        self.q2 = np.asarray(q2, dtype=float)
+
+    @classmethod
+    def from_cd(cls, diam, c, d, **kwargs):
+        """Build from the usual $c, d$ (Kipping 2013, eqs. 23-24)."""
+        total = c + d
+        q2 = np.where(
+            total == 0, 0.0, d / (2.0 * np.where(total == 0, 1.0, total))
+        )
+        return cls(diam, q1=total**2, q2=q2, **kwargs)
+
+    @property
+    def c(self):
+        return np.sqrt(self.q1) * (1.0 - 2.0 * self.q2)
+
+    @property
+    def d(self):
+        return 2.0 * np.sqrt(self.q1) * self.q2
+
+    def _profile(self):
+        c, d = self.c, self.d
+        # 1 - c (1 - mu) - d (1 - sqrt(mu)), in powers of mu
+        return np.stack([1.0 - c - d, c, d]), (0.0, 1.0, 0.5)
+
+    def is_physical(self):
+        return super().is_physical() & _in_unit_square(self.q1, self.q2)
+
+
+def _in_unit_square(q1, q2):
+    return np.all((q1 >= 0.0) & (q1 <= 1.0) & (q2 >= 0.0) & (q2 <= 1.0))
 
 
 class GravityDarkenedStar(Component):
@@ -2204,6 +2466,59 @@ def cvis_uniform_disk(u, v, ud, dra=0.0, ddec=0.0):
     )
 
     return envelope * offset_phase(u, v, dra, ddec)
+
+
+def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
+    r"""Complex visibilities of a disk whose brightness is a sum of powers of $\mu$.
+
+    For $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with $\mu = \sqrt{1 - (r/R)^2}$,
+    Quirrenbach et al. (1996, A&A 312, 160, eqs. 1-4) show that
+
+    $$
+    V(x) = \frac{1}{C} \sum_\nu a_\nu\, 2^{\nu/2}\,
+    \Gamma\!\left(\frac{\nu}{2} + 1\right)
+    \frac{J_{\nu/2+1}(x)}{x^{\nu/2+1}}, \qquad
+    C = \sum_\nu \frac{a_\nu}{\nu + 2},
+    $$
+
+    with $x = \pi\,\theta\,|b| / \lambda$ for diameter $\theta$, normalized to
+    1 at zero baseline. A uniform disk ($a_0 = 1$) gives $2 J_1(x)/x$. The
+    powers need not be integers: the square-root law has $\nu = 1/2$, which
+    needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``. harmonix
+    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
+    the result to polynomial limb darkening of spherical-harmonic maps.
+
+    Parameters
+    ----------
+    u : array-like
+        Baseline ``u`` coordinates in wavelength units (cycles / rad).
+    v : array-like
+        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    diam : float or array-like
+        Limb-darkened diameter in milliarcseconds.
+    coeffs : array-like
+        Coefficients $a_\nu$, one per power (traceable).
+    powers : sequence of float
+        Powers $\nu > -1$ of $\mu$ (static).
+    dra : float or array-like
+        Right-ascension offset in milliarcseconds.
+    ddec : float or array-like
+        Declination offset in milliarcseconds.
+
+    Returns
+    -------
+    array-like
+        Complex visibility samples.
+    """
+    x = np.pi * np.hypot(u, v) * mas2rad * diam
+    total = 0.0
+    norm = 0.0
+    for i, nu in enumerate(powers):
+        nu = float(nu)
+        scale = 2.0 ** (nu / 2) * math.gamma(nu / 2 + 1)
+        total = total + coeffs[i] * scale * bessel_jv_over_xv(nu / 2 + 1, x)
+        norm = norm + coeffs[i] / (nu + 2)
+    return (total / norm + 0j) * offset_phase(u, v, dra, ddec)
 
 
 def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):

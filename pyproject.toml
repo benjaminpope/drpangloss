@@ -20,7 +20,7 @@ dependencies = [
   # Floors are the oldest versions CI tests (the "lowest" job in
   # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8.
   "jax>=0.8.0",
-  "jaxbessel>=0.1.0",
+  "jaxbessel>=0.2.0",
   "equinox>=0.13.2",
   "zodiax>=0.4.1",
   "optimistix>=0.0.11",

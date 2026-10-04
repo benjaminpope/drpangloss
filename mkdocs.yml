@@ -59,6 +59,7 @@ nav:
       - "Extended source models": source_models.md
       - "Composing models": composition.md
       - "Spotted stars with harmonix": harmonix.md
+      - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
   - Imaging:
       - "1. Simulating AMI data": imaging_ami.md
