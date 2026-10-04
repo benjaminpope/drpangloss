@@ -388,9 +388,9 @@ def fit(
     FitResult
         The fitted model, parameter values and diagnostics. A warning is
         raised if LM or L-BFGS did not converge; for L-BFGS it says whether
-        the fit reached ``max_steps`` or stopped earlier because a step no
-        longer changed the parameters (its precision ran out, as can happen
-        in float32).
+        the fit reached ``max_steps``, met a non-finite gradient, or stopped
+        earlier because a step no longer changed the parameters (its
+        precision ran out, as can happen in float32).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -416,7 +416,7 @@ def fit(
             )
         elif method == "lbfgs":
             limit = max_steps or 20_000
-            z, steps, converged = _lbfgs(
+            z, steps, converged, stop = _lbfgs(
                 problem,
                 z0,
                 traced_scale,
@@ -435,7 +435,7 @@ def fit(
             )
         if converged is False:
             warnings.warn(
-                _lbfgs_not_converged(steps, limit, dtype)
+                _lbfgs_not_converged(stop, steps, limit, dtype)
                 if method == "lbfgs"
                 else f"fit(method={method!r}) did not converge in {steps} "
                 "steps.",
@@ -793,31 +793,49 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     # The start itself may already be a stationary point.
     start_gradient = _largest(jax.grad(loss)(z0))
     start = (0, z0, optimiser.init(z0), start_gradient, np.asarray(True))
-    count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
-    return z, count, gradient <= tolerance
+    count, z, _, gradient, moved = jax.lax.while_loop(keep_going, step, start)
+    return z, count, gradient, tolerance, moved
 
 
-def _lbfgs_not_converged(steps, limit, dtype):
+def _lbfgs_not_converged(stop, steps, limit, dtype):
     """The warning for an unconverged L-BFGS fit, saying why it stopped."""
-    if steps >= limit:
+    head = "fit(method='lbfgs') did not converge"
+    if stop == "limit":
+        return f"{head} in {steps} steps, the step limit; raise max_steps."
+    if stop == "non-finite":
         return (
-            f"fit(method='lbfgs') did not converge in {steps} steps, the "
-            "step limit; raise max_steps."
+            f"{head}: its gradient was not finite (NaN or inf) after "
+            f"{steps} steps; check the model and priors for invalid values."
         )
-    # _lbfgs_run also stops when a step no longer moves the parameters.
     hint = "; dtype='float64' can go further" if dtype == "float32" else ""
     return (
-        f"fit(method='lbfgs') did not converge: it stopped after {steps} of "
-        f"{limit} steps, when a step no longer changed the parameters (the "
-        f"line search ran out of {dtype} precision{hint})."
+        f"{head}: it stopped after {steps} of {limit} steps, when a step no "
+        f"longer changed the parameters (the line search ran out of {dtype} "
+        f"precision{hint})."
     )
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):
-    z, count, converged = _lbfgs_run(
+    """L-BFGS, returning ``(z, steps, converged, stop)``.
+
+    ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
+    ``"stalled"`` (a step no longer moved the parameters) or
+    ``"non-finite"`` (a NaN or infinite gradient); it is ``None`` when the
+    fit converged.
+    """
+    z, count, gradient, tolerance, moved = _lbfgs_run(
         problem, z0, scale, max_steps, gtol, max_step_size
     )
-    return z, int(count), bool(converged)
+    count, gradient, tolerance = int(count), float(gradient), float(tolerance)
+    if gradient <= tolerance:
+        return z, count, True, None
+    # The loop starts from an infinite gradient, so only a gradient seen
+    # after a step (or a non-finite starting tolerance) is a real failure.
+    if not math.isfinite(tolerance) or (
+        count > 0 and not math.isfinite(gradient)
+    ):
+        return z, count, False, "non-finite"
+    return z, count, False, "limit" if bool(moved) else "stalled"
 
 
 @eqx.filter_jit

@@ -216,16 +216,28 @@ def test_lbfgs_warning_says_it_hit_the_step_limit():
         fit(START, PRIORS, DATA, method="lbfgs", max_steps=2)
 
 
-def test_lbfgs_warning_says_when_it_ran_out_of_precision(monkeypatch):
-    # L-BFGS also stops, unconverged, when a step no longer changes the
-    # parameters. The warning used to call that "did not converge in N
-    # steps", which reads as the step limit.
+@pytest.mark.parametrize(
+    "gradient, moved, message",
+    [
+        (1.0, False, "stopped after 7 of 100 steps, when a step no longer"),
+        (float("nan"), False, "gradient was not finite"),
+        (float("nan"), True, "gradient was not finite"),
+    ],
+)
+def test_lbfgs_warning_says_why_it_stopped_early(
+    monkeypatch, gradient, moved, message
+):
+    # L-BFGS also stops before max_steps, unconverged, when a step no
+    # longer changes the parameters (out of precision) or the gradient is
+    # NaN. Both used to warn "did not converge in N steps", which reads as
+    # the step limit, and a NaN must not be blamed on precision.
     import virgil.fitting
 
-    monkeypatch.setattr(
-        virgil.fitting, "_lbfgs", lambda problem, z0, *_: (z0, 7, False)
-    )
-    with pytest.warns(RuntimeWarning, match="stopped after 7 of 100 steps"):
+    def stopped(problem, z0, *_):
+        return z0, 7, gradient, 1e-3, moved
+
+    monkeypatch.setattr(virgil.fitting, "_lbfgs_run", stopped)
+    with pytest.warns(RuntimeWarning, match=message):
         result = fit(
             START, PRIORS, DATA, method="lbfgs", max_steps=100, dtype="float32"
         )
