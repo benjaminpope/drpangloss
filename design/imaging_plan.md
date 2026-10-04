@@ -435,6 +435,9 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
 
+**Log:**
+- `orbits.py` (item 1): `KeplerOrbit` and `ThieleInnesOrbit`. jaxoplanet only solves Kepler's equation (`jaxoplanet.core.kepler`, with its exact derivatives); positions come from our Thiele–Innes constants (§2.4), so every convention lives in `orbits.py`, and `OrbitalBody` appears only in the converters. Velocities are exact JVPs. `[orbits]` is a new extra (and `integrations` includes it). Tests: §5.1.1 (an independent NumPy ephemeris, 1e-10 of a in float64, 1e-5 in float32) and §5.2.1–6; §5.2.7–8 come with `Attached` and the starting orbits. The α Cen and interferometric anchors (§5.1.2–3) wait for Ben's choice.
+
 **Tests:**
 - Conventions and ephemerides: O §5.1–5.2.
 - Synthetic position-angle round trips: O §5.3.1 and §5.3.3. These need no real data.
