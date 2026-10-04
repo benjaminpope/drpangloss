@@ -138,7 +138,11 @@ def test_a_binary_comes_back_at_its_position_angle(tmp_path, layout):
     tables = _tables(stations, pairs, triangles, waves, hour_angles, insname)
     pa, flux = _found(tables, tmp_path / "binary.oifits")
     assert _miss(pa, TRUE_PA) < 1.0
-    assert flux < 1.0
+    # Fluxes are searched below 1 only: a binary with flux f at r has the
+    # same V² and closure phases as one with flux 1/f at -r (the other star
+    # as the primary), so f < 1 is the convention, and it is the PA that
+    # shows a flip.
+    assert flux == pytest.approx(0.2)
     # The test can see a flip: negated closure phases put the companion on
     # the other side.
     tables["OI_T3"]["T3PHI"] = -tables["OI_T3"]["T3PHI"]
