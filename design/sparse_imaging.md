@@ -82,16 +82,21 @@ which JAX gives in one backward pass for any data: closure phases, kernel
 phases, DISCOs, V², or a mix. Each iteration:
 1. computes ``g = ∂χ²/∂c`` over the pixels, where ``c ≥ 0`` are the
    components' fluxes;
-2. picks the pixel ``p`` in the support where ``g`` is most negative, and
-   stops if no pixel lowers χ²;
-3. takes the Gauss–Newton step there, ``Δ = −g_p / (2‖J e_p‖²)``, from one
-   Jacobian–vector product, and adds ``gain × Δ`` to ``c_p``;
+2. picks the pixel ``p`` in the support whose Gauss–Newton step lowers χ²
+   most, the largest ``g_p² / ‖J e_p‖²`` with ``g_p < 0``, and stops if no
+   pixel lowers χ²;
+3. adds ``gain × Δ`` to ``c_p``, where ``Δ = −g_p / (2‖J e_p‖²)`` is the
+   Gauss–Newton step, from one Jacobian–vector product;
 4. stops when χ² per data point reaches a target (default 1, the discrepancy
-   principle), or after ``max_components`` iterations.
+   principle), or after ``max_iterations``.
 
-For linear data, step 3 is exactly Högbom's: the residual peak divided by the
-beam's peak. Mathematically this is matching pursuit, or a Frank–Wolfe
-method on the non-negative orthant.
+The atom norms ``‖J e_p‖²`` are computed once, at the start, with one
+Jacobian–vector product per pixel (a row of pixels at a time, so the Jacobian
+is never held whole).
+
+For linear data ``‖J e_p‖`` is the same at every pixel, so steps 2 and 3 are
+exactly Högbom's: the residual peak, divided by the beam's peak.
+Mathematically this is matching pursuit with normalised atoms.
 
 The components are fluxes relative to a fixed **base scene** (usually an
 analytic star at flux 1), so the model is
@@ -139,7 +144,7 @@ All three plug into `fit`, `l_curve` and `diagnose` unchanged.
 ### S2: gradient CLEAN
 
 `clean(data, npix, pixel_scale_mas, base=None, *, gain=0.1,
-max_components=500, target_chi2_red=1.0, support=None, init=None,
+max_iterations=1000, target_chi2_red=1.0, support=None, init=None,
 rotation_deg=0.0, dtype="float64")` returning a `CleanResult` with the
 model, the component fluxes, the χ² history and why it stopped, and a
 `restored(beam)` method.
@@ -180,6 +185,19 @@ starlet details at its edges, as it has differences for TV: flux at the edge
 of the field is penalised.
 
 ### S2
+
+`clean` and `CleanResult` in `virgil.imaging`. `Image`'s matrix-Fourier
+path is now a shared helper, `models._pixel_visibilities`, used by the
+private `_CleanScene` too.
+
+The first version picked the pixel with the most negative gradient, as
+Högbom's peak search does. On AMI DISCO data of a star with a 5% companion,
+it put 0.45 of the star's flux in the pixel next to the star: there, both
+the gradient and ``‖J e_p‖`` are small, so the Gauss–Newton step is huge.
+With the selection normalised by ``‖J e_p‖²`` (the predicted fall in χ²),
+CLEAN put its brightest component on the companion's pixel and reached
+χ²/N = 1 after 28 iterations, with 0.034 of the 0.05 companion flux
+(stopping at the discrepancy point under-recovers flux).
 
 ## References
 
