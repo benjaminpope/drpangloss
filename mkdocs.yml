@@ -47,6 +47,7 @@ nav:
   - Background:
       - Contributors: contributors.md
       - "Gaussian processes and information field theory": gp_and_ift.md
+      - Conventions: conventions.md
   - Data Handling:
       - "Reading data: OIFITS and OIData": data_io.md
       - "AMIGO DISCO data": amigo_disco.md

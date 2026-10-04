@@ -148,6 +148,8 @@ astronomical convention instead: **contrast** is primary/companion (100) and
 
 ## Image coordinate convention
 
+The user-facing version of the conventions (coordinates, Fourier sign, observables, fluxes, times) is `docs/conventions.md`; keep it in step with this section.
+
 **This convention must never be violated.** It has been the direct cause of real
 bugs (see below), and any new coordinate, rendering, or plotting code must be
 verified against it with a direct orientation test — not just a

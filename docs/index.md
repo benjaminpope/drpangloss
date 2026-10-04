@@ -57,7 +57,7 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 ### Using these docs
 
 The sections in the sidebar hold worked examples on simulated and bundled data:
-- **Background:** [who contributed what](contributors.md), and [Gaussian-process priors and information field theory](gp_and_ift.md).
+- **Background:** [who contributed what](contributors.md), [Gaussian-process priors and information field theory](gp_and_ift.md), and [coordinate, sign and flux conventions](conventions.md).
 - **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md).
 - **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), and [fitting several datasets together](hierarchical_inference.md).
 - **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md) and [gravity-darkened stars](gravity_darkened_star.md).
