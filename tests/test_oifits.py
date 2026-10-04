@@ -383,6 +383,54 @@ def test_differential_visphi_is_not_read_as_absolute(tmp_path):
         read_oifits(hdul)
 
 
+def _amplitude_file(amptyp):
+    from virgil.oifits import build_hdulist
+
+    tables = _tables()
+    u, v = _baselines()
+    tables["OI_VIS"] = {
+        "VISAMP": onp.full(u.size, 0.8),
+        "VISAMPERR": onp.full(u.size, 1e-3),
+        "VISPHI": onp.zeros(u.size),
+        "VISPHIERR": onp.full(u.size, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+    }
+    del tables["OI_VIS2"]
+    hdul = build_hdulist(tables)
+    for hdu in hdul:
+        if hdu.header.get("EXTNAME", "").strip() == "OI_VIS":
+            if amptyp is None:
+                del hdu.header["AMPTYP"]
+            else:
+                hdu.header["AMPTYP"] = amptyp
+    return hdul
+
+
+@pytest.mark.parametrize("amptyp", ["absolute", "ABSOLUTE ", None])
+def test_absolute_or_missing_amptyp_is_read_as_amplitude(amptyp):
+    record = read_oifits(_amplitude_file(amptyp))
+    assert not record["v2_flag"]
+    onp.testing.assert_allclose(record["vis"], 0.8)
+
+
+@pytest.mark.parametrize("amptyp", ["differential", "correlated flux"])
+def test_non_absolute_amptyp_is_not_read_as_amplitude(amptyp):
+    with pytest.raises(ValueError, match=f"AMPTYP = '{amptyp}'"):
+        read_oifits(_amplitude_file(amptyp))
+
+
+def test_amptyp_is_ignored_when_oi_vis2_is_read():
+    from virgil.oifits import build_hdulist
+
+    hdul = _amplitude_file("correlated flux")
+    hdul.append(
+        next(h for h in build_hdulist(_tables()) if h.name == "OI_VIS2")
+    )
+    assert read_oifits(hdul)["v2_flag"]
+
+
 def test_insname_selection_drops_emptied_table_types():
     from virgil.oifits import _collect_tables, _select_insname
 

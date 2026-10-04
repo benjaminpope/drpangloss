@@ -88,10 +88,18 @@ def read_oifits(source, target=None, insname=None, frame_mjd="mean"):
     -----
     Squared visibilities (``OI_VIS2``) are preferred over amplitudes
     (``OI_VIS``), and closure phases (``OI_T3``) over absolute phases
-    (``OI_VIS`` ``VISPHI``). A file with only ``OI_T3`` gives closure phases
-    alone: its baselines come from the triangle coordinates, and ``vis`` is
-    empty. Samples are flagged when their ``FLAG`` is set
-    or their value or uncertainty is not finite.
+    (``OI_VIS`` ``VISPHI``). ``VISAMP`` is read only when its table's
+    ``AMPTYP`` is ``'absolute'``, and ``VISPHI`` only when its
+    ``PHITYP`` is ``'absolute'``; a missing keyword counts as
+    ``'absolute'``, as in OIFITS1. Differential amplitudes and phases,
+    and correlated fluxes, raise a ``ValueError``. Nothing in the
+    standard marks ``OI_VIS2`` ``VIS2DATA`` that holds squared correlated
+    flux rather than squared visibility, as in MATISSE products reduced
+    with ``corrFlux=TRUE``; such data are read as visibilities, so
+    calibrate them (e.g. with virgil-vlti) before fitting. A file with
+    only ``OI_T3`` gives closure phases alone: its baselines come from the
+    triangle coordinates, and ``vis`` is empty. Samples are flagged when
+    their ``FLAG`` is set or their value or uncertainty is not finite.
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
@@ -386,6 +394,21 @@ class _BaselineLookup:
         return best[2], best[3]
 
 
+def _check_amptyp(hdu):
+    """Refuse a ``VISAMP`` that is not an absolute visibility amplitude."""
+    amptyp = str(hdu.header.get("AMPTYP", "absolute")).strip().lower()
+    if amptyp != "absolute":
+        raise ValueError(
+            f"VISAMP in this OI_VIS table has AMPTYP = {amptyp!r}, not "
+            "'absolute'. A differential visibility is normalised across "
+            "the band and a correlated flux is in flux units (e.g. MATISSE "
+            "products reduced with corrFlux=TRUE), so neither can be fitted "
+            "as a visibility amplitude. Calibrate the amplitudes into "
+            "visibilities first, or fit the closure phases (OI_T3) alone "
+            "by removing the OI_VIS table."
+        )
+
+
 def _read_visibilities(tables, wavelengths, target_id):
     if "OI_VIS2" in tables:
         names = ("OI_VIS2", "VIS2DATA", "VIS2ERR")
@@ -409,6 +432,8 @@ def _read_visibilities(tables, wavelengths, target_id):
         wave = _table_wavelengths(hdu, wavelengths)
         nwave = wave.size
         mask = _row_mask(hdu, target_id)
+        if extname == "OI_VIS" and onp.any(mask):
+            _check_amptyp(hdu)
         values = _column(hdu, value_col, mask, nwave)
         errors = _column(hdu, error_col, mask, nwave)
         flag = _flags(hdu, mask, nwave, values, errors)
