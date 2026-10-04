@@ -7,7 +7,7 @@ import pyoifits
 import pytest
 from astropy.io import fits
 
-from virgil.likelihood import loglike, model_loglike
+from virgil.likelihood import loglike, model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData, closure_phases, cp_indices
 from virgil.oifits import read_oifits, write_oifits
@@ -571,3 +571,40 @@ def test_dict_times_per_baseline_and_missing_times():
         OIData(_dict_data()).epochs()
     with pytest.raises(ValueError, match="mjd has shape"):
         OIData(_dict_data(mjd=onp.zeros(4)))
+
+
+# === Closure phases that are all (or all but one) flagged ===
+
+
+def _flagged_file(path, n_keep=0):
+    """A file whose closure phases are flagged, but the first ``n_keep``."""
+    tables = _tables()
+    flag = onp.ones(tables["OI_T3"]["T3PHI"].shape, dtype=bool)
+    flag[:n_keep] = False
+    tables["OI_T3"]["FLAG"] = flag
+    return write_oifits(tables, path)
+
+
+def test_all_closure_phases_flagged_raises_clearly(tmp_path):
+    path = _flagged_file(tmp_path / "flagged.oifits")
+    with pytest.raises(ValueError, match="Every closure phase is flagged"):
+        OIData(path)
+
+
+def test_all_closure_phases_flagged_in_a_record_raises_clearly():
+    flagged = onp.ones(len(TRIANGLES), dtype=bool)
+    with pytest.raises(ValueError, match="no phase data"):
+        OIData(_dict_data(phi_flag=flagged))
+    nan = _dict_data()
+    nan["phi"] = onp.full(len(TRIANGLES), onp.nan)
+    with pytest.raises(ValueError, match="no phase data"):
+        OIData(nan)
+
+
+def test_one_closure_phase_left_is_unchanged(tmp_path):
+    path = _flagged_file(tmp_path / "one_left.oifits", n_keep=1)
+    data = OIData(path)
+    assert data.cp_flag and data.phi.size == 1
+    assert data.cp_noise is None  # a single triangle: nothing correlates
+    assert whitened_residuals(TRUTH, data).size == len(PAIRS) + 1
+    assert np.isfinite(model_loglike(TRUTH, data))
