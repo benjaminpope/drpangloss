@@ -5,6 +5,19 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Added
+
+- **Times and frames.** `OIData` keeps each sample's time (`mjd`, stored as
+  `dt` days since a float64 `t_ref`) and exposure (`frame`) from OIFITS, and
+  dict input may give `mjd` and `frame`. A frame is the baselines that
+  closure phases tie together; by default all its samples get the frame's
+  mean time (`read_oifits(frame_mjd="row")` keeps each row's).
+  `OIData.epochs(gap_days=0.5)` labels nights, and `split_by_epoch()` returns
+  one `OIData` per night. This is the groundwork for orbits and per-frame
+  calibration terms.
+
 ## 0.2.0 (not yet released)
 
 ### Renamed: drpangloss is now virgil

@@ -48,6 +48,9 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - residuals
         - with_model
         - with_error_scale
+        - mjd
+        - epochs
+        - split_by_epoch
 
 ## uv grids
 
