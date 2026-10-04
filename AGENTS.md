@@ -119,6 +119,7 @@ see that repository's `PLAN.md` for the boundary.
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `fields.py` | Gaussian-process log-brightness for an `Image` (`GaussianField`, a DCT field with a Matérn-like spectrum) |
 | `spectra.py` | wavelength-dependent fluxes (`PowerLaw`, `BlackBody`, and `Tabulated` for a free flux per channel, provisional until Stage 6a's `Nodes`) accepted as a component's `flux` (SPARCO) |
+| `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve` |
@@ -132,7 +133,8 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `scenes` imports only `_geometry` and `_utils`.
+`plotting`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached`).
 
 ## Flux and contrast
 

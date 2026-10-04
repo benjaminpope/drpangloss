@@ -802,7 +802,15 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     def model(self, model_object):
         """
         Compute the model visibilities and phases for the given model object.
+
+        A model that changes with time (see
+        [`SourceModel.at`][virgil.models.SourceModel.at]) is evaluated at
+        each sample's own time, which the data must have (``mjd``), with the
+        direct Fourier transform: a ``uv_grid`` (AMIGO DISCO data, which
+        carry no times) is not used for it.
         """
+        if getattr(model_object, "time_dependent", False):
+            return self.standardize_model(self._cvis_in_time(model_object))
         if self.uv_grid is None:
             cvis = model_object.model(self.u, self.v, self.wavel)
         else:
@@ -810,6 +818,22 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 self.u, self.v, self.wavel, self.uv_grid
             )
         return self.standardize_model(cvis)
+
+    def _cvis_in_time(self, model_object):
+        """Complex visibilities with every sample at its own time."""
+        if self.dt is None:
+            raise ValueError(
+                "The model changes with time but these data have no times: "
+                "read them from OIFITS, or give mjd per sample."
+            )
+        wavel = np.broadcast_to(self.wavel, np.shape(self.u))
+
+        def one(dt, u, v, w):
+            scene = model_object.at(dt, self.t_ref)
+            return scene.model(u[None], v[None], w[None])[0]
+
+        # Parts that do not depend on time are computed once under vmap.
+        return jax.vmap(one)(self.dt, self.u, self.v, wavel)
 
     def with_error_scale(self, factor):
         """A copy of the data with every uncertainty multiplied by ``factor``.

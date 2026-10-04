@@ -59,8 +59,12 @@ legacy = [
 # Spherical-harmonic stars (HarmonixModel). harmonix is not yet on PyPI in
 # a version virgil works with; install it from GitHub, as CI does:
 #   pip install "harmonix @ git+https://github.com/shashankdholakia/harmonix"
-integrations = [
+# Keplerian orbits (virgil.orbits) solve Kepler's equation with jaxoplanet.
+orbits = [
   "jaxoplanet>=0.1.0",
+]
+integrations = [
+  "virgil-astro[orbits]",
 ]
 test = [
   "pytest>=8.0",

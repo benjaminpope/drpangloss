@@ -1,6 +1,6 @@
 # Keplerian orbits in virgil: alone, and jointly with the scene
 
-Status: **design**, 2026-10-03. Orbits are to be built in virgil, with the Kepler solver and orbital geometry from [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0) as an optional dependency. No orbit code exists yet.
+Status: **design**, 2026-10-03. Orbits are built in virgil, which owns the orbital geometry and conventions (Thiele–Innes, §2.4); [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet) (0.1.0, an optional dependency) only solves Kepler's equation, and appears otherwise only in the converters. Being built in Stage 6a.1: `virgil.orbits` (`KeplerOrbit`, `ThieleInnesOrbit`) exists; see the implementation log in [`imaging_plan.md`](imaging_plan.md).
 
 This note is the design of Stage 6a.1, orbits and binary-frame scenes, which grew out of the "Keplerian orbits" item first listed in Stage 8 ([`imaging_plan.md`](imaging_plan.md), [`pmoired_parity.md`](pmoired_parity.md)) into a general capability: fitting orbits to interferometric data from any instrument virgil reads, with radial velocities and external priors, and with scene components that move with the binary. The spectral and calibration side is in [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md). The runnable sketch is [`sketches/orbit_attached.py`](sketches/orbit_attached.py).
 
