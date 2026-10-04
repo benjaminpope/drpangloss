@@ -805,7 +805,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         A model that changes with time (see
         [`SourceModel.at`][virgil.models.SourceModel.at]) is evaluated at
-        each sample's own time, which the data must have (``mjd``).
+        each sample's own time, which the data must have (``mjd``), with the
+        direct Fourier transform: a ``uv_grid`` (AMIGO DISCO data, which
+        carry no times) is not used for it.
         """
         if getattr(model_object, "time_dependent", False):
             return self.standardize_model(self._cvis_in_time(model_object))

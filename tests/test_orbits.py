@@ -278,6 +278,7 @@ def test_position_likelihood_matches_a_gaussian():
         ({"period": 0.0}, "period"),
         ({"ecc": 1.0}, "ecc"),
         ({"inc": 200.0}, "inc"),
+        ({"inc": 180.0}, "inc"),
         ({"a_mas": -1.0}, "a_mas"),
         ({"omega": float("nan")}, "omega"),
     ],
@@ -297,3 +298,12 @@ def test_missing_jaxoplanet_names_the_extra(monkeypatch):
         _orbit().to_jaxoplanet()
     with pytest.raises(ImportError, match=r"virgil-astro\[orbits\]"):
         _orbit().relative(T_REF)
+
+
+def test_position_data_checks_its_shapes():
+    mjd = T_REF + onp.arange(3.0)
+    cov = onp.broadcast_to(onp.eye(2), (3, 2, 2))
+    with pytest.raises(ValueError, match="dra has shape"):
+        PositionData(mjd, onp.zeros(2), onp.zeros(3), cov)
+    with pytest.raises(ValueError, match="ddec has shape"):
+        PositionData(mjd, onp.zeros(3), 0.0, cov)

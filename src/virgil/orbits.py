@@ -182,8 +182,8 @@ class KeplerOrbit(zx.Base):
                 (
                     "inc",
                     self.inc,
-                    lambda x: (x >= 0) & (x <= 180),
-                    "in [0, 180]",
+                    lambda x: (x >= 0) & (x < 180),
+                    "in [0, 180)",
                 ),
                 ("a_mas", self.a_mas, lambda x: x >= 0, "non-negative"),
                 ("omega", self.omega, lambda x: True, "finite"),
@@ -439,10 +439,18 @@ class PositionData(zx.Base):
             raise ValueError(
                 f"cov has {cov.shape[0]} epochs but there are {mjd.size}."
             )
+        dra = onp.atleast_1d(onp.asarray(dra, dtype=float))
+        ddec = onp.atleast_1d(onp.asarray(ddec, dtype=float))
+        for name, values in (("dra", dra), ("ddec", ddec)):
+            if values.shape != mjd.shape:
+                raise ValueError(
+                    f"{name} has shape {values.shape} but there are "
+                    f"{mjd.size} epochs."
+                )
         self.t_ref = float(mjd.min() if t_ref is None else t_ref)
         self.dt = np.asarray(mjd - self.t_ref)
-        self.dra = np.asarray(onp.atleast_1d(dra), dtype=float)
-        self.ddec = np.asarray(onp.atleast_1d(ddec), dtype=float)
+        self.dra = np.asarray(dra)
+        self.ddec = np.asarray(ddec)
         self.whitener = np.asarray(onp.linalg.inv(onp.linalg.cholesky(cov)))
 
     @classmethod
