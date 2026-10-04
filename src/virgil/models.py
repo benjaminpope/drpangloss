@@ -665,7 +665,7 @@ class _LimbDarkenedDisk(Component):
         return np.where(inside, brightness, 0.0)
 
     def is_physical(self):
-        """Positive diameter and a profile that is nowhere negative.
+        r"""Positive diameter and a profile that is nowhere negative.
 
         The profile is checked on a grid of 101 values of $\mu$ from 0 to 1;
         each law has $I(1) = 1$, so this also keeps the flux positive.
