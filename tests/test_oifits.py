@@ -633,20 +633,24 @@ def _flagged_file(path, n_keep=0):
     return write_oifits(tables, path)
 
 
-def test_all_closure_phases_flagged_raises_clearly(tmp_path):
+def test_all_closure_phases_flagged_leaves_the_visibilities(tmp_path):
     path = _flagged_file(tmp_path / "flagged.oifits")
-    with pytest.raises(ValueError, match="Every closure phase is flagged"):
-        OIData(path)
+    with pytest.warns(UserWarning, match="Every closure phase is flagged"):
+        data = OIData(path)
+    assert not data.has_phases and not data.cp_flag
+    assert data.phi.size == 0 and data.cp_noise is None
+    assert whitened_residuals(TRUTH, data).size == len(PAIRS)
 
 
-def test_all_closure_phases_flagged_in_a_record_raises_clearly():
+def test_all_closure_phases_flagged_in_a_record_leaves_the_visibilities():
     flagged = onp.ones(len(TRIANGLES), dtype=bool)
-    with pytest.raises(ValueError, match="no phase data"):
-        OIData(_dict_data(phi_flag=flagged))
+    with pytest.warns(UserWarning, match="Every closure phase is flagged"):
+        data = OIData(_dict_data(phi_flag=flagged))
+    assert not data.has_phases
     nan = _dict_data()
     nan["phi"] = onp.full(len(TRIANGLES), onp.nan)
-    with pytest.raises(ValueError, match="no phase data"):
-        OIData(nan)
+    with pytest.warns(UserWarning, match="Every closure phase is flagged"):
+        assert not OIData(nan).has_phases
 
 
 def test_one_closure_phase_left_is_unchanged(tmp_path):

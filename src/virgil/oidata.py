@@ -1,3 +1,4 @@
+import warnings
 import jax
 import jax.numpy as np
 
@@ -41,6 +42,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     * ``phi``/``d_phi``: closure phases (``cp_flag=True``) built from the
       samples ``i_cps1 + i_cps2 - i_cps3``, or absolute phases; always in
       radians, optionally projected through ``phi_mat``.
+
+    Visibility-only data (no ``OI_T3`` or ``VISPHI``, no ``phi`` in a
+    dictionary, or every closure phase flagged) have an empty phase block:
+    ``has_phases`` is False and fits use the visibilities alone.
 
     Flagged samples are left out of the observables. ``vis_index`` (and
     ``phi_index`` for absolute phases) then lists the samples that are
@@ -156,9 +161,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         vis = onp.asarray(data["vis"], dtype=float)
         d_vis = onp.asarray(data["d_vis"], dtype=float)
         phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
+        # Visibility-only data have no phases: no "phi", or an empty one.
+        phi_in, d_phi_in = data.get("phi"), data.get("d_phi")
         phi, d_phi = self._phase_to_radians(
-            onp.asarray(data["phi"], dtype=float),
-            onp.asarray(data["d_phi"], dtype=float),
+            onp.zeros(0) if phi_in is None else onp.asarray(phi_in, float),
+            onp.zeros(0) if d_phi_in is None else onp.asarray(d_phi_in, float),
             phi_unit,
             default_unit="rad",
         )
@@ -234,9 +241,15 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             vis, d_vis = vis[keep], d_vis[keep]
 
         phi_index = None
-        n_phi = len(indices[0]) if cp_flag else u.size
-        keep = _good_samples(phi, d_phi, phi_flag, n_phi, "phi")
-        if keep is not None:
+        no_phases = not cp_flag and phi.size == 0 and phi_mat is None
+        if no_phases:
+            # Visibilities alone: an empty phase block (no phase sample is
+            # observed), so every phase term below has length zero.
+            phi_index = onp.zeros(0, dtype=int)
+        else:
+            n_phi = len(indices[0]) if cp_flag else u.size
+            keep = _good_samples(phi, d_phi, phi_flag, n_phi, "phi")
+        if not no_phases and keep is not None:
             if phi_mat is not None:
                 raise ValueError(
                     "Flagged phases cannot be combined with phi_mat; "
@@ -245,12 +258,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 )
             phi, d_phi = phi[keep], d_phi[keep]
             if cp_flag and phi.size == 0:
-                raise ValueError(
-                    "Every closure phase is flagged (or not finite), so "
-                    "there is no phase data. virgil needs at least one "
-                    "unflagged closure phase."
+                warnings.warn(
+                    "Every closure phase is flagged (or not finite): using "
+                    "the visibilities alone.",
+                    stacklevel=2,
                 )
-            if cp_flag:
+                cp_flag, indices = False, None
+                phi_index = onp.zeros(0, dtype=int)
+            elif cp_flag:
                 indices = [index[keep] for index in indices]
             else:
                 phi_index = onp.flatnonzero(keep)
@@ -694,6 +709,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if self.phi_index is not None:
             return int(np.asarray(self.phi_index).size)
         return int(np.asarray(self.u).size)
+
+    @property
+    def has_phases(self):
+        """Whether the data hold any phase observables. Visibility-only
+        data (e.g. V² without closure phases) have an empty phase block."""
+        if self.observable_kind != "split":
+            return True
+        return self._n_phi_samples() > 0
 
     @property
     def n_independent(self):

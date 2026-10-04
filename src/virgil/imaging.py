@@ -357,7 +357,7 @@ def _complex_visibilities(d):
     raise ValueError(
         "A dirty image needs complex visibilities: AMIGO DISCO data, or "
         "amplitudes with absolute phases for every sample (closure phases "
-        "do not give the phases)."
+        "do not give the phases, and visibility-only data have none)."
     )
 
 

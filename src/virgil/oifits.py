@@ -98,8 +98,11 @@ def read_oifits(source, target=None, insname=None, frame_mjd="mean"):
     with ``corrFlux=TRUE``; such data are read as visibilities, so
     calibrate them (e.g. with virgil-vlti) before fitting. A file with
     only ``OI_T3`` gives closure phases alone: its baselines come from the
-    triangle coordinates, and ``vis`` is empty. Samples are flagged when
-    their ``FLAG`` is set or their value or uncertainty is not finite.
+    triangle coordinates, and ``vis`` is empty. A file with neither
+    ``OI_T3`` nor ``VISPHI`` gives visibilities alone: ``phi`` is empty, and
+    files with and without phases cannot be read together. Samples are
+    flagged when their ``FLAG`` is set or their value or uncertainty is
+    not finite.
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
@@ -638,8 +641,15 @@ def _read_hdulist(hdul, target, insname=None, frame_mjd="mean"):
             )
         )
     else:
-        raise ValueError(
-            "OIFITS file has no phase data (OI_T3, or VISPHI in OI_VIS)."
+        # Visibilities alone (e.g. V² without closure phases).
+        record.update(
+            phi=onp.zeros(0),
+            d_phi=onp.zeros(0),
+            phi_flag=onp.zeros(0, dtype=bool),
+            i_cps1=None,
+            i_cps2=None,
+            i_cps3=None,
+            cp_flag=False,
         )
 
     record["mjd"], record["frame"] = lookup.times(frame_mjd)
@@ -660,6 +670,12 @@ def _concat_records(records):
                 f"Files disagree on {key}: they must all hold the same kinds "
                 "of visibility and phase observables."
             )
+    with_phases = {onp.size(record["phi"]) > 0 for record in records}
+    if len(with_phases) > 1:
+        raise ValueError(
+            "Some files have phases and others do not: read them "
+            "separately, or drop the phases, to combine them."
+        )
     out = {
         key: onp.concatenate([onp.asarray(r[key]) for r in records])
         for key in ("u", "v", "vis", "d_vis", "vis_flag")
