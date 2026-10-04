@@ -47,7 +47,7 @@ from ._geometry import (
 from . import _elr
 from ._utils import concrete, dtor, mas2rad
 from .orbits import _days_since
-from .spectra import Spectrum, _planck_ratio, flux_at, reference_flux
+from .spectra import Spectrum, _planck_ratio, flux_at
 
 
 def _normalize_image(image):
@@ -98,7 +98,8 @@ def _flux_is_non_negative(flux):
 
 def _check_non_negative_flux(flux, owner):
     """Raise if a concrete ``flux`` is negative; traced values are not checked."""
-    value = concrete(reference_flux(flux))
+    # The raw values, so every Tabulated node is checked, not just their mean.
+    value = concrete(flux.ratio if isinstance(flux, Spectrum) else flux)
     if value is not None and onp.any(value < 0.0):
         raise ValueError(
             f"{owner} has flux {value.tolist()}; fluxes must be non-negative."
