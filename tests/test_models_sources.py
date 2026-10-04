@@ -513,7 +513,8 @@ def test_binary_render_is_available():
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
             ),
-            2e-4,
+            # the image shades whole facets, the DFT uses barycentre points
+            5e-4,
         ),
     ],
     ids=[
