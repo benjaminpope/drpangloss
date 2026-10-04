@@ -244,6 +244,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "columns first."
                 )
             phi, d_phi = phi[keep], d_phi[keep]
+            if cp_flag and phi.size == 0:
+                raise ValueError(
+                    "Every closure phase is flagged (or not finite), so "
+                    "there is no phase data. virgil needs at least one "
+                    "unflagged closure phase."
+                )
             if cp_flag:
                 indices = [index[keep] for index in indices]
             else:
