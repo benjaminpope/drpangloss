@@ -56,7 +56,7 @@ Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpo
 ### Using these docs
 
 The sections in the sidebar hold worked examples on simulated and bundled data:
-- **Background:** [who contributed what](https://benjaminpope.github.io/virgil/contributors/), and [Gaussian-process priors and information field theory](https://benjaminpope.github.io/virgil/gp_and_ift/).
+- **Background:** [who contributed what](https://benjaminpope.github.io/virgil/contributors/), [Gaussian-process priors and information field theory](https://benjaminpope.github.io/virgil/gp_and_ift/), and [coordinate, sign and flux conventions](https://benjaminpope.github.io/virgil/conventions/).
 - **Data Handling:** [reading OIFITS files into `OIData`](https://benjaminpope.github.io/virgil/data_io/), and [AMIGO's DISCO data from JWST aperture masking](https://benjaminpope.github.io/virgil/amigo_disco/).
 - **Binaries:** [searching for companions](https://benjaminpope.github.io/virgil/binary_search/), [detection limits](https://benjaminpope.github.io/virgil/contrast_limits/), and [fitting several datasets together](https://benjaminpope.github.io/virgil/hierarchical_inference/).
 - **Sources:** [visibility models](https://benjaminpope.github.io/virgil/model_syntax/), [extended sources](https://benjaminpope.github.io/virgil/source_models/), [composing scenes](https://benjaminpope.github.io/virgil/composition/), [spotted stars](https://benjaminpope.github.io/virgil/harmonix/) and [gravity-darkened stars](https://benjaminpope.github.io/virgil/gravity_darkened_star/).
