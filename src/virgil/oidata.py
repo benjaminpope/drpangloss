@@ -187,9 +187,14 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if frame is not None:
             frame = onp.asarray(frame)
         if vis.ndim == 2:
-            # Per-baseline times, like u and v.
-            mjd = None if mjd is None else onp.repeat(mjd, vis.shape[1])
-            frame = None if frame is None else onp.repeat(frame, vis.shape[1])
+            # Per-baseline times are repeated over channels, like u and v;
+            # per-sample ones (shaped like vis, or flat) are flattened.
+            def per_sample(values):
+                if values is None or values.size == vis.size:
+                    return None if values is None else values.reshape(-1)
+                return onp.repeat(values, vis.shape[1])
+
+            mjd, frame = per_sample(mjd), per_sample(frame)
         if vis.ndim == 2:
             u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
             vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
@@ -314,8 +319,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         Parameters
         ----------
         gap_days : float, optional
-            Frames more than this far apart in time (days) are in different
-            epochs; the default separates nights.
+            Frames whose mean times are more than this far apart (days)
+            are in different epochs; the default separates nights. A frame
+            is never split between epochs.
 
         Returns
         -------
@@ -328,10 +334,18 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "These data have no times: read them from OIFITS, or give "
                 "mjd per sample."
             )
-        times, inverse = onp.unique(mjd, return_inverse=True)
-        return onp.concatenate([[0], onp.cumsum(onp.diff(times) > gap_days)])[
-            inverse
-        ]
+        # Whole frames go into one epoch, at the mean time of their samples.
+        frames, frame_of = onp.unique(
+            onp.asarray(self.frame), return_inverse=True
+        )
+        times = onp.bincount(frame_of, weights=mjd) / onp.bincount(frame_of)
+        order = onp.argsort(times)
+        sorted_epochs = onp.concatenate(
+            [[0], onp.cumsum(onp.diff(times[order]) > gap_days)]
+        )
+        epoch_of_frame = onp.empty(frames.size, dtype=int)
+        epoch_of_frame[order] = sorted_epochs
+        return epoch_of_frame[frame_of]
 
     def split_by_epoch(self, gap_days=0.5):
         """One [`OIData`][virgil.oidata.OIData] per epoch, in time order.

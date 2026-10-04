@@ -523,6 +523,46 @@ def test_split_by_epoch_partitions_the_likelihood(tmp_path):
     )
 
 
+def test_an_exposure_stays_in_one_epoch_with_row_times(tmp_path):
+    # With frame_mjd="row" a frame's samples have different times; a gap
+    # smaller than that spread must not split the frame.
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    vis2, t3 = hdul["OI_VIS2"].data, hdul["OI_T3"].data
+    vis2["INT_TIME"] = 120.0
+    vis2["MJD"] = vis2["MJD"][0] + onp.arange(len(vis2)) * 20.0 / 86400.0
+    t3["MJD"] = vis2["MJD"][0] + 60.0 / 86400.0
+    data = OIData(read_oifits(hdul, frame_mjd="row"))
+    assert onp.unique(data.mjd).size > 1
+    assert onp.all(data.epochs(gap_days=1e-5) == 0)
+    assert len(data.split_by_epoch(gap_days=1e-5)) == 1
+
+
+def test_dict_times_per_sample_for_several_channels():
+    waves = onp.array([2.0e-6, 2.2e-6])
+    u, v = _baselines()
+    cvis = onp.asarray(TRUTH.model(u[:, None], v[:, None], waves[None, :]))
+    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
+    per_sample = onp.repeat([60100.5, 60101.5], 3)[:, None] + 0 * waves
+    data = OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": waves,
+            "vis": onp.abs(cvis) ** 2,
+            "d_vis": onp.full(cvis.shape, 1e-3),
+            "phi": onp.angle(cvis[i1] * cvis[i2] / cvis[i3]),
+            "d_phi": onp.full((len(i1), 2), 1e-2),
+            "i_cps1": i1,
+            "i_cps2": i2,
+            "i_cps3": i3,
+            "mjd": per_sample,
+        }
+    )
+    assert onp.allclose(data.mjd, per_sample.reshape(-1))
+
+
 def test_dict_times_per_baseline_and_missing_times():
     data = OIData(_dict_data(mjd=onp.full(6, 60100.5)))
     assert onp.allclose(data.mjd, 60100.5)
