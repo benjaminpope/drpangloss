@@ -17,6 +17,12 @@ anything before 1.0 may change between minor versions.
   `OIData.epochs(gap_days=0.5)` labels nights, and `split_by_epoch()` returns
   one `OIData` per night. This is the groundwork for orbits and per-frame
   calibration terms.
+- **Orbits.** `KeplerOrbit` (period, time of periastron, eccentricity,
+  inclination, the secondary's ω, the receding node's Ω, angular semimajor
+  axis) gives the secondary's `relative` position and exact
+  `relative_velocity` in virgil's sky conventions, and `ThieleInnesOrbit` the
+  linear form used for starting orbits, with converters between them and to
+  jaxoplanet, which solves Kepler's equation (the new `[orbits]` extra).
 
 ## 0.2.0 (not yet released)
 
