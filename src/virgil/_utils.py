@@ -42,6 +42,18 @@ def _reference(model):
     return model[0] if isinstance(model, (list, tuple)) else model
 
 
+def _per_dataset(model, n_data):
+    """One model per dataset: ``model`` repeated, or its list checked."""
+    if not isinstance(model, (list, tuple)):
+        return [model] * n_data
+    if len(model) != n_data:
+        raise ValueError(
+            f"The model function returned {len(model)} models for "
+            f"{n_data} datasets."
+        )
+    return list(model)
+
+
 # === FLUX PARAMETERS ===
 #
 # A parameter is a flux when the last part of its name (or zodiax path) is

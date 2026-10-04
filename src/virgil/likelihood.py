@@ -20,7 +20,7 @@ import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
-from ._utils import concrete, is_flux_param
+from ._utils import _per_dataset, _reference, concrete, is_flux_param
 from .models import SourceModel
 
 
@@ -412,6 +412,11 @@ def numpyro_model(
         sample parameters that are not leaves of the model, such as a
         separation and position angle, or one inclination shared by two
         components (see [`build_model`][virgil.likelihood.build_model]).
+        As for [`fit`][virgil.fitting.fit], the function may return a
+        list of models, one per dataset in ``data_obj``, sharing
+        parameters: for example binaries at two epochs with one flux
+        ratio and a position each. Model ``i`` is compared with dataset
+        ``i``, and regularisers act on the first model only.
     priors : dict[str, numpyro.distributions.Distribution]
         Mapping from parameter path (e.g. ``"comp.flux"``) or function
         argument name to prior; each key is also used as the numpyro
@@ -461,18 +466,21 @@ def numpyro_model(
     def numpyro_fn():
         values = [numpyro.sample(path, priors[path]) for path in paths]
         source = build_model(model, paths, values)
+        sources = _per_dataset(source, len(observations))
         terms = {site: numpyro.sample(site, sites[site][0]) for site in sites}
         numpyro.factor(
             "loglike",
             sum(
                 model_loglike(
-                    source, obs, **options, **noise_for(sites, terms, i)
+                    src, obs, **options, **noise_for(sites, terms, i)
                 )
-                for i, obs in enumerate(observations)
+                for i, (src, obs) in enumerate(zip(sources, observations))
             ),
         )
         for i, regulariser in enumerate(regularisers):
-            numpyro.factor(f"regulariser_{i}", -regulariser.value(source))
+            numpyro.factor(
+                f"regulariser_{i}", -regulariser.value(_reference(source))
+            )
 
     return numpyro_fn
 

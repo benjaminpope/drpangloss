@@ -33,6 +33,10 @@ anything before 1.0 may change between minor versions.
   line of nodes, inclination, the side facing the primary). `OIData.model`
   evaluates a time-dependent model at each sample's own time; static models
   keep their fast path.
+- **A model per dataset in sampling.** `numpyro_model`, like `fit`, accepts
+  a model function returning a list of models, one per dataset, sharing
+  parameters (e.g. a binary at several epochs with one flux ratio).
+  Regularisers act on the first model.
 
 ## 0.2.0 (not yet released)
 

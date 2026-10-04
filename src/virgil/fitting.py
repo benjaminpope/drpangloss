@@ -24,7 +24,7 @@ import optax
 import optimistix as optx
 
 from ._precision import cast_tree, run_in
-from ._utils import _reference, is_flux_param
+from ._utils import _per_dataset, _reference, is_flux_param
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
@@ -190,17 +190,11 @@ class _Objective(eqx.Module):
 
     def _whitened(self, model, values=None):
         """(whitened residuals, inflated errors) for each dataset."""
-        if not isinstance(model, (list, tuple)):
-            model = [model] * len(self.data)
-        if len(model) != len(self.data):
-            raise ValueError(
-                f"The model function returned {len(model)} models for "
-                f"{len(self.data)} datasets."
-            )
+        models = _per_dataset(model, len(self.data))
         values = {} if values is None else values
         return [
             _whitened_and_errors(m, d, noise_for(self.noise, values, i))
-            for i, (m, d) in enumerate(zip(model, self.data))
+            for i, (m, d) in enumerate(zip(models, self.data))
         ]
 
     def residuals(self, z):
