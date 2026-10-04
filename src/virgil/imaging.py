@@ -1046,8 +1046,9 @@ def clean(
         [`circular_support`][virgil.models.circular_support] with a hole
         under the star.
     init : array-like, shape (npix, npix), optional
-        Starting component fluxes, non-negative (default: none with a base,
-        a single component at the centre without).
+        Starting component fluxes, non-negative and zero outside
+        ``support`` (default: none with a base, and without one a single
+        component on the supported pixel nearest the centre).
     rotation_deg : float, optional
         Position angle of the grid's "up" axis, as for
         [`Image`][virgil.models.Image]; match the data's uv lattice
@@ -1068,6 +1069,12 @@ def clean(
     rotation_deg = float(rotation_deg)
     if not 0.0 < gain <= 1.0:
         raise ValueError(f"gain must be in (0, 1], not {gain}.")
+    if int(max_iterations) != max_iterations or max_iterations < 0:
+        raise ValueError(
+            f"max_iterations must be a non-negative integer, not "
+            f"{max_iterations}."
+        )
+    max_iterations = int(max_iterations)
     if base is not None and base.time_dependent:
         raise ValueError("The base scene must not change with time.")
     shape = (npix, npix)
@@ -1082,13 +1089,18 @@ def clean(
         )
     if init is None:
         init = onp.zeros(shape)
-        if base is None:
-            init[npix // 2, npix // 2] = 1.0
+        if base is None:  # the supported pixel nearest the centre
+            offsets = pixel_offsets(npix, 1.0)
+            radius = onp.hypot(offsets[None, :], offsets[:, None])
+            centre = onp.argmin(onp.where(support, radius, onp.inf))
+            init.flat[centre] = 1.0
     init = onp.asarray(init, float)
     if init.shape != shape or not onp.all(onp.isfinite(init) & (init >= 0)):
         raise ValueError(
             f"init must have shape {shape} and be finite and non-negative."
         )
+    if onp.any(init[~support] > 0):
+        raise ValueError("init has flux outside the support.")
     if base is None and not init.sum() > 0:
         raise ValueError("Without a base scene, init needs a positive pixel.")
     ndata = sum(d.n_independent for d in observations)
@@ -1098,7 +1110,7 @@ def clean(
         norms = _atom_norms(*fixed, fluxes, pixel_scale_mas, rotation_deg)
         scores = np.where(support & (norms > 0), 1.0 / norms, 0.0)
         history, stop = [], "max_iterations"
-        for iteration in range(int(max_iterations) + 1):
+        for iteration in range(max_iterations + 1):
             chi2, p, decrease, step = _clean_step(
                 *fixed, fluxes, scores, pixel_scale_mas, rotation_deg
             )

@@ -191,6 +191,22 @@ def test_clean_respects_the_support_and_checks_its_inputs():
         max_iterations=10,
     )
     assert float(result.components[9, 5]) == 0.0
+    with pytest.raises(ValueError, match="outside the support"):
+        clean(
+            data,
+            NPIX,
+            SCALE,
+            base=PointSource(),
+            init=np.zeros((NPIX, NPIX)).at[9, 5].set(0.01),
+            support=support,
+        )
+    with pytest.raises(ValueError, match="max_iterations"):
+        clean(data, NPIX, SCALE, base=PointSource(), max_iterations=2.5)
+    # Without a base, the starting component avoids a hole at the centre.
+    hole = np.ones((NPIX, NPIX), bool).at[6:10, 6:10].set(False)
+    centred = clean(data, NPIX, SCALE, support=hole, max_iterations=0)
+    assert float(np.sum(np.where(hole, 0.0, centred.components))) == 0.0
+    assert len(centred.chi2_red) == 1
     with pytest.raises(ValueError, match="gain"):
         clean(data, NPIX, SCALE, base=PointSource(), gain=0.0)
     with pytest.raises(ValueError, match="init"):
