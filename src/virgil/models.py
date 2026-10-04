@@ -863,27 +863,60 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
+    # sub-pixel samples per pixel side when rasterising the image
+    _image_oversample = 4
+
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        if self.t_pole is None:
-            x, y, w, _ = self._surface()
-        else:  # drawn at wavel0
-            x, y, w = self._planck_weights(self.wavel0)
-        # Index formulas inverted from image_coordinates: x falls with the
-        # column and y with the row, from the (0, 0) pixel.
-        col = (xx[0, 0] - x) / pixel_scale_mas
-        row = (yy[0, 0] - y) / pixel_scale_mas
+        """Rasterise the faceted surface, flat-shaded per triangle.
+
+        Each pixel averages ``_image_oversample`` squared sub-pixel samples
+        of the surface brightness, so the limb is anti-aliased. A sample
+        takes the intensity of the front-facing triangle that contains it in
+        projection (those do not overlap, so no depth sorting is needed) and
+        0 outside the outline. This is what ``plot_surface`` draws and what
+        the visibilities transform, as opposed to splatting the barycentres
+        onto pixels, which blurs the limb and aliases against the mesh.
+        The sum matches the total weight of the DFT's point sources.
+        """
+        *_, teff, (pts, tri, cosine, intensity) = self._surface(
+            return_mesh=True
+        )
+        if self.t_pole is not None:  # drawn at wavel0
+            intensity = self._planck_intensity(teff, self.wavel0)
+        px, py = pts[tri, 0], pts[tri, 1]  # (n_tri, 3) corners on the sky
+        ax, ay = px[:, 0], py[:, 0]
+        e1x, e1y = px[:, 1] - ax, py[:, 1] - ay
+        e2x, e2y = px[:, 2] - ax, py[:, 2] - ay
+        det = e1x * e2y - e1y * e2x
+        # back-facing and degenerate triangles never contain a sample
+        valid = (cosine > 0) & (det != 0)
+        inv = 1.0 / np.where(valid, det, 1.0)
+        value = np.where(valid, intensity, 0.0)
+
+        def sample_row(pos):
+            sx, sy = pos[0] - ax[:, None], pos[1] - ay[:, None]
+            wb = (sx * e2y[:, None] - sy * e2x[:, None]) * inv[:, None]
+            wc = (e1x[:, None] * sy - e1y[:, None] * sx) * inv[:, None]
+            inside = valid[:, None] & (wb >= 0) & (wc >= 0) & (wb + wc <= 1)
+            hits = np.sum(inside, axis=0)
+            # a sample exactly on a shared edge counts once, not twice
+            total = np.sum(np.where(inside, value[:, None], 0.0), axis=0)
+            return total / np.maximum(hits, 1)
+
+        # sub-pixel sample positions; the pixel centres are the grid xx, yy
+        s = self._image_oversample
         nrow, ncol = xx.shape
-        c0, r0 = np.floor(col), np.floor(row)
-        fc, fr = col - c0, row - r0
-        image = np.zeros(xx.shape, dtype=w.dtype)
-        for dr, wr in ((0, 1.0 - fr), (1, fr)):
-            for dc, wc in ((0, 1.0 - fc), (1, fc)):
-                rr, cc = r0.astype(int) + dr, c0.astype(int) + dc
-                inside = (rr >= 0) & (rr < nrow) & (cc >= 0) & (cc < ncol)
-                image = image.at[
-                    np.clip(rr, 0, nrow - 1), np.clip(cc, 0, ncol - 1)
-                ].add(np.where(inside, w * wr * wc, 0.0))
-        return image
+        frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
+        sx = (xx[0, :, None] + frac).reshape(-1)  # (ncol * s,)
+        sy = (yy[:, 0, None] + frac).reshape(-1)  # (nrow * s,)
+        # one sub-row of samples at a time bounds memory by ncol * s * n_tri
+        sub_rows = jax.lax.map(
+            lambda y: sample_row((sx, y)), sy.astype(intensity.dtype)
+        )
+        mean = sub_rows.reshape(nrow, s, ncol, s).mean(axis=(1, 3))
+        # |normal| = 2 x area, so cosine carries twice the projected area
+        # in the DFT weights; the pixel area carries the same factor here
+        return 2.0 * pixel_scale_mas**2 * mean
 
     def plot_surface(self, ax=None, cmap="plasma"):
         """Plot the visible surface, coloured by its local brightness.

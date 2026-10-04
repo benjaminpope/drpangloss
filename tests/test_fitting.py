@@ -1,3 +1,5 @@
+import warnings
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -6,7 +8,7 @@ import numpyro.distributions as dist
 import pytest
 
 from virgil._precision import cast_tree, run_in
-from virgil.coverage import ami_grid_record
+from virgil.coverage import ami_grid_record, vlti_oidata
 from virgil.fitting import _Objective, fit
 from virgil.imaging import TSV, Centroid, MaxEntropy, image_priors
 from virgil.likelihood import numpyro_model, whitened_residuals
@@ -54,6 +56,7 @@ def test_fit_recovers_a_binary(method):
     assert result.info["converged"] in (True, None)
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_optimisers_agree_on_a_binary():
     lm = fit(START, PRIORS, DATA, method="lm")
     lbfgs = fit(START, PRIORS, DATA, method="lbfgs")
@@ -71,6 +74,7 @@ def test_a_function_model_needs_starting_values():
     assert abs(fit(binary, PRIORS, DATA, init=init).values["dra"] - 150) < 3
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_float32_and_float64_fits_agree():
     x64 = fit(START, PRIORS, DATA, dtype="float64")
     x32 = fit(START, PRIORS, DATA, dtype="float32")
@@ -329,3 +333,85 @@ def test_numpyro_model_samples_noise_terms():
     model = numpyro_model(START, PRIORS, DATA, noise=noise)
     trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     assert "noise.vis_scale" in trace
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_a_start_at_an_exact_optimum_is_converged(method):
+    # Noise-free data and the true parameters: chi2 ~ 0, gradient ~ rounding
+    # noise. A purely relative stopping test never passes here.
+    # Built in float64, so that the data really are the model's output.
+    with jax.enable_x64(True):
+        truth = BinaryModelCartesian(4.97, -3.36, 0.05)
+        clean = vlti_oidata(
+            wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6)
+        ).with_model(truth)
+        priors = {
+            "dra": dist.Uniform(-60.0, 60.0),
+            "ddec": dist.Uniform(-60.0, 60.0),
+            "flux": dist.Uniform(0.0, 1.0),
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = fit(truth, priors, clean, method=method)
+    assert result.info["converged"] is True
+    # L-BFGS tests the starting gradient before its first step, so an
+    # optimal start must not be moved at all
+    assert (
+        result.info["steps"] == 0
+        if method == "lbfgs"
+        else result.info["steps"] <= 3
+    )
+    assert onp.max(result.info["chi2"]) < 1e-12
+
+
+def _rim_problem():
+    from virgil.coverage import vlti_oidata
+    from virgil.models import ModulatedGaussianRim
+
+    truth = System(
+        star=PointSource(),
+        rim=ModulatedGaussianRim(
+            6.0,
+            1.0,
+            45.0,
+            30.0,
+            onp.array([0.5]),
+            onp.array([120.0]),
+            0.8,
+        ),
+    )
+    data = vlti_oidata(wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6))
+    data = data.with_model(truth, key=jax.random.PRNGKey(3))
+    return truth, truth.set("rim.diam", 5.5), data
+
+
+_UNIFORM_FORMS = {
+    "array": lambda lo, hi: dist.Uniform(onp.full(1, lo), onp.full(1, hi)),
+    "expand": lambda lo, hi: dist.Uniform(lo, hi).expand([1]),
+    "to_event": lambda lo, hi: dist.Uniform(lo, hi).expand([1]).to_event(1),
+}
+
+
+def _rim_priors(form):
+    make = _UNIFORM_FORMS[form]
+    return {
+        "rim.diam": dist.Uniform(1.0, 20.0),
+        "rim.flux": dist.Uniform(0.0, 5.0),
+        "rim.az_amps": make(0.0, 1.0),
+        "rim.az_pas": make(0.0, 360.0),
+    }
+
+
+@pytest.mark.parametrize("form", list(_UNIFORM_FORMS))
+def test_wrapped_uniform_priors_default_to_lm(form):
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors(form), data)
+    assert result.info["method"] == "lm"
+
+
+def test_expanded_priors_recover_the_rim():
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors("expand"), data)
+    assert result.info["method"] == "lm"
+    assert onp.isclose(result.model.get("rim.diam"), 6.0, rtol=0.05)
+    assert onp.allclose(result.model.get("rim.az_amps"), [0.5], atol=0.1)

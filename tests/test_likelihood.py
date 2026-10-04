@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 
 import equinox as eqx
@@ -24,6 +25,11 @@ def _shift_phases(data, shift):
     return eqx.tree_at(lambda d: d.phi, data, exact + shift)
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals",
+    "virgil.likelihood.model_loglike",
+    roots=["self-consistency"],
+)
 def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
     model = BinaryModelCartesian(240.0, 160.0, 6e-4)
     data, errors = oidata_sim.flatten_data()
@@ -42,6 +48,11 @@ def test_whitened_residuals_are_residuals_over_sigma_for_small_phases():
     assert np.allclose(whitened[n_vis:], phases, rtol=1e-4, atol=1e-4)
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals",
+    "virgil.likelihood.model_loglike",
+    roots=["self-consistency"],
+)
 def test_phase_term_is_von_mises_and_smooth_across_pi():
     n_vis = oidata_sim.vis.size
     sigma = oidata_sim.d_phi
@@ -70,6 +81,11 @@ def test_phase_term_is_von_mises_and_smooth_across_pi():
     assert abs(below) < 2e-3 * scale and abs(above) < 2e-3 * scale
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals",
+    "virgil.likelihood.model_loglike",
+    roots=["self-consistency"],
+)
 def test_model_loglike_is_gaussian_in_whitened_residuals():
     model = BinaryModelCartesian(240.0, 160.0, 6e-4)
     # The errors that normalise the likelihood: the visibilities' own, and
@@ -90,6 +106,11 @@ def test_model_loglike_is_gaussian_in_whitened_residuals():
     assert np.allclose(model_loglike(model, oidata_sim), expected, rtol=1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals",
+    "virgil.likelihood.model_loglike",
+    roots=["self-consistency"],
+)
 def test_projected_phases_are_plain_residuals_over_sigma():
     data = load_oi_data(PRODUCT)["F430M"]
     model = BinaryModelCartesian(150.0, 100.0, 1e-2)
@@ -118,6 +139,11 @@ def _absolute_phase_data(n, phase_offsets, phase_error, seed=0):
     )
 
 
+@pytest.mark.validates(
+    "virgil.likelihood.whitened_residuals",
+    "virgil.likelihood.model_loglike",
+    roots=["self-consistency"],
+)
 def test_uncorrelated_phase_likelihood_is_normalised_on_the_circle():
     # Review 1.2: with the Gaussian normaliser -log σ the von Mises
     # "density" integrated to 1.17 over the circle at σ = 1.

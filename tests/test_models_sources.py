@@ -87,6 +87,7 @@ def test_cvis_uniform_disk_zero_baseline_is_unity():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_matches_analytic_airy_formula():
     """Visibility amplitude should follow 2*J1(pi*theta*B/lambda) /
     (pi*theta*B/lambda), with theta the disk diameter in mas and B/lambda
@@ -108,6 +109,7 @@ def test_cvis_uniform_disk_matches_analytic_airy_formula():
     assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-8)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_vanishes_at_first_airy_null():
     ud = 8.0
     first_null_kernel = jn_zeros(1, 1)[0]
@@ -187,6 +189,9 @@ def test_star_and_zero_flux_rim_is_pure_point_source():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
 def test_symmetric_rim_matches_bessel_j0():
     """An unmodulated, uninclined, infinitely-narrow rim is a plain thin
     ring, whose visibility is the classic J0(2*pi*r0*B/lambda) form; mixed
@@ -334,6 +339,9 @@ def _rim_baselines():
     return rng.uniform(-60.0, 60.0, 40), rng.uniform(-60.0, 60.0, 40), 2.2e-6
 
 
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
 @pytest.mark.parametrize("x64", [False, True])
 def test_unmodulated_rim_visibility_is_blurred_in_the_rim_plane(x64):
     """An unmodulated rim is a thin ring times a Gaussian envelope, both
@@ -424,6 +432,9 @@ def test_binary_render_is_available():
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.models.SourceModel.render", roots=["self-consistency"]
+)
 @pytest.mark.parametrize(
     ("model", "atol"),
     [
@@ -513,7 +524,8 @@ def test_binary_render_is_available():
             GravityDarkenedStar(
                 12.0, omega=0.9, inc=50.0, pa=30.0, dra=-5.0, ddec=4.0
             ),
-            2e-4,
+            # the image shades whole facets, the DFT uses barycentre points
+            5e-4,
         ),
     ],
     ids=[
@@ -732,6 +744,9 @@ def _render_visibilities(model, u, v, npix, fov_mas):
     return phase @ image
 
 
+@pytest.mark.validates(
+    "virgil.models.HarmonixModel", roots=["self-consistency"]
+)
 def test_harmonix_render_fourier_transform_matches_model_visibilities():
     # The rendered star must be on the sky (East left, North up) at its
     # radius: its Fourier transform reproduces harmonix's visibilities, and
