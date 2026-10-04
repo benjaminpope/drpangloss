@@ -435,6 +435,8 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
 
+**Log (PA round trips):** §5.3.1, synthetic, in `tests/test_pa_round_trip.py`: a binary with flux ratio 0.2 is written in a GRAVITY layout (STA_INDEX 28/23/18/1, baselines from the highest index, five channels, three hour angles) and a 7-hole-mask layout, read back, and found by a grid search over the whole field: within 1° of its PA and fainter than the primary. A negative control (closure phases negated in the file) comes back 180° away, so the test can see a flip. AMICAL's writer is not tested yet (AMICAL is not in the test environment); real anchors (§5.3.2) are with the validation plan (virgil-validation#9).
+
 **Tests:**
 - Conventions and ephemerides: O §5.1–5.2.
 - Synthetic position-angle round trips: O §5.3.1 and §5.3.3. These need no real data.
