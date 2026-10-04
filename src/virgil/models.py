@@ -645,11 +645,23 @@ class _LimbDarkenedDisk(Component):
         return np.where(inside, brightness, 0.0)
 
     def is_physical(self):
-        return super().is_physical() & np.all(self.diam > 0.0)
+        """Positive diameter and a profile that is nowhere negative.
+
+        The profile is checked on a grid of 101 values of $\mu$ from 0 to 1;
+        each law has $I(1) = 1$, so this also keeps the flux positive.
+        """
+        coeffs, powers = self._profile()
+        mu = np.linspace(0.0, 1.0, 101)
+        brightness = sum(a * mu**nu for a, nu in zip(coeffs, powers))
+        return (
+            super().is_physical()
+            & np.all(self.diam > 0.0)
+            & np.all(brightness >= 0.0)
+        )
 
 
 class LimbDarkenedDisk(_LimbDarkenedDisk):
-    r"""Circular disk with polynomial limb darkening of any order.
+    r"""Circular disk with polynomial limb darkening of order up to 22.
 
     The brightness is
     $I(\mu) / I(1) = 1 - \sum_{n=1}^{N} u_n (1 - \mu)^n$, with
@@ -657,7 +669,8 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
     sight and the surface normal. This is the convention of jaxoplanet,
     *starry* and harmonix, so ``u`` is the same as a jaxoplanet
     ``Surface``'s ``u``: ``u=(u1,)`` is the linear law, ``u=(u1, u2)`` the
-    quadratic law, and the default ``u=()`` a uniform disk. To fit the
+    quadratic law, and the default ``u=()`` a uniform disk. The order is at
+    most 22, as the Bessel functions needed are of order at most 12. To fit the
     quadratic law with priors that cover exactly the physical profiles, use
     [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk].
 
@@ -673,7 +686,9 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
         milliarcseconds.
     u : sequence of float, optional
         Limb-darkening coefficients $u_1, \ldots, u_N$ (default: none, a
-        uniform disk). A 1D array; its length, the order of the law, is fixed.
+        uniform disk). A 1D array; its length, the order of the law (at most
+        22), is fixed. [`is_physical`][virgil.models.SourceModel.is_physical]
+        is false where the profile goes negative.
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
         [`System`][virgil.models.System], or a spectrum from
@@ -727,7 +742,10 @@ class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
     diam : float or array-like
         Limb-darkened angular diameter in milliarcseconds.
     q1, q2 : float or array-like, optional
-        Kipping's coefficients, each in $[0, 1]$ (default 0: a uniform disk).
+        Kipping's coefficients, each in $[0, 1]$; $q_1 = 0$ is a uniform
+        disk. Start a fit inside the square, not on its edges: ``fit`` maps
+        Uniform priors onto unbounded variables, and the edges map to
+        infinity (and $\sqrt{q_1}$ has an infinite derivative at 0).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
         [`System`][virgil.models.System], or a spectrum from
@@ -757,7 +775,7 @@ class QuadraticLimbDarkenedDisk(_LimbDarkenedDisk):
     q1: jax.Array
     q2: jax.Array
 
-    def __init__(self, diam, q1=0.0, q2=0.0, flux=1.0, dra=0.0, ddec=0.0):
+    def __init__(self, diam, q1, q2, flux=1.0, dra=0.0, ddec=0.0):
         self._set_position(diam, flux, dra, ddec)
         self.q1 = np.asarray(q1, dtype=float)
         self.q2 = np.asarray(q2, dtype=float)
@@ -811,7 +829,10 @@ class SquareRootLimbDarkenedDisk(_LimbDarkenedDisk):
     diam : float or array-like
         Limb-darkened angular diameter in milliarcseconds.
     q1, q2 : float or array-like, optional
-        Kipping's coefficients, each in $[0, 1]$ (default 0: a uniform disk).
+        Kipping's coefficients, each in $[0, 1]$; $q_1 = 0$ is a uniform
+        disk. Start a fit inside the square, not on its edges: ``fit`` maps
+        Uniform priors onto unbounded variables, and the edges map to
+        infinity (and $\sqrt{q_1}$ has an infinite derivative at 0).
     flux : float, array-like or Spectrum, optional
         Weight relative to the other components of a
         [`System`][virgil.models.System], or a spectrum from
@@ -832,7 +853,7 @@ class SquareRootLimbDarkenedDisk(_LimbDarkenedDisk):
     q1: jax.Array
     q2: jax.Array
 
-    def __init__(self, diam, q1=0.0, q2=0.0, flux=1.0, dra=0.0, ddec=0.0):
+    def __init__(self, diam, q1, q2, flux=1.0, dra=0.0, ddec=0.0):
         self._set_position(diam, flux, dra, ddec)
         self.q1 = np.asarray(q1, dtype=float)
         self.q2 = np.asarray(q2, dtype=float)
@@ -2484,7 +2505,9 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     with $x = \pi\,\theta\,|b| / \lambda$ for diameter $\theta$, normalized to
     1 at zero baseline. A uniform disk ($a_0 = 1$) gives $2 J_1(x)/x$. The
     powers need not be integers: the square-root law has $\nu = 1/2$, which
-    needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``. harmonix
+    needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
+    orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
+    finite). harmonix
     ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises
     the result to polynomial limb darkening of spherical-harmonic maps.
 
@@ -2499,7 +2522,7 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     coeffs : array-like
         Coefficients $a_\nu$, one per power (traceable).
     powers : sequence of float
-        Powers $\nu > -1$ of $\mu$ (static).
+        Powers $\nu$ of $\mu$, each with $-2 < \nu \le 22$ (static).
     dra : float or array-like
         Right-ascension offset in milliarcseconds.
     ddec : float or array-like
@@ -2510,6 +2533,9 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     array-like
         Complex visibility samples.
     """
+    bad = [nu for nu in powers if not -2.0 < float(nu) <= 22.0]
+    if bad:
+        raise ValueError(f"Powers of mu must be in (-2, 22], got {bad}.")
     x = np.pi * np.hypot(u, v) * mas2rad * diam
     total = 0.0
     norm = 0.0

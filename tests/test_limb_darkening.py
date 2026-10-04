@@ -103,8 +103,8 @@ def test_uniform_limit_is_uniform_disk():
     with jax.enable_x64(True):
         for model in (
             LimbDarkenedDisk(DIAM),
-            QuadraticLimbDarkenedDisk(DIAM),
-            SquareRootLimbDarkenedDisk(DIAM),
+            QuadraticLimbDarkenedDisk(DIAM, q1=0.0, q2=0.5),
+            SquareRootLimbDarkenedDisk(DIAM, q1=0.0, q2=0.5),
         ):
             assert onp.allclose(
                 _visibility(model), _visibility(UniformDisk(DIAM)), atol=1e-14
@@ -231,12 +231,29 @@ def test_unit_square_gives_exactly_the_physical_profiles(cls, profile):
     assert not physical(1.2, 0.5)
 
 
+def test_powers_outside_the_supported_range_are_refused():
+    for powers in [(0.0, 23.0), (-2.0,)]:
+        with pytest.raises(ValueError):
+            cvis_limb_darkened_disk(U, V, DIAM, np.ones(len(powers)), powers)
+    # order 22 is the highest polynomial law
+    assert onp.isfinite(
+        _visibility(LimbDarkenedDisk(DIAM, u=[0.0] * 22))
+    ).all()
+
+
 def test_is_physical():
     assert QuadraticLimbDarkenedDisk(DIAM, q1=0.3, q2=0.9).is_physical()
     assert not QuadraticLimbDarkenedDisk(DIAM, q1=1.3, q2=0.2).is_physical()
     assert not SquareRootLimbDarkenedDisk(DIAM, q1=0.3, q2=-0.1).is_physical()
     assert not LimbDarkenedDisk(-1.0, u=[0.5]).is_physical()
     assert LimbDarkenedDisk(DIAM, u=[0.5]).is_physical()
+    # negative at the limb, and zero flux
+    assert not LimbDarkenedDisk(DIAM, u=[2.0]).is_physical()
+    assert not LimbDarkenedDisk(DIAM, u=[3.0]).is_physical()
+    # limb brightening is allowed while the profile stays positive
+    assert LimbDarkenedDisk(DIAM, u=[-0.3]).is_physical()
+    jitted = jax.jit(lambda m: m.is_physical())
+    assert not jitted(LimbDarkenedDisk(DIAM, u=[2.0]))
 
 
 def test_render_darkens_the_limb():
