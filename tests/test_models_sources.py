@@ -19,7 +19,6 @@ from virgil.models import (
     FlaredDiskHG,
     FlaredDiskPowerLaw,
     GaussianDisk,
-    GaussianDiskModel,
     GravityDarkenedStar,
     HarmonixModel,
     Image,
@@ -28,7 +27,6 @@ from virgil.models import (
     Rotated,
     System,
     UniformDisk,
-    cvis_gaussian_disk,
     cvis_radial_dirac_delta_modulated,
     cvis_uniform_disk,
 )
@@ -40,23 +38,21 @@ from tests._test_data import oidata
 _MAS2RAD_REF = onp.pi / 180.0 / 3600.0 / 1000.0
 
 
+def _star_and_disk(sigma, flux, dra=0.0, ddec=0.0):
+    return System(
+        star=PointSource(),
+        disk=GaussianDisk(sigma, flux=flux, dra=dra, ddec=ddec),
+    )
+
+
 def _star_and_rim(flux, **rim_kwargs):
     return System(
         star=PointSource(), rim=ModulatedGaussianRim(flux=flux, **rim_kwargs)
     )
 
 
-def test_cvis_gaussian_disk_is_well_behaved():
-    uu = oidata.u / oidata.wavel
-    vv = oidata.v / oidata.wavel
-    cvis = cvis_gaussian_disk(uu, vv, sigma=20.0, flux=0.1, dra=5.0, ddec=-3.0)
-    assert cvis.shape == uu.shape
-    assert np.all(np.isfinite(cvis))
-    assert np.all(np.abs(cvis) <= 1.0 + 1e-12)
-
-
 def test_gaussian_disk_oidata_and_render():
-    model = GaussianDiskModel(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
+    model = _star_and_disk(sigma=30.0, flux=0.1, dra=10.0, ddec=-10.0)
     model_vec = oidata.model(model)
     image = model.render(npix=64, fov_mas=150.0)
 
@@ -68,7 +64,7 @@ def test_gaussian_disk_oidata_and_render():
 
 
 def test_gaussian_disk_render_remains_finite_for_narrow_shifted_disk():
-    image = GaussianDiskModel(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
+    image = _star_and_disk(sigma=1e-6, flux=0.1, dra=1e6, ddec=-1e6).render(
         npix=32, fov_mas=20.0
     )
 
@@ -91,6 +87,7 @@ def test_cvis_uniform_disk_zero_baseline_is_unity():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_matches_analytic_airy_formula():
     """Visibility amplitude should follow 2*J1(pi*theta*B/lambda) /
     (pi*theta*B/lambda), with theta the disk diameter in mas and B/lambda
@@ -112,6 +109,7 @@ def test_cvis_uniform_disk_matches_analytic_airy_formula():
     assert onp.allclose(onp.asarray(cvis).imag, 0.0, atol=1e-8)
 
 
+@pytest.mark.validates("virgil.models.UniformDisk", roots=["mathematics"])
 def test_cvis_uniform_disk_vanishes_at_first_airy_null():
     ud = 8.0
     first_null_kernel = jn_zeros(1, 1)[0]
@@ -191,6 +189,9 @@ def test_star_and_zero_flux_rim_is_pure_point_source():
     assert np.allclose(cvis, 1.0 + 0j)
 
 
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
 def test_symmetric_rim_matches_bessel_j0():
     """An unmodulated, uninclined, infinitely-narrow rim is a plain thin
     ring, whose visibility is the classic J0(2*pi*r0*B/lambda) form; mixed
@@ -338,6 +339,9 @@ def _rim_baselines():
     return rng.uniform(-60.0, 60.0, 40), rng.uniform(-60.0, 60.0, 40), 2.2e-6
 
 
+@pytest.mark.validates(
+    "virgil.models.ModulatedGaussianRim", roots=["mathematics"]
+)
 @pytest.mark.parametrize("x64", [False, True])
 def test_unmodulated_rim_visibility_is_blurred_in_the_rim_plane(x64):
     """An unmodulated rim is a thin ring times a Gaussian envelope, both
@@ -428,12 +432,15 @@ def test_binary_render_is_available():
     assert np.isclose(np.sum(image), 1.0, rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.validates(
+    "virgil.models.SourceModel.render", roots=["self-consistency"]
+)
 @pytest.mark.parametrize(
     ("model", "atol"),
     [
         (BinaryModelCartesian(12.0, -7.0, 0.3), 2e-3),
         (BinaryModelAngular(20.0, 60.0, 1.0 / 3.0), 2e-3),
-        (GaussianDiskModel(4.0, 0.5, 6.0, 3.0), 2e-3),
+        (_star_and_disk(4.0, 0.5, 6.0, 3.0), 2e-3),
         (UniformDisk(15.0, dra=-5.0, ddec=4.0), 2e-3),
         (
             Image.from_model(GaussianDisk(4.0), 49, 0.5, dra=6.0, ddec=-3.0),
@@ -575,7 +582,7 @@ def test_image_coordinates_use_pixel_centers(npix, fov_mas, expected):
 
 
 def test_gaussian_disk_render_uses_interferometric_image_orientation():
-    image = GaussianDiskModel(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
+    image = _star_and_disk(sigma=1e-3, flux=10.0, dra=2.0, ddec=2.0).render(
         npix=5, fov_mas=10.0
     )
 
@@ -736,6 +743,9 @@ def _render_visibilities(model, u, v, npix, fov_mas):
     return phase @ image
 
 
+@pytest.mark.validates(
+    "virgil.models.HarmonixModel", roots=["self-consistency"]
+)
 def test_harmonix_render_fourier_transform_matches_model_visibilities():
     # The rendered star must be on the sky (East left, North up) at its
     # radius: its Fourier transform reproduces harmonix's visibilities, and

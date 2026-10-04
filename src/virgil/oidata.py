@@ -347,8 +347,8 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         kept and the errors are its square-rooted diagonal. Otherwise the
         outputs are correlated, and using only the diagonal would count
         shared information more than once: the operator is rotated onto
-        the eigenvectors of A D Aᵀ, keeping those with non-zero variance,
-        so that the new outputs are independent with errors √λ.
+        the eigenvectors of A D^½ R D^½ Aᵀ, keeping those with non-zero
+        variance, so that the new outputs are independent with errors √λ.
         """
         operator = np.asarray(operator, dtype=float)
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
@@ -398,13 +398,21 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             return np.log(np.maximum(amp, 1e-30))
         return amp
 
-    def _visibility_channel_from_data(self, vis):
-        """Convert stored visibility observables to the configured scalar channel."""
+    def _visibility_channel_from_data(self, vis, d_vis):
+        """Convert stored visibility observables to the configured scalar channel.
+
+        Log-amplitudes take the log of the observable floored at its own
+        uncertainty (as in ``_visibility_uncertainty_channel``), so that a
+        V² or amplitude at or below zero gives a finite value rather than
+        log 1e-30.
+        """
         vis = np.asarray(vis, dtype=float)
+        d_vis = np.asarray(d_vis, dtype=float)
         if self.vis_mode == "logamp":
+            floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
             if self.v2_flag:
-                return 0.5 * np.log(np.maximum(vis, 1e-30))
-            return np.log(np.maximum(vis, 1e-30))
+                return 0.5 * np.log(floored)
+            return np.log(floored)
         if self.vis_mode == "amp" and self.v2_flag:
             return np.sqrt(np.maximum(vis, 0.0))
         if self.vis_mode == "v2" and (not self.v2_flag):
@@ -412,15 +420,24 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         return vis
 
     def _visibility_uncertainty_channel(self, vis, d_vis):
-        """Convert visibility uncertainties into the configured scalar channel."""
+        """Convert visibility uncertainties into the configured scalar channel.
+
+        The errors are propagated linearly, with the derivative evaluated
+        at the noisy data. Near zero that derivative diverges, so the data
+        are floored at their own uncertainty first, in either direction:
+        V² → amplitude gives ½σ/√max(V², σ) and V² → log-amplitude
+        ½σ/max(V², σ) (at most ½√σ and ½), amplitude → log-amplitude
+        σ/max(|V|, σ), and amplitude → V² uses √(|V|² + σ²) for |V|.
+        """
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
+        floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
         if self.vis_mode == "logamp":
             if self.v2_flag:
-                return 0.5 * d_vis / np.maximum(vis, 1e-30)
-            return d_vis / np.maximum(vis, 1e-30)
+                return 0.5 * d_vis / floored
+            return d_vis / floored
         if self.vis_mode == "amp" and self.v2_flag:
-            return 0.5 * d_vis / np.sqrt(np.maximum(vis, 1e-30))
+            return 0.5 * d_vis / np.sqrt(floored)
         if self.vis_mode == "v2" and (not self.v2_flag):
             # |V| is floored at its own uncertainty, so noisy amplitudes near
             # or below zero do not get a vanishing V² error.
@@ -444,7 +461,9 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         self._validate_operator_shape(self.phi_mat, n_phi, "phi_mat")
 
         if np.asarray(self.vis).size == n_vis:
-            vis_channel = self._visibility_channel_from_data(self.vis)
+            vis_channel = self._visibility_channel_from_data(
+                self.vis, self.d_vis
+            )
             vis_sigma = self._visibility_uncertainty_channel(
                 self.vis, self.d_vis
             )

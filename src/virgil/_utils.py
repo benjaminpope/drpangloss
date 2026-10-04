@@ -34,6 +34,14 @@ def concrete(value):
         return None
 
 
+# === PER-DATASET MODELS ===
+
+
+def _reference(model):
+    """The model regularisers act on: the first if there is one per dataset."""
+    return model[0] if isinstance(model, (list, tuple)) else model
+
+
 # === FLUX PARAMETERS ===
 #
 # A parameter is a flux when the last part of its name (or zodiax path) is

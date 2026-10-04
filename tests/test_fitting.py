@@ -56,6 +56,7 @@ def test_fit_recovers_a_binary(method):
     assert result.info["converged"] in (True, None)
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_optimisers_agree_on_a_binary():
     lm = fit(START, PRIORS, DATA, method="lm")
     lbfgs = fit(START, PRIORS, DATA, method="lbfgs")
@@ -73,13 +74,20 @@ def test_a_function_model_needs_starting_values():
     assert abs(fit(binary, PRIORS, DATA, init=init).values["dra"] - 150) < 3
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_float32_and_float64_fits_agree():
-    x64 = fit(START, PRIORS, DATA, dtype="float64").values
-    x32 = fit(START, PRIORS, DATA, dtype="float32").values
+    x64 = fit(START, PRIORS, DATA, dtype="float64")
+    x32 = fit(START, PRIORS, DATA, dtype="float32")
     ambient = np.float64 if jax.config.jax_enable_x64 else np.float32
     for path in PRIORS:
-        assert x64[path].dtype == ambient  # cast back after the fit
-        assert np.allclose(x32[path], x64[path], rtol=1e-3)
+        assert x64.values[path].dtype == ambient  # cast back after the fit
+        assert np.allclose(x32.values[path], x64.values[path], rtol=1e-3)
+    # Both converge. With a fixed gtol = 1e-4, below what rounding lets the
+    # float32 gradient reach, the float32 fit ran all 1000 LM steps (where
+    # float64 takes 7).
+    for result in (x64, x32):
+        assert result.info["converged"] is True
+        assert result.info["steps"] < 50
 
 
 def test_lm_and_lbfgs_agree_on_a_tsv_image():
@@ -150,7 +158,8 @@ def test_numpyro_model_accepts_prior_regularisers_only():
 
 
 def test_fit_rejects_bad_paths_flux_priors_and_methods():
-    with pytest.raises(Exception):
+    # zodiax raises ValueError (0.4.1) or KeyError (newer) for unknown paths.
+    with pytest.raises((KeyError, ValueError), match="nonsense"):
         fit(TRUTH, {"nonsense": dist.Uniform(0.0, 1.0)}, DATA)
     with pytest.raises(ValueError, match="negative"):
         fit(TRUTH, {"flux": dist.Normal(0.0, 1.0)}, DATA)
@@ -243,6 +252,33 @@ def test_repeated_fits_do_not_recompile(method):
     assert not compiles
 
 
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("lm", [{"gtol": 1e-4}, {"gtol": 2e-4}, {"gtol": 3e-4}]),
+        ("lbfgs", [{}, {"gtol": 2e-4}, {"max_step_size": 1.5}]),
+        ("lbfgs", [{"max_steps": 100}, {"max_steps": 200}, {}]),
+        ("adam", [{"learning_rate": r} for r in (1e-2, 2e-2, 3e-2)]),
+    ],
+)
+def test_new_prior_bounds_and_options_do_not_recompile(method, options):
+    # Python numbers in the priors (here a Uniform's lower bound) and in
+    # fit's options were static in the jitted solvers, so each new value
+    # recompiled the fit (~1.2 s each for a small model, ~4 s on a 64²
+    # image). They are now traced arrays. (LM's and Adam's max_steps set a
+    # loop's length and stay static.)
+    def fit_with(low, extra):
+        priors = dict(PRIORS, flux=dist.Uniform(low, 0.5))
+        steps = {"max_steps": 50} if method == "adam" else {}
+        return fit(START, priors, DATA, method=method, **steps, **extra)
+
+    fit_with(0.0, options[0])
+    with count_compiles() as compiles:
+        fit_with(1e-4, options[1])
+        fit_with(1e-3, options[2])
+    assert not compiles
+
+
 def test_fit_recovers_error_scales():
     # Noise twice the stated errors: the fitted scales should be near 2.
     data = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=2.0)
@@ -326,3 +362,56 @@ def test_a_start_at_an_exact_optimum_is_converged(method):
         else result.info["steps"] <= 3
     )
     assert onp.max(result.info["chi2"]) < 1e-12
+
+
+def _rim_problem():
+    from virgil.coverage import vlti_oidata
+    from virgil.models import ModulatedGaussianRim
+
+    truth = System(
+        star=PointSource(),
+        rim=ModulatedGaussianRim(
+            6.0,
+            1.0,
+            45.0,
+            30.0,
+            onp.array([0.5]),
+            onp.array([120.0]),
+            0.8,
+        ),
+    )
+    data = vlti_oidata(wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6))
+    data = data.with_model(truth, key=jax.random.PRNGKey(3))
+    return truth, truth.set("rim.diam", 5.5), data
+
+
+_UNIFORM_FORMS = {
+    "array": lambda lo, hi: dist.Uniform(onp.full(1, lo), onp.full(1, hi)),
+    "expand": lambda lo, hi: dist.Uniform(lo, hi).expand([1]),
+    "to_event": lambda lo, hi: dist.Uniform(lo, hi).expand([1]).to_event(1),
+}
+
+
+def _rim_priors(form):
+    make = _UNIFORM_FORMS[form]
+    return {
+        "rim.diam": dist.Uniform(1.0, 20.0),
+        "rim.flux": dist.Uniform(0.0, 5.0),
+        "rim.az_amps": make(0.0, 1.0),
+        "rim.az_pas": make(0.0, 360.0),
+    }
+
+
+@pytest.mark.parametrize("form", list(_UNIFORM_FORMS))
+def test_wrapped_uniform_priors_default_to_lm(form):
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors(form), data)
+    assert result.info["method"] == "lm"
+
+
+def test_expanded_priors_recover_the_rim():
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors("expand"), data)
+    assert result.info["method"] == "lm"
+    assert onp.isclose(result.model.get("rim.diam"), 6.0, rtol=0.05)
+    assert onp.allclose(result.model.get("rim.az_amps"), [0.5], atol=0.1)
