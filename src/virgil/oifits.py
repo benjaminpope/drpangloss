@@ -84,9 +84,10 @@ def read_oifits(source, target=None, insname=None):
     Squared visibilities (``OI_VIS2``) are preferred over amplitudes
     (``OI_VIS``), and closure phases (``OI_T3``) over absolute phases
     (``OI_VIS`` ``VISPHI``). ``VISAMP`` is read only when its table's
-    ``AMPTYP`` is ``'absolute'`` (or missing, as in OIFITS1), and
-    ``VISPHI`` only when ``PHITYP`` is; differential amplitudes and
-    phases, and correlated fluxes, raise a ``ValueError``. Nothing in the
+    ``AMPTYP`` is ``'absolute'``, and ``VISPHI`` only when its
+    ``PHITYP`` is ``'absolute'``; a missing keyword counts as
+    ``'absolute'``, as in OIFITS1. Differential amplitudes and phases,
+    and correlated fluxes, raise a ``ValueError``. Nothing in the
     standard marks ``OI_VIS2`` ``VIS2DATA`` that holds squared correlated
     flux rather than squared visibility, as in MATISSE products reduced
     with ``corrFlux=TRUE``; such data are read as visibilities, so
