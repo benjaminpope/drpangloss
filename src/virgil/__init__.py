@@ -48,6 +48,7 @@ from . import (  # noqa: E402
     models,
     oidata,
     oifits,
+    orbits,
     plotting,
     scenes,
     spectra,
@@ -102,6 +103,7 @@ from .models import (  # noqa: E402
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
+from .orbits import KeplerOrbit, ThieleInnesOrbit  # noqa: E402
 from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
@@ -119,6 +121,7 @@ __all__ = [
     "GravityDarkenedStar",
     "HarmonixModel",
     "Image",
+    "KeplerOrbit",
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
@@ -126,6 +129,7 @@ __all__ = [
     "Resolved",
     "SourceModel",
     "System",
+    "ThieleInnesOrbit",
     "UniformDisk",
     "absil_limits",
     "circular_support",
