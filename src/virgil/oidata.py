@@ -318,6 +318,12 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             validate_phi_covariance=has_disco_phi,
             closure=closure,
         )
+        if np.asarray(self.vis).size == 0 and np.asarray(self.phi).size == 0:
+            # A projection can drop rows too (zero-variance operator rows).
+            raise ValueError(
+                "No data left: the operators (vis_mat, phi_mat) project "
+                "every observable away."
+            )
 
     def _set_times(self, mjd, frame):
         """Store ``mjd`` as ``t_ref`` + ``dt`` and ``frame``, per sample."""

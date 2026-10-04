@@ -239,3 +239,21 @@ def test_closure_phases_alone_all_flagged_leave_no_data():
         warnings.simplefilter("ignore")
         with pytest.raises(ValueError, match="No unflagged data"):
             OIData(record)
+
+
+def test_an_operator_that_projects_everything_away_is_refused():
+    """Phases only, through an operator with no non-zero rows: the
+    projection drops every observable, which must be refused too."""
+    u, v = _baselines()
+    record = {
+        "u": u,
+        "v": v,
+        "wavel": 2.0e-6,
+        "vis": onp.zeros(0),
+        "d_vis": onp.zeros(0),
+        "phi": onp.zeros(u.size),
+        "d_phi": onp.full(u.size, 0.01),
+        "phi_mat": onp.zeros((2, u.size)),
+    }
+    with pytest.raises(ValueError, match="No data left"):
+        OIData(record)
