@@ -217,11 +217,14 @@ def test_unit_square_gives_exactly_the_physical_profiles(cls, profile):
     # Inside the unit square every profile is positive and decreases towards
     # the limb (Kipping 2013); just outside it, one of those fails.
     mu = onp.linspace(0.0, 1.0, 201)
+    # On the square's corners the limb intensity is exactly 0, which float32
+    # rounds to about -6e-8; the violations just outside are ~1e-3.
+    tol = 1e-6
 
     def physical(q1, q2):
         intensity = profile(cls(DIAM, q1=q1, q2=q2))(mu)
-        return onp.all(intensity >= -1e-12) and onp.all(
-            onp.diff(intensity) >= -1e-12
+        return onp.all(intensity >= -tol) and onp.all(
+            onp.diff(intensity) >= -tol
         )
 
     grid = onp.linspace(0.0, 1.0, 11)
