@@ -437,6 +437,7 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 
 **Log:**
 - `orbits.py` (item 1): `KeplerOrbit` and `ThieleInnesOrbit`. jaxoplanet only solves Kepler's equation (`jaxoplanet.core.kepler`, with its exact derivatives); positions come from our Thiele–Innes constants (§2.4), so every convention lives in `orbits.py`, and `OrbitalBody` appears only in the converters. Velocities are exact JVPs. `[orbits]` is a new extra (and `integrations` includes it). Tests: §5.1.1 (an independent NumPy ephemeris, 1e-10 of a in float64, 1e-5 in float32) and §5.2.1–6; §5.2.7–8 come with `Attached` and the starting orbits. The α Cen and interferometric anchors (§5.1.2–3) wait for Ben's choice.
+- Starting orbits (item 2): `PositionData(mjd, dra, ddec, cov)` and `.from_sep_pa`, with `loglike` and `whitened_residuals`; `starting_orbits(positions, periods, eccs, n_phase, n_best)` vmaps a whitened least-squares solve for (A, B, F, G) over the (P, e, t_peri) grid and returns the best `KeplerOrbit`s by χ² (Ω in [0°, 180°)). §5.2.8 passes (the true grid point, χ² ≈ 0); on 12 noisy epochs off the grid the best start is within 5% in period and 2 mas in position. Per-epoch positions come from the existing binary fits; a helper for that comes with the first real example.
 
 **Tests:**
 - Conventions and ephemerides: O §5.1–5.2.

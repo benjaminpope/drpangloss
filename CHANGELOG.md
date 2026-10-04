@@ -23,6 +23,10 @@ anything before 1.0 may change between minor versions.
   `relative_velocity` in virgil's sky conventions, and `ThieleInnesOrbit` the
   linear form used for starting orbits, with converters between them and to
   jaxoplanet, which solves Kepler's equation (the new `[orbits]` extra).
+  `PositionData` holds measured positions with their covariances (or
+  separations and position angles), and `starting_orbits` finds good
+  starting orbits for them by an exact Thiele–Innes least-squares solve on a
+  grid of period, eccentricity and time of periastron.
 
 ## 0.2.0 (not yet released)
 

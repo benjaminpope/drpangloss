@@ -35,7 +35,12 @@ import zodiax as zx
 from ._utils import concrete
 
 
-__all__ = ["KeplerOrbit", "ThieleInnesOrbit"]
+__all__ = [
+    "KeplerOrbit",
+    "PositionData",
+    "ThieleInnesOrbit",
+    "starting_orbits",
+]
 
 
 def _jaxoplanet():
@@ -351,6 +356,11 @@ class ThieleInnesOrbit(zx.Base):
         shift = np.floor(Omega / np.pi) * np.pi
         omega, Omega = omega - shift, Omega - shift
         half = (a**2 + b**2 + f**2 + g**2) / 2
+        if concrete(half) is not None and not onp.all(concrete(half) > 0):
+            raise ValueError(
+                "The Thiele–Innes constants are all zero: the positions "
+                "carry no orbit (all at the primary)."
+            )
         cos_term = a * g - b * f  # a² cos i
         a_sq = half + np.sqrt(np.maximum(half**2 - cos_term**2, 0.0))
         return KeplerOrbit(
@@ -363,3 +373,159 @@ class ThieleInnesOrbit(zx.Base):
             a_mas=np.sqrt(a_sq),
             t_ref=self.t_ref,
         )
+
+
+class PositionData(zx.Base):
+    """Measured positions of the secondary relative to the primary.
+
+    For starting orbits from per-epoch binary fits, and for published
+    positions with no raw data. **It ignores the scene:** when the source
+    is more than two point stars, positions fitted at about λ/D resolution
+    can be biased, and the orbit should be fitted to the visibilities.
+
+    Parameters
+    ----------
+    mjd : array-like
+        Time of each position (MJD).
+    dra, ddec : array-like
+        Positions (mas), East and North.
+    cov : array-like
+        Covariance of ``(dra, ddec)`` at each epoch, shape ``(n, 2, 2)``
+        (mas²), e.g. from [`laplace_cov`][virgil.inference.laplace_cov].
+    t_ref : float, optional
+        Reference time (MJD, static float64); by default the first epoch.
+    """
+
+    dt: jax.Array
+    dra: jax.Array
+    ddec: jax.Array
+    whitener: jax.Array  # (n, 2, 2): L⁻¹ with cov = L Lᵀ
+    t_ref: float = eqx.field(static=True)
+
+    def __init__(self, mjd, dra, ddec, cov, t_ref=None):
+        mjd = onp.atleast_1d(onp.asarray(mjd, dtype=onp.float64))
+        cov = onp.asarray(cov, dtype=float).reshape(-1, 2, 2)
+        if cov.shape[0] != mjd.size:
+            raise ValueError(
+                f"cov has {cov.shape[0]} epochs but there are {mjd.size}."
+            )
+        self.t_ref = float(mjd.min() if t_ref is None else t_ref)
+        self.dt = np.asarray(mjd - self.t_ref)
+        self.dra = np.asarray(onp.atleast_1d(dra), dtype=float)
+        self.ddec = np.asarray(onp.atleast_1d(ddec), dtype=float)
+        self.whitener = np.asarray(onp.linalg.inv(onp.linalg.cholesky(cov)))
+
+    @classmethod
+    def from_sep_pa(cls, mjd, sep, pa, sep_err, pa_err, t_ref=None):
+        """Positions given as separation (mas) and position angle (degrees,
+        North through East), with independent errors on each."""
+        sep, pa_rad = onp.asarray(sep, float), onp.deg2rad(pa)
+        dra, ddec = sep * onp.sin(pa_rad), sep * onp.cos(pa_rad)
+        # The Jacobian of (dra, ddec) with respect to (sep, pa).
+        jac = onp.stack(
+            [
+                onp.stack([onp.sin(pa_rad), sep * onp.cos(pa_rad)], -1),
+                onp.stack([onp.cos(pa_rad), -sep * onp.sin(pa_rad)], -1),
+            ],
+            -2,
+        )
+        errors = onp.stack(
+            [onp.asarray(sep_err, float), onp.deg2rad(pa_err)], -1
+        )
+        cov = jac * errors[..., None, :] ** 2 @ jac.swapaxes(-1, -2)
+        return cls(mjd, dra, ddec, cov, t_ref)
+
+    def whitened_residuals(self, orbit):
+        """``L⁻¹ (data - orbit)`` for every epoch, flattened (2n,)."""
+        dt = self.dt + (self.t_ref - orbit.t_ref)
+        dra, ddec, _ = orbit._relative(dt)
+        resid = np.stack([self.dra - dra, self.ddec - ddec], -1)
+        return np.einsum("nij,nj->ni", self.whitener, resid).reshape(-1)
+
+    def loglike(self, orbit):
+        """Gaussian log-likelihood of the positions under ``orbit``."""
+        resid = self.whitened_residuals(orbit)
+        log_det = np.sum(np.log(np.abs(np.diagonal(self.whitener, 0, 1, 2))))
+        return (
+            -0.5 * resid @ resid + log_det - resid.size / 2 * np.log(2 * np.pi)
+        )
+
+
+@jax.jit
+def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
+    """Weighted least-squares ``(A, B, F, G)`` and χ² at one grid point."""
+    x, y = _unit_orbit(dt, period, dt_peri, ecc)
+    zero = np.zeros_like(x)
+    # Rows (dra, ddec) per epoch; columns A, B, F, G.
+    design = np.stack(
+        [
+            np.stack([zero, x, zero, y], -1),
+            np.stack([x, zero, y, zero], -1),
+        ],
+        -2,
+    )
+    data = np.stack([dra, ddec], -1)
+    design = np.einsum("nij,njk->nik", whitener, design).reshape(-1, 4)
+    data = np.einsum("nij,nj->ni", whitener, data).reshape(-1)
+    params = np.linalg.lstsq(design, data)[0]
+    resid = data - design @ params
+    return params, resid @ resid
+
+
+def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
+    """Good starting orbits for a set of positions, from a grid search.
+
+    At fixed period, eccentricity and time of periastron the positions are
+    linear in the Thiele–Innes constants, so each grid point is an exact
+    weighted least-squares solve. This is the classical way to start an
+    orbit fit: it needs no random restarts and handles the several minima
+    of a short arc. Refine the best orbits with a fit to the visibilities
+    or to the positions.
+
+    Parameters
+    ----------
+    positions : PositionData
+        The measured positions.
+    periods : array-like
+        Trial periods (days), e.g. log-spaced over the plausible range.
+    eccs : array-like, optional
+        Trial eccentricities; by default 0 to 0.9 in steps of 0.05.
+    n_phase : int, optional
+        Number of trial times of periastron, spread over each period.
+    n_best : int, optional
+        Number of orbits to return.
+
+    Returns
+    -------
+    list of (KeplerOrbit, float)
+        The best orbits and their χ², best first. Each has
+        ``0 <= Omega < 180``; (Omega + 180, omega + 180) fits equally well.
+    """
+    eccs = onp.arange(0.0, 0.91, 0.05) if eccs is None else onp.asarray(eccs)
+    phases = onp.arange(n_phase) / n_phase
+    grid = onp.array(
+        [
+            (p, f * p, e)
+            for p in onp.asarray(periods)
+            for e in eccs
+            for f in phases
+        ]
+    )
+    fit_all = jax.vmap(_thiele_innes_fit, in_axes=(None,) * 4 + (0, 0, 0))
+    params, chi2 = fit_all(
+        positions.dt,
+        positions.dra,
+        positions.ddec,
+        positions.whitener,
+        *(np.asarray(grid[:, k]) for k in range(3)),
+    )
+    best = onp.argsort(onp.asarray(chi2))[:n_best]
+    return [
+        (
+            ThieleInnesOrbit(
+                *grid[k], *onp.asarray(params[k]), t_ref=positions.t_ref
+            ).to_kepler(),
+            float(chi2[k]),
+        )
+        for k in best
+    ]

@@ -9,7 +9,12 @@ from scipy.optimize import brentq
 
 pytest.importorskip("jaxoplanet")
 
-from virgil.orbits import KeplerOrbit, ThieleInnesOrbit  # noqa: E402
+from virgil.orbits import (  # noqa: E402
+    KeplerOrbit,
+    PositionData,
+    ThieleInnesOrbit,
+    starting_orbits,
+)
 
 T_REF = 60500.0
 ORBIT = dict(
@@ -175,6 +180,96 @@ def test_orbits_are_differentiable_under_jit():
 
     grads = jax.grad(separation)(_orbit(), dt)
     assert onp.all(onp.isfinite(onp.array([grads.ecc, grads.omega])))
+
+
+def _positions(orbit, mjd, sigma=0.05, key=None):
+    dra, ddec, _ = (onp.asarray(x) for x in orbit.relative(mjd))
+    if key is not None:
+        noise = sigma * onp.asarray(jax.random.normal(key, (2, mjd.size)))
+        dra, ddec = dra + noise[0], ddec + noise[1]
+    cov = onp.broadcast_to(sigma**2 * onp.eye(2), (mjd.size, 2, 2))
+    return PositionData(mjd, dra, ddec, cov)
+
+
+def test_starting_orbits_recover_the_true_grid_point():
+    # §5.2.8: noiseless positions, with the truth on the grid.
+    truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)
+    mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0, 340.0])
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd)
+        (best, chi2), *_ = starting_orbits(
+            positions, periods=[300.0, 400.0, 500.0], n_phase=8
+        )
+        assert chi2 < 1e-6  # zero, up to the grid's rounding of e
+        # Exact up to the grid's rounding of e (0.30000000000000004).
+        assert float(best.Omega) == pytest.approx(110.0, abs=1e-4)
+        for name, value in (("inc", 60.0), ("omega", 40.0), ("a_mas", 20.0)):
+            assert float(getattr(best, name)) == pytest.approx(value, abs=1e-4)
+        assert float(best.ecc) == pytest.approx(0.3)
+
+
+def test_starting_orbits_find_a_noisy_orbit_off_the_grid():
+    truth = _orbit(period=430.0, dt_peri=55.0, ecc=0.35)
+    mjd = T_REF + onp.linspace(0.0, 420.0, 12)
+    with jax.enable_x64(True):
+        positions = _positions(truth, mjd, key=jax.random.PRNGKey(3))
+        results = starting_orbits(
+            positions, periods=onp.geomspace(200, 900, 40)
+        )
+        best, chi2 = results[0]
+        assert [c for _, c in results] == sorted(c for _, c in results)
+        assert float(best.period) == pytest.approx(430.0, rel=0.05)
+        # Close enough to start a fit: positions within a few mas.
+        offset = (
+            onp.array(best.relative(mjd))[:2]
+            - onp.array(truth.relative(mjd))[:2]
+        )
+        assert onp.max(onp.abs(offset)) < 2.0
+
+
+def test_starting_orbits_in_float32():
+    # JAX's default precision: the grid solve still finds the orbit.
+    truth = _orbit(period=430.0, dt_peri=55.0, ecc=0.35)
+    mjd = T_REF + onp.linspace(0.0, 420.0, 12)
+    positions = _positions(truth, mjd, key=jax.random.PRNGKey(3))
+    results = starting_orbits(positions, periods=onp.geomspace(200, 900, 40))
+    best, _ = results[0]
+    assert [c for _, c in results] == sorted(c for _, c in results)
+    assert float(best.period) == pytest.approx(430.0, rel=0.05)
+    offset = (
+        onp.array(best.relative(mjd))[:2] - onp.array(truth.relative(mjd))[:2]
+    )
+    assert onp.max(onp.abs(offset)) < 2.0
+
+
+def test_positions_at_the_origin_have_no_orbit():
+    mjd = T_REF + onp.arange(4.0)
+    zero = PositionData(
+        mjd, onp.zeros(4), onp.zeros(4), onp.eye(2)[None] * onp.ones((4, 1, 1))
+    )
+    with pytest.raises(ValueError, match="no orbit"):
+        starting_orbits(zero, periods=[100.0], n_phase=4)
+
+
+def test_position_likelihood_matches_a_gaussian():
+    from scipy.stats import multivariate_normal
+
+    orbit = _orbit()
+    mjd = T_REF + onp.array([10.0, 90.0, 200.0])
+    cov = onp.array([[[0.04, 0.01], [0.01, 0.09]]] * 3)
+    with jax.enable_x64(True):
+        dra, ddec, _ = (onp.asarray(x) + 0.1 for x in orbit.relative(mjd))
+        data = PositionData(mjd, dra, ddec, cov)
+        expected = sum(
+            multivariate_normal(onp.array([a, d]) - 0.1, c).logpdf([a, d])
+            for a, d, c in zip(dra, ddec, cov)
+        )
+        assert float(data.loglike(orbit)) == pytest.approx(expected, rel=1e-10)
+        # Separation and position angle with their errors give the same
+        # positions and, to first order, the same covariance.
+        sep, pa = (onp.asarray(x) for x in orbit.separation_pa(mjd))
+        polar = PositionData.from_sep_pa(mjd, sep, pa, 0.2, 0.5)
+        assert onp.allclose(polar.whitened_residuals(orbit), 0.0, atol=1e-9)
 
 
 @pytest.mark.parametrize(
