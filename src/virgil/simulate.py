@@ -12,7 +12,8 @@ star with extended emission) and how well the coverage constrains a
 parameter.
 """
 
-import equinox as eqx
+import copy
+
 import jax
 import numpy as onp
 
@@ -52,8 +53,20 @@ def simulate(scene, template, key=None, noise_scale=1.0, shift_days=None):
     if shift_days is not None:
         if data.dt is None:
             raise ValueError("shift_days needs a template with times.")
-        data = eqx.tree_at(lambda d: d.dt, data, data.dt + float(shift_days))
+        data = _shift_times(data, shift_days)
     return data.with_model(scene, key=key, noise_scale=noise_scale)
+
+
+def _shift_times(data, days):
+    """``data`` with every time moved by ``days``.
+
+    The float64 ``t_ref`` moves and the small float32 offsets ``dt`` are
+    kept, so even a shift of decades keeps the samples' times to well under
+    a second. ``t_ref`` is a static field, so it is set on a copy.
+    """
+    shifted = copy.copy(data)
+    object.__setattr__(shifted, "t_ref", data.t_ref + float(days))
+    return shifted
 
 
 def bias_test(scene, template, model, priors, n, key, **fit_kwargs):
