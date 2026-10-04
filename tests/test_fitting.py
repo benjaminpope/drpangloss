@@ -1,3 +1,5 @@
+import warnings
+
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -6,7 +8,7 @@ import numpyro.distributions as dist
 import pytest
 
 from virgil._precision import cast_tree, run_in
-from virgil.coverage import ami_grid_record
+from virgil.coverage import ami_grid_record, vlti_oidata
 from virgil.fitting import _Objective, fit
 from virgil.imaging import TSV, Centroid, MaxEntropy, image_priors
 from virgil.likelihood import numpyro_model, whitened_residuals
@@ -331,6 +333,35 @@ def test_numpyro_model_samples_noise_terms():
     model = numpyro_model(START, PRIORS, DATA, noise=noise)
     trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     assert "noise.vis_scale" in trace
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_a_start_at_an_exact_optimum_is_converged(method):
+    # Noise-free data and the true parameters: chi2 ~ 0, gradient ~ rounding
+    # noise. A purely relative stopping test never passes here.
+    # Built in float64, so that the data really are the model's output.
+    with jax.enable_x64(True):
+        truth = BinaryModelCartesian(4.97, -3.36, 0.05)
+        clean = vlti_oidata(
+            wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6)
+        ).with_model(truth)
+        priors = {
+            "dra": dist.Uniform(-60.0, 60.0),
+            "ddec": dist.Uniform(-60.0, 60.0),
+            "flux": dist.Uniform(0.0, 1.0),
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = fit(truth, priors, clean, method=method)
+    assert result.info["converged"] is True
+    # L-BFGS tests the starting gradient before its first step, so an
+    # optimal start must not be moved at all
+    assert (
+        result.info["steps"] == 0
+        if method == "lbfgs"
+        else result.info["steps"] <= 3
+    )
+    assert onp.max(result.info["chi2"]) < 1e-12
 
 
 def _rim_problem():

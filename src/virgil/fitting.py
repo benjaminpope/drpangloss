@@ -358,7 +358,10 @@ def fit(
         value (so that a fit started near a solution, e.g. along an
         L-curve, still converges). The tolerance is never below √eps of the
         dtype times that starting value (3.5e-4 times it in float32), which
-        rounding errors in the gradient would not let the fit reach.
+        rounding errors in the gradient would not let the fit reach, nor
+        below ``1e-6 * gtol``, so that a fit started exactly at a
+        zero-residual optimum, whose gradient is rounding noise, is
+        converged at once.
     max_step_size : float, optional
         L-BFGS moves no unconstrained coordinate by more than this per step
         (for a log-brightness pixel, a factor ``exp(max_step_size)``).
@@ -638,10 +641,16 @@ def _tolerance(gradient, gtol):
     where a fixed ``gtol = 1e-4`` was out of reach and LM ran all its
     steps. The √eps floor (3.5e-4 in float32, 1.5e-8 in float64) clears
     it, and is the usual stopping limit for finite-precision optimisers.
+    Neither part is allowed below ``1e-6 * gtol``.
     """
     largest = _largest(gradient)
     floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
-    return np.maximum(np.minimum(gtol, 1e-3 * largest), floor)
+    # Both floors scale with the starting gradient, which at an exact,
+    # zero-residual optimum is itself rounding noise; 1e-6 * gtol keeps
+    # such a start reachable (converged at once).
+    return np.maximum(
+        np.minimum(gtol, 1e-3 * largest), np.maximum(floor, 1e-6 * gtol)
+    )
 
 
 class _GradientStoppedLM(optx.LevenbergMarquardt):
@@ -774,8 +783,9 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
         )
         return count + 1, new, state, _largest(grad), moved
 
-    inf = np.asarray(np.inf, dtype=float)
-    start = (0, z0, optimiser.init(z0), inf, np.asarray(True))
+    # The start itself may already be a stationary point.
+    start_gradient = _largest(jax.grad(loss)(z0))
+    start = (0, z0, optimiser.init(z0), start_gradient, np.asarray(True))
     count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
     return z, count, gradient <= tolerance
 
