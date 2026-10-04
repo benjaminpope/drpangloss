@@ -166,7 +166,8 @@ def test_a_grid_search_runs_on_v2_alone():
     assert onp.all(onp.isfinite(grid))
     i, j = onp.unravel_index(onp.argmax(grid), grid.shape)
     peak = axis[[i, j]]
-    assert onp.allclose(onp.abs(peak), [4.0, 3.0])
+    # the companion or its point reflection, and no other sign pattern
+    assert onp.allclose(peak, [4.0, -3.0]) or onp.allclose(peak, [-4.0, 3.0])
 
 
 def test_epochs_split_without_phases():
@@ -204,3 +205,37 @@ def test_files_with_and_without_phases_are_not_merged(tmp_path):
         warnings.simplefilter("ignore")
         with pytest.raises(ValueError, match="Some files have phases"):
             read_oifits([v2_only, with_phases])
+
+
+def test_phases_without_their_errors_are_refused():
+    with pytest.raises(ValueError, match="d_phi"):
+        OIData(_v2_dict(phi=onp.zeros((len(PAIRS), WAVES.size))))
+    with pytest.raises(ValueError, match="d_phi"):
+        OIData(_v2_dict(d_phi=onp.ones((len(PAIRS), WAVES.size))))
+
+
+def test_closure_phases_alone_all_flagged_leave_no_data():
+    """A closure-phase-only dataset (no visibilities) with every closure
+    phase flagged has no data at all: refused, not fitted to the prior."""
+    from virgil.oidata import cp_indices
+
+    tris = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
+    i1, i2, i3 = cp_indices(PAIRS, tris)
+    u, v = _baselines()
+    record = {
+        "u": u,
+        "v": v,
+        "wavel": 2.0e-6,
+        "vis": onp.zeros(0),
+        "d_vis": onp.zeros(0),
+        "phi": onp.zeros(len(tris)),
+        "d_phi": onp.full(len(tris), 0.01),
+        "phi_flag": onp.ones(len(tris), bool),
+        "i_cps1": i1,
+        "i_cps2": i2,
+        "i_cps3": i3,
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match="No unflagged data"):
+            OIData(record)

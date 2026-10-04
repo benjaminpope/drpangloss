@@ -170,6 +170,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             default_unit="rad",
         )
         phi, d_phi = onp.asarray(phi), onp.asarray(d_phi)
+        # (Projected phases may have fewer values than raw errors, so only
+        # one of the two being empty is an error.)
+        if (phi.size == 0) != (d_phi.size == 0):
+            raise ValueError(
+                f"phi has {phi.size} values but d_phi has {d_phi.size}: give "
+                "both, or neither for visibility-only data."
+            )
 
         indices = [data.get(key) for key in ("i_cps1", "i_cps2", "i_cps3")]
         if any(index is None for index in indices):
@@ -269,6 +276,11 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
                 indices = [index[keep] for index in indices]
             else:
                 phi_index = onp.flatnonzero(keep)
+        if vis.size == 0 and phi.size == 0:
+            raise ValueError(
+                "No unflagged data: every visibility and every phase is "
+                "flagged (or not finite), or there are none."
+            )
 
         self.u = np.asarray(u)
         self.v = np.asarray(v)
