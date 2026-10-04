@@ -40,6 +40,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
       members:
         - __init__
         - flatten_data
+        - has_phases
         - n_independent
         - standardize_model
         - to_vis
