@@ -2600,6 +2600,9 @@ notebooks = [
     { name = "pandas" },
     { name = "tqdm" },
 ]
+orbits = [
+    { name = "jaxoplanet" },
+]
 plots = [
     { name = "chainconsumer" },
     { name = "pandas" },
@@ -2622,7 +2625,7 @@ requires-dist = [
     { name = "ipywidgets", marker = "extra == 'notebooks'", specifier = ">=8.0" },
     { name = "jax", specifier = ">=0.8.0" },
     { name = "jaxbessel", specifier = ">=0.2.0" },
-    { name = "jaxoplanet", marker = "extra == 'integrations'", specifier = ">=0.1.0" },
+    { name = "jaxoplanet", marker = "extra == 'orbits'", specifier = ">=0.1.0" },
     { name = "lineax", specifier = ">=0.1.0" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
@@ -2641,13 +2644,14 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.13" },
     { name = "tqdm", marker = "extra == 'notebooks'", specifier = ">=4.66" },
     { name = "twine", marker = "extra == 'dev'" },
+    { name = "virgil-astro", extras = ["orbits"], marker = "extra == 'integrations'" },
     { name = "virgil-astro", extras = ["plots"], marker = "extra == 'test'" },
     { name = "virgil-astro", extras = ["plots", "integrations"], marker = "extra == 'notebooks'" },
     { name = "virgil-astro", extras = ["test", "docs"], marker = "extra == 'dev'" },
     { name = "zensical", marker = "extra == 'docs'", specifier = ">=0.0.62,<0.1" },
     { name = "zodiax", specifier = ">=0.4.1" },
 ]
-provides-extras = ["plots", "legacy", "integrations", "test", "notebooks", "docs", "dev"]
+provides-extras = ["plots", "legacy", "orbits", "integrations", "test", "notebooks", "docs", "dev"]
 
 [[package]]
 name = "virtualenv"

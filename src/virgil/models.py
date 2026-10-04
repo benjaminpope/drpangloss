@@ -46,6 +46,7 @@ from ._geometry import (
 )
 from . import _elr
 from ._utils import concrete, dtor, mas2rad
+from .orbits import _days_since
 from .spectra import Spectrum, _planck_ratio, flux_at, reference_flux
 
 
@@ -217,6 +218,25 @@ class SourceModel(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         evaluate it here.
         """
         return 1.0
+
+    @property
+    def time_dependent(self):
+        """Whether the model changes with time (it contains an
+        [`Attached`][virgil.models.Attached] component). Such a model is
+        evaluated with [`at`][virgil.models.SourceModel.at], which
+        [`OIData.model`][virgil.oidata.OIData.model] does sample by sample."""
+        return False
+
+    def at(self, mjd, t_ref=0.0):
+        """This model at time ``t_ref + mjd`` (days, MJD).
+
+        The time is split so that it keeps its precision: ``t_ref`` is a
+        float64 number and ``mjd`` may be small offsets from it, even in
+        float32 (as [`OIData`][virgil.oidata.OIData] passes them). For a
+        single time, ``model.at(60500.3)`` is enough. A model that does not
+        change with time returns itself.
+        """
+        return self
 
     def is_physical(self):
         """Whether the model is physically valid, as a (traceable) boolean.
@@ -1126,27 +1146,60 @@ class GravityDarkenedStar(Component):
         x, y, w, _ = self._surface()
         return _elr.visibilities(x, y, w, uu, vv)
 
+    # sub-pixel samples per pixel side when rasterising the image
+    _image_oversample = 4
+
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        if self.t_pole is None:
-            x, y, w, _ = self._surface()
-        else:  # drawn at wavel0
-            x, y, w = self._planck_weights(self.wavel0)
-        # Index formulas inverted from image_coordinates: x falls with the
-        # column and y with the row, from the (0, 0) pixel.
-        col = (xx[0, 0] - x) / pixel_scale_mas
-        row = (yy[0, 0] - y) / pixel_scale_mas
+        """Rasterise the faceted surface, flat-shaded per triangle.
+
+        Each pixel averages ``_image_oversample`` squared sub-pixel samples
+        of the surface brightness, so the limb is anti-aliased. A sample
+        takes the intensity of the front-facing triangle that contains it in
+        projection (those do not overlap, so no depth sorting is needed) and
+        0 outside the outline. This is what ``plot_surface`` draws and what
+        the visibilities transform, as opposed to splatting the barycentres
+        onto pixels, which blurs the limb and aliases against the mesh.
+        The sum matches the total weight of the DFT's point sources.
+        """
+        *_, teff, (pts, tri, cosine, intensity) = self._surface(
+            return_mesh=True
+        )
+        if self.t_pole is not None:  # drawn at wavel0
+            intensity = self._planck_intensity(teff, self.wavel0)
+        px, py = pts[tri, 0], pts[tri, 1]  # (n_tri, 3) corners on the sky
+        ax, ay = px[:, 0], py[:, 0]
+        e1x, e1y = px[:, 1] - ax, py[:, 1] - ay
+        e2x, e2y = px[:, 2] - ax, py[:, 2] - ay
+        det = e1x * e2y - e1y * e2x
+        # back-facing and degenerate triangles never contain a sample
+        valid = (cosine > 0) & (det != 0)
+        inv = 1.0 / np.where(valid, det, 1.0)
+        value = np.where(valid, intensity, 0.0)
+
+        def sample_row(pos):
+            sx, sy = pos[0] - ax[:, None], pos[1] - ay[:, None]
+            wb = (sx * e2y[:, None] - sy * e2x[:, None]) * inv[:, None]
+            wc = (e1x[:, None] * sy - e1y[:, None] * sx) * inv[:, None]
+            inside = valid[:, None] & (wb >= 0) & (wc >= 0) & (wb + wc <= 1)
+            hits = np.sum(inside, axis=0)
+            # a sample exactly on a shared edge counts once, not twice
+            total = np.sum(np.where(inside, value[:, None], 0.0), axis=0)
+            return total / np.maximum(hits, 1)
+
+        # sub-pixel sample positions; the pixel centres are the grid xx, yy
+        s = self._image_oversample
         nrow, ncol = xx.shape
-        c0, r0 = np.floor(col), np.floor(row)
-        fc, fr = col - c0, row - r0
-        image = np.zeros(xx.shape, dtype=w.dtype)
-        for dr, wr in ((0, 1.0 - fr), (1, fr)):
-            for dc, wc in ((0, 1.0 - fc), (1, fc)):
-                rr, cc = r0.astype(int) + dr, c0.astype(int) + dc
-                inside = (rr >= 0) & (rr < nrow) & (cc >= 0) & (cc < ncol)
-                image = image.at[
-                    np.clip(rr, 0, nrow - 1), np.clip(cc, 0, ncol - 1)
-                ].add(np.where(inside, w * wr * wc, 0.0))
-        return image
+        frac = ((np.arange(s) + 0.5) / s - 0.5) * pixel_scale_mas
+        sx = (xx[0, :, None] + frac).reshape(-1)  # (ncol * s,)
+        sy = (yy[:, 0, None] + frac).reshape(-1)  # (nrow * s,)
+        # one sub-row of samples at a time bounds memory by ncol * s * n_tri
+        sub_rows = jax.lax.map(
+            lambda y: sample_row((sx, y)), sy.astype(intensity.dtype)
+        )
+        mean = sub_rows.reshape(nrow, s, ncol, s).mean(axis=(1, 3))
+        # |normal| = 2 x area, so cosine carries twice the projected area
+        # in the DFT weights; the pixel area carries the same factor here
+        return 2.0 * pixel_scale_mas**2 * mean
 
     def plot_surface(self, ax=None, cmap="plasma"):
         """Plot the visible surface, coloured by its local brightness.
@@ -2055,6 +2108,16 @@ class System(SourceModel):
     def model(self, u, v, wavel):
         return self._mix(u, v, wavel, lambda c: c.model(u, v, wavel))
 
+    @property
+    def time_dependent(self):
+        return any(part.time_dependent for part in self.parts)
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        parts = tuple(part.at(mjd, t_ref) for part in self.parts)
+        return eqx.tree_at(lambda s: s.parts, self, parts)
+
     def model_on_grid(self, u, v, wavel, grid):
         return self._mix(
             u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
@@ -2143,6 +2206,170 @@ class Rotated(SourceModel):
 
     def is_physical(self):
         return self.source.is_physical()
+
+    @property
+    def time_dependent(self):
+        return self.source.time_dependent
+
+    def at(self, mjd, t_ref=0.0):
+        if not self.time_dependent:
+            return self
+        return eqx.tree_at(
+            lambda r: r.source, self, self.source.at(mjd, t_ref)
+        )
+
+
+_FRAME_ANGLES = (
+    "line_pa",
+    "towards_primary",
+    "line_tilt",
+    "node_pa",
+    "inc",
+    "apparent_inc",
+)
+
+
+class Attached(SourceModel):
+    """A component placed and oriented in the frame of a binary's orbit.
+
+    At each time the component is moved to its anchor on the orbit, and
+    its angle attributes are set from angles of the binary frame (see
+    [`KeplerOrbit.frame`][virgil.orbits.KeplerOrbit.frame]). A companion
+    on its orbit is ``Attached(PointSource(flux), orbit)``; a disc around
+    it in the orbital plane, brighter on the side facing the primary, is
+
+    ``Attached(ModulatedGaussianRim(...), orbit, bind={"pa": "node_pa",
+    "inc": "apparent_inc", "az_pas": "towards_primary"})``.
+
+    The model changes with time, so it is evaluated through
+    [`at`][virgil.models.SourceModel.at]; inside a
+    [`System`][virgil.models.System],
+    [`OIData.model`][virgil.oidata.OIData.model] evaluates every sample at
+    its own time. Components that should share one orbit (a companion and
+    its disc) are best built from shared parameters in a model function
+    (see [`fit`][virgil.fitting.fit]).
+
+    Parameters
+    ----------
+    component : Component
+        The component (its ``dra``, ``ddec`` and bound angles are set).
+    orbit : KeplerOrbit
+        The orbit of the secondary about the primary (the scene's origin).
+    anchor : {"secondary", "primary"} or float, optional
+        Where the component sits: on the secondary (default), on the
+        primary, or at this fraction of the way from the primary to the
+        secondary (e.g. ``q / (1 + q)`` for the barycentre).
+    bind : dict, optional
+        ``{attribute: frame angle}``, e.g. ``{"pa": "line_pa"}``. Frame
+        angles: ``line_pa``, ``towards_primary``, ``line_tilt``,
+        ``node_pa``, ``inc`` and ``apparent_inc``. An ``az_pas`` binding is a
+        sky position angle, converted to the component's deprojected rim
+        angle after its ``pa`` and ``inc`` are set (as
+        [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]
+        measures it).
+    offsets : dict, optional
+        ``{attribute: degrees}`` added to the bound angles (fittable, e.g. a
+        skew); zero by default.
+    """
+
+    component: SourceModel
+    orbit: Any
+    offsets: dict
+    bind: tuple = eqx.field(static=True)
+    anchor: Any = eqx.field(static=True)
+
+    def __init__(
+        self, component, orbit, anchor="secondary", bind=None, offsets=None
+    ):
+        bind = dict(bind or {})
+        for attr, angle in bind.items():
+            if not hasattr(component, attr):
+                raise ValueError(
+                    f"{type(component).__name__} has no attribute {attr!r} "
+                    "to bind."
+                )
+            if angle not in _FRAME_ANGLES:
+                raise ValueError(
+                    f"Unknown frame angle {angle!r}; use one of "
+                    f"{', '.join(_FRAME_ANGLES)}."
+                )
+        offsets = dict(offsets or {})
+        unknown = set(offsets) - set(bind)
+        if unknown:
+            raise ValueError(
+                f"Offsets for unbound attributes: {sorted(unknown)}."
+            )
+        if anchor not in ("primary", "secondary"):
+            anchor = float(anchor)
+        self.component = component
+        self.orbit = orbit
+        self.anchor = anchor
+        # az_pas last: it is deprojected with the bound pa and inc.
+        self.bind = tuple(sorted(bind.items(), key=lambda b: b[0] == "az_pas"))
+        self.offsets = {
+            attr: np.asarray(offsets.get(attr, 0.0), dtype=float)
+            for attr in bind
+        }
+
+    @property
+    def time_dependent(self):
+        return True
+
+    def at(self, mjd, t_ref=0.0):
+        dt = _days_since(mjd, self.orbit.t_ref - t_ref)
+        dra, ddec, _ = self.orbit._relative(dt)
+        fraction = {"primary": 0.0, "secondary": 1.0}.get(
+            self.anchor, self.anchor
+        )
+        out = eqx.tree_at(
+            lambda c: (c.dra, c.ddec),
+            self.component,
+            (fraction * dra, fraction * ddec),
+        )
+        frame = self.orbit._frame(dt)
+        for attr, angle in self.bind:
+            value = frame[angle] + self.offsets[attr]
+            if attr == "az_pas":
+                value = _rim_angle(value, out.pa, out.inc)
+            old = getattr(out, attr)
+            out = eqx.tree_at(
+                lambda c: getattr(c, attr),
+                out,
+                np.broadcast_to(value, np.shape(old)).astype(
+                    np.result_type(old)
+                ),
+            )
+        return out
+
+    def model(self, u, v, wavel):
+        raise ValueError(
+            "Attached changes with time: evaluate model.at(mjd), or let "
+            "OIData.model evaluate each sample at its own time."
+        )
+
+    def _image(self, xx, yy, pixel_scale_mas):
+        raise ValueError(
+            "Attached changes with time: render model.at(mjd) instead."
+        )
+
+    def _weight(self, wavel=None):
+        return self.component._weight(wavel)
+
+    def is_physical(self):
+        return self.component.is_physical()
+
+
+def _rim_angle(sky_pa, pa, inc):
+    """The in-plane rim angle whose projection points at ``sky_pa``.
+
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] measures
+    ``az_pas - pa`` in the deprojected disc and then compresses its minor
+    axis by ``cos(inc)``, so a sky angle is deprojected first.
+    """
+    d = np.deg2rad(sky_pa - pa)
+    return pa + np.rad2deg(
+        np.arctan2(np.sin(d) / np.cos(np.deg2rad(inc)), np.cos(d))
+    )
 
 
 _RESERVED_COMPONENT_NAMES = frozenset({"components", "names", "parts"})

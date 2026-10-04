@@ -389,7 +389,7 @@ Decided 2026-10-03: serious GRAVITY-specific development is its own project. On 
 
 The core keeps generic interfaces: a primary beam (6a), low-rank nuisance modes (6d), and an `insname` selector. It never imports virgil-vlti. Questions for the instrument team are in [`questions_for_gravity_team.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/questions_for_gravity_team.md).
 
-## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
+## Stage 6a.0: times and frames in `OIData` (done; branch `stage6a0-times`)
 From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
 - **Per-sample times and frames.** `OIData` gains `mjd` and `frame` per sample.
 - **Triangle matching.** Closure triangles are matched to baselines by frame (`INT_TIME`), not by nearest MJD.
@@ -398,6 +398,13 @@ From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-
 **Tests:**
 - Multi-file round trips keep `mjd` and `frame`.
 - Triangles match correctly on files whose MJDs differ slightly between OI_VIS2 and OI_T3.
+
+**Log:**
+- Triangle matching within an exposure (twice the longest `INT_TIME`) landed first, in #130, for the GRAVITY reader blocker.
+- Frames are the baselines that closure phases tie together (a union-find in the reader's baseline lookup), plus rows of one `INSNAME` at the same MJD. On all 136 per-instrument reads of the Apep GRAVITY archive, every file gets exactly one frame per exposure.
+- `OIData` stores `t_ref` (static float64) and `dt` (days, a leaf) rather than raw MJD, per S §2.5 item 4; `frame` is int32, the same in both x64 modes.
+- `split_by_epoch` slices the stored observables and rebuilds `ClosureNoise`, so the parts' log-likelihoods add up to the whole (tested). It refuses projected data.
+- Not done: closure-phase legs from the OI_T3 coordinates (the reader still uses the matched VIS2 rows' (u, v); TODO in `oifits.py`).
 
 ## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 25–30 h by its own table)
 Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
@@ -427,6 +434,13 @@ Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
 | OIFITS position-angle round trips (GRAVITY layout; AMICAL and virgil writers) | 2, then 2 per real anchor |
 
 **Later:** physical orbital skew from aberration (2 h), once a system near periastron needs it.
+
+**Log:**
+- `orbits.py` (item 1): `KeplerOrbit` and `ThieleInnesOrbit`. jaxoplanet only solves Kepler's equation (`jaxoplanet.core.kepler`, with its exact derivatives); positions come from our Thiele–Innes constants (§2.4), so every convention lives in `orbits.py`, and `OrbitalBody` appears only in the converters. Velocities are exact JVPs. `[orbits]` is a new extra (and `integrations` includes it). Tests: §5.1.1 (an independent NumPy ephemeris, 1e-10 of a in float64, 1e-5 in float32) and §5.2.1–6; §5.2.7–8 come with `Attached` and the starting orbits. The α Cen and interferometric anchors (§5.1.2–3) wait for Ben's choice.
+- Starting orbits (item 2): `PositionData(mjd, dra, ddec, cov)` and `.from_sep_pa`, with `loglike` and `whitened_residuals`; `starting_orbits(positions, periods, eccs, n_phase, n_best)` vmaps a whitened least-squares solve for (A, B, F, G) over the (P, e, t_peri) grid and returns the best `KeplerOrbit`s by χ² (Ω in [0°, 180°)). §5.2.8 passes (the true grid point, χ² ≈ 0); on 12 noisy epochs off the grid the best start is within 5% in period and 2 mas in position. Per-epoch positions come from the existing binary fits; a helper for that comes with the first real example.
+- `SourceModel.at` and `Attached` (items 5–6): `at(mjd, t_ref=0.0)` returns the model at time t_ref + mjd, so float32 offsets keep their precision; static models return themselves (`time_dependent` is False) and keep the fast path. `System.at` and `Rotated.at` map over their parts. `OIData.model` vmaps a time-dependent model over samples (each at its own time); JAX computes the time-independent parts once. `Attached` anchors at the secondary, the primary or a fraction along r, binds attributes to `KeplerOrbit.frame` angles (with `az_pas` deprojected for the rim), and adds fitted offsets. Tests: an attached companion equals static binaries at each epoch; float32 with a t_ref 30 years away; the §5.2.7 orientation (bright side within 2° of the primary at three phases); gradients. Shared orbits for several components go through a model function.
+
+**Log (PA round trips):** §5.3.1, synthetic, in `tests/test_pa_round_trip.py`: a binary with flux ratio 0.2 is written in a GRAVITY layout (STA_INDEX 28/23/18/1, baselines from the highest index, five channels, three hour angles) and a 7-hole-mask layout, read back, and found by a grid search over the whole field: within 1° of its PA and fainter than the primary. A negative control (closure phases negated in the file) comes back 180° away, so the test can see a flip. AMICAL's writer is not tested yet (AMICAL is not in the test environment); real anchors (§5.3.2) are with the validation plan (virgil-validation#9).
 
 **Tests:**
 - Conventions and ephemerides: O §5.1–5.2.

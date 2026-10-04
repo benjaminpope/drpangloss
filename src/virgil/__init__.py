@@ -48,6 +48,7 @@ from . import (  # noqa: E402
     models,
     oidata,
     oifits,
+    orbits,
     plotting,
     scenes,
     spectra,
@@ -81,6 +82,7 @@ from .limits import (  # noqa: E402
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
     EllipticalGaussian,
@@ -105,10 +107,17 @@ from .models import (  # noqa: E402
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
+from .orbits import (  # noqa: E402
+    KeplerOrbit,
+    PositionData,
+    ThieleInnesOrbit,
+    starting_orbits,
+)
 from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
 __all__ = [
+    "Attached",
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
@@ -122,16 +131,19 @@ __all__ = [
     "GravityDarkenedStar",
     "HarmonixModel",
     "Image",
+    "KeplerOrbit",
     "LimbDarkenedDisk",
     "ModulatedGaussianRim",
     "OIData",
     "PointSource",
+    "PositionData",
     "PowerLaw",
     "QuadraticLimbDarkenedDisk",
     "Resolved",
     "SourceModel",
     "SquareRootLimbDarkenedDisk",
     "System",
+    "ThieleInnesOrbit",
     "UniformDisk",
     "absil_limits",
     "circular_support",
@@ -156,6 +168,7 @@ __all__ = [
     "radial_profile",
     "read_oifits",
     "ruffio_upperlimit",
+    "starting_orbits",
     "whitened_residuals",
     "write_oifits",
 ]

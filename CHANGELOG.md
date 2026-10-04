@@ -5,6 +5,35 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
+## Unreleased
+
+### Added
+
+- **Times and frames.** `OIData` keeps each sample's time (`mjd`, stored as
+  `dt` days since a float64 `t_ref`) and exposure (`frame`) from OIFITS, and
+  dict input may give `mjd` and `frame`. A frame is the baselines that
+  closure phases tie together; by default all its samples get the frame's
+  mean time (`read_oifits(frame_mjd="row")` keeps each row's).
+  `OIData.epochs(gap_days=0.5)` labels nights, and `split_by_epoch()` returns
+  one `OIData` per night. This is the groundwork for orbits and per-frame
+  calibration terms.
+- **Orbits.** `KeplerOrbit` (period, time of periastron, eccentricity,
+  inclination, the secondary's ω, the receding node's Ω, angular semimajor
+  axis) gives the secondary's `relative` position and exact
+  `relative_velocity` in virgil's sky conventions, and `ThieleInnesOrbit` the
+  linear form used for starting orbits, with converters between them and to
+  jaxoplanet, which solves Kepler's equation (the new `[orbits]` extra).
+  `PositionData` holds measured positions with their covariances (or
+  separations and position angles), and `starting_orbits` finds good
+  starting orbits for them by an exact Thiele–Innes least-squares solve on a
+  grid of period, eccentricity and time of periastron.
+- **Scenes that move.** `SourceModel.at(mjd)` gives a model at a time, and
+  `Attached(component, orbit, anchor, bind, offsets)` places a component on a
+  binary's orbit and binds its angles to the binary frame (line of centres,
+  line of nodes, inclination, the side facing the primary). `OIData.model`
+  evaluates a time-dependent model at each sample's own time; static models
+  keep their fast path.
+
 ## 0.2.0 (not yet released)
 
 ### Renamed: drpangloss is now virgil

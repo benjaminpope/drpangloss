@@ -44,7 +44,7 @@ _DEFAULT_PHASE_UNIT = "deg"
 # === READING ===
 
 
-def read_oifits(source, target=None, insname=None):
+def read_oifits(source, target=None, insname=None, frame_mjd="mean"):
     """Read an OIFITS file into a record for [`OIData`][virgil.oidata.OIData].
 
     Parameters
@@ -67,6 +67,10 @@ def read_oifits(source, target=None, insname=None):
         merged: reading such a file without ``insname`` raises an error.
         The two polarisations of the science channel are independent
         measurements and may be read together.
+    frame_mjd : {"mean", "row"}, optional
+        The time given to each sample. ``"mean"`` (the default) gives every
+        sample of a frame (one exposure; see Notes) the mean ``MJD`` of the
+        frame's rows; ``"row"`` keeps each row's own ``MJD``.
 
     Returns
     -------
@@ -77,16 +81,25 @@ def read_oifits(source, target=None, insname=None):
         boolean ``vis_flag`` (True = bad), the phases ``phi``/``d_phi`` in
         radians with ``phi_flag``, the closure-phase indices
         ``i_cps1``/``i_cps2``/``i_cps3`` (or ``None`` for absolute phases),
-        and the flags ``v2_flag`` and ``cp_flag``.
+        the flags ``v2_flag`` and ``cp_flag``, and per sample the time
+        ``mjd`` (days, float64) and the integer ``frame``.
 
     Notes
     -----
     Squared visibilities (``OI_VIS2``) are preferred over amplitudes
     (``OI_VIS``), and closure phases (``OI_T3``) over absolute phases
-    (``OI_VIS`` ``VISPHI``). A file with only ``OI_T3`` gives closure phases
-    alone: its baselines come from the triangle coordinates, and ``vis`` is
-    empty. Samples are flagged when their ``FLAG`` is set
-    or their value or uncertainty is not finite.
+    (``OI_VIS`` ``VISPHI``). ``VISAMP`` is read only when its table's
+    ``AMPTYP`` is ``'absolute'``, and ``VISPHI`` only when its
+    ``PHITYP`` is ``'absolute'``; a missing keyword counts as
+    ``'absolute'``, as in OIFITS1. Differential amplitudes and phases,
+    and correlated fluxes, raise a ``ValueError``. Nothing in the
+    standard marks ``OI_VIS2`` ``VIS2DATA`` that holds squared correlated
+    flux rather than squared visibility, as in MATISSE products reduced
+    with ``corrFlux=TRUE``; such data are read as visibilities, so
+    calibrate them (e.g. with virgil-vlti) before fitting. A file with
+    only ``OI_T3`` gives closure phases alone: its baselines come from the
+    triangle coordinates, and ``vis`` is empty. Samples are flagged when
+    their ``FLAG`` is set or their value or uncertainty is not finite.
 
     Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
     baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
@@ -95,6 +108,11 @@ def read_oifits(source, target=None, insname=None):
     seconds if there is none), since pipelines such as GRAVITY's average different
     frames of one exposure for each table. The baselines must be stored in
     that orientation.
+
+    A frame is one exposure of one instrument: the baselines that closure
+    phases tie together, together with any rows of the same ``INSNAME`` at
+    the same ``MJD`` (within about 9 seconds). Frames are numbered within
+    the record, so different files never share one.
 
     All files in a list must hold the same kinds of observable (squared
     visibilities or amplitudes; closure or absolute phases).
@@ -106,6 +124,10 @@ def read_oifits(source, target=None, insname=None):
     ):
         if not source:
             raise ValueError("read_oifits() got an empty list of files.")
+        if frame_mjd not in ("mean", "row"):
+            raise ValueError(
+                f"frame_mjd must be 'mean' or 'row', not {frame_mjd!r}."
+            )
         if target is not None and not isinstance(target, str):
             raise TypeError(
                 "With several files, choose the target by name: TARGET_ID "
@@ -113,12 +135,16 @@ def read_oifits(source, target=None, insname=None):
                 "select different stars in different files."
             )
         return _concat_records(
-            [read_oifits(s, target, insname) for s in source]
+            [read_oifits(s, target, insname, frame_mjd) for s in source]
+        )
+    if frame_mjd not in ("mean", "row"):
+        raise ValueError(
+            f"frame_mjd must be 'mean' or 'row', not {frame_mjd!r}."
         )
     if isinstance(source, (str, os.PathLike)):
         with fits.open(source, memmap=False) as hdul:
-            return _read_hdulist(hdul, target, insname)
-    return _read_hdulist(source, target, insname)
+            return _read_hdulist(hdul, target, insname, frame_mjd)
+    return _read_hdulist(source, target, insname, frame_mjd)
 
 
 def _extname(hdu):
@@ -302,15 +328,56 @@ def _phase_scale(hdu, column):
 
 
 class _BaselineLookup:
-    """Find the sample index of a baseline at a given epoch and channel."""
+    """Find the sample index of a baseline at a given epoch and channel.
+
+    It also groups the baseline rows into frames (exposures): rows that a
+    closure phase ties together (``link``), and rows of one ``INSNAME`` at
+    the same ``MJD``.
+    """
 
     def __init__(self):
         self._rows = {}
+        self._order = []  # (start, nwave, mjd, ins) of every row, in order
+        self._parent = {}  # union-find over row starts
 
     def add(self, ins, pair, mjd, exposure, start, nwave):
         key = (ins, int(pair[0]), int(pair[1]))
         row = (float(mjd), exposure, start, nwave)
         self._rows.setdefault(key, []).append(row)
+        self._order.append((start, nwave, float(mjd), ins))
+        self._parent[start] = start
+
+    def _root(self, start):
+        while self._parent[start] != start:
+            self._parent[start] = self._parent[self._parent[start]]
+            start = self._parent[start]
+        return start
+
+    def link(self, *starts):
+        """Put the rows starting at ``starts`` in one frame."""
+        roots = [self._root(start) for start in starts]
+        for root in roots[1:]:
+            self._parent[root] = roots[0]
+
+    def times(self, frame_mjd):
+        """Per-sample ``(mjd, frame)``; see ``read_oifits``."""
+        by_ins = {}
+        for start, _, mjd, ins in self._order:
+            by_ins.setdefault(ins, []).append((mjd, start))
+        for rows in by_ins.values():
+            rows.sort()
+            for (mjd0, a), (mjd1, b) in zip(rows, rows[1:]):
+                if mjd1 - mjd0 <= _MJD_TOLERANCE:
+                    self.link(a, b)
+        roots = [self._root(start) for start, *_ in self._order]
+        labels = {root: k for k, root in enumerate(dict.fromkeys(roots))}
+        frame = onp.array([labels[root] for root in roots])
+        row_mjd = onp.array([mjd for _, _, mjd, _ in self._order])
+        if frame_mjd == "mean":
+            sums = onp.bincount(frame, weights=row_mjd)
+            row_mjd = (sums / onp.bincount(frame))[frame]
+        nwave = [n for _, n, _, _ in self._order]
+        return onp.repeat(row_mjd, nwave), onp.repeat(frame, nwave)
 
     def find(self, ins, pair, mjd):
         """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
@@ -325,6 +392,21 @@ class _BaselineLookup:
         if abs(best[0] - mjd) > window:
             return None
         return best[2], best[3]
+
+
+def _check_amptyp(hdu):
+    """Refuse a ``VISAMP`` that is not an absolute visibility amplitude."""
+    amptyp = str(hdu.header.get("AMPTYP", "absolute")).strip().lower()
+    if amptyp != "absolute":
+        raise ValueError(
+            f"VISAMP in this OI_VIS table has AMPTYP = {amptyp!r}, not "
+            "'absolute'. A differential visibility is normalised across "
+            "the band and a correlated flux is in flux units (e.g. MATISSE "
+            "products reduced with corrFlux=TRUE), so neither can be fitted "
+            "as a visibility amplitude. Calibrate the amplitudes into "
+            "visibilities first, or fit the closure phases (OI_T3) alone "
+            "by removing the OI_VIS table."
+        )
 
 
 def _read_visibilities(tables, wavelengths, target_id):
@@ -350,6 +432,8 @@ def _read_visibilities(tables, wavelengths, target_id):
         wave = _table_wavelengths(hdu, wavelengths)
         nwave = wave.size
         mask = _row_mask(hdu, target_id)
+        if extname == "OI_VIS" and onp.any(mask):
+            _check_amptyp(hdu)
         values = _column(hdu, value_col, mask, nwave)
         errors = _column(hdu, error_col, mask, nwave)
         flag = _flags(hdu, mask, nwave, values, errors)
@@ -448,6 +532,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup):
         ins = _insname(hdu)
         channels = onp.arange(nwave)
         for row, (a, b, c) in enumerate(sta_index):
+            starts = []
             for leg, pair in zip(i_cps, ((a, b), (b, c), (a, c))):
                 found = lookup.find(ins, pair, mjd[row])
                 if found is None or found[1] != nwave:
@@ -467,6 +552,8 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup):
                         f"table with the same wavelengths.{hint}"
                     )
                 leg.append(found[0] + channels)
+                starts.append(found[0])
+            lookup.link(*starts)
         phi.append(values.reshape(-1))
         d_phi.append(errors.reshape(-1))
         phi_flag.append(flag.reshape(-1))
@@ -534,7 +621,7 @@ def _read_absolute_phases(tables, wavelengths, target_id, lookup, n_samples):
     }
 
 
-def _read_hdulist(hdul, target, insname=None):
+def _read_hdulist(hdul, target, insname=None, frame_mjd="mean"):
     tables = _select_insname(_collect_tables(hdul), insname)
     wavelengths = _wavelength_tables(tables)
     target_id = _select_target(tables, target, ("OI_VIS2", "OI_VIS", "OI_T3"))
@@ -555,6 +642,7 @@ def _read_hdulist(hdul, target, insname=None):
             "OIFITS file has no phase data (OI_T3, or VISPHI in OI_VIS)."
         )
 
+    record["mjd"], record["frame"] = lookup.times(frame_mjd)
     unique_wavel = onp.unique(record["wavel"])
     if unique_wavel.size == 1:
         record["wavel"] = unique_wavel
@@ -583,8 +671,13 @@ def _concat_records(records):
             for r in records
         ]
     )
-    for key in ("phi", "d_phi", "phi_flag"):
+    for key in ("phi", "d_phi", "phi_flag", "mjd"):
         out[key] = onp.concatenate([onp.asarray(r[key]) for r in records])
+    # Frames are numbered per file: shift them so files never share one.
+    shifts = onp.cumsum([0] + [r["frame"].max() + 1 for r in records[:-1]])
+    out["frame"] = onp.concatenate(
+        [r["frame"] + shift for r, shift in zip(records, shifts)]
+    )
     if first["cp_flag"]:
         offsets = onp.cumsum([0] + [onp.size(r["u"]) for r in records[:-1]])
         for key in ("i_cps1", "i_cps2", "i_cps3"):

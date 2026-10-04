@@ -1,5 +1,6 @@
 """OIFITS reading/writing and the OIData observables built from it."""
 
+import jax
 import jax.numpy as np
 import numpy as onp
 import pyoifits
@@ -382,6 +383,54 @@ def test_differential_visphi_is_not_read_as_absolute(tmp_path):
         read_oifits(hdul)
 
 
+def _amplitude_file(amptyp):
+    from virgil.oifits import build_hdulist
+
+    tables = _tables()
+    u, v = _baselines()
+    tables["OI_VIS"] = {
+        "VISAMP": onp.full(u.size, 0.8),
+        "VISAMPERR": onp.full(u.size, 1e-3),
+        "VISPHI": onp.zeros(u.size),
+        "VISPHIERR": onp.full(u.size, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+    }
+    del tables["OI_VIS2"]
+    hdul = build_hdulist(tables)
+    for hdu in hdul:
+        if hdu.header.get("EXTNAME", "").strip() == "OI_VIS":
+            if amptyp is None:
+                del hdu.header["AMPTYP"]
+            else:
+                hdu.header["AMPTYP"] = amptyp
+    return hdul
+
+
+@pytest.mark.parametrize("amptyp", ["absolute", "ABSOLUTE ", None])
+def test_absolute_or_missing_amptyp_is_read_as_amplitude(amptyp):
+    record = read_oifits(_amplitude_file(amptyp))
+    assert not record["v2_flag"]
+    onp.testing.assert_allclose(record["vis"], 0.8)
+
+
+@pytest.mark.parametrize("amptyp", ["differential", "correlated flux"])
+def test_non_absolute_amptyp_is_not_read_as_amplitude(amptyp):
+    with pytest.raises(ValueError, match=f"AMPTYP = '{amptyp}'"):
+        read_oifits(_amplitude_file(amptyp))
+
+
+def test_amptyp_is_ignored_when_oi_vis2_is_read():
+    from virgil.oifits import build_hdulist
+
+    hdul = _amplitude_file("correlated flux")
+    hdul.append(
+        next(h for h in build_hdulist(_tables()) if h.name == "OI_VIS2")
+    )
+    assert read_oifits(hdul)["v2_flag"]
+
+
 def test_insname_selection_drops_emptied_table_types():
     from virgil.oifits import _collect_tables, _select_insname
 
@@ -462,3 +511,111 @@ def test_closure_only_rows_of_different_times_keep_their_own_baselines():
     record = read_oifits(hdul)
     assert record["u"].size == 2 * len(PAIRS)
     assert record["i_cps1"].size == 2 * n
+
+
+def _night(tmp_path, name, mjd):
+    tables = _tables(waves=(2.0e-6, 2.2e-6))
+    tables["info"]["MJD"] = mjd
+    return write_oifits(tables, tmp_path / name)
+
+
+def test_times_and_frames_survive_reading_several_files(tmp_path):
+    paths = [
+        _night(tmp_path, "a.oifits", 60000.2),
+        _night(tmp_path, "b.oifits", 60003.1),
+    ]
+    record = read_oifits(paths)
+    n = record["u"].size
+    assert record["mjd"].shape == record["frame"].shape == (n,)
+    assert record["mjd"].dtype == onp.float64
+    # One exposure per file, numbered apart.
+    assert onp.array_equal(onp.unique(record["frame"]), [0, 1])
+    data = OIData(paths)
+    assert data.t_ref == pytest.approx(60000.2, abs=1e-9)
+    assert onp.allclose(onp.unique(data.mjd), [60000.2, 60003.1], atol=1e-6)
+    assert onp.array_equal(data.epochs(), record["frame"])
+
+
+def test_a_frame_gets_one_time_by_default(tmp_path):
+    # GRAVITY stamps T3 and VIS2 rows of one exposure at different MJDs.
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    vis2, t3 = hdul["OI_VIS2"].data, hdul["OI_T3"].data
+    vis2["INT_TIME"] = 120.0
+    vis2["MJD"] = vis2["MJD"][0] + onp.arange(len(vis2)) * 20.0 / 86400.0
+    t3["MJD"] = vis2["MJD"][0] + 131.0 / 86400.0
+    mean = read_oifits(hdul)
+    assert onp.unique(mean["frame"]).size == 1
+    assert onp.unique(mean["mjd"]).size == 1
+    assert mean["mjd"][0] == pytest.approx(vis2["MJD"].mean())
+    rows = read_oifits(hdul, frame_mjd="row")
+    assert onp.unique(rows["mjd"]).size == len(vis2)
+
+
+def test_split_by_epoch_partitions_the_likelihood(tmp_path):
+    paths = [
+        _night(tmp_path, "a.oifits", 60000.2),
+        _night(tmp_path, "b.oifits", 60000.25),
+        _night(tmp_path, "c.oifits", 60003.1),
+    ]
+    data = OIData(paths)
+    noisy = data.with_model(TRUTH, key=jax.random.PRNGKey(1))
+    parts = noisy.split_by_epoch()
+    assert [onp.unique(p.frame).size for p in parts] == [2, 1]
+    assert sum(p.n_independent for p in parts) == noisy.n_independent
+    model = BinaryModelCartesian(dra=55.0, ddec=-35.0, flux=0.04)
+    whole = model_loglike(model, noisy)
+    assert sum(model_loglike(model, p) for p in parts) == pytest.approx(
+        whole, rel=1e-5
+    )
+
+
+def test_an_exposure_stays_in_one_epoch_with_row_times(tmp_path):
+    # With frame_mjd="row" a frame's samples have different times; a gap
+    # smaller than that spread must not split the frame.
+    from virgil.oifits import build_hdulist
+
+    hdul = build_hdulist(_tables())
+    vis2, t3 = hdul["OI_VIS2"].data, hdul["OI_T3"].data
+    vis2["INT_TIME"] = 120.0
+    vis2["MJD"] = vis2["MJD"][0] + onp.arange(len(vis2)) * 20.0 / 86400.0
+    t3["MJD"] = vis2["MJD"][0] + 60.0 / 86400.0
+    data = OIData(read_oifits(hdul, frame_mjd="row"))
+    assert onp.unique(data.mjd).size > 1
+    assert onp.all(data.epochs(gap_days=1e-5) == 0)
+    assert len(data.split_by_epoch(gap_days=1e-5)) == 1
+
+
+def test_dict_times_per_sample_for_several_channels():
+    waves = onp.array([2.0e-6, 2.2e-6])
+    u, v = _baselines()
+    cvis = onp.asarray(TRUTH.model(u[:, None], v[:, None], waves[None, :]))
+    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
+    per_sample = onp.repeat([60100.5, 60101.5], 3)[:, None] + 0 * waves
+    data = OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": waves,
+            "vis": onp.abs(cvis) ** 2,
+            "d_vis": onp.full(cvis.shape, 1e-3),
+            "phi": onp.angle(cvis[i1] * cvis[i2] / cvis[i3]),
+            "d_phi": onp.full((len(i1), 2), 1e-2),
+            "i_cps1": i1,
+            "i_cps2": i2,
+            "i_cps3": i3,
+            "mjd": per_sample,
+        }
+    )
+    assert onp.allclose(data.mjd, per_sample.reshape(-1))
+
+
+def test_dict_times_per_baseline_and_missing_times():
+    data = OIData(_dict_data(mjd=onp.full(6, 60100.5)))
+    assert onp.allclose(data.mjd, 60100.5)
+    assert onp.all(data.frame == 0)
+    with pytest.raises(ValueError, match="no times"):
+        OIData(_dict_data()).epochs()
+    with pytest.raises(ValueError, match="mjd has shape"):
+        OIData(_dict_data(mjd=onp.zeros(4)))
