@@ -56,6 +56,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     [`find_uv_grid`][virgil.oidata.find_uv_grid], e.g.
     ``eqx.tree_at(lambda d: d.uv_grid, data, find_uv_grid(data.u, data.v),
     is_leaf=lambda x: x is None)``.
+
+    Data read from OIFITS also keep their time and exposure per sample:
+    ``frame`` numbers the exposures (frames), :attr:`mjd` gives each
+    sample's time, and :meth:`epochs` and :meth:`split_by_epoch` group the
+    frames into nights. The time is stored as ``dt``, days since the static
+    float64 ``t_ref``, so that models of time see small numbers that keep
+    their precision in float32 (about 5 s over 1000 days).
     """
 
     u: jax.Array
@@ -74,10 +81,13 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
     phi_index: jax.Array | None
     uv_grid: UVGrid | None
     cp_noise: ClosureNoise | None
+    dt: jax.Array | None
+    frame: jax.Array | None
     observable_kind: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
+    t_ref: float | None = eqx.field(static=True)
 
     def __init__(self, data, target=None):
         """
@@ -113,6 +123,10 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
               ``observable_kind`` is an alias): the visibility channel that
               data and model are compared in. ``"auto"`` keeps the channel
               of ``vis``.
+            * ``mjd``, ``frame`` (optional): the time (days) and an integer
+              exposure label of each sample (or of each baseline, for
+              several channels). Without ``frame``, samples with the same
+              ``mjd`` form one frame.
             * ``vis_mat``, ``phi_mat`` (optional): linear operators of shape
               ``(n_out, n_in)`` projecting the channels into, e.g., kernel
               or DISCO observables. The ``disco_vis_mat``/``disco_phi_mat``
@@ -133,6 +147,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         if is_mixed_disco_record(data):
             for name, value in mixed_disco_fields(data).items():
                 setattr(self, name, value)
+            self.dt = self.frame = self.t_ref = None
             return
 
         u = onp.asarray(data["u"], dtype=float)
@@ -166,7 +181,20 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         vis_flag = data.get("vis_flag")
         phi_flag = data.get("phi_flag")
+        mjd, frame = data.get("mjd"), data.get("frame")
+        if mjd is not None:
+            mjd = onp.asarray(mjd, dtype=onp.float64)
+        if frame is not None:
+            frame = onp.asarray(frame)
+        if vis.ndim == 2:
+            # Per-baseline times are repeated over channels, like u and v;
+            # per-sample ones (shaped like vis, or flat) are flattened.
+            def per_sample(values):
+                if values is None or values.size == vis.size:
+                    return None if values is None else values.reshape(-1)
+                return onp.repeat(values, vis.shape[1])
 
+            mjd, frame = per_sample(mjd), per_sample(frame)
         if vis.ndim == 2:
             u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
             vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
@@ -245,6 +273,7 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
         # covariance instead (_transform_observed_channels).
         closure = ClosureNoise.from_indices(*indices) if cp_flag else None
         self.cp_noise = closure if phi_mat is None else None
+        self._set_times(mjd, frame)
         vis_mode_in = data.get(
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
@@ -255,6 +284,157 @@ class OIData(zx.Base):  # type: ignore[reportGeneralTypeIssues]
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
             closure=closure,
+        )
+
+    def _set_times(self, mjd, frame):
+        """Store ``mjd`` as ``t_ref`` + ``dt`` and ``frame``, per sample."""
+        n = onp.size(self.u)
+        for name, values in (("mjd", mjd), ("frame", frame)):
+            if values is not None and onp.shape(values) != (n,):
+                raise ValueError(
+                    f"{name} has shape {onp.shape(values)} but there are "
+                    f"{n} samples; give one value per sample (or per "
+                    "baseline, for several channels)."
+                )
+        if frame is None and mjd is not None:
+            frame = onp.unique(mjd, return_inverse=True)[1]
+        if mjd is None:
+            self.t_ref, self.dt = None, None
+        else:
+            self.t_ref = float(onp.min(mjd))
+            self.dt = np.asarray(mjd - self.t_ref)
+        # int32 is the same in both x64 modes (see _closure.ClosureNoise).
+        self.frame = None if frame is None else np.asarray(frame, np.int32)
+
+    @property
+    def mjd(self):
+        """Time of each sample (days, float64), or ``None`` if unknown."""
+        if self.dt is None:
+            return None
+        return self.t_ref + onp.asarray(self.dt, dtype=onp.float64)
+
+    def epochs(self, gap_days=0.5):
+        """Label each sample with its epoch: a run of frames with no gap.
+
+        Parameters
+        ----------
+        gap_days : float, optional
+            Frames whose mean times are more than this far apart (days)
+            are in different epochs; the default separates nights. A frame
+            is never split between epochs.
+
+        Returns
+        -------
+        numpy.ndarray
+            Integer epoch of each sample, numbered in time order from 0.
+        """
+        mjd = self.mjd
+        if mjd is None:
+            raise ValueError(
+                "These data have no times: read them from OIFITS, or give "
+                "mjd per sample."
+            )
+        # Whole frames go into one epoch, at the mean time of their samples.
+        frames, frame_of = onp.unique(
+            onp.asarray(self.frame), return_inverse=True
+        )
+        times = onp.bincount(frame_of, weights=mjd) / onp.bincount(frame_of)
+        order = onp.argsort(times)
+        sorted_epochs = onp.concatenate(
+            [[0], onp.cumsum(onp.diff(times[order]) > gap_days)]
+        )
+        epoch_of_frame = onp.empty(frames.size, dtype=int)
+        epoch_of_frame[order] = sorted_epochs
+        return epoch_of_frame[frame_of]
+
+    def split_by_epoch(self, gap_days=0.5):
+        """One [`OIData`][virgil.oidata.OIData] per epoch, in time order.
+
+        See :meth:`epochs`. Each part keeps its own samples, observables and
+        closure phases, so it can be fitted on its own or with a model per
+        epoch. Not available for projected (kernel, DISCO) observables.
+        """
+        labels = self.epochs(gap_days)
+        return [self._subset(labels == k) for k in range(labels.max() + 1)]
+
+    def _subset(self, keep):
+        """These data restricted to the samples where ``keep`` is True."""
+        if (
+            self.observable_kind != "split"
+            or self.vis_mat is not None
+            or self.phi_mat is not None
+            or self.uv_grid is not None
+        ):
+            raise ValueError(
+                "Only unprojected data can be split: projected (kernel, "
+                "DISCO) observables mix samples."
+            )
+        keep = onp.asarray(keep, dtype=bool)
+        new_index = onp.cumsum(keep) - 1  # old sample -> new sample
+
+        def observed(index):
+            """Rows of the observables to keep, and their new sample index."""
+            if index is None:
+                return onp.flatnonzero(keep), None
+            index = onp.asarray(index)
+            rows = onp.flatnonzero(keep[index])
+            return rows, np.asarray(new_index[index[rows]])
+
+        vis_rows, vis_index = observed(self.vis_index)
+        if self.cp_flag:
+            legs = [
+                onp.asarray(i) for i in (self.i_cps1, self.i_cps2, self.i_cps3)
+            ]
+            if onp.any(keep[legs[0]] != keep[legs[1]]) or onp.any(
+                keep[legs[0]] != keep[legs[2]]
+            ):
+                raise ValueError(
+                    "A closure phase would be split between parts."
+                )
+            phi_rows = onp.flatnonzero(keep[legs[0]])
+            legs = [new_index[leg[phi_rows]] for leg in legs]
+            closure = ClosureNoise.from_indices(*legs)
+            legs = [np.asarray(leg) for leg in legs]
+            phi_index = None
+        else:
+            phi_rows, phi_index = observed(self.phi_index)
+            legs, closure = [None] * 3, None
+        wavel = self.wavel if self.wavel.size == 1 else self.wavel[keep]
+        times = [None if x is None else x[keep] for x in (self.dt, self.frame)]
+        return eqx.tree_at(
+            lambda d: (
+                d.u,
+                d.v,
+                d.wavel,
+                d.vis,
+                d.d_vis,
+                d.phi,
+                d.d_phi,
+                d.i_cps1,
+                d.i_cps2,
+                d.i_cps3,
+                d.vis_index,
+                d.phi_index,
+                d.cp_noise,
+                d.dt,
+                d.frame,
+            ),
+            self,
+            (
+                self.u[keep],
+                self.v[keep],
+                wavel,
+                self.vis[vis_rows],
+                self.d_vis[vis_rows],
+                self.phi[phi_rows],
+                self.d_phi[phi_rows],
+                *legs,
+                vis_index,
+                phi_index,
+                closure,
+                *times,
+            ),
+            is_leaf=lambda x: x is None,
         )
 
     def _resolve_vis_mode(self, vis_mode):

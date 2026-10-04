@@ -389,7 +389,7 @@ Decided 2026-10-03: serious GRAVITY-specific development is its own project. On 
 
 The core keeps generic interfaces: a primary beam (6a), low-rank nuisance modes (6d), and an `insname` selector. It never imports virgil-vlti. Questions for the instrument team are in [`questions_for_gravity_team.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/questions_for_gravity_team.md).
 
-## Stage 6a.0: times and frames in `OIData` (about 2–3 h)
+## Stage 6a.0: times and frames in `OIData` (done; branch `stage6a0-times`)
 From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-frame nuisances (6d) all need it.
 - **Per-sample times and frames.** `OIData` gains `mjd` and `frame` per sample.
 - **Triangle matching.** Closure triangles are matched to baselines by frame (`INT_TIME`), not by nearest MJD.
@@ -398,6 +398,13 @@ From S §2.5. It comes first because the orbits (6a.1), VISPHI (6a) and the per-
 **Tests:**
 - Multi-file round trips keep `mjd` and `frame`.
 - Triangles match correctly on files whose MJDs differ slightly between OI_VIS2 and OI_T3.
+
+**Log:**
+- Triangle matching within an exposure (twice the longest `INT_TIME`) landed first, in #130, for the GRAVITY reader blocker.
+- Frames are the baselines that closure phases tie together (a union-find in the reader's baseline lookup), plus rows of one `INSNAME` at the same MJD. On all 136 per-instrument reads of the Apep GRAVITY archive, every file gets exactly one frame per exposure.
+- `OIData` stores `t_ref` (static float64) and `dt` (days, a leaf) rather than raw MJD, per S §2.5 item 4; `frame` is int32, the same in both x64 modes.
+- `split_by_epoch` slices the stored observables and rebuilds `ClosureNoise`, so the parts' log-likelihoods add up to the whole (tested). It refuses projected data.
+- Not done: closure-phase legs from the OI_T3 coordinates (the reader still uses the matched VIS2 rows' (u, v); TODO in `oifits.py`).
 
 ## Stage 6a.1: orbits and binary-frame scenes (after 6a.0; about 25–30 h by its own table)
 Design: [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
