@@ -61,6 +61,7 @@ def x64():
         yield
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_solver_float64(x64):
     omegas, thetas = _GOLD["omegas"], _GOLD["thetas"]
     for i, om in enumerate(omegas):
@@ -77,11 +78,13 @@ def test_golden_solver_float64(x64):
         )
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_eq32_float64(x64):
     got = onp.array([_elr.eq32(jnp.float64(o)) for o in _GOLD["omegas"]])
     onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-12)
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_mesh():
     m = _elr.mesh(32)
     onp.testing.assert_allclose(m.thetas, _GOLD["mesh_thetas"], rtol=1e-12)
@@ -95,6 +98,7 @@ def test_golden_mesh():
     assert len(ours - gold) <= 32
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 @pytest.mark.parametrize("k", range(N_SETS))
 def test_golden_surface_and_visibilities_float64(x64, k):
     om, req, inc, obl = _GOLD["vis_params"][k]
@@ -134,6 +138,7 @@ def test_golden_surface_and_visibilities_float64(x64, k):
 # ---------------------------------------------------- 2. golden in float32
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_solver_float32():
     for i, om in enumerate(_GOLD["omegas"]):
         rtw, teff, flux = _elr.solve_ELR_vec(
@@ -149,11 +154,13 @@ def test_golden_solver_float32():
         )
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 def test_golden_eq32_float32():
     got = onp.array([_elr.eq32(jnp.float32(o)) for o in _GOLD["omegas"]])
     onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-5)
 
 
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
 @pytest.mark.parametrize("k", range(N_SETS))
 def test_golden_surface_and_visibilities_float32(k):
     om, req, inc, obl = _GOLD["vis_params"][k]
@@ -207,6 +214,7 @@ def test_equatorial_teff_ratio_matches_eq32(omega):
     )
 
 
+@pytest.mark.validates("virgil._elr", roots=["mathematics"])
 @pytest.mark.parametrize("omega", [0.1, 0.5, 0.95])
 def test_polar_radius_is_roche(omega):
     # theta -> 0: R_pole / R_eq = 1 / (1 + omega^2 / 2)
@@ -217,6 +225,7 @@ def test_polar_radius_is_roche(omega):
     onp.testing.assert_allclose(req, 1.0, rtol=1e-4)
 
 
+@pytest.mark.validates("virgil._elr", roots=["mathematics"])
 @pytest.mark.parametrize("omega", [0.3, 0.7, 0.95])
 def test_closed_form_roche_radius(omega):
     th = THETAS[(omega * onp.sin(THETAS)) > 0.1]
@@ -271,6 +280,7 @@ def _ud_amp(req, q):
     return onp.abs(2 * j1(xx) / xx)
 
 
+@pytest.mark.validates("virgil._elr", roots=["mathematics"])
 def test_omega_zero_matches_uniform_disk():
     req = 0.5
     # first null at x = 3.8317 -> q_null

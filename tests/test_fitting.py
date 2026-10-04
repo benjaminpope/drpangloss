@@ -54,6 +54,7 @@ def test_fit_recovers_a_binary(method):
     assert result.info["converged"] in (True, None)
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_optimisers_agree_on_a_binary():
     lm = fit(START, PRIORS, DATA, method="lm")
     lbfgs = fit(START, PRIORS, DATA, method="lbfgs")
@@ -71,6 +72,7 @@ def test_a_function_model_needs_starting_values():
     assert abs(fit(binary, PRIORS, DATA, init=init).values["dra"] - 150) < 3
 
 
+@pytest.mark.validates("virgil.fitting.fit", roots=["self-consistency"])
 def test_float32_and_float64_fits_agree():
     x64 = fit(START, PRIORS, DATA, dtype="float64")
     x32 = fit(START, PRIORS, DATA, dtype="float32")
