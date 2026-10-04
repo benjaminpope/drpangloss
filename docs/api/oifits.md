@@ -13,8 +13,11 @@ The reader supports:
 - several targets, chosen with `target=`;
 - absolute phases from `OI_VIS` `VISPHI` when there is no `OI_T3`.
 
-Closure-phase triangles `(a, b, c)` must find their baselines stored as
-`(a, b)`, `(b, c)` and `(a, c)`; reversed legs raise a clear error.
+Closure-phase triangles `(a, b, c)` find their baselines `(a, b)`, `(b, c)`
+and `(a, c)` in the visibility table with the same `INSNAME`, or else in one
+with identical wavelengths (the standard does not require T3 and V² tables to
+share an `INSNAME`). A baseline stored reversed is used as the conjugate; a
+baseline stored in neither orientation raises a clear error.
 
 ## Functions
 
