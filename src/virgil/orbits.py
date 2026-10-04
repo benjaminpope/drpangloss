@@ -227,6 +227,36 @@ class KeplerOrbit(zx.Base):
         dt = _days_since(mjd, self.t_ref)
         return tuple(_velocity(self._relative, dt))
 
+    def _frame(self, dt):
+        dra, ddec, dz = self._relative(dt)
+        line_pa = np.rad2deg(np.arctan2(dra, ddec))
+        constant = np.zeros_like(line_pa)
+        return {
+            "line_pa": line_pa,
+            "towards_primary": line_pa + 180.0,
+            "line_tilt": np.rad2deg(np.arctan2(dz, np.hypot(dra, ddec))),
+            "node_pa": self.Omega + constant,
+            "inc": self.inc + constant,
+            "apparent_inc": np.rad2deg(
+                np.arccos(np.abs(np.cos(np.deg2rad(self.inc))))
+            )
+            + constant,
+        }
+
+    def frame(self, mjd):
+        """Angles of the binary frame at ``mjd`` (degrees), by name.
+
+        * ``line_pa``: position angle of the line of centres, primary to
+          secondary; ``towards_primary`` is ``line_pa + 180``.
+        * ``line_tilt``: the line of centres' elevation out of the sky,
+          ``arcsin(dz / |r|)``, positive when the secondary is farther.
+        * ``node_pa``: ``Omega``, the line of nodes of the orbital plane.
+        * ``inc``: the orbit's inclination (0–180); ``apparent_inc``:
+          ``arccos|cos inc|`` (0–90), the projected tilt, for components
+          whose ``inc`` is an apparent inclination.
+        """
+        return self._frame(_days_since(mjd, self.t_ref))
+
     def separation_pa(self, mjd):
         """Separation (mas) and position angle (degrees, North through East,
         in [0, 360)) of the secondary from the primary."""

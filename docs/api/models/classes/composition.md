@@ -94,5 +94,12 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
       show_root_heading: true
       heading_level: 2
 
+::: virgil.models.Attached
+    options:
+      show_root_heading: true
+      heading_level: 2
+      members:
+        - at
+
 Models are fitted through [`virgil.likelihood`](../../likelihood.md)
 (`build_model`, `loglike`, `numpyro_model`).

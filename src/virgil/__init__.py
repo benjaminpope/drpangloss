@@ -82,6 +82,7 @@ from .limits import (  # noqa: E402
     ruffio_upperlimit,
 )
 from .models import (  # noqa: E402
+    Attached,
     BinaryModelAngular,
     BinaryModelCartesian,
     EllipticalGaussian,
@@ -113,6 +114,7 @@ from .spectra import BlackBody, PowerLaw  # noqa: E402
 
 
 __all__ = [
+    "Attached",
     "BinaryModelAngular",
     "BinaryModelCartesian",
     "BlackBody",
