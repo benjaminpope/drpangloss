@@ -175,3 +175,30 @@ def test_orbits_are_differentiable_under_jit():
 
     grads = jax.grad(separation)(_orbit(), dt)
     assert onp.all(onp.isfinite(onp.array([grads.ecc, grads.omega])))
+
+
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"period": 0.0}, "period"),
+        ({"ecc": 1.0}, "ecc"),
+        ({"inc": 200.0}, "inc"),
+        ({"a_mas": -1.0}, "a_mas"),
+        ({"omega": float("nan")}, "omega"),
+    ],
+)
+def test_out_of_domain_orbits_are_rejected(changes, match):
+    with pytest.raises(ValueError, match=match):
+        _orbit(**changes)
+    # Traced values are not checked (they may be mid-optimisation).
+    jax.jit(lambda p: _orbit(period=p).period)(0.0)
+
+
+def test_missing_jaxoplanet_names_the_extra(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jaxoplanet", None)
+    with pytest.raises(ImportError, match=r"virgil-astro\[orbits\]"):
+        _orbit().to_jaxoplanet()
+    with pytest.raises(ImportError, match=r"virgil-astro\[orbits\]"):
+        _orbit().relative(T_REF)
