@@ -356,6 +356,11 @@ class ThieleInnesOrbit(zx.Base):
         shift = np.floor(Omega / np.pi) * np.pi
         omega, Omega = omega - shift, Omega - shift
         half = (a**2 + b**2 + f**2 + g**2) / 2
+        if concrete(half) is not None and not onp.all(concrete(half) > 0):
+            raise ValueError(
+                "The Thiele–Innes constants are all zero: the positions "
+                "carry no orbit (all at the primary)."
+            )
         cos_term = a * g - b * f  # a² cos i
         a_sq = half + np.sqrt(np.maximum(half**2 - cos_term**2, 0.0))
         return KeplerOrbit(

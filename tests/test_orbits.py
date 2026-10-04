@@ -227,6 +227,30 @@ def test_starting_orbits_find_a_noisy_orbit_off_the_grid():
         assert onp.max(onp.abs(offset)) < 2.0
 
 
+def test_starting_orbits_in_float32():
+    # JAX's default precision: the grid solve still finds the orbit.
+    truth = _orbit(period=430.0, dt_peri=55.0, ecc=0.35)
+    mjd = T_REF + onp.linspace(0.0, 420.0, 12)
+    positions = _positions(truth, mjd, key=jax.random.PRNGKey(3))
+    results = starting_orbits(positions, periods=onp.geomspace(200, 900, 40))
+    best, _ = results[0]
+    assert [c for _, c in results] == sorted(c for _, c in results)
+    assert float(best.period) == pytest.approx(430.0, rel=0.05)
+    offset = (
+        onp.array(best.relative(mjd))[:2] - onp.array(truth.relative(mjd))[:2]
+    )
+    assert onp.max(onp.abs(offset)) < 2.0
+
+
+def test_positions_at_the_origin_have_no_orbit():
+    mjd = T_REF + onp.arange(4.0)
+    zero = PositionData(
+        mjd, onp.zeros(4), onp.zeros(4), onp.eye(2)[None] * onp.ones((4, 1, 1))
+    )
+    with pytest.raises(ValueError, match="no orbit"):
+        starting_orbits(zero, periods=[100.0], n_phase=4)
+
+
 def test_position_likelihood_matches_a_gaussian():
     from scipy.stats import multivariate_normal
 
