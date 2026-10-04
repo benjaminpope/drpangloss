@@ -778,15 +778,15 @@ wheels = [
 
 [[package]]
 name = "jaxbessel"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jax" },
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/2f/1d8fb3dbf567bbb3c518292dee6147d1243c36febf56bea336526d54cacd/jaxbessel-0.1.0.tar.gz", hash = "sha256:4b679acc2f82299b4f4a29c05ec1639c6a31b09422dcb79bfa390e41c969dc68", size = 13365, upload-time = "2026-10-03T05:57:49.361Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f4/75/8aa41197e0cbcf99fca5316b82e276f2e26255eeacbde6a439ca9915091f/jaxbessel-0.2.0.tar.gz", hash = "sha256:9dac8aa5a6b25ba0ac754f5a70dbc1b87100ea9104364e11639cea98b222bbd0", size = 16584, upload-time = "2026-10-04T00:31:38.895Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/86/cf561d3bcddc52e17f10801ca1a9668f1ce1e0fd23860adc3a8d70130b49/jaxbessel-0.1.0-py3-none-any.whl", hash = "sha256:11f6bbf36e1b7eb79872dd764249f943619b1807b49a435ade0e874a72fb2a12", size = 11343, upload-time = "2026-10-03T05:57:50.45Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/8f/710e35de1866bd0561214dd49a35c0c11c5b4ebfe1a4be9a23764448f803/jaxbessel-0.2.0-py3-none-any.whl", hash = "sha256:90774297d2040ac0553c0d25827a906a39946f88a6df0c21d7ae786a3bda8b61", size = 14136, upload-time = "2026-10-04T00:31:37.474Z" },
 ]
 
 [[package]]
@@ -2600,6 +2600,9 @@ notebooks = [
     { name = "pandas" },
     { name = "tqdm" },
 ]
+orbits = [
+    { name = "jaxoplanet" },
+]
 plots = [
     { name = "chainconsumer" },
     { name = "pandas" },
@@ -2621,8 +2624,8 @@ requires-dist = [
     { name = "equinox", specifier = ">=0.13.2" },
     { name = "ipywidgets", marker = "extra == 'notebooks'", specifier = ">=8.0" },
     { name = "jax", specifier = ">=0.8.0" },
-    { name = "jaxbessel", specifier = ">=0.1.0" },
-    { name = "jaxoplanet", marker = "extra == 'integrations'", specifier = ">=0.1.0" },
+    { name = "jaxbessel", specifier = ">=0.2.0" },
+    { name = "jaxoplanet", marker = "extra == 'orbits'", specifier = ">=0.1.0" },
     { name = "lineax", specifier = ">=0.1.0" },
     { name = "matplotlib", specifier = ">=3.8" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6,<2" },
@@ -2641,13 +2644,14 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.13" },
     { name = "tqdm", marker = "extra == 'notebooks'", specifier = ">=4.66" },
     { name = "twine", marker = "extra == 'dev'" },
+    { name = "virgil-astro", extras = ["orbits"], marker = "extra == 'integrations'" },
     { name = "virgil-astro", extras = ["plots"], marker = "extra == 'test'" },
     { name = "virgil-astro", extras = ["plots", "integrations"], marker = "extra == 'notebooks'" },
     { name = "virgil-astro", extras = ["test", "docs"], marker = "extra == 'dev'" },
     { name = "zensical", marker = "extra == 'docs'", specifier = ">=0.0.62,<0.1" },
     { name = "zodiax", specifier = ">=0.4.1" },
 ]
-provides-extras = ["plots", "legacy", "integrations", "test", "notebooks", "docs", "dev"]
+provides-extras = ["plots", "legacy", "orbits", "integrations", "test", "notebooks", "docs", "dev"]
 
 [[package]]
 name = "virtualenv"

@@ -9,4 +9,5 @@ by wavelength). Likelihoods are in [`virgil.likelihood`](../likelihood.md).
       members:
         - cvis_binary
         - cvis_uniform_disk
+        - cvis_limb_darkened_disk
         - cvis_radial_dirac_delta_modulated

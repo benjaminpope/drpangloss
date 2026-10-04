@@ -40,6 +40,7 @@ MAPPINGS = {
     "notebooks/imaging_composite.ipynb": "docs/imaging_composite.md",
     "notebooks/imaging_sampling.ipynb": "docs/imaging_sampling.md",
     "notebooks/harmonix.ipynb": "docs/harmonix.md",
+    "notebooks/limb_darkening.ipynb": "docs/limb_darkening.md",
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
 }
 
