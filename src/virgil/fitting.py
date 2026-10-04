@@ -387,7 +387,10 @@ def fit(
     -------
     FitResult
         The fitted model, parameter values and diagnostics. A warning is
-        raised if LM or L-BFGS did not converge.
+        raised if LM or L-BFGS did not converge; for L-BFGS it says whether
+        the fit reached ``max_steps`` or stopped earlier because a step no
+        longer changed the parameters (its precision ran out, as can happen
+        in float32).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -412,11 +415,12 @@ def fit(
                 problem, z0, traced_scale, max_steps or 1000, gtol, cg_steps
             )
         elif method == "lbfgs":
+            limit = max_steps or 20_000
             z, steps, converged = _lbfgs(
                 problem,
                 z0,
                 traced_scale,
-                np.asarray(max_steps or 20_000),
+                np.asarray(limit),
                 gtol,
                 np.asarray(max_step_size),
             )
@@ -431,7 +435,10 @@ def fit(
             )
         if converged is False:
             warnings.warn(
-                f"fit(method={method!r}) did not converge in {steps} steps.",
+                _lbfgs_not_converged(steps, limit, dtype)
+                if method == "lbfgs"
+                else f"fit(method={method!r}) did not converge in {steps} "
+                "steps.",
                 RuntimeWarning,
                 stacklevel=2,
             )
@@ -788,6 +795,22 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size):
     start = (0, z0, optimiser.init(z0), start_gradient, np.asarray(True))
     count, z, _, gradient, _ = jax.lax.while_loop(keep_going, step, start)
     return z, count, gradient <= tolerance
+
+
+def _lbfgs_not_converged(steps, limit, dtype):
+    """The warning for an unconverged L-BFGS fit, saying why it stopped."""
+    if steps >= limit:
+        return (
+            f"fit(method='lbfgs') did not converge in {steps} steps, the "
+            "step limit; raise max_steps."
+        )
+    # _lbfgs_run also stops when a step no longer moves the parameters.
+    hint = "; dtype='float64' can go further" if dtype == "float32" else ""
+    return (
+        f"fit(method='lbfgs') did not converge: it stopped after {steps} of "
+        f"{limit} steps, when a step no longer changed the parameters (the "
+        f"line search ran out of {dtype} precision{hint})."
+    )
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size):

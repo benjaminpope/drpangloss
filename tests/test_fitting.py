@@ -211,6 +211,27 @@ def test_a_warm_start_still_converges(dtype):
     assert cold.info["chi2_red"] < 1.5
 
 
+def test_lbfgs_warning_says_it_hit_the_step_limit():
+    with pytest.warns(RuntimeWarning, match="in 2 steps, the step limit"):
+        fit(START, PRIORS, DATA, method="lbfgs", max_steps=2)
+
+
+def test_lbfgs_warning_says_when_it_ran_out_of_precision(monkeypatch):
+    # L-BFGS also stops, unconverged, when a step no longer changes the
+    # parameters. The warning used to call that "did not converge in N
+    # steps", which reads as the step limit.
+    import virgil.fitting
+
+    monkeypatch.setattr(
+        virgil.fitting, "_lbfgs", lambda problem, z0, *_: (z0, 7, False)
+    )
+    with pytest.warns(RuntimeWarning, match="stopped after 7 of 100 steps"):
+        result = fit(
+            START, PRIORS, DATA, method="lbfgs", max_steps=100, dtype="float32"
+        )
+    assert result.info["converged"] is False
+
+
 @pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.parametrize("dtype", ["float32", "float64"])
 def test_a_cold_maxent_fit_does_not_collapse(dtype):
