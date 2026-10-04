@@ -1,5 +1,6 @@
 """Chromatic scenes: spectra, resolved flux, several files, likelihood options."""
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -341,6 +342,31 @@ def test_tabulated_interpolates_between_channels():
     assert np.isclose(spectrum(1.60e-6), 0.3)
     assert np.isclose(spectrum(1.0e-6), 0.2)  # constant beyond the ends
     assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
+
+
+def test_reference_flux_is_each_spectrums_own_reference():
+    from virgil.spectra import reference_flux
+
+    nodes = Tabulated([0.2, 0.4, 0.1], WAVES)
+    assert reference_flux(nodes).shape == ()
+    assert np.isclose(
+        reference_flux(nodes), np.mean(np.array([0.2, 0.4, 0.1]))
+    )
+    assert np.isclose(reference_flux(PowerLaw(0.3, 1.0)), 0.3)
+    assert np.isclose(reference_flux(BlackBody(0.3, 3000.0)), 0.3)
+    assert reference_flux(0.25) == 0.25
+
+
+def test_negative_tabulated_node_is_rejected_despite_positive_mean():
+    # Tabulated rejects negatives itself, so inject one past its constructor.
+    bad = eqx.tree_at(
+        lambda s: s.ratio,
+        Tabulated([0.2, 0.4, 0.1], WAVES),
+        np.array([0.5, -0.1, 0.4]),
+    )
+    assert float(bad()) > 0.0
+    with pytest.raises(ValueError, match="must be non-negative"):
+        PointSource(flux=bad)
 
 
 def test_tabulated_rejects_bad_tables():

@@ -284,7 +284,12 @@ def flux_at(flux, wavel=None):
 
 
 def reference_flux(flux):
-    """The reference flux of a number or a spectrum."""
+    """The reference flux of a number or a spectrum.
+
+    For a spectrum this is ``flux(None)``, each spectrum's own definition: the
+    ``ratio`` for ``PowerLaw`` and ``BlackBody``, but the scalar mean over the
+    nodes for ``Tabulated``.
+    """
     if isinstance(flux, Spectrum):
-        return flux.ratio
+        return flux(None)
     return flux
