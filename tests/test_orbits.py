@@ -246,3 +246,30 @@ def test_position_likelihood_matches_a_gaussian():
         sep, pa = (onp.asarray(x) for x in orbit.separation_pa(mjd))
         polar = PositionData.from_sep_pa(mjd, sep, pa, 0.2, 0.5)
         assert onp.allclose(polar.whitened_residuals(orbit), 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize(
+    "changes, match",
+    [
+        ({"period": 0.0}, "period"),
+        ({"ecc": 1.0}, "ecc"),
+        ({"inc": 200.0}, "inc"),
+        ({"a_mas": -1.0}, "a_mas"),
+        ({"omega": float("nan")}, "omega"),
+    ],
+)
+def test_out_of_domain_orbits_are_rejected(changes, match):
+    with pytest.raises(ValueError, match=match):
+        _orbit(**changes)
+    # Traced values are not checked (they may be mid-optimisation).
+    jax.jit(lambda p: _orbit(period=p).period)(0.0)
+
+
+def test_missing_jaxoplanet_names_the_extra(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "jaxoplanet", None)
+    with pytest.raises(ImportError, match=r"virgil-astro\[orbits\]"):
+        _orbit().to_jaxoplanet()
+    with pytest.raises(ImportError, match=r"virgil-astro\[orbits\]"):
+        _orbit().relative(T_REF)

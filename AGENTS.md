@@ -133,8 +133,8 @@ Imports flow one way: `_utils`/`_geometry`/`_precision` → `oifits`/`amigo`/`_c
 `imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
 `inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
 `_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports nothing
-from virgil (jaxoplanet lazily).
+`plotting`. `scenes` imports only `_geometry` and `_utils`. `orbits` imports only `_utils`
+(and jaxoplanet lazily).
 
 ## Flux and contrast
 

@@ -32,6 +32,8 @@ import numpy as onp
 import equinox as eqx
 import zodiax as zx
 
+from ._utils import concrete
+
 
 __all__ = [
     "KeplerOrbit",
@@ -41,15 +43,40 @@ __all__ = [
 ]
 
 
-def _kepler(mean_anomaly, ecc):
-    """``(sin f, cos f)`` of the true anomaly, from jaxoplanet's solver."""
+def _jaxoplanet():
+    """The jaxoplanet package, with an install hint if it is missing."""
     try:
-        from jaxoplanet.core import kepler
+        import jaxoplanet.core
+        import jaxoplanet.orbits.keplerian
     except ImportError as err:
         raise ImportError(
             'Orbits need jaxoplanet: pip install "virgil-astro[orbits]".'
         ) from err
-    return kepler(mean_anomaly, ecc)
+    return jaxoplanet
+
+
+def _kepler(mean_anomaly, ecc):
+    """``(sin f, cos f)`` of the true anomaly, from jaxoplanet's solver."""
+    return _jaxoplanet().core.kepler(mean_anomaly, ecc)
+
+
+def _check(cls, checks):
+    """Reject concrete out-of-domain values; traced ones pass unchecked."""
+    for name, value, ok, domain in checks:
+        value = concrete(value)
+        if value is not None and not onp.all(onp.isfinite(value) & ok(value)):
+            raise ValueError(f"{cls}: {name} must be {domain}, not {value}.")
+
+
+def _check_orbit(cls, orbit):
+    _check(
+        cls,
+        (
+            ("period", orbit.period, lambda x: x > 0, "positive"),
+            ("ecc", orbit.ecc, lambda x: (x >= 0) & (x < 1), "in [0, 1)"),
+            ("dt_peri", orbit.dt_peri, lambda x: True, "finite"),
+        ),
+    )
 
 
 def _days_since(mjd, t_ref):
@@ -147,6 +174,23 @@ class KeplerOrbit(zx.Base):
         self.a_mas = np.asarray(a_mas, dtype=float)
         self.t_ref = float(t_ref)
 
+    def __check_init__(self):
+        _check_orbit("KeplerOrbit", self)
+        _check(
+            "KeplerOrbit",
+            (
+                (
+                    "inc",
+                    self.inc,
+                    lambda x: (x >= 0) & (x <= 180),
+                    "in [0, 180]",
+                ),
+                ("a_mas", self.a_mas, lambda x: x >= 0, "non-negative"),
+                ("omega", self.omega, lambda x: True, "finite"),
+                ("Omega", self.Omega, lambda x: True, "finite"),
+            ),
+        )
+
     def thiele_innes(self):
         """The Thiele–Innes constants ``(A, B, F, G, C, H)`` (mas).
 
@@ -205,8 +249,12 @@ class KeplerOrbit(zx.Base):
         (X, Y, Z) = (North, East, toward the observer), and its ω is the
         primary's: ``(dra, ddec, dz) = (Y, X, -Z) * scale``.
         """
-        from jaxoplanet.orbits.keplerian import Body, Central, OrbitalBody
-
+        keplerian = _jaxoplanet().orbits.keplerian
+        Body, Central, OrbitalBody = (
+            keplerian.Body,
+            keplerian.Central,
+            keplerian.OrbitalBody,
+        )
         body = OrbitalBody(
             Central(mass=1.0, radius=1.0),
             Body(
@@ -278,6 +326,14 @@ class ThieleInnesOrbit(zx.Base):
         self.F = np.asarray(F, dtype=float)
         self.G = np.asarray(G, dtype=float)
         self.t_ref = float(t_ref)
+
+    def __check_init__(self):
+        _check_orbit("ThieleInnesOrbit", self)
+        finite = lambda x: True  # noqa: E731
+        _check(
+            "ThieleInnesOrbit",
+            tuple((k, getattr(self, k), finite, "finite") for k in "ABFG"),
+        )
 
     def sky(self, mjd):
         """``(dra, ddec)`` of the secondary from the primary (mas)."""
