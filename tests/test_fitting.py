@@ -329,3 +329,56 @@ def test_numpyro_model_samples_noise_terms():
     model = numpyro_model(START, PRIORS, DATA, noise=noise)
     trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
     assert "noise.vis_scale" in trace
+
+
+def _rim_problem():
+    from virgil.coverage import vlti_oidata
+    from virgil.models import ModulatedGaussianRim
+
+    truth = System(
+        star=PointSource(),
+        rim=ModulatedGaussianRim(
+            6.0,
+            1.0,
+            45.0,
+            30.0,
+            onp.array([0.5]),
+            onp.array([120.0]),
+            0.8,
+        ),
+    )
+    data = vlti_oidata(wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6))
+    data = data.with_model(truth, key=jax.random.PRNGKey(3))
+    return truth, truth.set("rim.diam", 5.5), data
+
+
+_UNIFORM_FORMS = {
+    "array": lambda lo, hi: dist.Uniform(onp.full(1, lo), onp.full(1, hi)),
+    "expand": lambda lo, hi: dist.Uniform(lo, hi).expand([1]),
+    "to_event": lambda lo, hi: dist.Uniform(lo, hi).expand([1]).to_event(1),
+}
+
+
+def _rim_priors(form):
+    make = _UNIFORM_FORMS[form]
+    return {
+        "rim.diam": dist.Uniform(1.0, 20.0),
+        "rim.flux": dist.Uniform(0.0, 5.0),
+        "rim.az_amps": make(0.0, 1.0),
+        "rim.az_pas": make(0.0, 360.0),
+    }
+
+
+@pytest.mark.parametrize("form", list(_UNIFORM_FORMS))
+def test_wrapped_uniform_priors_default_to_lm(form):
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors(form), data)
+    assert result.info["method"] == "lm"
+
+
+def test_expanded_priors_recover_the_rim():
+    _, start, data = _rim_problem()
+    result = fit(start, _rim_priors("expand"), data)
+    assert result.info["method"] == "lm"
+    assert onp.isclose(result.model.get("rim.diam"), 6.0, rtol=0.05)
+    assert onp.allclose(result.model.get("rim.az_amps"), [0.5], atol=0.1)
