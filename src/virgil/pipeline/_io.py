@@ -323,9 +323,8 @@ def spec_digest(spec, arrays):
 def save_model(folder, model, values, params):
     """Write ``manifest.json`` and ``values.npz`` for a model.
 
-    ``values`` maps parameter path to value (the fitted parameters,
-    including any ``"<path>_vec"`` angle vectors); they are stored under
-    ``param/<path>`` beside the spec's arrays.
+    ``values`` maps parameter path to value (the fitted parameters); they
+    are stored under ``param/<path>`` beside the spec's arrays.
     """
     folder = Path(folder)
     try:
@@ -382,6 +381,10 @@ def load_model(folder):
 # === PROCESSED DATA AS OIFITS ===
 
 
+_IRREGULAR_CP = "irregular closure-phase layout"
+_IRREGULAR_WAVEL = "irregular wavelength layout"
+
+
 def oidata_tables(data):
     """OIFITS tables for :func:`virgil.oifits.write_oifits` from ``OIData``.
 
@@ -391,124 +394,186 @@ def oidata_tables(data):
     observables. Returns ``(tables, None)``, or ``(None, reason)`` when the
     data cannot be written faithfully.
     """
+    reason = _unsupported_reason(data)
+    if reason:
+        return None, reason
+    layout, reason = _baseline_layout(data)
+    if reason:
+        return None, reason
+    tables = _vis2_tables(data, layout)
+    phi = onp.asarray(data.phi, dtype=float)
+    if phi.size == 0:
+        return tables, None
+    phases = _closure_tables if data.cp_flag else _absolute_phase_tables
+    more, reason = phases(data, layout)
+    if reason:
+        return None, reason
+    tables.update(more)
+    return tables, None
+
+
+def _unsupported_reason(data):
+    """Why ``data`` has more than the supported observables, or ``None``."""
     if data.vis_mat is not None or data.phi_mat is not None:
-        return None, "projected observables (vis_mat/phi_mat)"
+        return "projected observables (vis_mat/phi_mat)"
     if data.uv_grid is not None:
-        return None, "uv-grid (AMIGO DISCO) data"
+        return "uv-grid (AMIGO DISCO) data"
     if data.extras:
-        return None, "extra observables"
+        return "extra observables"
     if data.gains is not None or data.phase_offsets is not None:
-        return None, "calibration gains or closure offsets"
+        return "calibration gains or closure offsets"
     if data.vis_index is not None or data.phi_index is not None:
-        return None, "flagged samples"
+        return "flagged samples"
     if not data.v2_flag or data.vis_mode != "v2":
-        return None, "visibility amplitudes rather than V²"
+        return "visibility amplitudes rather than V²"
+    return None
+
+
+def _baseline_layout(data):
+    """Samples as ``n_b`` baselines by ``n_w`` channels: ``(layout, reason)``.
+
+    ``layout`` holds ``n_b``, ``n_w``, the channel wavelengths ``waves``,
+    the baseline coordinates ``ub``, ``vb``, the ``stations`` of every
+    baseline and, if the data carry times, the ``mjd`` of every baseline.
+    """
     u = onp.asarray(data.u, dtype=float)
     v = onp.asarray(data.v, dtype=float)
-    n = u.size
     wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
     waves = onp.asarray(list(dict.fromkeys(wavel.tolist())))
     n_w = waves.size
-    if n % n_w:
-        return None, "irregular wavelength layout"
-    n_b = n // n_w
-    grid = wavel.reshape(n_b, n_w)
+    if u.size % n_w:
+        return None, _IRREGULAR_WAVEL
+    n_b = u.size // n_w
+    u, v = u.reshape(n_b, n_w), v.reshape(n_b, n_w)
     if not (
-        onp.all(grid == waves[None, :])
-        and onp.all(u.reshape(n_b, n_w) == u.reshape(n_b, n_w)[:, :1])
-        and onp.all(v.reshape(n_b, n_w) == v.reshape(n_b, n_w)[:, :1])
+        onp.all(wavel.reshape(n_b, n_w) == waves[None, :])
+        and onp.all(u == u[:, :1])
+        and onp.all(v == v[:, :1])
     ):
-        return None, "irregular wavelength layout"
-    ub, vb = u.reshape(n_b, n_w)[:, 0], v.reshape(n_b, n_w)[:, 0]
-    vis = onp.asarray(data.vis, dtype=float)
-    if vis.size != n:
+        return None, _IRREGULAR_WAVEL
+    if onp.asarray(data.vis).size != u.size:
         return None, "visibilities do not match the samples"
-    if data.stations is not None:
-        stations = onp.asarray(data.stations, dtype=int).reshape(n_b, n_w, 2)[
-            :, 0
-        ]
-    elif data.cp_flag:
-        return None, "closure phases without station indices"
-    else:
-        stations = onp.stack(
-            [2 * onp.arange(n_b) + 1, 2 * onp.arange(n_b) + 2], axis=1
-        )
+    stations, reason = _stations(data, n_b, n_w)
+    if reason:
+        return None, reason
     mjd = None
     if data.dt is not None and data.t_ref is not None:
-        mjd = (onp.asarray(data.dt, dtype=float) + data.t_ref).reshape(
-            n_b, n_w
-        )[:, 0]
+        dt = onp.asarray(data.dt, dtype=float).reshape(n_b, n_w)
+        mjd = (dt + data.t_ref)[:, 0]
+    return {
+        "n_b": n_b,
+        "n_w": n_w,
+        "waves": waves,
+        "ub": u[:, 0],
+        "vb": v[:, 0],
+        "stations": stations,
+        "mjd": mjd,
+    }, None
+
+
+def _stations(data, n_b, n_w):
+    """Station pair of every baseline (invented if there are no closures)."""
+    if data.stations is not None:
+        stations = onp.asarray(data.stations, dtype=int)
+        return stations.reshape(n_b, n_w, 2)[:, 0], None
+    if data.cp_flag:
+        return None, "closure phases without station indices"
+    index = onp.arange(n_b)
+    return onp.stack([2 * index + 1, 2 * index + 2], axis=1), None
+
+
+def _vis2_tables(data, layout):
+    n_b, n_w = layout["n_b"], layout["n_w"]
     tables = {
         "info": {"TARGET": "PIPELINE", "INSTRUME": "VIRGIL"},
-        "OI_WAVELENGTH": {"EFF_WAVE": waves, "EFF_BAND": 0.0},
+        "OI_WAVELENGTH": {"EFF_WAVE": layout["waves"], "EFF_BAND": 0.0},
         "OI_VIS2": {
-            "VIS2DATA": vis.reshape(n_b, n_w),
+            "VIS2DATA": onp.asarray(data.vis, float).reshape(n_b, n_w),
             "VIS2ERR": onp.asarray(data.d_vis, float).reshape(n_b, n_w),
-            "UCOORD": ub,
-            "VCOORD": vb,
-            "STA_INDEX": stations,
+            "UCOORD": layout["ub"],
+            "VCOORD": layout["vb"],
+            "STA_INDEX": layout["stations"],
         },
     }
-    if mjd is not None:
-        tables["OI_VIS2"]["MJD"] = mjd
-        tables["info"]["MJD"] = float(mjd[0])
+    if layout["mjd"] is not None:
+        tables["OI_VIS2"]["MJD"] = layout["mjd"]
+        tables["info"]["MJD"] = float(layout["mjd"][0])
+    return tables
+
+
+def _absolute_phase_tables(data, layout):
+    n_b, n_w = layout["n_b"], layout["n_w"]
     phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
     d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
-    if phi.size == 0:
-        return tables, None
-    if not data.cp_flag:
-        if phi.size != n:
-            return None, "absolute phases do not match the samples"
-        tables["OI_VIS"] = {
-            "VISPHI": phi.reshape(n_b, n_w),
-            "VISPHIERR": d_phi.reshape(n_b, n_w),
-            "VISAMP": onp.full((n_b, n_w), onp.nan),
-            "VISAMPERR": onp.full((n_b, n_w), onp.nan),
-            "UCOORD": ub,
-            "VCOORD": vb,
-            "STA_INDEX": stations,
-        }
-        if mjd is not None:
-            tables["OI_VIS"]["MJD"] = mjd
-        return tables, None
+    if phi.size != n_b * n_w:
+        return None, "absolute phases do not match the samples"
+    table = {
+        "VISPHI": phi.reshape(n_b, n_w),
+        "VISPHIERR": d_phi.reshape(n_b, n_w),
+        "VISAMP": onp.full((n_b, n_w), onp.nan),
+        "VISAMPERR": onp.full((n_b, n_w), onp.nan),
+        "UCOORD": layout["ub"],
+        "VCOORD": layout["vb"],
+        "STA_INDEX": layout["stations"],
+    }
+    if layout["mjd"] is not None:
+        table["MJD"] = layout["mjd"]
+    return {"OI_VIS": table}, None
+
+
+def _closure_baselines(data, n_w, n_t):
+    """Baseline of each leg of every triangle, or ``None`` if irregular.
+
+    Each leg indexes the flat samples as ``baseline * n_w + channel`` and
+    must run through the channels in order within one baseline.
+    """
     legs = [
-        onp.asarray(i, dtype=int)
+        onp.asarray(i, dtype=int).reshape(n_t, n_w)
         for i in (data.i_cps1, data.i_cps2, data.i_cps3)
     ]
-    if phi.size % n_w:
-        return None, "irregular closure-phase layout"
-    n_t = phi.size // n_w
-    rows = [leg.reshape(n_t, n_w) // n_w for leg in legs]
-    cols = [leg.reshape(n_t, n_w) % n_w for leg in legs]
+    rows, cols = [leg // n_w for leg in legs], [leg % n_w for leg in legs]
     if not all(
         onp.all(r == r[:, :1]) and onp.all(c == onp.arange(n_w)[None, :])
         for r, c in zip(rows, cols)
     ):
-        return None, "irregular closure-phase layout"
-    b1, b2, b3 = rows[0][:, 0], rows[1][:, 0], rows[2][:, 0]
-    triangles = onp.stack(
-        [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
-    )
-    # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e.
+        return None
+    return [r[:, 0] for r in rows]
+
+
+def _closure_tables(data, layout):
+    n_w, stations = layout["n_w"], layout["stations"]
+    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
+    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
+    if phi.size % n_w:
+        return None, _IRREGULAR_CP
+    n_t = phi.size // n_w
+    baselines = _closure_baselines(data, n_w, n_t)
+    if baselines is None:
+        return None, _IRREGULAR_CP
+    b1, b2, b3 = baselines
+    # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e. the
     # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
     if not (
         onp.all(stations[b2, 0] == stations[b1, 1])
         and onp.all(stations[b3, 0] == stations[b1, 0])
         and onp.all(stations[b3, 1] == stations[b2, 1])
     ):
-        return None, "irregular closure-phase layout"
-    tables["OI_T3"] = {
+        return None, _IRREGULAR_CP
+    ub, vb = layout["ub"], layout["vb"]
+    table = {
         "T3PHI": phi.reshape(n_t, n_w),
         "T3PHIERR": d_phi.reshape(n_t, n_w),
         "U1COORD": ub[b1],
         "V1COORD": vb[b1],
         "U2COORD": ub[b2],
         "V2COORD": vb[b2],
-        "STA_INDEX": triangles,
+        "STA_INDEX": onp.stack(
+            [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
+        ),
     }
-    if mjd is not None:
-        tables["OI_T3"]["MJD"] = mjd[b1]
-    return tables, None
+    if layout["mjd"] is not None:
+        table["MJD"] = layout["mjd"][b1]
+    return {"OI_T3": table}, None
 
 
 # === RESULTS ===

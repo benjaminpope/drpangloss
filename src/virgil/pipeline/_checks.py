@@ -387,9 +387,9 @@ def field_of_view(sep, resolution, fov):
     sep : float
         Separation (mas).
     resolution : float
-        Resolution limit (mas), about half of λ/B_max.
+        Resolution limit (mas), half of the finest λ/B of the samples.
     fov : float
-        Field-of-view radius (mas), about λ/B_min.
+        Field-of-view radius (mas), the coarsest λ/B of the samples.
     """
     if sep < resolution:
         return Check(
