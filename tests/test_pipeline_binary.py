@@ -549,6 +549,33 @@ def test_fit_and_posterior_recover_the_injected_companion(full_run):
         assert abs(fit[name] - value) < 4 * sigma, name
 
 
+def test_refined_flux_is_the_two_public_grids_from_one_pass(data):
+    import jax.numpy as np
+    from virgil.grid_fit import (
+        optimized_flux_grid,
+        optimized_likelihood_grid,
+    )
+    from virgil.pipeline.binary import _peak_index, _refined_flux
+
+    axis = np.linspace(-200.0, 200.0, 9)
+    grid = {"dra": axis, "ddec": axis, "flux": np.logspace(-3, -1, 5)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        flux, loglike = _refined_flux(data, grid, None)
+        want_flux = optimized_flux_grid(BinaryModelCartesian, data, grid)
+        want_loglike = optimized_likelihood_grid(
+            BinaryModelCartesian, data, grid
+        )
+    onp.testing.assert_array_equal(flux, want_flux)
+    onp.testing.assert_array_equal(loglike, want_loglike)
+
+    # One source for the peak: the nearest grid point on each axis.
+    best = {"dra": 50.0, "ddec": -100.0, "flux": 0.0}  # flux below the axis
+    assert _peak_index(grid, best) == [5, 2, 0]
+    best["flux"] = float(grid["flux"][3]) * 1.01
+    assert _peak_index(grid, best) == [5, 2, 3]
+
+
 # --- CLI ----------------------------------------------------------------------
 
 

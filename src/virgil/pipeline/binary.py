@@ -365,15 +365,55 @@ def _overview(p):
     return {}
 
 
+def _refined_flux(data, grid, batch_size):
+    """``(flux, loglike)`` of the point companion refined at every position.
+
+    This is ``optimized_flux_grid`` and ``optimized_likelihood_grid`` from
+    one optimizer pass (each public function runs it and keeps one half).
+    """
+    from .._grid import (
+        batch_size_or_default,
+        resolve_grid_keys,
+        warn_unconverged,
+    )
+    from ..grid_fit import _optimize_flux_grid
+    from ..models import BinaryModelCartesian
+
+    params, coord_keys, flux_key = resolve_grid_keys(grid)
+    flux, loglike, converged = _optimize_flux_grid(
+        data,
+        BinaryModelCartesian,
+        grid,
+        params=params,
+        coord_keys=coord_keys,
+        flux_key=flux_key,
+        batch_size=batch_size_or_default(batch_size, data),
+    )
+    warn_unconverged(converged, "optimized_flux_grid")
+    return flux, loglike
+
+
+def _peak_index(grid, best):
+    """Grid index of ``best`` (the detection statistics' peak) on each axis.
+
+    The position indices and the flux index come from the same source, the
+    point where ``delta_chi2`` is reached; the flux is matched in log.
+    """
+    index = []
+    for key in _AXIS_ORDER:
+        axis = onp.asarray(grid[key], dtype=float)
+        value = float(best[key])
+        if key == "flux":
+            axis, value = onp.log(axis), math.log(max(value, axis[0]))
+        index.append(int(onp.argmin(onp.abs(axis - value))))
+    return index
+
+
 def _search(p):
     import jax.numpy as np
 
     from ..detection import detection_statistics, local_nsigma
-    from ..grid_fit import (
-        laplace_flux_uncertainty_grid,
-        optimized_flux_grid,
-        optimized_likelihood_grid,
-    )
+    from ..grid_fit import laplace_flux_uncertainty_grid
     from ..likelihood import model_loglike
     from ..models import BinaryModelCartesian
     from ..plotting import plot_grid_map
@@ -390,12 +430,17 @@ def _search(p):
             stacklevel=2,
         )
     kw = {"batch_size": s["batch_size"]}
+    # Passes over the grid: detection_statistics evaluates the full
+    # likelihood grid, refines the flux and takes the Laplace width
+    # internally, but returns only scalars. Its log Bayes factor needs the
+    # full likelihood grid and its Δχ² falls back on the grid flux where the
+    # refinement fails, so neither follows from the maps below: it stays one
+    # call. The maps need the refined flux *and* its log likelihood, which
+    # the public optimized_*_grid functions each compute and half-discard, so
+    # one private call replaces two. The Laplace width reuses the flux.
     stats = detection_statistics(BinaryModelCartesian, data, grid, **kw)
-    loglike = onp.asarray(
-        optimized_likelihood_grid(BinaryModelCartesian, data, grid, **kw)
-    )
-    flux = onp.asarray(
-        optimized_flux_grid(BinaryModelCartesian, data, grid, **kw)
+    flux, loglike = (
+        onp.asarray(x) for x in _refined_flux(data, grid, s["batch_size"])
     )
     sigma = onp.asarray(
         laplace_flux_uncertainty_grid(
@@ -408,16 +453,7 @@ def _search(p):
         flux > 0, onp.maximum(2.0 * (loglike - ll0), 0.0), 0.0
     )
     snr = flux / sigma
-    peak = onp.unravel_index(int(onp.nanargmax(delta_chi2)), delta_chi2.shape)
-    flux_axis = onp.asarray(grid["flux"])
-    flux_index = int(
-        onp.argmin(
-            onp.abs(
-                onp.log(flux_axis)
-                - onp.log(max(float(stats["flux"]), flux_axis[0]))
-            )
-        )
-    )
+    peak_index = _peak_index(grid, stats)
 
     dchi2 = float(stats["delta_chi2"])
     local = float(local_nsigma(dchi2))
@@ -470,7 +506,7 @@ def _search(p):
         "grid_step_mas": step,
         "grid_step_wanted_mas": wanted,
         "grid_shape": [len(axes["dra"]), len(axes["ddec"]), len(axes["flux"])],
-        "peak_index": [int(peak[0]), int(peak[1]), flux_index],
+        "peak_index": peak_index,
         "chi2_null": chi2_null,
         "n_independent": int(data.n_independent),
     }
