@@ -13,13 +13,14 @@ import contextlib
 import hashlib
 import importlib
 import json
-import math
 import os
 import tempfile
 from pathlib import Path
 
 import numpy as onp
 
+from .. import _utils
+from .._utils import clean_json  # noqa: F401 - re-exported
 from ._checks import Check
 
 SCHEMA = "virgil-pipeline-run-v1"
@@ -65,7 +66,7 @@ def _json_default(value):
     if isinstance(value, (onp.integer,)):
         return int(value)
     if isinstance(value, (onp.floating,)):
-        return _clean_float(float(value))
+        return _utils._clean_float(float(value))
     if isinstance(value, onp.bool_):
         return bool(value)
     if hasattr(value, "tolist"):
@@ -73,25 +74,6 @@ def _json_default(value):
     if isinstance(value, Path):
         return str(value)
     raise TypeError(f"{type(value).__name__} is not JSON serializable.")
-
-
-def _clean_float(value):
-    return value if math.isfinite(value) else None
-
-
-def clean_json(value):
-    """``value`` with NaN and infinities replaced by ``None`` (strict JSON)."""
-    if isinstance(value, float):
-        return _clean_float(value)
-    if isinstance(value, dict):
-        return {str(k): clean_json(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [clean_json(v) for v in value]
-    if isinstance(value, (onp.ndarray, onp.generic)) or hasattr(
-        value, "tolist"
-    ):
-        return clean_json(onp.asarray(value).tolist())
-    return value
 
 
 def write_json(path, record):

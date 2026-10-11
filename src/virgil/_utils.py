@@ -2,6 +2,7 @@
 checks, and the rules for naming flux parameters."""
 
 import dataclasses
+import math
 
 import jax
 import jax.numpy as np
@@ -15,6 +16,25 @@ mas2rad = np.pi / 180.0 / 3600.0 / 1000.0  # convert mas to rad
 dtor = np.pi / 180.0  # convert deg to rad
 # FWHM of a Gaussian over its standard deviation, 2 sqrt(2 ln 2)
 FWHM_PER_SIGMA = float(2.0 * onp.sqrt(2.0 * onp.log(2.0)))
+
+
+def _clean_float(value):
+    return value if math.isfinite(value) else None
+
+
+def clean_json(value):
+    """``value`` with NaN and infinities replaced by ``None`` (strict JSON)."""
+    if isinstance(value, float):
+        return _clean_float(value)
+    if isinstance(value, dict):
+        return {str(k): clean_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [clean_json(v) for v in value]
+    if isinstance(value, (onp.ndarray, onp.generic)) or hasattr(
+        value, "tolist"
+    ):
+        return clean_json(onp.asarray(value).tolist())
+    return value
 
 
 def _unit_sum(image):

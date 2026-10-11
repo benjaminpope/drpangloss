@@ -12,7 +12,7 @@ import numpy as onp
 
 from . import _checks, _io
 from ._core import Stage, _Pipeline
-from .binary import (
+from ._common import (
     _BOUND_FRACTION,
     _chi2,
     _geometry,

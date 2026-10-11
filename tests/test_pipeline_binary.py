@@ -489,7 +489,7 @@ def test_residual_normality_passes_on_truth_noise(data):
     """The check uses the independent whitened residuals, not the CP penalty."""
     from virgil.likelihood import whitened_residuals
     from virgil.pipeline import _checks
-    from virgil.pipeline.binary import _moments
+    from virgil.pipeline._common import _moments
 
     r = onp.asarray(whitened_residuals(TRUTH, data))
     n = int(data.n_independent)
@@ -503,7 +503,7 @@ def test_prior_bound_fraction_is_the_one_fit_reports():
     LogUniform's in log x, an interval's, and none for a prior whose range
     ends are poles of its flat coordinate (it used to count them)."""
     import numpyro.distributions as dist
-    from virgil.pipeline.binary import _bound_samples
+    from virgil.pipeline._common import _bound_samples
     from virgil.priors import IsotropicInclination
 
     uniform = dist.Uniform(0.0, 10.0)
@@ -523,7 +523,7 @@ def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
 
     from virgil._utils import mas2rad
     from virgil.imaging import field_of_view, nyquist_pixel_scale
-    from virgil.pipeline.binary import _geometry
+    from virgil.pipeline._common import _geometry
 
     # 10 m at 1 µm and 100 m at 2 µm, plus a zero baseline at 3 µm.
     data = SimpleNamespace(
@@ -542,7 +542,7 @@ def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
 
 
 def test_moments_of_constant_residuals_are_finite():
-    from virgil.pipeline.binary import _moments
+    from virgil.pipeline._common import _moments
 
     assert _moments(onp.full(10, 0.1)) == (0.0, -3.0)
     assert _moments(onp.zeros(5)) == (0.0, -3.0)
