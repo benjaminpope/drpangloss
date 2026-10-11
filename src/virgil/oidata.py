@@ -865,11 +865,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         operator = np.asarray(operator, dtype=float)
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
-        weighted = operator * sigma[None, :]
-        if correlation is None:
-            covariance = weighted @ weighted.T
-        else:
-            covariance = weighted @ np.asarray(correlation) @ weighted.T
+
+        def projected_covariance(sigma):
+            weighted = operator * sigma[None, :]
+            if correlation is None:
+                return weighted @ weighted.T
+            return weighted @ np.asarray(correlation) @ weighted.T
+
+        covariance = projected_covariance(sigma)
         diagonal = np.diag(covariance)
         # A tolerance relative to the covariance's own scale, so that
         # rescaling an operator or its errors cannot bypass this check.
@@ -884,14 +887,22 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             # (zero input errors); a zero row projects everything away.
             used = np.any(operator != 0.0, axis=1)
             if correlation is None and bool(np.any(used & ~keep)):
-                raise ValueError(
-                    "An operator output has zero projected error (the "
-                    "inputs it combines have zero errors); it cannot be "
-                    "whitened. Give the inputs positive errors."
-                )
+                raise ValueError(_ZERO_PROJECTED_ERROR)
             return operator[keep], np.sqrt(diagonal[keep])
         variance, vectors = np.linalg.eigh(covariance)
         keep = variance > 1e-10 * float(np.max(variance))
+        zero = sigma == 0.0
+        if np.any(zero) and np.any(operator[:, zero] != 0.0):
+            # A zero error on an input the operator uses must not make a
+            # direction vanish unseen: with a positive placeholder for it,
+            # the same covariance keeps more directions if it did. (Rank
+            # lost to the correlation itself is lost in both.)
+            placeholder = projected_covariance(
+                np.where(zero, np.max(sigma), sigma)
+            )
+            expected = np.linalg.eigvalsh(placeholder)
+            if np.sum(keep) < np.sum(expected > 1e-10 * np.max(expected)):
+                raise ValueError(_ZERO_PROJECTED_ERROR)
         return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
 
     @classmethod
@@ -2035,6 +2046,13 @@ def _expand_channels(u, v, wavel, vis, indices):
         onp.tile(wavel, n_baseline),
         indices,
     )
+
+
+_ZERO_PROJECTED_ERROR = (
+    "An operator output has zero projected error (the inputs it combines "
+    "have zero errors); it cannot be whitened. Give the inputs positive "
+    "errors."
+)
 
 
 def _good_samples(values, errors, flag, n_samples, name, operator=False):

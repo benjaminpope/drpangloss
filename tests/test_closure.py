@@ -321,6 +321,20 @@ def test_a_phase_operator_on_closure_phases_keeps_their_correlations():
     assert projected.phi.size == 9  # three frames, three each
 
 
+def test_a_zero_closure_phase_error_under_an_operator_is_an_error():
+    # Under the closure phases' correlation the covariance is diagonalized.
+    # The four phases of a frame have rank three, so one exact phase leaves
+    # the rank alone, but two lose a direction there without a message; as
+    # for a diagonal covariance, it is an error.
+    data = _four_telescopes()
+    d_phi = onp.array(data.d_phi, dtype=float)
+    d_phi[0] = 0.0
+    OIData(_record(data, d_phi=d_phi, phi_mat=onp.eye(data.phi.size)))
+    d_phi[1] = 0.0
+    with pytest.raises(ValueError, match="zero projected error"):
+        OIData(_record(data, d_phi=d_phi, phi_mat=onp.eye(data.phi.size)))
+
+
 def test_tiny_but_identical_operator_rows_are_still_merged():
     data = OIData(
         {

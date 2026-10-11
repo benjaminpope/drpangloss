@@ -291,11 +291,30 @@ def test_a_zero_raw_error_is_accepted_with_an_operator():
     assert data.vis.size == 1 and float(data.d_vis[0]) > 0.0
 
 
+def test_a_zero_raw_error_is_accepted_with_a_correlating_operator():
+    """The overlapping rows correlate, so the covariance is diagonalized;
+    the projected errors are all positive."""
+    data = OIData(
+        {
+            "u": [1.0, 2.0, 3.0],
+            "v": [0.0, 1.0, 2.0],
+            "wavel": 2e-6,
+            "vis": [1.0, 1.0, 1.0],
+            "d_vis": [0.0, 0.02, 0.03],
+            "vis_mat": [[1.0, 1.0, 0.0], [0.0, 1.0, 1.0]],
+        }
+    )
+    assert data.vis.size == 2 and bool(onp.all(onp.asarray(data.d_vis) > 0.0))
+
+
 @pytest.mark.parametrize(
     "d_vis, mat",
     [
         ([0.0, 0.0], [[1.0, 1.0]]),
         ([0.0, 0.02], [[1.0, 0.0], [0.0, 1.0]]),
+        # Correlated outputs: the zero-variance direction would be dropped
+        # by the eigendecomposition without a word.
+        ([0.0, 0.02], [[1.0, 1.0], [1.0, -1.0]]),
     ],
 )
 def test_zero_projected_error_is_a_clear_error(d_vis, mat):
