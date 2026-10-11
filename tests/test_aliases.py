@@ -401,7 +401,7 @@ def test_misconfiguration_surfaces_in_the_preflight(monkeypatch):
     assert calls == []  # no band was attempted
 
 
-@pytest.mark.filterwarnings("ignore:Python iterable type")
+@pytest.mark.filterwarnings("error:Python iterable type")
 def test_data_given_as_a_generator_is_cast_to_float64(monkeypatch):
     data, _ = _synthetic(12.38)
     seen = {}
