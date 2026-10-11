@@ -5,9 +5,10 @@
 [`numpyro_model`][virgil.likelihood.numpyro_model], and fits a guide (an
 approximate posterior) to ``numpyro_model``'s posterior by maximizing the
 evidence lower bound (ELBO) with numpyro's ``SVI``. The guide works in the
-unconstrained coordinates NUTS samples (the priors' flat coordinates by
-default), and starts at the Laplace approximation: its centre at a
-[`FitResult`][virgil.fitting.FitResult] and its width from
+unconstrained coordinates NUTS samples (numpyro's bijection of each
+prior's support by default, or the priors' flat coordinates with
+``flat_coordinates=True``), and starts at the Laplace approximation: its
+centre at a [`FitResult`][virgil.fitting.FitResult] and its width from
 [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
 
 A Gaussian guide (``guide="mvn"``) is close to that Laplace approximation
@@ -35,7 +36,12 @@ from numpyro.distributions.transforms import LowerCholeskyAffine
 from numpyro.infer import autoguide
 
 from ._precision import cast_tree, run_in
-from .fitting import FitResult, gauss_newton_mass
+from .fitting import (
+    FitResult,
+    NoLeastSquaresForm,
+    SingularCurvature,
+    gauss_newton_mass,
+)
 from .likelihood import numpyro_model
 
 GUIDES = ("bnaf", "iaf", "mvn", "laplace")
@@ -212,10 +218,11 @@ def _start_scale(
             likelihoods=likelihoods,
             flat_coordinates=flat,
         )
-    except (ValueError, TypeError, NotImplementedError) as error:
+    except (NoLeastSquaresForm, SingularCurvature) as error:
         warnings.warn(
             f"No Gauss–Newton starting width ({error}); the guide starts "
             f"with width init_scale={init_scale}.",
+            RuntimeWarning,
             stacklevel=3,
         )
         return onp.linalg.cholesky(covariance), False
@@ -440,6 +447,7 @@ def variational(
                 "The Gauss–Newton starting width leaves out regularizers; "
                 f"with them, the guide starts with width "
                 f"init_scale={init_scale}.",
+                UserWarning,
                 stacklevel=2,
             )
         use_dense = dense_start and not regularizers
@@ -471,6 +479,7 @@ def variational(
         warnings.warn(
             f"The SVI loss had not settled after {steps} steps; raise "
             "steps or lower learning_rate, or check info and the losses.",
+            RuntimeWarning,
             stacklevel=2,
         )
     info = {

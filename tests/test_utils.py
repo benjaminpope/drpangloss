@@ -203,3 +203,31 @@ def test_legacy_helpers_are_deprecated():
     from virgil.oidata import cp_indices as original
 
     assert cp_indices is original
+
+
+def test_position_angle_never_returns_360():
+    from virgil._geometry import position_angle
+
+    assert position_angle(onp.float32(-1e-7), onp.float32(1.0)) < 360.0
+    assert position_angle(-1e-16, 1.0) < 360.0
+    jax_pa = position_angle(np.asarray(-1e-7), np.asarray(1.0))
+    assert 0.0 <= float(jax_pa) < 360.0
+    # still differentiable
+    grad = jax.grad(lambda a: position_angle(a, np.asarray(1.0)))(1e-3)
+    assert onp.isfinite(grad)
+
+
+def test_numpy_like_inputs_stay_in_numpy_precision():
+    from virgil._geometry import position_angle, rotate
+
+    pa = position_angle([1e-9, -1.0], (1.0, 1.0))
+    assert isinstance(pa, onp.ndarray) and pa.dtype == onp.float64
+    assert onp.isclose(pa[0], onp.degrees(1e-9))
+    x, y = rotate([0.0], [1.0], [90.0])
+    assert x.dtype == onp.float64 and onp.isclose(x[0], 1.0)
+
+    class Series:  # an array-like that is not NumPy, like a pandas Series
+        def __array__(self, dtype=None, copy=None):
+            return onp.array([1.0, 2.0])
+
+    assert position_angle(Series(), Series()).dtype == onp.float64

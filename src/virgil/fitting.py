@@ -52,6 +52,30 @@ def _bijection(distribution):
     return biject_to(distribution.support)
 
 
+class NoLeastSquaresForm(TypeError):
+    """The objective has no residual vector (use L-BFGS or Adam).
+
+    A ``TypeError`` for backward compatibility; ``fit`` picks L-BFGS on it
+    and ``variational`` falls back to a diagonal start, while other errors
+    propagate.
+    """
+
+
+class SingularCurvature(ValueError):
+    """The Gauss–Newton curvature is singular at the given values."""
+
+
+class GaussNewtonMass(dict):
+    """NUTS keyword arguments from ``gauss_newton_mass``.
+
+    A ``dict`` that unpacks into ``NUTS(...)`` as usual, and records the
+    ``flat_coordinates`` of its matrix as an attribute for
+    [`chain_init_params`][virgil.likelihood.chain_init_params].
+    """
+
+    flat_coordinates = False
+
+
 def _prior_residuals(path, distribution, value):
     """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
 
@@ -71,7 +95,7 @@ def _prior_residuals(path, distribution, value):
         return None
     if isinstance(distribution, dist.Normal):
         return np.ravel((value - distribution.loc) / distribution.scale)
-    raise TypeError(
+    raise NoLeastSquaresForm(
         f"The {type(distribution).__name__} prior on {path!r} has no "
         "least-squares form; use Normal, Uniform, ImproperUniform or "
         "LogUniform or AngleVector priors (or one with a flat coordinate, "
@@ -310,17 +334,18 @@ class _Objective(eqx.Module):
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
 
-        Raises ``TypeError`` if a regularizer or prior has no least-squares
-        form (then use L-BFGS or Adam).
+        Raises :class:`NoLeastSquaresForm` (a ``TypeError``) if a
+        regularizer or prior has no least-squares form (then use L-BFGS or
+        Adam).
         """
         if self.noise:
-            raise TypeError(
+            raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
                 "likelihood's normalization depends on them); fit with "
                 "method='lbfgs' or 'adam'."
             )
         if self._has_gains:
-            raise TypeError(
+            raise NoLeastSquaresForm(
                 "Data with gains or marginalized flux scales have no "
                 "least-squares form (their covariance, and its determinant, "
                 "depend on the model); fit "
@@ -329,7 +354,7 @@ class _Objective(eqx.Module):
         model = self.build(z)
         values = self.constrain(z)
         if self._has_term_norms:
-            raise TypeError(
+            raise NoLeastSquaresForm(
                 "Likelihood terms with a log_norm (a fitted RV jitter, or "
                 "the Jacobian of a position-angle prior) have no "
                 "least-squares form; fit with method='lbfgs' or 'adam'."
@@ -338,7 +363,7 @@ class _Objective(eqx.Module):
         parts += [term(values) for term in self.likelihoods]
         for regularizer in self.regularizers:
             if not hasattr(regularizer, "residuals"):
-                raise TypeError(
+                raise NoLeastSquaresForm(
                     f"{type(regularizer).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
@@ -747,6 +772,7 @@ class _Budget:
         self.progress = _print_progress if progress is True else progress
         self.progress = self.progress or None
         self.start = time.monotonic()
+        self._reported = None
 
     @property
     def chunked(self):
@@ -759,8 +785,19 @@ class _Budget:
         ``loss_and_gradient()`` returns the loss and the gradient norm,
         and is called only to report them.
         """
+        elapsed = self.finish(steps, loss_and_gradient)
+        return self.time_limit is not None and elapsed >= self.time_limit
+
+    def finish(self, steps, loss_and_gradient):
+        """Report progress at ``steps`` unless it was just reported.
+
+        Called on completion too, so that a fit that converges within
+        its first chunk, or in its last, still reports. Returns the
+        elapsed time.
+        """
         elapsed = time.monotonic() - self.start
-        if self.progress is not None:
+        if self.progress is not None and self._reported != steps:
+            self._reported = steps
             loss, grad_norm = loss_and_gradient()
             self.progress(
                 {
@@ -770,7 +807,7 @@ class _Budget:
                     "elapsed": elapsed,
                 }
             )
-        return self.time_limit is not None and elapsed >= self.time_limit
+        return elapsed
 
 
 # A parameter is at a bound of its prior when it is within this fraction of
@@ -788,15 +825,18 @@ def _bound_fraction(prior, value, flat=True):
     isotropic inclination's (face-on) or latitude's (the poles) are poles
     of the coordinates, not edges of the prior. ``flat`` says whether a
     LogUniform is fitted (or, for samples, read) in its flat coordinate,
-    log x.
+    log x; otherwise it is read in x, as a fraction of ``[low, high]``.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
     import numpyro.distributions as dist
 
-    if isinstance(_base(prior), dist.LogUniform) and flat:
-        to_flat, _, low, high = _flat_coordinate(prior)
-        value = to_flat(value)
+    if isinstance(_base(prior), dist.LogUniform):
+        if flat:
+            to_flat, _, low, high = _flat_coordinate(prior)
+            value = to_flat(value)
+        else:
+            low, high = _base(prior).low, _base(prior).high
     elif _flat_coordinate(prior) is not None:
         return None
     else:
@@ -879,12 +919,17 @@ def gauss_newton_mass(
         costs efficiency, not correctness.
     flat_coordinates : bool, optional
         Whether the sampler moves in the priors' flat coordinates, as for
-        ``numpyro_model`` (default ``False``). Pass the same value to both.
+        ``numpyro_model`` (default ``False``). Pass the same value to both:
+        with ``adapt_mass_matrix=False`` a matrix in the wrong coordinates
+        is never corrected, and sampling is silently slow. The result
+        records the value, and
+        [`chain_init_params`][virgil.likelihood.chain_init_params] (given
+        ``mass=``) raises on a mismatch with the numpyro model.
 
     Returns
     -------
-    dict
-        Keyword arguments for ``numpyro.infer.NUTS``:
+    GaussNewtonMass
+        A dict of keyword arguments for ``numpyro.infer.NUTS``:
         ``inverse_mass_matrix``, ``dense_mass``, and
         ``adapt_mass_matrix=False``. Warmup adaptation is switched off
         because a dense covariance estimated from a few hundred draws in
@@ -914,16 +959,18 @@ def gauss_newton_mass(
         covariance, ok = _gauss_newton_covariance(problem, z)
         covariance = onp.asarray(covariance)
     if not ok:
-        raise ValueError(
+        raise SingularCurvature(
             "The Gauss–Newton curvature is singular: a parameter in priors "
             "is constrained by neither the data nor a Normal prior."
         )
     sites = problem.sites
-    return {
-        "inverse_mass_matrix": {sites: covariance},
-        "dense_mass": [sites],
-        "adapt_mass_matrix": False,
-    }
+    out = GaussNewtonMass(
+        inverse_mass_matrix={sites: covariance},
+        dense_mass=[sites],
+        adapt_mass_matrix=False,
+    )
+    out.flat_coordinates = bool(flat_coordinates)
+    return out
 
 
 @eqx.filter_jit
@@ -1016,7 +1063,7 @@ def _has_residuals(problem, z):
     """Whether the whole objective has a least-squares form."""
     try:
         jax.eval_shape(problem.residuals, z)
-    except TypeError:
+    except NoLeastSquaresForm:
         return False
     return True
 
@@ -1166,9 +1213,16 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
         )
         z = solution.value
         steps += int(solution.stats["num_steps"])
+        limited = solution.result == optx.RESULTS.nonlinear_max_steps_reached
+        done = (
+            solution.result == optx.RESULTS.successful
+            or not limited
+            or steps >= max_steps
+        )
+        if done:
+            budget.finish(steps, lambda: _loss_and_gradient(problem, z, scale))
         if solution.result == optx.RESULTS.successful:
             return z, steps, True, None
-        limited = solution.result == optx.RESULTS.nonlinear_max_steps_reached
         if not limited:
             return z, steps, False, "failed"
         if steps >= max_steps:
@@ -1365,6 +1419,8 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         )
     count, z, _, value, gradient, moved = carry
     count, value, gradient = int(count), float(value), float(gradient)
+    if budget.chunked:
+        budget.finish(count, lambda: _loss_and_gradient(problem, z, scale))
     # A gradient seen only at the start (count 0) that is not finite gives
     # a non-finite tolerance too.
     finite = math.isfinite(tolerance) and math.isfinite(value)
