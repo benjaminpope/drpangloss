@@ -66,6 +66,10 @@ class SingularCurvature(ValueError):
     """The Gauss–Newton curvature is singular at the given values."""
 
 
+class NoStartingValue(ValueError):
+    """A free parameter has no starting value (a function model needs one)."""
+
+
 class GaussNewtonMass(dict):
     """NUTS keyword arguments from ``gauss_newton_mass``.
 
@@ -266,7 +270,7 @@ class _Objective(eqx.Module):
                 continue
             if path not in values:
                 if not isinstance(self.model, SourceModel):
-                    raise ValueError(
+                    raise NoStartingValue(
                         f"No starting value for {path!r}: pass init= when "
                         "the model is a function."
                     )
@@ -332,13 +336,11 @@ class _Objective(eqx.Module):
             for i, (m, d) in enumerate(zip(models, self.data))
         ]
 
-    def residuals(self, z):
-        """Residual vector whose half sum of squares is ``loss(z)`` + const.
-
-        Raises :class:`NoLeastSquaresForm` (a ``TypeError``) if a
-        regularizer or prior has no least-squares form (then use L-BFGS or
-        Adam).
-        """
+    def _check_least_squares(self, term_norms=True):
+        """Raise :class:`NoLeastSquaresForm` if the objective has no residual
+        vector: fitted error terms, data with gains, regularizers without
+        ``residuals`` and, if ``term_norms``, likelihood terms with a
+        ``log_norm``."""
         if self.noise:
             raise NoLeastSquaresForm(
                 "Fitted error terms have no least-squares form (the "
@@ -352,22 +354,32 @@ class _Objective(eqx.Module):
                 "depend on the model); fit "
                 "with method='lbfgs' or 'adam'."
             )
-        model = self.build(z)
-        values = self.constrain(z)
-        if self._has_term_norms:
+        if term_norms and self._has_term_norms:
             raise NoLeastSquaresForm(
                 "Likelihood terms with a log_norm (a fitted RV jitter, or "
                 "the Jacobian of a position-angle prior) have no "
                 "least-squares form; fit with method='lbfgs' or 'adam'."
             )
-        parts = self.data_residuals(model)
-        parts += [term(values) for term in self.likelihoods]
         for regularizer in self.regularizers:
             if not hasattr(regularizer, "residuals"):
                 raise NoLeastSquaresForm(
                     f"{type(regularizer).__name__} has no least-squares "
                     "form; fit with method='lbfgs' or 'adam'."
                 )
+
+    def residuals(self, z):
+        """Residual vector whose half sum of squares is ``loss(z)`` + const.
+
+        Raises :class:`NoLeastSquaresForm` (a ``TypeError``) if a
+        regularizer or prior has no least-squares form (then use L-BFGS or
+        Adam).
+        """
+        self._check_least_squares()
+        model = self.build(z)
+        values = self.constrain(z)
+        parts = self.data_residuals(model)
+        parts += [term(values) for term in self.likelihoods]
+        for regularizer in self.regularizers:
             parts.append(np.ravel(regularizer.residuals(_reference(model))))
         for path, prior in self.priors.items():
             r = _prior_residuals(path, prior, self._prior_value(values, path))
@@ -956,6 +968,8 @@ def gauss_newton_mass(
             ),
             "float64",
         )
+        # A log_norm has no residuals: its curvature is left out (see above).
+        problem._check_least_squares(term_norms=False)
         z = problem.init(cast_tree(values, "float64"))
         covariance, ok = _gauss_newton_covariance(problem, z)
         covariance = onp.asarray(covariance)

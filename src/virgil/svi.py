@@ -39,6 +39,7 @@ from ._precision import cast_tree, run_in
 from .fitting import (
     FitResult,
     NoLeastSquaresForm,
+    NoStartingValue,
     SingularCurvature,
     gauss_newton_mass,
 )
@@ -219,7 +220,11 @@ def _start_scale(
             likelihoods=likelihoods,
             flat_coordinates=flat,
         )
-    except (NoLeastSquaresForm, SingularCurvature) as error:
+    except (
+        NoLeastSquaresForm,
+        NoStartingValue,
+        SingularCurvature,
+    ) as error:
         warnings.warn(
             f"No Gauss–Newton starting width ({error}); the guide starts "
             f"with width init_scale={init_scale}.",
