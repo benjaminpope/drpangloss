@@ -19,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 
-from ._io import read_json, sha256_file
+from ._io import SCHEMA, read_json, sha256_file
 
 _PIPELINES = {
     "binary": ("virgil.pipeline.binary", "BinaryPipeline"),
@@ -63,14 +63,17 @@ def _run(args):
 def _info(args):
     folder = Path(args.dir)
     run = read_json(folder / "run.json")
-    print(f"{run['class']} ({run['stability']}), schema {run['schema']}")
-    print(f"status: {run['status']}")
+    print(
+        f"{run.get('class', '?')} ({run.get('stability', '?')}), "
+        f"schema {run.get('schema')}"
+    )
+    print(f"status: {run.get('status')}")
     if run.get("error"):
         error = run["error"]
         print(
             f"error in {error['stage']}: {error['type']}: {error['message']}"
         )
-    for name, entry in run["stages"].items():
+    for name, entry in run.get("stages", {}).items():
         print(
             f"  {name:<10} {entry['status']:<9} {entry.get('seconds', 0):8.1f} s"
         )
@@ -82,41 +85,81 @@ def _info(args):
     return 0
 
 
-def _validate(args):
-    folder = Path(args.dir)
+# Keys every run.json must hold.
+_REQUIRED_KEYS = (
+    "pipeline",
+    "class",
+    "config",
+    "inputs",
+    "provenance",
+    "stages",
+)
+_STATUSES = ("running", "partial", "complete", "failed")
+
+
+def _record_problems(run):
+    """Problems with the contents of ``run.json`` itself."""
     problems = []
-    try:
-        run = read_json(folder / "run.json")
-    except (OSError, ValueError) as err:
-        print(f"invalid: cannot read run.json ({err})")
-        return 1
-    if run.get("schema") != "virgil-pipeline-run-v1":
+    if run.get("schema") != SCHEMA:
         problems.append(f"unknown schema {run.get('schema')!r}")
-    if run.get("status") not in ("running", "partial", "complete", "failed"):
+    if run.get("status") not in _STATUSES:
         problems.append(f"unknown status {run.get('status')!r}")
-    for key in ("pipeline", "config", "inputs", "provenance", "stages"):
-        if key not in run:
-            problems.append(f"run.json lacks {key!r}")
+    problems += [
+        f"run.json lacks {key!r}" for key in _REQUIRED_KEYS if key not in run
+    ]
+    if run.get("status") == "failed":
+        error = run.get("error") or {}
+        problems.append(
+            f"the run failed in stage {error.get('stage')!r}: "
+            f"{error.get('type')}: {error.get('message')}"
+        )
+    return problems
+
+
+def _summary_problems(folder, run):
     try:
         summary = read_json(folder / "summary.json")
-        if summary.get("schema") != run.get("schema"):
-            problems.append("summary.json schema differs from run.json")
     except (OSError, ValueError) as err:
-        problems.append(f"cannot read summary.json ({err})")
+        return [f"cannot read summary.json ({err})"]
+    if summary.get("schema") != run.get("schema"):
+        return ["summary.json schema differs from run.json"]
+    return []
+
+
+def _file_problems(folder, run):
+    """Missing stage outputs, and files that changed since the run."""
+    problems = []
     for name, entry in run.get("stages", {}).items():
         if entry.get("status") != "complete":
             continue
-        for rel in entry.get("outputs", []):
-            if not (folder / rel).exists():
-                problems.append(f"stage {name}: missing {rel}")
+        problems += [
+            f"stage {name}: missing {rel}"
+            for rel in entry.get("outputs", [])
+            if not (folder / rel).exists()
+        ]
     for rel, digest in (run.get("files") or {}).items():
         path = folder / rel
         if not path.exists():
             problems.append(f"missing {rel}")
-            continue
-        h = sha256_file(path)
-        if h != digest:
+        elif sha256_file(path) != digest:
             problems.append(f"{rel} changed since the run")
+    return problems
+
+
+def _validate(args):
+    folder = Path(args.dir)
+    try:
+        run = read_json(folder / "run.json")
+        if not isinstance(run, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as err:
+        print(f"invalid: cannot read run.json ({err})")
+        return 1
+    problems = (
+        _record_problems(run)
+        + _summary_problems(folder, run)
+        + _file_problems(folder, run)
+    )
     if problems:
         print("invalid:")
         for problem in problems:
