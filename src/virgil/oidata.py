@@ -24,6 +24,7 @@ from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import _phase_unit_scale, read_oifits
+from ._deprecate import external_stacklevel
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
@@ -337,7 +338,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "positive error): using "
                     "the visibilities alone.",
                     UserWarning,
-                    stacklevel=2,
+                    stacklevel=external_stacklevel(),
                 )
                 cp_flag, indices = False, None
                 phi_index = onp.zeros(0, dtype=int)

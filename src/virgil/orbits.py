@@ -43,6 +43,7 @@ from ._geometry import position_angle, separation_pa
 from ._utils import concrete
 from .angles import AngleVector
 from .priors import IsotropicInclination
+from ._deprecate import external_stacklevel
 
 
 __all__ = [
@@ -136,7 +137,7 @@ def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
             "dt_peri is then counted from MJD 0. Give the orbit a t_ref "
             "near the data (e.g. KeplerOrbit(..., t_ref=60500.0)).",
             UserWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
 
 

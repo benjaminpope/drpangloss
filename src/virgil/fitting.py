@@ -44,6 +44,7 @@ from .likelihood import (
     tied_log_prior,
 )
 from .models import SourceModel
+from ._deprecate import external_stacklevel
 
 
 def _bijection(distribution):
@@ -131,7 +132,7 @@ def _warn_if_field_hyperparameter(model, path):
                 "field are biased at the MAP (towards a flat field). Fix "
                 "them, choose them from the evidence, or sample them.",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=external_stacklevel(),
             )
 
 
@@ -731,7 +732,7 @@ def fit(
             warnings.warn(
                 _not_converged(method, stop, steps, limit, dtype, time_limit),
                 RuntimeWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
         chi2 = [float(c) for c in chi2]
         info = {

@@ -249,7 +249,7 @@ anything before 1.0 may change between minor versions.
   the same value to `gauss_newton_mass`, `variational` and
   `chain_init_params`' model. See `design/sampler_flat_coordinates.md`.
 - **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
-- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `imaging.l_curve` takes `regularizer` (not `regulariser`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
 - **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
 - **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
 - **Duplicated and dead code removed (part of #310; no behaviour change).**
@@ -264,6 +264,33 @@ anything before 1.0 may change between minor versions.
   `coordinate_points`; one `_unit_sum`; the `batch_size` and noise-term
   "Priors" docstrings are stated once and referred to. Unused
   `_utils.i2pi` removed.
+- **Warnings name the caller's line.** Deprecation `FutureWarning`s and
+  virgil's other warnings are attributed to the first frame outside virgil
+  (`_deprecate.external_stacklevel`), not to a fixed depth, which pointed
+  into equinox's method wrappers (`OIData.model`, `with_model`,
+  `observables.*.predict`, `RVData.term`, `Tabulated`) or into the
+  `renamed` wrapper (`fit`'s own warnings). Shim messages name methods as
+  `Class.method`, and a new name passed positionally beside its old
+  keyword raises the shim's "got both" `TypeError`.
+- `_geometry.position_angle` never returns exactly 360 (it did for tiny
+  negative offsets), `KeplerOrbit.frame()["towards_primary"]` is wrapped
+  to `[0, 360)`, and the geometry helpers compute lists and array-likes
+  (e.g. a pandas Series) in NumPy float64 rather than JAX float32.
+- Differential-phase steps and anchors use one wrap, `[-π, π)`, in data
+  and model alike (a step of exactly ±π used to wrap differently).
+- `Centroid` sums over pixels at `Precision.HIGHEST`; `oifits` no longer
+  imports JAX.
+- `fit` falls back to L-BFGS only when the objective has no least-squares
+  form (`fitting.NoLeastSquaresForm`), and `variational` starts at
+  `init_scale` only for that or a singular curvature
+  (`fitting.SingularCurvature`); other errors propagate instead of being
+  taken for either. SVI warnings state their category. `fit(progress=)`
+  also reports when the fit finishes, and `fitting._bound_fraction` gives
+  a LogUniform's fraction in x when `flat=False`.
+- `numpyro_model`'s function and `gauss_newton_mass`'s result record
+  `flat_coordinates`, and `chain_init_params(..., mass=)` raises if they
+  differ (a mass matrix in the other coordinates is never adapted). The
+  docs now describe flat-coordinate sampling as opt-in.
 
 ### Fixed
 
@@ -277,7 +304,9 @@ anything before 1.0 may change between minor versions.
     (or negative) error, as it already did for extra observables
     (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
     residual, which made every likelihood and fit non-finite. Flagged
-    and non-finite samples were already dropped.
+    and non-finite samples were already dropped. Raw errors that
+    `vis_mat`/`phi_mat` project may still be zero; a zero *projected*
+    error raises a `ValueError`.
   - **Field of view.** `imaging.field_of_view` and `nyquist_pixel_scale`
     (and the new `Epochs.resolution_mas` and pipelines) share
     `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines,

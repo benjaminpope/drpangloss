@@ -40,6 +40,7 @@ from .likelihood import (
     inflated_errors,
     whitened_residuals,
 )
+from ._deprecate import external_stacklevel
 
 
 __all__ = [
@@ -648,7 +649,7 @@ def _limits(
             f"{tuple(flux_bounds)} and were clipped to the nearer bound; "
             "pass wider flux_bounds, or None, to search further.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
     elif missed:
         warnings.warn(
@@ -657,7 +658,7 @@ def _limits(
             f"{start:g} at {missed} of {onp.size(crossed)} grid positions; "
             "the limits there are where the search stopped.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
     return limits
 

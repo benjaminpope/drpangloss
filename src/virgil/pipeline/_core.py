@@ -19,6 +19,7 @@ import numpy as onp
 
 from . import _io
 from ._checks import stage_warning_checks, worst_status
+from .._deprecate import external_stacklevel
 
 SCHEMA = _io.SCHEMA
 
@@ -159,7 +160,7 @@ class _Pipeline:
                 f"{type(self).__name__} is provisional: its settings and "
                 "outputs may change while the virgil APIs it calls settle.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
 
     # --- settings -------------------------------------------------------

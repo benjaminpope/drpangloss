@@ -19,6 +19,7 @@ from ._precision import cast_tree, run_in
 from ._utils import concrete as _concrete
 from .likelihood import loglike
 from .models import SourceModel
+from ._deprecate import external_stacklevel
 
 
 def _warn_if_not_positive_definite(matrix, what):
@@ -32,7 +33,7 @@ def _warn_if_not_positive_definite(matrix, what):
             "likelihood maximum, or a parameter is unconstrained); the "
             "result has negative or infinite variances.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
 
 
@@ -154,7 +155,7 @@ def fisher_projection(fmat, eps=1e-12):
             "fisher_projection(): the Fisher matrix has eigenvalues below "
             f"eps={eps} times its largest; they were raised to that floor.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     safe = np.maximum(evals, floor)
     return evecs * (1.0 / np.sqrt(safe))[None, :]

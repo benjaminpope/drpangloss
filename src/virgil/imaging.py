@@ -74,6 +74,7 @@ from .models import (
     _pixel_visibilities,
     circular_support,
 )
+from ._deprecate import external_stacklevel
 
 _HIGHEST = jax.lax.Precision.HIGHEST
 
@@ -2127,7 +2128,7 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
             f"error_scale: the block noise scales did not converge in "
             f"{max_iter} iterations (relative change {change:.1e}).",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
     return dict(zip(kinds, beta))
 

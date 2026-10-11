@@ -65,6 +65,7 @@ from .orbits import (
     _phase_drift,
     starting_orbits,
 )
+from ._deprecate import external_stacklevel
 
 
 __all__ = [
@@ -670,7 +671,7 @@ def _check_scales(scales, name):
             "scales integrated out, see marginal_loglike). Pass "
             "scales='quoted' or scales='marginal' to choose.",
             FutureWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
         return "quoted"
     if scales not in _SCALES:
@@ -1542,7 +1543,7 @@ def epoch_positions(
             "these datasets, and do not read a rescaled chi2/N of 1 as a "
             "good fit.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     if edge_grid:
         warnings.warn(
@@ -1550,7 +1551,7 @@ def epoch_positions(
             "edge of the grid: the companion may lie outside it. Widen the "
             "grid.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     if edge_peak:
         warnings.warn(
@@ -1558,7 +1559,7 @@ def epoch_positions(
             "the edge of the grid: the companion may lie outside it. Widen "
             "the grid.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     return EpochPositions(
         names=data.dataset_names,
@@ -1817,7 +1818,7 @@ def start_from_positions(
             "the orbits; their visibilities still enter the ranking and "
             "the fits. See OrbitStart.ambiguous and positions.peaks.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     with run_in("float64"):
         seeds = positions.positions(t_ref=t_ref, min_gap=min_gap)
@@ -1885,7 +1886,7 @@ def start_from_positions(
                 f"The refinement fit from candidate {k} failed ({reason}); "
                 "the others go on.",
                 RuntimeWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
             continue
         result.info["candidate"] = int(k)
@@ -1926,5 +1927,5 @@ def _warn_if_coarse(periods, times):
             "orbits can miss the true period; use "
             "virgil.orbits.period_grid(times, p_min, p_max).",
             UserWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )

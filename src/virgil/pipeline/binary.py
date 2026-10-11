@@ -25,6 +25,7 @@ from ._common import (
 )
 from .._geometry import separation_pa
 from ._core import Stage, _Pipeline
+from .._deprecate import external_stacklevel
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
 
@@ -411,7 +412,7 @@ def _search(p):
             f"{axis.wanted:.3g} to {axis.step:.3g} mas; raise max_grid (or "
             "grid_step_mas) for a finer search.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     # detection_statistics evaluates the full likelihood grid, refines the
     # flux and takes the Laplace width internally, but returns only scalars.

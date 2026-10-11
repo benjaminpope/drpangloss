@@ -43,6 +43,7 @@ from .fitting import (
     gauss_newton_mass,
 )
 from .likelihood import numpyro_model
+from ._deprecate import external_stacklevel
 
 GUIDES = ("bnaf", "iaf", "mvn", "laplace")
 
@@ -223,7 +224,7 @@ def _start_scale(
             f"No Gauss–Newton starting width ({error}); the guide starts "
             f"with width init_scale={init_scale}.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
         return onp.linalg.cholesky(covariance), False
     ((sites, gn),) = mass["inverse_mass_matrix"].items()
@@ -448,7 +449,7 @@ def variational(
                 f"with them, the guide starts with width "
                 f"init_scale={init_scale}.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
         use_dense = dense_start and not regularizers
         if hasattr(guide_obj, "start_tril"):  # started at the Laplace frame
@@ -480,7 +481,7 @@ def variational(
             f"The SVI loss had not settled after {steps} steps; raise "
             "steps or lower learning_rate, or check info and the losses.",
             RuntimeWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
     info = {
         "guide": name,

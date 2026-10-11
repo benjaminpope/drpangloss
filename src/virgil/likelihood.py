@@ -37,6 +37,7 @@ from ._utils import (
 from .angles import is_angle_vector, vector_angle, vector_site
 from .gains import GAIN_GROUPS, OFFSET_GROUPS
 from .models import SourceModel
+from ._deprecate import external_stacklevel
 
 
 def _gain_jacobian(data, vis_prediction):
@@ -767,7 +768,7 @@ def _warn_zero_size_for_parallel_chains(observations):
             'Run numpyro chains with chain_method="vectorized", not '
             '"parallel".',
             RuntimeWarning,
-            stacklevel=4,
+            stacklevel=external_stacklevel(),
         )
 
 
