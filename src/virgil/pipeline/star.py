@@ -772,15 +772,18 @@ def _fit_scanned(p, entry, start, grid, noise):
     if noise is None:
         return entry.build(start), {"diam": onp.asarray(start["diam"])}, info
     data = p.processed
-    m2loglike, _ = _m2loglike_grid(
+    m2loglike, grid_scales = _m2loglike_grid(
         entry.build, start, data, grid, noise, p.settings["batch_size"]
     )
     best = int(onp.nanargmin(m2loglike))
     low = grid[max(best - 1, 0)]
     high = grid[min(best + 1, grid.size - 1)]
-    diam, _, scales = _refine_diameter(
+    diam, m2, scales = _refine_diameter(
         entry.build, start, data, low, high, noise
     )
+    if not m2 <= m2loglike[best]:  # not unimodal between the neighbours
+        diam = float(grid[best])
+        scales = {k: float(v[best]) for k, v in grid_scales.items()}
     values = {"diam": onp.asarray(diam)}
     values.update({f"noise.{k}": v for k, v in scales.items()})
     model = entry.build({**start, "diam": diam})
