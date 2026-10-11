@@ -392,7 +392,7 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     ran = []
     import virgil.pipeline.binary as binary
 
-    for name in ("_load", "_overview", "_search"):
+    for name in ("_load_report", "_overview", "_search"):
         monkeypatch.setattr(binary, name, lambda p, n=name: ran.append(n))
     res = BinaryPipeline(data, output=out, limit_bins=20, **settings).run(
         through="limits"

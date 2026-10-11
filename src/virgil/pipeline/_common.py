@@ -88,6 +88,36 @@ def _spatial_frequencies(data):
     return onp.hypot(u, v) / wavel
 
 
+def _load_report(p, **extra):
+    """The ``load`` stage: the data's summary report, and its OIFITS copy.
+
+    ``extra`` entries are added to the report after the geometry. A stale
+    ``processed.oifits`` of an earlier run is removed when the data cannot
+    be written (``_io.oidata_tables`` returns no tables).
+    """
+    from ..oifits import write_oifits
+
+    data = p.processed
+    tables, reason = _io.oidata_tables(data)
+    report = {
+        "n_vis": int(onp.asarray(data.vis).size),
+        "n_phi": int(onp.asarray(data.phi).size),
+        "n_independent": int(data.n_independent),
+        "closure_phases": bool(data.cp_flag),
+        **_geometry(data),
+        **extra,
+        "data_sha256": _io.data_fingerprint(data),
+        "processed_oifits_skipped": reason,
+    }
+    path = p.output / "data" / "processed.oifits"
+    if tables is None:
+        path.unlink(missing_ok=True)  # not an earlier run's data
+    else:
+        with _io.atomic_path(path) as tmp:
+            write_oifits(tables, tmp)
+    return report
+
+
 def _chi2(model, data, **noise):
     from ..likelihood import whitened_residuals
 
@@ -172,14 +202,32 @@ def _profiled_scales(model, data, blocks):
     return scales
 
 
+def _profiled_m2loglike(build, start, data, diam, blocks):
+    """``(−2 log L, scales)`` of ``build({**start, "diam": diam})`` at its
+    profiled error scales. Traceable."""
+    model = build({**start, "diam": diam})
+    scales = _profiled_scales(model, data, blocks)
+    return -2.0 * model_loglike(model, data, **scales), scales
+
+
 @eqx.filter_jit
 def _m2loglike_grid_jit(build, start, data, diams, blocks, batch_size):
     def one(diam):
-        model = build({**start, "diam": diam})
-        scales = _profiled_scales(model, data, blocks)
-        return -2.0 * model_loglike(model, data, **scales), scales
+        return _profiled_m2loglike(build, start, data, diam, blocks)
 
     return jax.lax.map(one, diams, batch_size=batch_size)
+
+
+@eqx.filter_jit
+def _refine_diameter_jit(build, start, data, low, high, blocks):
+    def loglike(log_diam):
+        m2, _ = _profiled_m2loglike(
+            build, start, data, np.exp(log_diam), blocks
+        )
+        return -0.5 * m2
+
+    diam = np.exp(_golden_max(loglike, np.log(low), np.log(high)))
+    return diam, *_profiled_m2loglike(build, start, data, diam, blocks)
 
 
 def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
@@ -210,6 +258,36 @@ def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
         return onp.asarray(m2), {k: onp.asarray(v) for k, v in scales.items()}
 
 
+def _refine_diameter(build, start, data, low, high, noise):
+    """The diameter in ``[low, high]`` of least profiled −2 log L.
+
+    Golden-section search in ln θ (the profiled likelihood is unimodal on
+    a bracket this narrow), with the error scales of ``noise`` re-profiled
+    at every trial diameter. ``build`` and ``start`` are as for
+    ``_m2loglike_grid``.
+
+    Returns
+    -------
+    tuple
+        ``(diam, m2loglike, scales)``: floats and a dict of floats.
+    """
+    with run_in("float64"):
+        data = cast_tree(data, "float64")
+        diam, m2, scales = _refine_diameter_jit(
+            build,
+            {k: np.asarray(v) for k, v in start.items()},
+            data,
+            np.asarray(low),
+            np.asarray(high),
+            _scale_blocks(data, noise),
+        )
+        return (
+            float(diam),
+            float(m2),
+            {k: float(v) for k, v in scales.items()},
+        )
+
+
 # Per-transition NUTS diagnostics kept in samples.h5.
 _NUTS_FIELDS = (
     "diverging",
@@ -228,7 +306,7 @@ _SAMPLER_SETTINGS = (
 )
 
 
-def _mcmc(posterior, settings, init, *, dense_mass):
+def _mcmc(posterior, settings, *, dense_mass):
     """A NUTS ``MCMC`` with the pipeline's sampler settings (not yet run)."""
     from numpyro.infer import MCMC, NUTS
 

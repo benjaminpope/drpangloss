@@ -13,6 +13,7 @@ from ._common import (
     _NUTS_FIELDS,
     _SAMPLER_SETTINGS,
     _diagnostics,
+    _load_report,
     _mcmc,
     _noise_quantiles,
     _sample_stats,
@@ -314,7 +315,7 @@ class BinaryPipeline(_Pipeline):
 
     def _stages(self):
         return (
-            Stage("load", _load, ("stages/load/report.json",)),
+            Stage("load", _load_report, ("stages/load/report.json",)),
             Stage(
                 "overview",
                 _overview,
@@ -361,29 +362,6 @@ class BinaryPipeline(_Pipeline):
 
 
 # === STAGES ===
-
-
-def _load(p):
-    from ..oifits import write_oifits
-
-    data = p.processed
-    tables, reason = _io.oidata_tables(data)
-    report = {
-        "n_vis": int(onp.asarray(data.vis).size),
-        "n_phi": int(onp.asarray(data.phi).size),
-        "n_independent": int(data.n_independent),
-        "closure_phases": bool(data.cp_flag),
-        **_geometry(data),
-        "data_sha256": _io.data_fingerprint(data),
-        "processed_oifits_skipped": reason,
-    }
-    path = p.output / "data" / "processed.oifits"
-    if tables is None:
-        path.unlink(missing_ok=True)  # not an earlier run's data
-    else:
-        with _io.atomic_path(path) as tmp:
-            write_oifits(tables, tmp)
-    return report
 
 
 def _overview(p):
@@ -832,7 +810,7 @@ def _run_nuts(p, priors, angular):
     init = chain_init_params(
         posterior, [start] * s["num_chains"], key=init_key
     )
-    mcmc = _mcmc(posterior, s, init, dense_mass=False)
+    mcmc = _mcmc(posterior, s, dense_mass=False)
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     return mcmc
 
