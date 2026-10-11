@@ -2330,6 +2330,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     return float(1.0 / onp.sqrt(beta))
 
 
+@renamed()
 def l_curve(
     model,
     priors,

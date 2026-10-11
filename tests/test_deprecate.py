@@ -232,3 +232,70 @@ def test_misnamed_parameters_fail_at_decoration():
         @old_order("data", "model", data="data")
         def f(model, data_obj):
             pass
+
+
+def _small_data():
+    return OIData(
+        {
+            "u": [1.0, 2.0],
+            "v": [0.0, 1.0],
+            "wavel": 2e-6,
+            "vis": [0.9, 0.8],
+            "d_vis": [0.02, 0.02],
+        }
+    )
+
+
+def test_warning_points_at_the_caller_for_equinox_methods():
+    from virgil.models import UniformDisk
+
+    data = _small_data()
+    with pytest.warns(FutureWarning, match="model_object") as record:
+        data.model(model_object=UniformDisk(2.0))
+    assert record[0].filename == __file__
+    assert "OIData.model(model_object=" in str(record[0].message)
+
+
+def test_tabulated_warning_points_at_the_caller():
+    from virgil.spectra import Tabulated
+
+    with pytest.warns(FutureWarning, match="Tabulated") as record:
+        Tabulated([1.0, 2.0], [1e-6, 2e-6])
+    assert record[0].filename == __file__
+
+
+def test_new_name_positional_with_old_keyword_is_the_shims_type_error():
+    with pytest.raises(TypeError, match="got both data= and data_obj="):
+        residuals_like("m", "d", data_obj="d")
+    with pytest.raises(TypeError, match="got both"):
+        residuals_like("m", data="d", data_obj="d")
+
+
+def test_messages_use_the_qualified_name():
+    class A:
+        @renamed()
+        def method(self, model):
+            return model
+
+    with pytest.warns(FutureWarning, match=r"A\.method\(model_object=") as r:
+        A().method(model_object=1)
+    assert r[0].filename == __file__
+
+
+def test_l_curve_accepts_the_old_regulariser_keyword():
+    import jax.numpy as np
+
+    from tests.test_imaging import DATA, NPIX, _image
+    from virgil.imaging import TSV, image_priors, l_curve
+    from virgil.models import PointSource, System
+
+    start = System(
+        star=PointSource(), env=_image(np.ones((NPIX, NPIX)), flux=0.2)
+    )
+    args = (start, image_priors(start), DATA)
+    kw = {"weights": [1e3], "method": "lm"}
+    new = l_curve(*args, regularizer=TSV(1.0, path="env"), **kw)
+    with pytest.warns(FutureWarning, match="regulariser=") as record:
+        old = l_curve(*args, regulariser=TSV(1.0, path="env"), **kw)
+    assert record[0].filename == __file__
+    assert np.allclose(old.chi2, new.chi2)

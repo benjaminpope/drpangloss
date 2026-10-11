@@ -14,6 +14,7 @@ array values, so they are valid while JAX traces a call.
 
 import functools
 import inspect
+import sys
 import warnings
 
 __all__ = ["old_order", "renamed"]
@@ -29,7 +30,30 @@ NAME_ALIASES = {
     # Oxford -ize spelling (0.4)
     "regularisers": "regularizers",
     "marginalise_offsets": "marginalize_offsets",
+    "regulariser": "regularizer",
 }
+
+#: Top-level packages whose frames a deprecation warning looks through.
+_INTERNAL = ("virgil", "equinox", "functools", "jaxtyping")
+
+
+def external_stacklevel():
+    """The ``stacklevel`` of the first caller outside virgil and its wrappers.
+
+    Meant for ``warnings.warn(..., stacklevel=external_stacklevel())`` in
+    the function that warns, so the warning is attributed to user code
+    even when equinox's method wrappers, ``functools`` or jaxtyping add
+    frames between the two. Falls back to the outermost frame.
+    """
+    frame = sys._getframe(1)
+    level = 1
+    while frame is not None:
+        top = frame.f_globals.get("__name__", "").partition(".")[0]
+        if top not in _INTERNAL:
+            return level
+        frame = frame.f_back
+        level += 1
+    return level - 1
 
 
 def _is_data(x):
@@ -54,20 +78,35 @@ def _alias_map(params, aliases):
     }
 
 
-def _apply_aliases(name, kwargs, aliases):
-    """Rename deprecated keywords in ``kwargs`` in place, with a warning."""
+def _apply_aliases(name, args, kwargs, aliases, positional=()):
+    """Rename deprecated keywords in ``kwargs`` in place, with a warning.
+
+    ``positional`` lists the parameter names in positional order, to catch
+    a new name passed positionally beside its old keyword.
+    """
     for old, new in aliases.items():
         if old not in kwargs:
             continue
-        if new in kwargs:
+        if new in kwargs or (
+            new in positional and positional.index(new) < len(args)
+        ):
             raise TypeError(f"{name} got both {new}= and {old}=; use {new}=")
         warnings.warn(
             f"{name}({old}=...) is now {name}({new}=...); "
             f"{old}= stops working in virgil 0.5.",
             FutureWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
         kwargs[new] = kwargs.pop(old)
+
+
+def _positional_names(params):
+    """Names of the parameters that can be passed positionally, in order."""
+    kinds = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
+    return tuple(n for n, p in params.items() if p.kind in kinds)
 
 
 def _as_keywords(bound, params):
@@ -93,10 +132,11 @@ def renamed(aliases=None):
         names = _alias_map(
             params, NAME_ALIASES if aliases is None else aliases
         )
+        positional = _positional_names(params)
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            _apply_aliases(fn.__name__, kwargs, names)
+            _apply_aliases(fn.__qualname__, args, kwargs, names, positional)
             return fn(*args, **kwargs)
 
         return wrapper
@@ -135,17 +175,19 @@ def old_order(*old_names, data, aliases=None, removed=False):
         names = _alias_map(
             params, NAME_ALIASES if aliases is None else aliases
         )
+        positional = _positional_names(params)
+        qualname = fn.__qualname__
         new_names = [n for n in params if n in old_names]
         moved = [params[n] for n in old_names] + [
             p for n, p in params.items() if n not in old_names
         ]
         old_sig = sig.replace(parameters=moved)
         i_old, i_new = old_names.index(data), new_names.index(data)
-        new_call = f"{fn.__name__}({', '.join(new_names)}, ...)"
+        new_call = f"{qualname}({', '.join(new_names)}, ...)"
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
-            _apply_aliases(fn.__name__, kwargs, names)
+            _apply_aliases(qualname, args, kwargs, names, positional)
             if not (
                 len(args) > i_old
                 and _is_data(args[i_old])
@@ -154,15 +196,15 @@ def old_order(*old_names, data, aliases=None, removed=False):
                 return fn(*args, **kwargs)
             if removed:
                 raise TypeError(
-                    f"{fn.__name__} takes the model before the data since "
+                    f"{qualname} takes the model before the data since "
                     f"virgil 0.4; call {new_call}."
                 )
             warnings.warn(
-                f"{fn.__name__} now takes the model before the data; "
+                f"{qualname} now takes the model before the data; "
                 f"call {new_call}. The old order stops working in "
                 "virgil 0.5.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
             bound = old_sig.bind(*args, **kwargs)
             return fn(**_as_keywords(bound, params))
