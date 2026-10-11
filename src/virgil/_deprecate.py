@@ -34,7 +34,18 @@ NAME_ALIASES = {
 }
 
 #: Top-level packages whose frames a deprecation warning looks through.
-_INTERNAL = ("virgil", "equinox", "functools", "jaxtyping")
+_INTERNAL = (
+    "virgil",
+    "equinox",
+    "functools",
+    "jax",
+    "jaxlib",
+    "jaxtyping",
+    "lineax",
+    "numpyro",
+    "optax",
+    "optimistix",
+)
 
 
 def external_stacklevel():
@@ -42,8 +53,9 @@ def external_stacklevel():
 
     Meant for ``warnings.warn(..., stacklevel=external_stacklevel())`` in
     the function that warns, so the warning is attributed to user code
-    even when equinox's method wrappers, ``functools`` or jaxtyping add
-    frames between the two. Falls back to the outermost frame.
+    even when equinox's method wrappers, ``functools``, jaxtyping, or the
+    tracing of JAX, numpyro, optimistix, lineax or optax add frames
+    between the two. Falls back to the outermost frame.
     """
     frame = sys._getframe(1)
     level = 1

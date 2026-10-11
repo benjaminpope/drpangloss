@@ -166,8 +166,9 @@ def position_angle(dra, ddec):
     """
     xp = onp if _numpy_inputs(dra, ddec) else np
     pa = xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
-    # mod rounds a tiny negative angle up to exactly 360.
-    return xp.where(pa >= 360.0, pa - 360.0, pa)
+    # mod rounds a tiny negative angle up to exactly 360. [()] turns the
+    # 0-d array NumPy's where makes of a scalar back into a scalar.
+    return xp.where(pa >= 360.0, pa - 360.0, pa)[()]
 
 
 def separation_pa(dra, ddec):

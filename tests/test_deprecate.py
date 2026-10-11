@@ -8,6 +8,8 @@ without ``__init__``: the shim only checks their type.
 import inspect
 import warnings
 
+import jax
+import jax.numpy as np
 import pytest
 
 from virgil._deprecate import old_order, renamed
@@ -224,6 +226,28 @@ def test_warning_points_at_the_caller():
     with pytest.warns(FutureWarning, match="samples_dict") as record:
         best_point_like([0.0], samples_dict={})
     assert record[0].filename == __file__
+
+
+def test_warning_during_tracing_points_at_the_caller():
+    # A warning raised while JAX traces a function is not attributed to a
+    # jax/_src line: the frames of JAX and numpyro are looked through.
+    # The warner lives in a virgil module (built with exec), and is traced
+    # by jit and vmap, which add JAX's frames between it and this file.
+    namespace = {"__name__": "virgil._fake"}
+    exec(
+        "import warnings\n"
+        "from virgil._deprecate import external_stacklevel\n"
+        "def warner(x):\n"
+        "    warnings.warn('old', FutureWarning,"
+        " stacklevel=external_stacklevel())\n"
+        "    return x\n",
+        namespace,
+    )
+    warner = namespace["warner"]
+    for transform in (jax.jit, jax.vmap):
+        with pytest.warns(FutureWarning, match="old") as record:
+            transform(warner)(np.ones(2))
+        assert record[0].filename == __file__
 
 
 def test_misnamed_parameters_fail_at_decoration():
