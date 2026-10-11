@@ -20,7 +20,6 @@ See ``fit_orbit_aliases`` for the entry point.
 
 import dataclasses
 import functools
-import hashlib
 import json
 import math
 import pathlib
@@ -30,8 +29,11 @@ import jax
 import jax.numpy as np
 import numpy as onp
 from scipy import optimize
+from scipy.special import logsumexp
 
-from ._precision import cast_tree, run_in
+from ._precision import in_float64
+from ._utils import clean_json
+from .detection import _fingerprint
 from .epochs import _Surface
 from .models import OrbitalBinary
 from .orbits import KeplerOrbit, period_grid, starting_orbits
@@ -64,6 +66,7 @@ _PERIODIC = {
     4: 360.0,
     5: 180.0,
 }  # periodic coordinates and their periods
+_N_FLUX = 4  # fluxes tried for each position-level candidate
 _ELEMENTS = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
 
 
@@ -181,71 +184,66 @@ def _elements(x, t_ref):
     return orbit, np.exp(x[7])
 
 
+# The kernels take the data as traced arguments, so one compilation serves
+# every band, mode and draw set of the same shapes. The surfaces, which hold
+# only the layout of the data (see ``epochs._Surface``), and ``t_ref``, one
+# float per run, are static.
+
+
+def _loglike(surfaces, x, data, t_ref):
+    """The scale-marginalized log likelihood of all epochs at ``x``."""
+    orbit, flux = _elements(x, t_ref)
+    model = OrbitalBinary(orbit, flux)
+    return sum(
+        s.score(s.chi2(model, d), 1.0, d) for s, d in zip(surfaces, data)
+    )
+
+
+_value_and_grad = functools.partial(jax.jit, static_argnums=(0, 3))(
+    jax.value_and_grad(_loglike, argnums=1)
+)
+_hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
+    jax.hessian(_loglike, argnums=1)
+)
+
+
+@functools.partial(jax.jit, static_argnums=(0, 3))
+def _batch(surfaces, xs, data, t_ref):
+    """``_loglike`` at each row of ``xs``, 64 rows at a time."""
+    return jax.lax.map(
+        lambda x: _loglike(surfaces, x, data, t_ref), xs, batch_size=64
+    )
+
+
 class _Problem:
     """The scale-marginalized log likelihood of all epochs and the priors."""
 
-    def __init__(
-        self, data, t_ref, p_range, a_range, flux_range, ecc_max, s_max
-    ):
-        self.data, self.t_ref, self.s_max = list(data), float(t_ref), s_max
-        self.surfaces = [_Surface(d, s_max) for d in self.data]
+    def __init__(self, data, settings):
+        self.data, self.t_ref = list(data), settings.t_ref
+        self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
         # Proper priors: log P log-uniform over the whole p_range, tau
         # uniform over one cycle, e uniform, cos i uniform, omega and Omega
         # uniform with the (Omega + 180, omega + 180) mirror folded away
         # (Omega in [0, 180)), log a and log flux uniform.
+        s = settings
         self.log_prior = float(
-            -onp.log(onp.log(p_range[1] / p_range[0]))
-            - onp.log(ecc_max)
+            -onp.log(onp.log(s.p_range[1] / s.p_range[0]))
+            - onp.log(s.ecc_max)
             - onp.log(2.0)
             - onp.log(360.0)
             - onp.log(180.0)
-            - onp.log(onp.log(a_range[1] / a_range[0]))
-            - onp.log(onp.log(flux_range[1] / flux_range[0]))
-        )
-        self.a_range, self.flux_range, self.ecc_max = (
-            a_range,
-            flux_range,
-            ecc_max,
-        )
-        self.value_and_grad = jax.jit(jax.value_and_grad(self.loglike))
-        self.hessian = jax.jit(jax.hessian(self.loglike))
-        self.batch = jax.jit(
-            lambda xs: jax.lax.map(self.loglike, xs, batch_size=64)
+            - onp.log(onp.log(s.a_range[1] / s.a_range[0]))
+            - onp.log(onp.log(s.flux_range[1] / s.flux_range[0]))
         )
 
-    def set_band(self, band):
-        self.lower = onp.array(
-            [
-                onp.log(band.p_lo),
-                -onp.inf,
-                0.0,
-                -1.0,
-                -onp.inf,
-                -onp.inf,
-                onp.log(self.a_range[0]),
-                onp.log(self.flux_range[0]),
-            ]
-        )
-        self.upper = onp.array(
-            [
-                onp.log(band.p_hi),
-                onp.inf,
-                self.ecc_max,
-                1.0,
-                onp.inf,
-                onp.inf,
-                onp.log(self.a_range[1]),
-                onp.log(self.flux_range[1]),
-            ]
-        )
+    def value_and_grad(self, x):
+        return _value_and_grad(self.surfaces, x, self.data, self.t_ref)
 
-    def loglike(self, x):
-        orbit, flux = _elements(x, self.t_ref)
-        model = OrbitalBinary(orbit, flux)
-        return sum(
-            s.score(s.chi2(model, d), 1.0, d)
-            for s, d in zip(self.surfaces, self.data)
-        )
+    def hessian(self, x):
+        return _hessian(self.surfaces, x, self.data, self.t_ref)
+
+    def batch(self, xs):
+        return _batch(self.surfaces, xs, self.data, self.t_ref)
 
     def per_epoch(self, x):
         """Raw χ²/ν per epoch and block, and the profile scales ŝ."""
@@ -263,10 +261,66 @@ class _Problem:
             )
         return rows
 
+
+@dataclasses.dataclass(frozen=True)
+class _Settings:
+    """Everything but the data that shapes a fit (and so a checkpoint)."""
+
+    p_range: tuple
+    a_range: tuple
+    flux_range: tuple
+    ecc_max: float
+    s_max: float | None
+    t_ref: float
+    n_candidates: int
+    n_refine: int
+    n_random: int
+    pool_size: int  # rows of the candidate batch: one compilation per run
+    k: float
+    eccs: tuple | None
+    min_distance_mas: float
+    max_steps: int
+    n_is: int
+    flag_nats: float
+    ess_min: float
+    seed: int
+
+    @property
+    def flux_scan(self):
+        """The fluxes tried for each position-level candidate."""
+        return onp.geomspace(*self.flux_range, _N_FLUX + 2)[1:-1]
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Bounds:
+    """The hard bounds of the prior in the sampled coordinates, for one band
+    (the angles are periodic, with none)."""
+
+    lower: onp.ndarray
+    upper: onp.ndarray
+
+    @classmethod
+    def of(cls, band, settings):
+        inf = onp.inf
+        a, f = settings.a_range, settings.flux_range
+        return cls(
+            onp.array(
+                [onp.log(band.p_lo), -inf, 0.0, -1.0, -inf, -inf]
+                + [onp.log(a[0]), onp.log(f[0])]
+            ),
+            onp.array(
+                [onp.log(band.p_hi), inf, settings.ecc_max, 1.0, inf, inf]
+                + [onp.log(a[1]), onp.log(f[1])]
+            ),
+        )
+
     def inside(self, xs):
-        """Whether each row of ``xs`` is inside the hard bounds of the prior
-        (the angles are periodic, with no bound)."""
+        """Whether each row of ``xs`` is inside the bounds."""
         return onp.all((xs >= self.lower) & (xs <= self.upper), axis=-1)
+
+    def clip(self, xs):
+        """``xs`` moved onto the bounds, where the likelihood is defined."""
+        return onp.clip(xs, self.lower, self.upper)
 
 
 def _fold(x):
@@ -280,7 +334,7 @@ def _fold(x):
     return x
 
 
-def _start_vector(orbit, flux, t_ref, band, problem):
+def _start_vector(orbit, flux, t_ref, band, bounds):
     period = float(onp.clip(float(orbit.period), band.p_lo, band.p_hi))
     dt = float(orbit.dt_peri) + float(orbit.t_ref) - t_ref
     tau = (dt / period + 0.5) % 1.0 - 0.5
@@ -298,7 +352,7 @@ def _start_vector(orbit, flux, t_ref, band, problem):
     )
     x = _fold(x)
     eps = 1e-3
-    lo, hi = problem.lower, problem.upper
+    lo, hi = bounds.lower, bounds.upper
     return onp.clip(
         x,
         onp.where(onp.isfinite(lo), lo + eps, lo),
@@ -313,7 +367,7 @@ def _senses(x):
     return [x, other]
 
 
-def _optimise(problem, x0, max_steps):
+def _optimize(problem, bounds, x0, max_steps):
     """Maximize the marginal likelihood from ``x0`` (L-BFGS-B, in the
     sampled coordinates)."""
 
@@ -321,18 +375,16 @@ def _optimise(problem, x0, max_steps):
         value, grad = problem.value_and_grad(np.asarray(x))
         return -float(value), -onp.asarray(grad, float)
 
-    bounds = list(
-        zip(
-            [None if not onp.isfinite(v) else float(v) for v in problem.lower],
-            [None if not onp.isfinite(v) else float(v) for v in problem.upper],
-        )
-    )
+    limits = [
+        [None if not onp.isfinite(v) else float(v) for v in side]
+        for side in (bounds.lower, bounds.upper)
+    ]
     res = optimize.minimize(
         fun,
         x0,
         jac=True,
         method="L-BFGS-B",
-        bounds=bounds,
+        bounds=list(zip(*limits)),
         options=dict(maxiter=max_steps),
     )
     return _fold(res.x), -float(res.fun)
@@ -343,159 +395,394 @@ def _optimise(problem, x0, max_steps):
 # ---------------------------------------------------------------------------
 
 
-def _logsumexp(a):
-    a = onp.asarray(a, float)
-    if a.size == 0 or not onp.any(onp.isfinite(a)):
-        return -onp.inf
-    m = onp.max(a[onp.isfinite(a)])
-    return float(m + onp.log(onp.sum(onp.exp(a - m))))
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Proposal:
+    """A mode's multivariate Student-t proposal (``df`` degrees of freedom,
+    the Laplace covariance ``chol chol^T``, ``l_inv = chol^-1``)."""
+
+    x: onp.ndarray
+    chol: onp.ndarray
+    l_inv: onp.ndarray
+    logdet: float
+    df: float
+
+    def draw(self, n, rng):
+        """``n`` draws and their squared Mahalanobis distances."""
+        z = rng.standard_normal((n, len(self.x)))
+        g = rng.chisquare(self.df, n) / self.df
+        return self.x + (z @ self.chol.T) / onp.sqrt(g)[:, None], (
+            onp.sum(z**2, axis=1) / g
+        )
+
+    def log_pdf(self, xs, mahal=None):
+        """Log density at ``xs`` (``mahal`` if already known)."""
+        if mahal is None:
+            mahal = onp.sum(((xs - self.x) @ self.l_inv.T) ** 2, axis=1)
+        d, df = len(self.x), self.df
+        return (
+            -0.5 * (df + d) * onp.log1p(mahal / df)
+            - 0.5 * self.logdet
+            + math.lgamma(0.5 * (df + d))
+            - math.lgamma(0.5 * df)
+            - 0.5 * d * onp.log(df * onp.pi)
+        )
 
 
-def _mode_evidence(problem, x, value, n_is, rng, df=5.0, bound_sigma=3.0):
+@dataclasses.dataclass(frozen=True, eq=False)
+class _Draws:
+    """A mode's importance draws: points, log target (likelihood times
+    prior, -inf outside the support), log weights and proposal."""
+
+    xs: onp.ndarray
+    log_t: onp.ndarray
+    log_w: onp.ndarray
+    proposal: _Proposal
+
+
+def _laplace_proposal(h, x, df):
+    """The Student-t proposal from the negative Hessian ``h`` at ``x``, or
+    the flag that says why there is none."""
+    finite = bool(onp.all(onp.isfinite(h)))
+    eig = onp.linalg.eigvalsh(h) if finite else onp.array([-onp.inf])
+    if not (finite and eig.min() > 0):
+        return None, "hessian-not-positive-definite"
+    if eig.min() <= 1e-13 * eig.max():
+        # Positive, but too ill-conditioned to invert: a flat direction.
+        return None, "hessian-singular"
+    try:
+        cov = onp.linalg.inv(h)
+        chol = onp.linalg.cholesky(cov)
+        l_inv = onp.linalg.inv(chol)
+    except onp.linalg.LinAlgError:
+        return None, "hessian-singular"
+    logdet = float(onp.linalg.slogdet(cov)[1])
+    return _Proposal(x, chol, l_inv, logdet, df), None
+
+
+def _mode_evidence(
+    problem, bounds, x, value, n_is, rng, df=5.0, bound_sigma=3.0
+):
     """Laplace and importance-sampling log evidences of one mode at ``x``.
 
     The importance proposal is a multivariate Student-t (``df``) with the
     Laplace covariance. The hard prior bounds truncate the target; angles
     are periodic and are kept within half a turn of the mode. A mode whose
-    Hessian is not positive definite, or is singular, has no proposal: both evidences are
-    ``-inf`` and it is dropped.
+    Hessian is not positive definite, or is singular, has no proposal: both
+    evidences are ``-inf`` and it is dropped.
+
+    All ``n_is`` draws are evaluated (one compiled shape), those outside the
+    support at the nearest point of the bounds, and then set to ``-inf``.
     """
     h = -onp.asarray(problem.hessian(np.asarray(x)), float)
-    h = 0.5 * (h + h.T)
-    finite = bool(onp.all(onp.isfinite(h)))
-    eig = onp.linalg.eigvalsh(h) if finite else onp.array([-onp.inf])
+    proposal, flag = _laplace_proposal(0.5 * (h + h.T), x, df)
     out = dict(
         x=x.tolist(),
         loglike=value,
         log_z_laplace=-onp.inf,
         log_z_is=-onp.inf,
         ess=0.0,
-        flags=[],
+        flags=[] if flag is None else [flag],
     )
-    if not (finite and eig.min() > 0):
-        out["flags"].append("hessian-not-positive-definite")
+    if proposal is None:
         return out, None
-    if eig.min() <= 1e-13 * eig.max():
-        # Positive, but too ill-conditioned to invert: a flat direction.
-        out["flags"].append("hessian-singular")
-        return out, None
-    try:
-        cov = onp.linalg.inv(h)
-        chol = onp.linalg.cholesky(cov)
-        l_inv = onp.linalg.inv(chol)
-    except onp.linalg.LinAlgError:
-        out["flags"].append("hessian-singular")
-        return out, None
-    sd = onp.sqrt(onp.diag(cov))
     d = len(x)
-    logdet = float(onp.linalg.slogdet(cov)[1])
+    sd = onp.sqrt(onp.sum(proposal.chol**2, axis=1))
     out["log_z_laplace"] = float(
         value
         + problem.log_prior
         + 0.5 * d * onp.log(2 * onp.pi)
-        + 0.5 * logdet
+        + 0.5 * proposal.logdet
     )
-    distance = onp.minimum(x - problem.lower, problem.upper - x) / sd
+    distance = onp.minimum(x - bounds.lower, bounds.upper - x) / sd
     if onp.any(distance < bound_sigma):
         out["flags"].append("near-prior-bound")
     out["sigma"] = sd.tolist()
     # Newton step in units of sigma, over the coordinates not on a bound:
     # large means L-BFGS stopped short of a stationary point.
     grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
-    free = (x - problem.lower > 1e-6) & (problem.upper - x > 1e-6)
+    free = (x - bounds.lower > 1e-6) & (bounds.upper - x > 1e-6)
     if onp.any(onp.abs(grad[free]) * sd[free] > 0.1):
         out["flags"].append("not-converged")
-    # Student-t proposal.
-    z = rng.standard_normal((n_is, d))
-    g = rng.chisquare(df, n_is) / df
-    xs = x + (z @ chol.T) / onp.sqrt(g)[:, None]
-    mahal = onp.sum(z**2, axis=1) / g
-    log_q = (
-        -0.5 * (df + d) * onp.log1p(mahal / df)
-        - 0.5 * logdet
-        + math.lgamma(0.5 * (df + d))
-        - math.lgamma(0.5 * df)
-        - 0.5 * d * onp.log(df * onp.pi)
-    )
+    xs, mahal = proposal.draw(n_is, rng)
+    log_q = proposal.log_pdf(xs, mahal)
     # Angles live within half a turn of the mode.
-    ok = problem.inside(xs)
+    ok = bounds.inside(xs)
     for k, width in _PERIODIC.items():
         ok &= onp.abs(xs[:, k] - x[k]) < width / 2.0
-    values = onp.full(n_is, -onp.inf)
-    if ok.any():
-        values[ok] = onp.asarray(problem.batch(np.asarray(xs[ok])), float)
-    log_t = values + problem.log_prior  # the target at each draw
+    values = onp.asarray(problem.batch(np.asarray(bounds.clip(xs))), float)
+    log_t = onp.where(ok, values, -onp.inf) + problem.log_prior
     log_w = log_t - log_q
     log_w[~onp.isfinite(log_w)] = -onp.inf
-    out["log_z_is"] = _logsumexp(log_w) - onp.log(n_is)
+    out["log_z_is"] = float(logsumexp(log_w)) - onp.log(n_is)
     w = (
         onp.exp(log_w - onp.max(log_w[onp.isfinite(log_w)]))
         if onp.any(onp.isfinite(log_w))
         else onp.zeros(n_is)
     )
     out["ess"] = float(w.sum() ** 2 / max((w**2).sum(), 1e-300))
-    proposal = (x, l_inv, logdet, df)
-    return out, (xs, log_t, log_w, proposal)
-
-
-def _log_t(xs, proposal):
-    """Log density of a mode's Student-t proposal at ``xs``."""
-    x, l_inv, logdet, df = proposal
-    d = len(x)
-    mahal = onp.sum(((xs - x) @ l_inv.T) ** 2, axis=1)
-    return (
-        -0.5 * (df + d) * onp.log1p(mahal / df)
-        - 0.5 * logdet
-        + math.lgamma(0.5 * (df + d))
-        - math.lgamma(0.5 * df)
-        - 0.5 * d * onp.log(df * onp.pi)
-    )
+    return out, _Draws(xs, log_t, log_w, proposal)
 
 
 def _mixture_weights(draws):
     """Log weights of the pooled draws of a band's modes under their
     deterministic mixture proposal, ``p / mean_k q_k``: the modes' tails
     overlap, and per-mode weights would count the overlap twice."""
-    xs = onp.concatenate([d[0] for d in draws])
-    log_t = onp.concatenate([d[1] for d in draws])
-    log_q = onp.stack([_log_t(xs, d[3]) for d in draws])
-    log_mix = onp.array([_logsumexp(c) for c in log_q.T]) - onp.log(len(draws))
+    xs = onp.concatenate([d.xs for d in draws])
+    log_t = onp.concatenate([d.log_t for d in draws])
+    log_q = onp.stack([d.proposal.log_pdf(xs) for d in draws])
+    log_mix = logsumexp(log_q, axis=0) - onp.log(len(draws))
     log_w = log_t - log_mix
     log_w[~onp.isfinite(log_w)] = -onp.inf
     return xs, log_w
 
 
 # ---------------------------------------------------------------------------
-# Results
+# Fitting one band
 # ---------------------------------------------------------------------------
 
 
-def _clean(v):
-    """``v`` as strict JSON: arrays to lists, inf and nan to None."""
-    if isinstance(v, dict):
-        return {k: _clean(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_clean(x) for x in v]
-    if hasattr(v, "tolist"):
-        return _clean(v.tolist())
-    if isinstance(v, float) and not math.isfinite(v):
-        return None  # JSON has no inf or nan
-    return v
+def _candidates(settings, band, bounds, rng, orbits):
+    """The band's seed pool: position-level ``orbits`` (``[(KeplerOrbit,
+    χ²), ...]`` or None) at several fluxes and both senses of motion, then
+    ``n_random`` random orbits."""
+    s = settings
+    pool = [
+        x
+        for orbit, _ in orbits or ()
+        for flux in s.flux_scan
+        for x in _senses(_start_vector(orbit, flux, s.t_ref, band, bounds))
+    ]
+    for _ in range(s.n_random):
+        pool.append(
+            _fold(
+                [
+                    rng.uniform(onp.log(band.p_lo), onp.log(band.p_hi)),
+                    rng.uniform(-0.5, 0.5),
+                    rng.uniform(0.0, 0.6 * s.ecc_max),
+                    rng.uniform(-0.95, 0.95),
+                    rng.uniform(0, 360),
+                    rng.uniform(0, 180),
+                    rng.uniform(*onp.log(s.a_range)),
+                    rng.uniform(*onp.log(s.flux_range)),
+                ]
+            )
+        )
+    if not pool:
+        raise ValueError(
+            "No candidate orbits: pass positions or a positive n_random."
+        )
+    return onp.asarray(pool)
 
 
-def _fingerprint(obj):
-    """A hash of every array in ``obj`` (data or positions), to tell a checkpoint's data from new data."""
-    if obj is None:
-        return None
-    h = hashlib.sha256()
-    for leaf in jax.tree_util.tree_leaves(obj):
+def _score_pool(problem, settings, pool):
+    """The marginal log likelihood of each candidate (-inf if not finite),
+    evaluated in a batch of ``pool_size`` rows, padded with the first."""
+    pad = max(settings.pool_size - len(pool), 0)
+    padded = onp.concatenate([pool, onp.repeat(pool[:1], pad, axis=0)])
+    score = onp.array(problem.batch(np.asarray(padded)), float)[: len(pool)]
+    score[~onp.isfinite(score)] = -onp.inf
+    return score
+
+
+def _distinct(modes, times, t_ref, min_distance_mas):
+    """Keep the best of the modes whose tracks at ``times`` agree within
+    ``min_distance_mas``."""
+    modes = sorted(modes, key=lambda m: -m[1])
+    kept, tracks = [], []
+    for x, value in modes:
+        orbit, _ = _elements(np.asarray(x), t_ref)
+        dra, ddec, _ = orbit.relative(np.asarray(times))
+        track = onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
+        if all(
+            onp.max(onp.hypot(*(track - t).T)) > min_distance_mas
+            for t in tracks
+        ):
+            kept.append((x, value))
+            tracks.append(track)
+    return kept
+
+
+def _refine(problem, settings, bounds, pool, times):
+    """Rank the candidates by the observables and refine the best distinct
+    few into modes.
+
+    Returns the distinct modes ``[(x, loglike), ...]`` and the number of
+    starts that failed. A ``TypeError`` or ``ValueError`` is the caller's
+    (misconfiguration) and propagates; if every start fails, a
+    ``RuntimeError`` chained to the last error is raised.
+    """
+    s = settings
+    score = _score_pool(problem, s, pool)
+    keep = onp.argsort(-score, kind="stable")[: 4 * s.n_refine]
+    ranked = _distinct(
+        [(pool[i], score[i]) for i in keep],
+        times,
+        s.t_ref,
+        s.min_distance_mas,
+    )
+    seeds = [x for x, _ in ranked[: s.n_refine]]
+    fitted, n_failed, error = [], 0, None
+    for x0 in seeds:
         try:
-            a = onp.asarray(leaf)
-        except Exception:  # noqa: BLE001 - not an array: hash its repr
-            h.update(repr(leaf).encode())
+            x, value = _optimize(problem, bounds, x0, s.max_steps)
+        except (TypeError, ValueError):
+            raise
+        except Exception as caught:  # noqa: BLE001 - one bad start
+            n_failed, error = n_failed + 1, caught
             continue
-        h.update(str(a.shape).encode() + str(a.dtype).encode() + a.tobytes())
-    return h.hexdigest()
+        if onp.isfinite(value):
+            fitted.append((x, value))
+    if seeds and n_failed == len(seeds):
+        raise RuntimeError(
+            f"Every one of the {n_failed} optimizer starts failed."
+        ) from error
+    return _distinct(fitted, times, s.t_ref, s.min_distance_mas), n_failed
+
+
+def _band_evidence(problem, settings, bounds, modes_xy, rng):
+    """Every mode's evidence, and the band's: the Laplace sum ``z_lap``
+    and the mixture importance-sampling estimate ``z_is``.
+
+    Where a mode sits on a prior bound (a period edge between bands, say)
+    the Gaussian is cut off, so that mode's ``log_z`` is its
+    importance-sampling value, which truncates the target; elsewhere it is
+    the Laplace value.
+
+    Returns ``(modes, z_lap, z_is, pool)``, with ``pool`` the pooled draws
+    and their mixture log weights (``(None, None)`` without any).
+    """
+    modes, draws = [], []
+    for x, value in modes_xy:
+        record, draw = _mode_evidence(
+            problem, bounds, x, value, settings.n_is, rng
+        )
+        modes.append(record)
+        if draw is not None:
+            draws.append(draw)
+    for m in modes:
+        edge = (
+            "near-prior-bound" in m["flags"] and m["ess"] >= settings.ess_min
+        )
+        m["log_z"] = m["log_z_is"] if edge else m["log_z_laplace"]
+    z_lap = float(logsumexp([m["log_z"] for m in modes]))
+    if not draws:
+        return modes, z_lap, -onp.inf, (None, None)
+    xs, log_w = _mixture_weights(draws)
+    z_is = float(logsumexp(log_w)) - onp.log(len(xs))
+    return modes, z_lap, z_is, (xs, log_w)
+
+
+def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
+    """The band's flags, best mode, χ²/ν and per-epoch scales."""
+    live = [m for m in modes if onp.isfinite(m["log_z"])]
+    best_mode = max(live, key=lambda m: m["log_z"]) if live else None
+    best, epochs, chi2_red = {}, [], float("nan")
+    if best_mode is not None:
+        best = {
+            k: float(v[0])
+            for k, v in _physical(
+                onp.array(best_mode["x"]), settings.t_ref
+            ).items()
+        }
+        epochs = problem.per_epoch(best_mode["x"])
+        nu = onp.concatenate([s.nu for s in problem.surfaces])
+        chi2 = onp.concatenate([onp.array(e["chi2_red"]) for e in epochs])
+        chi2_red = float(onp.sum(chi2 * nu) / onp.sum(nu))
+    flags = sorted({f for m in modes for f in m["flags"]})
+    if (
+        onp.isfinite(z_lap)
+        and onp.isfinite(z_is)
+        and abs(z_lap - z_is) > settings.flag_nats
+    ):
+        flags.append("laplace-is-differ")
+    if best_mode is not None and best_mode["ess"] < settings.ess_min:
+        flags.append("low-ess")
+    if best_mode is None:
+        flags.append("no-valid-mode")
+    if n_failed:
+        flags.append("starts-failed")
+    return AliasBandResult(
+        n=band.n,
+        p_lo=band.p_lo,
+        p_hi=band.p_hi,
+        modes=modes,
+        log_z=z_lap,
+        log_z_is=z_is,
+        ess=best_mode["ess"] if best_mode else 0.0,
+        flagged=bool(flags),
+        flags=flags,
+        best=best,
+        chi2_red=chi2_red,
+        epochs=epochs,
+        n_starts_failed=n_failed,
+    )
+
+
+def _fit_band(problem, settings, band, orbits, times):
+    """Fit one band: ``(AliasBandResult, (draws, log weights))``.
+
+    It has its own random stream, so a band does not depend on which bands
+    were fitted or loaded before it.
+    """
+    rng = onp.random.default_rng([settings.seed, band.n])
+    bounds = _Bounds.of(band, settings)
+    pool = _candidates(settings, band, bounds, rng, orbits)
+    modes_xy, n_failed = _refine(problem, settings, bounds, pool, times)
+    modes, z_lap, z_is, draws = _band_evidence(
+        problem, settings, bounds, modes_xy, rng
+    )
+    result = _band_result(
+        problem, settings, band, modes, z_lap, z_is, n_failed
+    )
+    return result, draws
+
+
+def _failed_band(band, error):
+    """The row of a band that raised (flag ``band-failed``)."""
+    return AliasBandResult(
+        n=band.n,
+        p_lo=band.p_lo,
+        p_hi=band.p_hi,
+        modes=[],
+        log_z=-onp.inf,
+        log_z_is=-onp.inf,
+        ess=0.0,
+        flagged=True,
+        flags=["band-failed"],
+        error=f"{type(error).__name__}: {error}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Checkpoints
+# ---------------------------------------------------------------------------
+
+_CHECKPOINT_FORMAT = 2  # bump when a checkpoint's contents change
+
+
+def _checkpoint_key(data, positions, bands, times, settings):
+    """What a band's checkpoint depends on: the data (every field, static
+    ones included), the positions, the bands and all settings.
+
+    Raises
+    ------
+    ValueError
+        If the data or positions cannot be hashed.
+    """
+    prints = dict(data=_fingerprint(data), positions=_fingerprint(positions))
+    if None in prints.values():
+        raise ValueError(
+            "checkpoint_dir needs data and positions that can be hashed, to "
+            "tell a checkpoint's data from new data; one holds something "
+            "unhashable (a function or an arbitrary object)."
+        )
+    return dict(
+        format=_CHECKPOINT_FORMAT,
+        edges=[[bd.p_lo, bd.p_hi] for bd in bands],
+        times=onp.asarray(times, float).tolist(),
+        settings=dataclasses.asdict(settings),
+        **prints,
+    )
 
 
 def _band_files(directory, band):
@@ -504,7 +791,8 @@ def _band_files(directory, band):
 
 
 def _load_band(directory, band, key):
-    """A band's checkpoint, or None if there is none or it is for other settings."""
+    """A band's checkpoint, or None if there is none or it is for other
+    settings."""
     if directory is None:
         return None
     pkl, _ = _band_files(directory, band)
@@ -513,7 +801,7 @@ def _load_band(directory, band, key):
             saved_key, done = pickle.load(f)
     except Exception:  # noqa: BLE001 - missing or truncated: refit
         return None
-    return done if saved_key == _clean(key) else None
+    return done if saved_key == clean_json(key) else None
 
 
 def _save_band(directory, band, key, done):
@@ -524,12 +812,17 @@ def _save_band(directory, band, key, done):
     pkl.parent.mkdir(parents=True, exist_ok=True)
     tmp = pkl.with_suffix(".tmp")
     with open(tmp, "wb") as f:
-        pickle.dump((_clean(key), done), f)
+        pickle.dump((clean_json(key), done), f)
     tmp.replace(pkl)
     with open(js, "w") as f:
         json.dump(
-            _clean(dataclasses.asdict(done[0])), f, indent=1, default=str
+            clean_json(dataclasses.asdict(done[0])), f, indent=1, default=str
         )
+
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
 
 
 @dataclasses.dataclass
@@ -554,6 +847,9 @@ class AliasBandResult:
         default_factory=list
     )  # per-epoch raw χ²/ν and scales
     error: str = ""  # the exception, if the band failed (flag ``band-failed``)
+    n_starts_failed: int = (
+        0  # optimizer starts that raised (``starts-failed``)
+    )
 
 
 @dataclasses.dataclass
@@ -636,7 +932,7 @@ class AliasResult:
         )
 
         with open(path, "w") as f:
-            json.dump(_clean(payload), f, indent=1, default=str)
+            json.dump(clean_json(payload), f, indent=1, default=str)
 
 
 def _physical(x, t_ref):
@@ -654,22 +950,38 @@ def _physical(x, t_ref):
     )
 
 
-def _distinct(modes, times, t_ref, min_distance_mas):
-    """Keep the best of the modes whose tracks at ``times`` agree within
-    ``min_distance_mas``."""
-    modes = sorted(modes, key=lambda m: -m[1])
-    kept, tracks = [], []
-    for x, value in modes:
-        orbit, _ = _elements(np.asarray(x), t_ref)
-        dra, ddec, _ = orbit.relative(np.asarray(times))
-        track = onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
-        if all(
-            onp.max(onp.hypot(*(track - t).T)) > min_distance_mas
-            for t in tracks
-        ):
-            kept.append((x, value))
-            tracks.append(track)
-    return kept
+def _band_probabilities(results):
+    """Set each band's ``p`` from its ``log_z`` and return the bands in order
+    of decreasing ``log_z``."""
+    log_z = onp.array([b.log_z for b in results])
+    finite = onp.isfinite(log_z)
+    weights = (
+        onp.where(finite, onp.exp(log_z - onp.max(log_z[finite])), 0.0)
+        if finite.any()
+        else onp.zeros_like(log_z)
+    )
+    for b, w in zip(results, weights / max(weights.sum(), 1e-300)):
+        b.p = float(w)
+    order = onp.argsort(-onp.where(finite, log_z, -onp.inf), kind="stable")
+    return [results[i] for i in order]
+
+
+def _resample(results, store, t_ref, n_samples, p_min, seed):
+    """Posterior draws by importance resampling, for the best band and every
+    band with ``p > p_min``."""
+    samples = {}
+    for rank, b in enumerate(results):
+        if rank > 0 and b.p <= p_min:
+            continue
+        xs, lw = store[b.n]
+        if xs is None or not onp.any(onp.isfinite(lw)):
+            continue
+        w = onp.exp(lw - onp.max(lw))
+        pick = onp.random.default_rng([seed, 2**31, b.n]).choice(
+            len(xs), size=n_samples, p=w / w.sum()
+        )
+        samples[b.n] = _physical(xs[pick], t_ref)
+    return samples
 
 
 # ---------------------------------------------------------------------------
@@ -677,19 +989,7 @@ def _distinct(modes, times, t_ref, min_distance_mas):
 # ---------------------------------------------------------------------------
 
 
-def _float64(fn):
-    """Run a fitting entry point in float64 (see ``virgil._precision``): the
-    Hessians and Cholesky factors of narrow ridges need it."""
-
-    @functools.wraps(fn)
-    def wrapped(data, *args, **kwargs):
-        with run_in("float64"):
-            return fn(cast_tree(list(data), "float64"), *args, **kwargs)
-
-    return wrapped
-
-
-@_float64
+@in_float64
 def fit_orbit_aliases(
     data,
     p_range,
@@ -766,12 +1066,12 @@ def fit_orbit_aliases(
     flag_nats : float, optional
         A band gets the flag ``laplace-is-differ`` when its Laplace and
         importance-sampling log evidences differ by more than this.
-
     checkpoint_dir : path-like, optional
         Each finished band is written here (``band_<N>.pkl`` for reuse and
         ``band_<N>.json`` to read) before the next starts. A rerun with the
-        same data, positions, ranges and settings loads the finished bands instead of
-        refitting them; a band that raised is not saved, so it is retried.
+        same data (every field), positions, ranges and settings loads the
+        finished bands instead of refitting them; a band that raised is not
+        saved, so it is retried.
     on_band : callable, optional
         Called with each band's
         [`AliasBandResult`][virgil.aliases.AliasBandResult] as soon as it is
@@ -781,10 +1081,22 @@ def fit_orbit_aliases(
     -------
     AliasResult
 
+    Raises
+    ------
+    RuntimeError
+        If every band fails (chained to the last error).
+    ValueError
+        If no band lies within ``p_range``, or ``checkpoint_dir`` is given
+        and the data or positions cannot be hashed.
+
     Notes
     -----
     A band that raises is kept as a ``band-failed`` row (``error`` holds the
-    exception) with ``log_z = -inf``; the other bands are unaffected.
+    exception) with ``log_z = -inf``; the other bands are unaffected, unless
+    all fail. A ``TypeError`` or ``ValueError`` (a misconfiguration) is not
+    isolated: it propagates at once. An optimizer start that raises is
+    dropped and counted (flag ``starts-failed``, ``n_starts_failed``); if
+    every start of a band fails the band fails.
 
     The band evidence ``log_z`` is the sum, over the band's distinct fitted
     modes (both senses of motion; the (Ω+180, ω+180) mirror is folded
@@ -798,10 +1110,18 @@ def fit_orbit_aliases(
     tails are not counted twice), and the posterior samples are resampled
     with the same weights, with the mirror folded.
 
+    The mixture is an approximation: each mode's Student-t proposal is
+    evaluated without periodic images of the angles, and each mode's draws
+    are restricted to its own window (within half a period of the mode).
+    When modes straddle the Ω fold, ``log_z_is`` and the resampled draws can
+    be slightly biased. ``log_z``, which uses the Laplace value except near
+    prior bounds, is unaffected.
+
     ``flags`` lists why a band should not be trusted:
     ``near-prior-bound``, ``not-converged`` (the optimizer stopped more
-    than 0.1σ from a stationary point), ``hessian-not-positive-definite``, ``hessian-singular``,
-    ``band-failed`` (an exception in the band; the others are unaffected),
+    than 0.1σ from a stationary point), ``hessian-not-positive-definite``,
+    ``hessian-singular``, ``band-failed`` (an exception in the band; the
+    others are unaffected), ``starts-failed`` (some optimizer start raised),
     ``laplace-is-differ``, ``low-ess`` (best mode's ESS below ``ess_min``)
     and ``no-valid-mode``. ``chi2_red`` is the raw χ²/ν on the quoted errors
     at the best mode, before any error scale.
@@ -824,211 +1144,72 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
-    profile = (
-        position_profile(positions, bands, k=k, n_best=n_candidates, eccs=eccs)
-        if positions is not None
+    profile = None
+    if positions is not None:
+        profile = position_profile(
+            positions, bands, k=k, n_best=n_candidates, eccs=eccs
+        )
+    if n_random is None:
+        n_random = 1000 if positions is None else 0
+    n_seeded = 0 if positions is None else 2 * _N_FLUX * n_candidates
+    n_pool = n_random + n_seeded  # both senses of motion at each flux
+    settings = _Settings(
+        p_range=tuple(map(float, p_range)),
+        a_range=tuple(map(float, a_range)),
+        flux_range=tuple(map(float, flux_range)),
+        ecc_max=ecc_max,
+        s_max=s_max,
+        t_ref=t_ref,
+        n_candidates=n_candidates,
+        n_refine=n_refine,
+        n_random=n_random,
+        pool_size=-(-n_pool // 64) * 64,
+        k=k,
+        eccs=None if eccs is None else tuple(map(float, eccs)),
+        min_distance_mas=min_distance_mas,
+        max_steps=max_steps,
+        n_is=n_is,
+        flag_nats=flag_nats,
+        ess_min=ess_min,
+        seed=seed,
+    )
+    problem = _Problem(data, settings)
+    key = (
+        _checkpoint_key(data, positions, bands, mean_times, settings)
+        if checkpoint_dir is not None
         else None
     )
 
-    n_extra = (
-        (1000 if positions is None else 0) if n_random is None else n_random
-    )
-    flux_scan = onp.geomspace(flux_range[0], flux_range[1], 6)[1:-1]
-    problem = _Problem(
-        data, t_ref, p_range, a_range, flux_range, ecc_max, s_max
-    )
-    key = dict(
-        edges=[[bd.p_lo, bd.p_hi] for bd in bands],
-        data=_fingerprint(data),
-        positions=_fingerprint(positions),
-        times=mean_times.tolist(),
-        s_max=s_max,
-        k=k,
-        eccs=None if eccs is None else list(onp.asarray(eccs, float)),
-        max_steps=max_steps,
-        min_distance_mas=min_distance_mas,
-        flag_nats=flag_nats,
-        ess_min=ess_min,
-        ecc_max=ecc_max,
-        a_range=list(a_range),
-        flux_range=list(flux_range),
-        n_candidates=n_candidates,
-        n_refine=n_refine,
-        n_random=n_extra,
-        n_is=n_is,
-        seed=seed,
-        t_ref=t_ref,
-    )
-
-    def fit_band(index, band):
-        # Its own stream: a band does not depend on which bands were fitted or loaded before it.
-        rng = onp.random.default_rng([seed, band.n])
-        problem.set_band(band)
-        pool = []
-        if profile is not None:
-            for orbit, _ in profile[index]["orbits"]:
-                for flux in flux_scan:
-                    pool.extend(
-                        _senses(
-                            _start_vector(orbit, flux, t_ref, band, problem)
-                        )
-                    )
-        for _ in range(n_extra):
-            pool.append(
-                _fold(
-                    [
-                        rng.uniform(onp.log(band.p_lo), onp.log(band.p_hi)),
-                        rng.uniform(-0.5, 0.5),
-                        rng.uniform(0.0, 0.6 * ecc_max),
-                        rng.uniform(-0.95, 0.95),
-                        rng.uniform(0, 360),
-                        rng.uniform(0, 180),
-                        rng.uniform(onp.log(a_range[0]), onp.log(a_range[1])),
-                        rng.uniform(
-                            onp.log(flux_range[0]), onp.log(flux_range[1])
-                        ),
-                    ]
-                )
-            )
-        # Rank the candidates by the observables, then refine the best few.
-        pool = onp.asarray(pool)
-        score = onp.array(problem.batch(np.asarray(pool)), float)
-        score[~onp.isfinite(score)] = -onp.inf
-        keep = onp.argsort(-score)[: 4 * n_refine]
-        ranked = _distinct(
-            [(pool[k_], score[k_]) for k_ in keep],
-            mean_times,
-            t_ref,
-            min_distance_mas,
-        )
-        seeds = [x_ for x_, _ in ranked[:n_refine]]
-        fitted = []
-        for x0 in seeds:
-            try:
-                x, value = _optimise(problem, x0, max_steps)
-            except Exception:  # noqa: BLE001 - a failed start is just dropped
-                continue
-            if onp.isfinite(value):
-                fitted.append((x, value))
-        modes_xy = (
-            _distinct(fitted, mean_times, t_ref, min_distance_mas)
-            if fitted
-            else []
-        )
-        modes, draws = [], []
-        for x, value in modes_xy:
-            record, draw = _mode_evidence(problem, x, value, n_is, rng)
-            modes.append(record)
-            if draw is not None:
-                draws.append(draw)
-        # Laplace per mode; where a mode sits on a prior bound (a period
-        # edge between bands, say) the Gaussian is cut off, so use that
-        # mode's importance-sampling value, which truncates the target.
-        for m in modes:
-            edge = "near-prior-bound" in m["flags"] and m["ess"] >= ess_min
-            m["log_z"] = m["log_z_is"] if edge else m["log_z_laplace"]
-        z_lap = _logsumexp([m["log_z"] for m in modes])
-        if draws:
-            xs_pool, lw_pool = _mixture_weights(draws)
-            z_is = _logsumexp(lw_pool) - onp.log(len(xs_pool))
-        else:
-            xs_pool, lw_pool, z_is = None, None, -onp.inf
-        live = [m for m in modes if onp.isfinite(m["log_z"])]
-        best_mode = max(live, key=lambda m: m["log_z"]) if live else None
-        best = {}
-        epochs, chi2_red = [], float("nan")
-        if best_mode is not None:
-            best = {
-                k_: float(v[0])
-                for k_, v in _physical(
-                    onp.array(best_mode["x"]), t_ref
-                ).items()
-            }
-            epochs = problem.per_epoch(best_mode["x"])
-            nu = onp.concatenate([s.nu for s in problem.surfaces])
-            chi2 = onp.concatenate([onp.array(e["chi2_red"]) for e in epochs])
-            chi2_red = float(onp.sum(chi2 * nu) / onp.sum(nu))
-        flags = sorted({f for m in modes for f in m["flags"]})
-        if (
-            onp.isfinite(z_lap)
-            and onp.isfinite(z_is)
-            and abs(z_lap - z_is) > flag_nats
-        ):
-            flags.append("laplace-is-differ")
-        if best_mode is not None and best_mode["ess"] < ess_min:
-            flags.append("low-ess")
-        if best_mode is None:
-            flags.append("no-valid-mode")
-        result = AliasBandResult(
-            n=band.n,
-            p_lo=band.p_lo,
-            p_hi=band.p_hi,
-            modes=modes,
-            log_z=z_lap,
-            log_z_is=z_is,
-            ess=best_mode["ess"] if best_mode else 0.0,
-            flagged=bool(flags),
-            flags=flags,
-            best=best,
-            chi2_red=chi2_red,
-            epochs=epochs,
-        )
-        return result, (xs_pool, lw_pool)
-
-    results, store = [], {}
+    results, store, error = [], {}, None
     for index, band in enumerate(bands):
         done = _load_band(checkpoint_dir, band, key)
         if done is None:
             try:
-                done = fit_band(index, band)
-            except Exception as err:  # noqa: BLE001 - one band must not lose the rest
-                done = (
-                    AliasBandResult(
-                        n=band.n,
-                        p_lo=band.p_lo,
-                        p_hi=band.p_hi,
-                        modes=[],
-                        log_z=-onp.inf,
-                        log_z_is=-onp.inf,
-                        ess=0.0,
-                        flagged=True,
-                        flags=["band-failed"],
-                        error=f"{type(err).__name__}: {err}",
-                    ),
-                    (None, None),
+                done = _fit_band(
+                    problem,
+                    settings,
+                    band,
+                    None if profile is None else profile[index]["orbits"],
+                    mean_times,
                 )
+            except (TypeError, ValueError):
+                raise
+            except Exception as caught:  # noqa: BLE001 - keep the other bands
+                error = caught
+                done = (_failed_band(band, caught), (None, None))
             else:
                 _save_band(checkpoint_dir, band, key, done)
-        result, pool = done
+        result, store[band.n] = done
         results.append(result)
-        store[band.n] = pool
         if on_band is not None:
             on_band(result)
+    if all("band-failed" in b.flags for b in results):
+        raise RuntimeError(
+            f"Every band failed; the last error was: {results[-1].error}"
+        ) from error
 
-    log_z = onp.array([b.log_z for b in results])
-    finite = onp.isfinite(log_z)
-    weights = (
-        onp.where(finite, onp.exp(log_z - onp.max(log_z[finite])), 0.0)
-        if finite.any()
-        else onp.zeros_like(log_z)
-    )
-    for b, w in zip(results, weights / max(weights.sum(), 1e-300)):
-        b.p = float(w)
-    order = onp.argsort(-onp.where(finite, log_z, -onp.inf))
-    results = [results[i] for i in order]
-
-    samples = {}
-    for rank, b in enumerate(results):
-        if rank > 0 and b.p <= p_min_samples:
-            continue
-        xs, lw = store[b.n]
-        if xs is None or not onp.any(onp.isfinite(lw)):
-            continue
-        w = onp.exp(lw - onp.max(lw))
-        pick = onp.random.default_rng([seed, 2**31, b.n]).choice(
-            len(xs), size=n_samples, p=w / w.sum()
-        )
-        samples[b.n] = _physical(xs[pick], t_ref)
+    results = _band_probabilities(results)
+    samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
     return AliasResult(
         t_ref,
         mean_times,
