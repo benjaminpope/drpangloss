@@ -67,11 +67,13 @@ anything before 1.0 may change between minor versions.
   one. A band that raises becomes a row with the flag `band-failed` and
   `AliasBandResult.error`, and a singular or ill-conditioned Hessian gets
   the flag `hessian-singular`. The checkpoint key hashes every field of
-  the data and positions, static ones included. `TypeError` and
-  `ValueError` propagate, failed optimizer starts are counted
-  (`starts-failed`, `AliasBandResult.n_starts_failed`), and a
-  `RuntimeError` is raised when every band fails. The likelihood compiles
-  once per data shape, not once per mode.
+  the data and positions, static ones included. The likelihood and its
+  gradient are evaluated once before any band is fitted, so a
+  misconfiguration raises there; afterwards only a `TypeError` propagates.
+  Other failed optimizer starts are counted (`starts-failed`,
+  `AliasBandResult.n_starts_failed`), a band with no finite mode is a
+  `no-valid-mode` row, and a `RuntimeError` is raised when every band
+  fails. The likelihood compiles once per data shape, not once per mode.
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
   model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
@@ -115,9 +117,10 @@ anything before 1.0 may change between minor versions.
   scales make equal to N), walks the registry's parent chain with a BIC
   penalty (`summary["comparison"]` decides, `summary["comparisons"]` lists
   all), and keeps the uniform disk's diameter scan with its scales
-  profiled. Re-running a stage deletes every later stage's outputs, and
-  `Result` serves only files of complete stages; `run.json` records
-  provenance per stage. The look-elsewhere significance is computed in log
+  profiled, refining the best diameter between grid points. Re-running a
+  stage deletes every later stage's outputs, and `Result` serves only
+  files and grid groups of complete stages; `run.json` records provenance
+  per stage, and `virgil-pipeline validate` fails a run left `running`. The look-elsewhere significance is computed in log
   space, so it stays finite for large searches.
 - **`virgil.ensemble`**: PYRA/MYTHRA-style reconstruction ensembles.
   `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry
@@ -269,22 +272,27 @@ anything before 1.0 may change between minor versions.
   (`_deprecate.external_stacklevel`), not to a fixed depth, which pointed
   into equinox's method wrappers (`OIData.model`, `with_model`,
   `observables.*.predict`, `RVData.term`, `Tabulated`) or into the
-  `renamed` wrapper (`fit`'s own warnings). Shim messages name methods as
+  `renamed` wrapper (`fit`'s own warnings); frames of JAX, numpyro and
+  the optimizers are looked through too. Shim messages name methods as
   `Class.method`, and a new name passed positionally beside its old
   keyword raises the shim's "got both" `TypeError`.
 - `_geometry.position_angle` never returns exactly 360 (it did for tiny
-  negative offsets), `KeplerOrbit.frame()["towards_primary"]` is wrapped
-  to `[0, 360)`, and the geometry helpers compute lists and array-likes
-  (e.g. a pandas Series) in NumPy float64 rather than JAX float32.
+  negative offsets; a scalar input still gives a NumPy scalar),
+  `KeplerOrbit.frame()["towards_primary"]` is wrapped to `[0, 360)`, and
+  the geometry helpers compute lists and array-likes (e.g. a pandas
+  Series) in NumPy float64 rather than JAX float32.
 - Differential-phase steps and anchors use one wrap, `[-π, π)`, in data
   and model alike (a step of exactly ±π used to wrap differently).
-- `Centroid` sums over pixels at `Precision.HIGHEST`; `oifits` no longer
-  imports JAX.
+- `Centroid` sums over pixels at `Precision.HIGHEST`; the `oifits` module
+  no longer imports JAX itself (`import virgil` still does).
 - `fit` falls back to L-BFGS only when the objective has no least-squares
   form (`fitting.NoLeastSquaresForm`), and `variational` starts at
-  `init_scale` only for that or a singular curvature
-  (`fitting.SingularCurvature`); other errors propagate instead of being
-  taken for either. SVI warnings state their category. `fit(progress=)`
+  `init_scale` only for that, a singular curvature
+  (`fitting.SingularCurvature`) or a parameter with no starting value
+  (`fitting.NoStartingValue`, a `ValueError`); other errors propagate
+  instead of being taken for one of these. `gauss_newton_mass` raises
+  `NoLeastSquaresForm` for data with gains, as `fit`'s Gauss–Newton path
+  does, instead of ignoring them. SVI warnings state their category. `fit(progress=)`
   also reports when the fit finishes, and `fitting._bound_fraction` gives
   a LogUniform's fraction in x when `flat=False`.
 - `numpyro_model`'s function and `gauss_newton_mass`'s result record
@@ -306,7 +314,8 @@ anything before 1.0 may change between minor versions.
     residual, which made every likelihood and fit non-finite. Flagged
     and non-finite samples were already dropped. Raw errors that
     `vis_mat`/`phi_mat` project may still be zero; a zero *projected*
-    error raises a `ValueError`.
+    error raises a `ValueError`, also when a correlating operator would
+    otherwise drop that direction silently.
   - **Field of view.** `imaging.field_of_view` and `nyquist_pixel_scale`
     (and the new `Epochs.resolution_mas` and pipelines) share
     `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines,
