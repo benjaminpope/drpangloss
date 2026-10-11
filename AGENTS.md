@@ -113,6 +113,7 @@ see that repository's `PLAN.md` for the boundary.
 | Module | Contents |
 | --- | --- |
 | `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
+| `gains.py` | `GainModes`: calibration gains correlated across channels (and closure-phase offsets), marginalized analytically; used by `OIData.with_gains`/`with_closure_offsets` and `likelihood` |
 | `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals`; `colour` inverts `whiten` for the residual bootstrap (private) |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
@@ -121,6 +122,7 @@ see that repository's `PLAN.md` for the boundary.
 | `fitting.py` | `fit(model, priors, data, regularizers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
 | `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
+| `priors.py` | invariant priors that are not plain numpyro priors: `IsotropicInclination`, `IsotropicLatitude`, hierarchical (population) scales; imports nothing from virgil |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
@@ -135,6 +137,7 @@ see that repository's `PLAN.md` for the boundary.
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
+| `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
 | `ensemble.py` | PYRA/MYTHRA-style reconstruction ensembles: `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry group), `combine` (selection and the iterative mean) and `ensemble`, returning an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset) |
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
@@ -142,18 +145,14 @@ see that repository's `PLAN.md` for the boundary.
 | `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them with `flat_coordinates=True` (opt-in; private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
-| `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`, `StarPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `star` (with a registry of models by short name), `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
+| `_linear.py` | the shared algebra for parameters that enter linearly and are marginalized analytically (`LinearMarginal`), used by `gains`, `observables` and `orbits` (private) |
+| `_precision.py` | local float32/float64 for entry points: `run_in`, `cast_tree` and the `in_float64` decorator (private) |
+| `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`, `StarPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_common` (helpers both pipelines share: χ², residual moments, quantiles, data geometry, prior-bound fractions, figure saving), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `star` (with a registry of models by short name), `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
-Imports flow one way: `_utils`/`_geometry`/`_precision`/`_flat` → `oifits`/`amigo`/`_closure`
-→ `oidata` → `coverage`; `gains` → `observables` → `oidata`. Separately, `_utils` → `spectra` and `fields`, and
-`_elr`/`spectra` → `models` → `likelihood` → `fitting` (which also imports `fields`) →
-`imaging` (which imports `fitting`, `fields`, `likelihood` and `models`). `likelihood` →
-`inference` → `grid_fit` and `likelihood` → `limits`; `grid_fit` and `limits` also use
-`_grid`, which imports only `_utils`, and do not import each other; `limits` →
-`plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `scenes` imports only `_geometry` and `_utils`. `ensemble` imports `imaging`, `metrics` and `models`. `angles` imports nothing from virgil, and
-`likelihood`, `fitting` and `orbits` import it. `orbits` imports only `_utils` and `angles`
-(and jaxoplanet lazily), and `models` imports `orbits` (for `Attached` and `OrbitalBinary`). `epochs` imports `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`. `simulate` imports `fitting`.
+Module-level imports flow one way. `_utils` is at the bottom; `_geometry`, `_linear`, `_grid`, `spectra`, `fields`, `scenes` and `_elr` import only `_utils` (and `scenes` also `_geometry`); `_precision`, `_flat`, `angles`, `priors` and `_closure` import nothing from virgil; `_deprecate` is imported everywhere and imports `oidata` only lazily. Then `oifits`, `amigo`, `_closure`, `gains` and `observables` (both on `_linear`) → `oidata` → `coverage`. `orbits` imports `_utils`, `_geometry`, `_linear`, `angles` and `priors` (and jaxoplanet lazily); `_elr`, `spectra` and `orbits` → `models` → `likelihood` (which also imports `angles`, `_flat` and `gains`) → `fitting` (also `fields`) → `imaging` (also `fields` and `spectra`). `likelihood` → `inference` → `grid_fit`, and `likelihood` → `limits`; `grid_fit` and `limits` both use `_grid` and do not import each other; `limits` → `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `metrics` imports `imaging`; `ensemble` imports `fitting`, `imaging`, `metrics` and `models`. `epochs` imports `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`; `aliases` imports `epochs`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`; `simulate` imports `fitting`.
+
+Five imports run inside functions, to break what would be cycles: `amigo` → `oidata`, `_deprecate` → `oidata`, `epochs` → `orbit_search`, `likelihood` → `observables` and `plotting` → `imaging`. Keep new cross-module imports at module level and in the order above; a new lazy import needs a comment saying which cycle it breaks.
 
 ## Flux and contrast
 
