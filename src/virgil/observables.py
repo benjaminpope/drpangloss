@@ -891,19 +891,18 @@ class DifferentialPhase(_Block):
         phases = np.asarray(self.values)[self.grid]
         steps = np.diff(phases, axis=-1)
         steps = wrap_phase(steps)
-        anchor = np.arctan2(np.sin(phases[..., :1]), np.cos(phases[..., :1]))
+        anchor = wrap_phase(phases[..., :1])
         return self._project(self._unwrap(steps, anchor))
 
     @renamed()
     def predict(self, model, cvis):
         vis = np.asarray(cvis)[self.sample][self.grid]
         phases = np.angle(vis)
-        steps = np.angle(vis[..., 1:] * np.conj(vis[..., :-1]))
+        # One convention, [-π, π), as for the data steps in ``data``.
+        steps = wrap_phase(np.angle(vis[..., 1:] * np.conj(vis[..., :-1])))
         data_phase = np.asarray(self.values)[self.grid]
-        data_anchor = np.arctan2(
-            np.sin(data_phase[..., :1]), np.cos(data_phase[..., :1])
-        )
-        anchor_delta = np.angle(np.exp(1j * (phases[..., :1] - data_anchor)))
+        data_anchor = wrap_phase(data_phase[..., :1])
+        anchor_delta = wrap_phase(phases[..., :1] - data_anchor)
         return self._project(self._unwrap(steps, data_anchor + anchor_delta))
 
     def covariance(self, errors=None):

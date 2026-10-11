@@ -295,9 +295,10 @@ def test_chunked_lbfgs_takes_the_unchunked_path(monkeypatch):
         onp.testing.assert_allclose(
             chunked.values[path], plain.values[path], rtol=1e-6
         )
-    # A report after every chunk that ended short of convergence.
+    # A report after every chunk that ended short of convergence, and one
+    # on completion.
     steps = [r["steps"] for r in reports]
-    assert steps == list(range(3, plain.info["steps"], 3))
+    assert steps == [*range(3, plain.info["steps"], 3), plain.info["steps"]]
     assert all(r["elapsed"] >= 0 and onp.isfinite(r["loss"]) for r in reports)
 
 
@@ -690,3 +691,23 @@ def test_fit_accepts_the_old_regularisers_keyword():
     with pytest.warns(FutureWarning, match="regularisers="):
         old = fit(START, PRIORS, DATA, regularisers=())
     assert abs(old.values["dra"] - new.values["dra"]) < 1e-6
+
+
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_a_converged_fit_reports_progress_at_least_once(method):
+    # Converging inside the first chunk used to skip the report.
+    reports = []
+    result = fit(START, PRIORS, DATA, method=method, progress=reports.append)
+    assert result.info["converged"]
+    assert reports and reports[-1]["steps"] == result.info["steps"]
+    assert onp.isfinite(reports[-1]["loss"])
+
+
+def test_bound_fraction_reads_a_log_uniform_in_x_when_not_flat():
+    from virgil.fitting import _bound_fraction
+
+    prior = dist.LogUniform(1.0, 100.0)
+    # flat: log x, so 10 is halfway; not flat: x, so 10 is 9/99 of the way
+    assert _bound_fraction(prior, 10.0) == pytest.approx(0.5)
+    assert _bound_fraction(prior, 10.0, flat=False) == pytest.approx(9 / 99)
+    assert _bound_fraction(prior, 100.0, flat=False) == pytest.approx(1.0)

@@ -297,7 +297,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # Drop flagged samples from the observables. Their baselines stay in
         # u and v, because closure phases may still need them.
         vis_index = None
-        keep = _good_samples(vis, d_vis, vis_flag, u.size, "vis")
+        keep = _good_samples(
+            vis, d_vis, vis_flag, u.size, "vis", vis_mat is not None
+        )
         if keep is not None:
             if vis_mat is not None:
                 raise ValueError(
@@ -318,7 +320,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi_index = onp.zeros(0, dtype=int)
         else:
             n_phi = len(indices[0]) if cp_flag else u.size
-            keep = _good_samples(phi, d_phi, phi_flag, n_phi, "phi")
+            keep = _good_samples(
+                phi, d_phi, phi_flag, n_phi, "phi", phi_mat is not None
+            )
         if not no_phases and keep is not None:
             if phi_mat is not None:
                 raise ValueError(
@@ -875,6 +879,15 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             # closure relation of correlated closure phases), which carry
             # no measurement and would divide 0 by 0.
             keep = diagonal > 1e-10 * scale
+            # A non-zero row with no variance has a zero projected error
+            # (zero input errors); a zero row projects everything away.
+            used = np.any(operator != 0.0, axis=1)
+            if correlation is None and bool(np.any(used & ~keep)):
+                raise ValueError(
+                    "An operator output has zero projected error (the "
+                    "inputs it combines have zero errors); it cannot be "
+                    "whitened. Give the inputs positive errors."
+                )
             return operator[keep], np.sqrt(diagonal[keep])
         variance, vectors = np.linalg.eigh(covariance)
         keep = variance > 1e-10 * float(np.max(variance))
@@ -2023,11 +2036,13 @@ def _expand_channels(u, v, wavel, vis, indices):
     )
 
 
-def _good_samples(values, errors, flag, n_samples, name):
+def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
     Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
-    finite, with a finite, positive error.
+    finite, with a finite, positive error. With an ``operator``, the raw
+    errors only enter through the projected ones, so a zero raw error is
+    usable (``_diagonalized`` rejects zero projected errors).
 
     Data whose size is not ``n_samples`` are already projected and are not
     checked.
@@ -2039,7 +2054,10 @@ def _good_samples(values, errors, flag, n_samples, name):
                 f"for {n_samples} samples (it looks already projected)."
             )
         return None
-    bad = ~_valid_samples(values, errors)
+    if operator:
+        bad = ~(onp.isfinite(values) & onp.isfinite(errors) & (errors >= 0))
+    else:
+        bad = ~_valid_samples(values, errors)
     if flag is not None:
         flag = onp.asarray(flag, dtype=bool).reshape(-1)
         if flag.size != n_samples:

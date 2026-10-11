@@ -872,7 +872,11 @@ def numpyro_model(
         over numpyro's bijection, hence the default. With ``True``,
         unconstrained ``init_params`` or a mass matrix computed in numpyro's
         coordinates no longer apply; pass the same value to
-        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
+        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]. The
+        returned function records the choice as its ``flat_coordinates``
+        attribute, which
+        [`chain_init_params`][virgil.likelihood.chain_init_params] checks
+        against a mass matrix.
     **options
         Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].
@@ -963,10 +967,25 @@ def numpyro_model(
                 f"regularizer_{i}", -regularizer.value(_reference(source))
             )
 
+    numpyro_fn.flat_coordinates = bool(flat_coordinates)
     return numpyro_fn
 
 
-def chain_init_params(model, starts, key=None):
+def _check_mass_coordinates(model, mass):
+    """Raise if ``mass`` and ``model`` were built for other coordinates."""
+    wanted = getattr(model, "flat_coordinates", None)
+    given = getattr(mass, "flat_coordinates", None)
+    if wanted is not None and given is not None and wanted != given:
+        raise ValueError(
+            f"The mass matrix was computed with flat_coordinates={given}, "
+            f"but the numpyro model samples with flat_coordinates={wanted}: "
+            "its matrix is in the wrong coordinates, and with "
+            "adapt_mass_matrix=False it is never corrected. Pass the same "
+            "flat_coordinates to numpyro_model and gauss_newton_mass."
+        )
+
+
+def chain_init_params(model, starts, key=None, mass=None):
     """Initial parameters for numpyro's ``MCMC``, one chain per start.
 
     ``init_to_value`` starts every chain at one point. To start each
@@ -988,6 +1007,11 @@ def chain_init_params(model, starts, key=None):
         from a dict start uniformly at random, as ``init_to_value`` does.
     key : jax.Array, optional
         Random key for those missing sites (default ``PRNGKey(0)``).
+    mass : dict, optional
+        The result of [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass],
+        to check that it was computed with the same ``flat_coordinates``
+        as ``model``: a mismatch raises a ``ValueError``, since its
+        matrix would be in the wrong coordinates and never adapted.
 
     Returns
     -------
@@ -1008,6 +1032,7 @@ def chain_init_params(model, starts, key=None):
     from numpyro.infer.initialization import init_to_value
     from numpyro.infer.util import initialize_model
 
+    _check_mass_coordinates(model, mass)
     starts = list(starts)
     if not starts:
         raise ValueError("starts must hold at least one dict of values.")

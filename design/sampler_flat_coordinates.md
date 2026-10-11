@@ -25,15 +25,15 @@ the clean logistic density that `fit`'s coordinate gives.
 
 | Entry point | Where | Coordinates before | After |
 | --- | --- | --- | --- |
-| `numpyro_model` parameter sites | `src/virgil/likelihood.py:708` (`_sample`), called at `:928` | numpyro's `biject_to(support)` (logit of x on [a, b]) | flat (`_flat.flat_sampled`) |
-| `numpyro_model` `noise=` sites (error scales, gain widths, `wavel_scale`, ...) | `src/virgil/likelihood.py:938` | `biject_to(support)` | flat |
-| `numpyro_model` angle vectors (`AngleVector`) | `src/virgil/likelihood.py:717` | a 2-D vector (no wrap boundary) | unchanged: already its own coordinate |
-| `numpyro_model` tied noise terms, `hierarchical_scales` members | `src/virgil/likelihood.py:937`, `src/virgil/priors.py:349` | deterministic; hyperparameters are ordinary `priors` sites | hyperparameters (LogUniform median, spread) now flat |
-| `chain_init_params` | `src/virgil/likelihood.py:966` | whatever the sites' `biject_to` is | follows the sites: flat |
-| `gauss_newton_mass` | `src/virgil/fitting.py:824` | `_Objective(flat=False)`: numpyro's coordinates | `flat=flat_coordinates` (default flat), matching NUTS |
-| `fit`, `bias_test`, `OrbitStart` (MAP, not sampling) | `src/virgil/fitting.py:432`, `src/virgil/simulate.py:72`, `src/virgil/epochs.py:1662` | flat (since #226) | unchanged |
-| `laplace_samples` | `src/virgil/imaging.py:1936` | Gaussian in a field's latents (Normal priors) | unchanged: no flat-coordinate prior |
-| grid marginalization (`linear_flux_grid(prior=LogUniform)`, detection log Bayes factor) | `src/virgil/grid_fit.py:556`, `src/virgil/detection.py:358` | closed-form/quadrature in log f | unchanged: not a sampler |
+| `numpyro_model` parameter sites | `likelihood._sample`, called in `numpyro_model` | numpyro's `biject_to(support)` (logit of x on [a, b]) | flat (`_flat.flat_sampled`) |
+| `numpyro_model` `noise=` sites (error scales, gain widths, `wavel_scale`, ...) | `numpyro_model` | `biject_to(support)` | flat |
+| `numpyro_model` angle vectors (`AngleVector`) | `likelihood._sample` | a 2-D vector (no wrap boundary) | unchanged: already its own coordinate |
+| `numpyro_model` tied noise terms, `hierarchical_scales` members | `numpyro_model`, `priors.hierarchical_scales` | deterministic; hyperparameters are ordinary `priors` sites | hyperparameters (LogUniform median, spread) now flat |
+| `chain_init_params` | `likelihood.chain_init_params` | whatever the sites' `biject_to` is | follows the sites: flat |
+| `gauss_newton_mass` | `fitting.gauss_newton_mass` | `_Objective(flat=False)`: numpyro's coordinates | `flat=flat_coordinates` (opt-in, default off), matching NUTS; the result records it and `chain_init_params(..., mass=)` checks it |
+| `fit`, `bias_test`, `OrbitStart` (MAP, not sampling) | `fitting.fit`, `simulate.bias_test`, `epochs.OrbitStart` | flat (since #226) | unchanged |
+| `laplace_samples` | `imaging.laplace_samples` | Gaussian in a field's latents (Normal priors) | unchanged: no flat-coordinate prior |
+| grid marginalization (`linear_flux_grid(prior=LogUniform)`, detection log Bayes factor) | `grid_fit.linear_flux_grid`, `detection.detection_statistics` | closed-form/quadrature in log f | unchanged: not a sampler |
 
 ## Reparametrization
 
@@ -86,9 +86,14 @@ Two float32 details made it exact at the ends:
 - `log_density`, `Predictive` and `posterior_predictive_summary` are
   unchanged, because the site's density is the prior's.
 - `FitResult.values` starts NUTS with `init_to_value` as before.
-- `numpyro_model(..., flat_coordinates=False)` and
-  `gauss_newton_mass(..., flat_coordinates=False)` restore numpyro's
-  bijection of the support. Pass the same value to both.
+- `flat_coordinates=True` on `numpyro_model` and `gauss_newton_mass` opts in
+  to the flat coordinates; the default `False` is numpyro's bijection of the
+  support. Pass the same value to both: a mass matrix in the other
+  coordinates is never adapted (`adapt_mass_matrix=False`), so sampling is
+  silently slow. `gauss_newton_mass` records its value (the returned dict
+  has a `flat_coordinates` attribute), `numpyro_model` records it on the
+  returned function, and `chain_init_params(model, starts, mass=mass)`
+  raises on a mismatch.
 
 ## Backwards compatibility
 
@@ -97,7 +102,7 @@ changes for a user:
 
 - unconstrained `init_params` saved from 0.3 (or computed with
   `initialize_model` there) are in the old coordinates: recompute them
-  (`chain_init_params`) or pass `flat_coordinates=False`;
+  (`chain_init_params`); the default `flat_coordinates=False` is unchanged;
 - a `gauss_newton_mass` matrix from 0.3 is in the old coordinates for
   LogUniform and isotropic sites; recompute it;
 - chains differ draw by draw (different z), so seeded results change, but

@@ -18,14 +18,12 @@ wavelength.
 """
 
 import datetime
+import math
 import os
 import warnings
 
 import numpy as onp
 from astropy.io import fits
-
-from ._utils import dtor
-
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
@@ -414,7 +412,7 @@ def _phase_unit_scale(unit, default, name="phase"):
     if name_ in {"rad", "radian", "radians"}:
         return 1.0
     if name_ in {"deg", "degree", "degrees"}:
-        return dtor
+        return math.pi / 180.0
     raise ValueError(
         f"Unsupported phase unit {raw!r} for {name}; expected degrees or "
         "radians."

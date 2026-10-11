@@ -42,6 +42,7 @@ import jax.numpy as np
 import numpy as onp
 import zodiax as zdx
 
+from ._deprecate import external_stacklevel
 from ._utils import check_part_name, concrete
 
 
@@ -589,7 +590,7 @@ class Tabulated(Spectrum):
             "Tabulated is deprecated; use virgil.spectra.Nodes (with wavel0 "
             "for the reference flux).",
             FutureWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
         self.ratio = np.asarray(ratio, dtype=float)
         self.wavel = np.asarray(wavel, dtype=float)

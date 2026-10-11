@@ -273,3 +273,40 @@ def test_an_operator_that_projects_everything_away_is_refused():
     }
     with pytest.raises(ValueError, match="No data left"):
         OIData(record)
+
+
+def test_a_zero_raw_error_is_accepted_with_an_operator():
+    """With ``vis_mat`` the raw errors only enter through the projected
+    ones, which are positive here (0.3.0 accepted this)."""
+    data = OIData(
+        {
+            "u": [1.0, 2.0],
+            "v": [0.0, 1.0],
+            "wavel": 2e-6,
+            "vis": [1.0, 1.0],
+            "d_vis": [0.0, 0.02],
+            "vis_mat": [[1.0, 1.0]],
+        }
+    )
+    assert data.vis.size == 1 and float(data.d_vis[0]) > 0.0
+
+
+@pytest.mark.parametrize(
+    "d_vis, mat",
+    [
+        ([0.0, 0.0], [[1.0, 1.0]]),
+        ([0.0, 0.02], [[1.0, 0.0], [0.0, 1.0]]),
+    ],
+)
+def test_zero_projected_error_is_a_clear_error(d_vis, mat):
+    with pytest.raises(ValueError, match="zero projected error"):
+        OIData(
+            {
+                "u": [1.0, 2.0],
+                "v": [0.0, 1.0],
+                "wavel": 2e-6,
+                "vis": [1.0, 1.0],
+                "d_vis": d_vis,
+                "vis_mat": mat,
+            }
+        )

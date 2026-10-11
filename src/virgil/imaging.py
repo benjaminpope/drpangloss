@@ -424,8 +424,17 @@ class Centroid(_ImageRegulariser):
         image = self.image(model)
         b = image.brightness
         nrow, ncol = b.shape
-        x = np.sum(b, axis=0) @ pixel_offsets(ncol, image.pixel_scale_mas)
-        y = np.sum(b, axis=1) @ pixel_offsets(nrow, image.pixel_scale_mas)
+        highest = jax.lax.Precision.HIGHEST
+        x = np.matmul(
+            np.sum(b, axis=0),
+            pixel_offsets(ncol, image.pixel_scale_mas),
+            precision=highest,
+        )
+        y = np.matmul(
+            np.sum(b, axis=1),
+            pixel_offsets(nrow, image.pixel_scale_mas),
+            precision=highest,
+        )
         x, y = rotate(x, y, image.rotation_deg)
         return np.stack([x + image.dra, y + image.ddec])
 
@@ -2330,6 +2339,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     return float(1.0 / onp.sqrt(beta))
 
 
+@renamed()
 def l_curve(
     model,
     priors,
