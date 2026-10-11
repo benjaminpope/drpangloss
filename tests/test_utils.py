@@ -168,6 +168,9 @@ def test_position_angle_is_north_through_east_in_zero_to_360():
     assert onp.allclose(sep, onp.hypot(dra, ddec), atol=1e-5)
     assert onp.allclose(pa, expected, atol=1e-4)
     assert onp.isclose(position_angle(-2.0, 0.0), 270.0)
+    # A Python scalar gives a NumPy scalar, not a 0-d array.
+    assert isinstance(position_angle(-2.0, 0.0), onp.float64)
+    assert isinstance(separation_pa(1.0, 1.0)[1], onp.float64)
     th = onp.radians(got)
     assert onp.allclose(onp.hypot(dra, ddec) * onp.sin(th), dra, atol=1e-12)
     assert onp.allclose(onp.hypot(dra, ddec) * onp.cos(th), ddec, atol=1e-12)
