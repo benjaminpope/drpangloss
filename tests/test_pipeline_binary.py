@@ -475,6 +475,19 @@ def test_rerun_discards_the_outputs_of_later_stages(full_run, tmp_path):
         load(out).grid()
 
 
+def test_grid_leaves_out_the_limits_of_an_unfinished_limits_stage(
+    full_run, tmp_path
+):
+    pipeline, _ = full_run
+    copy = tmp_path / "copy"
+    shutil.copytree(pipeline.output, copy)
+    run = json.loads((copy / "run.json").read_text())
+    run["stages"]["limits"]["status"] = "failed"
+    (copy / "run.json").write_text(json.dumps(run))
+    grid = load(copy).grid()
+    assert "snr" in grid and "limit_flux" not in grid
+
+
 def test_global_nsigma_is_finite_for_huge_trial_numbers():
     from scipy.stats import norm
     from virgil.pipeline.binary import _global_nsigma
@@ -607,6 +620,11 @@ def test_cli_validate_fails_for_failed_runs_and_missing_keys(
                 error={"stage": "fit", "type": "RuntimeError", "message": "x"},
             ),
             "the run failed in stage 'fit'",
+        ),
+        (
+            "running",
+            lambda run: run.update(status="running"),
+            "did not finish (status 'running')",
         ),
         ("noclass", lambda run: run.pop("class"), "lacks 'class'"),
     ):

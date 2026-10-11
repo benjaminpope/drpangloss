@@ -736,7 +736,11 @@ class Result:
         path = self._stage_file("grids.h5", stage)
         out = {"axes": read_h5(path, "axes")}
         for group in ("search", "limits", "scan"):
-            out.update(read_h5(path, group))
+            # Each group is written by the stage of its name (the star's
+            # scan by its fit); a group left by an unfinished stage is not
+            # this run's.
+            if self._complete("fit" if group == "scan" else group):
+                out.update(read_h5(path, group))
         order = read_h5_attrs(path).get("axis_order")
         if order:
             out["axes"] = {k: out["axes"][k] for k in order}
@@ -766,10 +770,16 @@ class Result:
     def _group(group, name):
         return group if name is None else f"{group}_{name}"
 
+    def _status(self, stage):
+        return self.run.get("stages", {}).get(stage, {}).get("status")
+
+    def _complete(self, stage):
+        return self._status(stage) == "complete"
+
     def _stage_file(self, relative, stage):
         """``relative`` in the run folder, if ``stage`` completed and wrote it."""
         path = self.path / relative
-        status = self.run.get("stages", {}).get(stage, {}).get("status")
+        status = self._status(stage)
         if status != "complete" or not path.exists():
             reason = (
                 f"{path} does not exist"

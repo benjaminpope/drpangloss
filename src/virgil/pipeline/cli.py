@@ -107,6 +107,11 @@ def _record_problems(run):
     problems += [
         f"run.json lacks {key!r}" for key in _REQUIRED_KEYS if key not in run
     ]
+    if run.get("status") == "running":
+        problems.append(
+            "the run did not finish (status 'running'): it is still running "
+            "or was interrupted"
+        )
     if run.get("status") == "failed":
         error = run.get("error") or {}
         problems.append(
