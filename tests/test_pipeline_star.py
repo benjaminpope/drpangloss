@@ -434,7 +434,7 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     (out / "run.json").write_text(json.dumps(run))
 
     ran = []
-    for name in ("_load", "_overview", "_fit"):
+    for name in ("_load_star", "_overview", "_fit"):
         monkeypatch.setattr(star, name, lambda p, n=name: ran.append(n))
     res = StarPipeline(data, output=out, **settings).run(through="posterior")
     assert ran == []  # nothing before the posterior was recomputed
@@ -646,9 +646,9 @@ def test_error_scale_fit_compares_models_on_minus_two_log_likelihood(
 
 
 def test_profiled_scales_maximize_the_likelihood(data):
-    """sqrt(chi2_b / N_b) per block is the maximum of the likelihood in
-    each scale, for a model that describes the data (the closure phases
-    are von Mises, whose maximum is sqrt(chi2 / N) only for small errors)."""
+    """The profiled scales are the maximum of the likelihood: scaling any
+    one of them by 0.9 or 1.1 raises -2 log L. (sqrt(chi2_b / N_b) is not
+    the maximum for the von Mises closure phases, hence the profiling.)"""
     import numpyro.distributions as dist
 
     from virgil.pipeline import _common
@@ -669,6 +669,69 @@ def test_profiled_scales_maximize_the_likelihood(data):
             trial = {k: float(v) for k, v in scales.items()}
             trial[key] *= factor
             assert _common._m2loglike(model, data, **trial) > best, key
+
+
+def test_scanned_fit_refines_the_diameter_between_grid_points():
+    """With small errors the grid spacing (0.26 %) is many sigma_theta; the
+    refined diameter must reach the optimum of a far denser grid."""
+    import numpyro.distributions as dist
+
+    from virgil.pipeline import _common
+
+    template = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
+        hour_angles_h=(-2.5, 0.0, 2.5),
+        sigma_v2=1e-4,
+        sigma_cp_deg=0.1,
+    )
+    small = template.with_model(UniformDisk(6.0), key=jax.random.PRNGKey(5))
+    noise = {
+        "vis_scale": dist.LogUniform(0.1, 10.0),
+        "phi_scale": dist.LogUniform(0.1, 10.0),
+    }
+    pipeline = StarPipeline(small, "uniform", error_scale="fit")
+    entry = star.models()["uniform"]
+    start = {"diam": 6.0}
+    grid = onp.geomspace(0.75 * 6.0, 1.25 * 6.0, star._START_POINTS)
+    batch = pipeline.settings["batch_size"]
+    coarse, _ = _common._m2loglike_grid(
+        entry.build, start, small, grid, noise, batch
+    )
+    best = int(onp.nanargmin(coarse))
+    values = star._fit_scanned(pipeline, entry, start, grid, noise)[1]
+    refined = float(values["diam"])
+    assert {"noise.vis_scale", "noise.phi_scale"} <= set(values)
+
+    window = onp.geomspace(grid[best - 1], grid[best + 1], 2001)
+    dense, _ = _common._m2loglike_grid(
+        entry.build, start, small, window, noise, batch
+    )
+    step = grid[best + 1] / grid[best] - 1.0
+    dense_best = float(window[int(onp.nanargmin(dense))])
+    at_refined = _common._m2loglike_grid(
+        entry.build, start, small, onp.array([refined]), noise, batch
+    )[0][0]
+    assert abs(refined / dense_best - 1.0) < 0.05 * step
+    assert at_refined <= coarse[best]
+
+
+def test_load_removes_a_stale_processed_oifits(data, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from virgil.pipeline import _common
+
+    folder = tmp_path / "data"
+    folder.mkdir()
+    stale = folder / "processed.oifits"
+    stale.write_text("an earlier run's data")
+    p = SimpleNamespace(processed=data, output=tmp_path)
+    monkeypatch.setattr(
+        _common._io, "oidata_tables", lambda d: (None, "no tables")
+    )
+    report = star._load_star(p)
+    assert not stale.exists()
+    assert report["processed_oifits_skipped"] == "no tables"
+    assert "freq_max_per_rad" in report
 
 
 def _fake_models(parents):

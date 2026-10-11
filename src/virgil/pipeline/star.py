@@ -16,6 +16,7 @@ from ._common import (
     _NUTS_FIELDS,
     _SAMPLER_SETTINGS,
     _diagnostics,
+    _load_report,
     _mcmc,
     _noise_quantiles,
     _sample_stats,
@@ -25,6 +26,7 @@ from ._common import (
     _m2loglike,
     _m2loglike_grid,
     _quantiles,
+    _refine_diameter,
     _save,
     _spatial_frequencies,
 )
@@ -436,7 +438,7 @@ class StarPipeline(_Pipeline):
                 f"models/{name}/info.json",
             ]
         return (
-            Stage("load", _load, ("stages/load/report.json",)),
+            Stage("load", _load_star, ("stages/load/report.json",)),
             Stage(
                 "overview",
                 _overview,
@@ -538,26 +540,8 @@ def _first_null(model, diam_mas, n=_NULL_POINTS):
     return float((grid[i] + frac * (grid[i + 1] - grid[i])) / scale)
 
 
-def _load(p):
-    from ..oifits import write_oifits
-
-    data = p.processed
-    tables, reason = _io.oidata_tables(data)
-    report = {
-        "n_vis": int(onp.asarray(data.vis).size),
-        "n_phi": int(onp.asarray(data.phi).size),
-        "n_independent": int(data.n_independent),
-        "closure_phases": bool(data.cp_flag),
-        **_geometry(data),
-        "freq_max_per_rad": _freq_max(data),
-        "data_sha256": _io.data_fingerprint(data),
-        "processed_oifits_skipped": reason,
-    }
-    if tables is not None:
-        path = p.output / "data" / "processed.oifits"
-        with _io.atomic_path(path) as tmp:
-            write_oifits(tables, tmp)
-    return report
+def _load_star(p):
+    return _load_report(p, freq_max_per_rad=_freq_max(p.processed))
 
 
 def _overview(p):
@@ -775,8 +759,10 @@ def _fit_scanned(p, entry, start, grid, noise):
 
     Without ``noise`` the lobe's refined diameter is the fit. With fitted
     error scales the scales are profiled analytically at each diameter of
-    ``grid`` (see ``_common._profiled_scales``) and the diameter of least
-    −2 log L is kept: a gradient fit of the non-smooth χ² would stall.
+    ``grid`` (see ``_common._profiled_scales``); the diameter of least
+    −2 log L is then refined between its grid neighbours, with the scales
+    re-profiled at each trial, so the fit is not limited to the grid
+    spacing (a gradient fit of the non-smooth χ² would stall).
     """
     info = {
         "method": "scan",
@@ -785,18 +771,19 @@ def _fit_scanned(p, entry, start, grid, noise):
     }
     if noise is None:
         return entry.build(start), {"diam": onp.asarray(start["diam"])}, info
-    m2loglike, scales = _m2loglike_grid(
-        entry.build,
-        start,
-        p.processed,
-        grid,
-        noise,
-        p.settings["batch_size"],
+    data = p.processed
+    m2loglike, _ = _m2loglike_grid(
+        entry.build, start, data, grid, noise, p.settings["batch_size"]
     )
     best = int(onp.nanargmin(m2loglike))
-    values = {"diam": onp.asarray(grid[best])}
-    values.update({f"noise.{k}": v[best] for k, v in scales.items()})
-    model = entry.build({**start, "diam": float(grid[best])})
+    low = grid[max(best - 1, 0)]
+    high = grid[min(best + 1, grid.size - 1)]
+    diam, _, scales = _refine_diameter(
+        entry.build, start, data, low, high, noise
+    )
+    values = {"diam": onp.asarray(diam)}
+    values.update({f"noise.{k}": v for k, v in scales.items()})
+    model = entry.build({**start, "diam": diam})
     return model, values, {**info, "scales": "profiled"}
 
 
@@ -961,6 +948,10 @@ def _choose_model(reports, registry, n):
     model that has no fitted parent (the one of least −2 log L if there
     are several) and moves to a child while that child is preferred over
     the model it contains, taking the largest gain among children.
+
+    With more than two nested models, a deeper model C is reached only
+    through a preferred intermediate B: C is never compared with the root
+    A directly, so a C that would beat A but not B is not chosen.
 
     Returns
     -------
@@ -1153,7 +1144,7 @@ def _nuts(model, data, p, name, priors, start):
     init = chain_init_params(
         posterior, [start] * s["num_chains"], key=init_key
     )
-    mcmc = _mcmc(posterior, s, init, dense_mass=True)
+    mcmc = _mcmc(posterior, s, dense_mass=True)
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     samples = {
         k: onp.asarray(v)
