@@ -4,24 +4,50 @@ from __future__ import annotations
 
 import dataclasses
 import math
-import types
 import warnings
 from typing import Callable
 
 import numpy as onp
 
+from .._precision import in_float64
+from .._utils import rad2mas
 from . import _checks, _io
-from ._core import Stage, _Pipeline
 from ._common import (
-    _BOUND_FRACTION,
+    _bound_samples,
     _chi2,
     _geometry,
-    _moments,
+    _m2loglike,
+    _m2loglike_grid,
     _quantiles,
     _save,
+    _spatial_frequencies,
 )
+from ._core import Stage, _Pipeline
 
-MAS_PER_RAD = 180.0 / math.pi * 3600.0 * 1000.0
+# Points of the grid that refines a lobe's diameter, ±1 coarse step.
+_REFINE_POINTS = 201
+# Points and span (fractions of the lobe's diameter) of the grid whose best
+# diameter starts a second fit, and on which a uniform disk's error scales
+# are profiled.
+_START_POINTS = 201
+_START_SPAN = (0.75, 1.25)
+# Fractional separation within which a scan point must be the lowest to be
+# a lobe's minimum.
+_LOBE_SEPARATION = 0.05
+# The default diameter prior spans these multiples of the finest and the
+# coarsest λ/B: well inside the unresolved regime, beyond the first null of
+# the shortest baseline.
+_DIAM_LOW_FACTOR = 0.1
+_DIAM_HIGH_FACTOR = 4.0
+# Δ(−2 log L) of a closure-phase flip at the data's precision.
+_WALL_JUMP = 1000.0
+# Posterior draws probed for hard walls, and the step in posterior sds.
+_WALL_DRAWS = 40
+_WALL_RADIUS = 2.0
+# Points of the grid of θf (θ the diameter, f = B/λ) searched for a null,
+# and its extent: the uniform disk's first null is at 1.22.
+_NULL_POINTS = 4000
+_NULL_REACH = 4.0
 
 
 # === THE MODEL REGISTRY ===
@@ -67,8 +93,12 @@ class StarModel:
         from sampled values (for example ``u1`` and ``u2`` from ``q1`` and
         ``q2``).
     parent : str or None
-        The name of the simpler model this one contains, for the Δχ²
+        The name of the simpler model this one contains, for the model
         comparison (None if it contains none).
+    check_stem : str or None
+        Stem of the names of this model's checks: ``<stem>_gain`` (its gain
+        over its parent) and ``<stem>_constrained`` (its shape parameters
+        against their priors). Defaults to ``name``.
     """
 
     name: str
@@ -82,10 +112,19 @@ class StarModel:
     shape: tuple = ()
     derived: Callable | None = None
     parent: str | None = None
+    check_stem: str | None = None
 
     @property
     def n_params(self):
         return len(self.params)
+
+    @property
+    def gain_check(self):
+        return f"{self.check_stem or self.name}_gain"
+
+    @property
+    def constrained_check(self):
+        return f"{self.check_stem or self.name}_constrained"
 
 
 def _uniform_disk(values):
@@ -156,6 +195,7 @@ def _registry():
             shape=("q1", "q2"),
             derived=_quadratic_derived,
             parent="uniform",
+            check_stem="limb_darkening",
         ),
     )
     return {e.name: e for e in entries}
@@ -203,23 +243,28 @@ class StarPipeline(_Pipeline):
     * ``overview`` plots the data and their uv coverage.
     * ``fit`` scans the uniform-disk diameter (a uniform disk's closure
       phases flip at every null, so its χ² is not smooth and a scan is
-      the reliable fit), then fits each other model with
+      the reliable fit; with ``error_scale="fit"`` its error scales are
+      profiled along the scan), then fits each other model with
       [`fit`][virgil.fitting.fit] from the scanned diameter. With the
       default ``model`` it compares the limb-darkened and uniform fits by
-      their Δχ² on the quoted errors against a BIC penalty.
+      their Δ(−2 log L) against a BIC penalty. Lobes of the diameter are
+      compared the same way.
     * ``posterior`` samples every fitted model with NUTS
       ([`numpyro_model`][virgil.likelihood.numpyro_model]).
     * ``quicklook`` writes and executes ``quicklook.ipynb``: the main
       result is V² against spatial frequency with the model curves.
 
     The fit is on the quoted errors unless ``error_scale="fit"``, and χ²/N
-    is always reported on the quoted errors. Priors are group-invariant:
+    is always reported on the quoted errors. (With fitted error scales,
+    χ² at each model's own scales is N by construction, so lobes and
+    models are compared on −2 log L, whose normalization penalizes inflated
+    errors; on the quoted errors that is χ² up to a constant.) Priors are group-invariant:
     log-uniform in the diameter over ``diam_range_mas`` and uniform on
     [0, 1] in Kipping's limb-darkening coefficients ``q1``, ``q2``, which
     cover exactly the physical quadratic laws.
 
     ``res.model()`` is the preferred model (the limb-darkened one only if
-    its Δχ² exceeds the BIC penalty of its two extra parameters);
+    its Δ(−2 log L) exceeds the BIC penalty of its two extra parameters);
     ``res.model("uniform")`` and ``res.model("limb_darkened")`` give each.
 
     Parameters
@@ -239,11 +284,13 @@ class StarPipeline(_Pipeline):
         Overrides of the defaults (see ``StarPipeline.defaults()``):
 
         - ``diam_range_mas`` (None): ``[min, max]`` of the log-uniform
-          diameter prior; by default from 0.1 λ_min/B_max (well inside
-          the unresolved regime) to 4 λ_max/B_min (beyond the first null
-          on every baseline).
-        - ``n_scan`` (2000): points of the log-spaced diameter scan; a
-          second scan of 201 points over ±1% then refines it.
+          diameter prior; by default from 0.1 times the finest λ/B (well
+          inside the unresolved regime) to 4 times the coarsest (beyond
+          the first null on every baseline), where λ/B is taken over the
+          observed samples (see ``fringe_scales``).
+        - ``n_scan`` (2000): points of the log-spaced diameter scan; each
+          lobe's minimum is then refined on 201 points within one scan step
+          either side.
         - ``max_lobes`` (5): the most diameter lobes (separate minima of
           the scan) fitted for each model. The best lobe gives the fit
           and bounds the posterior's diameter prior; the table of lobes
@@ -319,9 +366,6 @@ class StarPipeline(_Pipeline):
             )
         super().__init__(data, template, output=output, **settings)
 
-    def _default_model(self):
-        raise NotImplementedError  # a template is always built in __init__
-
     @classmethod
     def _validate(cls, s):
         if s["diam_range_mas"] is not None:
@@ -366,8 +410,8 @@ class StarPipeline(_Pipeline):
             return float(given[0]), float(given[1])
         geo = _geometry(self.processed)
         return (
-            0.1 * geo["lambda_over_b_mas"],
-            4.0 * geo["fov_mas"],
+            _DIAM_LOW_FACTOR * geo["lambda_over_b_mas"],
+            _DIAM_HIGH_FACTOR * geo["fov_mas"],
         )
 
     def _stages(self):
@@ -434,9 +478,7 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 
     if ax is None:
         _, ax = plt.subplots(figsize=(7, 4))
-    u, v = onp.asarray(data.u, dtype=float), onp.asarray(data.v, dtype=float)
-    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
-    freq = onp.hypot(u, v) / wavel
+    freq = _spatial_frequencies(data)
     power = 2 if data.v2_flag else 1
     ax.errorbar(
         freq / 1e6,
@@ -467,20 +509,20 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 
 def _freq_max(data):
     """The longest spatial frequency B/λ in the data (cycles per radian)."""
-    u, v = onp.asarray(data.u, dtype=float), onp.asarray(data.v, dtype=float)
-    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
-    return float(onp.max(onp.hypot(u, v) / wavel))
+    from .._geometry import fringe_scales
+
+    return float(rad2mas) / fringe_scales(data)[0]
 
 
-def _first_null(model, diam_mas, n=4000):
+def _first_null(model, diam_mas, n=_NULL_POINTS):
     """θB/λ at the first sign change of the model visibility.
 
     The visibility is evaluated on a one-dimensional grid of B/λ out to
-    four times the uniform-disk null. Falls back to the uniform-disk value
-    when the model has no null in range.
+    θf = 4 (about 3.3 times the uniform-disk null). Falls back to the
+    uniform-disk value when the model has no null in range.
     """
-    scale = 3.6e6 * 180.0 / math.pi / float(diam_mas)  # f for θf = 1
-    grid = onp.linspace(1e-3, 4.0, n) * scale
+    scale = float(rad2mas) / float(diam_mas)  # f for θf = 1
+    grid = onp.linspace(1e-3, _NULL_REACH, n) * scale
     vis = onp.real(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
     flips = onp.flatnonzero(onp.sign(vis[1:]) * onp.sign(vis[:-1]) < 0)
     if not flips.size:
@@ -522,58 +564,52 @@ def _overview(p):
     return {}
 
 
-def _float64(function):
-    """Run ``function`` with 64-bit JAX and its pytree arguments cast to it.
+# --- the diameter scan and its lobes ---
 
-    A closure phase flips by 180 degrees where a model's visibility changes
-    sign, so a χ² evaluated in float32 near a null can jump by orders of
-    magnitude; ``fit`` and the grid tools are float64 inside, and so are
-    the numbers this pipeline reports.
-    """
-    import functools
-
-    from .._precision import cast_tree, run_in
-
-    @functools.wraps(function)
-    def wrapper(*args, **kwargs):
-        with run_in("float64"):
-            args = [cast_tree(a, "float64") for a in args]
-            return function(*args, **kwargs)
-
-    return wrapper
+# A closure phase flips by 180 degrees where a model's visibility changes
+# sign, so a χ² evaluated in float32 near a null can jump by orders of
+# magnitude; ``fit`` and the grid tools are float64 inside, and so are the
+# numbers this pipeline reports.
 
 
-@_float64
+@in_float64
 def _chi2_64(model, data, **noise):
     return _chi2(model, data, **noise)
 
 
-@_float64
+@in_float64
+def _m2loglike_64(model, data, **noise):
+    return _m2loglike(model, data, **noise)
+
+
+@in_float64
 def _scan(data, lo, hi, n_scan, batch_size):
-    """Uniform-disk log-likelihood over the diameter: coarse, then refined."""
+    """Uniform-disk Δ(−2 log L) on a log-spaced diameter grid.
+
+    Returns
+    -------
+    tuple
+        ``(axis, delta)``: the diameters and the excess of −2 log L over
+        its minimum on the grid (Δχ² on the quoted errors).
+    """
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
     from ..models import UniformDisk
 
-    kw = {"batch_size": batch_size}
-    coarse = onp.geomspace(lo, hi, n_scan)
+    axis = onp.geomspace(lo, hi, n_scan)
     ll = onp.asarray(
-        likelihood_grid(UniformDisk, data, {"diam": np.asarray(coarse)}, **kw)
+        likelihood_grid(
+            UniformDisk,
+            data,
+            {"diam": np.asarray(axis)},
+            batch_size=batch_size,
+        )
     )
-    best = float(coarse[int(onp.nanargmax(ll))])
-    # One coarse step either side of the coarse optimum.
-    step = (hi / lo) ** (1.0 / (n_scan - 1))
-    fine = onp.geomspace(max(lo, best / step), min(hi, best * step), 201)
-    ll_fine = onp.asarray(
-        likelihood_grid(UniformDisk, data, {"diam": np.asarray(fine)}, **kw)
-    )
-    best = float(fine[int(onp.nanargmax(ll_fine))])
-    ll_top = float(max(onp.nanmax(ll), onp.nanmax(ll_fine)))
-    return coarse, 2.0 * (ll_top - ll), best
+    return axis, 2.0 * (onp.nanmax(ll) - ll)
 
 
-def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
+def _find_lobes(axis, delta, lo, hi, cap, *, separation=_LOBE_SEPARATION):
     """The scan's lobes: separate minima of the diameter scan.
 
     Past the first null the squared visibility repeats in lobes (and
@@ -588,7 +624,17 @@ def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
     list[dict]
         By increasing diameter: ``{"diam": scan minimum, "scan_delta_chi2":
         its excess over the best, "bounds": (low, high)}``.
+
+    Raises
+    ------
+    RuntimeError
+        If the scan is not finite anywhere.
     """
+    if not onp.isfinite(delta).any():
+        raise RuntimeError(
+            "The uniform-disk scan is not finite at any diameter in "
+            f"[{lo:.4g}, {hi:.4g}] mas; check the data and diam_range_mas."
+        )
     n = axis.size
     dlog = math.log(axis[-1] / axis[0]) / (n - 1)
     half = max(1, int(round(separation / dlog)))
@@ -615,7 +661,7 @@ def _find_lobes(axis, delta, lo, hi, cap, *, separation=0.05):
     ]
 
 
-@_float64
+@in_float64
 def _refine(data, centre, lo, hi, step, batch_size):
     """The uniform-disk diameter of best likelihood within one coarse step."""
     import jax.numpy as np
@@ -623,7 +669,9 @@ def _refine(data, centre, lo, hi, step, batch_size):
     from ..grid_fit import likelihood_grid
     from ..models import UniformDisk
 
-    fine = onp.geomspace(max(lo, centre / step), min(hi, centre * step), 201)
+    fine = onp.geomspace(
+        max(lo, centre / step), min(hi, centre * step), _REFINE_POINTS
+    )
     ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
@@ -635,57 +683,343 @@ def _refine(data, centre, lo, hi, step, batch_size):
     return float(fine[int(onp.nanargmax(ll))])
 
 
-def _fit_model(p, entry, priors, best_diam, noise):
-    """MAP fit of one registered model: ``(model, values, info)``."""
+def _scan_lobes(data, lo, hi, n_scan, max_lobes, batch_size):
+    """Scan, find and refine: ``(axis, delta, lobes)``.
+
+    The lobes are those of ``_find_lobes``, each with its diameter refined
+    on the uniform disk's likelihood.
+    """
+    axis, delta = _scan(data, lo, hi, n_scan, batch_size)
+    lobes = _find_lobes(axis, delta, lo, hi, max_lobes)
+    step = (hi / lo) ** (1.0 / (n_scan - 1))
+    for lobe in lobes:
+        lobe["diam"] = _refine(data, lobe["diam"], lo, hi, step, batch_size)
+    return axis, delta, lobes
+
+
+# --- fitting one model in one lobe ---
+
+
+@dataclasses.dataclass(frozen=True)
+class LobeFit:
+    """A model fitted in one diameter lobe.
+
+    Attributes
+    ----------
+    model : SourceModel
+        The fitted model.
+    values : dict
+        Fitted values by path (and ``noise.<name>`` for error scales).
+    info : dict
+        The fit's diagnostics.
+    chi2 : float
+        χ² on the quoted errors.
+    chi2_fitted : float
+        χ² at the fitted error scales (N by construction at the MAP; a
+        diagnostic only, not a score).
+    m2loglike : float
+        −2 log L at the fitted error scales: the score that compares lobes
+        and models.
+    residuals : ndarray
+        Whitened residuals on the quoted errors.
+    scales : dict
+        The fitted error scales by name (empty on the quoted errors).
+    priors : dict
+        The priors the lobe was fitted with.
+    lobe : dict
+        The lobe (``diam``, ``bounds``) it was fitted in.
+    warnings : list
+        Warnings the fit raised.
+    """
+
+    model: object
+    values: dict
+    info: dict
+    chi2: float
+    chi2_fitted: float
+    m2loglike: float
+    residuals: onp.ndarray
+    scales: dict
+    priors: dict
+    lobe: dict
+    warnings: list
+
+
+def _scales_of(values):
+    """The fitted error scales among a fit's ``values``, by name."""
+    return {
+        k.split(".", 1)[1]: float(v)
+        for k, v in values.items()
+        if k.startswith("noise.")
+    }
+
+
+def _diameter_grid(centre, priors):
+    """The grid of diameters around ``centre``, within the prior."""
+    low, high = float(priors["diam"].low), float(priors["diam"].high)
+    return onp.geomspace(
+        max(low, _START_SPAN[0] * centre),
+        min(high, _START_SPAN[1] * centre),
+        _START_POINTS,
+    )
+
+
+def _fit_scanned(p, entry, start, grid, noise):
+    """A scan model's fit: the lobe's diameter, error scales profiled.
+
+    Without ``noise`` the lobe's refined diameter is the fit. With fitted
+    error scales the scales are profiled analytically at each diameter of
+    ``grid`` (see ``_common._profiled_scales``) and the diameter of least
+    −2 log L is kept: a gradient fit of the non-smooth χ² would stall.
+    """
+    info = {
+        "method": "scan",
+        "converged": True,
+        "n_scan": p.settings["n_scan"],
+    }
+    if noise is None:
+        return entry.build(start), {"diam": onp.asarray(start["diam"])}, info
+    m2loglike, scales = _m2loglike_grid(
+        entry.build,
+        start,
+        p.processed,
+        grid,
+        noise,
+        p.settings["batch_size"],
+    )
+    best = int(onp.nanargmin(m2loglike))
+    values = {"diam": onp.asarray(grid[best])}
+    values.update({f"noise.{k}": v[best] for k, v in scales.items()})
+    model = entry.build({**start, "diam": float(grid[best])})
+    return model, values, {**info, "scales": "profiled"}
+
+
+def _fit_from_starts(p, entry, priors, start, grid, noise):
+    """A gradient fit from the lobe's diameter and from the best of a grid.
+
+    A limb-darkened star seen past its first null has closure phases that
+    flip at visibility nulls, so χ² is a union of thin slivers and a local
+    fit started on the wrong one stalls at a huge χ². Start from the scan
+    diameter and from the best of a small grid of diameters with the
+    starting shape, and keep the better fit.
+    """
     from ..fitting import fit
 
-    start = {"diam": best_diam, **p._starts[entry.name]}
-    template = entry.build(start)
-    if entry.scan and noise is None:
-        values = {"diam": onp.asarray(best_diam)}
-        info = {
-            "method": "scan",
-            "converged": True,
-            "n_scan": p.settings["n_scan"],
-        }
-        return template, values, info
-    # A limb-darkened star seen past its first null has closure phases that
-    # flip at visibility nulls, so chi^2 is a union of thin slivers and a
-    # local fit started on the wrong one stalls at a huge chi^2. Start from
-    # the scan diameter and from the best of a small grid of diameters with
-    # the starting shape, and keep the better fit.
-    low, high = float(priors["diam"].low), float(priors["diam"].high)
-    grid = onp.geomspace(
-        max(low, 0.75 * best_diam), min(high, 1.25 * best_diam), 201
+    data = p.processed
+    m2loglike, _ = _m2loglike_grid(
+        entry.build, start, data, grid, None, p.settings["batch_size"]
     )
-    chi2 = [
-        float(_chi2_64(entry.build({**start, "diam": d}), p.processed)[0])
-        for d in grid
-    ]
-    starts = [best_diam, float(grid[int(onp.nanargmin(chi2))])]
+    starts = [start["diam"], float(grid[int(onp.nanargmin(m2loglike))])]
     best = None
     for diam in dict.fromkeys(starts):
-        tmpl = entry.build({**start, "diam": diam})
+        template = entry.build({**start, "diam": diam})
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = fit(tmpl, priors, p.processed, noise=noise)
-        score = float(_chi2_64(result.model, p.processed)[0])
+            result = fit(template, priors, data, noise=noise)
+        score = _m2loglike_64(result.model, data, **_scales_of(result.values))
         if best is None or score < best[0]:
             best = (score, result, caught)
-    result = best[1]
-    _rewarn(best[2])
+    _, result, caught = best
+    _rewarn(caught)
     values = {k: onp.asarray(v) for k, v in result.values.items()}
     return result.model, values, _io.clean_json(dict(result.info))
 
 
-def _fit(p):
+def _fit_model(p, entry, priors, best_diam, noise):
+    """MAP fit of one registered model: ``(model, values, info)``."""
+    start = {"diam": best_diam, **p._starts[entry.name]}
+    grid = _diameter_grid(best_diam, priors)
+    if entry.scan:
+        return _fit_scanned(p, entry, start, grid, noise)
+    return _fit_from_starts(p, entry, priors, start, grid, noise)
+
+
+def _fit_lobe(p, entry, lobe, noise):
+    """Fit ``entry`` in ``lobe`` and score it: a ``LobeFit``."""
+    data = p.processed
+    priors = entry.priors(*lobe["bounds"])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model, values, info = _fit_model(p, entry, priors, lobe["diam"], noise)
+    chi2, residuals = _chi2_64(model, data)
+    scales = _scales_of(values)
+    chi2_fitted = _chi2_64(model, data, **scales)[0] if scales else chi2
+    return LobeFit(
+        model=model,
+        values=values,
+        info=info,
+        chi2=float(chi2),
+        chi2_fitted=float(chi2_fitted),
+        m2loglike=float(_m2loglike_64(model, data, **scales)),
+        residuals=residuals,
+        scales=scales,
+        priors=priors,
+        lobe=lobe,
+        warnings=caught,
+    )
+
+
+def _finite_or(value, default):
+    return value if math.isfinite(value) else default
+
+
+def _choose_lobe(fits):
+    """The lobe fit of least −2 log L."""
+    return min(fits, key=lambda f: _finite_or(f.m2loglike, math.inf))
+
+
+def _lobe_table(fits, n):
+    """One row per lobe, with its −2 log L above the best lobe's.
+
+    ``delta_chi2`` is that difference (the Δχ² on the quoted errors, up to
+    the constant that cancels), kept under its older name.
+    """
+    top = _choose_lobe(fits).m2loglike
+    return [
+        {
+            "diam_bounds_mas": list(f.lobe["bounds"]),
+            "diam_mas": float(onp.asarray(f.values["diam"])),
+            "chi2": f.chi2,
+            "chi2_reduced": f.chi2 / n,
+            "m2loglike": f.m2loglike,
+            "delta_m2loglike": f.m2loglike - top,
+            "delta_chi2": f.m2loglike - top,
+        }
+        for f in fits
+    ]
+
+
+def _model_report(entry, fit, table, n):
+    """The stage report of one model's best lobe."""
+    params = {k: float(onp.asarray(fit.values[k])) for k in entry.params}
+    if entry.derived:
+        derived = entry.derived(
+            {k: onp.asarray(fit.values[k]) for k in entry.params}
+        )
+        params.update({k: float(v) for k, v in derived.items()})
+    return {
+        "params": params,
+        "converged": fit.info.get("converged"),
+        "chi2": fit.chi2,
+        "chi2_fitted": fit.chi2_fitted,
+        "m2loglike": fit.m2loglike,
+        "first_null": _first_null(fit.model, float(fit.values["diam"])),
+        "diam_bounds_mas": list(fit.lobe["bounds"]),
+        "lobes": table,
+        "chi2_reduced": fit.chi2 / n,
+        "error_scales": fit.scales or None,
+        "at_bound": list(fit.info.get("at_bound", []) or []),
+        "priors": {k: repr(v) for k, v in fit.priors.items()},
+        "prior_std": {
+            k: float(onp.sqrt(fit.priors[k].variance)) for k in entry.shape
+        },
+    }
+
+
+def _fit_in_lobes(p, entry, lobes, noise):
+    """Fit ``entry`` in every lobe: ``(best LobeFit, report)``."""
+    n = int(p.processed.n_independent)
+    fits = [_fit_lobe(p, entry, lobe, noise) for lobe in lobes]
+    best = _choose_lobe(fits)
+    # Only the best lobe's fit warns: a fit that stalls in an alias lobe,
+    # whose χ² is thousands above the best, is not a problem.
+    _rewarn(best.warnings)
+    return best, _model_report(entry, best, _lobe_table(fits, n), n)
+
+
+# --- choosing between models ---
+
+
+def _compare(registry, reports, child, n):
+    """The comparison of a model with its parent: gain against BIC penalty."""
+    parent = registry[child].parent
+    gain = reports[parent]["m2loglike"] - reports[child]["m2loglike"]
+    n_extra = registry[child].n_params - registry[parent].n_params
+    penalty = _checks.bic_penalty(n_extra, n)
+    return {
+        "simple": parent,
+        "complex": child,
+        "delta_m2loglike": gain,
+        "delta_chi2": gain,
+        "n_extra_params": n_extra,
+        "bic_penalty": penalty,
+        "preferred": child if gain > penalty else parent,
+    }
+
+
+def _choose_model(reports, registry, n):
+    """The preferred model, by walking down the chain of parents.
+
+    Every fitted model with a fitted parent is compared with it (the gain
+    in −2 log L against ``n_extra ln N``). The walk starts at the fitted
+    model that has no fitted parent (the one of least −2 log L if there
+    are several) and moves to a child while that child is preferred over
+    the model it contains, taking the largest gain among children.
+
+    Returns
+    -------
+    tuple
+        ``(best, decisive, comparisons)``: the name of the preferred model,
+        the comparison that decided it (the last one made on the walk; None
+        if no model has a fitted parent) and all of them.
+    """
+    comparisons = [
+        _compare(registry, reports, name, n)
+        for name in reports
+        if registry[name].parent in reports
+    ]
+    roots = [k for k in reports if registry[k].parent not in reports]
+    best = min(
+        roots, key=lambda k: _finite_or(reports[k]["m2loglike"], math.inf)
+    )
+    decisive = None
+    while True:
+        children = [c for c in comparisons if c["simple"] == best]
+        if not children:
+            return best, decisive, comparisons
+        decisive = max(
+            children, key=lambda c: _finite_or(c["delta_m2loglike"], -math.inf)
+        )
+        if decisive["preferred"] == best:
+            return best, decisive, comparisons
+        best = decisive["complex"]
+
+
+# --- the fit stage ---
+
+
+def _save_fit(folder, entry, fit):
+    _io.save_model(folder, fit.model, fit.values, list(entry.params))
+    _io.write_json(folder / "info.json", fit.info)
+
+
+def _fit_plots(p, registry, fits, best):
+    """The MAP fit's data-model correlation and the V² curves."""
     from ..likelihood import posterior_predictive_summary
     from ..plotting import plot_data_model_correlation
 
+    data, params = p.processed, list(registry[best].params)
+    one = {
+        k: onp.asarray([float(onp.asarray(fits[best].values[k]))])
+        for k in params
+    }
+    pred = posterior_predictive_summary(one, fits[best].model, data, params)
+    fig = plot_data_model_correlation(data, {"MAP fit": pred})
+    fig = fig[0] if isinstance(fig, tuple) else fig
+    _save(fig, p.output / "plots" / "fit_correlation.png")
+    fig = plot_v2_models(
+        data, {registry[n].label: fits[n].model for n in p.names}
+    )
+    _save(fig, p.output / "plots" / "fit_v2.png")
+
+
+def _fit(p):
     data, s = p.processed, p.settings
     lo, hi = p._diam_range()
     registry = models()
-    axis, delta, best_diam = _scan(data, lo, hi, s["n_scan"], s["batch_size"])
+    axis, delta, lobes = _scan_lobes(
+        data, lo, hi, s["n_scan"], s["max_lobes"], s["batch_size"]
+    )
     _io.write_h5(
         p.output / "grids.h5",
         {
@@ -695,167 +1029,21 @@ def _fit(p):
         attrs={"/": {"axis_order": ["diam"], "schema": _io.SCHEMA}},
     )
 
-    # The scan's lobes. Each is fitted for each model; the best lobe gives
-    # the model's fit and (in the posterior) its bounded, group-invariant
-    # log-uniform diameter prior. The lobe table is recorded in the summary.
-    lobes = _find_lobes(axis, delta, lo, hi, s["max_lobes"])
-    step = (hi / lo) ** (1.0 / (s["n_scan"] - 1))
-    for lobe in lobes:
-        lobe["diam"] = _refine(
-            data, lobe["diam"], lo, hi, step, s["batch_size"]
-        )
+    # Each lobe is fitted for each model; the best lobe gives the model's
+    # fit and (in the posterior) its bounded, group-invariant log-uniform
+    # diameter prior. The lobe table is recorded in the summary.
     noise = p._noise()
-    fitted, reports = {}, {}
+    fits, reports = {}, {}
     for name in p.names:
-        entry = registry[name]
-        candidates = []
-        for lobe in lobes:
-            b0, b1 = lobe["bounds"]
-            priors = entry.priors(b0, b1)
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                model, values, info = _fit_model(
-                    p, entry, priors, lobe["diam"], noise
-                )
-            chi2, resid = _chi2_64(model, data)
-            scales = {
-                k.split(".", 1)[1]: float(v)
-                for k, v in values.items()
-                if k.startswith("noise.")
-            }
-            # With fitted error scales, lobes and models are compared on
-            # chi^2 with the rescaled errors; chi^2/N on the quoted errors
-            # stays the diagnostic.
-            chi2_fitted = chi2
-            if scales:
-                chi2_fitted, _ = _chi2_64(
-                    model,
-                    data,
-                    **{k: onp.asarray(v) for k, v in scales.items()},
-                )
-            candidates.append(
-                (
-                    float(chi2_fitted),
-                    model,
-                    values,
-                    info,
-                    chi2,
-                    resid,
-                    scales,
-                    priors,
-                    lobe,
-                    caught,
-                )
-            )
-        top = min(c[0] for c in candidates)
-        table = [
-            {
-                "diam_bounds_mas": list(c[8]["bounds"]),
-                "diam_mas": float(onp.asarray(c[2]["diam"])),
-                "chi2": float(c[4]),
-                "chi2_reduced": float(c[4]) / data.n_independent,
-                "delta_chi2": c[0] - top,
-            }
-            for c in candidates
-        ]
-        chosen = min(candidates, key=lambda c: c[0])
-        (
-            chi2_fitted,
-            model,
-            values,
-            info,
-            chi2,
-            resid,
-            scales,
-            priors,
-            lobe,
-            caught,
-        ) = chosen
-        # Only the best lobe's fit warns: a fit that stalls in an alias lobe,
-        # whose chi^2 is thousands above the best, is not a problem.
-        _rewarn(caught)
-        # Test only the independent whitened residuals: the periodic penalty
-        # terms of correlated closure phases are not meant to be normal.
-        resid = resid[: int(data.n_independent)]
-        skew, kurt = _moments(resid)
-        reported = {k: float(onp.asarray(values[k])) for k in entry.params}
-        if entry.derived:
-            reported.update(
-                {
-                    k: float(v)
-                    for k, v in entry.derived(
-                        {k: onp.asarray(values[k]) for k in entry.params}
-                    ).items()
-                }
-            )
-        _io.save_model(
-            p.output / "models" / name, model, values, list(entry.params)
+        fits[name], reports[name] = _fit_in_lobes(
+            p, registry[name], lobes, noise
         )
-        _io.write_json(p.output / "models" / name / "info.json", info)
-        fitted[name] = (model, values, info)
-        reports[name] = {
-            "params": reported,
-            "converged": info.get("converged"),
-            "chi2": chi2,
-            "chi2_fitted": float(chi2_fitted),
-            "first_null": _first_null(model, float(values["diam"])),
-            "diam_bounds_mas": list(lobe["bounds"]),
-            "lobes": table,
-            "chi2_reduced": chi2 / data.n_independent,
-            "error_scales": scales or None,
-            "residual_skew": skew,
-            "residual_excess_kurtosis": kurt,
-            "n_residuals": int(resid.size),
-            "at_bound": list(info.get("at_bound", []) or []),
-            "priors": {k: repr(v) for k, v in priors.items()},
-            "prior_std": {
-                k: float(onp.sqrt(priors[k].variance)) for k in entry.shape
-            },
-        }
-
-    comparison, best = None, p.names[0]
+        _save_fit(p.output / "models" / name, registry[name], fits[name])
     n = int(data.n_independent)
-    for name in p.names:
-        entry = registry[name]
-        if entry.parent in reports:
-            simple = reports[entry.parent]["chi2_fitted"]
-            gain = simple - reports[name]["chi2_fitted"]
-            n_extra = entry.n_params - registry[entry.parent].n_params
-            penalty = n_extra * math.log(max(n, 2))
-            comparison = {
-                "simple": entry.parent,
-                "complex": name,
-                "delta_chi2": gain,
-                "n_extra_params": n_extra,
-                "bic_penalty": penalty,
-                "preferred": name if gain > penalty else entry.parent,
-            }
-            best = comparison["preferred"]
-    if comparison is None:
-        best = p.names[-1]
-    model, values, info = fitted[best]
-    _io.save_model(
-        p.output / "models" / "best",
-        model,
-        values,
-        list(registry[best].params),
-    )
-    _io.write_json(p.output / "models" / "best" / "info.json", info)
-
-    one = {
-        k: onp.asarray([float(onp.asarray(values[k]))])
-        for k in registry[best].params
-    }
-    pred = posterior_predictive_summary(
-        one, model, data, list(registry[best].params)
-    )
-    fig = plot_data_model_correlation(data, {"MAP fit": pred})
-    fig = fig[0] if isinstance(fig, tuple) else fig
-    _save(fig, p.output / "plots" / "fit_correlation.png")
-    fig = plot_v2_models(
-        data, {registry[n].label: fitted[n][0] for n in p.names}
-    )
-    _save(fig, p.output / "plots" / "fit_v2.png")
+    best, decisive, comparisons = _choose_model(reports, registry, n)
+    _save_fit(p.output / "models" / "best", registry[best], fits[best])
+    _fit_plots(p, registry, fits, best)
+    scan_best = min(lobes, key=lambda lobe: lobe["scan_delta_chi2"])
     return {
         "names": list(p.names),
         "best": best,
@@ -865,41 +1053,27 @@ def _fit(p):
         "rivals": [
             [row["diam_mas"], row["delta_chi2"]]
             for row in reports[best]["lobes"]
-            if row["delta_chi2"] > 0 and row["delta_chi2"] <= 25.0
+            if 0 < row["delta_chi2"] <= _checks.RIVAL_DELTA_CHI2
         ],
-        "scan_diam_mas": best_diam,
+        "scan_diam_mas": scan_best["diam"],
         "models": reports,
-        "comparison": comparison,
+        "comparison": decisive,
+        "comparisons": comparisons,
     }
 
 
-_NOISE_BOUNDS = (0.1, 10.0)  # the fitted error scales' LogUniform range
-
-
-def _bound_fractions(samples, priors, skip=()):
+def _bound_fractions(entry, priors, noise, samples):
     """Fraction of samples within 1% of the range of either prior bound.
 
-    Covers the sampled priors except ``skip`` (the shape parameters, whose
-    priors are meant to matter and are judged by
-    ``limb_darkening_constrained`` instead), and every fitted error scale
-    ``noise.<term>``.
+    Covers the sampled priors except the entry's shape parameters (whose
+    priors are meant to matter and are judged by the ``constrained`` check
+    instead), and every fitted error scale ``noise.<term>``. Parameters
+    whose prior has no finite edges are left out.
     """
-    bound = {}
-    scales = {
-        k: types.SimpleNamespace(low=_NOISE_BOUNDS[0], high=_NOISE_BOUNDS[1])
-        for k in samples
-        if k.startswith("noise.")
-    }
-    for k, prior in {**priors, **scales}.items():
-        if k in skip or not hasattr(prior, "low"):
-            continue
-        lo, hi = float(prior.low), float(prior.high)
-        x = onp.asarray(samples[k], dtype=float).ravel()
-        if type(prior).__name__ in ("LogUniform", "SimpleNamespace"):
-            lo, hi, x = math.log(lo), math.log(hi), onp.log(x)
-        edge = _BOUND_FRACTION * (hi - lo)
-        bound[k] = float(onp.mean((x < lo + edge) | (x > hi - edge)))
-    return bound
+    sampled = {k: v for k, v in priors.items() if k not in entry.shape}
+    sampled.update({f"noise.{k}": v for k, v in (noise or {}).items()})
+    fractions = {k: _bound_samples(v, samples[k]) for k, v in sampled.items()}
+    return {k: v for k, v in fractions.items() if v is not None}
 
 
 def _rewarn(caught):
@@ -910,10 +1084,9 @@ def _rewarn(caught):
         )
 
 
-_WALL_JUMP = 1000.0  # Δχ² of a closure-phase flip at the data's precision
-
-
-def _wall_probe(entry, data, samples, priors, n=40, radius=2.0, seed=0):
+def _wall_probe(
+    entry, data, samples, priors, n=_WALL_DRAWS, radius=_WALL_RADIUS, seed=0
+):
     """How much of the posterior's surroundings is a hard wall.
 
     A closure phase of a centrosymmetric star flips by π wherever a model
@@ -959,7 +1132,7 @@ def _wall_probe(entry, data, samples, priors, n=40, radius=2.0, seed=0):
     }
 
 
-@_float64
+@in_float64
 def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
     import jax
@@ -970,7 +1143,8 @@ def _nuts(model, data, p, name, priors, start):
 
     s = p.settings
     entry = models()[name]
-    posterior = numpyro_model(model, priors, data, noise=p._noise())
+    noise = p._noise()
+    posterior = numpyro_model(model, priors, data, noise=noise)
     key = jax.random.PRNGKey(s["seed"])
     init_key, run_key = jax.random.split(key)
     init = chain_init_params(
@@ -1044,7 +1218,7 @@ def _nuts(model, data, p, name, priors, start):
             "divergence_fraction": float(onp.mean(stats["diverging"])),
             "wall_probe": _wall_probe(entry, data, samples, priors),
             "prior_bound_fraction": _bound_fractions(
-                samples, priors, skip=entry.shape
+                entry, priors, noise, samples
             ),
         },
     )
@@ -1153,6 +1327,161 @@ _DATA_KEYS = (
 )
 
 
+_FIT_KEYS = (
+    "params",
+    "converged",
+    "chi2",
+    "chi2_fitted",
+    "m2loglike",
+    "chi2_reduced",
+    "diam_bounds_mas",
+    "lobes",
+    "at_bound",
+)
+_POSTERIOR_KEYS = (
+    "models",
+    "best",
+    "sampled",
+    "num_chains",
+    "num_samples",
+    "num_warmup",
+    "r_hat_max",
+    "ess_bulk_min",
+    "divergence_fraction",
+)
+
+
+def _chi2_section(settings, fit):
+    names = fit["names"]
+    return {
+        "n_independent": fit["n_independent"],
+        "error_scale": settings["error_scale"],
+        "reduced": {k: fit["models"][k]["chi2_reduced"] for k in names},
+        "error_scales": {k: fit["models"][k]["error_scales"] for k in names},
+    }
+
+
+def _fit_section(fit):
+    return {
+        "best": fit["best"],
+        "scan_diam_mas": fit["scan_diam_mas"],
+        "diam_bounds_mas": fit["diam_bounds_mas"],
+        "rivals": fit["rivals"],
+        "models": {
+            k: {f: fit["models"][k][f] for f in _FIT_KEYS}
+            for k in fit["names"]
+        },
+    }
+
+
+def _fit_checks(fit, registry):
+    """Checks on the fits: χ²/N, model gains and the fitted error scales."""
+    reports = fit["models"]
+    checks = [
+        _checks.chi2_reduced(
+            f"chi2_{k}",
+            reports[k]["chi2_reduced"],
+            label=f"the {registry[k].label}",
+        )
+        for k in fit["names"]
+    ]
+    for comparison in fit["comparisons"]:
+        simple, complex_ = comparison["simple"], comparison["complex"]
+        checks.append(
+            _checks.model_gain(
+                registry[complex_].gain_check,
+                reports[simple]["m2loglike"],
+                reports[complex_]["m2loglike"],
+                fit["n_independent"],
+                n_extra=comparison["n_extra_params"],
+                simple=registry[simple].label,
+                complex_=registry[complex_].label,
+            )
+        )
+    scales = {
+        f"{k}.{kk}": v
+        for k in fit["names"]
+        for kk, v in (reports[k]["error_scales"] or {}).items()
+    }
+    if scales:
+        checks.append(_checks.error_scale(scales))
+    return checks
+
+
+def _star_section(fit, post):
+    """The star's diameter: from the posterior if there is one."""
+    best = fit["best"]
+    if post:
+        row = post["models"][best]["params"]["diam"]
+        diam, diam_err = row["median"], 0.5 * (row["q84"] - row["q16"])
+    else:
+        diam, diam_err = fit["models"][best]["params"]["diam"], None
+    return {
+        "model": best,
+        "source": "posterior" if post else "fit",
+        "diam_mas": diam,
+        "diam_err_mas": diam_err,
+    }
+
+
+def _resolution(fit, load, diam):
+    """The resolution section and check: ``(section, check)``."""
+    null = fit["models"][fit["best"]]["first_null"]
+    check = _checks.resolution_regime(
+        diam, load["freq_max_per_rad"], first_null=null
+    )
+    section = {
+        "diam_mas": diam,
+        "freq_max_per_rad": load["freq_max_per_rad"],
+        "first_null": null,
+        "first_null_fraction": check.value,
+    }
+    return section, check
+
+
+def _shape(fit, post, entry):
+    """The shape section and check: the posterior's width against the
+    prior's for the best model's shape parameters."""
+    best = entry.name
+    rows = {k: post["models"][best]["params"][k] for k in entry.shape}
+    prior_std = fit["models"][best]["prior_std"]
+    ratios = {k: rows[k]["std"] / prior_std[k] for k in entry.shape}
+    section = {
+        "model": best,
+        "params": {
+            k: {
+                "median": rows[k]["median"],
+                "posterior_std": rows[k]["std"],
+                "prior_std": prior_std[k],
+                "ratio": ratios[k],
+            }
+            for k in entry.shape
+        },
+    }
+    return section, _checks.prior_constrained(entry.constrained_check, ratios)
+
+
+def _posterior_checks(post):
+    """Checks on the sampler: bounds, R-hat, ESS and divergences."""
+    worst = max(
+        post["models"].values(), key=lambda m: m["divergence_fraction"]
+    )
+    return [
+        _checks.prior_bound(
+            {
+                f"{n}.{k}": v
+                for n, m in post["models"].items()
+                for k, v in m["prior_bound_fraction"].items()
+            }
+        ),
+        _checks.r_hat(post["r_hat_max"]),
+        _checks.ess(post["ess_bulk_min"]),
+        _checks.divergences(
+            post["divergence_fraction"], walls=worst.get("wall_probe")
+        ),
+    ]
+
+
 def _summarize(settings, reports):
     registry = models()
     sections, checks = {}, []
@@ -1166,148 +1495,24 @@ def _summarize(settings, reports):
     if not fit:
         return sections, checks
 
-    names, best = fit["names"], fit["best"]
-    n = fit["n_independent"]
-    sections["chi2"] = {
-        "n_independent": n,
-        "error_scale": settings["error_scale"],
-        "reduced": {k: fit["models"][k]["chi2_reduced"] for k in names},
-        "error_scales": {k: fit["models"][k]["error_scales"] for k in names},
-    }
-    sections["fit"] = {
-        "best": best,
-        "scan_diam_mas": fit["scan_diam_mas"],
-        "diam_bounds_mas": fit["diam_bounds_mas"],
-        "rivals": fit["rivals"],
-        "models": {
-            k: {
-                f: fit["models"][k][f]
-                for f in (
-                    "params",
-                    "converged",
-                    "chi2",
-                    "chi2_fitted",
-                    "chi2_reduced",
-                    "diam_bounds_mas",
-                    "lobes",
-                    "at_bound",
-                )
-            }
-            for k in names
-        },
-    }
-    for k in names:
-        checks.append(
-            _checks.chi2_reduced(
-                f"chi2_{k}",
-                fit["models"][k]["chi2_reduced"],
-                label=f"the {registry[k].label}",
-            )
-        )
-    comparison = fit["comparison"]
-    if comparison:
-        sections["comparison"] = dict(comparison)
-        checks.append(
-            _checks.model_gain(
-                "limb_darkening_gain",
-                fit["models"][comparison["simple"]]["chi2_fitted"],
-                fit["models"][comparison["complex"]]["chi2_fitted"],
-                n,
-                n_extra=comparison["n_extra_params"],
-                simple=registry[comparison["simple"]].label,
-                complex_=registry[comparison["complex"]].label,
-            )
-        )
-    scales = {
-        f"{k}.{kk}": v
-        for k in names
-        for kk, v in (fit["models"][k]["error_scales"] or {}).items()
-    }
-    if scales:
-        checks.append(_checks.error_scale(scales))
-
-    source = post["models"][best]["params"] if post else None
-    if source:
-        diam, diam_err = (
-            source["diam"]["median"],
-            0.5 * (source["diam"]["q84"] - source["diam"]["q16"]),
-        )
-    else:
-        diam, diam_err = fit["models"][best]["params"]["diam"], None
-    sections["star"] = {
-        "model": best,
-        "source": "posterior" if post else "fit",
-        "diam_mas": diam,
-        "diam_err_mas": diam_err,
-    }
+    sections["chi2"] = _chi2_section(settings, fit)
+    sections["fit"] = _fit_section(fit)
+    if fit["comparison"]:
+        sections["comparison"] = dict(fit["comparison"])
+        sections["comparisons"] = [dict(c) for c in fit["comparisons"]]
+    checks += _fit_checks(fit, registry)
+    sections["star"] = _star_section(fit, post)
     if load:
-        sections["resolution"] = {
-            "diam_mas": diam,
-            "freq_max_per_rad": load["freq_max_per_rad"],
-        }
-        null = fit["models"][best]["first_null"]
-        sections["resolution"]["first_null"] = null
-        check = _checks.resolution_regime(
-            diam, load["freq_max_per_rad"], first_null=null
+        sections["resolution"], check = _resolution(
+            fit, load, sections["star"]["diam_mas"]
         )
-        sections["resolution"]["first_null_fraction"] = check.value
         checks.append(check)
-    checks.append(_checks.multimodal(fit["models"][best]["lobes"]))
+    checks.append(_checks.multimodal(fit["models"][fit["best"]]["lobes"]))
     if post:
-        entry = registry[best]
+        entry = registry[fit["best"]]
         if entry.shape:
-            ratios = {}
-            for k in entry.shape:
-                row = post["models"][best]["params"][k]
-                ratios[k] = row["std"] / fit["models"][best]["prior_std"][k]
-            sections["shape"] = {
-                "model": best,
-                "params": {
-                    k: {
-                        "median": post["models"][best]["params"][k]["median"],
-                        "posterior_std": post["models"][best]["params"][k][
-                            "std"
-                        ],
-                        "prior_std": fit["models"][best]["prior_std"][k],
-                        "ratio": ratios[k],
-                    }
-                    for k in entry.shape
-                },
-            }
-            checks.append(
-                _checks.prior_constrained("limb_darkening_constrained", ratios)
-            )
-        sections["posterior"] = {
-            k: post[k]
-            for k in (
-                "models",
-                "best",
-                "sampled",
-                "num_chains",
-                "num_samples",
-                "num_warmup",
-                "r_hat_max",
-                "ess_bulk_min",
-                "divergence_fraction",
-            )
-        }
-        checks.append(
-            _checks.prior_bound(
-                {
-                    f"{n}.{k}": v
-                    for n, m in post["models"].items()
-                    for k, v in m["prior_bound_fraction"].items()
-                }
-            )
-        )
-        checks.append(_checks.r_hat(post["r_hat_max"]))
-        checks.append(_checks.ess(post["ess_bulk_min"]))
-        worst = max(
-            post["models"].values(), key=lambda m: m["divergence_fraction"]
-        )
-        checks.append(
-            _checks.divergences(
-                post["divergence_fraction"], walls=worst.get("wall_probe")
-            )
-        )
+            sections["shape"], check = _shape(fit, post, entry)
+            checks.append(check)
+        sections["posterior"] = {k: post[k] for k in _POSTERIOR_KEYS}
+        checks += _posterior_checks(post)
     return sections, checks
