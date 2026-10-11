@@ -353,7 +353,7 @@ def test_every_band_failing_raises_chained(monkeypatch):
     assert caught.value.__cause__ is boom
 
 
-def test_misconfiguration_in_a_band_propagates(monkeypatch):
+def test_type_error_in_a_band_propagates(monkeypatch):
     data, _ = _synthetic(12.38)
     calls = []
 
@@ -365,6 +365,59 @@ def test_misconfiguration_in_a_band_propagates(monkeypatch):
     with pytest.raises(TypeError, match="misspelt"):
         fit_orbit_aliases(data, (12.1, 12.7), t_ref=T_REF)
     assert len(calls) == 1  # not isolated as a failed band
+
+
+def test_value_error_in_one_band_gives_a_band_failed_row(monkeypatch):
+    data, _ = _synthetic(12.38)
+    seen = []
+
+    def fit_band(problem, settings, band, orbits, times):
+        if not seen:
+            seen.append(band.n)
+            raise ValueError("a bad band")
+        return _band(band.n, []), (None, None)
+
+    monkeypatch.setattr(aliases, "_fit_band", fit_band)
+    result = fit_orbit_aliases(
+        data, (11.3, 12.9), t_ref=T_REF, on_band=lambda b: None
+    )
+    failed = [b for b in result.bands if "band-failed" in b.flags]
+    assert [b.n for b in failed] == seen
+    assert "a bad band" in failed[0].error
+    assert len(failed) < len(result.bands)
+
+
+def test_misconfiguration_surfaces_in_the_preflight(monkeypatch):
+    data, _ = _synthetic(12.38)
+    calls = []
+
+    def value_and_grad(self, x):
+        raise ValueError("bad data shape")
+
+    monkeypatch.setattr(aliases._Problem, "value_and_grad", value_and_grad)
+    monkeypatch.setattr(aliases, "_fit_band", lambda *args: calls.append(args))
+    with pytest.raises(ValueError, match="bad data shape"):
+        fit_orbit_aliases(data, (12.1, 12.7), t_ref=T_REF)
+    assert calls == []  # no band was attempted
+
+
+@pytest.mark.filterwarnings("ignore:Python iterable type")
+def test_data_given_as_a_generator_is_cast_to_float64(monkeypatch):
+    data, _ = _synthetic(12.38)
+    seen = {}
+
+    def preflight(problem, settings, band):
+        seen["dtypes"] = {
+            leaf.dtype
+            for leaf in jax.tree.leaves(problem.data)
+            if hasattr(leaf, "dtype") and leaf.dtype.kind == "f"
+        }
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(aliases, "_preflight", preflight)
+    with pytest.raises(KeyboardInterrupt):
+        fit_orbit_aliases(iter(data), (12.1, 12.7), t_ref=T_REF)
+    assert seen["dtypes"] == {onp.dtype("float64")}
 
 
 class _Scores:
@@ -405,7 +458,48 @@ def test_failed_starts_are_counted_and_the_others_go_on(monkeypatch):
     assert "starts-failed" in result.flags and result.n_starts_failed == 1
 
 
-def test_every_start_failing_raises_and_misconfiguration_propagates(
+def test_a_non_finite_value_drops_the_start_without_counting_it(
+    monkeypatch,
+):
+    band, settings, bounds, pool = _refine_inputs()
+    monkeypatch.setattr(
+        aliases, "_optimize", lambda p, b, x0, m: (x0, float("nan"))
+    )
+    modes_xy, n_failed = aliases._refine(
+        _Scores(), settings, bounds, pool, EPOCHS
+    )
+    assert modes_xy == [] and n_failed == 0
+    modes, z_lap, z_is, draws = aliases._band_evidence(
+        None, settings, bounds, modes_xy, onp.random.default_rng(0)
+    )
+    assert modes == [] and z_lap == -onp.inf and z_is == -onp.inf
+    assert draws == (None, None)
+    result = aliases._band_result(
+        None, settings, band, modes, z_lap, z_is, n_failed
+    )
+    assert result.flags == ["no-valid-mode"] and result.log_z == -onp.inf
+
+
+@pytest.mark.parametrize("error", [ValueError, onp.linalg.LinAlgError])
+def test_value_and_linalg_errors_count_as_failed_starts(monkeypatch, error):
+    _, settings, bounds, pool = _refine_inputs()
+    calls = []
+
+    def optimize(problem, bounds, x0, max_steps):
+        calls.append(x0)
+        if len(calls) == 1:
+            raise error("singular")
+        return x0, -1.0
+
+    monkeypatch.setattr(aliases, "_optimize", optimize)
+    modes, n_failed = aliases._refine(
+        _Scores(), settings, bounds, pool, EPOCHS
+    )
+    assert n_failed == 1 and len(calls) == settings.n_refine
+    assert len(modes) == settings.n_refine - 1
+
+
+def test_every_start_failing_raises_and_type_error_propagates(
     monkeypatch,
 ):
     _, settings, bounds, pool = _refine_inputs()
@@ -419,11 +513,19 @@ def test_every_start_failing_raises_and_misconfiguration_propagates(
         aliases._refine(_Scores(), settings, bounds, pool, EPOCHS)
     assert caught.value.__cause__ is error
 
+    def value_error(problem, bounds, x0, max_steps):
+        raise ValueError("singular")
+
+    monkeypatch.setattr(aliases, "_optimize", value_error)
+    with pytest.raises(RuntimeError, match="starts failed") as caught:
+        aliases._refine(_Scores(), settings, bounds, pool, EPOCHS)
+    assert isinstance(caught.value.__cause__, ValueError)
+
     def misconfigured(problem, bounds, x0, max_steps):
-        raise ValueError("bad option")
+        raise TypeError("bad option")
 
     monkeypatch.setattr(aliases, "_optimize", misconfigured)
-    with pytest.raises(ValueError, match="bad option"):
+    with pytest.raises(TypeError, match="bad option"):
         aliases._refine(_Scores(), settings, bounds, pool, EPOCHS)
 
 

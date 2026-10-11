@@ -31,7 +31,7 @@ import numpy as onp
 from scipy import optimize
 from scipy.special import logsumexp
 
-from ._precision import in_float64
+from ._precision import cast_tree, in_float64
 from ._utils import clean_json
 from .detection import _fingerprint
 from .epochs import _Surface
@@ -607,9 +607,10 @@ def _refine(problem, settings, bounds, pool, times):
     few into modes.
 
     Returns the distinct modes ``[(x, loglike), ...]`` and the number of
-    starts that failed. A ``TypeError`` or ``ValueError`` is the caller's
-    (misconfiguration) and propagates; if every start fails, a
-    ``RuntimeError`` chained to the last error is raised.
+    starts that failed. Only a ``TypeError`` (a bug or a misuse) propagates;
+    any other exception, a ``ValueError`` or ``LinAlgError`` from a start
+    say, counts it as failed. If every start fails, a ``RuntimeError``
+    chained to the last error is raised.
     """
     s = settings
     score = _score_pool(problem, s, pool)
@@ -625,7 +626,7 @@ def _refine(problem, settings, bounds, pool, times):
     for x0 in seeds:
         try:
             x, value = _optimize(problem, bounds, x0, s.max_steps)
-        except (TypeError, ValueError):
+        except TypeError:
             raise
         except Exception as caught:  # noqa: BLE001 - one bad start
             n_failed, error = n_failed + 1, caught
@@ -664,7 +665,9 @@ def _band_evidence(problem, settings, bounds, modes_xy, rng):
             "near-prior-bound" in m["flags"] and m["ess"] >= settings.ess_min
         )
         m["log_z"] = m["log_z_is"] if edge else m["log_z_laplace"]
-    z_lap = float(logsumexp([m["log_z"] for m in modes]))
+    z_lap = (
+        float(logsumexp([m["log_z"] for m in modes])) if modes else -onp.inf
+    )
     if not draws:
         return modes, z_lap, -onp.inf, (None, None)
     xs, log_w = _mixture_weights(draws)
@@ -735,6 +738,18 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, band, modes, z_lap, z_is, n_failed
     )
     return result, draws
+
+
+def _preflight(problem, settings, band):
+    """Evaluate the likelihood and its gradient once, at the centre of the
+    first band's bounds, outside any ``try``: misconfiguration (bad data,
+    options or shapes) surfaces here, before any band is fitted, and what
+    raises later is a failure of one start or band."""
+    bounds = _Bounds.of(band, settings)
+    finite = onp.isfinite(bounds.lower) & onp.isfinite(bounds.upper)
+    centre = onp.zeros(len(finite))
+    centre[finite] = (bounds.lower[finite] + bounds.upper[finite]) / 2
+    problem.value_and_grad(np.asarray(centre))
 
 
 def _failed_band(band, error):
@@ -1088,15 +1103,20 @@ def fit_orbit_aliases(
     ValueError
         If no band lies within ``p_range``, or ``checkpoint_dir`` is given
         and the data or positions cannot be hashed.
+        Also whatever the preflight likelihood evaluation raises
+        (misconfiguration), before any band is fitted.
 
     Notes
     -----
     A band that raises is kept as a ``band-failed`` row (``error`` holds the
     exception) with ``log_z = -inf``; the other bands are unaffected, unless
-    all fail. A ``TypeError`` or ``ValueError`` (a misconfiguration) is not
-    isolated: it propagates at once. An optimizer start that raises is
-    dropped and counted (flag ``starts-failed``, ``n_starts_failed``); if
-    every start of a band fails the band fails.
+    all fail. Misconfiguration surfaces first: the likelihood and its
+    gradient are evaluated once at the centre of the first band before any
+    band is fitted, so an error there propagates unchanged, and so does a
+    ``TypeError`` anywhere. Any other exception in a band is isolated. An
+    optimizer start that raises is dropped and counted (flag
+    ``starts-failed``, ``n_starts_failed``); if every start of a band
+    fails the band fails.
 
     The band evidence ``log_z`` is the sum, over the band's distinct fitted
     modes (both senses of motion; the (Ω+180, ω+180) mirror is folded
@@ -1130,7 +1150,7 @@ def fit_orbit_aliases(
     the absolute ``log_z`` is defined only up to a constant shared by all
     bands (``p`` and differences are meaningful).
     """
-    data = list(data)
+    data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (
         onp.array([onp.mean(onp.asarray(d.mjd, float)) for d in data])
         if times is None
@@ -1174,6 +1194,7 @@ def fit_orbit_aliases(
         seed=seed,
     )
     problem = _Problem(data, settings)
+    _preflight(problem, settings, bands[0])
     key = (
         _checkpoint_key(data, positions, bands, mean_times, settings)
         if checkpoint_dir is not None
@@ -1192,7 +1213,7 @@ def fit_orbit_aliases(
                     None if profile is None else profile[index]["orbits"],
                     mean_times,
                 )
-            except (TypeError, ValueError):
+            except TypeError:
                 raise
             except Exception as caught:  # noqa: BLE001 - keep the other bands
                 error = caught
