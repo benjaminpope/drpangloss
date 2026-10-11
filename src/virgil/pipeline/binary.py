@@ -10,6 +10,12 @@ import numpy as onp
 
 from . import _checks, _io
 from ._common import (
+    _NUTS_FIELDS,
+    _SAMPLER_SETTINGS,
+    _diagnostics,
+    _mcmc,
+    _noise_quantiles,
+    _sample_stats,
     _bound_samples,
     _chi2,
     _geometry,
@@ -28,22 +34,6 @@ _STEP_FRACTION = 0.25
 _STEP_TOLERANCE = 1e-9
 # The fit starts at least this factor inside the ends of the flux prior.
 _START_MARGIN = 2.0
-# Per-transition NUTS diagnostics kept in samples.h5.
-_NUTS_FIELDS = (
-    "diverging",
-    "accept_prob",
-    "adapt_state.step_size",
-    "num_steps",
-    "potential_energy",
-)
-# Settings recorded as attributes of samples.h5.
-_SAMPLER_SETTINGS = (
-    "num_warmup",
-    "num_samples",
-    "num_chains",
-    "chain_method",
-    "seed",
-)
 _AXIS_ORDER = ("dra", "ddec", "flux")
 _AXIS_UNITS = {"dra": "mas", "ddec": "mas", "flux": "companion/primary"}
 
@@ -826,8 +816,6 @@ def _posterior(p):
 def _run_nuts(p, priors, angular):
     """NUTS from the fit, one start per chain; returns the finished MCMC."""
     import jax
-    from numpyro.infer import MCMC, NUTS
-
     from ..likelihood import chain_init_params, numpyro_model
 
     s = p.settings
@@ -843,25 +831,9 @@ def _run_nuts(p, priors, angular):
     init = chain_init_params(
         posterior, [start] * s["num_chains"], key=init_key
     )
-    mcmc = MCMC(
-        NUTS(posterior),
-        num_warmup=s["num_warmup"],
-        num_samples=s["num_samples"],
-        num_chains=s["num_chains"],
-        chain_method=s["chain_method"],
-        progress_bar=False,
-    )
+    mcmc = _mcmc(posterior, s, init, dense_mass=False)
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     return mcmc
-
-
-def _sample_stats(mcmc):
-    """NUTS diagnostics per transition, ``(chain, draw)``, by clean name."""
-    extra = mcmc.get_extra_fields(group_by_chain=True)
-    return {
-        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
-        for k, v in extra.items()
-    }
 
 
 def _write_samples(p, samples, sample_stats, reported, priors):
@@ -880,22 +852,6 @@ def _write_samples(p, samples, sample_stats, reported, priors):
     )
 
 
-def _diagnostics(arrays):
-    """Worst split R-hat and bulk ESS of ``arrays`` (each ``(chain, draw)``)."""
-    from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
-
-    return {
-        "r_hat": max(
-            float(onp.nanmax(onp.asarray(split_gelman_rubin(x))))
-            for x in arrays
-        ),
-        "ess_bulk": min(
-            float(onp.nanmin(onp.asarray(effective_sample_size(x))))
-            for x in arrays
-        ),
-    }
-
-
 def _derived_diagnostics(samples):
     """Diagnostics of ``sep`` and ``pa``; an angle through its sine and cosine."""
     pa = onp.radians(samples["pa"])
@@ -909,15 +865,6 @@ def _prior_bounds(priors, samples):
     """Fraction of samples at a prior bound, for the priors that have edges."""
     fractions = {k: _bound_samples(priors[k], samples[k]) for k in priors}
     return {k: f for k, f in fractions.items() if f is not None}
-
-
-def _noise_quantiles(samples):
-    noise = {
-        k.split(".", 1)[1]: _quantiles(samples[k])
-        for k in samples
-        if k.startswith("noise.")
-    }
-    return noise or None
 
 
 def _plot_posterior(output, samples, reported):

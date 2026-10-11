@@ -13,6 +13,12 @@ from .._precision import in_float64
 from .._utils import rad2mas
 from . import _checks, _io
 from ._common import (
+    _NUTS_FIELDS,
+    _SAMPLER_SETTINGS,
+    _diagnostics,
+    _mcmc,
+    _noise_quantiles,
+    _sample_stats,
     _bound_samples,
     _chi2,
     _geometry,
@@ -1136,8 +1142,6 @@ def _wall_probe(
 def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
     import jax
-    from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
-    from numpyro.infer import MCMC, NUTS
 
     from ..likelihood import chain_init_params, numpyro_model
 
@@ -1145,48 +1149,18 @@ def _nuts(model, data, p, name, priors, start):
     entry = models()[name]
     noise = p._noise()
     posterior = numpyro_model(model, priors, data, noise=noise)
-    key = jax.random.PRNGKey(s["seed"])
-    init_key, run_key = jax.random.split(key)
+    init_key, run_key = jax.random.split(jax.random.PRNGKey(s["seed"]))
     init = chain_init_params(
         posterior, [start] * s["num_chains"], key=init_key
     )
-    mcmc = MCMC(
-        NUTS(posterior, dense_mass=True),
-        num_warmup=s["num_warmup"],
-        num_samples=s["num_samples"],
-        num_chains=s["num_chains"],
-        chain_method=s["chain_method"],
-        progress_bar=False,
-    )
-    mcmc.run(
-        run_key,
-        init_params=init,
-        extra_fields=(
-            "diverging",
-            "accept_prob",
-            "adapt_state.step_size",
-            "num_steps",
-            "potential_energy",
-        ),
-    )
+    mcmc = _mcmc(posterior, s, init, dense_mass=True)
+    mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     samples = {
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
     }
-    extra = mcmc.get_extra_fields(group_by_chain=True)
-    stats = {
-        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
-        for k, v in extra.items()
-    }
-    diagnostics = {
-        site: {
-            "r_hat": float(onp.nanmax(onp.asarray(split_gelman_rubin(x)))),
-            "ess_bulk": float(
-                onp.nanmin(onp.asarray(effective_sample_size(x)))
-            ),
-        }
-        for site, x in samples.items()
-    }
+    stats = _sample_stats(mcmc)
+    diagnostics = {site: _diagnostics([x]) for site, x in samples.items()}
     if entry.derived:
         samples.update(entry.derived(samples))
     reported = list(entry.params) + list(
@@ -1202,17 +1176,13 @@ def _nuts(model, data, p, name, priors, start):
             "std": float(onp.std(flat)),
             **diagnostics.get(k, {}),
         }
-    noise_sites = {
-        k.split(".", 1)[1]: _quantiles(samples[k])
-        for k in samples
-        if k.startswith("noise.")
-    }
+    noise_sites = _noise_quantiles(samples)
     return (
         samples,
         stats,
         {
             "params": summary,
-            "noise": noise_sites or None,
+            "noise": noise_sites,
             "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
             "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
             "divergence_fraction": float(onp.mean(stats["diverging"])),
@@ -1264,16 +1234,7 @@ def _posterior(p):
                 "priors": {
                     n: fit_report["models"][n]["priors"] for n in p.names
                 },
-                "sampler": {
-                    k: s[k]
-                    for k in (
-                        "num_warmup",
-                        "num_samples",
-                        "num_chains",
-                        "chain_method",
-                        "seed",
-                    )
-                },
+                "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
             }
         },
     )

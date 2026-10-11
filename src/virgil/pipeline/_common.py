@@ -210,6 +210,72 @@ def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
         return onp.asarray(m2), {k: onp.asarray(v) for k, v in scales.items()}
 
 
+# Per-transition NUTS diagnostics kept in samples.h5.
+_NUTS_FIELDS = (
+    "diverging",
+    "accept_prob",
+    "adapt_state.step_size",
+    "num_steps",
+    "potential_energy",
+)
+# Settings recorded as attributes of samples.h5.
+_SAMPLER_SETTINGS = (
+    "num_warmup",
+    "num_samples",
+    "num_chains",
+    "chain_method",
+    "seed",
+)
+
+
+def _mcmc(posterior, settings, init, *, dense_mass):
+    """A NUTS ``MCMC`` with the pipeline's sampler settings (not yet run)."""
+    from numpyro.infer import MCMC, NUTS
+
+    return MCMC(
+        NUTS(posterior, dense_mass=dense_mass),
+        num_warmup=settings["num_warmup"],
+        num_samples=settings["num_samples"],
+        num_chains=settings["num_chains"],
+        chain_method=settings["chain_method"],
+        progress_bar=False,
+    )
+
+
+def _sample_stats(mcmc):
+    """NUTS diagnostics per transition, ``(chain, draw)``, by clean name."""
+    extra = mcmc.get_extra_fields(group_by_chain=True)
+    return {
+        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
+        for k, v in extra.items()
+    }
+
+
+def _diagnostics(arrays):
+    """Worst split R-hat and bulk ESS of ``arrays`` (each ``(chain, draw)``)."""
+    from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
+
+    return {
+        "r_hat": max(
+            float(onp.nanmax(onp.asarray(split_gelman_rubin(x))))
+            for x in arrays
+        ),
+        "ess_bulk": min(
+            float(onp.nanmin(onp.asarray(effective_sample_size(x))))
+            for x in arrays
+        ),
+    }
+
+
+def _noise_quantiles(samples):
+    noise = {
+        k.split(".", 1)[1]: _quantiles(samples[k])
+        for k in samples
+        if k.startswith("noise.")
+    }
+    return noise or None
+
+
 def _moments(r):
     r = onp.asarray(r, dtype=float)
     if r.std() <= 1e-12 * max(abs(r.mean()), 1.0):
