@@ -326,7 +326,7 @@ class _Pipeline:
         record["updated"] = _now()
         _io.write_json(self.output / "run.json", record)
 
-    def _new_record(self):
+    def _new_record(self, versions):
         return {
             "schema": SCHEMA,
             "pipeline": self.NAME,
@@ -337,7 +337,7 @@ class _Pipeline:
             "config": self.settings,
             "model": self._model_digest(),
             "inputs": self._input_record(),
-            "provenance": provenance(),
+            "provenance": versions,
             "stages": {},
             "created": _now(),
         }
@@ -372,14 +372,16 @@ class _Pipeline:
             names if through is None else names[: names.index(through) + 1]
         )
         run_file = self.output / "run.json"
+        versions = provenance()
         if not resume:
             self._clear()
         if resume and run_file.exists():
             record = _io.read_json(run_file)
             self._check_resume(record)
-            record["provenance"] = provenance()
+            # The latest run's versions; each stage keeps its own.
+            record["provenance"] = versions
         else:
-            record = self._new_record()
+            record = self._new_record(versions)
         record["status"], record["error"] = "running", None
         self.output.mkdir(parents=True, exist_ok=True)
         self._write_record(record)
@@ -397,9 +399,7 @@ class _Pipeline:
             rerun = True  # later stages depend on this one
             for later in names[names.index(name) :]:
                 record["stages"].pop(later, None)
-                stale = self.output / "stages" / later / "report.json"
-                if stale.exists():
-                    stale.unlink()
+                self._discard(stages[later])
             started, t0 = _now(), time.perf_counter()
             record["stages"][name] = {"status": "running", "started": started}
             if name == names[-1]:
@@ -439,6 +439,7 @@ class _Pipeline:
                 "finished": _now(),
                 "seconds": round(time.perf_counter() - t0, 3),
                 "outputs": list(stage.outputs),
+                "provenance": versions,
             }
             self._write_summary(record)
             self._write_record(record)
@@ -452,6 +453,13 @@ class _Pipeline:
         record["files"] = self._file_hashes()
         self._write_record(record)
         return _io.load(self.output)
+
+    def _discard(self, stage):
+        """Delete a stage's report and declared outputs (they are stale)."""
+        report = self.output / "stages" / stage.name / "report.json"
+        for path in (report, *(self.output / p for p in stage.outputs)):
+            if path.exists():
+                path.unlink()
 
     def _file_hashes(self):
         return {

@@ -18,6 +18,8 @@ import dataclasses
 import math
 import re
 
+from .._utils import mas2rad
+
 STATUSES = ("pass", "warn", "fail")
 
 
@@ -78,6 +80,11 @@ def _jsonable(value):
 
 def _finite(value):
     return value is not None and math.isfinite(float(value))
+
+
+def format_sigma(value):
+    """``value`` as ``"3.21σ"``, or ``"n/a"`` if it is missing or not finite."""
+    return f"{float(value):.2f}σ" if _finite(value) else "n/a"
 
 
 def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
@@ -165,8 +172,9 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "pass",
             value,
             threshold,
-            f"Companion detected at {global_sigma:.2f}σ after an approximate "
-            f"look-elsewhere correction ({local_sigma:.2f}σ local); for a "
+            f"Companion detected at {format_sigma(global_sigma)} after an "
+            f"approximate look-elsewhere correction "
+            f"({format_sigma(local_sigma)} local); for a "
             "calibrated threshold use injection_recovery or gaussian_null.",
         )
     if _finite(local_sigma) and local_sigma >= threshold:
@@ -175,8 +183,9 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "warn",
             value,
             threshold,
-            f"Marginal: {local_sigma:.2f}σ local but {global_sigma:.2f}σ "
-            "after an approximate look-elsewhere correction; confirm it "
+            f"Marginal: {format_sigma(local_sigma)} local but "
+            f"{format_sigma(global_sigma)} after an approximate "
+            "look-elsewhere correction; confirm it "
             "with simulated nulls (injection_recovery or gaussian_null).",
         )
     return Check(
@@ -184,7 +193,8 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
         "warn",
         value,
         threshold,
-        f"No companion above {threshold:g}σ ({local_sigma:.2f}σ local): "
+        f"No companion above {threshold:g}σ "
+        f"({format_sigma(local_sigma)} local): "
         "the fit and posterior describe the highest noise peak; quote the "
         "contrast limits instead.",
     )
@@ -436,7 +446,7 @@ def resolution_regime(
         θB/λ of the first null of the fitted model's visibility; the
         uniform-disk value by default.
     """
-    ratio = float(diam_mas) * math.pi / 180.0 / 3.6e6 * float(freq_max)
+    ratio = float(diam_mas) * float(mas2rad) * float(freq_max)
     ratio /= float(first_null)
     if not _finite(ratio):
         return Check(

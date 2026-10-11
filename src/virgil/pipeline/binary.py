@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as onp
 
@@ -19,6 +20,33 @@ from .._geometry import separation_pa
 from ._core import Stage, _Pipeline
 
 GLOBAL_NSIGMA_METHOD = "Sidak estimate, not a simulated FAP"
+
+# Default grid step, as a fraction of the finest λ/B (Nyquist is one half).
+_STEP_FRACTION = 0.25
+# Relative slack before a step counts as coarsened (rounding of the odd n).
+_STEP_TOLERANCE = 1e-9
+_AXIS_ORDER = ("dra", "ddec", "flux")
+_AXIS_UNITS = {"dra": "mas", "ddec": "mas", "flux": "companion/primary"}
+
+
+def _global_nsigma(local_nsigma, n_trials):
+    """Look-elsewhere (Sidak) significance of ``local_nsigma`` in sigma.
+
+    The global p-value of the best of ``n_trials`` independent trials is
+    ``1 - (1 - p)**n_trials``; its Gaussian sigma is the quantile of the
+    complement ``(1 - p)**n_trials``, which is kept in log space so that it
+    stays finite when ``n_trials * p`` is large (then the p-value rounds to
+    1 and the sigma is negative: no significance). NaN if ``local_nsigma``
+    is not finite.
+    """
+    from scipy.special import ndtri_exp
+    from scipy.stats import norm
+
+    if not math.isfinite(local_nsigma):
+        return float("nan")
+    p_local = float(norm.sf(local_nsigma))
+    sigma = float(ndtri_exp(n_trials * math.log1p(-p_local)))
+    return min(sigma, local_nsigma)  # not above the local value
 
 
 class BinaryPipeline(_Pipeline):
@@ -73,9 +101,12 @@ class BinaryPipeline(_Pipeline):
         - ``max_sep_mas`` (None): half-width of the search grid; by
           default ``fov_fraction`` × λ_max/B_min.
         - ``fov_fraction`` (1.0): see ``max_sep_mas``.
-        - ``grid_step_mas`` (None): grid spacing; by default λ_min/(4
-          B_max), coarsened so that no axis exceeds ``max_grid`` points.
-        - ``max_grid`` (101): most points per position axis.
+        - ``grid_step_mas`` (None): grid spacing; by default a quarter of
+          the finest λ/B of the samples, coarsened so that no axis exceeds
+          ``max_grid`` points (the search report then records the effective
+          step and warns).
+        - ``max_grid`` (101): most points per position axis; the grid has
+          the largest odd number of points not above it (at least 3).
         - ``flux_range`` ([1e-5, 0.5]): flux axis of the grid and bounds
           of the log-uniform flux prior (companion/primary).
         - ``n_flux`` (40): points on the flux axis.
@@ -160,9 +191,11 @@ class BinaryPipeline(_Pipeline):
         for name in ("max_sep_mas", "grid_step_mas", "batch_size"):
             if s[name] is not None:
                 positive(name)
-        for name in ("num_samples", "num_chains", "max_grid", "limit_bins"):
+        for name in ("num_samples", "num_chains", "limit_bins"):
             if not (isinstance(s[name], int) and s[name] >= 1):
                 raise ValueError(f"{name} must be an integer >= 1.")
+        if not (isinstance(s["max_grid"], int) and s["max_grid"] >= 3):
+            raise ValueError("max_grid must be an integer >= 3.")
         if not (isinstance(s["num_warmup"], int) and s["num_warmup"] >= 0):
             raise ValueError("num_warmup must be an integer >= 0.")
         if not (isinstance(s["n_flux"], int) and s["n_flux"] >= 2):
@@ -185,15 +218,28 @@ class BinaryPipeline(_Pipeline):
 
     # --- shared state, rebuilt on demand so that resume works ------------
 
+    def _grid_axis(self):
+        """``(max_sep, n, step, wanted)`` of the position axes.
+
+        ``wanted`` is the requested step (``grid_step_mas``, or a fraction
+        of the finest λ/B); ``n`` points (odd, so that the star is on the
+        grid, and at most ``max_grid``) give the effective ``step``.
+        """
+        s = self.settings
+        geo = _geometry(self.processed)
+        max_sep = s["max_sep_mas"] or s["fov_fraction"] * geo["fov_mas"]
+        wanted = (
+            s["grid_step_mas"] or _STEP_FRACTION * geo["lambda_over_b_mas"]
+        )
+        most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
+        n = min(2 * math.ceil(max_sep / wanted) + 1, most)
+        return max_sep, n, 2.0 * max_sep / (n - 1), wanted
+
     def _grid(self):
         import jax.numpy as np
 
         s = self.settings
-        geo = _geometry(self.processed)
-        max_sep = s["max_sep_mas"] or s["fov_fraction"] * geo["fov_mas"]
-        step = s["grid_step_mas"] or 0.25 * geo["lambda_over_b_mas"]
-        n = 2 * math.ceil(max_sep / step) + 1
-        n = min(n, s["max_grid"] if s["max_grid"] % 2 else s["max_grid"] + 1)
+        max_sep, n, _, _ = self._grid_axis()
         axis = np.linspace(-max_sep, max_sep, n)
         lo, hi = s["flux_range"]
         return {
@@ -331,10 +377,18 @@ def _search(p):
     from ..likelihood import model_loglike
     from ..models import BinaryModelCartesian
     from ..plotting import plot_grid_map
-    from scipy.stats import norm
 
     data, s = p.processed, p.settings
     grid, max_sep = p._grid()
+    _, _, step, wanted = p._grid_axis()
+    if step > wanted * (1 + _STEP_TOLERANCE):
+        warnings.warn(
+            f"max_grid={s['max_grid']} coarsens the grid step from "
+            f"{wanted:.3g} to {step:.3g} mas; raise max_grid (or "
+            "grid_step_mas) for a finer search.",
+            UserWarning,
+            stacklevel=2,
+        )
     kw = {"batch_size": s["batch_size"]}
     stats = detection_statistics(BinaryModelCartesian, data, grid, **kw)
     loglike = onp.asarray(
@@ -369,9 +423,7 @@ def _search(p):
     local = float(local_nsigma(dchi2))
     geo = _geometry(data)
     n_trials = max(1.0, (2.0 * max_sep / geo["lambda_over_b_mas"]) ** 2)
-    p_local = float(norm.sf(local))
-    p_global = -math.expm1(n_trials * math.log1p(-min(p_local, 1 - 1e-16)))
-    global_sigma = float(norm.isf(p_global)) if p_global > 0 else local
+    global_sigma = _global_nsigma(local, n_trials)
     chi2_null, _ = _chi2(null, data)
 
     axes = {k: onp.asarray(v) for k, v in grid.items()}
@@ -379,9 +431,7 @@ def _search(p):
         p.output / "grids.h5",
         {
             "axes": {
-                "dra": (axes["dra"], {"units": "mas"}),
-                "ddec": (axes["ddec"], {"units": "mas"}),
-                "flux": (axes["flux"], {"units": "companion/primary"}),
+                k: (axes[k], {"units": _AXIS_UNITS[k]}) for k in _AXIS_ORDER
             },
             "search": {
                 "delta_chi2": delta_chi2,
@@ -391,9 +441,7 @@ def _search(p):
                 "snr": snr,
             },
         },
-        attrs={
-            "/": {"axis_order": ["dra", "ddec", "flux"], "schema": _io.SCHEMA}
-        },
+        attrs={"/": {"axis_order": list(_AXIS_ORDER), "schema": _io.SCHEMA}},
     )
     best = {"dra": float(stats["dra"]), "ddec": float(stats["ddec"])}
     fig, _ = plot_grid_map(
@@ -419,6 +467,8 @@ def _search(p):
         "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
         "n_trials": n_trials,
         "max_sep_mas": max_sep,
+        "grid_step_mas": step,
+        "grid_step_wanted_mas": wanted,
         "grid_shape": [len(axes["dra"]), len(axes["ddec"]), len(axes["flux"])],
         "peak_index": [int(peak[0]), int(peak[1]), flux_index],
         "chi2_null": chi2_null,
@@ -452,27 +502,18 @@ def _limits(p):
     )
 
     path = p.output / "grids.h5"
+    axes = _io.read_h5(path, "axes")
     groups = {
-        "axes": {
-            k: (v, {"units": u})
-            for (k, v), u in zip(
-                _io.read_h5(path, "axes").items(),
-                ("mas", "mas", "companion/primary"),
-            )
-        },
+        "axes": {k: (axes[k], {"units": _AXIS_UNITS[k]}) for k in _AXIS_ORDER},
         "search": _io.read_h5(path, "search"),
         "limits": {
             "limit_flux": (limit, {"sigma": s["sigma"], "method": "absil"}),
         },
     }
-    # read_h5 returns the axes sorted by name; restore the grid order.
-    groups["axes"] = {k: groups["axes"][k] for k in ("dra", "ddec", "flux")}
     _io.write_h5(
         path,
         groups,
-        attrs={
-            "/": {"axis_order": ["dra", "ddec", "flux"], "schema": _io.SCHEMA}
-        },
+        attrs={"/": {"axis_order": list(_AXIS_ORDER), "schema": _io.SCHEMA}},
     )
     fig, _ = plot_grid_map(
         limit, grid, kind="limit", units="delta_mag", sigma=s["sigma"]
@@ -575,6 +616,7 @@ def _posterior(p):
     from numpyro.infer import MCMC, NUTS
 
     from ..likelihood import chain_init_params, numpyro_model
+    from ..models import BinaryModelAngular
     from ..plotting import plot_chainconsumer_diagnostics
 
     data, s = p.processed, p.settings
@@ -583,7 +625,7 @@ def _posterior(p):
     priors = p._priors(max_sep)
     params = list(priors)
     reported = list(fit_report["params"])
-    angular = reported != params
+    angular = isinstance(p.model, BinaryModelAngular)
     model = p._sampled_model()
     if not angular:
         model = _io.load_model(p.output / "models" / "best")

@@ -17,7 +17,10 @@ import tempfile
 from pathlib import Path
 
 from . import _io
+from ._checks import format_sigma
 
+# Annuli of the contrast curve for runs that stored no ``limit_bins``.
+_LIMIT_BINS = 20
 _STATUS_WORD = {"pass": "pass", "warn": "**warn**", "fail": "**FAIL**"}
 _OPENING = {
     "pass": "Every check passed.",
@@ -102,14 +105,17 @@ def _binary_cells(run, summary, path):
     if {"search", "limits"} <= done:
         search = summary["search"]
         limits = summary["limits"]
+        # The curve of the limits stage: same annuli as the saved plot.
+        bins = run["config"].get("limit_bins", _LIMIT_BINS)
         cells.append(
             (
                 "## Search and limits\n\n"
                 "The left panel is the Δχ² of a point companion over the grid, "
                 f"peaking at Δχ² = {search['delta_chi2']:.3g} "
-                f"({search['local_nsigma']:.2f}σ local, "
-                f"{search['global_nsigma']:.2f}σ after the look-elsewhere "
-                f"correction for {search['n_trials']:.0f} resolution elements). "
+                f"({format_sigma(search['local_nsigma'])} local, "
+                f"{format_sigma(search['global_nsigma'])} after the "
+                f"look-elsewhere correction for {search['n_trials']:.0f} "
+                "resolution elements). "
                 f"The right panel is the {limits['sigma']:g}σ contrast curve "
                 "(Absil method), the median limit in annuli about the star.",
                 "grid = res.grid()\n"
@@ -117,7 +123,8 @@ def _binary_cells(run, summary, path):
                 'plotting.plot_grid_map(grid["delta_chi2"], grid["axes"], '
                 'kind="loglike", label="Δχ²", title="Δχ²", ax=left)\n'
                 'plotting.plot_contrast_curve(grid["limit_flux"], grid["axes"], '
-                f"sigma={limits['sigma']!r}, ax=right)\n"
+                f"sigma={limits['sigma']!r}, r_max={search['max_sep_mas']!r}, "
+                f"bins={bins!r}, ax=right)\n"
                 "fig.tight_layout()",
             )
         )

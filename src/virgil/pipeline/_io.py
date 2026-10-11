@@ -314,8 +314,9 @@ def spec_digest(spec, arrays):
     """A short hash of a model spec and its arrays, for resume checks."""
     h = hashlib.sha256(json.dumps(spec, sort_keys=True).encode())
     for name in sorted(arrays):
-        h.update(name.encode())
-        h.update(onp.ascontiguousarray(arrays[name]).tobytes())
+        array = onp.ascontiguousarray(arrays[name])
+        h.update(f"{name}|{array.dtype.str}|{array.shape}|".encode())
+        h.update(array.tobytes())
     return h.hexdigest()
 
 
@@ -470,7 +471,10 @@ def oidata_tables(data):
         if mjd is not None:
             tables["OI_VIS"]["MJD"] = mjd
         return tables, None
-    legs = [onp.asarray(i, dtype=int) for i in (data.i_cps1, data.i_cps2)]
+    legs = [
+        onp.asarray(i, dtype=int)
+        for i in (data.i_cps1, data.i_cps2, data.i_cps3)
+    ]
     if phi.size % n_w:
         return None, "irregular closure-phase layout"
     n_t = phi.size // n_w
@@ -481,10 +485,18 @@ def oidata_tables(data):
         for r, c in zip(rows, cols)
     ):
         return None, "irregular closure-phase layout"
-    b1, b2 = rows[0][:, 0], rows[1][:, 0]
+    b1, b2, b3 = rows[0][:, 0], rows[1][:, 0], rows[2][:, 0]
     triangles = onp.stack(
         [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
     )
+    # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e.
+    # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
+    if not (
+        onp.all(stations[b2, 0] == stations[b1, 1])
+        and onp.all(stations[b3, 0] == stations[b1, 0])
+        and onp.all(stations[b3, 1] == stations[b2, 1])
+    ):
+        return None, "irregular closure-phase layout"
     tables["OI_T3"] = {
         "T3PHI": phi.reshape(n_t, n_w),
         "T3PHIERR": d_phi.reshape(n_t, n_w),
@@ -604,11 +616,11 @@ class Result:
 
         path = self.path / "data" / "processed.oifits"
         if not path.exists():
+            report = self.path / "stages" / "load" / "report.json"
             reason = (
-                self.run.get("stages", {})
-                .get("load", {})
-                .get("report", {})
-                .get("processed_oifits_skipped")
+                read_json(report).get("processed_oifits_skipped")
+                if report.exists()
+                else None
             )
             raise FileNotFoundError(
                 f"{path} was not written"
@@ -690,12 +702,18 @@ class Result:
         return group if name is None else f"{group}_{name}"
 
     def _stage_file(self, relative, stage):
+        """``relative`` in the run folder, if ``stage`` completed and wrote it."""
         path = self.path / relative
-        if not path.exists():
-            done = self.run.get("stages", {}).get(stage, {}).get("status")
+        status = self.run.get("stages", {}).get(stage, {}).get("status")
+        if status != "complete" or not path.exists():
+            reason = (
+                f"{path} does not exist"
+                if not path.exists()
+                else f"{path} is left over from an earlier run"
+            )
             raise FileNotFoundError(
-                f"{path} does not exist: the {stage!r} stage has status "
-                f"{done or 'not run'}; run the pipeline through it first."
+                f"{reason}: the {stage!r} stage has status "
+                f"{status or 'not run'}; run the pipeline through it first."
             )
         return path
 

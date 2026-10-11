@@ -126,15 +126,80 @@ def test_processed_oifits_round_trip_absolute_phases(tmp_path):
 
 def test_processed_oifits_reports_unsupported_layouts():
     data = OIData(NUHOR)
-    flagged = data.with_error_floor()  # unchanged copy
-    assert _io.oidata_tables(flagged)[1] is None
     import equinox as eqx
+
+    assert _io.oidata_tables(data)[1] is None
+    rng = onp.random.default_rng(1)
+    u, v = rng.uniform(-6, 6, (2, 8))
+    flag = onp.ones(8, dtype=bool)
+    flag[3] = False  # one flagged visibility
+    flagged = OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": [4.8e-6],
+            "vis": onp.ones(8),
+            "d_vis": onp.full(8, 0.01),
+            "vis_flag": flag,
+            "cp_flag": False,
+        }
+    )
+    assert flagged.vis_index is not None
+    assert _io.oidata_tables(flagged) == (None, "flagged samples")
 
     no_stations = eqx.tree_at(
         lambda d: d.stations, data, None, is_leaf=lambda x: x is None
     )
     tables, reason = _io.oidata_tables(no_stations)
     assert tables is None and "station" in reason
+
+
+def test_processed_oifits_refuses_mischained_triangles():
+    """OI_T3 stores the triangle ABC; virgil's closure phase is
+    φ[i_cps1] + φ[i_cps2] - φ[i_cps3] over AB, BC and AC, so legs that do
+    not chain that way must not be written as if they did."""
+    import equinox as eqx
+
+    data = OIData(NUHOR)
+    tables, reason = _io.oidata_tables(data)
+    assert reason is None
+    irregular = (None, "irregular closure-phase layout")
+    # Legs 1 and 2 swapped: BC then AB.
+    swapped = eqx.tree_at(
+        lambda d: (d.i_cps1, d.i_cps2), data, (data.i_cps2, data.i_cps1)
+    )
+    assert _io.oidata_tables(swapped) == irregular
+    # The third leg is not the baseline AC.
+    other = eqx.tree_at(lambda d: d.i_cps3, data, data.i_cps1)
+    assert _io.oidata_tables(other) == irregular
+
+
+def test_result_data_reports_why_the_processed_oifits_is_missing(tmp_path):
+    """The reason is in the load stage's report, not in run.json."""
+    (tmp_path / "run.json").write_text(
+        json.dumps({"schema": SCHEMA, "stages": {"load": {}}})
+    )
+    report = tmp_path / "stages" / "load" / "report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        json.dumps({"processed_oifits_skipped": "extra observables"})
+    )
+    with pytest.raises(FileNotFoundError, match="extra observables"):
+        _io.load(tmp_path).data()
+
+
+def test_spec_digest_covers_dtype_and_shape():
+    spec = {"x": 1}
+    digests = [
+        _io.spec_digest(spec, {"leaf_0": array})
+        for array in (
+            onp.zeros(4, dtype=onp.float32),
+            onp.zeros(4, dtype=onp.int32),  # same bytes, other dtype
+            onp.zeros((2, 2), dtype=onp.float32),  # same bytes, other shape
+            onp.zeros(4, dtype=onp.float32),
+        )
+    ]
+    assert len(set(digests)) == 3 and digests[0] == digests[3]
 
 
 def test_json_is_strict_and_atomic(tmp_path):
