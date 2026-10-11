@@ -66,7 +66,12 @@ anything before 1.0 may change between minor versions.
   has its own random stream, so a resumed run reproduces an uninterrupted
   one. A band that raises becomes a row with the flag `band-failed` and
   `AliasBandResult.error`, and a singular or ill-conditioned Hessian gets
-  the flag `hessian-singular`.
+  the flag `hessian-singular`. The checkpoint key hashes every field of
+  the data and positions, static ones included. `TypeError` and
+  `ValueError` propagate, failed optimizer starts are counted
+  (`starts-failed`, `AliasBandResult.n_starts_failed`), and a
+  `RuntimeError` is raised when every band fails. The likelihood compiles
+  once per data shape, not once per mode.
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
   model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
@@ -104,6 +109,16 @@ anything before 1.0 may change between minor versions.
   and the `virgil-pipeline` command runs a pipeline and prints, validates
   or re-renders the quicklook of a run folder.
   `import virgil` does not import the pipelines. See the Pipelines page.
+  `StarPipeline` compares diameter lobes and models on −2 log L
+  (`model_loglike`, so with `error_scale="fit"` each candidate is scored
+  at its own maximum-likelihood error scales, not on a χ² that those
+  scales make equal to N), walks the registry's parent chain with a BIC
+  penalty (`summary["comparison"]` decides, `summary["comparisons"]` lists
+  all), and keeps the uniform disk's diameter scan with its scales
+  profiled. Re-running a stage deletes every later stage's outputs, and
+  `Result` serves only files of complete stages; `run.json` records
+  provenance per stage. The look-elsewhere significance is computed in log
+  space, so it stays finite for large searches.
 - **`virgil.ensemble`**: PYRA/MYTHRA-style reconstruction ensembles.
   `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry
   group), `combine` (selection and the iterative mean) and `ensemble`
