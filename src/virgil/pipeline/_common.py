@@ -125,21 +125,51 @@ def _scale_blocks(data, noise):
     )
 
 
+_GOLDEN_STEPS = (
+    48  # golden-section steps in ln s: a bracket of 1e-10 of ln(100)
+)
+
+
+def _golden_max(f, lo, hi, steps=_GOLDEN_STEPS):
+    """The maximum of a unimodal ``f`` on ``[lo, hi]`` by golden section
+    (traceable; ``steps`` fixed)."""
+    g = 0.5 * (np.sqrt(5.0) - 1.0)
+
+    def step(_, bracket):
+        a, b = bracket
+        c, d = b - g * (b - a), a + g * (b - a)
+        left = f(c) >= f(d)
+        return np.where(left, a, c), np.where(left, d, b)
+
+    a, b = jax.lax.fori_loop(0, steps, step, (lo, hi))
+    return 0.5 * (a + b)
+
+
 def _profiled_scales(model, data, blocks):
     """The error scales that maximize the likelihood of ``model``.
 
-    For each block of ``_scale_blocks`` with ``N`` independent residuals and
-    ``χ²`` on the quoted errors, the scale is ``sqrt(χ² / N)`` (exact for
-    Gaussian blocks, the small-σ limit for von Mises phases), clipped to its
-    prior range. Traceable.
+    Each scale multiplies the errors of one block of ``_scale_blocks`` and
+    enters only that block's terms of ``model_loglike``, so each is
+    maximized on its own, in ln s over its prior range. The block's log
+    likelihood is unimodal in ln s: ``-χ²/(2s²) - N ln s`` for Gaussian
+    blocks, and concave in the concentration κ = 1/(sσ)² for von Mises
+    phases, whose maximum is not at ``sqrt(χ²/N)``. Traceable.
     """
     from ..likelihood import whitened_residuals
 
     r = whitened_residuals(model, data)
-    return {
+    scales = {
         key: np.clip(np.sqrt(np.sum(r[start : start + n] ** 2) / n), low, high)
         for key, start, n, low, high in blocks
     }
+    for key, _, _, low, high in blocks:
+
+        def loglike(log_s, key=key):
+            return model_loglike(model, data, **{**scales, key: np.exp(log_s)})
+
+        bounds = np.log(np.asarray([low, high], r.dtype))
+        scales[key] = np.exp(_golden_max(loglike, bounds[0], bounds[1]))
+    return scales
 
 
 @eqx.filter_jit
