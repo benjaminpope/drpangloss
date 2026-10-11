@@ -1,13 +1,20 @@
-"""Helpers shared by the pipelines: χ², residual moments, quantiles,
-geometry of the data, prior-bound fractions and figure saving."""
+"""Helpers shared by the pipelines: χ² and −2 log L (with error scales
+profiled over a grid), residual moments, quantiles, geometry of the data,
+prior-bound fractions and figure saving."""
 
 from __future__ import annotations
 
 import math
 
+import equinox as eqx
+import jax
+import jax.numpy as np
 import numpy as onp
 from scipy import stats
 
+from .._grid import batch_size_or_default
+from .._precision import cast_tree, run_in
+from ..likelihood import model_loglike
 from . import _io
 
 # Fraction of a prior's range, at either end, counted as "at the bound".
@@ -72,11 +79,105 @@ def _geometry(data):
     }
 
 
+def _spatial_frequencies(data):
+    """The spatial frequency B/λ of every sample of ``data`` (cycles per
+    radian), in the shape of ``data.u``."""
+    u = onp.asarray(data.u, dtype=float)
+    v = onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    return onp.hypot(u, v) / wavel
+
+
 def _chi2(model, data, **noise):
     from ..likelihood import whitened_residuals
 
     r = onp.asarray(whitened_residuals(model, data, **noise), dtype=float)
     return float(onp.sum(r**2)), r
+
+
+def _m2loglike(model, data, **noise):
+    """−2 log L of ``model``, including the error terms' normalization.
+
+    This is the score for comparing models and lobes when error scales are
+    fitted: at each candidate's own scales χ²/N is 1 by construction, but
+    −2 log L keeps the −N log s term that penalizes inflated errors. On
+    the quoted errors it differs from χ² by a constant.
+    """
+    return -2.0 * float(model_loglike(model, data, **noise))
+
+
+def _scale_blocks(data, noise):
+    """Where each fitted error scale applies: ``((key, start, n, low, high),
+    ...)``, with the scale's name, the first row and number of independent
+    rows of its block of ``whitened_residuals``, and its prior range.
+
+    Concrete (hashable, so a jitted function can take it as static).
+    """
+    from ..epochs import _blocks
+
+    ranges = {
+        k: (float(d.low), float(d.high)) for k, d in (noise or {}).items()
+    }
+    return tuple(
+        (f"{name}_scale", start, nu, *ranges[f"{name}_scale"])
+        for name, start, _, nu, _ in _blocks(data)
+        if f"{name}_scale" in ranges
+    )
+
+
+def _profiled_scales(model, data, blocks):
+    """The error scales that maximize the likelihood of ``model``.
+
+    For each block of ``_scale_blocks`` with ``N`` independent residuals and
+    ``χ²`` on the quoted errors, the scale is ``sqrt(χ² / N)`` (exact for
+    Gaussian blocks, the small-σ limit for von Mises phases), clipped to its
+    prior range. Traceable.
+    """
+    from ..likelihood import whitened_residuals
+
+    r = whitened_residuals(model, data)
+    return {
+        key: np.clip(np.sqrt(np.sum(r[start : start + n] ** 2) / n), low, high)
+        for key, start, n, low, high in blocks
+    }
+
+
+@eqx.filter_jit
+def _m2loglike_grid_jit(build, start, data, diams, blocks, batch_size):
+    def one(diam):
+        model = build({**start, "diam": diam})
+        scales = _profiled_scales(model, data, blocks)
+        return -2.0 * model_loglike(model, data, **scales), scales
+
+    return jax.lax.map(one, diams, batch_size=batch_size)
+
+
+def _m2loglike_grid(build, start, data, diams, noise=None, batch_size=None):
+    """−2 log L of ``build({**start, "diam": d})`` over the diameters ``d``.
+
+    One batched, jitted evaluation in float64. With ``noise`` (the
+    pipeline's error-scale priors) the scales are profiled at every
+    diameter (``_profiled_scales``) and the likelihood is evaluated at
+    them. ``build`` should be a module-level function, so that the compiled
+    function is reused between calls; ``start`` holds the other parameters.
+
+    Returns
+    -------
+    tuple
+        ``(m2loglike, scales)``: an array over the diameters and a dict of
+        arrays by scale name (empty without ``noise``).
+    """
+    with run_in("float64"):
+        data = cast_tree(data, "float64")
+        m2, scales = _m2loglike_grid_jit(
+            build,
+            {k: np.asarray(v) for k, v in start.items()},
+            data,
+            np.asarray(diams),
+            _scale_blocks(data, noise),
+            batch_size_or_default(batch_size, data),
+        )
+        return onp.asarray(m2), {k: onp.asarray(v) for k, v in scales.items()}
 
 
 def _moments(r):

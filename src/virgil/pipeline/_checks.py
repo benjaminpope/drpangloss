@@ -81,7 +81,7 @@ def _finite(value):
 
 
 def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
-    """χ²/N on the quoted errors.
+    """χ²/N on the quoted errors, even when error scales are fitted.
 
     Parameters
     ----------
@@ -469,17 +469,28 @@ def resolution_regime(
     )
 
 
-def multimodal(lobes, *, threshold=25.0):
+# Δ(−2 log L) within which another diameter lobe counts as a rival.
+RIVAL_DELTA_CHI2 = 25.0
+
+
+def bic_penalty(n_extra, n):
+    """The BIC penalty ``n_extra ln N`` of ``n_extra`` extra parameters fitted
+    to ``n`` independent observables."""
+    return n_extra * math.log(max(int(n), 2))
+
+
+def multimodal(lobes, *, threshold=RIVAL_DELTA_CHI2):
     """Whether another lobe of the diameter fits nearly as well as the best.
 
     Parameters
     ----------
     lobes : list[dict]
         The per-lobe table of the preferred model: each row has
-        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2`` (zero for the
-        best lobe).
+        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2``, the lobe's
+        −2 log L above the best lobe's (zero for the best lobe; on the
+        quoted errors, its Δχ²).
     threshold : float, optional
-        The Δχ² of the next-best lobe above which the best lobe is
+        The Δ(−2 log L) of the next-best lobe above which the best lobe is
         unambiguous.
     """
     rows = sorted(lobes, key=lambda r: r["delta_chi2"])
@@ -515,20 +526,22 @@ def multimodal(lobes, *, threshold=25.0):
 
 
 def model_gain(
-    name, chi2_simple, chi2_complex, n, *, n_extra, simple, complex_
+    name, m2loglike_simple, m2loglike_complex, n, *, n_extra, simple, complex_
 ):
     """Whether a richer model improves the fit by more than its BIC penalty.
 
-    Both χ² values are on the quoted errors. The richer model contains the
-    simpler one, so a negative gain means that one of the fits did not
-    converge.
+    The gain is the drop in −2 log L from the simpler to the richer model,
+    which is their Δχ² when the errors are quoted. The richer model
+    contains the simpler one, so a negative gain means that one of the fits
+    did not converge.
 
     Parameters
     ----------
     name : str
         Check name.
-    chi2_simple, chi2_complex : float
-        χ² of the simpler and richer model.
+    m2loglike_simple, m2loglike_complex : float
+        −2 log L of the simpler and richer model, each at its own fitted
+        error scales if any.
     n : int
         Number of independent observables.
     n_extra : int
@@ -536,28 +549,31 @@ def model_gain(
     simple, complex_ : str
         Their names, for the message.
     """
-    gain = float(chi2_simple) - float(chi2_complex)
-    penalty = n_extra * math.log(max(int(n), 2))
+    gain = float(m2loglike_simple) - float(m2loglike_complex)
+    penalty = bic_penalty(n_extra, n)
     if not _finite(gain):
-        return Check(name, "fail", gain, penalty, "The χ² gain is not finite.")
+        return Check(
+            name, "fail", gain, penalty, "The −2 log L gain is not finite."
+        )
     if gain < -1.0:
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
-            f"contains (Δχ² = {gain:.3g}): a fit did not converge."
+            f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
         )
     elif gain > penalty:
         status = "pass"
         message = (
-            f"Δχ² = {gain:.3g} for {n_extra} extra parameters exceeds the "
-            f"BIC penalty {penalty:.3g}: the {complex_} model is preferred."
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters "
+            f"exceeds the BIC penalty {penalty:.3g}: the {complex_} model "
+            "is preferred."
         )
     else:
         status = "pass"
         message = (
-            f"Δχ² = {gain:.3g} for {n_extra} extra parameters does not "
-            f"exceed the BIC penalty {penalty:.3g}: the {simple} model is "
-            "adequate."
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters does "
+            f"not exceed the BIC penalty {penalty:.3g}: the {simple} model "
+            "is adequate."
         )
     return Check(name, status, gain, penalty, message)
 
