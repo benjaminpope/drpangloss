@@ -1460,7 +1460,9 @@ def _lbfgs_round(
         if not (running and math.isfinite(value)):
             break
         z = carry[1]
-        if budget.check(offset + count, lambda: _loss_and_gradient(problem, z, scale)):
+        if budget.check(
+            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+        ):
             stop = "time"
             break
         carry = _lbfgs_resume(
@@ -1475,7 +1477,9 @@ def _lbfgs_round(
     count, z, _, value, gradient, moved = carry
     count, value, gradient = int(count), float(value), float(gradient)
     if budget.chunked:
-        budget.finish(offset + count, lambda: _loss_and_gradient(problem, z, scale))
+        budget.finish(
+            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+        )
     # A gradient seen only at the start (count 0) that is not finite gives
     # a non-finite tolerance too.
     finite = math.isfinite(tolerance) and math.isfinite(value)
