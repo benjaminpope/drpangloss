@@ -30,6 +30,11 @@ from virgil.pipeline import (  # noqa: E402
 )
 from virgil.pipeline import cli  # noqa: E402
 
+# The module's tests share expensive module-scoped fixtures: with
+# ``pytest -n N --dist loadgroup`` they run on one worker, which builds each
+# fixture once instead of once per worker.
+pytestmark = pytest.mark.xdist_group("pipeline_binary")
+
 TINY = {
     "max_sep_mas": 300.0,
     "max_grid": 13,

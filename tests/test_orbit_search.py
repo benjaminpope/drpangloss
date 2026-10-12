@@ -27,6 +27,11 @@ from virgil.simulate import simulate
 
 pytest.importorskip("jaxoplanet")
 
+# The module's tests share expensive module-scoped fixtures: with
+# ``pytest -n N --dist loadgroup`` they run on one worker, which builds each
+# fixture once instead of once per worker.
+pytestmark = pytest.mark.xdist_group("orbit_search")
+
 T_REF = 60000.0
 TRUTH = KeplerOrbit(300.0, 50.0, 0.3, 50.0, 60.0, 120.0, 8.0, t_ref=T_REF)
 OTHER = KeplerOrbit(300.0, 120.0, 0.3, 50.0, 60.0, 40.0, 8.0, t_ref=T_REF)
@@ -263,23 +268,37 @@ def test_flux_and_slope_marginal_matches_quadrature():
     assert 0.0 < scores.slope_err[0, 0] < 3.0
 
 
-def test_rv_term_adds_its_loglike():
+# Every score_orbits call compiles its own program (about 10 s here), so the
+# tests of rv terms, batching, precision and budgets share one scoring of
+# these candidates rather than each scoring them again.
+CANDIDATES = [TRUTH, OTHER, TRUTH]
+SHARED = SharedFlux((0.1, 1.0, 8))
+
+
+@pytest.fixture(scope="module")
+def scored():
+    """``(epochs, scores)``: CANDIDATES scored in float64, all at once."""
     epochs = _epochs()
+    return epochs, score_orbits(
+        epochs, OrbitalBinary, CANDIDATES, shared=SHARED
+    )
+
+
+def test_rv_term_adds_its_loglike(scored):
+    epochs, base = scored
     mjd = onp.array([60010.0, 60100.0, 60200.0])
     rv = RVData(mjd, [1.0, -2.0, 0.5], 0.5, t_ref=T_REF)
     term = rv.term(lambda v: (v["orbit"], 0.5, 0.0, 50.0))
-    shared = SharedFlux((0.1, 1.0, 8))
-    base = score_orbits(epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared)
     with_rv = score_orbits(
         epochs,
         OrbitalBinary,
-        [TRUTH, OTHER],
-        shared=shared,
+        CANDIDATES,
+        shared=SHARED,
         terms=[term, lambda o: rv.loglike(o, 0.5, 0.0, 50.0, jitter=1.0)],
     )
     with jax.enable_x64(True):
         rv64 = _f64(rv)
-        for k, orbit in enumerate(_f64((TRUTH, OTHER))):
+        for k, orbit in enumerate(_f64(tuple(CANDIDATES))):
             expect = [
                 float(rv64.loglike(orbit, 0.5, 0.0, 50.0)),
                 float(rv64.loglike(orbit, 0.5, 0.0, 50.0, jitter=1.0)),
@@ -291,32 +310,27 @@ def test_rv_term_adds_its_loglike():
             )
 
 
-def test_independent_of_batch_size():
-    epochs = _epochs()
-    candidates = [TRUTH, OTHER, TRUTH]
-    shared = SharedFlux((0.1, 1.0, 8))
-    every = score_orbits(epochs, OrbitalBinary, candidates, shared=shared)
+def test_independent_of_batch_size(scored):
+    epochs, every = scored
     batched = score_orbits(
-        epochs, OrbitalBinary, candidates, shared=shared, batch_size=2
+        epochs, OrbitalBinary, CANDIDATES, shared=SHARED, batch_size=2
     )
     # Batching changes how XLA fuses the Newton steps: equal to rounding.
     onp.testing.assert_allclose(batched.score, every.score, rtol=1e-10)
     onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
-def test_float32_agrees_with_float64_and_ties_rank_by_index():
-    epochs = _epochs()
-    candidates = [OTHER, TRUTH, TRUTH]
-    shared = SharedFlux((0.1, 1.0, 8))
-    f64 = score_orbits(epochs, OrbitalBinary, candidates, shared=shared)
+def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):
+    epochs, f64 = scored
     f32 = score_orbits(
-        epochs, OrbitalBinary, candidates, shared=shared, dtype="float32"
+        epochs, OrbitalBinary, CANDIDATES, shared=SHARED, dtype="float32"
     )
     onp.testing.assert_allclose(f32.score, f64.score, rtol=1e-4)
     onp.testing.assert_allclose(f32.flux, f64.flux, rtol=1e-3)
-    # The two copies of the truth tie: by index, in both precisions.
-    assert f64.order().tolist() == [1, 2, 0]
-    assert f32.order().tolist() == [1, 2, 0]
+    # The two copies of the truth (0 and 2) tie: by index, in both
+    # precisions.
+    assert f64.order().tolist() == [0, 2, 1]
+    assert f32.order().tolist() == [0, 2, 1]
     assert rank_scores([1.0, 1.0 + 4e-4, onp.nan, 1.0 - 4e-4]).tolist() == [
         0,
         1,
@@ -382,22 +396,19 @@ def test_per_epoch_flux_decoy_loses_under_shared_flux():
     assert shared.order().tolist() == [0, 1]
 
 
-def test_budget_refuses_before_scoring():
-    epochs = _epochs()
-    shared = SharedFlux((0.1, 1.0, 8))
-    cost = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared
-    ).cost
+def test_budget_refuses_before_scoring(scored):
+    epochs, base = scored
+    cost = base.cost
     with pytest.raises(ValueError, match=f"max_evaluations={cost - 1}"):
         score_orbits(
             epochs,
             OrbitalBinary,
-            [TRUTH, OTHER],
-            shared=shared,
+            CANDIDATES,
+            shared=SHARED,
             max_evaluations=cost - 1,
         )
     within = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared,
+        epochs, OrbitalBinary, CANDIDATES, shared=SHARED,
         max_evaluations=cost,
     )  # fmt: skip
     assert within.cost == cost
