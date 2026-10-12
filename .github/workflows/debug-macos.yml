@@ -19,4 +19,4 @@ jobs:
           uv venv --python 3.11 .venv
           uv pip install --python .venv/bin/python -e ".[test,integrations]" "harmonix>=0.1.0"
           uv pip install --python .venv/bin/python --upgrade jax jaxlib
-          .venv/bin/python scratch_debug/diag.py
+          .venv/bin/python -m pytest -x -q tests/test_fitting.py tests/test_pipeline_star.py -k 'fitting or error_scale or lbfgs or fit' -p no:cacheprovider

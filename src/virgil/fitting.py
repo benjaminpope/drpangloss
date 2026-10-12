@@ -1201,6 +1201,10 @@ def _lm_linear_solver(z0, cg_steps):
 # (a Jacobian and a solve each) cost far more than L-BFGS steps.
 _LM_CHUNK = 50
 _LBFGS_CHUNK = 200
+# L-BFGS restarts after this many steps without converging, while a round
+# still gains more than _RESTART_GAIN in the loss per data point.
+_LBFGS_ROUND = 2000
+_RESTART_GAIN = 1e-7
 
 
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
@@ -1395,7 +1399,43 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
-    """L-BFGS, returning ``(z, steps, converged, stop)``.
+    """L-BFGS in rounds, returning ``(z, steps, converged, stop)``.
+
+    A round that ends at its step limit without converging restarts from
+    its last point with fresh curvature memory, so that a memory spoilt on
+    the way (by a parameter running into a bound, say) cannot hold the fit
+    for the rest of ``max_steps``: on macOS a limb-darkened star's fit with
+    fitted error scales crawled for all 20 000 steps in one round, where
+    Linux converged in under 700. Restarts stop once a round gains less
+    than ``_RESTART_GAIN`` in the loss per data point.
+    """
+    limit, total, z = int(max_steps), 0, z0
+    while True:
+        before = float(_loss_and_gradient(problem, z, scale)[0])
+        z, steps, converged, stop = _lbfgs_round(
+            problem,
+            z,
+            scale,
+            min(_LBFGS_ROUND, limit - total),
+            gtol,
+            max_step_size,
+            memory,
+            budget,
+            total,
+        )
+        total += steps
+        if converged or stop in ("time", "non-finite") or total >= limit:
+            break
+        gain = before - float(_loss_and_gradient(problem, z, scale)[0])
+        if not gain > _RESTART_GAIN:  # also stops on a NaN
+            break
+    return z, total, converged, stop
+
+
+def _lbfgs_round(
+    problem, z0, scale, max_steps, gtol, max_step_size, memory, budget, offset
+):
+    """One round of L-BFGS, returning ``(z, steps, converged, stop)``.
 
     ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
     ``"time"`` (the budget's time limit), ``"stalled"`` (a step no longer
@@ -1420,7 +1460,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         if not (running and math.isfinite(value)):
             break
         z = carry[1]
-        if budget.check(count, lambda: _loss_and_gradient(problem, z, scale)):
+        if budget.check(offset + count, lambda: _loss_and_gradient(problem, z, scale)):
             stop = "time"
             break
         carry = _lbfgs_resume(
@@ -1435,7 +1475,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     count, z, _, value, gradient, moved = carry
     count, value, gradient = int(count), float(value), float(gradient)
     if budget.chunked:
-        budget.finish(count, lambda: _loss_and_gradient(problem, z, scale))
+        budget.finish(offset + count, lambda: _loss_and_gradient(problem, z, scale))
     # A gradient seen only at the start (count 0) that is not finite gives
     # a non-finite tolerance too.
     finite = math.isfinite(tolerance) and math.isfinite(value)
