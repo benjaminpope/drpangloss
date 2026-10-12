@@ -711,3 +711,27 @@ def test_bound_fraction_reads_a_log_uniform_in_x_when_not_flat():
     assert _bound_fraction(prior, 10.0) == pytest.approx(0.5)
     assert _bound_fraction(prior, 10.0, flat=False) == pytest.approx(9 / 99)
     assert _bound_fraction(prior, 100.0, flat=False) == pytest.approx(1.0)
+
+
+def test_lbfgs_restarts_reach_the_same_minimum(monkeypatch):
+    """Short rounds restart L-BFGS often; the fit still converges to the
+    same point, and the step count is the sum over the rounds."""
+    from virgil import fitting
+
+    whole = fit(START, PRIORS, DATA, method="lbfgs")
+    assert whole.info["converged"] and whole.info["steps"] > 5
+    monkeypatch.setattr(fitting, "_LBFGS_ROUND", 3)
+    rounds = fit(START, PRIORS, DATA, method="lbfgs")
+    assert rounds.info["converged"]
+    assert rounds.info["steps"] > 3  # more than one round
+    assert rounds.info["loss"] == pytest.approx(whole.info["loss"], abs=1e-4)
+    # Stopped by the step limit, the total is the limit exactly.
+    with pytest.warns(RuntimeWarning, match="step limit"):
+        capped = fit(START, PRIORS, DATA, method="lbfgs", max_steps=7)
+    assert capped.info["steps"] == 7 and capped.info["stop"] == "limit"
+    # A small gain ends the restarts, not the fit: the rest of max_steps
+    # runs as one round, and the stop is still the step limit.
+    monkeypatch.setattr(fitting, "_RESTART_GAIN", float("inf"))
+    with pytest.warns(RuntimeWarning, match="step limit"):
+        last = fit(START, PRIORS, DATA, method="lbfgs", max_steps=7)
+    assert last.info["steps"] == 7 and last.info["stop"] == "limit"
