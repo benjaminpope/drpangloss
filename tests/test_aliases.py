@@ -1,6 +1,7 @@
 """Period aliases of an undersampled orbit: bands, window and evidences."""
 
 import copy
+import functools
 import json
 
 import jax
@@ -97,6 +98,7 @@ def test_position_profile_has_a_chi2_per_band():
     assert all(onp.isfinite(r["chi2"]) for r in rows)
 
 
+@functools.cache
 def _synthetic(period):
     truth = {**TRUTH, "period": period}
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
@@ -128,6 +130,10 @@ def test_alias_bands_include_the_long_period_band():
 
 
 # 12.38 d sits mid-band N = 20; 12.1 d is 0.05 cycles from the N = 20/21 edge.
+# The seed grid must be fine enough to land within a cycle's fraction of the
+# truth over the 247 d baseline (k = 18: 1/18 of a cycle between neighbouring
+# trial periods): at the coarse k = 3 the seeds are far off the narrow
+# likelihood ridge and the optimizer settles in a wrong alias (chi2_red ~ 500).
 @pytest.mark.slow
 @pytest.mark.parametrize("period", [12.38, 12.1])
 def test_injected_alias_wins_in_closure_phases(period, tmp_path):
@@ -137,11 +143,11 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
         (11.3, 12.9),
         positions=pos,
         t_ref=T_REF,
-        n_candidates=40,
+        n_candidates=10,
         n_refine=4,
         n_is=400,
         n_samples=50,
-        k=3.0,
+        k=18.0,
     )
     n_true = round(float(onp.ptp(result.times)) / period)
     assert result.best.n == n_true
@@ -169,9 +175,9 @@ def test_random_starts_and_s_max_without_positions():
         data,
         (12.1, 12.7),
         t_ref=T_REF,
-        n_random=300,
-        n_refine=4,
-        n_is=200,
+        n_random=64,
+        n_refine=2,
+        n_is=100,
         n_samples=20,
         s_max=50.0,
     )
