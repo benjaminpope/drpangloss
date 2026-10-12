@@ -781,7 +781,7 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
 
     # Pairs: every epoch with its neighbours at a few lags; the best-conditioned
     # _N_SIGN_PAIRS by |det [u_a u_b]| are used.
-    lags = onp.array([1, 2, 3, 5, 8, 13]) % max(n - 1, 1) + 1
+    lags = onp.unique((onp.array([1, 2, 3, 5, 8, 13]) - 1) % max(n - 1, 1) + 1)
     a = onp.tile(onp.arange(n), len(lags))
     b = (a + onp.repeat(lags, n)) % n
     a, b = np.asarray(a), np.asarray(b)

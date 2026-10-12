@@ -42,7 +42,7 @@ profile (both senses of motion, a flux scan) and are ranked by `m`. With
 `sign_free=True` (flux ratios 0.9–1) each position is known only up to a
 sign: the seeds solve the Thiele–Innes matrix from epoch pairs, set every
 epoch's sign against it, and scan fluxes near the top of the range;
-the best distinct few are refined by L-BFGS in the flat coordinates of the
+the best distinct few are refined by L-BFGS, then polished by damped Newton steps (Levenberg–Marquardt, accepted only if the log likelihood rises), in the flat coordinates of the
 Jeffreys priors (log P, fractional time of periastron, e, cos i, ω, Ω,
 log a, log flux). The (Ω+180, ω+180) mirror is exactly degenerate for
 closure phases and is folded by restricting Ω to [0, 180). Fits are

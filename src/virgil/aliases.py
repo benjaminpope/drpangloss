@@ -301,9 +301,8 @@ class _Settings:
         0.7 and 0.95 of its upper end."""
         scan = onp.geomspace(*self.flux_range, _N_FLUX + 2)[1:-1]
         if self.sign_free:
-            scan = onp.append(
-                scan, onp.array([0.7, 0.95]) * self.flux_range[1]
-            )
+            top = onp.array([0.7, 0.95]) * self.flux_range[1]
+            scan = onp.append(scan, top[top >= self.flux_range[0]])
         return scan
 
 

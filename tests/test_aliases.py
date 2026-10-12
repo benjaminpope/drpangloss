@@ -631,3 +631,36 @@ def test_gaussian_evidence_laplace_exact_and_importance_sampling_close():
     xs, log_w = aliases._mixture_weights([draws])
     z_is = logsumexp(log_w) - onp.log(len(xs))
     assert abs(z_is - rec["log_z_is"]) < 1e-9
+
+
+def test_newton_polish_reaches_a_quadratic_optimum_inside_the_bounds():
+    centre = onp.array([0.3, -0.2, 0.5, 0.1, 2.0, 1.0, 0.0, -0.5])
+    scale = onp.array([1.0, 4.0, 0.5, 2.0, 1.0, 3.0, 1.0, 1.0])
+
+    class Quad:
+        def value_and_grad(self, x):
+            x = onp.asarray(x)
+            return -0.5 * onp.sum(scale * (x - centre) ** 2), -scale * (
+                x - centre
+            )
+
+        def hessian(self, x):
+            return -onp.diag(scale)
+
+    lim = [[-5.0] * 8, [5.0] * 8]
+    x0 = centre + 0.5
+    x, value = aliases._newton_polish(
+        Quad(), lim, x0.copy(), Quad().value_and_grad(x0)[0]
+    )
+    assert value > Quad().value_and_grad(x0)[0]
+    onp.testing.assert_allclose(
+        x[[0, 1, 2, 3, 6, 7]], centre[[0, 1, 2, 3, 6, 7]], atol=1e-6
+    )
+    # An optimum is left alone, and a start at a bound stays inside it.
+    x1, v1 = aliases._newton_polish(Quad(), lim, centre.copy(), 0.0)
+    onp.testing.assert_allclose(
+        x1[[0, 1, 2, 3, 6, 7]], centre[[0, 1, 2, 3, 6, 7]], atol=1e-9
+    )
+    tight = [[-5.0] * 8, [0.2] + [5.0] * 7]
+    x2, _ = aliases._newton_polish(Quad(), tight, centre.copy() - 0.1, -1.0)
+    assert x2[0] <= 0.2 + 1e-12
