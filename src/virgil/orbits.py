@@ -771,11 +771,9 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
         resid = data - wd @ params
         return params, resid @ resid
 
-    def signs_for(
-        params,
-    ):  # params (A, B, F, G): dra = A x + F y, ddec = B x + G y
+    def signs_for(params):  # params (A, B, F, G): ddec = A x + F y, dra = B x + G y
         model = np.stack(
-            [params[0] * x + params[2] * y, params[1] * x + params[3] * y], -1
+            [params[1] * x + params[3] * y, params[0] * x + params[2] * y], -1
         )
         return np.where(np.sum(model * r, -1) >= 0, 1.0, -1.0)
 
@@ -793,8 +791,8 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
         u = np.array([[x[i], x[j]], [y[i], y[j]]])
         u = u + 1e-12 * np.eye(2)
         rr = np.stack([r[i], rel * r[j]], -1)
-        m = rr @ np.linalg.inv(u)  # [[A, F], [B, G]]
-        params = np.array([m[0, 0], m[1, 0], m[0, 1], m[1, 1]])
+        m = rr @ np.linalg.inv(u)  # rows (dra, ddec): [[B, G], [A, F]]
+        params = np.array([m[1, 0], m[0, 0], m[1, 1], m[0, 1]])
         params, c2 = refit(signs_for(params)[:, None] * r)
         params, c2 = refit(signs_for(params)[:, None] * r)
         return params, c2
