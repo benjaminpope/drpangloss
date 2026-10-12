@@ -215,7 +215,9 @@ def test_starting_orbits_recover_the_true_grid_point():
 def test_starting_orbits_sign_free_recovers_orbit_from_random_signs():
     # A near-equal-flux binary: each epoch's position is known up to a sign.
     truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)
-    mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0, 340.0, 361.0])
+    mjd = T_REF + onp.array(
+        [0.0, 37.0, 81.0, 150.0, 210.0, 299.0, 340.0, 361.0]
+    )
     signs = onp.array([1, -1, -1, 1, -1, 1, 1, -1.0])
     with jax.enable_x64(True):
         true = _positions(truth, mjd)

@@ -47,7 +47,7 @@ anything before 1.0 may change between minor versions.
   phases cannot tell `(dra, ddec)` from `(-dra, -ddec)` epoch by epoch, and
   seeding with the wrong sign mix landed on the wrong alias (AL Dor, HD 41255,
   HD 188088). The fit also seeds fluxes near the top of `flux_range`.
-  L-BFGS is now followed by Levenberg-Marquardt polishing, which removes most
+  L-BFGS is now followed by Levenberg-Marquardt polishing, aimed at the
   `not-converged` and `hessian-not-positive-definite` flags.
 
 - **Variational inference** (virgil#12). `virgil.svi.variational(model,

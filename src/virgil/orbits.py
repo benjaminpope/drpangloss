@@ -759,7 +759,8 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
     n = x.shape[0]
     zero = np.zeros_like(x)
     design = np.stack(
-        [np.stack([zero, x, zero, y], -1), np.stack([x, zero, y, zero], -1)], -2
+        [np.stack([zero, x, zero, y], -1), np.stack([x, zero, y, zero], -1)],
+        -2,
     )
     wd = np.einsum("nij,njk->nik", whitener, design).reshape(-1, 4)
     r = np.stack([dra, ddec], -1)
@@ -770,7 +771,9 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
         resid = data - wd @ params
         return params, resid @ resid
 
-    def signs_for(params):  # params (A, B, F, G): dra = A x + F y, ddec = B x + G y
+    def signs_for(
+        params,
+    ):  # params (A, B, F, G): dra = A x + F y, ddec = B x + G y
         model = np.stack(
             [params[0] * x + params[2] * y, params[1] * x + params[3] * y], -1
         )
