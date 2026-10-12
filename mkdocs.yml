@@ -5,6 +5,10 @@
 # ===== Setup and Themes =====
 markdown_extensions:
   - admonition
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:zensical.extensions.emoji.twemoji
+      emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
   - pymdownx.superfences
   - pymdownx.highlight
   - pymdownx.arithmatex:
@@ -50,6 +54,7 @@ nav:
   - Home: index.md
   - Background:
       - Contributions: contributors.md
+      - "Comparison with other packages": comparison.md
       - Development carbon: dev_carbon.md
       - Conventions: conventions.md
       - "Gaussian processes and information field theory": gp_and_ift.md
