@@ -13,12 +13,10 @@
 }
 
 /* Comparison table icons: green supported, amber partial, red unsupported. */
-.yes { color: #2e9e5b; }
-.maybe { color: #d99a00; }
-.no { color: #d64545; }
-[data-md-color-scheme="slate"] .yes { color: #5fd38d; }
-[data-md-color-scheme="slate"] .maybe { color: #ffc447; }
-[data-md-color-scheme="slate"] .no { color: #ff7b7b; }
+.twemoji.yes { color: #2e9e5b; }
+.twemoji.maybe { color: #d99a00; }
+.twemoji.no { color: #d64545; }
+[data-md-color-scheme="slate"] .twemoji.yes { color: #5fd38d; }
+[data-md-color-scheme="slate"] .twemoji.maybe { color: #ffc447; }
+[data-md-color-scheme="slate"] .twemoji.no { color: #ff7b7b; }
 .md-typeset table td .twemoji { height: 1.3em; width: 1.3em; }
-.md-typeset table td { text-align: center; }
-.md-typeset table td:first-child { text-align: left; }
