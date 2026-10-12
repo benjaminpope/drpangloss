@@ -311,6 +311,8 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
+
 - **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'
   L-BFGS-B refinement stopped on its relative-reduction test 50-800 nats
   short of the optimum on a many-cycle orbit's narrow ridge, so about one

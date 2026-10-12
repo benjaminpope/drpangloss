@@ -1201,6 +1201,10 @@ def _lm_linear_solver(z0, cg_steps):
 # (a Jacobian and a solve each) cost far more than L-BFGS steps.
 _LM_CHUNK = 50
 _LBFGS_CHUNK = 200
+# L-BFGS restarts after this many steps without converging, while a round
+# still gains more than _RESTART_GAIN in the loss per data point.
+_LBFGS_ROUND = 2000
+_RESTART_GAIN = 1e-7
 
 
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
@@ -1313,7 +1317,9 @@ def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
 
 
 @eqx.filter_jit
-def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size, memory):
+def _lbfgs_run(
+    problem, z0, scale, max_steps, gtol, max_step_size, memory, tolerance=None
+):
     # optax's L-BFGS (with a zoom line search, and capped steps; see
     # _capped_lbfgs), stopped on the gradient.
     # A gradient test suits log-brightness pixels: the gradient for a pixel
@@ -1328,7 +1334,10 @@ def _lbfgs_run(problem, z0, scale, max_steps, gtol, max_step_size, memory):
     # _lbfgs_loop) after at most max_steps steps, and the tolerance.
     loss = _scaled_loss(problem, scale)
     value, gradient = jax.value_and_grad(loss)(z0)
-    tolerance = _tolerance(gradient, gtol)
+    # A restart passes the first round's tolerance, so that every round
+    # meets the same test.
+    if tolerance is None:
+        tolerance = _tolerance(gradient, gtol)
     # The start itself may already be a stationary point.
     state = _capped_lbfgs(max_step_size, memory).init(z0)
     start = (0, z0, state, value, _largest(gradient), np.asarray(True))
@@ -1395,7 +1404,74 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
-    """L-BFGS, returning ``(z, steps, converged, stop)``.
+    """L-BFGS in rounds, returning ``(z, steps, converged, stop)``.
+
+    A round that ends at its step limit without converging restarts from
+    its last point with fresh curvature memory, so that a memory spoilt on
+    the way (by a parameter running into a bound, say) cannot hold the fit
+    for the rest of ``max_steps``: on macOS a limb-darkened star's fit with
+    fitted error scales crawled for all 20 000 steps in one round, where
+    Linux converged in under 700. Restarts stop once a round gains less
+    than ``_RESTART_GAIN`` in the loss per data point.
+    """
+    limit, total, z, tolerance = int(max_steps), 0, z0, None
+    while True:
+        before = float(_loss_and_gradient(problem, z, scale)[0])
+        z, steps, converged, stop, tolerance = _lbfgs_round(
+            problem,
+            z,
+            scale,
+            min(_LBFGS_ROUND, limit - total),
+            gtol,
+            max_step_size,
+            memory,
+            budget,
+            total,
+            tolerance,
+        )
+        total += steps
+        # Only a round that used all its steps restarts: a stalled one
+        # (the line search out of precision) or a timed-out or non-finite
+        # one ends the fit as it always did.
+        if converged or stop != "limit" or total >= limit:
+            break
+        gain = before - float(_loss_and_gradient(problem, z, scale)[0])
+        if not gain > _RESTART_GAIN:  # also true of a NaN
+            # Little progress: no more restarts, but the rest of max_steps
+            # as one round, as before restarts were made.
+            z, steps, converged, stop, _ = _lbfgs_round(
+                problem,
+                z,
+                scale,
+                limit - total,
+                gtol,
+                max_step_size,
+                memory,
+                budget,
+                total,
+                tolerance,
+            )
+            total += steps
+            break
+    return z, total, converged, stop
+
+
+def _lbfgs_round(
+    problem,
+    z0,
+    scale,
+    max_steps,
+    gtol,
+    max_step_size,
+    memory,
+    budget,
+    offset,
+    tolerance=None,
+):
+    """One round of L-BFGS: ``(z, steps, converged, stop, tolerance)``.
+
+    ``tolerance`` is the convergence test of the first round (``None``
+    there), which later rounds keep.
 
     ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
     ``"time"`` (the budget's time limit), ``"stalled"`` (a step no longer
@@ -1410,7 +1486,14 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     limit = int(max_steps)
     first = min(limit, _LBFGS_CHUNK) if budget.chunked else limit
     carry, traced_tolerance = _lbfgs_run(
-        problem, z0, scale, np.asarray(first), gtol, max_step_size, memory
+        problem,
+        z0,
+        scale,
+        np.asarray(first),
+        gtol,
+        max_step_size,
+        memory,
+        None if tolerance is None else np.asarray(tolerance),
     )
     tolerance, stop = float(traced_tolerance), None
     while budget.chunked:
@@ -1420,7 +1503,9 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         if not (running and math.isfinite(value)):
             break
         z = carry[1]
-        if budget.check(count, lambda: _loss_and_gradient(problem, z, scale)):
+        if budget.check(
+            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+        ):
             stop = "time"
             break
         carry = _lbfgs_resume(
@@ -1435,17 +1520,20 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     count, z, _, value, gradient, moved = carry
     count, value, gradient = int(count), float(value), float(gradient)
     if budget.chunked:
-        budget.finish(count, lambda: _loss_and_gradient(problem, z, scale))
+        budget.finish(
+            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+        )
     # A gradient seen only at the start (count 0) that is not finite gives
     # a non-finite tolerance too.
     finite = math.isfinite(tolerance) and math.isfinite(value)
     if not finite or (count > 0 and not math.isfinite(gradient)):
-        return z, count, False, "non-finite"
+        return z, count, False, "non-finite", tolerance
     if gradient <= tolerance:
-        return z, count, True, None
+        return z, count, True, None, tolerance
     if stop == "time":
-        return z, count, False, "time"
-    return z, count, False, "limit" if bool(moved) else "stalled"
+        return z, count, False, "time", tolerance
+    stop = "limit" if bool(moved) else "stalled"
+    return z, count, False, stop, tolerance
 
 
 @eqx.filter_jit
