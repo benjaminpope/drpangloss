@@ -23,15 +23,26 @@ Thiele–Innes profile (`position_profile`: best χ² per band from
 `period_grid` and `starting_orbits`) cross-checks that the bands are viable.
 Positions are used for initialization and diagnostics only.
 
-**Per-band fit.** The likelihood is the joint closure-phase (and
-visibility) likelihood of all epochs, evaluated exposure by exposure.
-It is hierarchical: each epoch's observable blocks have an error scale
+**Per-band fit.** The method is the joint squared-visibility and
+closure-phase likelihood of all epochs, evaluated exposure by exposure,
+with one flux ratio shared by every epoch. Closure phases alone are not
+enough for near-equal binaries: for flux ratios of 0.9–1 the closure phases
+are almost zero, the point reflection of the sky is almost exactly
+degenerate in every epoch separately, and only the visibilities fix the
+separation. The V² block has its own error scale in every epoch, apart
+from the closure phases' (see below). Uncalibrated V² (ESO GRAVITY Phase 3
+`SINGLE_SCI_VIS`) carry a transfer function that a scale cannot undo, so the
+V² scales come out large and V² then weighs little; report raw χ²/N for
+V² and closure phases separately. It is hierarchical: each epoch's observable blocks have an error scale
 `s_b` with a Jeffreys prior `1/s_b`, integrated out analytically
 (`marginal_loglike`, `m = −Σ ν_b/2 ln χ²_b`), so `m` is unchanged by a
 constant rescaling of an epoch's quoted errors and no epoch dominates
 through an optimistic error bar. Candidate orbits come from the position
-profile (both senses of motion, a flux scan) and are ranked by `m`;
-the best distinct few are refined by L-BFGS in the flat coordinates of the
+profile (both senses of motion, a flux scan) and are ranked by `m`. With
+`sign_free=True` (flux ratios 0.9–1) each position is known only up to a
+sign: the seeds solve the Thiele–Innes matrix from epoch pairs, set every
+epoch's sign against it, and scan fluxes near the top of the range;
+the best distinct few are refined by L-BFGS, then polished by damped Newton steps (Levenberg–Marquardt, accepted only if the log likelihood rises), in the flat coordinates of the
 Jeffreys priors (log P, fractional time of periastron, e, cos i, ω, Ω,
 log a, log flux). The (Ω+180, ω+180) mirror is exactly degenerate for
 closure phases and is folded by restricting Ω to [0, 180). Fits are

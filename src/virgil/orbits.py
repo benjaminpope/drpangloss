@@ -737,6 +737,79 @@ def _thiele_innes_fit(dt, dra, ddec, whitener, period, dt_peri, ecc):
     return params, resid @ resid
 
 
+_N_SIGN_PAIRS = 16  # epoch pairs tried per grid point by the sign-free fit
+
+
+@jax.jit
+def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
+    """Thiele–Innes fit when each position is known only up to a sign.
+
+    A binary of nearly equal fluxes has closure phases and V² that are the
+    same for ``(dra, ddec)`` and ``(-dra, -ddec)``, so the per-epoch signs
+    of its positions are arbitrary. At fixed ``(P, T, e)`` the positions
+    are ``s_i M u_i`` with the unit-orbit points ``u_i`` known and the
+    2x2 matrix ``M`` (the Thiele–Innes constants) unknown. Two epochs fix
+    ``M`` up to one relative sign, so for the best-conditioned pairs of
+    epochs and both relative signs, ``M`` is solved, every sign is set to
+    the one that agrees with ``M u_i``, and the weighted fit is repeated
+    twice on the signed positions. The result is the lowest χ²; the
+    global sign (the point reflection of the whole orbit) stays free.
+    """
+    x, y = _unit_orbit(dt, period, dt_peri, ecc)
+    n = x.shape[0]
+    zero = np.zeros_like(x)
+    design = np.stack(
+        [np.stack([zero, x, zero, y], -1), np.stack([x, zero, y, zero], -1)],
+        -2,
+    )
+    wd = np.einsum("nij,njk->nik", whitener, design).reshape(-1, 4)
+    r = np.stack([dra, ddec], -1)
+
+    def refit(signed):
+        data = np.einsum("nij,nj->ni", whitener, signed).reshape(-1)
+        params = np.linalg.lstsq(wd, data)[0]
+        resid = data - wd @ params
+        return params, resid @ resid
+
+    def signs_for(
+        params,
+    ):  # params (A, B, F, G): ddec = A x + F y, dra = B x + G y
+        model = np.stack(
+            [params[1] * x + params[3] * y, params[0] * x + params[2] * y], -1
+        )
+        return np.where(np.sum(model * r, -1) >= 0, 1.0, -1.0)
+
+    # Pairs: every epoch with its neighbours at a few lags; the best-conditioned
+    # _N_SIGN_PAIRS by |det [u_a u_b]| are used.
+    lags = onp.unique((onp.array([1, 2, 3, 5, 8, 13]) - 1) % max(n - 1, 1) + 1)
+    a = onp.tile(onp.arange(n), len(lags))
+    b = (a + onp.repeat(lags, n)) % n
+    a, b = np.asarray(a), np.asarray(b)
+    det = np.abs(x[a] * y[b] - x[b] * y[a])
+    best = np.argsort(-det)[:_N_SIGN_PAIRS]
+    ia, ib = a[best], b[best]
+
+    def candidate(i, j, rel):
+        u = np.array([[x[i], x[j]], [y[i], y[j]]])
+        u = u + 1e-12 * np.eye(2)
+        rr = np.stack([r[i], rel * r[j]], -1)
+        m = rr @ np.linalg.inv(u)  # rows (dra, ddec): [[B, G], [A, F]]
+        params = np.array([m[1, 0], m[0, 0], m[1, 1], m[0, 1]])
+        params, c2 = refit(signs_for(params)[:, None] * r)
+        params, c2 = refit(signs_for(params)[:, None] * r)
+        return params, c2
+
+    fit = jax.vmap(
+        lambda i, j: jax.vmap(lambda rel: candidate(i, j, rel))(
+            np.array([1.0, -1.0])
+        )
+    )
+    params, chi2 = fit(ia, ib)
+    params, chi2 = params.reshape(-1, 4), chi2.reshape(-1)
+    k = np.argmin(np.where(np.isfinite(chi2), chi2, np.inf))
+    return params[k], chi2[k]
+
+
 # Trial periods are spaced so that neighbouring ones drift apart by at most
 # 1/k of a cycle over the baseline T: a frequency step of 1/(kT), i.e. δP =
 # P²/(kT). The true period is then within half a step of a trial period,
@@ -809,7 +882,9 @@ def _phase_drift(periods, baseline):
     return float(baseline * onp.max(onp.diff(frequencies)))
 
 
-def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
+def starting_orbits(
+    positions, periods, eccs=None, n_phase=36, n_best=5, sign_free=False
+):
     """Good starting orbits for a set of positions, from a grid search.
 
     At fixed period, eccentricity and time of periastron the positions are
@@ -833,6 +908,13 @@ def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
         Number of trial times of periastron, spread over each period.
     n_best : int, optional
         Number of orbits to return.
+    sign_free : bool, optional
+        Treat each position as known only up to a sign, as for a binary of
+        nearly equal fluxes (the point reflection of the sky is then
+        degenerate in every epoch separately). The signs are chosen per grid
+        point (see ``_thiele_innes_fit_sign_free``); the orbit returned has
+        the global sign of its best fit, and its reflection (``omega`` +
+        180°) fits equally well.
 
     Returns
     -------
@@ -850,7 +932,8 @@ def starting_orbits(positions, periods, eccs=None, n_phase=36, n_best=5):
             for f in phases
         ]
     )
-    fit_all = jax.vmap(_thiele_innes_fit, in_axes=(None,) * 4 + (0, 0, 0))
+    fitter = _thiele_innes_fit_sign_free if sign_free else _thiele_innes_fit
+    fit_all = jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))
     params, chi2 = fit_all(
         positions.dt,
         positions.dra,

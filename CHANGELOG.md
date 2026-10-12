@@ -41,6 +41,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Alias fit for near-equal binaries.** `fit_orbit_aliases(...,
+  sign_free=True)` and `starting_orbits(..., sign_free=True)` seed from
+  positions known only up to a sign: with flux ratios of 0.9-1 the closure
+  phases cannot tell `(dra, ddec)` from `(-dra, -ddec)` epoch by epoch, and
+  seeding with the wrong sign mix landed on the wrong alias (AL Dor, HD 41255,
+  HD 188088). The fit also seeds fluxes near the top of `flux_range`.
+  L-BFGS is now followed by Levenberg-Marquardt polishing, aimed at the
+  `not-converged` and `hessian-not-positive-definite` flags.
+
 - **Variational inference** (virgil#12). `virgil.svi.variational(model,
   priors, data, ..., start=fit_result)` fits a guide to `numpyro_model`'s
   posterior with numpyro's SVI and returns a `VariationalResult`: draws in
