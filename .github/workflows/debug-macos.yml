@@ -4,7 +4,16 @@ on:
     branches: [claude/mystifying-bun-602201]
 jobs:
   d:
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-latest, x64: "0"}
+          - {os: macos-latest, x64: "1"}
+          - {os: ubuntu-latest, x64: "0"}
+    runs-on: ${{ matrix.os }}
+    env:
+      JAX_ENABLE_X64: ${{ matrix.x64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
