@@ -1,0 +1,15 @@
+name: debug macos
+on:
+  push:
+    branches: [claude/mystifying-bun-602201]
+jobs:
+  d:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: |
+          uv venv --python 3.11 .venv
+          uv pip install --python .venv/bin/python -e ".[test,integrations]" "harmonix>=0.1.0"
+          uv pip install --python .venv/bin/python --upgrade jax jaxlib
+          .venv/bin/python scratch_debug/diag.py
