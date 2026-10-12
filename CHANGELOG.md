@@ -307,12 +307,14 @@ anything before 1.0 may change between minor versions.
   short of the optimum on a many-cycle orbit's narrow ridge, so about one
   noise draw in four settled in a neighbouring alias. Each start now
   restarts from its own optimum until it stops improving, and a winning
-  band whose χ²/ν is more than 5σ above 1 is flagged `poor-fit` with a
-  `UserWarning` instead of being reported silently.
-- **A phase step of exactly π wraps the same in data and model.**
-  `wrap_phase` sent `float32(π)` to -π but an `arctan2` result one ulp
-  lower to +π (macOS), so differential phases could disagree by 2π;
-  values within a few float32 rounding errors of +π now wrap to -π.
+  band with χ²/ν above 10 on the quoted errors (a missed ridge gives
+  65-800) is flagged `poor-fit` with a `UserWarning` instead of being
+  reported silently; errors underestimated by more than 3x also trip it.
+- **Differential-phase steps near ±π wrap the same in data and model.**
+  A step of exactly π wrapped to -π in the data but, one ulp lower from
+  `arctan2` on macOS, to +π in the model, a 2π disagreement. The model's
+  steps are now wrapped to within π of the data's, as its anchor already
+  was, so no cut can separate them.
 - **Repeated refinements in `start_from_positions` compile once.**
 - **Faster, steadier CI.** The slowest tests share their expensive
   fixtures (kept on one xdist worker with `--dist loadgroup`) and use

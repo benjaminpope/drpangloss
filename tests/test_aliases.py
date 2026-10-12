@@ -134,6 +134,7 @@ def test_alias_bands_include_the_long_period_band():
 # without restarts L-BFGS-B stalled short of the ridge and 1 in 4 noise
 # draws settled in a wrong alias at chi2_red ~ 100-800.
 @pytest.mark.slow
+@pytest.mark.filterwarnings("error:fit_orbit_aliases")  # a good fit is quiet
 @pytest.mark.parametrize("period", [12.38, 12.1])
 def test_injected_alias_wins_in_closure_phases(period, tmp_path):
     data, pos = _synthetic(period)
@@ -172,7 +173,7 @@ def test_a_band_that_cannot_fit_the_data_warns_loudly():
     band is flagged poor-fit and the call warns rather than failing
     silently."""
     data, pos = _synthetic(12.38)
-    with pytest.warns(UserWarning, match="poor-fit|not trustworthy"):
+    with pytest.warns(UserWarning, match="missed the narrow"):
         result = fit_orbit_aliases(
             data,
             (13.5, 14.5),

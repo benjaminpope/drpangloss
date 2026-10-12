@@ -999,29 +999,28 @@ def _band_probabilities(results):
     return [results[i] for i in order]
 
 
-# A fit whose raw χ²/ν exceeds 1 by this many standard deviations of a χ²
-# variate, sqrt(2/ν), is not a fit of the data (a seed grid that missed the
-# narrow likelihood ridge, typically, but also underestimated errors).
-_POOR_FIT_SIGMA = 5.0
+# Raw χ²/ν on the quoted errors above which the best band is flagged. The
+# per-epoch error scales absorb the routine underestimates of interferometric
+# errors (χ²/ν of 1-2), so the bar sits well above them: a missed
+# likelihood ridge gives χ²/ν of 65-800, and errors underestimated by more
+# than 3x deserve a look anyway.
+_POOR_FIT_CHI2_RED = 10.0
 
 
-def _check_fit_quality(problem, results, k):
+def _check_fit_quality(results, k):
     """Flag, and warn about, a best band that does not fit the data."""
     best = results[0]
-    nu = float(onp.sum(onp.concatenate([s.nu for s in problem.surfaces])))
-    limit = 1.0 + _POOR_FIT_SIGMA * math.sqrt(2.0 / max(nu, 1.0))
-    if not best.chi2_red > limit:  # also False for NaN (no valid mode)
+    if not best.chi2_red > _POOR_FIT_CHI2_RED:  # False for NaN too
         return
     best.flags.append("poor-fit")
     best.flagged = True
     warnings.warn(
         f"fit_orbit_aliases(): the best band (N={best.n}) has chi2_red = "
-        f"{best.chi2_red:.3g} on the quoted errors, above "
-        f"{limit:.3g} ({_POOR_FIT_SIGMA:g} sigma for nu = {nu:.0f}): the "
-        "fits did not find an orbit consistent with the data, so the band "
-        "probabilities are not trustworthy. The optimizer probably did not "
-        "reach the narrow likelihood ridge: try a larger n_refine or k (now "
-        f"{k:g}), or check the errors.",
+        f"{best.chi2_red:.3g} on the quoted errors (above "
+        f"{_POOR_FIT_CHI2_RED:g}). Either the optimizer missed the narrow "
+        "likelihood ridge, so the band probabilities are not trustworthy "
+        f"(try a larger n_refine or k, now {k:g}), or the errors are "
+        "underestimated by more than 3x.",
         UserWarning,
         stacklevel=external_stacklevel(),
     )
@@ -1193,8 +1192,9 @@ def fit_orbit_aliases(
     quoted errors at the best mode, before any error scale.
 
     ``poor-fit`` is set on the winning band only, with a ``UserWarning``,
-    when its ``chi2_red`` is more than five standard deviations of a χ²
-    variate above 1: no fit found an orbit consistent with the data.
+    when its ``chi2_red`` exceeds 10: the fits missed the orbit, or the
+    errors are underestimated by more than 3x (the per-epoch error scales
+    absorb smaller underestimates without a flag).
 
     Without ``s_max`` the Jeffreys prior on each error scale is improper, so
     the absolute ``log_z`` is defined only up to a constant shared by all
@@ -1280,7 +1280,7 @@ def fit_orbit_aliases(
         ) from error
 
     results = _band_probabilities(results)
-    _check_fit_quality(problem, results, k)
+    _check_fit_quality(results, k)
     samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
     return AliasResult(
         t_ref,
