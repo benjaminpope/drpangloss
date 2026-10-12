@@ -118,7 +118,8 @@ jobs:
 
       # ===== Tests =====
       # pytest-xdist runs one worker per core; the suite is many small,
-      # compile-bound tests, so this roughly halves its time.
+      # compile-bound tests, so this roughly halves its time. loadgroup keeps
+      # the xdist_group modules (shared module-scoped fixtures) on one worker.
       - name: Test Suite
         env:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
@@ -135,7 +136,7 @@ jobs:
             nproc; free -m; df -h .
             ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
           fi
-          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} -rs --durations=30 \
+          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
             ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 

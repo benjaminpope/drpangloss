@@ -33,11 +33,23 @@ from virgil.pipeline import (  # noqa: E402
 from virgil.pipeline import _checks as checks  # noqa: E402
 from virgil.pipeline import cli, star  # noqa: E402
 
+# The module's tests share expensive module-scoped fixtures: with
+# ``pytest -n N --dist loadgroup`` they run on one worker, which builds each
+# fixture once instead of once per worker.
+pytestmark = pytest.mark.xdist_group("pipeline_star")
+
+# max_lobes=2: each extra lobe costs two more L-BFGS fits per model, and
+# only the best lobe (always among the first two) is used here. The lobe
+# tests below set their own max_lobes.
 TINY = {
+    "max_lobes": 2,
     "num_warmup": 30,
     "num_samples": 30,
     "num_chains": 2,
 }
+# Long enough to adapt (30 warmup steps are too few, whatever the model), so
+# the full run can also serve the divergence test.
+FULL = {**TINY, "num_warmup": 100, "num_samples": 60}
 TRUTH = QuadraticLimbDarkenedDisk.from_u(6.0, u1=0.35, u2=0.25)
 
 
@@ -55,7 +67,7 @@ def data():
 @pytest.fixture(scope="module")
 def full_run(data, tmp_path_factory):
     out = tmp_path_factory.mktemp("star") / "run"
-    pipeline = StarPipeline(data, output=out, **TINY)
+    pipeline = StarPipeline(data, output=out, **FULL)
     return pipeline, pipeline.run()
 
 
@@ -322,19 +334,19 @@ def test_round_trip(full_run, data):
     assert res.fit_result().info["method"] == "lm"
 
     samples = res.samples()  # the preferred model
-    assert samples["diam"].shape == (TINY["num_chains"], TINY["num_samples"])
+    assert samples["diam"].shape == (FULL["num_chains"], FULL["num_samples"])
     assert {"q1", "q2", "u1", "u2"} <= set(samples)
     assert set(res.samples(name="uniform")) == {"diam"}
     flat = res.samples(group_by_chain=False)
-    assert flat["q1"].shape == (TINY["num_chains"] * TINY["num_samples"],)
+    assert flat["q1"].shape == (FULL["num_chains"] * FULL["num_samples"],)
     median = res.summary["posterior"]["models"]["limb_darkened"]["params"]
     onp.testing.assert_allclose(
         onp.median(flat["diam"]), median["diam"]["median"], rtol=1e-5
     )
     stats = res.sample_stats("uniform")
     assert stats["diverging"].shape == (
-        TINY["num_chains"],
-        TINY["num_samples"],
+        FULL["num_chains"],
+        FULL["num_samples"],
     )
 
     grid = res.grid()
@@ -423,7 +435,9 @@ def test_uniform_only_run_and_error_scale(data, tmp_path):
 def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     out = tmp_path / "run"
     settings = dict(TINY, quicklook_execute=False)
-    res = StarPipeline(data, output=out, **settings).run(through="fit")
+    res = StarPipeline(data, "uniform", output=out, **settings).run(
+        through="fit"
+    )
     assert res.status == "partial" and "posterior" not in res.summary
     before = json.loads((out / "run.json").read_text())["stages"]
 
@@ -436,7 +450,9 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     ran = []
     for name in ("_load_star", "_overview", "_fit"):
         monkeypatch.setattr(star, name, lambda p, n=name: ran.append(n))
-    res = StarPipeline(data, output=out, **settings).run(through="posterior")
+    res = StarPipeline(data, "uniform", output=out, **settings).run(
+        through="posterior"
+    )
     assert ran == []  # nothing before the posterior was recomputed
     after = json.loads((out / "run.json").read_text())
     for name in ("load", "overview", "fit"):
@@ -444,12 +460,14 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     assert "posterior" in res.summary
 
     with pytest.raises(ConfigMismatchError, match="num_chains"):
-        StarPipeline(data, output=out, **dict(settings, num_chains=3)).run()
+        StarPipeline(
+            data, "uniform", output=out, **dict(settings, num_chains=3)
+        ).run()
     with pytest.raises(ConfigMismatchError, match="model template differs"):
-        StarPipeline(data, "uniform", output=out, **settings).run()
+        StarPipeline(data, "limb_darkened", output=out, **settings).run()
     shifted = data.with_error_floor(absolute={"vis": 0.5})
     with pytest.raises(ConfigMismatchError, match="data differ"):
-        StarPipeline(shifted, output=out, **settings).run()
+        StarPipeline(shifted, "uniform", output=out, **settings).run()
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -556,21 +574,13 @@ def test_prior_dominated_names_the_parameters():
 # --- review follow-ups ------------------------------------------------------
 
 
-def test_the_posterior_has_few_divergences(data, tmp_path):
+def test_the_posterior_has_few_divergences(full_run):
     """The prior covers the best lobe, so NUTS has no hard walls to hit.
 
-    The chains are longer than TINY: 30 warmup steps are too few to adapt,
-    whatever the model.
+    The full run's chains are longer than TINY: 30 warmup steps are too few
+    to adapt, whatever the model.
     """
-    pipeline = StarPipeline(
-        data,
-        output=tmp_path / "run",
-        num_warmup=200,
-        num_samples=100,
-        num_chains=2,
-        quicklook_execute=False,
-    )
-    res = pipeline.run(through="posterior")
+    pipeline, res = full_run
     s = res.summary
     lo, hi = s["fit"]["diam_bounds_mas"]
     full_lo, full_hi = pipeline._diam_range()
@@ -942,9 +952,11 @@ def test_divergences_at_hard_walls_are_explained_not_hidden(
     """
     res = StarPipeline(
         tutorial_data,
+        "limb_darkened",
         output=tmp_path / "run",
-        num_warmup=300,
-        num_samples=300,
+        max_lobes=2,
+        num_warmup=200,
+        num_samples=150,
         num_chains=2,
         quicklook_execute=False,
     ).run(through="posterior")
