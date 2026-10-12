@@ -24,6 +24,7 @@ import json
 import math
 import pathlib
 import pickle
+import warnings
 
 import jax
 import jax.numpy as np
@@ -31,6 +32,7 @@ import numpy as onp
 from scipy import optimize
 from scipy.special import logsumexp
 
+from ._deprecate import external_stacklevel
 from ._precision import cast_tree, in_float64
 from ._utils import clean_json
 from .detection import _fingerprint
@@ -367,9 +369,17 @@ def _senses(x):
     return [x, other]
 
 
+# L-BFGS-B stops early on the narrow, curved likelihood ridge of a
+# many-cycle orbit (its relative-reduction test fires 50-250 nats short of
+# the optimum), so it restarts from its own optimum, which resets its
+# curvature memory, until a restart gains less than _RESTART_GAIN nats.
+_MAX_RESTARTS = 6
+_RESTART_GAIN = 0.05
+
+
 def _optimize(problem, bounds, x0, max_steps):
     """Maximize the marginal likelihood from ``x0`` (L-BFGS-B, in the
-    sampled coordinates)."""
+    sampled coordinates, restarted until it stops improving)."""
 
     def fun(x):
         value, grad = problem.value_and_grad(np.asarray(x))
@@ -379,15 +389,23 @@ def _optimize(problem, bounds, x0, max_steps):
         [None if not onp.isfinite(v) else float(v) for v in side]
         for side in (bounds.lower, bounds.upper)
     ]
-    res = optimize.minimize(
-        fun,
-        x0,
-        jac=True,
-        method="L-BFGS-B",
-        bounds=list(zip(*limits)),
-        options=dict(maxiter=max_steps),
-    )
-    return _fold(res.x), -float(res.fun)
+    x, best = onp.asarray(x0, float), -onp.inf
+    for _ in range(_MAX_RESTARTS):
+        res = optimize.minimize(
+            fun,
+            x,
+            jac=True,
+            method="L-BFGS-B",
+            bounds=list(zip(*limits)),
+            options=dict(maxiter=max_steps, ftol=1e-13, gtol=1e-9),
+        )
+        value = -float(res.fun)
+        gain = value - best
+        if value > best:
+            x, best = res.x, value
+        if not gain > _RESTART_GAIN:  # also stops on a NaN
+            break
+    return _fold(x), best
 
 
 # ---------------------------------------------------------------------------
@@ -981,6 +999,34 @@ def _band_probabilities(results):
     return [results[i] for i in order]
 
 
+# A fit whose raw χ²/ν exceeds 1 by this many standard deviations of a χ²
+# variate, sqrt(2/ν), is not a fit of the data (a seed grid that missed the
+# narrow likelihood ridge, typically, but also underestimated errors).
+_POOR_FIT_SIGMA = 5.0
+
+
+def _check_fit_quality(problem, results, k):
+    """Flag, and warn about, a best band that does not fit the data."""
+    best = results[0]
+    nu = float(onp.sum(onp.concatenate([s.nu for s in problem.surfaces])))
+    limit = 1.0 + _POOR_FIT_SIGMA * math.sqrt(2.0 / max(nu, 1.0))
+    if not best.chi2_red > limit:  # also False for NaN (no valid mode)
+        return
+    best.flags.append("poor-fit")
+    best.flagged = True
+    warnings.warn(
+        f"fit_orbit_aliases(): the best band (N={best.n}) has chi2_red = "
+        f"{best.chi2_red:.3g} on the quoted errors, above "
+        f"{limit:.3g} ({_POOR_FIT_SIGMA:g} sigma for nu = {nu:.0f}): the "
+        "fits did not find an orbit consistent with the data, so the band "
+        "probabilities are not trustworthy. The optimizer probably did not "
+        "reach the narrow likelihood ridge: try a larger n_refine or k (now "
+        f"{k:g}), or check the errors.",
+        UserWarning,
+        stacklevel=external_stacklevel(),
+    )
+
+
 def _resample(results, store, t_ref, n_samples, p_min, seed):
     """Posterior draws by importance resampling, for the best band and every
     band with ``p > p_min``."""
@@ -1142,9 +1188,13 @@ def fit_orbit_aliases(
     than 0.1σ from a stationary point), ``hessian-not-positive-definite``,
     ``hessian-singular``, ``band-failed`` (an exception in the band; the
     others are unaffected), ``starts-failed`` (some optimizer start raised),
-    ``laplace-is-differ``, ``low-ess`` (best mode's ESS below ``ess_min``)
-    and ``no-valid-mode``. ``chi2_red`` is the raw χ²/ν on the quoted errors
-    at the best mode, before any error scale.
+    ``laplace-is-differ``, ``low-ess`` (best mode's ESS below ``ess_min``),
+    ``no-valid-mode`` and ``poor-fit``. ``chi2_red`` is the raw χ²/ν on the
+    quoted errors at the best mode, before any error scale.
+
+    ``poor-fit`` is set on the winning band only, with a ``UserWarning``,
+    when its ``chi2_red`` is more than five standard deviations of a χ²
+    variate above 1: no fit found an orbit consistent with the data.
 
     Without ``s_max`` the Jeffreys prior on each error scale is improper, so
     the absolute ``log_z`` is defined only up to a constant shared by all
@@ -1230,6 +1280,7 @@ def fit_orbit_aliases(
         ) from error
 
     results = _band_probabilities(results)
+    _check_fit_quality(problem, results, k)
     samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
     return AliasResult(
         t_ref,

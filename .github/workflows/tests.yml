@@ -23,10 +23,11 @@ permissions:
   contents: read
 
 jobs:
-  # Pull requests run the Linux jobs and skip the slow-marked tests; pushes to
-  # main, the weekly schedule and manual dispatches also run macOS and every
-  # test. macOS runners are scarce and slower (about 350 s of tests against
-  # 190 s on Linux), so they set the wall time of a pull request.
+  # Pull requests run the Linux jobs, and all but one skip the slow-marked
+  # tests; pushes to main, the weekly schedule and manual dispatches also run
+  # macOS and every test. macOS runners are scarce and slower (about 350 s of
+  # tests against 190 s on Linux), so they set the wall time of a pull
+  # request.
   matrix:
     name: choose the test matrix
     runs-on: ubuntu-latest
@@ -42,7 +43,14 @@ jobs:
           import os
 
           include = [
-              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"},
+              # This job runs the slow tests on pull requests too, so a
+              # change that breaks them fails before it reaches main.
+              {
+                  "os": "ubuntu-latest",
+                  "python-version": "3.12",
+                  "x64": "0",
+                  "slow": True,
+              },
               # x64 exercises the float64 paths.
               {"os": "ubuntu-latest", "python-version": "3.12", "x64": "1"},
               {"os": "ubuntu-latest", "python-version": "3.13", "x64": "0"},
@@ -66,7 +74,7 @@ jobs:
           EOF
 
   build:
-    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.slow && ' +slow' || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
     # A pull request's suite (no slow tests) takes about 10 minutes; fail a
@@ -127,7 +135,8 @@ jobs:
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
-        # Pull requests skip the tests marked slow (tests/conftest.py).
+        # Pull requests skip the tests marked slow (tests/conftest.py), except
+        # on the job flagged slow in the matrix.
         # Two workers on lowest deps: 4 workers at about 4 GB each exhaust the 16 GB runner.
         # The memory sampler needs GNU free and procps ps, so it runs on Linux
         # only (macOS has neither nproc nor free: exit code 127).
@@ -137,7 +146,7 @@ jobs:
             ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
           fi
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
-            ${{ github.event_name == 'pull_request' && '-m "not slow"' || '' }} \
+            ${{ github.event_name == 'pull_request' && !matrix.slow && '-m "not slow"' || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
       - name: kernel log

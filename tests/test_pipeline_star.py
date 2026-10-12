@@ -39,8 +39,8 @@ from virgil.pipeline import cli, star  # noqa: E402
 pytestmark = pytest.mark.xdist_group("pipeline_star")
 
 # max_lobes=2: each extra lobe costs two more L-BFGS fits per model, and
-# only the best lobe (always among the first two) is used here. The lobe
-# tests below set their own max_lobes.
+# on this data the best lobe is the scan's deepest minimum, so two are
+# plenty. The lobe tests below set their own max_lobes.
 TINY = {
     "max_lobes": 2,
     "num_warmup": 30,
@@ -49,7 +49,7 @@ TINY = {
 }
 # Long enough to adapt (30 warmup steps are too few, whatever the model), so
 # the full run can also serve the divergence test.
-FULL = {**TINY, "num_warmup": 100, "num_samples": 60}
+FULL = {**TINY, "num_warmup": 200, "num_samples": 100}
 TRUTH = QuadraticLimbDarkenedDisk.from_u(6.0, u1=0.35, u2=0.25)
 
 

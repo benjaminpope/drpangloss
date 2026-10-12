@@ -302,6 +302,23 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'
+  L-BFGS-B refinement stopped on its relative-reduction test 50-800 nats
+  short of the optimum on a many-cycle orbit's narrow ridge, so about one
+  noise draw in four settled in a neighbouring alias. Each start now
+  restarts from its own optimum until it stops improving, and a winning
+  band whose χ²/ν is more than 5σ above 1 is flagged `poor-fit` with a
+  `UserWarning` instead of being reported silently.
+- **A phase step of exactly π wraps the same in data and model.**
+  `wrap_phase` sent `float32(π)` to -π but an `arctan2` result one ulp
+  lower to +π (macOS), so differential phases could disagree by 2π;
+  values within a few float32 rounding errors of +π now wrap to -π.
+- **Repeated refinements in `start_from_positions` compile once.**
+- **Faster, steadier CI.** The slowest tests share their expensive
+  fixtures (kept on one xdist worker with `--dist loadgroup`) and use
+  smaller problems; one pull-request job runs the slow tests, so they no
+  longer fail first on main; the `dev` extra includes `orbits`, so the
+  orbit tests run locally rather than skipping.
 - **Isotropic priors have finite gradients at the poles in float32.**
   `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
   derivative within about 1e-8 of a pole (the branch not taken of a

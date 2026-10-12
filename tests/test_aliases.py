@@ -130,10 +130,9 @@ def test_alias_bands_include_the_long_period_band():
 
 
 # 12.38 d sits mid-band N = 20; 12.1 d is 0.05 cycles from the N = 20/21 edge.
-# The seed grid must be fine enough to land within a cycle's fraction of the
-# truth over the 247 d baseline (k = 18: 1/18 of a cycle between neighbouring
-# trial periods): at the coarse k = 3 the seeds are far off the narrow
-# likelihood ridge and the optimizer settles in a wrong alias (chi2_red ~ 500).
+# A few seeds suffice now that the optimizer restarts (aliases._optimize);
+# without restarts L-BFGS-B stalled short of the ridge and 1 in 4 noise
+# draws settled in a wrong alias at chi2_red ~ 100-800.
 @pytest.mark.slow
 @pytest.mark.parametrize("period", [12.38, 12.1])
 def test_injected_alias_wins_in_closure_phases(period, tmp_path):
@@ -143,11 +142,10 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
         (11.3, 12.9),
         positions=pos,
         t_ref=T_REF,
-        n_candidates=10,
-        n_refine=4,
+        n_candidates=30,
+        n_refine=3,
         n_is=400,
         n_samples=50,
-        k=18.0,
     )
     n_true = round(float(onp.ptp(result.times)) / period)
     assert result.best.n == n_true
@@ -169,6 +167,29 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
 
 
 @pytest.mark.slow
+def test_a_band_that_cannot_fit_the_data_warns_loudly():
+    """No orbit in 13.5-14.5 d fits a 12.38 d orbit's data, so the best
+    band is flagged poor-fit and the call warns rather than failing
+    silently."""
+    data, pos = _synthetic(12.38)
+    with pytest.warns(UserWarning, match="poor-fit|not trustworthy"):
+        result = fit_orbit_aliases(
+            data,
+            (13.5, 14.5),
+            positions=pos,
+            t_ref=T_REF,
+            n_candidates=10,
+            n_refine=2,
+            n_is=100,
+            n_samples=10,
+        )
+    assert result.best.chi2_red > 10
+    assert "poor-fit" in result.best.flags and result.best.flagged
+
+
+# Few random starts and no positions: this checks the run completes, and
+# the fit is often poor, which fit_orbit_aliases rightly warns about.
+@pytest.mark.filterwarnings("ignore:fit_orbit_aliases:UserWarning")
 def test_random_starts_and_s_max_without_positions():
     data, _ = _synthetic(12.38)
     result = fit_orbit_aliases(

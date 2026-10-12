@@ -65,21 +65,20 @@ def check_part_name(name, owner, kind, example, clashes_with):
         )
 
 
-def wrap_phase(phase):
-    """``phase`` (radians) wrapped to ``[-π, π)``.
+# About 7e-6 rad, a few float32 rounding errors at π, in every precision so
+# that float32-origin values also agree under x64.
+_WRAP_TOL = 8.0 * float(onp.finfo(onp.float32).eps) * math.pi
 
-    A phase within a few rounding errors of +π is wrapped to -π as well.
-    Without that, a step of exactly π lands on either side of the
-    boundary depending on the last bit of ``arctan2`` or of ``π`` in the
-    working precision, which differs between platforms (and between data
-    wrapped from ``float32(π)`` and a model angle one ulp lower).
-    """
-    phase = np.asarray(phase)
-    if not np.issubdtype(phase.dtype, np.floating):
-        phase = phase.astype(np.result_type(float))
+
+def wrap_phase(phase):
+    """``phase`` (radians) wrapped to ``[-π, π)``, with values within
+    ``_WRAP_TOL`` below +π sent to -π too: whether a step of exactly π
+    lands at +π or -π otherwise depends on the last bit of ``arctan2`` or
+    of ``π``, which differs between platforms and between data and model."""
     wrapped = np.mod(phase + np.pi, 2.0 * np.pi) - np.pi
-    tol = 8.0 * np.finfo(phase.dtype).eps * np.pi
-    return np.where(wrapped > np.pi - tol, wrapped - 2.0 * np.pi, wrapped)
+    return np.where(
+        wrapped > np.pi - _WRAP_TOL, wrapped - 2.0 * np.pi, wrapped
+    )
 
 
 # === TRACED VALUES ===

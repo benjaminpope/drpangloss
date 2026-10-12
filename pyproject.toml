@@ -98,7 +98,8 @@ docs = [
   "zensical>=0.0.62,<0.1",
 ]
 dev = [
-  "virgil-astro[test,docs]",
+  # orbits, so the orbit and alias tests run locally instead of skipping.
+  "virgil-astro[test,docs,orbits]",
   "ruff==0.11.0",
   "pre-commit",
   "build",

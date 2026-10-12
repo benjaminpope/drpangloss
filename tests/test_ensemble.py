@@ -408,15 +408,13 @@ def test_ensemble_recovers_two_blobs():
     )
     data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
     # One family and few weights, to keep this fast.
-    spec = EnsembleSpec(
-        families=("tsv",), n_weights=4
-    )
+    spec = EnsembleSpec(families=("tsv",), n_weights=4)
     result = ensemble(data, 3, jax.random.PRNGKey(1), spec=spec)
     best = min(result.kept, key=lambda m: m.total_chi2_red)
-    # The mean is accepted within sqrt(2/N) of the best member's chi2 (not
-    # below it), so that is the bound, not the best member's chi2 itself.
-    for c, b, d in zip(result.chi2_red, result.trace[0], [data]):
-        assert c <= b * (1 + onp.sqrt(2.0 / d.n_independent) + 1e-6)
+    # Members join the mean while its chi2 stays within sqrt(2/N) of the
+    # best member's (EnsembleSpec.mean_rtol), so that is the bound.
+    (c,), (b,) = result.chi2_red, result.trace[0]
+    assert c <= b * (1 + onp.sqrt(2.0 / data.n_independent) + 1e-6)
     assert best.chi2_red[0] < 2.0
     scores = score(result.mean, truth.env)
     assert scores["ncc"] > 0.8
