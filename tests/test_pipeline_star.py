@@ -20,6 +20,7 @@ pytest.importorskip("nbclient")
 
 import virgil  # noqa: E402
 from virgil import UniformDisk  # noqa: E402
+from virgil._precision import in_float64  # noqa: E402
 from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.models import QuadraticLimbDarkenedDisk  # noqa: E402
 from virgil.pipeline import (  # noqa: E402
@@ -116,10 +117,12 @@ SUMMARY_KEYS = {
         "simple",
         "complex",
         "delta_chi2",
+        "delta_m2loglike",
         "n_extra_params",
         "bic_penalty",
         "preferred",
     },
+    "comparisons": None,
     "star": {"model", "source", "diam_mas", "diam_err_mas"},
     "resolution": {
         "diam_mas",
@@ -261,7 +264,11 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     ld = s["fit"]["models"]["limb_darkened"]
     # The simulated noise differs by platform, so allow several sigma.
     assert abs(ld["params"]["diam"] - 6.0) < 0.4
-    assert abs(ld["params"]["u1"] - 0.35) < 0.5
+    # u1 is weakly constrained by this noise (sigma_V^2 = 0.01 on 81
+    # observables): the truth lies within 3 posterior sigma of the median.
+    u1 = s["posterior"]["models"]["limb_darkened"]["params"]["u1"]
+    assert abs(u1["median"] - 0.35) < 3 * u1["std"]
+    assert u1["std"] < 0.5
     assert s["fit"]["best"] == "limb_darkened"
     # The uniform disk cannot describe a star seen past its first null, and
     # the raw chi^2/N on the quoted errors says so; no rescaling hides it.
@@ -273,6 +280,8 @@ def test_diameter_recovered_and_quoted_errors_lead(full_run):
     assert s["chi2"]["reduced"]["uniform"] > 2.2
     assert s["comparison"]["preferred"] == "limb_darkened"
     assert s["comparison"]["delta_chi2"] > 5 * s["comparison"]["bic_penalty"]
+    assert s["comparison"]["delta_m2loglike"] == s["comparison"]["delta_chi2"]
+    assert s["comparisons"] == [s["comparison"]]
     assert abs(s["star"]["diam_mas"] - 6.0) < 0.5
     assert s["resolution"]["first_null_fraction"] > 1.0
     by_name = {c.name: c for c in res.checks}
@@ -331,20 +340,21 @@ def test_round_trip(full_run, data):
     grid = res.grid()
     assert list(grid["axes"]) == ["diam"]
     assert grid["delta_chi2"].shape == grid["axes"]["diam"].shape
-    # Relative to the refined best point, which the coarse axis can miss:
-    # the coarse minimum lies within one coarse step of the scan diameter,
-    # and its excess over the refined minimum is small there.
+    # The scan is coarse: its minimum is zero and lies within one coarse
+    # step of the refined scan diameter.
     axis, delta = grid["axes"]["diam"], grid["delta_chi2"]
     scan = res.summary["fit"]["scan_diam_mas"]
     step = (axis[-1] / axis[0]) ** (1.0 / (axis.size - 1))
     coarse = axis[int(onp.argmin(delta))]
+    assert delta.min() == 0.0
     assert coarse / step <= scan <= coarse * step
-    # The coarse minimum's excess over the refined minimum, from chi^2
-    # computed independently of the scan.
-    excess = float(star._chi2_64(UniformDisk(coarse), data)[0]) - float(
-        star._chi2_64(UniformDisk(scan), data)[0]
+    # Its excess at another diameter, from chi^2 computed independently of
+    # the scan.
+    i = int(onp.argmin(abs(axis - 2 * coarse)))
+    excess = float(star._chi2_64(UniformDisk(axis[i]), data)[0]) - float(
+        star._chi2_64(UniformDisk(coarse), data)[0]
     )
-    assert delta.min() == pytest.approx(excess, rel=1e-3, abs=1e-3)
+    assert delta[i] == pytest.approx(excess, rel=1e-3, abs=1e-3)
 
 
 def test_quicklook_notebook(full_run):
@@ -424,7 +434,7 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     (out / "run.json").write_text(json.dumps(run))
 
     ran = []
-    for name in ("_load", "_overview", "_fit"):
+    for name in ("_load_star", "_overview", "_fit"):
         monkeypatch.setattr(star, name, lambda p, n=name: ran.append(n))
     res = StarPipeline(data, output=out, **settings).run(through="posterior")
     assert ran == []  # nothing before the posterior was recomputed
@@ -552,25 +562,32 @@ def test_the_posterior_has_few_divergences(data, tmp_path):
     The chains are longer than TINY: 30 warmup steps are too few to adapt,
     whatever the model.
     """
-    res = StarPipeline(
+    pipeline = StarPipeline(
         data,
         output=tmp_path / "run",
         num_warmup=200,
         num_samples=100,
         num_chains=2,
         quicklook_execute=False,
-    ).run(through="posterior")
+    )
+    res = pipeline.run(through="posterior")
     s = res.summary
     lo, hi = s["fit"]["diam_bounds_mas"]
-    assert lo < s["fit"]["scan_diam_mas"] < hi
+    full_lo, full_hi = pipeline._diam_range()
+    # The lobe's bounds are a narrow window of the full prior range that
+    # holds the truth, and every draw of the diameter lies inside them.
+    assert hi / lo < 0.5 * full_hi / full_lo
     assert lo < 6.0 < hi
     for name, model in s["posterior"]["models"].items():
+        diam = res.samples(name=name, group_by_chain=False)["diam"]
+        assert lo <= diam.min() and diam.max() <= hi, name
         assert model["divergence_fraction"] <= 0.05, name
 
 
 def test_scan_diameter_matches_a_brute_force_grid(data):
     lo, hi = 0.5, 30.0
-    axis, delta, best = star._scan(data, lo, hi, 400, None)
+    axis, delta, lobes = star._scan_lobes(data, lo, hi, 400, 1, None)
+    best = lobes[0]["diam"]
     assert delta.shape == axis.shape
     window = onp.linspace(0.97 * best, 1.03 * best, 301)
     chi2 = onp.array(
@@ -583,47 +600,209 @@ def test_scan_diameter_matches_a_brute_force_grid(data):
 
 def test_refine_window_spans_one_coarse_step(data):
     """A coarse scan of 25 points still recovers the diameter."""
-    axis, delta, best = star._scan(data, 0.5, 30.0, 25, None)
-    reference = star._scan(data, 0.5, 30.0, 2000, None)[2]
-    assert best == pytest.approx(reference, rel=2e-3)
+    axis, _, lobes = star._scan_lobes(data, 0.5, 30.0, 25, 1, None)
+    reference = star._scan_lobes(data, 0.5, 30.0, 2000, 1, None)[2][0]
+    assert lobes[0]["diam"] == pytest.approx(reference["diam"], rel=2e-3)
     step = (axis[-1] / axis[0]) ** (1.0 / (axis.size - 1))
     assert step > 1.1  # the old fixed +-1% window could not have found it
 
 
-def test_error_scale_fit_compares_models_on_rescaled_errors(data, tmp_path):
+def test_find_lobes_rejects_a_scan_that_is_not_finite():
+    axis = onp.geomspace(1.0, 10.0, 50)
+    with pytest.raises(RuntimeError, match="not finite"):
+        star._find_lobes(axis, onp.full(50, onp.nan), 1.0, 10.0, 3)
+
+
+def test_error_scale_fit_compares_models_on_minus_two_log_likelihood(
+    data, tmp_path
+):
+    """At each model's own scales chi^2 is N, so it cannot score the
+    models: -2 log L must, and it prefers the true limb-darkened star."""
     res = StarPipeline(
         data, output=tmp_path / "run", error_scale="fit", **TINY
     ).run(through="fit")
     fit = res.summary["fit"]["models"]
-    for report in fit.values():
-        assert report["chi2_fitted"] != pytest.approx(report["chi2"])
+    n = res.summary["chi2"]["n_independent"]
+    uniform, ld = fit["uniform"], fit["limb_darkened"]
+    # At the MAP chi^2 at the fitted scales is N, whatever the model: the
+    # degeneracy that made it useless as a score. (The uniform disk's
+    # scales are profiled analytically, an approximation for wrapping
+    # phases, so only the fitted model is held to it.)
+    assert ld["chi2_fitted"] == pytest.approx(n, rel=0.01)
     comp = res.summary["comparison"]
-    assert comp["delta_chi2"] == pytest.approx(
-        fit["uniform"]["chi2_fitted"] - fit["limb_darkened"]["chi2_fitted"]
+    assert comp["delta_m2loglike"] == pytest.approx(
+        uniform["m2loglike"] - ld["m2loglike"]
     )
+    assert comp["preferred"] == "limb_darkened"
+    assert comp["delta_m2loglike"] > comp["bic_penalty"]
+    assert res.summary["fit"]["best"] == "limb_darkened"
+    # The uniform disk's scales are profiled along the scan.
+    assert res.fit_result("uniform").info["scales"] == "profiled"
     # The quoted-error chi^2/N stays the diagnostic.
     assert res.summary["chi2"]["reduced"]["uniform"] == pytest.approx(
-        fit["uniform"]["chi2_reduced"]
+        uniform["chi2_reduced"]
     )
+    assert uniform["chi2_reduced"] > ld["chi2_reduced"]
+
+
+def test_profiled_scales_maximize_the_likelihood(data):
+    """The profiled scales are the maximum of the likelihood: scaling any
+    one of them by 0.9 or 1.1 raises -2 log L. (sqrt(chi2_b / N_b) is not
+    the maximum for the von Mises closure phases, hence the profiling.)"""
+    import numpyro.distributions as dist
+
+    from virgil.pipeline import _common
+
+    model = TRUTH
+    noise = {
+        "vis_scale": dist.LogUniform(0.1, 10.0),
+        "phi_scale": dist.LogUniform(0.1, 10.0),
+    }
+    blocks = _common._scale_blocks(data, noise)
+    assert [b[0] for b in blocks] == ["vis_scale", "phi_scale"]
+    scales = _common._profiled_scales(model, data, blocks)
+    best = _common._m2loglike(
+        model, data, **{k: float(v) for k, v in scales.items()}
+    )
+    for key in scales:
+        for factor in (0.9, 1.1):
+            trial = {k: float(v) for k, v in scales.items()}
+            trial[key] *= factor
+            assert _common._m2loglike(model, data, **trial) > best, key
+
+
+def test_scanned_fit_refines_the_diameter_between_grid_points():
+    """With small errors the grid spacing (0.26 %) is many sigma_theta; the
+    refined diameter must reach the optimum of a far denser grid."""
+    import numpyro.distributions as dist
+
+    from virgil.pipeline import _common
+
+    template = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
+        hour_angles_h=(-2.5, 0.0, 2.5),
+        sigma_v2=1e-4,
+        sigma_cp_deg=0.1,
+    )
+    small = template.with_model(UniformDisk(6.0), key=jax.random.PRNGKey(5))
+    noise = {
+        "vis_scale": dist.LogUniform(0.1, 10.0),
+        "phi_scale": dist.LogUniform(0.1, 10.0),
+    }
+    pipeline = StarPipeline(small, "uniform", error_scale="fit")
+    entry = star.models()["uniform"]
+    start = {"diam": 6.0}
+    grid = onp.geomspace(0.75 * 6.0, 1.25 * 6.0, star._START_POINTS)
+    batch = pipeline.settings["batch_size"]
+    coarse, _ = _common._m2loglike_grid(
+        entry.build, start, small, grid, noise, batch
+    )
+    best = int(onp.nanargmin(coarse))
+    values = star._fit_scanned(pipeline, entry, start, grid, noise)[1]
+    refined = float(values["diam"])
+    assert {"noise.vis_scale", "noise.phi_scale"} <= set(values)
+
+    window = onp.geomspace(grid[best - 1], grid[best + 1], 2001)
+    dense, _ = _common._m2loglike_grid(
+        entry.build, start, small, window, noise, batch
+    )
+    step = grid[best + 1] / grid[best] - 1.0
+    dense_best = float(window[int(onp.nanargmin(dense))])
+    at_refined = _common._m2loglike_grid(
+        entry.build, start, small, onp.array([refined]), noise, batch
+    )[0][0]
+    assert abs(refined / dense_best - 1.0) < 0.05 * step
+    assert at_refined <= coarse[best]
+
+
+def test_load_removes_a_stale_processed_oifits(data, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from virgil.pipeline import _common
+
+    folder = tmp_path / "data"
+    folder.mkdir()
+    stale = folder / "processed.oifits"
+    stale.write_text("an earlier run's data")
+    p = SimpleNamespace(processed=data, output=tmp_path)
+    monkeypatch.setattr(
+        _common._io, "oidata_tables", lambda d: (None, "no tables")
+    )
+    report = star._load_star(p)
+    assert not stale.exists()
+    assert report["processed_oifits_skipped"] == "no tables"
+    assert "freq_max_per_rad" in report
+
+
+def _fake_models(parents):
+    entries = {}
+    for name, (parent, n_params) in parents.items():
+        entries[name] = dataclasses.replace(
+            star.models()["uniform"],
+            name=name,
+            parent=parent,
+            params=tuple(f"p{i}" for i in range(n_params)),
+        )
+    return entries
+
+
+@pytest.mark.parametrize(
+    "m2loglike, best, decisive",
+    [
+        # Each step beats its penalty (ln 81 = 4.4 per parameter): C.
+        ({"a": 300.0, "b": 250.0, "c": 200.0}, "c", ("b", "c")),
+        # B beats A but C does not beat B: B.
+        ({"a": 300.0, "b": 250.0, "c": 248.0}, "b", ("b", "c")),
+        # B does not beat A, whatever C does relative to B: A.
+        ({"a": 300.0, "b": 298.0, "c": 200.0}, "a", ("a", "b")),
+    ],
+)
+def test_model_choice_walks_the_chain_of_parents(m2loglike, best, decisive):
+    registry = _fake_models({"a": (None, 1), "b": ("a", 2), "c": ("b", 3)})
+    reports = {k: {"m2loglike": v} for k, v in m2loglike.items()}
+    chosen, comparison, comparisons = star._choose_model(reports, registry, 81)
+    assert chosen == best
+    assert (comparison["simple"], comparison["complex"]) == decisive
+    assert [(c["simple"], c["complex"]) for c in comparisons] == [
+        ("a", "b"),
+        ("b", "c"),
+    ]
+    assert comparison["bic_penalty"] == pytest.approx(math.log(81))
+    assert comparison["delta_m2loglike"] == pytest.approx(
+        m2loglike[decisive[0]] - m2loglike[decisive[1]]
+    )
+
+
+def test_model_choice_with_a_single_model_has_no_comparison():
+    registry = _fake_models({"a": (None, 1), "b": ("a", 2)})
+    best, comparison, comparisons = star._choose_model(
+        {"b": {"m2loglike": 5.0}}, registry, 81
+    )
+    assert (best, comparison, comparisons) == ("b", None, [])
 
 
 def test_prior_bound_ignores_shape_parameters():
     import numpyro.distributions as dist
 
+    entry = star.models()["limb_darkened"]
     priors = {
         "diam": dist.LogUniform(1.0, 10.0),
         "q1": dist.Uniform(0.0, 1.0),
+        "q2": dist.Uniform(0.0, 1.0),
     }
+    noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
     samples = {
         "diam": onp.full(100, 5.0),
         "q1": onp.full(100, 0.999),
-        "noise.vis_scale": onp.full(100, 1.0),
+        "q2": onp.full(100, 0.5),
+        "noise.vis_scale": onp.full(100, 9.99),
     }
-    both = star._bound_fractions(samples, priors)
-    assert both["q1"] == 1.0
-    kept = star._bound_fractions(samples, priors, skip=("q1",))
-    assert set(kept) == {"diam", "noise.vis_scale"}
-    assert kept["diam"] == 0.0
+    fractions = star._bound_fractions(entry, priors, noise, samples)
+    # q1 sits at its bound but is a shape parameter: judged elsewhere.
+    assert set(fractions) == {"diam", "noise.vis_scale"}
+    assert fractions["diam"] == 0.0
+    assert fractions["noise.vis_scale"] == 1.0
+    assert set(star._bound_fractions(entry, priors, None, samples)) == {"diam"}
 
 
 def test_resolution_uses_the_fitted_models_first_null():
@@ -699,6 +878,8 @@ def test_two_lobe_star_reports_the_alias(tmp_path):
         "diam_mas",
         "chi2",
         "chi2_reduced",
+        "m2loglike",
+        "delta_m2loglike",
         "delta_chi2",
     }
     best = min(rows, key=lambda r: r["delta_chi2"])
@@ -772,22 +953,32 @@ def test_divergences_at_hard_walls_are_explained_not_hidden(
     assert abs(post["params"]["diam"]["median"] - 6.04) < 0.15
     by_name = {c.name: c for c in res.checks}
     assert by_name["chi2_limb_darkened"].status == "pass"
-    if post["divergence_fraction"] > 0.01:
-        div = by_name["divergences"]
-        assert div.status == "warn" and "hard wall" in div.message
+    # The probe finds walls, so divergences are explained and never fail.
+    div = by_name["divergences"]
+    assert div.status != "fail"
+    assert ("hard wall" in div.message) == (post["divergence_fraction"] > 0.01)
 
 
-def test_wall_probe_finds_no_wall_in_a_smooth_posterior(data):
-    entry = star.models()["limb_darkened"]
+def _wall_samples(spread):
     rng = onp.random.default_rng(0)
-    samples = {
-        "diam": 6.0 + 0.01 * rng.normal(size=200),
-        "q1": 0.5 + 0.01 * rng.normal(size=200),
-        "q2": 0.2 + 0.01 * rng.normal(size=200),
+    return {
+        "diam": 6.0 + spread * rng.normal(size=200),
+        "q1": float(TRUTH.q1) + spread * rng.normal(size=200),
+        "q2": float(TRUTH.q2) + spread * rng.normal(size=200),
     }
+
+
+def test_wall_probe_separates_narrow_from_wide_posteriors(tutorial_data):
+    """With 0.5 deg closure-phase errors a flip costs ~1e5 in chi^2: a
+    posterior a thousandth of a milliarcsecond wide never reaches one, one
+    as wide as the tutorial star's (0.06 mas) often does."""
+    entry = star.models()["limb_darkened"]
     priors = entry.priors(3.0, 12.0)
-    probe = star._wall_probe(entry, data, samples, priors, n=10)
-    assert probe["exposed"] == 0.0 and probe["n"] > 0
+    probe = in_float64(star._wall_probe)  # as in the sampler stage
+    narrow = probe(entry, tutorial_data, _wall_samples(1e-3), priors, n=20)
+    wide = probe(entry, tutorial_data, _wall_samples(0.06), priors, n=20)
+    assert narrow["n"] > 0 and narrow["exposed"] == 0.0
+    assert wide["n"] > 0 and wide["exposed"] > 0.0
 
 
 @pytest.mark.parametrize(

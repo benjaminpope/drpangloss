@@ -73,7 +73,7 @@ nav:
       - "Gravity-darkened stars": gravity_darkened_star.md
   - Imaging:
       - "1. Simulating AMI data": imaging_ami.md
-      - "2. Regularised maximum likelihood": imaging_rml.md
+      - "2. Regularized maximum likelihood": imaging_rml.md
       - "3. Gaussian-process priors": imaging_gp.md
       - "4. A ring around a binary": imaging_composite.md
       - "5. Sampling the posterior": imaging_sampling.md
@@ -98,7 +98,7 @@ nav:
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
-      - Linear marginalisation (internal): api/linear.md
+      - Linear marginalization (internal): api/linear.md
       - Observables: api/observables.md
       - Fitting: api/fitting.md
       - SVI: api/svi.md

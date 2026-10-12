@@ -7,6 +7,8 @@ virgil never enables float64 globally. Entry points such as
 """
 
 import contextlib
+import functools
+from collections.abc import Iterator
 
 import jax
 import jax.numpy as np
@@ -57,3 +59,27 @@ def cast_tree(tree, dtype):
         return leaf
 
     return jax.tree_util.tree_map(cast, tree)
+
+
+def in_float64(fn):
+    """Run ``fn`` inside :func:`run_in` ``("float64")``, with every
+    positional and keyword argument cast by :func:`cast_tree`.
+
+    For private entry points whose Hessians, Cholesky factors or χ² near a
+    visibility null need double precision; arguments that are not arrays
+    (or pytrees of them) pass through unchanged. So do iterators (a
+    generator of datasets, say), which are not pytrees: ``fn`` casts what
+    it reads from them.
+    """
+
+    def cast(arg):
+        return arg if isinstance(arg, Iterator) else cast_tree(arg, "float64")
+
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        with run_in("float64"):
+            args = [cast(a) for a in args]
+            kwargs = {k: cast(v) for k, v in kwargs.items()}
+            return fn(*args, **kwargs)
+
+    return wrapped

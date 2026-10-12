@@ -12,6 +12,7 @@ import jax.numpy as np
 import numpy as onp
 
 from ._utils import concrete, is_flux_param, resolve_flux_param
+from ._deprecate import external_stacklevel
 
 
 # Grid points are evaluated in batches, which bounds memory on large grids:
@@ -177,5 +178,5 @@ def warn_unconverged(success, caller):
             "inaccurate.",
             RuntimeWarning,
             # user -> public function -> here
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )

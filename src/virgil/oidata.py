@@ -24,6 +24,7 @@ from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .oifits import _phase_unit_scale, read_oifits
+from ._deprecate import external_stacklevel
 
 
 __all__ = ["OIData", "closure_phases", "cp_indices"]
@@ -297,7 +298,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # Drop flagged samples from the observables. Their baselines stay in
         # u and v, because closure phases may still need them.
         vis_index = None
-        keep = _good_samples(vis, d_vis, vis_flag, u.size, "vis")
+        keep = _good_samples(
+            vis, d_vis, vis_flag, u.size, "vis", vis_mat is not None
+        )
         if keep is not None:
             if vis_mat is not None:
                 raise ValueError(
@@ -318,7 +321,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi_index = onp.zeros(0, dtype=int)
         else:
             n_phi = len(indices[0]) if cp_flag else u.size
-            keep = _good_samples(phi, d_phi, phi_flag, n_phi, "phi")
+            keep = _good_samples(
+                phi, d_phi, phi_flag, n_phi, "phi", phi_mat is not None
+            )
         if not no_phases and keep is not None:
             if phi_mat is not None:
                 raise ValueError(
@@ -333,7 +338,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "positive error): using "
                     "the visibilities alone.",
                     UserWarning,
-                    stacklevel=2,
+                    stacklevel=external_stacklevel(),
                 )
                 cp_flag, indices = False, None
                 phi_index = onp.zeros(0, dtype=int)
@@ -860,11 +865,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         operator = np.asarray(operator, dtype=float)
         sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
-        weighted = operator * sigma[None, :]
-        if correlation is None:
-            covariance = weighted @ weighted.T
-        else:
-            covariance = weighted @ np.asarray(correlation) @ weighted.T
+
+        def projected_covariance(sigma):
+            weighted = operator * sigma[None, :]
+            if correlation is None:
+                return weighted @ weighted.T
+            return weighted @ np.asarray(correlation) @ weighted.T
+
+        covariance = projected_covariance(sigma)
         diagonal = np.diag(covariance)
         # A tolerance relative to the covariance's own scale, so that
         # rescaling an operator or its errors cannot bypass this check.
@@ -875,9 +883,26 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             # closure relation of correlated closure phases), which carry
             # no measurement and would divide 0 by 0.
             keep = diagonal > 1e-10 * scale
+            # A non-zero row with no variance has a zero projected error
+            # (zero input errors); a zero row projects everything away.
+            used = np.any(operator != 0.0, axis=1)
+            if correlation is None and bool(np.any(used & ~keep)):
+                raise ValueError(_ZERO_PROJECTED_ERROR)
             return operator[keep], np.sqrt(diagonal[keep])
         variance, vectors = np.linalg.eigh(covariance)
         keep = variance > 1e-10 * float(np.max(variance))
+        zero = sigma == 0.0
+        if np.any(zero) and np.any(operator[:, zero] != 0.0):
+            # A zero error on an input the operator uses must not make a
+            # direction vanish unseen: with a positive placeholder for it,
+            # the same covariance keeps more directions if it did. (Rank
+            # lost to the correlation itself is lost in both.)
+            placeholder = projected_covariance(
+                np.where(zero, np.max(sigma), sigma)
+            )
+            expected = np.linalg.eigvalsh(placeholder)
+            if np.sum(keep) < np.sum(expected > 1e-10 * np.max(expected)):
+                raise ValueError(_ZERO_PROJECTED_ERROR)
         return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
 
     @classmethod
@@ -2023,11 +2048,20 @@ def _expand_channels(u, v, wavel, vis, indices):
     )
 
 
-def _good_samples(values, errors, flag, n_samples, name):
+_ZERO_PROJECTED_ERROR = (
+    "An operator output has zero projected error (the inputs it combines "
+    "have zero errors); it cannot be whitened. Give the inputs positive "
+    "errors."
+)
+
+
+def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
     Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
-    finite, with a finite, positive error.
+    finite, with a finite, positive error. With an ``operator``, the raw
+    errors only enter through the projected ones, so a zero raw error is
+    usable (``_diagonalized`` rejects zero projected errors).
 
     Data whose size is not ``n_samples`` are already projected and are not
     checked.
@@ -2039,7 +2073,10 @@ def _good_samples(values, errors, flag, n_samples, name):
                 f"for {n_samples} samples (it looks already projected)."
             )
         return None
-    bad = ~_valid_samples(values, errors)
+    if operator:
+        bad = ~(onp.isfinite(values) & onp.isfinite(errors) & (errors >= 0))
+    else:
+        bad = ~_valid_samples(values, errors)
     if flag is not None:
         flag = onp.asarray(flag, dtype=bool).reshape(-1)
         if flag.size != n_samples:

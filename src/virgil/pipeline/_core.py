@@ -19,6 +19,7 @@ import numpy as onp
 
 from . import _io
 from ._checks import stage_warning_checks, worst_status
+from .._deprecate import external_stacklevel
 
 SCHEMA = _io.SCHEMA
 
@@ -159,7 +160,7 @@ class _Pipeline:
                 f"{type(self).__name__} is provisional: its settings and "
                 "outputs may change while the virgil APIs it calls settle.",
                 FutureWarning,
-                stacklevel=2,
+                stacklevel=external_stacklevel(),
             )
 
     # --- settings -------------------------------------------------------
@@ -326,7 +327,7 @@ class _Pipeline:
         record["updated"] = _now()
         _io.write_json(self.output / "run.json", record)
 
-    def _new_record(self):
+    def _new_record(self, versions):
         return {
             "schema": SCHEMA,
             "pipeline": self.NAME,
@@ -337,7 +338,7 @@ class _Pipeline:
             "config": self.settings,
             "model": self._model_digest(),
             "inputs": self._input_record(),
-            "provenance": provenance(),
+            "provenance": versions,
             "stages": {},
             "created": _now(),
         }
@@ -371,78 +372,98 @@ class _Pipeline:
         selected = (
             names if through is None else names[: names.index(through) + 1]
         )
+        versions = provenance()
+        record = self._open_record(resume, versions)
+        stages = {stage.name: stage for stage in self._stages()}
+        rerun = False
+        for name in selected:
+            if not rerun and self._is_done(record, stages[name]):
+                continue
+            rerun = True  # later stages depend on this one
+            for later in names[names.index(name) :]:
+                record["stages"].pop(later, None)
+                self._discard(stages[later])
+            self._run_stage(record, stages[name], versions, name == names[-1])
+        self._close_record(record, names)
+        return _io.load(self.output)
+
+    def _open_record(self, resume, versions):
+        """The ``run.json`` record to continue (or a new one), marked running."""
         run_file = self.output / "run.json"
         if not resume:
             self._clear()
         if resume and run_file.exists():
             record = _io.read_json(run_file)
             self._check_resume(record)
-            record["provenance"] = provenance()
+            # The latest run's versions; each stage keeps its own.
+            record["provenance"] = versions
+            record.pop("files", None)  # stale until the run is closed
         else:
-            record = self._new_record()
+            record = self._new_record(versions)
         record["status"], record["error"] = "running", None
         self.output.mkdir(parents=True, exist_ok=True)
         self._write_record(record)
+        return record
 
-        stages = {stage.name: stage for stage in self._stages()}
-        rerun = False
-        for name in selected:
-            stage = stages[name]
-            entry = record["stages"].get(name, {})
-            done = entry.get("status") == "complete" and all(
-                (self.output / p).exists() for p in stage.outputs
+    def _is_done(self, record, stage):
+        """Whether ``stage`` completed and all its outputs are still there."""
+        entry = record["stages"].get(stage.name, {})
+        return entry.get("status") == "complete" and all(
+            (self.output / p).exists() for p in stage.outputs
+        )
+
+    def _run_stage(self, record, stage, versions, last):
+        """Run one stage, writing its report and updating ``record``."""
+        name = stage.name
+        started, t0 = _now(), time.perf_counter()
+        record["stages"][name] = {"status": "running", "started": started}
+        if last:
+            # The last stage (the quicklook) reports on a run whose
+            # analysis is complete; a failure here still marks it failed.
+            record["status"] = "complete"
+        self._write_record(record)
+        caught = []
+        try:
+            # Warnings raised inside a stage are recorded, not printed:
+            # they land in the report, the summary and its checks.
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                report = stage.run(self) or {}
+            report = dict(report, warnings=_record_warnings(name, caught))
+            _io.write_json(
+                self.output / "stages" / name / "report.json", report
             )
-            if done and not rerun:
-                continue
-            rerun = True  # later stages depend on this one
-            for later in names[names.index(name) :]:
-                record["stages"].pop(later, None)
-                stale = self.output / "stages" / later / "report.json"
-                if stale.exists():
-                    stale.unlink()
-            started, t0 = _now(), time.perf_counter()
-            record["stages"][name] = {"status": "running", "started": started}
-            if name == names[-1]:
-                # The last stage (the quicklook) reports on a run whose
-                # analysis is complete; a failure here still marks it failed.
-                record["status"] = "complete"
-            self._write_record(record)
-            caught = []
-            try:
-                # Warnings raised inside a stage are recorded, not printed:
-                # they land in the report, the summary and its checks.
-                with warnings.catch_warnings(record=True) as caught:
-                    warnings.simplefilter("always")
-                    report = stage.run(self) or {}
-                report = dict(report, warnings=_record_warnings(name, caught))
-                _io.write_json(
-                    self.output / "stages" / name / "report.json", report
-                )
-            except BaseException as err:
-                record["stages"][name].update(
-                    status="failed", seconds=time.perf_counter() - t0
-                )
-                record["status"] = "failed"
-                record["error"] = {
-                    "stage": name,
-                    "type": type(err).__name__,
-                    "message": str(err),
-                    "traceback": traceback.format_exc(),
-                    # The warnings often explain the failure.
-                    "warnings": _record_warnings(name, caught),
-                }
-                self._write_record(record)
-                raise
-            record["stages"][name] = {
-                "status": "complete",
-                "started": started,
-                "finished": _now(),
-                "seconds": round(time.perf_counter() - t0, 3),
-                "outputs": list(stage.outputs),
-            }
-            self._write_summary(record)
-            self._write_record(record)
+        except BaseException as err:
+            self._record_failure(record, name, err, caught, t0)
+            raise
+        record["stages"][name] = {
+            "status": "complete",
+            "started": started,
+            "finished": _now(),
+            "seconds": round(time.perf_counter() - t0, 3),
+            "outputs": list(stage.outputs),
+            "provenance": versions,
+        }
+        self._write_summary(record)
+        self._write_record(record)
 
+    def _record_failure(self, record, name, err, caught, t0):
+        record["stages"][name].update(
+            status="failed", seconds=time.perf_counter() - t0
+        )
+        record["status"] = "failed"
+        record["error"] = {
+            "stage": name,
+            "type": type(err).__name__,
+            "message": str(err),
+            "traceback": traceback.format_exc(),
+            # The warnings often explain the failure.
+            "warnings": _record_warnings(name, caught),
+        }
+        self._write_record(record)
+
+    def _close_record(self, record, names):
+        """Set the final status, write the summary and hash the outputs."""
         complete = all(
             record["stages"].get(n, {}).get("status") == "complete"
             for n in names
@@ -451,7 +472,13 @@ class _Pipeline:
         self._write_summary(record)
         record["files"] = self._file_hashes()
         self._write_record(record)
-        return _io.load(self.output)
+
+    def _discard(self, stage):
+        """Delete a stage's report and declared outputs (they are stale)."""
+        report = self.output / "stages" / stage.name / "report.json"
+        for path in (report, *(self.output / p for p in stage.outputs)):
+            if path.exists():
+                path.unlink()
 
     def _file_hashes(self):
         return {

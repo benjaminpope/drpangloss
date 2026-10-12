@@ -39,223 +39,6 @@ anything before 1.0 may change between minor versions.
   `pytest -W error::FutureWarning`. A message regex given to `-W` on the
   command line is matched literally, so it would not catch them.
 
-### Changed
-
-- **NUTS can sample each prior in its flat coordinate (opt-in,
-  `flat_coordinates=True`, #301).** `numpyro_model(...,
-  flat_coordinates=True)` maps a `LogUniform` scale to NUTS's
-  unconstrained coordinate through log x, an `IsotropicInclination`
-  through cos i and an `IsotropicLatitude` through sin(lat), for
-  parameters and `noise=` terms alike, as `fit` optimizes them. Sites keep
-  their names, samples are the model's own parameters, and the posterior
-  is unchanged. It is off by default: simulation-based calibration (1000
-  replicates) showed no gain in effective sample size per second or in
-  divergences, and rank uniformity was the same. The 62² imaging notebook,
-  with `gauss_newton_mass`, ran in 67 s instead of 550 s with it, so the
-  tutorials that sample large images pass `flat_coordinates=True`. Pass
-  the same value to `gauss_newton_mass`, `variational` and
-  `chain_init_params`' model. See `design/sampler_flat_coordinates.md`.
-
-
-- **`AliasResult.table()["scales"]` is now flat (#321).** It was one entry per
-  epoch, each a list of per-block scales; it is now one float per epoch and
-  block, so `row["scales"][i]` no longer means epoch `i`. The per-epoch
-  nesting is the new `epoch_scales` key.
-- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
-- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
-- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
-- **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
-- **Orbit starts are scale-aware (#268).** `epoch_positions` now scores
-  its grid on the scale-marginalized surface m = -Σ_b (ν_b/2) ln χ²_b,
-  in which each dataset's V² and closure-phase error scales are
-  integrated out under their Jeffreys priors (new
-  `epochs.marginal_loglike`; Gaussian normalization in every block, with
-  `s_max=` for a bounded numerical marginal where closure phases are
-  weak, and `dof=` for an effective-dof fraction). The refinement
-  maximizes m (equivalently, a fit with free `vis_scale` and
-  `phi_scale`), and the covariance is the curvature of m, so positions,
-  covariances and the new `EpochPositions.gap_marginal` do not change
-  when one dataset's errors, or only its closure-phase errors, are
-  rescaled. `gap` keeps its old value on the quoted errors for one
-  release and will then switch to the marginal value; `decisive`,
-  `positions(min_gap=...)` and `start_from_positions(min_gap=...)` now
-  compare `gap_marginal`. **Behaviour change:** a night whose errors are
-  underestimated by s used to look s² times more decisive than it is, and
-  is no longer used to seed orbits unless its marginal gap passes
-  `min_gap`. New fields `chi2_raw` (χ²/N on the quoted errors, per block
-  and in all, N = `n_independent`) and `scale` (ŝ per block) are
-  recorded, and a `UserWarning` names the datasets with raw χ²/N > 4.
-  Grid fluxes must be at most 1 (and the refinement keeps f ≤ 1): f > 1
-  at r is the same binary as 1/f at -r.
-  Data with gains, closure-phase offsets or a model-dependent covariance
-  raise a `NotImplementedError` on the marginalized surface, since their
-  nuisance covariance is not multiplied by an error scale.
-- `rank_orbits` and `start_from_positions` take `scales="quoted" |
-  "marginal"`. `"marginal"` ranks with each dataset's error scales
-  integrated out, so the worst-calibrated nights no longer dominate the
-  ranking. The default stays `"quoted"` in 0.4, with a `FutureWarning`
-  when `scales` is not given; it will become `"marginal"`.
-
-- **Duplicated and dead code removed (part of #310; no behaviour change).**
-  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
-  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
-  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
-  Internally: `epochs` and `pipeline.binary` use the `_utils` unit
-  constants; `FWHM_PER_SIGMA` moved to `_utils` (still importable from
-  `detection`) and replaces the hand-written `2.3548` and
-  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
-  exact value, a 1e-5 relative change in an envelope-fit starting width);
-  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
-  `coordinate_points`; one `_unit_sum`; `pipeline.cli` uses
-  `_io.read_json` and `_io.sha256_file`; `pipeline.binary` takes skewness
-  and kurtosis from `scipy.stats`; the `batch_size` and noise-term
-  "Priors" docstrings are stated once and referred to. Unused
-  `_utils.i2pi` removed.
-
-### Fixed
-
-- **Isotropic priors have finite gradients at the poles in float32.**
-  `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
-  derivative within about 1e-8 of a pole (the branch not taken of a
-  `where` had an infinite slope), and their final clip a slope of 1/2 at
-  the bounds; both now keep the true derivative.
-
-- **Drifted copies unified (part of #310).**
-  - **Pipeline resume fingerprint.** `pipeline._io.data_fingerprint` now
-    hashes every field of the `OIData` (it is `detection._fingerprint`),
-    not twelve arrays and three flags, so a change to the stations,
-    `t_ref`, `dt`, frames, gains, closure offsets, extra observables or
-    uv grid is noticed on resume. **This changes every fingerprint: run
-    folders written by earlier versions no longer match, so resuming one
-    raises a `ConfigMismatchError` ("the data differ"), and their cached
-    stages are recomputed once you start it over with `run(resume=False)`
-    (`--fresh`) or in a new folder.**
-  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
-    (or negative) error, as it already did for extra observables
-    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
-    residual, which made every likelihood and fit non-finite. Flagged
-    and non-finite samples were already dropped.
-  - **Orbit ranking.** `rank_orbits` (and so `start_from_positions`)
-    orders orbits with `orbit_search.rank_scores`, as
-    `score_orbits(...).order()` does: scores within 1e-3 nat tie and
-    rank by index, and non-finite ones rank last. Orbits whose scores
-    differ by less than that can come out in a different order than
-    before.
-  - **Field of view.** `imaging.field_of_view`, `nyquist_pixel_scale`,
-    `Epochs.resolution_mas` and the pipeline's `fov_mas`,
-    `resolution_mas` and `lambda_over_b_mas` share
-    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines.
-    The pipeline used the longest wavelength over the shortest baseline,
-    which are not observed together when the uv sampling differs between
-    channels, so its `fov_mas` can be smaller (and its default
-    `max_sep`, a fraction of it).
-  - **Position angles.** One `_geometry.position_angle` /
-    `separation_pa` (North through East, `[0, 360)`) serves the models,
-    orbits, plotting and the pipeline. `KeplerOrbit.frame(...)["line_pa"]`
-    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
-    `towards_primary` is still `line_pa + 180`).
-  - **Phase units** (`oifits` columns and `OIData` records) go through
-    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
-    means the default unit in both. One check for the names of
-    `System` components and `Sum` parts (derived from the class's own
-    fields), one `wrap_phase`, and the pipeline's prior-bound fractions
-    use `fitting._bound_fraction` (a prior with a flat coordinate, such
-    as `IsotropicInclination`, no longer counts its poles as bounds).
-- **`virgil.ensemble` default selection.** The L-curve window now keeps
-  the weights from `window_dex` below the corner up to the corner (MYTHRA's
-  "just before the turnover"), not the over-regularized side above it. The
-  default weight ranges reach a decade lower (`tsv` 0.1–10⁴, the others
-  10⁻⁴–10 per data point), set from the corners of the 60 datasets of
-  virgil-validation's contest bench, and each sweep draws one log-uniform
-  weight per equal bin of `log w`, so it spans its range. The default
-  `field_factors` are now (1, 2, 4) times `field_of_view(data)`, and a
-  field too large for `max_npix` keeps its size with coarser pixels instead
-  of being cropped, down to Nyquist pixels; on a uv lattice (AMI) the factors are capped at 1. The
-  iterative mean now admits a member if every dataset's χ² stays within
-  `mean_rtol` of the best member's, by default each dataset's χ²/N noise
-  √(2/N) (was: no rise at all, judged against the running mean), and
-  `combine` warns when fewer than `min_kept` (3) members are kept. The
-  default `n_weights` is 8. On the bench the old defaults kept 1 of 72
-  members on 44 of 60 datasets and gave the worst images of any arm.
-
-- **`read_oifits` reads closure triangles whose leg has no visibility
-  row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
-  triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
-  raised a `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER
-  products (which omit a baseline's V²) could not be read. `OI_T3` is
-  self-contained in the OIFITS standard, so such a leg now gets a flagged
-  sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
-  `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
-  same frame, as reversed legs already were. One `UserWarning` per file
-  gives the number of legs placed this way. The `ValueError` remains when
-  those coordinates are NaN or zero, or disagree with the triangle's other
-  legs (a table written with the opposite baseline direction).
-
-- **`epoch_positions` no longer commits to a peak before refining it.**
-  It refined only the best grid point, which is not always the best peak
-  once refined: fringe peaks are often narrower than the grid step, and
-  on Gl 229 (GRAVITY) two nights committed to a wrong peak with a
-  `gap_marginal` above `min_gap`, which then seeded the orbit search in a
-  wrong mode. It now refines the top `n_peaks=5` distinct local maxima of
-  the grid (more than `gap_mas` apart), takes the best refined one as the
-  position, and measures `gap_marginal` against its best refined rival
-  (with the grid as a floor). The new `EpochPositions.peaks` holds each
-  dataset's catalogue (`EpochPeaks`: positions, fluxes, quoted and
-  marginal scores, weights, an `edge` flag and a `laplace` flag; also
-  `EpochPositions.edge`). The weights are each peak's Laplace mass
-  exp(m) det(H)^(-1/2) over (dra, ddec, flux), normalized, falling back
-  to the height exp(m) where `laplace` is false (no refinement, or a
-  Hessian that is not positive definite). Refined peaks within `gap_mas`
-  of a higher one are dropped, so two grid cells that refine to one
-  maximum are counted once. The quoted `gap` stays the grid quantity for
-  its last release. The cost of the refinement grows linearly with
-  `n_peaks`, which must be an integer of at least 1 (a `ValueError`
-  otherwise). The edge warning now fires when either the best grid point
-  or the best refined peak's starting cell is on the grid edge, with a
-  message for each case; before, only the best grid point was tested.
-  `start_from_positions(n_peaks=)` passes it on, and
-  `OrbitStart.seeded` and `OrbitStart.ambiguous` name the datasets that
-  seeded the orbits and those left out (with a `UserWarning`), so that no
-  night is dropped silently.
-- `ensemble.combine` drops members whose fit diverged (a non-finite χ²),
-  with `reason="diverged"`, instead of rejecting every member with a
-  `ValueError`, and `LCurve.corner` ignores non-finite points so that a
-  diverged fit cannot move the corner.
-- Parallel numpyro chains (`chain_method="parallel"`) on data with
-  `with_gains` no longer segfault. `GainModes` held zero-size arrays when
-  no mode spans frames, and XLA's Shardy pass crashes compiling a
-  `jax.pmap` that captures one (JAX 0.11.2). `GainModes.spanning` and
-  `spanning_group` are now `None` then. `numpyro_model` warns, suggesting
-  `chain_method="vectorized"`, when the data still hold zero-size arrays
-  (e.g. no closure phases) and more than one device is visible.
-- `metrics.rms_convolved` no longer needs `pixel_scale_mas` for array
-  inputs when no `beam` is given (the docstring already said so); a beam
-  with arrays and no pixel scale still raises a clear `ValueError`.
-- The `lawson_sigma_over_peak` docstring now states that both images are
-  normalized over the whole array, so flux in empty sky does affect σ.
-  Values are unchanged.
-- `limits.chi2ppf` works for any number of degrees of freedom on a
-  standard install. For `df != 1` it called numpyro's `gammaincinv`,
-  which needs `tensorflow_probability`, not a virgil dependency; it now
-  inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
-  matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
-  for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
-  `df = 1` also uses it, gaining precision at small p. It returns NaN
-  for `df <= 0`, and no longer needs `tensorflow_probability`. This
-  supersedes the removal of `chi2ppf` in #293, which is reverted. Found
-  by virgil-validation (F17).
-- `epochs.marginal_loglike(..., s_max=...)` (and `scales="marginal"` in
-  `epoch_positions` and `rank_orbits` with `s_max`) integrates each
-  block's error scale adaptively in ln s instead of on a fixed 257-node
-  grid, which missed by up to 0.7 in `m` where the likelihood falls
-  steeply from a bound (a model with s ≈ 5 against `s_max = 1.2`). It now
-  matches `scipy.integrate.quad` and the closed form in incomplete gamma
-  functions to about 1e-11 in float64. `m` is now the log of the integral
-  over ln s itself, so bounded values shift by a constant per block
-  (differences between models are unaffected by it), and `gap_marginal`
-  values computed with `s_max` may shift slightly. Found by
-  virgil-validation (F18).
-
 ### Added
 
 - **Variational inference** (virgil#12). `virgil.svi.variational(model,
@@ -271,21 +54,26 @@ anything before 1.0 may change between minor versions.
   bounded posteriors; `"iaf"`, `"mvn"` (a Gaussian, ≈ Laplace) and
   `"laplace"` are the alternatives. float64 by default, as for `fit`;
   `flat_coordinates` is passed through. New page: Variational inference.
-
-- **Per-band checkpoints and failure isolation in `fit_orbit_aliases` (#321).**
-  `checkpoint_dir=` writes each band (`band_<N>.pkl`, `band_<N>.json`) as
-  soon as it is fitted, and a rerun with the same data, positions and
-  settings loads it instead of refitting; `on_band=` is called with each
-  `AliasBandResult`. Each band has its own random stream, so a resumed run
-  reproduces an uninterrupted one. A band that raises becomes a row with the
-  flag `band-failed` and `AliasBandResult.error`; a singular or
-  ill-conditioned Hessian gets the flag `hessian-singular` instead of
-  raising `LinAlgError`.
 - **`virgil.aliases.fit_orbit_aliases`.** Orbits whose epochs undersample the
   period: alias bands `N = round(T/P)`, each fitted to the closure phases of
   all epochs with per-epoch error scales integrated out, with Laplace and
   importance-sampling evidences, band probabilities and posterior samples.
-
+  `AliasResult.table()` gives one row per band (`scales` flat over epochs
+  and blocks, `epoch_scales` per epoch). `checkpoint_dir=` writes each band
+  (`band_<N>.pkl`, `band_<N>.json`) as soon as it is fitted, and a rerun
+  with the same data, positions and settings loads it instead of
+  refitting; `on_band=` is called with each `AliasBandResult`. Each band
+  has its own random stream, so a resumed run reproduces an uninterrupted
+  one. A band that raises becomes a row with the flag `band-failed` and
+  `AliasBandResult.error`, and a singular or ill-conditioned Hessian gets
+  the flag `hessian-singular`. The checkpoint key hashes every field of
+  the data and positions, static ones included. The likelihood and its
+  gradient are evaluated once before any band is fitted, so a
+  misconfiguration raises there; afterwards only a `TypeError` propagates.
+  Other failed optimizer starts are counted (`starts-failed`,
+  `AliasBandResult.n_starts_failed`), a band with no finite mode is a
+  `no-valid-mode` row, and a `RuntimeError` is raised when every band
+  fails. The likelihood compiles once per data shape, not once per mode.
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
   model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
@@ -311,7 +99,50 @@ anything before 1.0 may change between minor versions.
   predicted cost (candidates × datasets × score evaluations) is over budget.
   `rank_scores` / `OrbitScores.order` rank with ties broken on quantized
   scores, then by index.
-
+- **Pipelines (`virgil.pipeline`, the `pipeline` extra).**
+  `BinaryPipeline` (companion search, contrast limits, fit and NUTS
+  posterior) and `StarPipeline` (angular diameter and limb darkening,
+  with a registry of models by short name) run fixed, named stages on
+  public virgil functions and write a run folder: `run.json`,
+  `summary.json`, HDF5 grids and samples, plots, the processed OIFITS and
+  an executed quicklook notebook, with deterministic quality checks
+  (`Check`). Runs resume; a run folder whose settings, data or template
+  differ raises `ConfigMismatchError`. `load` reloads a run as a `Result`,
+  and the `virgil-pipeline` command runs a pipeline and prints, validates
+  or re-renders the quicklook of a run folder.
+  `import virgil` does not import the pipelines. See the Pipelines page.
+  `StarPipeline` compares diameter lobes and models on −2 log L
+  (`model_loglike`, so with `error_scale="fit"` each candidate is scored
+  at its own maximum-likelihood error scales, not on a χ² that those
+  scales make equal to N), walks the registry's parent chain with a BIC
+  penalty (`summary["comparison"]` decides, `summary["comparisons"]` lists
+  all), and keeps the uniform disk's diameter scan with its scales
+  profiled, refining the best diameter between grid points. Re-running a
+  stage deletes every later stage's outputs, and `Result` serves only
+  files and grid groups of complete stages; `run.json` records provenance
+  per stage, and `virgil-pipeline validate` fails a run left `running`. The look-elsewhere significance is computed in log
+  space, so it stays finite for large searches.
+- **`virgil.ensemble`**: PYRA/MYTHRA-style reconstruction ensembles.
+  `EnsembleSpec`, `draw_groups`, `run_group` (one L-curve per geometry
+  group), `combine` (selection and the iterative mean) and `ensemble`
+  return an `Ensemble` (mean `Image`, per-pixel σ, raw χ²/N per dataset).
+  The L-curve window keeps the weights from `window_dex` below the corner
+  up to it; the default weight ranges (`tsv` 0.1–10⁴, the others 10⁻⁴–10
+  per data point) were set from the corners of the 60 datasets of
+  virgil-validation's contest bench, and each sweep draws one log-uniform
+  weight per equal bin of `log w`. The default `field_factors` are
+  (1, 2, 4) times `field_of_view(data)`, capped at 1 on a uv lattice, and
+  a field too large for `max_npix` keeps its size with coarser pixels.
+  The iterative mean admits a member if every dataset's χ² stays within
+  `mean_rtol` (by default each dataset's χ²/N noise √(2/N)) of the best
+  member's; members whose fit diverged are dropped with
+  `reason="diverged"`, and `combine` warns when fewer than `min_kept` (3)
+  are kept.
+- **`virgil.metrics`**: scores for a reconstructed image against a known
+  truth, from the imaging contests' published definitions:
+  `lawson_sigma_over_peak` (both images normalized over the whole array),
+  `rms_convolved` (after a Gaussian beam; `pixel_scale_mas` is needed only
+  with a beam), `l1_score` and `ncc`.
 - **Azimuthally modulated cones.** `TruncatedCone(..., az_amps=, az_pas=)`
   multiplies every ring's brightness by `1 + Σ A_m cos(m (φ - φ_m))` in
   its own azimuth, e.g. for a colliding-wind shock brighter on its
@@ -341,16 +172,12 @@ anything before 1.0 may change between minor versions.
   in frequency with δP ≤ P²/(kT) over the baseline T, finer than
   ARMADA's and The Joker's rules; `start_from_positions` warns when its
   `periods` are coarser than that over the seeding datasets.
-- A private `virgil._deprecate` module for the 0.4 change to a single
-  model-before-data argument order. `old_order` lets a function written
-  in the new order accept calls in the 0.3 positional order, recognized
-  by which argument is the `OIData`, with a `FutureWarning` that names the
-  new call; with `removed=True` (for 0.5) such a call is a `TypeError`
-  naming the new call. `old_order` and `renamed` also accept the old
-  keyword names `data_obj=`, `observations=`, `model_object=`,
-  `model_fn=` and `samples_dict=` for `data`, `model` and `grid`, with a
-  `FutureWarning`; passing an old name with its new one is a `TypeError`.
-  No public function uses it yet, so nothing changes for users.
+- `OIData.select` takes `ranges=` (a union of wavelength windows),
+  `exclude=` (windows to drop, e.g. a line) and `observables=` (`"vis"`,
+  `"phi"` and the extra observables' kinds), so closure-phase-only or
+  line-free subsets need no hand-flagged records. Dropping the closure
+  phases rebuilds differential phases with their closure part, and gains
+  go with the visibilities.
 - Starting and sampling orbit fits to multi-epoch visibilities
   (`design/visibility_orbits.md`, stage 2), all model first:
   `rank_orbits(model, data, orbits)` ranks trial orbits (e.g. from
@@ -363,11 +190,176 @@ anything before 1.0 may change between minor versions.
   from distinct orbits) returned as an `OrbitStart`, whose `chain_values`
   give one start per distinct mode; and `likelihood.chain_init_params`
   turns one start per chain into numpyro's `init_params`.
-  `Epochs.resolution_mas` gives the data's finest λ/B_max.
+  `Epochs.resolution_mas` gives the data's finest λ/B.
+  - `Epochs` and `OrbitalBinary` (a binary on its orbit, observed as one
+    snapshot per dataset; `design/visibility_orbits.md`, stage 1).
+  - `epoch_positions` scores its grid on the scale-marginalized surface
+    m = -Σ_b (ν_b/2) ln χ²_b, in which each dataset's V² and
+    closure-phase error scales are integrated out under their Jeffreys
+    priors (`epochs.marginal_loglike`; `s_max=` integrates each block's
+    scale adaptively in ln s over a bounded range, matching
+    `scipy.integrate.quad` to about 1e-11, and `dof=` sets an
+    effective-dof fraction). Positions, covariances and
+    `EpochPositions.gap_marginal` therefore do not change when one
+    dataset's errors are rescaled. It refines the top `n_peaks=5` distinct
+    local maxima of the grid, takes the best refined one, and measures
+    `gap_marginal` against its best refined rival; `EpochPositions.peaks`
+    holds each dataset's catalogue (`EpochPeaks`: positions, fluxes,
+    scores, Laplace-mass weights, `edge` and `laplace` flags). `gap` is
+    the grid quantity on the quoted errors and will switch to the
+    marginal value; `decisive`, `positions(min_gap=...)` and
+    `start_from_positions(min_gap=...)` compare `gap_marginal`. Raw χ²/N
+    and the profiled scales are recorded (`chi2_raw`, `scale`), with a
+    `UserWarning` naming datasets with raw χ²/N > 4. Data with gains,
+    closure-phase offsets or a model-dependent covariance raise
+    `NotImplementedError` on the marginalized surface.
+  - `rank_orbits` and `start_from_positions` take `scales="quoted" |
+    "marginal"`; `"marginal"` integrates each dataset's error scales out,
+    so the worst-calibrated nights do not dominate the ranking. The
+    default is `"quoted"` in 0.4, with a `FutureWarning` when `scales` is
+    not given; it will become `"marginal"`. Rankings use
+    `orbit_search.rank_scores` (ties within 1e-3 nat broken by index,
+    non-finite scores last). `OrbitStart.seeded` and `.ambiguous` name the
+    datasets that seeded the orbits and those left out (with a
+    `UserWarning`).
 - The orbit tutorial now fits one snapshot per night with `Epochs` and
   `OrbitalBinary` (the default for orbits whose motion within a night is
   negligible), starts from `start_from_positions`, and starts one NUTS
   chain per distinct mode.
+- A private `virgil._deprecate` module implements the 0.4 change to a
+  single model-before-data argument order and the renamed keywords (see
+  "Migration from 0.3.0"): `old_order` accepts calls in the 0.3
+  positional order, recognized by which argument is the `OIData`, with a
+  `FutureWarning` that names the new call (with `removed=True`, for 0.5,
+  a `TypeError`); `old_order` and `renamed` accept the old keyword names
+  with a `FutureWarning`, and passing an old name with its new one is a
+  `TypeError`.
+
+### Changed
+
+- **NUTS can sample each prior in its flat coordinate (opt-in,
+  `flat_coordinates=True`, #301).** `numpyro_model(...,
+  flat_coordinates=True)` maps a `LogUniform` scale to NUTS's
+  unconstrained coordinate through log x, an `IsotropicInclination`
+  through cos i and an `IsotropicLatitude` through sin(lat), for
+  parameters and `noise=` terms alike, as `fit` optimizes them. Sites keep
+  their names, samples are the model's own parameters, and the posterior
+  is unchanged. It is off by default: simulation-based calibration (1000
+  replicates) showed no gain in effective sample size per second or in
+  divergences, and rank uniformity was the same. The 62² imaging notebook,
+  with `gauss_newton_mass`, ran in 67 s instead of 550 s with it, so the
+  tutorials that sample large images pass `flat_coordinates=True`. Pass
+  the same value to `gauss_newton_mass`, `variational` and
+  `chain_init_params`' model. See `design/sampler_flat_coordinates.md`.
+- **Warnings and precision (#306).** `Tabulated` now warns with `FutureWarning` (as every other deprecation does) instead of the default-hidden `DeprecationWarning`; the four warnings that set no category (`Ensemble` too few members kept, every closure phase flagged, unmatched T3 legs, `t_ref = 0` with MJD times) now say `UserWarning`. `cvis_uniform_disk` takes `diam` like the other disks (`ud=` still works with a `FutureWarning`). The two pixel-sum matmuls in `GaussianArc`/`TruncatedCone` use `Precision.HIGHEST`, as the rest of the forward model does (TF32 on A100/H100 otherwise). The AMIGO covariance check takes its tiny-number floor from the array's dtype. `tests/_test_data.py` finds `data/` from its own location, not the working directory.
+- **Oxford -ize spelling in names (#306).** `fit`, `numpyro_model` and `diagnose` take `regularizers` (not `regularisers`), `imaging.l_curve` takes `regularizer` (not `regulariser`), `RVData.term` takes `marginalize_offsets` (not `marginalise_offsets`), and the numpyro factor sites for regularizers are named `regularizer_<i>`. The old keywords still work with a `FutureWarning` until 0.5 (`_deprecate.renamed`). Private names (`_linear.standardize`, `_diagonalized`, `_summarize`, `_normalize`) and the spelling in docstrings, comments and the hand-written docs follow. `barycenter` and the already -ize public names (`regularized_inverse`, `optimized_*`, `standardize_model`, `Image(normalize=)`) are unchanged.
+- **Deprecated parameter names are gone from public signatures (#306).** `OIData.model`, `OIData.with_model` and every `observables.*.predict` take `model` (not `model_object`), `inflated_errors` takes `data` (not `data_obj`), and `joint_data` / `joint_errors` take `data` (not `observations`). The old keywords still work with a `FutureWarning` until 0.5, through the same `_deprecate.renamed` path as the other functions. Private helpers in `likelihood`, `inference` and `oidata` were renamed to match.
+- **One import convention (#306).** `import jax.numpy as np` and `import numpy as onp` everywhere in `src`, `tests`, `examples`, `scripts` and `design/sketches` (six `src` modules and three tests had the two swapped, so code moved between files silently changed backend). Ruff's `ICN001` now enforces it; notebooks keep their old aliases until they are next re-executed.
+- **Duplicated and dead code removed (part of #310; no behaviour change).**
+  `legacy.oifits_implaneia.GetWavelength`, `Format_STAINDEX_V2`,
+  `Format_STAINDEX_T3`, `rad2mas` and the `cp_indices` re-export are
+  deprecated (`FutureWarning`; removal in 0.6), since nothing uses them.
+  Internally: `FWHM_PER_SIGMA` moved to `_utils` (still importable from
+  `detection`) and replaces the hand-written `2.3548` and
+  `2*sqrt(2 ln 2)` (the two literal `2.3548`s in `imaging` now use the
+  exact value, a 1e-5 relative change in an envelope-fit starting width);
+  `coverage` uses `_geometry.rotate` (which now stays in NumPy for NumPy inputs); `meshgrid_vectors` is
+  `coordinate_points`; one `_unit_sum`; the `batch_size` and noise-term
+  "Priors" docstrings are stated once and referred to. Unused
+  `_utils.i2pi` removed.
+- **Warnings name the caller's line.** Deprecation `FutureWarning`s and
+  virgil's other warnings are attributed to the first frame outside virgil
+  (`_deprecate.external_stacklevel`), not to a fixed depth, which pointed
+  into equinox's method wrappers (`OIData.model`, `with_model`,
+  `observables.*.predict`, `RVData.term`, `Tabulated`) or into the
+  `renamed` wrapper (`fit`'s own warnings); frames of JAX, numpyro and
+  the optimizers are looked through too. Shim messages name methods as
+  `Class.method`, and a new name passed positionally beside its old
+  keyword raises the shim's "got both" `TypeError`.
+- `_geometry.position_angle` never returns exactly 360 (it did for tiny
+  negative offsets; a scalar input still gives a NumPy scalar),
+  `KeplerOrbit.frame()["towards_primary"]` is wrapped to `[0, 360)`, and
+  the geometry helpers compute lists and array-likes (e.g. a pandas
+  Series) in NumPy float64 rather than JAX float32.
+- Differential-phase steps and anchors use one wrap, `[-π, π)`, in data
+  and model alike (a step of exactly ±π used to wrap differently).
+- `Centroid` sums over pixels at `Precision.HIGHEST`; the `oifits` module
+  no longer imports JAX itself (`import virgil` still does).
+- `fit` falls back to L-BFGS only when the objective has no least-squares
+  form (`fitting.NoLeastSquaresForm`), and `variational` starts at
+  `init_scale` only for that, a singular curvature
+  (`fitting.SingularCurvature`) or a parameter with no starting value
+  (`fitting.NoStartingValue`, a `ValueError`); other errors propagate
+  instead of being taken for one of these. `gauss_newton_mass` raises
+  `NoLeastSquaresForm` for data with gains, as `fit`'s Gauss–Newton path
+  does, instead of ignoring them. SVI warnings state their category. `fit(progress=)`
+  also reports when the fit finishes, and `fitting._bound_fraction` gives
+  a LogUniform's fraction in x when `flat=False`.
+- `numpyro_model`'s function and `gauss_newton_mass`'s result record
+  `flat_coordinates`, and `chain_init_params(..., mass=)` raises if they
+  differ (a mass matrix in the other coordinates is never adapted). The
+  docs now describe flat-coordinate sampling as opt-in.
+
+### Fixed
+
+- **Isotropic priors have finite gradients at the poles in float32.**
+  `IsotropicInclination.icdf` and `IsotropicLatitude.icdf` gave a NaN
+  derivative within about 1e-8 of a pole (the branch not taken of a
+  `where` had an infinite slope), and their final clip a slope of 1/2 at
+  the bounds; both now keep the true derivative.
+- **Drifted copies unified (part of #310).**
+  - **Zero errors.** `OIData` now drops V² and phase samples with a zero
+    (or negative) error, as it already did for extra observables
+    (`OI_FLUX`, `|V|`, `T3AMP`); a zero error gives an infinite whitened
+    residual, which made every likelihood and fit non-finite. Flagged
+    and non-finite samples were already dropped. Raw errors that
+    `vis_mat`/`phi_mat` project may still be zero; a zero *projected*
+    error raises a `ValueError`, also when a correlating operator would
+    otherwise drop that direction silently.
+  - **Field of view.** `imaging.field_of_view` and `nyquist_pixel_scale`
+    (and the new `Epochs.resolution_mas` and pipelines) share
+    `_geometry.fringe_scales`: per-sample `B/λ` over non-zero baselines,
+    rather than a longest wavelength and a shortest baseline that are not
+    observed together when the uv sampling differs between channels.
+  - **Position angles.** One `_geometry.position_angle` /
+    `separation_pa` (North through East, `[0, 360)`) serves the models,
+    orbits and plotting. `KeplerOrbit.frame(...)["line_pa"]`
+    was in (-180, 180]; it is now in `[0, 360)` (equal modulo 360, and
+    `towards_primary` is still `line_pa + 180`).
+  - **Phase units** (`oifits` columns and `OIData` records) go through
+    one parser, with one error message; a blank `TUNIT` or `phi_unit` now
+    means the default unit in both. One check for the names of
+    `System` components and `Sum` parts (derived from the class's own
+    fields) and one `wrap_phase`.
+- **`read_oifits` reads closure triangles whose leg has no visibility
+  row** ([#299](https://github.com/benjaminpope/virgil/issues/299)). A
+  triangle leg stored in no `OI_VIS2`/`OI_VIS` row in either orientation
+  raised a `ValueError`, so MIRC-X files and some ESO phase-3 PIONIER
+  products (which omit a baseline's V²) could not be read. `OI_T3` is
+  self-contained in the OIFITS standard, so such a leg now gets a flagged
+  sample at the T3 row's own coordinates (`(U1COORD, V1COORD)`,
+  `(U2COORD, V2COORD)` or their sum), shared by later triangles of the
+  same frame, as reversed legs already were. One `UserWarning` per file
+  gives the number of legs placed this way. The `ValueError` remains when
+  those coordinates are NaN or zero, or disagree with the triangle's other
+  legs (a table written with the opposite baseline direction).
+- Parallel numpyro chains (`chain_method="parallel"`) on data with
+  `with_gains` no longer segfault. `GainModes` held zero-size arrays when
+  no mode spans frames, and XLA's Shardy pass crashes compiling a
+  `jax.pmap` that captures one (JAX 0.11.2). `GainModes.spanning` and
+  `spanning_group` are now `None` then. `numpyro_model` warns, suggesting
+  `chain_method="vectorized"`, when the data still hold zero-size arrays
+  (e.g. no closure phases) and more than one device is visible.
+- `limits.chi2ppf` works for any number of degrees of freedom on a
+  standard install. For `df != 1` it called numpyro's `gammaincinv`,
+  which needs `tensorflow_probability`, not a virgil dependency; it now
+  inverts `jax.scipy.special.gammainc` by Halley's method for every `df`,
+  matching `scipy.stats.chi2.ppf` to about 1e-14 relative in float64
+  for p in [1e-10, 1 - 1e-10], and stays differentiable and `jit`-able.
+  `df = 1` also uses it, gaining precision at small p. It returns NaN
+  for `df <= 0`, and no longer needs `tensorflow_probability`. This
+  supersedes the removal of `chi2ppf` in #293, which is reverted. Found
+  by virgil-validation (F17).
 
 ## 0.3.0 (2026-10-06)
 

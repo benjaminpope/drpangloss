@@ -43,6 +43,7 @@ from ._geometry import position_angle, separation_pa
 from ._utils import concrete
 from .angles import AngleVector
 from .priors import IsotropicInclination
+from ._deprecate import external_stacklevel
 
 
 __all__ = [
@@ -136,7 +137,7 @@ def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
             "dt_peri is then counted from MJD 0. Give the orbit a t_ref "
             "near the data (e.g. KeplerOrbit(..., t_ref=60500.0)).",
             UserWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
 
 
@@ -382,9 +383,12 @@ class KeplerOrbit(zdx.Base):
         dra, ddec, dz = self._relative(dt)
         line_pa = position_angle(dra, ddec)
         constant = np.zeros_like(line_pa)
+        opposite = line_pa + 180.0
         return {
             "line_pa": line_pa,
-            "towards_primary": line_pa + 180.0,
+            "towards_primary": np.where(
+                opposite >= 360.0, opposite - 360.0, opposite
+            ),
             "line_tilt": np.rad2deg(np.arctan2(dz, np.hypot(dra, ddec))),
             "node_pa": self.Omega + constant,
             "inc": self.inc + constant,
@@ -398,7 +402,8 @@ class KeplerOrbit(zdx.Base):
         """Angles of the binary frame at ``mjd`` (degrees), by name.
 
         * ``line_pa``: position angle of the line of centres, primary to
-          secondary; ``towards_primary`` is ``line_pa + 180``.
+          secondary; ``towards_primary`` is ``line_pa + 180``, wrapped to
+          [0, 360).
         * ``line_tilt``: the line of centres' elevation out of the sky,
           ``arcsin(dz / |r|)``, positive when the secondary is farther.
         * ``node_pa``: ``Omega``, the line of nodes of the orbital plane.

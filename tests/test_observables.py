@@ -927,3 +927,23 @@ def test_select_observables_takes_the_gains_with_the_visibilities():
     offsets = data.with_closure_offsets(baseline=0.01)
     with pytest.raises(ValueError, match="closure-phase offsets"):
         offsets.select(observables="vis")
+
+
+def test_a_step_of_pi_wraps_the_same_in_data_and_model():
+    """Data and model steps use one convention, [-π, π), so a differential
+    phase step of exactly π unwraps identically in both."""
+    phases = onp.array([0.0, onp.pi, 0.3])
+    block = DifferentialPhase.build(
+        phases,
+        onp.full(3, 0.1),
+        [0, 1, 2],
+        [2.0e-6, 2.1e-6, 2.2e-6],
+        [0, 0, 0],
+        [[0, 1]] * 3,
+        row=[0, 0, 0],
+    )
+    # exactly -1, whose angle is +π before wrapping
+    cvis = np.array([1.0 + 0j, -1.0 + 0j, np.exp(0.3j)])
+    onp.testing.assert_allclose(
+        block.predict(_scene(), cvis), block.data(), atol=1e-5
+    )

@@ -201,4 +201,54 @@ def test_flat_coordinates_are_off_by_default():
     assert float(potential_energy(default, (), {}, z)) == pytest.approx(
         float(potential_energy(off, (), {}, z)), rel=1e-6
     )
-    assert _Objective(_no_model, FLAT_PRIORS, (), flat=False, likelihoods=())
+    # The default coordinates are those of fit(flat=False), not the flat ones.
+    start = {"scale": 1e-2, "inc": 30.0, "pole": 5.0, "lat": 0.3}
+    info = initialize_model(
+        jax.random.PRNGKey(0),
+        default,
+        init_strategy=init_to_value(values=start),
+    )
+    for flat in (False, True):
+        z = _Objective(
+            _no_model, FLAT_PRIORS, (), flat=flat, likelihoods=()
+        ).init(start)
+        same = [
+            bool(
+                np.isclose(
+                    info.param_info.z[site], z[site], rtol=1e-5, atol=1e-6
+                )
+            )
+            for site in FLAT_PRIORS
+        ]
+        assert all(same) is (not flat)
+    assert default.flat_coordinates is False
+
+
+def test_mismatched_flat_coordinates_between_model_and_mass_raise():
+    """gauss_newton_mass records its coordinates, and chain_init_params
+    refuses a numpyro model that samples in the others."""
+    from virgil.fitting import GaussNewtonMass, gauss_newton_mass
+
+    priors = {"x": dist.Normal(0.0, 1.0), "y": dist.Normal(1.0, 2.0)}
+    start = {"x": 0.1, "y": 0.1}
+    mass = gauss_newton_mass(_no_model, priors, (), start)
+    flat_mass = gauss_newton_mass(
+        _no_model, priors, (), start, flat_coordinates=True
+    )
+    assert isinstance(mass, GaussNewtonMass)
+    assert mass.flat_coordinates is False and flat_mass.flat_coordinates
+    # still unpacks as NUTS keyword arguments
+    assert set(dict(**mass)) == {
+        "inverse_mass_matrix",
+        "dense_mass",
+        "adapt_mass_matrix",
+    }
+    plain = numpyro_model(_no_model, priors, ())
+    flat = numpyro_model(_no_model, priors, (), flat_coordinates=True)
+    assert plain.flat_coordinates is False and flat.flat_coordinates is True
+    chain_init_params(plain, [start], mass=mass)
+    chain_init_params(flat, [start], mass=flat_mass)
+    with pytest.raises(ValueError, match="flat_coordinates=False"):
+        chain_init_params(flat, [start], mass=mass)
+    with pytest.raises(ValueError, match="flat_coordinates=True"):
+        chain_init_params(plain, [start], mass=flat_mass)

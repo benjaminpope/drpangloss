@@ -61,6 +61,7 @@ from .imaging import (
 from ._precision import cast_tree, run_in
 from .metrics import align, resample
 from .models import Image, PointSource, System
+from ._deprecate import external_stacklevel
 
 # The regularizer families, by the names used in EnsembleSpec.
 FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
@@ -786,7 +787,7 @@ def combine(data, groups, *, spec=None, star=True):
             "a useful map. Look at Ensemble.summary() for where they were "
             "dropped.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=external_stacklevel(),
         )
 
     stack = onp.stack([weighted[j] for j in chosen])

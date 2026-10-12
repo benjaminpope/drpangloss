@@ -7,6 +7,7 @@ the contract, not the science.
 
 import inspect
 import json
+import math
 import warnings
 import shutil
 
@@ -332,7 +333,7 @@ def test_quoted_errors_lead_and_companion_found(full_run):
 
 
 def test_quicklook_notebook(full_run):
-    pipeline, _ = full_run
+    pipeline, res = full_run
     nb = json.loads((pipeline.output / "quicklook.ipynb").read_text())
     cells = nb["cells"]
     assert (
@@ -352,6 +353,18 @@ def test_quicklook_notebook(full_run):
     )
     assert images == 4  # overview, search + limits, correlation, corner
     assert "| `r_hat` |" in "".join(cells[-1]["source"])
+    # The notebook's contrast curve uses the pipeline's annuli and range.
+    curve = [
+        "".join(c["source"])
+        for c in cells
+        if c["cell_type"] == "code"
+        and "plot_contrast_curve" in "".join(c["source"])
+    ]
+    run = json.loads((pipeline.output / "run.json").read_text())
+    max_sep = res.summary["search"]["max_sep_mas"]
+    assert len(curve) == 1
+    assert f"r_max={max_sep!r}" in curve[0]
+    assert f"bins={run['config']['limit_bins']!r}" in curve[0]
 
 
 # --- resume -------------------------------------------------------------------
@@ -373,12 +386,13 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     # stored config lacks it, and resuming must still work.
     run = json.loads((out / "run.json").read_text())
     del run["config"]["limit_bins"]
+    run["stages"]["load"]["provenance"]["virgil"] = "0.0.old"
     (out / "run.json").write_text(json.dumps(run))
 
     ran = []
     import virgil.pipeline.binary as binary
 
-    for name in ("_load", "_overview", "_search"):
+    for name in ("_load_report", "_overview", "_search"):
         monkeypatch.setattr(binary, name, lambda p, n=name: ran.append(n))
     res = BinaryPipeline(data, output=out, limit_bins=20, **settings).run(
         through="limits"
@@ -387,6 +401,12 @@ def test_resume_skips_completed_stages(data, tmp_path, monkeypatch):
     after, run = _started(out)
     assert {k: after[k] for k in before} == before
     assert run["status"] == "partial" and "limits" in res.summary
+    # A resumed run keeps the versions that computed the earlier stages.
+    assert run["stages"]["load"]["provenance"]["virgil"] == "0.0.old"
+    assert run["stages"]["limits"]["provenance"]["virgil"] == (
+        virgil.__version__
+    )
+    assert run["provenance"]["virgil"] == virgil.__version__
 
     with pytest.raises(ConfigMismatchError, match="sigma"):
         BinaryPipeline(data, output=out, **dict(settings, sigma=5.0)).run()
@@ -421,6 +441,154 @@ def test_fresh_run_and_failure_record(data, tmp_path, monkeypatch):
     assert run["stages"]["load"]["status"] == "complete"
 
 
+def test_rerun_discards_the_outputs_of_later_stages(full_run, tmp_path):
+    """Re-running a stage deletes what the later stages wrote; Result then
+    refuses them, also if a stale file is put back."""
+    pipeline, _ = full_run
+    out = tmp_path / "rerun"
+    shutil.copytree(pipeline.output, out)
+    later = (
+        "grids.h5",
+        "samples.h5",
+        "quicklook.ipynb",
+        "models/best/values.npz",
+        "plots/limits_contrast_curve.png",
+        "plots/posterior_corner.png",
+    )
+    assert all((out / name).exists() for name in later)
+    (out / "plots" / "overview_uv.png").unlink()  # an output of 'overview'
+
+    again = BinaryPipeline(pipeline.data, output=out, **TINY)
+    res = again.run(through="overview")
+    assert res.status == "partial"
+    assert not any((out / name).exists() for name in later)
+    assert "search" not in res.summary and "fit" not in res.summary
+    run = json.loads((out / "run.json").read_text())
+    assert list(run["stages"]) == ["load", "overview"]
+    for call in (res.grid, res.samples, res.model, res.fit_result):
+        with pytest.raises(FileNotFoundError, match="stage"):
+            call()
+
+    # Even a stale file left behind is not served: the stage never completed.
+    shutil.copy(pipeline.output / "grids.h5", out / "grids.h5")
+    with pytest.raises(FileNotFoundError, match="earlier run"):
+        load(out).grid()
+
+
+def test_grid_leaves_out_the_limits_of_an_unfinished_limits_stage(
+    full_run, tmp_path
+):
+    pipeline, _ = full_run
+    copy = tmp_path / "copy"
+    shutil.copytree(pipeline.output, copy)
+    run = json.loads((copy / "run.json").read_text())
+    run["stages"]["limits"]["status"] = "failed"
+    (copy / "run.json").write_text(json.dumps(run))
+    grid = load(copy).grid()
+    assert "snr" in grid and "limit_flux" not in grid
+
+
+def test_global_nsigma_is_finite_for_huge_trial_numbers():
+    from scipy.stats import norm
+    from virgil.pipeline.binary import _global_nsigma
+
+    assert _global_nsigma(5.0, 1.0) == pytest.approx(5.0, abs=1e-6)
+    # Sidak: p_global = 1 - (1 - p)^n.
+    p = float(norm.sf(4.0))
+    expected = float(norm.isf(1.0 - (1.0 - p) ** 100))
+    assert _global_nsigma(4.0, 100.0) == pytest.approx(expected, abs=1e-6)
+    previous = _global_nsigma(4.0, 1.0)
+    for n in (1e2, 1e4, 1e6, 1e9, 1e12):
+        sigma = _global_nsigma(4.0, n)  # n * p >> 37: p_global rounds to 1
+        assert math.isfinite(sigma) and sigma < previous
+        previous = sigma
+    assert _global_nsigma(4.0, 1e12) < 0.0
+    assert _global_nsigma(40.0, 1e4) == pytest.approx(40.0, abs=1e-3)
+    assert math.isnan(_global_nsigma(float("nan"), 10.0))
+
+
+def test_grid_is_capped_at_an_odd_number_and_the_step_reported(data, tmp_path):
+    settings = dict(TINY, quicklook_execute=False)
+    settings.update(max_grid=12, grid_step_mas=10.0)
+    pipeline = BinaryPipeline(data, output=tmp_path / "run", **settings)
+    grid, _ = pipeline._grid()
+    assert grid["dra"].size == grid["ddec"].size == 11  # not 13
+    max_sep, n, step, wanted = pipeline._grid_axis()
+    assert n == 11 and step == pytest.approx(2 * max_sep / 10)
+    assert step > wanted == 10.0
+    with pytest.raises(ValueError, match="max_grid"):
+        BinaryPipeline(data, max_grid=2)
+
+    res = pipeline.run(through="search")
+    report = json.loads(
+        (tmp_path / "run/stages/search/report.json").read_text()
+    )
+    assert report["grid_step_mas"] == pytest.approx(step)
+    assert report["grid_step_wanted_mas"] == 10.0
+    assert report["grid_shape"][:2] == [11, 11]
+    messages = [w["message"] for w in report["warnings"]]
+    assert any("coarsens the grid step" in m for m in messages)
+    assert "stage_warnings" in [c.name for c in res.checks]
+
+
+def test_grids_file_stores_the_units_of_each_axis(full_run):
+    import h5py
+
+    pipeline, _ = full_run
+    with h5py.File(pipeline.output / "grids.h5", "r") as f:
+        assert f["axes/dra"].attrs["units"] == "mas"
+        assert f["axes/ddec"].attrs["units"] == "mas"
+        assert f["axes/flux"].attrs["units"] == "companion/primary"
+        assert "limits/limit_flux" in f and "search/snr" in f
+        assert json.loads(f.attrs["axis_order"]) == ["dra", "ddec", "flux"]
+
+
+def test_fit_and_posterior_recover_the_injected_companion(full_run):
+    """The fitted and sampled companion match the truth within a few sigma
+    (the quoted widths of the 30-draw chains get a floor)."""
+    _, res = full_run
+    truth = {
+        "sep": float(onp.hypot(TRUTH.dra, TRUTH.ddec)),
+        "pa": float(onp.degrees(onp.arctan2(TRUTH.dra, TRUTH.ddec))),
+        "flux": float(TRUTH.flux),
+    }
+    floor = {"sep": 1.0, "pa": 0.5, "flux": 1e-3}
+    post = res.summary["posterior"]["params"]
+    fit = res.summary["fit"]["params"]
+    for name, value in truth.items():
+        row = post[name]
+        sigma = max(0.5 * (row["q84"] - row["q16"]), floor[name])
+        assert abs(row["median"] - value) < 4 * sigma, name
+        assert abs(fit[name] - value) < 4 * sigma, name
+
+
+def test_refined_flux_is_the_two_public_grids_from_one_pass(data):
+    import jax.numpy as np
+    from virgil.grid_fit import (
+        optimized_flux_grid,
+        optimized_likelihood_grid,
+    )
+    from virgil.pipeline.binary import _peak_index, _refined_flux
+
+    axis = np.linspace(-200.0, 200.0, 9)
+    grid = {"dra": axis, "ddec": axis, "flux": np.logspace(-3, -1, 5)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        flux, loglike = _refined_flux(data, grid, None)
+        want_flux = optimized_flux_grid(BinaryModelCartesian, data, grid)
+        want_loglike = optimized_likelihood_grid(
+            BinaryModelCartesian, data, grid
+        )
+    onp.testing.assert_array_equal(flux, want_flux)
+    onp.testing.assert_array_equal(loglike, want_loglike)
+
+    # One source for the peak: the nearest grid point on each axis.
+    best = {"dra": 50.0, "ddec": -100.0, "flux": 0.0}  # flux below the axis
+    assert _peak_index(grid, best) == [5, 2, 0]
+    best["flux"] = float(grid["flux"][3]) * 1.01
+    assert _peak_index(grid, best) == [5, 2, 3]
+
+
 # --- CLI ----------------------------------------------------------------------
 
 
@@ -438,6 +606,35 @@ def test_cli_info_and_validate(full_run, tmp_path, capsys):
     assert cli.main(["validate", str(copy)]) == 1
     out = capsys.readouterr().out
     assert "fit_correlation.png changed" in out and "missing grids.h5" in out
+
+
+def test_cli_validate_fails_for_failed_runs_and_missing_keys(
+    full_run, tmp_path, capsys
+):
+    pipeline, _ = full_run
+    for name, change, message in (
+        (
+            "failed",
+            lambda run: run.update(
+                status="failed",
+                error={"stage": "fit", "type": "RuntimeError", "message": "x"},
+            ),
+            "the run failed in stage 'fit'",
+        ),
+        (
+            "running",
+            lambda run: run.update(status="running"),
+            "did not finish (status 'running')",
+        ),
+        ("noclass", lambda run: run.pop("class"), "lacks 'class'"),
+    ):
+        copy = tmp_path / name
+        shutil.copytree(pipeline.output, copy)
+        run = json.loads((copy / "run.json").read_text())
+        change(run)
+        (copy / "run.json").write_text(json.dumps(run))
+        assert cli.main(["validate", str(copy)]) == 1
+        assert message in capsys.readouterr().out
 
 
 def test_cli_binary_run_from_oifits(full_run, tmp_path, capsys):
@@ -489,7 +686,7 @@ def test_residual_normality_passes_on_truth_noise(data):
     """The check uses the independent whitened residuals, not the CP penalty."""
     from virgil.likelihood import whitened_residuals
     from virgil.pipeline import _checks
-    from virgil.pipeline.binary import _moments
+    from virgil.pipeline._common import _moments
 
     r = onp.asarray(whitened_residuals(TRUTH, data))
     n = int(data.n_independent)
@@ -503,7 +700,7 @@ def test_prior_bound_fraction_is_the_one_fit_reports():
     LogUniform's in log x, an interval's, and none for a prior whose range
     ends are poles of its flat coordinate (it used to count them)."""
     import numpyro.distributions as dist
-    from virgil.pipeline.binary import _bound_samples
+    from virgil.pipeline._common import _bound_samples
     from virgil.priors import IsotropicInclination
 
     uniform = dist.Uniform(0.0, 10.0)
@@ -523,7 +720,7 @@ def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
 
     from virgil._utils import mas2rad
     from virgil.imaging import field_of_view, nyquist_pixel_scale
-    from virgil.pipeline.binary import _geometry
+    from virgil.pipeline._common import _geometry
 
     # 10 m at 1 µm and 100 m at 2 µm, plus a zero baseline at 3 µm.
     data = SimpleNamespace(
@@ -542,7 +739,7 @@ def test_field_of_view_uses_each_sample_own_baseline_and_wavelength():
 
 
 def test_moments_of_constant_residuals_are_finite():
-    from virgil.pipeline.binary import _moments
+    from virgil.pipeline._common import _moments
 
     assert _moments(onp.full(10, 0.1)) == (0.0, -3.0)
     assert _moments(onp.zeros(5)) == (0.0, -3.0)

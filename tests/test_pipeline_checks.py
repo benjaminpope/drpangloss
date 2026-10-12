@@ -63,6 +63,17 @@ def test_detection(local, glob, status, word):
     assert word in check.message
 
 
+def test_detection_survives_a_missing_global_significance():
+    """A global sigma stored as None (not finite) must not break the text."""
+    check = checks.detection(14.0, None, threshold=3.0)
+    assert _status(check) == "warn" and "Marginal" in check.message
+    assert "14.00σ local but n/a" in check.message
+    check = checks.detection(1.0, float("nan"), threshold=3.0)
+    assert _status(check) == "warn" and "1.00σ local" in check.message
+    assert checks.format_sigma(None) == checks.format_sigma(float("inf"))
+    assert checks.format_sigma(3.14159) == "3.14σ"
+
+
 def test_grid_edge():
     assert _status(checks.grid_edge([3, 4, 2], [9, 9, 6], "xyz")) == "pass"
     check = checks.grid_edge([0, 4, 5], [9, 9, 6], ("dra", "ddec", "flux"))

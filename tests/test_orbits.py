@@ -1468,3 +1468,12 @@ def test_total_mass_and_distance_are_finite_in_float32(a_au, period_yr):
         dist = distance_pc(orbit, mass)
         assert onp.isfinite(float(dist))
         assert float(dist) == pytest.approx(1.0, rel=1e-4)
+
+
+def test_towards_primary_is_wrapped_to_zero_360():
+    for Omega in (110.0, 330.0):
+        frame = _orbit(Omega=Omega).frame(T_REF + onp.linspace(0.0, 400.0, 40))
+        toward = onp.asarray(frame["towards_primary"])
+        line = onp.asarray(frame["line_pa"])
+        assert onp.all((toward >= 0.0) & (toward < 360.0))
+        assert onp.allclose((toward - line) % 360.0, 180.0, atol=1e-3)

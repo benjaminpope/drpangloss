@@ -124,22 +124,35 @@ def rotate(x, y, rotation_deg):
     ``(0, 1)`` lands at ``(sin θ, cos θ)``. The same matrix maps
     frequencies, and ``rotate(..., -rotation_deg)`` inverts it. NumPy
     inputs (and Python numbers) are rotated in NumPy, at their own
-    precision; anything else, JAX arrays and traced values, in JAX.
+    precision (as are lists, tuples and other array-likes such as pandas
+    Series); JAX arrays and traced values are rotated in JAX.
     """
-    concrete = (int, float, onp.ndarray, onp.generic)
-    xp = (
-        onp
-        if all(isinstance(a, concrete) for a in (x, y, rotation_deg))
-        else np
-    )
+    xp = onp if _numpy_inputs(x, y, rotation_deg) else np
+    if xp is onp:
+        x, y, rotation_deg = (
+            a
+            if isinstance(a, (int, float, onp.ndarray, onp.generic))
+            else onp.asarray(a)
+            for a in (x, y, rotation_deg)
+        )
     c, s = xp.cos(rotation_deg * dtor), xp.sin(rotation_deg * dtor)
     return c * x + s * y, -s * x + c * y
 
 
+def _is_numpy_like(a):
+    """Whether ``a`` is a number, NumPy, or array-like, but not JAX."""
+    if isinstance(a, jax.Array):  # includes tracers
+        return False
+    if isinstance(a, (int, float, onp.ndarray, onp.generic)):
+        return True
+    if isinstance(a, (list, tuple)):
+        return all(_is_numpy_like(b) for b in a)
+    return hasattr(a, "__array__")
+
+
 def _numpy_inputs(*values):
-    """Whether every value is a Python number or NumPy: not JAX or traced."""
-    concrete = (int, float, onp.ndarray, onp.generic)
-    return all(isinstance(a, concrete) for a in values)
+    """Whether every value is NumPy-like (numbers, lists, ``__array__``)."""
+    return all(_is_numpy_like(a) for a in values)
 
 
 def position_angle(dra, ddec):
@@ -148,11 +161,14 @@ def position_angle(dra, ddec):
     ``dra`` is the offset East and ``ddec`` North (mas, or any common
     unit), and the angle runs from North through East, so ``(0, 1)`` is 0°,
     ``(1, 0)`` is 90° and ``(-1, 0)`` is 270°. This is the inverse of
-    ``(sep sin pa, sep cos pa)``. NumPy inputs are computed in NumPy,
-    anything else in JAX.
+    ``(sep sin pa, sep cos pa)``. NumPy inputs (and lists or other
+    array-likes) are computed in NumPy, anything else in JAX.
     """
     xp = onp if _numpy_inputs(dra, ddec) else np
-    return xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
+    pa = xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
+    # mod rounds a tiny negative angle up to exactly 360. [()] turns the
+    # 0-d array NumPy's where makes of a scalar back into a scalar.
+    return xp.where(pa >= 360.0, pa - 360.0, pa)[()]
 
 
 def separation_pa(dra, ddec):

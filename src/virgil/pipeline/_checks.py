@@ -18,6 +18,8 @@ import dataclasses
 import math
 import re
 
+from .._utils import mas2rad
+
 STATUSES = ("pass", "warn", "fail")
 
 
@@ -80,8 +82,13 @@ def _finite(value):
     return value is not None and math.isfinite(float(value))
 
 
+def format_sigma(value):
+    """``value`` as ``"3.21σ"``, or ``"n/a"`` if it is missing or not finite."""
+    return f"{float(value):.2f}σ" if _finite(value) else "n/a"
+
+
 def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
-    """χ²/N on the quoted errors.
+    """χ²/N on the quoted errors, even when error scales are fitted.
 
     Parameters
     ----------
@@ -165,8 +172,9 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "pass",
             value,
             threshold,
-            f"Companion detected at {global_sigma:.2f}σ after an approximate "
-            f"look-elsewhere correction ({local_sigma:.2f}σ local); for a "
+            f"Companion detected at {format_sigma(global_sigma)} after an "
+            f"approximate look-elsewhere correction "
+            f"({format_sigma(local_sigma)} local); for a "
             "calibrated threshold use injection_recovery or gaussian_null.",
         )
     if _finite(local_sigma) and local_sigma >= threshold:
@@ -175,8 +183,9 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
             "warn",
             value,
             threshold,
-            f"Marginal: {local_sigma:.2f}σ local but {global_sigma:.2f}σ "
-            "after an approximate look-elsewhere correction; confirm it "
+            f"Marginal: {format_sigma(local_sigma)} local but "
+            f"{format_sigma(global_sigma)} after an approximate "
+            "look-elsewhere correction; confirm it "
             "with simulated nulls (injection_recovery or gaussian_null).",
         )
     return Check(
@@ -184,7 +193,8 @@ def detection(local_sigma, global_sigma, *, threshold=3.0):
         "warn",
         value,
         threshold,
-        f"No companion above {threshold:g}σ ({local_sigma:.2f}σ local): "
+        f"No companion above {threshold:g}σ "
+        f"({format_sigma(local_sigma)} local): "
         "the fit and posterior describe the highest noise peak; quote the "
         "contrast limits instead.",
     )
@@ -377,9 +387,9 @@ def field_of_view(sep, resolution, fov):
     sep : float
         Separation (mas).
     resolution : float
-        Resolution limit (mas), about half of λ/B_max.
+        Resolution limit (mas), half of the finest λ/B of the samples.
     fov : float
-        Field-of-view radius (mas), about λ/B_min.
+        Field-of-view radius (mas), the coarsest λ/B of the samples.
     """
     if sep < resolution:
         return Check(
@@ -436,7 +446,7 @@ def resolution_regime(
         θB/λ of the first null of the fitted model's visibility; the
         uniform-disk value by default.
     """
-    ratio = float(diam_mas) * math.pi / 180.0 / 3.6e6 * float(freq_max)
+    ratio = float(diam_mas) * float(mas2rad) * float(freq_max)
     ratio /= float(first_null)
     if not _finite(ratio):
         return Check(
@@ -469,17 +479,28 @@ def resolution_regime(
     )
 
 
-def multimodal(lobes, *, threshold=25.0):
+# Δ(−2 log L) within which another diameter lobe counts as a rival.
+RIVAL_DELTA_CHI2 = 25.0
+
+
+def bic_penalty(n_extra, n):
+    """The BIC penalty ``n_extra ln N`` of ``n_extra`` extra parameters fitted
+    to ``n`` independent observables."""
+    return n_extra * math.log(max(int(n), 2))
+
+
+def multimodal(lobes, *, threshold=RIVAL_DELTA_CHI2):
     """Whether another lobe of the diameter fits nearly as well as the best.
 
     Parameters
     ----------
     lobes : list[dict]
         The per-lobe table of the preferred model: each row has
-        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2`` (zero for the
-        best lobe).
+        ``diam_mas``, ``diam_bounds_mas`` and ``delta_chi2``, the lobe's
+        −2 log L above the best lobe's (zero for the best lobe; on the
+        quoted errors, its Δχ²).
     threshold : float, optional
-        The Δχ² of the next-best lobe above which the best lobe is
+        The Δ(−2 log L) of the next-best lobe above which the best lobe is
         unambiguous.
     """
     rows = sorted(lobes, key=lambda r: r["delta_chi2"])
@@ -515,20 +536,22 @@ def multimodal(lobes, *, threshold=25.0):
 
 
 def model_gain(
-    name, chi2_simple, chi2_complex, n, *, n_extra, simple, complex_
+    name, m2loglike_simple, m2loglike_complex, n, *, n_extra, simple, complex_
 ):
     """Whether a richer model improves the fit by more than its BIC penalty.
 
-    Both χ² values are on the quoted errors. The richer model contains the
-    simpler one, so a negative gain means that one of the fits did not
-    converge.
+    The gain is the drop in −2 log L from the simpler to the richer model,
+    which is their Δχ² when the errors are quoted. The richer model
+    contains the simpler one, so a negative gain means that one of the fits
+    did not converge.
 
     Parameters
     ----------
     name : str
         Check name.
-    chi2_simple, chi2_complex : float
-        χ² of the simpler and richer model.
+    m2loglike_simple, m2loglike_complex : float
+        −2 log L of the simpler and richer model, each at its own fitted
+        error scales if any.
     n : int
         Number of independent observables.
     n_extra : int
@@ -536,28 +559,31 @@ def model_gain(
     simple, complex_ : str
         Their names, for the message.
     """
-    gain = float(chi2_simple) - float(chi2_complex)
-    penalty = n_extra * math.log(max(int(n), 2))
+    gain = float(m2loglike_simple) - float(m2loglike_complex)
+    penalty = bic_penalty(n_extra, n)
     if not _finite(gain):
-        return Check(name, "fail", gain, penalty, "The χ² gain is not finite.")
+        return Check(
+            name, "fail", gain, penalty, "The −2 log L gain is not finite."
+        )
     if gain < -1.0:
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
-            f"contains (Δχ² = {gain:.3g}): a fit did not converge."
+            f"contains (Δ(−2 log L) = {gain:.3g}): a fit did not converge."
         )
     elif gain > penalty:
         status = "pass"
         message = (
-            f"Δχ² = {gain:.3g} for {n_extra} extra parameters exceeds the "
-            f"BIC penalty {penalty:.3g}: the {complex_} model is preferred."
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters "
+            f"exceeds the BIC penalty {penalty:.3g}: the {complex_} model "
+            "is preferred."
         )
     else:
         status = "pass"
         message = (
-            f"Δχ² = {gain:.3g} for {n_extra} extra parameters does not "
-            f"exceed the BIC penalty {penalty:.3g}: the {simple} model is "
-            "adequate."
+            f"Δ(−2 log L) = {gain:.3g} for {n_extra} extra parameters does "
+            f"not exceed the BIC penalty {penalty:.3g}: the {simple} model "
+            "is adequate."
         )
     return Check(name, status, gain, penalty, message)
 

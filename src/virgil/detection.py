@@ -71,6 +71,7 @@ from .grid_fit import (
 )
 from .likelihood import build_model, loglike, whitened_residuals
 from .limits import nsigma
+from ._deprecate import external_stacklevel
 
 
 __all__ = [
@@ -391,7 +392,7 @@ def _warn_if_concrete(stats, success, grid, flux_key):
             f"the flux axis (max {top:.3g}), so log_bayes_factor misses the "
             "likelihood peak; extend the axis.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
     elif float(steps) < MIN_PEAK_STEPS:
         warnings.warn(
@@ -400,7 +401,7 @@ def _warn_if_concrete(stats, success, grid, flux_key):
             f"under {MIN_PEAK_STEPS:g}), so log_bayes_factor is "
             "inaccurate; refine the flux axis near the best flux.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
 
 
@@ -1481,7 +1482,7 @@ class DetectionMC:
                 f"of {fap:.3g}; the threshold is about the largest null "
                 "value. Simulate more null draws.",
                 RuntimeWarning,
-                stacklevel=3,
+                stacklevel=external_stacklevel(),
             )
         return null, float(onp.quantile(null, 1.0 - fap))
 
@@ -1716,7 +1717,7 @@ class DetectionMC:
                     "concatenate(): the results come from different virgil "
                     "versions.",
                     RuntimeWarning,
-                    stacklevel=2,
+                    stacklevel=external_stacklevel(),
                 )
         seeds = [s for r in results for s in r.meta["seeds"]]
         if len({json.dumps(s, sort_keys=True) for s in seeds}) < len(seeds):

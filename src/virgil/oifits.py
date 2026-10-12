@@ -18,14 +18,13 @@ wavelength.
 """
 
 import datetime
+import math
 import os
 import warnings
 
 import numpy as onp
 from astropy.io import fits
-
-from ._utils import dtor
-
+from ._deprecate import external_stacklevel
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
@@ -414,7 +413,7 @@ def _phase_unit_scale(unit, default, name="phase"):
     if name_ in {"rad", "radian", "radians"}:
         return 1.0
     if name_ in {"deg", "degree", "degrees"}:
-        return dtor
+        return math.pi / 180.0
     raise ValueError(
         f"Unsupported phase unit {raw!r} for {name}; expected degrees or "
         "radians."
@@ -824,7 +823,7 @@ def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
             "table's own (u, v) as a flagged sample: the closure phases are "
             "fitted, but the V² coverage of this file is incomplete.",
             UserWarning,
-            stacklevel=4,
+            stacklevel=external_stacklevel(),
         )
     if extra["u"]:
         n_extra = n_samples - record["u"].size
