@@ -771,7 +771,9 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
         resid = data - wd @ params
         return params, resid @ resid
 
-    def signs_for(params):  # params (A, B, F, G): ddec = A x + F y, dra = B x + G y
+    def signs_for(
+        params,
+    ):  # params (A, B, F, G): ddec = A x + F y, dra = B x + G y
         model = np.stack(
             [params[1] * x + params[3] * y, params[0] * x + params[2] * y], -1
         )
