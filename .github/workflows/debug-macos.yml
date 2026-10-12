@@ -9,8 +9,6 @@ jobs:
       matrix:
         include:
           - {os: macos-latest, x64: "0"}
-          - {os: macos-latest, x64: "1"}
-          - {os: ubuntu-latest, x64: "0"}
     runs-on: ${{ matrix.os }}
     env:
       JAX_ENABLE_X64: ${{ matrix.x64 }}
