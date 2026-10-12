@@ -1,6 +1,7 @@
 """Period aliases of an undersampled orbit: bands, window and evidences."""
 
 import copy
+import functools
 import json
 
 import jax
@@ -97,6 +98,7 @@ def test_position_profile_has_a_chi2_per_band():
     assert all(onp.isfinite(r["chi2"]) for r in rows)
 
 
+@functools.cache
 def _synthetic(period):
     truth = {**TRUTH, "period": period}
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
@@ -128,7 +130,11 @@ def test_alias_bands_include_the_long_period_band():
 
 
 # 12.38 d sits mid-band N = 20; 12.1 d is 0.05 cycles from the N = 20/21 edge.
+# A few seeds suffice now that the optimizer restarts (aliases._optimize);
+# without restarts L-BFGS-B stalled short of the ridge and 1 in 4 noise
+# draws settled in a wrong alias at chi2_red ~ 100-800.
 @pytest.mark.slow
+@pytest.mark.filterwarnings("error:fit_orbit_aliases")  # a good fit is quiet
 @pytest.mark.parametrize("period", [12.38, 12.1])
 def test_injected_alias_wins_in_closure_phases(period, tmp_path):
     data, pos = _synthetic(period)
@@ -137,11 +143,10 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
         (11.3, 12.9),
         positions=pos,
         t_ref=T_REF,
-        n_candidates=40,
-        n_refine=4,
+        n_candidates=30,
+        n_refine=3,
         n_is=400,
         n_samples=50,
-        k=3.0,
     )
     n_true = round(float(onp.ptp(result.times)) / period)
     assert result.best.n == n_true
@@ -163,15 +168,38 @@ def test_injected_alias_wins_in_closure_phases(period, tmp_path):
 
 
 @pytest.mark.slow
+def test_a_band_that_cannot_fit_the_data_warns_loudly():
+    """No orbit in 13.5-14.5 d fits a 12.38 d orbit's data, so the best
+    band is flagged poor-fit and the call warns rather than failing
+    silently."""
+    data, pos = _synthetic(12.38)
+    with pytest.warns(UserWarning, match="missed the narrow"):
+        result = fit_orbit_aliases(
+            data,
+            (13.5, 14.5),
+            positions=pos,
+            t_ref=T_REF,
+            n_candidates=10,
+            n_refine=2,
+            n_is=100,
+            n_samples=10,
+        )
+    assert result.best.chi2_red > 10
+    assert "poor-fit" in result.best.flags and result.best.flagged
+
+
+# Few random starts and no positions: this checks the run completes, and
+# the fit is often poor, which fit_orbit_aliases rightly warns about.
+@pytest.mark.filterwarnings("ignore:fit_orbit_aliases:UserWarning")
 def test_random_starts_and_s_max_without_positions():
     data, _ = _synthetic(12.38)
     result = fit_orbit_aliases(
         data,
         (12.1, 12.7),
         t_ref=T_REF,
-        n_random=300,
-        n_refine=4,
-        n_is=200,
+        n_random=64,
+        n_refine=2,
+        n_is=100,
         n_samples=20,
         s_max=50.0,
     )

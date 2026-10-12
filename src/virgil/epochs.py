@@ -1862,6 +1862,9 @@ def start_from_positions(
     if not chosen:
         raise ValueError("No starting orbit has a finite log likelihood.")
     fits, failed, error = [], [], None
+    # One function for every refinement, so ``fit`` compiles once: a fresh
+    # closure per start would recompile for each.
+    model_fn = data.model_fn(model)
     for k in chosen:
         # One bad start (a NaN, a solver error) must not lose the others.
         # TypeError and ValueError are the caller's (a misspelt option,
@@ -1869,7 +1872,7 @@ def start_from_positions(
         # they propagate.
         try:
             result = fit(
-                data.model_fn(model),
+                model_fn,
                 priors,
                 data.data,
                 noise=noise,

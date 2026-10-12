@@ -39,12 +39,12 @@ def pytest_configure(config):
         "(see virgil-validation's docs/design.md)",
     )
     # The heaviest, compile-dominated tests. Pull requests run
-    # `-m "not slow"` to keep CI fast; pushes to main, the weekly schedule
-    # and manual dispatches run everything, so no coverage is lost.
+    # `-m "not slow"` on all but one CI job to keep CI fast; that job, pushes
+    # to main, the weekly schedule and manual dispatches run everything.
     config.addinivalue_line(
         "markers",
-        "slow: heaviest, compile-dominated tests; skipped on pull requests "
-        "(-m 'not slow') but run on main and the weekly schedule",
+        "slow: heaviest, compile-dominated tests; skipped on most pull-request "
+        "jobs (-m 'not slow') but run on one, on main and weekly",
     )
 
 

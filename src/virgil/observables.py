@@ -887,23 +887,27 @@ class DifferentialPhase(_Block):
             [anchor, anchor + np.cumsum(steps, axis=-1)], axis=-1
         )
 
-    def data(self):
+    def _data_steps(self):
+        """The data's wrapped steps and anchor, ``[-π, π)``."""
         phases = np.asarray(self.values)[self.grid]
-        steps = np.diff(phases, axis=-1)
-        steps = wrap_phase(steps)
-        anchor = wrap_phase(phases[..., :1])
-        return self._project(self._unwrap(steps, anchor))
+        steps = wrap_phase(np.diff(phases, axis=-1))
+        return steps, wrap_phase(phases[..., :1])
+
+    def data(self):
+        return self._project(self._unwrap(*self._data_steps()))
 
     @renamed()
     def predict(self, model, cvis):
         vis = np.asarray(cvis)[self.sample][self.grid]
-        phases = np.angle(vis)
-        # One convention, [-π, π), as for the data steps in ``data``.
-        steps = wrap_phase(np.angle(vis[..., 1:] * np.conj(vis[..., :-1])))
-        data_phase = np.asarray(self.values)[self.grid]
-        data_anchor = wrap_phase(data_phase[..., :1])
-        anchor_delta = wrap_phase(phases[..., :1] - data_anchor)
-        return self._project(self._unwrap(steps, data_anchor + anchor_delta))
+        steps = np.angle(vis[..., 1:] * np.conj(vis[..., :-1]))
+        anchor = np.angle(vis[..., :1])
+        # The model's steps and anchor are wrapped to within π of the
+        # data's, so a step near ±π lands on the data's side of the cut
+        # whatever the last bit of arctan2 or π.
+        data_steps, data_anchor = self._data_steps()
+        steps = data_steps + wrap_phase(steps - data_steps)
+        anchor = data_anchor + wrap_phase(anchor - data_anchor)
+        return self._project(self._unwrap(steps, anchor))
 
     def covariance(self, errors=None):
         """Per frame, the covariance of the outputs, ``(F, K R, K R)``.
