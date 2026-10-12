@@ -138,7 +138,9 @@ def alias_bands(times, p_range):
     return bands
 
 
-def position_profile(positions, bands, k=9.0, n_best=3, eccs=None):
+def position_profile(
+    positions, bands, k=9.0, n_best=3, eccs=None, sign_free=False
+):
     """A cheap diagnostic: the best position-level χ² in each band.
 
     For each band, the best Thiele–Innes fits
@@ -157,7 +159,13 @@ def position_profile(positions, bands, k=9.0, n_best=3, eccs=None):
         periods = period_grid(
             positions.dt + positions.t_ref, band.p_lo, band.p_hi, k=k
         )
-        found = starting_orbits(positions, periods, eccs=eccs, n_best=n_best)
+        found = starting_orbits(
+            positions,
+            periods,
+            eccs=eccs,
+            n_best=n_best,
+            sign_free=sign_free,
+        )
         rows.append(
             dict(
                 n=band.n,
@@ -284,11 +292,17 @@ class _Settings:
     flag_nats: float
     ess_min: float
     seed: int
+    sign_free: bool = False
 
     @property
     def flux_scan(self):
-        """The fluxes tried for each position-level candidate."""
-        return onp.geomspace(*self.flux_range, _N_FLUX + 2)[1:-1]
+        """The fluxes tried for each position-level candidate: log-spaced
+        inside the range, and, for near-equal fluxes (``sign_free``), also
+        0.7 and 0.95 of its upper end."""
+        scan = onp.geomspace(*self.flux_range, _N_FLUX + 2)[1:-1]
+        if self.sign_free:
+            scan = onp.append(scan, onp.array([0.7, 0.95]) * self.flux_range[1])
+        return scan
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -387,7 +401,51 @@ def _optimize(problem, bounds, x0, max_steps):
         bounds=list(zip(*limits)),
         options=dict(maxiter=max_steps),
     )
-    return _fold(res.x), -float(res.fun)
+    x, value = _newton_polish(problem, limits, _fold(res.x), -float(res.fun))
+    return x, value
+
+
+def _newton_polish(problem, limits, x, value, n_steps=25):
+    """Levenberg–Marquardt steps from L-BFGS's stopping point.
+
+    L-BFGS stops short of the stationary point along the narrow curved
+    ridges of this likelihood (the ``not-converged`` and
+    ``hessian-not-positive-definite`` flags), and the Laplace proposal built
+    there is poor. A step is accepted only if the log likelihood rises; the
+    coordinates stay inside the bounds. Returns the polished point and its
+    value; the input if no step helps or the Hessian is not finite.
+    """
+    lo = onp.array([-onp.inf if a is None else a for a in limits[0]])
+    hi = onp.array([onp.inf if b is None else b for b in limits[1]])
+    lam = 1e-3
+    for _ in range(n_steps):
+        grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
+        h = onp.asarray(problem.hessian(np.asarray(x)), float)
+        if not (onp.all(onp.isfinite(grad)) and onp.all(onp.isfinite(h))):
+            break
+        h = 0.5 * (h + h.T)
+        free = (x - lo > 1e-6) & (hi - x > 1e-6)
+        improved = False
+        for _try in range(8):
+            a = -h[onp.ix_(free, free)]
+            a = a + lam * onp.diag(onp.maximum(onp.abs(onp.diag(a)), 1e-12))
+            try:
+                step = onp.linalg.solve(a, grad[free])
+            except onp.linalg.LinAlgError:
+                lam *= 10.0
+                continue
+            trial = x.copy()
+            trial[free] += step
+            trial = onp.clip(trial, lo, hi)
+            new = float(problem.value_and_grad(np.asarray(trial))[0])
+            if onp.isfinite(new) and new > value:
+                improved = new - value > 1e-9 * max(abs(value), 1.0)
+                x, value, lam = trial, new, max(lam / 10.0, 1e-9)
+                break
+            lam *= 10.0
+        if not improved:
+            break
+    return _fold(x), value
 
 
 # ---------------------------------------------------------------------------
@@ -1021,6 +1079,7 @@ def fit_orbit_aliases(
     n_random=None,
     k=9.0,
     eccs=None,
+    sign_free=False,
     min_distance_mas=0.5,
     max_steps=200,
     n_is=2000,
@@ -1058,6 +1117,10 @@ def fit_orbit_aliases(
         companion/primary flux.
     ecc_max : float, optional
         Eccentricity is uniform on ``[0, ecc_max]``.
+    sign_free : bool, optional
+        The companion is nearly as bright as the primary, so each epoch's
+        position is known only up to a sign (the point reflection): seed
+        with sign-free Thiele–Innes fits and flux seeds near ``flux_range[1]``.
     s_max : float, optional
         Bound on the error scales, as in
         [`marginal_loglike`][virgil.epochs.marginal_loglike].
@@ -1167,11 +1230,17 @@ def fit_orbit_aliases(
     profile = None
     if positions is not None:
         profile = position_profile(
-            positions, bands, k=k, n_best=n_candidates, eccs=eccs
+            positions,
+            bands,
+            k=k,
+            n_best=n_candidates,
+            eccs=eccs,
+            sign_free=sign_free,
         )
     if n_random is None:
         n_random = 1000 if positions is None else 0
-    n_seeded = 0 if positions is None else 2 * _N_FLUX * n_candidates
+    n_scan = _N_FLUX + (2 if sign_free else 0)
+    n_seeded = 0 if positions is None else 2 * n_scan * n_candidates
     n_pool = n_random + n_seeded  # both senses of motion at each flux
     settings = _Settings(
         p_range=tuple(map(float, p_range)),
@@ -1192,6 +1261,7 @@ def fit_orbit_aliases(
         flag_nats=flag_nats,
         ess_min=ess_min,
         seed=seed,
+        sign_free=sign_free,
     )
     problem = _Problem(data, settings)
     _preflight(problem, settings, bands[0])

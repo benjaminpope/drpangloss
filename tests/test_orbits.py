@@ -212,6 +212,30 @@ def test_starting_orbits_recover_the_true_grid_point():
         assert float(best.ecc) == pytest.approx(0.3)
 
 
+def test_starting_orbits_sign_free_recovers_orbit_from_random_signs():
+    # A near-equal-flux binary: each epoch's position is known up to a sign.
+    truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)
+    mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0, 340.0, 361.0])
+    signs = onp.array([1, -1, -1, 1, -1, 1, 1, -1.0])
+    with jax.enable_x64(True):
+        true = _positions(truth, mjd)
+        flipped = PositionData(
+            mjd,
+            onp.asarray(true.dra) * signs,
+            onp.asarray(true.ddec) * signs,
+            onp.tile(onp.eye(2) * 1e-4, (len(mjd), 1, 1)),
+            t_ref=true.t_ref,
+        )
+        periods = [300.0, 400.0, 500.0]
+        (plain, c_plain), *_ = starting_orbits(flipped, periods, n_phase=8)
+        (free, c_free), *_ = starting_orbits(
+            flipped, periods, n_phase=8, sign_free=True
+        )
+        assert c_plain > 1e3
+        assert c_free < 1e-3
+        assert float(free.period) == pytest.approx(400.0)
+
+
 def test_starting_orbits_find_a_noisy_orbit_off_the_grid():
     truth = _orbit(period=430.0, dt_peri=55.0, ecc=0.35)
     mjd = T_REF + onp.linspace(0.0, 420.0, 12)
