@@ -591,8 +591,8 @@ def _scan(data, lo, hi, n_scan, batch_size):
     ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
-            data,
-            {"diam": np.asarray(axis)},
+            data=data,
+            grid={"diam": np.asarray(axis)},
             batch_size=batch_size,
         )
     )
@@ -665,8 +665,8 @@ def _refine(data, centre, lo, hi, step, batch_size):
     ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
-            data,
-            {"diam": np.asarray(fine)},
+            data=data,
+            grid={"diam": np.asarray(fine)},
             batch_size=batch_size,
         )
     )

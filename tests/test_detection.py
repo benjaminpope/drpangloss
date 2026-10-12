@@ -80,7 +80,7 @@ def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
         result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
         assert float(result["delta_chi2"]) >= 0.0
         # The flux optimizer only improves on the best grid point.
-        grid_ll = likelihood_grid(BinaryModelCartesian, data, grid)
+        grid_ll = likelihood_grid(BinaryModelCartesian, data=data, grid=grid)
         loglike0 = loglike(np.array([0.0, 0.0, 0.0]), *_args(data))
         grid_delta = 2.0 * float(np.max(grid_ll) - loglike0)
         assert float(result["delta_chi2"]) >= grid_delta - 1e-3

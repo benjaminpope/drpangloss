@@ -158,9 +158,17 @@ def _refine_flux_grid(
     )
 
 
-@old_order("data", "model", "grid", data="data")
-def likelihood_grid(model, data, grid, *, batch_size=None):
+@old_order("data", "model", "grid", data="data", keywords=("data", "grid"))
+def likelihood_grid(model, *, data, grid, batch_size=None):
     """Evaluate the log likelihood at every point of a parameter grid.
+
+    Only ``model`` may be passed positionally: ``data`` and ``grid`` are
+    keyword-only, so a call reads
+    ``likelihood_grid(model, data=data, grid=grid)`` and the model, the
+    data and the grid axes cannot be swapped by position. Calls in the
+    0.3 order, ``likelihood_grid(data, model, grid)``, still work with a
+    `FutureWarning` until 0.5; any other positional call raises a
+    `TypeError` naming the keyword call.
 
     Parameters
     ----------

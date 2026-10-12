@@ -244,7 +244,7 @@ def _recover_grid(oidata: OIData) -> dict[str, float]:
         "ddec": np.linspace(-220.0, 220.0, 41),
         "flux": 10 ** np.linspace(-4.5, -1.5, 36),
     }
-    ll = likelihood_grid(BinaryModelCartesian, oidata, samples)
+    ll = likelihood_grid(BinaryModelCartesian, data=oidata, grid=samples)
     best = np.unravel_index(np.argmax(ll), ll.shape)
     return {
         "dra": float(samples["dra"][best[0]]),

@@ -268,6 +268,9 @@ def test_grid_tools_take_flux_param_and_batch_size_by_keyword():
         optimized_likelihood_grid(BinaryModelCartesian, data, grid, "flux")
     with pytest.raises(TypeError):
         likelihood_grid(BinaryModelCartesian, data, grid, 10**6)
+    # data and grid are keyword-only in likelihood_grid
+    with pytest.raises(TypeError, match="by keyword"):
+        likelihood_grid(BinaryModelCartesian, data, grid)
 
 
 def test_prior_validation():
