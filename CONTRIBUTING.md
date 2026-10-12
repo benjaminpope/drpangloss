@@ -161,8 +161,13 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
 
 **Each release:**
 1. Bump `version` in `pyproject.toml`, run `uv lock`, and merge to `main` with CI green.
-2. Check the build locally:
+2. **Evidence gate** (before tagging; [virgil-validation](https://github.com/benjaminpope/virgil-validation), its method page "Release gate"). All four must hold for the release commit:
+   - virgil-validation's tier A passes against that commit (`pytest -m "not slow"` there, with virgil installed from the commit);
+   - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
+   - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes);
+   - the mutation kill rate of its suite (`scripts/mutation.py`) is reported in the release notes.
+3. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
    ```
-3. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on `main`, write the notes, and publish it. The workflow checks that the tag matches the version, builds and checks the distributions, and uploads them.
+4. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on `main`, write the notes, and publish it. The workflow checks that the tag matches the version, builds and checks the distributions, and uploads them.

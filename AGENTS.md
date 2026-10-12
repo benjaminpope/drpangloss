@@ -67,7 +67,9 @@ the OIFITS reader, run that suite against your branch. If someone wants a
 validation that is not covered there, ask them to open an Issue on
 virgil-validation (https://github.com/benjaminpope/virgil-validation/issues)
 detailing the request: the model or function, the independent result it should
-match, and the precision expected.
+match, and the precision expected. Before a release the validation evidence
+must be pinned to the release commit (see the evidence gate under Releasing in
+`CONTRIBUTING.md`).
 
 ## Instrument-specific work
 
