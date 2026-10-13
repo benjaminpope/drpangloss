@@ -242,8 +242,13 @@ def _epoch_chi2(surface, model, d, amp_range):
     """
     r = whitened_residuals(model, d)
     chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks])
-    if amp_range is None or surface.names[0] != "vis" or not d.v2_flag:
+    if amp_range is None or surface.names[0] != "vis":
         return chi2, np.ones((), chi2.dtype)
+    if d.vis_mode != "v2" or d.observable_kind != "split":
+        raise NotImplementedError(
+            "vis_amp needs squared visibilities as the visibility channel "
+            f"(vis_mode='v2', unprojected), got vis_mode={d.vis_mode!r}."
+        )
     n = surface.blocks[0][2]
     obs = np.reshape(d.vis, -1)
     err = np.reshape(d.d_vis, -1)
@@ -942,6 +947,12 @@ def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     )
 
 
+def _pinned(x, bounds, tol=0.02):
+    """Whether the flux ratio sits at the top of its range (within ``tol`` in
+    log flux): a fit that wants a ratio above the range."""
+    return bool(x[7] >= bounds.upper[7] - tol)
+
+
 def _flip_modes(problem, settings, bounds, modes_xy, times):
     """Refit each mode whose flux ratio sits at the top of ``flux_range``
     from the same orbit with the stars' labels swapped (the ratio is then
@@ -952,7 +963,7 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
     top = settings.flux_range[1]
     flips, refits, n_failed = [], [], 0
     for x, _ in modes_xy:
-        if onp.exp(x[7]) < 0.9 * top:
+        if not _pinned(x, bounds):
             continue
         try:
             xf, vf = _optimize(
@@ -982,6 +993,16 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
         settings.min_distance_mas,
     )
     return merged, flips, n_failed
+
+
+def _flip_is_relabelling(problem, settings):
+    """The swap is a relabelling of one sky orbit only for two point
+    sources and no differential phases (a resolved primary stays on the
+    first star; differential phases are chromatic), so it is skipped
+    otherwise."""
+    return not settings.primary_diam and not any(
+        d.extras for d in problem.data
+    )
 
 
 def _is_flipped(result, flips, settings, times):
@@ -1027,7 +1048,7 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, bounds, pool, times, forced
     )
     flips = []
-    if settings.flip_flux:
+    if settings.flip_flux and _flip_is_relabelling(problem, settings):
         modes_xy, flips, n_flip_failed = _flip_modes(
             problem, settings, bounds, modes_xy, times
         )
@@ -1475,16 +1496,21 @@ def fit_orbit_aliases(
     vis_amp : (float, float), optional
         Give every epoch's squared visibilities their own multiplicative
         amplitude ``A`` (a contrast loss that is the same on every baseline
-        and wavelength, unlike a resolved primary), log-uniform over this
-        range and profiled analytically (the best ``A``, clipped to the
-        range; reported per epoch as ``vis_amp``). The error scale of the
+        and wavelength, unlike a resolved primary), profiled analytically:
+        the best ``A``, clipped to this range (which only bounds it: no
+        prior or Occam factor for ``A`` enters ``log_z``, which is then a
+        profile in ``A``; every band has the same number of them). It is
+        reported per epoch as ``vis_amp``. It needs squared-visibility data
+        (``vis_mode="v2"``) and raises otherwise. The error scale of the
         epoch is kept. ``None`` (default) leaves the visibilities as they are.
     flip_flux : bool, optional
         When a band's mode has its flux ratio at the top of ``flux_range``
-        (0.9 of it or more) refit it with the stars' labels swapped
+        refit it with the stars' labels swapped
         (ω + 180°, flux → 1/flux), since a ratio above 1 sits outside the
         prior; the better result is kept and ``flipped`` is set on the band
-        if it won.
+        if it won. It applies to a point primary without differential
+        phases only (otherwise the swap is not a relabelling) and acts on a
+        mode within 0.02 of the top in log flux.
     init : (KeplerOrbit, float) or dict, optional
         A warm start: an orbit and flux ratio, or a dict with ``period``,
         ``dt_peri`` (relative to ``t_ref``), ``ecc``, ``inc``, ``omega``,

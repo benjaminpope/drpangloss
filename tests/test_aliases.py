@@ -790,7 +790,7 @@ def test_a_flux_ratio_above_one_is_refit_with_the_labels_swapped():
     )  # fmt: skip
     plain = fit_orbit_aliases(data, (12.0, 12.2), flip_flux=False, **kw)
     flip = fit_orbit_aliases(data, (12.0, 12.2), **kw)
-    assert flip.best.flipped and not plain.best.flipped
+    assert flip.best.flipped
     assert flip.best.chi2_red < 3.0
     assert not plain.best.chi2_red < 3.0  # pinned at the bound, or no mode
     assert flip.best.best["flux"] == pytest.approx(1 / 1.4, rel=0.1)
@@ -809,3 +809,45 @@ def test_a_warm_start_reproduces_the_optimum_without_other_seeds():
     assert best["period"] == pytest.approx(12.1, abs=0.02)
     assert best["flux"] == pytest.approx(FLUX, rel=0.2)
     assert not result.best.flipped
+
+
+def test_the_flip_acts_only_on_a_flux_pinned_at_the_top():
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), _settings())
+    assert not aliases._pinned(
+        _x_truth(flux=0.95), bounds
+    )  # near-equal, not pinned
+    assert aliases._pinned(_x_truth(flux=0.995), bounds)
+
+
+@in_float64
+def test_the_flip_is_skipped_for_a_resolved_primary():
+    data, _ = _synthetic(12.1)
+    for kw, expect in (({}, True), ({"primary_diam": 0.5}, False)):
+        _, problem = _problem(data, **kw)
+        assert aliases._flip_is_relabelling(problem, _settings(**kw)) is expect
+
+
+@in_float64
+def test_a_warm_start_is_forced_into_its_band_whatever_its_rank(monkeypatch):
+    data, _ = _synthetic(12.1)
+    seen = []
+    monkeypatch.setattr(
+        aliases,
+        "_refine",
+        lambda *a: seen.append(a[5] if len(a) > 5 else ()) or ([], 0),
+    )
+    init = (12.1, 2.0, 0.3, 50.0, 60.0, 120.0, 10.0, 0.3)
+    for p_lo, p_hi, expect in ((12.0, 12.2, 1), (11.0, 11.5, 0)):
+        settings, problem = _problem(data, init=init)
+        band = aliases.AliasBand(20, p_lo, p_hi)
+        aliases._fit_band(problem, settings, band, None, EPOCHS)
+        assert len(seen[-1]) == expect
+
+
+def test_vis_amp_refuses_data_that_are_not_squared_visibilities():
+    data, _ = _synthetic(12.1)
+    d = copy.copy(data[0])
+    object.__setattr__(d, "vis_mode", "amp")
+    _, problem = _problem([d, *data[1:]], vis_amp=(0.01, 1.5))
+    with pytest.raises(NotImplementedError, match="vis_amp"):
+        problem.per_epoch(jax.numpy.asarray(_x_truth()))

@@ -254,6 +254,9 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
+  `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
+  settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
 - **NUTS can sample each prior in its flat coordinate (opt-in,
   `flat_coordinates=True`, #301).** `numpyro_model(...,
   flat_coordinates=True)` maps a `LogUniform` scale to NUTS's
