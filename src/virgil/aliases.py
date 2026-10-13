@@ -960,7 +960,6 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
     the swap, and a fit pinned at the top is the signature of a ratio above
     it). Returns the modes with the refits (distinct ones), the refits on
     tracks no mode had, and the number that failed."""
-    top = settings.flux_range[1]
     flips, refits, n_failed = [], [], 0
     for x, _ in modes_xy:
         if not _pinned(x, bounds):
