@@ -257,6 +257,15 @@ anything before 1.0 may change between minor versions.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
+
+- **The evidence helpers take several field Images.** `log_evidence`,
+  `error_scale` and `laplace_samples` accept `path=None` (every Image whose
+  log-brightness is a `GaussianField`) or a tuple of paths, and take the
+  Jacobian over all those latents together, so a compact and an extended
+  GP Image in one `System` get a joint Laplace evidence. `laplace_samples`
+  returns `"latents"` as a dict keyed by Image path when it draws more than
+  one. Single-Image results and the default `path="env"` are unchanged.
+
 - **NUTS can sample each prior in its flat coordinate (opt-in,
   `flat_coordinates=True`, #301).** `numpyro_model(...,
   flat_coordinates=True)` maps a `LogUniform` scale to NUTS's

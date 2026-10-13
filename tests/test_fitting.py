@@ -382,6 +382,7 @@ def test_a_cold_maxent_fit_does_not_collapse(dtype):
     assert np.mean(b > 1e-3 * np.max(b)) > 0.1  # collapsed fits: 2%
 
 
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_repeated_fits_do_not_recompile(method):
     # The solvers are jitted once at module level, so a second fit of a
@@ -390,7 +391,11 @@ def test_repeated_fits_do_not_recompile(method):
     # defined inside each call, every fit recompiled, which took most of
     # its time.
     start, priors, data = _image_fit()
-    options = {"max_steps": 20} if method == "adam" else {}
+    # A short run: L-BFGS restarts a round that ends unconverged, and the
+    # restart's first call is a separate compilation. Whether the second fit
+    # needs one depends on the platform's numerics and on which tests ran
+    # before in the worker, so a converged-length run made this test flaky.
+    options = {"max_steps": 20} if method in ("adam", "lbfgs") else {}
     again = data.with_model(start, key=jax.random.PRNGKey(2))
 
     def fit_tsv(data, weight):

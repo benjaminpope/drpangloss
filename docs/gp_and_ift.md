@@ -94,6 +94,20 @@ up to a constant that is the same for every σ and ℓ. Each quantity is evaluat
 
 The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximize Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small; with `by_observable=True` it gives one scale per kind of observable (V², closure phases, fluxes), for data whose blocks are mis-calibrated by different factors. Alternatively, σ and ℓ can be given priors and sampled together with z.
 
+**Several field images.** A compact and an extended component can each be a GP image in one `System`, so that their brightnesses add (a bright knot on a faint, smooth envelope), with the two fields' hyperparameters chosen by the evidence:
+
+```python
+scene = System(
+    star=PointSource(),
+    compact=Image(GaussianField(np.zeros((32, 32)), 1.0, 0.7), 0.4, flux=0.1),
+    extended=Image(GaussianField(np.zeros((32, 32)), 1.0, 6.0), 1.6, flux=0.5),
+)
+result = fit(scene, image_priors(scene) | flux_priors, data)
+log_evidence(result, data, path=None)
+```
+
+`image_priors` gives each field Image its own standard-normal latents, and `log_evidence`, `error_scale` and `laplace_samples` take `path=None` for every field Image in the model, or a tuple of paths such as `("compact", "extended")`. J is then the Jacobian with respect to all the latents together, so the Occam factor includes the correlations between the two images (they can trade flux). The default `path="env"` is unchanged. `laplace_samples` returns `"latents"` as a dict keyed by image path when it draws more than one. Fluxes and the star stay at their MAP values in the evidence, so the evidence of a one-image and a two-image model differ in a term that is not counted: compare them with that in mind. The data constrain only the total brightness, so the split between the two images comes from their priors.
+
 ### Relation to TSV and Gaussian Markov random fields
 
 Some imaging codes (e.g. Tiede et al. 2026, HIBI) use Gaussian Markov random field (GMRF) priors. These are usually described by "neighbouring pixels are correlated", which can make them look different from a kernel with a correlation length. They are not different. A GMRF is specified by its **precision matrix** Q = Σ⁻¹, the inverse of the covariance. Q is sparse: each pixel is coupled to its neighbours only. Its inverse Σ is dense: every pair of pixels is correlated, by an amount that decays with separation over a correlation length. "Only neighbours are coupled" describes Q, not Σ.

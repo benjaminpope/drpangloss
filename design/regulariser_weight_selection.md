@@ -205,6 +205,7 @@ The intuition: each well-measured parameter absorbs one datum's worth of scatter
 
 In virgil:
 - `imaging.error_scale(model, data)` computes s at a `GaussianField` MAP, from the same Jacobian as `log_evidence`.
+- `log_evidence`, `error_scale` and `laplace_samples` take `path=None` (every field Image in the model) or a tuple of paths, with one Jacobian over all the latents (the sum-of-fields plan, stage 1; see `design/imaging_plan.md`, log 5e).
 - `OIData.with_error_scale(s)` rescales the data, for a refit.
 
 One fixed-point step usually suffices. The estimate assumes the model is adequate, because unmodelled structure inflates s.

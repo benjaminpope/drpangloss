@@ -12,6 +12,7 @@ from virgil.imaging import (
     error_scale,
     image_priors,
     l_curve,
+    laplace_samples,
     log_evidence,
 )
 from virgil.models import GaussianDisk, Image, PointSource, System
@@ -370,7 +371,7 @@ def test_the_evidence_prefers_the_simulated_gain_width():
 
 
 def test_laplace_samples_have_the_gauss_newton_covariance():
-    from virgil.imaging import _residual_jacobian, laplace_samples
+    from virgil.imaging import _residual_jacobian
 
     n = 4
     latent = jax.random.normal(jax.random.PRNGKey(9), (n, n))
@@ -561,3 +562,253 @@ def test_observable_blocks_map_residual_rows(n_telescopes):
     onp.testing.assert_allclose(
         halved[rows["phi"]], 0.5 * base[rows["phi"]], rtol=1e-5
     )
+
+
+# --- Several field Images in one model (a compact and an extended Image) ---
+
+_NC, _NE = 3, 4
+
+
+def _two_image_scene(latent_c, latent_e, sigmas=(1.0, 1.0)):
+    compact = Image(GaussianField(latent_c, sigmas[0], 0.7), 0.5, flux=0.2)
+    extended = Image(GaussianField(latent_e, sigmas[1], 3.0), 2.0, flux=0.5)
+    return System(star=PointSource(), compact=compact, extended=extended)
+
+
+def _two_image_problem():
+    latents = [
+        0.5 * jax.random.normal(jax.random.PRNGKey(20), (_NC, _NC)),
+        0.5 * jax.random.normal(jax.random.PRNGKey(21), (_NE, _NE)),
+    ]
+    model = _two_image_scene(*latents)
+    data = DATA.with_model(model, key=jax.random.PRNGKey(22))
+    return model, data
+
+
+def _hand_jacobian(model, data, paths):
+    """dr/dz over several leaves by jax.jacfwd, with no virgil helpers."""
+    from virgil._precision import cast_tree, run_in
+    from virgil.likelihood import whitened_residuals
+
+    with run_in("float64"):
+        model, data = cast_tree((model, data), "float64")
+        x0 = np.concatenate([np.ravel(model.get(p)) for p in paths])
+        shapes = [np.shape(model.get(p)) for p in paths]
+        edges = onp.cumsum([0] + [int(onp.prod(s)) for s in shapes])
+
+        def residuals(x):
+            parts = [
+                x[edges[i] : edges[i + 1]].reshape(s)
+                for i, s in enumerate(shapes)
+            ]
+            changed = model
+            for p, part in zip(paths, parts):
+                changed = changed.set(p, part)
+            return whitened_residuals(changed, data)
+
+        return (
+            onp.asarray(residuals(x0), float),
+            onp.asarray(jax.jacfwd(residuals)(x0), float),
+            onp.asarray(x0, float),
+        )
+
+
+def test_single_image_helpers_are_unchanged():
+    # The helpers' old algorithm, rebuilt from the single-leaf Jacobian (the
+    # trace they had before taking several paths), at a fixed model (no fit,
+    # so no optimizer in the numbers). Pinned numbers would not travel
+    # between float32 and x64, or between platforms.
+    from virgil.imaging import _log_norm, _residual_jacobian
+
+    n = 6
+    template = onp.asarray(GaussianDisk(2.0).render(n, n * H))
+    latent = 0.5 * jax.random.normal(jax.random.PRNGKey(3), (n, n))
+    field = GaussianField(latent, 1.2, 1.5, mean=template)
+    model = System(star=PointSource(), env=Image(field, H, flux=0.4))
+    data = DATA.with_model(model, key=jax.random.PRNGKey(4))
+    path = "env.log_brightness.latent"
+    r, jac = _residual_jacobian(model, data, path)
+    z = onp.asarray(model.get(path), dtype=float)
+    singular = onp.linalg.svd(jac, compute_uv=False)
+    old_evidence = float(
+        -0.5 * (r @ r)
+        - _log_norm(model, data)
+        - 0.5 * onp.sum(z**2)
+        - 0.5 * onp.sum(onp.log1p(singular**2))
+    )
+    evidence = log_evidence(model, data)
+    assert evidence == pytest.approx(old_evidence, rel=1e-12)
+    # error_scale: s² = χ²/(N − γ) with γ from the same Jacobian.
+    scale = error_scale(model, data)
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * singular**2 / (1.0 + beta * singular**2))
+    assert scale**2 == pytest.approx(
+        (r @ r) / (data.n_independent - gamma), rel=1e-6
+    )
+    key = jax.random.PRNGKey(5)
+    out = laplace_samples(model, data, 3, key, npix=8, fov_mas=8.0)
+    assert out["latents"].shape == (3, n, n)
+    # The old draws: V diag((1+s²)^-½) ε₁ + (I − VVᵀ) ε₂ about z.
+    _, s_vals, vt = onp.linalg.svd(jac, full_matrices=False)
+    first, second = jax.random.split(key)
+    e1 = onp.asarray(jax.random.normal(first, (3, s_vals.size)), float)
+    e2 = onp.asarray(jax.random.normal(second, (3, z.size)), float)
+    old = z.ravel() + (e1 / onp.sqrt(1.0 + s_vals**2)) @ vt
+    old += e2 - (e2 @ vt.T) @ vt
+    onp.testing.assert_allclose(
+        out["latents"].reshape(3, -1), old, rtol=1e-9, atol=1e-12
+    )
+    assert out["images"].shape == (3, 8, 8)
+    # However the one Image is named, the numbers are the same, exactly.
+    for path in (("env",), None):
+        assert log_evidence(model, data, path=path) == evidence
+        assert error_scale(model, data, path=path) == scale
+        again = laplace_samples(model, data, 3, key, path=path)
+        assert (again["latents"] == out["latents"]).all()
+
+
+def test_the_evidence_of_two_images_is_the_joint_laplace():
+    from virgil.imaging import _log_norm
+
+    model, data = _two_image_problem()
+    paths = ("compact.log_brightness.latent", "extended.log_brightness.latent")
+    r, jac, z = _hand_jacobian(model, data, paths)
+    assert jac.shape == (r.size, _NC**2 + _NE**2)
+    _, logdet = onp.linalg.slogdet(onp.eye(z.size) + jac.T @ jac)
+    log_norm = _log_norm(model, data)
+    direct = -0.5 * (r @ r) - log_norm - 0.5 * (z @ z) - 0.5 * logdet
+    evidence = log_evidence(model, data, path=None)
+    assert evidence == pytest.approx(direct, rel=1e-10)
+    assert log_evidence(model, data, path=("compact", "extended")) == evidence
+    # The joint Laplace is not the sum of the Images' own: their latents
+    # are correlated through the shared data.
+    _, logdet_c = onp.linalg.slogdet(
+        onp.eye(_NC**2) + jac[:, : _NC**2].T @ jac[:, : _NC**2]
+    )
+    _, logdet_e = onp.linalg.slogdet(
+        onp.eye(_NE**2) + jac[:, _NC**2 :].T @ jac[:, _NC**2 :]
+    )
+    assert abs(logdet - logdet_c - logdet_e) > 1e-3
+    # One Image alone is the evidence with the other's latents held fixed.
+    assert log_evidence(model, data, path="compact") != evidence
+
+
+def test_laplace_samples_of_two_images_have_the_joint_covariance():
+    from virgil.imaging import _residual_jacobian
+
+    model, data = _two_image_problem()
+    paths = ("compact.log_brightness.latent", "extended.log_brightness.latent")
+    _, jac = _residual_jacobian(model, data, paths)
+    expected = onp.linalg.inv(onp.eye(jac.shape[1]) + jac.T @ jac)
+    draws = 20_000
+    out = laplace_samples(
+        model,
+        data,
+        draws,
+        jax.random.PRNGKey(30),
+        path=None,
+        npix=8,
+        fov_mas=8.0,
+    )
+    latents = out["latents"]
+    assert set(latents) == {"compact", "extended"}
+    assert latents["compact"].shape == (draws, _NC, _NC)
+    assert latents["extended"].shape == (draws, _NE, _NE)
+    flat = onp.concatenate(
+        [latents["compact"].reshape(draws, -1)]
+        + [latents["extended"].reshape(draws, -1)],
+        axis=1,
+    )
+    z = onp.concatenate([onp.ravel(model.get(p)) for p in paths])
+    sd = onp.sqrt(onp.diag(expected))
+    assert onp.all(onp.abs(flat.mean(0) - z) < 5 * sd / onp.sqrt(draws))
+    cov = onp.cov(flat, rowvar=False)
+    onp.testing.assert_allclose(cov, expected, atol=5 * onp.sqrt(2 / draws))
+    # The cross-covariance between the Images is not zero.
+    assert onp.abs(expected[: _NC**2, _NC**2 :]).max() > 1e-3
+    assert out["images"].shape == (draws, 8, 8)
+    onp.testing.assert_allclose(out["images"].sum(axis=(1, 2)), 1.0, rtol=1e-5)
+
+
+def test_error_scale_of_two_images_counts_every_latent():
+    model, data = _two_image_problem()
+    scale = error_scale(model, data, path=None)
+    assert scale == error_scale(model, data, path=("compact", "extended"))
+    # γ ≤ the number of latents, and with both Images it exceeds the
+    # compact Image's alone (it can only gain constrained directions).
+    n_latent = _NC**2 + _NE**2
+    from virgil.imaging import _residual_jacobian
+
+    paths = ("compact.log_brightness.latent", "extended.log_brightness.latent")
+    r, jac = _residual_jacobian(model, data, paths)
+    lam = onp.linalg.svd(jac, compute_uv=False) ** 2
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * lam / (1.0 + beta * lam))
+    assert gamma <= n_latent
+    n_data = data.n_independent
+    assert scale**2 == pytest.approx((r @ r) / (n_data - gamma), rel=1e-6)
+    only = error_scale(model, data, path="compact")
+    assert only != scale
+    blocks = error_scale(model, data, path=None, by_observable=True)
+    assert set(blocks) == {"vis", "phi"}
+
+
+def test_image_priors_gives_one_latent_prior_per_field_image():
+    model, _ = _two_image_problem()
+    priors = image_priors(model)
+    assert set(priors) == {
+        "compact.log_brightness.latent",
+        "extended.log_brightness.latent",
+    }
+    assert priors["extended.log_brightness.latent"].event_shape == (
+        _NE,
+        _NE,
+    )
+
+
+def test_the_evidence_helpers_say_when_there_is_no_field_latent():
+    pixels = System(
+        star=PointSource(), env=Image.from_model(GaussianDisk(3.0), N, H)
+    )
+    bare = System(star=PointSource(), env=GaussianDisk(3.0, flux=0.4))
+    for scene in (pixels, bare):
+        for helper in (log_evidence, error_scale):
+            with pytest.raises(TypeError, match="found no Image with a Gauss"):
+                helper(scene, DATA, path=None)
+        with pytest.raises(TypeError, match="found no Image with a Gauss"):
+            laplace_samples(scene, DATA, 2, jax.random.PRNGKey(0), path=None)
+    # An explicit path to a pixel Image, or to one in a tuple, is named.
+    model, data = _two_image_problem()
+    mixed = System(
+        star=PointSource(),
+        env=Image.from_model(GaussianDisk(3.0), N, H, flux=0.4),
+        extended=model.components["extended"],
+    )
+    with pytest.raises(TypeError, match="GaussianField at 'env'"):
+        log_evidence(mixed, data, path=("extended", "env"))
+    with pytest.raises(ValueError, match="repeated"):
+        log_evidence(model, data, path=("compact", "compact"))
+    with pytest.raises(ValueError, match="at least one"):
+        log_evidence(model, data, path=())
+    # path=None skips the pixel Image and finds the field one.
+    assert log_evidence(mixed, data, path=None) == log_evidence(
+        mixed, data, path="extended"
+    )
+
+
+def test_the_two_image_jacobian_compiles_once():
+    n = 7  # grid sizes no other test uses, so nothing is cached
+
+    def scene(sigma):
+        return _two_image_scene(
+            onp.zeros((n, n)), onp.zeros((n + 1, n + 1)), (sigma, sigma)
+        )
+
+    first, second = scene(1.0), scene(2.0)
+    with count_compiles() as compiles:
+        log_evidence(first, DATA, path=None)
+    assert len(compiles) < 20
+    with count_compiles() as compiles:
+        log_evidence(second, DATA, path=None)
+        error_scale(second, DATA, path=None)
+    assert not compiles
