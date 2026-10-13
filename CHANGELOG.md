@@ -246,6 +246,14 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **The evidence helpers take several field Images.** `log_evidence`,
+  `error_scale` and `laplace_samples` accept `path=None` (every Image whose
+  log-brightness is a `GaussianField`) or a tuple of paths, and take the
+  Jacobian over all those latents together, so a compact and an extended
+  GP Image in one `System` get a joint Laplace evidence. `laplace_samples`
+  returns `"latents"` as a dict keyed by Image path when it draws more than
+  one. Single-Image results and the default `path="env"` are unchanged.
+
 - **NUTS can sample each prior in its flat coordinate (opt-in,
   `flat_coordinates=True`, #301).** `numpyro_model(...,
   flat_coordinates=True)` maps a `LogUniform` scale to NUTS's

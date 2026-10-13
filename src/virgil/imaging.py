@@ -63,7 +63,6 @@ from ._deprecate import renamed
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
-from .fields import GaussianField
 from .likelihood import _whitened_and_log_norm, whitened_residuals
 from .models import (
     Image,
@@ -456,6 +455,8 @@ def image_priors(scene):
     [`GaussianField`][virgil.fields.GaussianField] gets standard-normal
     priors on the field's latents, ``{"env.log_brightness.latent":
     Normal(0, 1)}``: the Gaussian-process prior, which needs no regularizer.
+    A scene with several such Images (a compact and an extended component,
+    say) gets one prior per Image.
     Add priors for any other free parameters (fluxes, offsets) to the dict.
     """
     import numpyro.distributions as dist
@@ -463,9 +464,7 @@ def image_priors(scene):
     priors = {}
 
     def visit(model, prefix):
-        if isinstance(model, Image) and isinstance(
-            model.log_brightness, GaussianField
-        ):
+        if isinstance(model, Image) and _whitened_field(model.log_brightness):
             shape = model.log_brightness.shape
             priors[prefix + "log_brightness.latent"] = dist.Normal(
                 np.zeros(shape), 1.0
@@ -1709,7 +1708,7 @@ class LCurve:
         ):
             model = _single_model(result, "classic_maxent")
             image = model.get(path)
-            if isinstance(image.log_brightness, GaussianField):
+            if _whitened_field(image.log_brightness):
                 raise TypeError("classic_maxent needs a pixel Image.")
             _, jac = _residual_jacobian(model, data, path + ".log_brightness")
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
@@ -1747,11 +1746,33 @@ def _jitted_residual_jacobian(model, datasets, path):
     Jitted once at module level, with the model and data as arguments, so
     that a new fit of the same shape reuses the compilation; run eagerly,
     the Jacobian compiles hundreds of small operations one at a time.
+    ``path`` is one leaf's path, or a tuple of paths: the Jacobian is then
+    taken with respect to their concatenated, raveled leaves.
     """
-    leaf = model.get(path)
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    if len(paths) == 1:
+        leaf = model.get(paths[0])
+
+        def with_leaf(x):
+            return model.set(paths[0], x)
+
+    else:
+        leaves = model.get(list(paths))
+        shapes = [np.shape(x) for x in leaves]
+        edges = onp.cumsum([0] + [int(onp.prod(s)) for s in shapes])
+        leaf = np.concatenate([np.ravel(x) for x in leaves])
+
+        def with_leaf(x):
+            return model.set(
+                list(paths),
+                [
+                    x[edges[i] : edges[i + 1]].reshape(shape)
+                    for i, shape in enumerate(shapes)
+                ],
+            )
 
     def residuals(x):
-        changed = model.set(path, x)
+        changed = with_leaf(x)
         return np.concatenate(
             [whitened_residuals(changed, d) for d in datasets]
         )
@@ -1787,13 +1808,17 @@ def _jitted_residual_jacobian(model, datasets, path):
 
 
 def _residual_jacobian(model, data, path):
-    """All the whitened residuals, and their Jacobian with respect to a leaf.
+    """All the whitened residuals, and their Jacobian with respect to leaves.
 
-    Returns NumPy arrays ``(residuals, jacobian)`` of shapes ``(n_data,)``
-    and ``(n_data, leaf.size)``, computed in float64, with whichever of
-    forward or reverse mode is cheaper for the Jacobian.
+    ``path`` is one leaf's path or a tuple of paths. Returns NumPy arrays
+    ``(residuals, jacobian)`` of shapes ``(n_data,)`` and
+    ``(n_data, total leaf size)``, computed in float64, with whichever of
+    forward or reverse mode is cheaper for the Jacobian. The columns are
+    the paths' raveled leaves, in the order given.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    if not isinstance(path, str):
+        path = tuple(path)
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
         r, jac = _jitted_residual_jacobian(model, datasets, path)
@@ -1843,20 +1868,68 @@ def _log_norm(model, data):
         return float(_jitted_log_norm(model, datasets))
 
 
-def _gaussian_field_latents(model, path, caller):
-    """The path of a GaussianField's latents in ``model``, checked."""
-    image = model.get(path)
-    if not isinstance(image.log_brightness, GaussianField):
-        raise TypeError(
-            f"{caller} needs an Image with a GaussianField at {path!r}."
+def _whitened_field(obj):
+    """Whether ``obj`` is a whitened field: it evaluates and has latents."""
+    return callable(getattr(obj, "evaluate", None)) and hasattr(obj, "latent")
+
+
+def _field_images(model, path, caller):
+    """The paths of the Images with whitened fields that ``path`` selects.
+
+    ``path`` is the path of one Image (the Image must have a whitened
+    field, else a ``TypeError``), a tuple of such paths, or ``None`` for
+    every Image in ``model`` with a whitened field (a ``TypeError`` if
+    there is none).
+    """
+    if path is None:
+        found = tuple(
+            p
+            for p, part in _parts(model)
+            if isinstance(part, Image) and _whitened_field(part.log_brightness)
         )
-    return path + ".log_brightness.latent"
+        if not found:
+            raise TypeError(
+                f"{caller} found no Image with a GaussianField in the model; "
+                "give path= for an Image with one."
+            )
+        return found
+    paths = (path,) if isinstance(path, str) else tuple(path)
+    if not paths:
+        raise ValueError(f"{caller} needs at least one path, not none.")
+    if len(set(paths)) != len(paths):
+        raise ValueError(f"{caller} was given repeated paths {paths}.")
+    for p in paths:
+        image = model.get(p)
+        if not (
+            isinstance(image, Image) and _whitened_field(image.log_brightness)
+        ):
+            raise TypeError(
+                f"{caller} needs an Image with a GaussianField at {p!r}."
+            )
+    return paths
+
+
+def _field_latents(model, path, caller):
+    """The paths of the latents of the fields ``path`` selects, checked.
+
+    See [`_field_images`][virgil.imaging._field_images] for ``path``.
+    Returns a tuple of ``(image_path, latent_path)``.
+    """
+    return tuple(
+        (
+            p,
+            "log_brightness.latent"
+            if p is None
+            else p + ".log_brightness.latent",
+        )
+        for p in _field_images(model, path, caller)
+    )
 
 
 def log_evidence(model, data, path="env"):
     """Laplace-approximated log evidence of a Gaussian-field image fit.
 
-    For an Image whose log-brightness is a
+    For a model whose Image log-brightness is a
     [`GaussianField`][virgil.fields.GaussianField] with standard-normal
     latents ``z``, at the MAP ``model`` from [`fit`][virgil.fitting.fit],
 
@@ -1864,7 +1937,11 @@ def log_evidence(model, data, path="env"):
 
     up to a constant that depends only on the data (see below). ``J`` is
     the Jacobian of the whitened residuals with respect to ``z``, so
-    ``JᵀJ`` is the Gauss–Newton curvature of the likelihood. Other fitted
+    ``JᵀJ`` is the Gauss–Newton curvature of the likelihood. With several
+    field Images (``path=None`` or a tuple), ``z`` is all their latents
+    together and ``J`` is taken with respect to all of them at once, so
+    the log determinant carries the correlations between the Images' fields
+    (a compact and an extended component can trade flux). Other fitted
     parameters (fluxes, spectra) are held at their MAP values. Compare it
     across fits with different hyperparameters and choose the largest, as
     MacKay's evidence framework does; it is exact for a linear model, and
@@ -1900,19 +1977,26 @@ def log_evidence(model, data, path="env"):
         A list of models raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
-    path : str, optional
-        Path of the Image in the model (default ``"env"``).
+    path : str or tuple of str or None, optional
+        Path of the Image in the model (default ``"env"``), a tuple of
+        paths of Images with GaussianFields, or ``None`` for every such
+        Image in the model (a ``TypeError`` if there is none).
 
     Returns
     -------
     float
     """
     model = _single_model(model, "log_evidence")
-    latent_path = _gaussian_field_latents(model, path, "log_evidence")
-    r, jac = _residual_jacobian(model, data, latent_path)
+    latent_paths = tuple(
+        latent for _, latent in _field_latents(model, path, "log_evidence")
+    )
+    r, jac = _residual_jacobian(model, data, latent_paths)
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)
-    z = onp.asarray(model.get(latent_path), dtype=float)
+    z2 = sum(
+        onp.sum(onp.asarray(model.get(latent), dtype=float) ** 2)
+        for latent in latent_paths
+    )
     # log det(I + JᵀJ) = Σ log(1 + s²) over the singular values s of J. A
     # Cholesky factor of I + JJᵀ fails on high signal-to-noise data: the
     # Gram matrix is low rank with a huge norm, and its rounding error
@@ -1920,12 +2004,16 @@ def log_evidence(model, data, path="env"):
     # indefinite. The singular values avoid forming it.
     singular = onp.linalg.svd(jac, compute_uv=False)
     logdet = float(onp.sum(onp.log1p(singular**2)))
-    return float(-0.5 * chi2 - log_norm - 0.5 * onp.sum(z**2) - 0.5 * logdet)
+    return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
 
 
 @eqx.filter_jit
 def _render_latents(model, latent_path, latents, npix, fov_mas):
-    """The whole model rendered with each of ``latents`` at its field."""
+    """The whole model rendered with each of ``latents`` at its field.
+
+    ``latent_path`` is one path with ``latents`` an array, or a tuple of
+    paths with ``latents`` a tuple of arrays, each with a leading draw axis.
+    """
     return jax.vmap(lambda x: model.set(latent_path, x).render(npix, fov_mas))(
         latents
     )
@@ -1942,7 +2030,9 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     ``z ~ N(z₀, (I + JᵀJ)⁻¹)``,
 
     with ``J`` the Jacobian of the whitened residuals with respect to
-    ``z``: the same approximation as
+    ``z`` (all the latents of every selected Image together, so the draws
+    keep the correlations between the Images' fields): the same
+    approximation as
     [`log_evidence`][virgil.imaging.log_evidence]. With the thin SVD
     ``J = U S Vᵀ``, a draw is
     ``z₀ + V diag((1 + s²)^-½) ε₁ + (I - V Vᵀ) ε₂`` with standard-normal
@@ -1965,8 +2055,10 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         Number of draws.
     key : jax.Array
         A JAX random key.
-    path : str, optional
-        Path of the Image in the model (default ``"env"``).
+    path : str or tuple of str or None, optional
+        Path of the Image in the model (default ``"env"``), a tuple of
+        paths of Images with GaussianFields, or ``None`` for every such
+        Image in the model (a ``TypeError`` if there is none).
     npix : int, optional
         With ``fov_mas``, also render the whole model for each draw (see
         [`SourceModel.render`][virgil.models.SourceModel.render]).
@@ -1980,16 +2072,22 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     dict
         ``"latents"``, a NumPy array ``(n, *latent.shape)``, and, given
         ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``:
-        unit-sum images of the whole model.
+        unit-sum images of the whole model. With more than one Image
+        selected, ``"latents"`` is a dict from each Image's path to its
+        array (``None`` for the model's own Image is written ``""``).
     """
     if (npix is None) != (fov_mas is None):
         raise ValueError(
             "laplace_samples renders images only given both npix and fov_mas."
         )
     model = _single_model(model, "laplace_samples")
-    latent_path = _gaussian_field_latents(model, path, "laplace_samples")
-    _, jac = _residual_jacobian(model, data, latent_path)
-    z = onp.asarray(model.get(latent_path), dtype=float)
+    fields = _field_latents(model, path, "laplace_samples")
+    latent_paths = tuple(latent for _, latent in fields)
+    _, jac = _residual_jacobian(model, data, latent_paths)
+    zs = [
+        onp.asarray(model.get(latent), dtype=float) for latent in latent_paths
+    ]
+    z = onp.concatenate([x.ravel() for x in zs])
     _, singular, vt = onp.linalg.svd(jac, full_matrices=False)
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
@@ -1998,17 +2096,34 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     # off them, (I - VVᵀ) ε₂, along the prior's.
     draws = (e1 / onp.sqrt(1.0 + singular**2)) @ vt
     draws += e2 - (e2 @ vt.T) @ vt
-    latents = (z.ravel() + draws).reshape((n,) + z.shape)
-    out = {"latents": latents}
+    flat = z + draws
+    edges = onp.cumsum([0] + [x.size for x in zs])
+    pieces = [
+        flat[:, edges[i] : edges[i + 1]].reshape((n,) + x.shape)
+        for i, x in enumerate(zs)
+    ]
+    if len(pieces) == 1:
+        out = {"latents": pieces[0]}
+    else:
+        out = {
+            "latents": {
+                "" if image is None else image: piece
+                for (image, _), piece in zip(fields, pieces)
+            }
+        }
     if npix is not None and fov_mas is not None:
-        out["images"] = onp.asarray(
-            _render_latents(
-                model,
-                latent_path,
-                np.asarray(latents, dtype=model.get(latent_path).dtype),
-                int(npix),
-                float(fov_mas),
+        dtypes = [model.get(latent).dtype for latent in latent_paths]
+        if len(pieces) == 1:
+            where = latent_paths[0]
+            values = np.asarray(pieces[0], dtype=dtypes[0])
+        else:
+            where = latent_paths
+            values = tuple(
+                np.asarray(piece, dtype=dtype)
+                for piece, dtype in zip(pieces, dtypes)
             )
+        out["images"] = onp.asarray(
+            _render_latents(model, where, values, int(npix), float(fov_mas))
         )
     return out
 
@@ -2271,14 +2386,17 @@ def error_scale(model, data, path="env", *, by_observable=False):
     ----------
     model : SourceModel or FitResult
         The MAP model, whose Image at ``path`` has a GaussianField
-        log-brightness, or better the
+        log-brightness (see ``path``), or better the
         [`FitResult`][virgil.fitting.FitResult] itself, so that fitted
         ``noise=`` terms are caught (a ``ValueError``). A list of models
         raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
-    path : str, optional
-        Path of the Image in the model (default ``"env"``).
+    path : str or tuple of str or None, optional
+        Path of the Image in the model (default ``"env"``), a tuple of
+        paths of Images with GaussianFields, or ``None`` for every such
+        Image in the model (a ``TypeError`` if there is none). γ then
+        counts the latents of all of them.
     by_observable : bool, optional
         Estimate one scale per kind of observable (default False: one
         scale for all the data).
@@ -2307,12 +2425,10 @@ def error_scale(model, data, path="env", *, by_observable=False):
       [`LCurve.classic_maxent`][virgil.imaging.LCurve.classic_maxent].
     """
     model = _single_model(model, "error_scale")
-    image = model.get(path)
-    if not isinstance(image.log_brightness, GaussianField):
-        raise TypeError(
-            f"error_scale needs an Image with a GaussianField at {path!r}."
-        )
-    r, jac = _residual_jacobian(model, data, path + ".log_brightness.latent")
+    latent_paths = tuple(
+        latent for _, latent in _field_latents(model, path, "error_scale")
+    )
+    r, jac = _residual_jacobian(model, data, latent_paths)
     datasets = data if isinstance(data, (list, tuple)) else [data]
     if by_observable:
         _check_scalable_blocks(datasets)

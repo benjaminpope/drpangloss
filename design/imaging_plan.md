@@ -376,6 +376,19 @@ A background split off as a `Resolved` component also changes what the image's i
   - Shows the posterior mean, the standard deviation and z-score residuals. The z-scores are within ±1, apart from a few at about −2.5.
   - Sampling σ and ℓ is described, with the GPU timing, but not run.
 
+**Log, 5e (2026-10-13): the evidence helpers take several field Images.** Stage 1 of the compact-plus-extended plan (a `SumField` was scoped; two independent fields on one grid equal one field with a summed spectrum, and a brightness-additive point on a broad disc is best two GP Images in a `System`, which `fit` and NUTS already handle).
+- **Library:**
+  - `log_evidence`, `error_scale` and `laplace_samples` take `path` as one Image path (default `"env"`, unchanged), a tuple of paths, or `None` for every Image in the model whose log-brightness is a whitened field (found by `_whitened_field`: it has `evaluate` and a `latent`). No field found is a `TypeError`.
+  - `_residual_jacobian` takes a tuple of leaf paths and differentiates with respect to their concatenated, raveled leaves, so the log determinant and γ include the cross-correlations between the Images' fields. One path keeps the old trace.
+  - `laplace_samples` returns `"latents"` as a dict keyed by image path when it draws more than one, and the array as before for one.
+  - `image_priors` and `LCurve.classic_maxent` recognize fields by the same protocol.
+- **Tests:**
+  - A single Image reproduces values pinned from the code before the change (evidence, γ, per-observable scales, Laplace draws), and `path="env"`, `("env",)` and `None` agree with `==`.
+  - A two-Image System (compact 3×3, extended 4×4, different pixel scales): the evidence equals −½χ² − ½|z|² − ½ log det(I + JᵀJ) from a `jax.jacfwd` Jacobian over both latents; it differs from the sum of the Images' own log determinants.
+  - The Laplace-draw covariance equals (I + JᵀJ)⁻¹ across both Images; `error_scale` satisfies s² = χ²/(N − γ) with γ over all latents; one latent prior per field Image.
+  - A clear error when there is no field latent, a pixel Image in a tuple, repeated or empty paths; the multi-path Jacobian compiles once.
+- **Open (plan, stage 2):** the Laplace evidence holds the flux ratio at its MAP, so it lacks that Occam factor; `SumField` (one latent, a summed spectrum) and the identifiability bench in virgil-validation come next.
+
 ## Order of work after Stage 5 (updated 2026-10-03)
 These stages draw on three notes:
 - [`pmoired_parity.md`](pmoired_parity.md), which compares virgil with PMOIRED;
