@@ -70,6 +70,21 @@ the winning band and in every band with `p_N > 0.01`.
 error scale), then the fitted per-epoch scales ŝ, `log Z_N`, `p_N`, ESS.
 A rescaled χ² near 1 is tautological, and large scales mean a failed fit.
 
+## Extensions
+
+* **Resolved primary.** `primary_diam` swaps the point primary for a uniform
+  disk; a fitted diameter is one more coordinate with a log-uniform prior.
+* **Per-epoch V² amplitude.** A contrast loss multiplies an epoch's V² by one
+  number on every baseline and wavelength, which a resolved primary cannot
+  mimic. The model is linear in it, so the best amplitude (clipped to its
+  Jeffreys range) is profiled analytically, keeping the epoch's error scale.
+* **Flux flip.** The flux prior (lo, 1] is not symmetric under swapping the
+  stars. A mode pinned at the top is refit from the swapped labels
+  (ω + 180°, flux → 1/flux) and the better mode kept; closure phases and V²
+  are the same under the swap, so the two are one sky orbit.
+* **Warm start.** `init=` joins every band's pool and is always refined in
+  its own band, so a reference orbit cannot be missed by the seeding.
+
 ## Limits
 
 * The sum over modes misses modes the multistart does not find.

@@ -21,6 +21,7 @@ See ``fit_orbit_aliases`` for the entry point.
 import dataclasses
 import functools
 import json
+import logging
 import math
 import pathlib
 import pickle
@@ -37,8 +38,11 @@ from ._precision import cast_tree, in_float64
 from ._utils import clean_json
 from .detection import _fingerprint
 from .epochs import _Surface
-from .models import OrbitalBinary
+from .likelihood import whitened_residuals
+from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
+
+_LOG = logging.getLogger(__name__)
 
 __all__ = [
     "AliasBand",
@@ -52,7 +56,8 @@ __all__ = [
 
 # Sampled coordinates (flat under the Jeffreys prior): log P, the time of
 # periastron as a fraction of the period, e, cos i, omega, Omega (degrees),
-# log a, log flux.
+# log a, log flux, and, with ``primary_diam="fit"``, log of the primary's
+# uniform-disk diameter (mas).
 _NAMES = (
     "log_period",
     "tau",
@@ -62,6 +67,7 @@ _NAMES = (
     "Omega",
     "log_a_mas",
     "log_flux",
+    "log_diam",
 )
 _PERIODIC = {
     1: 1.0,
@@ -194,18 +200,73 @@ def _elements(x, t_ref):
     return orbit, np.exp(x[7])
 
 
+class _UDBinary(OrbitalBinary):
+    """An [`OrbitalBinary`][virgil.models.OrbitalBinary] whose primary is a
+    uniform disk of diameter ``diam`` (mas)."""
+
+    diam: jax.Array
+
+    def __init__(self, orbit, flux, diam):
+        super().__init__(orbit, flux)
+        self.diam = np.asarray(diam, dtype=float)
+
+    def at(self, mjd, t_ref=0.0):
+        snap = super().at(mjd, t_ref)
+        return System(
+            primary=UniformDisk(self.diam),
+            companion=PointSource(snap.flux, snap.dra, snap.ddec),
+        )
+
+
+def _model(x, cfg):
+    """The scene at the sampled vector ``x`` (traceable); ``cfg`` is
+    ``_Settings.cfg``: ``(t_ref, fixed diameter or None, fit diameter,
+    amplitude range or None)``."""
+    t_ref, diam, fit_diam, _ = cfg
+    orbit, flux = _elements(x, t_ref)
+    if fit_diam:
+        return _UDBinary(orbit, flux, np.exp(x[8]))
+    if diam:
+        return _UDBinary(orbit, flux, diam)
+    return OrbitalBinary(orbit, flux)
+
+
+def _epoch_chi2(surface, model, d, amp_range):
+    """Raw χ² per block of one epoch and its V² amplitude.
+
+    With ``amp_range`` (lo, hi), the squared visibilities are multiplied by
+    one amplitude ``A``, a per-epoch contrast loss that does not depend on
+    baseline or wavelength. Its profile (the weighted least-squares ``A``,
+    clipped to the range, which is the bound of its Jeffreys prior) is
+    analytic because the model is linear in ``A``. ``A`` is 1 without it.
+    """
+    r = whitened_residuals(model, d)
+    chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks])
+    if amp_range is None or surface.names[0] != "vis" or not d.v2_flag:
+        return chi2, np.ones((), chi2.dtype)
+    n = surface.blocks[0][2]
+    obs = np.reshape(d.vis, -1)
+    err = np.reshape(d.d_vis, -1)
+    mod = obs + r[:n] * err
+    w = 1.0 / err**2
+    tiny = np.finfo(chi2.dtype).tiny
+    amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
+    amp = np.clip(amp, *amp_range)
+    return chi2.at[0].set(np.sum(((obs - amp * mod) / err) ** 2)), amp
+
+
 # The kernels take the data as traced arguments, so one compilation serves
 # every band, mode and draw set of the same shapes. The surfaces, which hold
 # only the layout of the data (see ``epochs._Surface``), and ``t_ref``, one
 # float per run, are static.
 
 
-def _loglike(surfaces, x, data, t_ref):
+def _loglike(surfaces, x, data, cfg):
     """The scale-marginalized log likelihood of all epochs at ``x``."""
-    orbit, flux = _elements(x, t_ref)
-    model = OrbitalBinary(orbit, flux)
+    model = _model(x, cfg)
     return sum(
-        s.score(s.chi2(model, d), 1.0, d) for s, d in zip(surfaces, data)
+        s.score(_epoch_chi2(s, model, d, cfg[3])[0], 1.0, d)
+        for s, d in zip(surfaces, data)
     )
 
 
@@ -218,10 +279,10 @@ _hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
 
 
 @functools.partial(jax.jit, static_argnums=(0, 3))
-def _batch(surfaces, xs, data, t_ref):
+def _batch(surfaces, xs, data, cfg):
     """``_loglike`` at each row of ``xs``, 64 rows at a time."""
     return jax.lax.map(
-        lambda x: _loglike(surfaces, x, data, t_ref), xs, batch_size=64
+        lambda x: _loglike(surfaces, x, data, cfg), xs, batch_size=64
     )
 
 
@@ -230,6 +291,7 @@ class _Problem:
 
     def __init__(self, data, settings):
         self.data, self.t_ref = list(data), settings.t_ref
+        self.cfg = settings.cfg
         self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
         # Proper priors: log P log-uniform over the whole p_range, tau
         # uniform over one cycle, e uniform, cos i uniform, omega and Omega
@@ -244,29 +306,35 @@ class _Problem:
             - onp.log(180.0)
             - onp.log(onp.log(s.a_range[1] / s.a_range[0]))
             - onp.log(onp.log(s.flux_range[1] / s.flux_range[0]))
+            - (
+                onp.log(onp.log(s.diam_range[1] / s.diam_range[0]))
+                if s.primary_diam == "fit"
+                else 0.0
+            )
         )
 
     def value_and_grad(self, x):
-        return _value_and_grad(self.surfaces, x, self.data, self.t_ref)
+        return _value_and_grad(self.surfaces, x, self.data, self.cfg)
 
     def hessian(self, x):
-        return _hessian(self.surfaces, x, self.data, self.t_ref)
+        return _hessian(self.surfaces, x, self.data, self.cfg)
 
     def batch(self, xs):
-        return _batch(self.surfaces, xs, self.data, self.t_ref)
+        return _batch(self.surfaces, xs, self.data, self.cfg)
 
     def per_epoch(self, x):
         """Raw χ²/ν per epoch and block, and the profile scales ŝ."""
-        orbit, flux = _elements(np.asarray(x), self.t_ref)
-        model = OrbitalBinary(orbit, flux)
+        model = _model(np.asarray(x), self.cfg)
         rows = []
         for s, d in zip(self.surfaces, self.data):
-            chi2 = onp.asarray(s.chi2(model, d))
+            chi2, amp = _epoch_chi2(s, model, d, self.cfg[3])
+            chi2 = onp.asarray(chi2)
             rows.append(
                 dict(
                     blocks=list(s.names),
                     chi2_red=(chi2 / s.nu).tolist(),
                     scale=s.scales(chi2).tolist(),
+                    vis_amp=float(amp),
                 )
             )
         return rows
@@ -295,6 +363,23 @@ class _Settings:
     ess_min: float
     seed: int
     sign_free: bool = False
+    primary_diam: float | str | None = None  # None, mas, or "fit"
+    diam_range: tuple = (0.05, 5.0)  # mas: log-uniform prior of a fitted one
+    vis_amp: tuple | None = None  # per-epoch V² amplitude range, or None
+    flip_flux: bool = True
+    init: tuple | None = (
+        None  # period, dt_peri, ecc, inc, omega, Omega, a, flux
+    )
+
+    @property
+    def fit_diam(self):
+        return self.primary_diam == "fit"
+
+    @property
+    def cfg(self):
+        """What the compiled kernels need besides the data (static)."""
+        fixed = None if self.fit_diam else self.primary_diam
+        return (self.t_ref, fixed, self.fit_diam, self.vis_amp)
 
     @property
     def flux_scan(self):
@@ -320,14 +405,18 @@ class _Bounds:
     def of(cls, band, settings):
         inf = onp.inf
         a, f = settings.a_range, settings.flux_range
+        d = settings.diam_range
+        extra = [onp.log(d)] if settings.fit_diam else []
         return cls(
             onp.array(
                 [onp.log(band.p_lo), -inf, 0.0, -1.0, -inf, -inf]
                 + [onp.log(a[0]), onp.log(f[0])]
+                + [e[0] for e in extra]
             ),
             onp.array(
                 [onp.log(band.p_hi), inf, settings.ecc_max, 1.0, inf, inf]
                 + [onp.log(a[1]), onp.log(f[1])]
+                + [e[1] for e in extra]
             ),
         )
 
@@ -351,7 +440,7 @@ def _fold(x):
     return x
 
 
-def _start_vector(orbit, flux, t_ref, band, bounds):
+def _start_vector(orbit, flux, t_ref, band, bounds, diam=None):
     period = float(onp.clip(float(orbit.period), band.p_lo, band.p_hi))
     dt = float(orbit.dt_peri) + float(orbit.t_ref) - t_ref
     tau = (dt / period + 0.5) % 1.0 - 0.5
@@ -366,6 +455,7 @@ def _start_vector(orbit, flux, t_ref, band, bounds):
             onp.log(float(orbit.a_mas)),
             onp.log(flux),
         ]
+        + ([onp.log(diam)] if len(bounds.lower) > 8 else [])
     )
     x = _fold(x)
     eps = 1e-3
@@ -623,12 +713,16 @@ def _candidates(settings, band, bounds, rng, orbits):
     χ²), ...]`` or None) at several fluxes and both senses of motion, then
     ``n_random`` random orbits."""
     s = settings
+    diam = _DIAM_SEED if s.fit_diam else None
     pool = [
         x
         for orbit, _ in orbits or ()
         for flux in s.flux_scan
-        for x in _senses(_start_vector(orbit, flux, s.t_ref, band, bounds))
+        for x in _senses(
+            _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
+        )
     ]
+    pool.extend(_init_starts(s, band, bounds))
     for _ in range(s.n_random):
         pool.append(
             _fold(
@@ -642,6 +736,7 @@ def _candidates(settings, band, bounds, rng, orbits):
                     rng.uniform(*onp.log(s.a_range)),
                     rng.uniform(*onp.log(s.flux_range)),
                 ]
+                + ([rng.uniform(*onp.log(s.diam_range))] if s.fit_diam else [])
             )
         )
     if not pool:
@@ -649,6 +744,53 @@ def _candidates(settings, band, bounds, rng, orbits):
             "No candidate orbits: pass positions or a positive n_random."
         )
     return onp.asarray(pool)
+
+
+_DIAM_SEED = 0.5  # mas: where a fitted diameter starts
+
+
+def _init_orbit(settings):
+    """The warm start's ``(KeplerOrbit, flux)``, or None."""
+    if settings.init is None:
+        return None
+    period, dt_peri, ecc, inc, omega, big_omega, a_mas, flux = settings.init
+    orbit = KeplerOrbit(
+        period,
+        dt_peri,
+        ecc,
+        inc,
+        omega,
+        big_omega,
+        a_mas,
+        t_ref=settings.t_ref,
+    )
+    return orbit, flux
+
+
+def _init_starts(settings, band, bounds):
+    """The warm start (``init=``) as a start vector in ``band``."""
+    start = _init_orbit(settings)
+    if start is None:
+        return []
+    diam = _DIAM_SEED if settings.fit_diam else None
+    return [_start_vector(*start, settings.t_ref, band, bounds, diam)]
+
+
+def _flipped(x, settings, bounds):
+    """``x`` with the stars' labels swapped: the same sky orbit seen from
+    the other star (ω + 180°, the same elements otherwise) and the flux
+    ratio inverted, kept inside the range (a ratio above the range's top
+    starts at 0.9 of it)."""
+    y = onp.array(x, float)
+    y[4] = y[4] + 180.0
+    top = settings.flux_range[1]
+    y[7] = onp.log(min(1.0 / onp.exp(x[7]), 0.9 * top))
+    y = _fold(y)
+    return onp.clip(
+        y,
+        onp.where(onp.isfinite(bounds.lower), bounds.lower + 1e-3, -onp.inf),
+        onp.where(onp.isfinite(bounds.upper), bounds.upper - 1e-3, onp.inf),
+    )
 
 
 def _score_pool(problem, settings, pool):
@@ -679,7 +821,7 @@ def _distinct(modes, times, t_ref, min_distance_mas):
     return kept
 
 
-def _refine(problem, settings, bounds, pool, times):
+def _refine(problem, settings, bounds, pool, times, forced=()):
     """Rank the candidates by the observables and refine the best distinct
     few into modes.
 
@@ -698,7 +840,9 @@ def _refine(problem, settings, bounds, pool, times):
         s.t_ref,
         s.min_distance_mas,
     )
-    seeds = [x for x, _ in ranked[: s.n_refine]]
+    seeds = [x for x, _ in ranked[: s.n_refine]] + [
+        onp.asarray(x, float) for x in forced
+    ]
     fitted, n_failed, error = [], 0, None
     for x0 in seeds:
         try:
@@ -798,6 +942,72 @@ def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     )
 
 
+def _flip_modes(problem, settings, bounds, modes_xy, times):
+    """Refit each mode whose flux ratio sits at the top of ``flux_range``
+    from the same orbit with the stars' labels swapped (the ratio is then
+    below the top: the log-uniform prior on (lo, top] is not symmetric under
+    the swap, and a fit pinned at the top is the signature of a ratio above
+    it). Returns the modes with the refits (distinct ones), the refits on
+    tracks no mode had, and the number that failed."""
+    top = settings.flux_range[1]
+    flips, refits, n_failed = [], [], 0
+    for x, _ in modes_xy:
+        if onp.exp(x[7]) < 0.9 * top:
+            continue
+        try:
+            xf, vf = _optimize(
+                problem,
+                bounds,
+                _flipped(x, settings, bounds),
+                settings.max_steps,
+            )
+        except TypeError:
+            raise
+        except Exception:  # noqa: BLE001 - one bad start
+            n_failed += 1
+            continue
+        if onp.isfinite(vf):
+            refits.append((xf, vf))
+            new = _track(xf, settings.t_ref, times)
+            seen = (_track(m, settings.t_ref, times) for m, _ in modes_xy)
+            if all(  # a refit that lands on a known mode relabels nothing
+                onp.max(onp.hypot(*(new - t).T)) > settings.min_distance_mas
+                for t in seen
+            ):
+                flips.append((xf, vf))
+    merged = _distinct(
+        list(modes_xy) + refits,
+        times,
+        settings.t_ref,
+        settings.min_distance_mas,
+    )
+    return merged, flips, n_failed
+
+
+def _is_flipped(result, flips, settings, times):
+    """Whether the band's best mode is one of the relabelled refits."""
+    if not flips or not result.modes:
+        return False
+    live = [m for m in result.modes if onp.isfinite(m["log_z"])]
+    if not live:
+        return False
+    best = onp.array(max(live, key=lambda m: m["log_z"])["x"])
+    tracks = [
+        _track(x, settings.t_ref, times)
+        for x in [best] + [f[0] for f in flips]
+    ]
+    return any(
+        onp.max(onp.hypot(*(tracks[0] - t).T)) <= settings.min_distance_mas
+        for t in tracks[1:]
+    )
+
+
+def _track(x, t_ref, times):
+    orbit, _ = _elements(np.asarray(x), t_ref)
+    dra, ddec, _ = orbit.relative(np.asarray(times))
+    return onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
+
+
 def _fit_band(problem, settings, band, orbits, times):
     """Fit one band: ``(AliasBandResult, (draws, log weights))``.
 
@@ -807,13 +1017,34 @@ def _fit_band(problem, settings, band, orbits, times):
     rng = onp.random.default_rng([settings.seed, band.n])
     bounds = _Bounds.of(band, settings)
     pool = _candidates(settings, band, bounds, rng, orbits)
-    modes_xy, n_failed = _refine(problem, settings, bounds, pool, times)
+    forced = []
+    if (
+        settings.init is not None
+        and band.p_lo <= settings.init[0] <= band.p_hi
+    ):
+        forced = _init_starts(settings, band, bounds)  # a fair band
+    modes_xy, n_failed = _refine(
+        problem, settings, bounds, pool, times, forced
+    )
+    flips = []
+    if settings.flip_flux:
+        modes_xy, flips, n_flip_failed = _flip_modes(
+            problem, settings, bounds, modes_xy, times
+        )
+        n_failed += n_flip_failed
     modes, z_lap, z_is, draws = _band_evidence(
         problem, settings, bounds, modes_xy, rng
     )
     result = _band_result(
         problem, settings, band, modes, z_lap, z_is, n_failed
     )
+    result.flipped = _is_flipped(result, flips, settings, times)
+    if result.flipped:
+        _LOG.info(
+            "band N=%d: the best mode has the stars' labels swapped "
+            "(flux ratio was pinned at the top of flux_range)",
+            band.n,
+        )
     return result, draws
 
 
@@ -938,6 +1169,7 @@ class AliasBandResult:
     epochs: list = dataclasses.field(
         default_factory=list
     )  # per-epoch raw χ²/ν and scales
+    flipped: bool = False  # best mode has the stars' labels swapped
     error: str = ""  # the exception, if the band failed (flag ``band-failed``)
     n_starts_failed: int = (
         0  # optimizer starts that raised (``starts-failed``)
@@ -1039,6 +1271,7 @@ def _physical(x, t_ref):
         Omega=onp.mod(x[:, 5], 360.0),
         a_mas=onp.exp(x[:, 6]),
         flux=onp.exp(x[:, 7]),
+        **({"diam": onp.exp(x[:, 8])} if x.shape[1] > 8 else {}),
     )
 
 
@@ -1108,6 +1341,31 @@ def _resample(results, store, t_ref, n_samples, p_min, seed):
 # ---------------------------------------------------------------------------
 
 
+def _flatten_init(init, t_ref):
+    """``init`` as ``(period, dt_peri, ecc, inc, omega, Omega, a_mas, flux)``
+    (``dt_peri`` relative to ``t_ref``), or None."""
+    if init is None:
+        return None
+    if isinstance(init, dict):
+        keys = _ELEMENTS + ("flux",)
+        missing = [k for k in keys if k not in init]
+        if missing:
+            raise ValueError(f"init is missing {missing}.")
+        return tuple(float(init[k]) for k in keys)
+    orbit, flux = init
+    dt = float(orbit.dt_peri) + float(orbit.t_ref) - t_ref
+    return (
+        float(orbit.period),
+        dt,
+        float(orbit.ecc),
+        float(orbit.inc),
+        float(orbit.omega),
+        float(orbit.Omega),
+        float(orbit.a_mas),
+        float(flux),
+    )
+
+
 @in_float64
 def fit_orbit_aliases(
     data,
@@ -1136,6 +1394,11 @@ def fit_orbit_aliases(
     seed=0,
     checkpoint_dir=None,
     on_band=None,
+    primary_diam=None,
+    diam_range=(0.05, 5.0),
+    vis_amp=None,
+    flip_flux=True,
+    init=None,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -1200,6 +1463,34 @@ def fit_orbit_aliases(
         Called with each band's
         [`AliasBandResult`][virgil.aliases.AliasBandResult] as soon as it is
         fitted or loaded (``p`` is not yet set: it needs all bands).
+
+    primary_diam : float or "fit", optional
+        The primary's uniform-disk diameter (mas). ``None`` (default) or 0 is
+        a point source (the fast path); a float fixes it; ``"fit"`` samples
+        one shared diameter, log-uniform over ``diam_range``, as an extra
+        coordinate (reported as ``diam`` in the band's ``best`` and the
+        samples).
+    diam_range : (float, float), optional
+        Prior range (mas) of a fitted diameter.
+    vis_amp : (float, float), optional
+        Give every epoch's squared visibilities their own multiplicative
+        amplitude ``A`` (a contrast loss that is the same on every baseline
+        and wavelength, unlike a resolved primary), log-uniform over this
+        range and profiled analytically (the best ``A``, clipped to the
+        range; reported per epoch as ``vis_amp``). The error scale of the
+        epoch is kept. ``None`` (default) leaves the visibilities as they are.
+    flip_flux : bool, optional
+        When a band's mode has its flux ratio at the top of ``flux_range``
+        (0.9 of it or more) refit it with the stars' labels swapped
+        (ω + 180°, flux → 1/flux), since a ratio above 1 sits outside the
+        prior; the better result is kept and ``flipped`` is set on the band
+        if it won.
+    init : (KeplerOrbit, float) or dict, optional
+        A warm start: an orbit and flux ratio, or a dict with ``period``,
+        ``dt_peri`` (relative to ``t_ref``), ``ecc``, ``inc``, ``omega``,
+        ``Omega``, ``a_mas`` and ``flux``. It joins every band's candidate
+        pool, and is refined in the band that contains its period whatever
+        its rank.
 
     Returns
     -------
@@ -1290,9 +1581,18 @@ def fit_orbit_aliases(
         )
     if n_random is None:
         n_random = 1000 if positions is None else 0
+    if primary_diam is not None and primary_diam != "fit":
+        primary_diam = float(primary_diam)
+        if not primary_diam >= 0:
+            raise ValueError("primary_diam must be None, >= 0, or 'fit'.")
+    if vis_amp is not None:
+        vis_amp = tuple(map(float, vis_amp))
+        if not 0 < vis_amp[0] < vis_amp[1]:
+            raise ValueError("vis_amp must be (lo, hi) with 0 < lo < hi.")
+    init_flat = _flatten_init(init, t_ref)
     n_scan = _N_FLUX + (2 if sign_free else 0)
     n_seeded = 0 if positions is None else 2 * n_scan * n_candidates
-    n_pool = n_random + n_seeded  # both senses of motion at each flux
+    n_pool = n_random + n_seeded + (1 if init else 0)  # senses, fluxes, init
     settings = _Settings(
         p_range=tuple(map(float, p_range)),
         a_range=tuple(map(float, a_range)),
@@ -1313,6 +1613,11 @@ def fit_orbit_aliases(
         ess_min=ess_min,
         seed=seed,
         sign_free=sign_free,
+        primary_diam=primary_diam,
+        diam_range=tuple(map(float, diam_range)),
+        vis_amp=vis_amp,
+        flip_flux=bool(flip_flux),
+        init=init_flat,
     )
     problem = _Problem(data, settings)
     _preflight(problem, settings, bands[0])

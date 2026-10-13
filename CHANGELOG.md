@@ -41,6 +41,14 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`fit_orbit_aliases` handles a resolved primary, contrast loss and a
+  bright companion.** `primary_diam` gives the primary a uniform disk (fixed
+  or `"fit"`, one shared log-uniform diameter); `vis_amp=(lo, hi)` gives every
+  epoch's V² its own profiled amplitude (a contrast loss independent of
+  baseline and wavelength); `flip_flux` (default) refits a mode whose flux
+  ratio is pinned at the top of `flux_range` with the stars' labels swapped
+  (`AliasBandResult.flipped`); `init=` is a warm start that is always refined
+  in the band holding its period.
 - **Alias fit for near-equal binaries.** `fit_orbit_aliases(...,
   sign_free=True)` and `starting_orbits(..., sign_free=True)` seed from
   positions known only up to a sign: with flux ratios of 0.9-1 the closure
