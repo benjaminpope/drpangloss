@@ -19,6 +19,7 @@ from virgil.aliases import (  # noqa: E402
     position_profile,
     spectral_window,
 )
+from virgil._precision import in_float64, cast_tree  # noqa: E402
 from virgil.models import OrbitalBinary  # noqa: E402
 from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit, PositionData  # noqa: E402
@@ -692,3 +693,161 @@ def test_newton_polish_reaches_a_quadratic_optimum_inside_the_bounds():
     tight = [[-5.0] * 8, [0.2] + [5.0] * 7]
     x2, _ = aliases._newton_polish(Quad(), tight, centre.copy() - 0.1, -1.0)
     assert x2[0] <= 0.2 + 1e-12
+
+
+# --- UD primary, V² amplitudes, the flux flip and the warm start -----------------------
+
+
+def _problem(data, **kw):
+    settings = _settings(**kw)
+    return settings, aliases._Problem(
+        [cast_tree(d, "float64") for d in data], settings
+    )
+
+
+def _x_truth(flux=FLUX, diam=None):
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    band = aliases.AliasBand(20, 12.0, 12.2)
+    settings = _settings(primary_diam=None if diam is None else "fit")
+    bounds = aliases._Bounds.of(band, settings)
+    return aliases._start_vector(orbit, flux, T_REF, band, bounds, diam)
+
+
+@in_float64
+def test_a_vanishing_ud_primary_is_the_point_binary():
+    data, _ = _synthetic(12.1)
+    x = _x_truth()
+    _, point = _problem(data)
+    _, ud = _problem(data, primary_diam=1e-4)
+    assert float(ud.value_and_grad(jax.numpy.asarray(x))[0]) == pytest.approx(
+        float(point.value_and_grad(jax.numpy.asarray(x))[0]), abs=1e-3
+    )
+
+
+@in_float64
+def test_a_fitted_diameter_is_recovered():
+    truth = 3.0
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    scene = aliases._UDBinary(orbit, FLUX, truth)
+    key = jax.random.PRNGKey(5)
+    data = [
+        simulate(
+            scene, _night(m, rotation=7.0 * k), key=jax.random.fold_in(key, k)
+        )
+        for k, m in enumerate(EPOCHS)
+    ]
+    settings, problem = _problem(data, primary_diam="fit", max_steps=60)
+    band = aliases.AliasBand(20, 12.0, 12.2)
+    bounds = aliases._Bounds.of(band, settings)
+    x0 = _x_truth(diam=1.0)
+    x, value = aliases._optimize(problem, bounds, x0, 60)
+    assert onp.exp(x[8]) == pytest.approx(truth, rel=0.1)
+    assert value > float(problem.value_and_grad(jax.numpy.asarray(x0))[0])
+
+
+@in_float64
+def test_the_epoch_v2_amplitude_is_profiled():
+    data, _ = _synthetic(12.1)
+    # Epoch 0's V² lost half its contrast.
+    lossy = [data[0].set("vis", data[0].vis * 0.5), *data[1:]]
+    x = jax.numpy.asarray(_x_truth())
+    _, plain = _problem(lossy)
+    _, amp = _problem(lossy, vis_amp=(0.01, 1.5))
+    assert float(amp.value_and_grad(x)[0]) > float(plain.value_and_grad(x)[0])
+    rows = amp.per_epoch(x)
+    assert rows[0]["vis_amp"] == pytest.approx(0.5, rel=0.1)
+    assert rows[1]["vis_amp"] == pytest.approx(1.0, rel=0.1)
+    assert rows[0]["chi2_red"][0] < plain.per_epoch(x)[0]["chi2_red"][0]
+
+
+@in_float64
+def test_relabelling_the_stars_leaves_the_likelihood_unchanged():
+    data, _ = _synthetic(12.1)
+    settings, problem = _problem(data, flux_range=(0.01, 2.0))
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
+    x = _x_truth(flux=0.97)
+    y = aliases._flipped(x, settings, bounds)
+    assert onp.exp(y[7]) == pytest.approx(1 / 0.97, rel=1e-3)
+    value = lambda z: float(problem.value_and_grad(jax.numpy.asarray(z))[0])  # noqa: E731
+    assert value(y) == pytest.approx(value(x), abs=0.05)
+
+
+@pytest.mark.slow
+def test_a_flux_ratio_above_one_is_refit_with_the_labels_swapped():
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    # The companion is the brighter star: ratio 1.4 is outside (0.01, 1].
+    scene = OrbitalBinary(orbit, 1.4)
+    key = jax.random.PRNGKey(9)
+    data = [
+        simulate(
+            scene, _night(m, rotation=7.0 * k), key=jax.random.fold_in(key, k)
+        )
+        for k, m in enumerate(EPOCHS)
+    ]
+    kw = dict(
+        t_ref=T_REF, n_random=0, n_refine=1, n_is=200, n_samples=20,
+        init=(orbit, 1.0),
+    )  # fmt: skip
+    plain = fit_orbit_aliases(data, (12.0, 12.2), flip_flux=False, **kw)
+    flip = fit_orbit_aliases(data, (12.0, 12.2), **kw)
+    assert flip.best.flipped
+    assert flip.best.chi2_red < 3.0
+    assert not plain.best.chi2_red < 3.0  # pinned at the bound, or no mode
+    assert flip.best.best["flux"] == pytest.approx(1 / 1.4, rel=0.1)
+
+
+@pytest.mark.slow
+def test_a_warm_start_reproduces_the_optimum_without_other_seeds():
+    data, _ = _synthetic(12.1)
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    result = fit_orbit_aliases(
+        data, (12.0, 12.2), t_ref=T_REF, n_random=0, n_refine=1, n_is=200,
+        n_samples=20, init=(orbit, FLUX),
+    )  # fmt: skip
+    best = result.best.best
+    assert result.best.chi2_red < 3.0
+    assert best["period"] == pytest.approx(12.1, abs=0.02)
+    assert best["flux"] == pytest.approx(FLUX, rel=0.2)
+    assert not result.best.flipped
+
+
+def test_the_flip_acts_only_on_a_flux_pinned_at_the_top():
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), _settings())
+    assert not aliases._pinned(
+        _x_truth(flux=0.95), bounds
+    )  # near-equal, not pinned
+    assert aliases._pinned(_x_truth(flux=0.995), bounds)
+
+
+@in_float64
+def test_the_flip_is_skipped_for_a_resolved_primary():
+    data, _ = _synthetic(12.1)
+    for kw, expect in (({}, True), ({"primary_diam": 0.5}, False)):
+        _, problem = _problem(data, **kw)
+        assert aliases._flip_is_relabelling(problem, _settings(**kw)) is expect
+
+
+@in_float64
+def test_a_warm_start_is_forced_into_its_band_whatever_its_rank(monkeypatch):
+    data, _ = _synthetic(12.1)
+    seen = []
+    monkeypatch.setattr(
+        aliases,
+        "_refine",
+        lambda *a: seen.append(a[5] if len(a) > 5 else ()) or ([], 0),
+    )
+    init = (12.1, 2.0, 0.3, 50.0, 60.0, 120.0, 10.0, 0.3)
+    for p_lo, p_hi, expect in ((12.0, 12.2, 1), (11.0, 11.5, 0)):
+        settings, problem = _problem(data, init=init)
+        band = aliases.AliasBand(20, p_lo, p_hi)
+        aliases._fit_band(problem, settings, band, None, EPOCHS)
+        assert len(seen[-1]) == expect
+
+
+def test_vis_amp_refuses_data_that_are_not_squared_visibilities():
+    data, _ = _synthetic(12.1)
+    d = copy.copy(data[0])
+    object.__setattr__(d, "vis_mode", "amp")
+    _, problem = _problem([d, *data[1:]], vis_amp=(0.01, 1.5))
+    with pytest.raises(NotImplementedError, match="vis_amp"):
+        problem.per_epoch(jax.numpy.asarray(_x_truth()))
