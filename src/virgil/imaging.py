@@ -1735,6 +1735,16 @@ class LCurve:
         return float(onp.exp(t[0] + fraction * (t[1] - t[0])))
 
 
+def _set_each(model, paths, values):
+    """``model`` with each of ``paths`` set to its value, one at a time.
+
+    The oldest zodiax does not accept a list of paths in ``set`` and ``get``.
+    """
+    for path, value in zip(paths, values):
+        model = model.set(path, value)
+    return model
+
+
 # Basis vectors pushed through together when building a residual Jacobian.
 _JACOBIAN_BATCH = 64
 
@@ -1757,14 +1767,15 @@ def _jitted_residual_jacobian(model, datasets, path):
             return model.set(paths[0], x)
 
     else:
-        leaves = model.get(list(paths))
+        leaves = [model.get(p) for p in paths]
         shapes = [np.shape(x) for x in leaves]
         edges = onp.cumsum([0] + [int(onp.prod(s)) for s in shapes])
         leaf = np.concatenate([np.ravel(x) for x in leaves])
 
         def with_leaf(x):
-            return model.set(
-                list(paths),
+            return _set_each(
+                model,
+                paths,
                 [
                     x[edges[i] : edges[i + 1]].reshape(shape)
                     for i, shape in enumerate(shapes)
@@ -2014,9 +2025,17 @@ def _render_latents(model, latent_path, latents, npix, fov_mas):
     ``latent_path`` is one path with ``latents`` an array, or a tuple of
     paths with ``latents`` a tuple of arrays, each with a leading draw axis.
     """
-    return jax.vmap(lambda x: model.set(latent_path, x).render(npix, fov_mas))(
-        latents
-    )
+    if isinstance(latent_path, str):
+
+        def put(x):
+            return model.set(latent_path, x)
+
+    else:
+
+        def put(x):
+            return _set_each(model, latent_path, x)
+
+    return jax.vmap(lambda x: put(x).render(npix, fov_mas))(latents)
 
 
 def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):

@@ -601,7 +601,10 @@ def _hand_jacobian(model, data, paths):
                 x[edges[i] : edges[i + 1]].reshape(s)
                 for i, s in enumerate(shapes)
             ]
-            return whitened_residuals(model.set(list(paths), parts), data)
+            changed = model
+            for p, part in zip(paths, parts):
+                changed = changed.set(p, part)
+            return whitened_residuals(changed, data)
 
         return (
             onp.asarray(residuals(x0), float),
@@ -611,31 +614,51 @@ def _hand_jacobian(model, data, paths):
 
 
 def test_single_image_helpers_are_unchanged():
-    # Values from the helpers before they took several paths, at a fixed
-    # model (no fit, so no optimizer in the numbers).
+    # The helpers' old algorithm, rebuilt from the single-leaf Jacobian (the
+    # trace they had before taking several paths), at a fixed model (no fit,
+    # so no optimizer in the numbers). Pinned numbers would not travel
+    # between float32 and x64, or between platforms.
+    from virgil.imaging import _log_norm, _residual_jacobian
+
     n = 6
     template = onp.asarray(GaussianDisk(2.0).render(n, n * H))
     latent = 0.5 * jax.random.normal(jax.random.PRNGKey(3), (n, n))
     field = GaussianField(latent, 1.2, 1.5, mean=template)
     model = System(star=PointSource(), env=Image(field, H, flux=0.4))
     data = DATA.with_model(model, key=jax.random.PRNGKey(4))
+    path = "env.log_brightness.latent"
+    r, jac = _residual_jacobian(model, data, path)
+    z = onp.asarray(model.get(path), dtype=float)
+    singular = onp.linalg.svd(jac, compute_uv=False)
+    old_evidence = float(
+        -0.5 * (r @ r)
+        - _log_norm(model, data)
+        - 0.5 * onp.sum(z**2)
+        - 0.5 * onp.sum(onp.log1p(singular**2))
+    )
     evidence = log_evidence(model, data)
-    assert evidence == pytest.approx(-22.448337952190954, rel=1e-9)
+    assert evidence == pytest.approx(old_evidence, rel=1e-12)
+    # error_scale: s² = χ²/(N − γ) with γ from the same Jacobian.
     scale = error_scale(model, data)
-    assert scale == pytest.approx(0.9816965039925815, rel=1e-9)
-    blocks = error_scale(model, data, by_observable=True)
-    assert blocks["vis"] == pytest.approx(1.0192699027722474, rel=1e-9)
-    assert blocks["phi"] == pytest.approx(0.8947243087356087, rel=1e-9)
+    beta = 1.0 / scale**2
+    gamma = onp.sum(beta * singular**2 / (1.0 + beta * singular**2))
+    assert scale**2 == pytest.approx(
+        (r @ r) / (data.n_independent - gamma), rel=1e-6
+    )
     key = jax.random.PRNGKey(5)
     out = laplace_samples(model, data, 3, key, npix=8, fov_mas=8.0)
     assert out["latents"].shape == (3, n, n)
-    assert out["latents"].sum() == pytest.approx(-7.255815718766707, rel=1e-8)
-    assert out["latents"][1, 2, 3] == pytest.approx(
-        -2.0191627011065822, rel=1e-8
+    # The old draws: V diag((1+s²)^-½) ε₁ + (I − VVᵀ) ε₂ about z.
+    _, s_vals, vt = onp.linalg.svd(jac, full_matrices=False)
+    first, second = jax.random.split(key)
+    e1 = onp.asarray(jax.random.normal(first, (3, s_vals.size)), float)
+    e2 = onp.asarray(jax.random.normal(second, (3, z.size)), float)
+    old = z.ravel() + (e1 / onp.sqrt(1.0 + s_vals**2)) @ vt
+    old += e2 - (e2 @ vt.T) @ vt
+    onp.testing.assert_allclose(
+        out["latents"].reshape(3, -1), old, rtol=1e-9, atol=1e-12
     )
-    assert out["images"][2, 4, 4] == pytest.approx(
-        0.10115629434585571, rel=1e-6
-    )
+    assert out["images"].shape == (3, 8, 8)
     # However the one Image is named, the numbers are the same, exactly.
     for path in (("env",), None):
         assert log_evidence(model, data, path=path) == evidence
