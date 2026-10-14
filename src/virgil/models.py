@@ -2932,10 +2932,15 @@ class ExpTail(_RadialProfile):
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
     so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
     is an exponential disk. Gauss-Laguerre nodes cover the oscillating tail
-    less efficiently than Gauss-Legendre does a finite range: about
-    $16 \cdot 2\pi q L$ nodes give 1e-5 at the longest baseline $q$ (24
-    nodes at $2\pi q L = 1$, 100 at 5). For a tail that is resolved much
-    more finely, give a ``cutoff``: the tail is then cut at
+    less efficiently than Gauss-Legendre does a finite range, and the
+    accuracy depends on $2\pi q L$ at the longest baseline $q$: the rule of
+    thumb $16 \cdot 2\pi q L$ nodes (24 nodes at $2\pi q L = 1$, 100 at 5)
+    is optimistic when the tail is well resolved. In a benchmark of a widely
+    resolved tail the largest error in $V$ was about $2 \times 10^{-4}$ at
+    128 nodes and about $4 \times 10^{-5}$ at the 150-node cap, not
+    $10^{-5}$. For a tail that is resolved much more finely, prefer a
+    [`RadialPowerLaw`][virgil.models.RadialPowerLaw] with a soft edge, or
+    give a ``cutoff``: the tail is then cut at
     $r_0 + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
     integrated by a Gauss-Legendre rule, which needs about
     $\pi q\, \mathrm{cutoff}\, L + 12$ nodes (a cutoff of 5 drops 0.7 %
@@ -3246,6 +3251,535 @@ class RadialPower(_RadialFunction):
         return self.value * np.maximum(r / self.r0, 1e-12) ** self.index
 
 
+def _matern(d, nu):
+    """Matérn correlation at the scaled distance ``d = |r - r'| / ell``.
+
+    ``nu`` is 0.5, 1.5, 2.5 (closed forms) or ``inf`` (the squared
+    exponential).
+    """
+    if nu == 0.5:
+        return np.exp(-d)
+    if nu == 1.5:
+        a = math.sqrt(3.0) * d
+        return (1.0 + a) * np.exp(-a)
+    if nu == 2.5:
+        a = math.sqrt(5.0) * d
+        return (1.0 + a + a * a / 3.0) * np.exp(-a)
+    return np.exp(-0.5 * d * d)
+
+
+def _check_nu(nu, owner):
+    nu = float(nu)
+    if nu not in (0.5, 1.5, 2.5, math.inf):
+        raise ValueError(
+            f"{owner}: nu must be 0.5, 1.5, 2.5 or inf (closed-form Matérn "
+            f"kernels), not {nu}."
+        )
+    return nu
+
+
+def _gp_factor(nodes, ell, nu, jitter):
+    """Cholesky factor of the Matérn correlation matrix of ``nodes``.
+
+    A jitter on the diagonal (at least 64 machine epsilons, relative to the
+    unit variance) keeps it positive definite when ``ell`` is long against
+    the spacing of the nodes. Differentiable.
+    """
+    d = np.abs(nodes[:, None] - nodes[None, :]) / ell
+    corr = _matern(d, nu)
+    jitter = max(float(jitter), 64.0 * float(np.finfo(corr.dtype).eps))
+    return np.linalg.cholesky(corr + jitter * np.eye(nodes.shape[-1]))
+
+
+def _linear_interp(r, nodes, values):
+    """Piecewise-linear interpolation onto ``r``, constant beyond the ends.
+
+    ``nodes`` (``n``, increasing) and ``values`` (``(..., n)``); the result
+    has shape ``values.shape[:-1] + r.shape``. Differentiable in ``values``
+    and in the nodes.
+    """
+    r = np.asarray(r)
+    flat = np.ravel(r)
+    n = nodes.shape[-1]
+    if n == 1:
+        out = values[..., :1] + 0.0 * flat
+    else:
+        idx = np.clip(np.searchsorted(nodes, flat) - 1, 0, n - 2)
+        x0, x1 = nodes[idx], nodes[idx + 1]
+        dx = x1 - x0
+        t = np.clip((flat - x0) / np.where(dx > 0.0, dx, 1.0), 0.0, 1.0)
+        out = values[..., idx] * (1.0 - t) + values[..., idx + 1] * t
+    return out.reshape(values.shape[:-1] + r.shape)
+
+
+_GP_NODES = 16
+
+
+class RadialGP(_RadialProfile, _RadialFunction):
+    r"""A Gaussian process in the radius, on nodes, in whitened form.
+
+    The values at the nodes $r_k$ are $g = \mu + \sigma L z$, with
+    $LL^\top$ the Matérn correlation matrix of the nodes (length ``ell``,
+    smoothness ``nu``) and **whitened latents** $z \sim N(0, I)$, the
+    parameters (path ``z``): a standard-normal prior on ``z`` is the
+    Gaussian-process prior, and optimizers and samplers see a unit-scale,
+    uncorrelated coordinate (as for [`GaussianField`][virgil.fields.GaussianField]).
+    The matrix is dense and its Cholesky factor is recomputed at every
+    call, which costs nothing for the ``n`` of at most about 100 nodes used here.
+    A jitter keeps it positive definite when ``ell`` is long against the node
+    spacing.
+
+    One class serves two roles.
+
+    **As the profile** of a [`PolarDisk`][virgil.models.PolarDisk]
+    (``PolarDisk(RadialGP(r_in, r_out), n_r=48)``) the brightness is
+    $I_0(r) = \exp g(r)$, positive. The nodes are the Gauss-Legendre nodes
+    of $[r_{\rm in}, r_{\rm out}]$ that the disk's quadrature uses, one
+    latent each (so ``n_r`` latents), and a non-parametric profile of ``n_r``
+    values is exactly a quadrature of the Hankel transform. Rendering
+    interpolates linearly in $r$. The disk's visibility is normalized, so
+    the mean ``mu`` of $g$ is not identifiable: leave it at 0.
+
+    **As a function of the radius** (a coefficient of
+    [`Harmonics`][virgil.models.Harmonics], the spectral index
+    ``spectral_index`` of a disk) it is $g(r)$ itself (no exponential): the
+    nodes are ``n`` equally spaced radii on $[r_{\rm in}, r_{\rm out}]$ and
+    ``g`` is interpolated linearly between them. The range, when not given,
+    is that of the disk's profile.
+
+    **Priors.** ``z`` has a standard-normal prior. ``sigma`` and ``ell`` are
+    scales, so their invariant priors are log-uniform on stated bounds
+    (``dist.LogUniform``; [`gp_priors`][virgil.models.gp_priors] writes
+    them), which also make the evidence proper; fitted by MAP they are biased
+    (``fit`` warns), so fix them, sample them, or choose them by the
+    evidence of [`log_evidence`][virgil.imaging.log_evidence]. Draws from the
+    prior, to show beside the posterior, come from
+    [`draws`][virgil.models.RadialGP.draws].
+
+    Parameters
+    ----------
+    r_in, r_out : float or None, optional
+        Radii in milliarcseconds of the first and last node (the range of the
+        process). Required for a profile; for a function of the radius, the
+        disk's profile range by default.
+    sigma : float, optional
+        Standard deviation of $g$ (default 1; for a profile, the dynamic
+        range is about $e^{\pm\sigma}$).
+    ell : float, optional
+        Correlation length in milliarcseconds (default 1).
+    mu : float, optional
+        Mean of $g$ (default 0).
+    z : array-like, shape (n,), optional
+        Whitened latents (default 0). Its size is the number of nodes of the
+        function; for a profile it must equal the disk's ``n_r`` (the default
+        is set from it).
+    n : int, optional
+        Number of nodes when ``z`` is not given (default 16 for a function of
+        the radius; for a profile ``n_r``).
+    nu : {0.5, 1.5, 2.5, inf}, optional
+        Matérn smoothness (default 1.5; ``inf`` is the squared exponential
+        used by FRAP). Static.
+    jitter : float, optional
+        Relative jitter on the correlation matrix's diagonal (default 1e-6;
+        static).
+    weight : float, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+
+    Examples
+    --------
+    A non-parametric profile with a fitted prior, and a spectral index:
+
+    >>> profile = RadialGP(r_in=0.5, r_out=12.0, sigma=1.5, ell=2.0)
+    >>> disk = PolarDisk(
+    ...     profile,
+    ...     spectral_index=RadialGP(sigma=0.5, ell=4.0),
+    ...     wavel0=2.2e-6,
+    ...     inc=30.0,
+    ...     n_r=24,
+    ... )
+    >>> disk.profile.z.shape
+    (24,)
+
+    References
+    ----------
+    Whitened Gaussian-process latents at radial nodes, $g = \mu + L z$,
+    sampled by NUTS, and a Gaussian process in the radius for each
+    quantity follow FRAP (Yoshida et al. 2026, ApJ 1007, 198,
+    arXiv:2607.12618; https://github.com/tomyoshida/frap), and the Gaussian-process
+    prior on a radial profile frank (Jennings et al. 2020, MNRAS 495, 3209;
+    https://github.com/discsim/frank). The code is a new implementation; none was
+    copied.
+    """
+
+    z: Any
+    mu: jax.Array
+    sigma: jax.Array
+    ell: jax.Array
+    r_in: Any
+    r_out: Any
+    nu: float = eqx.field(static=True)
+    jitter: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        r_in=None,
+        r_out=None,
+        sigma=1.0,
+        ell=1.0,
+        mu=0.0,
+        z=None,
+        n=None,
+        nu=1.5,
+        jitter=1e-6,
+        weight=1.0,
+    ):
+        if (r_in is None) != (r_out is None):
+            raise ValueError("give both r_in and r_out, or neither.")
+        if z is not None:
+            z = np.asarray(z, dtype=float)
+            if z.ndim != 1:
+                raise ValueError(f"z must be 1-D, got shape {z.shape}.")
+            if n is not None and int(n) != z.shape[0]:
+                raise ValueError(f"n={n} but z has {z.shape[0]} entries.")
+        elif n is not None:
+            if int(n) != n or n < 1:
+                raise ValueError(f"n must be a positive integer: {n!r}.")
+            z = np.zeros(int(n))
+        self.z = z
+        self.mu = np.asarray(mu, dtype=float)
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.ell = np.asarray(ell, dtype=float)
+        self.r_in = None if r_in is None else np.asarray(r_in, dtype=float)
+        self.r_out = None if r_out is None else np.asarray(r_out, dtype=float)
+        self.nu = _check_nu(nu, "RadialGP")
+        self.jitter = float(jitter)
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+        _check_shape_params(
+            "RadialGP",
+            (
+                ("sigma", self.sigma, lambda x: x > 0.0, "positive"),
+                ("ell", self.ell, lambda x: x > 0.0, "positive"),
+            ),
+        )
+
+    # -- nodes and values ---------------------------------------------
+
+    def _check_range(self):
+        if self.r_in is None:
+            raise ValueError(
+                "RadialGP has no radial range: give r_in and r_out, or use "
+                "it inside a PolarDisk, whose profile sets them."
+            )
+
+    def with_range(self, r_in, r_out):
+        """This process on ``[r_in, r_out]`` (and ``_GP_NODES`` latents) if it
+        has no range or latents yet; otherwise unchanged."""
+        out = self
+        if out.r_in is None and r_in is not None:
+            out = eqx.tree_at(
+                lambda p: (p.r_in, p.r_out),
+                out,
+                (
+                    np.asarray(r_in, dtype=float),
+                    np.asarray(r_out, dtype=float),
+                ),
+                is_leaf=lambda x: x is None,
+            )
+        if out.z is None and out.rule_x is None:
+            out = eqx.tree_at(
+                lambda p: p.z,
+                out,
+                np.zeros(_GP_NODES),
+                is_leaf=lambda x: x is None,
+            )
+        return out
+
+    def with_rule(self, n_r):
+        """This profile with an ``n_r``-node rule, and ``n_r`` latents (zero)
+        if it had none."""
+        out = super().with_rule(n_r)
+        if out.z is None:
+            out = eqx.tree_at(
+                lambda p: p.z,
+                out,
+                np.zeros(int(n_r)),
+                is_leaf=lambda x: x is None,
+            )
+        elif out.z.shape[0] != int(n_r):
+            raise ValueError(
+                f"A RadialGP profile has one latent per quadrature node: z "
+                f"has {out.z.shape[0]} entries but n_r is {n_r}."
+            )
+        return out
+
+    def _nodes(self):
+        """The nodes (mas): the quadrature nodes of a profile, else ``n``
+        equally spaced radii."""
+        self._check_range()
+        if self.rule is not None:
+            return _legendre_nodes(self.rule, self.r_in, self.r_out)[0]
+        if self.z is None:
+            raise ValueError(
+                "this RadialGP has no latents: give z or n, or use it inside "
+                "a PolarDisk."
+            )
+        return np.linspace(self.r_in, self.r_out, self.z.shape[0])
+
+    def _values(self):
+        """The nodes and the process ``g`` at them."""
+        nodes = self._nodes()
+        if self.z is None or self.z.shape[0] != nodes.shape[0]:
+            raise ValueError("the latents do not match the nodes.")
+        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
+        return nodes, self.mu + self.sigma * (factor @ self.z)
+
+    def nodes(self):
+        """The nodes in milliarcseconds."""
+        return self._nodes()
+
+    def __call__(self, r):
+        """The process $g(r)$ (no exponential), interpolated linearly
+        between the nodes (constant beyond them)."""
+        nodes, g = self._values()
+        return _linear_interp(r, nodes, g)
+
+    def draws(self, key, n=1, r=None, positive=False):
+        """``n`` draws from the prior at the radii ``r`` (the nodes by default).
+
+        Draws $g = \\mu + \\sigma L z$ with $z \\sim N(0, I)$ at the current
+        ``mu``, ``sigma``, ``ell``; with ``positive``, $\\exp g$ (the
+        profile). Shape ``(n,) + shape(r)``. Use them to show the prior beside
+        the posterior.
+        """
+        nodes = self._nodes()
+        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
+        z = jax.random.normal(key, (int(n), nodes.shape[0]), nodes.dtype)
+        g = self.mu + self.sigma * (z @ factor.T)
+        if r is not None:
+            g = _linear_interp(r, nodes, g)
+        return np.exp(g) if positive else g
+
+    # -- the profile role -----------------------------------------------
+
+    def quadrature(self):
+        self._check_rule()
+        nodes, g = self._values()
+        _, dr = _legendre_nodes(self.rule, self.r_in, self.r_out)
+        return nodes, dr * nodes * np.exp(g)
+
+    def intensity(self, r, pixel_scale_mas):
+        nodes, g = self._values()
+        inside = (r >= self.r_in) & (r <= self.r_out)
+        return np.where(inside, np.exp(_linear_interp(r, nodes, g)), 0.0)
+
+    def extent(self):
+        self._check_range()
+        return float(onp.asarray(self.r_in)), float(onp.asarray(self.r_out))
+
+    def is_physical(self):
+        valid = (
+            np.asarray(self.sigma > 0.0)
+            & np.asarray(self.ell > 0.0)
+            & np.asarray(self.weight >= 0.0)
+        )
+        if self.r_in is not None:
+            valid = (
+                valid
+                & np.asarray(self.r_in >= 0.0)
+                & np.asarray(self.r_out > self.r_in)
+            )
+        if self.z is not None:
+            valid = valid & np.all(np.isfinite(self.z))
+        return valid
+
+
+class PolarKernel(zdx.Base):
+    r"""A prior over the azimuthal-harmonic coefficients of a
+    [`PolarDisk`][virgil.models.PolarDisk]: a Matérn kernel in the radius and
+    in the azimuth.
+
+    Give it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. The
+    coefficients of every order $m = 1 \dots M$ ($c_m$ and $s_m$ of the linear
+    form, the latents $\mathrm{re}_m$ and $\mathrm{im}_m$ of the positive
+    one) are independent [`RadialGP`][virgil.models.RadialGP]s with the
+    same radial length ``ell_r`` (mas), and their variance falls with the
+    order as the spectral density of a periodic Matérn kernel in the azimuth,
+
+    $$
+    \mathrm{Var}[c_m] = \sigma^2 \frac{S(m)}{S(1)}, \qquad
+    S(m) = \left[1 + \frac{1}{2\nu_\theta}
+    \left(\frac{m\,\ell_\theta}{\bar r}\right)^2\right]^{-\nu_\theta - 1/2},
+    $$
+
+    ($S(m) \propto e^{-(m\ell_\theta/\bar r)^2/2}$ for $\nu_\theta = \infty$), so
+    ``ell_theta`` is on the same scale as ``ell_r``, with $\bar r$ the mean
+    radius of the range. It is diagonal in $m$ (no
+    extra cost), the prior mean is 0 (a uniform ring), and a long ``ell_theta``
+    (an azimuthal correlation length, in mas on the ring of radius
+    $\bar r$) favours smooth arcs and low orders without imposing them:
+    $\sigma$ is the standard deviation of the first-order coefficients.
+    The positive form's latents carry the same prior, so the variance falling
+    with $j$ plays the part of falling with $m$.
+
+    The latents are whitened, ``z`` of shape ``(2, M, n)``
+    (``disk.harmonics.z``, standard-normal prior), on ``n`` equally
+    spaced radii of ``[r_in, r_out]`` (the disk's profile range by default),
+    with the coefficients interpolated linearly in $r$. Priors on ``sigma``,
+    ``ell_r`` and ``ell_theta`` are log-uniform on stated bounds
+    ([`gp_priors`][virgil.models.gp_priors]).
+
+    Parameters
+    ----------
+    ell_r : float
+        Correlation length in the radius, in milliarcseconds.
+    ell_theta : float
+        Correlation length in the azimuth, in milliarcseconds along the ring
+        at $\bar r$ (the angular length is ``ell_theta / r_ref`` radians).
+    sigma : float, optional
+        Standard deviation of the first-order coefficients (default 0.3).
+    r_in, r_out : float or None, optional
+        Range of the radial processes (the disk's profile extent by default).
+    r_ref : float or None, optional
+        The radius $\bar r$ that converts ``ell_theta`` to an angle (the
+        middle of the range by default).
+    n : int, optional
+        Number of radial nodes (default 16, static).
+    nu_r, nu_theta : {0.5, 1.5, 2.5, inf}, optional
+        Matérn smoothness in the radius and in the azimuth (default 1.5;
+        static).
+
+    Examples
+    --------
+    >>> prior = PolarKernel(ell_r=3.0, ell_theta=4.0, sigma=0.4)
+    >>> harmonics = Harmonics(degree=2, prior=prior)
+    >>> disk = PolarDisk(GaussianRing(6.0, 1.5), harmonics=harmonics, n_r=32)
+    >>> disk.harmonics.z.shape
+    (2, 2, 16)
+
+    References
+    ----------
+    A separate Gaussian process in the radius for each quantity follows FRAP
+    (Yoshida et al. 2026, ApJ 1007, 198, arXiv:2607.12618;
+    https://github.com/tomyoshida/frap).
+    """
+
+    ell_r: jax.Array
+    ell_theta: jax.Array
+    sigma: jax.Array
+    r_in: Any
+    r_out: Any
+    r_ref: Any
+    n: int = eqx.field(static=True)
+    nu_r: float = eqx.field(static=True)
+    nu_theta: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        ell_r,
+        ell_theta,
+        sigma=0.3,
+        r_in=None,
+        r_out=None,
+        r_ref=None,
+        n=_GP_NODES,
+        nu_r=1.5,
+        nu_theta=1.5,
+    ):
+        if (r_in is None) != (r_out is None):
+            raise ValueError("give both r_in and r_out, or neither.")
+        if int(n) != n or n < 2:
+            raise ValueError(f"n must be an integer of at least 2: {n!r}.")
+        self.ell_r = np.asarray(ell_r, dtype=float)
+        self.ell_theta = np.asarray(ell_theta, dtype=float)
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.r_in = None if r_in is None else np.asarray(r_in, dtype=float)
+        self.r_out = None if r_out is None else np.asarray(r_out, dtype=float)
+        self.r_ref = None if r_ref is None else np.asarray(r_ref, dtype=float)
+        self.n = int(n)
+        self.nu_r = _check_nu(nu_r, "PolarKernel")
+        self.nu_theta = _check_nu(nu_theta, "PolarKernel")
+        _check_shape_params(
+            "PolarKernel",
+            (
+                ("ell_r", self.ell_r, lambda x: x > 0.0, "positive"),
+                ("ell_theta", self.ell_theta, lambda x: x > 0.0, "positive"),
+                ("sigma", self.sigma, lambda x: x > 0.0, "positive"),
+            ),
+        )
+
+    def with_range(self, r_in, r_out):
+        """This prior on ``[r_in, r_out]`` if it has no range; else unchanged."""
+        if self.r_in is not None or r_in is None:
+            return self
+        return eqx.tree_at(
+            lambda p: (p.r_in, p.r_out),
+            self,
+            (np.asarray(r_in, dtype=float), np.asarray(r_out, dtype=float)),
+            is_leaf=lambda x: x is None,
+        )
+
+    def _check_range(self):
+        if self.r_in is None:
+            raise ValueError(
+                "PolarKernel has no radial range: give r_in and r_out, or "
+                "use it in a PolarDisk, whose profile sets them."
+            )
+
+    def nodes(self):
+        """The radial nodes in milliarcseconds."""
+        self._check_range()
+        return np.linspace(self.r_in, self.r_out, self.n)
+
+    def spectrum(self, degree):
+        """``S(m) / S(1)`` for ``m = 1 .. degree``: the variance of the
+        order-``m`` coefficients relative to the first order's."""
+        r_ref = (
+            0.5 * (self.r_in + self.r_out)
+            if self.r_ref is None
+            else self.r_ref
+        )
+        m = np.arange(1, int(degree) + 1)
+        angle = self.ell_theta / r_ref
+        nu = self.nu_theta
+        if math.isinf(nu):
+            return np.exp(-0.5 * angle**2 * (m**2 - 1.0))
+        a2 = angle**2 / (2.0 * nu)
+        return ((1.0 + a2) / (1.0 + m**2 * a2)) ** (nu + 0.5)
+
+    def values(self, z, r):
+        """The coefficients at the radii ``r`` from the latents ``z`` of
+        shape ``(2, M, n)``: ``(re, im)`` (positive form) or ``(c, s)``
+        (linear form), shape ``(2, M) + shape(r)``."""
+        nodes = self.nodes()
+        factor = _gp_factor(nodes, self.ell_r, self.nu_r, 1e-6)
+        scale = self.sigma * np.sqrt(self.spectrum(z.shape[1]))
+        g = np.einsum("ij,kmj->kmi", factor, z) * scale[None, :, None]
+        return _linear_interp(r, nodes, g)
+
+    def draws(self, key, degree, n=1, r=None):
+        """``n`` draws of the coefficients from the prior at the radii ``r``
+        (the nodes by default): shape ``(n, 2, degree) + shape(r)``."""
+        z = jax.random.normal(key, (int(n), 2, int(degree), self.n))
+        r = self.nodes() if r is None else r
+        return jax.vmap(lambda zz: self.values(zz, r))(z)
+
+    def is_physical(self):
+        valid = (
+            np.asarray(self.ell_r > 0.0)
+            & np.asarray(self.ell_theta > 0.0)
+            & np.asarray(self.sigma > 0.0)
+        )
+        if self.r_in is not None:
+            valid = (
+                valid
+                & np.asarray(self.r_in >= 0.0)
+                & np.asarray(self.r_out > self.r_in)
+            )
+        return valid
+
+
 def _harmonic_entries(values, name):
     """A tuple of coefficients: constants (0-d arrays) or radial functions."""
     if isinstance(values, _RadialFunction):
@@ -3422,6 +3956,15 @@ class Harmonics(_Azimuthal):
     form : {"positive", "linear"}, optional
         By default ``"linear"`` if ``c`` or ``s`` is given, else
         ``"positive"``.
+    prior : PolarKernel, optional
+        A Gaussian-process prior over the coefficients of every order
+        (``degree`` is then required, and none of ``c``, ``s``, ``re``, ``im``
+        or ``w``): the coefficients ($c_m$ and $s_m$, or $\mathrm{re}_j$ and
+        $\mathrm{im}_j$) are [`RadialGP`][virgil.models.RadialGP]s whose
+        whitened latents are the parameter ``z`` of shape ``(2, M, n)``
+        (standard-normal prior), with the variances and lengths of the
+        [`PolarKernel`][virgil.models.PolarKernel]. The form is then the
+        positive one unless ``form="linear"``.
 
     Examples
     --------
@@ -3452,12 +3995,26 @@ class Harmonics(_Azimuthal):
     s: tuple
     re: tuple
     im: tuple
+    z: Any
+    prior: Any
     degree: int = eqx.field(static=True)
     form: str = eqx.field(static=True)
 
     def __init__(
-        self, c=(), s=(), degree=None, form=None, re=(), im=(), w=None
+        self,
+        c=(),
+        s=(),
+        degree=None,
+        form=None,
+        re=(),
+        im=(),
+        w=None,
+        prior=None,
     ):
+        if prior is not None:
+            return self._init_prior(prior, c, s, degree, form, re, im, w)
+        self.z = None
+        self.prior = None
         c, s = _harmonic_entries(c, "c"), _harmonic_entries(s, "s")
         if w is not None:
             if re != () or im != ():
@@ -3513,16 +4070,56 @@ class Harmonics(_Azimuthal):
         self.degree = top
         self.form = form
 
+    def _init_prior(self, prior, c, s, degree, form, re, im, w):
+        if not isinstance(prior, PolarKernel):
+            raise TypeError(f"prior must be a PolarKernel: {prior!r}")
+        if (
+            any(len(_harmonic_entries(x, "x")) for x in (c, s, re, im))
+            or w is not None
+        ):
+            raise ValueError(
+                "with a prior, the coefficients are Gaussian-process "
+                "latents (z): do not give c, s, re, im or w."
+            )
+        if degree is None:
+            raise ValueError("a Harmonics with a prior needs its degree.")
+        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            raise ValueError(f"degree must be a positive integer: {degree}.")
+        form = "positive" if form is None else form
+        if form not in ("linear", "positive"):
+            raise ValueError(
+                f"Harmonics form must be 'positive' or 'linear', not {form!r}."
+            )
+        self.c = self.s = self.re = self.im = ()
+        self.degree = int(degree)
+        self.form = form
+        self.prior = prior
+        self.z = np.zeros((2, self.degree, prior.n))
+
     def _needs_radius(self):
-        return any(
+        return self.prior is not None or any(
             isinstance(e, _RadialFunction)
-            for e in self.c + self.s + self.re + self.im
+            for group in (self.c, self.s, self.re, self.im)
+            for e in group
         )
+
+    def _pair(self, r):
+        """The two sets of coefficients (``c, s`` or ``re, im``), each of
+        shape ``(M,) + shape(r)``."""
+        first, second = (
+            (self.c, self.s) if self.form == "linear" else (self.re, self.im)
+        )
+        if self.prior is not None:
+            both = self.prior.values(self.z, np.asarray(r))
+            return both[0], both[1]
+        return self._at(first, r), self._at(second, r)
 
     @staticmethod
     def _at(entries, r):
         r = np.asarray(r)
-        if not entries:
+        # ``entries`` is a tuple, or an array when a path sets the whole
+        # field (``disk.set("harmonics.c", array)``): test its length.
+        if len(entries) == 0:
             return np.zeros((0,) + r.shape)
         return np.stack(
             [
@@ -3535,9 +4132,7 @@ class Harmonics(_Azimuthal):
         """Complex reflection coefficients ``k`` at the radii ``r``."""
         from . import harmonics as _h
 
-        return _h.reflection_coefficients(
-            self._at(self.re, r), self._at(self.im, r)
-        )
+        return _h.reflection_coefficients(*self._pair(r))
 
     def polynomial(self, r):
         """The minimum-phase polynomial ``h_0 .. h_M`` (``h_0 = 1``) of the
@@ -3555,7 +4150,7 @@ class Harmonics(_Azimuthal):
         from . import harmonics as _h
 
         if self.form == "linear":
-            return self._at(self.c, r), self._at(self.s, r)
+            return self._pair(r)
         return _h.linear_from_image(self.image_harmonics(r))
 
     def image_harmonics(self, r=None):
@@ -3792,6 +4387,32 @@ class PowerLawHeight(_Height):
         return np.all(self.r0 > 0.0)
 
 
+def _polar_frequencies(u, v, inc, pa, stretch=None):
+    """The spatial frequency in the plane of the disk, for the engine.
+
+    Returns ``(q, q2, phase, q_minor)``: the length ``q`` and its square,
+    the direction ``e^{i phi}`` and the distance along the projected minor
+    axis of each baseline ``(u, v)``.
+    """
+    if stretch is None:
+        stretch = np.maximum(np.cos(inc * dtor), 1e-8)
+    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch)
+    q2 = ut**2 + vt**2
+    positive = q2 > 0.0
+    # sqrt has an infinite derivative at 0: keep gradients finite at u = v = 0,
+    # where the visibility is exactly 1.
+    q_safe = np.sqrt(np.where(positive, q2, 1.0))
+    q = np.where(positive, q_safe, 0.0)
+    # Direction of the frequency in the disk plane, e^{i phi}, with phi from
+    # the deprojected North (v) towards East (u); J_m(0) = 0 for m >= 1, so
+    # its value at q = 0 is irrelevant.
+    phase = np.where(positive, (vt + 1j * ut) / q_safe, 1.0 + 0j)
+    # Distance along the projected minor axis (towards PA pa + 90): the
+    # frequency conjugate to the lift of a ring.
+    q_minor = u * np.cos(pa * dtor) - v * np.sin(pa * dtor)
+    return q, q2, phase, q_minor
+
+
 def polar_disk_cvis(
     u,
     v,
@@ -3838,7 +4459,9 @@ def polar_disk_cvis(
     r : array-like
         Quadrature radii in milliarcseconds, shape ``(n_r,)``.
     w : array-like
-        Quadrature weights ($I_0(r_k) r_k\,dr$ folded in), shape ``(n_r,)``.
+        Quadrature weights ($I_0(r_k) r_k\,dr$ folded in), shape ``(n_r,)``,
+        or ``u.shape + (n_r,)`` for weights that differ per sample (a
+        chromatic profile); each is normalized to unit sum.
     inc, pa : float or array-like, optional
         Inclination and position angle in degrees.
     blur_fwhm : float, array-like or None, optional
@@ -3875,32 +4498,21 @@ def polar_disk_cvis(
     https://github.com/drgmk/vis-r): parametric profiles, the uv
     deprojection and a Gaussian envelope. No code was copied.
     """
-    if stretch is None:
-        stretch = np.maximum(np.cos(inc * dtor), 1e-8)
-    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch)
-    q2 = ut**2 + vt**2
-    positive = q2 > 0.0
-    # sqrt has an infinite derivative at 0: keep gradients finite at u = v = 0,
-    # where the visibility is exactly 1.
-    q_safe = np.sqrt(np.where(positive, q2, 1.0))
-    q = np.where(positive, q_safe, 0.0)
-    # Direction of the frequency in the disk plane, e^{i phi}, with phi from
-    # the deprojected North (v) towards East (u); J_m(0) = 0 for m >= 1, so
-    # its value at q = 0 is irrelevant.
-    phase = np.where(positive, (vt + 1j * ut) / q_safe, 1.0 + 0j)
-    # Distance along the projected minor axis (towards PA pa + 90): the
-    # frequency conjugate to the lift of a ring.
-    q_minor = u * np.cos(pa * dtor) - v * np.sin(pa * dtor)
+    q, q2, phase, q_minor = _polar_frequencies(u, v, inc, pa, stretch)
 
-    w = w / np.sum(w)
+    w = w / np.sum(w, axis=-1, keepdims=True)
     r_rad = r * mas2rad
     n_orders = 0 if c is None else int(np.shape(c)[0])
     lift = None
     if height is not None:
         lift = height * np.sin(inc * dtor)
+    n_r = r.shape[-1]
+    # Weights with a leading shape (a chromatic profile) are per sample.
+    per_sample = w.ndim > 1
 
     def ring_sum(args):
-        q_flat, z_flat, qm_flat = args
+        q_flat, z_flat, qm_flat = args[:3]
+        w_ring = args[3] if per_sample else w
         arg = 2.0 * np.pi * q_flat[..., None] * r_rad
         bessel = bessel_jn(n_orders, arg)
         # Even orders feed the real part and odd orders the imaginary part
@@ -3922,10 +4534,11 @@ def polar_disk_cvis(
         ring = jax.lax.complex(re, im)
         if lift is not None:
             ring = ring * offset_phase(qm_flat[..., None], 0.0, lift, 0.0)
-        return np.sum(ring * w, axis=-1)
+        return np.sum(ring * w_ring, axis=-1)
 
-    n_r = r.shape[-1]
     flat = (q.ravel(), phase.ravel(), q_minor.ravel())
+    if per_sample:
+        flat = flat + (np.broadcast_to(w, q.shape + (n_r,)).reshape(-1, n_r),)
     if q.size * n_r * (1 + n_orders) > _POLAR_CHUNK_ELEMENTS:
         batch = max(1, _POLAR_CHUNK_ELEMENTS // (n_r * (1 + n_orders)))
         cvis = jax.lax.map(ring_sum, flat, batch_size=batch)
@@ -3939,6 +4552,122 @@ def polar_disk_cvis(
             -(np.pi**2) * fwhm_rad**2 * q2 / (4.0 * np.log(2.0))
         )
     return cvis + 0j
+
+
+def _with_gp_range(obj, lo, hi):
+    """``obj`` with the radial range ``[lo, hi]`` given to every
+    [`RadialGP`][virgil.models.RadialGP] and
+    [`PolarKernel`][virgil.models.PolarKernel] in it that has none."""
+
+    def fill(x):
+        if isinstance(x, (RadialGP, PolarKernel)):
+            return x.with_range(lo, hi)
+        return x
+
+    return jax.tree_util.tree_map(
+        fill, obj, is_leaf=lambda x: isinstance(x, (RadialGP, PolarKernel))
+    )
+
+
+def _polar_basis(u, v, r, inc, pa, n_orders, height=None):
+    """The data- and geometry-dependent part of ``polar_disk_cvis``.
+
+    Returns ``(q2, p0, cos, sin)``: ``q2`` the squared frequency in the disk
+    plane, ``p0`` the order-0 matrix ``J_0(2 pi q r_k)`` (with the phase of
+    the ring heights), and the lists of ``n_orders`` matrices ``cos[m - 1]``
+    and ``sin[m - 1]`` that multiply the coefficients $c_m$ and $s_m$ (each of
+    shape ``u.shape + (n_r,)``, complex). Then
+    ``V = sum_k w_k (p0 + sum_m c_mk cos[m - 1] + s_mk sin[m - 1])`` with
+    normalized weights ``w``: what ``polar_disk_cvis`` computes.
+    """
+    q, q2, phase, q_minor = _polar_frequencies(u, v, inc, pa)
+    arg = 2.0 * np.pi * q[..., None] * (r * mas2rad)
+    bessel = bessel_jn(n_orders, arg)
+    lift = 1.0
+    if height is not None:
+        lift = offset_phase(
+            q_minor[..., None], 0.0, height * np.sin(inc * dtor), 0.0
+        )
+    p0 = bessel[0] * lift + 0j
+    cos, sin = [], []
+    zm = np.ones_like(phase)
+    for m in range(1, n_orders + 1):
+        zm = zm * phase
+        sign = (-1.0) ** (m // 2)
+        factor = sign if m % 2 == 0 else -1j * sign
+        ring = factor * bessel[m] * lift
+        cos.append(np.real(zm)[..., None] * ring)
+        sin.append(np.imag(zm)[..., None] * ring)
+    return q2, p0, tuple(cos), tuple(sin)
+
+
+def _dot(matrix, x):
+    """``sum_k matrix[..., k] x[..., k]``, a matrix-vector product when
+    ``x`` is one vector."""
+    if x.ndim == 1:
+        return np.matmul(matrix, x + 0j, precision=jax.lax.Precision.HIGHEST)
+    return np.sum(matrix * x, axis=-1)
+
+
+class _FrozenGeometry(zdx.Base):
+    """The cached matrices of ``PolarDisk.freeze_geometry``: the baselines,
+    nodes and geometry they were built for (to check against at every call)
+    and ``_polar_basis``'s matrices."""
+
+    uu: jax.Array
+    vv: jax.Array
+    r: jax.Array
+    inc: jax.Array
+    pa: jax.Array
+    height: Any
+    q2: jax.Array
+    p0: jax.Array
+    cos: tuple
+    sin: tuple
+    tol: float = eqx.field(static=True)
+
+    def matches(self, uu, vv, r, inc, pa, height):
+        """Whether the cache was built for these arguments (traced boolean)."""
+        if (height is None) != (self.height is None):
+            return np.asarray(False)
+        if np.shape(uu) != self.uu.shape or np.shape(r) != self.r.shape:
+            return np.asarray(False)
+
+        def close(a, b):
+            a = np.asarray(a, dtype=b.dtype)
+            # Relative to each element, with a floor of tol times the largest
+            # element: an entry that is zero in one precision and a rounding
+            # residue (1e-14) in the other must still match.
+            scale = np.abs(b) + np.max(np.abs(b))
+            return np.all((a == b) | (np.abs(a - b) <= self.tol * scale))
+
+        ok = (
+            close(uu, self.uu)
+            & close(vv, self.vv)
+            & close(r, self.r)
+            & close(inc, self.inc)
+            & close(pa, self.pa)
+        )
+        if height is not None:
+            ok = ok & close(height, self.height)
+        return ok
+
+    def cvis(self, w, c, s, blur_fwhm):
+        """The visibility from the cached matrices, for weights ``w`` (shape
+        ``(n_r,)`` or ``uu.shape + (n_r,)``), coefficients ``c`` and ``s``
+        (``(M, n_r)`` or ``None``) and the blur."""
+        w = w / np.sum(w, axis=-1, keepdims=True)
+        out = _dot(self.p0, w)
+        for m in range(len(self.cos)):
+            out = (
+                out + _dot(self.cos[m], w * c[m]) + _dot(self.sin[m], w * s[m])
+            )
+        if blur_fwhm is not None:
+            fwhm_rad = blur_fwhm * mas2rad
+            out = out * np.exp(
+                -(np.pi**2) * fwhm_rad**2 * self.q2 / (4.0 * np.log(2.0))
+            )
+        return out + 0j
 
 
 class PolarDisk(Component):
@@ -3999,6 +4728,22 @@ class PolarDisk(Component):
         shapes of arrays, so it is static: changing it recompiles, and
         changing any parameter does not. [`suggest_n_r`][virgil.models.PolarDisk.suggest_n_r]
         gives a starting value; it is never applied silently.
+    spectral_index : float, radial function, RadialGP or None, optional
+        Makes the profile chromatic: $I_0(r, \lambda) = I_0(r)
+        (\lambda/\lambda_0)^{\alpha(r)}$, with $\alpha$ a constant, a
+        function of the radius ([`RadialLinear`][virgil.models.RadialLinear],
+        [`RadialPower`][virgil.models.RadialPower]) or a
+        [`RadialGP`][virgil.models.RadialGP] (the process itself, no
+        exponential). The profile is evaluated per wavelength at the nodes
+        and the visibility is normalized per wavelength; the harmonics are
+        grey (they share $\alpha$). The component's weight at $\lambda$ is
+        ``flux`` times the profile's light at $\lambda$ relative to
+        $\lambda_0$, so ``flux`` is the flux at $\lambda_0$ and must be a
+        number, not a [`spectra`][virgil.spectra] spectrum. ``wavel0`` is
+        required.
+    wavel0 : float or None, optional
+        The reference wavelength $\lambda_0$ in metres of ``spectral_index``
+        (an image renders at it).
 
     Notes
     -----
@@ -4045,6 +4790,9 @@ class PolarDisk(Component):
     inc: jax.Array
     pa: jax.Array
     blur_fwhm: Any
+    spectral_index: Any
+    wavel0: Any
+    frozen: Any
     n_r: int = eqx.field(static=True)
 
     def __init__(
@@ -4059,6 +4807,8 @@ class PolarDisk(Component):
         dra=0.0,
         ddec=0.0,
         n_r=64,
+        spectral_index=None,
+        wavel0=None,
     ):
         if not isinstance(profile, _RadialProfile):
             raise TypeError(f"profile must be a radial profile: {profile!r}")
@@ -4066,6 +4816,38 @@ class PolarDisk(Component):
             raise ValueError(f"n_r must be a positive integer, not {n_r!r}.")
         self.n_r = int(n_r)
         self.profile = profile.with_rule(self.n_r)
+        support = self._support()
+        if harmonics is not None:
+            harmonics = _with_gp_range(harmonics, *support)
+        if spectral_index is not None:
+            if isinstance(spectral_index, _RadialProfile) and not isinstance(
+                spectral_index, RadialGP
+            ):
+                raise TypeError(
+                    "spectral_index must be a number, a radial function or a "
+                    f"RadialGP, not a profile: {spectral_index!r}"
+                )
+            if isinstance(flux, Spectrum):
+                raise ValueError(
+                    "a PolarDisk with a spectral_index takes a scalar flux "
+                    "(its flux at wavel0): its spectrum comes from the "
+                    "profile, so a spectrum from virgil.spectra is not "
+                    "allowed."
+                )
+            if wavel0 is None:
+                raise ValueError(
+                    "spectral_index needs wavel0, the reference wavelength "
+                    "(metres) at which flux and the profile are quoted."
+                )
+            spectral_index = _with_gp_range(
+                _scalar_or_function(spectral_index, "spectral_index"),
+                *support,
+            )
+        self.spectral_index = spectral_index
+        self.wavel0 = (
+            None if wavel0 is None else np.asarray(wavel0, dtype=float)
+        )
+        self.frozen = None
         if harmonics is not None and not isinstance(harmonics, _Azimuthal):
             raise TypeError(
                 f"harmonics must be a Harmonics or VonMises: {harmonics!r}"
@@ -4093,7 +4875,33 @@ class PolarDisk(Component):
             valid = valid & self.height.is_physical()
         if self.harmonics is not None and self.harmonics.degree:
             valid = valid & (self.min_intensity() >= -1e-6)
+            if self.harmonics.prior is not None:
+                valid = valid & self.harmonics.prior.is_physical()
+        if isinstance(self.spectral_index, RadialGP):
+            valid = valid & self.spectral_index.is_physical()
+        if self.wavel0 is not None:
+            valid = valid & np.all(self.wavel0 > 0.0)
         return valid
+
+    def __check_init__(self):
+        super().__check_init__()
+        if self.spectral_index is not None and isinstance(self.flux, Spectrum):
+            raise ValueError(
+                "a PolarDisk with a spectral_index takes a scalar flux (its "
+                "flux at wavel0), not a spectrum."
+            )
+
+    def _support(self):
+        """The profile's concrete radial range, or ``(None, None)``."""
+        try:
+            return self.profile.extent()
+        except (
+            TypeError,
+            ValueError,
+            jax.errors.TracerArrayConversionError,
+            jax.errors.ConcretizationTypeError,
+        ):
+            return None, None
 
     def min_intensity(self, n_theta=720):
         """The least brightness relative to the azimuthal mean.
@@ -4148,24 +4956,171 @@ class PolarDisk(Component):
                 n -= 8
         return n
 
-    def _centred_cvis(self, uu, vv):
+    def _alpha(self, r):
+        """The spectral index at the radii ``r``."""
+        alpha = self.spectral_index
+        if isinstance(alpha, _RadialFunction):
+            return alpha(r)
+        return alpha + 0.0 * r
+
+    def _chromatic(self, r, w, wavel):
+        """The quadrature weights at ``wavel``: ``w (wavel / wavel0)^alpha``,
+        of shape ``(n_r,)`` for a scalar wavelength and ``wavel.shape +
+        (n_r,)`` otherwise (``w`` itself without a spectral index)."""
+        if self.spectral_index is None or wavel is None:
+            return w
+        ratio = np.log(np.asarray(wavel) / self.wavel0)
+        return w * np.exp(self._alpha(r) * ratio[..., None])
+
+    def _weight(self, wavel=None):
+        flux = super()._weight(wavel)
+        if self.spectral_index is None or wavel is None:
+            return flux
         r, w = self.profile.quadrature()
+        light = np.sum(self._chromatic(r, w, wavel), axis=-1) / np.sum(w)
+        return flux * light
+
+    def model(self, u, v, wavel):
+        uu, vv = u / wavel, v / wavel
+        return self._centred_cvis(uu, vv, wavel) * offset_phase(
+            uu, vv, self.dra, self.ddec
+        )
+
+    def _centred_cvis(self, uu, vv, wavel=None):
+        r, w = self.profile.quadrature()
+        w = self._chromatic(r, w, wavel)
         c = s = None
         if self.harmonics is not None and self.harmonics.degree:
             c, s = self.harmonics.coefficients(r)
         height = None if self.height is None else self.height(r)
-        return polar_disk_cvis(
+
+        def full():
+            return polar_disk_cvis(
+                uu,
+                vv,
+                r,
+                w,
+                self.inc,
+                self.pa,
+                self.blur_fwhm,
+                c=c,
+                s=s,
+                height=height,
+            )
+
+        cache = self.frozen
+        n_orders = 0 if c is None else c.shape[0]
+        if (
+            cache is None
+            or len(cache.cos) != n_orders
+            or np.shape(uu) != cache.uu.shape
+        ):
+            return full()
+        return jax.lax.cond(
+            cache.matches(uu, vv, r, self.inc, self.pa, height),
+            lambda: cache.cvis(w, c, s, self.blur_fwhm),
+            full,
+        )
+
+    def freeze_geometry(self, data):
+        """A disk with its Bessel matrices cached for ``data``.
+
+        With ``inc``, ``pa``, ``height`` and the nodes fixed, the transform
+        matrices depend only on the baselines and the nodes, so a refit of
+        the profile, the harmonics or the spectral index is one
+        matrix-vector product per call (and per order) instead of the Bessel
+        functions of every baseline and node. Never automatic: call it
+        once the geometry is settled (say from a parametric fit), and fit
+        the returned model.
+
+        The cache stores the baselines, nodes and geometry it was built for and
+        checks them at every call: for any other baselines, nodes, ``inc``,
+        ``pa`` or heights the disk silently falls back to the full
+        computation (correct, not faster), so freezing is safe but changing a
+        frozen quantity loses the speed-up. Build it in the precision you
+        evaluate in (inside ``jax.enable_x64(True)`` for a float64 fit); a
+        float32 cache still matches a float64 fit, to float32 rounding. It
+        holds ``(2M + 1)`` complex matrices of shape ``(n_samples, n_r)``
+        (``M`` the harmonics' degree).
+
+        Parameters
+        ----------
+        data : OIData
+            Anything with ``u``, ``v`` (metres) and ``wavel`` (metres): the
+            samples the model will be evaluated at.
+
+        Returns
+        -------
+        PolarDisk
+            This disk with the cache (``frozen``); ``model`` equals the
+            unfrozen disk's to rounding.
+        """
+        uu, vv = data.u / data.wavel, data.v / data.wavel
+        r, _ = self.profile.quadrature()
+        n_orders = 0
+        if self.harmonics is not None and self.harmonics.degree:
+            n_orders = self.harmonics.degree
+        height = None if self.height is None else self.height(r)
+        q2, p0, cos, sin = _polar_basis(
+            uu, vv, r, self.inc, self.pa, n_orders, height
+        )
+        cache = _FrozenGeometry(
             uu,
             vv,
             r,
-            w,
             self.inc,
             self.pa,
-            self.blur_fwhm,
-            c=c,
-            s=s,
-            height=height,
+            height,
+            q2,
+            p0,
+            cos,
+            sin,
+            32.0 * float(np.finfo(np.asarray(uu).dtype).eps),
         )
+        return eqx.tree_at(
+            lambda d: d.frozen, self, cache, is_leaf=lambda x: x is None
+        )
+
+    def gp_sites(self):
+        """The Gaussian-process parts of the disk, by path.
+
+        Returns a dict from the path (relative to the disk) of every
+        [`RadialGP`][virgil.models.RadialGP] (in the profile, the harmonics'
+        coefficients or the spectral index) and of the harmonics when they
+        carry a [`PolarKernel`][virgil.models.PolarKernel], to that object.
+        Its whitened latents are at ``<path>.z`` (``harmonics.z`` for the
+        kernel), its hyperparameters at ``<path>.sigma``, ``<path>.ell``
+        (``harmonics.prior.sigma``, ``.ell_r``, ``.ell_theta``).
+        """
+        sites = {}
+
+        def visit(obj, path):
+            if isinstance(obj, RadialGP):
+                sites[path] = obj
+            elif isinstance(obj, RadialSum):
+                for name, part in zip(obj.names, obj.parts):
+                    visit(part, f"{path}.{name}")
+            elif isinstance(obj, Gap):
+                visit(obj.base, f"{path}.base")
+            elif isinstance(obj, (tuple, list)):
+                for i, item in enumerate(obj):
+                    visit(item, f"{path}.{i}")
+            elif isinstance(obj, VonMises):
+                visit(obj.kappa, f"{path}.kappa")
+                visit(obj.theta0, f"{path}.theta0")
+
+        visit(self.profile, "profile")
+        if self.harmonics is not None:
+            if getattr(self.harmonics, "prior", None) is not None:
+                sites["harmonics"] = self.harmonics
+            elif isinstance(self.harmonics, Harmonics):
+                for name in ("c", "s", "re", "im"):
+                    visit(getattr(self.harmonics, name), f"harmonics.{name}")
+            else:
+                visit(self.harmonics, "harmonics")
+        if isinstance(self.spectral_index, RadialGP):
+            sites["spectral_index"] = self.spectral_index
+        return sites
 
     def _lifted_image(self, xx, yy, pixel_scale_mas, stretch):
         """The image of a disk with a height, by splatting thin rings.
@@ -4294,6 +5249,84 @@ class PolarDisk(Component):
         )
         psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
         return fftconvolve(image, psf, mode="same")
+
+
+def _polar_disks(model, prefix=""):
+    """``(path, disk)`` for every PolarDisk in ``model`` (path prefix ``""``
+    for a bare disk, else ``"name."``-joined)."""
+    if isinstance(model, PolarDisk):
+        yield prefix, model
+    elif isinstance(model, System):
+        for name, part in model.components.items():
+            yield from _polar_disks(part, f"{prefix}{name}.")
+    elif isinstance(model, Rotated):
+        yield from _polar_disks(model.source, f"{prefix}source.")
+
+
+def gp_priors(model, sigma=None, ell=None, ell_theta=None):
+    r"""Priors for the Gaussian-process parts of a scene's
+    [`PolarDisk`][virgil.models.PolarDisk]s, for ``fit`` and ``numpyro_model``.
+
+    Returns a dict from parameter path to prior for every
+    [`RadialGP`][virgil.models.RadialGP] (in a profile, the harmonics'
+    coefficients or the spectral index) and every
+    [`PolarKernel`][virgil.models.PolarKernel] of a
+    [`Harmonics`][virgil.models.Harmonics] in ``model`` (a disk, a
+    [`System`][virgil.models.System] or a rotated source):
+
+    * the whitened latents ``z`` get independent standard-normal priors (the
+      Gaussian-process prior itself);
+    * with ``sigma``, ``ell`` or ``ell_theta`` given as bounds
+      ``(low, high)``, the scales get log-uniform priors on them (the
+      invariant prior of a scale, bounded so the prior and the Laplace
+      evidence are proper): ``sigma`` for every process's standard deviation
+      and the kernel's amplitude, ``ell`` for the radial correlation lengths,
+      ``ell_theta`` for the kernel's azimuthal length. Left as ``None`` the
+      hyperparameters are fixed at the model's values (and not in the dict).
+
+    Add priors for the other free parameters (fluxes, geometry) to the dict.
+
+    Examples
+    --------
+    >>> import numpyro.distributions as dist
+    >>> disk = PolarDisk(RadialGP(0.5, 12.0), n_r=24)
+    >>> priors = gp_priors(System(star=PointSource(), disk=disk), sigma=(0.1, 3.0), ell=(0.5, 8.0))
+    >>> sorted(priors)
+    ['disk.profile.ell', 'disk.profile.sigma', 'disk.profile.z']
+    """
+    import numpyro.distributions as dist
+
+    def scale(bounds, name):
+        low, high = (float(b) for b in bounds)
+        if not 0.0 < low < high:
+            raise ValueError(
+                f"{name} bounds must be 0 < low < high: {bounds}."
+            )
+        return dist.LogUniform(low, high)
+
+    priors = {}
+    for prefix, disk in _polar_disks(model):
+        for rel, obj in disk.gp_sites().items():
+            path = f"{prefix}{rel}"
+            latent = dist.Normal(np.zeros(obj.z.shape), 1.0).to_event(
+                obj.z.ndim
+            )
+            priors[f"{path}.z"] = latent
+            if isinstance(obj, Harmonics):
+                names = {
+                    "sigma": (sigma, "sigma"),
+                    "ell_r": (ell, "ell"),
+                    "ell_theta": (ell_theta, "ell_theta"),
+                }
+                path = f"{path}.prior"
+            else:
+                names = {"sigma": (sigma, "sigma"), "ell": (ell, "ell")}
+            for field, (bounds, label) in names.items():
+                if bounds is not None:
+                    priors[f"{path}.{field}"] = scale(bounds, label)
+    if not priors:
+        raise ValueError("The model contains no RadialGP or PolarKernel.")
+    return priors
 
 
 class Resolved(SourceModel):
