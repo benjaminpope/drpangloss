@@ -272,7 +272,7 @@ def _radial_factor(n_r, spacing, length, nu, jitter=1e-6):
     (a jitter of 1e-6 gives NaN for 128 nodes, ``nu`` = 5/2 and a length of
     5 spacings or more).
     """
-    dtype = np.result_type(length, float)
+    dtype = np.result_type(length)
     r = np.arange(n_r, dtype=dtype) * spacing
     cov = _matern(np.abs(r[:, None] - r[None, :]), length, nu)
     jitter = max(jitter, 10.0 * n_r * float(np.finfo(dtype).eps))
