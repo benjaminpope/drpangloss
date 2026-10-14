@@ -1605,15 +1605,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             in metres and divided by the wavelength where it is used, so
             it still matches the samples.
         """
-        out = eqx.tree_at(
-            lambda d: d.wavel, self, self.wavel * scale + offset
-        )
+        out = eqx.tree_at(lambda d: d.wavel, self, self.wavel * scale + offset)
         if self.bandwidth is None:
             return out
         # Channel widths scale with the wavelengths; a shift does not.
-        return eqx.tree_at(
-            lambda d: d.bandwidth, out, self.bandwidth * scale
-        )
+        return eqx.tree_at(lambda d: d.bandwidth, out, self.bandwidth * scale)
 
     def with_bandwidth(self, dlambda):
         """A copy of the data with channel widths ``dlambda`` (bandwidth smearing).
@@ -2107,9 +2103,7 @@ def cp_indices(vis_sta_index, cp_sta_index):
 
 def _check_bandwidth(bandwidth):
     if not onp.all(onp.isfinite(bandwidth)) or onp.any(bandwidth < 0):
-        raise ValueError(
-            "bandwidth must be finite and non-negative (metres)."
-        )
+        raise ValueError("bandwidth must be finite and non-negative (metres).")
 
 
 def _expand_channels(u, v, wavel, vis, indices):

@@ -322,7 +322,9 @@ def _sample_bandwidth(record, tables):
     no width, or only zeros, have no bandwidth, so smearing stays off.
     """
     widths = _channel_widths(tables)
-    wavel = onp.broadcast_to(onp.asarray(record["wavel"]), onp.shape(record["u"]))
+    wavel = onp.broadcast_to(
+        onp.asarray(record["wavel"]), onp.shape(record["u"])
+    )
     band = onp.array([widths.get(w, 0.0) for w in wavel.tolist()])
     if not onp.all(onp.isfinite(band)) or not onp.any(band > 0):
         return None

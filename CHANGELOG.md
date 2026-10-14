@@ -41,6 +41,12 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Opt-in bandwidth smearing.** `OIData(path, bandwidth=True)` keeps `EFF_BAND`
+  as `OIData.bandwidth` (`with_bandwidth(dlambda)` sets it for simulated data);
+  models are then smeared over boxcar channels by a `sinc` envelope on each
+  component offset (`models.smeared_model`). Off by default: results are
+  unchanged.
+
 - **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
   tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
   normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the

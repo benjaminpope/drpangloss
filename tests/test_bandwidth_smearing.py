@@ -34,7 +34,9 @@ def _data(dra=200.0, ddec=0.0, bandwidth=False):
             "d_vis": onp.full(u.size, 0.01),
         }
     )
-    return data.with_bandwidth(onp.tile(widths, pa.size)) if bandwidth else data
+    return (
+        data.with_bandwidth(onp.tile(widths, pa.size)) if bandwidth else data
+    )
 
 
 def _binary(dra=200.0, ddec=0.0):
@@ -57,7 +59,9 @@ def _brute_force(data, dra, ddec, n_sub=2001):
     return out
 
 
-@pytest.mark.parametrize("offset", [(200.0, 0.0), (120.0, -160.0), (-250.0, 30.0)])
+@pytest.mark.parametrize(
+    "offset", [(200.0, 0.0), (120.0, -160.0), (-250.0, 30.0)]
+)
 def test_smeared_binary_matches_channel_integral(offset):
     data = _data(bandwidth=True)
     model = _binary(*offset)
@@ -71,9 +75,7 @@ def test_smeared_binary_matches_channel_integral(offset):
 
 def test_zero_offset_component_is_unaffected():
     data = _data(bandwidth=True)
-    model = System(
-        star=PointSource(), disk=GaussianDisk(sigma=5.0, flux=0.4)
-    )
+    model = System(star=PointSource(), disk=GaussianDisk(sigma=5.0, flux=0.4))
     assert onp.array_equal(
         onp.asarray(data._cvis(model)),
         onp.asarray(data.with_bandwidth(None)._cvis(model)),
@@ -91,7 +93,9 @@ def test_default_is_bit_identical():
     # Zero width is also the unsmeared model.
     zero = data.with_bandwidth(0.0)
     assert onp.allclose(
-        onp.asarray(zero._cvis(model)), onp.asarray(data._cvis(model)), atol=1e-6
+        onp.asarray(zero._cvis(model)),
+        onp.asarray(data._cvis(model)),
+        atol=1e-6,
     )
 
 
@@ -115,7 +119,9 @@ def test_bandwidth_survives_subset_and_wavelength_scale():
     data = _data(bandwidth=True)
     kept = data.select(wavel_min=LAMBDA0)
     assert kept.bandwidth.shape == kept.u.shape
-    assert onp.allclose(onp.asarray(kept.bandwidth), onp.asarray(kept.wavel) / R)
+    assert onp.allclose(
+        onp.asarray(kept.bandwidth), onp.asarray(kept.wavel) / R
+    )
     scaled = data.with_wavelength_scale(1.01)
     assert onp.allclose(
         onp.asarray(scaled.bandwidth), onp.asarray(data.bandwidth) * 1.01
@@ -158,4 +164,6 @@ def test_unsupported_model_raises():
     from virgil.models import BinaryModelCartesian
 
     with pytest.raises(TypeError, match="Bandwidth smearing"):
-        _data(bandwidth=True)._cvis(BinaryModelCartesian(dra=5.0, ddec=2.0, flux=0.1))
+        _data(bandwidth=True)._cvis(
+            BinaryModelCartesian(dra=5.0, ddec=2.0, flux=0.1)
+        )

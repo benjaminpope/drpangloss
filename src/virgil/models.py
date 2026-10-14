@@ -4142,7 +4142,9 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
             w * _smeared(c, u, v, wavel, bandwidth, ra, dec)
             for w, c in zip(weights, model.parts)
         ) / sum(weights)
-        return total * offset_phase(u / wavel, v / wavel, model.dra, model.ddec)
+        return total * offset_phase(
+            u / wavel, v / wavel, model.dra, model.ddec
+        )
     if isinstance(model, Component):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
