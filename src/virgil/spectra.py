@@ -52,6 +52,7 @@ __all__ = [
     "LorentzianLine",
     "Nodes",
     "PowerLaw",
+    "Scaled",
     "Spectrum",
     "Sum",
     "Tabulated",
@@ -320,6 +321,65 @@ class LorentzianLine(_Line):
     @staticmethod
     def _profile(x):
         return 1.0 / (1.0 + 4.0 * x**2)
+
+
+class Scaled(Spectrum):
+    """A fixed spectral shape times one free amplitude, ``ratio * template(λ)``.
+
+    The template's own parameters are held fixed (no gradient flows to
+    them), and only ``ratio`` is free, so any spectrum, e.g. a
+    library SED or a [`Sum`][virgil.spectra.Sum] with lines, can be the
+    companion in grids, limits and detection statistics, whose flux axis
+    is ``comp.flux.ratio``. The reference flux is ``ratio * template()``.
+
+    Parameters
+    ----------
+    template : Spectrum
+        The shape, with its own normalization.
+    ratio : float or array-like, optional
+        The multiplier (default 1).
+
+    Examples
+    --------
+    >>> template = PowerLaw(0.5, index=-2.0, wavel0=2.0e-6)
+    >>> round(float(Scaled(template, 0.1)(4.0e-6)), 6)
+    0.0125
+    """
+
+    template: Spectrum
+    ratio: jax.Array
+
+    def __init__(self, template, ratio=1.0):
+        if not isinstance(template, Spectrum):
+            raise TypeError(f"template is not a Spectrum: {template!r}")
+        self.template = template
+        self.ratio = np.asarray(ratio, dtype=float)
+
+    @property
+    def wavel0(self):
+        return self.template.wavel0
+
+    def __call__(self, wavel=None):
+        if wavel is None:
+            return self.ratio * jax.lax.stop_gradient(self.template(None))
+        return self._at(np.asarray(wavel))
+
+    def _at(self, wavel):
+        return self.ratio * jax.lax.stop_gradient(self.template._at(wavel))
+
+    def _params_valid(self):
+        return np.all(self.ratio >= 0.0) & self.template._params_valid()
+
+    def _check_wavel(self):
+        return self.template._check_wavel()
+
+    def __check_init__(self):
+        value = concrete(self.ratio)
+        if value is not None and (value < 0.0).any():
+            raise ValueError(
+                f"Scaled ratio {value.tolist()} is negative; fluxes must be "
+                "non-negative."
+            )
 
 
 class Nodes(Spectrum):

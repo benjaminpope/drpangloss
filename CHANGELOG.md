@@ -41,6 +41,16 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape times one
+  free amplitude, so any spectrum (a library SED, a `Sum` with lines) can be a
+  companion in the grids, limits and detection statistics, with
+  `comp.flux.ratio` as the flux axis; the template's parameters get no
+  gradient. Regression tests (`tests/test_chromatic_search.py`) run
+  `likelihood_grid`, `linear_flux_grid`, `injection_limits`, `absil_limits`,
+  `detection_statistics` and `injection_recovery` on a WR + OB system with V²,
+  closure phases, differential phases and a flux spectrum, and show a
+  differential-phase-only detection of a 0.1 mas companion that a grey V²/T3 fit
+  misses. Tutorial: *Chromatic companion search*.
 - **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
   tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
   normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
