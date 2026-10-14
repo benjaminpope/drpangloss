@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("jaxoplanet")
 
 from virgil.aliases import _UDBinary  # noqa: E402
+from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.likelihood import model_loglike  # noqa: E402
 from virgil.models import (  # noqa: E402
     Attached,
@@ -19,6 +20,7 @@ from virgil.models import (  # noqa: E402
     System,
     UniformDisk,
 )
+from virgil.spectra import PowerLaw  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 from tests.test_attached import ORBIT, T_REF, _epochs  # noqa: E402
 
@@ -42,7 +44,26 @@ def _ud_attached(x):
     )
 
 
+def _chromatic(x):
+    # a chromatic companion: its weight depends on each sample's wavelength
+    return System(
+        primary=UniformDisk(x[4]),
+        companion=Attached(
+            PointSource(PowerLaw(x[3], 2.0, 2.2e-6)), _orbit(x)
+        ),
+    )
+
+
 X = onp.array([730.0, 50.0, 20.0, 0.1, 0.8])
+
+
+def _channels():
+    """Several channels per baseline: ``mjd`` repeated, ``wavel`` varying."""
+    return vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, 4),
+        nights_mjd=T_REF + onp.array([0.0, 150.0, 400.0]),
+    )
 
 
 def _derivatives(build, data):
@@ -57,11 +78,25 @@ def _derivatives(build, data):
     )
 
 
-@pytest.mark.parametrize("build", [_binary, _ud_binary, _ud_attached])
-def test_broadcast_matches_the_serial_loop_in_float64(build, monkeypatch):
+@pytest.mark.parametrize(
+    "build, channels",
+    [
+        (_binary, False),
+        (_ud_binary, False),
+        (_ud_attached, False),
+        (_binary, True),
+        (_chromatic, True),
+    ],
+)
+def test_broadcast_matches_the_serial_loop_in_float64(
+    build, channels, monkeypatch
+):
     with jax.enable_x64(True):
-        mjds = T_REF + onp.array([0.0, 150.0, 400.0, 900.0])
-        data = _epochs(mjds)
+        if channels:
+            data = _channels()
+            assert np.size(data.wavel) > 1
+        else:
+            data = _epochs(T_REF + onp.array([0.0, 150.0, 400.0, 900.0]))
         scene = build(np.asarray(X))
         assert scene.broadcast_in_time
         fast = _derivatives(build, data)
@@ -99,6 +134,17 @@ def test_orbit_batches_are_vectorized_by_default_and_change_nothing():
     assert _orbit_batch_size(None, [data], 5000) == 5000
     assert _orbit_batch_size(None, [data], 3) == 3
     assert _orbit_batch_size(7, [data], 3) == 3
+    # The batch holds about a million visibilities in all: it shrinks with
+    # the data, with the number of datasets and with work per candidate,
+    # and is never below one.
+    from virgil._grid import batch_visibilities
+
+    many = [data] * 40
+    big = batch_visibilities() // (40 * data.u.size)
+    assert _orbit_batch_size(None, many, 10**9) == big
+    assert big < _orbit_batch_size(None, [data], 10**9)
+    assert _orbit_batch_size(None, many, 10**9, per_candidate=8) == big // 8
+    assert _orbit_batch_size(None, many, 10**9, per_candidate=10**9) == 1
     epochs = Epochs({"a": data})
     periods = onp.linspace(600.0, 800.0, 7)
     orbits = [

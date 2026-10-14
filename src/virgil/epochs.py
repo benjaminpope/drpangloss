@@ -50,7 +50,7 @@ import numpy as onp
 from jax.scipy.special import i0e
 
 from ._geometry import fringe_scales
-from ._grid import batch_size_or_default
+from ._grid import batch_size_or_default, batch_visibilities
 from ._precision import cast_tree, run_in
 from .fitting import fit
 from .likelihood import (
@@ -681,17 +681,22 @@ def _check_scales(scales, name):
     return scales
 
 
-def _orbit_batch_size(batch_size, datasets, n):
+def _orbit_batch_size(batch_size, datasets, n, per_candidate=1):
     """Candidates per vectorized batch of a ``lax.map`` over ``n`` of them.
 
     ``lax.map`` without a ``batch_size`` is a serial loop, several times
     slower than batches (3-5x for thousands of candidates on a laptop CPU).
     By default a batch holds about ``_grid.batch_visibilities()`` model
-    visibilities of the largest dataset, and never more than ``n``
-    candidates. The results do not depend on it.
+    visibilities in all: each candidate evaluates every dataset, so it
+    costs the datasets' samples summed, times ``per_candidate`` for work
+    that multiplies that (a flux grid). One candidate per batch at the
+    least, never more than ``n``. The results do not depend on it.
     """
-    biggest = max(datasets, key=lambda d: onp.size(d.u))
-    return min(batch_size_or_default(batch_size, biggest), max(int(n), 1))
+    if batch_size is not None:
+        return min(batch_size_or_default(batch_size, None), max(int(n), 1))
+    samples = sum(max(onp.size(d.u), onp.size(d.wavel), 1) for d in datasets)
+    fit = batch_visibilities() // max(samples * per_candidate, 1)
+    return min(max(fit, 1), max(int(n), 1))
 
 
 def _loglikes(
@@ -907,9 +912,10 @@ def rank_orbits(
         number, or a dict keyed by dataset or epoch name) and the bound
         on the scales, as for ``marginal_loglike``.
     batch_size : int, optional
-        Orbits evaluated together by ``jax.lax.map`` (default: enough to
-        hold about a million model visibilities of the largest dataset, at
-        most all of them). Lower it if the data are large.
+        Orbits evaluated together by ``jax.lax.map`` (default: as many as
+        keep about a million model visibilities, summed over all the
+        datasets, in memory at once, at least one and at most all of
+        them). Lower it if the data are large.
     dtype : {"float64", "float32"}, optional
         Precision of the evaluation (default float64, in a local
         ``jax.enable_x64`` context).

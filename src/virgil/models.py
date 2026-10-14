@@ -258,7 +258,9 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Whether the model changes with time (it contains an
         [`Attached`][virgil.models.Attached] component). Such a model is
         evaluated with [`at`][virgil.models.SourceModel.at], which
-        [`OIData.model`][virgil.oidata.OIData.model] does sample by sample."""
+        [`OIData.model`][virgil.oidata.OIData.model] does at each sample's
+        own time (all at once, see
+        [`broadcast_in_time`][virgil.models.SourceModel.broadcast_in_time])."""
         return False
 
     @property
@@ -266,10 +268,14 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Whether ``at`` accepts an array of times and returns a model
         whose ``model`` evaluates all of them at once, one per sample
         (which [`OIData.model`][virgil.oidata.OIData.model] then does
-        without a loop over samples). False for an
-        [`Attached`][virgil.models.Attached] component with bound angles,
-        whose per-sample angles the components cannot take."""
-        return True
+        without a loop over samples). False by default, so a time-dependent
+        model whose ``at`` takes only a scalar time keeps the per-sample
+        loop; a model that sets it True must accept an array ``mjd`` and
+        return a snapshot whose positions are arrays of that shape. False
+        also for an [`Attached`][virgil.models.Attached] component with
+        bound angles, whose per-sample angles the components cannot
+        take."""
+        return False
 
     def at(self, mjd, t_ref=0.0):
         """This model at time ``t_ref + mjd`` (days, MJD).
@@ -277,8 +283,9 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         The time is split so that it keeps its precision: ``t_ref`` is a
         float64 number and ``mjd`` may be small offsets from it, even in
         float32 (as [`OIData`][virgil.oidata.OIData] passes them). For a
-        single time, ``model.at(60500.3)`` is enough. A model that does not
-        change with time returns itself.
+        single time, ``model.at(60500.3)`` is enough. A model with
+        ``broadcast_in_time`` also takes an array of times, one per sample.
+        A model that does not change with time returns itself.
         """
         return self
 
@@ -4059,7 +4066,12 @@ class System(SourceModel):
 
     @property
     def broadcast_in_time(self):
-        return all(part.broadcast_in_time for part in self.parts)
+        # Static parts do not veto it: ``at`` leaves them as they are.
+        return all(
+            part.broadcast_in_time
+            for part in self.parts
+            if part.time_dependent
+        )
 
     def at(self, mjd, t_ref=0.0):
         if not self.time_dependent:
@@ -4383,6 +4395,10 @@ class OrbitalBinary(SourceModel):
 
     @property
     def time_dependent(self):
+        return True
+
+    @property
+    def broadcast_in_time(self):
         return True
 
     def at(self, mjd, t_ref=0.0):
