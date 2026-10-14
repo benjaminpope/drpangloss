@@ -64,22 +64,6 @@ uv pip install --python .venv/bin/python -e ".[test]"
 
 Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpope.github.io/virgil/).
 
-### Using these docs
-
-The sections in the sidebar hold worked examples on simulated and bundled data:
-- **Background:** [who contributed what](contributors.md), [Gaussian-process priors and information field theory](gp_and_ift.md), and [coordinate, sign and flux conventions](conventions.md).
-- **Data Handling:** [reading OIFITS files into `OIData`](data_io.md), and [AMIGO's DISCO data from JWST aperture masking](amigo_disco.md), and [spectro-interferometric observables](spectro_observables.md) (OI_FLUX spectra, differential phases and calibration nuisances).
-- **Binaries:** [searching for companions](binary_search.md), [detection limits](contrast_limits.md), [detection ROC curves](detection_roc.md) calibrated by injection and recovery, [fitting several datasets together](hierarchical_inference.md), and [orbits from interferometric epochs](orbit_fitting.md) (needs the `[orbits]` extra).
-- **Sources:** [visibility models](model_syntax.md), [extended sources](source_models.md), [composing scenes](composition.md), [spotted stars](harmonix.md), [limb-darkened stars](limb_darkening.md) and [gravity-darkened stars](gravity_darkened_star.md).
-- **Imaging:** image reconstruction in six parts: [simulating data](imaging_ami.md), [regularized maximum likelihood](imaging_rml.md), [Gaussian-process priors](imaging_gp.md), [a ring around a binary](imaging_composite.md), [sampling the posterior](imaging_sampling.md) and [sparse images and CLEAN](imaging_clean.md).
-- **[API Reference](api/index.md)** documents every public class and function.
-
-The documentation is built with Zensical. Local docs check:
-
-```bash
-.venv/bin/python -m zensical build --clean
-```
-
 ## Independent validation
 
 virgil's own tests mostly check virgil against itself. The companion repository [virgil-validation](https://github.com/benjaminpope/virgil-validation) checks it against code that shares nothing with it: geometric primitives with textbook visibilities, uv tracks and OIFITS files built from first principles, and aperture-masking images simulated with [dLux](https://github.com/LouisDesdoigts/dLux), which virgil then reads and fits. If you would like something else validated, please [open an Issue there](https://github.com/benjaminpope/virgil-validation/issues) describing the model or function, the independent result it should match, and the precision you expect.
