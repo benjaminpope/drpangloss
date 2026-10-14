@@ -17,7 +17,6 @@ import numpy as onp
 import matplotlib.pyplot as plt
 from tqdm.auto import tqdm
 
-import virgil
 from virgil import GaussianLine, OIData, PointSource, PowerLaw, Scaled, Sum, System
 from virgil.coverage import vlti_oidata
 from virgil.detection import detection_statistics
