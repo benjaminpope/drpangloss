@@ -79,6 +79,7 @@ anything before 1.0 may change between minor versions.
   conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
   `to_legacy`). The positive form is credited to Dumitrescu 2007 and
   Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
+
 - **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
   free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
   companion in the grids, limits and detection statistics, with

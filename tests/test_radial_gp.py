@@ -504,7 +504,7 @@ def test_spectral_index_validation():
 # --- freeze_geometry ------------------------------------------------------------
 
 
-def _frozen_pair(x64=True):
+def _frozen_pair(f32=False):
     rng = onp.random.default_rng(10)
     disk = PolarDisk(
         RadialGP(0.5, 9.0, sigma=1.0, ell=2.0, z=rng.standard_normal(24)),
@@ -519,6 +519,18 @@ def _frozen_pair(x64=True):
         blur_fwhm=0.3,
         n_r=24,
     )
+    if f32:
+        # The cache as built under the default float32 precision, whatever
+        # JAX_ENABLE_X64 says (the x64 CI job).
+        with jax.enable_x64(False):
+            data32 = jax.tree.map(
+                lambda x: x.astype(onp.float32)
+                if hasattr(x, "dtype")
+                and onp.issubdtype(x.dtype, onp.floating)
+                else x,
+                DATA,
+            )
+            return disk, disk.freeze_geometry(data32)
     return disk, disk.freeze_geometry(DATA)
 
 
@@ -541,11 +553,8 @@ def _cache_is_used(frozen):
 def test_a_float32_cache_is_used_by_a_float64_evaluation():
     # The workflow `frozen = disk.freeze_geometry(data); fit(frozen, ...)`
     # builds the cache in float32 and evaluates in float64.
-    disk, _ = _frozen_pair()
-    frozen = disk.freeze_geometry(DATA)
-    if jax.config.jax_enable_x64:
-        pytest.skip("the cache is float32 only when x64 is off globally")
-    assert frozen.frozen.uu.dtype == np.float32
+    disk, frozen = _frozen_pair(f32=True)
+    assert frozen.frozen.uu.dtype == onp.float32
     with jax.enable_x64(True):
         up = eqx.tree_at(
             lambda d: d.frozen,
@@ -614,10 +623,8 @@ def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
 def test_a_float32_cache_is_used_when_the_model_is_evaluated_in_float64():
     # virgil builds in float32 by default, while fit and log_evidence cast
     # the model to float64: the cache must still be recognized.
-    disk, frozen = _frozen_pair()
-    if jax.config.jax_enable_x64:
-        pytest.skip("the cache is float32 only when x64 is off globally")
-    assert frozen.frozen.uu.dtype == np.float32
+    disk, frozen = _frozen_pair(f32=True)
+    assert frozen.frozen.uu.dtype == onp.float32
     cache = frozen.frozen
     r, _ = frozen.profile.quadrature()
     with jax.enable_x64(True):
