@@ -41,6 +41,36 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
+  a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
+  `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
+  periodic one in azimuth, interpolated onto the pixels. Whitened latents,
+  so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
+  `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
+  `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
+  (Yoshida et al. 2026) and frank's polar representation (Jennings et al.
+  2020). `FlaredDisk*` is unchanged: its comparison with `PolarDisk` is
+  tested in `tests/test_flared_vs_polar_disk.py`.
+
+- **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
+  `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
+  *positive* form by default: brightness `|h(e^{i theta})|^2` normalized to the
+  azimuthal mean, with `h(z) = 1 + h_1 z + ... + h_M z^M` the minimum-phase
+  polynomial of complex reflection coefficients `k_j = w_j tanh|w_j| / |w_j|`
+  (unconstrained Cartesian latents `w_j`, a Levinson step-up recursion).
+  Every non-negative image of degree `M` is reachable (Fejér-Riesz), the image
+  is positive for every parameter value, its degree is exactly `M`, and the
+  root-flip multimodality of `|h|^2` is removed. Value and gradient are finite
+  at `w = 0`. The linear form (`c=`, `s=`) is unchanged and is still chosen
+  whenever `c` or `s` is given. `VonMises(kappa, theta0, degree=M)` is a
+  `PolarDisk` arc with analytic harmonics (a small FFT), and
+  `truncation_power()` reports the dropped power. The new module
+  `virgil.harmonics` converts every form to and from the image harmonics
+  (`to_image_harmonics`, `from_image_harmonics`, `Harmonics.convert`), including
+  image-to-positive by spectral factorization, and the legacy `az_amps`/`az_pas`
+  conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
+  `to_legacy`). The positive form is credited to Dumitrescu 2007 and
+  Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
 - **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
   free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
   companion in the grids, limits and detection statistics, with
@@ -289,6 +319,25 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`GaussianArc` is a von Mises arc (a change of shape).** The weight along
+  the arc is now `exp(kappa cos(angle - pa))` with `kappa = (2 sqrt(2 ln 2)
+  radius / length)^2`, where it was a Gaussian in arc length taken once round
+  the circle and cut off at the antipode of `pa`. `length` is still the FWHM
+  along the arc and the parameter names and paths are unchanged, and the two
+  shapes agree to about 1e-3 in V for arcs with `length` below a tenth of the
+  semicircle (1e-2 at a fifth) but differ for long arcs, so refit if you rely
+  on those. The visibility is analytic (a `ThinRing` with `VonMises` harmonics
+  and a blur on the `PolarDisk` engine); `degree` (default chosen from the
+  starting `radius` and `length`) replaces `nodes` for the visibility, and
+  `nodes` only samples the rendered image. Arcs narrower than 256 harmonics
+  allow (`length / radius` below about 0.05) are integrated along the arc
+  with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
+  so their cost does not grow; `is_physical` is false when the series drops
+  more than 1e-4 of its power. Building one gives a `FutureWarning` for this
+  release.
+- **`ModulatedGaussianRim` runs on the `PolarDisk` engine** (a `ThinRing`,
+  linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
+  same name and parameters; it agrees with the old code to rounding.
 - **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
   `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
   sharply at long baselines, and its visibilities at fixed parameters shift
@@ -301,7 +350,6 @@ anything before 1.0 may change between minor versions.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
-
 - **The evidence helpers take several field Images.** `log_evidence`,
   `error_scale` and `laplace_samples` accept `path=None` (every Image whose
   log-brightness is a `GaussianField`) or a tuple of paths, and take the
