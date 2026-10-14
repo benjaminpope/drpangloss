@@ -115,7 +115,10 @@ No code from orbitize!, Octofitter or orvara is in virgil.
   (`role = "bibliography"`) but are imports or separate repositories, not
   provenance. eht-imaging is a comparison only; nothing was taken from it.
   Entries with `role = "compared"` were studied for comparison, not ported.
-- Entries without arXiv ID or DOI (Quirrenbach 1996, Högbom 1974, Skilling &
-  Bryan 1984, Thiele 1883, Starck et al. 2010) and the package-only heritage
-  entries are unverified until `scripts/fetch_references.py` runs with an ADS
-  token.
+- ADS resolved 88 of 100 entries (bibcodes in the TOML; BibTeX in
+  `references/virgil.bib`, keyed by our bibkeys). ADS does not index Gull 1989,
+  Skilling 1989, MacKay 1992, Wilks 1938 or Efron 1979 under their DOIs (their
+  BibTeX is written from the TOML), nor Thiele 1883 or Starck et al. 2010.
+- Package-only entries (CANDID, fouriever, AMICAL, ImPlaneIA, nifty, zodiax,
+  GDit, frito, jaxbessel, CEPHES) have a URL and no paper, so ADS cannot
+  resolve them.

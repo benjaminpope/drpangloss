@@ -67,12 +67,12 @@ def _search(session, query):
 
 def queries(entry):
     """Yield ``(how, query)`` pairs in order of reliability."""
+    if entry.get("bibcode"):
+        yield "bibcode", f"bibcode:{_quote(entry['bibcode'])}"
     if entry.get("arxiv"):
         yield "arxiv", f"identifier:{_quote('arXiv:' + entry['arxiv'])}"
     if entry.get("doi"):
         yield "doi", f"doi:{_quote(entry['doi'])}"
-    if entry.get("bibcode"):
-        yield "bibcode", f"bibcode:{_quote(entry['bibcode'])}"
     first = re.split(r"[,&]| et al| and ", entry.get("authors", ""))[0].strip()
     surname = first.split()[-1] if first else ""
     if surname and entry.get("year") and entry.get("title"):
@@ -104,7 +104,13 @@ def resolve(entry, session):
         doc = docs[0]
         problems = []
         ids = [i.replace("arXiv:", "") for i in doc.get("identifier", [])]
-        if entry.get("arxiv") and entry["arxiv"] not in ids:
+        # a stored bibcode is authoritative: ADS keeps the arXiv ID on the
+        # preprint's record, not on the published version's
+        if (
+            how != "bibcode"
+            and entry.get("arxiv")
+            and entry["arxiv"] not in ids
+        ):
             problems.append(f"stored arXiv {entry['arxiv']} not in ADS ids")
         if entry.get("doi") and entry["doi"].lower() not in [
             d.lower() for d in doc.get("doi", [])
@@ -139,6 +145,26 @@ def export_bibtex(session, bibcodes):
     )
     r.raise_for_status()
     return r.json()["export"]
+
+
+def fallback_bibtex(key, entry):
+    """A minimal BibTeX record for an entry ADS does not index."""
+    fields = {
+        "author": entry.get("authors", ""),
+        "title": entry.get("title", ""),
+    }
+    if entry.get("year"):
+        fields["year"] = str(entry["year"])
+    if entry.get("doi"):
+        fields["doi"] = entry["doi"]
+    if entry.get("arxiv"):
+        fields["eprint"] = entry["arxiv"]
+    if entry.get("url"):
+        fields["url"] = entry["url"]
+    if entry.get("note"):
+        fields["note"] = entry["note"]
+    body = ",\n".join(f"  {k} = {{{v}}}" for k, v in fields.items())
+    return f"@misc{{{key},\n{body}\n}}\n"
 
 
 def write_back(path, found):
@@ -200,12 +226,13 @@ def main(argv=None, session=None):
         session = requests.Session()
         session.headers["Authorization"] = f"Bearer {token}"
     refs = load_refs(args.refs)
-    found, bibcodes, bad = {}, [], 0
+    found, bibcodes, bad, keys, extra = {}, [], 0, {}, []
     for key, entry in refs.items():
         doc, how, problems = resolve(entry, session)
         if doc is None:
             print(f"{key:24s} NOT FOUND ({entry.get('url', 'no url')})")
             bad += 1
+            extra.append(fallback_bibtex(key, entry))
             continue
         if problems:
             # a mismatched record may be the wrong paper: report it, but keep
@@ -225,14 +252,24 @@ def main(argv=None, session=None):
             "verified": clean,
         }
         bibcodes.append(doc["bibcode"])
+        keys[doc["bibcode"]] = key
         flag = "" if not problems else "  MISMATCH: " + "; ".join(problems)
         bad += bool(problems)
         print(
             f"{key:24s} {doc['bibcode']:22s} arXiv:{arxiv or '-':16s} via {how}{flag}"
         )
     if bibcodes:
-        Path(args.bib).write_text(export_bibtex(session, bibcodes))
-        print(f"wrote {args.bib} ({len(bibcodes)} records)")
+        text = export_bibtex(session, bibcodes)
+        for code, key in keys.items():  # cite by our bibkey, not the bibcode
+            text = text.replace("{" + code + ",", "{" + key + ",", 1)
+        text += (
+            "\n% not indexed by ADS: written from provenance.toml\n"
+            + "\n".join(extra)
+        )
+        Path(args.bib).write_text(text)
+        print(
+            f"wrote {args.bib} ({len(bibcodes)} ADS records, {len(extra)} fallback)"
+        )
     if args.write_back:
         write_back(args.refs, found)
     print(f"{bad} entries need attention")
