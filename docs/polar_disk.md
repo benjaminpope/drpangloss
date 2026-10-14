@@ -263,6 +263,9 @@ precision you will fit in if you need full accuracy: a cache built in float32
 (virgil's default) is still recognized when `fit` or `log_evidence` evaluates
 in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 
+See [A planet in a gap between rings](polar_disk_rings.md) for a worked example with a
+parametric fit and a Gaussian-process disk of the same data.
+
 ## Notes
 
 - **Normalization.** The disk has unit flux, and the transform is divided by

@@ -41,6 +41,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Tutorial: a planet in a gap between inclined rings (stage P5).**
+  `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
+  simulates chromatic VLTI-like V² and closure phases of a star, three
+  coplanar blackbody rings (the outer one lopsided) and a planet in the
+  gap; fits the parametric family with invariant priors (MAP, Laplace
+  covariance and evidence); then recovers the rings, their colours, the
+  lopsidedness and the planet with one `PolarDisk` whose profile, spectral
+  index and harmonics are Gaussian processes, and compares the Laplace
+  evidences and the prior and posterior of the profile and index.
 - **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
   (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
   (or radial function) with latents `z`; `PolarKernel` is a prior over the
