@@ -94,8 +94,8 @@ def test_main_writes_bib_and_write_back(tmp_path):
         session=FakeSession(),
     )
     assert rc == 1  # the wrong entry needs attention
-    assert "2025arXiv250925433D" in bib.read_text()
-    assert "2018arXiv180207859S" not in bib.read_text()  # mismatch kept out
+    assert "@ARTICLE{good," in bib.read_text()  # keyed by bibkey
+    assert "{wrong," not in bib.read_text()  # mismatch kept out
     out = tomllib.loads(p.read_text())["ref"]
     assert (
         out["good"]["bibcode"] == "2025arXiv250925433D"
