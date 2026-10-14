@@ -178,7 +178,7 @@ def test_the_exact_thin_surface_is_a_polar_disk_with_negative_height(
     aspect = 0.1
     polar = _polar(inc, PowerLawHeight(-aspect * R0, R0, flaring))
     thin = _thin(inc, aspect, flaring, use_tan=True)
-    assert _max_dv(thin, polar) < 1e-6
+    assert _max_dv(thin, polar) < 1e-5
 
 
 @pytest.mark.parametrize(

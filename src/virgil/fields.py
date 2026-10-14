@@ -263,10 +263,20 @@ def _matern(distance, length, nu):
 
 
 def _radial_factor(n_r, spacing, length, nu, jitter=1e-6):
-    """Cholesky factor ``L`` of the radial correlation on the nodes."""
-    r = np.arange(n_r) * spacing
+    """Cholesky factor ``L`` of the radial correlation on the nodes.
+
+    The diagonal jitter is at least ``10 n_r`` times the machine epsilon of
+    the working precision (1.5e-5 for 128 nodes in float32, below the
+    default 1e-6 in float64), so that the Cholesky factorization of a
+    Matérn matrix whose length is many node spacings stays finite in float32
+    (a jitter of 1e-6 gives NaN for 128 nodes, ``nu`` = 5/2 and a length of
+    5 spacings or more).
+    """
+    dtype = np.result_type(length, float)
+    r = np.arange(n_r, dtype=dtype) * spacing
     cov = _matern(np.abs(r[:, None] - r[None, :]), length, nu)
-    return np.linalg.cholesky(cov + jitter * np.eye(n_r))
+    jitter = max(jitter, 10.0 * n_r * float(np.finfo(dtype).eps))
+    return np.linalg.cholesky(cov + jitter * np.eye(n_r, dtype=dtype))
 
 
 def _periodic_filter(latent, length, nu):
@@ -287,13 +297,13 @@ def _periodic_filter(latent, length, nu):
     return np.real(np.fft.ifft(root * np.fft.fft(latent, axis=1), axis=1))
 
 
-def polar_interpolate(values, r_min, spacing, r, theta):
+def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
     """Bilinear interpolation of a polar grid at ``(r, theta)``.
 
     ``values[k, j]`` sits at radius ``r_min + k * spacing`` and azimuth
     ``2π j / n_theta`` (periodic). Outside the radial range the field falls
-    linearly to zero over one ``spacing`` and is zero beyond, so a residual
-    field has no edge discontinuity. The error is second order in the grid
+    linearly to ``fill`` over one ``spacing`` and is ``fill`` beyond, so
+    there is no edge discontinuity. The error is second order in the grid
     spacings.
 
     Parameters
@@ -303,6 +313,8 @@ def polar_interpolate(values, r_min, spacing, r, theta):
         Radius of the first node and the node spacing, in milliarcseconds.
     r, theta : array-like
         Radii (mas) and azimuths (radians); any common shape.
+    fill : float, optional
+        The value outside the grid (default 0).
 
     Returns
     -------
@@ -311,9 +323,8 @@ def polar_interpolate(values, r_min, spacing, r, theta):
     """
     values = np.asarray(values)
     n_r, n_theta = values.shape
-    padded = np.concatenate(
-        [np.zeros((1, n_theta)), values, np.zeros((1, n_theta))], axis=0
-    )
+    edge = np.full((1, n_theta), fill, dtype=values.dtype)
+    padded = np.concatenate([edge, values, edge], axis=0)
     f = np.clip((r - r_min) / spacing + 1.0, 0.0, n_r + 1.0 - 1e-9)
     i0 = np.floor(f)
     wr = f - i0
@@ -343,9 +354,8 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     with a Matérn kernel in radius and a Matérn kernel of the chordal
     distance in azimuth, so periodic. A long ``length_theta`` favours rings
     and arcs without imposing them, and a short ``length_r`` allows radial
-    structure such as gaps. This is the pixel counterpart of the
-    ``PolarKernel`` prior on the coefficients of a
-    [`PolarDisk`][virgil.models.PolarDisk]: use it for emission that the
+    structure such as gaps. Use it, in the frame of a
+    [`PolarDisk`][virgil.models.PolarDisk], for emission that the
     parametric disk misses, as a residual field aligned with the disk,
     instead of a Cartesian [`GaussianField`][virgil.fields.GaussianField]
     that knows nothing about the geometry.
@@ -357,7 +367,11 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ([`image_priors`][virgil.imaging.image_priors]) is MAP estimation, and
     [`log_evidence`][virgil.imaging.log_evidence] and the numpyro model work
     as for a ``GaussianField``. Positivity is that of the Image: its
-    brightness is the softmax of ``η``. Give ``σ`` and the two lengths
+    brightness is the softmax of ``η``. Beyond the polar grid (outside
+    ``r_max_mas``, or inside ``r_min_mas``) ``η`` falls to ``outside``
+    (default -20), so those pixels are dark and the Image's flux goes to the
+    grid's ellipse; a value of 0 would leave a flat background there that
+    the latents cannot remove. Give ``σ`` and the two lengths
     bounded log-uniform priors with
     [`polar_field_priors`][virgil.fields.polar_field_priors], so that the
     evidence is proper; their MAP values are biased (``fit`` warns).
@@ -402,6 +416,9 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         [`GaussianField`][virgil.fields.GaussianField] (default: flat).
     mean_floor : float, optional
         Floor on the template, as a fraction of its peak (default 1e-3).
+    outside : float, optional
+        Log-brightness beyond the polar grid (default -20, effectively
+        dark).
 
     Notes
     -----
@@ -437,6 +454,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     r_max_mas: float = eqx.field(static=True)
     nu: float = eqx.field(static=True)
     mean_floor: float = eqx.field(static=True)
+    outside: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -454,6 +472,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         nu=1.5,
         mean=None,
         mean_floor=1e-3,
+        outside=-20.0,
     ):
         self.latent = np.asarray(latent, dtype=float)
         if self.latent.ndim != 2 or min(self.latent.shape) < 2:
@@ -508,6 +527,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.mean = mean
         _check_positive("mean_floor", mean_floor)
         self.mean_floor = float(mean_floor)
+        self.outside = float(outside)
 
     @classmethod
     def from_disk(cls, disk, latent, image_shape, r_max_mas=None, **kwargs):
@@ -546,7 +566,10 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             self.latent.shape[0], self.spacing, self.length_r, self.nu
         )
         azimuthal = _periodic_filter(self.latent, self.length_theta, self.nu)
-        return self.sigma * factor @ azimuthal
+        # HIGHEST: the default matmul precision on A100/H100 is TF32.
+        return self.sigma * np.matmul(
+            factor, azimuthal, precision=jax.lax.Precision.HIGHEST
+        )
 
     def evaluate(self, pixel_scale_mas):
         """The log-brightness ``η`` on pixels of ``pixel_scale_mas``."""
@@ -562,7 +585,12 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         origin = (xe == 0.0) & (ye == 0.0)
         theta = np.arctan2(xe, np.where(origin, 1.0, ye))
         eta = polar_interpolate(
-            self.polar_values(), self.r_min_mas, self.spacing, r, theta
+            self.polar_values(),
+            self.r_min_mas,
+            self.spacing,
+            r,
+            theta,
+            fill=self.outside,
         )
         if self.mean is not None:
             template = np.maximum(self.mean, 0.0) / np.max(self.mean)
@@ -584,8 +612,11 @@ def polar_field_priors(
     bounded. Add the latents' priors with
     [`image_priors`][virgil.imaging.image_priors]. Each range is
     ``(low, high)``: ``sigma`` in log-brightness, ``length_r`` in
-    milliarcseconds and ``length_theta`` in radians (up to ``2π``, past
-    which the field is constant in azimuth).
+    milliarcseconds and ``length_theta`` in radians. The azimuthal kernel
+    acts on the chord length ``2 sin(Δ/2)`` on the unit circle, at most 2, so
+    a length of about 2 or more varies little with azimuth (opposite
+    azimuths have a correlation of 0.89 at a length of 6 for ``nu`` = 3/2)
+    and the default upper limit of 6 is nearly azimuthally constant.
 
     Parameters
     ----------

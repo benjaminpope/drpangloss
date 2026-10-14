@@ -16,6 +16,7 @@ from virgil.imaging import image_priors, log_evidence
 from virgil.models import (
     GaussianDisk,
     GaussianRing,
+    Harmonics,
     Image,
     PointSource,
     PolarDisk,
@@ -74,7 +75,9 @@ def test_latents_are_whitened_and_zero_latent_is_the_template():
     values = jax.vmap(lambda z: field.set("latent", z).polar_values())(draws)
     assert float(np.std(values)) == pytest.approx(sigma, rel=0.1)
     template = onp.asarray(GaussianDisk(4.0).render(npix=24, fov_mas=24.0))
-    flat = _field(mean=template).set("latent", np.zeros((N_R, N_T)))
+    flat = _field(mean=template, outside=0.0).set(
+        "latent", np.zeros((N_R, N_T))
+    )
     floor = 1e-3
     expected = onp.log(template / template.max() + floor)
     assert onp.allclose(flat.evaluate(1.0), expected)
@@ -325,3 +328,99 @@ def test_bad_polar_field_parameters_are_rejected(bad):
     )
     with pytest.raises(ValueError):
         PolarField(**(kwargs | bad))
+
+
+def _independent_polar_coordinates(shape, ps, inc, pa):
+    # r and azimuth of every pixel from first principles: the position
+    # angle pa of the major axis is (sin pa, cos pa) in (East, North); the
+    # azimuth runs from it towards pa + 90, (cos pa, -sin pa).
+    n_r_, n_c = shape
+    x = onp.asarray(pixel_offsets(n_c, ps))[None, :] * onp.ones((n_r_, 1))
+    y = onp.asarray(pixel_offsets(n_r_, ps))[:, None] * onp.ones((1, n_c))
+    p, i = onp.radians(pa), onp.radians(inc)
+    major = x * onp.sin(p) + y * onp.cos(p)
+    minor = (x * onp.cos(p) - y * onp.sin(p)) / onp.cos(i)
+    return onp.hypot(major, minor), onp.arctan2(minor, major)
+
+
+@pytest.mark.parametrize("pa", [0.0, 30.0, -50.0, 115.0])
+def test_orientation_at_a_general_position_angle(pa):
+    # A mirrored pa, or an azimuth towards pa - 90, would fail for pa != 0.
+    field = _field(shape=(25, 25), inc=55.0, pa=pa)
+    r, theta = _independent_polar_coordinates((25, 25), 1.0, 55.0, pa)
+    expected = polar_interpolate(
+        field.polar_values(), 0.0, field.spacing, r, theta, fill=-20.0
+    )
+    # The fade to -20 over one node spacing is steep: float32 noise only.
+    assert onp.allclose(field.evaluate(1.0), expected, atol=2e-4)
+
+
+def test_the_azimuth_agrees_with_polar_disks_harmonics():
+    # A field that is cos(azimuth) times a ring peaks where PolarDisk's
+    # first linear harmonic (c = 1, s = 0) peaks, at the same inc and pa.
+    class CosineField(PolarField):
+        def polar_values(self):
+            r = onp.arange(N_R) * self.spacing
+            th = 2 * onp.pi * onp.arange(N_T) / N_T
+            ring = onp.exp(-0.5 * ((r - 8.0) / 2.0) ** 2)
+            return 6.0 * ring[:, None] * onp.cos(th)[None, :]
+
+    shape, ps, inc, pa = (49, 49), 0.5, 50.0, 30.0
+    field = CosineField(
+        onp.zeros((N_R, N_T)), shape, R_MAX + 4.0, inc=inc, pa=pa
+    )
+    disk = PolarDisk(
+        GaussianRing(8.0, 2.0),
+        harmonics=Harmonics(c=0.9, s=0.0, form="linear"),
+        inc=inc,
+        pa=pa,
+        n_r=64,
+    )
+    eta = onp.asarray(field.evaluate(ps))
+    image = onp.asarray(disk.render(npix=49, fov_mas=49 * ps))
+    assert onp.unravel_index(eta.argmax(), eta.shape) == onp.unravel_index(
+        image.argmax(), image.shape
+    )
+
+
+def test_pixels_outside_the_polar_grid_are_dark():
+    field = _field(shape=(48, 48), inc=40.0, pa=25.0)
+    image = Image(field, 0.5, flux=1.0)
+    r, _ = _independent_polar_coordinates((48, 48), 0.5, 40.0, 25.0)
+    brightness = onp.asarray(image.brightness)
+    outside = r > R_MAX + field.spacing
+    assert outside.mean() > 0.2
+    assert brightness[outside].sum() < 1e-6
+    # The old zero padding would put this share of the flux outside.
+    flat = _field(shape=(48, 48), inc=40.0, pa=25.0, outside=0.0)
+    assert (
+        onp.asarray(Image(flat, 0.5, flux=1.0).brightness)[outside].sum() > 0.1
+    )
+
+
+def test_the_azimuthal_kernel_is_chordal():
+    # Opposite azimuths at length 6 are still only 0.89 correlated (nu 3/2),
+    # so a length above 2 does not make the field constant exactly.
+    from virgil.fields import _matern
+
+    assert float(_matern(2.0, 6.0, 1.5)) == pytest.approx(0.89, abs=5e-3)
+
+
+def test_the_radial_factor_is_finite_in_float32():
+    # 128 nodes of 0.3 mas and a Matérn 5/2 length of 50 mas: with a fixed
+    # jitter of 1e-6 the float32 Cholesky factor is NaN.
+    from virgil.fields import _radial_factor
+
+    factor = _radial_factor(128, 0.3, np.float32(50.0), 2.5)
+    assert factor.dtype == np.float32
+    assert onp.all(onp.isfinite(onp.asarray(factor)))
+    latent = onp.random.default_rng(0).normal(size=(128, 16))
+    field = PolarField(
+        latent,
+        (32, 32),
+        38.0,
+        length_r=50.0,
+        nu=2.5,
+        inc=40.0,
+    )
+    assert onp.all(onp.isfinite(onp.asarray(field.evaluate(1.5))))
