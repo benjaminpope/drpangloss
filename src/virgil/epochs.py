@@ -1384,7 +1384,9 @@ class _RefineProblem(eqx.Module):
 def _refine_marginal(x0, dof, d64, surface, bounds):
     """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
     the IRLS curvature, in float64, deterministic) within ``bounds``.
-    Returns the point and the surface's negative value there."""
+    Returns the point and the surface's negative value there; a run that
+    does not converge (or starts non-finite) returns ``x0`` and ``inf``,
+    which the caller reads as no improvement."""
     state = _gauss_newton.solve(
         _RefineProblem(d64, dof, surface),
         onp.asarray(x0, float),
@@ -1393,6 +1395,8 @@ def _refine_marginal(x0, dof, d64, surface, bounds):
         dtol=1e-12,
         max_steps=200,
     )
+    if int(state.stop) != _gauss_newton.CONVERGED:
+        return onp.asarray(x0, dtype=float), float("inf")
     return onp.asarray(state.z, dtype=float), float(state.value)
 
 

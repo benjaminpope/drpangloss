@@ -931,3 +931,19 @@ def test_refined_peaks_match_the_lbfgs_refinement(case):
     onp.testing.assert_allclose(
         peaks.marginal[:2], old[name]["marginal"], atol=1e-5
     )
+
+
+def test_a_refinement_that_does_not_converge_keeps_the_grid_point(monkeypatch):
+    from virgil import _gauss_newton
+
+    real = _gauss_newton.solve
+
+    def one_step(problem, start, **kw):
+        return real(problem, start, **{**kw, "max_steps": 1})
+
+    monkeypatch.setattr(_gauss_newton, "solve", one_step)
+    night = _night(ARRAYS["3T"], seed=1)
+    peaks = _positions(night).peaks[0]
+    grid = _positions(night, refine=False).peaks[0]
+    onp.testing.assert_array_equal(peaks.dra, grid.dra)
+    onp.testing.assert_array_equal(peaks.ddec, grid.ddec)

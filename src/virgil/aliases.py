@@ -1601,8 +1601,9 @@ def fit_orbit_aliases(
     Each start is optimized by damped Newton (Levenberg–Marquardt) steps
     on the scale-marginalized log likelihood. Its curvature is that of
     iteratively reweighted least squares: each observable block's
-    residuals weighted by 1/ŝ², with ŝ² = χ²/ν the error scale those
-    residuals imply, and the profiled V² amplitude differentiated through.
+    residuals weighted by the slope of the log likelihood in its χ² (for
+    ``s_max=None``, 1/ŝ² with ŝ² = χ²/ν the error scale those residuals
+    imply), and the profiled V² amplitude differentiated through.
     A step is kept only if the log likelihood rises, so the curvature
     sets the speed and not the optimum. If a start does not converge in
     ``max_steps`` (or stalls), L-BFGS-B continues from where it stopped,

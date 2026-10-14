@@ -4,7 +4,6 @@ import copy
 import functools
 import json
 
-import equinox as eqx
 import jax
 import numpy as onp
 import pytest
@@ -728,18 +727,15 @@ def test_a_kernel_that_stalls_falls_back_to_lbfgs_and_then_the_kernel(
     )
     real, calls = _gauss_newton.solve, []
 
-    def stall_first(problem, start, **kw):
-        state = real(problem, start, **kw)
+    def truncate_first(problem, start, **kw):
         calls.append(start)
-        if len(calls) == 1:
-            state = eqx.tree_at(
-                lambda s: s.stop, state, onp.int32(_gauss_newton.STALLED)
-            )
-        return state
+        if len(calls) == 1:  # a real stall: stopped short of the optimum
+            kw = {**kw, "max_steps": 2}
+        return real(problem, start, **kw)
 
-    monkeypatch.setattr(_gauss_newton, "solve", stall_first)
+    monkeypatch.setattr(_gauss_newton, "solve", truncate_first)
     x, value = aliases._optimize(problem, bounds, x0, 200)
-    assert len(calls) == 2  # the kernel, L-BFGS-B, the kernel again
+    assert len(calls) == 2  # the kernel (cut short), L-BFGS-B, the kernel
     assert value == pytest.approx(-193.286626, abs=0.01)
 
 
