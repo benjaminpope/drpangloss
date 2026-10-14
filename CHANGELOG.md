@@ -60,6 +60,17 @@ anything before 1.0 may change between minor versions.
   `imaging.log_evidence` (Laplace over the latents) support them. The
   Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
   the `RadialGP` docstring, the contributors page and the bibliography.
+- **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
+  a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
+  `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
+  periodic one in azimuth, interpolated onto the pixels. Whitened latents,
+  so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
+  `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
+  `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
+  (Yoshida et al. 2026) and frank's polar representation (Jennings et al.
+  2020). `FlaredDisk*` is unchanged: its comparison with `PolarDisk` is
+  tested in `tests/test_flared_vs_polar_disk.py`.
+
 - **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
   `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
   *positive* form by default: brightness `|h(e^{i theta})|^2` normalized to the

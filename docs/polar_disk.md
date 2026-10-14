@@ -187,7 +187,11 @@ amplitude and azimuth pairs `az_amps`/`az_pas` of `ModulatedGaussianRim` and
 the ring of radius $r$ at $r\cot\alpha - \mathrm{tip}$, and
 `PowerLawHeight(h0, r0, psi)` at $h_0 (r/r_0)^\psi$. On the sky the ring moves
 by $h\sin i$ along the projected minor axis, towards position angle
-`pa + 90`, a phase factor per node after the stretch. The emitting surface is
+`pa + 90`, a phase factor per node after the stretch. A positive height
+shifts the ring towards `pa + 90`. A top surface lifted towards the observer
+shifts the apparent ring towards the *far* side, so when `pa + 90` is the near
+side of the disk (the side tilted towards the observer), the top surface of a
+flared disk needs a negative `h0`. The emitting surface is
 thin and nothing is occulted.
 
 [`TruncatedCone`](api/models/classes/composition.md) is exactly this: an
@@ -265,6 +269,40 @@ in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 
 See [A planet in a gap between rings](polar_disk_rings.md) for a worked example with a
 parametric fit and a Gaussian-process disk of the same data.
+
+## Residuals aligned with the disk: `PolarField`
+
+A parametric disk misses some of the light. Rather than a Cartesian
+[`GaussianField`](api/fields.md), which knows nothing about the disk, a
+`PolarField` is a Gaussian-process residual on a polar grid in the disk's
+frame, with a Matérn kernel in radius (length `length_r`) and a periodic one
+in azimuth (`length_theta`, radians). A long `length_theta` favours rings and
+arcs without imposing them; a short `length_r` allows gaps. It is evaluated
+on the grid, deprojected with `inc`, `pa` and the centre, and interpolated
+onto the pixels of an `Image`, whose brightness stays positive (a softmax).
+The latents are whitened, so `image_priors`, `fit`, `log_evidence` and the
+numpyro model work as for a `GaussianField`:
+
+```python
+from virgil import Image, PolarField
+from virgil.fields import polar_field_priors
+from virgil.imaging import image_priors
+
+field = PolarField.from_disk(
+    disk, np.zeros((24, 32)), image_shape=(64, 64), sigma=1.0,
+    length_r=4.0, length_theta=1.0,
+)
+scene = System(star=PointSource(), disk=disk, resid=Image(field, 1.5, flux=0.1))
+priors = image_priors(scene) | polar_field_priors("resid.log_brightness")
+```
+
+`polar_field_priors` gives `sigma` and the two lengths bounded log-uniform
+priors, so the evidence is proper; fit them by sampling or from the evidence,
+not by MAP (`fit` warns). The geometry is copied from the disk, not tied to
+it. The construction follows the whitened latents of
+[FRAP](https://github.com/tomyoshida/frap) (Yoshida et al. 2026) and the polar
+representation of [frank](https://github.com/discsim/frank) (Jennings et al.
+2020); no code is shared.
 
 ## Notes
 
