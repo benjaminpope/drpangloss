@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   # | tier    | trigger                         | jobs                                       |
-  # | PR gate | pull request                    | py3.12 f32 in 3 shards, py3.12 x64; no slow |
+  # | PR gate | pull request                    | py3.12 f32 and x64, 3 shards each; no slow |
   # |         |   ... changing pyproject.toml   | + py3.11 at the dependency floors          |
   # | full    | push to main, dispatch, full-ci | the gate with slow tests, + macOS py3.11,  |
   # |         |                                 |   py3.13                                   |
@@ -73,8 +73,15 @@ jobs:
               for k in (1, 2, 3)
           ]
           # x64 exercises the float64 paths, and finds tests silently
-          # written for float32. virgil-validation reads its evidence.
-          include.append({**linux, "x64": "1", "slow": full, "budget": True})
+          # written for float32. Sharded on pull requests too, or it alone
+          # sets their wall time; one job on full runs, whose artifact
+          # (virgil-evidence-ubuntu-latest-py3.12-x641) virgil-validation
+          # reads.
+          x64 = {**linux, "x64": "1", "slow": full, "budget": True}
+          if full:
+              include.append(x64)
+          else:
+              include += [{**x64, "shard": f"{k}/3"} for k in (1, 2, 3)]
           if full:
               # The oldest Python on macOS: x64 dtype mix-ups have surfaced
               # on macOS and Python 3.11 but not in Linux CI.
