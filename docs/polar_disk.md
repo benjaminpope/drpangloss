@@ -12,9 +12,10 @@ $$
 
 where $q'$ is the baseline's spatial frequency in the plane of the disk, after
 undoing the inclination and rotation. Without harmonics or a height the disk
-is azimuthally symmetric, so a centred disk has real visibilities and zero
-closure phases; they appear with an offset, odd harmonics, a height, or
-alongside other components.
+is azimuthally symmetric, so a centred disk has real visibilities (which
+change sign past their nulls) and closure phases of 0° or 180°; other values
+appear with an offset, odd harmonics, a height, or alongside other
+components.
 
 The ideas follow [frank](https://github.com/discsim/frank) (Jennings et al.
 2020), which writes a radial profile as a Hankel transform on a set of nodes,

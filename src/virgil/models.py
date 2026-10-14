@@ -889,17 +889,19 @@ class TruncatedCone(Component):
         phi = np.arctan2(np.cos(d) / squash, np.sin(d))
         return self.pa + 90.0 - phi / dtor
 
+    def _radial_profile(self):
+        sin_alpha = np.sin(self.alpha * dtor)
+        return ExpTail(
+            self.s0 * sin_alpha, self.length * sin_alpha, cutoff=5.0
+        ).with_rule(self.n_rings)
+
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
-        and normalized weight of each ring."""
-        t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
-        s = self.s0 + t * self.length
-        rho = s * np.sin(self.alpha * dtor)
-        along = (s * np.cos(self.alpha * dtor) - self.tip) * np.cos(
-            self.tilt * dtor
-        )
-        weight = rho * np.exp(-(s - self.s0) / self.length)
-        return rho, along, weight / np.sum(weight)
+        and normalized weight of each ring: the Gauss-Legendre nodes that
+        ``model`` integrates and ``render`` draws."""
+        r, w = self._radial_profile().quadrature()
+        along = Cone(self.alpha, self.tip)(r) * np.cos(self.tilt * dtor)
+        return r, along, w / np.sum(w)
 
     def _centred_cvis(self, uu, vv):
         # The cone is a PolarDisk: an exponential tail in the radius of the
@@ -907,11 +909,7 @@ class TruncatedCone(Component):
         # the walls' modulation as linear harmonics. The disk's major axis
         # is perpendicular to the projected axis of the cone, and the
         # minor-axis foreshortening ratio * sin(tilt) is passed as is.
-        sin_alpha = np.sin(self.alpha * dtor)
-        profile = ExpTail(
-            self.s0 * sin_alpha, self.length * sin_alpha, cutoff=5.0
-        ).with_rule(self.n_rings)
-        r, w = profile.quadrature()
+        r, w = self._radial_profile().quadrature()
         height = Cone(self.alpha, self.tip)(r)
         c = s = None
         if self.az_amps is not None:
@@ -3546,8 +3544,10 @@ class PolarDisk(Component):
     Notes
     -----
     Without ``harmonics`` or ``height`` the disk is azimuthally symmetric
-    and its closure phases are zero when centred; they appear with an offset
-    ``dra``/``ddec``, an odd harmonic, a height, or in
+    and point-symmetric (whatever ``inc``), so when centred its
+    visibilities are real and its closure phases are 0 or 180 degrees (the
+    visibility changes sign past its nulls); other values appear with an
+    offset ``dra``/``ddec``, an odd harmonic, a height, or in
     a [`System`][virgil.models.System] with other components. A height
     needs ``n_r`` to resolve the extra phase ``2 pi q h sin(inc)`` as well.
     Rendering a disk with a ``height`` splats rings on a fine radial grid and
@@ -3652,9 +3652,11 @@ class PolarDisk(Component):
     def suggest_n_r(self, data):
         """A starting number of nodes for ``data``'s longest baselines.
 
-        Enough to sample the Bessel oscillations across the profile (at the
-        current parameter values, which must be concrete), rounded up to a
-        multiple of 8. A starting point only: check convergence by
+        Enough to sample the Bessel oscillations across the profile and the
+        phase of a ``height``'s lift (at the current parameter values, which
+        must be concrete), rounded up to a
+        multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
+        tail). A starting point only: check convergence by
         doubling ``n_r``.
 
         Parameters
@@ -3665,7 +3667,26 @@ class PolarDisk(Component):
         u, v, wavel = (onp.asarray(a) for a in (data.u, data.v, data.wavel))
         q_max = float(onp.max(onp.hypot(u, v) / wavel))
         n = self.profile._n_needed(q_max)
-        return int(8 * onp.ceil(max(n, 16) / 8))
+        if self.height is not None:
+            # The lift h(r) sin(inc) adds a phase 2 pi q (lift) across the
+            # profile, which dominates when |dh/dr| sin(inc) > 1.
+            lo, hi = self.profile.extent()
+            h = onp.asarray(self.height(np.linspace(lo, hi, 65)), float)
+            lift = float(onp.sum(onp.abs(onp.diff(h))))
+            lift *= float(
+                onp.max(onp.abs(onp.sin(onp.asarray(self.inc) * dtor)))
+            )
+            n = max(n, int(onp.ceil(onp.pi * q_max * lift * mas2rad)) + 12)
+        n = int(8 * onp.ceil(max(n, 16) / 8))
+        # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
+        # has at most 150 nodes; step down in 8s until the rule builds.
+        while n > 16:
+            try:
+                self.profile.with_rule(n)
+                break
+            except ValueError:
+                n -= 8
+        return n
 
     def _centred_cvis(self, uu, vv):
         r, w = self.profile.quadrature()

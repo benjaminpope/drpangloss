@@ -55,9 +55,7 @@ anything before 1.0 may change between minor versions.
   (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
   midpoint stack to 1e-6, where 64 midpoint rings are off by 5e-4 and 256 by
   3e-5, at less than half the cost. The model is unchanged (the tail is still
-  cut at five lengths). **The default `n_rings` is now 48** (was 32), since
-  too few Gauss-Legendre nodes fail sharply at long baselines; results at a
-  given `n_rings` differ from the midpoint rule's by that rule's error.
+  cut at five lengths). The released behaviour changes: see Changed.
   Credits carry over from the earlier cone code, `frank` and `vis-r`.
 - **`PolarDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
   `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
@@ -281,6 +279,15 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
+  `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
+  sharply at long baselines, and its visibilities at fixed parameters shift
+  by the old midpoint rule's error (about 8e-4 at the old default, worth
+  Delta log L of about 4 per GRAVITY epoch), so a 0.3 fit rerun gives a
+  different chi-squared and best fit with no API change. The per-call cost
+  at the default rises (48 Gauss-Legendre nodes against 32 midpoint rings);
+  it is lower only at equal accuracy. `rings()` and `render()` now use the
+  same Gauss-Legendre nodes as `model()`.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.

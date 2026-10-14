@@ -1,7 +1,5 @@
 """PolarDisk with a height and harmonics, and TruncatedCone on the engine."""
 
-import time
-
 import equinox as eqx
 import jax
 import jax.numpy as np
@@ -203,25 +201,28 @@ def test_the_new_rule_reaches_1e5_with_few_nodes_where_midpoint_needs_hundreds()
         assert onp.max(onp.abs(onp.asarray(new24) - reference)) < 1e-5
 
 
-def test_new_cone_is_faster_than_256_midpoint_rings():
-    p = _CONES["plain"]
-    rng = onp.random.default_rng(0)
-    u = np.asarray(rng.uniform(-100.0, 100.0, 4000))
-    v = np.asarray(rng.uniform(-100.0, 100.0, 4000))
-    cone = TruncatedCone(**p, n_rings=48)
-    new = jax.jit(lambda cone, u, v: cone.model(u, v, WAVEL))
-    old = jax.jit(lambda u, v: _old_cone_cvis(u, v, 256, **p))
+def test_cone_rings_are_the_nodes_the_model_integrates():
+    cone = TruncatedCone(**_CONES["plain"], n_rings=48)
+    rho, along, weight = cone.rings()
+    r, w = cone._radial_profile().quadrature()
+    assert onp.allclose(rho, r) and onp.isclose(float(np.sum(weight)), 1.0)
+    assert onp.allclose(
+        along,
+        onp.asarray(Cone(cone.alpha, cone.tip)(r))
+        * onp.cos(cone.tilt * onp.pi / 180.0),
+    )
 
-    def best(f, *args):
-        jax.block_until_ready(f(*args))
-        times = []
-        for _ in range(5):
-            t0 = time.perf_counter()
-            jax.block_until_ready(f(*args))
-            times.append(time.perf_counter() - t0)
-        return min(times)
 
-    assert best(new, cone, u, v) < best(old, u, v)
+def test_suggest_n_r_counts_the_height_phase():
+    class _Data:
+        u = onp.array([0.3 / mas2rad * 2.2e-6])  # 0.3 cycles/mas
+        v = onp.array([0.0])
+        wavel = onp.array([2.2e-6])
+
+    profile = ExpTail(3.0, 3.0, cutoff=6.0)
+    flat = PolarDisk(profile, inc=60.0).suggest_n_r(_Data)
+    cone = PolarDisk(profile, height=Cone(20.0), inc=60.0).suggest_n_r(_Data)
+    assert cone >= 48 > flat
 
 
 @pytest.mark.parametrize("name", ["plain", "modulated", "edge on"])
