@@ -187,7 +187,11 @@ amplitude and azimuth pairs `az_amps`/`az_pas` of `ModulatedGaussianRim` and
 the ring of radius $r$ at $r\cot\alpha - \mathrm{tip}$, and
 `PowerLawHeight(h0, r0, psi)` at $h_0 (r/r_0)^\psi$. On the sky the ring moves
 by $h\sin i$ along the projected minor axis, towards position angle
-`pa + 90`, a phase factor per node after the stretch. The emitting surface is
+`pa + 90`, a phase factor per node after the stretch. A positive height
+shifts the ring towards `pa + 90`. A top surface lifted towards the observer
+shifts the apparent ring towards the *far* side, so when `pa + 90` is the near
+side of the disk (the side tilted towards the observer), the top surface of a
+flared disk needs a negative `h0`. The emitting surface is
 thin and nothing is occulted.
 
 [`TruncatedCone`](api/models/classes/composition.md) is exactly this: an

@@ -3700,7 +3700,9 @@ class PowerLawHeight(_Height):
 
     Positive heights shift towards position angle ``pa + 90`` on the sky
     (see [`Cone`][virgil.models.Cone]); a negative ``h0`` puts the surface
-    on the other side.
+    on the other side. A top surface lifted towards the observer shifts the
+    apparent ring towards the far side, so when ``pa + 90`` is the near side
+    of the disk it has ``h0 < 0``.
 
     Parameters
     ----------
