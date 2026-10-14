@@ -3339,8 +3339,10 @@ class Harmonics(_Azimuthal):
     Cartesian coefficients (no funnel as an amplitude goes to zero and no
     wrap of a phase; a Gaussian prior on them is a uniform prior on the
     phase). It reproduces `ModulatedGaussianRim` and `TruncatedCone`, but
-    does not keep the image positive: ``sum(c_m**2 + s_m**2) ** 0.5 <= 1``
-    guarantees it, and ``PolarDisk.min_intensity`` reports violations.
+    does not keep the image positive: the sum of the amplitudes,
+    ``sum(sqrt(c_m**2 + s_m**2)) <= 1``, guarantees it (an rms of the
+    coefficients at most 1 does not), and ``PolarDisk.min_intensity``
+    reports violations.
 
     [`virgil.harmonics`][virgil.harmonics] converts between the forms and the
     image harmonics.

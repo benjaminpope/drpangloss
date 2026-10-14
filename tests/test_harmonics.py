@@ -192,8 +192,10 @@ def test_root_flipped_twins_share_an_image_but_map_to_one_canonical_w():
             )
             image = H.image_harmonics_from_h(np.asarray(twin))
             assert onp.allclose(image, canonical, atol=1e-12)
-            # The twin's own reflection coefficients lie outside the disk
-            # (or on it, for the partly flipped ones), not in the chart.
+            # Every twin has some step-down coefficient outside the unit
+            # disk, so none is a point of the chart (for k = 0.6 and the
+            # root ordering of np.roots the single-flip twin of the real
+            # root has |k| = 1.64, 1.51, 0.79).
             raw, _ = H.step_down(twin, clip=-1e9)
             assert onp.max(abs(raw)) > 1.0 + 1e-3
             # The factorization of the shared image gives the one canonical
@@ -759,3 +761,15 @@ def test_gaussian_arc_degree_and_warning_are_controlled():
             GaussianArc(20.0, 2.0, 15.0, degree=0)
         # A uniform ring (a very long arc) needs very few harmonics.
         assert GaussianArc(5.0, 1.0, 1e3).degree <= 4
+
+
+def test_linear_positivity_guarantee_is_the_sum_of_amplitudes_not_their_rms():
+    # sum_m sqrt(c_m^2 + s_m^2) <= 1 keeps 1 + f >= 0, but an rms of the
+    # coefficients <= 1 does not (M = 20 equal amplitudes dip to -0.11).
+    M = 20
+    a = 2.0 / (2.0 * M**0.5)  # c_m = 2 * (1 / (2 sqrt M)), so rms c = 1
+    rms = Harmonics(c=(a,) * M)
+    assert onp.isclose(onp.sqrt(sum(float(x) ** 2 for x in rms.c)), 1.0)
+    assert float(rms.min_intensity(np.ones(1))) < -0.05
+    safe = Harmonics(c=(1.0 / M,) * M)  # sum of amplitudes = 1
+    assert float(safe.min_intensity(np.ones(1))) >= -1e-6
