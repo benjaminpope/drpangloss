@@ -3588,15 +3588,14 @@ class PolarKernel(zdx.Base):
 
     $$
     \mathrm{Var}[c_m] = \sigma^2 \frac{S(m)}{S(1)}, \qquad
-    S(m) = \left[1 + \frac{1}{2\nu_\theta}\left(\frac{m\,\ell_\theta}{\bar r}\right)^2\right]^{-\nu_\theta - 1/2},
+    S(m) = \left[1 + \frac{1}{2\nu_\theta}
+    \left(\frac{m\,\ell_\theta}{\bar r}\right)^2\right]^{-\nu_\theta - 1/2},
     $$
 
-    with $\bar r$ the mean radius of the range (for ``nu_theta=inf``,
-    $S(m) = \exp[-\tfrac12 (m\,\ell_\theta/\bar r)^2]$). It is the Matérn
-    spectral density, so ``ell_theta`` is the same length as ``ell_r`` (the
-    two kernels' correlation lengths in the same convention). It is
-    diagonal in $m$ (no extra cost), the prior mean is 0 (a uniform ring),
-    and a long ``ell_theta``
+    ($S(m) \propto e^{-(m\ell_\theta/\bar r)^2/2}$ for $\nu_\theta = \infty$), so
+    ``ell_theta`` is on the same scale as ``ell_r``, with $\bar r$ the mean
+    radius of the range. It is diagonal in $m$ (no
+    extra cost), the prior mean is 0 (a uniform ring), and a long ``ell_theta``
     (an azimuthal correlation length, in mas on the ring of radius
     $\bar r$) favours smooth arcs and low orders without imposing them:
     $\sigma$ is the standard deviation of the first-order coefficients.
@@ -3722,14 +3721,11 @@ class PolarKernel(zdx.Base):
         )
         m = np.arange(1, int(degree) + 1)
         angle = self.ell_theta / r_ref
-        if math.isinf(self.nu_theta):
-            # The squared-exponential limit of the Matérn density.
-            return np.exp(-0.5 * (m**2 - 1.0) * angle**2)
-        two_nu = 2.0 * self.nu_theta
-        base = 1.0 + angle**2 / two_nu
-        return (base / (1.0 + (m * angle) ** 2 / two_nu)) ** (
-            self.nu_theta + 0.5
-        )
+        nu = self.nu_theta
+        if math.isinf(nu):
+            return np.exp(-0.5 * angle**2 * (m**2 - 1.0))
+        a2 = angle**2 / (2.0 * nu)
+        return ((1.0 + a2) / (1.0 + m**2 * a2)) ** (nu + 0.5)
 
     def values(self, z, r):
         """The coefficients at the radii ``r`` from the latents ``z`` of
@@ -4604,7 +4600,7 @@ class _FrozenGeometry(zdx.Base):
     p0: jax.Array
     cos: tuple
     sin: tuple
-    tol: jax.Array
+    tol: float = eqx.field(static=True)
 
     def matches(self, uu, vv, r, inc, pa, height):
         """Whether the cache was built for these arguments (traced boolean)."""
@@ -4615,12 +4611,7 @@ class _FrozenGeometry(zdx.Base):
 
         def close(a, b):
             a = np.asarray(a, dtype=b.dtype)
-            # The tolerance is that of the precision the cache was built in
-            # (stored in ``tol``), not of the precision it is evaluated in: a
-            # float32 cache evaluated in float64 differs from the float64
-            # baselines at 1e-7, and must still be recognized.
-            tol = np.maximum(8.0 * float(np.finfo(b.dtype).eps), self.tol)
-            return np.all((a == b) | (np.abs(a - b) <= tol * np.abs(b)))
+            return np.all((a == b) | (np.abs(a - b) <= self.tol * np.abs(b)))
 
         ok = (
             close(uu, self.uu)
@@ -5019,10 +5010,9 @@ class PolarDisk(Component):
         ``pa`` or heights the disk silently falls back to the full
         computation (correct, not faster), so freezing is safe but changing a
         frozen quantity loses the speed-up. Build it in the precision you
-        evaluate in for full accuracy (inside ``jax.enable_x64(True)`` for a
-        float64 fit). A cache built in float32 (virgil's default) is still
-        recognized when ``fit`` or ``log_evidence`` evaluates in float64, but
-        its matrices keep float32 accuracy (about 1e-7). It holds ``(2M + 1)`` complex matrices of shape ``(n_samples, n_r)``
+        evaluate in (inside ``jax.enable_x64(True)`` for a float64 fit); a
+        float32 cache still matches a float64 fit, to float32 rounding. It
+        holds ``(2M + 1)`` complex matrices of shape ``(n_samples, n_r)``
         (``M`` the harmonics' degree).
 
         Parameters
@@ -5048,7 +5038,17 @@ class PolarDisk(Component):
         )
         tol = 8.0 * float(np.finfo(np.asarray(uu).dtype).eps)
         cache = _FrozenGeometry(
-            uu, vv, r, self.inc, self.pa, height, q2, p0, cos, sin, tol
+            uu,
+            vv,
+            r,
+            self.inc,
+            self.pa,
+            height,
+            q2,
+            p0,
+            cos,
+            sin,
+            8.0 * float(np.finfo(np.asarray(uu).dtype).eps),
         )
         return eqx.tree_at(
             lambda d: d.frozen, self, cache, is_leaf=lambda x: x is None

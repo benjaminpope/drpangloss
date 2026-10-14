@@ -1985,7 +1985,7 @@ def _evidence_latents(model, path, caller):
     else:
         paths = (path,) if isinstance(path, str) else tuple(path)
         if not paths:
-            raise ValueError(f"{caller} needs at least one path, not none.")
+            raise ValueError(f"{caller} needs at least one path.")
         images, disks = [], []
         for p in paths:
             if isinstance(model.get(p), PolarDisk):

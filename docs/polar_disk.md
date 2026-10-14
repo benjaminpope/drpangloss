@@ -224,22 +224,20 @@ evidence is over the latents, conditional on the hyperparameters.
 ### Priors over the harmonics
 
 `Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
-coefficients with a prior. Every order $m$ is a `RadialGP` of length `ell_r`
-(across radius), independent between orders, and its variance falls with the
-order as the Matérn spectral density in the azimuth,
-$(1 + (m \ell_\theta / \bar r)^2 / 2\nu)^{-\nu - 1/2}$ (relative to $m = 1$), so
-`ell_theta` is a correlation length in milliarcseconds along the ring, on
-the same scale as `ell_r`. Large values suppress high orders. The reference
-radius $\bar r$ is `r_ref`, by default the middle of the radial range of the
-processes, which is the *extent* of the profile (for a `GaussianRing` that is
-$[0, r_0 + k\sigma]$, a truncation set by the profile): give `r_ref`
-explicitly when you want `ell_theta` to mean a length at a particular
-radius. The variance law holds for the coefficients $c_m, s_m$ of the
-linear form. In the default positive form the latents drive the inputs
-$\mathrm{re}_j, \mathrm{im}_j$ of the reflection coefficients, not the
-brightness harmonics themselves, so the law holds only loosely there (the
-variance falling with $j$ plays the part of falling with $m$). The latents
-are the field `harmonics.z` of shape `(2, M, n)`.
+coefficients with a prior: each order $m$ is a `RadialGP` of length `ell_r`
+(across radius), independent between orders. The azimuthal length
+`ell_theta` (on the same scale as `ell_r`, in mas along the ring at
+$\bar r$) sets how fast the prior falls off with $m$: large values suppress
+high orders. The variance of the order-$m$ coefficients is proportional to
+$(1 + (m \ell_\theta / \bar r)^2 / 2\nu)^{-\nu - 1/2}$ (the Matérn
+spectral density; a squared exponential for $\nu = \infty$). This law is
+exact for the coefficients of the linear form (`form="linear"`). In the
+default positive form the latents drive the reflection-coefficient inputs
+rather than the brightness harmonics, so it holds only loosely there.
+$\bar r$ is `r_ref`, by default the middle of the profile's radial extent, so
+for a `GaussianRing` (whose range runs from 0 to a few widths beyond the ring)
+it is not the ring radius: pass `r_ref` to set it. The latents are the field
+`harmonics.z` of shape `(2, M, n)`.
 
 ## Spectral index
 
