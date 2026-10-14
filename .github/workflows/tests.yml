@@ -1,8 +1,11 @@
 # Author : Benjamin Pope
 # Date : 23/2/2024
 # Title : tests.yml
-# Description : Automatically runs tests when branches are merged.
-#   The tests that are run can be found in the tests directory.
+# Description : Runs the test suite in tiers (design/ci_review_2026-10.md):
+#   pull requests run a fast gate; pushes to main, manual dispatches and the
+#   `full-ci` label run the full matrix; a daily run adds the dependency
+#   floors and a newest-dependencies canary, and reports failures in an
+#   issue. Checks that need no JAX compiles live in lint.yml.
 
 name: automated tests
 on:
@@ -10,83 +13,112 @@ on:
     branches:
       - main
   pull_request:
-  # Weekly full run, so the slow tests and macOS also run when main is quiet.
   schedule:
-    - cron: "0 3 * * 1"
+    - cron: "0 3 * * *"
+  # Also dispatched by full-ci.yml (the full-ci label) and lock-upgrade.yml.
   workflow_dispatch:
 
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  # Pull requests run the Linux jobs, and all but one skip the slow-marked
-  # tests; pushes to main, the weekly schedule and manual dispatches also run
-  # macOS and every test. macOS runners are scarce and slower (about 350 s of
-  # tests against 190 s on Linux), so they set the wall time of a pull
-  # request.
+  # | tier    | trigger                         | jobs                                       |
+  # | PR gate | pull request                    | py3.12 f32 in 3 shards, py3.12 x64; no slow |
+  # |         |   ... changing pyproject.toml   | + py3.11 at the dependency floors          |
+  # | full    | push to main, dispatch, full-ci | the gate with slow tests, + macOS py3.11,  |
+  # |         |                                 |   py3.13                                   |
+  # | nightly | daily schedule                  | full, all with slow tests, + floors, +     |
+  # |         |                                 |   newest-dependencies canary; issue on fail |
   matrix:
     name: choose the test matrix
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.choose.outputs.matrix }}
     steps:
+      # The dependency floors only move when pyproject.toml does.
+      - id: changed
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh pr diff ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --name-only | grep -qx pyproject.toml; then
+            echo "pyproject=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: choose
         env:
           EVENT: ${{ github.event_name }}
+          FULL_CI: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          PYPROJECT: ${{ steps.changed.outputs.pyproject }}
         run: |
           python3 - <<'EOF' >> "$GITHUB_OUTPUT"
           import json
           import os
 
+          event = os.environ["EVENT"]
+          nightly = event == "schedule"
+          full = event != "pull_request" or os.environ["FULL_CI"] == "true"
+          linux = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
+
+          # The per-test budget (tests/conftest.py) is enforced on the
+          # Linux py3.12 jobs, whose timings it was set from.
           include = [
-              # This job runs the slow tests on pull requests too, so a
-              # change that breaks them fails before it reaches main.
-              {
-                  "os": "ubuntu-latest",
-                  "python-version": "3.12",
-                  "x64": "0",
-                  "slow": True,
-              },
-              # x64 exercises the float64 paths.
-              {"os": "ubuntu-latest", "python-version": "3.12", "x64": "1"},
-              {"os": "ubuntu-latest", "python-version": "3.13", "x64": "0"},
-              # The dependency floors in pyproject.toml: every direct
-              # dependency at the oldest version it allows.
-              {
-                  "os": "ubuntu-latest",
-                  "python-version": "3.11",
-                  "x64": "0",
-                  "lowest": True,
-              },
+              # Whole files packed by tests/test_durations.json, so the
+              # sampler-heavy modules no longer queue behind each other.
+              {**linux, "shard": f"{k}/3", "slow": full, "budget": True}
+              for k in (1, 2, 3)
           ]
-          if os.environ["EVENT"] != "pull_request":
-              # The oldest Python on macOS: x64 dtype mix-ups (the Bessel
-              # functions, then cached integer index arrays) have surfaced
+          # x64 exercises the float64 paths, and finds tests silently
+          # written for float32. virgil-validation reads its evidence.
+          include.append({**linux, "x64": "1", "slow": full, "budget": True})
+          if full:
+              # The oldest Python on macOS: x64 dtype mix-ups have surfaced
               # on macOS and Python 3.11 but not in Linux CI.
-              include.insert(
-                  2, {"os": "macos-latest", "python-version": "3.11", "x64": "0"}
+              include.append(
+                  {"os": "macos-latest", "python-version": "3.11",
+                   "x64": "0", "slow": nightly}
+              )
+              include.append({**linux, "python-version": "3.13", "slow": nightly})
+          if nightly or os.environ["PYPROJECT"] == "true":
+              # Every direct dependency at the oldest version
+              # pyproject.toml allows. Two workers: four at about 4 GB each
+              # exhaust the 16 GB runner.
+              include.append(
+                  {**linux, "python-version": "3.11", "lowest": True,
+                   "slow": nightly}
+              )
+          if nightly:
+              # Newer than uv.lock: catches a break from a new release
+              # before lock-upgrade.yml's pull request merges.
+              include.append({**linux, "canary": True, "slow": True})
+
+          for job in include:
+              shard = job.get("shard", "").replace("/", "of")
+              variant = "-lowest" if job.get("lowest") else (
+                  "-canary" if job.get("canary") else "")
+              job["id"] = (
+                  f"{job['os']}-py{job['python-version']}-x64{job['x64']}"
+                  f"{variant}{'-shard' + shard if shard else ''}"
               )
           print("matrix=" + json.dumps({"include": include}))
           EOF
 
   build:
-    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.slow && ' +slow' || '' }}
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.canary && ' canary' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}${{ matrix.slow && ' +slow' || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
-    # A pull request's suite (no slow tests) takes about 10 minutes; fail a
-    # hung job instead of holding a runner for GitHub's 6-hour default.
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 45 || 360 }}
+    # Fail a hung job instead of holding a runner for GitHub's 6 hours.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || github.event_name == 'pull_request' && !matrix.slow && 30 || 45 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
     env:
       JAX_ENABLE_X64: ${{ matrix.x64 }}
-      # One JAX cache per job: compiled code differs by OS, Python and x64.
-      CACHE_PREFIX: jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}${{ matrix.lowest && '-lowest' || '' }}
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - name: checkout
         uses: actions/checkout@v4
@@ -94,79 +126,100 @@ jobs:
       - name: install uv
         uses: astral-sh/setup-uv@v6
 
+      # The tested versions come from uv.lock, so a new JAX (or any other
+      # release) cannot change CI under an open pull request. The lock
+      # tracks the newest JAX: lock-upgrade.yml opens a pull request for
+      # each new release, and the nightly canary runs ahead of the lock.
+      # harmonix is a dependency group, not an extra (pyproject.toml).
       - name: create environment
         run: |
-          uv venv --python ${{ matrix.python-version }} .venv
           if [ "${{ matrix.lowest }}" = "true" ]; then
+            uv venv .venv
             uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test]"
+          elif [ "${{ matrix.canary }}" = "true" ]; then
+            uv lock --upgrade
+            uv sync --extra test --extra integrations --group harmonix
           else
-            # harmonix 0.1.0 is on PyPI; the integrations extra brings
-            # jaxoplanet, which it also needs.
-            uv pip install --python .venv/bin/python -e ".[test,integrations]" \
-              "harmonix>=0.1.0"
-            # Test against the newest JAX the other dependencies allow.
-            uv pip install --python .venv/bin/python --upgrade jax jaxlib
+            uv sync --locked --extra test --extra integrations --group harmonix
           fi
           uv pip list --python .venv/bin/python
 
-      # Linting lives in lint.yml and docs builds in zensical-pages.yml, so
-      # neither blocks the test suite.
+      # Most of the suite's time is JAX compiling. JAX's persistent cache
+      # keys its entries on the code and the JAX version itself, so the
+      # store is keyed only on what changes the programs (OS, Python, x64,
+      # variant, shard), the JAX version and the ISO week. The first push
+      # to main or nightly of each week saves it; pull requests restore the
+      # latest match. The nightly deletes older weeks' caches.
+      - name: JAX version and week
+        id: key
+        run: |
+          echo "jax=$(.venv/bin/python -c 'import jax; print(jax.__version__)')" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
-      # Most of the suite's time is JAX compiling; JAX's persistent cache
-      # (keyed internally on the JAX version and the code compiled) halves
-      # it on later runs. Only pushes to main save a cache, one per change
-      # to the code, so pull requests reuse main's and the cache quota is
-      # not filled with a copy per run.
       - name: restore JAX compilation cache
+        id: cache
         uses: actions/cache/restore@v4
         with:
           path: .jax-cache
-          key: ${{ env.CACHE_PREFIX }}-${{ hashFiles('pyproject.toml', 'src/**/*.py', 'tests/**/*.py') }}
-          restore-keys: ${{ env.CACHE_PREFIX }}-
+          key: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-${{ steps.key.outputs.week }}
+          restore-keys: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
 
       # ===== Tests =====
-      # pytest-xdist runs one worker per core; the suite is many small,
-      # compile-bound tests, so this roughly halves its time. loadgroup keeps
-      # the xdist_group modules (shared module-scoped fixtures) on one worker.
+      # pytest-xdist runs one worker per core; loadgroup keeps each
+      # xdist_group module (shared module-scoped fixtures) on one worker.
+      # tests/lint runs in lint.yml.
       - name: Test Suite
         env:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
+          # Seconds per test not marked slow (tests/conftest.py); only with
+          # a warm cache, since a cold one makes every compile count.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && steps.cache.outputs.cache-matched-key != '' && '15' || '' }}
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
-        # Pull requests skip the tests marked slow (tests/conftest.py), except
-        # on the job flagged slow in the matrix.
-        # Two workers on lowest deps: 4 workers at about 4 GB each exhaust the 16 GB runner.
-        # The memory sampler needs GNU free and procps ps, so it runs on Linux
-        # only (macOS has neither nproc nor free: exit code 127).
+        # The memory sampler needs GNU free and procps ps: Linux only.
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .
             ( while true; do echo "[mem] $(date +%T) $(free -m | awk '/Mem/{print "used " $3 " avail " $7}; /Swap/{print "swap " $3}' | tr '\n' ' ') $(ps -eo rss,args --sort=-rss | awk 'NR>1&&NR<6{printf "%dMB ", $1/1024}')"; sleep 10; done ) &
           fi
+          echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
-            ${{ github.event_name == 'pull_request' && !matrix.slow && '-m "not slow"' || '' }} \
+            --ignore=tests/lint \
+            ${{ !matrix.slow && '-m "not slow"' || '' }} \
+            ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
       - name: kernel log
         if: always() && runner.os == 'Linux'
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
 
+      # virgil-validation reads virgil-evidence-ubuntu-latest-py3.12-x641.
       - name: upload evidence
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
-          name: virgil-evidence-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
+          name: virgil-evidence-${{ matrix.id }}
           path: junit-evidence.xml
           if-no-files-found: ignore
 
+      # For the nightly report and scripts/update_test_durations.py.
+      - name: upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.id }}
+          path: junit-evidence.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: save JAX compilation cache
-        if: github.event_name == 'push'
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule') && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .jax-cache
-          key: ${{ env.CACHE_PREFIX }}-${{ hashFiles('pyproject.toml', 'src/**/*.py', 'tests/**/*.py') }}
+          key: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-${{ steps.key.outputs.week }}
 
   # Builds the distributions as publish.yml does, installs the wheel into a
   # clean environment (no test or dev extras) and imports it, so packaging
@@ -219,3 +272,42 @@ jobs:
           assert math.isfinite(value), value
           print("virgil", virgil.__version__, "log likelihood", value)
           EOF
+
+  # A nightly failure opens (or adds to) one issue, labelled
+  # nightly-failure, naming the failing tests and the commits since the last
+  # green nightly; a green nightly closes it. It also deletes JAX caches
+  # from earlier weeks, keeping the store under GitHub's 10 GB.
+  nightly-report:
+    name: report the nightly run
+    needs: [build, package]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: download JUnit reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: junit
+
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.build.result == 'success' && needs.package.result == 'success' && 'success' || 'failure' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/scripts/nightly_report.py junit
+
+      - name: delete earlier weeks' JAX caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          week=$(date -u +%G-W%V)
+          gh cache list -R "$GITHUB_REPOSITORY" --key jax- --limit 500 --json id,key \
+            --jq ".[] | select(.key | endswith(\"-$week\") | not) | .id" |
+            while read -r id; do gh cache delete "$id" -R "$GITHUB_REPOSITORY"; done

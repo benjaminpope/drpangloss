@@ -92,13 +92,26 @@ Locally, run the lint checks plus the tests relevant to your change, for example
 
 Do not run the full suite locally: the JAX tests are heavy, and GitHub Actions runs the full suite on every pull request. Call the venv interpreter directly rather than `uv run`, which resyncs the venv to the lock.
 
-Note that passing locally does not guarantee cross-platform compatibility. On every pull
-request, GitHub Actions (`.github/workflows/tests.yml`) runs the suite on Linux with
-Python 3.12 (in float32 and float64) and 3.13, on macOS with Python 3.11, and once with
-every dependency at the oldest version `pyproject.toml` allows; it also builds the wheel
-and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
-environment. Raising a dependency floor means editing `pyproject.toml`, which that last
-job then tests. The lint workflow only checks: fix what it reports with
+Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions
+(`.github/workflows/tests.yml`) runs the suite in tiers. Every pull request runs the tests
+not marked `slow` on Linux with Python 3.12, in float32 (split across three jobs) and in
+float64, with the versions in `uv.lock`; a pull request that edits `pyproject.toml` also
+runs once with every dependency at the oldest version it allows. Pushes to main, and pull
+requests labelled `full-ci`, add the slow tests, macOS with Python 3.11 and Python 3.13.
+A daily run does all of that, plus a canary with dependencies newer than the lock, and
+opens an issue labelled `nightly-failure` when it fails. Each pull request also builds the
+wheel and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
+environment.
+
+Each test not marked `slow` has a budget of 15 s (setup and call, with a warm JAX cache);
+CI fails a test that exceeds it. Shrink the test (a smaller problem, fewer draws, a stub
+run) or mark it `slow`. `tests/over_budget.txt` lists the tests that were already over
+budget; remove lines from it as they are fixed, and never add to it. `pytest-timeout`
+fails any test that runs past 300 s. The float32 jobs pack whole test files by the timings
+in `tests/test_durations.json`; refresh them occasionally with
+`scripts/update_test_durations.py`.
+
+The lint workflow only checks: fix what it reports with
 `bash scripts/lint_local.sh --fix` and push again.
 
 **Documentation**

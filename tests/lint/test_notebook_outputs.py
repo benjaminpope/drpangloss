@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 SCRIPT = (
-    Path(__file__).resolve().parent.parent
+    Path(__file__).resolve().parents[2]
     / "scripts"
     / "check_notebook_outputs.py"
 )

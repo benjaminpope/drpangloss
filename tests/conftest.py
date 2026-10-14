@@ -13,9 +13,14 @@ Tests without the marker are unaffected.
 
 import gc
 import json
+import os
+import re
+from pathlib import Path
 
 import jax
 import pytest
+
+HERE = Path(__file__).parent
 
 ROOTS = (
     "mathematics",
@@ -39,15 +44,26 @@ def pytest_configure(config):
         "(see virgil-validation's docs/design.md)",
     )
     # The heaviest, compile-dominated tests. Pull requests run
-    # `-m "not slow"` on all but one CI job to keep CI fast; that job, pushes
-    # to main, the weekly schedule and manual dispatches run everything.
+    # `-m "not slow"`; pushes to main, the `full-ci` label and the nightly
+    # run everything (.github/workflows/tests.yml).
     config.addinivalue_line(
         "markers",
-        "slow: heaviest, compile-dominated tests; skipped on most pull-request "
-        "jobs (-m 'not slow') but run on one, on main and weekly",
+        "slow: heaviest, compile-dominated tests; skipped on pull requests "
+        "(-m 'not slow') but run on main, with the full-ci label and nightly",
     )
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--shard",
+        metavar="K/N",
+        help="run only shard K of N (1-based): whole test files, packed by "
+        "their timings in tests/test_durations.json",
+    )
+
+
+# trylast: after -m has deselected, so --shard packs only what will run.
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     for item in items:
         for mark in item.iter_markers("validates"):
@@ -76,6 +92,7 @@ def pytest_collection_modifyitems(config, items):
                 "tier": tier,
             }
             item.user_properties.append(("validates", json.dumps(claim)))
+    _keep_shard(config, items)
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -95,3 +112,82 @@ def _clear_jax_caches():
     yield
     jax.clear_caches()
     gc.collect()
+
+
+def _shard_files(files, n):
+    """Pack test files into n shards by their recorded timings.
+
+    Whole files, so a module-scoped fixture (and an xdist_group) runs in one
+    job only. Longest first onto the least-loaded shard; a file with no
+    recorded timing counts as the mean. Every shard collects the same files,
+    so each computes the same packing.
+    """
+    known = json.loads((HERE / "test_durations.json").read_text())
+    mean = sum(known.values()) / len(known)
+    loads = [0.0] * n
+    shard = {}
+    for path in sorted(files, key=lambda f: (-known.get(f, mean), f)):
+        k = loads.index(min(loads))
+        shard[path] = k
+        loads[k] += known.get(path, mean)
+    return shard
+
+
+def _keep_shard(config, items):
+    """Keep only this job's shard (``--shard K/N``)."""
+    spec = config.getoption("--shard")
+    if not spec:
+        return
+    k, n = (int(x) for x in spec.split("/"))
+    if not 1 <= k <= n:
+        raise pytest.UsageError(f"--shard {spec}: need 1 <= K <= N")
+    shard = _shard_files({item.nodeid.split("::")[0] for item in items}, n)
+    keep, drop = [], []
+    for item in items:
+        (keep if shard[item.nodeid.split("::")[0]] == k - 1 else drop).append(
+            item
+        )
+    config.hook.pytest_deselected(items=drop)
+    items[:] = keep
+
+
+# The per-test time budget: CI sets VIRGIL_TEST_BUDGET (seconds) on the
+# pull-request jobs, when the JAX cache is warm. A test not marked slow whose
+# setup and call together take longer fails, so the fast tier stays fast as
+# the suite grows. Setup counts: the first test of a module pays for its
+# module-scoped fixtures, which is where sampler runs hide. Shrink the test,
+# or mark it slow. tests/over_budget.txt lists the tests that were over
+# budget when it was introduced; it should only get shorter.
+_BUDGET = float(os.environ.get("VIRGIL_TEST_BUDGET") or 0)
+_EXEMPT = {
+    line.strip()
+    for line in (HERE / "over_budget.txt").read_text().splitlines()
+    if line.strip() and not line.startswith("#")
+}
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = (yield).get_result()
+    if not _BUDGET:
+        return
+    if report.when == "setup":
+        item._budget_setup_s = report.duration
+        return
+    if report.when != "call" or not report.passed:
+        return
+    seconds = getattr(item, "_budget_setup_s", 0.0) + report.duration
+    # pytest-xdist's loadgroup appends "@group" to the node id.
+    nodeid = re.sub(r"@[^\]]*$", "", item.nodeid)
+    if (
+        seconds > _BUDGET
+        and item.get_closest_marker("slow") is None
+        and nodeid not in _EXEMPT
+    ):
+        report.outcome = "failed"
+        report.longrepr = (
+            f"{nodeid} took {seconds:.1f} s (setup and call), over the "
+            f"{_BUDGET:g} s budget for tests not marked slow. Shrink it "
+            "(a smaller problem, fewer draws, a stub run) or mark it "
+            "@pytest.mark.slow; see tests/conftest.py."
+        )

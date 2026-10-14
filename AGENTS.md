@@ -21,8 +21,10 @@ pre-commit install
 ```
 
 Cloud agents get this environment from `.github/workflows/copilot-setup-steps.yml`.
-CI tests against the newest JAX (`.github/workflows/tests.yml`), and a stale JAX
-can hide failures that only appear in newer releases. Bring an existing `.venv`
+CI tests against the newest JAX: it installs from `uv.lock`, which
+`.github/workflows/lock-upgrade.yml` upgrades daily through a pull request of its
+own, and a nightly canary runs ahead of the lock. A stale JAX locally can hide
+failures that only appear in newer releases. Bring an existing `.venv`
 up to date with `uv pip install --python .venv/bin/python --upgrade -e ".[dev]"`;
 upgrading `jax` alone can leave optax, equinox etc. too old for it.
 
@@ -50,7 +52,7 @@ Before committing:
 2. `.venv/bin/python -m pytest` on the relevant test files or tests only. Do not
    run the full suite locally: heavy JAX work overloads the laptop, and CI runs the full suite.
 3. If you touched a tutorial notebook: rerun `scripts/sync_tutorial_docs.py` and
-   `pytest tests/test_tutorial_docs_sync.py`.
+   `pytest tests/lint/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `.venv/bin/python -m zensical build --clean`.
 
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
@@ -298,7 +300,8 @@ to that test.
 The notebooks listed in `MAPPINGS` in `scripts/sync_tutorial_docs.py` are the source of
 truth for the corresponding `docs/*.md` pages. Edit the notebook, execute it so outputs
 are current (the sync embeds text and PNG outputs), then run the sync script.
-`tests/test_tutorial_docs_sync.py` fails if the markdown is stale.
+`tests/lint/test_tutorial_docs_sync.py` fails if the markdown is stale (it runs in
+`lint.yml`, with the other checks in `tests/lint/` that need no JAX compiles).
 
 Execute notebooks with the repo's own kernel, `virgil`, which lives in `.venv`. The
 user-level `python3` kernel may point at another environment.
