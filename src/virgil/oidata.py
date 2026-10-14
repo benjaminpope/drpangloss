@@ -1226,6 +1226,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "read them from OIFITS, or give mjd per sample."
             )
         wavel = np.broadcast_to(self.wavel, np.shape(self.u))
+        if getattr(model, "broadcast_in_time", False):
+            # One time per sample: the snapshot's positions are arrays and
+            # the Fourier transform broadcasts, with no loop and no vmap.
+            return model.at(self.dt, self.t_ref).model(self.u, self.v, wavel)
 
         def one(dt, u, v, w):
             scene = model.at(dt, self.t_ref)
@@ -1235,7 +1239,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # components whose angles vary per sample (an Attached disc's bound
         # inclination or position angle) and differentiating made JAX run
         # executables with the wrong batch size (RuntimeProgramInputMismatch,
-        # or "Expected cotangent type" in fit).
+        # or "Expected cotangent type" in fit). Only such models need it.
         return jax.lax.map(lambda x: one(*x), (self.dt, self.u, self.v, wavel))
 
     def with_error_scale(self, factor):
