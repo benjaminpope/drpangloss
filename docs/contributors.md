@@ -10,19 +10,19 @@
 ## People and their projects
 
 - **Louis Desdoigts.**
-  - Every model is built on his [zodiax](https://github.com/LouisDesdoigts/zodiax), whose dot-paths (`"comp.flux"`) are the public fitting interface.
-  - `virgil.amigo` reads the mixed-DISCO format of his AMIGO pipeline ([Desdoigts et al. 2026](https://arxiv.org/abs/2510.09806), PASA 43, e075). `virgil.coverage` simulates data in that form, following AMIGO's latent visibility basis.
-  - The matrix Fourier transform was checked against the one in his [dLux](https://github.com/LouisDesdoigts/dLux) ([Desdoigts et al. 2024](https://arxiv.org/abs/2406.08703)).
+    - Every model is built on his [zodiax](https://github.com/LouisDesdoigts/zodiax), whose dot-paths (`"comp.flux"`) are the public fitting interface.
+    - `virgil.amigo` reads the mixed-DISCO format of his AMIGO pipeline ([Desdoigts et al. 2026](https://arxiv.org/abs/2510.09806), PASA 43, e075). `virgil.coverage` simulates data in that form, following AMIGO's latent visibility basis.
+    - The matrix Fourier transform was checked against the one in his [dLux](https://github.com/LouisDesdoigts/dLux) ([Desdoigts et al. 2024](https://arxiv.org/abs/2406.08703)).
 - **Shashank Dholakia.**
-  - He made `drpangloss` handle spectrally dispersed data in 2024.
-  - `GravityDarkenedStar` comes from his unpublished thesis work on rapidly rotating stars. Its equations are those of [Espinosa Lara & Rieutord (2011)](https://arxiv.org/abs/1109.3038); its implementation follows Aaron Dotter's [GDit](https://github.com/aarondotter/GDit).
-  - virgil has an interface to his [harmonix](https://github.com/shashankdholakia/harmonix/) ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)).
-  - The JAX translation of the [CEPHES](https://www.netlib.org/cephes/) Bessel functions, now the separate package [jaxbessel](https://github.com/benjaminpope/jaxbessel), is adapted from harmonix.
+    - He made `drpangloss` handle spectrally dispersed data in 2024.
+    - `GravityDarkenedStar` comes from his unpublished thesis work on rapidly rotating stars. Its equations are those of [Espinosa Lara & Rieutord (2011)](https://arxiv.org/abs/1109.3038); its implementation follows Aaron Dotter's [GDit](https://github.com/aarondotter/GDit).
+    - virgil has an interface to his [harmonix](https://github.com/shashankdholakia/harmonix/) ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)).
+    - The JAX translation of the [CEPHES](https://www.netlib.org/cephes/) Bessel functions, now the separate package [jaxbessel](https://github.com/benjaminpope/jaxbessel), is adapted from harmonix.
 - **Max Charles.** The image reconstruction is largely a port and extension of the visibility-based part of his `dorito`, written for [his NIRISS AMI paper](https://arxiv.org/abs/2510.10924) (PASA 43, e048, 2026). Some of the inspiration for `dorito` came from Ian Czekala's [MPoL](https://mpol-dev.github.io/MPoL/).
 - **Jonah Goldfine.** The parametric scenes (`virgil.scenes`) come from his [frito](https://github.com/JonahDG/frito), together with geometric primitives from his unpublished work on PDS 70.
 - **Toon De Prins.**
-  - He contributed the inclined, azimuthally modulated rim (`ModulatedGaussianRim`) and the elliptical transforms, from his work on post-AGB disks.
-  - He reviewed and fixed the 0.4.0 release, including the pipeline layer.
+    - He contributed the inclined, azimuthally modulated rim (`ModulatedGaussianRim`) and the elliptical transforms, from his work on post-AGB disks.
+    - He reviewed and fixed the 0.4.0 release, including the pipeline layer.
 - **Dori Blakely.** Besides starting the project, Dori contributed the flared-disk geometry from the PDS 70 paper.
 - **Frantz Martinache.** The binary visibility function `cvis_binary` is adapted from his [xara](https://github.com/fmartinache/xara) (formerly pysco; [Martinache 2010](https://arxiv.org/abs/1009.3933)).
 
@@ -82,9 +82,9 @@ The docstrings cite these where they are used. A full list with BibTeX is in `re
 
 - Sampling: the No-U-Turn Sampler ([Hoffman & Gelman 2014](https://arxiv.org/abs/1111.4246)) through numpyro.
 - Variational inference:
-  - ADVI ([Kucukelbir et al. 2017](https://arxiv.org/abs/1603.00788));
-  - flow guides, as inverse autoregressive flows ([Kingma et al. 2016](https://arxiv.org/abs/1606.04934)) and block neural autoregressive flows ([De Cao, Titov & Aziz 2019](https://arxiv.org/abs/1904.04676));
-  - PSIS diagnostics ([Vehtari et al. 2024](https://arxiv.org/abs/1507.02646)).
+    - ADVI ([Kucukelbir et al. 2017](https://arxiv.org/abs/1603.00788));
+    - flow guides, as inverse autoregressive flows ([Kingma et al. 2016](https://arxiv.org/abs/1606.04934)) and block neural autoregressive flows ([De Cao, Titov & Aziz 2019](https://arxiv.org/abs/1904.04676));
+    - PSIS diagnostics ([Vehtari et al. 2024](https://arxiv.org/abs/1507.02646)).
 - Default priors: [Jeffreys (1946)](https://doi.org/10.1098/rspa.1946.0056).
 
 ## Software
