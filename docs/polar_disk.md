@@ -11,9 +11,10 @@ V(q) = \frac{\int I(r)\, J_0(2\pi q' r)\, r\,\mathrm{d}r}{\int I(r)\, r\,\mathrm
 $$
 
 where $q'$ is the baseline's spatial frequency in the plane of the disk, after
-undoing the inclination and rotation. This version is azimuthally
-symmetric, so a centred disk has real visibilities and zero closure phases;
-they appear with an offset or alongside other components.
+undoing the inclination and rotation. Without harmonics or a height the disk
+is azimuthally symmetric, so a centred disk has real visibilities and zero
+closure phases; they appear with an offset, odd harmonics, a height, or
+alongside other components.
 
 The ideas follow [frank](https://github.com/discsim/frank) (Jennings et al.
 2020), which writes a radial profile as a Hankel transform on a set of nodes,
@@ -72,6 +73,45 @@ profile = RadialSum(
 )
 disk = PolarDisk(profile, inc=40.0, pa=20.0, n_r=32)  # "disk.profile.outer.weight"
 ```
+
+## Harmonics
+
+`Harmonics(c=..., s=...)` multiplies the profile by
+$1 + \sum_m c_m(r)\cos m\theta + s_m(r)\sin m\theta$, with the azimuth
+$\theta$ in the plane of the disk, from the projected major axis (position
+angle `pa`) towards `pa + 90`. The coefficients are Cartesian (no amplitude
+and phase, whose funnel and wrap make fits harder), each a constant or a
+function of the radius (`RadialLinear`, `RadialPower`); the degree is the
+number of orders, or set with `degree=`. The visibility is
+$2\pi\sum_m (-i)^m e^{im\phi}\sum_k w_k I_m(r_k) J_m(2\pi q r_k)$ with
+$I_{\pm m} = (c_m \mp i s_m)/2$, from one call to `bessel_jn`. The model is
+linear in the coefficients but does not keep the image positive:
+`disk.min_intensity()` gives the least brightness relative to the azimuthal
+mean (negative is a violation, and `is_physical` is then false).
+
+```python
+from virgil import GaussianRing, Harmonics, PolarDisk
+
+lopsided = PolarDisk(
+    GaussianRing(6.0, 1.0),
+    harmonics=Harmonics(c=(0.3, 0.1), s=(-0.2,)),
+    inc=30.0, pa=40.0,
+)
+```
+
+## Height: flared disks and cones
+
+`height=` lifts each ring above the plane of the disk. `Cone(alpha, tip)` puts
+the ring of radius $r$ at $r\cot\alpha - \mathrm{tip}$, and
+`PowerLawHeight(h0, r0, psi)` at $h_0 (r/r_0)^\psi$. On the sky the ring moves
+by $h\sin i$ along the projected minor axis, towards position angle
+`pa + 90`, a phase factor per node after the stretch. The emitting surface is
+thin and nothing is occulted.
+
+[`TruncatedCone`](api/models/classes/composition.md) is exactly this: an
+`ExpTail(s0 sin(alpha), length sin(alpha), cutoff=5)` profile, a `Cone` height
+and harmonics, with `inc = 90 - |tilt|` and `pa` the cone's `pa - 90`. It keeps
+its name and parameters, and now converges spectrally in `n_rings`.
 
 ## Notes
 

@@ -1280,9 +1280,10 @@ def test_a_cone_opens_towards_its_position_angle_on_the_sky(pa, east, north):
         assert col < npix // 2
 
 
-def test_cone_ring_error_falls_quadratically_with_n_rings():
-    # |V(n) - V(2n)| ~ 1 / n**2 on a modest uv set out to ~0.3 cycles/mas:
-    # about a factor 4 per doubling, and small at 128 (documented guidance).
+def test_cone_quadrature_converges_spectrally_with_n_rings():
+    # Gauss-Legendre nodes along the walls: the error is negligible once the
+    # nodes resolve the fringes of baselines out to ~0.3 cycles/mas, and
+    # larger n_rings only repeats the converged value.
     rng = onp.random.default_rng(7)
     q = rng.uniform(0.02, 0.3, 12) / 4.84813681109536e-9  # cycles/rad
     theta = rng.uniform(0.0, onp.pi, 12)
@@ -1293,14 +1294,11 @@ def test_cone_ring_error_falls_quadratically_with_n_rings():
     )
     vis = {
         n: onp.asarray(TruncatedCone(**cone, n_rings=n).model(u, v, wavel))
-        for n in (32, 64, 128, 256)
+        for n in (16, 32, 64, 128, 256)
     }
-    d32, d64, d128 = (
-        onp.max(onp.abs(vis[n] - vis[2 * n])) for n in (32, 64, 128)
-    )
-    assert 3.0 < d32 / d64 < 6.0
-    assert 3.0 < d64 / d128 < 6.0
-    assert d128 < 1e-4
+    errors = [onp.max(onp.abs(vis[n] - vis[256])) for n in (16, 32, 64, 128)]
+    assert errors[0] > errors[1] > 1e-4
+    assert errors[2] < 5e-6 and errors[3] < 5e-6
 
 
 def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
@@ -1321,11 +1319,10 @@ def test_cone_quadrature_converges_and_tilt_is_checked_after_set():
         onp.max(
             onp.abs(TruncatedCone(**cone, n_rings=n).model(u, v, 1e-6) - fine)
         )
-        for n in (16, 32, 64)
+        for n in (4, 8, 16, 32)
     ]
-    # The midpoint rule converges as n_rings grows (second order).
-    assert errors[1] < errors[0] / 2 and errors[2] < errors[1] / 2
-    assert errors[2] < 1e-3
+    assert errors[1] < errors[0] and errors[2] < errors[0] / 4
+    assert errors[3] < 1e-5
     good = TruncatedCone(**cone)
     assert bool(good.is_physical())
     assert not bool(good.set("tilt", 120.0).is_physical())
@@ -1357,7 +1354,7 @@ def _brute_force_cone(
     tilt,
     pa,
     ratio=1.0,
-    n_rings=32,
+    n_rings=2048,  # the midpoint rule, converged
     n_phi=720,
 ):
     # The cone built in 3-D from its definition, as rings of points
@@ -1401,7 +1398,7 @@ def test_modulated_cone_matches_a_brute_force_ring_sum(az_amps, az_pas):
         u, v, wavel, az_amps, az_pas, **_MODULATED_CONE
     )
     got = onp.asarray(cone.model(u, v, wavel))
-    assert onp.max(onp.abs(got - expected)) < 1e-6
+    assert onp.max(onp.abs(got - expected)) < 1e-5
     # ... and it is not the unmodulated cone.
     plain = onp.asarray(TruncatedCone(**_MODULATED_CONE).model(u, v, wavel))
     assert onp.max(onp.abs(got - plain)) > 1e-2
@@ -1420,7 +1417,7 @@ def test_unmodulated_cone_is_unchanged_and_has_no_empty_leaves():
     assert onp.allclose(
         plain.model(u, v, wavel),
         _brute_force_cone(u, v, wavel, (), (), **_MODULATED_CONE),
-        atol=1e-6,
+        atol=1e-5,
     )
 
 

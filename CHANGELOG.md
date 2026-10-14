@@ -41,6 +41,24 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
+  tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
+  normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
+  linear-form `Harmonics(c=, s=)` of Cartesian coefficients, constants or
+  functions of the radius (`RadialLinear`, `RadialPower`). `min_intensity()`
+  reports where the image would go negative. `ExpTail` gains `cutoff=` (a
+  Gauss-Legendre rule on a finite tail). `polar_disk_cvis` takes `c`, `s`,
+  `height` and `stretch`.
+- **`TruncatedCone` runs on the `PolarDisk` engine** with the same name and
+  parameters. Its quadrature along the walls is Gauss-Legendre, which
+  converges spectrally instead of as `1 / n_rings**2`: for the Apep-like cone
+  (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
+  midpoint stack to 1e-6, where 64 midpoint rings are off by 5e-4 and 256 by
+  3e-5, at less than half the cost. The model is unchanged (the tail is still
+  cut at five lengths). **The default `n_rings` is now 48** (was 32), since
+  too few Gauss-Legendre nodes fail sharply at long baselines; results at a
+  given `n_rings` differ from the midpoint rule's by that rule's error.
+  Credits carry over from the earlier cone code, `frank` and `vis-r`.
 - **`PolarDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
   `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
   and `RadialSum`), inclined and rotated, with an optional Gaussian blur,
