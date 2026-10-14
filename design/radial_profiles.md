@@ -169,7 +169,7 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **One shared engine.** `PolarDisk` and every subsumed class call one engine, `polar_disk_cvis(...)`.
 - **Names and paths are kept.** An old class keeps its public name and parameter names, so prior dicts keyed by path still work. Only its `_centred_cvis` changes, to call the engine.
 - **Old code goes after equality tests.** The old private visibility code is deleted once the tests pass.
-- **Deprecation rule.** A class is deprecated only if it is reproducible as a special case of the general one. `FlaredDisk*` is not (see its row), so it is exempt. At the next minor release, each other subsumed class gets a deprecation note and a changelog migration line, and it is removed one release later.
+- **Deprecation rule.** A class is deprecated only if it is reproducible as a special case of the general one, or replaced by a decided change of shape flagged in the changelog (`GaussianArc`, see its row). `FlaredDisk*` is neither (see its row), so it is exempt. At the next minor release, each other subsumed class gets a deprecation note and a changelog migration line, and it is removed one release later.
 
 | Class | Engine form | Test |
 |---|---|---|
@@ -191,7 +191,7 @@ Stellar disks (`UniformDisk`, limb-darkened disks, `GaussianDisk`) are out of sc
 | P3 | `Harmonics` positive form (reflection coefficients) added to P2's linear form; the `virgil.harmonics` conversion helpers with round-trip tests; a test that reproduces the multimodality check and `VonMises`. Tests against a DFT of the rendered image. Subsume `ModulatedGaussianRim`; `GaussianArc` becomes von Mises. | 4–5 h |
 | P4 | `RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`; NUTS with flat coordinates; `log_evidence` support. *Enables A2.* | 5–7 h |
 | P5 | Tutorial notebook (§7) | 3–4 h |
-| P6 | `PolarField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; the switch waits for Ben and the `pds70-disk` branch. | 4–6 h |
+| P6 | `PolarField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; `FlaredDisk*` is not switched (decided, see §5 and §10). | 4–6 h |
 | V | virgil-validation benchmarks against reference implementations (§12), committed at the end | 6–8 h |
 
 Each stage is one PR with tests. P5 is the only virgil notebook. V comes last: commits to virgil-validation, following its independence rule. Docs describe the component, never this note. Every PR keeps the credit (§11) up to date.
@@ -336,7 +336,7 @@ Each benchmark records software versions and a pinned virgil commit hash, and gi
 - **Merging.** Never merge. Ben merges stacked PRs in order, and they are retargeted to `main` as their bases merge.
 - **Git.** Merge, never rebase. Merge `origin/main` before pushing, and never use `--no-verify`.
 - **Python environment.** Use a worktree venv (Python 3.12); never `uv sync`/`uv run` in `~/code/virgil`. In virgil-validation, install frank, vis-r, astro-frap and PMOIRED into that repository's own environment.
-- **Compute.** Nothing on OzSTAR: no ssh, no job scripts, no prompts to Ben. Keep all JAX light on the laptop. That means:
+- **Compute.** *(Overridden 2026-10-14: heavy runs moved to OzSTAR, see §14.)* Nothing on OzSTAR: no ssh, no job scripts, no prompts to Ben. Keep all JAX light on the laptop. That means:
   - timings at N_vis ≤ 10⁴ on CPU, with GPU and 10⁵ timings deferred;
   - MAP and Laplace only for the tutorial and V4, with NUTS at most a few hundred draws on tiny problems;
   - A1 is fixed-parameter likelihood evaluations only. Compare the old and new cone at the stored best-fit parameters: Δlog L against nodes, and time per call. Write a short report in the Apep analysis directory. Commit nothing to virgil. A1 and A2 fits wait for Ben.
