@@ -31,7 +31,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import numpyro.distributions as dist
-from tqdm.auto import tqdm
 
 from virgil import (
     BlackBody, GaussianRing, Harmonics, PointSource, PolarDisk,
@@ -42,9 +41,7 @@ from virgil.imaging import beam, log_evidence
 from virgil.inference import laplace_cov
 from virgil.likelihood import whitened_residuals
 from virgil.priors import IsotropicInclination
-from virgil.plotting import (
-    plot_data_model_correlation, plot_model, plot_residual_map,
-)
+from virgil.plotting import plot_model, plot_residual_map
 
 W0 = 3.0e-6  # reference wavelength, m
 
@@ -220,7 +217,7 @@ log_prior = sum(float(priors[k].log_prob(par.values[k])) for k in names)
 logz_par = (-0.5 * chi2_par + log_prior + 0.5 * len(names) * np.log(2 * np.pi)
             + 0.5 * np.linalg.slogdet(cov)[1])
 logz = {}
-for ell in tqdm((1.5, 4.0), desc="profile length scale"):
+for ell in (1.5, 4.0):
     f = gpfit if ell == 1.5 else fit(gp.set("disk.profile.ell", ell), gp_priors_, data)
     logz[ell] = float(log_evidence(f, data, path="disk"))
 print(f"parametric (20 parameters, Laplace-marginalized): log Z = {logz_par:8.1f}")
@@ -393,25 +390,6 @@ plt.show()
 ```
 
 ![polar_disk_rings output 13.1](generated/polar_disk_rings_cell013_out01.png)
-
-## Data against model
-
-The model squared visibilities and closure phases against the data, with the one-to-one line. Both fits predict the same 378 and 252 numbers, so the points lie on top of each other and on the line, from the lowest visibilities near 5 percent to the highest near 65 percent. The residual plot above is the sharper test: the squared-visibility root mean square is 1.14 for the Gaussian process and 1.02 for the parametric model.
-
-```python
-def summary(m):
-    pred = np.asarray(data.model(m))
-    return {"vis_mean": pred[:n_vis], "vis_std": 0 * pred[:n_vis],
-            "phi_mean": pred[n_vis:], "phi_std": 0 * pred[n_vis:]}
-
-
-fig, _ = plot_data_model_correlation(
-    data, {"parametric": summary(par_model), "GP": summary(gpm)}, figsize=(9, 4.5))
-fig.suptitle("Both fits against the simulated data", y=1.03)
-plt.show()
-```
-
-![polar_disk_rings output 15.1](generated/polar_disk_rings_cell015_out01.png)
 
 ## Summary
 
