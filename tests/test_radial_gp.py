@@ -543,6 +543,8 @@ def test_a_float32_cache_is_used_by_a_float64_evaluation():
     # builds the cache in float32 and evaluates in float64.
     disk, _ = _frozen_pair()
     frozen = disk.freeze_geometry(DATA)
+    if jax.config.jax_enable_x64:
+        pytest.skip("the cache is float32 only when x64 is off globally")
     assert frozen.frozen.uu.dtype == np.float32
     with jax.enable_x64(True):
         up = eqx.tree_at(
@@ -613,6 +615,8 @@ def test_a_float32_cache_is_used_when_the_model_is_evaluated_in_float64():
     # virgil builds in float32 by default, while fit and log_evidence cast
     # the model to float64: the cache must still be recognized.
     disk, frozen = _frozen_pair()
+    if jax.config.jax_enable_x64:
+        pytest.skip("the cache is float32 only when x64 is off globally")
     assert frozen.frozen.uu.dtype == np.float32
     cache = frozen.frozen
     r, _ = frozen.profile.quadrature()
