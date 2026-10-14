@@ -173,20 +173,30 @@ def test_data_with_a_model_dependent_normalization_are_refused():
         marginal_loglike(BinaryModelCartesian(*TRUTH), data)
 
 
-def test_one_kernel_serves_every_dataset_of_one_shape():
+def test_one_kernel_serves_every_dataset_of_one_shape(monkeypatch):
     import virgil.epochs as epochs_module
 
     kernels = [
         epochs_module._grid_scores,
         epochs_module._grid_marginal,
-        epochs_module._negative_marginal_and_grad,
         epochs_module._negative_marginal_hessian,
         epochs_module._block_chi2,
     ]
+    # The refinement's damped-Newton kernel is jitted inside _gauss_newton:
+    # count how often its problem's rows are traced.
+    traces = []
+    rows = epochs_module._RefineProblem.rows
+    monkeypatch.setattr(
+        epochs_module._RefineProblem,
+        "rows",
+        lambda self, x: (traces.append(1), rows(self, x))[1],
+    )
     first = _night(VLTI_UTS[:3], 1, sigma_cp_deg=5.0)
     _positions(first, s_max=10.0)
     _positions(first)
     sizes = [k._cache_size() for k in kernels]
+    n_traces = len(traces)
+    assert n_traces > 0
     # Other values (data, quoted errors, dof) of the same shapes.
     other = _night(
         VLTI_UTS[:3], 2, TRUTH[::-1], sigma_v2=0.03, sigma_cp_deg=8.0
@@ -194,6 +204,7 @@ def test_one_kernel_serves_every_dataset_of_one_shape():
     _positions(other, s_max=10.0, dof=0.5)
     _positions(other, dof=0.7)
     assert [k._cache_size() for k in kernels] == sizes
+    assert len(traces) == n_traces
 
 
 def test_the_von_mises_marginal_is_the_gaussian_one_for_small_errors():
@@ -846,3 +857,77 @@ def test_n_peaks_must_be_a_positive_integer(n_peaks):
     data = Epochs({"night": _night(VLTI_UTS[:3], 1)})
     with pytest.raises(ValueError, match="n_peaks"):
         epoch_positions(data, GRID, n_peaks=n_peaks)
+
+
+# ---------------------------------------------------------------------------
+# 8. The IRLS weights and the kernel refinement
+# ---------------------------------------------------------------------------
+
+
+def test_the_irls_weight_is_dof_nu_over_chi2_without_s_max():
+    from virgil.epochs import _Surface
+
+    data = _night(VLTI_UTS[:3], 1)
+    surface = _Surface(data)
+    chi2 = np.asarray([37.0, 52.0][: len(surface.nu)])
+    w = surface.weights(chi2, 0.7, data)
+    onp.testing.assert_allclose(w, 0.7 * surface.nu / chi2, rtol=1e-5)
+    # It is the profile scale: w_b = dof/ŝ_b².
+    onp.testing.assert_allclose(w, 0.7 / surface.scales(chi2) ** 2, rtol=1e-5)
+
+
+@pytest.mark.parametrize("dof", [1.0, 0.5])
+def test_the_irls_weight_is_twice_the_slope_of_minus_the_bounded_score(dof):
+    from virgil.epochs import _Surface
+
+    with jax.enable_x64(True):
+        data = cast_tree(_night(VLTI_UTS[:3], 1, sigma_cp_deg=20.0), "float64")
+        surface = _Surface(data, s_max=3.0)
+        chi2 = np.asarray([70.0, 30.0][: len(surface.nu)])
+        w = onp.asarray(surface.weights(chi2, dof, data))
+        h = 1e-4
+        for k in range(len(chi2)):
+            step = np.zeros_like(chi2).at[k].set(h)
+            slope = (
+                float(surface.score(chi2 + step, dof, data))
+                - float(surface.score(chi2 - step, dof, data))
+            ) / (2 * h)
+            assert w[k] == pytest.approx(-2 * slope, rel=1e-6)
+            assert w[k] > 0
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("3T-plain", "3T", dict(seed=1)),
+        ("4T-ambiguous", "4T", AMBIGUOUS["4T"]),
+    ],
+)
+def test_refined_peaks_match_the_lbfgs_refinement(case):
+    # The best two peaks of epoch_positions from main's L-BFGS-B refinement
+    # (commit 5f600a3): dra, ddec, flux and the score m.
+    old = {
+        "3T-plain": dict(
+            dra=[-5.318477, 3.782279],
+            ddec=[2.651273, -1.902586],
+            flux=[0.221803, 1.0],
+            marginal=[-44.468897, -45.563913],
+        ),
+        "4T-ambiguous": dict(
+            dra=[4.146854, -4.234045],
+            ddec=[-2.223253, 2.389963],
+            flux=[0.779335, 1.0],
+            marginal=[-151.408063, -152.375217],
+        ),
+    }
+    name, array, options = case
+    peaks = _positions(_night(ARRAYS[array], **options)).peaks[0]
+    for key in ("dra", "ddec"):
+        onp.testing.assert_allclose(
+            getattr(peaks, key)[:2], old[name][key], atol=1e-4
+        )
+    onp.testing.assert_allclose(peaks.flux[:2], old[name]["flux"], atol=1e-4)
+    # m is flat at the peak, so it agrees far better than the position.
+    onp.testing.assert_allclose(
+        peaks.marginal[:2], old[name]["marginal"], atol=1e-5
+    )

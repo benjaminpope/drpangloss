@@ -44,11 +44,13 @@ import functools
 import math
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
 from jax.scipy.special import i0e
 
+from . import _gauss_newton
 from ._geometry import fringe_scales
 from ._grid import batch_size_or_default, batch_visibilities
 from ._precision import cast_tree, run_in
@@ -578,6 +580,32 @@ class _Surface:
             guess = 0.5 * np.log(np.maximum(chi2[k], tiny) / nu)
             total = total + _log_integral(log_f, -bound, bound, guess)
         return total
+
+    def weights(self, chi2, dof, data):
+        """The IRLS weight of each block, ``w_b = 2 ∂(-score)/∂χ²_b``.
+
+        Near a point, the score falls as ``Σ_b w_b χ²_b / 2``, so a
+        Gauss–Newton step on the blocks' residuals multiplied by √w_b has
+        the curvature of the score. ``w_b ≥ 0`` because the score falls
+        as any χ²_b rises. Without ``s_max`` it is ``dof ν_b/χ²_b``, which
+        is ``dof/ŝ_b²`` with ŝ_b the block's profile scale. ``dof`` is a
+        scalar here.
+        """
+        return 2.0 * jax.grad(lambda c: -self.score(c, dof, data))(chi2)
+
+    def weighted_rows(self, r, dof, data):
+        """The whitened residuals ``r`` with each block multiplied by
+        √(stop_gradient ``w_b``): curvature rows of the score (see
+        [`weights`][virgil.epochs._Surface.weights]). The weights are
+        frozen, so ``½ |rows|²`` has the score's Gauss–Newton curvature."""
+        chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
+        w = jax.lax.stop_gradient(self.weights(chi2, dof, data))
+        return np.concatenate(
+            [
+                np.sqrt(w[k]) * r[a:b]
+                for k, (_, a, b, _, _) in enumerate(self.blocks)
+            ]
+        )
 
     def scales(self, chi2):
         """ŝ_b = √(χ²_b/ν_b), the profile maximum of each block's scale."""
@@ -1199,9 +1227,6 @@ def _negative_marginal(x, dof, data, surface):
     return -surface.score(surface.chi2(_binary(x), data), dof, data)
 
 
-_negative_marginal_and_grad = jax.jit(
-    jax.value_and_grad(_negative_marginal), static_argnames="surface"
-)
 _negative_marginal_hessian = jax.jit(
     jax.hessian(_negative_marginal), static_argnames="surface"
 )
@@ -1331,26 +1356,44 @@ def _refined_gap(points, marginal, grid_score, xx, yy, rival):
     return float(marginal[0] - max(rivals)) if rivals else onp.inf
 
 
+class _RefineProblem(eqx.Module):
+    """The negative scale-marginalized surface of one dataset's static
+    binary ``(dra, ddec, flux)``, as a kernel problem
+    ([`_gauss_newton`][virgil._gauss_newton]).
+
+    The curvature rows are the blocks' whitened residuals weighted by the
+    IRLS weights of the surface ([`_Surface.weights`][virgil.epochs._Surface.weights]);
+    the priors are flat in these coordinates.
+    """
+
+    data: object  # an OIData
+    dof: jax.Array
+    surface: _Surface = eqx.field(static=True)
+
+    def loss(self, x):
+        return _negative_marginal(x, self.dof, self.data, self.surface)
+
+    def rows(self, x):
+        r = whitened_residuals(_binary(x), self.data)
+        return self.surface.weighted_rows(r, self.dof, self.data)
+
+    def diag(self, x):
+        return np.zeros_like(x)
+
+
 def _refine_marginal(x0, dof, d64, surface, bounds):
-    """Maximize the scale-marginalized surface from ``x0`` (L-BFGS-B in
-    float64, deterministic) within ``bounds``."""
-    from scipy.optimize import minimize
-
-    def fun(x):
-        value, grad = _negative_marginal_and_grad(
-            np.asarray(x), dof, d64, surface
-        )
-        return float(value), onp.asarray(grad, dtype=float)
-
-    result = minimize(
-        fun,
-        onp.clip(x0, [b[0] for b in bounds], [b[1] for b in bounds]),
-        jac=True,
-        method="L-BFGS-B",
-        bounds=bounds,
-        options={"ftol": 1e-15, "gtol": 1e-10, "maxiter": 500},
+    """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
+    the IRLS curvature, in float64, deterministic) within ``bounds``.
+    Returns the point and the surface's negative value there."""
+    state = _gauss_newton.solve(
+        _RefineProblem(d64, dof, surface),
+        onp.asarray(x0, float),
+        lower=[b[0] for b in bounds],
+        upper=[b[1] for b in bounds],
+        dtol=1e-12,
+        max_steps=200,
     )
-    return onp.asarray(result.x, dtype=float), float(result.fun)
+    return onp.asarray(state.z, dtype=float), float(state.value)
 
 
 def epoch_positions(

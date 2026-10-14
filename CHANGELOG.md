@@ -289,6 +289,16 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton
+  steps.** Each start of the alias search, and each peak refinement of
+  `epoch_positions`, now runs Levenberg–Marquardt on the
+  iteratively-reweighted curvature of the scale-marginalized likelihood,
+  instead of L-BFGS-B with restarts and a Newton polish; L-BFGS-B remains
+  the fallback for a start that does not converge. It reaches the same
+  optima (positions agree to 1e-4 mas) and is faster. Which local
+  optimum a start far from the ridge reaches can differ, so a band's modes
+  and evidence can change for such starts. `_Surface.weights` is new
+  (private).
 - **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
   `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
   sharply at long baselines, and its visibilities at fixed parameters shift
