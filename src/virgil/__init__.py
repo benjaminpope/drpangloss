@@ -60,6 +60,7 @@ from . import (  # noqa: E402
     fitting,
     gains,
     grid_fit,
+    harmonics,
     imaging,
     inference,
     likelihood,
@@ -145,6 +146,7 @@ from .models import (  # noqa: E402
     ThinRing,
     TruncatedCone,
     UniformDisk,
+    VonMises,
     circular_support,
     polar_disk_cvis,
 )
@@ -232,6 +234,7 @@ __all__ = [
     "ThinRing",
     "TruncatedCone",
     "UniformDisk",
+    "VonMises",
     "absil_limits",
     "injection_limits",
     "circular_support",

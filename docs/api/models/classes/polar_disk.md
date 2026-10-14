@@ -53,7 +53,19 @@ PolarDisk](../../../polar_disk.md) for usage.
     options:
       show_root_heading: true
       heading_level: 3
-      members: false
+      members:
+        - image_harmonics
+        - convert
+        - coefficients
+        - polynomial
+
+::: virgil.models.VonMises
+    options:
+      show_root_heading: true
+      heading_level: 3
+      members:
+        - image_harmonics
+        - truncation_power
 
 ::: virgil.models.RadialLinear
     options:

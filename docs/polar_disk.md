@@ -76,28 +76,109 @@ disk = PolarDisk(profile, inc=40.0, pa=20.0, n_r=32)  # "disk.profile.outer.weig
 
 ## Harmonics
 
-`Harmonics(c=..., s=...)` multiplies the profile by
-$1 + \sum_m c_m(r)\cos m\theta + s_m(r)\sin m\theta$, with the azimuth
-$\theta$ in the plane of the disk, from the projected major axis (position
-angle `pa`) towards `pa + 90`. The coefficients are Cartesian (no amplitude
-and phase, whose funnel and wrap make fits harder), each a constant or a
-function of the radius (`RadialLinear`, `RadialPower`); the degree is the
-number of orders, or set with `degree=`. The visibility is
-$2\pi\sum_m (-i)^m e^{im\phi}\sum_k w_k I_m(r_k) J_m(2\pi q r_k)$ with
-$I_{\pm m} = (c_m \mp i s_m)/2$, from one call to `bessel_jn`. The model is
-linear in the coefficients but does not keep the image positive:
+`harmonics=` makes the disk lopsided: the brightness at radius $r$ and azimuth
+$\theta$ (in the plane of the disk, from the projected major axis, at position
+angle `pa`, towards `pa + 90`) is the profile times an azimuthal factor of mean
+one and **exact degree $M$**, with the harmonics $0 \dots M$ and none beyond.
+Each coefficient is a constant or a function of the radius (`RadialLinear`,
+`RadialPower`), and the degree is static. The visibility is
+$2\pi\sum_m (-i)^m e^{im\phi}\sum_k w_k I_m(r_k) J_m(2\pi q r_k)$ with the
+*image harmonics* $I_m$ of the factor ($I_{-m} = \bar I_m$, $I_0 = 1$), from
+one call to `bessel_jn`. Odd orders give closure phases for a centred disk;
+even orders are seen by $V^2$ alone and are partly degenerate with `inc` and
+`pa`.
+
+**Positive form** (the default when no `c` or `s` is given):
+$|h(e^{i\theta})|^2 / \sum_j |h_j|^2$ with
+$h(z) = 1 + h_1 z + \dots + h_M z^M$. Every non-negative image of degree $M$
+has this form (the Fejér–Riesz theorem), so the brightness is positive for
+all parameter values, with no constraint to enforce. Reflecting a root of $h$
+through the unit circle leaves the image unchanged, so $h$ itself has up to
+$2^M$ equivalent values; the parametrization keeps only the minimum-phase
+one, built from complex reflection coefficients $k_j$ with $|k_j| < 1$ by the
+Levinson step-up recursion, and each $k_j = w_j \tanh|w_j| / |w_j|$ comes
+from an unconstrained Cartesian latent $w_j = $ `re[j-1]` $+ i\,$`im[j-1]`
+(finite gradient at $w = 0$, which is a uniform ring). Optimizers and samplers
+then see one smooth mode. The latents are an internal coordinate: report the
+image harmonics, `disk.harmonics.image_harmonics()`.
+
+**Linear form** (`c=` and `s=`): $1 + \sum_m c_m \cos m\theta + s_m \sin m\theta$,
+exactly linear in the Cartesian coefficients (no amplitude and phase, whose
+funnel and wrap make fits harder). It does not keep the image positive:
 `disk.min_intensity()` gives the least brightness relative to the azimuthal
 mean (negative is a violation, and `is_physical` is then false).
 
 ```python
 from virgil import GaussianRing, Harmonics, PolarDisk
 
+# A positive lopsided ring with a second harmonic: latents w_1, w_2.
 lopsided = PolarDisk(
+    GaussianRing(6.0, 1.0),
+    harmonics=Harmonics(w=(0.4 + 0.1j, 0.2j)),
+    inc=30.0, pa=40.0,
+)
+
+# The linear form, with c_m and s_m given directly.
+linear = PolarDisk(
     GaussianRing(6.0, 1.0),
     harmonics=Harmonics(c=(0.3, 0.1), s=(-0.2,)),
     inc=30.0, pa=40.0,
 )
 ```
+
+### Arcs: `VonMises`
+
+`VonMises(kappa, theta0, degree=M)` is the arc $\exp[\kappa\cos(\theta -
+\theta_0)]$ (width about $1/\sqrt\kappa$ radians, centred on the azimuth
+`theta0` in degrees; `kappa=0` is a uniform ring). Its harmonics are
+analytic, $\propto I_m(\kappa)/I_0(\kappa)\,e^{-im\theta_0}$ with $I_m$ the
+modified Bessel function, and are computed by a small FFT, so they are
+differentiable in both parameters. The series is truncated at `degree`, which
+must grow with $\kappa$ (about $5.7\sqrt\kappa$ for harmonics below
+$10^{-6}$; the default picks it for a constant `kappa`);
+`disk.harmonics.truncation_power()` reports the fraction of the power the
+truncation drops.
+
+```python
+from virgil import PolarDisk, ThinRing, VonMises
+
+arc = PolarDisk(ThinRing(20.0), harmonics=VonMises(kappa=30.0, theta0=250.0),
+                blur_fwhm=2.0)
+```
+
+[`GaussianArc`](api/models/classes/composition.md) is exactly this, with
+$\kappa = (2\sqrt{2\ln 2}\,\mathrm{radius}/\mathrm{length})^2$: the arc's
+`length` is the FWHM of the weight along it, as before, but the weight is the
+von Mises function of the position angle where it used to be a Gaussian in
+arc length cut off at the antipode. The two agree for arcs short against the
+radius (to about 1e-3 in $V$ for `length` below 0.1 of the semicircle, 1e-2 at
+0.2) and differ for long arcs. It keeps its name and parameters.
+
+### Converting between forms
+
+The module [`virgil.harmonics`](api/harmonics.md) maps every form to the image
+harmonics $I_m$ and back, to report any model in one convention, to warm-start
+a positive-form fit from a linear one, and to check models against each other:
+
+```python
+from virgil import Harmonics, harmonics
+
+linear = Harmonics(c=(0.5, 0.1), s=(0.2, -0.1))
+image = harmonics.to_image_harmonics(linear)        # I_0 .. I_2, complex
+positive = linear.convert("positive")               # same image, latents w
+again = harmonics.from_image_harmonics(image, form="positive")
+```
+
+Linear and image harmonics are exact both ways ($c_m = 2\,\mathrm{Re}\,I_m$,
+$s_m = -2\,\mathrm{Im}\,I_m$), and so is positive to image. Image to positive
+is a spectral factorization in numpy (not differentiated): it takes the roots
+of $z^M \sum_m I_m z^m$ outside the unit circle, then the step-down recursion
+and the inverse tanh. It raises an error if the image is negative somewhere,
+and an image that touches zero (a root on the circle) is clipped to
+$|k| = 1 - 10^{-6}$ with a warning. `from_legacy` and `to_legacy` convert the
+amplitude and azimuth pairs `az_amps`/`az_pas` of `ModulatedGaussianRim` and
+`TruncatedCone`, with each class's azimuth origin and sense;
+`ModulatedGaussianRim` is a `ThinRing`, linear `Harmonics` and `blur_fwhm`.
 
 ## Height: flared disks and cones
 
