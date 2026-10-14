@@ -4635,7 +4635,11 @@ class _FrozenGeometry(zdx.Base):
 
         def close(a, b):
             a = np.asarray(a, dtype=b.dtype)
-            return np.all((a == b) | (np.abs(a - b) <= self.tol * np.abs(b)))
+            # Relative to each element, with a floor of tol times the largest
+            # element: an entry that is zero in one precision and a rounding
+            # residue (1e-14) in the other must still match.
+            scale = np.abs(b) + np.max(np.abs(b))
+            return np.all((a == b) | (np.abs(a - b) <= self.tol * scale))
 
         ok = (
             close(uu, self.uu)
