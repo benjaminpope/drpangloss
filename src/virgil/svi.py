@@ -48,7 +48,6 @@ from numpyro.infer import autoguide
 from ._precision import cast_tree, run_in
 from .fitting import (
     FitResult,
-    NoLeastSquaresForm,
     NoStartingValue,
     SingularCurvature,
     gauss_newton_mass,
@@ -204,13 +203,23 @@ def _make_guide(guide, posterior, init_loc_fn):
 
 
 def _start_scale(
-    guide_obj, model, priors, data, values, likelihoods, flat, init_scale
+    guide_obj,
+    model,
+    priors,
+    data,
+    values,
+    likelihoods,
+    noise,
+    flat,
+    init_scale,
 ):
     """The Cholesky factor of the guide's starting covariance.
 
-    The Gauss–Newton covariance at ``values``, reordered into the guide's
-    latent vector, for the sites it covers; ``init_scale`` times the
-    identity for any others (error terms). Returns ``(L, dense)``.
+    The Gauss–Newton covariance at ``values`` (error terms in ``noise``
+    included), reordered into the guide's latent vector, for the sites it
+    covers; ``init_scale`` times the identity for any others. A diagonal
+    Gauss–Newton mass (more than ``fitting._DENSE_MASS_MAX`` coordinates)
+    goes on the diagonal. Returns ``(L, dense)``.
     """
     n = guide_obj.latent_dim
     # The guide's own map from its latent vector to sites gives each
@@ -228,13 +237,10 @@ def _start_scale(
             data,
             values,
             likelihoods=likelihoods,
+            noise=noise,
             flat_coordinates=flat,
         )
-    except (
-        NoLeastSquaresForm,
-        NoStartingValue,
-        SingularCurvature,
-    ) as error:
+    except (NoStartingValue, SingularCurvature) as error:
         warnings.warn(
             f"No Gauss–Newton starting width ({error}); the guide starts "
             f"with width init_scale={init_scale}.",
@@ -244,6 +250,8 @@ def _start_scale(
         return onp.linalg.cholesky(covariance), False
     ((sites, gn),) = mass["inverse_mass_matrix"].items()
     gn = onp.asarray(gn)
+    if gn.ndim == 1:  # a diagonal mass
+        gn = onp.diag(gn)
     # Indices of each site in GN's matrix (in the order of ``sites``).
     gn_index, start = {}, 0
     for site in sites:
@@ -369,20 +377,21 @@ def variational(
         log b]`` for a ``LogUniform(a, b)`` with ``flat_coordinates=True``.
     dense_start : bool, optional
         Start the guide's width from the Gauss–Newton covariance at
-        ``start`` (default ``True``). That covariance is the data's and
-        the priors' curvature at the nominal errors: it leaves out
-        ``regularizers``, fitted error terms in ``noise`` and fixed ones
-        in ``**options``. With regularizers (whose absence can leave the
-        curvature singular, as for an image) the dense start is skipped,
-        with a warning. With error terms it is kept: an inflated error
-        makes the start too narrow, which the guide learns away at the
-        cost of steps. The error terms' own sites, which it does not
-        cover, and priors without a least-squares form (see
-        ``gauss_newton_mass``) start at ``init_scale``.
+        ``start`` (default ``True``). That covariance holds the data's,
+        the likelihood terms' and the priors' curvature, and the error
+        terms in ``noise`` get their own widths from it (it takes them as
+        coordinates); fixed error terms in ``**options`` and
+        ``regularizers`` are left out. With regularizers (whose absence can
+        leave the curvature singular, as for an image) the dense start is
+        skipped, with a warning. Data with gains and priors without a
+        least-squares form (HalfNormal, Beta, ...) get this start too,
+        where they once started at ``init_scale``. Above
+        ``fitting._DENSE_MASS_MAX`` coordinates the start is the
+        covariance's diagonal.
     init_scale : float, optional
         Starting width, in the unconstrained coordinates, of the
-        coordinates not covered by the Gauss–Newton covariance (default
-        0.1).
+        coordinates not covered by the Gauss–Newton covariance, and of all
+        of them when it cannot be computed (default 0.1).
     window : int, optional
         Steps per window of the convergence test (default ``steps // 10``).
     psis : bool, optional
@@ -475,6 +484,7 @@ def variational(
                 data_c,
                 values_c if use_dense else None,
                 likelihoods,
+                noise_c,
                 flat_coordinates,
                 init_scale,
             )

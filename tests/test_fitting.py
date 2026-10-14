@@ -740,3 +740,355 @@ def test_lbfgs_restarts_reach_the_same_minimum(monkeypatch):
     with pytest.warns(RuntimeWarning, match="step limit"):
         last = fit(START, PRIORS, DATA, method="lbfgs", max_steps=7)
     assert last.info["steps"] == 7 and last.info["stop"] == "limit"
+
+
+# --- The Gauss–Newton curvature (design/gauss_newton_plan.md, GN2) ---
+
+NOISY = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=1.7)
+SCALES = {
+    "vis_scale": dist.LogUniform(0.1, 10.0),
+    "phi_scale": dist.LogUniform(0.1, 10.0),
+}
+
+
+def _curvature(model, priors, data, values, noise=None, flat=False):
+    """``(problem, z, J, P)`` of ``gauss_newton_mass``'s curvature, in float64."""
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(model, priors, data, noise=noise, flat=flat), "float64"
+        )
+        z = problem.init(cast_tree(dict(values), "float64"))
+        flat_z, unravel = problem.ravel(z)
+        jac = jax.jacfwd(lambda x: problem.curvature_rows(unravel(x)))(flat_z)
+        return (
+            problem,
+            z,
+            onp.asarray(jac),
+            onp.asarray(problem.curvature_diag(z, True)),
+        )
+
+
+def _hessian_check(model, priors, data, values, noise=None, flat=False):
+    """``(sites, eigenvalues of F⁻¹H, mass)``: H is the exact Hessian of the
+    numpyro potential in the coordinates of the mass matrix."""
+    from numpyro.infer import init_to_value
+    from numpyro.infer.util import initialize_model
+
+    from virgil.fitting import gauss_newton_mass
+
+    with run_in("float64"):
+        mass = gauss_newton_mass(
+            model, priors, data, values, noise=noise, flat_coordinates=flat
+        )
+        (sites,) = mass["dense_mass"]
+        covariance = mass["inverse_mass_matrix"][sites]
+        m, p, d, n = cast_tree((model, priors, data, noise), "float64")
+        posterior = numpyro_model(m, p, d, noise=n, flat_coordinates=flat)
+        info = initialize_model(
+            jax.random.PRNGKey(1),
+            posterior,
+            init_strategy=init_to_value(
+                values=cast_tree(dict(values), "float64")
+            ),
+        )
+        z = info.param_info.z
+        shapes = [z[k].shape for k in sites]
+        sizes = [int(onp.prod(s)) for s in shapes]
+
+        def potential(x):
+            parts = np.split(x, onp.cumsum(sizes)[:-1])
+            return info.potential_fn(
+                {k: v.reshape(s) for k, v, s in zip(sites, parts, shapes)}
+            )
+
+        flat_z = np.concatenate([np.ravel(z[k]) for k in sites])
+        hessian = onp.asarray(jax.hessian(potential)(flat_z))
+    return sites, onp.linalg.eigvals(covariance @ hessian).real, mass
+
+
+def _sigmoid(z):
+    return 1.0 / (1.0 + onp.exp(-z))
+
+
+def test_bounded_priors_give_the_curvature_of_their_transforms():
+    # With flat coordinates a LogUniform is flat in the fitted coordinate, so
+    # NUTS's potential is -log σ(1 - σ) and P = 2σ(1 - σ), as for a Uniform.
+    priors = PRIORS | {"flux": dist.LogUniform(1e-3, 0.5)}
+    values = {"dra": 150.0, "ddec": -80.0, "flux": 0.02}
+    problem, z, _, p = _curvature(START, priors, DATA, values, flat=True)
+    s = _sigmoid(onp.array([float(z[k]) for k in problem.paths]))
+    onp.testing.assert_allclose(p, 2 * s * (1 - s), rtol=1e-10)
+    # Without the Jacobian (fit's loss), flat priors add nothing.
+    with run_in("float64"):
+        none = problem.curvature_diag(z, False)
+    onp.testing.assert_array_equal(onp.asarray(none), 0.0)
+
+
+def test_log_uniform_under_numpyros_bijection_matches_the_potential():
+    # Without flat coordinates, numpyro maps [a, b] by a + (b - a)σ(z), so
+    # P = max(0, (log x)'' + 2σ(1 - σ)): compare with the Hessian of the
+    # numpyro potential of the 1-D prior.
+    from numpyro.infer import init_to_value
+    from numpyro.infer.util import initialize_model
+
+    low, high = 1e-3, 0.5
+    prior = dist.LogUniform(low, high)
+    for flux in (0.004, 0.02, 0.3):
+        problem, z, _, p = _curvature(
+            START, {"flux": prior}, (), {"flux": flux}, flat=False
+        )
+
+        def model():
+            numpyro.sample("flux", prior)
+
+        with run_in("float64"):
+            info = initialize_model(
+                jax.random.PRNGKey(0),
+                model,
+                init_strategy=init_to_value(values={"flux": flux}),
+            )
+            zz = info.param_info.z["flux"]
+            potential = lambda v: info.potential_fn({"flux": v})
+            hessian = float(jax.hessian(potential)(zz))
+            log_x = lambda v: np.log(low + (high - low) * jax.nn.sigmoid(v))
+            analytic = float(jax.grad(jax.grad(log_x))(zz))
+            s = float(jax.nn.sigmoid(zz))
+        assert float(z["flux"]) == pytest.approx(float(zz))
+        assert hessian == pytest.approx(analytic + 2 * s * (1 - s), rel=1e-8)
+        assert p[0] == pytest.approx(max(0.0, hessian), rel=1e-8)
+
+
+def _v19_fixture():
+    result = fit(START, PRIORS, NOISY, noise=SCALES, method="lbfgs")
+    return result.values
+
+
+def test_the_scale_block_is_the_fisher_information_and_decoupled():
+    values = _v19_fixture()
+    problem, z, jac, _ = _curvature(START, PRIORS, NOISY, values, SCALES)
+    keys = problem.coordinate_keys[-2:]
+    assert set(keys) == {"noise.vis_scale", "noise.phi_scale"}
+    jtj = jac.T @ jac
+    n_vis = onp.size(NOISY.vis)
+    n_phi = NOISY.cp_noise.size  # the whitened closure phases
+    counts = {"noise.vis_scale": n_vis, "noise.phi_scale": n_phi}
+    expected = []
+    with run_in("float64"):
+        for site in keys:
+            count = counts[site]
+            bijection = problem.bijection(problem.noise[site][0])
+            dln = float(jax.grad(lambda v: np.log(bijection(v)))(z[site]))
+            expected.append(2 * count * dln**2)
+    onp.testing.assert_allclose(
+        jtj[-2:, -2:], onp.diag(expected), rtol=1e-6, atol=1e-9
+    )
+    # The errors do not move the mean, nor the parameters the errors.
+    onp.testing.assert_allclose(jtj[:-2, -2:], 0.0, atol=1e-9)
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_the_v19_matrix_whitens_the_posterior(flat):
+    values = _v19_fixture()
+    sites, eigenvalues, mass = _hessian_check(
+        START, PRIORS, NOISY, values, SCALES, flat
+    )
+    assert set(sites) == {
+        "dra",
+        "ddec",
+        "flux",
+        "noise.vis_scale",
+        "noise.phi_scale",
+    }
+    # Measured on this fixture (noise 1.7x the errors, 15 independent closure
+    # phases): the two scales give 1.0000 and 1.0000, ln(flux) 0.998, and the
+    # dra and ddec directions 0.666 and 1.329, the Σ r∇²r that F drops. The
+    # plan's bound [0.8, 1.25] was for e8's cleaner data; this is the
+    # measured one with margin.
+    assert eigenvalues.min() > 0.6 and eigenvalues.max() < 1.4, eigenvalues
+    assert onp.sum(onp.abs(eigenvalues - 1.0) < 0.01) >= 2  # the scales
+    assert mass.condition < 1e4
+
+
+def _gains_data():
+    gains = oidata.with_gains(telescope=0.03, baseline=0.02)
+    return gains.with_model(TRUTH, key=jax.random.PRNGKey(5))
+
+
+def test_gain_data_give_a_positive_definite_matrix_close_to_the_hessian():
+    data = _gains_data()
+    values = fit(START, PRIORS, data).values
+    sites, eigenvalues, mass = _hessian_check(START, PRIORS, data, values)
+    assert set(sites) == {"dra", "ddec", "flux"}
+    assert eigenvalues.min() > 0.5 and eigenvalues.max() < 2.0, eigenvalues
+
+
+def test_fitted_gain_widths_and_scales_stay_positive_definite():
+    # The gain width's curvature is a heuristic (a PSD one) rather than the
+    # Fisher information: the matrix is a valid preconditioner but looser.
+    data = _gains_data()
+    noise = {
+        "vis_scale": dist.LogUniform(0.1, 10.0),
+        "vis_gain_baseline": dist.LogUniform(1e-3, 0.3),
+    }
+    values = fit(START, PRIORS, data, noise=noise).values
+    _, eigenvalues, mass = _hessian_check(START, PRIORS, data, values, noise)
+    assert onp.all(onp.isfinite(eigenvalues)) and eigenvalues.min() > 0
+    assert eigenvalues.min() > GAIN_WIDTH_BOUNDS[0]
+    assert eigenvalues.max() < GAIN_WIDTH_BOUNDS[1], eigenvalues
+
+
+# Measured: eig(F⁻¹H) = 0.0058, 0.996, 1.000, 1.011, 1.93. The three parameter
+# directions are exact (0.996 to 1.011, as without the width) and the scale 1.93;
+# the gain width's F, from the whitening alone, is some 170 times its true
+# curvature (the plan expected [0.3, 3]). The cost is efficiency in that one
+# coordinate, not correctness.
+GAIN_WIDTH_BOUNDS = (0.003, 3.0)
+
+
+def test_added_errors_couple_to_the_parameters():
+    noise = {"vis_error_rel": dist.LogUniform(1e-4, 0.3)}
+    values = fit(START, PRIORS, NOISY, noise=noise).values
+    problem, _, jac, _ = _curvature(START, PRIORS, NOISY, values, noise)
+    jtj = jac.T @ jac
+    assert problem.coordinate_keys[-1] == "noise.vis_error_rel"
+    assert onp.max(onp.abs(jtj[:-1, -1])) > 0.0
+    assert onp.all(onp.linalg.eigvalsh(jtj) > -1e-9 * onp.max(jtj))
+    _, eigenvalues, _ = _hessian_check(START, PRIORS, NOISY, values, noise)
+    # Measured 0.755, 0.9996, 1.0003, 1.298.
+    assert eigenvalues.min() > 0.6 and eigenvalues.max() < 1.5, eigenvalues
+
+
+def _latent_sites(model):
+    trace = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
+    return {
+        name: int(onp.size(site["value"]))
+        for name, site in trace.items()
+        if site["type"] == "sample" and not site.get("is_observed")
+    }
+
+
+def _check_sites(model, priors, data, values, noise, flat, expected):
+    from virgil.fitting import gauss_newton_mass
+    from virgil.likelihood import chain_init_params
+
+    mass = gauss_newton_mass(
+        model, priors, data, values, noise=noise, flat_coordinates=flat
+    )
+    (sites,) = mass["dense_mass"]
+    posterior = numpyro_model(
+        model, priors, data, noise=noise, flat_coordinates=flat
+    )
+    latent = _latent_sites(posterior)
+    assert len(sites) == len(expected) and set(sites) == set(expected)
+    assert set(sites) == set(latent)
+    covariance = mass["inverse_mass_matrix"][sites]
+    assert covariance.shape == (sum(latent.values()),) * 2
+    chain_init_params(posterior, [values], mass=mass)  # raises on a mismatch
+    return covariance
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_the_mass_sites_are_the_numpyro_latent_sites(flat):
+    values = {"dra": 150.0, "ddec": -80.0, "flux": 0.02}
+    # Fitted scales of one dataset.
+    _check_sites(
+        START,
+        PRIORS,
+        NOISY,
+        values | {"noise.vis_scale": 1.5, "noise.phi_scale": 1.2},
+        SCALES,
+        flat,
+        ("dra", "ddec", "flux", "noise.vis_scale", "noise.phi_scale"),
+    )
+    # List-form noise: sites are indexed by dataset; an empty dict has none.
+    noise = [
+        {"vis_scale": dist.LogUniform(0.1, 10.0)},
+        {"phi_scale": dist.LogUniform(0.1, 10.0)},
+    ]
+    _check_sites(
+        START,
+        PRIORS,
+        [NOISY, NOISY],
+        values | {"noise[0].vis_scale": 1.5, "noise[1].phi_scale": 1.2},
+        noise,
+        flat,
+        ("dra", "ddec", "flux", "noise[0].vis_scale", "noise[1].phi_scale"),
+    )
+    # A tied term is a function of the parameters: no row, no site.
+    tied = [
+        {"vis_scale": lambda v: v["s"]},
+        {"vis_scale": lambda v: 2.0 * v["s"]},
+    ]
+    priors = {**PRIORS, "s": dist.LogUniform(0.5, 5.0)}
+    _check_sites(
+        _binary_fn,
+        priors,
+        [NOISY, NOISY],
+        values | {"s": 1.5},
+        tied,
+        flat,
+        ("dra", "ddec", "flux", "s"),
+    )
+
+
+@pytest.mark.parametrize("flat", [False, True])
+def test_an_angle_vector_with_noise_keeps_its_site_name(flat):
+    from virgil.angles import AngleVector
+    from virgil.models import BinaryModelAngular
+
+    truth = BinaryModelAngular(150.0, 5.0, 0.05)
+    # Noisy data: noiseless ones fit a scale to its lower bound.
+    data = oidata.with_model(truth, key=jax.random.PRNGKey(2))
+    template = BinaryModelAngular(150.0, 355.0, 0.05)
+    priors = {"pa": AngleVector()}
+    noise = {"vis_scale": dist.LogUniform(0.1, 10.0)}
+    result = fit(template, priors, data, noise=noise)
+    covariance = _check_sites(
+        template,
+        priors,
+        data,
+        result.values,
+        noise,
+        flat,
+        ("pa_vec", "noise.vis_scale"),
+    )
+    assert covariance.shape == (3, 3)
+    assert onp.all(onp.linalg.eigvalsh(covariance) > 0)
+
+
+def test_curvature_rows_are_finite_in_float32_with_gains_and_offsets():
+    data = oidata.with_gains(
+        telescope=0.03, baseline=0.02
+    ).with_closure_offsets(baseline=0.02)
+    noise = {
+        "vis_scale": dist.LogUniform(0.1, 10.0),
+        "vis_gain_baseline": dist.LogUniform(1e-3, 0.3),
+        "phi_offset_baseline": dist.LogUniform(1e-3, 0.3),
+    }
+    problem = _Objective(START, PRIORS, data, noise=noise, flat=False)
+    z = problem.init({"dra": 150.0, "ddec": -80.0, "flux": 0.02})
+    assert set(problem.coordinate_keys[-3:]) == {f"noise.{k}" for k in noise}
+    rows = problem.curvature_rows(z)
+    assert rows.dtype == np.float32 and bool(np.all(np.isfinite(rows)))
+    assert bool(np.all(np.isfinite(problem.curvature_diag(z, True))))
+
+
+def test_a_nuts_chain_runs_with_the_v19_mass():
+    from numpyro.infer import MCMC, NUTS, init_to_value
+
+    from virgil.fitting import gauss_newton_mass
+
+    values = _v19_fixture()
+    mass = gauss_newton_mass(START, PRIORS, NOISY, values, noise=SCALES)
+    kernel = NUTS(
+        numpyro_model(START, PRIORS, NOISY, noise=SCALES),
+        init_strategy=init_to_value(values=values),
+        **mass,
+    )
+    mcmc = MCMC(kernel, num_warmup=30, num_samples=30, progress_bar=False)
+    mcmc.run(jax.random.PRNGKey(0), extra_fields=("diverging", "num_steps"))
+    extra = mcmc.get_extra_fields()
+    assert int(extra["diverging"].sum()) == 0
+    samples = mcmc.get_samples()
+    assert set(samples) == set(PRIORS) | {"noise.vis_scale", "noise.phi_scale"}
+    assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())

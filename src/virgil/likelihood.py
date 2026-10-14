@@ -76,7 +76,13 @@ def _whiten(
 
 
 def _whiten_with_log_norm(
-    data, prediction, reference, errors, gain_terms=None, offset_terms=None
+    data,
+    prediction,
+    reference,
+    errors,
+    gain_terms=None,
+    offset_terms=None,
+    frozen=False,
 ):
     """Whitened residuals, effective errors, and the marginal log-normalizer.
 
@@ -137,10 +143,19 @@ def _whiten_with_log_norm(
       penalty rows are unchanged.
     - Extra observables (``OIData.extras``) follow the phases, each block
       whitened by itself (see [`virgil.observables`][virgil.observables]).
+
+    With ``frozen=True`` the diagonal ``errors`` (those of
+    ``inflated_errors``, and nothing else) pass through
+    ``jax.lax.stop_gradient``: the curvature rows of
+    ``_curvature_rows`` differentiate the residuals at fixed errors, and
+    add the errors' own dependence as normalizer rows. Gains, offsets and
+    the extra blocks stay differentiable.
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
     errors = np.asarray(errors)
+    if frozen:
+        errors = jax.lax.stop_gradient(errors)
     n_vis = np.asarray(data.vis).size
     n_phase = n_vis + np.asarray(data.phi).size
     vis, vis_errors, vis_norm = _whiten_vis(
@@ -432,7 +447,14 @@ def _whitened_and_log_norm(model, data, noise=None):
     return whitened, log_norm
 
 
-def _whitened_errors_and_log_norm(model, data, noise):
+def _prediction_and_errors(model, data, noise):
+    """The model prediction and the diagonal errors of ``data``.
+
+    Returns ``(prediction, errors, values, gain_terms, offset_terms)``:
+    the prediction with the wavelength and North-angle terms applied, the
+    errors of ``inflated_errors``, the data vector, and the gain and
+    closure-offset widths in ``noise``.
+    """
     unknown = set(noise) - set(NOISE_TERMS)
     if unknown:
         raise TypeError(
@@ -472,9 +494,74 @@ def _whitened_errors_and_log_norm(model, data, noise):
     data = observed
     errors = inflated_errors(data, prediction, **inflation)
     values = data.flatten_data()[0]
+    return prediction, errors, values, gain_terms, offset_terms
+
+
+def _whitened_errors_and_log_norm(model, data, noise):
+    prediction, errors, values, gain_terms, offset_terms = (
+        _prediction_and_errors(model, data, noise)
+    )
     return _whiten_with_log_norm(
         data, prediction, values, errors, gain_terms, offset_terms
     )
+
+
+def _curvature_rows(model, data, noise):
+    """The curvature rows of one dataset (see ``_Objective.curvature_rows``).
+
+    Their Jacobian J gives the Gauss–Newton curvature JᵀJ of the negative
+    log likelihood. Two kinds of row, concatenated:
+
+    - *mean rows*: ``whitened_residuals`` with the diagonal errors frozen
+      (``_whiten_with_log_norm(frozen=True)``). Gains, closure offsets,
+      extra observable blocks and the mean terms (``wavel_scale``,
+      ``wavel_offset``, ``north_angle``, which act through the
+      prediction) stay differentiable;
+    - *normalizer rows* ``√2 log σ_k`` for the diagonal errors σ_k of the
+      visibility and phase observables, when error terms are fitted. For
+      Gaussian data, mean plus normalizer rows give the Fisher
+      information: ``blockdiag(JᵀJ, 2 N)`` in ``ln s`` for one scale ``s``
+      of ``N`` errors. Uncorrelated phases use the Gaussian σ, not the von
+      Mises effective error (which would overstate the curvature in a weak
+      phase's scale). Correlated closure phases use the effective errors
+      of the whitened rows (``ClosureNoise.whiten``), without the periodic
+      penalty rows, whose errors are constants. Extra blocks get none:
+      their ``whiten`` has its own error model, and their differentiable
+      rows already carry a positive semi-definite curvature.
+
+    Gain and offset widths get curvature only through the mean rows, a
+    positive semi-definite heuristic rather than the Fisher information.
+    """
+    prediction, errors, values, gain_terms, offset_terms = (
+        _prediction_and_errors(model, data, noise)
+    )
+    mean = _whiten_with_log_norm(
+        data,
+        prediction,
+        values,
+        errors,
+        gain_terms,
+        offset_terms,
+        frozen=True,
+    )[0]
+    rows = [mean]
+    fitted = any(
+        k not in GAIN_TERMS + OFFSET_TERMS + WAVEL_TERMS + NORTH_TERMS
+        for k in noise
+    )
+    if fitted:
+        root2 = np.sqrt(2.0)
+        n_vis = np.asarray(data.vis).size
+        n_phase = n_vis + np.asarray(data.phi).size
+        rows.append(root2 * np.log(errors[:n_vis]))
+        phase_errors = errors[n_vis:n_phase]
+        if data._phases_wrap and data.cp_noise is not None:
+            resid = (
+                np.asarray(prediction)[n_vis:n_phase] - values[n_vis:n_phase]
+            )
+            phase_errors = data.cp_noise.whiten(np.sin(resid), phase_errors)[1]
+        rows.append(root2 * np.log(phase_errors))
+    return np.concatenate(rows)
 
 
 @renamed()

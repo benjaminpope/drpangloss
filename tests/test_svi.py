@@ -17,7 +17,7 @@ from virgil._flat import flat_sampled
 from virgil._precision import cast_tree, run_in
 from virgil.angles import AngleVector
 from virgil.coverage import nrm_oidata
-from virgil.fitting import fit, gauss_newton_mass
+from virgil.fitting import _Objective, fit, gauss_newton_mass
 from virgil.likelihood import numpyro_model
 from virgil.models import BinaryModelAngular, BinaryModelCartesian
 from virgil.svi import variational
@@ -40,11 +40,27 @@ class _GaussianInZ:
     ``loglike`` is the Gaussian in z minus the prior's density in z (the
     prior times the Jacobian of z → x), so the product is the Gaussian.
     ``__call__`` gives its whitened residuals, for ``gauss_newton_mass``.
+    ``gauss_newton_mass`` adds the curvature P of the priors' transforms to
+    JᵀJ, so the residuals carry what is left of the precision,
+    JᵀJ = COV⁻¹ - diag(P), and the Gauss–Newton matrix is exactly COV.
     """
 
     def __init__(self, flat):
         self.flat = flat
         self.chol = onp.linalg.cholesky(COV)
+        with run_in("float64"):
+            problem = cast_tree(
+                _Objective(_no_model, PRIORS, (), flat=flat), "float64"
+            )
+            z = {k: np.asarray(m, float) for k, m in zip(PRIORS, MU)}
+            # (The problem's coordinates are in sorted order.)
+            by_key = dict(
+                zip(problem.coordinate_keys, problem.curvature_diag(z, True))
+            )
+            p = onp.array([float(by_key[k]) for k in PRIORS])
+        self.row_chol = onp.linalg.cholesky(
+            onp.linalg.inv(onp.linalg.inv(COV) - onp.diag(p))
+        )
 
     def _z(self, values):
         zs, log_prior = [], 0.0
@@ -60,15 +76,19 @@ class _GaussianInZ:
             zs.append(z)
         return np.stack(zs), log_prior
 
-    def __call__(self, values):
-        z, _ = self._z(values)
-        return jax.scipy.linalg.solve_triangular(
-            np.asarray(self.chol, z.dtype), z - MU, lower=True
+    def _whitened(self, values, chol):
+        z, log_prior = self._z(values)
+        white = jax.scipy.linalg.solve_triangular(
+            np.asarray(chol, z.dtype), z - MU, lower=True
         )
+        return white, log_prior
+
+    def __call__(self, values):
+        return self._whitened(values, self.row_chol)[0]
 
     def loglike(self, values):
-        _, log_prior = self._z(values)
-        return -0.5 * np.sum(self(values) ** 2) - log_prior
+        white, log_prior = self._whitened(values, self.chol)
+        return -0.5 * np.sum(white**2) - log_prior
 
 
 def _in_site_order(guide, loc, tril):

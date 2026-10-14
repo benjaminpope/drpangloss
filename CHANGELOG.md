@@ -7,6 +7,41 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
+  `fit` and `numpyro_model` and covers them in the matrix, under their
+  numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
+  is the Fisher information, with the extra rows √2 log σ for each
+  visibility and phase error. It now also accepts data with gains, any
+  elementwise prior (HalfNormal, Beta, Uniform and so on, each with the
+  curvature of the sampler's transform) and likelihood terms with a
+  `log_norm`. With more than 8192 coordinates it returns the diagonal of
+  the covariance, with a `UserWarning`, instead of an n² matrix.
+  `SingularCurvature` now means a direction that neither the data nor a
+  proper prior constrains (an `ImproperUniform` or flat-in-coordinate
+  parameter the data do not fix), or a matrix that is not positive
+  definite: a parameter under a bounded prior no longer raises. The
+  result's `condition` attribute is the condition number of its
+  correlation matrix. The matrix checks positive definiteness on the
+  covariance itself, which a float32 Woodbury result could fail while
+  the old check passed.
+
+### Changed
+
+- **`variational` starts error terms and gains data at their
+  Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
+  so fitted error terms get widths from the curvature instead of
+  `init_scale`; data with gains, and priors without a least-squares form
+  (HalfNormal, Beta), now get a Gauss–Newton start rather than
+  `init_scale`. The posterior is unchanged; only the starting width, so
+  the number of steps to converge.
+- A bounded elementwise prior (`Uniform`, `LogUniform` and so on) now adds
+  the curvature of the sampler's transform to `gauss_newton_mass`'s
+  matrix, where `Uniform` added none before. The matrix is a
+  preconditioner, so this changes the efficiency of NUTS with it, not its
+  samples.
+
 ### Migration from 0.3.0
 
 - **Model before data in the grid, limit and detection tools.**

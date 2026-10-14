@@ -27,6 +27,7 @@ import lineax as lx
 import numpy as onp
 import optax
 import optimistix as optx
+from jax.flatten_util import ravel_pytree
 
 from ._deprecate import renamed
 from ._flat import _base, _flat_coordinate, _FlatBijection
@@ -36,6 +37,7 @@ from .angles import is_angle_vector, vector_angle, vector_site
 from .fields import GaussianField
 from .likelihood import (
     _check_positive_flux_prior,
+    _curvature_rows,
     _whitened_and_errors,
     build_model,
     is_tied,
@@ -63,7 +65,11 @@ class NoLeastSquaresForm(TypeError):
 
 
 class SingularCurvature(ValueError):
-    """The Gauss–Newton curvature is singular at the given values."""
+    """The Gauss–Newton curvature is singular at the given values: some
+    direction is constrained by neither the data nor a proper prior (an
+    ``ImproperUniform`` or flat-in-coordinate parameter the data do not
+    fix), or the matrix is not positive definite in the working precision.
+    """
 
 
 class NoStartingValue(ValueError):
@@ -75,10 +81,13 @@ class GaussNewtonMass(dict):
 
     A ``dict`` that unpacks into ``NUTS(...)`` as usual, and records the
     ``flat_coordinates`` of its matrix as an attribute for
-    [`chain_init_params`][virgil.likelihood.chain_init_params].
+    [`chain_init_params`][virgil.likelihood.chain_init_params]. ``condition``
+    is the condition number of the matrix's correlation form (``None`` for
+    a diagonal mass).
     """
 
     flat_coordinates = False
+    condition = None
 
 
 def _prior_residuals(path, distribution, value):
@@ -138,6 +147,13 @@ def _warn_if_field_hyperparameter(model, path):
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
+
+
+def _log_jacobian(bijection, z):
+    """``log |dx/dz|`` of a bijection (virgil's flat one or numpyro's)."""
+    if isinstance(bijection, _FlatBijection):
+        return bijection.log_abs_det_jacobian(z)
+    return bijection.log_abs_det_jacobian(z, bijection(z))
 
 
 class _Objective(eqx.Module):
@@ -386,6 +402,134 @@ class _Objective(eqx.Module):
             if r is not None:
                 parts.append(r)
         return np.concatenate(parts)
+
+    # The Gauss–Newton curvature F = JᵀJ + diag(P) (design/gauss_newton_plan.md).
+
+    @property
+    def coordinate_keys(self):
+        """The keys of ``z`` in the order of the flat coordinate vector: the
+        paths of ``priors``, then the non-tied noise sites."""
+        return tuple(self.priors) + tuple(
+            site
+            for site, (prior, _, _) in self.noise.items()
+            if not is_tied(prior)
+        )
+
+    @property
+    def coordinate_sites(self):
+        """The numpyro sites of the flat coordinates, in the same order:
+        ``sites``, then the non-tied noise sites."""
+        return self.sites + self.coordinate_keys[len(self.priors) :]
+
+    def ravel(self, z):
+        """``(flat, unravel)``: ``z`` as one vector in ``coordinate_keys``
+        order, and the map back to a dict. (``ravel_pytree`` of a dict would
+        sort the keys, so the arrays go in as a list.)"""
+        keys = self.coordinate_keys
+        flat, unravel_list = ravel_pytree([z[k] for k in keys])
+
+        def unravel(x):
+            return dict(zip(keys, unravel_list(x)))
+
+        return flat, unravel
+
+    def _coordinate_priors(self):
+        priors = dict(self.priors)
+        priors.update({site: p for site, (p, _, _) in self.noise.items()})
+        return [(key, priors[key]) for key in self.coordinate_keys]
+
+    def curvature_rows(self, z):
+        """The curvature rows ρ(z), whose Jacobian J gives JᵀJ.
+
+        Four kinds of row, in this order: each dataset's mean rows (the
+        whitened residuals with the diagonal errors frozen, so that gains,
+        closure offsets and extra observable blocks stay live) and, with
+        fitted error terms, its normalizer rows √2 log σ_k (see
+        ``likelihood._curvature_rows``); each likelihood term's residuals
+        (live; a term's ``log_norm`` has no rows and adds no curvature);
+        and the residuals of the ``AngleVector`` priors. Regularizers are
+        not included. ``z`` is the dict of unconstrained coordinates, as
+        for ``loss``.
+        """
+        model = self.build(z)
+        values = self.constrain(z)
+        models = _per_dataset(model, len(self.data))
+        rows = [
+            _curvature_rows(m, d, noise_for(self.noise, values, i))
+            for i, (m, d) in enumerate(zip(models, self.data))
+        ]
+        rows += [np.ravel(term(values)) for term in self.likelihoods]
+        rows += [
+            prior.residuals(z[path])
+            for path, prior in self.priors.items()
+            if is_angle_vector(prior)
+        ]
+        return np.concatenate(rows) if rows else np.zeros(0)
+
+    def _no_prior_curvature(self, prior, jacobian):
+        """Whether ``prior``'s coordinates have P = 0 by type (known when
+        tracing): angle vectors (their residuals are rows) and priors that
+        are not elementwise; ``ImproperUniform``; and, without the
+        Jacobian, priors flat in their fitted coordinate and ``Uniform``."""
+        import numpyro.distributions as dist
+
+        base = _base(prior)
+        # ``_base`` strips ``.expand`` and ``.to_event``: an image's
+        # ``Normal(0, 1).to_event(2)`` is still a separable, elementwise prior.
+        if is_angle_vector(prior) or base.event_shape != ():
+            return True
+        if isinstance(base, dist.ImproperUniform):
+            return True
+        if jacobian:
+            return False
+        return self._in_flat_coordinate(prior) or isinstance(
+            base, dist.Uniform
+        )
+
+    def curvature_zero(self, z, jacobian):
+        """A boolean NumPy vector over the flat coordinates: those whose P
+        is zero by type (``_no_prior_curvature``)."""
+        return onp.concatenate(
+            [
+                onp.full(
+                    np.size(z[key]), self._no_prior_curvature(p, jacobian)
+                )
+                for key, p in self._coordinate_priors()
+            ]
+        )
+
+    def curvature_diag(self, z, jacobian):
+        """P, the diagonal of curvature from elementwise priors, over the
+        flat coordinates.
+
+        For each coordinate whose prior is elementwise (a base
+        ``event_shape == ()``, under any ``.expand`` or ``.to_event``), P is
+        ``max(0, ∂²/∂z² [-log p(x(z)) - log|dx/dz|])``, the second term
+        only if ``jacobian`` (NUTS's potential includes it; ``fit``'s loss
+        does not). The terms are separable, so a ``jax.jvp`` of ``jax.grad``
+        with a tangent of ones gives the diagonal. A prior with a flat
+        coordinate adds nothing to ``fit``'s loss, so without the Jacobian
+        its P is 0. ``AngleVector``, multivariate and tied priors give 0
+        (the first has rows). A Normal prior on the real line gives 1/σ².
+        """
+        parts = []
+        for key, prior in self._coordinate_priors():
+            zk = np.asarray(z[key])
+            if self._no_prior_curvature(prior, jacobian):
+                parts.append(np.zeros(zk.size, zk.dtype))
+                continue
+            bijection = self.bijection(prior)
+
+            def potential(v, prior=prior, bijection=bijection):
+                term = -prior.log_prob(bijection(v))
+                if jacobian:
+                    term = term - _log_jacobian(bijection, v)
+                return np.sum(term)
+
+            ones = np.ones_like(zk)
+            second = jax.jvp(jax.grad(potential), (zk,), (ones,))[1]
+            parts.append(np.ravel(np.maximum(0.0, second)))
+        return np.concatenate(parts) if parts else np.zeros(0)
 
     def loss(self, z):
         """Negative log posterior (up to a constant) at ``z``.
@@ -878,10 +1022,25 @@ def _at_bound(problem, values):
     return tuple(found)
 
 
+# Above this many coordinates ``gauss_newton_mass`` returns a diagonal mass:
+# the dense covariance is n² (a 128² image is 2 GB in float64, 256² is 34 GB).
+_DENSE_MASS_MAX = 8192
+# P is floored at this fraction of its largest entry in the Woodbury branch,
+# so that W = P^-½ is finite.
+_P_FLOOR = 1e-12
+
+
 def gauss_newton_mass(
-    model, priors, data, values, *, likelihoods=(), flat_coordinates=False
+    model,
+    priors,
+    data,
+    values,
+    *,
+    likelihoods=(),
+    noise=None,
+    flat_coordinates=False,
 ):
-    """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
+    """A NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
     NUTS is the No-U-Turn Sampler of Hoffman & Gelman (2014,
     https://arxiv.org/abs/1111.4246;
@@ -889,17 +1048,64 @@ def gauss_newton_mass(
     in numpyro; see
     Betancourt (2017, https://arxiv.org/abs/1701.02434) for an introduction.
 
-    Near the maximum a posteriori, the posterior is close to a Gaussian
-    whose precision, in the unconstrained coordinates z that numpyro samples,
-    is the Gauss–Newton matrix JᵀJ. Here J is the Jacobian of the
-    whitened residuals with respect to z, including the residuals of the
-    priors (so a standard-normal prior adds the identity). Giving NUTS the
-    inverse, (JᵀJ)⁻¹, as its inverse mass matrix whitens that Gaussian.
-    Directions the data fix tightly then take the same step size as those
-    left to the prior. Without it, the step size shrinks to suit the
-    tightest direction, and NUTS needs its full tree depth (1023 leapfrog
-    steps) per draw. On a 62² Gaussian-field image fitted to 588 AMI
-    observables, it cut the cost to 63 steps per draw.
+    **The matrix.** Near the maximum a posteriori, a posterior with one peak
+    is close to a Gaussian whose precision, in the unconstrained coordinates
+    z that numpyro samples, is F = JᵀJ + diag(P). Here J is the Jacobian of
+    a vector of *curvature rows* with respect to z: the whitened residuals
+    of every dataset (with the diagonal errors held fixed), the residuals of
+    likelihood terms, and of angle-vector priors. JᵀJ is never negative in
+    any direction, since δᵀJᵀJδ = |Jδ|², so F is positive semi-definite.
+    P is the curvature of the elementwise priors and of the coordinate
+    transforms, each coordinate's own, with the Jacobian of numpyro's
+    bijection included, as NUTS's potential has it (a Normal prior on the
+    real line gives 1/σ²). The covariance F⁻¹ is the inverse mass matrix: it
+    whitens that Gaussian, so that directions the data fix tightly take the
+    same step size as those left to the prior. Without it, the step size
+    shrinks to suit the tightest direction. On a 62² Gaussian-field image
+    fitted to 588 AMI observables the matrix cut NUTS from its full tree
+    depth (1023 leapfrog steps) per draw to 63; on an 8-parameter orbit,
+    from 87 steps to about 6.
+
+    **Fitted error terms.** With ``noise=`` the matrix covers the error
+    terms too, under their numpyro site names (``"noise.vis_scale"``,
+    ``"noise[1].phi_scale"``). The likelihood then has a second term,
+    Σ log σ_k, that is not a sum of squares, but its expected curvature is
+    known for Gaussian data: a scale s multiplying N errors adds 2N in ln s,
+    whatever the model, and the matrix is blockdiag(JᵀJ, 2N). virgil builds
+    it with extra rows √2 log σ_k next to the residuals. Added errors
+    (``vis_error_rel``) get their cross terms with the model parameters the
+    same way. This is the Fisher information. Phases with errors above
+    about 0.5 rad (a von Mises, not a Gaussian, likelihood) have their
+    scale's curvature overstated, by up to a few times, which costs
+    efficiency only.
+
+    **Gains.** Gains and closure-phase offsets that are correlated across
+    channels are integrated out analytically: their covariance whitens the
+    residuals, and F differentiates through that whitening. That is a good
+    curvature for the model parameters. For fitted gain widths it is a
+    positive semi-definite heuristic rather than the Fisher information.
+
+    **What is dropped.** The exact Hessian also has Σ r ∇²r, each residual
+    times the curvature of the model. It is small when the residuals are
+    noise-like or the model is nearly linear over the error bars. It
+    matters when the fit is poor (χ²/N ≫ 1) or the model bends on the scale
+    of the errors, where F is still a safe direction but a poorer guide to
+    the error bars. A likelihood term's ``log_norm`` (a fitted RV jitter's,
+    or the Jacobian of
+    [`position_angle_prior`][virgil.orbits.position_angle_prior]) has no
+    rows, so its curvature is left out. The matrix is a preconditioner:
+    errors in it cost efficiency, not correctness.
+
+    **When not to use it.**
+
+    - Several modes (orbit aliases, the 180° flip of a symmetric binary):
+      the matrix describes one mode. Sample each separately.
+    - Nearly circular orbits (e ≲ 0.05): ω and the periastron time are
+      degenerate, and NUTS reports divergences.
+    - Companions too faint to detect, whose posterior fills the prior.
+    - Closure phases that can pass through ±180°, where the likelihood has
+      sharp walls.
+    - χ²/N ≫ 1 (a misspecified model).
 
     Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
     [`log_evidence`][virgil.imaging.log_evidence]). The curvature
@@ -908,17 +1114,24 @@ def gauss_newton_mass(
     tightly constrained one left out (such as an image's flux) keeps its
     identity mass and its tiny step size.
 
+    **Size.** The dense matrix has n² entries. With more than 8192
+    coordinates the result is a diagonal mass, with a ``UserWarning``:
+    images of 128² and above get this. Its entries are the diagonal of the
+    covariance F⁻¹, computed without forming the matrix, when there are
+    fewer rows than coordinates (an image), and 1/diag(F) otherwise.
+
     Parameters
     ----------
     model, priors, data
-        As for [`fit`][virgil.fitting.fit]. The priors must have a
-        least-squares form, as for ``fit``'s Levenberg–Marquardt: Normal
-        priors, [`AngleVector`][virgil.angles.AngleVector] priors, and
-        flat ones (Uniform, ImproperUniform, LogUniform and the other
-        priors with a flat coordinate). Flat priors add no curvature, as
-        for Uniform. An angle vector's block is keyed by its site,
-        ``"<path>_vec"``. The matrix is in the unconstrained coordinates
-        NUTS samples for
+        As for [`fit`][virgil.fitting.fit]. Any elementwise prior is
+        accepted (those with ``event_shape == ()``, including array-valued
+        parameters with an elementwise prior): Normal, HalfNormal, Beta,
+        Uniform, LogUniform and so on. Its curvature P is taken in the
+        coordinates of the sampler. ``ImproperUniform`` priors add none, nor
+        do [`AngleVector`][virgil.angles.AngleVector] priors, whose
+        residuals are rows instead; an angle vector's block is keyed by its
+        site, ``"<path>_vec"``. Data may carry gains. The matrix is in the
+        unconstrained coordinates NUTS samples for
         [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
         ``flat_coordinates``: by default numpyro's bijection of each prior's
         support, or with ``flat_coordinates=True`` ``fit``'s flat coordinates
@@ -926,16 +1139,16 @@ def gauss_newton_mass(
         b]``).
     values : dict
         The parameter values at which to take the curvature, normally
-        ``fit(model, priors, data).values``.
+        ``fit(model, priors, data).values``, including the fitted error
+        terms if ``noise`` is given.
     likelihoods : sequence, optional
         Further likelihood terms, as for ``fit`` (e.g.
         [`PositionData.term`][virgil.orbits.PositionData.term]); data may
-        then be ``()``. Their residuals join the data's in J. A term's
-        ``log_norm`` (a fitted RV jitter's, or the Jacobian of
-        [`position_angle_prior`][virgil.orbits.position_angle_prior]) has
-        no residuals, so its
-        curvature is left out: the matrix is a preconditioner, so that
-        costs efficiency, not correctness.
+        then be ``()``. Their residuals join the data's in J.
+    noise : dict or list of dict, optional
+        Priors on error terms, as for ``fit`` and ``numpyro_model``. They
+        are coordinates of the matrix. A term tied to the parameters (a
+        function instead of a prior) is not one.
     flat_coordinates : bool, optional
         Whether the sampler moves in the priors' flat coordinates, as for
         ``numpyro_model`` (default ``False``). Pass the same value to both:
@@ -952,7 +1165,22 @@ def gauss_newton_mass(
         ``inverse_mass_matrix``, ``dense_mass``, and
         ``adapt_mass_matrix=False``. Warmup adaptation is switched off
         because a dense covariance estimated from a few hundred draws in
-        thousands of dimensions is far worse than this matrix.
+        thousands of dimensions is far worse than this matrix. The
+        attribute ``condition`` is the condition number of the correlation
+        matrix (the covariance scaled to unit diagonal, so independent of
+        the parameters' units), or ``None`` for a diagonal mass. Above 1e10
+        the matrix is numerically unreliable. For the diagonal mass
+        (more than 8192 coordinates) ``dense_mass`` is empty and
+        ``inverse_mass_matrix`` holds a vector.
+
+    Raises
+    ------
+    SingularCurvature
+        If a direction is constrained by neither the data nor a proper
+        prior (an ``ImproperUniform`` or flat-in-coordinate parameter the
+        data do not fix), or the matrix is not positive definite. A
+        parameter under a bounded prior is not one: it gets the curvature
+        of the transform.
 
     Examples
     --------
@@ -969,115 +1197,157 @@ def gauss_newton_mass(
                 model,
                 priors,
                 data,
+                noise=noise,
                 likelihoods=likelihoods,
                 flat=flat_coordinates,
             ),
             "float64",
         )
-        # A log_norm has no residuals: its curvature is left out (see above).
-        problem._check_least_squares(term_norms=False)
         z = problem.init(cast_tree(values, "float64"))
-        covariance, ok = _gauss_newton_covariance(problem, z)
-        covariance = onp.asarray(covariance)
+        n = sum(np.size(z[k]) for k in problem.coordinate_keys)
+        dense = n <= _DENSE_MASS_MAX
+        covariance, ok, condition = _gauss_newton_covariance(problem, z, dense)
     if not ok:
         raise SingularCurvature(
-            "The Gauss–Newton curvature is singular: a parameter in priors "
-            "is constrained by neither the data nor a Normal prior."
+            "The Gauss–Newton curvature is singular: a direction is "
+            "constrained by neither the data nor a proper prior (an "
+            "ImproperUniform or flat-in-coordinate parameter the data do "
+            "not fix), or the matrix is not positive definite."
         )
-    sites = problem.sites
+    sites = problem.coordinate_sites
+    if not dense:
+        warnings.warn(
+            f"The Gauss–Newton mass has {n} coordinates, more than "
+            f"{_DENSE_MASS_MAX}: returning its diagonal, not the dense "
+            "matrix, which would need n² entries.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
     out = GaussNewtonMass(
         inverse_mass_matrix={sites: covariance},
-        dense_mass=[sites],
+        dense_mass=[sites] if dense else [],
         adapt_mass_matrix=False,
     )
     out.flat_coordinates = bool(flat_coordinates)
+    out.condition = condition
     return out
 
 
-@eqx.filter_jit
-def _gauss_newton_covariance(problem, z):
-    """(JᵀJ)⁻¹ over the parameters, in the order of ``problem.paths``.
+def _correlation_condition(covariance):
+    """The condition number of the covariance scaled to unit diagonal."""
+    if not onp.all(onp.isfinite(covariance)):
+        return onp.inf
+    scale = onp.sqrt(onp.diag(covariance))
+    correlation = covariance / onp.outer(scale, scale)
+    eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
+    if eigenvalues[0] <= 0.0:
+        return onp.inf
+    return float(eigenvalues[-1] / eigenvalues[0])
 
-    J is the Jacobian of the residuals, the data's and the priors', with
-    respect to the unconstrained coordinates ``z``. Most priors'
-    residuals are elementwise, so they add a diagonal D to JᵀJ, and only the
-    data's rows are differentiated (in reverse mode, one pass per datum).
-    An angle vector's residuals mix its two coordinates, so they are
-    differentiated with the data's rows instead. Returns the covariance and
-    whether JᵀJ + D was positive definite.
+
+def _gauss_newton_covariance(problem, z, dense=True):
+    """F⁻¹ for F = JᵀJ + diag(P) over the flat coordinates of ``problem``.
+
+    Returns ``(covariance, ok, condition)``: the covariance (a vector, its
+    diagonal, if ``dense`` is false), whether it is positive definite and
+    finite, and the condition number of its correlation matrix (``None``
+    unless ``dense``). The coordinates are ``problem.coordinate_keys``:
+    parameters, then fitted noise terms.
     """
-    paths = problem.paths
-    shapes = [np.shape(z[p]) for p in paths]
-    sizes = [math.prod(shape) for shape in shapes]
+    covariance, ok = _covariance(problem, z, dense)
+    covariance, ok = onp.asarray(covariance), bool(ok)
+    condition = _correlation_condition(covariance) if dense else None
+    return covariance, ok, condition
 
-    def unflatten(x):
-        pieces = np.split(x, onp.cumsum(sizes)[:-1])
-        return {p: v.reshape(s) for p, v, s in zip(paths, pieces, shapes)}
 
-    vectors = [p for p in paths if is_angle_vector(problem.priors[p])]
+@eqx.filter_jit
+def _covariance(problem, z, dense):
+    """``(covariance, ok)`` of ``_gauss_newton_covariance``.
 
-    def data_residuals(x):
-        z_x = unflatten(x)
-        model = problem.build(z_x)
-        rows = list(problem.data_residuals(model))
-        constrained = problem.constrain(z_x)
-        rows += [np.ravel(term(constrained)) for term in problem.likelihoods]
-        rows += [problem.priors[p].residuals(z_x[p]) for p in vectors]
-        # With data=() and no other rows there are no residuals: an empty
-        # vector.
-        return np.concatenate(rows) if rows else np.zeros(0)
+    J is the Jacobian of ``problem.curvature_rows`` and P is
+    ``problem.curvature_diag(z, jacobian=True)``. With at least as many rows
+    as coordinates, F is formed and Cholesky-factored. With fewer (an
+    image's latents) it is inverted by Woodbury, which solves a system the
+    size of the rows: with W = P^-½ and K = JW,
+    (P + JᵀJ)⁻¹ = W (I - Kᵀ(I + KKᵀ)⁻¹K) W. The coordinates with P = 0 by
+    type (``curvature_zero``) are given P = 1, then that is taken back off,
+    (A - EᵀE)⁻¹ = A⁻¹ + A⁻¹Eᵀ(I - EA⁻¹Eᵀ)⁻¹EA⁻¹ with E picking them out of
+    A. Every other P is floored at 1e-12 times the largest, so that W is
+    finite, since ``max(0, ·)`` can give zero at run time. Positive
+    definiteness is checked on the result, by a Cholesky factorization of
+    the covariance itself: a cancellation in float32 can give a
+    non-positive-definite matrix from factors that look fine.
+    """
+    flat, unravel = problem.ravel(z)
+    n = flat.size
 
-    def prior_curvature(path):
-        prior = problem.priors[path]
-        if path in vectors:
-            return None  # differentiated with the data's rows
-        if _prior_residuals(path, prior, z[path]) is None:
-            return None  # a flat prior
-        bijection = _bijection(prior)
+    def rows(x):
+        return problem.curvature_rows(unravel(x))
 
-        def residuals(v):
-            return _prior_residuals(path, prior, bijection(v))
-
-        ones = np.ones_like(z[path])
-        return jax.jvp(residuals, (z[path],), (ones,))[1] ** 2
-
-    curvatures = [prior_curvature(p) for p in paths]
-    # Which coordinates have flat priors is known when tracing.
-    flat_prior = onp.concatenate(
-        [onp.full(n, c is None) for n, c in zip(sizes, curvatures)]
-    )
-    d = np.concatenate(
-        [np.zeros(n) if c is None else c for n, c in zip(sizes, curvatures)]
-    )
-    flat = np.concatenate([np.ravel(z[p]) for p in paths])
-    # Forward mode costs a pass per parameter, reverse a pass per residual.
-    n, n_data = flat.size, jax.eval_shape(data_residuals, flat).size
-    jacobian = jax.jacfwd if n_data >= n else jax.jacrev
-    jac = jacobian(data_residuals)(flat)
-    if n_data >= n:
-        factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(d))
-        covariance = jax.scipy.linalg.cho_solve(factor, np.eye(n))
-        ok = np.all(np.isfinite(factor[0])) & np.all(np.diag(factor[0]) > 0)
-        return covariance, ok
-    # Fewer data than parameters (an image's latents): by Woodbury,
-    # (D + JᵀJ)⁻¹ = W (I - Kᵀ(I + KKᵀ)⁻¹K) W with W = D^-1/2 and K = JW,
-    # which solves a system the size of the data, not of the parameters.
-    # Coordinates with flat priors (a few, e.g. a flux) have no D: give
-    # them D = 1, then take that back off, (A - EᵀE)⁻¹ = A⁻¹ +
-    # A⁻¹Eᵀ(I - EA⁻¹Eᵀ)⁻¹EA⁻¹ with E picking them out of A = D + JᵀJ.
-    w = 1 / np.sqrt(np.where(flat_prior, 1.0, d))
-    k = jac * w
-    inner = jax.scipy.linalg.cho_factor(np.eye(n_data) + k @ k.T)
-    shrink = k.T @ jax.scipy.linalg.cho_solve(inner, k)
-    a_inv = w[:, None] * (np.eye(n) - shrink) * w[None, :]
-    flats = onp.flatnonzero(flat_prior)
-    if flats.size == 0:
-        return a_inv, np.asarray(True)  # D + JᵀJ is positive definite
-    columns = a_inv[:, flats]
-    schur = jax.scipy.linalg.cho_factor(np.eye(flats.size) - columns[flats])
-    covariance = a_inv + columns @ jax.scipy.linalg.cho_solve(schur, columns.T)
-    ok = np.all(np.isfinite(schur[0])) & np.all(np.diag(schur[0]) > 0)
-    return covariance, ok
+    n_rows = jax.eval_shape(rows, flat).size
+    p = problem.curvature_diag(z, True)
+    zero = problem.curvature_zero(z, True)
+    # Forward mode costs a pass per coordinate, reverse a pass per row.
+    jac = (jax.jacfwd if n_rows >= n else jax.jacrev)(rows)(flat)
+    if n_rows >= n:
+        factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(p))
+        if dense:
+            covariance = jax.scipy.linalg.cho_solve(factor, np.eye(n))
+        else:
+            covariance = 1.0 / (np.sum(jac**2, axis=0) + p)
+        ok_factor = np.all(np.isfinite(factor[0]))
+    else:
+        zero_np = onp.asarray(zero)
+        largest = np.max(np.where(zero_np, 0.0, p), initial=0.0)
+        floor = _P_FLOOR * np.where(largest > 0.0, largest, 1.0)
+        w = 1.0 / np.sqrt(np.where(zero_np, 1.0, np.maximum(p, floor)))
+        k = jac * w
+        inner = jax.scipy.linalg.cho_factor(np.eye(n_rows) + k @ k.T)
+        ok_factor = np.all(np.isfinite(inner[0]))
+        flats = onp.flatnonzero(zero_np)
+        if dense:
+            shrink = k.T @ jax.scipy.linalg.cho_solve(inner, k)
+            a_inv = w[:, None] * (np.eye(n) - shrink) * w[None, :]
+            covariance = a_inv
+            if flats.size:
+                columns = a_inv[:, flats]
+                schur = jax.scipy.linalg.cho_factor(
+                    np.eye(flats.size) - columns[flats]
+                )
+                covariance = a_inv + columns @ jax.scipy.linalg.cho_solve(
+                    schur, columns.T
+                )
+                ok_factor = ok_factor & np.all(np.isfinite(schur[0]))
+        else:
+            # The diagonal of the same expression, never forming n × n:
+            # with Y = L⁻¹K and I + KKᵀ = LLᵀ, a_inv = W (I - YᵀY) W.
+            # (cho_factor gives the upper factor U, I + KKᵀ = UᵀU, so L = Uᵀ.)
+            y = jax.scipy.linalg.solve_triangular(
+                inner[0], k, trans="T", lower=inner[1]
+            )
+            covariance = w**2 * (1.0 - np.sum(y**2, axis=0))
+            if flats.size:
+                e = (
+                    np.zeros((n, flats.size))
+                    .at[flats, np.arange(flats.size)]
+                    .set(1.0)
+                )
+                columns = w[:, None] * (e - y.T @ y[:, flats])
+                columns = columns * w[flats][None, :]
+                schur = jax.scipy.linalg.cho_factor(
+                    np.eye(flats.size) - columns[flats]
+                )
+                solved = jax.scipy.linalg.cho_solve(schur, columns.T)
+                covariance = covariance + np.sum(columns * solved.T, axis=1)
+                ok_factor = ok_factor & np.all(np.isfinite(schur[0]))
+    finite = np.all(np.isfinite(covariance))
+    if dense:
+        covariance = 0.5 * (covariance + covariance.T)
+        chol = np.linalg.cholesky(covariance)
+        positive = np.all(np.isfinite(chol)) & np.all(np.diag(chol) > 0)
+    else:
+        positive = np.all(covariance > 0)
+    return covariance, ok_factor & finite & positive
 
 
 def _has_residuals(problem, z):
