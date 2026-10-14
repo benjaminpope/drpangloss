@@ -1,6 +1,7 @@
 # Gauss–Newton and Levenberg–Marquardt across virgil: implementation plan
 
-Status: **plan, adversarially reviewed, not built** (2026-10-14). Ben
+Status: **plan, adversarially reviewed, decisions taken, not built**
+(2026-10-14). Ben
 accepted the six recommendations of the Gauss–Newton audit (coordinating
 session, 2026-10-14; experiments `e1`–`e9`). This note turns them into
 PR-sized pieces that Sonnet sessions can build without further design
@@ -11,7 +12,7 @@ Stage 7.
 Contents: §1 the problem; §2 the design in one page; §3 the explanation
 for the docs (the draft Ben asked for); §4 the pieces; §5 where
 Gauss–Newton must not be trusted; §6 the split with the orbit solver;
-§7 open decisions; §8 review and responses.
+§7 Ben's decisions; §8 review and responses.
 
 ## 1. The problem
 
@@ -104,7 +105,7 @@ already sums of squares (all of today's default `method="lm"` fits,
 including large images with CG): their paths do not change. L-BFGS stays
 for regularizers without a residual form, images, and problems too large
 for a dense kernel. Folding optimistix's dense case into the kernel is a
-later decision (§7, D3).
+later decision (§7, D3: after a release).
 
 **What goes.** The restart loop of `aliases._optimize`
 (`_MAX_RESTARTS`, `_RESTART_GAIN`), `aliases._newton_polish`, the scipy
@@ -594,6 +595,8 @@ with per-block dof), `docs/gauss_newton.md` (new), `mkdocs.yml`
     respect to `chi2` times 2 (w_b ≥ 0 because the score falls as any
     χ²_b rises; for `s_max=None` it is dof_b·ν_b/χ²_b).
 
+**Default switch (D1).** GN3 merges with the kernel reached by `method="lm"` only (rule 2 behind a module flag `_GN_DEFAULT_ON = False`). When the OzSTAR comparison below shows the kernel beating L-BFGS, a follow-up sets the flag, updates the regression tests' expected solver and adds the CHANGELOG entry.
+
 **What changes for existing users.** Default fits with fitted `noise=`,
 with gains, with priors such as HalfNormal or Beta, or with `log_norm`
 terms, and ≤ 50 coordinates, now use LM on the kernel instead of L-BFGS.
@@ -612,8 +615,9 @@ optimistix vs the kernel).
 - *Regression* (`tests/test_fitting_gn.py`, new, ~6 curated fixtures:
   binary with `vis_scale`/`phi_scale`; binary with gains; binary with
   `vis_error_rel`; a list-form noise over two datasets; an orbit with
-  `RVData` jitter (`log_norm`); a HalfNormal prior): the default fit
-  uses `solver == "gauss-newton"`; values agree with
+  `RVData` jitter (`log_norm`); a HalfNormal prior): with `_GN_DEFAULT_ON`
+  monkeypatched to True, the default fit uses `solver == "gauss-newton"`
+  (with the flag off, `"lbfgs"` as now); values agree with
   `method="lbfgs"` within 1e-4 relative or 1e-3 of the Laplace σ,
   whichever is larger; losses within 1e-6·N. Existing assertions on
   `info["method"] == "lbfgs"` for such fits elsewhere are updated, each
@@ -891,31 +895,32 @@ Where this plan differs from the solver's §6.4 text:
    rule, and agrees with today's matrix wherever the transform is the
    identity.
 
-## 7. Open decisions for Ben
+## 7. Decisions (Ben, 2026-10-14)
 
 - **D1. The `fit` default for objectives that are not least squares
-  (GN3).** The plan switches the default to the kernel up to 50
-  coordinates (the review's figure), keeps `method="lm"` up to 200, and
-  falls back to L-BFGS when the kernel stalls. The alternative is
-  opt-in only until the Apep OzSTAR comparison is back. Raising the 50
-  waits for the GN3 size sweep.
-- **D2. Fitted gain widths.** Their curvature is a PSD heuristic (live
-  rows), not the Fisher information. That is good enough for a
-  preconditioner. If precise NUTS work on gain widths is planned, an
-  exact per-block form is a follow-up (§8, objection 1).
-- **D3. One LM or two.** optimistix stays for pure least squares, so no
-  existing path changes. Moving its dense (≤ 200) case onto the kernel
-  would leave one dense LM in virgil, but change the path of every
-  existing small LM fit. The plan does not do it. Revisit after GN3 has
-  shipped in a release.
+  (GN3): the kernel, if it beats L-BFGS.** GN3 switches the default to
+  the kernel up to 50 coordinates and keeps `method="lm"` up to 200, with
+  L-BFGS as the fallback when the kernel stalls. The switch is gated on
+  GN3's OzSTAR comparison (e2 with noise scales, and the Apep fit):
+  the kernel must succeed at least as often as L-BFGS, be faster in
+  median wall time, and reach the same values and losses on Apep. Until
+  that report is back, GN3 merges with the kernel opt-in
+  (`method="lm"`); a follow-up of a few lines flips the default. The
+  size sweep decides whether the 50 can rise.
+- **D2. Fitted gain widths: the heuristic is accepted.** Their curvature
+  comes from the live rows (PSD, not the Fisher information). An exact
+  per-block form is not planned.
+- **D3. Two LM paths for now.** optimistix stays for pure least squares;
+  the kernel takes the rest. Revisit merging them after GN3 has shipped
+  in a release.
 - **D4. MEM default (GN6).** Flip `lm_default` only if the Stage 7
   L-curve success test passes on OzSTAR.
 - **D5. Pipeline default (GN5).** It stays adapted. Flip it to
-  `"gauss_newton"` after the OzSTAR comparison, if fallbacks are rare.
-- **D6. Benchmarks.** Ben's rule keeps heavy JAX off the laptop, so every
-  benchmark that decides anything is an OzSTAR job. Locally there are
-  only unit-test-sized smoke runs. The brief asked for local benchmarks
-  before OzSTAR; these smoke runs are that step.
+  `"gauss_newton"` only after the OzSTAR comparison, if fallbacks are
+  rare.
+- **D6. Benchmarks.** Every benchmark that decides anything is an OzSTAR
+  job that Ben runs. The local step before it is the seconds-long smoke
+  runs of each piece.
 
 ## 8. Review and responses
 
