@@ -41,8 +41,8 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
-- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape times one
-  free amplitude, so any spectrum (a library SED, a `Sum` with lines) can be a
+- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
+  free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
   companion in the grids, limits and detection statistics, with
   `comp.flux.ratio` as the flux axis; the template's parameters get no
   gradient. Regression tests (`tests/test_chromatic_search.py`) run

@@ -324,26 +324,35 @@ class LorentzianLine(_Line):
 
 
 class Scaled(Spectrum):
-    """A fixed spectral shape times one free amplitude, ``ratio * template(λ)``.
+    """A fixed spectral shape with a free reference flux, ``ratio`` at ``wavel0``.
 
-    The template's own parameters are held fixed (no gradient flows to
-    them), and only ``ratio`` is free, so any spectrum, e.g. a
-    library SED or a [`Sum`][virgil.spectra.Sum] with lines, can be the
-    companion in grids, limits and detection statistics, whose flux axis
-    is ``comp.flux.ratio``. The reference flux is ``ratio * template()``.
+    The value is ``ratio * template(λ) / template()``: the template's shape,
+    normalized to ``ratio`` at the template's reference wavelength, as for
+    ``PowerLaw.ratio``. Any spectrum, e.g. a library SED or a
+    [`Sum`][virgil.spectra.Sum] with lines, can then be a companion in the
+    grids, limits and detection statistics, whose flux axis is
+    ``comp.flux.ratio``, and that axis is a flux ratio in physical units
+    whatever the template's own normalization (which must be positive).
+
+    The template's parameters are held fixed: no gradient flows to them, so
+    do not give priors to, or fit, paths such as ``comp.flux.template.index``
+    (they would not move, and sampling them would be wrong). Only ``ratio``
+    is free.
 
     Parameters
     ----------
     template : Spectrum
-        The shape, with its own normalization.
+        The shape; only its shape matters.
     ratio : float or array-like, optional
-        The multiplier (default 1).
+        The flux at the template's ``wavel0`` (default 1).
 
     Examples
     --------
     >>> template = PowerLaw(0.5, index=-2.0, wavel0=2.0e-6)
     >>> round(float(Scaled(template, 0.1)(4.0e-6)), 6)
-    0.0125
+    0.025
+    >>> round(float(Scaled(template, 0.1)()), 6)
+    0.1
     """
 
     template: Spectrum
@@ -361,14 +370,21 @@ class Scaled(Spectrum):
 
     def __call__(self, wavel=None):
         if wavel is None:
-            return self.ratio * jax.lax.stop_gradient(self.template(None))
+            return self.ratio
         return self._at(np.asarray(wavel))
 
     def _at(self, wavel):
-        return self.ratio * jax.lax.stop_gradient(self.template._at(wavel))
+        shape = jax.lax.stop_gradient(
+            self.template._at(wavel) / self.template(None)
+        )
+        return self.ratio * shape
 
     def _params_valid(self):
-        return np.all(self.ratio >= 0.0) & self.template._params_valid()
+        return (
+            np.all(self.ratio >= 0.0)
+            & (self.template(None) > 0.0)
+            & self.template._params_valid()
+        )
 
     def _check_wavel(self):
         return self.template._check_wavel()

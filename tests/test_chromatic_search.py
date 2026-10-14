@@ -28,6 +28,7 @@ from virgil.detection import (
     injection_recovery,
 )
 from virgil.grid_fit import likelihood_grid, linear_flux_grid
+from virgil.spectra import reference_flux
 from virgil.limits import absil_limits, injection_limits
 
 BRG = 2.1661e-6
@@ -146,14 +147,15 @@ def test_scaled_is_the_template_times_a_ratio():
     )
     scaled = Scaled(template, 0.1)
     wavel = onp.linspace(BRG - 4e-9, BRG + 4e-9, 17)
+    # The template's shape, normalized to ratio at its reference wavelength
+    # (here template() != 1), so that ratio is a flux ratio.
+    assert float(template()) != pytest.approx(1.0, rel=0.1)
     onp.testing.assert_allclose(
-        scaled(wavel), 0.1 * template(wavel), rtol=1e-6
+        scaled(wavel), 0.1 * template(wavel) / template(), rtol=1e-6
     )
-    assert float(scaled()) == pytest.approx(0.1 * float(template()), rel=1e-6)
+    assert float(scaled()) == pytest.approx(0.1, rel=1e-6)
+    assert float(reference_flux(scaled)) == pytest.approx(0.1, rel=1e-6)
     assert bool(scaled.is_physical())
-    assert float(Scaled(template)(BRG)) == pytest.approx(
-        float(template(BRG)), rel=1e-6
-    )
     with pytest.raises(ValueError, match="negative"):
         Scaled(template, -0.1)
     with pytest.raises(TypeError, match="Spectrum"):
@@ -263,7 +265,9 @@ def test_detection_statistics_and_mc_detect_the_chromatic_companion(wr_data):
 
 def test_differential_phase_alone_detects_what_a_grey_fit_misses():
     # 0.1 mas is a fiftieth of the 4 mas resolution of the 130 m baselines:
-    # V2 and closure phases change by a fraction of their errors. The
+    # V2 and closure phases change by a fraction of their errors (the
+    # differential phases have smaller errors, 0.005 rad, than the closure
+    # phases, 0.0087 rad, and more phases per sample). The
     # photocentre moves with the line (the flux ratio drops from 0.2 to
     # about 0.05 across it), so the differential phase sees it.
     sep = 0.1
