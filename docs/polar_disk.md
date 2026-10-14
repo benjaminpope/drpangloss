@@ -252,6 +252,9 @@ product per order. It is never automatic. If a frozen quantity or the
 baselines change the model falls back to the full computation (same answer,
 no speed-up), checked at every call.
 
+See [A planet in a gap between rings](polar_disk_rings.md) for a worked example with a
+parametric fit and a Gaussian-process disk of the same data.
+
 ## Notes
 
 - **Normalization.** The disk has unit flux, and the transform is divided by
