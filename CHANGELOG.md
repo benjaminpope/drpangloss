@@ -41,6 +41,16 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
+  (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
+  (or radial function) with latents `z`; `PolarKernel` is a prior over the
+  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `PolarDisk` takes
+  `spectral_index=` (number, function or `RadialGP`) with `wavel0=`;
+  `freeze_geometry(data)` caches the Bessel matrices; `gp_priors` builds the
+  priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
+  `imaging.log_evidence` (Laplace over the latents) support them. The
+  Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
+  the `RadialGP` docstring, the contributors page and the bibliography.
 - **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
   `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
   *positive* form by default: brightness `|h(e^{i theta})|^2` normalized to the

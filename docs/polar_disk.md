@@ -195,6 +195,63 @@ thin and nothing is occulted.
 and harmonics, with `inc = 90 - |tilt|` and `pa` the cone's `pa - 90`. It keeps
 its name and parameters, and now converges spectrally in `n_rings`.
 
+## Gaussian-process profiles
+
+[`RadialGP`](api/models/classes/polar_disk.md) is a nonparametric profile: the
+log-intensity at the quadrature nodes is $g = \mu + \sigma L z$, with $L$ the
+Cholesky factor of a Matérn kernel of length $\ell$ and $z \sim N(0, I)$ the
+free parameters ("whitened" latents, which NUTS samples well). The intensity
+is $e^{g}$, so it is positive for any $z$. The nodes are the Gauss-Legendre
+nodes of the profile's own range, so `n_r` is the number of latents (keep it
+at 100 or below: the factor is dense). Linear interpolation between nodes is
+used only for rendering.
+
+```python
+from virgil import PolarDisk, RadialGP, fit, gp_priors
+
+start = PolarDisk(RadialGP(0.5, 10.0, sigma=1.5, ell=1.5), n_r=24)
+result = fit(start, gp_priors(start), data)
+```
+
+`gp_priors(model)` gives `Normal(0, 1)` priors on every latent vector and,
+when bounds are passed (`sigma=(0.3, 3.0)`, `ell=(1.0, 6.0)`), log-uniform
+priors on the scales. The scales are fixed unless given priors. A MAP fit of
+`sigma` or `ell` is biased towards the prior edge (`fit` warns), so sample
+them with NUTS (`numpyro_model(..., flat_coordinates=True)`) or leave them
+fixed and compare `imaging.log_evidence` at several values: the Laplace
+evidence is over the latents, conditional on the hyperparameters.
+
+### Priors over the harmonics
+
+`Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
+coefficients with a prior: each order $m$ is a `RadialGP` of length `ell_r`
+(across radius) with variance proportional to
+$(1 + (m \ell_\theta / \bar r)^2)^{-\nu - 1/2}$, independent between
+orders. The azimuthal length `ell_theta` sets how fast the structure falls
+off with $m$: large values suppress high orders. The latents are the field
+`harmonics.z` of shape `(2, M, n)`. The default form is positive.
+
+## Spectral index
+
+`PolarDisk(..., spectral_index=alpha, wavel0=lambda0)` makes the intensity
+$I(r, \lambda) = I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$. `alpha` is a number,
+a radial function from `virgil.models` (for example `RadialLinear`) or a
+`RadialGP` (here $\alpha = g$ directly, not exponentiated). The visibility is
+normalized at every wavelength, and the share of the disk's light in a
+[`System`](api/models/classes/composition.md) follows
+$\int I(r, \lambda)\, r\, dr$ relative to $\lambda_0$, with `flux` the
+flux at `wavel0` (a scalar: a spectrum from `virgil.spectra` is refused).
+Harmonics are grey.
+
+## Frozen geometry
+
+`disk.freeze_geometry(data)` returns the disk with the Bessel matrices for
+those baselines cached. With `inc`, `pa`, the height and the nodes held fixed,
+a refit of the profile, the harmonics or the index is then a matrix-vector
+product per order. It is never automatic. If a frozen quantity or the
+baselines change the model falls back to the full computation (same answer,
+no speed-up), checked at every call.
+
 ## Notes
 
 - **Normalization.** The disk has unit flux, and the transform is divided by
