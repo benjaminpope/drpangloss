@@ -491,6 +491,9 @@ class EllipticalGaussian(Component):
         return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
 
 
+_ARC_MAX_DEGREE = 256  # beyond this GaussianArc integrates along the arc
+
+
 class GaussianArc(Component):
     r"""A ridge bent along a circular arc, e.g. a curved shock front.
 
@@ -521,11 +524,14 @@ class GaussianArc(Component):
     The visibility is exact up to the truncation of the von Mises
     harmonics at ``degree``, which is chosen when the arc is built, from its
     ``radius`` and ``length``, so that the neglected harmonics are below
-    $10^{-6}$ of the mean (at most 256, which covers arcs down to a FWHM of
-    about 3 degrees); pass ``degree`` to choose it, and note that fitting
-    ``length`` to much narrower arcs than the starting ones needs a larger
-    one. The rendered image samples the weight at ``nodes`` points along the
-    arc.
+    $10^{-6}$ of the mean. Arcs narrower than that allows (more than 256
+    harmonics, ``length / radius`` below about 0.05, a FWHM of about 3
+    degrees) are instead integrated along the arc with the von Mises
+    weight at ``nodes`` points, as the image is, at a cost independent of
+    the width; ``quadrature`` says which was chosen. Pass ``degree`` to
+    force the series. Fitting ``length`` to much narrower arcs than the
+    starting ones needs a larger ``degree``, and ``is_physical`` is false
+    once the series drops more than 1e-4 of its power.
 
     Parameters
     ----------
@@ -547,7 +553,8 @@ class GaussianArc(Component):
         the East and North. The arc itself lies ``radius`` away from it.
     nodes : int, optional
         Points along the arc at which the rendered image is sampled, at least
-        2 (default 128). It does not affect the visibilities.
+        2 (default 128). It affects the visibilities only on the quadrature
+        path (very narrow arcs).
     degree : int, optional
         Highest harmonic of the von Mises weight kept in the visibilities
         (static); by default chosen from the starting ``radius`` and
@@ -564,6 +571,7 @@ class GaussianArc(Component):
     pa: jax.Array
     nodes: int = eqx.field(static=True)
     degree: int = eqx.field(static=True)
+    quadrature: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -597,6 +605,7 @@ class GaussianArc(Component):
         if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
+        self.quadrature = False
         if degree is None:
             r, length = concrete(self.radius), concrete(self.length)
             if (
@@ -610,7 +619,12 @@ class GaussianArc(Component):
                 kappa = (FWHM_PER_SIGMA * onp.max(r / length)) ** 2
                 from .harmonics import auto_von_mises_degree
 
-                degree = auto_von_mises_degree(kappa)
+                degree = auto_von_mises_degree(kappa, cap=None)
+                if degree > _ARC_MAX_DEGREE:
+                    # Too narrow for a harmonic series: integrate along the
+                    # arc instead.
+                    self.quadrature = True
+                    degree = _ARC_MAX_DEGREE
         if isinstance(degree, bool) or int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
@@ -633,7 +647,16 @@ class GaussianArc(Component):
             & np.all(self.radius > 0.0)
             & np.all(self.width > 0.0)
             & np.all(self.length > 0.0)
+            & self._series_converged()
         )
+
+    def _series_converged(self):
+        """True unless the von Mises series, truncated at ``degree``, drops
+        more than 1e-4 of the power (e.g. ``length`` fitted far below its
+        starting value); always true on the quadrature path."""
+        if self.quadrature:
+            return np.asarray(True)
+        return np.all(self.harmonics().truncation_power() < 1e-4)
 
     def kappa(self):
         """The concentration of the von Mises weight along the arc."""
@@ -652,7 +675,11 @@ class GaussianArc(Component):
         which the weight is above ``exp(-21)`` of its peak (once round the
         circle for a wide arc, both ends at the antipode of ``pa``)."""
         kappa = self.kappa()
-        span = np.arccos(np.clip(1.0 - 21.0 / np.maximum(kappa, 1e-12), -1, 1))
+        # A safe argument where the span is the whole circle, so that the
+        # gradient of arccos stays finite.
+        cosine = 1.0 - 21.0 / np.maximum(kappa, 1e-12)
+        wide = cosine <= -1.0
+        span = np.where(wide, np.pi, np.arccos(np.where(wide, 0.0, cosine)))
         phi = np.linspace(-1.0, 1.0, self.nodes) * span
         angle = self.pa * dtor + phi
         # Trapezoidal rule: the end points carry half weight.
@@ -662,7 +689,21 @@ class GaussianArc(Component):
         y = self.radius * np.cos(angle)
         return x, y, weight / np.sum(weight)
 
+    def _quadrature_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        curve = np.matmul(
+            offset_phase(uu, vv, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape(curve * envelope, shape)
+
     def _centred_cvis(self, uu, vv):
+        if self.quadrature:
+            return self._quadrature_cvis(uu, vv)
         # A thin ring with the von Mises weight and a Gaussian blur, on the
         # engine, face-on: its azimuth runs from North towards East.
         c, s = self.harmonics().coefficients(np.reshape(self.radius, (1,)))
@@ -3951,7 +3992,13 @@ class Harmonics(_Azimuthal):
         if w is not None:
             if re != () or im != ():
                 raise ValueError("give w or re and im, not both.")
-            w = onp.atleast_1d(onp.asarray(concrete(w), dtype=complex))
+            w_value = concrete(w)
+            if w_value is None:
+                raise TypeError(
+                    "Harmonics(w=...) takes constants; for traced latents "
+                    "pass re= and im= (real and imaginary parts) instead."
+                )
+            w = onp.atleast_1d(onp.asarray(w_value, dtype=complex))
             if w.ndim != 1:
                 raise ValueError(f"w must be 1-D, got shape {w.shape}.")
             re, im = (
@@ -4196,9 +4243,10 @@ class VonMises(_Azimuthal):
         from . import harmonics as _h
 
         r = np.asarray(r)
-        value = (
-            lambda v: v(r) if isinstance(v, _RadialFunction) else v + 0.0 * r
-        )  # noqa: E731
+
+        def value(v):
+            return v(r) if isinstance(v, _RadialFunction) else v + 0.0 * r
+
         return _h.von_mises_image_harmonics(
             value(self.kappa),
             value(self.theta0) * dtor,

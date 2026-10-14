@@ -203,15 +203,18 @@ def von_mises_image_harmonics(kappa, theta0, degree, n_fft):
 def auto_von_mises_degree(kappa, tol=1e-6, cap=256, minimum=1):
     """The smallest degree whose von Mises coefficients beyond it are all
     below ``tol`` of the mean, for a concrete ``kappa`` (the largest if
-    several), at most ``cap`` (a warning is given if that truncates)."""
+    several), at most ``cap`` (a warning is given if that truncates; ``None``
+    for no cap)."""
     kappa = float(onp.max(onp.asarray(kappa, dtype=float)))
     n = 4096
+    while n < 40.0 * onp.sqrt(kappa):
+        n *= 2
     grid = 2.0 * onp.pi * onp.arange(n) / n
     spectrum = onp.fft.rfft(onp.exp(kappa * (onp.cos(grid) - 1.0)))
     ratio = onp.abs(spectrum / spectrum[0])
     above = onp.nonzero(ratio > tol)[0]
     degree = int(above.max()) if above.size else 0
-    if degree > cap:
+    if cap is not None and degree > cap:
         warnings.warn(
             f"a von Mises profile with kappa = {kappa:g} needs degree "
             f"{degree} to keep its harmonics above {tol:g}; truncating at "
