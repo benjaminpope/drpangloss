@@ -19,6 +19,13 @@ normalizing flow (a block neural autoregressive flow) after the Laplace
 affine map, which can bend and skew the Gaussian to follow curved ridges,
 skewed scales and parameters pressed against a prior bound. Every guide
 covers one mode.
+
+References: ADVI (Kucukelbir et al. 2017, https://arxiv.org/abs/1603.00788),
+the block neural autoregressive flow (De Cao, Titov & Aziz 2019,
+https://arxiv.org/abs/1904.04676), the inverse autoregressive flow (Kingma
+et al. 2016, https://arxiv.org/abs/1606.04934), and Pareto-smoothed
+importance sampling, whose shape estimate k̂ diagnoses the fit (Vehtari et
+al. 2024, https://arxiv.org/abs/1507.02646).
 """
 
 import dataclasses

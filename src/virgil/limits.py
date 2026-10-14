@@ -7,9 +7,10 @@ as a magnitude difference ``Δmag = 2.5 log10(contrast)`` (5 mag here), which
 :func:`flux_to_contrast` and :func:`flux_to_delta_mag` compute.
 
 * :func:`ruffio_upperlimit`: Bayesian upper limits with a positive-flux prior
-  (Ruffio et al. 2018).
+  (Ruffio et al. 2018, https://arxiv.org/abs/1809.08261).
 * `absil_limits`: frequentist limits from the chi-squared ratio to the
-  no-companion model (Absil et al. 2011), using :func:`nsigma`.
+  no-companion model (Absil et al. 2011, https://arxiv.org/abs/1110.1178),
+  using :func:`nsigma`.
 * `injection_limits`: limits by companion injection (Gallenne et al. 2015,
   as in CANDID): the flux at which an injected companion would be detected
   at ``sigma``.

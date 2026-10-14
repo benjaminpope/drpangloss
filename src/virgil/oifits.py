@@ -15,6 +15,10 @@ Each (baseline, wavelength) sample becomes one element of the flat ``u``,
 row, then wavelength channel. Closure phases index into these samples, so a
 multi-wavelength closure phase is formed from visibilities at its own
 wavelength.
+
+The format is the OIFITS standard: version 1 of Pauls et al. (2005, PASP
+117, 1255, https://doi.org/10.1086/444523) and version 2 of Duvert et al.
+(2017, A&A 597, A8, https://arxiv.org/abs/1510.04556).
 """
 
 import datetime

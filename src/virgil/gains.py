@@ -22,7 +22,8 @@ its width. The modes come in groups, with one width each:
 For small gains (τ ≲ 0.2) the observable changes linearly, by
 J m_j with J = dObs/dlog|V| = 2V² for squared visibilities, |V| for
 amplitudes and 1 for log-amplitudes, taken from the *model* (so the
-covariance does not depend on the noisy data; Lachaume 2021). The gains
+covariance does not depend on the noisy data; Lachaume 2021,
+https://arxiv.org/abs/2104.07082). The gains
 are then Gaussian and are marginalized analytically: the visibility
 covariance becomes
 

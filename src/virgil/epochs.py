@@ -588,8 +588,8 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
 
     Each observable block *b* of ``data`` (visibilities, phases, and each
     extra observable) has an unknown factor ``s_b`` on its quoted errors.
-    Integrating it out under its Jeffreys prior ``1/s_b`` gives, up to a
-    constant,
+    Integrating it out under its Jeffreys prior ``1/s_b`` (Jeffreys 1946,
+    https://doi.org/10.1098/rspa.1946.0056) gives, up to a constant,
 
         m = -Σ_b (ν_b/2) ln χ²_b,
 
@@ -598,7 +598,8 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
     ν_b its number of independent observables
     ([`n_independent`][virgil.oidata.OIData.n_independent], split by
     block). Profiling ``s_b`` gives the same function, at
-    ŝ_b² = χ²_b/ν_b. ``m`` does not change when any block's errors are
+    ŝ_b² = χ²_b/ν_b (the re-estimation of error bars of MacKay 1992,
+    Neural Comput. 4, 415, https://doi.org/10.1162/neco.1992.4.3.415). ``m`` does not change when any block's errors are
     multiplied by a constant, so its differences between models (e.g.
     the gap between two peaks) do not depend on how well the errors were
     quoted. Near a peak, m ≈ -χ²/(2ŝ²): differences are those of the

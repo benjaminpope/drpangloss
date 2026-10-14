@@ -114,7 +114,10 @@ class TSV(_ImageRegulariser):
     """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
 
     A quadratic smoothness penalty, so it can be fitted by
-    Levenberg–Marquardt.
+    Levenberg–Marquardt. Total squared variation is the regularizer of
+    Kuramochi et al. (2018, ApJ 858, 56, https://arxiv.org/abs/1802.05783),
+    used with the sparse modelling of Akiyama et al. (2017,
+    https://arxiv.org/abs/1702.07361).
 
     Parameters
     ----------
@@ -142,7 +145,11 @@ class TSV(_ImageRegulariser):
 class TV(_ImageRegulariser):
     """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
 
-    Favours piecewise-flat images with sharp edges. ``ε`` smooths the
+    Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi
+    1992, Physica D 60, 259, https://doi.org/10.1016/0167-2789(92)90242-F;
+    for radio imaging see Akiyama et al. 2017,
+    https://arxiv.org/abs/1702.07361, and Chael et al. 2018,
+    https://arxiv.org/abs/1803.07088). ``ε`` smooths the
     penalty where the image is flat, so that it is differentiable. The
     penalty is averaged over the four flips of the image, so it does not
     depend on which neighbour each forward difference pairs a pixel with,
@@ -187,7 +194,10 @@ class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
     The relative entropy of the image with respect to a default image ``q``.
-    It is zero for ``b = q`` and positive otherwise.
+    It is zero for ``b = q`` and positive otherwise. Maximum-entropy
+    reconstruction is that of Skilling & Bryan (1984, MNRAS 211, 111); for
+    its use in optical interferometry see BSMEM (Baron & Young 2008,
+    https://doi.org/10.1117/12.789115).
 
     Parameters
     ----------
@@ -230,7 +240,8 @@ class Laplacian(_ImageRegulariser):
     ``∇²b`` is the five-point Laplacian, with zeros beyond the edges (so it
     is evaluated on a ring of pixels around the image too). A quadratic
     penalty on curvature, smoother than TSV, so it can be fitted by
-    Levenberg–Marquardt.
+    Levenberg–Marquardt. Quadratic regularizers are Gaussian priors on the
+    image (Thiébaut & Young 2017, https://arxiv.org/abs/1708.08390).
 
     Parameters
     ----------
@@ -317,8 +328,10 @@ class StarletL1(_ImageRegulariser):
     ``s`` are the detail coefficients of :func:`starlet`, at every scale.
     An L1 norm favours few non-zero coefficients, so the image is built
     from few compact structures, of any size: a sparse image in the
-    wavelet sense. The coarse plane, which carries the flux, is not
-    penalized. ``ε`` smooths the penalty near zero, so that it is
+    wavelet sense (L1 sparse modelling for interferometric imaging: Honma
+    et al. 2014, PASJ 66, 95, https://arxiv.org/abs/1407.2422; Akiyama et
+    al. 2017, https://arxiv.org/abs/1702.07361). The coarse plane, which
+    carries the flux, is not penalized. ``ε`` smooths the penalty near zero, so that it is
     differentiable.
 
     Parameters
@@ -1672,7 +1685,8 @@ class LCurve:
         For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits,
         this is the weight ``w`` at which ``-2 w S`` equals the number of
         well-measured directions in the image, ``N = Σ λ / (λ + w)``
-        (Gull 1989; Skilling 1989). Here ``S`` is the entropy (minus
+        (Gull 1989, https://doi.org/10.1007/978-94-015-7860-8_4; Skilling
+        1989, https://doi.org/10.1007/978-94-015-7860-8_3). Here ``S`` is the entropy (minus
         the sweep's ``penalty``), and the ``λ`` are the eigenvalues of the
         data's Gauss–Newton curvature in the entropy metric,
         ``diag(√b) JᵀJ diag(√b)``, with ``J`` the Jacobian of the whitened

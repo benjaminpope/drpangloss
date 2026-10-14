@@ -3317,8 +3317,12 @@ def _cvis_binary_angular(u, v, sep, pa, flux):
 
 
 def cvis_binary(u, v, dra, ddec, flux):
-    # adapted from pymask
     """Compute complex visibilities for a Cartesian-parameterized binary model.
+
+    Adapted from ``pymask``, the sparse-aperture-masking analysis tools of
+    Anthony Cheetham (https://github.com/AnthonyCheetham/pymask). For
+    closure-phase contrast limits in sparse aperture masking see Ireland
+    (2013, MNRAS 433, 1718, https://arxiv.org/abs/1301.6205).
 
     Parameters
     ----------

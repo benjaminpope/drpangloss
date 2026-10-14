@@ -23,6 +23,21 @@ positions follow from the Thiele–Innes constants (§2.4). jaxoplanet's own
 conventions differ (its ω is the primary's, and its third axis points
 toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
 :meth:`KeplerOrbit.from_jaxoplanet`.
+
+References
+----------
+The Kepler solver is jaxoplanet (Hattori et al., Zenodo,
+https://doi.org/10.5281/zenodo.10736936), which descends from exoplanet
+(Foreman-Mackey et al. 2021, JOSS 6, 3285, https://arxiv.org/abs/2105.01994).
+The linear Thiele–Innes fit at fixed (P, e, T) is the classical method
+(Thiele 1883, Astron. Nachr. 104, 245), as used for visual binaries by
+Hartkopf, McAlister & Franz (1989, AJ 98, 1014,
+https://doi.org/10.1086/115193), by Wright & Howard (2009, ApJS 182, 205,
+https://arxiv.org/abs/0904.3725) for linear parameters and by Lucy (2014,
+A&A 563, A126, https://arxiv.org/abs/1309.2868) for incomplete orbits. The
+position angle at a reference epoch and the fits to closure phases follow
+Octofitter (Thompson et al. 2023, AJ 166, 164,
+https://arxiv.org/abs/2402.01971). No code is taken from these packages.
 """
 
 import math
@@ -302,7 +317,7 @@ class KeplerOrbit(zdx.Base):
         """The orbit whose position angle at ``t_ref`` is ``theta``.
 
         An alternative to ``dt_peri`` for short arcs, after Thompson et al.
-        (2023, AJ 166, 164): astrometry measures the position angle at an
+        (2023, AJ 166, 164, https://arxiv.org/abs/2402.01971): astrometry measures the position angle at an
         epoch directly. With φ = θ - Ω, the argument of latitude u = ω + f
         at ``t_ref`` follows from (cos φ, sin φ) ∝ (cos u, sin u cos i):
         u = atan2(sin φ / cos i, cos φ); then the true anomaly f = u - ω,
@@ -699,7 +714,8 @@ class PositionData(zdx.Base):
             and ``Normal(1, 1e-3)`` for m, is strong information and
             should come from the instrument's astrometric calibration.
             Per-dataset plate-scale and North-angle terms follow
-            Octofitter (Thompson et al. 2023, AJ 166, 164). They do not
+            Octofitter (Thompson et al. 2023, AJ 166, 164,
+            https://arxiv.org/abs/2402.01971). They do not
             change the likelihood's normalization, so a least-squares
             fit keeps its form.
         """
@@ -835,6 +851,9 @@ def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
     the truth at every epoch. That is a uniform grid in frequency 1/P, with
     a step of 1/(kT): many more periods at short periods than a
     log-spaced grid, which misses short-period orbits on a long baseline.
+    The frequency spacing is that of a periodogram, as in Lucy (2014, A&A
+    563, A126, https://arxiv.org/abs/1309.2868) and The Joker (Price-Whelan
+    et al. 2017, ApJ 837, 20, https://arxiv.org/abs/1610.07602).
 
     Parameters
     ----------
@@ -891,7 +910,11 @@ def starting_orbits(
     linear in the Thiele–Innes constants, so each grid point is an exact
     weighted least-squares solve. This is the classical way to start an
     orbit fit: it needs no random restarts and handles the several minima
-    of a short arc. Refine the best orbits with a fit to the visibilities
+    of a short arc. The dense (P, e, T) grid with a linear solve follows
+    Lucy (2014, A&A 563, A126, https://arxiv.org/abs/1309.2868); the linear
+    step is that of Hartkopf, McAlister & Franz (1989, AJ 98, 1014,
+    https://doi.org/10.1086/115193) and Wright & Howard (2009, ApJS 182,
+    205, https://arxiv.org/abs/0904.3725). Refine the best orbits with a fit to the visibilities
     or to the positions.
 
     Parameters

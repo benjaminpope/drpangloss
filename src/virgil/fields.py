@@ -9,6 +9,14 @@ basis that diagonalizes the Laplacian with reflecting boundaries. Fitting the
 latents under a standard-normal prior (from
 [`image_priors`][virgil.imaging.image_priors]) is MAP estimation with a
 GP prior, and the same parameterization suits sampling.
+
+The construction, a Gaussian-process field with a stationary spectrum on a
+whitened basis, is abstracted from the NIFTy library (Edenhofer et al.
+2024, https://arxiv.org/abs/2402.16683) and the correlated field model used
+for M87* by Arras et al. (2022, Nature Astron. 6, 259,
+https://arxiv.org/abs/2002.05218), within the framework of information
+field theory (Enßlin et al. 2009, https://arxiv.org/abs/0806.3474). No code
+is taken from NIFTy.
 """
 
 import equinox as eqx

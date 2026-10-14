@@ -1,7 +1,7 @@
 """The ELR11 rotating-star model: Roche shape and gravity darkening.
 
 Implements the model of Espinosa Lara & Rieutord (2011, A&A 533, A43,
-"ELR11") for the shape and gravity darkening of a rigidly rotating star,
+https://arxiv.org/abs/1109.3038, "ELR11") for the shape and gravity darkening of a rigidly rotating star,
 which needs no free gravity-darkening exponent beta.
 
 Ported from Shashank Dholakia's jax-interferometry (core/ELR.py,
