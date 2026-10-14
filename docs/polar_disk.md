@@ -224,12 +224,22 @@ evidence is over the latents, conditional on the hyperparameters.
 ### Priors over the harmonics
 
 `Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
-coefficients with a prior: each order $m$ is a `RadialGP` of length `ell_r`
-(across radius) with variance proportional to
-$(1 + (m \ell_\theta / \bar r)^2)^{-\nu - 1/2}$, independent between
-orders. The azimuthal length `ell_theta` sets how fast the structure falls
-off with $m$: large values suppress high orders. The latents are the field
-`harmonics.z` of shape `(2, M, n)`. The default form is positive.
+coefficients with a prior. Every order $m$ is a `RadialGP` of length `ell_r`
+(across radius), independent between orders, and its variance falls with the
+order as the Matérn spectral density in the azimuth,
+$(1 + (m \ell_\theta / \bar r)^2 / 2\nu)^{-\nu - 1/2}$ (relative to $m = 1$), so
+`ell_theta` is a correlation length in milliarcseconds along the ring, on
+the same scale as `ell_r`. Large values suppress high orders. The reference
+radius $\bar r$ is `r_ref`, by default the middle of the radial range of the
+processes, which is the *extent* of the profile (for a `GaussianRing` that is
+$[0, r_0 + k\sigma]$, a truncation set by the profile): give `r_ref`
+explicitly when you want `ell_theta` to mean a length at a particular
+radius. The variance law holds for the coefficients $c_m, s_m$ of the
+linear form. In the default positive form the latents drive the inputs
+$\mathrm{re}_j, \mathrm{im}_j$ of the reflection coefficients, not the
+brightness harmonics themselves, so the law holds only loosely there (the
+variance falling with $j$ plays the part of falling with $m$). The latents
+are the field `harmonics.z` of shape `(2, M, n)`.
 
 ## Spectral index
 
@@ -250,7 +260,10 @@ those baselines cached. With `inc`, `pa`, the height and the nodes held fixed,
 a refit of the profile, the harmonics or the index is then a matrix-vector
 product per order. It is never automatic. If a frozen quantity or the
 baselines change the model falls back to the full computation (same answer,
-no speed-up), checked at every call.
+no speed-up), checked at every call. Freeze after the data are in the
+precision you will fit in if you need full accuracy: a cache built in float32
+(virgil's default) is still recognized when `fit` or `log_evidence` evaluates
+in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 
 ## Notes
 

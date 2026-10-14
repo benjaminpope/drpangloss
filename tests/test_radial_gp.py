@@ -252,12 +252,13 @@ def test_the_polar_kernel_variance_falls_with_the_order_as_the_spectral_density(
     assert onp.all(onp.diff(var) < 0.0)
     expected = 0.25 * onp.asarray(kernel.spectrum(degree))
     assert onp.allclose(var, expected, rtol=0.1)
-    # Closed form: S(m)/S(1) = ((1 + a^2) / (1 + (m a)^2))^(nu + 1/2).
+    # Closed form of the Matern density, written out with the 2 nu:
+    # S(m)/S(1) = ((1 + a^2/2nu) / (1 + (m a)^2/2nu))^(nu + 1/2).
     a = 4.0 / 6.0
     m = onp.arange(1, degree + 1)
     assert onp.allclose(
         onp.asarray(kernel.spectrum(degree)),
-        ((1 + a**2) / (1 + (m * a) ** 2)) ** 2.0,
+        ((1 + a**2 / 3.0) / (1 + (m * a) ** 2 / 3.0)) ** 2.0,
         rtol=1e-5,
     )
     # Diagonal in m, and a Matern correlation in r with the length ell_r.
@@ -269,6 +270,42 @@ def test_the_polar_kernel_variance_falls_with_the_order_as_the_spectral_density(
     expected_corr = _matern15(nodes, 3.0)
     got = cov / onp.sqrt(onp.outer(onp.diag(cov), onp.diag(cov)))
     assert onp.max(onp.abs(got - expected_corr)) < 0.06
+
+
+def test_ell_theta_is_the_same_length_as_ell_r():
+    # With the 2 nu in the Matern density the azimuthal length is on the
+    # scale of the radial one: the kernel's spectrum is the Fourier transform
+    # of the Matern correlation function of length ell_theta along the ring.
+    # Check against numerical quadrature of the correlation function.
+    r_ref, ell, nu_theta = 5.0, 3.0, 1.5
+    kernel = PolarKernel(
+        2.0, ell, r_in=1.0, r_out=9.0, r_ref=r_ref, nu_theta=nu_theta
+    )
+    x = onp.linspace(0.0, 400.0, 400001)  # arc length in mas
+    a = onp.sqrt(3.0) * x / ell
+    k = (1.0 + a) * onp.exp(-a)
+    density = [
+        onp.trapezoid(k * onp.cos(m / r_ref * x), x) for m in (1, 2, 3, 4)
+    ]
+    assert onp.allclose(
+        onp.asarray(kernel.spectrum(4)),
+        onp.asarray(density) / density[0],
+        rtol=1e-3,
+    )
+
+
+@pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, float("inf")])
+def test_the_azimuthal_spectrum_is_finite_for_every_smoothness(nu):
+    kernel = PolarKernel(2.0, 3.0, r_in=1.0, r_out=9.0, nu_theta=nu)
+    spectrum = onp.asarray(kernel.spectrum(5))
+    assert onp.all(onp.isfinite(spectrum)) and onp.isclose(spectrum[0], 1.0)
+    assert onp.all(onp.diff(spectrum) < 0.0) and spectrum[1] > 0.0
+    if nu == float("inf"):
+        a = 3.0 / 5.0
+        m = onp.arange(1, 6)
+        assert onp.allclose(
+            spectrum, onp.exp(-0.5 * (m**2 - 1.0) * a**2), rtol=1e-5
+        )
 
 
 def test_a_longer_azimuthal_length_suppresses_high_orders():
@@ -386,11 +423,25 @@ def test_chromatic_model_equals_the_per_wavelength_model():
     weights = onp.asarray(scene.disk._weight(np.asarray(wavel)))
     assert weights.shape == wavel.shape and onp.all(weights > 0.0)
     assert not onp.allclose(weights, weights[0])
-    # Harmonics are grey: the image harmonics do not depend on wavelength.
-    assert onp.allclose(
-        onp.asarray(disk.harmonics.image_harmonics(np.ones(3))),
-        onp.asarray(disk.harmonics.image_harmonics(np.ones(3))),
+    # Harmonics are grey: with a spectral index constant across the ring the
+    # disk's normalized visibility depends on the wavelength only through
+    # u / lambda, so the harmonics' azimuthal structure is the same at two
+    # wavelengths. (Closure-phase-carrying odd orders included.)
+    grey = PolarDisk(
+        GaussianRing(4.0, 1.0),
+        harmonics=Harmonics(c=0.3, s=0.2),
+        spectral_index=0.8,
+        wavel0=3.5e-6,
+        inc=35.0,
+        pa=20.0,
+        n_r=24,
     )
+    u1, v1 = np.asarray(u[:8]), np.asarray(v[:8])
+    w1, w2 = 3.0e-6, 4.5e-6
+    one = grey.model(u1, v1, w1)
+    two = grey.model(u1 * (w2 / w1), v1 * (w2 / w1), w2)
+    assert onp.max(onp.abs(onp.asarray(one - two))) < 2e-6
+    assert onp.max(onp.abs(onp.asarray(one.imag))) > 1e-3
 
 
 def test_spectral_index_makes_the_inner_edge_redder_than_the_outer():
@@ -460,6 +511,17 @@ def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
     with jax.enable_x64(True):
         disk, frozen = _frozen_pair()
         assert disk.frozen is None and frozen.frozen is not None
+        # The cache is actually used (not the silent fallback).
+        r, _ = frozen.profile.quadrature()
+        hit = frozen.frozen.matches(
+            DATA.u / DATA.wavel,
+            DATA.v / DATA.wavel,
+            r,
+            frozen.inc,
+            frozen.pa,
+            frozen.height(r),
+        )
+        assert bool(hit)
         got = frozen.model(DATA.u, DATA.v, DATA.wavel)
         expected = disk.model(DATA.u, DATA.v, DATA.wavel)
         assert onp.max(onp.abs(onp.asarray(got - expected))) < 1e-12
@@ -478,6 +540,17 @@ def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
         RadialGP(0.5, 9.0, z=np.linspace(-1.0, 1.0, 24)), inc=30.0, n_r=24
     )
     frozen = disk.freeze_geometry(DATA)
+    r, _ = frozen.profile.quadrature()
+    assert bool(
+        frozen.frozen.matches(
+            DATA.u / DATA.wavel,
+            DATA.v / DATA.wavel,
+            r,
+            frozen.inc,
+            frozen.pa,
+            None if frozen.height is None else frozen.height(r),
+        )
+    )
     assert frozen.frozen.cos == () and frozen.frozen.p0.shape == (
         DATA.u.shape[0],
         24,
@@ -485,6 +558,42 @@ def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
     got = onp.asarray(frozen.model(DATA.u, DATA.v, DATA.wavel))
     expected = onp.asarray(disk.model(DATA.u, DATA.v, DATA.wavel))
     assert onp.max(onp.abs(got - expected)) < 1e-6
+
+
+def test_a_float32_cache_is_used_when_the_model_is_evaluated_in_float64():
+    # virgil builds in float32 by default, while fit and log_evidence cast
+    # the model to float64: the cache must still be recognized.
+    disk, frozen = _frozen_pair()
+    assert frozen.frozen.uu.dtype == np.float32
+    cache = frozen.frozen
+    r, _ = frozen.profile.quadrature()
+    with jax.enable_x64(True):
+        u64 = np.asarray(DATA.u, dtype=float)
+        v64 = np.asarray(DATA.v, dtype=float)
+        w64 = np.asarray(DATA.wavel, dtype=float)
+        hit = cache.matches(
+            u64 / w64,
+            v64 / w64,
+            np.asarray(r, dtype=float),
+            np.asarray(frozen.inc, dtype=float),
+            np.asarray(frozen.pa, dtype=float),
+            np.asarray(frozen.height(r), dtype=float),
+        )
+        assert bool(hit)
+        # Baselines that really differ are still rejected.
+        miss = cache.matches(
+            1.01 * u64 / w64,
+            v64 / w64,
+            np.asarray(r, dtype=float),
+            np.asarray(frozen.inc, dtype=float),
+            np.asarray(frozen.pa, dtype=float),
+            np.asarray(frozen.height(r), dtype=float),
+        )
+        assert not bool(miss)
+        # And the result agrees with the unfrozen model to float32 accuracy.
+        got = onp.asarray(frozen.model(u64, v64, w64))
+        expected = onp.asarray(disk.model(u64, v64, w64))
+        assert onp.max(onp.abs(got - expected)) < 1e-4
 
 
 def test_a_frozen_disk_falls_back_when_the_geometry_changes():
@@ -639,8 +748,6 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
     everything = log_evidence(result, data, path=None)
     assert onp.isfinite(everything)
     assert onp.isclose(everything, log_evidence(result, data, path="disk"))
-    # A subset of the latents gives a different, finite evidence.
-    assert models.PolarDisk.gp_sites  # public
     from virgil import imaging
 
     assert imaging._evidence_latents(result.model, "disk", "x") == (
@@ -657,18 +764,32 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
 
 
 def test_the_evidence_prefers_the_correlation_length_the_data_came_from():
-    # Truth drawn from a GP profile of length 2; evidence at that length
-    # beats a far-too-short and a far-too-long one, as MacKay's framework.
-    gp = RadialGP(0.5, 9.0, sigma=1.5, ell=2.0, n=16)
-    z = jax.random.normal(jax.random.PRNGKey(4), (16,))
+    # Truth drawn from a smooth GP profile of length 1.5 on a compact range
+    # (so the visibility stays positive and the closure phases cannot flip by
+    # pi, which would strand the fit in a local minimum) and observed at low
+    # noise; the evidence at that length beats a far-too-short and a
+    # far-too-long one, as MacKay's framework.
+    low_noise = vlti_oidata(
+        hour_angles_h=(-3.0, -1.5, 0.0, 1.5, 3.0),
+        wavelengths_m=[3.2e-6, 3.6e-6, 4.0e-6],
+        sigma_v2=0.002,
+        sigma_cp_deg=0.1,
+    )
+    gp = RadialGP(0.5, 2.5, sigma=1.5, ell=1.5, n=16)
+    # numpy, so that the draw is the same in float32 and float64.
+    z = onp.random.default_rng(4).standard_normal(16)
     truth = PolarDisk(gp.set("z", z), n_r=16)
-    data = simulate(truth, DATA, key=jax.random.PRNGKey(5))
+    assert onp.all(
+        onp.asarray(truth.model(low_noise.u, low_noise.v, low_noise.wavel)).real
+        > 0.0
+    )
+    data = simulate(truth, low_noise, key=jax.random.PRNGKey(5))
     evidence = {}
-    for ell in (0.2, 2.0, 12.0):
+    for ell in (0.1, 1.5, 12.0):
         start = PolarDisk(gp.set("ell", ell), n_r=16)
         result = fit(start, gp_priors(start), data)
         evidence[ell] = log_evidence(result, data, path=None)
-    assert evidence[2.0] > evidence[0.2] and evidence[2.0] > evidence[12.0]
+    assert evidence[1.5] > evidence[0.1] and evidence[1.5] > evidence[12.0]
 
 
 def test_fitting_a_gp_hyperparameter_by_map_warns():
