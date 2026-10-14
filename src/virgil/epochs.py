@@ -50,6 +50,7 @@ import numpy as onp
 from jax.scipy.special import i0e
 
 from ._geometry import fringe_scales
+from ._grid import batch_size_or_default
 from ._precision import cast_tree, run_in
 from .fitting import fit
 from .likelihood import (
@@ -680,6 +681,19 @@ def _check_scales(scales, name):
     return scales
 
 
+def _orbit_batch_size(batch_size, datasets, n):
+    """Candidates per vectorized batch of a ``lax.map`` over ``n`` of them.
+
+    ``lax.map`` without a ``batch_size`` is a serial loop, several times
+    slower than batches (3-5x for thousands of candidates on a laptop CPU).
+    By default a batch holds about ``_grid.batch_visibilities()`` model
+    visibilities of the largest dataset, and never more than ``n``
+    candidates. The results do not depend on it.
+    """
+    biggest = max(datasets, key=lambda d: onp.size(d.u))
+    return min(batch_size_or_default(batch_size, biggest), max(int(n), 1))
+
+
 def _loglikes(
     scene_of,
     inputs,
@@ -703,6 +717,9 @@ def _loglikes(
             "take one snapshot per dataset."
         )
     per_dataset = data.noise(noise or {})
+    batch_size = _orbit_batch_size(
+        batch_size, data.data, jax.tree_util.tree_leaves(inputs)[0].shape[0]
+    )
     if scales == "marginal":
         surfaces = tuple(_Surface(d, s_max) for d in data.data)
         dofs = np.asarray(
@@ -890,8 +907,9 @@ def rank_orbits(
         number, or a dict keyed by dataset or epoch name) and the bound
         on the scales, as for ``marginal_loglike``.
     batch_size : int, optional
-        Orbits evaluated together by ``jax.lax.map`` (default: all of them
-        at once). Lower it if the data are large.
+        Orbits evaluated together by ``jax.lax.map`` (default: enough to
+        hold about a million model visibilities of the largest dataset, at
+        most all of them). Lower it if the data are large.
     dtype : {"float64", "float32"}, optional
         Precision of the evaluation (default float64, in a local
         ``jax.enable_x64`` context).

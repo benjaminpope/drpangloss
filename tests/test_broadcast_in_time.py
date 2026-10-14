@@ -88,3 +88,39 @@ def test_bound_angles_keep_the_serial_loop():
     assert System(
         primary=PointSource(), comp=Attached(PointSource(0.1), ORBIT)
     ).broadcast_in_time
+
+
+def test_orbit_batches_are_vectorized_by_default_and_change_nothing():
+    # lax.map without a batch_size is a serial loop; the default now batches.
+    from virgil.epochs import Epochs, _orbit_batch_size, rank_orbits
+    from virgil.orbit_search import SharedFlux, score_orbits
+
+    data = _epochs(T_REF + onp.array([0.0, 150.0]))
+    assert _orbit_batch_size(None, [data], 5000) == 5000
+    assert _orbit_batch_size(None, [data], 3) == 3
+    assert _orbit_batch_size(7, [data], 3) == 3
+    epochs = Epochs({"a": data})
+    periods = onp.linspace(600.0, 800.0, 7)
+    orbits = [
+        KeplerOrbit(p, -100.0, 0.3, 50.0, 60.0, 120.0, 20.0, t_ref=T_REF)
+        for p in periods
+    ]
+    for scales in ("quoted", "marginal"):
+        default = rank_orbits(
+            lambda o: OrbitalBinary(o, 0.1), epochs, orbits, scales=scales
+        )
+        single = rank_orbits(
+            lambda o: OrbitalBinary(o, 0.1),
+            epochs,
+            orbits,
+            scales=scales,
+            batch_size=1,
+        )
+        assert onp.array_equal(default.order, single.order)
+        assert onp.allclose(default.loglike, single.loglike, rtol=1e-10)
+    kwargs = dict(shared=SharedFlux([0.1]), s_max=5.0)
+    default = score_orbits(epochs, OrbitalBinary, orbits, **kwargs)
+    single = score_orbits(
+        epochs, OrbitalBinary, orbits, batch_size=2, **kwargs
+    )
+    assert onp.allclose(default.score, single.score, rtol=1e-10)

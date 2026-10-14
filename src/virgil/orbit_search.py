@@ -45,6 +45,7 @@ from .epochs import (
     Epochs,
     _check_dof,
     _dof_for,
+    _orbit_batch_size,
     _orbit_list,
     _stack,
     _Surface,
@@ -1005,8 +1006,9 @@ def score_orbits(
         dominate the profile (``profiled``, ``flux``, ``slope``). A finite
         ``s_max`` bounds each block's gain at about ν ln s_max.
     batch_size : int, optional
-        Candidates evaluated together by ``jax.lax.map`` (default: all).
-        The result does not depend on it.
+        Candidates evaluated together by ``jax.lax.map`` (default: enough
+        to hold about a million model visibilities of the largest dataset,
+        at most all). The result does not depend on it.
     max_evaluations : int, optional
         A budget in work units: candidates × Σ over datasets of the score
         evaluations of the dataset's band's marginal (coarse grid points,
@@ -1050,6 +1052,7 @@ def score_orbits(
             f"over the budget max_evaluations={int(max_evaluations)}. "
             "Score fewer candidates, or use coarser flux grids."
         )
+    batch_size = _orbit_batch_size(batch_size, epochs.data, n)
     term_fns = tuple(_term_function(t) for t in terms)
     scorers = tuple(_Scorer(d, s_max) for d in epochs.data)
     dofs = onp.asarray(
