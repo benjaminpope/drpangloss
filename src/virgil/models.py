@@ -259,8 +259,7 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         [`Attached`][virgil.models.Attached] component). Such a model is
         evaluated with [`at`][virgil.models.SourceModel.at], which
         [`OIData.model`][virgil.oidata.OIData.model] does at each sample's
-        own time (all at once, see
-        [`broadcast_in_time`][virgil.models.SourceModel.broadcast_in_time])."""
+        own time (all at once when ``broadcast_in_time`` is true)."""
         return False
 
     @property
