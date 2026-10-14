@@ -346,4 +346,4 @@ Each benchmark records software versions and a pinned virgil commit hash, and gi
 - **Status.** Keep a `STATUS.md` at the worktree root: stage, branch, PR URL, CI state, open questions. It is the hand-off for Ben in the morning.
 
 ## 14. Execution log (2026-10-14)
-The run produced stacked PRs P1–P6 (#335 and #336 merged; #338 P3; #343 P4; P5; #340 P6) plus a validation PR. Heavy runs (experiments, tutorial execution, V4) were moved to OzSTAR by Ben's decision ("Option A"), overriding the no-HPC rule in §13. No deprecations were made.
+The run produced stacked PRs P1–P6 (#335 and #336 merged; #338 P3; #343 P4; #347 P5; #340 P6) plus a validation PR in virgil-validation. Heavy runs (experiments, tutorial execution, V4) were moved to OzSTAR by Ben's decision ("Option A"), overriding the no-HPC rule in §13. No deprecations were made.
