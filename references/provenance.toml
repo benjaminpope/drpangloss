@@ -3,6 +3,8 @@
 # or Crossref; ADS resolution with scripts/fetch_references.py gives the final check),
 # verified_via, used_in (module:symbol), note. Entries with neither arxiv nor doi are
 # unverified until scripts/fetch_references.py resolves them against ADS.
+# role: absent = a source of an idea or code; "compared" = studied for comparison,
+# not ported; "bibliography" = in virgil.bib for the paper, not provenance.
 
 [ref.harmonix]
 authors = "Dholakia & Pope"
@@ -169,6 +171,7 @@ verified = true
 verified_via = "arxiv"
 used_in = []
 note = "OFTI"
+role = "compared"
 
 [ref.blunt2020]
 authors = "Blunt et al."
@@ -179,6 +182,7 @@ verified = true
 verified_via = "arxiv"
 used_in = []
 note = "orbitize!; AJ 159, 89 (2020)"
+role = "compared"
 
 [ref.blunt2024]
 authors = "Blunt et al."
@@ -189,6 +193,7 @@ verified = true
 verified_via = "crossref"
 used_in = []
 note = "orbitize!; JOSS 9, 6756"
+role = "compared"
 
 [ref.brandt2021]
 authors = "Brandt et al."
@@ -199,6 +204,7 @@ verified = true
 verified_via = "arxiv"
 used_in = ["virgil.orbits:RVData"]
 note = "orvara; AJ 162, 186"
+role = "compared"
 
 [ref.thompson2023]
 authors = "Thompson et al."
@@ -218,8 +224,9 @@ arxiv = "2105.01994"
 doi = "10.21105/joss.03285"
 verified = true
 verified_via = "arxiv+crossref"
-used_in = ["virgil.angles:AngleVector", "virgil.orbits"]
+used_in = []
 note = "JOSS 6, 3285"
+role = "bibliography"
 
 [ref.jaxoplanet]
 authors = "Hattori et al."
@@ -228,8 +235,9 @@ title = "jaxoplanet"
 doi = "10.5281/zenodo.10736936"
 verified = false
 verified_via = "none"
-used_in = ["virgil.orbits:KeplerOrbit"]
+used_in = []
 note = "Zenodo; https://github.com/exoplanet-dev/jaxoplanet"
+role = "bibliography"
 
 [ref.pricewhelan2017]
 authors = "Price-Whelan et al."
@@ -286,6 +294,7 @@ note = "A&A 533, A43"
 authors = "Hillen et al."
 year = 2016
 title = "Imaging the dust sublimation front of a circumbinary disk"
+arxiv = "1603.03023"
 doi = "10.1051/0004-6361/201628125"
 verified = true
 verified_via = "crossref"
@@ -405,16 +414,6 @@ verified_via = "crossref"
 used_in = ["virgil.imaging:TV"]
 note = "Physica D 60, 259"
 
-[ref.chael2016]
-authors = "Chael et al."
-year = 2016
-title = "High Resolution Linear Polarimetric Imaging for the Event Horizon Telescope"
-arxiv = "1605.06156"
-verified = true
-verified_via = "arxiv"
-used_in = ["virgil.imaging:Centroid"]
-note = "eht-imaging"
-
 [ref.chael2018]
 authors = "Chael et al."
 year = 2018
@@ -423,7 +422,7 @@ arxiv = "1803.07088"
 doi = "10.3847/1538-4357/aab6a8"
 verified = true
 verified_via = "arxiv+crossref"
-used_in = ["virgil.imaging:Centroid"]
+used_in = ["virgil.imaging:TV"]
 note = "ApJ 857, 23; eht-imaging"
 
 [ref.thiebaut2017]
@@ -865,6 +864,7 @@ verified = false
 verified_via = "none"
 used_in = ["virgil.limits:injection_limits"]
 note = "algorithm paper: gallenne2015"
+role = "compared"
 
 [ref.fouriever]
 authors = "Kammerer"
@@ -873,7 +873,8 @@ url = "https://github.com/kammerje/fouriever"
 verified = false
 verified_via = "none"
 used_in = ["virgil.grid_fit:linear_flux_grid"]
-note = "no paper found; linear_flux_grid follows its lincmap; author attribution to confirm"
+note = "comparison only: linear_flux_grid is equivalent to its lincmap; no paper found"
+role = "compared"
 
 [ref.amical]
 authors = "Soulain et al."
@@ -881,8 +882,9 @@ title = "AMICAL: aperture masking interferometry calibration and analysis"
 url = "https://github.com/SAIL-Labs/AMICAL"
 verified = false
 verified_via = "none"
-used_in = ["virgil.coverage:nrm_oidata"]
-note = "paper reference to add (SPIE 2020)"
+used_in = []
+note = "separate package, bibliography only; paper reference to add (SPIE 2020)"
+role = "bibliography"
 
 [ref.implaneia]
 authors = "Greenbaum, Sivaramakrishnan et al."
@@ -894,22 +896,13 @@ used_in = ["virgil.legacy.oifits_implaneia"]
 note = "paper: greenbaum2015"
 
 [ref.pymask]
-authors = "Cheetham et al."
-title = "pymask: analysis tools for sparse aperture masking interferometry"
-url = "https://github.com/AnthonyCheetham/pymask"
+authors = "Pope"
+title = "pymask"
+url = "https://github.com/benjaminpope/pymask"
 verified = false
 verified_via = "none"
 used_in = ["virgil.models:cvis_binary"]
-note = "author from the GitHub repository owner; related paper: ireland2013"
-
-[ref.eht-imaging]
-authors = "Chael et al."
-title = "eht-imaging"
-url = "https://github.com/achael/eht-imaging"
-verified = false
-verified_via = "none"
-used_in = ["virgil.imaging:Centroid"]
-note = "papers: chael2016, chael2018"
+note = "itself copied from pysco/xara (Martinache); related paper: ireland2013"
 
 [ref.mpol]
 authors = "Czekala et al."
@@ -985,3 +978,32 @@ verified = false
 verified_via = "none"
 used_in = []
 
+[ref.xara]
+authors = "Martinache"
+year = 2010
+title = "Kernel-Phase in Fizeau Inteferometry"
+arxiv = "1009.3933"
+url = "https://github.com/fmartinache/xara"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.models:cvis_binary"]
+note = "xara was pysco; pymask copied the binary model from it"
+
+[ref.selig2013]
+authors = "Selig et al."
+year = 2013
+title = "NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference"
+arxiv = "1301.4499"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.fields:GaussianField"]
+
+[ref.ensslin2019]
+authors = "Enßlin"
+year = 2018
+title = "Information theory for fields"
+arxiv = "1804.03350"
+verified = true
+verified_via = "arxiv"
+used_in = ["virgil.fields:GaussianField"]
+note = "Annalen der Physik 531, 1800127 (2019)"

@@ -884,7 +884,9 @@ def gauss_newton_mass(
     """A dense NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
     NUTS is the No-U-Turn Sampler of Hoffman & Gelman (2014,
-    https://arxiv.org/abs/1111.4246), as implemented in numpyro; see
+    https://arxiv.org/abs/1111.4246;
+    https://en.wikipedia.org/wiki/Hamiltonian_Monte_Carlo), as implemented
+    in numpyro; see
     Betancourt (2017, https://arxiv.org/abs/1701.02434) for an introduction.
 
     Near the maximum a posteriori, the posterior is close to a Gaussian

@@ -291,7 +291,7 @@ def starlet(image, scales=4):
     """The starlet (isotropic undecimated wavelet) transform of an image.
 
     The à-trous algorithm with a B3-spline kernel (Starck, Murtagh & Fadili
-    2010): the image is smoothed ``scales`` times, the kernel's taps twice
+    2010, *Sparse Image and Signal Processing*, CUP): the image is smoothed ``scales`` times, the kernel's taps twice
     as far apart each time, and each detail plane is the difference between
     successive smoothings. Detail plane ``j`` holds structure about
     ``2**j`` pixels across. Beyond the edges the image is zero.
@@ -375,7 +375,8 @@ class LogSum(_ImageRegulariser):
     ``log(b / (ε b̄))`` once it is brighter than ``ε b̄``, and almost
     nothing when fainter, so as ``ε → 0`` the penalty counts the bright
     pixels: a smooth surrogate for the L0 "norm" of SQUEEZE (Candès, Wakin
-    & Boyd 2008). It favours images with few bright pixels. It is not
+    & Boyd 2008, https://arxiv.org/abs/0711.1612; SQUEEZE: Baron, Monnier
+    & Kloppenburg 2010, https://doi.org/10.1117/12.857364). It favours images with few bright pixels. It is not
     convex, so start the fit from a good image.
 
     Sweep its weight with ``l_curve(..., warm_start=False)``. By default
@@ -1246,7 +1247,7 @@ def clean(
 ):
     """Build an image from components, one at a time: gradient CLEAN.
 
-    Högbom's CLEAN repeatedly finds the peak of the residual dirty image
+    Högbom's CLEAN (Högbom 1974, A&AS 15, 417) repeatedly finds the peak of the residual dirty image
     and adds a fraction (the loop ``gain``) of a point source there. For
     data that are linear in the image, the residual dirty image is
     proportional to ``-∂χ²/∂c``, the gradient of χ² with respect to the
@@ -1278,7 +1279,8 @@ def clean(
 
     Each iteration only adds flux, so an early step that overshoots cannot
     be undone by later ones. Every ``refit_every`` iterations a **major
-    cycle** (as in Clark and Cotton–Schwab CLEAN) refits the fluxes of all
+    cycle** (as in Clark 1980, A&A 89, 377 and Cotton–Schwab CLEAN,
+    Schwab 1984, AJ 89, 1076) refits the fluxes of all
     the components at once, by non-negative least squares on the
     linearized residuals: flux can move between components, and components
     whose flux falls to zero are removed. The fluxes stay non-negative.
@@ -1295,7 +1297,9 @@ def clean(
     does not model. A companion much closer to the star than λ/B has its
     flux and separation nearly degenerate, whatever fits it.
 
-    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793): with several
+    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793,
+    https://arxiv.org/abs/0806.2228; Rau & Cornwell 2011,
+    https://arxiv.org/abs/1106.2745): with several
     ``scales_mas``, each component is a pixel convolved with a circular
     Gaussian of FWHM ``s`` (``s = 0`` is a point), and the image is
     ``Σ_s G_s * F_s``. The search runs over every (scale, pixel), with the
@@ -1635,7 +1639,7 @@ class LCurve:
 
         The curve is ``(log χ², log penalty)`` parametrized by ``log w``;
         the corner is the interior point of largest curvature (Hansen &
-        O'Leary 1993). Check it by eye: the curvature of a sparse or noisy
+        O'Leary 1993, https://doi.org/10.1137/0914086). Check it by eye: the curvature of a sparse or noisy
         sweep is itself noisy, and a smooth curve has no clear corner.
         A fit that diverged (a non-finite χ² or penalty) is left out, so
         that its NaN cannot spread to the curvature of its neighbours.

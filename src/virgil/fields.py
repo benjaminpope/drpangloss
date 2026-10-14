@@ -15,8 +15,11 @@ whitened basis, is abstracted from the NIFTy library (Edenhofer et al.
 2024, https://arxiv.org/abs/2402.16683) and the correlated field model used
 for M87* by Arras et al. (2022, Nature Astron. 6, 259,
 https://arxiv.org/abs/2002.05218), within the framework of information
-field theory (Enßlin et al. 2009, https://arxiv.org/abs/0806.3474). No code
-is taken from NIFTy.
+field theory (Enßlin et al. 2009, https://arxiv.org/abs/0806.3474; review:
+Enßlin 2019, https://arxiv.org/abs/1804.03350). The first NIFTy is Selig et
+al. (2013, https://arxiv.org/abs/1301.4499). That quadratic regularizers
+are Gaussian priors is the view of Thiébaut & Young (2017,
+https://arxiv.org/abs/1708.08390). No code is taken from NIFTy.
 """
 
 import equinox as eqx

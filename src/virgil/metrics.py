@@ -7,7 +7,8 @@ contests, written from their published definitions:
   Eq. 2: the flux-weighted rms of the normalized difference, over the
   peak ([`lawson_sigma_over_peak`][virgil.metrics.lawson_sigma_over_peak]);
 * the 2008-2012 contests (Cotton et al. 2008, Proc. SPIE 7013; Malbet et
-  al. 2010, Proc. SPIE 7734; Baron et al. 2012, Proc. SPIE 8445): the rms
+  al. 2010, Proc. SPIE 7734, https://arxiv.org/abs/1007.4473; Baron et
+  al. 2012, Proc. SPIE 8445, https://arxiv.org/abs/1207.7141): the rms
   difference after convolving both images with a Gaussian beam
   ([`rms_convolved`][virgil.metrics.rms_convolved]);
 * the 2024 contest's ``ImageMetrics`` L1 score

@@ -3319,10 +3319,12 @@ def _cvis_binary_angular(u, v, sep, pa, flux):
 def cvis_binary(u, v, dra, ddec, flux):
     """Compute complex visibilities for a Cartesian-parameterized binary model.
 
-    Adapted from ``pymask``, the sparse-aperture-masking analysis tools of
-    Anthony Cheetham (https://github.com/AnthonyCheetham/pymask). For
-    closure-phase contrast limits in sparse aperture masking see Ireland
-    (2013, MNRAS 433, 1718, https://arxiv.org/abs/1301.6205).
+    Adapted from ``pymask`` (Pope, https://github.com/benjaminpope/pymask),
+    which took it from ``pysco``, now ``xara`` (Martinache,
+    https://github.com/fmartinache/xara; Martinache 2010,
+    https://arxiv.org/abs/1009.3933). For closure-phase contrast limits in
+    sparse aperture masking see Ireland (2013, MNRAS 433, 1718,
+    https://arxiv.org/abs/1301.6205).
 
     Parameters
     ----------
@@ -3400,7 +3402,8 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     r"""Complex visibilities of a disk whose brightness is a sum of powers of $\mu$.
 
     For $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with $\mu = \sqrt{1 - (r/R)^2}$,
-    Quirrenbach et al. (1996, A&A 312, 160, eqs. 1-4) show that
+    Quirrenbach et al. (1996, A&A 312, 160,
+    https://ui.adsabs.harvard.edu/abs/1996A&A...312..160Q, eqs. 1-4) show that
 
     $$
     V(x) = \frac{1}{C} \sum_\nu a_\nu\, 2^{\nu/2}\,

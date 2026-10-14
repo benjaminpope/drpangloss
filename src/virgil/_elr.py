@@ -6,7 +6,7 @@ which needs no free gravity-darkening exponent beta.
 
 Ported from Shashank Dholakia's jax-interferometry (core/ELR.py,
 core/utils.py, commit 70689ed), who ported the equations from Aaron
-Dotter's GDit. Function names, structure and ELR11 equation references are
+Dotter's GDit (https://github.com/aarondotter/GDit). Function names, structure and ELR11 equation references are
 his; the changes made in this port are:
 
 - ``jaxopt.Bisection`` is replaced by ``optimistix`` bisection, with brackets

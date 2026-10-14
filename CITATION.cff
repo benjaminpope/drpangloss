@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "VIRGIL: the Versatile Interferometric Reconstruction and Gradient-based Inference Library"
+abstract: "Modelling and imaging interferometric data in JAX (PyPI distribution virgil-astro)."
+type: software
+version: 0.3.0
+license: MIT
+repository-code: "https://github.com/benjaminpope/virgil"
+doi: "TBD"  # software DOI (e.g. Zenodo), to be added at release
+authors:
+  - family-names: Pope
+    given-names: Benjamin
+  - family-names: Blakely
+    given-names: Dori
+  - family-names: Dholakia
+    given-names: Shashank
+  - family-names: Charles
+    given-names: Max
+  - family-names: De Prins
+    given-names: Toon
+  - family-names: Desdoigts
+    given-names: Louis
+  - family-names: Goldfine
+    given-names: Jonah
+# preferred-citation: the paper (arXiv and PASA), TBD
