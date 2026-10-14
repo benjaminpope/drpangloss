@@ -1,0 +1,1081 @@
+# Provenance of the methods in virgil. See design/provenance.md for the narrative table.
+# Fields: authors, year, title, arxiv, doi, verified (checked against the arXiv abstract page
+# or Crossref; ADS resolution with scripts/fetch_references.py gives the final check),
+# verified_via, used_in (module:symbol), note. Entries with neither arxiv nor doi are
+# unverified until scripts/fetch_references.py resolves them against ADS.
+# role: absent = a source of an idea or code; "compared" = studied for comparison,
+# not ported; "bibliography" = in virgil.bib for the paper, not provenance.
+
+[ref.harmonix]
+authors = "Dholakia & Pope"
+year = 2025
+title = "Analytic Interferometry of Rotating Stellar Surfaces"
+used_in = ["virgil.models:HarmonixModel", "virgil.models:LimbDarkenedDisk"]
+bibcode = "2026PASP..138e4504D"
+arxiv = "2509.25433"
+verified = true
+verified_via = "ads"
+
+[ref.dorito]
+authors = "Charles et al."
+year = 2025
+title = "Image reconstruction with the JWST Interferometer"
+used_in = ["virgil.imaging:Image", "virgil.imaging:starting_image"]
+note = "PASA 43, e048 (2026)"
+bibcode = "2026PASA...43...48C"
+arxiv = "2510.10924"
+verified = true
+verified_via = "ads"
+
+[ref.amigo]
+authors = "Desdoigts et al."
+year = 2025
+title = "AMIGO: a Data-Driven Calibration of the JWST Interferometer"
+used_in = ["virgil.amigo:load_oi_data", "virgil.coverage:ami_grid_record"]
+note = "PASA 43, e075 (2026)"
+bibcode = "2025arXiv251009806D"
+arxiv = "2510.09806"
+verified = true
+verified_via = "ads"
+
+[ref.blakely2024]
+authors = "Blakely et al."
+year = 2024
+title = "The James Webb Interferometer: Space-based interferometric detections of PDS 70 b and c at 3.8 and 4.8 microns"
+used_in = ["virgil.models:FlaredDisk"]
+note = "AJ 169, 137 (2025)"
+bibcode = "2025AJ....169..137B"
+arxiv = "2404.13032"
+verified = true
+verified_via = "ads"
+
+[ref.ruffio2018]
+authors = "Ruffio et al."
+year = 2018
+title = "A Bayesian Framework for Exoplanet Direct Detection and Non-Detection"
+used_in = ["virgil.limits:ruffio_upperlimit"]
+bibcode = "2018AJ....156..196R"
+arxiv = "1809.08261"
+verified = true
+verified_via = "ads"
+
+[ref.absil2011]
+authors = "Absil et al."
+year = 2011
+title = "Searching for faint companions with VLTI/PIONIER. I. Method and first results"
+used_in = ["virgil.limits:absil_limits", "virgil.limits:nsigma"]
+bibcode = "2011A&A...535A..68A"
+arxiv = "1110.1178"
+verified = true
+verified_via = "ads"
+
+[ref.gallenne2015]
+authors = "Gallenne et al."
+year = 2015
+title = "Robust high-contrast companion detection from interferometric observations. The CANDID algorithm and an application to six binary stars"
+used_in = ["virgil.limits:injection_limits", "virgil.grid_fit:linear_flux_grid"]
+note = "CANDID"
+bibcode = "2015A&A...579A..68G"
+arxiv = "1505.02715"
+verified = true
+verified_via = "ads"
+
+[ref.kluska2014]
+authors = "Kluska et al."
+year = 2014
+title = "SPARCO: a semi-parametric approach for image reconstruction of chromatic objects"
+used_in = ["virgil.spectra:PowerLaw", "virgil.models:System"]
+bibcode = "2014A&A...564A..80K"
+arxiv = "1403.3343"
+verified = true
+verified_via = "ads"
+
+[ref.kammerer2020]
+authors = "Kammerer et al."
+year = 2020
+title = "Increasing the achievable contrast of infrared interferometry with an error correlation model"
+used_in = ["virgil._closure:ClosureNoise", "virgil.detection:rescale_errors"]
+bibcode = "2020A&A...644A.110K"
+arxiv = "2011.01209"
+verified = true
+verified_via = "ads"
+
+[ref.soummer2007]
+authors = "Soummer et al."
+year = 2007
+title = "Fast computation of Lyot-style coronagraph propagation"
+used_in = ["virgil._geometry:grid_visibilities"]
+note = "matrix Fourier transform"
+bibcode = "2007OExpr..1515935S"
+arxiv = "0711.0368"
+verified = true
+verified_via = "ads"
+
+[ref.merand2022]
+authors = "Mérand"
+year = 2022
+title = "Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED"
+used_in = ["virgil.oidata:OIData.with_error_floor", "virgil.spectra:Nodes"]
+note = "PMOIRED"
+bibcode = "2022SPIE12183E..1NM"
+arxiv = "2207.11047"
+verified = true
+verified_via = "ads"
+
+[ref.sivaramakrishnan2023]
+authors = "Sivaramakrishnan et al."
+year = 2022
+title = "The Near Infrared Imager and Slitless Spectrograph for the James Webb Space Telescope. IV. Aperture Masking Interferometry"
+used_in = ["virgil.coverage:mask_transfer"]
+note = "PASP 135, 015003 (2023)"
+bibcode = "2023PASP..135a5003S"
+arxiv = "2210.17434"
+verified = true
+verified_via = "ads"
+
+[ref.luger2017linear]
+authors = "Luger, Foreman-Mackey & Hogg"
+year = 2017
+title = "Linear Models for Systematics and Nuisances"
+doi = "10.3847/2515-5172/aa96b5"
+used_in = ["virgil._linear", "virgil.grid_fit:linear_flux_grid", "virgil.orbits:starting_orbits"]
+note = "RNAAS 1, 7"
+bibcode = "2017RNAAS...1....7L"
+arxiv = "1710.11136"
+verified = true
+verified_via = "ads"
+
+[ref.lucy2014]
+authors = "Lucy"
+year = 2014
+title = "Mass estimates for visual binaries with incomplete orbits"
+used_in = ["virgil.orbits:period_grid", "virgil.orbits:starting_orbits"]
+note = "A&A 563, A126"
+bibcode = "2014A&A...563A.126L"
+arxiv = "1309.2868"
+verified = true
+verified_via = "ads"
+
+[ref.wright2009]
+authors = "Wright & Howard"
+year = 2009
+title = "Efficient fitting of multiplanet Keplerian models to radial velocity and astrometry data"
+used_in = ["virgil.orbits:KeplerOrbit"]
+note = "ApJS 182, 205"
+bibcode = "2009ApJS..182..205W"
+arxiv = "0904.3725"
+verified = true
+verified_via = "ads"
+
+[ref.hartkopf1989]
+authors = "Hartkopf, McAlister & Franz"
+year = 1989
+title = "Binary star orbits from speckle interferometry. II. Combined visual-spectroscopic orbits of 31 close binaries"
+doi = "10.1086/115193"
+used_in = ["virgil.orbits:KeplerOrbit"]
+note = "AJ 98, 1014; bibcode 1989AJ.....98.1014H"
+bibcode = "1989AJ.....98.1014H"
+verified = true
+verified_via = "ads"
+
+[ref.blunt2017]
+authors = "Blunt et al."
+year = 2017
+title = "Orbits for the Impatient: A Bayesian Rejection Sampling Method for Quickly Fitting the Orbits of Long-Period Exoplanets"
+used_in = []
+note = "OFTI"
+role = "compared"
+bibcode = "2017AJ....153..229B"
+arxiv = "1703.10653"
+verified = true
+verified_via = "ads"
+
+[ref.blunt2020]
+authors = "Blunt et al."
+year = 2019
+title = "orbitize!: A Comprehensive Orbit-fitting Software Package for the High-contrast Imaging Community"
+used_in = []
+note = "orbitize!; AJ 159, 89 (2020)"
+role = "compared"
+bibcode = "2020AJ....159...89B"
+arxiv = "1910.01756"
+verified = true
+verified_via = "ads"
+
+[ref.blunt2024]
+authors = "Blunt et al."
+year = 2024
+title = "orbitize! v3: Orbit fitting for the High-contrast Imaging Community"
+doi = "10.21105/joss.06756"
+used_in = []
+note = "orbitize!; JOSS 9, 6756"
+role = "compared"
+bibcode = "2024JOSS....9.6756B"
+arxiv = "2409.11573"
+verified = true
+verified_via = "ads"
+
+[ref.brandt2021]
+authors = "Brandt et al."
+year = 2021
+title = "orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute, and/or Relative Astrometry"
+used_in = ["virgil.orbits:RVData"]
+note = "orvara; AJ 162, 186"
+role = "compared"
+bibcode = "2021AJ....162..186B"
+arxiv = "2105.11671"
+verified = true
+verified_via = "ads"
+
+[ref.thompson2023]
+authors = "Thompson et al."
+year = 2023
+title = "Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets"
+doi = "10.3847/1538-3881/acf5cc"
+used_in = ["virgil.angles:AngleVector", "virgil.orbits:KeplerOrbit.from_position_angle", "virgil.oidata:OIData.with_north_angle"]
+note = "AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication"
+bibcode = "2023AJ....166..164T"
+arxiv = "2402.01971"
+verified = true
+verified_via = "ads"
+
+[ref.foreman-mackey2021]
+authors = "Foreman-Mackey et al."
+year = 2021
+title = "exoplanet: Gradient-based probabilistic inference for exoplanet data & other astronomical time series"
+doi = "10.21105/joss.03285"
+used_in = []
+note = "JOSS 6, 3285"
+role = "bibliography"
+bibcode = "2021JOSS....6.3285F"
+arxiv = "2105.01994"
+verified = true
+verified_via = "ads"
+
+[ref.jaxoplanet]
+authors = "Hattori et al."
+year = 2024
+title = "jaxoplanet"
+doi = "10.5281/zenodo.10736936"
+used_in = []
+note = "Zenodo; https://github.com/exoplanet-dev/jaxoplanet"
+role = "bibliography"
+bibcode = "2024zndo..10736936H"
+verified = true
+verified_via = "ads"
+
+[ref.pricewhelan2017]
+authors = "Price-Whelan et al."
+year = 2017
+title = "The Joker: A custom Monte Carlo sampler for binary-star and exoplanet radial velocity data"
+used_in = ["virgil.orbits:starting_orbits"]
+note = "ApJ 837, 20"
+bibcode = "2017ApJ...837...20P"
+arxiv = "1610.07602"
+verified = true
+verified_via = "ads"
+
+[ref.starry]
+authors = "Luger et al."
+year = 2018
+title = "STARRY: Analytic Occultation Light Curves"
+used_in = ["virgil.models:HarmonixModel"]
+note = "AJ 157, 64 (2019)"
+bibcode = "2019AJ....157...64L"
+arxiv = "1810.06559"
+verified = true
+verified_via = "ads"
+
+[ref.kipping2013]
+authors = "Kipping"
+year = 2013
+title = "Efficient, uninformative sampling of limb darkening coefficients for two-parameter laws"
+doi = "10.1093/mnras/stt1435"
+used_in = ["virgil.models:QuadraticLimbDarkenedDisk", "virgil.models:SquareRootLimbDarkenedDisk"]
+bibcode = "2013MNRAS.435.2152K"
+arxiv = "1308.0009"
+verified = true
+verified_via = "ads"
+
+[ref.quirrenbach1996]
+authors = "Quirrenbach et al."
+year = 1996
+title = "Angular diameter and limb darkening of Arcturus"
+used_in = ["virgil.models:cvis_limb_darkened_disk"]
+note = "A&A 312, 160; bibcode 1996A&A...312..160Q; title from memory, to check against ADS"
+bibcode = "1996A&A...312..160Q"
+verified = true
+verified_via = "ads"
+
+[ref.espinosalara2011]
+authors = "Espinosa Lara & Rieutord"
+year = 2011
+title = "Gravity darkening in rotating stars"
+doi = "10.1051/0004-6361/201117252"
+used_in = ["virgil._elr", "virgil.models:GravityDarkenedStar"]
+note = "A&A 533, A43"
+bibcode = "2011A&A...533A..43E"
+arxiv = "1109.3038"
+verified = true
+verified_via = "ads"
+
+[ref.hillen2016]
+authors = "Hillen et al."
+year = 2016
+title = "Imaging the dust sublimation front of a circumbinary disk"
+doi = "10.1051/0004-6361/201628125"
+used_in = ["virgil.spectra"]
+bibcode = "2016A&A...588L...1H"
+arxiv = "1603.03023"
+verified = true
+verified_via = "ads"
+
+[ref.lazareff2017]
+authors = "Lazareff et al."
+year = 2016
+title = "Structure of Herbig AeBe disks at the milliarcsecond scale: A statistical survey in the H band using PIONIER-VLTI"
+used_in = ["virgil.models:ModulatedGaussianRim"]
+note = "A&A 599, A85 (2017)"
+bibcode = "2017A&A...599A..85L"
+arxiv = "1611.08428"
+verified = true
+verified_via = "ads"
+
+[ref.lachaume2021]
+authors = "Lachaume"
+year = 2021
+title = "Bias-free model fitting of correlated data in interferometry"
+doi = "10.1017/pasa.2021.20"
+used_in = ["virgil.gains:GainModes"]
+note = "PASA 38, e033 (2021)"
+bibcode = "2021PASA...38...29L"
+arxiv = "2104.07082"
+verified = true
+verified_via = "ads"
+
+[ref.pauls2005]
+authors = "Pauls et al."
+year = 2005
+title = "A Data Exchange Standard for Optical (Visible/IR) Interferometry"
+doi = "10.1086/444523"
+used_in = ["virgil.oifits:read_oifits"]
+note = "OIFITS 1; PASP 117, 1255"
+bibcode = "2005PASP..117.1255P"
+arxiv = "astro-ph/0508185"
+verified = true
+verified_via = "ads"
+
+[ref.duvert2017]
+authors = "Duvert, Young & Hummel"
+year = 2015
+title = "OIFITS 2: the 2nd version of the Data Exchange Standard for Optical (Visible/IR) Interferometry"
+doi = "10.1051/0004-6361/201526405"
+used_in = ["virgil.oifits:read_oifits", "virgil.oifits:write_oifits"]
+note = "A&A 597, A8 (2017)"
+bibcode = "2017A&A...597A...8D"
+arxiv = "1510.04556"
+verified = true
+verified_via = "ads"
+
+[ref.greenbaum2015]
+authors = "Greenbaum et al."
+year = 2014
+title = "An image-plane algorithm for JWST's non-redundant aperture mask data"
+used_in = ["virgil.legacy.oifits_implaneia"]
+note = "ImPlaneIA; ApJ 798, 68 (2015)"
+bibcode = "2015ApJ...798...68G"
+arxiv = "1411.3446"
+verified = true
+verified_via = "ads"
+
+[ref.martinache2010]
+authors = "Martinache"
+year = 2010
+title = "Kernel-Phase in Fizeau Inteferometry"
+used_in = []
+note = "ApJ 724, 464 (2010)"
+bibcode = "2010ApJ...724..464M"
+arxiv = "1009.3933"
+verified = true
+verified_via = "ads"
+
+[ref.ireland2013]
+authors = "Ireland"
+year = 2013
+title = "Phase Errors in Diffraction-Limited Imaging: Contrast Limits for Sparse Aperture Masking"
+used_in = ["virgil.models:cvis_binary"]
+note = "MNRAS 433, 1718"
+bibcode = "2013MNRAS.433.1718I"
+arxiv = "1301.6205"
+verified = true
+verified_via = "ads"
+
+[ref.kuramochi2018]
+authors = "Kuramochi et al."
+year = 2018
+title = "Superresolution Interferometric Imaging with Sparse Modeling Using Total Squared Variation: Application to Imaging the Black Hole Shadow"
+doi = "10.3847/1538-4357/aab6b5"
+used_in = ["virgil.imaging:TSV"]
+note = "ApJ 858, 56"
+bibcode = "2018ApJ...858...56K"
+arxiv = "1802.05783"
+verified = true
+verified_via = "ads"
+
+[ref.akiyama2017]
+authors = "Akiyama et al."
+year = 2017
+title = "Imaging the Schwarzschild-radius-scale Structure of M87 with the Event Horizon Telescope using Sparse Modeling"
+used_in = ["virgil.imaging:TSV", "virgil.imaging:StarletL1"]
+note = "ApJ 838, 1"
+bibcode = "2017ApJ...838....1A"
+arxiv = "1702.07361"
+verified = true
+verified_via = "ads"
+
+[ref.honma2014]
+authors = "Honma, Akiyama, Uemura & Ikeda"
+year = 2014
+title = "Super-resolution imaging with radio interferometry using sparse modeling"
+arxiv = "1407.2422"
+doi = "10.1093/pasj/psu070"
+used_in = ["virgil.imaging:StarletL1"]
+note = "PASJ 66, 95"
+bibcode = "2014PASJ...66...95H"
+verified = true
+verified_via = "ads"
+
+[ref.rudin1992]
+authors = "Rudin, Osher & Fatemi"
+year = 1992
+title = "Nonlinear total variation based noise removal algorithms"
+doi = "10.1016/0167-2789(92)90242-F"
+used_in = ["virgil.imaging:TV"]
+note = "Physica D 60, 259"
+bibcode = "1992PhyD...60..259R"
+verified = true
+verified_via = "ads"
+
+[ref.chael2018]
+authors = "Chael et al."
+year = 2018
+title = "Interferometric Imaging Directly with Closure Phases and Closure Amplitudes"
+doi = "10.3847/1538-4357/aab6a8"
+used_in = ["virgil.imaging:TV"]
+note = "ApJ 857, 23; eht-imaging"
+bibcode = "2018ApJ...857...23C"
+arxiv = "1803.07088"
+verified = true
+verified_via = "ads"
+
+[ref.thiebaut2017]
+authors = "Thiébaut & Young"
+year = 2017
+title = "Principles of image reconstruction in optical interferometry: tutorial"
+used_in = ["virgil.imaging:Laplacian", "virgil.imaging:diagnose"]
+note = "JOSA A 34, 904"
+bibcode = "2017JOSAA..34..904T"
+arxiv = "1708.08390"
+verified = true
+verified_via = "ads"
+
+[ref.candes2008]
+authors = "Candès, Wakin & Boyd"
+year = 2007
+title = "Enhancing Sparsity by Reweighted L1 Minimization"
+used_in = ["virgil.imaging:LogSum"]
+note = "J. Fourier Anal. Appl. 14, 877 (2008)"
+bibcode = "2008JFAA...14..877C"
+arxiv = "0711.1612"
+verified = true
+verified_via = "ads"
+
+[ref.malbet2010]
+authors = "Malbet et al."
+year = 2010
+title = "The 2010 Interferometric Imaging Beauty Contest"
+used_in = ["virgil.metrics"]
+note = "SPIE 7734"
+bibcode = "2010SPIE.7734E..2NM"
+arxiv = "1007.4473"
+verified = true
+verified_via = "ads"
+
+[ref.baron2012]
+authors = "Baron et al."
+year = 2012
+title = "The 2012 Interferometric Imaging Beauty Contest"
+used_in = ["virgil.metrics"]
+note = "SPIE 8445"
+bibcode = "2012SPIE.8445E..1EB"
+arxiv = "1207.7141"
+verified = true
+verified_via = "ads"
+
+[ref.baron2010squeeze]
+authors = "Baron, Monnier & Kloppenburg"
+year = 2010
+title = "A novel image reconstruction software for optical/infrared interferometry"
+doi = "10.1117/12.857364"
+used_in = ["virgil.imaging:LogSum"]
+note = "SQUEEZE; SPIE 7734"
+bibcode = "2010SPIE.7734E..2IB"
+verified = true
+verified_via = "ads"
+
+[ref.baron2008]
+authors = "Baron & Young"
+year = 2008
+title = "Image reconstruction at Cambridge University"
+doi = "10.1117/12.789115"
+used_in = ["virgil.imaging:MaxEntropy"]
+note = "BSMEM; SPIE 7013"
+bibcode = "2008SPIE.7013E..3XB"
+verified = true
+verified_via = "ads"
+
+[ref.gull1989]
+authors = "Gull"
+year = 1989
+title = "Developments in Maximum Entropy Data Analysis"
+doi = "10.1007/978-94-015-7860-8_4"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.imaging:LCurve.classic_maxent"]
+note = "in Maximum Entropy and Bayesian Methods, Cambridge 1988; the DOI chapter title is the Gull one; Skilling 1989 shares the volume"
+
+[ref.mackay1992]
+authors = "MacKay"
+year = 1992
+title = "Bayesian Interpolation"
+doi = "10.1162/neco.1992.4.3.415"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.imaging:log_evidence", "virgil.imaging:error_scale", "virgil.epochs:marginal_loglike"]
+note = "Neural Comput. 4, 415"
+
+[ref.hansen1993]
+authors = "Hansen & O'Leary"
+year = 1993
+title = "The Use of the L-Curve in the Regularization of Discrete Ill-Posed Problems"
+doi = "10.1137/0914086"
+used_in = ["virgil.imaging:l_curve"]
+bibcode = "1993SJSC...14.1487H"
+verified = true
+verified_via = "ads"
+
+[ref.cornwell2008]
+authors = "Cornwell"
+year = 2008
+title = "Multi-Scale CLEAN deconvolution of radio synthesis images"
+arxiv = "0806.2228"
+doi = "10.1109/jstsp.2008.2006388"
+used_in = ["virgil.imaging:clean"]
+note = "IEEE JSTSP 2, 793"
+bibcode = "2008ISTSP...2..793C"
+verified = true
+verified_via = "ads"
+
+[ref.rau2011]
+authors = "Rau & Cornwell"
+year = 2011
+title = "A multi-scale multi-frequency deconvolution algorithm for synthesis imaging in radio interferometry"
+doi = "10.1051/0004-6361/201117104"
+used_in = ["virgil.imaging:clean"]
+note = "A&A 532, A71"
+bibcode = "2011A&A...532A..71R"
+arxiv = "1106.2745"
+verified = true
+verified_via = "ads"
+
+[ref.hogbom1974]
+authors = "Högbom"
+year = 1974
+title = "Aperture synthesis with a non-regular distribution of interferometer baselines"
+used_in = ["virgil.imaging:clean"]
+note = "A&AS 15, 417; bibcode 1974A&AS...15..417H; title from memory, to check against ADS"
+bibcode = "1974A&AS...15..417H"
+verified = true
+verified_via = "ads"
+
+[ref.arras2021]
+authors = "Arras et al."
+year = 2020
+title = "Comparison of classical and Bayesian imaging in radio interferometry"
+used_in = ["virgil.fields:GaussianField"]
+note = "A&A 646, A84 (2021); cited in the audit as the correlated-field source: check"
+bibcode = "2021A&A...646A..84A"
+arxiv = "2008.11435"
+verified = true
+verified_via = "ads"
+
+[ref.arras2022]
+authors = "Arras et al."
+year = 2020
+title = "Variable structures in M87* from space, time and frequency resolved interferometry"
+used_in = ["virgil.fields:GaussianField"]
+note = "Nature Astron. 6, 259 (2022)"
+bibcode = "2022NatAs...6..259A"
+arxiv = "2002.05218"
+verified = true
+verified_via = "ads"
+
+[ref.edenhofer2024]
+authors = "Edenhofer et al."
+year = 2024
+title = "Re-Envisioning Numerical Information Field Theory (NIFTy.re): A Library for Gaussian Processes and Variational Inference"
+used_in = ["virgil.fields:GaussianField"]
+note = "JOSS 9, 6593"
+bibcode = "2024JOSS....9.6593E"
+arxiv = "2402.16683"
+verified = true
+verified_via = "ads"
+
+[ref.knollmuller2019]
+authors = "Knollmüller & Enßlin"
+year = 2019
+title = "Metric Gaussian Variational Inference"
+used_in = ["virgil.imaging:laplace_samples"]
+bibcode = "2019arXiv190111033K"
+arxiv = "1901.11033"
+verified = true
+verified_via = "ads"
+
+[ref.frank2021]
+authors = "Frank, Leike & Enßlin"
+year = 2021
+title = "Geometric variational inference"
+used_in = ["virgil.svi:variational"]
+note = "geoVI"
+bibcode = "2021Entrp..23..853F"
+arxiv = "2105.10470"
+verified = true
+verified_via = "ads"
+
+[ref.ensslin2009]
+authors = "Enßlin, Frommert & Kitaura"
+year = 2008
+title = "Information field theory for cosmological perturbation reconstruction and non-linear signal analysis"
+used_in = ["virgil.fields"]
+note = "Phys. Rev. D 80, 105005 (2009)"
+bibcode = "2009PhRvD..80j5005E"
+arxiv = "0806.3474"
+verified = true
+verified_via = "ads"
+
+[ref.tiede2025]
+authors = "Tiede et al."
+year = 2025
+title = "Hierarchical Interferometric Bayesian Imaging"
+used_in = ["virgil.imaging"]
+note = "HIBI/Comrade"
+bibcode = "2026ApJ...997..262T"
+arxiv = "2511.17706"
+verified = true
+verified_via = "ads"
+
+[ref.chavez2026]
+authors = "Chavez et al."
+year = 2026
+title = "Multifrequency Synthesis via CHIBI: Colorful Hierarchical Interferometric Bayesian Imaging"
+used_in = []
+bibcode = "2026ApJ..1005..132C"
+arxiv = "2606.04094"
+verified = true
+verified_via = "ads"
+
+[ref.drevon2026]
+authors = "Drevon et al."
+year = 2026
+title = "PYRA and MYTHRA: new statistical analysis for image reconstruction"
+used_in = ["virgil.ensemble:ensemble", "virgil.ensemble:combine"]
+note = "the brief says 2025; arXiv v1 is 2026"
+bibcode = "2026arXiv260915365D"
+arxiv = "2609.15365"
+verified = true
+verified_via = "ads"
+
+[ref.hoffman2014]
+authors = "Hoffman & Gelman"
+year = 2011
+title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
+used_in = ["virgil.inference"]
+note = "NUTS; JMLR 15, 1593 (2014)"
+bibcode = "2011arXiv1111.4246H"
+arxiv = "1111.4246"
+verified = true
+verified_via = "ads"
+
+[ref.betancourt2017]
+authors = "Betancourt"
+year = 2017
+title = "A Conceptual Introduction to Hamiltonian Monte Carlo"
+used_in = ["virgil.inference"]
+bibcode = "2017arXiv170102434B"
+arxiv = "1701.02434"
+verified = true
+verified_via = "ads"
+
+[ref.betancourt2013]
+authors = "Betancourt & Girolami"
+year = 2013
+title = "Hamiltonian Monte Carlo for Hierarchical Models"
+used_in = ["virgil.priors:hierarchical_scales"]
+bibcode = "2013arXiv1312.0906B"
+arxiv = "1312.0906"
+verified = true
+verified_via = "ads"
+
+[ref.kucukelbir2017]
+authors = "Kucukelbir et al."
+year = 2016
+title = "Automatic Differentiation Variational Inference"
+used_in = ["virgil.svi:variational"]
+note = "ADVI; JMLR 18, 14"
+bibcode = "2016arXiv160300788K"
+arxiv = "1603.00788"
+verified = true
+verified_via = "ads"
+
+[ref.decao2019]
+authors = "De Cao, Titov & Aziz"
+year = 2019
+title = "Block Neural Autoregressive Flow"
+used_in = ["virgil.svi:variational"]
+note = "BNAF"
+bibcode = "2019arXiv190404676D"
+arxiv = "1904.04676"
+verified = true
+verified_via = "ads"
+
+[ref.kingma2016]
+authors = "Kingma et al."
+year = 2016
+title = "Improving Variational Inference with Inverse Autoregressive Flow"
+used_in = ["virgil.svi:variational"]
+note = "IAF"
+bibcode = "2016arXiv160604934K"
+arxiv = "1606.04934"
+verified = true
+verified_via = "ads"
+
+[ref.vehtari2024]
+authors = "Vehtari et al."
+year = 2015
+title = "Pareto Smoothed Importance Sampling"
+used_in = ["virgil.svi:_khat"]
+note = "JMLR 25, 72 (2024)"
+bibcode = "2015arXiv150702646V"
+arxiv = "1507.02646"
+verified = true
+verified_via = "ads"
+
+[ref.kingma2015]
+authors = "Kingma & Ba"
+year = 2014
+title = "Adam: A Method for Stochastic Optimization"
+used_in = ["virgil.fitting"]
+bibcode = "2014arXiv1412.6980K"
+arxiv = "1412.6980"
+verified = true
+verified_via = "ads"
+
+[ref.liu1989]
+authors = "Liu & Nocedal"
+year = 1989
+title = "On the limited memory BFGS method for large scale optimization"
+doi = "10.1007/BF01589116"
+used_in = ["virgil.fitting"]
+note = "L-BFGS"
+bibcode = "1989MatPr..45..503L"
+verified = true
+verified_via = "ads"
+
+[ref.hogg2010recipes]
+authors = "Hogg, Bovy & Lang"
+year = 2010
+title = "Data analysis recipes: Fitting a model to data"
+used_in = ["virgil.likelihood:inflated_errors"]
+bibcode = "2010arXiv1008.4686H"
+arxiv = "1008.4686"
+verified = true
+verified_via = "ads"
+
+[ref.hogg2010ecc]
+authors = "Hogg, Myers & Bovy"
+year = 2010
+title = "Inferring the eccentricity distribution"
+used_in = ["virgil._flat", "virgil.priors"]
+bibcode = "2010ApJ...725.2166H"
+arxiv = "1008.4146"
+verified = true
+verified_via = "ads"
+
+[ref.gross2010]
+authors = "Gross & Vitells"
+year = 2010
+title = "Trial factors for the look elsewhere effect in high energy physics"
+used_in = ["virgil.detection"]
+bibcode = "2010EPJC...70..525G"
+arxiv = "1005.1891"
+verified = true
+verified_via = "ads"
+
+[ref.mawet2014]
+authors = "Mawet et al."
+year = 2014
+title = "Fundamental limitations of high contrast imaging set by small sample statistics"
+used_in = ["virgil.detection:injection_recovery"]
+note = "ApJ 792, 97"
+bibcode = "2014ApJ...792...97M"
+arxiv = "1407.2247"
+verified = true
+verified_via = "ads"
+
+[ref.wilks1938]
+authors = "Wilks"
+year = 1938
+title = "The Large-Sample Distribution of the Likelihood Ratio for Testing Composite Hypotheses"
+doi = "10.1214/aoms/1177732360"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.detection:local_nsigma"]
+
+[ref.chernoff1954]
+authors = "Chernoff"
+year = 1954
+title = "On the Distribution of the Likelihood Ratio"
+doi = "10.1214/aoms/1177728725"
+used_in = ["virgil.detection:local_nsigma"]
+bibcode = "1954AnnMS..25..573C"
+verified = true
+verified_via = "ads"
+
+[ref.efron1979]
+authors = "Efron"
+year = 1979
+title = "Bootstrap Methods: Another Look at the Jackknife"
+doi = "10.1214/aos/1176344552"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.detection:bootstrap_null"]
+
+[ref.fawcett2006]
+authors = "Fawcett"
+year = 2006
+title = "An introduction to ROC analysis"
+doi = "10.1016/j.patrec.2005.10.010"
+used_in = ["virgil.detection:DetectionMC"]
+bibcode = "2006PaReL..27..861F"
+verified = true
+verified_via = "ads"
+
+[ref.jeffreys1946]
+authors = "Jeffreys"
+year = 1946
+title = "An invariant form for the prior probability in estimation problems"
+doi = "10.1098/rspa.1946.0056"
+used_in = ["virgil.priors", "virgil.grid_fit"]
+bibcode = "1946RSPSA.186..453J"
+verified = true
+verified_via = "ads"
+
+[ref.vanderplas2018]
+authors = "VanderPlas"
+year = 2017
+title = "Understanding the Lomb-Scargle Periodogram"
+used_in = ["virgil.aliases:spectral_window"]
+note = "ApJS 236, 16 (2018)"
+bibcode = "2018ApJS..236...16V"
+arxiv = "1703.09824"
+verified = true
+verified_via = "ads"
+
+[ref.skilling1989]
+authors = "Skilling"
+year = 1989
+title = "Classic Maximum Entropy"
+doi = "10.1007/978-94-015-7860-8_3"
+verified = true
+verified_via = "crossref"
+used_in = ["virgil.imaging:LCurve.classic_maxent"]
+note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter"
+
+[ref.skillingbryan1984]
+authors = "Skilling & Bryan"
+year = 1984
+title = "Maximum entropy image reconstruction: general algorithm"
+used_in = ["virgil.imaging:MaxEntropy"]
+note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S"
+bibcode = "1984MNRAS.211..111S"
+verified = true
+verified_via = "ads"
+
+[ref.thiele1883]
+authors = "Thiele"
+year = 1883
+title = "Neue Methode der Bahnbestimmung von Doppelsternen"
+verified = false
+verified_via = "none"
+used_in = ["virgil.orbits:_thiele_innes_fit"]
+note = "Astron. Nachr. 104, 245; title from memory, to check against ADS"
+
+[ref.starck2010]
+authors = "Starck, Murtagh & Fadili"
+year = 2010
+title = "Sparse Image and Signal Processing: Wavelets, Curvelets, Morphological Diversity"
+verified = false
+verified_via = "none"
+used_in = ["virgil.imaging:starlet"]
+note = "book (CUP)"
+
+
+# package-only heritage: URLs; a paper reference is added where one exists
+
+[ref.candid]
+authors = "Mérand et al."
+title = "CANDID: Companion Analysis and Non-Detection in Interferometric Data"
+url = "https://github.com/amerand/CANDID"
+verified = false
+verified_via = "none"
+used_in = ["virgil.limits:injection_limits"]
+note = "algorithm paper: gallenne2015"
+role = "compared"
+
+[ref.fouriever]
+authors = "Kammerer"
+title = "fouriever"
+url = "https://github.com/kammerje/fouriever"
+verified = false
+verified_via = "none"
+used_in = ["virgil.grid_fit:linear_flux_grid"]
+note = "comparison only: linear_flux_grid is equivalent to its lincmap; no paper found"
+role = "compared"
+
+[ref.amical]
+authors = "Soulain et al."
+title = "AMICAL: aperture masking interferometry calibration and analysis"
+url = "https://github.com/SAIL-Labs/AMICAL"
+verified = false
+verified_via = "none"
+used_in = []
+note = "separate package, bibliography only; paper reference to add (SPIE 2020)"
+role = "bibliography"
+
+[ref.implaneia]
+authors = "Greenbaum, Sivaramakrishnan et al."
+title = "ImPlaneIA"
+url = "https://github.com/anand0xff/ImPlaneIA"
+verified = false
+verified_via = "none"
+used_in = ["virgil.legacy.oifits_implaneia"]
+note = "paper: greenbaum2015"
+
+[ref.mpol]
+authors = "Czekala et al."
+year = 2025
+title = "Million Points of Light (MPoL): a PyTorch library for radio interferometric imaging"
+url = "https://mpol-dev.github.io/MPoL/"
+used_in = []
+note = "arXiv ID returned by title search; ADS check pending"
+bibcode = "2025arXiv250200100C"
+arxiv = "2502.00100"
+verified = true
+verified_via = "ads"
+
+[ref.nifty]
+authors = "Enßlin group (Arras, Edenhofer et al.)"
+title = "NIFTy: Numerical Information Field Theory"
+url = "https://ift.pages.mpcdf.de/nifty/user/index.html"
+verified = false
+verified_via = "none"
+used_in = ["virgil.fields:GaussianField"]
+note = "papers: edenhofer2024, arras2021, ensslin2009"
+
+[ref.dlux]
+authors = "Desdoigts et al."
+year = 2024
+title = "Differentiable Optics with dLux I: Deep calibration of Flat Field and Phase Retrieval"
+url = "https://github.com/LouisDesdoigts/dLux"
+used_in = ["virgil._geometry:grid_visibilities"]
+note = "matrix Fourier transform cross-check; part II is 2406.08704"
+bibcode = "2023JATIS...9b8007D"
+arxiv = "2406.08703"
+verified = true
+verified_via = "ads"
+
+[ref.zodiax]
+authors = "Desdoigts"
+title = "zodiax"
+url = "https://github.com/LouisDesdoigts/zodiax"
+verified = false
+verified_via = "none"
+used_in = ["virgil.models"]
+note = "no paper"
+
+[ref.gdit]
+authors = "Dotter"
+title = "GDit"
+url = "https://github.com/aarondotter/GDit"
+verified = false
+verified_via = "none"
+used_in = ["virgil._elr"]
+note = "ELR equations ported via Dholakia from GDit"
+
+[ref.frito]
+authors = "Goldfine"
+title = "frito"
+url = "https://github.com/JonahDG/frito"
+verified = false
+verified_via = "none"
+used_in = ["virgil.scenes"]
+
+[ref.jaxbessel]
+authors = "Pope et al."
+title = "jaxbessel"
+url = "https://github.com/benjaminpope/jaxbessel"
+verified = false
+verified_via = "none"
+used_in = ["virgil.models"]
+note = "CEPHES (Moshier) translation, adapted from harmonix"
+
+[ref.cephes]
+authors = "Moshier"
+title = "Cephes mathematical library"
+url = "https://www.netlib.org/cephes/"
+verified = false
+verified_via = "none"
+used_in = []
+
+[ref.xara]
+authors = "Martinache"
+year = 2010
+title = "Kernel-Phase in Fizeau Inteferometry"
+url = "https://github.com/fmartinache/xara"
+used_in = ["virgil.models:cvis_binary"]
+note = "xara was formerly pysco; cvis_binary is adapted from it"
+bibcode = "2010ApJ...724..464M"
+arxiv = "1009.3933"
+verified = true
+verified_via = "ads"
+
+[ref.selig2013]
+authors = "Selig et al."
+year = 2013
+title = "NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference"
+used_in = ["virgil.fields:GaussianField"]
+bibcode = "2013A&A...554A..26S"
+arxiv = "1301.4499"
+verified = true
+verified_via = "ads"
+
+[ref.ensslin2019]
+authors = "Enßlin"
+year = 2018
+title = "Information theory for fields"
+used_in = ["virgil.fields:GaussianField"]
+note = "Annalen der Physik 531, 1800127 (2019)"
+bibcode = "2019AnP...53100127E"
+arxiv = "1804.03350"
+verified = true
+verified_via = "ads"

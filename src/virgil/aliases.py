@@ -15,6 +15,16 @@ out ([`marginal_loglike`][virgil.epochs.marginal_loglike]). The evidence of
 each band is the sum over its distinct modes of a Laplace approximation,
 checked by importance sampling from the Laplace proposal.
 
+The aliasing of an irregular time sampling is described by its spectral
+window, as in the Lomb–Scargle periodogram (VanderPlas 2018,
+https://arxiv.org/abs/1703.09824). The linear solve at fixed (P, e, T) that
+starts each band follows Lucy (2014, A&A 563, A126,
+https://arxiv.org/abs/1309.2868) and The Joker's period sampling
+(Price-Whelan et al. 2017, https://arxiv.org/abs/1610.07602). The error
+scales are integrated out under a Jeffreys prior (Jeffreys 1946,
+https://doi.org/10.1098/rspa.1946.0056) as in the evidence framework of
+MacKay (1992, https://doi.org/10.1162/neco.1992.4.3.415).
+
 See ``fit_orbit_aliases`` for the entry point.
 """
 
@@ -88,7 +98,9 @@ def spectral_window(times, frequencies):
 
     It is 1 at ``f = 0`` and returns to near 1 at the aliases of the
     sampling: a frequency offset at which the window is high cannot be told
-    from zero offset by the timing alone.
+    from zero offset by the timing alone. See VanderPlas (2018,
+    https://arxiv.org/abs/1703.09824) for the spectral window of a
+    periodogram.
     """
     t = onp.asarray(times, float)
     f = onp.atleast_1d(onp.asarray(frequencies, float))

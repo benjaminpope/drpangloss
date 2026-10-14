@@ -565,7 +565,8 @@ def linear_flux_grid(
 
     A fast first pass for companion searches, beside the iterative
     [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid], and the
-    equivalent of fouriever's linear contrast map (``lincmap``). For a faint
+    equivalent of fouriever's linear contrast map (``lincmap``; Kammerer,
+    https://github.com/kammerje/fouriever, which has no paper). For a faint
     companion (flux ``f`` much smaller than 1) the whitened residuals
     ``r`` of virgil's likelihood are linear in ``f`` at fixed position:
     ``r(f) = r(0) + f g``, where ``g = dr/df`` at ``f = 0`` is computed

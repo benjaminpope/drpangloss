@@ -155,7 +155,7 @@ class BlackBody(Spectrum):
 
     The shape of a blackbody at ``temperature`` in F_λ, normalized to
     ``ratio`` at ``wavel0``, as SPARCO uses for dust and companions (e.g.
-    Hillen et al. 2016). At long wavelengths (``hc/λkT`` small) it tends to
+    Hillen et al. 2016, https://arxiv.org/abs/1603.03023). At long wavelengths (``hc/λkT`` small) it tends to
     the Rayleigh-Jeans ``PowerLaw`` with index -4.
 
     Parameters

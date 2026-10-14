@@ -23,6 +23,9 @@ Monte Carlo estimates of false-alarm rates and completeness need.
 Wilks's Gaussian-equivalent significance at a single position. It ignores
 the look-elsewhere effect of searching a grid, so it overstates the
 significance of the best of many positions; calibrate with simulations.
+The look-elsewhere effect and its trial factor are reviewed by Gross &
+Vitells (2010, https://arxiv.org/abs/1005.1891;
+https://en.wikipedia.org/wiki/Look-elsewhere_effect).
 
 The simulations:
 
@@ -40,6 +43,15 @@ The simulations:
   NumPy arrays and gives empirical false-alarm probabilities, thresholds,
   ROC curves, completeness maps and contrast curves; it saves, loads and
   concatenates, so that array jobs can be merged.
+
+References: the residual bootstrap is Efron (1979,
+https://doi.org/10.1214/aos/1176344552); the ROC curve and its area are
+reviewed by Fawcett (2006, https://doi.org/10.1016/j.patrec.2005.10.010;
+https://en.wikipedia.org/wiki/Receiver_operating_characteristic);
+injection-recovery completeness and small-sample false-alarm rates follow
+the practice of direct imaging (e.g. Mawet et al. 2014,
+https://arxiv.org/abs/1407.2247) and CANDID's bootstrap (Gallenne et al.
+2015, https://arxiv.org/abs/1505.02715).
 """
 
 import dataclasses
@@ -226,7 +238,13 @@ def local_nsigma(delta_chi2):
     advance**: under the null hypothesis it then follows ½δ₀ + ½χ²₁ (one
     flux, bounded at zero), whose upper tail at ``delta_chi2`` is the
     one-sided Gaussian tail at ``sqrt(delta_chi2)``. This is
-    [`nsigma`][virgil.limits.nsigma] with one degree of freedom.
+    [`nsigma`][virgil.limits.nsigma] with one degree of freedom. The χ²
+    law of the likelihood ratio is Wilks's theorem (Wilks 1938,
+    https://doi.org/10.1214/aoms/1177732360;
+    https://en.wikipedia.org/wiki/Wilks%27_theorem), and the half-χ²₁
+    mixture at a boundary is Chernoff's (1954,
+    https://doi.org/10.1214/aoms/1177728725; see
+    https://en.wikipedia.org/wiki/Likelihood-ratio_test).
 
     It is local: it does not account for the look-elsewhere effect of
     taking the best of many grid positions, so for a search it overstates

@@ -25,8 +25,9 @@ a least-squares form, so Levenberg–Marquardt and
 and the density is normalized in ℝ², so evidences stay normalized.
 
 The construction follows Octofitter's ``UniformCircular`` (Thompson et al.
-2023, AJ 166, 164) and exoplanet's ``Angle`` (Foreman-Mackey et al. 2021,
-JOSS 6, 3285), which sample v ~ N(0, I); the ring and the chord priors are
+2023, AJ 166, 164, https://arxiv.org/abs/2402.01971) and exoplanet's
+``Angle`` (Foreman-Mackey et al. 2021, JOSS 6, 3285,
+https://arxiv.org/abs/2105.01994), which sample v ~ N(0, I); the ring and the chord priors are
 virgil's.
 """
 

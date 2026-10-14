@@ -13,6 +13,7 @@ authors = [
   {name = "Max Charles"},
   {name = "Toon De Prins", email = "toon.deprins@protonmail.com"},
   {name = "Louis Desdoigts", email = "ldes9555@uni.sydney.edu.au"},
+  {name = "Jonah Goldfine"},
 ]
 keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "virgil"]
 urls = {repository = "https://github.com/benjaminpope/virgil"}

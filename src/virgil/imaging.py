@@ -114,7 +114,10 @@ class TSV(_ImageRegulariser):
     """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
 
     A quadratic smoothness penalty, so it can be fitted by
-    Levenberg–Marquardt.
+    Levenberg–Marquardt. Total squared variation is the regularizer of
+    Kuramochi et al. (2018, ApJ 858, 56, https://arxiv.org/abs/1802.05783),
+    used with the sparse modelling of Akiyama et al. (2017,
+    https://arxiv.org/abs/1702.07361).
 
     Parameters
     ----------
@@ -142,7 +145,11 @@ class TSV(_ImageRegulariser):
 class TV(_ImageRegulariser):
     """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
 
-    Favours piecewise-flat images with sharp edges. ``ε`` smooths the
+    Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi
+    1992, Physica D 60, 259, https://doi.org/10.1016/0167-2789(92)90242-F;
+    for radio imaging see Akiyama et al. 2017,
+    https://arxiv.org/abs/1702.07361, and Chael et al. 2018,
+    https://arxiv.org/abs/1803.07088). ``ε`` smooths the
     penalty where the image is flat, so that it is differentiable. The
     penalty is averaged over the four flips of the image, so it does not
     depend on which neighbour each forward difference pairs a pixel with,
@@ -187,7 +194,10 @@ class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
     The relative entropy of the image with respect to a default image ``q``.
-    It is zero for ``b = q`` and positive otherwise.
+    It is zero for ``b = q`` and positive otherwise. Maximum-entropy
+    reconstruction is that of Skilling & Bryan (1984, MNRAS 211, 111); for
+    its use in optical interferometry see BSMEM (Baron & Young 2008,
+    https://doi.org/10.1117/12.789115).
 
     Parameters
     ----------
@@ -230,7 +240,8 @@ class Laplacian(_ImageRegulariser):
     ``∇²b`` is the five-point Laplacian, with zeros beyond the edges (so it
     is evaluated on a ring of pixels around the image too). A quadratic
     penalty on curvature, smoother than TSV, so it can be fitted by
-    Levenberg–Marquardt.
+    Levenberg–Marquardt. Quadratic regularizers are Gaussian priors on the
+    image (Thiébaut & Young 2017, https://arxiv.org/abs/1708.08390).
 
     Parameters
     ----------
@@ -280,7 +291,7 @@ def starlet(image, scales=4):
     """The starlet (isotropic undecimated wavelet) transform of an image.
 
     The à-trous algorithm with a B3-spline kernel (Starck, Murtagh & Fadili
-    2010): the image is smoothed ``scales`` times, the kernel's taps twice
+    2010, *Sparse Image and Signal Processing*, CUP): the image is smoothed ``scales`` times, the kernel's taps twice
     as far apart each time, and each detail plane is the difference between
     successive smoothings. Detail plane ``j`` holds structure about
     ``2**j`` pixels across. Beyond the edges the image is zero.
@@ -317,8 +328,10 @@ class StarletL1(_ImageRegulariser):
     ``s`` are the detail coefficients of :func:`starlet`, at every scale.
     An L1 norm favours few non-zero coefficients, so the image is built
     from few compact structures, of any size: a sparse image in the
-    wavelet sense. The coarse plane, which carries the flux, is not
-    penalized. ``ε`` smooths the penalty near zero, so that it is
+    wavelet sense (L1 sparse modelling for interferometric imaging: Honma
+    et al. 2014, PASJ 66, 95, https://arxiv.org/abs/1407.2422; Akiyama et
+    al. 2017, https://arxiv.org/abs/1702.07361). The coarse plane, which
+    carries the flux, is not penalized. ``ε`` smooths the penalty near zero, so that it is
     differentiable.
 
     Parameters
@@ -362,7 +375,8 @@ class LogSum(_ImageRegulariser):
     ``log(b / (ε b̄))`` once it is brighter than ``ε b̄``, and almost
     nothing when fainter, so as ``ε → 0`` the penalty counts the bright
     pixels: a smooth surrogate for the L0 "norm" of SQUEEZE (Candès, Wakin
-    & Boyd 2008). It favours images with few bright pixels. It is not
+    & Boyd 2008, https://arxiv.org/abs/0711.1612; SQUEEZE: Baron, Monnier
+    & Kloppenburg 2010, https://doi.org/10.1117/12.857364). It favours images with few bright pixels. It is not
     convex, so start the fit from a good image.
 
     Sweep its weight with ``l_curve(..., warm_start=False)``. By default
@@ -1233,7 +1247,7 @@ def clean(
 ):
     """Build an image from components, one at a time: gradient CLEAN.
 
-    Högbom's CLEAN repeatedly finds the peak of the residual dirty image
+    Högbom's CLEAN (Högbom 1974, A&AS 15, 417) repeatedly finds the peak of the residual dirty image
     and adds a fraction (the loop ``gain``) of a point source there. For
     data that are linear in the image, the residual dirty image is
     proportional to ``-∂χ²/∂c``, the gradient of χ² with respect to the
@@ -1265,7 +1279,8 @@ def clean(
 
     Each iteration only adds flux, so an early step that overshoots cannot
     be undone by later ones. Every ``refit_every`` iterations a **major
-    cycle** (as in Clark and Cotton–Schwab CLEAN) refits the fluxes of all
+    cycle** (as in Clark 1980, A&A 89, 377 and Cotton–Schwab CLEAN,
+    Schwab 1984, AJ 89, 1076) refits the fluxes of all
     the components at once, by non-negative least squares on the
     linearized residuals: flux can move between components, and components
     whose flux falls to zero are removed. The fluxes stay non-negative.
@@ -1282,7 +1297,9 @@ def clean(
     does not model. A companion much closer to the star than λ/B has its
     flux and separation nearly degenerate, whatever fits it.
 
-    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793): with several
+    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793,
+    https://arxiv.org/abs/0806.2228; Rau & Cornwell 2011,
+    https://arxiv.org/abs/1106.2745): with several
     ``scales_mas``, each component is a pixel convolved with a circular
     Gaussian of FWHM ``s`` (``s = 0`` is a point), and the image is
     ``Σ_s G_s * F_s``. The search runs over every (scale, pixel), with the
@@ -1622,7 +1639,7 @@ class LCurve:
 
         The curve is ``(log χ², log penalty)`` parametrized by ``log w``;
         the corner is the interior point of largest curvature (Hansen &
-        O'Leary 1993). Check it by eye: the curvature of a sparse or noisy
+        O'Leary 1993, https://doi.org/10.1137/0914086). Check it by eye: the curvature of a sparse or noisy
         sweep is itself noisy, and a smooth curve has no clear corner.
         A fit that diverged (a non-finite χ² or penalty) is left out, so
         that its NaN cannot spread to the curvature of its neighbours.
@@ -1672,7 +1689,8 @@ class LCurve:
         For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits,
         this is the weight ``w`` at which ``-2 w S`` equals the number of
         well-measured directions in the image, ``N = Σ λ / (λ + w)``
-        (Gull 1989; Skilling 1989). Here ``S`` is the entropy (minus
+        (Gull 1989, https://doi.org/10.1007/978-94-015-7860-8_4; Skilling
+        1989, https://doi.org/10.1007/978-94-015-7860-8_3). Here ``S`` is the entropy (minus
         the sweep's ``penalty``), and the ``λ`` are the eigenvalues of the
         data's Gauss–Newton curvature in the entropy metric,
         ``diag(√b) JᵀJ diag(√b)``, with ``J`` the Jacobian of the whitened

@@ -2,7 +2,7 @@
 
 A single regularized reconstruction depends on choices the data do not fix:
 the regularizer and its weight, the pixel size, the field and the starting
-image. Drevon et al. (2025, arXiv:2609.15365), who won the 2024
+image. Drevon et al. (2026, https://arxiv.org/abs/2609.15365), who won the 2024
 interferometric imaging contest, run many reconstructions with these
 choices drawn at random (their PYRA), keep those that fit the data, and
 average them while the average still fits (their MYTHRA). The mean is less
@@ -599,7 +599,7 @@ def _chi2_red(model, datasets):
 def combine(data, groups, *, spec=None, star=True):
     """Select the members of an ensemble and average them.
 
-    The selection follows MYTHRA (Drevon et al. 2025):
+    The selection follows MYTHRA (Drevon et al. 2026):
 
     1. In each group, keep the weights from ``spec.window_dex`` below the
        L-curve's corner up to the corner: the weights just before the
