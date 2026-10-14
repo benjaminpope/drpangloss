@@ -1264,10 +1264,16 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "read them from OIFITS, or give mjd per sample."
             )
         wavel = np.broadcast_to(self.wavel, np.shape(self.u))
-
         bandwidth = self.bandwidth
         if bandwidth is not None:
             bandwidth = np.broadcast_to(bandwidth, np.shape(self.u))
+        if getattr(model, "broadcast_in_time", False):
+            # One time per sample: the snapshot's positions are arrays and
+            # the Fourier transform broadcasts, with no loop and no vmap.
+            scene = model.at(self.dt, self.t_ref)
+            if bandwidth is None:
+                return scene.model(self.u, self.v, wavel)
+            return smeared_model(scene, self.u, self.v, wavel, bandwidth)
 
         def one(dt, u, v, w, b):
             scene = model.at(dt, self.t_ref)
@@ -1279,7 +1285,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         # components whose angles vary per sample (an Attached disc's bound
         # inclination or position angle) and differentiating made JAX run
         # executables with the wrong batch size (RuntimeProgramInputMismatch,
-        # or "Expected cotangent type" in fit).
+        # or "Expected cotangent type" in fit). Only such models need it.
         bw = np.zeros_like(wavel) if bandwidth is None else bandwidth
         return jax.lax.map(
             lambda x: one(*x), (self.dt, self.u, self.v, wavel, bw)
