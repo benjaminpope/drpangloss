@@ -203,9 +203,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             give ``bandwidth`` as a key instead.
         """
         if not isinstance(data, dict):
-            data = read_oifits(data, target=target, extras=extras)
-            if not bandwidth:
-                data.pop("bandwidth", None)
+            data = read_oifits(
+                data, target=target, extras=extras, bandwidth=bandwidth
+            )
         elif target is not None:
             raise ValueError("target only applies to OIFITS input.")
         elif bandwidth:

@@ -5,7 +5,7 @@ import pytest
 
 from virgil.models import GaussianDisk, PointSource, System
 from virgil.oidata import OIData
-from virgil.oifits import write_oifits
+from virgil.oifits import read_oifits, write_oifits
 
 MAS = onp.pi / 180.0 / 3600.0 / 1000.0
 LAMBDA0 = 2.2e-6
@@ -167,3 +167,78 @@ def test_unsupported_model_raises():
         _data(bandwidth=True)._cvis(
             BinaryModelCartesian(dra=5.0, ddec=2.0, flux=0.1)
         )
+
+
+def test_read_oifits_leaves_widths_out_by_default(tmp_path):
+    waves, widths = _channels(5)
+    path = write_oifits(_tables(waves, widths), tmp_path / "b.fits")
+    assert "bandwidth" not in read_oifits(path)
+    assert OIData(read_oifits(path)).bandwidth is None
+    assert "bandwidth" in read_oifits(path, bandwidth=True)
+
+
+def test_conflicting_widths_at_one_wavelength_raise(tmp_path):
+    waves, widths = _channels(5)
+    tables = _tables(waves, widths)
+    path = write_oifits(tables, tmp_path / "c.fits")
+    from astropy.io import fits
+
+    with fits.open(path) as hdul:
+        wave = [h for h in hdul if h.name == "OI_WAVELENGTH"][0]
+        dup = wave.copy()
+        dup.header["INSNAME"] = "OTHER"
+        dup.data["EFF_BAND"] *= 2.0
+        hdul.append(dup)
+        with pytest.raises(ValueError, match="different EFF_BAND"):
+            read_oifits(hdul, bandwidth=True)
+
+
+def test_image_component_is_refused():
+    from virgil.models import Image
+
+    image = Image(onp.ones((8, 8)), pixel_scale_mas=10.0)
+    with pytest.raises(TypeError, match="Bandwidth smearing"):
+        _data(bandwidth=True)._cvis(System(star=PointSource(), img=image))
+
+
+def test_time_dependent_path_matches_smeared_snapshot():
+    import jax
+
+    pytest.importorskip("jaxoplanet")
+    from virgil.models import Attached, smeared_model
+    from virgil.orbits import KeplerOrbit
+
+    orbit = KeplerOrbit(
+        period=700.0,
+        dt_peri=-120.0,
+        ecc=0.3,
+        inc=50.0,
+        omega=60.0,
+        Omega=120.0,
+        a_mas=200.0,
+        t_ref=0.0,
+    )
+    scene = System(
+        primary=PointSource(), comp=Attached(PointSource(flux=FLUX), orbit)
+    )
+    mjd = 120.0
+    with jax.enable_x64(True):
+        base = _data()
+        data = OIData(
+            {
+                "u": onp.asarray(base.u),
+                "v": onp.asarray(base.v),
+                "wavel": onp.asarray(base.wavel),
+                "vis": onp.full(base.u.size, 0.5),
+                "d_vis": onp.full(base.u.size, 0.01),
+                "mjd": onp.full(base.u.size, mjd),
+                "bandwidth": onp.asarray(base.wavel) / R,
+            }
+        )
+        got = onp.asarray(data._cvis(scene))
+        want = onp.asarray(
+            smeared_model(
+                scene.at(mjd), data.u, data.v, data.wavel, data.bandwidth
+            )
+        )
+    onp.testing.assert_allclose(got, want, atol=1e-9)

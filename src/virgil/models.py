@@ -4116,7 +4116,7 @@ def smeared_model(model, u, v, wavel, bandwidth):
     is smeared as if it sat at its centre offset (its internal structure
     is not smeared). Only [`System`][virgil.models.System] trees of
     [`Component`][virgil.models.Component] shapes are supported; other
-    models raise ``TypeError``. A component at zero offset is exactly
+    models, including ``Image``, raise ``TypeError``. A component at zero offset is exactly
     unaffected.
 
     [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is
@@ -4145,12 +4145,13 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         return total * offset_phase(
             u / wavel, v / wavel, model.dra, model.ddec
         )
-    if isinstance(model, Component):
+    if isinstance(model, Component) and not isinstance(model, Image):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
     raise TypeError(
-        "Bandwidth smearing supports Systems of Component shapes; got "
+        "Bandwidth smearing supports Systems of Component shapes (not Image,"
+        " whose flux is not at its offset); got "
         f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
         " to evaluate it unsmeared."
     )

@@ -53,7 +53,12 @@ _DEFAULT_PHASE_UNIT = "deg"
 
 
 def read_oifits(
-    source, target=None, insname=None, frame_mjd="mean", extras=()
+    source,
+    target=None,
+    insname=None,
+    frame_mjd="mean",
+    extras=(),
+    bandwidth=False,
 ):
     """Read an OIFITS file into a record for [`OIData`][virgil.oidata.OIData].
 
@@ -165,6 +170,11 @@ def read_oifits(
     as an absolute phase: without ``OI_T3`` the phase block is empty. A
     file whose ``OI_VIS`` holds correlated fluxes and no ``OI_VIS2`` gives
     flagged visibility samples, with the amplitudes in ``"visamp"``.
+
+    With ``bandwidth=True`` the record also holds ``"bandwidth"``, the
+    ``EFF_BAND`` of each sample's channel (matched by wavelength within the
+    selected ``insname``; absent if the file gives only zeros). It is left
+    out by default, so that data are not smeared unless asked.
     """
     extras = _check_extras(extras)
     # An HDUList is itself a list (of HDUs): only other sequences are lists
@@ -186,7 +196,7 @@ def read_oifits(
             )
         return _concat_records(
             [
-                read_oifits(s, target, insname, frame_mjd, extras)
+                read_oifits(s, target, insname, frame_mjd, extras, bandwidth)
                 for s in source
             ]
         )
@@ -196,8 +206,10 @@ def read_oifits(
         )
     if isinstance(source, (str, os.PathLike)):
         with fits.open(source, memmap=False) as hdul:
-            return _read_hdulist(hdul, target, insname, frame_mjd, extras)
-    return _read_hdulist(source, target, insname, frame_mjd, extras)
+            return _read_hdulist(
+                hdul, target, insname, frame_mjd, extras, bandwidth
+            )
+    return _read_hdulist(source, target, insname, frame_mjd, extras, bandwidth)
 
 
 EXTRAS = ("flux", "nflux", "t3amp", "visamp", "visphi")
@@ -311,7 +323,13 @@ def _channel_widths(tables):
             continue
         wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
         band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
-        widths.update(zip(wave.tolist(), band.tolist()))
+        for w, b in zip(wave.tolist(), band.tolist()):
+            if widths.setdefault(w, b) != b:
+                raise ValueError(
+                    f"Two OI_WAVELENGTH channels at {w:.6g} m have different "
+                    "EFF_BAND values (several instruments?): choose one "
+                    "with insname=."
+                )
     return widths
 
 
@@ -1200,7 +1218,9 @@ def _concat_extras(records, out):
         out[key] = merged
 
 
-def _read_hdulist(hdul, target, insname=None, frame_mjd="mean", extras=()):
+def _read_hdulist(
+    hdul, target, insname=None, frame_mjd="mean", extras=(), bandwidth=False
+):
     tables = _select_insname(_collect_tables(hdul), insname)
     wavelengths = _wavelength_tables(tables)
     target_tables = ["OI_VIS2", "OI_VIS", "OI_T3"]
@@ -1238,14 +1258,14 @@ def _read_hdulist(hdul, target, insname=None, frame_mjd="mean", extras=()):
     _read_extras(tables, wavelengths, target_id, lookup, record, extras)
     record["mjd"], record["frame"] = lookup.times(frame_mjd)
     record["stations"] = lookup.stations()
-    bandwidth = _sample_bandwidth(record, tables)
-    if bandwidth is not None:
-        record["bandwidth"] = bandwidth
+    widths = _sample_bandwidth(record, tables) if bandwidth else None
+    if widths is not None:
+        record["bandwidth"] = widths
     unique_wavel = onp.unique(record["wavel"])
     if unique_wavel.size == 1:
         record["wavel"] = unique_wavel
-        if bandwidth is not None and onp.unique(bandwidth).size == 1:
-            record["bandwidth"] = onp.unique(bandwidth)
+        if widths is not None and onp.unique(widths).size == 1:
+            record["bandwidth"] = onp.unique(widths)
     record["phi_unit"] = "rad"
     return record
 
