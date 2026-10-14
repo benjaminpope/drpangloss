@@ -72,6 +72,7 @@ from .models import (
     System,
     _pixel_visibilities,
     circular_support,
+    smeared_model,
 )
 from ._deprecate import external_stacklevel
 
@@ -2773,7 +2774,10 @@ def diagnose(model, data, regularizers=()):
     for d in observations:
         if d.phi_mat is None and d.observable_kind != "mixed_log_complex":
             continue
-        cvis = model.model(d.u, d.v, d.wavel)
+        if d.bandwidth is None:
+            cvis = model.model(d.u, d.v, d.wavel)
+        else:
+            cvis = smeared_model(model, d.u, d.v, d.wavel, d.bandwidth)
         bad = (np.abs(np.angle(cvis)) > 0.8 * np.pi) | (np.abs(cvis) < 0.05)
         regimes.append(float(np.mean(bad)))
     if regimes:

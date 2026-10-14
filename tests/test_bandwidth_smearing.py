@@ -244,3 +244,33 @@ def test_time_dependent_path_matches_smeared_snapshot():
     # The stored sample times are float32, which moves the companion by
     # ~1e-6 in the phasor; the smearing envelope itself is ~1e-2 or more.
     onp.testing.assert_allclose(got, want, atol=1e-4)
+
+
+def test_diagnose_smears_the_phase_regime_check():
+    from virgil.imaging import diagnose
+
+    def build(bandwidth):
+        d = _data(bandwidth=bandwidth)
+        n = d.u.size
+        rec = {
+            "u": onp.asarray(d.u),
+            "v": onp.asarray(d.v),
+            "wavel": onp.asarray(d.wavel),
+            "vis": onp.full(n, 0.5),
+            "d_vis": onp.full(n, 0.01),
+            "phi": onp.zeros(n),
+            "d_phi": onp.full(n, 0.01),
+            "phi_mat": onp.eye(n),
+        }
+        if bandwidth:
+            rec["bandwidth"] = onp.asarray(d.bandwidth)
+        return OIData(rec)
+
+    # A bright companion 3000 mas away is washed out by the channel width.
+    model = System(
+        star=PointSource(flux=0.05),
+        comp=PointSource(dra=3000.0, ddec=0.0, flux=1.0),
+    )
+    plain = diagnose(model, build(False)).checks["phase_regime"][0]
+    smeared = diagnose(model, build(True)).checks["phase_regime"][0]
+    assert smeared > plain
