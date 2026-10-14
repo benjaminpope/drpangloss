@@ -29,6 +29,7 @@ from virgil.models import (
     PolarDisk,
     PolarKernel,
     RadialGP,
+    VonMises,
     RadialLinear,
     RadialSum,
     System,
@@ -829,7 +830,9 @@ def test_the_evidence_prefers_the_correlation_length_the_data_came_from():
     z = onp.random.default_rng(4).standard_normal(16)
     truth = PolarDisk(gp.set("z", z), n_r=16)
     assert onp.all(
-        onp.asarray(truth.model(low_noise.u, low_noise.v, low_noise.wavel)).real
+        onp.asarray(
+            truth.model(low_noise.u, low_noise.v, low_noise.wavel)
+        ).real
         > 0.0
     )
     data = simulate(truth, low_noise, key=jax.random.PRNGKey(5))
@@ -888,3 +891,71 @@ def test_gp_priors_for_a_polar_kernel():
         gp_priors(PolarDisk(ThinRing(3.0)))
     with pytest.raises(ValueError, match="bounds"):
         gp_priors(disk, sigma=(2.0, 1.0))
+
+
+def test_a_radial_gp_as_a_harmonics_coefficient_or_a_von_mises_kappa():
+    coefficient = PolarDisk(
+        GaussianRing(4.0, 1.0),
+        harmonics=Harmonics(
+            c=(RadialGP(0.5, 9.0, sigma=0.2, ell=2.0),), s=0.1, form="linear"
+        ),
+        n_r=16,
+    )
+    arc = PolarDisk(
+        GaussianRing(4.0, 1.0),
+        harmonics=VonMises(
+            kappa=RadialGP(0.5, 9.0, sigma=1.0, ell=2.0),
+            theta0=30.0,
+            degree=12,
+        ),
+        n_r=16,
+    )
+    for disk, site in (
+        (coefficient, "harmonics.c.0"),
+        (arc, "harmonics.kappa"),
+    ):
+        assert list(disk.gp_sites()) == [site]
+        priors = gp_priors(disk)
+        assert f"{site}.z" in priors
+        assert disk.get(f"{site}.z").shape == (16,)
+        # The path resolves for fit and set: a different latent changes the
+        # model.
+        moved = disk.set(f"{site}.z", 0.5 * np.ones(16))
+        assert not onp.allclose(
+            onp.asarray(disk.model(DATA.u, DATA.v, DATA.wavel)),
+            onp.asarray(moved.model(DATA.u, DATA.v, DATA.wavel)),
+        )
+    # A negative g is a well-defined arc (kappa < 0 is the arc opposite,
+    # I_m(-k) = (-1)^m I_m(k)): finite, with the brightness positive.
+    negative = arc.set("harmonics.kappa.z", -3.0 * np.ones(16))
+    assert onp.all(
+        onp.isfinite(onp.asarray(negative.model(DATA.u, DATA.v, DATA.wavel)))
+    )
+    assert float(negative.min_intensity()) > -1e-3
+
+
+@pytest.mark.parametrize(
+    "form, fields", [("linear", ("c", "s")), ("positive", ("re", "im"))]
+)
+def test_array_valued_harmonics_paths_can_be_set(form, fields):
+    disk = PolarDisk(
+        GaussianRing(4.0, 1.0),
+        harmonics=Harmonics(
+            **{fields[0]: (0.1, 0.05), fields[1]: (0.0, 0.1)}, form=form
+        ),
+        n_r=16,
+    )
+    first = np.asarray([0.2, -0.1])
+    second = np.asarray([0.05, 0.15])
+    whole = disk.set(f"harmonics.{fields[0]}", first).set(
+        f"harmonics.{fields[1]}", second
+    )
+    each = (
+        disk.set(f"harmonics.{fields[0]}.0", 0.2)
+        .set(f"harmonics.{fields[0]}.1", -0.1)
+        .set(f"harmonics.{fields[1]}.0", 0.05)
+        .set(f"harmonics.{fields[1]}.1", 0.15)
+    )
+    a = onp.asarray(whole.model(DATA.u, DATA.v, DATA.wavel))
+    b = onp.asarray(each.model(DATA.u, DATA.v, DATA.wavel))
+    assert onp.all(onp.isfinite(a)) and onp.allclose(a, b, atol=1e-6)

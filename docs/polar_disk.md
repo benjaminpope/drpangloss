@@ -274,8 +274,10 @@ in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 - **The blur** is a Gaussian envelope in the Fourier plane, applied in the
   plane of the disk: exact and free.
 - **Exponential tails** take more nodes than finite ranges when the tail is
-  well resolved (about $16 \cdot 2\pi q L$); for that, use a power law with a
-  large outer radius and a soft edge.
+  well resolved (the rule of thumb $16 \cdot 2\pi q L$ is optimistic: about
+  $2 \times 10^{-4}$ in $V$ at 128 nodes in a widely resolved benchmark, and
+  $4 \times 10^{-5}$ at the 150-node cap); for that, use a power law with a
+  large outer radius and a soft edge, or a `cutoff`.
 - **Precision.** A profile's reference nodes are built in the default
   precision when the disk is made, so to evaluate in float64 construct the
   disk inside `jax.enable_x64(True)`.

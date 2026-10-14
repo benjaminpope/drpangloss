@@ -2916,10 +2916,15 @@ class ExpTail(_RadialProfile):
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
     so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
     is an exponential disk. Gauss-Laguerre nodes cover the oscillating tail
-    less efficiently than Gauss-Legendre does a finite range: about
-    $16 \cdot 2\pi q L$ nodes give 1e-5 at the longest baseline $q$ (24
-    nodes at $2\pi q L = 1$, 100 at 5). For a tail that is resolved much
-    more finely, give a ``cutoff``: the tail is then cut at
+    less efficiently than Gauss-Legendre does a finite range, and the
+    accuracy depends on $2\pi q L$ at the longest baseline $q$: the rule of
+    thumb $16 \cdot 2\pi q L$ nodes (24 nodes at $2\pi q L = 1$, 100 at 5)
+    is optimistic when the tail is well resolved. In a benchmark of a widely
+    resolved tail the largest error in $V$ was about $2 \times 10^{-4}$ at
+    128 nodes and about $4 \times 10^{-5}$ at the 150-node cap, not
+    $10^{-5}$. For a tail that is resolved much more finely, prefer a
+    [`RadialPowerLaw`][virgil.models.RadialPowerLaw] with a soft edge, or
+    give a ``cutoff``: the tail is then cut at
     $r_0 + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
     integrated by a Gauss-Legendre rule, which needs about
     $\pi q\, \mathrm{cutoff}\, L + 12$ nodes (a cutoff of 5 drops 0.7 %
@@ -4078,7 +4083,8 @@ class Harmonics(_Azimuthal):
     def _needs_radius(self):
         return self.prior is not None or any(
             isinstance(e, _RadialFunction)
-            for e in self.c + self.s + self.re + self.im
+            for group in (self.c, self.s, self.re, self.im)
+            for e in group
         )
 
     def _pair(self, r):
@@ -4095,7 +4101,9 @@ class Harmonics(_Azimuthal):
     @staticmethod
     def _at(entries, r):
         r = np.asarray(r)
-        if not entries:
+        # ``entries`` is a tuple, or an array when a path sets the whole
+        # field (``disk.set("harmonics.c", array)``): test its length.
+        if len(entries) == 0:
             return np.zeros((0,) + r.shape)
         return np.stack(
             [
@@ -5036,7 +5044,6 @@ class PolarDisk(Component):
         q2, p0, cos, sin = _polar_basis(
             uu, vv, r, self.inc, self.pa, n_orders, height
         )
-        tol = 8.0 * float(np.finfo(np.asarray(uu).dtype).eps)
         cache = _FrozenGeometry(
             uu,
             vv,
