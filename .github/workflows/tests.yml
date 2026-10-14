@@ -162,7 +162,11 @@ jobs:
         with:
           path: .jax-cache
           key: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-${{ steps.key.outputs.week }}
-          restore-keys: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
+          # Last, any cache of the same OS, Python and x64 (an older JAX,
+          # another shard): JAX ignores entries it cannot use.
+          restore-keys: |
+            jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
+            jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
 
       # ===== Tests =====
       # pytest-xdist runs one worker per core; loadgroup keeps each
@@ -174,8 +178,9 @@ jobs:
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
           # Seconds per test not marked slow (tests/conftest.py); only with
-          # a warm cache, since a cold one makes every compile count.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && steps.cache.outputs.cache-matched-key != '' && '15' || '' }}
+          # a warm cache (this job, this JAX), since a cold one makes every
+          # compile count.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '15' || '' }}
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # The memory sampler needs GNU free and procps ps: Linux only.
