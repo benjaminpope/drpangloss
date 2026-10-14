@@ -41,6 +41,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+<<<<<<< HEAD
 - **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
   (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
   (or radial function) with latents `z`; `PolarKernel` is a prior over the
@@ -70,6 +71,18 @@ anything before 1.0 may change between minor versions.
   conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
   `to_legacy`). The positive form is credited to Dumitrescu 2007 and
   Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
+=======
+- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
+  free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
+  companion in the grids, limits and detection statistics, with
+  `comp.flux.ratio` as the flux axis; the template's parameters get no
+  gradient. Regression tests (`tests/test_chromatic_search.py`) run
+  `likelihood_grid`, `linear_flux_grid`, `injection_limits`, `absil_limits`,
+  `detection_statistics` and `injection_recovery` on a WR + OB system with V²,
+  closure phases, differential phases and a flux spectrum, and show a
+  differential-phase-only detection of a 0.1 mas companion that a grey V²/T3 fit
+  misses. Tutorial: *Chromatic companion search*.
+>>>>>>> origin/main
 - **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
   tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
   normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
