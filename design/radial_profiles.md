@@ -169,15 +169,17 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **One shared engine.** `PolarDisk` and every subsumed class call one engine, `polar_disk_cvis(...)`.
 - **Names and paths are kept.** An old class keeps its public name and parameter names, so prior dicts keyed by path still work. Only its `_centred_cvis` changes, to call the engine.
 - **Old code goes after equality tests.** The old private visibility code is deleted once the tests pass.
-- **Deprecation.** At the next minor release, each old class gets a deprecation note and a changelog migration line, and it is removed one release later.
+- **Deprecation rule.** A class is deprecated only if it is reproducible as a special case of the general one. `FlaredDisk*` is not (see its row), so it is exempt. At the next minor release, each other subsumed class gets a deprecation note and a changelog migration line, and it is removed one release later.
 
 | Class | Engine form | Test |
 |---|---|---|
 | `ModulatedGaussianRim` | `ThinRing` + `Harmonics` + `blur_fwhm`. The legacy amplitude/phase parameters are converted to (c, s) inside the wrapper. | Exact to rounding |
 | `TruncatedCone` | `ExpTail` profile in slant distance + `Cone` height + `Harmonics`, with the legacy `az_amps`/`az_pas` converted | Agreement with the old class at n_rings → ∞ (the midpoint error is about 1/n²). The new rule should reach 1e-5 with about 16–24 nodes, against 256 midpoint rings. |
 | `GaussianArc` | `GaussianRing` + `VonMises` (decided) | A notebook check of old against new shape before switching. The changelog flags the change of shape, and `GaussianArc` raises a `FutureWarning` for one release first. |
-| `FlaredDisk*` | profile + `height` + scattering harmonics | Agreement within the numerical-FT error, coordinated with the `pds70-disk` branch |
+| `FlaredDisk*` | **Not subsumed, not deprecated.** Kept as is. | Verified in P6 (PR #340): Blakely+2024 Eq. 3 (sin i, z at the pixel mid-plane radius, z² added, no brightness Jacobian) is an approximation. Only a thin-surface version (tan i, z at the surface point's radius, no z², brightness Jacobian) equals `PolarDisk` + `PowerLawHeight(h0 = −z)`, to 1.5e-9. The flat case (aspect = 0) matches to about 1e-9. |
 | Per-class inc/pa (`EllipticalGaussian`) | `Projected` (Stage 8) | Separate PR |
+
+Sign convention for the `FlaredDisk*` row: positive h shifts towards pa + 90°. A top surface lifted towards the observer shifts the ring to the far side, so h0 < 0.
 
 Stellar disks (`UniformDisk`, limb-darkened disks, `GaussianDisk`) are out of scope. They are closed forms on the core star path and stay as they are; they serve as the analytic m = 0 tests.
 
@@ -276,6 +278,9 @@ This is done as a real worked example in its own analysis repository, never in v
   - `freeze_geometry` is an explicit method returning a cached model;
   - the stages are reordered so the dust-plume worked example benefits first (A1 after P2, A2 after P4);
   - credit to the original papers and codes goes in docstrings and the contributors page (§11).
+- **FlaredDisk\* stays (2026-10-14).** Ben's decision: `FlaredDisk*` stays undeprecated, and no PR carries a deprecation notice. Options for later:
+  - add a pixel-evaluated height mode to `PolarDisk`, which would reproduce the Blakely approximation; or
+  - keep `FlaredDisk*` for flared fits and use `PolarDisk` + `PowerLawHeight(h0 < 0)` for new thin-surface work.
 
 ## 11. Credit
 We reimplement ideas and copy no code (frank is LGPL). Credit is still mandatory, in two places:
@@ -339,3 +344,6 @@ Each benchmark records software versions and a pinned virgil commit hash, and gi
 - **Delegated PRs.** Check `gh pr files` before calling any delegated PR ready; an agent once reported tests it never wrote.
 - **Decisions.** Record any decision needed from Ben in a `QUESTIONS.md` at the worktree root, choose the conservative option, and continue.
 - **Status.** Keep a `STATUS.md` at the worktree root: stage, branch, PR URL, CI state, open questions. It is the hand-off for Ben in the morning.
+
+## 14. Execution log (2026-10-14)
+The run produced stacked PRs P1–P6 (#335 and #336 merged; #338 P3; #343 P4; P5; #340 P6) plus a validation PR. Heavy runs (experiments, tutorial execution, V4) were moved to OzSTAR by Ben's decision ("Option A"), overriding the no-HPC rule in §13. No deprecations were made.
