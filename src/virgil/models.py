@@ -3162,9 +3162,10 @@ class PolarDisk(Component):
     Notes
     -----
     This is the azimuthally symmetric (degree 0) disk. Without ``inc``, a
-    disk has no preferred direction, so closure phases are zero for a
-    centred disk; they appear with an offset ``dra``/``ddec`` or in
-    a [`System`][virgil.models.System] with other components. The disk has
+    centred disk is point-symmetric (whatever ``inc``), so its visibilities
+    are real and its closure phases are 0 or 180 degrees (the visibility
+    changes sign past its nulls); other values appear with an offset
+    ``dra``/``ddec`` or in a [`System`][virgil.models.System] with other components. The disk has
     unit flux, and in a system its weight is ``flux``. Light on scales much larger than
     the shortest baseline's resolution appears only as a loss of visibility,
     which [`Resolved`][virgil.models.Resolved] also models: the data
@@ -3236,7 +3237,8 @@ class PolarDisk(Component):
 
         Enough to sample the Bessel oscillations across the profile (at the
         current parameter values, which must be concrete), rounded up to a
-        multiple of 8. A starting point only: check convergence by
+        multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
+        tail). A starting point only: check convergence by
         doubling ``n_r``.
 
         Parameters
@@ -3247,7 +3249,16 @@ class PolarDisk(Component):
         u, v, wavel = (onp.asarray(a) for a in (data.u, data.v, data.wavel))
         q_max = float(onp.max(onp.hypot(u, v) / wavel))
         n = self.profile._n_needed(q_max)
-        return int(8 * onp.ceil(max(n, 16) / 8))
+        n = int(8 * onp.ceil(max(n, 16) / 8))
+        # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
+        # has at most 150 nodes; step down in 8s until the rule builds.
+        while n > 16:
+            try:
+                self.profile.with_rule(n)
+                break
+            except ValueError:
+                n -= 8
+        return n
 
     def _centred_cvis(self, uu, vv):
         r, w = self.profile.quadrature()
