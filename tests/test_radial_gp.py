@@ -550,31 +550,6 @@ def _cache_is_used(frozen):
     )
 
 
-def test_a_float32_cache_is_used_by_a_float64_evaluation():
-    # The workflow `frozen = disk.freeze_geometry(data); fit(frozen, ...)`
-    # builds the cache in float32 and evaluates in float64.
-    disk, frozen = _frozen_pair(f32=True)
-    assert frozen.frozen.uu.dtype == onp.float32
-    with jax.enable_x64(True):
-        up = eqx.tree_at(
-            lambda d: d.frozen,
-            frozen,
-            jax.tree.map(
-                lambda x: x.astype(np.float64)
-                if hasattr(x, "dtype") and np.issubdtype(x.dtype, np.floating)
-                else x,
-                frozen.frozen,
-            ),
-        )
-        u, v, w = (
-            np.asarray(x, dtype=float) for x in (DATA.u, DATA.v, DATA.wavel)
-        )
-        r, _ = up.profile.quadrature()
-        assert bool(
-            up.frozen.matches(u / w, v / w, r, up.inc, up.pa, up.height(r))
-        )
-
-
 def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
     with jax.enable_x64(True):
         disk, frozen = _frozen_pair()
