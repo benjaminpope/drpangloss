@@ -172,6 +172,7 @@ from .spectra import (  # noqa: E402
     LorentzianLine,
     Nodes,
     PowerLaw,
+    Scaled,
     Sum,
 )
 
@@ -233,6 +234,7 @@ __all__ = [
     "SourceModel",
     "StateVectorOrbit",
     "SquareRootLimbDarkenedDisk",
+    "Scaled",
     "Sum",
     "System",
     "ThieleInnesOrbit",
