@@ -225,11 +225,19 @@ evidence is over the latents, conditional on the hyperparameters.
 
 `Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
 coefficients with a prior: each order $m$ is a `RadialGP` of length `ell_r`
-(across radius) with variance proportional to
-$(1 + (m \ell_\theta / \bar r)^2)^{-\nu - 1/2}$, independent between
-orders. The azimuthal length `ell_theta` sets how fast the structure falls
-off with $m$: large values suppress high orders. The latents are the field
-`harmonics.z` of shape `(2, M, n)`. The default form is positive.
+(across radius), independent between orders. The azimuthal length
+`ell_theta` (on the same scale as `ell_r`, in mas along the ring at
+$\bar r$) sets how fast the prior falls off with $m$: large values suppress
+high orders. The variance of the order-$m$ coefficients is proportional to
+$(1 + (m \ell_\theta / \bar r)^2 / 2\nu)^{-\nu - 1/2}$ (the Matérn
+spectral density; a squared exponential for $\nu = \infty$). This law is
+exact for the coefficients of the linear form (`form="linear"`). In the
+default positive form the latents drive the reflection-coefficient inputs
+rather than the brightness harmonics, so it holds only loosely there.
+$\bar r$ is `r_ref`, by default the middle of the profile's radial extent, so
+for a `GaussianRing` (whose range runs from 0 to a few widths beyond the ring)
+it is not the ring radius: pass `r_ref` to set it. The latents are the field
+`harmonics.z` of shape `(2, M, n)`.
 
 ## Spectral index
 

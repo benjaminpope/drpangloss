@@ -16,7 +16,6 @@ import pytest
 from numpyro.infer import MCMC, NUTS
 from scipy.special import j0 as scipy_j0
 
-from virgil import models
 from virgil._geometry import image_coordinates
 from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
@@ -252,14 +251,26 @@ def test_the_polar_kernel_variance_falls_with_the_order_as_the_spectral_density(
     assert onp.all(onp.diff(var) < 0.0)
     expected = 0.25 * onp.asarray(kernel.spectrum(degree))
     assert onp.allclose(var, expected, rtol=0.1)
-    # Closed form: S(m)/S(1) = ((1 + a^2) / (1 + (m a)^2))^(nu + 1/2).
+    # Closed form of the Matern spectral density, with the 2 nu in it so that
+    # ell_theta is on the scale of ell_r: S(m)/S(1) =
+    # ((1 + a^2/2nu) / (1 + (m a)^2/2nu))^(nu + 1/2), a = ell_theta / r_ref.
     a = 4.0 / 6.0
     m = onp.arange(1, degree + 1)
     assert onp.allclose(
         onp.asarray(kernel.spectrum(degree)),
-        ((1 + a**2) / (1 + (m * a) ** 2)) ** 2.0,
+        ((1 + a**2 / 3.0) / (1 + (m * a) ** 2 / 3.0)) ** 2.0,
         rtol=1e-5,
     )
+    # The squared-exponential limit is the Gaussian in m, and a large nu
+    # approaches it; it does not collapse to the first order alone.
+    inf = PolarKernel(
+        2.0, 4.0, 0.5, r_in=3.0, r_out=9.0, nu_theta=float("inf")
+    )
+    sq = onp.asarray(inf.spectrum(degree))
+    assert onp.allclose(sq, onp.exp(-0.5 * a**2 * (m**2 - 1.0)), rtol=1e-5)
+    assert onp.all(sq > 0.0)
+    big = PolarKernel(2.0, 4.0, 0.5, r_in=3.0, r_out=9.0, nu_theta=2.5)
+    assert onp.all(onp.abs(onp.asarray(big.spectrum(degree)) - sq) < 0.2)
     # Diagonal in m, and a Matern correlation in r with the length ell_r.
     flat = values.transpose(1, 2, 0, 3)  # (kind, m, draw, r)
     corr = onp.corrcoef(flat[0, 0, :, 0], flat[0, 1, :, 0])[0, 1]
@@ -386,11 +397,29 @@ def test_chromatic_model_equals_the_per_wavelength_model():
     weights = onp.asarray(scene.disk._weight(np.asarray(wavel)))
     assert weights.shape == wavel.shape and onp.all(weights > 0.0)
     assert not onp.allclose(weights, weights[0])
-    # Harmonics are grey: the image harmonics do not depend on wavelength.
-    assert onp.allclose(
-        onp.asarray(disk.harmonics.image_harmonics(np.ones(3))),
-        onp.asarray(disk.harmonics.image_harmonics(np.ones(3))),
+    # Harmonics are grey: the closure-phase signal of the azimuthal structure
+    # is the same at every wavelength for the same baseline in cycles/mas.
+    thin = PolarDisk(
+        ThinRing(4.0),
+        harmonics=Harmonics(c=0.4, s=0.2),
+        spectral_index=1.0,
+        wavel0=3.5e-6,
+        inc=40.0,
+        pa=20.0,
+        n_r=8,
     )
+    flat = PolarDisk(
+        ThinRing(4.0),
+        harmonics=Harmonics(c=0.4, s=0.2),
+        inc=40.0,
+        pa=20.0,
+        n_r=8,
+    )
+    u, v = onp.asarray(DATA.u), onp.asarray(DATA.v)
+    for w in (3.0e-6, 4.5e-6):
+        a = onp.asarray(thin.model(u, v, np.full_like(u, w)))
+        b = onp.asarray(flat.model(u, v, np.full_like(u, w)))
+        assert onp.allclose(a, b, atol=1e-6)
 
 
 def test_spectral_index_makes_the_inner_edge_redder_than_the_outer():
@@ -456,10 +485,53 @@ def _frozen_pair(x64=True):
     return disk, disk.freeze_geometry(DATA)
 
 
+def _cache_is_used(frozen):
+    """Whether the cache matches the disk's own arguments (the fast path)."""
+    r, _ = frozen.profile.quadrature()
+    height = None if frozen.height is None else frozen.height(r)
+    return bool(
+        frozen.frozen.matches(
+            DATA.u / DATA.wavel,
+            DATA.v / DATA.wavel,
+            r,
+            frozen.inc,
+            frozen.pa,
+            height,
+        )
+    )
+
+
+def test_a_float32_cache_is_used_by_a_float64_evaluation():
+    # The workflow `frozen = disk.freeze_geometry(data); fit(frozen, ...)`
+    # builds the cache in float32 and evaluates in float64.
+    disk, _ = _frozen_pair()
+    frozen = disk.freeze_geometry(DATA)
+    assert frozen.frozen.uu.dtype == np.float32
+    with jax.enable_x64(True):
+        up = eqx.tree_at(
+            lambda d: d.frozen,
+            frozen,
+            jax.tree.map(
+                lambda x: x.astype(np.float64)
+                if hasattr(x, "dtype") and np.issubdtype(x.dtype, np.floating)
+                else x,
+                frozen.frozen,
+            ),
+        )
+        u, v, w = (
+            np.asarray(x, dtype=float) for x in (DATA.u, DATA.v, DATA.wavel)
+        )
+        r, _ = up.profile.quadrature()
+        assert bool(
+            up.frozen.matches(u / w, v / w, r, up.inc, up.pa, up.height(r))
+        )
+
+
 def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
     with jax.enable_x64(True):
         disk, frozen = _frozen_pair()
         assert disk.frozen is None and frozen.frozen is not None
+        assert _cache_is_used(frozen)
         got = frozen.model(DATA.u, DATA.v, DATA.wavel)
         expected = disk.model(DATA.u, DATA.v, DATA.wavel)
         assert onp.max(onp.abs(onp.asarray(got - expected))) < 1e-12
@@ -467,6 +539,7 @@ def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
         z = onp.random.default_rng(11).standard_normal(24)
         refit_f = frozen.set("profile.z", z)
         refit_u = disk.set("profile.z", z)
+        assert _cache_is_used(refit_f)
         diff = refit_f.model(DATA.u, DATA.v, DATA.wavel) - refit_u.model(
             DATA.u, DATA.v, DATA.wavel
         )
@@ -482,6 +555,7 @@ def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
         DATA.u.shape[0],
         24,
     )
+    assert _cache_is_used(frozen)
     got = onp.asarray(frozen.model(DATA.u, DATA.v, DATA.wavel))
     expected = onp.asarray(disk.model(DATA.u, DATA.v, DATA.wavel))
     assert onp.max(onp.abs(got - expected)) < 1e-6
@@ -639,8 +713,7 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
     everything = log_evidence(result, data, path=None)
     assert onp.isfinite(everything)
     assert onp.isclose(everything, log_evidence(result, data, path="disk"))
-    # A subset of the latents gives a different, finite evidence.
-    assert models.PolarDisk.gp_sites  # public
+    # Which latents the evidence integrates over:
     from virgil import imaging
 
     assert imaging._evidence_latents(result.model, "disk", "x") == (
@@ -676,6 +749,25 @@ def test_fitting_a_gp_hyperparameter_by_map_warns():
     priors = gp_priors(start, sigma=(0.3, 3.0))
     with pytest.warns(UserWarning, match="biased at the MAP"):
         fit(start, priors, data, max_steps=2)
+
+
+def test_a_radial_gp_as_a_harmonics_coefficient_has_resolving_paths():
+    disk = PolarDisk(
+        GaussianRing(4.0, 1.0),
+        harmonics=Harmonics(
+            c=(RadialGP(sigma=0.3, ell=2.0, z=onp.zeros(8)),),
+            s=0.0,
+        ),
+        n_r=16,
+    )
+    sites = disk.gp_sites()
+    assert "harmonics.c.0" in sites
+    priors = gp_priors(disk)
+    assert set(priors) == {"harmonics.c.0.z"}
+    z = onp.linspace(-1.0, 1.0, 8)
+    assert onp.allclose(
+        onp.asarray(disk.set("harmonics.c.0.z", z).get("harmonics.c.0.z")), z
+    )
 
 
 def test_gp_priors_for_a_polar_kernel():
