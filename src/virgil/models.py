@@ -24,6 +24,7 @@ ratio. Likelihoods of these models are in
 import dataclasses
 import math
 import textwrap
+import warnings
 from typing import Any
 
 import equinox as eqx
@@ -50,6 +51,7 @@ from ._geometry import (
 )
 from . import _elr
 from ._deprecate import renamed
+from .harmonics import cone_coefficients, rim_coefficients
 from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
@@ -505,32 +507,47 @@ class EllipticalGaussian(Component):
         return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
 
 
+_ARC_MAX_DEGREE = 256  # beyond this GaussianArc integrates along the arc
+
+
 class GaussianArc(Component):
-    """A Gaussian ridge bent along a circular arc, e.g. a curved shock front.
+    r"""A ridge bent along a circular arc, e.g. a curved shock front.
 
-    The brightness is a curve convolved with a circular Gaussian of FWHM
-    ``width``. The curve is a circle of ``radius`` about the centre of
-    curvature ``(dra, ddec)``, weighted along its length by a Gaussian of
-    FWHM ``length`` (an arc length, in milliarcseconds) peaking at position
-    angle ``pa`` as seen from the centre. For a large radius it tends to an
-    elliptical Gaussian with FWHMs ``hypot(length, width)`` along the arc
-    and ``width`` across it.
+    The brightness is a circle of ``radius`` about the centre of curvature
+    ``(dra, ddec)``, convolved with a circular Gaussian of FWHM ``width``, and
+    weighted along it by a von Mises function of the position angle
+    $\varphi$ seen from the centre, $\exp[\kappa\cos(\varphi - \mathrm{pa})]$,
+    brightest at position angle ``pa``. The concentration
+    $\kappa = (2\sqrt{2\ln 2}\,\mathrm{radius} / \mathrm{length})^2$ makes
+    ``length`` the FWHM of the weight along the arc, as an arc length
+    in milliarcseconds, for an arc short against its radius; for a large
+    radius the model tends to an elliptical Gaussian with FWHMs
+    ``hypot(length, width)`` along the arc and ``width`` across it, and as
+    ``length`` grows it tends to a uniform ring (the weight wraps smoothly
+    round the circle).
 
-    The weight is a Gaussian in the arc length ``s`` from ``pa``, taken
-    once round the circle, ``-π radius <= s <= π radius``: it is cut off
-    at the antipode of ``pa``, where the two tails meet, and never wraps
-    round the circle more than once. The quadrature covers ``±6σ`` (the
-    part beyond, a fraction 2e-9 of the flux, is dropped), or the whole
-    circle once ``6σ >= π radius``, i.e. ``length >= 0.39 π radius``.
-    The cut at the antipode matters only for longer arcs: at ``length =
-    π radius`` it removes 2 % of the Gaussian, and as ``length`` grows
-    the brightness tends to a uniform ring.
+    **Change of shape.** Before this version the weight was a Gaussian in
+    the arc length, taken once round the circle and cut off at the antipode
+    of ``pa``. The two agree for arcs short against the radius (the von
+    Mises weight is the periodic version of the Gaussian) but differ when
+    ``length`` is comparable to $\pi\,\mathrm{radius}$; refit if you rely on
+    long arcs. The component is a [`PolarDisk`][virgil.models.PolarDisk]: a
+    [`ThinRing`][virgil.models.ThinRing] with a
+    [`VonMises`][virgil.models.VonMises] azimuthal profile and a ``width``
+    blur, and constructing one gives a ``FutureWarning`` that
+    says so (for this release).
 
-    The visibility is the Fourier transform of the curve, a line integral
-    evaluated by the trapezoidal rule on ``nodes`` equally spaced points
-    spanning ``±min(6σ, π radius)``, times the Gaussian's. It is accurate
-    while the spacing of the points, ``2 min(6σ, π radius) / (nodes -
-    1)``, is below half the shortest fringe spacing, ``λ / 2 B_max``.
+    The visibility is exact up to the truncation of the von Mises
+    harmonics at ``degree``, which is chosen when the arc is built, from its
+    ``radius`` and ``length``, so that the neglected harmonics are below
+    $10^{-6}$ of the mean. Arcs narrower than that allows (more than 256
+    harmonics, ``length / radius`` below about 0.05, a FWHM of about 3
+    degrees) are instead integrated along the arc with the von Mises
+    weight at ``nodes`` points, as the image is, at a cost independent of
+    the width; ``quadrature`` says which was chosen. Pass ``degree`` to
+    force the series. Fitting ``length`` to much narrower arcs than the
+    starting ones needs a larger ``degree``, and ``is_physical`` is false
+    once the series drops more than 1e-4 of its power.
 
     Parameters
     ----------
@@ -540,7 +557,7 @@ class GaussianArc(Component):
         FWHM of the ridge across the arc, in milliarcseconds.
     length : float or array-like
         FWHM of the brightness along the arc, as an arc length in
-        milliarcseconds.
+        milliarcseconds (see above).
     pa : float or array-like
         Position angle of the brightest point of the arc, seen from the
         centre of curvature, in degrees North to East.
@@ -551,7 +568,13 @@ class GaussianArc(Component):
         Offset of the centre of curvature in milliarcseconds, positive to
         the East and North. The arc itself lies ``radius`` away from it.
     nodes : int, optional
-        Quadrature points along the arc, at least 2 (default 128).
+        Points along the arc at which the rendered image is sampled, at least
+        2 (default 128). It affects the visibilities only on the quadrature
+        path (very narrow arcs).
+    degree : int, optional
+        Highest harmonic of the von Mises weight kept in the visibilities
+        (static); by default chosen from the starting ``radius`` and
+        ``length``, or 32 if they are traced.
 
     Examples
     --------
@@ -563,6 +586,8 @@ class GaussianArc(Component):
     length: jax.Array
     pa: jax.Array
     nodes: int = eqx.field(static=True)
+    degree: int = eqx.field(static=True)
+    quadrature: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -574,7 +599,18 @@ class GaussianArc(Component):
         dra=0.0,
         ddec=0.0,
         nodes=128,
+        degree=None,
     ):
+        warnings.warn(
+            "GaussianArc now has a von Mises weight along the arc, "
+            "exp(kappa cos(angle - pa)) with kappa = (2 sqrt(2 ln 2) radius "
+            "/ length)**2, in place of a Gaussian in the arc length cut off "
+            "at the antipode: the shapes agree for arcs short against the "
+            "radius and differ for long ones. This warning is removed in "
+            "the next release.",
+            FutureWarning,
+            stacklevel=4,  # past equinox's __call__ wrappers
+        )
         self.radius = np.asarray(radius, dtype=float)
         self.width = np.asarray(width, dtype=float)
         self.length = np.asarray(length, dtype=float)
@@ -585,6 +621,29 @@ class GaussianArc(Component):
         if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
+        self.quadrature = False
+        if degree is None:
+            r, length = concrete(self.radius), concrete(self.length)
+            if (
+                r is None
+                or length is None
+                or not onp.all(onp.isfinite(r) & (r > 0.0))
+                or not onp.all(onp.isfinite(length) & (length > 0.0))
+            ):
+                degree = 32  # traced, or invalid (rejected below)
+            else:
+                kappa = (FWHM_PER_SIGMA * onp.max(r / length)) ** 2
+                from .harmonics import auto_von_mises_degree
+
+                degree = auto_von_mises_degree(kappa, cap=None)
+                if degree > _ARC_MAX_DEGREE:
+                    # Too narrow for a harmonic series: integrate along the
+                    # arc instead.
+                    self.quadrature = True
+                    degree = _ARC_MAX_DEGREE
+        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            raise ValueError(f"degree must be a positive integer: {degree}.")
+        self.degree = int(degree)
 
     def __check_init__(self):
         super().__check_init__()
@@ -604,26 +663,49 @@ class GaussianArc(Component):
             & np.all(self.radius > 0.0)
             & np.all(self.width > 0.0)
             & np.all(self.length > 0.0)
+            & self._series_converged()
         )
+
+    def _series_converged(self):
+        """True unless the von Mises series, truncated at ``degree``, drops
+        more than 1e-4 of the power (e.g. ``length`` fitted far below its
+        starting value); always true on the quadrature path."""
+        if self.quadrature:
+            return np.asarray(True)
+        return np.all(self.harmonics().truncation_power() < 1e-4)
+
+    def kappa(self):
+        """The concentration of the von Mises weight along the arc."""
+        return (FWHM_PER_SIGMA * self.radius / self.length) ** 2
+
+    def harmonics(self):
+        """The azimuthal weight as a [`VonMises`][virgil.models.VonMises]
+        (azimuth from North towards East, brightest at ``pa``)."""
+        return VonMises(self.kappa(), self.pa, degree=self.degree)
 
     def curve(self):
         """Points along the arc (mas, East and North of the centre) and
-        their normalized trapezoidal-rule weights."""
-        sigma = self.length / FWHM_PER_SIGMA
-        # Out to 6σ (a flux loss of 2e-9), or once round the circle if the
-        # arc is longer: then both ends sit at the antipode of pa, and their
-        # half weights add to one full trapezoidal weight.
-        span = np.minimum(6.0 * sigma, np.pi * self.radius)
-        s = np.linspace(-1.0, 1.0, self.nodes) * span
-        angle = self.pa * dtor + s / self.radius
+        their normalized trapezoidal-rule weights, as the image samples it.
+
+        The points are equally spaced in position angle over the span in
+        which the weight is above ``exp(-21)`` of its peak (once round the
+        circle for a wide arc, both ends at the antipode of ``pa``)."""
+        kappa = self.kappa()
+        # A safe argument where the span is the whole circle, so that the
+        # gradient of arccos stays finite.
+        cosine = 1.0 - 21.0 / np.maximum(kappa, 1e-12)
+        wide = cosine <= -1.0
+        span = np.where(wide, np.pi, np.arccos(np.where(wide, 0.0, cosine)))
+        phi = np.linspace(-1.0, 1.0, self.nodes) * span
+        angle = self.pa * dtor + phi
         # Trapezoidal rule: the end points carry half weight.
         ends = np.ones(self.nodes).at[np.array([0, -1])].set(0.5)
-        weight = ends * np.exp(-0.5 * (s / sigma) ** 2)
+        weight = ends * np.exp(kappa * (np.cos(phi) - 1.0))
         x = self.radius * np.sin(angle)
         y = self.radius * np.cos(angle)
         return x, y, weight / np.sum(weight)
 
-    def _centred_cvis(self, uu, vv):
+    def _quadrature_cvis(self, uu, vv):
         x, y, weight = self.curve()
         shape = np.shape(uu)
         uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
@@ -634,6 +716,24 @@ class GaussianArc(Component):
         )
         envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
         return np.reshape(curve * envelope, shape)
+
+    def _centred_cvis(self, uu, vv):
+        if self.quadrature:
+            return self._quadrature_cvis(uu, vv)
+        # A thin ring with the von Mises weight and a Gaussian blur, on the
+        # engine, face-on: its azimuth runs from North towards East.
+        c, s = self.harmonics().coefficients(np.reshape(self.radius, (1,)))
+        return polar_disk_cvis(
+            uu,
+            vv,
+            np.reshape(self.radius, (1,)),
+            np.ones((1,)),
+            0.0,
+            0.0,
+            self.width,
+            c=c,
+            s=s,
+        )
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         x, y, weight = self.curve()
@@ -945,18 +1045,9 @@ class TruncatedCone(Component):
         return cvis * _cvis_gaussian_envelope(uu, vv, self.width)
 
     def _harmonics(self, r):
-        """The wall modulation as the Cartesian ``(c, s)`` of the engine.
-
-        A mode ``A_m cos(m (az - az_pa_m))`` has the ring angle of
-        ``_orders`` (0 on the wall at ``pa + 90``), and the engine's azimuth
-        runs from the disk's major axis, at ``pa - 90``, towards the minor
-        axis: they differ by half a turn, which is the factor ``(-1)**m``.
-        """
-        orders = onp.arange(1, self.az_amps.size + 1)
-        _, amps, phases = self._orders()
-        sign = (-1.0) ** orders
-        c = sign * amps * np.cos(orders * phases)
-        s = -sign * amps * np.sin(orders * phases)
+        """The wall modulation as the Cartesian ``(c, s)`` of the engine
+        (see [`cone_coefficients`][virgil.harmonics.cone_coefficients])."""
+        c, s = cone_coefficients(self.az_amps, self.az_pas, self.pa)
         ones = np.ones_like(r)
         return c[:, None] * ones, s[:, None] * ones
 
@@ -1964,15 +2055,23 @@ class ModulatedGaussianRim(Component):
         return _rim_angle(sky_pa, self.pa, self.inc)
 
     def _centred_cvis(self, uu, vv):
-        return _cvis_centred_rim(
+        # The rim is a PolarDisk: a ThinRing of radius diam / 2, the
+        # modulation as linear harmonics (converted from the amplitudes and
+        # azimuths), and the blur of the engine.
+        c = s = None
+        if self.az_amps.size:
+            c, s = rim_coefficients(self.az_amps, self.az_pas, self.pa)
+            c, s = c[:, None], s[:, None]
+        return polar_disk_cvis(
             uu,
             vv,
-            self.diam,
-            self.fwhm,
+            np.reshape(self.diam / 2.0, (1,)),
+            np.ones((1,)),
             self.inc,
             self.pa,
-            self.az_amps,
-            self.az_pas - self.pa,
+            self.fwhm,
+            c=c,
+            s=s,
         )
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
@@ -3170,95 +3269,73 @@ def _harmonic_entries(values, name):
     return tuple(out)
 
 
-class Harmonics(zdx.Base):
-    r"""Azimuthal harmonics of a [`PolarDisk`][virgil.models.PolarDisk],
-    in the linear form.
+def _scalar_or_function(value, name):
+    """A constant (0-d array) or a radial function of ``r``."""
+    if isinstance(value, _RadialFunction):
+        return value
+    value = np.asarray(value, dtype=float)
+    if value.ndim:
+        raise ValueError(
+            f"{name} must be a scalar or a radial function of r, got an "
+            f"array of shape {value.shape}."
+        )
+    return value
 
-    The brightness at radius $r$ and azimuth $\theta$ in the plane of the
-    disk is the profile $I_0(r)$ times
-    $1 + \sum_{m=1}^{M} c_m(r) \cos m\theta + s_m(r) \sin m\theta$.
-    The azimuth $\theta$ is measured from the projected major axis (at
-    position angle ``pa`` of the disk) towards ``pa + 90`` on the sky, the
-    azimuth of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim].
-    The model is exactly linear in the Cartesian coefficients $c_m$, $s_m$,
-    which are better behaved than an amplitude and phase (no funnel as the
-    amplitude goes to zero and no wrap of the phase), and a Gaussian prior on
-    them is a uniform prior on the phase. Each is a constant or a
-    function of the radius, such as
-    [`RadialLinear`][virgil.models.RadialLinear] or
-    [`RadialPower`][virgil.models.RadialPower]. The visibility needs only
-    the orders ``0..M``, from one call to ``bessel_jn``.
 
-    The brightness stays non-negative only if
-    $1 + \sum_m (\dots) \ge 0$ everywhere; ``sum(c_m**2 + s_m**2) ** 0.5
-    <= 1`` guarantees it, and
-    ``PolarDisk.min_intensity``
-    reports violations.
+class _Azimuthal(zdx.Base):
+    """Base class of the azimuthal profiles of a
+    [`PolarDisk`][virgil.models.PolarDisk]: a brightness
+    ``I(r, theta) / I0(r)`` with azimuthal mean 1 and harmonics ``0..degree``.
 
-    Parameters
-    ----------
-    c, s : float, radial function or sequence of them, optional
-        Coefficients of $\cos m\theta$ and $\sin m\theta$ from the first
-        order up. A scalar is the first order only. Missing orders are zero.
-    degree : int, optional
-        The highest order ``M`` (static: it sets shapes, so changing it
-        recompiles). By default the length of the longer of ``c`` and ``s``.
-    form : str, optional
-        Only ``"linear"`` is available.
-
-    Examples
-    --------
-    A lopsided ring, brighter towards the major axis's far end, with a
-    second order that grows outwards:
-
-    >>> harmonics = Harmonics(c=(0.3, RadialLinear(0.0, 0.02, 5.0)), s=(0.1,))
-    >>> disk = PolarDisk(GaussianRing(6.0, 1.0), harmonics=harmonics, inc=30.0)
+    A subclass gives the linear coefficients ``coefficients(r)``, the
+    ``(c, s)`` the engine needs, and the rest follows.
     """
-
-    c: tuple
-    s: tuple
-    degree: int = eqx.field(static=True)
-
-    def __init__(self, c=(), s=(), degree=None, form="linear"):
-        if form != "linear":
-            raise ValueError(
-                f"Harmonics form must be 'linear' (the only one available), "
-                f"not {form!r}."
-            )
-        c, s = _harmonic_entries(c, "c"), _harmonic_entries(s, "s")
-        top = max(len(c), len(s)) if degree is None else degree
-        if isinstance(top, bool) or int(top) != top or top < 0:
-            raise ValueError(f"degree must be a non-negative integer: {top}.")
-        top = int(top)
-        if max(len(c), len(s)) > top:
-            raise ValueError(
-                f"degree is {top} but c has {len(c)} and s has {len(s)} "
-                "entries."
-            )
-        zero = np.asarray(0.0)
-        self.c = c + (zero,) * (top - len(c))
-        self.s = s + (zero,) * (top - len(s))
-        self.degree = top
-
-    @staticmethod
-    def _at(entries, r):
-        r = np.asarray(r)
-        if not entries:
-            return np.zeros((0,) + r.shape)
-        return np.stack(
-            [
-                e(r) if isinstance(e, _RadialFunction) else e + 0.0 * r
-                for e in entries
-            ]
-        ).reshape((len(entries),) + r.shape)
 
     def coefficients(self, r):
         """``(c, s)``, each of shape ``(M, len(r))``, at the radii ``r``."""
-        return self._at(self.c, r), self._at(self.s, r)
+        raise NotImplementedError
+
+    def _needs_radius(self):
+        return False
+
+    def image_harmonics(self, r=None):
+        """Image harmonics ``I_0 .. I_M`` (complex, ``I_0 = 1``) at the radii
+        ``r`` (not needed for constants), shape ``(M + 1,) + shape(r)``:
+        $I_m = (c_m - i s_m)/2$."""
+        from . import harmonics as _h
+
+        if r is None and self._needs_radius():
+            raise ValueError(
+                "some coefficients are functions of the radius: give r."
+            )
+        r = np.asarray(0.0 if r is None else r)
+        return _h.image_from_linear(*self.coefficients(r))
+
+    def convert(self, form="linear"):
+        """The same image harmonics in another form, constants only.
+
+        ``form`` is ``"linear"`` or ``"positive"``; see
+        [`from_image_harmonics`][virgil.harmonics.from_image_harmonics] (a
+        spectral factorization for ``"positive"``, which needs a
+        non-negative image). Coefficients that are functions of the radius
+        cannot be converted.
+        """
+        from . import harmonics as _h
+
+        if getattr(self, "form", None) == form:
+            return self
+        if self._needs_radius():
+            raise ValueError(
+                "convert needs constant coefficients; evaluate "
+                "image_harmonics(r) and convert node by node."
+            )
+        return _h.from_image_harmonics(
+            onp.asarray(self.image_harmonics()), form=form
+        )
 
     def factor(self, r, theta):
-        """``1 + sum_m c_m cos m theta + s_m sin m theta`` on ``r, theta``
-        (broadcast against each other)."""
+        """``I(r, theta) / I0(r)`` on ``r, theta`` (broadcast against each
+        other)."""
         shape = np.broadcast_shapes(np.shape(r), np.shape(theta))
         rr = np.broadcast_to(r, shape).ravel()
         tt = np.broadcast_to(theta, shape).ravel()
@@ -3274,6 +3351,368 @@ class Harmonics(zdx.Base):
         image goes negative)."""
         theta = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
         return np.min(self.factor(np.ravel(r)[:, None], theta[None, :]))
+
+
+class Harmonics(_Azimuthal):
+    r"""Azimuthal harmonics of a [`PolarDisk`][virgil.models.PolarDisk], of
+    exact degree ``M``.
+
+    The brightness at radius $r$ and azimuth $\theta$ in the plane of the
+    disk is the profile $I_0(r)$ times an azimuthal factor of mean 1.
+    The azimuth $\theta$ is measured from the projected major axis (at
+    position angle ``pa`` of the disk) towards ``pa + 90`` on the sky, the
+    azimuth of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim].
+    Every coefficient is a constant or a function of the radius, such as
+    [`RadialLinear`][virgil.models.RadialLinear] or
+    [`RadialPower`][virgil.models.RadialPower]. The visibility needs only the
+    orders ``0..M``, from one call to ``bessel_jn``, and the image has
+    harmonics exactly ``0..M``: none beyond.
+
+    Two forms are offered.
+
+    **``form="positive"``** (the default when no ``c``/``s`` is given):
+    $I/I_0 = |h(e^{i\theta})|^2 / \sum_j |h_j|^2$, with
+    $h(z) = 1 + h_1 z + \dots + h_M z^M$. By the Fejér-Riesz theorem every
+    non-negative trigonometric polynomial of degree ``M`` is of this form, so
+    the image is positive for every parameter value and every positive image
+    of degree ``M`` is reachable. The polynomial has a root-flip ambiguity
+    (reflecting a root through the unit circle leaves the image unchanged,
+    giving up to $2^M$ copies of every solution), which the parametrization
+    removes by taking the minimum-phase factor, built from complex reflection
+    coefficients $k_j$ ($|k_j| < 1$) by the step-up recursion
+    $h^{(j)}_i = h^{(j-1)}_i + k_j \overline{h^{(j-1)}_{j-i}}$, with
+    $k_j = w_j \tanh|w_j| / |w_j|$ from the unconstrained latents
+    $w_j = $ ``re[j - 1]`` $+\, i\,$ ``im[j - 1]`` (Cartesian, finite
+    gradients at $w = 0$, a uniform ring). There is no label switching and no
+    constraint, so optimizers and samplers see a smooth unimodal surface. The
+    latents are an internal coordinate: for weak asymmetry $h_m \approx k_m$,
+    so $I \approx I_0 (1 + 2\,\mathrm{Re} \sum_m h_m e^{im\theta})$, but the
+    quantities to report are the image harmonics, $I_m =
+    \sum_j h_{j+m} \bar h_j / \sum_j |h_j|^2$
+    ([`image_harmonics`][virgil.models.Harmonics.image_harmonics]).
+
+    **``form="linear"``** (given whenever ``c`` or ``s`` is): $I/I_0 = 1 +
+    \sum_m c_m(r) \cos m\theta + s_m(r) \sin m\theta$, exactly linear in the
+    Cartesian coefficients (no funnel as an amplitude goes to zero and no
+    wrap of a phase; a Gaussian prior on them is a uniform prior on the
+    phase). It reproduces `ModulatedGaussianRim` and `TruncatedCone`, but
+    does not keep the image positive: the sum of the amplitudes,
+    ``sum(sqrt(c_m**2 + s_m**2)) <= 1``, guarantees it (an rms of the
+    coefficients at most 1 does not), and ``PolarDisk.min_intensity``
+    reports violations.
+
+    [`virgil.harmonics`][virgil.harmonics] converts between the forms and the
+    image harmonics.
+
+    Parameters
+    ----------
+    c, s : float, radial function or sequence of them, optional
+        Linear form: coefficients of $\cos m\theta$ and $\sin m\theta$ from
+        the first order up. A scalar is the first order only. Missing orders
+        are zero.
+    re, im : float, radial function or sequence of them, optional
+        Positive form: the real and imaginary parts of the latents $w_j$,
+        $j = 1 \dots M$ (missing ones are zero).
+    w : complex or sequence of complex, optional
+        Positive form, for constants: the latents as complex numbers, in place
+        of ``re`` and ``im``.
+    degree : int, optional
+        The highest order ``M`` (static: it sets shapes, so changing it
+        recompiles). By default the number of coefficients given.
+    form : {"positive", "linear"}, optional
+        By default ``"linear"`` if ``c`` or ``s`` is given, else
+        ``"positive"``.
+
+    Examples
+    --------
+    A lopsided ring that stays positive, with a second harmonic:
+
+    >>> w = (0.4 + 0.1j, 0.2j)
+    >>> disk = PolarDisk(GaussianRing(6.0, 1.0), harmonics=Harmonics(w=w), inc=30.0)
+
+    The linear form, with a second order that grows outwards:
+
+    >>> harmonics = Harmonics(c=(0.3, RadialLinear(0.0, 0.02, 5.0)), s=(0.1,))
+
+    A linear form is converted to the positive one, when it is positive:
+
+    >>> positive = Harmonics(c=0.5, s=0.2).convert("positive")
+
+    References
+    ----------
+    The positive form is the Fejér-Riesz spectral factorization of a
+    non-negative trigonometric polynomial (Dumitrescu 2007, *Positive
+    Trigonometric Polynomials and Signal Processing Applications*, Springer),
+    with the minimum-phase factor parametrized without constraint by
+    reflection coefficients (Barndorff-Nielsen & Schou 1973, J. Multivariate
+    Anal. 3, 408).
+    """
+
+    c: tuple
+    s: tuple
+    re: tuple
+    im: tuple
+    degree: int = eqx.field(static=True)
+    form: str = eqx.field(static=True)
+
+    def __init__(
+        self, c=(), s=(), degree=None, form=None, re=(), im=(), w=None
+    ):
+        c, s = _harmonic_entries(c, "c"), _harmonic_entries(s, "s")
+        if w is not None:
+            if re != () or im != ():
+                raise ValueError("give w or re and im, not both.")
+            w_value = concrete(w)
+            if w_value is None:
+                raise TypeError(
+                    "Harmonics(w=...) takes constants; for traced latents "
+                    "pass re= and im= (real and imaginary parts) instead."
+                )
+            w = onp.atleast_1d(onp.asarray(w_value, dtype=complex))
+            if w.ndim != 1:
+                raise ValueError(f"w must be 1-D, got shape {w.shape}.")
+            re, im = (
+                tuple(float(x) for x in w.real),
+                tuple(float(x) for x in w.imag),
+            )
+        re, im = _harmonic_entries(re, "re"), _harmonic_entries(im, "im")
+        if form is None:
+            form = "linear" if (c or s) else "positive"
+        if form not in ("linear", "positive"):
+            raise ValueError(
+                f"Harmonics form must be 'positive' or 'linear', not {form!r}."
+            )
+        if form == "linear" and (re or im):
+            raise ValueError(
+                "re, im and w belong to the positive form; the linear form "
+                "takes c and s."
+            )
+        if form == "positive" and (c or s):
+            raise ValueError(
+                "c and s belong to the linear form (form='linear'); the "
+                "positive form takes re and im, or w."
+            )
+        first, second = (c, s) if form == "linear" else (re, im)
+        top = max(len(first), len(second)) if degree is None else degree
+        if isinstance(top, bool) or int(top) != top or top < 0:
+            raise ValueError(f"degree must be a non-negative integer: {top}.")
+        top = int(top)
+        if max(len(first), len(second)) > top:
+            raise ValueError(
+                f"degree is {top} but there are {len(first)} and "
+                f"{len(second)} coefficients."
+            )
+        zero = np.asarray(0.0)
+        first = first + (zero,) * (top - len(first))
+        second = second + (zero,) * (top - len(second))
+        empty = ()
+        if form == "linear":
+            self.c, self.s, self.re, self.im = first, second, empty, empty
+        else:
+            self.c, self.s, self.re, self.im = empty, empty, first, second
+        self.degree = top
+        self.form = form
+
+    def _needs_radius(self):
+        return any(
+            isinstance(e, _RadialFunction)
+            for e in self.c + self.s + self.re + self.im
+        )
+
+    @staticmethod
+    def _at(entries, r):
+        r = np.asarray(r)
+        if not entries:
+            return np.zeros((0,) + r.shape)
+        return np.stack(
+            [
+                e(r) if isinstance(e, _RadialFunction) else e + 0.0 * r
+                for e in entries
+            ]
+        ).reshape((len(entries),) + r.shape)
+
+    def _reflection(self, r):
+        """Complex reflection coefficients ``k`` at the radii ``r``."""
+        from . import harmonics as _h
+
+        return _h.reflection_coefficients(
+            self._at(self.re, r), self._at(self.im, r)
+        )
+
+    def polynomial(self, r):
+        """The minimum-phase polynomial ``h_0 .. h_M`` (``h_0 = 1``) of the
+        positive form at the radii ``r``, complex, shape ``(M + 1,) +
+        shape(r)``."""
+        from . import harmonics as _h
+
+        if self.form != "positive":
+            raise ValueError("polynomial is defined for the positive form.")
+        return _h.step_up(self._reflection(r))
+
+    def coefficients(self, r):
+        """The linear ``(c, s)``, each of shape ``(M,) + shape(r)``, at the
+        radii ``r``."""
+        from . import harmonics as _h
+
+        if self.form == "linear":
+            return self._at(self.c, r), self._at(self.s, r)
+        return _h.linear_from_image(self.image_harmonics(r))
+
+    def image_harmonics(self, r=None):
+        """Image harmonics ``I_0 .. I_M`` (complex, ``I_0 = 1``) at the radii
+        ``r`` (not needed for constants), shape ``(M + 1,) + shape(r)``.
+
+        Linear form: $I_m = (c_m - i s_m)/2$. Positive form:
+        $I_m = \\sum_j h_{j+m} \\bar h_j / \\sum_j |h_j|^2$.
+        """
+        from . import harmonics as _h
+
+        if self.form == "linear":
+            return super().image_harmonics(r)
+        if r is None and self._needs_radius():
+            raise ValueError(
+                "some coefficients are functions of the radius: give r."
+            )
+        r = np.asarray(0.0 if r is None else r)
+        return _h.image_harmonics_from_h(self.polynomial(r))
+
+    def factor(self, r, theta):
+        """``I(r, theta) / I0(r)`` on ``r, theta`` (broadcast against each
+        other); for the positive form $|h|^2 / \\sum_j |h_j|^2$, exactly
+        non-negative."""
+        if self.form == "linear":
+            return super().factor(r, theta)
+        shape = np.broadcast_shapes(np.shape(r), np.shape(theta))
+        rr = np.broadcast_to(r, shape).ravel()
+        tt = np.broadcast_to(theta, shape).ravel()
+        h = self.polynomial(rr)
+        z = np.exp(1j * tt)
+        poly = h[-1]
+        for j in range(self.degree - 1, -1, -1):
+            poly = poly * z + h[j]
+        norm = np.sum(np.real(h * np.conj(h)), axis=0)
+        return (np.real(poly * np.conj(poly)) / norm).reshape(shape)
+
+
+class VonMises(_Azimuthal):
+    r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$,
+    for [`PolarDisk`][virgil.models.PolarDisk], truncated at ``degree``.
+
+    The profile (an arc of width $\sim 1/\sqrt\kappa$ radians centred on
+    the azimuth $\theta_0$; $\kappa = 0$ is a uniform ring) has the analytic
+    harmonics $c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$
+    with $I_m$ the modified Bessel function; they are computed by a small FFT
+    of $\exp[\kappa(\cos\theta_j - 1)]$, so no special function is needed,
+    and are differentiable in $\kappa$ and $\theta_0$. The azimuth is in the
+    plane of the disk, as for [`Harmonics`][virgil.models.Harmonics]. The
+    brightness is the truncated series, not the von Mises function itself,
+    and goes slightly negative if ``degree`` is too low for $\kappa$:
+    narrow arcs (large $\kappa$) need a larger degree, about
+    $5.7\sqrt\kappa$ for harmonics below $10^{-6}$.
+    [`truncation_power`][virgil.models.VonMises.truncation_power] reports the
+    fraction of the power that the truncation drops.
+
+    Parameters
+    ----------
+    kappa : float or radial function
+        Concentration (dimensionless, non-negative).
+    theta0 : float or radial function, optional
+        Azimuth of the brightest point in degrees (default 0, the projected
+        major axis).
+    degree : int, optional
+        The highest order kept (static). By default the smallest that keeps
+        the harmonics above $10^{-6}$ of the mean for the given constant
+        ``kappa`` (at most 256), or 32 if ``kappa`` is a radial function or
+        traced.
+    n_fft : int, optional
+        Points of the FFT (static); the default, ``max(512, 8 (degree +
+        1))``, is accurate to the aliasing error ``I_{n_fft - m} / I_0``,
+        negligible for $\kappa$ below about ``n_fft**2 / 30``.
+
+    Examples
+    --------
+    An arc brightest at azimuth 30 degrees, about 25 degrees wide:
+
+    >>> arc = VonMises(kappa=5.0, theta0=30.0, degree=20)
+    >>> ring = PolarDisk(GaussianRing(6.0, 1.0), harmonics=arc, inc=40.0)
+    """
+
+    kappa: Any
+    theta0: Any
+    degree: int = eqx.field(static=True)
+    n_fft: int = eqx.field(static=True)
+
+    def __init__(self, kappa, theta0=0.0, degree=None, n_fft=None):
+        self.kappa = _scalar_or_function(kappa, "kappa")
+        self.theta0 = _scalar_or_function(theta0, "theta0")
+        if not isinstance(self.kappa, _RadialFunction):
+            _check_shape_params(
+                "VonMises",
+                (("kappa", self.kappa, lambda x: x >= 0.0, "non-negative"),),
+            )
+        if degree is None:
+            value = (
+                None
+                if isinstance(self.kappa, _RadialFunction)
+                else concrete(self.kappa)
+            )
+            from . import harmonics as _h
+
+            degree = 32 if value is None else _h.auto_von_mises_degree(value)
+        if isinstance(degree, bool) or int(degree) != degree or degree < 1:
+            raise ValueError(f"degree must be a positive integer: {degree}.")
+        self.degree = int(degree)
+        n_fft = max(512, 8 * (self.degree + 1)) if n_fft is None else n_fft
+        if int(n_fft) != n_fft or n_fft < 2 * self.degree + 2:
+            raise ValueError(
+                f"n_fft must be an integer of at least {2 * self.degree + 2}."
+            )
+        self.n_fft = int(n_fft)
+
+    def _needs_radius(self):
+        return isinstance(self.kappa, _RadialFunction) or isinstance(
+            self.theta0, _RadialFunction
+        )
+
+    def _evaluate(self, r):
+        from . import harmonics as _h
+
+        r = np.asarray(r)
+
+        def value(v):
+            return v(r) if isinstance(v, _RadialFunction) else v + 0.0 * r
+
+        return _h.von_mises_image_harmonics(
+            value(self.kappa),
+            value(self.theta0) * dtor,
+            self.degree,
+            self.n_fft,
+        )
+
+    def image_harmonics(self, r=None):
+        """Image harmonics ``I_0 .. I_M`` (``I_0 = 1``) of the truncated
+        profile at the radii ``r`` (not needed for constants)."""
+        if r is None and self._needs_radius():
+            raise ValueError(
+                "kappa or theta0 is a function of the radius: give r."
+            )
+        return self._evaluate(np.asarray(0.0 if r is None else r))[0]
+
+    def coefficients(self, r):
+        """The linear ``(c, s)``, each of shape ``(M,) + shape(r)``."""
+        from . import harmonics as _h
+
+        return _h.linear_from_image(self._evaluate(r)[0])
+
+    def truncation_power(self, r=None):
+        r"""The fraction of the power of the structure that the truncation at
+        ``degree`` drops, $\sum_{m > M} |I_m|^2 / \sum_{m \ne 0} |I_m|^2$
+        (0 for a degree that holds everything; shape of ``r``)."""
+        if r is None and self._needs_radius():
+            raise ValueError(
+                "kappa or theta0 is a function of the radius: give r."
+            )
+        return self._evaluate(np.asarray(0.0 if r is None else r))[1]
 
 
 class _Height(zdx.Base):
@@ -3325,7 +3764,9 @@ class PowerLawHeight(_Height):
 
     Positive heights shift towards position angle ``pa + 90`` on the sky
     (see [`Cone`][virgil.models.Cone]); a negative ``h0`` puts the surface
-    on the other side.
+    on the other side. A top surface lifted towards the observer shifts the
+    apparent ring towards the far side, so when ``pa + 90`` is the near side
+    of the disk it has ``h0 < 0``.
 
     Parameters
     ----------
@@ -3522,14 +3963,18 @@ class PolarDisk(Component):
     profile : profile
         The radial profile (see above); its quadrature rule is set to
         ``n_r`` nodes.
-    harmonics : Harmonics or None, optional
-        Azimuthal harmonics in the linear form: the brightness is the
-        profile times ``1 + sum_m c_m(r) cos(m theta) + s_m(r) sin(m theta)``,
-        with the azimuth ``theta`` measured in the disk plane from the
-        projected major axis towards ``pa + 90``. They make closure phases
-        non-zero for a centred disk (odd orders) and are linear in the
-        coefficients. ``min_intensity``
-        reports where the image would go negative.
+    harmonics : Harmonics, VonMises or None, optional
+        Azimuthal harmonics: the brightness is the profile times an
+        azimuthal factor of mean one and exact degree ``M``, with the
+        azimuth ``theta`` measured in the disk plane from the projected
+        major axis towards ``pa + 90``. The positive form of
+        [`Harmonics`][virgil.models.Harmonics] (the default) is
+        ``|h(e^{i theta})|^2`` and stays positive for every parameter value;
+        the linear form is ``1 + sum_m c_m(r) cos(m theta) + s_m(r)
+        sin(m theta)``, exactly linear in the coefficients, and
+        ``min_intensity`` reports where it would go negative;
+        [`VonMises`][virgil.models.VonMises] is an arc. They make closure
+        phases non-zero for a centred disk (odd orders).
     height : Cone, PowerLawHeight or None, optional
         The height of each ring above the disk plane, as a function of its
         radius: a cone ``r cot(alpha) - tip`` or a flared power law
@@ -3597,7 +4042,7 @@ class PolarDisk(Component):
     """
 
     profile: _RadialProfile
-    harmonics: Harmonics | None
+    harmonics: _Azimuthal | None
     height: _Height | None
     inc: jax.Array
     pa: jax.Array
@@ -3623,8 +4068,10 @@ class PolarDisk(Component):
             raise ValueError(f"n_r must be a positive integer, not {n_r!r}.")
         self.n_r = int(n_r)
         self.profile = profile.with_rule(self.n_r)
-        if harmonics is not None and not isinstance(harmonics, Harmonics):
-            raise TypeError(f"harmonics must be a Harmonics: {harmonics!r}")
+        if harmonics is not None and not isinstance(harmonics, _Azimuthal):
+            raise TypeError(
+                f"harmonics must be a Harmonics or VonMises: {harmonics!r}"
+            )
         if height is not None and not isinstance(height, _Height):
             raise TypeError(
                 f"height must be a Cone or PowerLawHeight: {height!r}"
@@ -3654,10 +4101,9 @@ class PolarDisk(Component):
         """The least brightness relative to the azimuthal mean.
 
         The minimum over the quadrature nodes and ``n_theta`` azimuths of
-        ``I(r, theta) / I0(r) = 1 + sum_m c_m cos m theta + s_m sin m
-        theta``: 1 without harmonics, and negative if the image goes
-        negative somewhere (the harmonics are linear, so nothing prevents
-        it). ``is_physical`` is false
+        ``I(r, theta) / I0(r)``: 1 without harmonics, and negative if the
+        image goes negative somewhere (possible for the linear and von Mises
+        forms, never for the positive one). ``is_physical`` is false
         then.
         """
         if self.harmonics is None or not self.harmonics.degree:
@@ -4921,20 +5367,3 @@ def _cvis_gaussian_envelope(u, v, fwhm):
         np.exp(-(np.pi**2) * fwhm_rad**2 * base_norm**2 / (4.0 * np.log(2.0)))
         + 0j
     )
-
-
-def _cvis_centred_rim(u, v, diam, fwhm, inc, pa, az_amps, az_phis):
-    """Unit-flux visibility of an inclined, modulated thin ring at the origin, blurred by a Gaussian that is isotropic in the rim plane."""
-    # Transform spatial frequency coordinates to the frame of reference where the
-    # model rim is uninclined and the major axis is pointed North.
-    stretch_factor = np.maximum(np.cos(inc * dtor), 1e-8)
-    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch_factor)
-
-    cvis = cvis_radial_dirac_delta_modulated(
-        ut, vt, diam / 2.0, az_amps, az_phis
-    )
-
-    # Gaussian blur that is isotropic in the rim plane, so it is evaluated in
-    # the same (deprojected) frame as the ring; on the sky it is an elliptical
-    # Gaussian that is narrower along the minor axis.
-    return cvis * _cvis_gaussian_envelope(ut, vt, fwhm)

@@ -104,6 +104,7 @@ nav:
               - PolarDisk: api/models/classes/polar_disk.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
+      - Harmonics: api/harmonics.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
       - Linear marginalization (internal): api/linear.md

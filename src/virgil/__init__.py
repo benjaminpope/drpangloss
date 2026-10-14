@@ -60,6 +60,7 @@ from . import (  # noqa: E402
     fitting,
     gains,
     grid_fit,
+    harmonics,
     imaging,
     inference,
     likelihood,
@@ -79,7 +80,7 @@ from . import (  # noqa: E402
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
-from .fields import GaussianField  # noqa: E402
+from .fields import GaussianField, PolarField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -145,6 +146,7 @@ from .models import (  # noqa: E402
     ThinRing,
     TruncatedCone,
     UniformDisk,
+    VonMises,
     circular_support,
     polar_disk_cvis,
 )
@@ -199,6 +201,7 @@ __all__ = [
     "GaussianArc",
     "GaussianDisk",
     "GaussianField",
+    "PolarField",
     "GaussianRing",
     "GaussianLine",
     "GravityDarkenedStar",
@@ -234,6 +237,7 @@ __all__ = [
     "ThinRing",
     "TruncatedCone",
     "UniformDisk",
+    "VonMises",
     "absil_limits",
     "injection_limits",
     "circular_support",
