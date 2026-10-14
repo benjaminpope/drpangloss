@@ -318,9 +318,13 @@ anything before 1.0 may change between minor versions.
   semicircle (1e-2 at a fifth) but differ for long arcs, so refit if you rely
   on those. The visibility is analytic (a `ThinRing` with `VonMises` harmonics
   and a blur on the `PolarDisk` engine); `degree` (default chosen from the
-  starting `radius` and `length`, at most 256) replaces `nodes` for the
-  visibility, and `nodes` only samples the rendered image. Building one gives
-  a `FutureWarning` for this release.
+  starting `radius` and `length`) replaces `nodes` for the visibility, and
+  `nodes` only samples the rendered image. Arcs narrower than 256 harmonics
+  allow (`length / radius` below about 0.05) are integrated along the arc
+  with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
+  so their cost does not grow; `is_physical` is false when the series drops
+  more than 1e-4 of its power. Building one gives a `FutureWarning` for this
+  release.
 - **`ModulatedGaussianRim` runs on the `PolarDisk` engine** (a `ThinRing`,
   linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
   same name and parameters; it agrees with the old code to rounding.
@@ -336,7 +340,6 @@ anything before 1.0 may change between minor versions.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
-
 - **The evidence helpers take several field Images.** `log_evidence`,
   `error_scale` and `laplace_samples` accept `path=None` (every Image whose
   log-brightness is a `GaussianField`) or a tuple of paths, and take the
