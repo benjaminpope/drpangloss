@@ -41,6 +41,31 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
+  tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
+  normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
+  linear-form `Harmonics(c=, s=)` of Cartesian coefficients, constants or
+  functions of the radius (`RadialLinear`, `RadialPower`). `min_intensity()`
+  reports where the image would go negative. `ExpTail` gains `cutoff=` (a
+  Gauss-Legendre rule on a finite tail). `polar_disk_cvis` takes `c`, `s`,
+  `height` and `stretch`.
+- **`TruncatedCone` runs on the `PolarDisk` engine** with the same name and
+  parameters. Its quadrature along the walls is Gauss-Legendre, which
+  converges spectrally instead of as `1 / n_rings**2`: for the Apep-like cone
+  (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
+  midpoint stack to 1e-6, where 64 midpoint rings are off by 5e-4 and 256 by
+  3e-5, at less than half the cost. The model is unchanged (the tail is still
+  cut at five lengths). The released behaviour changes: see Changed.
+  Credits carry over from the earlier cone code, `frank` and `vis-r`.
+- **`PolarDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
+  `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
+  and `RadialSum`), inclined and rotated, with an optional Gaussian blur,
+  built on `polar_disk_cvis`, a Hankel transform by quadrature that each
+  profile owns the nodes of (Gauss-Legendre, or Gauss-Laguerre for an
+  exponential tail). It follows the ideas of frank (Jennings et al. 2020) and
+  vis-r (Kennedy 2025), which are credited in the docstrings and on the
+  contributors page; no code was copied. This first stage is the
+  azimuthally symmetric disk (degree 0).
 - **`fit_orbit_aliases` handles a resolved primary, contrast loss and a
   bright companion.** `primary_diam` gives the primary a uniform disk (fixed
   or `"fit"`, one shared log-uniform diameter); `vis_amp=(lo, hi)` gives every
@@ -254,6 +279,15 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
+  `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
+  sharply at long baselines, and its visibilities at fixed parameters shift
+  by the old midpoint rule's error (about 8e-4 at the old default, worth
+  Delta log L of about 4 per GRAVITY epoch), so a 0.3 fit rerun gives a
+  different chi-squared and best fit with no API change. The per-call cost
+  at the default rises (48 Gauss-Legendre nodes against 32 midpoint rings);
+  it is lower only at equal accuracy. `rings()` and `render()` now use the
+  same Gauss-Legendre nodes as `model()`.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
