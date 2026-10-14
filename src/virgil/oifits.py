@@ -303,6 +303,32 @@ def _wavelength_tables(tables):
     return wavelengths
 
 
+def _channel_widths(tables):
+    """``{EFF_WAVE: EFF_BAND}`` over the OI_WAVELENGTH tables (metres)."""
+    widths = {}
+    for hdu in tables.get("OI_WAVELENGTH", []):
+        if "EFF_BAND" not in hdu.columns.names:
+            continue
+        wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
+        band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
+        widths.update(zip(wave.tolist(), band.tolist()))
+    return widths
+
+
+def _sample_bandwidth(record, tables):
+    """Per-sample ``EFF_BAND`` of the record, or ``None`` if it is not given.
+
+    Samples are matched to channels by their wavelength. Files that give
+    no width, or only zeros, have no bandwidth, so smearing stays off.
+    """
+    widths = _channel_widths(tables)
+    wavel = onp.broadcast_to(onp.asarray(record["wavel"]), onp.shape(record["u"]))
+    band = onp.array([widths.get(w, 0.0) for w in wavel.tolist()])
+    if not onp.all(onp.isfinite(band)) or not onp.any(band > 0):
+        return None
+    return band
+
+
 def _table_wavelengths(hdu, wavelengths):
     ins = _insname(hdu)
     if ins in wavelengths:
@@ -1210,9 +1236,14 @@ def _read_hdulist(hdul, target, insname=None, frame_mjd="mean", extras=()):
     _read_extras(tables, wavelengths, target_id, lookup, record, extras)
     record["mjd"], record["frame"] = lookup.times(frame_mjd)
     record["stations"] = lookup.stations()
+    bandwidth = _sample_bandwidth(record, tables)
+    if bandwidth is not None:
+        record["bandwidth"] = bandwidth
     unique_wavel = onp.unique(record["wavel"])
     if unique_wavel.size == 1:
         record["wavel"] = unique_wavel
+        if bandwidth is not None and onp.unique(bandwidth).size == 1:
+            record["bandwidth"] = onp.unique(bandwidth)
     record["phi_unit"] = "rad"
     return record
 
@@ -1259,9 +1290,21 @@ def _concat_records(records):
             ).astype(int)
     else:
         out.update(i_cps1=None, i_cps2=None, i_cps3=None)
+    if any("bandwidth" in r for r in records):
+        # A file without widths is unsmeared: width zero.
+        out["bandwidth"] = onp.concatenate(
+            [
+                onp.broadcast_to(
+                    onp.asarray(r.get("bandwidth", 0.0)), onp.shape(r["u"])
+                )
+                for r in records
+            ]
+        )
     unique_wavel = onp.unique(out["wavel"])
     if unique_wavel.size == 1:
         out["wavel"] = unique_wavel
+        if "bandwidth" in out and onp.unique(out["bandwidth"]).size == 1:
+            out["bandwidth"] = onp.unique(out["bandwidth"])
     out.update(
         v2_flag=first["v2_flag"], cp_flag=first["cp_flag"], phi_unit="rad"
     )

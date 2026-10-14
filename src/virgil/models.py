@@ -1528,8 +1528,10 @@ class GravityDarkenedStar(Component):
     gravity darkening, radiates the Planck function $B_\lambda(T)$, and is
     weighted by its projected area times that, at each sample's own
     wavelength. The hot pole and cool equator then have a contrast that
-    rises towards short wavelengths. Limb darkening and bandwidth smearing
-    are not modelled. The weights have shape ``(n_samples, n_triangles)``,
+    rises towards short wavelengths. Limb darkening and the bandwidth smearing of the
+    star's own structure are not modelled (opt-in smearing of a component's
+    offset is described under
+    [`smeared_model`][virgil.models.smeared_model]). The weights have shape ``(n_samples, n_triangles)``,
     so memory is about 200 MB of complex64 for 10^4 samples at the default
     ``n_lat``.
 
@@ -4094,6 +4096,62 @@ class System(SourceModel):
 
     def __check_init__(self):
         _check_non_negative_flux(self.flux, "System")
+
+
+def smeared_model(model, u, v, wavel, bandwidth):
+    r"""Complex visibilities with bandwidth smearing (boxcar channels).
+
+    A channel of full width $\Delta\lambda$ averages the visibility of a
+    source at offset $\mathbf{s}$ over wavelength. For a boxcar channel
+    this multiplies the component's offset phasor by the real envelope
+    $\mathrm{sinc}(\pi\,\Delta\lambda\,(u\,\mathrm{dra} + v\,\mathrm{ddec})/\lambda^2)$,
+    with $u$, $v$ in metres and the offsets in radians. This is done
+    for each component of a [`System`][virgil.models.System] before the
+    components are weighted and summed (offsets add down nested
+    systems), not on the final visibility, so the flux weights and the
+    zero-offset component are unchanged.
+
+    The model is the first-order one: the weights and the shape of each
+    component are taken at the channel centre, and an extended component
+    is smeared as if it sat at its centre offset (its internal structure
+    is not smeared). Only [`System`][virgil.models.System] trees of
+    [`Component`][virgil.models.Component] shapes are supported; other
+    models raise ``TypeError``. A component at zero offset is exactly
+    unaffected.
+
+    [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is
+    set (read from ``EFF_BAND``, or by
+    [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
+
+    Parameters
+    ----------
+    model : System or Component
+    u, v, wavel : array-like
+        Baselines and wavelengths in metres, as for ``model.model``.
+    bandwidth : array-like
+        Full channel width in metres, broadcast against ``u``.
+    """
+    return _smeared(model, u, v, wavel, bandwidth, 0.0, 0.0)
+
+
+def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
+    if isinstance(model, System):
+        ra, dec = ra0 + model.dra, dec0 + model.ddec
+        weights = [c._weight(wavel) for c in model.parts]
+        total = sum(
+            w * _smeared(c, u, v, wavel, bandwidth, ra, dec)
+            for w, c in zip(weights, model.parts)
+        ) / sum(weights)
+        return total * offset_phase(u / wavel, v / wavel, model.dra, model.ddec)
+    if isinstance(model, Component):
+        ra, dec = ra0 + model.dra, dec0 + model.ddec
+        arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
+        return model.model(u, v, wavel) * np.sinc(arg)
+    raise TypeError(
+        "Bandwidth smearing supports Systems of Component shapes; got "
+        f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
+        " to evaluate it unsmeared."
+    )
 
 
 class Rotated(SourceModel):
