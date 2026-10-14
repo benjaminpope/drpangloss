@@ -6,8 +6,8 @@ name: review response label
 # answered when it is resolved or when a human (not Claude, not another bot)
 # has replied in it. The label is removed once every such thread is answered.
 #
-# GitHub Actions cannot be triggered by resolving a thread, so a scheduled
-# sweep over the open pull requests picks resolutions up within ~15 minutes.
+# GitHub Actions cannot be triggered by resolving a thread, so resolving
+# alone does not clear the label until the next push, review or comment.
 
 on:
   pull_request:
@@ -16,18 +16,15 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, deleted]
-  schedule:
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
 
 concurrency:
-  group: review-response-${{ github.event.pull_request.number || 'sweep' }}
+  group: review-response-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   label:
     # Fork PRs get a read-only token; skip them (as claude-review.yml does).
-    if: github.event.pull_request == null || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -41,17 +38,8 @@ jobs:
             const isClaude = (login) => !!login && /^claude(\[bot\])?$/i.test(login);
             const { owner, repo } = context.repo;
 
-            // Event runs handle their own PR; scheduled/manual runs sweep all open ones.
-            const prs = context.payload.pull_request
-              ? [context.payload.pull_request]
-              : await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open' });
-
-            for (const pr of prs) {
-              if (pr.head.repo && pr.head.repo.full_name !== `${owner}/${repo}`) continue;
-              await update(pr.number);
-            }
-
-            async function update(number) {
+            const number = context.payload.pull_request.number;
+            {
               // GraphQL: every review thread with its comments' authors.
               let cursor = null;
               let unanswered = 0;
