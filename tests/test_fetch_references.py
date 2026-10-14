@@ -112,7 +112,7 @@ def test_provenance_file_is_well_formed():
             e.get("arxiv") or e.get("doi") or e.get("url") or e.get("note")
         ), key
         if e["verified"]:
-            assert e.get("arxiv") or e.get("doi"), key
+            assert e.get("arxiv") or e.get("doi") or e.get("bibcode"), key
 
 
 def test_used_in_symbols_exist():
