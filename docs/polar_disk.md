@@ -1,27 +1,40 @@
-# Radial profiles and `PolarDisk`
+# `PolarDisk` reference
 
-`PolarDisk` is a component for disks, rings and haloes that is described by a
-radial brightness profile $I(r)$ in the plane of the disk. It is inclined by
-`inc`, rotated by `pa` (the projected major axis, North to East), and placed
-by `dra`/`ddec` and weighted by `flux` like any other component of a
-[`System`](composition.md). Its visibility is the Hankel transform
+`PolarDisk` is a component for disks, rings and haloes described by a radial
+brightness profile $I(r)$ in the plane of the disk. It is placed and weighted
+like any other component of a [`System`](composition.md), and its visibility is
+the Hankel transform of the profile (the maths, and a worked fit, are in the
+tutorial [A planet in a gap between rings](polar_disk_rings.md)). This page
+lists the API: the constructor, the profiles, harmonics, height, Gaussian-process
+priors, spectral index, frozen geometry and `PolarField`. The ideas follow
+[frank](https://github.com/discsim/frank) (Jennings et al. 2020) and
+[vis-r](https://github.com/drgmk/vis-r) (Kennedy 2025); virgil reimplements them,
+with no shared code, for V² and closure-phase data and for composition in a scene.
 
-$$
-V(q) = \frac{\int I(r)\, J_0(2\pi q' r)\, r\,\mathrm{d}r}{\int I(r)\, r\,\mathrm{d}r},
-$$
+## The constructor
 
-where $q'$ is the baseline's spatial frequency in the plane of the disk, after
-undoing the inclination and rotation. Without harmonics or a height the disk
-is azimuthally symmetric, so a centred disk has real visibilities (which
-change sign past their nulls) and closure phases of 0° or 180°; other values
-appear with an offset, odd harmonics, a height, or alongside other
-components.
+`PolarDisk(profile, harmonics=None, height=None, inc=0.0, pa=0.0, blur_fwhm=None,
+flux=1.0, dra=0.0, ddec=0.0, n_r=64, spectral_index=None, wavel0=None)`
 
-The ideas follow [frank](https://github.com/discsim/frank) (Jennings et al.
-2020), which writes a radial profile as a Hankel transform on a set of nodes,
-and [vis-r](https://github.com/drgmk/vis-r) (Kennedy 2025), which fits
-parametric radial profiles to visibilities. virgil reimplements them, with no
-shared code, for V² and closure-phase data and for composition in a scene.
+| Argument | Meaning |
+| --- | --- |
+| `profile` | the radial profile ([below](#profiles-and-quadrature)); it owns its quadrature rule |
+| `harmonics` | azimuthal structure: [`Harmonics`](#harmonics) or `VonMises`; none gives a symmetric disk |
+| `height` | `Cone` or `PowerLawHeight`: [lifts each ring above the plane](#height-flared-disks-and-cones) |
+| `inc`, `pa` | inclination (degrees, 0 is face-on) and position angle of the projected major axis (North to East) |
+| `blur_fwhm` | Gaussian smoothing in the plane of the disk (mas); an exact Fourier envelope |
+| `flux` | weight in a `System`, a number or a spectrum |
+| `dra`, `ddec` | offset of the centre (mas) |
+| `n_r` | quadrature nodes per profile; static (changing it recompiles) |
+| `spectral_index`, `wavel0` | [chromatic profile](#spectral-index): $I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$ |
+
+The visibility is normalized to one at zero baseline, so `flux` is the only
+weight. Without harmonics or a height the disk is azimuthally symmetric: a
+centred disk has real visibilities (changing sign past their nulls) and
+closure phases of 0° or 180°, and other values appear with an offset, odd
+harmonics, a height, or other components. Parameters are reached by path, so
+they can be fitted like any other: `"disk.inc"`, `"disk.profile.r0"`,
+`"disk.profile.base.sigma"`.
 
 ## Profiles and quadrature
 
@@ -36,6 +49,7 @@ Each profile owns its quadrature rule, so the transform is a sum over
 | `ExpTail(r0, scale)` | $\exp[-(r - r_0)/L]$ for $r \ge r_0$ | Gauss–Laguerre, to infinity |
 | `Gap(base, r0, width, depth)` | a Gaussian gap cut in `base` | that of `base` |
 | `RadialSum(a=..., b=...)` | named profiles, each normalized and mixed by its `weight` | each part's |
+| `RadialGP(r_in, r_out, sigma, ell, nu)` | $\exp g(r)$, $g$ a Gaussian process ([below](#gaussian-process-profiles)) | its own nodes: Gauss–Legendre on $[r_{\rm in}, r_{\rm out}]$ |
 
 Because the rules converge spectrally, a narrow ring needs tens of nodes, not
 the hundreds of a midpoint stack. `n_r` is a static integer: changing it
@@ -63,9 +77,7 @@ cvis = scene.model(u, 0.3 * u, 2.2e-6)
 image = scene.render(npix=256, fov_mas=60.0)
 ```
 
-Parameters are reached by their path, so they can be fitted like any other:
-`"disk.inc"`, `"disk.profile.r0"`, `"disk.profile.base.sigma"`. With a
-`RadialSum`, name the parts and tie their weights:
+With a `RadialSum`, name the parts and tie their weights:
 
 ```python
 profile = RadialSum(
@@ -225,6 +237,18 @@ them with NUTS (`numpyro_model(..., flat_coordinates=True)`) or leave them
 fixed and compare `imaging.log_evidence` at several values: the Laplace
 evidence is over the latents, conditional on the hyperparameters.
 
+**What `ell` means.** The Matérn length $\ell$ is a correlation length of
+$\ln I_0$ in milliarcseconds, not the width of a feature. A squared-exponential
+bump with the same curvature as the default Matérn-3/2 kernel has width
+$\ell/\sqrt3$ (so $\ell = 1.5$ mas corresponds to a Gaussian $\sigma$ of about
+0.9 mas), and the prior's rms slope in $\ln I_0$ is $\sqrt3\,\sigma/\ell$ per
+mas, so a large `sigma` with a short `ell` is a very rough prior (many
+maxima). Visibilities cannot constrain structure finer than the half-fringe
+$\lambda/2B$ of the longest baseline, so below that scale, and where the data
+have no leverage (the inner edge, the outer tail), the posterior is the prior.
+A modest evidence difference between two `ell` values means the data do not
+choose between them: report `ell` as a prior choice.
+
 ### Priors over the harmonics
 
 `Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
@@ -267,9 +291,6 @@ precision you will fit in if you need full accuracy: a cache built in float32
 (virgil's default) is still recognized when `fit` or `log_evidence` evaluates
 in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 
-See [A planet in a gap between rings](polar_disk_rings.md) for a worked example with a
-parametric fit and a Gaussian-process disk of the same data.
-
 ## Residuals aligned with the disk: `PolarField`
 
 A parametric disk misses some of the light. Rather than a Cartesian
@@ -303,6 +324,13 @@ it. The construction follows the whitened latents of
 [FRAP](https://github.com/tomyoshida/frap) (Yoshida et al. 2026) and the polar
 representation of [frank](https://github.com/discsim/frank) (Jennings et al.
 2020); no code is shared.
+
+## Worked example
+
+[A planet in a gap between rings](polar_disk_rings.md) simulates three inclined
+rings and a planet, fits them parametrically, then recovers the same structure
+with one Gaussian-process disk (profile, spectral index and lopsidedness) and
+compares the two by their Laplace evidence.
 
 ## Notes
 
