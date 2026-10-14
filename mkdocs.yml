@@ -67,6 +67,7 @@ nav:
       - "Variational inference": variational_inference.md
       - "Contrast limits": contrast_limits.md
       - "Detection ROC curves": detection_roc.md
+      - "Chromatic companion search": wr_chromatic_search.md
       - "Hierarchical inference across filters": hierarchical_inference.md
       - "Orbits from interferometric data": orbit_fitting.md
   - Sources:
