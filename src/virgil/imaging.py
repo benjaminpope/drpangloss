@@ -1955,12 +1955,74 @@ def _field_latents(model, path, caller):
     )
 
 
+def _evidence_latents(model, path, caller):
+    """The paths of every whitened latent that ``path`` selects, for the
+    Laplace evidence: the fields of Images with a GaussianField, and the
+    Gaussian-process latents of PolarDisks (``RadialGP`` profiles,
+    coefficients and spectral indices, and ``PolarKernel`` harmonics).
+
+    ``path`` is a path or a tuple of paths of such Images or disks, or
+    ``None`` for all of them in ``model`` (a ``TypeError`` if there are none).
+    """
+    from .models import PolarDisk, _polar_disks
+
+    def disk_latents(prefix, disk):
+        return tuple(f"{prefix}{rel}.z" for rel in disk.gp_sites())
+
+    if path is None:
+        images = tuple(
+            p
+            for p, part in _parts(model)
+            if isinstance(part, Image) and _whitened_field(part.log_brightness)
+        )
+        disks = [(pre, d) for pre, d in _polar_disks(model) if d.gp_sites()]
+        if not images and not disks:
+            raise TypeError(
+                f"{caller} found no Image with a GaussianField and no "
+                "PolarDisk with a RadialGP or PolarKernel in the model; "
+                "give path= for one."
+            )
+    else:
+        paths = (path,) if isinstance(path, str) else tuple(path)
+        if not paths:
+            raise ValueError(f"{caller} needs at least one path.")
+        images, disks = [], []
+        for p in paths:
+            if isinstance(model.get(p), PolarDisk):
+                if not model.get(p).gp_sites():
+                    raise TypeError(
+                        f"{caller} needs a PolarDisk with a RadialGP or a "
+                        f"PolarKernel at {p!r}."
+                    )
+                disks.append((p + ".", model.get(p)))
+            else:
+                images.append(p)
+        if images:
+            images = _field_images(model, tuple(images), caller)
+        if len(set(paths)) != len(paths):
+            raise ValueError(f"{caller} was given repeated paths {paths}.")
+    latents = []
+    for p in images:
+        latents.append(
+            "log_brightness.latent"
+            if p is None
+            else p + ".log_brightness.latent"
+        )
+    for prefix, disk in disks:
+        latents.extend(disk_latents(prefix, disk))
+    return tuple(latents)
+
+
 def log_evidence(model, data, path="env"):
-    """Laplace-approximated log evidence of a Gaussian-field image fit.
+    """Laplace-approximated log evidence of a Gaussian-process fit.
 
     For a model whose Image log-brightness is a
-    [`GaussianField`][virgil.fields.GaussianField] with standard-normal
-    latents ``z``, at the MAP ``model`` from [`fit`][virgil.fitting.fit],
+    [`GaussianField`][virgil.fields.GaussianField], or whose
+    [`PolarDisk`][virgil.models.PolarDisk] has Gaussian-process parts
+    ([`RadialGP`][virgil.models.RadialGP] profiles, harmonics and spectral
+    indices, and the [`PolarKernel`][virgil.models.PolarKernel] prior of
+    its harmonics), with standard-normal whitened latents ``z``, at the MAP
+    ``model`` from [`fit`][virgil.fitting.fit],
 
     ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``,
 
@@ -2008,17 +2070,21 @@ def log_evidence(model, data, path="env"):
         The data it was fitted to.
     path : str or tuple of str or None, optional
         Path of the Image in the model (default ``"env"``), a tuple of
-        paths of Images with GaussianFields, or ``None`` for every such
-        Image in the model (a ``TypeError`` if there is none).
+        paths of Images with GaussianFields and PolarDisks with
+        Gaussian-process parts (all their latents together), or ``None``
+        for every such Image and disk in the model (a ``TypeError`` if there
+        is none). The evidence is conditional on the hyperparameters (the
+        processes' ``sigma`` and ``ell``, the kernel's lengths), held at
+        their values in ``model``: compare it across fits with different
+        ones, or give them log-uniform priors
+        ([`gp_priors`][virgil.models.gp_priors]) and sample them.
 
     Returns
     -------
     float
     """
     model = _single_model(model, "log_evidence")
-    latent_paths = tuple(
-        latent for _, latent in _field_latents(model, path, "log_evidence")
-    )
+    latent_paths = _evidence_latents(model, path, "log_evidence")
     r, jac = _residual_jacobian(model, data, latent_paths)
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)

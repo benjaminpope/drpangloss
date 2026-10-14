@@ -41,6 +41,25 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Tutorial: a planet in a gap between inclined rings (stage P5).**
+  `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
+  simulates chromatic VLTI-like V² and closure phases of a star, three
+  coplanar blackbody rings (the outer one lopsided) and a planet in the
+  gap; fits the parametric family with invariant priors (MAP, Laplace
+  covariance and evidence); then recovers the rings, their colours, the
+  lopsidedness and the planet with one `PolarDisk` whose profile, spectral
+  index and harmonics are Gaussian processes, and compares the Laplace
+  evidences and the prior and posterior of the profile and index.
+- **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
+  (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
+  (or radial function) with latents `z`; `PolarKernel` is a prior over the
+  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `PolarDisk` takes
+  `spectral_index=` (number, function or `RadialGP`) with `wavel0=`;
+  `freeze_geometry(data)` caches the Bessel matrices; `gp_priors` builds the
+  priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
+  `imaging.log_evidence` (Laplace over the latents) support them. The
+  Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
+  the `RadialGP` docstring, the contributors page and the bibliography.
 - **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
   a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
   `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
@@ -71,6 +90,7 @@ anything before 1.0 may change between minor versions.
   conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
   `to_legacy`). The positive form is credited to Dumitrescu 2007 and
   Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
+
 - **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
   free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
   companion in the grids, limits and detection statistics, with

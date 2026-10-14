@@ -43,7 +43,7 @@ from .likelihood import (
     noise_sites,
     tied_log_prior,
 )
-from .models import SourceModel
+from .models import PolarKernel, RadialGP, SourceModel
 from ._deprecate import external_stacklevel
 
 
@@ -127,10 +127,22 @@ def _traced(prior):
 
 
 def _warn_if_field_hyperparameter(model, path):
-    """Warn when a GaussianField's sigma or length is fitted by MAP."""
+    """Warn when a Gaussian process's sigma or length is fitted by MAP."""
     parent, _, name = path.rpartition(".")
-    if name in ("sigma", "length_mas", "length_r", "length_theta") and parent:
-        if isinstance(model.get(parent), (GaussianField, PolarField)):
+    hyper = (
+        "sigma",
+        "length_mas",
+        "ell",
+        "ell_r",
+        "ell_theta",
+        "length_r",
+        "length_theta",
+    )
+    if name in hyper and parent:
+        if isinstance(
+            model.get(parent),
+            (GaussianField, RadialGP, PolarKernel, PolarField),
+        ):
             warnings.warn(
                 f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
                 "field are biased at the MAP (towards a flat field). Fix "
