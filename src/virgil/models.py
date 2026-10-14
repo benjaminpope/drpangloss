@@ -3161,7 +3161,7 @@ class PolarDisk(Component):
 
     Notes
     -----
-    This is the azimuthally symmetric (degree 0) disk. Without ``inc``, a
+    This is the azimuthally symmetric (degree 0) disk. A
     centred disk is point-symmetric (whatever ``inc``), so its visibilities
     are real and its closure phases are 0 or 180 degrees (the visibility
     changes sign past its nulls); other values appear with an offset
