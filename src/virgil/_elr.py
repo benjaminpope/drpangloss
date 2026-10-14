@@ -4,9 +4,10 @@ Implements the model of Espinosa Lara & Rieutord (2011, A&A 533, A43,
 https://arxiv.org/abs/1109.3038, "ELR11") for the shape and gravity darkening of a rigidly rotating star,
 which needs no free gravity-darkening exponent beta.
 
-Ported from Shashank Dholakia's jax-interferometry (core/ELR.py,
-core/utils.py, commit 70689ed), who ported the equations from Aaron
-Dotter's GDit (https://github.com/aarondotter/GDit). Function names, structure and ELR11 equation references are
+The equations are those of ELR11. The implementation is Aaron Dotter's
+GDit (https://github.com/aarondotter/GDit), ported to JAX by Shashank
+Dholakia in his jax-interferometry (core/ELR.py, core/utils.py, commit
+70689ed). Function names, structure and ELR11 equation references are
 his; the changes made in this port are:
 
 - ``jaxopt.Bisection`` is replaced by ``optimistix`` bisection, with brackets

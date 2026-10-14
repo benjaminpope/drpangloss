@@ -1467,13 +1467,15 @@ def _in_unit_square(q1, q2):
 class GravityDarkenedStar(Component):
     r"""Rapidly rotating star: Roche shape and gravity darkening (ELR11).
 
-    The model of Espinosa Lara & Rieutord (2011, A&A 533, A43): a rigidly
+    The equations are those of Espinosa Lara & Rieutord (2011, A&A 533, A43,
+    https://arxiv.org/abs/1109.3038): a rigidly
     rotating star has the oblate Roche shape, and its local bolometric flux
     follows the effective gravity without a free gravity-darkening exponent
     $\beta$. The brightness is proportional to that local flux (no limb
     darkening yet), summed over the visible triangles of a surface mesh.
-    Ported from Shashank Dholakia's jax-interferometry (`ELR_Model`, commit
-    70689ed); the physics lives in ``virgil._elr``.
+    The implementation is Aaron Dotter's GDit
+    (https://github.com/aarondotter/GDit), ported to JAX by Shashank
+    Dholakia in his jax-interferometry (`ELR_Model`, commit 70689ed); the physics lives in ``virgil._elr``.
 
     Parameters
     ----------
@@ -3319,8 +3321,7 @@ def _cvis_binary_angular(u, v, sep, pa, flux):
 def cvis_binary(u, v, dra, ddec, flux):
     """Compute complex visibilities for a Cartesian-parameterized binary model.
 
-    Adapted from ``pymask`` (Pope, https://github.com/benjaminpope/pymask),
-    which took it from ``pysco``, now ``xara`` (Martinache,
+    Adapted from Frantz Martinache's ``xara`` (formerly ``pysco``,
     https://github.com/fmartinache/xara; Martinache 2010,
     https://arxiv.org/abs/1009.3933). For closure-phase contrast limits in
     sparse aperture masking see Ireland (2013, MNRAS 433, 1718,

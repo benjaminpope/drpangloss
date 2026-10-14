@@ -370,7 +370,7 @@ arxiv = "1301.6205"
 verified = true
 verified_via = "arxiv"
 used_in = ["virgil.models:cvis_binary"]
-note = "MNRAS 433, 1718; the closure-phase binary model in pymask (Cheetham)"
+note = "MNRAS 433, 1718"
 
 [ref.kuramochi2018]
 authors = "Kuramochi et al."
@@ -891,15 +891,6 @@ verified_via = "none"
 used_in = ["virgil.legacy.oifits_implaneia"]
 note = "paper: greenbaum2015"
 
-[ref.pymask]
-authors = "Pope"
-title = "pymask"
-url = "https://github.com/benjaminpope/pymask"
-verified = false
-verified_via = "none"
-used_in = ["virgil.models:cvis_binary"]
-note = "itself copied from pysco/xara (Martinache); related paper: ireland2013"
-
 [ref.mpol]
 authors = "Czekala et al."
 year = 2025
@@ -983,7 +974,7 @@ url = "https://github.com/fmartinache/xara"
 verified = true
 verified_via = "arxiv"
 used_in = ["virgil.models:cvis_binary"]
-note = "xara was pysco; pymask copied the binary model from it"
+note = "xara was formerly pysco; cvis_binary is adapted from it"
 
 [ref.selig2013]
 authors = "Selig et al."

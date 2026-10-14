@@ -599,7 +599,7 @@ def _chi2_red(model, datasets):
 def combine(data, groups, *, spec=None, star=True):
     """Select the members of an ensemble and average them.
 
-    The selection follows MYTHRA (Drevon et al. 2025):
+    The selection follows MYTHRA (Drevon et al. 2026):
 
     1. In each group, keep the weights from ``spec.window_dex`` below the
        L-curve's corner up to the corner: the weights just before the

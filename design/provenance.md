@@ -27,9 +27,9 @@ the rest carry no arXiv ID or DOI yet, and wait for an ADS run.
 - Grid searches (`virgil.grid_fit`): Dori Blakely and Louis Desdoigts, in the
   `drpangloss` era. Only `linear_flux_grid` notes its equivalence to
   fouriever's `lincmap`, as a comparison.
-- Shashank Dholakia: the gravity-darkened star (`espinosalara2011`, ported
-  from his jax-interferometry, who took the equations from Aaron Dotter's
-  GDit), the spherical-harmonic star (`harmonix`), the Bessel functions
+- Shashank Dholakia: the gravity-darkened star (equations from
+  `espinosalara2011`; the implementation is Aaron Dotter's GDit, ported to JAX
+  in his jax-interferometry), the spherical-harmonic star (`harmonix`), the Bessel functions
   (CEPHES, via harmonix, now `jaxbessel`), and spectrally dispersed data.
 - Max Charles: the image reconstruction in `virgil.imaging` is a port and
   extension of the visibility part of `dorito` (`dorito`), with ideas from
@@ -44,7 +44,7 @@ the rest carry no arXiv ID or DOI yet, and wait for an ADS run.
 |---|---|---|
 | Limb-darkened disk, sum of powers of μ | `models.cvis_limb_darkened_disk` | `quirrenbach1996` (eqs 1–4), generalized by `harmonix` |
 | Quadratic and square-root LD in q1, q2 | `models` | `kipping2013` |
-| Rapid rotator, Roche shape, gravity darkening | `_elr`, `GravityDarkenedStar` | `espinosalara2011`; ported via Dholakia from GDit |
+| Rapid rotator, Roche shape, gravity darkening | `_elr`, `GravityDarkenedStar` | equations: `espinosalara2011`; implementation: GDit (Dotter), ported via Dholakia |
 | Spotted star | `HarmonixModel` | `harmonix`; conventions of jaxoplanet and `starry` |
 | Flared scattered-light disk, phase functions | `FlaredDisk*` | `blakely2024`, §III |
 | Matrix Fourier transform | `_geometry.grid_visibilities` | `soummer2007` |
@@ -57,7 +57,7 @@ the rest carry no arXiv ID or DOI yet, and wait for an ADS run.
 | Angle vectors, North angle, plate scale | `angles`, `oidata` | Octofitter's `UniformCircular` and calibration terms (`thompson2023`) |
 | OIFITS reading and writing | `oifits` | `pauls2005`, `duvert2017` |
 | Legacy OIFITS writer | `legacy.oifits_implaneia` | ImPlaneIA (`greenbaum2015`) |
-| Closure-phase binary visibilities | `models.cvis_binary` | adapted from `pymask` (Pope), which took it from pysco/`xara` (Martinache, `xara`) |
+| Closure-phase binary visibilities | `models.cvis_binary` | adapted from Martinache's `xara` (formerly pysco; `xara`) |
 | AMI mask geometry, NRM simulation | `coverage` | `sivaramakrishnan2023` |
 
 ## Detection and limits
