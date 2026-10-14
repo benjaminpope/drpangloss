@@ -1056,6 +1056,10 @@ def test_an_angle_vector_with_noise_keeps_its_site_name(flat):
     assert onp.all(onp.linalg.eigvalsh(covariance) > 0)
 
 
+@pytest.mark.skipif(
+    jax.config.jax_enable_x64,
+    reason="the dtype is specific to float32; x64 is on globally",
+)
 def test_curvature_rows_are_finite_in_float32_with_gains_and_offsets():
     data = oidata.with_gains(
         telescope=0.03, baseline=0.02

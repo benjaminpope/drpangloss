@@ -1249,7 +1249,10 @@ def _correlation_condition(covariance):
     """The condition number of the covariance scaled to unit diagonal."""
     if not onp.all(onp.isfinite(covariance)):
         return onp.inf
-    scale = onp.sqrt(onp.diag(covariance))
+    diagonal = onp.diag(covariance)
+    if not onp.all(diagonal > 0):
+        return onp.inf
+    scale = onp.sqrt(diagonal)
     correlation = covariance / onp.outer(scale, scale)
     eigenvalues = onp.linalg.eigvalsh(0.5 * (correlation + correlation.T))
     if eigenvalues[0] <= 0.0:
