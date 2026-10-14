@@ -1027,10 +1027,11 @@ def test_gaussian_arc_bends_towards_its_centre():
 def test_gaussian_arc_with_a_large_radius_is_an_elliptical_gaussian():
     # Equal up to the curvature of the arc.
     u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
-    # (A narrow arc on a large circle needs many von Mises harmonics.)
-    arc = GaussianArc(150.0, 3.0, 6.0, 30.0, degree=400)
+    # A narrow arc on a large circle is integrated along the arc.
+    arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
+    assert arc.quadrature
     ellipse = EllipticalGaussian(
-        onp.hypot(6.0, 3.0), 3.0 / onp.hypot(6.0, 3.0), 120.0
+        onp.hypot(10.0, 3.0), 3.0 / onp.hypot(10.0, 3.0), 120.0
     )
     assert onp.allclose(
         onp.abs(arc.model(u, v, 2.2e-6)),

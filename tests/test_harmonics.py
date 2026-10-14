@@ -773,3 +773,36 @@ def test_linear_positivity_guarantee_is_the_sum_of_amplitudes_not_their_rms():
     assert float(rms.min_intensity(np.ones(1))) < -0.05
     safe = Harmonics(c=(1.0 / M,) * M)  # sum of amplitudes = 1
     assert float(safe.min_intensity(np.ones(1))) >= -1e-6
+
+
+def test_narrow_arc_on_a_large_circle_uses_quadrature_without_warning():
+    with pytest.warns(FutureWarning):
+        arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
+    assert arc.quadrature and bool(arc.is_physical())
+    # Forcing the series (a degree too low for kappa) is flagged.
+    with pytest.warns(FutureWarning):
+        forced = GaussianArc(150.0, 3.0, 6.0, 30.0, degree=20)
+    assert not forced.quadrature and not bool(forced.is_physical())
+
+
+def test_wide_arc_image_gradients_are_finite():
+    import jax
+
+    with pytest.warns(FutureWarning):
+        arc = GaussianArc(5.0, 1.0, 40.0, 30.0)
+    xx, yy = onp.meshgrid(onp.linspace(-8, 8, 9), onp.linspace(-8, 8, 9))
+
+    def total(a):
+        return a._centred_image(xx, yy, 1.0).sum()
+
+    grads = jax.grad(total)(arc)
+    for leaf in (grads.radius, grads.length, grads.pa):
+        assert onp.isfinite(onp.asarray(leaf))
+
+
+def test_harmonics_w_must_be_concrete():
+    import jax
+    from virgil import Harmonics
+
+    with pytest.raises(TypeError, match="re= and im="):
+        jax.jit(lambda w: Harmonics(w=w).re)(onp.array([0.1 + 0.2j]))
