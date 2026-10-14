@@ -258,6 +258,16 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         [`OIData.model`][virgil.oidata.OIData.model] does sample by sample."""
         return False
 
+    @property
+    def broadcast_in_time(self):
+        """Whether ``at`` accepts an array of times and returns a model
+        whose ``model`` evaluates all of them at once, one per sample
+        (which [`OIData.model`][virgil.oidata.OIData.model] then does
+        without a loop over samples). False for an
+        [`Attached`][virgil.models.Attached] component with bound angles,
+        whose per-sample angles the components cannot take."""
+        return True
+
     def at(self, mjd, t_ref=0.0):
         """This model at time ``t_ref + mjd`` (days, MJD).
 
@@ -2713,6 +2723,10 @@ class System(SourceModel):
     def time_dependent(self):
         return any(part.time_dependent for part in self.parts)
 
+    @property
+    def broadcast_in_time(self):
+        return all(part.broadcast_in_time for part in self.parts)
+
     def at(self, mjd, t_ref=0.0):
         if not self.time_dependent:
             return self
@@ -2820,6 +2834,10 @@ class Rotated(SourceModel):
     @property
     def time_dependent(self):
         return self.source.time_dependent
+
+    @property
+    def broadcast_in_time(self):
+        return self.source.broadcast_in_time
 
     def at(self, mjd, t_ref=0.0):
         if not self.time_dependent:
@@ -2933,6 +2951,10 @@ class Attached(SourceModel):
     @property
     def time_dependent(self):
         return True
+
+    @property
+    def broadcast_in_time(self):
+        return not self.bind
 
     def at(self, mjd, t_ref=0.0):
         dt = _days_since(mjd, self.orbit.t_ref - t_ref)
