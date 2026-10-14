@@ -119,6 +119,19 @@ class Ignores(eqx.Module):
         return np.zeros_like(z)
 
 
+class MissingTerm(eqx.Module):
+    """Φ has a ½ z₁² term that neither ``rows`` nor ``diag`` carries."""
+
+    def rows(self, z):
+        return z[:1] - 1.0
+
+    def loss(self, z):
+        return 0.5 * (z[0] - 1.0) ** 2 + 0.5 * z[1] ** 2
+
+    def diag(self, z):
+        return np.zeros_like(z)
+
+
 class LogSum(eqx.Module):
     """Φ = Σ log z: not finite for z ≤ 0."""
 
@@ -369,3 +382,87 @@ def test_float32_rosenbrock_ends_converged_not_stalled():
         assert int(state.stop) == CONVERGED
         assert int(state.stop) not in (STALLED, RUNNING)
         onp.testing.assert_allclose(state.z, [1.0, 1.0], atol=1e-3)
+
+
+@pytest.mark.parametrize("x64", [True, False], ids=["float64", "float32"])
+def test_rounding_floor_converges_with_a_nonzero_residual(x64):
+    """Default tolerances: the run ends through the λ > 1e10 rule, not LIMIT.
+
+    Rosenbrock has zero residual at the optimum, so it can stop on g == 0.
+    Noisy least squares cannot: Φ only changes by rounding noise there.
+    """
+    rng = onp.random.default_rng(0)
+    A = rng.normal(size=(30, 4))
+    b = rng.normal(size=30)
+    with jax.enable_x64(x64):
+        dtype = np.float64 if x64 else np.float32
+        problem = LeastSquares(np.asarray(A, dtype), np.asarray(b, dtype))
+        state = solve(problem, np.zeros(4, dtype))
+        assert state.z.dtype == dtype
+        assert int(state.stop) == CONVERGED
+        assert int(state.steps) < 200
+        assert float(state.lam) > 1e10
+        ref = onp.linalg.lstsq(A, b, rcond=None)[0]
+        onp.testing.assert_allclose(state.z, ref, atol=1e-10 if x64 else 1e-4)
+
+
+def test_a_coordinate_just_inside_a_bound_is_held_not_clipped_and_rejected():
+    """The case ε is for: z₀ sits 1e-11 inside its bound with an outward gradient.
+
+    Coordinate 1 is already at its conditional optimum, but the unconstrained
+    Newton step moves coordinate 0 outward; clipped, it is worse than the
+    start. With ε = 0 the coordinate is free, and the run needs 17 steps (9
+    rejected); with ε it is held and converges at once.
+    """
+    rho = 0.99
+    H = onp.array([[1.0, rho], [rho, 1.0]])
+    problem = Quadratic(
+        np.asarray(onp.linalg.cholesky(H).T), np.array([-1.0, 2.0])
+    )
+    state = solve(
+        problem,
+        np.array([1e-11, 1.01]),
+        lower=np.array([0.0, -np.inf]),
+        gtol=1e-8,
+        max_steps=20,
+    )
+    assert int(state.stop) == CONVERGED
+    assert int(state.steps) <= 3
+    assert int(state.rejects) <= 1
+    onp.testing.assert_allclose(state.z, [1e-11, 1.01], atol=1e-9)
+
+
+def test_a_coordinate_just_inside_a_bound_in_float32_uses_a_float32_epsilon():
+    """Away from 0, 1e-10 is below float32 resolution: ε scales with the dtype."""
+    rho = 0.99
+    H = onp.array([[1.0, rho], [rho, 1.0]])
+    with jax.enable_x64(False):
+        f32 = np.float32
+        problem = Quadratic(
+            np.asarray(onp.linalg.cholesky(H).T, f32),
+            np.asarray([0.0, 2.0], f32),
+        )
+        state = solve(
+            problem,
+            np.array([1.0000001, 1.01], f32),
+            lower=np.array([1.0, -np.inf], f32),
+            gtol=1e-4,
+            max_steps=30,
+        )
+        assert int(state.stop) == CONVERGED
+        assert int(state.steps) <= 3
+        assert int(state.rejects) <= 1
+
+
+def test_a_gradient_without_curvature_stalls_instead_of_returning_a_wrong_answer():
+    """A term of Φ missing from rows and diag: the run stops STALLED, finite.
+
+    The step in coordinate 1 is ~1/(λ·1e-12) long, so every trial is
+    rejected until λ passes 1e10. Callers (`fit`) answer STALLED with a
+    fallback optimizer.
+    """
+    start = np.array([3.0, 7.0])
+    state = solve(MissingTerm(), start, gtol=1e-10, max_steps=200)
+    assert int(state.stop) == STALLED
+    assert onp.all(onp.isfinite(onp.asarray(state.z)))
+    assert float(state.value) <= float(MissingTerm().loss(start))

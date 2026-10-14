@@ -9,7 +9,11 @@ where ρ(z) is a vector of *curvature rows* (for a least-squares objective,
 the whitened residuals, with Φ = ½|ρ|² + …) and P ≥ 0 is the diagonal from
 elementwise priors and coordinate transforms. F is positive semi-definite
 by construction. Because steps are accepted only if Φ itself falls, an
-error in F costs speed, never correctness.
+error in F costs speed, or a ``STALLED`` stop that a caller answers with a
+fallback optimizer; it never gives a wrong answer. (A coordinate with a
+non-zero gradient but no curvature in F, because a term of Φ is missing
+from ``rows`` and ``diag``, is the way to get ``STALLED``: its step is
+~1/(λ·1e-12) long, so every trial is rejected.)
 
 A *kernel problem* is an ``eqx.Module`` with three methods of a flat 1-D
 float vector: ``loss(z)`` (scalar Φ), ``rows(z)`` (curvature rows, any
@@ -35,7 +39,8 @@ coordinate the rows ignore (F_ii = 0) still gives a positive-definite
 system and no NaN.
 
 **Active set** (ε-active, Bertsekas 1982). With
-``ε = 1e-10 (1 + |bound|)``, coordinate i is held if
+``ε = max(1e-10, 10 eps) (1 + |bound|)``, with eps the machine epsilon of
+the dtype (so ε is above rounding in float32 too), coordinate i is held if
 ``z_i ≤ lower_i + ε`` and ``g_i > 0``, or ``z_i ≥ upper_i - ε`` and
 ``g_i < 0``: the descent direction ``-g_i`` points out of the box. Holding
 only coordinates exactly on a bound makes a coordinate that sits just
@@ -101,12 +106,9 @@ def curvature(problem, z):
 
 def _held(z, g, lower, upper):
     """The ε-active set: coordinates whose descent direction leaves the box."""
-    eps_lo = _BOUND_EPS * (
-        1.0 + np.abs(np.where(np.isfinite(lower), lower, 0.0))
-    )
-    eps_hi = _BOUND_EPS * (
-        1.0 + np.abs(np.where(np.isfinite(upper), upper, 0.0))
-    )
+    rel = max(_BOUND_EPS, 10 * np.finfo(z.dtype).eps)
+    eps_lo = rel * (1.0 + np.abs(np.where(np.isfinite(lower), lower, 0.0)))
+    eps_hi = rel * (1.0 + np.abs(np.where(np.isfinite(upper), upper, 0.0)))
     at_lower = np.isfinite(lower) & (z <= lower + eps_lo) & (g > 0)
     at_upper = np.isfinite(upper) & (z >= upper - eps_hi) & (g < 0)
     return at_lower | at_upper

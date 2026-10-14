@@ -331,7 +331,9 @@ def solve(problem, start, *, lower=None, upper=None, gtol=0.0, dtol=0.0,
 
 - `curvature`: J = `jax.jacfwd(problem.rows)(z)`, F = JᵀJ + diag(P),
   symmetrized.
-- **Active set** (ε-active, Bertsekas 1982): with ε = 1e-10·(1 + |bound|),
+- **Active set** (ε-active, Bertsekas 1982): with
+  ε = max(1e-10, 10·eps)·(1 + |bound|), eps the dtype's machine epsilon
+  (so that ε exceeds rounding in float32; review of PR #349),
   coordinate i is *held* if z_i ≤ lower_i + ε and g_i > 0, or
   z_i ≥ upper_i − ε and g_i < 0. Held coordinates get δ_i = 0: their
   rows and columns of the system are replaced by the identity and their
