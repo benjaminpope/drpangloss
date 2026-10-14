@@ -95,12 +95,13 @@ def test_main_writes_bib_and_write_back(tmp_path):
     )
     assert rc == 1  # the wrong entry needs attention
     assert "2025arXiv250925433D" in bib.read_text()
+    assert "2018arXiv180207859S" not in bib.read_text()  # mismatch kept out
     out = tomllib.loads(p.read_text())["ref"]
     assert (
         out["good"]["bibcode"] == "2025arXiv250925433D"
         and out["good"]["verified"]
     )
-    assert out["wrong"]["verified"] is False
+    assert out["wrong"]["verified"] is False and "bibcode" not in out["wrong"]
 
 
 def test_provenance_file_is_well_formed():

@@ -91,9 +91,12 @@ def _surname(authors):
 def resolve(entry, session):
     """Look an entry up in ADS.
 
-    Returns ``(doc, how, problems)``: the first ADS record found (or None),
-    the kind of query that found it, and a list of mismatch messages.
+    Returns ``(doc, how, problems)``: the first ADS record that passes the
+    checks, else the first record found, with the kind of query that found
+    it and a list of mismatch messages (empty for a clean hit). A record
+    that fails a check does not stop the later queries.
     """
+    first = None
     for how, query in queries(entry):
         docs = _search(session, query)
         if not docs:
@@ -115,8 +118,10 @@ def resolve(entry, session):
             and sur.replace("é", "e") not in ads_first.replace("é", "e")
         ):
             problems.append(f"first author {sur!r} vs ADS {ads_first!r}")
-        return doc, how, problems
-    return None, None, ["not found in ADS"]
+        if not problems:
+            return doc, how, problems
+        first = first or (doc, how, problems)
+    return first or (None, None, ["not found in ADS"])
 
 
 def ads_arxiv_id(doc):
@@ -202,9 +207,18 @@ def main(argv=None, session=None):
             print(f"{key:24s} NOT FOUND ({entry.get('url', 'no url')})")
             bad += 1
             continue
+        if problems:
+            # a mismatched record may be the wrong paper: report it, but keep
+            # it out of the .bib and the write-back
+            print(
+                f"{key:24s} {doc['bibcode']:22s} MISMATCH: "
+                + "; ".join(problems)
+            )
+            bad += 1
+            continue
         arxiv = ads_arxiv_id(doc)
         # a title-only hit is a guess, so it is not marked verified
-        clean = not problems and how != "title"
+        clean = how != "title"
         found[key] = {
             "bibcode": doc["bibcode"],
             "arxiv": arxiv,
