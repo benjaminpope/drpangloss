@@ -12,6 +12,7 @@ sample's wavelength, as in SPARCO.
         - LorentzianLine
         - Nodes
         - PowerLaw
+        - Scaled
         - Spectrum
         - Sum
         - Tabulated
