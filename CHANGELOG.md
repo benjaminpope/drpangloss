@@ -25,7 +25,9 @@ anything before 1.0 may change between minor versions.
   result's `condition` attribute is the condition number of its
   correlation matrix. The matrix checks positive definiteness on the
   covariance itself, which a float32 Woodbury result could fail while
-  the old check passed.
+  the old check passed. A prior that is neither elementwise nor an
+  angle vector (`MultivariateNormal`, `Dirichlet`) raises
+  `NoLeastSquaresForm`, as its curvature is not diagonal.
 
 ### Changed
 

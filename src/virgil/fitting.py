@@ -468,16 +468,25 @@ class _Objective(eqx.Module):
 
     def _no_prior_curvature(self, prior, jacobian):
         """Whether ``prior``'s coordinates have P = 0 by type (known when
-        tracing): angle vectors (their residuals are rows) and priors that
-        are not elementwise; ``ImproperUniform``; and, without the
-        Jacobian, priors flat in their fitted coordinate and ``Uniform``."""
+        tracing): angle vectors (their residuals are rows);
+        ``ImproperUniform``; and, without the Jacobian, priors flat in their
+        fitted coordinate and ``Uniform``. A prior that is neither
+        elementwise nor an angle vector (a ``MultivariateNormal``, a
+        ``Dirichlet``) has a curvature that is not diagonal, and raises
+        :class:`NoLeastSquaresForm`."""
         import numpyro.distributions as dist
 
         base = _base(prior)
         # ``_base`` strips ``.expand`` and ``.to_event``: an image's
         # ``Normal(0, 1).to_event(2)`` is still a separable, elementwise prior.
-        if is_angle_vector(prior) or base.event_shape != ():
+        if is_angle_vector(prior):
             return True
+        if base.event_shape != ():
+            raise NoLeastSquaresForm(
+                f"{type(base).__name__} has event_shape {base.event_shape}: "
+                "its curvature is not diagonal, and the Gauss–Newton matrix "
+                "takes only elementwise priors and angle vectors."
+            )
         if isinstance(base, dist.ImproperUniform):
             return True
         if jacobian:
@@ -509,8 +518,9 @@ class _Objective(eqx.Module):
         does not). The terms are separable, so a ``jax.jvp`` of ``jax.grad``
         with a tangent of ones gives the diagonal. A prior with a flat
         coordinate adds nothing to ``fit``'s loss, so without the Jacobian
-        its P is 0. ``AngleVector``, multivariate and tied priors give 0
-        (the first has rows). A Normal prior on the real line gives 1/σ².
+        its P is 0. An ``AngleVector`` gives 0 (it has rows), and a
+        prior that is neither elementwise nor an angle vector raises
+        :class:`NoLeastSquaresForm`. A Normal prior on the real line gives 1/σ².
         """
         parts = []
         for key, prior in self._coordinate_priors():
@@ -1125,7 +1135,9 @@ def gauss_newton_mass(
     model, priors, data
         As for [`fit`][virgil.fitting.fit]. Any elementwise prior is
         accepted (those with ``event_shape == ()``, including array-valued
-        parameters with an elementwise prior): Normal, HalfNormal, Beta,
+        parameters with an elementwise prior; a ``MultivariateNormal`` or
+        ``Dirichlet`` raises
+        ``NoLeastSquaresForm``): Normal, HalfNormal, Beta,
         Uniform, LogUniform and so on. Its curvature P is taken in the
         coordinates of the sampler. ``ImproperUniform`` priors add none, nor
         do [`AngleVector`][virgil.angles.AngleVector] priors, whose
@@ -1290,12 +1302,16 @@ def _covariance(problem, z, dense):
     # Forward mode costs a pass per coordinate, reverse a pass per row.
     jac = (jax.jacfwd if n_rows >= n else jax.jacrev)(rows)(flat)
     if n_rows >= n:
-        factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(p))
         if dense:
+            factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(p))
             covariance = jax.scipy.linalg.cho_solve(factor, np.eye(n))
+            ok_factor = np.all(np.isfinite(factor[0]))
         else:
-            covariance = 1.0 / (np.sum(jac**2, axis=0) + p)
-        ok_factor = np.all(np.isfinite(factor[0]))
+            # Never forming n × n: every coordinate must be constrained,
+            # which a diagonal mass can check (not a rank deficiency).
+            diagonal = np.sum(jac**2, axis=0) + p
+            covariance = 1.0 / diagonal
+            ok_factor = np.all(diagonal > 0)
     else:
         zero_np = onp.asarray(zero)
         largest = np.max(np.where(zero_np, 0.0, p), initial=0.0)

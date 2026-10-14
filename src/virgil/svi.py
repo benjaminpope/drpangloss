@@ -48,6 +48,7 @@ from numpyro.infer import autoguide
 from ._precision import cast_tree, run_in
 from .fitting import (
     FitResult,
+    NoLeastSquaresForm,
     NoStartingValue,
     SingularCurvature,
     gauss_newton_mass,
@@ -219,7 +220,9 @@ def _start_scale(
     included), reordered into the guide's latent vector, for the sites it
     covers; ``init_scale`` times the identity for any others. A diagonal
     Gauss–Newton mass (more than ``fitting._DENSE_MASS_MAX`` coordinates)
-    goes on the diagonal. Returns ``(L, dense)``.
+    goes on the diagonal, but ``L`` is still n × n: the guides keep a
+    Cholesky factor of the latent covariance, so only the Gauss–Newton
+    step avoids it. Returns ``(L, dense)``.
     """
     n = guide_obj.latent_dim
     # The guide's own map from its latent vector to sites gives each
@@ -240,7 +243,7 @@ def _start_scale(
             noise=noise,
             flat_coordinates=flat,
         )
-    except (NoStartingValue, SingularCurvature) as error:
+    except (NoStartingValue, SingularCurvature, NoLeastSquaresForm) as error:
         warnings.warn(
             f"No Gauss–Newton starting width ({error}); the guide starts "
             f"with width init_scale={init_scale}.",

@@ -1092,3 +1092,14 @@ def test_a_nuts_chain_runs_with_the_v19_mass():
     samples = mcmc.get_samples()
     assert set(samples) == set(PRIORS) | {"noise.vis_scale", "noise.phi_scale"}
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
+
+
+def test_a_prior_without_a_diagonal_curvature_raises():
+    # A Dirichlet's curvature is not diagonal: the matrix would leave it
+    # out, so the curvature refuses rather than mislead.
+    from virgil.fitting import NoLeastSquaresForm
+
+    priors = dict(PRIORS) | {"flux": dist.Dirichlet(np.ones(2))}
+    problem = _Objective(START, priors, NOISY, flat=False)
+    with pytest.raises(NoLeastSquaresForm, match="not diagonal"):
+        problem._no_prior_curvature(priors["flux"], True)

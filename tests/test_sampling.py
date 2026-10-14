@@ -286,6 +286,54 @@ def test_the_size_guard_returns_the_diagonal_of_the_dense_matrix(
     onp.testing.assert_allclose(diagonal, expected, rtol=1e-10)
 
 
+def _shapes(jaxpr, primitive=None):
+    """Every array shape in a jaxpr, nested calls included, or (with
+    ``primitive``) the input shapes of that primitive's equations."""
+    found = set()
+    if primitive is None:
+        for var in [*jaxpr.invars, *jaxpr.outvars]:
+            found.add(tuple(getattr(var.aval, "shape", ())))
+    for eqn in jaxpr.eqns:
+        if primitive is None:
+            for var in [*eqn.invars, *eqn.outvars]:
+                found.add(tuple(getattr(var.aval, "shape", ())))
+        elif eqn.primitive.name == primitive:
+            found.add(tuple(eqn.invars[0].aval.shape))
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (list, tuple)) else [param]:
+                inner = getattr(sub, "jaxpr", sub)
+                if hasattr(inner, "eqns"):
+                    found |= _shapes(inner, primitive)
+    return found
+
+
+@pytest.mark.parametrize("hours", [(0.0,), (-2.0, 0.0, 2.0)])
+def test_the_diagonal_covariance_forms_no_n_by_n_matrix(hours):
+    # The size guard's diagonal must not allocate or factor n x n, or the
+    # guard saves nothing. With fewer rows than coordinates (Woodbury) no
+    # n x n array exists at all; with more, the Jacobian is already at least
+    # n x n, but F is not formed or Cholesky-factored.
+    from virgil.fitting import _covariance
+
+    scene = _small_scene()
+    data = vlti_oidata(hour_angles_h=hours, wavelengths_m=[3.5e-6]).with_model(
+        scene
+    )
+    priors = image_priors(scene)
+    problem = _Objective(scene, priors, data, flat=False)
+    z = problem.init({"env.log_brightness.latent": onp.zeros((4, 4))})
+    n = 16
+    rows = jax.eval_shape(problem.curvature_rows, z).shape[0]
+    dense = jax.make_jaxpr(lambda z: _covariance(problem, z, True))(z)
+    thin = jax.make_jaxpr(lambda z: _covariance(problem, z, False))(z)
+    # The helper sees nested calls: the dense matrix is factored.
+    assert (n, n) in _shapes(dense.jaxpr, "cholesky")
+    assert (n, n) not in _shapes(thin.jaxpr, "cholesky")
+    if rows < n:
+        assert (n, n) in _shapes(dense.jaxpr)
+        assert (n, n) not in _shapes(thin.jaxpr)
+
+
 def test_a_non_positive_definite_covariance_is_not_ok_in_float32():
     # e7b: a 16² image, errors 1000 times smaller, float32. The Woodbury
     # cancellation gave a covariance that was not positive definite while
