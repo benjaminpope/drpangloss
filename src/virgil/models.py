@@ -4,7 +4,9 @@
   [`GaussianDisk`][virgil.models.GaussianDisk],
   [`UniformDisk`][virgil.models.UniformDisk], the limb-darkened disks such
   as [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
-  [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim], and
+  [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim],
+  [`PolarDisk`][virgil.models.PolarDisk] (a radial profile, with its
+  profiles such as [`GaussianRing`][virgil.models.GaussianRing]), and
   the flared scattered-light disks such as
   [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]) are
   single shapes, combined with flux weights in a
@@ -31,9 +33,10 @@ import numpy as onp
 import zodiax as zdx
 from jax.scipy.ndimage import map_coordinates
 from jax.scipy.signal import fftconvolve
-from jaxbessel import bessel_jn, bessel_jv_over_xv, j0
+from jaxbessel import bessel_jn, bessel_jv_over_xv
 
 from ._geometry import (
+    apply_elliptical_transf_coord,
     check_az_prof_nonnegative,
     grid_visibilities,
     image_coordinates,
@@ -654,7 +657,14 @@ class TruncatedCone(Component):
     ``(s cos α - tip) cos β`` along the projected axis. The rings are
     weighted by the area element (∝ ρ) and the emissivity, and integrated
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
-    flux is dropped) by the midpoint rule on ``n_rings`` rings.
+    flux is dropped) by a Gauss-Legendre rule on ``n_rings`` rings.
+
+    The cone is a [`PolarDisk`][virgil.models.PolarDisk]: an
+    [`ExpTail`][virgil.models.ExpTail] profile in the ring radius, a
+    [`Cone`][virgil.models.Cone] height and
+    [`Harmonics`][virgil.models.Harmonics] for the modulation below, with the
+    disk's inclination ``90 - |tilt|`` and its major axis at ``pa - 90``.
+    The class keeps its name and parameters.
 
     **Azimuthal modulation.** ``az_amps`` and ``az_pas`` brighten one side
     of the walls, e.g. the leading edge of a colliding-wind shock that the
@@ -678,27 +688,21 @@ class TruncatedCone(Component):
     (``bind={"az_pas": ...}``), a sky position angle is deprojected into
     the rings' azimuth, so the bright side points at it on the sky.
 
-    **Choosing ``n_rings``.** The quadrature is second order: once the rings
-    are fine enough to resolve the fringes, the error in the visibility falls
-    as ``1 / n_rings**2``, so each doubling of ``n_rings`` cuts it by about
-    4. It is fine enough when both the spacing of the rings' centres on the
-    sky, ``5 length cos α cos β / n_rings``, and the step between their radii,
-    ``5 length sin α max(1, ratio) / n_rings``, are below half the shortest
-    fringe spacing (a cone seen down its axis, tilt 90°, has all its centres
-    together, and only the radius step matters). That criterion only says the
-    error is small, not that it is below your noise. For a cone with
-    ``length`` 13.8 mas and ``alpha`` 62.5°, over baselines out to 0.3
-    cycles/mas, ``max |V(n) - V(2n)|`` is about 6e-4 for ``n = 32``, 1.5e-4
-    for 64, 4e-5 for 128 and 1e-5 for 256, so the error of ``n_rings = 32``
-    itself is about 8e-4 in visibility amplitude. That is negligible for
-    noisy data but not for well-measured data: a high-S/N GRAVITY dataset
-    gained about 4 in log-likelihood per epoch going from 32 to 64 rings at
-    fixed parameters, and nearly 29 over three epochs from 24 to 64.
-
-    To check, refit or evaluate at the best fit with ``n_rings`` doubled and
-    compare χ² (or the log-likelihood): if |Δχ²| ≳ 1 per dataset (equivalently
-    |Δ log L| ≳ 0.5), use more rings, and double again until it is below that. Well-measured data (e.g.
-    GRAVITY) may need 64 or more. The cost is linear in ``n_rings``.
+    **Choosing ``n_rings``.** The quadrature converges spectrally, not at
+    second order as the midpoint rule it replaced did: the error is
+    negligible once the nodes resolve the fringes, and then does not change
+    with more. Fringes of the rings' centres and radii run at most
+    ``q max(sin α max(1, ratio), cos α cos β)`` cycles per milliarcsecond
+    of slant distance, so about ``π q 5 length`` times that factor nodes are
+    safe (fewer often do). For a cone with ``length`` 13.8 mas and ``alpha``
+    62.5°, 24 nodes agree with a converged midpoint stack to 1e-5 for
+    baselines out to 0.1 cycles/mas, and 48 to 1e-8 out to 0.3 cycles/mas
+    (where 256 midpoint rings are still off by 1e-5 and 64 by 5e-4), so
+    the default of 48 suits baselines to about 130 m at 2.2 µm. Too few nodes
+    is not a smooth loss of accuracy: the error stays large and then
+    drops sharply, so check by doubling ``n_rings``: if |Δχ²| ≳ 1 per
+    dataset (|Δ log L| ≳ 0.5), use more, as before. The cost is linear in
+    ``n_rings`` and about half the midpoint stack's at the same accuracy.
 
     Parameters
     ----------
@@ -730,9 +734,9 @@ class TruncatedCone(Component):
         Offset of the reference point in milliarcseconds, positive to the
         East and North.
     n_rings : int, optional
-        Quadrature rings along the walls, at least 2 (default 32). The
-        visibility error falls as ``1 / n_rings**2``; check convergence by
-        doubling it (see above).
+        Gauss-Legendre nodes (rings) along the walls, at least 2 (default
+        48). The error falls spectrally once they resolve the fringes;
+        check convergence by doubling it (see above).
     az_amps : float or array-like, optional
         Amplitudes of the cosine azimuthal modulations of the walls, from
         the first order up (see above). A scalar gives a single first-order
@@ -784,7 +788,7 @@ class TruncatedCone(Component):
         flux=1.0,
         dra=0.0,
         ddec=0.0,
-        n_rings=32,
+        n_rings=48,
         az_amps=(),
         az_pas=(),
     ):
@@ -895,57 +899,60 @@ class TruncatedCone(Component):
         phi = np.arctan2(np.cos(d) / squash, np.sin(d))
         return self.pa + 90.0 - phi / dtor
 
+    def _radial_profile(self):
+        sin_alpha = np.sin(self.alpha * dtor)
+        return ExpTail(
+            self.s0 * sin_alpha, self.length * sin_alpha, cutoff=5.0
+        ).with_rule(self.n_rings)
+
     def rings(self):
         """Radius, sky offset of the centre along the projected axis (mas)
-        and normalized weight of each ring."""
-        t = (np.arange(self.n_rings) + 0.5) / self.n_rings * 5.0
-        s = self.s0 + t * self.length
-        rho = s * np.sin(self.alpha * dtor)
-        along = (s * np.cos(self.alpha * dtor) - self.tip) * np.cos(
-            self.tilt * dtor
-        )
-        weight = rho * np.exp(-(s - self.s0) / self.length)
-        return rho, along, weight / np.sum(weight)
-
-    def _axes(self, uu, vv):
-        """Spatial frequencies along and across the projected axis."""
-        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
-        return uu * sin_pa + vv * cos_pa, uu * cos_pa - vv * sin_pa
+        and normalized weight of each ring: the Gauss-Legendre nodes that
+        ``model`` integrates and ``render`` draws."""
+        r, w = self._radial_profile().quadrature()
+        along = Cone(self.alpha, self.tip)(r) * np.cos(self.tilt * dtor)
+        return r, along, w / np.sum(w)
 
     def _centred_cvis(self, uu, vv):
-        rho, along, weight = self.rings()
-        shape = np.shape(uu)
-        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
-        q_par, q_perp = self._axes(uu, vv)
-        q = np.sqrt(
-            q_perp**2
-            + (self.ratio * q_par * np.sin(self.tilt * dtor)) ** 2
-            + 1e-30
+        # The cone is a PolarDisk: an exponential tail in the radius of the
+        # rings (the slant distance times sin alpha), a conical height, and
+        # the walls' modulation as linear harmonics. The disk's major axis
+        # is perpendicular to the projected axis of the cone, and the
+        # minor-axis foreshortening ratio * sin(tilt) is passed as is.
+        r, w = self._radial_profile().quadrature()
+        height = Cone(self.alpha, self.tip)(r)
+        c = s = None
+        if self.az_amps is not None:
+            c, s = self._harmonics(r)
+        cvis = polar_disk_cvis(
+            uu,
+            vv,
+            r,
+            w,
+            inc=90.0 - np.abs(self.tilt),
+            pa=self.pa - 90.0,
+            c=c,
+            s=s,
+            height=height,
+            stretch=self.ratio * np.sin(self.tilt * dtor),
         )
-        sin_pa, cos_pa = np.sin(self.pa * dtor), np.cos(self.pa * dtor)
-        shift = offset_phase(uu, vv, along * sin_pa, along * cos_pa)
-        x = 2.0 * np.pi * mas2rad * rho * q
-        if self.az_amps is None:
-            rings = j0(x)
-        else:
-            # e^{iθ}, θ the direction of the spatial frequency in the ring
-            # angle of _modulation; it multiplies J_m, which vanishes at
-            # q = 0, so the guard in q is enough.
-            squash = self.ratio * np.sin(self.tilt * dtor)
-            turn = (q_perp + 1j * squash * q_par) / q
-            orders, amps, phases = self._orders()
-            bessel = bessel_jn(len(orders), x)
-            rings = bessel[0] + sum(
-                amps[m - 1]
-                * (-1j) ** m
-                * np.real(turn**m * np.exp(-1j * m * phases[m - 1]))
-                * bessel[m]
-                for m in orders
-            )
-        rings = rings * shift
-        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
-        rings = np.matmul(rings, weight, precision=jax.lax.Precision.HIGHEST)
-        return np.reshape(rings * envelope, shape)
+        return cvis * _cvis_gaussian_envelope(uu, vv, self.width)
+
+    def _harmonics(self, r):
+        """The wall modulation as the Cartesian ``(c, s)`` of the engine.
+
+        A mode ``A_m cos(m (az - az_pa_m))`` has the ring angle of
+        ``_orders`` (0 on the wall at ``pa + 90``), and the engine's azimuth
+        runs from the disk's major axis, at ``pa - 90``, towards the minor
+        axis: they differ by half a turn, which is the factor ``(-1)**m``.
+        """
+        orders = onp.arange(1, self.az_amps.size + 1)
+        _, amps, phases = self._orders()
+        sign = (-1.0) ** orders
+        c = sign * amps * np.cos(orders * phases)
+        s = -sign * amps * np.sin(orders * phases)
+        ones = np.ones_like(r)
+        return c[:, None] * ones, s[:, None] * ones
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
         rho, along, weight = self.rings()
@@ -2510,6 +2517,1333 @@ class FlaredDiskPowerLaw(FlaredDisk):
     def _phase_function(self, theta):
         # Clipped: cos(θ/2) rounds to slightly below zero at θ = ±π.
         return np.maximum(np.cos(0.5 * theta), 0.0) ** self.n
+
+
+# ---------------------------------------------------------------------------
+# PolarDisk: radial profiles and a quadrature (Hankel-transform) engine
+# ---------------------------------------------------------------------------
+
+# Largest number of (sample, node) Bessel evaluations held at once; bigger
+# problems are chunked over the samples with ``jax.lax.map``.
+_POLAR_CHUNK_ELEMENTS = 2**24
+# Half-width, in widths, of the quadrature range of a Gaussian or soft edge:
+# the mass beyond it is about 2e-9.
+_POLAR_TAIL_WIDTHS = 6.0
+# numpy's Gauss-Laguerre weights underflow to 0 and then NaN beyond this.
+_LAGUERRE_MAX_NODES = 150
+
+
+def _legendre_rule(n_r):
+    """Gauss-Legendre nodes and weights on [-1, 1] (NumPy, built once)."""
+    x, w = onp.polynomial.legendre.leggauss(int(n_r))
+    return np.asarray(x), np.asarray(w)
+
+
+def _laguerre_rule(n_r):
+    """Gauss-Laguerre nodes and weights for the weight ``exp(-t)`` on [0, inf)."""
+    if n_r > _LAGUERRE_MAX_NODES:
+        raise ValueError(
+            f"A Gauss-Laguerre rule has at most {_LAGUERRE_MAX_NODES} nodes "
+            f"(its weights underflow beyond that), not {n_r}; use a "
+            "RadialPowerLaw with a large r_out and a soft edge for a tail "
+            "resolved that finely."
+        )
+    t, w = onp.polynomial.laguerre.laggauss(int(n_r))
+    return np.asarray(t), np.asarray(w)
+
+
+def _legendre_nodes(rule, lo, hi):
+    """Nodes on [lo, hi] and their ``dr`` weights from a [-1, 1] rule.
+
+    The rule arrays are inputs of the computation (never baked into the
+    compiled program) and carry no gradient.
+    """
+    x, w = (jax.lax.stop_gradient(a) for a in rule)
+    half = 0.5 * (hi - lo)
+    return 0.5 * (hi + lo) + half * x, half * w
+
+
+def _soft_step(x, width):
+    """Smooth 0 -> 1 step, an error function of standard deviation ``width``."""
+    return 0.5 * (1.0 + jax.scipy.special.erf(x / (math.sqrt(2.0) * width)))
+
+
+class _RadialProfile(zdx.Base):
+    """Base class of the radial profiles of a [`PolarDisk`][virgil.models.PolarDisk].
+
+    A profile is a non-negative brightness ``I(r)`` of the radius ``r`` in
+    the plane of the disk (milliarcseconds). It owns its quadrature rule:
+    ``quadrature`` returns nodes ``r_k`` and weights ``w_k`` such that
+    ``sum_k w_k f(r_k)`` approximates ``int I(r) f(r) r dr`` for smooth
+    ``f``. The rule's reference arrays are fields of the profile, filled by
+    ``with_rule(n_r)`` (which [`PolarDisk`][virgil.models.PolarDisk] calls), so
+    they are traced inputs and changing a parameter never recompiles.
+
+    ``weight`` is the profile's share of the light when it is one part of a
+    [`RadialSum`][virgil.models.RadialSum]; alone it has no effect.
+    """
+
+    weight: jax.Array
+    rule_x: Any
+    rule_w: Any
+
+    @property
+    def rule(self):
+        """The quadrature rule's reference nodes and weights, or ``None``."""
+        if self.rule_x is None:
+            return None
+        return self.rule_x, self.rule_w
+
+    def with_rule(self, n_r):
+        """This profile with an ``n_r``-node quadrature rule."""
+        return eqx.tree_at(
+            lambda p: (p.rule_x, p.rule_w),
+            self,
+            self._reference_rule(int(n_r)),
+            is_leaf=lambda x: x is None,
+        )
+
+    def _reference_rule(self, n_r):
+        return _legendre_rule(n_r)
+
+    def _check_rule(self):
+        if self.rule is None:
+            raise ValueError(
+                f"{type(self).__name__} has no quadrature rule; build it "
+                "into a PolarDisk, or call with_rule(n_r)."
+            )
+
+    def quadrature(self):
+        """Nodes ``r`` (mas) and weights ``w`` including ``I(r) r dr``."""
+        raise NotImplementedError
+
+    def intensity(self, r, pixel_scale_mas):
+        """``I(r)`` on a radius array, with the weight scale of ``quadrature``."""
+        raise NotImplementedError
+
+    def extent(self):
+        """Concrete (inner, outer) radius of the support, for ``suggest_n_r``."""
+        raise NotImplementedError
+
+    def _n_needed(self, q_max):
+        """Nodes for oscillations up to the frequency ``q_max`` (cycles/rad)."""
+        lo, hi = self.extent()
+        phase = onp.pi * float(q_max) * (hi - lo) * mas2rad
+        return int(onp.ceil(phase)) + 12
+
+    def is_physical(self):
+        return np.asarray(self.weight >= 0.0)
+
+    def _normalized_quadrature(self):
+        """``quadrature`` scaled to unit total, for mixing."""
+        r, w = self.quadrature()
+        return r, w / np.sum(w)
+
+
+class ThinRing(_RadialProfile):
+    r"""Infinitely thin ring of radius ``r0``, $I \propto \delta(r - r_0)$.
+
+    Its Hankel transform is $J_0(2\pi q r_0)$, so it needs no quadrature
+    (``n_r`` is irrelevant). Rendered, it is a Gaussian a pixel wide.
+
+    Parameters
+    ----------
+    r0 : float or array-like
+        Radius in milliarcseconds, in the plane of the disk.
+    weight : float or array-like, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+    """
+
+    r0: jax.Array
+
+    def __init__(self, r0, weight=1.0):
+        self.r0 = np.asarray(r0, dtype=float)
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+
+    def with_rule(self, n_r):
+        return self
+
+    def quadrature(self):
+        return np.reshape(self.r0, (1,)), np.ones((1,), dtype=self.r0.dtype)
+
+    def intensity(self, r, pixel_scale_mas):
+        s = np.maximum(0.5 * pixel_scale_mas, 1e-9)
+        norm = math.sqrt(2.0 * math.pi) * s * np.maximum(self.r0, s)
+        return np.exp(-0.5 * ((r - self.r0) / s) ** 2) / norm
+
+    def extent(self):
+        r0 = float(onp.max(onp.asarray(self.r0)))
+        return r0, r0
+
+    def _n_needed(self, q_max):
+        return 1
+
+    def is_physical(self):
+        return super().is_physical() & np.asarray(self.r0 >= 0.0)
+
+
+class GaussianRing(_RadialProfile):
+    r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with $r \ge 0$.
+
+    The quadrature runs over $r_0 \pm 6\sigma$ (clipped at the centre) with
+    a Gauss-Legendre rule, which converges spectrally.
+
+    Parameters
+    ----------
+    r0 : float or array-like
+        Radius of the peak in milliarcseconds.
+    sigma : float or array-like
+        Standard deviation of the radial profile in milliarcseconds.
+    weight : float or array-like, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+
+    References
+    ----------
+    Gaussian rings are the basic building block of the parametric radial
+    models of vis-r (Kennedy 2025, RASTI 4, rzaf004;
+    https://github.com/drgmk/vis-r).
+    """
+
+    r0: jax.Array
+    sigma: jax.Array
+
+    def __init__(self, r0, sigma, weight=1.0):
+        self.r0 = np.asarray(r0, dtype=float)
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+
+    def _range(self):
+        half = _POLAR_TAIL_WIDTHS * self.sigma
+        return np.maximum(self.r0 - half, 0.0), self.r0 + half
+
+    def quadrature(self):
+        self._check_rule()
+        r, dr = _legendre_nodes(self.rule, *self._range())
+        return r, dr * r * self.intensity(r, 0.0)
+
+    def intensity(self, r, pixel_scale_mas):
+        return np.exp(-0.5 * ((r - self.r0) / self.sigma) ** 2)
+
+    def extent(self):
+        r0, s = (float(onp.max(onp.asarray(a))) for a in (self.r0, self.sigma))
+        return max(
+            r0 - _POLAR_TAIL_WIDTHS * s, 0.0
+        ), r0 + _POLAR_TAIL_WIDTHS * s
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.asarray(self.r0 >= 0.0)
+            & np.asarray(self.sigma > 0.0)
+        )
+
+
+class RadialPowerLaw(_RadialProfile):
+    r"""Power law $I \propto r^{\rm index}$ between ``r_in`` and ``r_out``.
+
+    With ``edge`` (a length in milliarcseconds) both edges are soft, error
+    functions of that standard deviation, as in vis-r; the quadrature then
+    runs over ``edge`` * 6 beyond them, and ``n_r`` must resolve ``edge``.
+    With ``edge=None`` the edges are sharp and the Gauss-Legendre rule spans
+    exactly ``[r_in, r_out]``, so the transform is spectrally accurate for
+    a smooth power law (``index=0``, ``r_in=0`` is a uniform disk).
+
+    Parameters
+    ----------
+    r_in, r_out : float or array-like
+        Inner and outer radius in milliarcseconds.
+    index : float or array-like, optional
+        Power-law index (default 0).
+    edge : float, array-like or None, optional
+        Standard deviation of the soft edges in milliarcseconds, or ``None``
+        for sharp edges (default).
+    weight : float or array-like, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+
+    References
+    ----------
+    Power-law profiles with error-function edges follow vis-r
+    (Kennedy 2025, RASTI 4, rzaf004; https://github.com/drgmk/vis-r).
+    """
+
+    r_in: jax.Array
+    r_out: jax.Array
+    index: jax.Array
+    edge: Any
+
+    def __init__(self, r_in, r_out, index=0.0, edge=None, weight=1.0):
+        self.r_in = np.asarray(r_in, dtype=float)
+        self.r_out = np.asarray(r_out, dtype=float)
+        self.index = np.asarray(index, dtype=float)
+        self.edge = None if edge is None else np.asarray(edge, dtype=float)
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+
+    def _range(self):
+        if self.edge is None:
+            return self.r_in, self.r_out
+        half = _POLAR_TAIL_WIDTHS * self.edge
+        return np.maximum(self.r_in - half, 0.0), self.r_out + half
+
+    def quadrature(self):
+        self._check_rule()
+        r, dr = _legendre_nodes(self.rule, *self._range())
+        return r, dr * r * self.intensity(r, 0.0)
+
+    def intensity(self, r, pixel_scale_mas):
+        base = np.maximum(r, 1e-9) ** self.index
+        if self.edge is None:
+            inside = (r >= self.r_in) & (r <= self.r_out)
+            return np.where(inside, base, 0.0)
+        return (
+            base
+            * _soft_step(r - self.r_in, self.edge)
+            * _soft_step(self.r_out - r, self.edge)
+        )
+
+    def extent(self):
+        lo, hi = self._range()
+        return float(onp.min(onp.asarray(lo))), float(onp.max(onp.asarray(hi)))
+
+    def is_physical(self):
+        valid = (
+            super().is_physical()
+            & np.asarray(self.r_in >= 0.0)
+            & np.asarray(self.r_out > self.r_in)
+        )
+        if self.edge is not None:
+            valid = valid & np.asarray(self.edge > 0.0)
+        return valid
+
+
+class ExpTail(_RadialProfile):
+    r"""Exponential tail, $I \propto \exp[-(r - r_0)/L]$ for $r \ge r_0$.
+
+    By default a Gauss-Laguerre rule integrates the whole tail to infinity,
+    so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
+    is an exponential disk. Gauss-Laguerre nodes cover the oscillating tail
+    less efficiently than Gauss-Legendre does a finite range: about
+    $16 \cdot 2\pi q L$ nodes give 1e-5 at the longest baseline $q$ (24
+    nodes at $2\pi q L = 1$, 100 at 5). For a tail that is resolved much
+    more finely, give a ``cutoff``: the tail is then cut at
+    $r_0 + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
+    integrated by a Gauss-Legendre rule, which needs about
+    $\pi q\, \mathrm{cutoff}\, L + 12$ nodes (a cutoff of 5 drops 0.7 %
+    of the flux of a thin disk). See ``PolarDisk.suggest_n_r``.
+
+    Parameters
+    ----------
+    r0 : float or array-like
+        Inner radius in milliarcseconds, where the tail starts.
+    scale : float or array-like
+        e-folding length $L$ in milliarcseconds.
+    weight : float or array-like, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+    cutoff : float or None, optional
+        Cut the tail at ``r0 + cutoff * scale`` (a static number; ``None``,
+        the default, is the whole tail).
+    """
+
+    r0: jax.Array
+    scale: jax.Array
+    cutoff: float | None = eqx.field(static=True)
+
+    def __init__(self, r0, scale, weight=1.0, cutoff=None):
+        if cutoff is not None and not float(cutoff) > 0.0:
+            raise ValueError(f"cutoff must be positive or None: {cutoff!r}")
+        self.r0 = np.asarray(r0, dtype=float)
+        self.scale = np.asarray(scale, dtype=float)
+        self.weight = np.asarray(weight, dtype=float)
+        self.cutoff = None if cutoff is None else float(cutoff)
+        self.rule_x = None
+        self.rule_w = None
+
+    def _reference_rule(self, n_r):
+        if self.cutoff is not None:
+            return _legendre_rule(n_r)
+        return _laguerre_rule(n_r)
+
+    def quadrature(self):
+        self._check_rule()
+        if self.cutoff is not None:
+            r, dr = _legendre_nodes(
+                self.rule, self.r0, self.r0 + self.cutoff * self.scale
+            )
+            return r, dr * r * self.intensity(r, 0.0)
+        t, w = (jax.lax.stop_gradient(a) for a in self.rule)
+        r = self.r0 + self.scale * t
+        # int_{r0}^inf e^{-(r-r0)/L} f(r) r dr = L int e^{-t} f r dt.
+        return r, self.scale * w * r
+
+    def intensity(self, r, pixel_scale_mas):
+        s = np.maximum(r - self.r0, 0.0) / self.scale
+        inside = r >= self.r0
+        if self.cutoff is not None:
+            inside = inside & (s <= self.cutoff)
+        return np.where(inside, np.exp(-s), 0.0)
+
+    def extent(self):
+        r0, s = (float(onp.max(onp.asarray(a))) for a in (self.r0, self.scale))
+        return r0, r0 + (10.0 if self.cutoff is None else self.cutoff) * s
+
+    def _n_needed(self, q_max):
+        lo, hi = self.extent()
+        if self.cutoff is not None:
+            return super()._n_needed(q_max)
+        a = 2.0 * onp.pi * float(q_max) * (hi - lo) / 10.0 * mas2rad
+        return min(int(onp.ceil(16.0 * a)) + 16, _LAGUERRE_MAX_NODES)
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & np.asarray(self.r0 >= 0.0)
+            & np.asarray(self.scale > 0.0)
+        )
+
+
+class Gap(_RadialProfile):
+    r"""A Gaussian gap cut in another profile.
+
+    The brightness is that of ``base`` times
+    $1 - d \exp[-(r - r_0)^2 / 2 w^2]$, so ``depth=1`` empties the gap
+    and ``depth=0`` leaves ``base``. The quadrature is the base profile's:
+    its ``n_r`` must resolve ``width``. The base profile's own ``weight`` is
+    ignored; the gap's ``weight`` is used inside a
+    [`RadialSum`][virgil.models.RadialSum].
+
+    Parameters
+    ----------
+    base : profile
+        The profile the gap is cut in. It must have a brightness, so a
+        [`ThinRing`][virgil.models.ThinRing] cannot be gapped.
+    r0, width : float or array-like
+        Radius of the gap's centre and its standard deviation in
+        milliarcseconds.
+    depth : float or array-like, optional
+        Fractional depth between 0 and 1 (default 1).
+    weight : float or array-like, optional
+        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+
+    References
+    ----------
+    Gaussian gaps in parametric radial profiles follow vis-r
+    (Kennedy 2025, RASTI 4, rzaf004; https://github.com/drgmk/vis-r).
+    """
+
+    base: _RadialProfile
+    r0: jax.Array
+    width: jax.Array
+    depth: jax.Array
+
+    def __init__(self, base, r0, width, depth=1.0, weight=1.0):
+        if not isinstance(base, _RadialProfile) or isinstance(base, ThinRing):
+            raise TypeError(
+                "Gap needs a base profile with a brightness (not a "
+                f"ThinRing): {base!r}"
+            )
+        self.base = base
+        self.r0 = np.asarray(r0, dtype=float)
+        self.width = np.asarray(width, dtype=float)
+        self.depth = np.asarray(depth, dtype=float)
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+
+    def with_rule(self, n_r):
+        return eqx.tree_at(lambda p: p.base, self, self.base.with_rule(n_r))
+
+    def _factor(self, r):
+        return 1.0 - self.depth * np.exp(
+            -0.5 * ((r - self.r0) / self.width) ** 2
+        )
+
+    def quadrature(self):
+        r, w = self.base.quadrature()
+        return r, w * self._factor(r)
+
+    def intensity(self, r, pixel_scale_mas):
+        return self.base.intensity(r, pixel_scale_mas) * self._factor(r)
+
+    def extent(self):
+        return self.base.extent()
+
+    def _n_needed(self, q_max):
+        lo, hi = self.extent()
+        width = float(onp.min(onp.asarray(self.width)))
+        resolve = int(onp.ceil(4.0 * (hi - lo) / max(width, 1e-12)))
+        return max(self.base._n_needed(q_max), resolve)
+
+    def is_physical(self):
+        return (
+            super().is_physical()
+            & self.base.is_physical()
+            & np.asarray(self.width > 0.0)
+            & np.asarray((self.depth >= 0.0) & (self.depth <= 1.0))
+        )
+
+
+class RadialSum(_RadialProfile):
+    """Sum of named radial profiles, mixed by their ``weight``.
+
+    Each part is normalized to unit total light and then weighted by its
+    ``weight`` (relative to the others), so the weights are the parts' shares
+    of the disk's flux, as the ``flux`` of a [`System`][virgil.models.System]'s
+    components are. Keep the parts' weights as parameters and fit
+    their ratios. Parts are reached by name: ``disk.profile.inner.r0``.
+    Each part keeps its own quadrature rule, so the sum has
+    ``n_r`` nodes per part.
+
+    Examples
+    --------
+    >>> profile = RadialSum(
+    ...     inner=GaussianRing(r0=3.0, sigma=0.5),
+    ...     outer=GaussianRing(r0=8.0, sigma=1.0, weight=0.5),
+    ... )
+    >>> disk = PolarDisk(profile, inc=40.0, pa=20.0, n_r=32)
+    """
+
+    names: tuple = eqx.field(static=True)
+    parts: tuple
+
+    def __init__(self, parts=None, /, *, weight=1.0, **named):
+        parts = {**(parts or {}), **named}
+        if not parts:
+            raise ValueError("RadialSum needs at least one profile.")
+        for name, part in parts.items():
+            check_part_name(
+                name, RadialSum, "part", "inner.r0", "a RadialSum attribute"
+            )
+            if not isinstance(part, _RadialProfile):
+                raise TypeError(f"Part '{name}' is not a profile: {part!r}")
+        self.names = tuple(parts)
+        self.parts = tuple(parts.values())
+        self.weight = np.asarray(weight, dtype=float)
+        self.rule_x = None
+        self.rule_w = None
+
+    def __getattr__(self, name):
+        try:
+            names = object.__getattribute__(self, "names")
+            parts = object.__getattribute__(self, "parts")
+        except AttributeError:
+            raise AttributeError(name) from None
+        if name in names:
+            return parts[names.index(name)]
+        raise AttributeError(
+            f"RadialSum has no part or attribute '{name}'; its parts are "
+            f"{list(names)}."
+        )
+
+    def with_rule(self, n_r):
+        parts = tuple(part.with_rule(n_r) for part in self.parts)
+        return eqx.tree_at(lambda p: p.parts, self, parts)
+
+    def _shares(self):
+        weights = np.stack([np.asarray(p.weight) for p in self.parts])
+        return weights / np.sum(weights)
+
+    def quadrature(self):
+        shares = self._shares()
+        rs, ws = [], []
+        for share, part in zip(shares, self.parts):
+            r, w = part._normalized_quadrature()
+            rs.append(r)
+            ws.append(share * w)
+        return np.concatenate(rs), np.concatenate(ws)
+
+    def intensity(self, r, pixel_scale_mas):
+        shares = self._shares()
+        total = 0.0
+        for share, part in zip(shares, self.parts):
+            _, w = part.quadrature()
+            total = total + share * part.intensity(
+                r, pixel_scale_mas
+            ) / np.sum(w)
+        return total
+
+    def extent(self):
+        extents = [part.extent() for part in self.parts]
+        return min(e[0] for e in extents), max(e[1] for e in extents)
+
+    def _n_needed(self, q_max):
+        return max(part._n_needed(q_max) for part in self.parts)
+
+    def is_physical(self):
+        valid = super().is_physical()
+        for part in self.parts:
+            valid = valid & part.is_physical()
+        total = sum(np.asarray(p.weight) for p in self.parts)
+        return valid & (total > 0.0)
+
+
+class _RadialFunction(zdx.Base):
+    """A smooth function of the radius ``r`` (milliarcseconds), e.g. for a
+    harmonic coefficient of [`Harmonics`][virgil.models.Harmonics]."""
+
+    def __call__(self, r):
+        raise NotImplementedError
+
+
+class RadialLinear(_RadialFunction):
+    """``value + slope (r - r0)``: a coefficient that varies linearly.
+
+    Parameters
+    ----------
+    value : float or array-like
+        The function at ``r = r0``.
+    slope : float or array-like, optional
+        Gradient per milliarcsecond (default 0).
+    r0 : float or array-like, optional
+        Reference radius in milliarcseconds (default 0).
+    """
+
+    value: jax.Array
+    slope: jax.Array
+    r0: jax.Array
+
+    def __init__(self, value, slope=0.0, r0=0.0):
+        self.value = np.asarray(value, dtype=float)
+        self.slope = np.asarray(slope, dtype=float)
+        self.r0 = np.asarray(r0, dtype=float)
+
+    def __call__(self, r):
+        return self.value + self.slope * (r - self.r0)
+
+
+class RadialPower(_RadialFunction):
+    """``value (r / r0) ** index``: a coefficient that follows a power law.
+
+    Parameters
+    ----------
+    value : float or array-like
+        The function at ``r = r0``.
+    index : float or array-like
+        Power-law index.
+    r0 : float or array-like
+        Reference radius in milliarcseconds (positive).
+    """
+
+    value: jax.Array
+    index: jax.Array
+    r0: jax.Array
+
+    def __init__(self, value, index, r0):
+        self.value = np.asarray(value, dtype=float)
+        self.index = np.asarray(index, dtype=float)
+        self.r0 = np.asarray(r0, dtype=float)
+
+    def __call__(self, r):
+        return self.value * np.maximum(r / self.r0, 1e-12) ** self.index
+
+
+def _harmonic_entries(values, name):
+    """A tuple of coefficients: constants (0-d arrays) or radial functions."""
+    if isinstance(values, _RadialFunction):
+        return (values,)
+    if isinstance(values, (tuple, list)):
+        items = values
+    else:
+        items = np.atleast_1d(np.asarray(values, dtype=float))
+    out = []
+    for item in items:
+        if isinstance(item, _RadialFunction):
+            out.append(item)
+        else:
+            item = np.asarray(item, dtype=float)
+            if item.ndim:
+                raise ValueError(
+                    f"each entry of {name} must be a scalar or a radial "
+                    f"function of r, got an array of shape {item.shape}."
+                )
+            out.append(item)
+    return tuple(out)
+
+
+class Harmonics(zdx.Base):
+    r"""Azimuthal harmonics of a [`PolarDisk`][virgil.models.PolarDisk],
+    in the linear form.
+
+    The brightness at radius $r$ and azimuth $\theta$ in the plane of the
+    disk is the profile $I_0(r)$ times
+    $1 + \sum_{m=1}^{M} c_m(r) \cos m\theta + s_m(r) \sin m\theta$.
+    The azimuth $\theta$ is measured from the projected major axis (at
+    position angle ``pa`` of the disk) towards ``pa + 90`` on the sky, the
+    azimuth of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim].
+    The model is exactly linear in the Cartesian coefficients $c_m$, $s_m$,
+    which are better behaved than an amplitude and phase (no funnel as the
+    amplitude goes to zero and no wrap of the phase), and a Gaussian prior on
+    them is a uniform prior on the phase. Each is a constant or a
+    function of the radius, such as
+    [`RadialLinear`][virgil.models.RadialLinear] or
+    [`RadialPower`][virgil.models.RadialPower]. The visibility needs only
+    the orders ``0..M``, from one call to ``bessel_jn``.
+
+    The brightness stays non-negative only if
+    $1 + \sum_m (\dots) \ge 0$ everywhere; ``sum(c_m**2 + s_m**2) ** 0.5
+    <= 1`` guarantees it, and
+    ``PolarDisk.min_intensity``
+    reports violations.
+
+    Parameters
+    ----------
+    c, s : float, radial function or sequence of them, optional
+        Coefficients of $\cos m\theta$ and $\sin m\theta$ from the first
+        order up. A scalar is the first order only. Missing orders are zero.
+    degree : int, optional
+        The highest order ``M`` (static: it sets shapes, so changing it
+        recompiles). By default the length of the longer of ``c`` and ``s``.
+    form : str, optional
+        Only ``"linear"`` is available.
+
+    Examples
+    --------
+    A lopsided ring, brighter towards the major axis's far end, with a
+    second order that grows outwards:
+
+    >>> harmonics = Harmonics(c=(0.3, RadialLinear(0.0, 0.02, 5.0)), s=(0.1,))
+    >>> disk = PolarDisk(GaussianRing(6.0, 1.0), harmonics=harmonics, inc=30.0)
+    """
+
+    c: tuple
+    s: tuple
+    degree: int = eqx.field(static=True)
+
+    def __init__(self, c=(), s=(), degree=None, form="linear"):
+        if form != "linear":
+            raise ValueError(
+                f"Harmonics form must be 'linear' (the only one available), "
+                f"not {form!r}."
+            )
+        c, s = _harmonic_entries(c, "c"), _harmonic_entries(s, "s")
+        top = max(len(c), len(s)) if degree is None else degree
+        if isinstance(top, bool) or int(top) != top or top < 0:
+            raise ValueError(f"degree must be a non-negative integer: {top}.")
+        top = int(top)
+        if max(len(c), len(s)) > top:
+            raise ValueError(
+                f"degree is {top} but c has {len(c)} and s has {len(s)} "
+                "entries."
+            )
+        zero = np.asarray(0.0)
+        self.c = c + (zero,) * (top - len(c))
+        self.s = s + (zero,) * (top - len(s))
+        self.degree = top
+
+    @staticmethod
+    def _at(entries, r):
+        r = np.asarray(r)
+        if not entries:
+            return np.zeros((0,) + r.shape)
+        return np.stack(
+            [
+                e(r) if isinstance(e, _RadialFunction) else e + 0.0 * r
+                for e in entries
+            ]
+        ).reshape((len(entries),) + r.shape)
+
+    def coefficients(self, r):
+        """``(c, s)``, each of shape ``(M, len(r))``, at the radii ``r``."""
+        return self._at(self.c, r), self._at(self.s, r)
+
+    def factor(self, r, theta):
+        """``1 + sum_m c_m cos m theta + s_m sin m theta`` on ``r, theta``
+        (broadcast against each other)."""
+        shape = np.broadcast_shapes(np.shape(r), np.shape(theta))
+        rr = np.broadcast_to(r, shape).ravel()
+        tt = np.broadcast_to(theta, shape).ravel()
+        c, s = self.coefficients(rr)
+        out = np.ones_like(rr)
+        for m in range(1, self.degree + 1):
+            out = out + c[m - 1] * np.cos(m * tt) + s[m - 1] * np.sin(m * tt)
+        return out.reshape(shape)
+
+    def min_intensity(self, r, n_theta=720):
+        """The minimum of the brightness relative to the azimuthal mean
+        over the radii ``r`` and ``n_theta`` azimuths (negative if the
+        image goes negative)."""
+        theta = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
+        return np.min(self.factor(np.ravel(r)[:, None], theta[None, :]))
+
+
+class _Height(zdx.Base):
+    """Height of a ring of radius ``r`` above the disk plane (mas)."""
+
+    def __call__(self, r):
+        raise NotImplementedError
+
+    def is_physical(self):
+        return np.asarray(True)
+
+
+class Cone(_Height):
+    r"""A conical surface: the ring at radius $r$ lies at the height
+    $h = r \cot\alpha - \mathrm{tip}$ along the disk's normal.
+
+    This is the geometry of [`TruncatedCone`][virgil.models.TruncatedCone]:
+    the normal is the cone's axis, so the disk's inclination is
+    $90^\circ - $ the axis's tilt out of the sky, and ``pa`` is the
+    position angle of the *major* axis, 90 degrees from the projection of the
+    axis. Positive heights shift towards position angle ``pa + 90``. In
+    slant distance $s$ from the apex, $r = s \sin\alpha$.
+
+    Parameters
+    ----------
+    alpha : float or array-like
+        Half-opening angle in degrees (0 < alpha < 90).
+    tip : float or array-like, optional
+        Distance in milliarcseconds from the disk's centre back to the apex
+        along the axis (the ring at $r = 0$ lies at $-\mathrm{tip}$).
+    """
+
+    alpha: jax.Array
+    tip: jax.Array
+
+    def __init__(self, alpha, tip=0.0):
+        self.alpha = np.asarray(alpha, dtype=float)
+        self.tip = np.asarray(tip, dtype=float)
+
+    def __call__(self, r):
+        return r / np.tan(self.alpha * dtor) - self.tip
+
+    def is_physical(self):
+        return np.all((self.alpha > 0.0) & (self.alpha < 90.0))
+
+
+class PowerLawHeight(_Height):
+    r"""A flared surface: $h = h_0 (r / r_0)^\psi$.
+
+    Positive heights shift towards position angle ``pa + 90`` on the sky
+    (see [`Cone`][virgil.models.Cone]); a negative ``h0`` puts the surface
+    on the other side.
+
+    Parameters
+    ----------
+    h0 : float or array-like
+        Height at ``r0`` in milliarcseconds.
+    r0 : float or array-like
+        Reference radius in milliarcseconds (positive).
+    psi : float or array-like, optional
+        Flaring index (default 1, a cone through the centre).
+    """
+
+    h0: jax.Array
+    r0: jax.Array
+    psi: jax.Array
+
+    def __init__(self, h0, r0, psi=1.0):
+        self.h0 = np.asarray(h0, dtype=float)
+        self.r0 = np.asarray(r0, dtype=float)
+        self.psi = np.asarray(psi, dtype=float)
+
+    def __call__(self, r):
+        return self.h0 * np.maximum(r / self.r0, 1e-12) ** self.psi
+
+    def is_physical(self):
+        return np.all(self.r0 > 0.0)
+
+
+def polar_disk_cvis(
+    u,
+    v,
+    r,
+    w,
+    inc=0.0,
+    pa=0.0,
+    blur_fwhm=None,
+    c=None,
+    s=None,
+    height=None,
+    stretch=None,
+):
+    r"""Unit-flux visibility of a disk from radial quadrature.
+
+    The disk is a sum of thin rings, the nodes ``r`` weighted by ``w``,
+    after undoing the inclination ``inc`` and the position angle ``pa`` of
+    the projected major axis (North to East, as
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]). In the
+    plane of the disk, the brightness of ring ``k`` is
+    $1 + \sum_m c_{mk} \cos m\theta + s_{mk} \sin m\theta$ times its
+    weight, with the azimuth $\theta$ measured from the projected major
+    axis (the North of the deprojected frame) towards East, so that
+
+    $$
+    V = 2\pi \sum_{|m| \le M} (-i)^m e^{im\phi} \sum_k w_k I_m(r_k)
+        J_m(2\pi q r_k),
+    $$
+
+    with $I_{\pm m} = (c_m \mp i s_m)/2$ (and $I_0 = 1$), $q$ and $\phi$
+    the length and direction of the spatial frequency in the disk plane.
+    The sum is normalized, so $V(0) = 1$, and an optional Gaussian
+    ``blur_fwhm`` (in the disk plane) multiplies it as a Fourier envelope.
+    If ``height`` is given, ring ``k`` is lifted by ``height[k]`` along the
+    disk's normal, a shift on the sky of ``height[k] sin(inc)`` along the
+    projected minor axis (towards position angle ``pa + 90``), applied as a
+    phase factor after the stretch; the surface is thin and nothing is
+    occulted.
+
+    Parameters
+    ----------
+    u, v : array-like
+        Baseline coordinates in wavelength units (cycles/rad); any shape.
+    r : array-like
+        Quadrature radii in milliarcseconds, shape ``(n_r,)``.
+    w : array-like
+        Quadrature weights ($I_0(r_k) r_k\,dr$ folded in), shape ``(n_r,)``.
+    inc, pa : float or array-like, optional
+        Inclination and position angle in degrees.
+    blur_fwhm : float, array-like or None, optional
+        FWHM in milliarcseconds, in the disk plane, of a Gaussian that
+        smooths the profile.
+    c, s : array-like or None, optional
+        Cartesian coefficients of the linear azimuthal harmonics at the
+        nodes, shape ``(M, n_r)``: row ``m - 1`` is order ``m``. The
+        brightness must stay non-negative (the caller's task).
+    height : array-like or None, optional
+        Height of each ring above the disk plane in milliarcseconds, shape
+        ``(n_r,)`` (``None`` is a flat disk).
+    stretch : float or array-like or None, optional
+        The factor by which the minor axis is foreshortened on the sky,
+        ``cos(inc)`` by default. Pass it to change the axis ratio of the
+        rings independently of ``inc`` (which still sets the lift of
+        ``height``); a negative value mirrors the azimuth.
+
+    Returns
+    -------
+    array-like
+        Complex visibilities with the shape of ``u``.
+
+    Notes
+    -----
+    Large problems are evaluated in chunks over the samples. The Bessel
+    functions of every order come from one call to ``bessel_jn``.
+
+    References
+    ----------
+    Jennings et al. 2020, MNRAS 495, 3209 (frank,
+    https://github.com/discsim/frank): visibilities of a radial profile as
+    a Hankel transform on nodes. Kennedy 2025, RASTI 4, rzaf004 (vis-r,
+    https://github.com/drgmk/vis-r): parametric profiles, the uv
+    deprojection and a Gaussian envelope. No code was copied.
+    """
+    if stretch is None:
+        stretch = np.maximum(np.cos(inc * dtor), 1e-8)
+    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa, stretch)
+    q2 = ut**2 + vt**2
+    positive = q2 > 0.0
+    # sqrt has an infinite derivative at 0: keep gradients finite at u = v = 0,
+    # where the visibility is exactly 1.
+    q_safe = np.sqrt(np.where(positive, q2, 1.0))
+    q = np.where(positive, q_safe, 0.0)
+    # Direction of the frequency in the disk plane, e^{i phi}, with phi from
+    # the deprojected North (v) towards East (u); J_m(0) = 0 for m >= 1, so
+    # its value at q = 0 is irrelevant.
+    phase = np.where(positive, (vt + 1j * ut) / q_safe, 1.0 + 0j)
+    # Distance along the projected minor axis (towards PA pa + 90): the
+    # frequency conjugate to the lift of a ring.
+    q_minor = u * np.cos(pa * dtor) - v * np.sin(pa * dtor)
+
+    w = w / np.sum(w)
+    r_rad = r * mas2rad
+    n_orders = 0 if c is None else int(np.shape(c)[0])
+    lift = None
+    if height is not None:
+        lift = height * np.sin(inc * dtor)
+
+    def ring_sum(args):
+        q_flat, z_flat, qm_flat = args
+        arg = 2.0 * np.pi * q_flat[..., None] * r_rad
+        bessel = bessel_jn(n_orders, arg)
+        # Even orders feed the real part and odd orders the imaginary part
+        # through (-i)^m, so only one complex product is needed at the end.
+        re = bessel[0]
+        im = np.zeros_like(re)
+        zm = np.ones_like(z_flat)
+        for m in range(1, n_orders + 1):
+            zm = zm * z_flat
+            amp = (
+                c[m - 1] * np.real(zm)[..., None]
+                + s[m - 1] * np.imag(zm)[..., None]
+            ) * bessel[m]
+            sign = (-1.0) ** (m // 2)
+            if m % 2 == 0:
+                re = re + sign * amp
+            else:
+                im = im - sign * amp
+        ring = jax.lax.complex(re, im)
+        if lift is not None:
+            ring = ring * offset_phase(qm_flat[..., None], 0.0, lift, 0.0)
+        return np.sum(ring * w, axis=-1)
+
+    n_r = r.shape[-1]
+    flat = (q.ravel(), phase.ravel(), q_minor.ravel())
+    if q.size * n_r * (1 + n_orders) > _POLAR_CHUNK_ELEMENTS:
+        batch = max(1, _POLAR_CHUNK_ELEMENTS // (n_r * (1 + n_orders)))
+        cvis = jax.lax.map(ring_sum, flat, batch_size=batch)
+    else:
+        cvis = ring_sum(flat)
+    cvis = cvis.reshape(q.shape)
+
+    if blur_fwhm is not None:
+        fwhm_rad = blur_fwhm * mas2rad
+        cvis = cvis * np.exp(
+            -(np.pi**2) * fwhm_rad**2 * q2 / (4.0 * np.log(2.0))
+        )
+    return cvis + 0j
+
+
+class PolarDisk(Component):
+    r"""Axisymmetric disk with a radial profile, evaluated by quadrature.
+
+    The brightness is a radial profile $I(r)$ in the plane of the disk,
+    inclined by ``inc`` and rotated by ``pa``. Its visibility is the
+    Hankel transform $2\pi \int I(r) J_0(2\pi q r) r\,dr$, evaluated by
+    summing over ``n_r`` nodes of a rule that the profile owns (a
+    Gauss-Legendre rule, or Gauss-Laguerre for an
+    [`ExpTail`][virgil.models.ExpTail]); both converge spectrally, so a narrow
+    ring needs only tens of nodes. Many profiles are available:
+    [`ThinRing`][virgil.models.ThinRing], [`GaussianRing`][virgil.models.GaussianRing],
+    [`RadialPowerLaw`][virgil.models.RadialPowerLaw] (with sharp or soft edges),
+    [`ExpTail`][virgil.models.ExpTail], [`Gap`][virgil.models.Gap] (a gap in
+    another profile) and [`RadialSum`][virgil.models.RadialSum].
+
+    Parameters
+    ----------
+    profile : profile
+        The radial profile (see above); its quadrature rule is set to
+        ``n_r`` nodes.
+    harmonics : Harmonics or None, optional
+        Azimuthal harmonics in the linear form: the brightness is the
+        profile times ``1 + sum_m c_m(r) cos(m theta) + s_m(r) sin(m theta)``,
+        with the azimuth ``theta`` measured in the disk plane from the
+        projected major axis towards ``pa + 90``. They make closure phases
+        non-zero for a centred disk (odd orders) and are linear in the
+        coefficients. ``min_intensity``
+        reports where the image would go negative.
+    height : Cone, PowerLawHeight or None, optional
+        The height of each ring above the disk plane, as a function of its
+        radius: a cone ``r cot(alpha) - tip`` or a flared power law
+        ``h0 (r / r0) ** psi``. The ring is shifted on the sky by
+        ``h sin(inc)`` towards position angle ``pa + 90`` (a phase factor
+        after the stretch). The surface is thin and nothing is occulted.
+    inc : float or array-like, optional
+        Inclination in degrees (0 is face-on).
+    pa : float or array-like, optional
+        Position angle of the projected major axis in degrees, North to
+        East (see the image coordinate convention).
+    blur_fwhm : float, array-like or None, optional
+        FWHM of a Gaussian that smooths the profile, in milliarcseconds, in
+        the plane of the disk. It is a Fourier envelope: exact and free.
+    flux : float, array-like or Spectrum, optional
+        Weight relative to the other components of a [`System`][virgil.models.System],
+        or a spectrum from [`virgil.spectra`][virgil.spectra]
+        (default 1).
+    dra, ddec : float or array-like, optional
+        Offset of the disk's centre in milliarcseconds, positive to the East
+        and North.
+    n_r : int, optional
+        Number of quadrature nodes per profile (default 64). It sets the
+        shapes of arrays, so it is static: changing it recompiles, and
+        changing any parameter does not. [`suggest_n_r`][virgil.models.PolarDisk.suggest_n_r]
+        gives a starting value; it is never applied silently.
+
+    Notes
+    -----
+    Without ``harmonics`` or ``height`` the disk is azimuthally symmetric
+    and point-symmetric (whatever ``inc``), so when centred its
+    visibilities are real and its closure phases are 0 or 180 degrees (the
+    visibility changes sign past its nulls); other values appear with an
+    offset ``dra``/``ddec``, an odd harmonic, a height, or in
+    a [`System`][virgil.models.System] with other components. A height
+    needs ``n_r`` to resolve the extra phase ``2 pi q h sin(inc)`` as well.
+    Rendering a disk with a ``height`` splats rings on a fine radial grid and
+    needs concrete parameters. The disk has
+    unit flux, and in a system its weight is ``flux``. Light on scales much larger than
+    the shortest baseline's resolution appears only as a loss of visibility,
+    which [`Resolved`][virgil.models.Resolved] also models: the data
+    constrain their sum.
+
+    The transform needs ``n_r`` nodes enough to sample the Bessel oscillations
+    across the profile's range: about $\pi q_{\max} (r_{\rm out} - r_{\rm in})$,
+    plus a dozen.
+
+    Examples
+    --------
+    A ring with a gap beyond it, seen at 50 degrees:
+
+    >>> profile = Gap(GaussianRing(r0=10.0, sigma=3.0), r0=10.0, width=0.8)
+    >>> disk = PolarDisk(profile, inc=50.0, pa=30.0, blur_fwhm=1.0, n_r=48)
+    >>> scene = System(star=PointSource(), disk=disk.set("flux", 0.3))
+    >>> vis = scene.model(np.array([30.0]), np.array([10.0]), 2.2e-6)
+
+    References
+    ----------
+    The Hankel-transform representation of a radial profile on a fixed set of
+    nodes follows frank (Jennings et al. 2020, MNRAS 495, 3209;
+    https://github.com/discsim/frank), and the parametric profiles, uv
+    deprojection and Gaussian envelope follow vis-r (Kennedy 2025, RASTI 4,
+    rzaf004; https://github.com/drgmk/vis-r). The code is a new
+    implementation; none was copied.
+    """
+
+    profile: _RadialProfile
+    harmonics: Harmonics | None
+    height: _Height | None
+    inc: jax.Array
+    pa: jax.Array
+    blur_fwhm: Any
+    n_r: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        profile,
+        harmonics=None,
+        height=None,
+        inc=0.0,
+        pa=0.0,
+        blur_fwhm=None,
+        flux=1.0,
+        dra=0.0,
+        ddec=0.0,
+        n_r=64,
+    ):
+        if not isinstance(profile, _RadialProfile):
+            raise TypeError(f"profile must be a radial profile: {profile!r}")
+        if int(n_r) != n_r or n_r < 1:
+            raise ValueError(f"n_r must be a positive integer, not {n_r!r}.")
+        self.n_r = int(n_r)
+        self.profile = profile.with_rule(self.n_r)
+        if harmonics is not None and not isinstance(harmonics, Harmonics):
+            raise TypeError(f"harmonics must be a Harmonics: {harmonics!r}")
+        if height is not None and not isinstance(height, _Height):
+            raise TypeError(
+                f"height must be a Cone or PowerLawHeight: {height!r}"
+            )
+        self.harmonics = harmonics
+        self.height = height
+        self.inc = np.asarray(inc, dtype=float)
+        self.pa = np.asarray(pa, dtype=float)
+        self.blur_fwhm = (
+            None if blur_fwhm is None else np.asarray(blur_fwhm, dtype=float)
+        )
+        self.flux = _as_flux(flux)
+        self.dra = np.asarray(dra, dtype=float)
+        self.ddec = np.asarray(ddec, dtype=float)
+
+    def is_physical(self):
+        valid = super().is_physical() & self.profile.is_physical()
+        if self.blur_fwhm is not None:
+            valid = valid & np.all(self.blur_fwhm >= 0.0)
+        if self.height is not None:
+            valid = valid & self.height.is_physical()
+        if self.harmonics is not None and self.harmonics.degree:
+            valid = valid & (self.min_intensity() >= -1e-6)
+        return valid
+
+    def min_intensity(self, n_theta=720):
+        """The least brightness relative to the azimuthal mean.
+
+        The minimum over the quadrature nodes and ``n_theta`` azimuths of
+        ``I(r, theta) / I0(r) = 1 + sum_m c_m cos m theta + s_m sin m
+        theta``: 1 without harmonics, and negative if the image goes
+        negative somewhere (the harmonics are linear, so nothing prevents
+        it). ``is_physical`` is false
+        then.
+        """
+        if self.harmonics is None or not self.harmonics.degree:
+            return np.asarray(1.0)
+        r, w = self.profile.quadrature()
+        return self.harmonics.min_intensity(r, n_theta)
+
+    def suggest_n_r(self, data):
+        """A starting number of nodes for ``data``'s longest baselines.
+
+        Enough to sample the Bessel oscillations across the profile and the
+        phase of a ``height``'s lift (at the current parameter values, which
+        must be concrete), rounded up to a
+        multiple of 8 (but at most the 144 nodes buildable for a Gauss-Laguerre
+        tail). A starting point only: check convergence by
+        doubling ``n_r``.
+
+        Parameters
+        ----------
+        data : OIData
+            Anything with ``u``, ``v`` (metres) and ``wavel`` (metres).
+        """
+        u, v, wavel = (onp.asarray(a) for a in (data.u, data.v, data.wavel))
+        q_max = float(onp.max(onp.hypot(u, v) / wavel))
+        n = self.profile._n_needed(q_max)
+        if self.height is not None:
+            # The lift h(r) sin(inc) adds a phase 2 pi q (lift) across the
+            # profile, which dominates when |dh/dr| sin(inc) > 1.
+            lo, hi = self.profile.extent()
+            h = onp.asarray(self.height(np.linspace(lo, hi, 65)), float)
+            lift = float(onp.sum(onp.abs(onp.diff(h))))
+            lift *= float(
+                onp.max(onp.abs(onp.sin(onp.asarray(self.inc) * dtor)))
+            )
+            n = max(n, int(onp.ceil(onp.pi * q_max * lift * mas2rad)) + 12)
+        n = int(8 * onp.ceil(max(n, 16) / 8))
+        # A Gauss-Laguerre tail (ExpTail, alone or inside a RadialSum/Gap)
+        # has at most 150 nodes; step down in 8s until the rule builds.
+        while n > 16:
+            try:
+                self.profile.with_rule(n)
+                break
+            except ValueError:
+                n -= 8
+        return n
+
+    def _centred_cvis(self, uu, vv):
+        r, w = self.profile.quadrature()
+        c = s = None
+        if self.harmonics is not None and self.harmonics.degree:
+            c, s = self.harmonics.coefficients(r)
+        height = None if self.height is None else self.height(r)
+        return polar_disk_cvis(
+            uu,
+            vv,
+            r,
+            w,
+            self.inc,
+            self.pa,
+            self.blur_fwhm,
+            c=c,
+            s=s,
+            height=height,
+        )
+
+    def _lifted_image(self, xx, yy, pixel_scale_mas, stretch):
+        """The image of a disk with a height, by splatting thin rings.
+
+        The ring at each radius of a fine grid is a set of points round it,
+        lifted and projected, each a Gaussian spot a pixel wide, so
+        overlapping parts of the surface add (it is optically thin). Needs
+        concrete parameters, for the number of points.
+        """
+        lo, hi = self.profile.extent()
+        pad = 3.0 * pixel_scale_mas
+        lo, hi = max(lo - pad, 0.0), hi + pad
+        n_rad = int(
+            min(max(onp.ceil(3.0 * (hi - lo) / pixel_scale_mas), 64), 768)
+        )
+        n_theta = int(
+            min(max(onp.ceil(6.0 * onp.pi * hi / pixel_scale_mas), 128), 1536)
+        )
+        dr = (hi - lo) / n_rad
+        radii = lo + (np.arange(n_rad) + 0.5) * dr
+        theta = (np.arange(n_theta) + 0.5) * (2.0 * np.pi / n_theta)
+        brightness = (
+            self.profile.intensity(radii, pixel_scale_mas) * radii * dr
+        )
+        lift = self.height(radii) * np.sin(self.inc * dtor)
+        if self.harmonics is not None and self.harmonics.degree:
+            factor = self.harmonics.factor(radii[:, None], theta[None, :])
+        else:
+            factor = np.ones((n_rad, n_theta))
+        weights = brightness[:, None] * factor / n_theta
+        # Unit vectors of the projected minor axis (towards PA pa + 90).
+        minor_x, minor_y = np.cos(self.pa * dtor), -np.sin(self.pa * dtor)
+        width = pixel_scale_mas
+        k = 4.0 * np.log(2.0) / width**2
+        grid = _orthogonal_grid(xx, yy)
+
+        def ring_points(radius, height):
+            x, y = apply_elliptical_transf_coord(
+                radius * np.sin(theta),
+                radius * np.cos(theta),
+                self.pa,
+                stretch,
+            )
+            return x + height * minor_x, y + height * minor_y
+
+        if grid is not None:
+            origin, e_col, e_row = grid
+            cols = np.arange(np.shape(xx)[1])[:, None]
+            rows = np.arange(np.shape(xx)[0])[:, None]
+
+            def add_ring(image, ring):
+                radius, height, wt = ring
+                x, y = ring_points(radius, height)
+                dx, dy = x - origin[0], y - origin[1]
+                s_col = (dx * e_col[0] + dy * e_col[1]) / (e_col @ e_col)
+                s_row = (dx * e_row[0] + dy * e_row[1]) / (e_row @ e_row)
+                g_col = np.exp(-k * (e_col @ e_col) * (cols - s_col) ** 2)
+                g_row = np.exp(-k * (e_row @ e_row) * (rows - s_row) ** 2)
+                spots = np.matmul(
+                    g_row * wt, g_col.T, precision=jax.lax.Precision.HIGHEST
+                )
+                return image + spots, None
+
+        else:
+            blocks = n_theta // 64 + (n_theta % 64 > 0)
+            pad_to = blocks * 64
+
+            def add_ring(image, ring):
+                radius, height, wt = ring
+                x, y = ring_points(radius, height)
+                x, y = (np.pad(a, (0, pad_to - n_theta)) for a in (x, y))
+                wt = np.pad(wt, (0, pad_to - n_theta))
+
+                def add_block(image, block):
+                    bx, by, bw = block
+                    d2 = (xx[..., None] - bx) ** 2 + (yy[..., None] - by) ** 2
+                    spots = np.exp(-k * d2) * bw
+                    return image + np.sum(spots, -1), None
+
+                image, _ = jax.lax.scan(
+                    add_block,
+                    image,
+                    tuple(a.reshape(blocks, 64) for a in (x, y, wt)),
+                )
+                return image, None
+
+        image, _ = jax.lax.scan(
+            add_ring, np.zeros(np.shape(xx)), (radii, lift, weights)
+        )
+        return image
+
+    def _centred_image(self, xx, yy, pixel_scale_mas):
+        stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
+        if self.height is not None:
+            image = self._lifted_image(xx, yy, pixel_scale_mas, stretch)
+        else:
+            image = self._flat_image(xx, yy, pixel_scale_mas, stretch)
+        return self._blurred(image, pixel_scale_mas, stretch)
+
+    def _flat_image(self, xx, yy, pixel_scale_mas, stretch):
+        xx_ell, yy_ell = undo_elliptical_transf_coord(xx, yy, self.pa, stretch)
+        r_ell = np.hypot(xx_ell, yy_ell)
+        image = self.profile.intensity(r_ell, pixel_scale_mas / stretch)
+        if self.harmonics is not None and self.harmonics.degree:
+            # The azimuth runs from the deprojected North towards East.
+            origin = (xx_ell == 0.0) & (yy_ell == 0.0)
+            theta = np.arctan2(xx_ell, np.where(origin, 1.0, yy_ell))
+            image = image * self.harmonics.factor(r_ell, theta)
+        return image
+
+    def _blurred(self, image, pixel_scale_mas, stretch):
+        if self.blur_fwhm is None:
+            return image
+
+        # As for ModulatedGaussianRim: an odd kernel centred on a pixel,
+        # isotropic in the disk plane.
+        npix = image.shape[0]
+        nker = npix + 1 - npix % 2
+        kx, ky = image_coordinates(nker, nker * pixel_scale_mas)
+        sigma_mas = np.maximum(self.blur_fwhm / FWHM_PER_SIGMA, 1e-9)
+        psf_stretch = np.minimum(
+            np.maximum(stretch, 0.5 * pixel_scale_mas / sigma_mas), 1.0
+        )
+        kx_ell, ky_ell = undo_elliptical_transf_coord(
+            kx, ky, self.pa, psf_stretch
+        )
+        psf = np.exp(-0.5 * (kx_ell**2 + ky_ell**2) / sigma_mas**2)
+        return fftconvolve(image, psf, mode="same")
 
 
 class Resolved(SourceModel):

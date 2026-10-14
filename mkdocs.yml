@@ -73,6 +73,7 @@ nav:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
+      - "Radial profiles and PolarDisk": polar_disk.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
@@ -99,6 +100,7 @@ nav:
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
               - System and building blocks: api/models/classes/composition.md
               - Image: api/models/classes/image.md
+              - PolarDisk: api/models/classes/polar_disk.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
       - Likelihood: api/likelihood.md

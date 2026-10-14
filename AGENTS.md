@@ -117,7 +117,7 @@ see that repository's `PLAN.md` for the boundary.
 | `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals`; `colour` inverts `whiten` for the residual bootstrap (private) |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
-| `models.py` | source models (`SourceModel`, components including the pixel `Image`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions |
+| `models.py` | source models (`SourceModel`, components including the pixel `Image` and the radial-profile `PolarDisk` with its profiles, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions, and `polar_disk_cvis`, the quadrature engine of `PolarDisk` |
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
 | `fitting.py` | `fit(model, priors, data, regularizers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |

@@ -1079,3 +1079,25 @@ bibcode = "2019AnP...53100127E"
 arxiv = "1804.03350"
 verified = true
 verified_via = "ads"
+
+[ref.frank]
+authors = "Jennings et al."
+year = 2020
+title = "Frankenstein: fitting the visibilities of protoplanetary disc and other radially symmetric sources"
+used_in = ["virgil.models:PolarDisk", "virgil.models:polar_disk_cvis"]
+note = "MNRAS 495, 3209 (2020); github.com/discsim/frank. Ideas only, no code copied (LGPL)."
+bibcode = "2020MNRAS.495.3209J"
+arxiv = "2005.07709"
+verified = true
+verified_via = "ads"
+
+[ref.visr]
+authors = "Kennedy"
+year = 2025
+title = "vis-r: a parametric visibility modelling code for radial profiles of discs"
+used_in = ["virgil.models:PolarDisk", "virgil.models:polar_disk_cvis"]
+note = "RASTI (2025); github.com/drgmk/vis-r. Ideas only, no code copied."
+bibcode = "2025RASTI...4....4D"
+arxiv = "2502.17619"
+verified = true
+verified_via = "ads"
