@@ -5,9 +5,9 @@ This notebook shows what [`PolarDisk`](polar_disk.md) is for. We build a synthet
 
 ## The scene and the data
 
-The star is a point source with a 6000 K blackbody spectrum, and every other component's flux is relative to it at the reference wavelength of 3 microns. The three rings are `PolarDisk`s with `GaussianRing` profiles at radii of 3, 7 and 15 mas, each with its own blackbody (1500, 900 and 600 K), so that the inner ring is bluer than the outer one. The outer ring also has an azimuthal harmonic of degree one, which makes one side of it brighter, and the planet is a `PointSource` with a 1000 K blackbody that sits in the gap between the second and third rings. The rings are coplanar, so they must share an inclination and a position angle; we get that by building the whole scene in a function of the parameters that hands one `inc` and `pa` to every ring. This is the same function we will fit in the next step.
+The star is a point source with a 6000 K blackbody spectrum, and every other component's flux is relative to it at the reference wavelength of 3 microns. The three rings are `PolarDisk`s with `GaussianRing` profiles at radii of 3, 7 and 15 mas, each with its own blackbody (1500, 900 and 600 K), so that the inner ring is bluer than the outer one. The outer ring also has an azimuthal harmonic of degree one, which makes one side of it brighter, and the planet is a `PointSource` with a 1000 K blackbody that sits in the gap between the second and third rings. The rings' radii are measured in the disk plane, not on the sky, so the planet's place in the gap has to be worked out in the plane. With a position angle of 30 degrees the major axis of the projected rings points along $(\Delta\alpha, \Delta\delta) \propto (\sin 30^\circ, \cos 30^\circ)$, and along that axis a distance on the sky equals the distance in the plane (only the perpendicular direction is foreshortened, by $\cos 50^\circ$). We put the planet on the major axis, on the side to the South-West, at an in-plane radius of 11 mas, midway between the rings at 7 and 15 mas, which gives $(\Delta\alpha, \Delta\delta) = (-5.5, -9.53)$ mas. The cell that builds the scene checks this by deprojecting the planet's offset to the disk plane and printing its radius. The rings are coplanar, so they must share an inclination and a position angle; we get that by building the whole scene in a function of the parameters that hands one `inc` and `pa` to every ring. This is the same function we will fit in the next step.
 
-The data resemble a low-resolution L-band run with the four VLTI unit telescopes: nine channels from 2.4 to 3.6 microns, seven hour angles, so 378 squared visibilities with errors of 0.01 and 252 closure phases with errors of 0.5 degrees (567 independent data once the closure phases' correlations are accounted for). The beam of this coverage, drawn in the corner of every image below, is about 6 by 3 mas, so the 4 mas between the first two rings is of the order of one resolution element. The picture shows the truth at 3 microns with East to the left, the star saturated so that the faint outer ring can be seen, and the planet as the dot below and to the right of the centre.
+The data resemble a low-resolution L-band run with the four VLTI unit telescopes: nine channels from 2.4 to 3.6 microns, seven hour angles, so 378 squared visibilities with errors of 0.01 and 252 closure phases with errors of 0.5 degrees (567 independent data once the closure phases' correlations are accounted for). The beam of this coverage, drawn in the corner of every image below, is about 6 by 3 mas, so the 4 mas between the first two rings is of the order of one resolution element. The picture shows the truth at 3 microns with East to the left, the star saturated so that the faint outer ring can be seen, and the planet as the dot below and to the right of the centre, that is to the South and West of the star (West is on the right when East is on the left).
 
 ```python
 import sys
@@ -33,6 +33,7 @@ from virgil.coverage import vlti_oidata
 from virgil.imaging import beam, log_evidence
 from virgil.inference import laplace_cov
 from virgil.likelihood import whitened_residuals
+from virgil.priors import IsotropicInclination
 from virgil.plotting import (
     plot_data_model_correlation, plot_model, plot_residual_map,
 )
@@ -57,9 +58,23 @@ def scene(inc, pa, r1, s1, f1, t1, r2, s2, f2, t2, r3, s3, f3, t3,
 
 truth = dict(inc=50.0, pa=30.0, r1=3.0, s1=0.8, f1=0.15, t1=1500.0,
              r2=7.0, s2=1.0, f2=0.25, t2=900.0, r3=15.0, s3=1.8, f3=0.5,
-             t3=600.0, h_re=0.5, h_im=0.2, dra=6.0, ddec=-9.0, fp=0.04,
+             t3=600.0, h_re=0.5, h_im=0.2, dra=-5.5, ddec=-9.526, fp=0.04,
              tp=1000.0)
 truth_model = scene(**truth)
+
+
+def plane_radius(dra, ddec, inc, pa):
+    """Disk-plane radius of a sky offset: rotate to the major/minor axes, de-foreshorten the minor."""
+    pa_r = np.radians(pa)
+    major = dra * np.sin(pa_r) + ddec * np.cos(pa_r)
+    minor = dra * np.cos(pa_r) - ddec * np.sin(pa_r)
+    return float(np.hypot(major, minor / np.cos(np.radians(inc))))
+
+
+print("planet: sky separation "
+      f"{np.hypot(truth['dra'], truth['ddec']):.2f} mas, disk-plane radius "
+      f"{plane_radius(truth['dra'], truth['ddec'], truth['inc'], truth['pa']):.2f} mas "
+      f"(rings at {truth['r1']}, {truth['r2']}, {truth['r3']} mas)")
 template = vlti_oidata(
     wavelengths_m=np.linspace(2.4e-6, 3.6e-6, 9),
     hour_angles_h=(-3, -2, -1, 0, 1, 2, 3),
@@ -74,17 +89,17 @@ plt.show()
 
 ## The parametric fit
 
-The truth family has 20 parameters: the shared geometry, a radius, width, flux and temperature for each ring, the two components of the outer ring's harmonic, and the planet's offset, flux and temperature. We give them invariant priors: uniform for angles, positions and radii, which are locations, and log-uniform for widths, fluxes and temperatures, which are scales. We start 5 percent away from the truth, which is what a local optimizer needs, and run `fit` to the MAP solution with Levenberg-Marquardt. A coarse search of the planet's position and the ring radii would normally come first for a real target. We then take the Laplace covariance of the likelihood at the MAP point, `laplace_cov`, to get an uncertainty on each parameter and, in a few cells, the evidence.
+The truth family has 20 parameters: the shared geometry, a radius, width, flux and temperature for each ring, the two components of the outer ring's harmonic, and the planet's offset, flux and temperature. We give them invariant priors: an isotropic prior on the inclination (`IsotropicInclination`, uniform in $\cos i$, which a plain uniform prior on $i$ is not), uniform for the position angle, harmonic components and the planet's offsets, which are locations or angles, and log-uniform for the ring radii, widths, fluxes and temperatures, which are scales (a radius is a size, and rescales with the distance). We start 5 percent away from the truth, which is what a local optimizer needs, and run `fit` to the MAP solution with Levenberg-Marquardt. A coarse search of the planet's position and the ring radii would normally come first for a real target. We then take the Laplace covariance of the likelihood at the MAP point, `laplace_cov`, to get an uncertainty on each parameter and, in a few cells, the evidence.
 
 The fit reaches a raw $\chi^2$ of 580 for 567 independent data on the quoted errors, so $\chi^2/N = 1.02$, without rescaling. Most parameters are recovered to within about one Laplace standard deviation, and the planet's position and flux are precise (0.03 mas and 3 percent). The exception is the width of the innermost ring, which is not resolved: it lands on 0.15 mas, with a Laplace standard deviation of 0.38 mas that is larger than the value itself, and the truth of 0.8 mas lies within its range. A Gaussian approximation is poor for a scale parameter that is pressed against the edge of its prior, which will matter for the evidence below.
 
 ```python
-priors = dict(inc=dist.Uniform(0, 85), pa=dist.Uniform(-90, 90),
+priors = dict(inc=IsotropicInclination(0, 85), pa=dist.Uniform(-90, 90),
               h_re=dist.Uniform(-1, 1), h_im=dist.Uniform(-1, 1),
               dra=dist.Uniform(-20, 20), ddec=dist.Uniform(-20, 20),
               fp=dist.LogUniform(0.003, 0.3), tp=dist.LogUniform(300, 3000))
 for i in (1, 2, 3):
-    priors |= {f"r{i}": dist.Uniform(0.5, 25), f"s{i}": dist.LogUniform(0.1, 4),
+    priors |= {f"r{i}": dist.LogUniform(0.5, 25), f"s{i}": dist.LogUniform(0.1, 4),
                f"f{i}": dist.LogUniform(0.01, 2),
                f"t{i}": dist.LogUniform(300, 3000)}
 start = {k: v * (1 + 0.05 * (-1) ** i) for i, (k, v) in enumerate(truth.items())}
@@ -135,7 +150,8 @@ print(f"chi2 = {gpfit.info['chi2'][0]:.0f} for N = {gpfit.info['ndata'][0]} "
       f"independent data (chi2/N = {gpfit.info['chi2'][0] / gpfit.info['ndata'][0]:.2f}), "
       f"converged: {gpfit.info['converged']}, {gpfit.info['steps']} steps")
 print(f"planet offset (dra, ddec) = ({gv['planet.dra']:.2f}, {gv['planet.ddec']:.2f}) mas "
-      f"(parametric: {v['dra']:.2f}, {v['ddec']:.2f}; truth 6.00, -9.00)")
+      f"(parametric: {v['dra']:.2f}, {v['ddec']:.2f}; "
+      f"truth {truth['dra']:.2f}, {truth['ddec']:.2f})")
 print(f"planet flux at 3 micron = {gv['planet.flux.ratio']:.3f} of the star "
       f"(parametric: {v['fp']:.3f}; truth 0.040)")
 print(f"disk flux at 3 micron = {gv['disk.flux']:.2f} "
@@ -144,7 +160,7 @@ print(f"disk flux at 3 micron = {gv['disk.flux']:.2f} "
 
 ## The evidence, parametric against Gaussian process
 
-How much should we believe the extra freedom? The Laplace evidence is $\log Z \approx -\tfrac12\chi^2 + \log\pi(\hat\theta) + \tfrac d2\log 2\pi + \tfrac12\log\det\Sigma$ for the parametric model, with $\Sigma$ the Laplace covariance, and `log_evidence` computes the equivalent expression for the Gaussian-process latents, $-\tfrac12\chi^2 - \tfrac12|z|^2 - \tfrac12\log\det(I + J^TJ)$. Both are in the same normalization of the data's likelihood, so only differences between them mean anything. Two caveats apply and both favour the parametric model. The Gaussian-process evidence is conditional on its fixed hyperparameters and on the geometry, the planet and the disk flux held at their MAP values, whereas the parametric evidence marginalizes all 20 parameters; and the parametric family contains the truth, which is of course not something a real analysis can assume. We also compare the profile's correlation length of 1.5 mas with a longer one of 4 mas, which is how MacKay's evidence framework chooses a hyperparameter.
+How much should we believe the extra freedom? The Laplace evidence is $\log Z \approx -\tfrac12\chi^2 + \log\pi(\hat\theta) + \tfrac d2\log 2\pi + \tfrac12\log\det\Sigma$ for the parametric model, with $\Sigma$ the Laplace covariance, and `log_evidence` computes the equivalent expression for the Gaussian-process latents, $-\tfrac12\chi^2 - \tfrac12|z|^2 - \tfrac12\log\det(I + J^TJ)$. Both are in the same normalization of the data's likelihood, so only differences between them mean anything. Two caveats apply, and they pull in opposite directions. The Gaussian-process evidence is conditional on its fixed hyperparameters, and `log_evidence` holds every non-latent parameter (the disk flux, the planet's four parameters, and, since we took it from the parametric fit, the geometry, which was tuned on these same data) at its MAP value with no prior or Occam factor. That is a profile likelihood over those parameters, not a marginal one, and each parameter left unmarginalized would have contributed a negative term of a few nats, so this caveat favours the Gaussian process. The parametric evidence marginalizes all 20 parameters, and its family contains the truth, which is of course not something a real analysis can assume, so this second caveat favours the parametric model. The two do not cancel in any known amount, and the gap between the two numbers is therefore not a calibrated Bayes factor, even though the Laplace approximation is itself rough for the parameter that presses on its prior edge. We also compare the profile's correlation length of 1.5 mas with a longer one of 4 mas, a comparison between two Gaussian-process fits with the same held parameters, which is the cleaner use of this number and is how MacKay's evidence framework chooses a hyperparameter.
 
 ```python
 gpm = gpfit.model
@@ -159,15 +175,15 @@ logz = {}
 for ell in tqdm((1.5, 4.0), desc="profile length scale"):
     f = gpfit if ell == 1.5 else fit(gp.set("disk.profile.ell", ell), gp_priors_, data)
     logz[ell] = float(log_evidence(f, data, path="disk"))
-print(f"parametric (20 parameters, all marginalized): log Z = {logz_par:8.1f}")
+print(f"parametric (20 parameters, Laplace-marginalized): log Z = {logz_par:8.1f}")
 for ell, z in logz.items():
-    print(f"GP, profile length scale {ell:4.2f} mas: log Z = {z:8.1f}"
+    print(f"GP (other parameters at MAP), profile length scale {ell:4.2f} mas: log Z = {z:8.1f}"
           + ("  (used below)" if ell == 1.5 else ""))
 ```
 
 ## What the data taught the Gaussian process
 
-The evidence tells us that the data prefer the model that knows about the rings, by a wide margin, which is not surprising. What the Gaussian process buys is not evidence but not having to know. The two panels compare the prior of the profile and of the spectral index, a band of the 16 to 84 percent range of draws from the Gaussian-process prior at the fixed hyperparameters, with a band of draws from the Laplace posterior of the latents, $\mathcal N(z_0, (I + J^TJ)^{-1})$, the same approximation that the evidence uses. Only the latents vary in the posterior bands: the geometry, the planet and the disk flux are held at their MAP values, so the bands are narrower than the full posterior would be. The profile has gone from an unstructured prior that spans four decades to a posterior that has three bumps and a gap, and the spectral index from a wide band to a band that traces a step, with a lower value at the inner radii and a higher one in the outer ring.
+The evidence comparison is not like for like (see the caveats above), but it is unsurprising that a model that is told where the rings are is not beaten by one that is not. What the Gaussian process buys is not evidence but not having to know. The two panels compare the prior of the profile and of the spectral index, a band of the 16 to 84 percent range of draws from the Gaussian-process prior at the fixed hyperparameters, with a band of draws from the Laplace posterior of the latents, $\mathcal N(z_0, (I + J^TJ)^{-1})$, the same approximation that the evidence uses. Only the latents vary in the posterior bands: the geometry, the planet and the disk flux are held at their MAP values, so the bands are narrower than the full posterior would be. The profile has gone from an unstructured prior that spans four decades to a posterior that has three bumps and a gap, and the spectral index from a wide band to a band that traces a step, with a lower value at the inner radii and a higher one in the outer ring.
 
 ```python
 latents = ["disk.profile.z", "disk.harmonics.z", "disk.spectral_index.z"]
@@ -214,7 +230,7 @@ prior_al = np.asarray(gpm.disk.spectral_index.draws(key, 200, r=rg))
 band = lambda x: np.percentile(x, [16, 84], axis=0)
 fig, axes = plt.subplots(1, 2, figsize=(10, 3.8))
 for ax, pr, po, label in zip(axes, (prior_i0, prior_al), (post_i0, post_al),
-                             ("I$_0$(r) (flux per mas$^2$ at 3 micron)", r"$\alpha$(r)")):
+                             (r"I$_0$(r) at 3 micron ($\int I_0\,r\,dr$ = flux)", r"$\alpha$(r)")):
     ax.fill_between(rg, *band(pr), color="0.8", label="prior, 16-84%")
     ax.fill_between(rg, *band(po), color="C0", alpha=0.5, label="posterior, 16-84%")
     ax.set_xlabel("radius in the disk plane (mas)")
@@ -229,9 +245,9 @@ plt.show()
 
 ## Truth, parametric fit and deconvolution side by side
 
-The top row shows the three images at 3 microns on the same colour scale, with the beam in the corner; the second row shows the two fits minus the truth as plain signed residuals, not z-scores, since the MAP images have no uncertainty, on a colour scale that is symmetric about zero. The three middle panels compare the radial profile, the colour and the lopsidedness with the truth. The truth for the profile is the sum of the three Gaussians in the same units as the Gaussian process, for the colour it is the intensity-weighted logarithmic slope of the three blackbodies at 3 microns, and for the lopsidedness it is the outer ring's first harmonic weighted by that ring's share of the light at each radius. The blue bands are the Laplace posterior of the latents from the previous cell. The spectra panel integrates the Gaussian-process disk's flux, $I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$ over three radial windows (inside 5.3 mas, between 5.3 and 10 mas, and outside 10 mas) and sets each against the blackbody of the corresponding ring. The bottom row shows the residuals of both fits, divided by the quoted errors, for the squared visibilities and the closure phases, with the root mean square of each in the legend.
+The top row shows the three images at 3 microns on the same colour scale, with the beam in the corner; the second row shows the two fits minus the truth as plain signed residuals, not z-scores, since the MAP images have no uncertainty, on a colour scale that is symmetric about zero. The three middle panels compare the radial profile, the colour and the lopsidedness with the truth. The truth for the profile is the sum of the three Gaussians in r, centred on the ring radii and normalized so that $\int I_0\, r\,dr$ is the flux, as for the Gaussian process, for the colour it is the intensity-weighted logarithmic slope of the three blackbodies at 3 microns, and for the lopsidedness it is the outer ring's first harmonic weighted by that ring's share of the light at each radius. The blue bands are the Laplace posterior of the latents from the previous cell. The spectra panel integrates the Gaussian-process disk's flux, $I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$ over three radial windows (inside 5.3 mas, between 5.3 and 10 mas, and outside 10 mas) and sets each against the blackbody of the corresponding ring. The bottom row shows the residuals of both fits, divided by the quoted errors, for the squared visibilities and the closure phases, with the root mean square of each in the legend.
 
-The Gaussian process puts bumps at about 3.7, 7 and 15 mas against the true 3, 7 and 15 mas, so the ring radii agree to within one resolution element, and it cuts a gap between about 9 and 11 mas, in which the planet sits. It reproduces the radial contrast of the profile to within its bands, including the steep fall beyond 20 mas, where the data have no constraint and the band widens to the prior. The spectral index follows the truth: the inner ring is blue, the outer ring is red with a slope near 3, and the band in between is wide, so the middle ring's colour is only weakly determined. The rise of the index at the innermost radii is an edge effect of the Gaussian process, where the data have little leverage. The third middle panel shows the lopsidedness, the first harmonic's amplitude relative to the azimuthal mean: it is near 0.4 beyond 10 mas, as in the truth, and consistent with zero in the inner rings. The recovered spectra are of the right order and ordering but, as the dashed lines show, a power law in wavelength over a band with this much curvature only approximates a blackbody, and the inner ring's spectrum is flatter than the truth. In the residual maps, which are dominated by the centre, the residual of the Gaussian-process image is about three times that of the parametric one (the scales differ), and both lie within the inner ring and on the star, with nothing visible at the outer ring or the planet.
+The Gaussian process puts bumps at about 3.7, 7 and 15 mas against the true 3, 7 and 15 mas, so the ring radii agree to within one resolution element, and it cuts a gap between the second and third rings, in which the planet sits at 11 mas in the disk plane. It reproduces the radial contrast of the profile to within its bands, including the steep fall beyond 20 mas, where the data have no constraint and the band widens to the prior. The spectral index follows the truth: the inner ring is blue, the outer ring is red with a slope near 3, and the band in between is wide, so the middle ring's colour is only weakly determined. The rise of the index at the innermost radii is an edge effect of the Gaussian process, where the data have little leverage. The third middle panel shows the lopsidedness, the first harmonic's amplitude relative to the azimuthal mean: it is near 0.4 beyond 10 mas, as in the truth, and consistent with zero in the inner rings. The recovered spectra are of the right order and ordering but, as the dashed lines show, a power law in wavelength over a band with this much curvature only approximates a blackbody, and the inner ring's spectrum is flatter than the truth. In the residual maps, which are dominated by the centre, the residual of the Gaussian-process image is about three times that of the parametric one (the scales differ), and both lie within the inner ring and on the star, with nothing visible at the outer ring or the planet.
 
 ```python
 par_model, bm = par.model, beam(data)
@@ -242,7 +258,12 @@ alpha_of = lambda t: float(jax.grad(lambda l: jnp.log(BlackBody(1.0, t, W0)(l)))
 
 
 def truth_profile(r, p):
-    """I0(r) at 3 micron, the intensity-weighted alpha(r) and the harmonic |I_1|(r)."""
+    """I0(r) at 3 micron, the intensity-weighted alpha(r) and the harmonic |I_1|(r).
+
+    Each ring is exp[-(r - r_i)^2 / 2 s_i^2], as GaussianRing has it, normalized by
+    sqrt(2 pi) s_i r_i so that the integral of I0 r dr is the ring's flux (exact to
+    <0.1 percent here, where r_i >> s_i).
+    """
     g = [p[f"f{i}"] * np.exp(-0.5 * ((r - p[f"r{i}"]) / p[f"s{i}"]) ** 2)
          / (np.sqrt(2 * np.pi) * p[f"s{i}"] * p[f"r{i}"]) for i in (1, 2, 3)]
     a = [alpha_of(p[f"t{i}"]) for i in (1, 2, 3)]
@@ -268,7 +289,7 @@ i_p, a_p, h_p = truth_profile(rg, dict(par.values))
 ax.fill_between(rg, *band(post_i0), color="C0", alpha=0.4, label="GP 16-84%")
 ax.plot(rg, i_t, "k", label="truth")
 ax.plot(rg, i_p, "C1--", label="parametric")
-ax.set(yscale="log", ylim=(1e-5, 1e1), xlabel="radius (mas)", ylabel="I$_0$(r)")
+ax.set(yscale="log", ylim=(1e-5, 1e1), xlabel="radius (mas)", ylabel=r"I$_0$(r) ($\int I_0\,r\,dr$ = flux)")
 ax.legend(fontsize=7)
 ax = fig.add_subplot(grid[2, 2:4])
 ax.fill_between(rg, *band(post_al), color="C0", alpha=0.4)
@@ -324,4 +345,4 @@ plt.show()
 
 ## Summary
 
-A non-parametric `PolarDisk` found the rings, the gap, the outer ring's lopsidedness and the planet from the same 630 numbers that a parametric fit of the true family used, without being told that there are three rings. The ring radii agree with the truth to within about a resolution element, the colour of the inner and outer rings agrees with the blackbody slopes, and the planet's position and flux agree with the parametric fit. The costs are visible too: the parametric evidence is higher by about 57 nats, the fit is a little worse on the quoted errors ($\chi^2/N$ of 1.17 against 1.02), the colour of the middle ring is poorly determined, a power law in wavelength only approximates a blackbody, and the inner edge of the Gaussian process needed to stay above the resolution. For real data, the sensible use of the two is together: the Gaussian process to find the structure and propose a parametric family, and the parametric fit, with its evidence, to confirm and measure it. The Gaussian-process hyperparameters here were fixed; sampling them, with NUTS and the whitened latents, is the next step and is not done in this notebook.
+A non-parametric `PolarDisk` found the rings, the gap, the outer ring's lopsidedness and the planet from the same 630 numbers that a parametric fit of the true family used, without being told that there are three rings. The ring radii agree with the truth to within about a resolution element, the colour of the inner and outer rings agrees with the blackbody slopes, and the planet's position and flux agree with the parametric fit. The costs are visible too: the fit is a little worse on the quoted errors ($\chi^2/N$ of 1.17 against 1.02), the colour of the middle ring is poorly determined, a power law in wavelength only approximates a blackbody, and the inner edge of the Gaussian process needed to stay above the resolution. The evidence comparison is only indicative, since the Gaussian process's evidence holds its non-latent parameters at their MAP values, which favours it, while the parametric family contains the truth, which favours the other. For real data, the sensible use of the two is together: the Gaussian process to find the structure and propose a parametric family, and the parametric fit, with its evidence, to confirm and measure it. The Gaussian-process hyperparameters here were fixed; sampling them, with NUTS and the whitened latents, is the next step and is not done in this notebook.
