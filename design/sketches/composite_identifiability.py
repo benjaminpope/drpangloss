@@ -23,7 +23,7 @@ minute on a laptop.
 
 import itertools
 
-import numpy as np
+import numpy as onp
 
 SIGMA_V = 0.01  # noise on each of Re V, Im V (total flux 1)
 FLUX_SD = 1.0  # prior sd of each component's total flux (broad)
@@ -39,39 +39,39 @@ def coverage(seed=0, n_tel=6, n_ha=10, channels=(0.85, 0.95, 1.05, 1.15)):
     """Earth-rotation uv tracks of ``n_tel`` random stations, |uv| ≤ 1/beam
     at the longest baseline and shortest wavelength (VLTI-like: 15 baselines,
     10 hour angles, 4 channels)."""
-    rng = np.random.default_rng(seed)
+    rng = onp.random.default_rng(seed)
     xy = rng.uniform(-1, 1, (n_tel, 2))
     pairs = list(itertools.combinations(range(n_tel), 2))
-    b = np.array([xy[j] - xy[i] for i, j in pairs])
+    b = onp.array([xy[j] - xy[i] for i, j in pairs])
     uv = []
-    for h in np.linspace(-1.0, 1.0, n_ha):  # hour angle, radians
-        c, s = np.cos(h), np.sin(h)
-        rot = np.stack([c * b[:, 0] - s * b[:, 1], 0.7 * (s * b[:, 0] + c * b[:, 1])], 1)
+    for h in onp.linspace(-1.0, 1.0, n_ha):  # hour angle, radians
+        c, s = onp.cos(h), onp.sin(h)
+        rot = onp.stack([c * b[:, 0] - s * b[:, 1], 0.7 * (s * b[:, 0] + c * b[:, 1])], 1)
         for lam in channels:
             uv.append(rot / lam)
-    uv = np.concatenate(uv)
-    return uv / np.hypot(*uv.T).max()
+    uv = onp.concatenate(uv)
+    return uv / onp.hypot(*uv.T).max()
 
 
 def fourier(uv, x, y):
     """Complex visibility matrix of unit points at (x, y): (n_uv, n_points)."""
-    return np.exp(-2j * np.pi * (uv[:, :1] * x[None] + uv[:, 1:] * y[None]))
+    return onp.exp(-2j * onp.pi * (uv[:, :1] * x[None] + uv[:, 1:] * y[None]))
 
 
 def grid(npix, pixel, dra=0.0, ddec=0.0):
     """Pixel centres (x East, y North) of a square grid centred on (dra, ddec)."""
-    c = (np.arange(npix) - (npix - 1) / 2) * pixel
-    x, y = np.meshgrid(c[::-1] + dra, c[::-1] + ddec)
+    c = (onp.arange(npix) - (npix - 1) / 2) * pixel
+    x, y = onp.meshgrid(c[::-1] + dra, c[::-1] + ddec)
     return x.ravel(), y.ravel()
 
 
 def realify(z):
-    return np.concatenate([z.real, z.imag])
+    return onp.concatenate([z.real, z.imag])
 
 
 def design(uv, x, y):
     """Real design matrix: Re V, Im V, and the weighted total flux."""
-    return np.vstack([realify(fourier(uv, x, y)), NORM * np.ones((1, x.size))])
+    return onp.vstack([realify(fourier(uv, x, y)), NORM * onp.ones((1, x.size))])
 
 
 # --- components ---------------------------------------------------------------
@@ -85,7 +85,7 @@ class Component:
 
 
 def point(name, x=0.0, y=0.0, flux=0.5):
-    return Component(name, np.array([x]), np.array([y]), np.array([flux]), np.array([[FLUX_SD**2]]))
+    return Component(name, onp.array([x]), onp.array([y]), onp.array([flux]), onp.array([[FLUX_SD**2]]))
 
 
 def image(name, npix, pixel, ell, amp, dra=0.0, ddec=0.0, hole=None, radius=None, flux=0.5):
@@ -94,8 +94,8 @@ def image(name, npix, pixel, ell, amp, dra=0.0, ddec=0.0, hole=None, radius=None
     the grid centre), with a broad total-flux mode and a flat mean of total
     ``flux``."""
     x, y = grid(npix, pixel, dra, ddec)
-    r = np.hypot(x - dra, y - ddec)
-    keep = np.ones_like(r, bool)
+    r = onp.hypot(x - dra, y - ddec)
+    keep = onp.ones_like(r, bool)
     if hole is not None:
         keep &= r >= hole
     if radius is not None:
@@ -103,8 +103,8 @@ def image(name, npix, pixel, ell, amp, dra=0.0, ddec=0.0, hole=None, radius=None
     x, y = x[keep], y[keep]
     n = x.size
     d2 = (x[:, None] - x[None]) ** 2 + (y[:, None] - y[None]) ** 2
-    cov = amp**2 * np.exp(-0.5 * d2 / ell**2) + (FLUX_SD / n) ** 2 * np.ones((n, n))
-    return Component(name, x, y, np.full(n, flux / n), cov + 1e-10 * np.eye(n))
+    cov = amp**2 * onp.exp(-0.5 * d2 / ell**2) + (FLUX_SD / n) ** 2 * onp.ones((n, n))
+    return Component(name, x, y, onp.full(n, flux / n), cov + 1e-10 * onp.eye(n))
 
 
 # --- the exact linear-Gaussian posterior --------------------------------------
@@ -114,48 +114,48 @@ class Fit:
     def __init__(self, uv, data, comps):
         self.comps = comps
         self.blocks = [design(uv, c.x, c.y) for c in comps]
-        A = np.concatenate(self.blocks, 1)
-        m = np.concatenate([c.mean for c in comps])
+        A = onp.concatenate(self.blocks, 1)
+        m = onp.concatenate([c.mean for c in comps])
         sizes = [c.mean.size for c in comps]
-        K = np.zeros((sum(sizes),) * 2)
-        o = np.cumsum([0] + sizes)
+        K = onp.zeros((sum(sizes),) * 2)
+        o = onp.cumsum([0] + sizes)
         for i, c in enumerate(comps):
             K[o[i] : o[i + 1], o[i] : o[i + 1]] = c.cov
-        S = A @ K @ A.T + SIGMA_V**2 * np.eye(A.shape[0])
-        L = np.linalg.cholesky(S)
+        S = A @ K @ A.T + SIGMA_V**2 * onp.eye(A.shape[0])
+        L = onp.linalg.cholesky(S)
         r = data - A @ m
-        w = np.linalg.solve(L, r)
-        self.log_z = float(-0.5 * w @ w - np.log(np.diag(L)).sum() - 0.5 * r.size * np.log(2 * np.pi))
-        Sinv_r = np.linalg.solve(L.T, w)
+        w = onp.linalg.solve(L, r)
+        self.log_z = float(-0.5 * w @ w - onp.log(onp.diag(L)).sum() - 0.5 * r.size * onp.log(2 * onp.pi))
+        Sinv_r = onp.linalg.solve(L.T, w)
         self.mean = m + K @ A.T @ Sinv_r
         self.offsets, self.A, self.K, self.L = o, A, K, L
-        self.chi2_red = float(np.sum((data - A @ self.mean) ** 2) / SIGMA_V**2 / data.size)
+        self.chi2_red = float(onp.sum((data - A @ self.mean) ** 2) / SIGMA_V**2 / data.size)
 
     def flux_moments(self):
         """Posterior mean, sd and correlation of each component's total flux."""
         o = self.offsets
-        W = np.zeros((self.K.shape[0], len(self.comps)))
+        W = onp.zeros((self.K.shape[0], len(self.comps)))
         for i in range(len(self.comps)):
             W[o[i] : o[i + 1], i] = 1.0
         KW = self.K @ W
-        V = np.linalg.solve(self.L, self.A @ KW)
+        V = onp.linalg.solve(self.L, self.A @ KW)
         cov = W.T @ KW - V.T @ V
-        sd = np.sqrt(np.diag(cov))
-        return self.mean @ W, sd, cov / np.outer(sd, sd)
+        sd = onp.sqrt(onp.diag(cov))
+        return self.mean @ W, sd, cov / onp.outer(sd, sd)
 
     def residual_covariance_solve(self, data):
         """S⁻¹ (d - A μ_prior) with S the marginal covariance, for searches."""
-        r = data - self.A @ np.concatenate([c.mean for c in self.comps])
-        return np.linalg.solve(self.L.T, np.linalg.solve(self.L, r))
+        r = data - self.A @ onp.concatenate([c.mean for c in self.comps])
+        return onp.linalg.solve(self.L.T, onp.linalg.solve(self.L, r))
 
     def image(self, npix, pixel):
         """The posterior-mean scene binned onto a common grid."""
-        out = np.zeros((npix, npix))
+        out = onp.zeros((npix, npix))
         c = (npix - 1) / 2
         for comp, (a, b) in zip(self.comps, zip(self.offsets[:-1], self.offsets[1:])):
-            col = np.clip(np.rint(c - comp.x / pixel).astype(int), 0, npix - 1)
-            row = np.clip(np.rint(c - comp.y / pixel).astype(int), 0, npix - 1)
-            np.add.at(out, (row, col), self.mean[a:b])
+            col = onp.clip(onp.rint(c - comp.x / pixel).astype(int), 0, npix - 1)
+            row = onp.clip(onp.rint(c - comp.y / pixel).astype(int), 0, npix - 1)
+            onp.add.at(out, (row, col), self.mean[a:b])
         return out
 
 
@@ -169,7 +169,7 @@ def search(uv, data, fit, npix=41, pixel=0.125, extent=None, noise_only=False, n
     fitted scene does."""
     x, y = grid(npix, pixel)
     if extent is not None:
-        keep = np.hypot(x, y) <= extent
+        keep = onp.hypot(x, y) <= extent
         x, y = x[keep], y[keep]
     G = design(uv, x, y)
     G[-1] = 0.0  # a point adds flux, not total flux (normalized data)
@@ -177,12 +177,12 @@ def search(uv, data, fit, npix=41, pixel=0.125, extent=None, noise_only=False, n
         Sinv_r, Sinv_G = (data - fit.A @ fit.mean) / SIGMA_V**2, G / SIGMA_V**2
     else:
         Sinv_r = fit.residual_covariance_solve(data)
-        Sinv_G = np.linalg.solve(fit.L.T, np.linalg.solve(fit.L, G))
-    f = G.T @ Sinv_r / np.einsum("ij,ij->j", G, Sinv_G)
-    snr = f * np.sqrt(np.einsum("ij,ij->j", G, Sinv_G))
+        Sinv_G = onp.linalg.solve(fit.L.T, onp.linalg.solve(fit.L, G))
+    f = G.T @ Sinv_r / onp.einsum("ij,ij->j", G, Sinv_G)
+    snr = f * onp.sqrt(onp.einsum("ij,ij->j", G, Sinv_G))
     peaks = []
-    for k in np.argsort(-snr):
-        if all(np.hypot(x[k] - a, y[k] - b) >= min_sep for a, b, _, _ in peaks):
+    for k in onp.argsort(-snr):
+        if all(onp.hypot(x[k] - a, y[k] - b) >= min_sep for a, b, _, _ in peaks):
             peaks.append((float(x[k]), float(y[k]), float(snr[k]), float(f[k])))
         if len(peaks) == n_peaks:
             break
@@ -197,44 +197,44 @@ def truth_ring(planet_sep, planet_pa=60.0, star=0.5, planet=0.03, r_in=1.5, inc=
     """Star + inclined ring (bright near side) + faint outer ring, gap
     between them, + a planet: the ``star_disk_planet`` phantom family."""
     x, y = grid(201, 0.05)
-    p = np.radians(pa)
-    along, across = x * np.sin(p) + y * np.cos(p), x * np.cos(p) - y * np.sin(p)
-    ci = np.cos(np.radians(inc))
-    r = np.hypot(along, across / ci)
-    az = np.arctan2(across / ci, along)
-    inner = np.exp(-0.5 * ((r - r_in) / (0.15 * r_in)) ** 2) * (1 + rim * np.sin(az))
-    ring_out = np.exp(-0.5 * ((r - 3 * r_in) / (0.2 * 3 * r_in)) ** 2)
+    p = onp.radians(pa)
+    along, across = x * onp.sin(p) + y * onp.cos(p), x * onp.cos(p) - y * onp.sin(p)
+    ci = onp.cos(onp.radians(inc))
+    r = onp.hypot(along, across / ci)
+    az = onp.arctan2(across / ci, along)
+    inner = onp.exp(-0.5 * ((r - r_in) / (0.15 * r_in)) ** 2) * (1 + rim * onp.sin(az))
+    ring_out = onp.exp(-0.5 * ((r - 3 * r_in) / (0.2 * 3 * r_in)) ** 2)
     disk = (1 - outer) * inner / inner.sum() + outer * ring_out / ring_out.sum()
     disk_flux = 1 - star - planet
-    q = np.radians(planet_pa)
-    px, py = planet_sep * np.sin(q), planet_sep * np.cos(q)
-    xs = np.concatenate([[0.0, px], x])
-    ys = np.concatenate([[0.0, py], y])
-    fl = np.concatenate([[star, planet], disk_flux * disk])
+    q = onp.radians(planet_pa)
+    px, py = planet_sep * onp.sin(q), planet_sep * onp.cos(q)
+    xs = onp.concatenate([[0.0, px], x])
+    ys = onp.concatenate([[0.0, py], y])
+    fl = onp.concatenate([[star, planet], disk_flux * disk])
     return xs, ys, fl, {"star": star, "planet": planet, "disk": disk_flux, "planet_xy": (px, py)}
 
 
 def truth_envelope(radius, core=0.4, halo=0.25, seed=3):
     """Unresolved core + broad Gaussian halo + clumps within ``radius``:
     the ``envelope`` phantom family."""
-    rng = np.random.default_rng(seed)
+    rng = onp.random.default_rng(seed)
     x, y = grid(241, 0.06)
-    g = lambda dx, dy, fwhm: np.exp(-0.5 * ((x - dx) ** 2 + (y - dy) ** 2) / (fwhm / 2.355) ** 2)  # noqa: E731
+    g = lambda dx, dy, fwhm: onp.exp(-0.5 * ((x - dx) ** 2 + (y - dy) ** 2) / (fwhm / 2.355) ** 2)  # noqa: E731
     h = g(0, 0, 2 * radius)
     clumps = sum(
-        rng.uniform(0.2, 1) * g(*(radius * np.sqrt(rng.random()) * np.array([np.sin(a), np.cos(a)])),
+        rng.uniform(0.2, 1) * g(*(radius * onp.sqrt(rng.random()) * onp.array([onp.sin(a), onp.cos(a)])),
                                  radius * rng.uniform(0.25, 0.75))
-        for a in rng.uniform(0, 2 * np.pi, 5)
+        for a in rng.uniform(0, 2 * onp.pi, 5)
     )
     rest = 1 - core - halo
     env = halo * h / h.sum() + rest * clumps / clumps.sum()
-    return (np.concatenate([[0.0], x]), np.concatenate([[0.0], y]), np.concatenate([[core], env]),
+    return (onp.concatenate([[0.0], x]), onp.concatenate([[0.0], y]), onp.concatenate([[core], env]),
             {"star": core, "env": 1 - core})
 
 
 def observe(uv, truth, seed=1):
     x, y, f, info = truth
-    rng = np.random.default_rng(seed)
+    rng = onp.random.default_rng(seed)
     v = design(uv, x, y) @ f
     return v + SIGMA_V * rng.standard_normal(v.size), info
 
@@ -302,12 +302,12 @@ def case_ring(uv, planet_sep, label):
             print(f"        stamp at ({cand[1][0]:.2f}, {cand[1][1]:.2f}): Δlog Z {cand[0].log_z - current.log_z:+.1f}")
             if best is None or cand[0].log_z > best[0].log_z:
                 best = cand
-        if best[0].log_z - current.log_z < np.log(100):
+        if best[0].log_z - current.log_z < onp.log(100):
             break
         ox, oy = best[1]
         stamps.append(image(f"stamp{k + 1}", 5, 0.1, 0.1, 0.01, dra=ox, ddec=oy, flux=0.0))
         current = best[0]
-        err = float(np.hypot(ox - tx, oy - ty))
+        err = float(onp.hypot(ox - tx, oy - ty))
         out.append(report(f"star + GP(hole) + {k + 1} stamp(s)", current, (l3, a3, round(float(ox), 2),
                                                                          round(float(oy), 2)), tf))
         out[-1]["offset_error"] = err
