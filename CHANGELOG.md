@@ -41,6 +41,15 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`PolarDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
+  `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
+  and `RadialSum`), inclined and rotated, with an optional Gaussian blur,
+  built on `polar_disk_cvis`, a Hankel transform by quadrature that each
+  profile owns the nodes of (Gauss-Legendre, or Gauss-Laguerre for an
+  exponential tail). It follows the ideas of frank (Jennings et al. 2020) and
+  vis-r (Kennedy 2025), which are credited in the docstrings and on the
+  contributors page; no code was copied. This first stage is the
+  azimuthally symmetric disk (degree 0).
 - **`fit_orbit_aliases` handles a resolved primary, contrast loss and a
   bright companion.** `primary_diam` gives the primary a uniform disk (fixed
   or `"fit"`, one shared log-uniform diameter); `vis_amp=(lo, hi)` gives every
