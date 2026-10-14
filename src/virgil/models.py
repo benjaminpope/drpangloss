@@ -5075,7 +5075,7 @@ class PolarDisk(Component):
             p0,
             cos,
             sin,
-            8.0 * float(np.finfo(np.asarray(uu).dtype).eps),
+            32.0 * float(np.finfo(np.asarray(uu).dtype).eps),
         )
         return eqx.tree_at(
             lambda d: d.frozen, self, cache, is_leaf=lambda x: x is None
