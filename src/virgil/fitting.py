@@ -33,7 +33,7 @@ from ._flat import _base, _flat_coordinate, _FlatBijection
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
 from .angles import is_angle_vector, vector_angle, vector_site
-from .fields import GaussianField
+from .fields import GaussianField, PolarField
 from .likelihood import (
     _check_positive_flux_prior,
     _whitened_and_errors,
@@ -129,8 +129,8 @@ def _traced(prior):
 def _warn_if_field_hyperparameter(model, path):
     """Warn when a GaussianField's sigma or length is fitted by MAP."""
     parent, _, name = path.rpartition(".")
-    if name in ("sigma", "length_mas") and parent:
-        if isinstance(model.get(parent), GaussianField):
+    if name in ("sigma", "length_mas", "length_r", "length_theta") and parent:
+        if isinstance(model.get(parent), (GaussianField, PolarField)):
             warnings.warn(
                 f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
                 "field are biased at the MAP (towards a flat field). Fix "

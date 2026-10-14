@@ -80,7 +80,7 @@ from . import (  # noqa: E402
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
-from .fields import GaussianField  # noqa: E402
+from .fields import GaussianField, PolarField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -200,6 +200,7 @@ __all__ = [
     "GaussianArc",
     "GaussianDisk",
     "GaussianField",
+    "PolarField",
     "GaussianRing",
     "GaussianLine",
     "GravityDarkenedStar",
