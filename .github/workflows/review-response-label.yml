@@ -3,8 +3,11 @@ name: review response label
 # Marks a pull request with a yellow "review-response" label while a Claude
 # review has inline comments that nobody has answered, so it is clear the
 # pull request is not ready to merge. A Claude comment thread counts as
-# answered when it is resolved or when someone other than Claude has replied
-# in it. The label is removed once every such thread is answered.
+# answered when it is resolved or when a human (not Claude, not another bot)
+# has replied in it. The label is removed once every such thread is answered.
+#
+# GitHub Actions cannot be triggered by resolving a thread, so resolving
+# alone does not clear the label until the next push, review or comment.
 
 on:
   pull_request:
@@ -13,8 +16,6 @@ on:
     types: [submitted, dismissed]
   pull_request_review_comment:
     types: [created, deleted]
-  pull_request_review_thread:
-    types: [resolved, unresolved]
 
 concurrency:
   group: review-response-${{ github.event.pull_request.number }}
@@ -22,6 +23,7 @@ concurrency:
 
 jobs:
   label:
+    # Fork PRs get a read-only token; skip them (as claude-review.yml does).
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -35,53 +37,60 @@ jobs:
             const LABEL = 'review-response';
             const isClaude = (login) => !!login && /^claude(\[bot\])?$/i.test(login);
             const { owner, repo } = context.repo;
-            const number = context.payload.pull_request.number;
 
-            // GraphQL: every review thread with its comments' authors.
-            let cursor = null;
-            let unanswered = 0;
-            for (;;) {
-              const res = await github.graphql(
-                `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
-                  repository(owner:$owner,name:$repo){
-                    pullRequest(number:$number){
-                      reviewThreads(first:50,after:$cursor){
-                        pageInfo{hasNextPage endCursor}
-                        nodes{
-                          isResolved
-                          comments(first:50){nodes{author{login}}}
+            const number = context.payload.pull_request.number;
+            {
+              // GraphQL: every review thread with its comments' authors.
+              let cursor = null;
+              let unanswered = 0;
+              for (;;) {
+                const res = await github.graphql(
+                  `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+                    repository(owner:$owner,name:$repo){
+                      pullRequest(number:$number){
+                        reviewThreads(first:50,after:$cursor){
+                          pageInfo{hasNextPage endCursor}
+                          nodes{
+                            isResolved
+                            comments(first:50){nodes{author{login __typename}}}
+                          }
                         }
                       }
                     }
-                  }
-                }`,
-                { owner, repo, number, cursor },
-              );
-              const page = res.repository.pullRequest.reviewThreads;
-              for (const t of page.nodes) {
-                const authors = t.comments.nodes.map((c) => c.author && c.author.login);
-                if (!isClaude(authors[0]) || t.isResolved) continue;
-                if (!authors.slice(1).some((a) => a && !isClaude(a))) unanswered += 1;
+                  }`,
+                  { owner, repo, number, cursor },
+                );
+                const page = res.repository.pullRequest.reviewThreads;
+                for (const t of page.nodes) {
+                  const authors = t.comments.nodes.map((c) => c.author);
+                  if (!authors[0] || !isClaude(authors[0].login) || t.isResolved) continue;
+                  // A human reply answers; replies from Claude or other bots do not.
+                  if (!authors.slice(1).some((a) => a && a.__typename !== 'Bot' && !isClaude(a.login))) unanswered += 1;
+                }
+                if (!page.pageInfo.hasNextPage) break;
+                cursor = page.pageInfo.endCursor;
               }
-              if (!page.pageInfo.hasNextPage) break;
-              cursor = page.pageInfo.endCursor;
-            }
 
-            core.info(`${unanswered} unanswered Claude thread(s)`);
-            const labels = await github.paginate(github.rest.issues.listLabelsOnIssue,
-              { owner, repo, issue_number: number });
-            const has = labels.some((l) => l.name === LABEL);
+              core.info(`#${number}: ${unanswered} unanswered Claude thread(s)`);
+              const labels = await github.paginate(github.rest.issues.listLabelsOnIssue,
+                { owner, repo, issue_number: number });
+              const has = labels.some((l) => l.name === LABEL);
 
-            if (unanswered > 0 && !has) {
-              try {
-                await github.rest.issues.createLabel({
-                  owner, repo, name: LABEL, color: 'FBCA04',
-                  description: 'Claude review points not yet answered; not ready to merge',
-                });
-              } catch (e) {
-                if (e.status !== 422) throw e;  // already exists
+              if (unanswered > 0 && !has) {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: LABEL, color: 'FBCA04',
+                    description: 'Claude review points not yet answered; not ready to merge',
+                  });
+                } catch (e) {
+                  if (e.status !== 422) throw e;  // already exists
+                }
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [LABEL] });
+              } else if (unanswered === 0 && has) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: LABEL });
+                } catch (e) {
+                  if (e.status !== 404) throw e;  // removed by hand meanwhile
+                }
               }
-              await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [LABEL] });
-            } else if (unanswered === 0 && has) {
-              await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: LABEL });
             }
