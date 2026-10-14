@@ -260,7 +260,22 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Whether the model changes with time (it contains an
         [`Attached`][virgil.models.Attached] component). Such a model is
         evaluated with [`at`][virgil.models.SourceModel.at], which
-        [`OIData.model`][virgil.oidata.OIData.model] does sample by sample."""
+        [`OIData.model`][virgil.oidata.OIData.model] does at each sample's
+        own time (all at once when ``broadcast_in_time`` is true)."""
+        return False
+
+    @property
+    def broadcast_in_time(self):
+        """Whether ``at`` accepts an array of times and returns a model
+        whose ``model`` evaluates all of them at once, one per sample
+        (which [`OIData.model`][virgil.oidata.OIData.model] then does
+        without a loop over samples). False by default, so a time-dependent
+        model whose ``at`` takes only a scalar time keeps the per-sample
+        loop; a model that sets it True must accept an array ``mjd`` and
+        return a snapshot whose positions are arrays of that shape. False
+        also for an [`Attached`][virgil.models.Attached] component with
+        bound angles, whose per-sample angles the components cannot
+        take."""
         return False
 
     def at(self, mjd, t_ref=0.0):
@@ -269,8 +284,9 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         The time is split so that it keeps its precision: ``t_ref`` is a
         float64 number and ``mjd`` may be small offsets from it, even in
         float32 (as [`OIData`][virgil.oidata.OIData] passes them). For a
-        single time, ``model.at(60500.3)`` is enough. A model that does not
-        change with time returns itself.
+        single time, ``model.at(60500.3)`` is enough. A model with
+        ``broadcast_in_time`` also takes an array of times, one per sample.
+        A model that does not change with time returns itself.
         """
         return self
 
@@ -491,6 +507,9 @@ class EllipticalGaussian(Component):
         return np.exp(-4.0 * np.log(2.0) * (xt**2 + yt**2) / fwhm**2)
 
 
+_ARC_MAX_DEGREE = 256  # beyond this GaussianArc integrates along the arc
+
+
 class GaussianArc(Component):
     r"""A ridge bent along a circular arc, e.g. a curved shock front.
 
@@ -521,11 +540,14 @@ class GaussianArc(Component):
     The visibility is exact up to the truncation of the von Mises
     harmonics at ``degree``, which is chosen when the arc is built, from its
     ``radius`` and ``length``, so that the neglected harmonics are below
-    $10^{-6}$ of the mean (at most 256, which covers arcs down to a FWHM of
-    about 3 degrees); pass ``degree`` to choose it, and note that fitting
-    ``length`` to much narrower arcs than the starting ones needs a larger
-    one. The rendered image samples the weight at ``nodes`` points along the
-    arc.
+    $10^{-6}$ of the mean. Arcs narrower than that allows (more than 256
+    harmonics, ``length / radius`` below about 0.05, a FWHM of about 3
+    degrees) are instead integrated along the arc with the von Mises
+    weight at ``nodes`` points, as the image is, at a cost independent of
+    the width; ``quadrature`` says which was chosen. Pass ``degree`` to
+    force the series. Fitting ``length`` to much narrower arcs than the
+    starting ones needs a larger ``degree``, and ``is_physical`` is false
+    once the series drops more than 1e-4 of its power.
 
     Parameters
     ----------
@@ -547,7 +569,8 @@ class GaussianArc(Component):
         the East and North. The arc itself lies ``radius`` away from it.
     nodes : int, optional
         Points along the arc at which the rendered image is sampled, at least
-        2 (default 128). It does not affect the visibilities.
+        2 (default 128). It affects the visibilities only on the quadrature
+        path (very narrow arcs).
     degree : int, optional
         Highest harmonic of the von Mises weight kept in the visibilities
         (static); by default chosen from the starting ``radius`` and
@@ -564,6 +587,7 @@ class GaussianArc(Component):
     pa: jax.Array
     nodes: int = eqx.field(static=True)
     degree: int = eqx.field(static=True)
+    quadrature: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -597,6 +621,7 @@ class GaussianArc(Component):
         if isinstance(nodes, bool) or int(nodes) != nodes or nodes < 2:
             raise ValueError(f"nodes must be an integer >= 2, got {nodes}.")
         self.nodes = int(nodes)
+        self.quadrature = False
         if degree is None:
             r, length = concrete(self.radius), concrete(self.length)
             if (
@@ -610,7 +635,12 @@ class GaussianArc(Component):
                 kappa = (FWHM_PER_SIGMA * onp.max(r / length)) ** 2
                 from .harmonics import auto_von_mises_degree
 
-                degree = auto_von_mises_degree(kappa)
+                degree = auto_von_mises_degree(kappa, cap=None)
+                if degree > _ARC_MAX_DEGREE:
+                    # Too narrow for a harmonic series: integrate along the
+                    # arc instead.
+                    self.quadrature = True
+                    degree = _ARC_MAX_DEGREE
         if isinstance(degree, bool) or int(degree) != degree or degree < 1:
             raise ValueError(f"degree must be a positive integer: {degree}.")
         self.degree = int(degree)
@@ -633,7 +663,16 @@ class GaussianArc(Component):
             & np.all(self.radius > 0.0)
             & np.all(self.width > 0.0)
             & np.all(self.length > 0.0)
+            & self._series_converged()
         )
+
+    def _series_converged(self):
+        """True unless the von Mises series, truncated at ``degree``, drops
+        more than 1e-4 of the power (e.g. ``length`` fitted far below its
+        starting value); always true on the quadrature path."""
+        if self.quadrature:
+            return np.asarray(True)
+        return np.all(self.harmonics().truncation_power() < 1e-4)
 
     def kappa(self):
         """The concentration of the von Mises weight along the arc."""
@@ -652,7 +691,11 @@ class GaussianArc(Component):
         which the weight is above ``exp(-21)`` of its peak (once round the
         circle for a wide arc, both ends at the antipode of ``pa``)."""
         kappa = self.kappa()
-        span = np.arccos(np.clip(1.0 - 21.0 / np.maximum(kappa, 1e-12), -1, 1))
+        # A safe argument where the span is the whole circle, so that the
+        # gradient of arccos stays finite.
+        cosine = 1.0 - 21.0 / np.maximum(kappa, 1e-12)
+        wide = cosine <= -1.0
+        span = np.where(wide, np.pi, np.arccos(np.where(wide, 0.0, cosine)))
         phi = np.linspace(-1.0, 1.0, self.nodes) * span
         angle = self.pa * dtor + phi
         # Trapezoidal rule: the end points carry half weight.
@@ -662,7 +705,21 @@ class GaussianArc(Component):
         y = self.radius * np.cos(angle)
         return x, y, weight / np.sum(weight)
 
+    def _quadrature_cvis(self, uu, vv):
+        x, y, weight = self.curve()
+        shape = np.shape(uu)
+        uu, vv = np.ravel(uu)[:, None], np.ravel(vv)[:, None]
+        curve = np.matmul(
+            offset_phase(uu, vv, x[None, :], y[None, :]),
+            weight,
+            precision=jax.lax.Precision.HIGHEST,
+        )
+        envelope = _cvis_gaussian_envelope(uu[:, 0], vv[:, 0], self.width)
+        return np.reshape(curve * envelope, shape)
+
     def _centred_cvis(self, uu, vv):
+        if self.quadrature:
+            return self._quadrature_cvis(uu, vv)
         # A thin ring with the von Mises weight and a Gaussian blur, on the
         # engine, face-on: its azimuth runs from North towards East.
         c, s = self.harmonics().coefficients(np.reshape(self.radius, (1,)))
@@ -2875,10 +2932,15 @@ class ExpTail(_RadialProfile):
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
     so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
     is an exponential disk. Gauss-Laguerre nodes cover the oscillating tail
-    less efficiently than Gauss-Legendre does a finite range: about
-    $16 \cdot 2\pi q L$ nodes give 1e-5 at the longest baseline $q$ (24
-    nodes at $2\pi q L = 1$, 100 at 5). For a tail that is resolved much
-    more finely, give a ``cutoff``: the tail is then cut at
+    less efficiently than Gauss-Legendre does a finite range, and the
+    accuracy depends on $2\pi q L$ at the longest baseline $q$: the rule of
+    thumb $16 \cdot 2\pi q L$ nodes (24 nodes at $2\pi q L = 1$, 100 at 5)
+    is optimistic when the tail is well resolved. In a benchmark of a widely
+    resolved tail the largest error in $V$ was about $2 \times 10^{-4}$ at
+    128 nodes and about $4 \times 10^{-5}$ at the 150-node cap, not
+    $10^{-5}$. For a tail that is resolved much more finely, prefer a
+    [`RadialPowerLaw`][virgil.models.RadialPowerLaw] with a soft edge, or
+    give a ``cutoff``: the tail is then cut at
     $r_0 + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
     integrated by a Gauss-Legendre rule, which needs about
     $\pi q\, \mathrm{cutoff}\, L + 12$ nodes (a cutoff of 5 drops 0.7 %
@@ -3547,10 +3609,13 @@ class PolarKernel(zdx.Base):
 
     $$
     \mathrm{Var}[c_m] = \sigma^2 \frac{S(m)}{S(1)}, \qquad
-    S(m) = \left[1 + \left(\frac{m\,\ell_\theta}{\bar r}\right)^2\right]^{-\nu_\theta - 1/2},
+    S(m) = \left[1 + \frac{1}{2\nu_\theta}
+    \left(\frac{m\,\ell_\theta}{\bar r}\right)^2\right]^{-\nu_\theta - 1/2},
     $$
 
-    with $\bar r$ the mean radius of the range. It is diagonal in $m$ (no
+    ($S(m) \propto e^{-(m\ell_\theta/\bar r)^2/2}$ for $\nu_\theta = \infty$), so
+    ``ell_theta`` is on the same scale as ``ell_r``, with $\bar r$ the mean
+    radius of the range. It is diagonal in $m$ (no
     extra cost), the prior mean is 0 (a uniform ring), and a long ``ell_theta``
     (an azimuthal correlation length, in mas on the ring of radius
     $\bar r$) favours smooth arcs and low orders without imposing them:
@@ -3677,8 +3742,11 @@ class PolarKernel(zdx.Base):
         )
         m = np.arange(1, int(degree) + 1)
         angle = self.ell_theta / r_ref
-        base = 1.0 + angle**2
-        return (base / (1.0 + (m * angle) ** 2)) ** (self.nu_theta + 0.5)
+        nu = self.nu_theta
+        if math.isinf(nu):
+            return np.exp(-0.5 * angle**2 * (m**2 - 1.0))
+        a2 = angle**2 / (2.0 * nu)
+        return ((1.0 + a2) / (1.0 + m**2 * a2)) ** (nu + 0.5)
 
     def values(self, z, r):
         """The coefficients at the radii ``r`` from the latents ``z`` of
@@ -3951,7 +4019,13 @@ class Harmonics(_Azimuthal):
         if w is not None:
             if re != () or im != ():
                 raise ValueError("give w or re and im, not both.")
-            w = onp.atleast_1d(onp.asarray(concrete(w), dtype=complex))
+            w_value = concrete(w)
+            if w_value is None:
+                raise TypeError(
+                    "Harmonics(w=...) takes constants; for traced latents "
+                    "pass re= and im= (real and imaginary parts) instead."
+                )
+            w = onp.atleast_1d(onp.asarray(w_value, dtype=complex))
             if w.ndim != 1:
                 raise ValueError(f"w must be 1-D, got shape {w.shape}.")
             re, im = (
@@ -4025,7 +4099,8 @@ class Harmonics(_Azimuthal):
     def _needs_radius(self):
         return self.prior is not None or any(
             isinstance(e, _RadialFunction)
-            for e in self.c + self.s + self.re + self.im
+            for group in (self.c, self.s, self.re, self.im)
+            for e in group
         )
 
     def _pair(self, r):
@@ -4042,7 +4117,9 @@ class Harmonics(_Azimuthal):
     @staticmethod
     def _at(entries, r):
         r = np.asarray(r)
-        if not entries:
+        # ``entries`` is a tuple, or an array when a path sets the whole
+        # field (``disk.set("harmonics.c", array)``): test its length.
+        if len(entries) == 0:
             return np.zeros((0,) + r.shape)
         return np.stack(
             [
@@ -4196,9 +4273,10 @@ class VonMises(_Azimuthal):
         from . import harmonics as _h
 
         r = np.asarray(r)
-        value = (
-            lambda v: v(r) if isinstance(v, _RadialFunction) else v + 0.0 * r
-        )  # noqa: E731
+
+        def value(v):
+            return v(r) if isinstance(v, _RadialFunction) else v + 0.0 * r
+
         return _h.von_mises_image_harmonics(
             value(self.kappa),
             value(self.theta0) * dtor,
@@ -4546,6 +4624,7 @@ class _FrozenGeometry(zdx.Base):
     p0: jax.Array
     cos: tuple
     sin: tuple
+    tol: float = eqx.field(static=True)
 
     def matches(self, uu, vv, r, inc, pa, height):
         """Whether the cache was built for these arguments (traced boolean)."""
@@ -4556,8 +4635,7 @@ class _FrozenGeometry(zdx.Base):
 
         def close(a, b):
             a = np.asarray(a, dtype=b.dtype)
-            tol = 8.0 * float(np.finfo(b.dtype).eps)
-            return np.all((a == b) | (np.abs(a - b) <= tol * np.abs(b)))
+            return np.all((a == b) | (np.abs(a - b) <= self.tol * np.abs(b)))
 
         ok = (
             close(uu, self.uu)
@@ -4956,7 +5034,8 @@ class PolarDisk(Component):
         ``pa`` or heights the disk silently falls back to the full
         computation (correct, not faster), so freezing is safe but changing a
         frozen quantity loses the speed-up. Build it in the precision you
-        evaluate in (inside ``jax.enable_x64(True)`` for a float64 fit). It
+        evaluate in (inside ``jax.enable_x64(True)`` for a float64 fit); a
+        float32 cache still matches a float64 fit, to float32 rounding. It
         holds ``(2M + 1)`` complex matrices of shape ``(n_samples, n_r)``
         (``M`` the harmonics' degree).
 
@@ -4982,7 +5061,17 @@ class PolarDisk(Component):
             uu, vv, r, self.inc, self.pa, n_orders, height
         )
         cache = _FrozenGeometry(
-            uu, vv, r, self.inc, self.pa, height, q2, p0, cos, sin
+            uu,
+            vv,
+            r,
+            self.inc,
+            self.pa,
+            height,
+            q2,
+            p0,
+            cos,
+            sin,
+            8.0 * float(np.finfo(np.asarray(uu).dtype).eps),
         )
         return eqx.tree_at(
             lambda d: d.frozen, self, cache, is_leaf=lambda x: x is None
@@ -5018,7 +5107,7 @@ class PolarDisk(Component):
 
         visit(self.profile, "profile")
         if self.harmonics is not None:
-            if self.harmonics.prior is not None:
+            if getattr(self.harmonics, "prior", None) is not None:
                 sites["harmonics"] = self.harmonics
             elif isinstance(self.harmonics, Harmonics):
                 for name in ("c", "s", "re", "im"):
@@ -5447,6 +5536,15 @@ class System(SourceModel):
     def time_dependent(self):
         return any(part.time_dependent for part in self.parts)
 
+    @property
+    def broadcast_in_time(self):
+        # Static parts do not veto it: ``at`` leaves them as they are.
+        return all(
+            part.broadcast_in_time
+            for part in self.parts
+            if part.time_dependent
+        )
+
     def at(self, mjd, t_ref=0.0):
         if not self.time_dependent:
             return self
@@ -5554,6 +5652,10 @@ class Rotated(SourceModel):
     @property
     def time_dependent(self):
         return self.source.time_dependent
+
+    @property
+    def broadcast_in_time(self):
+        return self.source.broadcast_in_time
 
     def at(self, mjd, t_ref=0.0):
         if not self.time_dependent:
@@ -5668,6 +5770,10 @@ class Attached(SourceModel):
     def time_dependent(self):
         return True
 
+    @property
+    def broadcast_in_time(self):
+        return not self.bind
+
     def at(self, mjd, t_ref=0.0):
         dt = _days_since(mjd, self.orbit.t_ref - t_ref)
         _warn_if_mjd_without_t_ref(self.orbit.t_ref, dt)
@@ -5761,6 +5867,10 @@ class OrbitalBinary(SourceModel):
 
     @property
     def time_dependent(self):
+        return True
+
+    @property
+    def broadcast_in_time(self):
         return True
 
     def at(self, mjd, t_ref=0.0):

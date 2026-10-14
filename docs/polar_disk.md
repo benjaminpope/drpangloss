@@ -225,11 +225,19 @@ evidence is over the latents, conditional on the hyperparameters.
 
 `Harmonics(degree=M, prior=PolarKernel(ell_r, ell_theta, sigma))` replaces the
 coefficients with a prior: each order $m$ is a `RadialGP` of length `ell_r`
-(across radius) with variance proportional to
-$(1 + (m \ell_\theta / \bar r)^2)^{-\nu - 1/2}$, independent between
-orders. The azimuthal length `ell_theta` sets how fast the structure falls
-off with $m$: large values suppress high orders. The latents are the field
-`harmonics.z` of shape `(2, M, n)`. The default form is positive.
+(across radius), independent between orders. The azimuthal length
+`ell_theta` (on the same scale as `ell_r`, in mas along the ring at
+$\bar r$) sets how fast the prior falls off with $m$: large values suppress
+high orders. The variance of the order-$m$ coefficients is proportional to
+$(1 + (m \ell_\theta / \bar r)^2 / 2\nu)^{-\nu - 1/2}$ (the Matérn
+spectral density; a squared exponential for $\nu = \infty$). This law is
+exact for the coefficients of the linear form (`form="linear"`). In the
+default positive form the latents drive the reflection-coefficient inputs
+rather than the brightness harmonics, so it holds only loosely there.
+$\bar r$ is `r_ref`, by default the middle of the profile's radial extent, so
+for a `GaussianRing` (whose range runs from 0 to a few widths beyond the ring)
+it is not the ring radius: pass `r_ref` to set it. The latents are the field
+`harmonics.z` of shape `(2, M, n)`.
 
 ## Spectral index
 
@@ -250,7 +258,10 @@ those baselines cached. With `inc`, `pa`, the height and the nodes held fixed,
 a refit of the profile, the harmonics or the index is then a matrix-vector
 product per order. It is never automatic. If a frozen quantity or the
 baselines change the model falls back to the full computation (same answer,
-no speed-up), checked at every call.
+no speed-up), checked at every call. Freeze after the data are in the
+precision you will fit in if you need full accuracy: a cache built in float32
+(virgil's default) is still recognized when `fit` or `log_evidence` evaluates
+in float64, but its matrices keep float32 accuracy (about $10^{-7}$).
 
 See [A planet in a gap between rings](polar_disk_rings.md) for a worked example with a
 parametric fit and a Gaussian-process disk of the same data.
@@ -266,8 +277,10 @@ parametric fit and a Gaussian-process disk of the same data.
 - **The blur** is a Gaussian envelope in the Fourier plane, applied in the
   plane of the disk: exact and free.
 - **Exponential tails** take more nodes than finite ranges when the tail is
-  well resolved (about $16 \cdot 2\pi q L$); for that, use a power law with a
-  large outer radius and a soft edge.
+  well resolved (the rule of thumb $16 \cdot 2\pi q L$ is optimistic: about
+  $2 \times 10^{-4}$ in $V$ at 128 nodes in a widely resolved benchmark, and
+  $4 \times 10^{-5}$ at the 150-node cap); for that, use a power law with a
+  large outer radius and a soft edge, or a `cutoff`.
 - **Precision.** A profile's reference nodes are built in the default
   precision when the disk is made, so to evaluate in float64 construct the
   disk inside `jax.enable_x64(True)`.
