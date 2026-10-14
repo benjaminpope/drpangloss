@@ -413,6 +413,17 @@ def test_render_follows_the_sky_orientation():
     row, col = onp.unravel_index(onp.argmax(image), image.shape)
     assert row < 40 and col < 40  # North-East is the upper left corner
 
+    # An oblique PA distinguishes pa from -pa: light along 30 deg east of
+    # north lies in the NE (upper-left) and SW (lower-right) quadrants.
+    image = onp.asarray(
+        PolarDisk(GaussianRing(15.0, 1.0), inc=70.0, pa=30.0).render(
+            npix=121, fov_mas=80.0
+        )
+    )
+    ne_sw = image[:60, :60].sum() + image[61:, 61:].sum()
+    nw_se = image[:60, 61:].sum() + image[61:, :60].sum()
+    assert ne_sw > 1.5 * nw_se
+
 
 # --- quadrature convergence and suggest_n_r ------------------------------------
 
@@ -509,3 +520,18 @@ def test_is_physical_flags_bad_parameters():
     assert not bool(good.set("blur_fwhm", -1.0).is_physical())
     gap = PolarDisk(Gap(GaussianRing(5.0, 1.0), 5.0, 0.5))
     assert not bool(gap.set("profile.depth", 1.5).is_physical())
+
+
+def test_suggest_n_r_is_buildable_for_a_long_exp_tail():
+    class _Data:
+        u = onp.array([57.0])
+        v = onp.array([0.0])
+        wavel = onp.array([2.2e-6])
+
+    for profile in (
+        ExpTail(0.0, 10.0),
+        RadialSum(a=ExpTail(0.0, 10.0), b=GaussianRing(5.0, 1.0)),
+    ):
+        n = PolarDisk(profile).suggest_n_r(_Data)
+        assert n <= 150
+        PolarDisk(profile, n_r=n)
