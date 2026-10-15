@@ -1,3 +1,5 @@
+import dataclasses
+
 import equinox as eqx
 import jax
 import numpy as onp
@@ -6,11 +8,17 @@ import pytest
 from virgil.coverage import ami_grid_record
 from virgil.ensemble import (
     Draw,
+    GPFit,
     EnsembleSpec,
     Group,
     combine,
+    _grow_grid,
+    _on_common_grid,
+    _oriented,
     draw_groups,
     ensemble,
+    evidence_grid,
+    gp_members,
     reference_starts,
     _mixture,
     run_group,
@@ -423,3 +431,150 @@ def test_ensemble_recovers_two_blobs():
     assert best.chi2_red[0] < 2.0
     scores = score(result.mean, truth.env)
     assert scores["ncc"] > 0.8
+
+
+# Gaussian-process members.
+
+GP_SPEC = EnsembleSpec(
+    families=("gp",),
+    starts=("moments",),
+    oversample=(2.0,),
+    field_factors=(1.0,),
+    gp_sigmas=(1.0, 2.0),
+    gp_lengths=(1.0,),
+    gp_growths=0,
+    gp_axis_ratio=None,
+)
+GP_OPTIONS = {"method": "lm", "max_steps": 30}
+
+
+def test_grid_grows_toward_an_optimum_off_the_edge_and_stops_at_limits():
+    def evidence(length, sigma):
+        return -(onp.log2(length / 4.0) ** 2) - onp.log2(sigma / 0.5) ** 2
+
+    ls, ss, values = _grow_grid(
+        evidence, [1.0, 2.0], [1.0, 2.0], (0.1, 100.0), (0.1, 100.0), 5
+    )
+    assert max(values, key=values.get) == (4.0, 0.5)
+    assert ls[0] < 4.0 < ls[-1] and ss[0] < 0.5 < ss[-1]
+    ls, ss, _ = _grow_grid(
+        evidence, [1.0, 2.0], [1.0, 2.0], (1.0, 2.0), (0.5, 2.0), 5
+    )
+    assert (ls, ss) == ([1.0, 2.0], [0.5, 1.0, 2.0])
+
+
+def test_oriented_template_renders_back_onto_the_sky_template():
+    # An asymmetric template (a blob to the North-East), so that the sign of
+    # the rotation matters.
+    n = 41
+    y, x = onp.mgrid[:n, :n] - n // 2
+    template = onp.exp(-((x - 6.0) ** 2 + (y + 8.0) ** 2) / 8.0) + 1e-6
+    rotated = _oriented(template, 30.0, 1.0)
+    sky = onp.asarray(
+        Image.from_brightness(rotated, 1.0, rotation_deg=30.0).render(n, n)
+    )
+    assert onp.unravel_index(sky.argmax(), sky.shape) == (
+        onp.unravel_index(template.argmax(), template.shape)
+    )
+    wrong = _oriented(template, -30.0, 1.0)
+    sky_wrong = onp.asarray(
+        Image.from_brightness(wrong, 1.0, rotation_deg=30.0).render(n, n)
+    )
+    assert onp.unravel_index(sky_wrong.argmax(), sky.shape) != (
+        onp.unravel_index(template.argmax(), template.shape)
+    )
+
+
+def test_rotated_member_is_rendered_onto_the_common_grid_without_cropping():
+    n = 16
+    blob = gaussian_blob(n, 1.0, 2.0, dra=5.0, ddec=5.0)
+    image = Image.from_brightness(blob, 1.0, rotation_deg=45.0)
+    pixels = _on_common_grid(image, n, 1.0)
+    sky = onp.asarray(image.render(n, float(n)))
+    # The member keeps its unit flux, and is the rendering up to that.
+    assert abs(pixels.sum() - 1.0) < 1e-9
+    onp.testing.assert_allclose(pixels / pixels.sum(), sky / sky.sum())
+
+
+def test_evidence_grid_and_gp_members():
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
+    assert draw.family == "gp" and draw.weights == ()
+    group = gp_members(data, draw, spec=GP_SPEC, **GP_OPTIONS)
+    grid = group.grid
+    assert group.curve is None and group.gp
+    assert grid.log_evidence["iso"].shape == (1, 2)
+    assert onp.all(onp.isfinite(grid.log_evidence["iso"]))
+    assert grid.best.log_evidence == onp.max(grid.log_evidence["iso"])
+    assert group.gp[0] is grid.best or group.gp[0].log_evidence == (
+        grid.best.log_evidence
+    )
+    top = grid.best.log_evidence
+    assert all(
+        isinstance(f, GPFit) and f.log_evidence >= top - GP_SPEC.gp_window_nats
+        for f in group.gp
+    )
+    # A zero window keeps the best alone.
+    tight = dataclasses.replace(GP_SPEC, gp_window_nats=0.0)
+    assert len(gp_members(data, draw, spec=tight, **GP_OPTIONS).gp) == 1
+
+
+def test_gp_group_without_a_star():
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
+    group = gp_members(data, draw, star=False, spec=GP_SPEC, **GP_OPTIONS)
+    assert group.gp
+    assert onp.all(onp.isfinite(group.grid.log_evidence["iso"]))
+
+
+def test_evidence_grid_adds_an_anisotropic_variant_for_elongated_data():
+    elongated = dataclasses.replace(GP_SPEC, gp_axis_ratio=1.01)
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), elongated)[0]
+    grid = evidence_grid(data, draw, spec=elongated, **GP_OPTIONS)
+    assert set(grid.log_evidence) == {"iso", "aniso"}
+    assert grid.axis_ratio is not None and 0.0 < grid.axis_ratio <= 1.0
+    assert onp.all(onp.isfinite(grid.log_evidence["aniso"]))
+
+
+def test_combine_handles_gp_and_regulariser_members_together():
+    data = DATASETS[0]
+    spec = dataclasses.replace(
+        SMALL,
+        families=("tsv", "gp"),
+        gp_sigmas=(1.0,),
+        gp_lengths=(1.0,),
+        gp_growths=0,
+        gp_axis_ratio=None,
+        chi2_ratio=1e6,
+        mad_cut=1e6,
+    )
+    draws = draw_groups(data, 6, jax.random.PRNGKey(3), spec)
+    families = {d.family for d in draws}
+    assert families == {"tsv", "gp"}
+    starts = reference_starts(data, True, sorted({d.start for d in draws}))
+    draws = [
+        next(d for d in draws if d.family == "tsv"),
+        next(d for d in draws if d.family == "gp"),
+    ]
+    groups = [
+        run_group(data, d, starts=starts, spec=spec, **GP_OPTIONS)
+        for d in draws
+    ]
+    result = combine(data, groups, spec=spec)
+    gp = [m for m in result.members if m.gp is not None]
+    assert gp and all(onp.isnan(m.weight) for m in gp)
+    assert all(m.reason != "window" for m in gp)
+    assert any(m.draw.family == "tsv" for m in result.members)
+    assert result.kept
+    assert onp.all(onp.isfinite(onp.asarray(result.mean.brightness)))
+    assert "gp" in result.summary()
+
+
+def test_gp_only_combine_has_no_window():
+    data = DATASETS[0]
+    result = ensemble(
+        data, 1, jax.random.PRNGKey(0), spec=GP_SPEC, **GP_OPTIONS
+    )
+    assert all(m.reason != "window" for m in result.members)
+    assert result.groups[0].curve is None
