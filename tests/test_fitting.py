@@ -887,6 +887,7 @@ def test_the_scale_block_is_the_fisher_information_and_decoupled():
 
 
 @pytest.mark.parametrize("flat", [False, True])
+@pytest.mark.slow
 def test_the_v19_matrix_whitens_the_posterior(flat):
     values = _v19_fixture()
     sites, eigenvalues, mass = _hessian_check(
@@ -914,6 +915,7 @@ def _gains_data():
     return gains.with_model(TRUTH, key=jax.random.PRNGKey(5))
 
 
+@pytest.mark.slow
 def test_gain_data_give_a_positive_definite_matrix_close_to_the_hessian():
     data = _gains_data()
     values = fit(START, PRIORS, data).values
@@ -922,6 +924,7 @@ def test_gain_data_give_a_positive_definite_matrix_close_to_the_hessian():
     assert eigenvalues.min() > 0.5 and eigenvalues.max() < 2.0, eigenvalues
 
 
+@pytest.mark.slow
 def test_fitted_gain_widths_and_scales_stay_positive_definite():
     # The gain width's curvature is a heuristic (a PSD one) rather than the
     # Fisher information: the matrix is a valid preconditioner but looser.
@@ -945,6 +948,7 @@ def test_fitted_gain_widths_and_scales_stay_positive_definite():
 GAIN_WIDTH_BOUNDS = (0.003, 3.0)
 
 
+@pytest.mark.slow
 def test_added_errors_couple_to_the_parameters():
     noise = {"vis_error_rel": dist.LogUniform(1e-4, 0.3)}
     values = fit(START, PRIORS, NOISY, noise=noise).values
