@@ -78,6 +78,12 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Opt-in bandwidth smearing.** `OIData(path, bandwidth=True)` (or `read_oifits(..., bandwidth=True)`) keeps `EFF_BAND`
+  as `OIData.bandwidth` (`with_bandwidth(dlambda)` sets it for simulated data);
+  models are then smeared over boxcar channels by a `sinc` envelope on each
+  component offset (`models.smeared_model`). Off by default: results are
+  unchanged.
+
 - **Tutorial: a planet in a gap between inclined rings (stage P5).**
   `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
   simulates chromatic VLTI-like V² and closure phases of a star, three

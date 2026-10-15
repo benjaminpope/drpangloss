@@ -243,9 +243,20 @@ fit, since it does not average down. For low-S/N data, either fit V² (which is 
 subtracted the noise power), or debias the amplitudes before reading, as
 eht-imaging's `debias` does: |V| → √max(|V|² − σ², 0).
 
+## Bandwidth smearing
+
+`OIData(path, bandwidth=True)` keeps the channel widths
+(`OI_WAVELENGTH.EFF_BAND`) as `OIData.bandwidth`, and
+`data.with_bandwidth(dlambda)` sets them for simulated data. They are ignored
+by default. Models are then evaluated with each component's offset phasor multiplied
+by the boxcar-channel envelope `sinc(π Δλ (u dra + v ddec) / λ²)`, applied to
+the components of a `System` before they are weighted and summed. An extended
+component is smeared as if it sat at its centre offset. Without a bandwidth
+(the default) nothing changes. See `virgil.models.smeared_model`.
+
 ## Not yet
 
-virgil does not model the following yet: bandwidth smearing, the
+virgil does not model the following yet: the
 spectral-resolution kernel, the primary beam (fibre coupling), differential
 visibility amplitudes (`AMPTYP='differential'`), and fitted `noise=` terms
 for the extra observables. The wavelength scale (`wavel_scale`, from
