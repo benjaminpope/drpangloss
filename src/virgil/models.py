@@ -3403,13 +3403,15 @@ class RadialGP(_RadialProfile, _RadialFunction):
 
     **What ``ell`` means.** The Matérn length is a correlation length of
     $g$ in milliarcseconds, not the width of a feature. A squared-exponential
-    bump with the same curvature as the default Matérn-3/2 kernel has width
-    $\ell/\sqrt3$ (so $\ell = 1.5$ mas is a Gaussian $\sigma$ of about
-    0.9 mas), and the prior's rms slope of $g$ is $\sqrt3\,\sigma/\ell$ per
-    milliarcsecond, so a large ``sigma`` with a short ``ell`` is a very rough
-    prior (a short ``ell`` also gives many maxima, which ``sigma`` does not
-    change). Visibilities cannot constrain structure finer than the
-    half-fringe $\lambda/2B$ of the longest baseline, so below that scale,
+    bump with the same curvature at the peak as the Matérn-$\nu$ kernel has
+    width $\ell\sqrt{(\nu - 1)/\nu}$, and the prior's rms slope of $g$ is
+    $\sigma\sqrt{\nu/(\nu - 1)}/\ell$ per milliarcsecond. For the default
+    $\nu = 3/2$ these are $\ell/\sqrt3$ (so $\ell = 1.5$ mas is a Gaussian
+    $\sigma$ of about 0.9 mas) and $\sqrt3\,\sigma/\ell$; for $\nu = 1/2$
+    $g$ is not differentiable and there is no finite slope. A large ``sigma``
+    with a short ``ell`` is a very rough prior (a short ``ell`` also gives
+    many maxima, which ``sigma`` does not change). Visibilities cannot
+    constrain structure finer than the half-fringe $\lambda/2B$ of the longest baseline, so below that scale,
     and where the data have no leverage (the inner edge, the outer tail), the
     posterior is the prior. A modest evidence difference between two ``ell``
     values means that the data do not choose between them: report ``ell`` as
