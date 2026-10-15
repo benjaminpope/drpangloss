@@ -1,9 +1,20 @@
 import jax
 import jax.numpy as np
+import numpy as onp
+import pytest
 
-from virgil.coverage import ami_grid_record
-from virgil.imaging import Centroid, Diagnosis, diagnose
-from virgil.models import Image, PointSource, System
+from virgil.coverage import ami_grid_record, vlti_oidata
+from virgil.fields import GaussianField
+from virgil.imaging import (
+    Centroid,
+    Diagnosis,
+    chi2_by_observable,
+    diagnose,
+    residual_image,
+    short_baseline_residual,
+)
+from virgil.likelihood import whitened_residuals
+from virgil.models import GaussianDisk, Image, PointSource, System
 from virgil.oidata import OIData
 from virgil.scenes import gaussian_blob
 
@@ -128,3 +139,94 @@ def test_diagnose_accepts_the_old_regularisers_keyword():
     with pytest.warns(FutureWarning, match="regularisers="):
         old = diagnose(TRUTH, DATA, regularisers=[Centroid(10.0)])
     assert old.warnings == new.warnings
+
+
+VLTI = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
+
+
+def _disk(flux=0.4):
+    return System(star=PointSource(), env=GaussianDisk(4.0, flux=flux))
+
+
+VTRUTH = _disk()
+VDATA = VLTI.with_model(VTRUTH, key=jax.random.PRNGKey(1))
+
+
+def test_chi2_by_observable_splits_the_total_and_counts_the_data():
+    out = chi2_by_observable(VTRUTH, VDATA)
+    assert set(out) == {"chi2", "n", "chi2_red"}
+    assert out["n"]["total"] == VDATA.n_independent
+    assert out["n"]["vis"] + out["n"]["phi"] == out["n"]["total"]
+    parts = out["chi2"]["vis"] + out["chi2"]["phi"]
+    assert parts == pytest.approx(out["chi2"]["total"])
+    for kind in ("vis", "phi"):  # the truth fits each kind to its noise
+        assert 0.3 < out["chi2_red"][kind] < 3.0
+    assert "n_gamma" not in out
+
+
+def test_chi2_by_observable_sees_which_observable_is_wrong():
+    right = chi2_by_observable(VTRUTH, VDATA)["chi2_red"]
+    wrong = chi2_by_observable(_disk(flux=0.9), VDATA)["chi2_red"]
+    assert wrong["vis"] > 3 * right["vis"]
+
+
+def test_n_gamma_counts_the_constrained_latents():
+    n = 12
+    data = VLTI
+    template = onp.asarray(GaussianDisk(3.0).render(n, float(n)))
+
+    def scene(sigma):
+        field = GaussianField(onp.zeros((n, n)), sigma, 2.0, mean=template)
+        return System(star=PointSource(), env=Image(field, 1.0, flux=0.4))
+
+    ngamma = {
+        s: chi2_by_observable(scene(s), data, path="env")["n_gamma"]
+        for s in (0.01, 1.0)
+    }
+    assert 0.0 <= ngamma[0.01] < ngamma[1.0] <= n * n
+
+
+def test_short_baseline_residual_is_unbiased_for_the_truth_and_sees_missing_flux():
+    mean, error = short_baseline_residual(VTRUTH, VDATA)
+    n = round(0.2 * VDATA.vis.size)
+    assert error == pytest.approx(1 / onp.sqrt(n))
+    assert abs(mean) < 4 * error
+    biased, _ = short_baseline_residual(_disk(flux=0.9), VDATA)
+    assert abs(biased) > 10 * error
+    assert diagnose(VTRUTH, VDATA).checks[
+        "short_baseline_mean"
+    ] == pytest.approx(mean)
+
+
+def test_short_baseline_residual_with_every_baseline_is_the_mean_residual():
+    mean_all, _ = short_baseline_residual(VTRUTH, VDATA, quantile=1.0)
+    r = onp.asarray(whitened_residuals(VTRUTH, VDATA))[: VDATA.vis.size]
+    assert mean_all == pytest.approx(float(r.mean()), abs=1e-4)
+    with pytest.raises(ValueError, match="quantile"):
+        short_baseline_residual(VTRUTH, VDATA, quantile=0.0)
+
+
+def test_diagnose_adds_the_observable_keys_without_changing_the_old_ones():
+    checks = diagnose(VTRUTH, VDATA).checks
+    assert set(checks["chi2_red_by_observable"][0]) == {"vis", "phi"}
+    assert "chi2_red" in checks and "anchored" in checks
+
+
+def test_the_residual_image_points_at_the_missing_flux():
+    star_only = System(star=PointSource())
+    star_only = System(
+        star=PointSource(),
+        env=Image.from_brightness(
+            gaussian_blob(NPIX, SCALE, 300.0, 0.0, 0.0), SCALE, flux=1e-6
+        ),
+    )
+    # Truth has a blob at (150, -100) mas that the model lacks.
+    residual = residual_image(star_only, DATA, NPIX, SCALE)
+    assert residual.shape == (NPIX, NPIX)
+    blob = onp.asarray(gaussian_blob(NPIX, SCALE, 100.0, *(150.0, -100.0)))
+    inside = blob > 0.5 * blob.max()
+    assert residual[inside].mean() > 0.0
+    assert residual[inside].mean() > 5 * abs(residual[~inside].mean())
+    # The truth leaves a far smaller residual map than the star alone.
+    fitted = residual_image(TRUTH, DATA, NPIX, SCALE)
+    assert onp.abs(fitted).max() < 0.5 * residual.max()

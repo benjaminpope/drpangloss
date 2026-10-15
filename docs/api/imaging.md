@@ -34,6 +34,9 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - log_evidence
         - laplace_samples
         - error_scale
+        - chi2_by_observable
+        - short_baseline_residual
+        - residual_image
         - diagnose
         - Diagnosis
 
