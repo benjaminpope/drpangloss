@@ -16,7 +16,7 @@ def _load_sync_module(repo_root: Path):
 
 
 def test_tutorial_markdown_is_synced_with_notebooks():
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     module = _load_sync_module(repo_root)
 
     for nb_rel, doc_rel in module.MAPPINGS.items():
@@ -33,7 +33,7 @@ def test_tutorial_markdown_is_synced_with_notebooks():
 
 
 def test_tutorial_markdown_header_uses_repo_relative_notebook_path():
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     module = _load_sync_module(repo_root)
 
     nb_rel = "notebooks/binary_search.ipynb"
@@ -45,7 +45,7 @@ def test_tutorial_markdown_header_uses_repo_relative_notebook_path():
 
 
 def test_warning_locations_are_removed_from_published_output():
-    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    module = _load_sync_module(Path(__file__).resolve().parents[2])
     raw = (
         "/var/folders/ab/T/ipykernel_86886/1114166516.py:8: RuntimeWarning: "
         "optimizer did not converge\n"
@@ -58,7 +58,7 @@ def test_warning_locations_are_removed_from_published_output():
 
 
 def test_landing_page_is_generated_from_the_readme():
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     module = _load_sync_module(repo_root)
     readme, index = (repo_root / path for path in module.LANDING_PAGE)
     assert index.read_text(encoding="utf-8") == module.render_landing_page(
@@ -69,7 +69,7 @@ def test_landing_page_is_generated_from_the_readme():
 
 
 def test_landing_page_links_stay_inside_the_docs():
-    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    module = _load_sync_module(Path(__file__).resolve().parents[2])
     url = module.DOCS_URL
     page = module.render_landing_page(
         f"[a]({url}data_io/) [b]({url}api/) [c]({url}) [d](CONTRIBUTING.md)"
@@ -81,7 +81,7 @@ def test_landing_page_links_stay_inside_the_docs():
 
 
 def test_sanitize_text_strips_machine_paths():
-    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    module = _load_sync_module(Path(__file__).resolve().parents[2])
     for prefix in ("/Users/ben/code/virgil", "/fred/oz1/x/virgil", "/a/b"):
         text = f"{prefix}/src/virgil/fitting.py:12: UserWarning: no\n"
         assert module._sanitize_text(text) == (
@@ -95,7 +95,7 @@ def test_sanitize_text_strips_machine_paths():
 def test_remove_cell_tag_hides_cell_from_docs(tmp_path):
     import json
 
-    module = _load_sync_module(Path(__file__).resolve().parents[1])
+    module = _load_sync_module(Path(__file__).resolve().parents[2])
     (tmp_path / "notebooks").mkdir()
     nb_path = tmp_path / "notebooks" / "toy.ipynb"
     cells = [
