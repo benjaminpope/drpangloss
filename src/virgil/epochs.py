@@ -1503,8 +1503,13 @@ def _flag_one_night(
             NightFlag(
                 "alias-peaks",
                 f"{close} other peak(s) within {alias_nats:g} nats of the "
-                f"best (marginal gap {gap_marginal:.1f}, so also low-gap): a "
-                "single-night alias, the true position may be a rival",
+                f"best (marginal gap {gap_marginal:.1f}"
+                + (
+                    ", so also below the low-gap limit"
+                    if min_gap is not None and gap_marginal < min_gap
+                    else ""
+                )
+                + "): a single-night alias, the true position may be a rival",
             )
         )
     elif min_gap is not None and gap_marginal < min_gap:
@@ -2193,9 +2198,10 @@ def start_from_positions(
     if ambiguous and seeded:
         warnings.warn(
             f"The positions of {', '.join(ambiguous)} are ambiguous (a "
-            f"marginal gap of at most min_gap={min_gap}) and do not seed "
-            "the orbits; their visibilities still enter the ranking and "
-            "the fits. See OrbitStart.ambiguous and positions.peaks.",
+            f"marginal gap of at most min_gap={min_gap}) or flagged "
+            f"({positions.flag_codes()}) and do not seed the orbits; their "
+            "visibilities still enter the ranking and the fits. See "
+            "OrbitStart.ambiguous and positions.peaks.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
@@ -2205,10 +2211,11 @@ def start_from_positions(
         )
     if len(seeds.dt) < 2:
         raise ValueError(
-            "At least two decisive datasets are needed to seed orbits; "
-            f"the marginal gaps are {positions.gap_marginal.round(1)}. Lower "
-            "min_gap or "
-            "refine the grid."
+            "At least two decisive, unflagged datasets are needed to seed "
+            f"orbits; the marginal gaps are {positions.gap_marginal.round(1)} "
+            f"and the flagged datasets are {positions.flag_codes()}. Lower "
+            "min_gap, refine the grid, or (if flags are the cause) pass "
+            "skip_flagged=False or loosen flag_options."
         )
     _warn_if_coarse(periods, seeds.dt)
     with run_in("float64"):

@@ -1547,6 +1547,11 @@ def test_epoch_positions_must_match_the_data_and_the_primary():
         warnings.simplefilter("error")
         aliases._check_seed_diameter(ud, 1.05)
         aliases._check_seed_diameter(found, None)
+        # A fitted diameter is seeded by any UD estimate ...
+        aliases._check_seed_diameter(ud, "fit")
+    # ... and only point seeds warn, with advice that can be followed.
+    with pytest.warns(UserWarning, match="Pass an estimated primary_diam"):
+        aliases._check_seed_diameter(found, "fit")
 
 
 def test_a_fitted_primary_diameter_works_end_to_end(tmp_path):
