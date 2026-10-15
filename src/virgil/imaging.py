@@ -57,7 +57,7 @@ import numpy as onp
 from jax.scipy.signal import fftconvolve
 from jax.scipy.special import xlogy
 
-from ._geometry import fringe_scales, pixel_offsets, rotate
+from ._geometry import fringe_scales, pixel_offsets, rotate, smearing_scale
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
 from ._deprecate import renamed
 from ._precision import cast_tree, run_in
@@ -87,6 +87,7 @@ class _ImageRegulariser(eqx.Module):
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
+        model = model.resolved()
         image = model if self.path is None else model.get(self.path)
         if not isinstance(image, Image):
             raise TypeError(
@@ -505,24 +506,203 @@ def nyquist_pixel_scale(data):
     """The largest pixel scale (mas) that samples the data's finest fringes.
 
     That is λ / (2 B) for the longest baseline B in units of wavelength,
-    over all samples of ``data`` (an OIData or a sequence of them).
+    over the unflagged samples of ``data`` (an OIData or a sequence of
+    them; see [`OIData.unflagged`][virgil.oidata.OIData.unflagged]). A
+    flagged sample carries no signal, so its baseline does not count.
     Reconstructions normally use pixels 2–4 times smaller.
     """
     return 0.5 * fringe_scales(data)[0]
 
 
-def field_of_view(data, largest_mas=500.0):
-    """The default field of view for an image of ``data``, in mas.
+def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
+    """The largest field of view (mas) that the data measure.
 
-    The smaller of ``largest_mas`` (500 by default) and the interferometric
-    field of view, the largest λ / B over all samples with a non-zero
-    baseline B (the shortest baseline at the longest wavelength, where they
-    are observed together): structure larger than that is not measured,
-    and on a uv lattice a larger field would alias. Use it with
+    The smallest of these, as the width of a field:
+
+    * ``largest_mas`` (500 by default), a cap you choose;
+    * the interferometric field of view, the largest λ / B over the
+      unflagged samples with a non-zero baseline B (the shortest baseline
+      at the longest wavelength, where they are observed together):
+      structure larger than that is not measured, and on a uv lattice a
+      larger field would alias;
+    * the bandwidth-smearing field R λ / B_max, when the data carry
+      channel widths (``bandwidth``, from ``EFF_BAND`` or
+      [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]): beyond it
+      a source is washed out on the long baselines of a channel of
+      resolving power R (see
+      [`smeared_model`][virgil.models.smeared_model]);
+    * ``aperture_mas``, if given: the field of a single telescope, about
+      λ / D, which is all that the telescopes see of the sky.
+
+    Samples that are flagged are left out (see
+    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]). This is a
+    ceiling, not a recommended size: [`image_field`][virgil.imaging.image_field]
+    sizes an image from the data and uses it as the limit. Use it with
     [`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale] to
     choose the image's size and pixels.
     """
-    return min(float(largest_mas), fringe_scales(data)[1])
+    ceiling = min(float(largest_mas), fringe_scales(data)[1])
+    ceiling = min(ceiling, smearing_scale(data))
+    if aperture_mas is not None:
+        ceiling = min(ceiling, float(aperture_mas))
+    return ceiling
+
+
+def _squared_visibilities(d):
+    """Spatial frequency (cycles per radian), V² and its error, of the
+    unflagged visibility samples of a dataset, as three flat arrays.
+
+    Empty for data without visibility amplitudes of their own: projected
+    (kernel, DISCO) observables, and data with only phases.
+    """
+    empty = onp.zeros(0)
+    if (
+        d.observable_kind != "split"
+        or d.vis_mat is not None
+        or d.uv_grid is not None
+        or onp.size(d.vis) == 0
+    ):
+        return empty, empty, empty
+    amplitude = onp.asarray(d.vis, float)
+    error = onp.asarray(d.d_vis, float)
+    if d.vis_mode == "v2":
+        v2, sigma = amplitude, error
+    elif d.vis_mode == "logamp":
+        v2 = onp.exp(2.0 * amplitude)
+        sigma = 2.0 * v2 * error
+    else:
+        v2, sigma = amplitude**2, 2.0 * onp.abs(amplitude) * error
+    u = onp.ravel(onp.asarray(d.u, float))
+    v = onp.ravel(onp.asarray(d.v, float))
+    wavel = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), u.shape)
+    rho = onp.hypot(u, v) / wavel
+    if d.vis_index is not None:
+        rho = rho[onp.asarray(d.vis_index)]
+    return rho, v2, sigma
+
+
+def second_moment_fwhm(data, v2_min=0.3):
+    """The FWHM (mas) of the Gaussian that the short baselines see.
+
+    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)``,
+    with ρ = B / λ in cycles per radian, and any normalized source has
+    the same form to second order in ρ (a second moment of its brightness,
+    ``-ln V² ≈ 4 π² σ² ρ²`` for a circularly symmetric source of rms
+    radius σ per axis). This is a straight line through the origin, fitted
+    by least squares to ``-ln V²`` against ρ² (weighted by the errors) on
+    the unflagged samples whose squared visibility is at least ``v2_min``:
+    the short baselines, where the source is resolved only a little and the
+    approximation holds. It needs no image and no fit. It is the rms width
+    of the whole source, a star included, so a faint extended envelope
+    around a bright star gives a smaller value than its own FWHM. When a
+    bright unresolved component (a star with flux fraction above about
+    0.55) keeps V² above ``v2_min`` on every baseline, the fit is set by
+    the long baselines' constant offset, not by a curvature, and the
+    value is meaningless (an order of magnitude too small, unrelated to
+    the envelope); use
+    [`envelope_fwhm`][virgil.imaging.envelope_fwhm] there.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        Data with visibility amplitudes (V², |V| or log |V|); projected
+        (kernel, DISCO) observables and phase-only data have none.
+    v2_min : float, optional
+        The smallest V² to use, 0.3 by default.
+
+    Returns
+    -------
+    float or None
+        The FWHM in mas: zero if V² does not fall with ρ (an unresolved
+        source), and ``None`` if fewer than two unflagged samples have a
+        V² of at least ``v2_min`` (no visibilities, or a source resolved on
+        every baseline).
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    parts = [_squared_visibilities(d) for d in observations]
+    rho, v2, sigma = (onp.concatenate(x) for x in zip(*parts))
+    use = onp.isfinite(v2) & onp.isfinite(sigma) & (v2 >= v2_min) & (rho > 0)
+    if use.sum() < 2:
+        return None
+    rho, v2, sigma = rho[use], v2[use], sigma[use]
+    y = -onp.log(v2)
+    weight = (v2 / onp.maximum(sigma, 1e-12)) ** 2
+    slope = onp.sum(weight * rho**2 * y) / onp.sum(weight * rho**4)
+    if not slope > 0:
+        return 0.0
+    theta = onp.sqrt(2.0 * onp.log(2.0) * slope) / onp.pi
+    return float(theta / mas2rad)
+
+
+def image_field(
+    data,
+    fwhm_mas=None,
+    *,
+    field_fwhms=6.0,
+    inner_elements=4.0,
+    aperture_mas=None,
+    largest_mas=500.0,
+):
+    """The width (mas) of an image field that the data size.
+
+    The field is ``field_fwhms`` times the source's FWHM, kept between a
+    floor and a ceiling that come from the data:
+
+    * **Moments of the visibilities.** The wanted field is
+      ``field_fwhms × fwhm_mas``. Without ``fwhm_mas`` it is the FWHM that
+      the short baselines see
+      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]);
+      [`starting_image`][virgil.imaging.starting_image] passes the FWHM of
+      its envelope fit. With no visibility amplitudes to measure it, the
+      wanted field is the ceiling.
+    * **Inner working angle (the floor).** The field is at least
+      ``inner_elements × λ / (2 B_max)``, that many resolution elements
+      across, so an unresolved source still gets a field with room around
+      it.
+    * **Interferometric field of view (the ceiling).** It is at most
+      [`field_of_view`][virgil.imaging.field_of_view] (with ``largest_mas``
+      and ``aperture_mas``): λ / B_min, the bandwidth-smearing field
+      R λ / B_max if the data carry channel widths, and the single-aperture
+      field. The ceiling wins over the floor if they cross.
+
+    The baselines are the unflagged ones throughout (see
+    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]), so a long
+    baseline that the provider flagged moves neither the floor nor the
+    ceiling. There is no fixed size: a source of 3 mas gets a field of
+    about 18 mas, where earlier versions of ``starting_image`` took at
+    least 500 mas, which in practice meant the interferometric field.
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+    fwhm_mas : float, optional
+        The FWHM of the source in mas, to override the one from the
+        visibilities.
+    field_fwhms : float, optional
+        The field in FWHMs of the source (6 by default; 3 to 8 are
+        reasonable). A larger field spends pixels on empty sky, where an
+        image that is free to place flux can scatter it in islands.
+    inner_elements : float, optional
+        The floor, in resolution elements λ / (2 B_max) (4 by default).
+    aperture_mas : float, optional
+        A telescope's field of view, as a further ceiling.
+    largest_mas : float, optional
+        A cap on the ceiling (500 by default, as for ``field_of_view``).
+
+    Returns
+    -------
+    float
+        The field in mas.
+    """
+    ceiling = field_of_view(
+        data, largest_mas=largest_mas, aperture_mas=aperture_mas
+    )
+    if fwhm_mas is None:
+        fwhm_mas = second_moment_fwhm(data)
+    wanted = ceiling if fwhm_mas is None else field_fwhms * float(fwhm_mas)
+    floor = inner_elements * nyquist_pixel_scale(data)
+    return float(min(ceiling, max(floor, wanted)))
 
 
 def _complex_visibilities(d):
@@ -627,6 +807,60 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     return np.asarray(image / total)
 
 
+def _envelope_fit(data, star, aperture_mas):
+    """The fitted envelope and the FWHM (mas) that sizes the image field.
+
+    The FWHM is the envelope's or, if larger, the one that the short
+    baselines see ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]),
+    which guards against an envelope fit that collapsed onto the star.
+    """
+    import numpyro.distributions as dist
+
+    from .models import GaussianDisk
+
+    resolution = beam(data).major_mas
+    widest = field_of_view(
+        data, largest_mas=onp.inf, aperture_mas=aperture_mas
+    )
+    best = None
+    for width in (0.25 * resolution, resolution, 4.0 * resolution):
+        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
+        if star:
+            model = System(
+                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
+            )
+            priors = {
+                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
+                "env.flux": dist.LogUniform(1e-4, 100.0),
+            }
+        else:
+            model = GaussianDisk(sigma)
+            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
+        result = fit(model, priors, data)
+        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
+            best = result
+    envelope = best.model.env if star else best.model
+    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
+    # The envelope can collapse onto the star when the structure is not
+    # Gaussian; the short baselines' own second moment then sets the size.
+    moment = second_moment_fwhm(data)
+    return envelope, fwhm if moment is None else max(fwhm, moment)
+
+
+def envelope_fwhm(data, star=True, aperture_mas=None):
+    """The FWHM (mas) of the source's envelope, from a quick parametric fit.
+
+    This is the width that [`starting_image`][virgil.imaging.starting_image]
+    sizes its field from: a star (if ``star``) plus a Gaussian envelope is
+    fitted, and the FWHM is the envelope's or, if larger, the one the short
+    baselines see. Unlike
+    [`second_moment_fwhm`][virgil.imaging.second_moment_fwhm] alone it is
+    not diluted by a bright star. Pass it to
+    [`image_field`][virgil.imaging.image_field].
+    """
+    return _envelope_fit(data, star, aperture_mas)[1]
+
+
 def starting_image(
     data,
     star=True,
@@ -634,6 +868,9 @@ def starting_image(
     largest_mas=None,
     start="moments",
     hole_mas=None,
+    field_fwhms=6.0,
+    inner_elements=4.0,
+    aperture_mas=None,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -642,9 +879,19 @@ def starting_image(
     description of the visibilities, from a few starting widths. Then it
     chooses the image:
 
-    * a field of about six FWHMs of the envelope, but at least 500 mas, and
-      never larger than the interferometric field of view (λ / B_min) or
-      ``largest_mas``;
+    * a field of ``field_fwhms`` (6) FWHMs of the envelope, which is as
+      large as the source needs and no larger. It is at least
+      ``inner_elements`` (4) resolution elements λ / (2 B_max) across, and
+      never larger than the interferometric field of view (λ / B_min, the
+      bandwidth-smearing field and ``aperture_mas``; see
+      [`field_of_view`][virgil.imaging.field_of_view]) or ``largest_mas``.
+      The baselines are the unflagged ones. There is no fixed minimum:
+      earlier versions took at least 500 mas, which always gave λ / B_min,
+      so the size of the source made no difference. The FWHM is the
+      envelope's or, if larger, the one that the short baselines see
+      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]), which
+      guards against an envelope fit that collapsed onto the star (the rule
+      is [`image_field`][virgil.imaging.image_field]);
     * pixels ``oversample`` times finer than the Nyquist scale;
     * an [`Image`][virgil.models.Image] with the fitted flux, whose
       pixels are the fitted Gaussian (``start="moments"``) or the positive
@@ -679,40 +926,31 @@ def starting_image(
         indistinguishable from the star's own, so without a hole the fit can
         trade the two and bias the flux ratio; half the beam's minor axis
         (``0.5 * beam(data).minor_mas``) is a good choice.
+    field_fwhms : float, optional
+        The field in FWHMs of the envelope (6 by default).
+    inner_elements : float, optional
+        The least field, in resolution elements λ / (2 B_max) (4 by
+        default).
+    aperture_mas : float, optional
+        A telescope's field of view, as a ceiling on the field and on the
+        envelope's width.
 
     Returns
     -------
     SourceModel
         ``System(star=PointSource(), env=Image(...))``, or the Image alone.
     """
-    import numpyro.distributions as dist
-
     from .models import GaussianDisk
 
-    resolution = beam(data).major_mas
-    widest = field_of_view(data, largest_mas=onp.inf)
-    best = None
-    for width in (0.25 * resolution, resolution, 4.0 * resolution):
-        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
-        if star:
-            model = System(
-                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
-            )
-            priors = {
-                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
-                "env.flux": dist.LogUniform(1e-4, 100.0),
-            }
-        else:
-            model = GaussianDisk(sigma)
-            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
-        result = fit(model, priors, data)
-        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
-            best = result
-    envelope = best.model.env if star else best.model
-    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
-    fov = min(max(500.0, 6.0 * fwhm), widest)
-    if largest_mas is not None:
-        fov = min(fov, float(largest_mas))
+    envelope, fwhm = _envelope_fit(data, star, aperture_mas)
+    fov = image_field(
+        data,
+        fwhm_mas=fwhm,
+        field_fwhms=field_fwhms,
+        inner_elements=inner_elements,
+        aperture_mas=aperture_mas,
+        largest_mas=onp.inf if largest_mas is None else largest_mas,
+    )
     scale = nyquist_pixel_scale(data) / float(oversample)
     npix = int(onp.ceil(fov / scale))
     support = None
@@ -768,7 +1006,13 @@ def beam(data):
     weighting"); in AMIGO DISCO data those are the uv points on which the
     modes have weight (at least 1e-3 of the largest), i.e. the splodges.
     Weighting by information instead would let the low-frequency central
-    splodge dominate, and give a broader beam.
+    splodge dominate, and give a broader beam. In other data they are the
+    unflagged samples (see
+    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]): a flagged
+    sample keeps its u, v but measures nothing, and counting it would
+    shrink the beam to a resolution that the data do not have. When a
+    provider flags most of the long baselines of a resolved source, the
+    beam is two or three times coarser than that of all the samples.
 
     Parameters
     ----------
@@ -784,7 +1028,7 @@ def beam(data):
     for d in observations:
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
-        weight = onp.ones_like(fu)
+        weight = onp.asarray(d.unflagged, dtype=float)
         if d.observable_kind == "mixed_log_complex":
             sigma = onp.asarray(d.d_vis)[:, None]
             information = onp.sum(
@@ -2677,6 +2921,7 @@ def _parts(model, path=None):
 
     The path is ``None`` for the model itself, else e.g. ``"env"``.
     """
+    model = model.resolved()
     found = [(path, model)]
     prefix = "" if path is None else path + "."
     if isinstance(model, System):
@@ -2689,6 +2934,7 @@ def _parts(model, path=None):
 
 def _map_images(model, fn):
     """``model`` with ``fn`` applied to each of its Images."""
+    model = model.resolved()
     if isinstance(model, Image):
         return fn(model)
     if isinstance(model, Rotated):

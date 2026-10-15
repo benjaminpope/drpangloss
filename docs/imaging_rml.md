@@ -88,7 +88,7 @@ plt.show()
 
 The fit needs a starting image, and `starting_image` builds one from the data:
 - **A parametric fit.** It fits a star plus a circular Gaussian envelope, and uses the envelope's flux and width.
-- **A pixel grid.** The pixel scale is a quarter of the Nyquist pixel, and the field of view spans six envelope widths or 500 mas, whichever is larger, but no more than the interferometric field of view (here capped at the truth's field).
+- **A pixel grid.** The pixel scale is a quarter of the Nyquist pixel, and the field of view spans six envelope widths (and at least four resolution elements), but no more than the interferometric field of view (here capped at the truth's field).
 - **A hole under the star.** `hole_mas` cuts a hole of half a beam in the image's support there. Extended flux that close to the star is nearly indistinguishable from the star's own light, so without a hole the fit can trade one against the other.
 - **The starting pixels.** `start="moments"` takes them from the fitted Gaussian. `start="dirty"` takes the positive part of the dirty image instead, which already has the right shape when the coverage is good, as it is here.
 

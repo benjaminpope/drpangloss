@@ -109,6 +109,9 @@ def test_field_parameters_have_finite_gradients():
     assert all(onp.isfinite(float(g)) and float(g) != 0.0 for g in grads)
 
 
+# Compile-dominated (three LM-sized compiles): ~6 s on a laptop, 15.5 s on a
+# CI runner, against the 15 s pull-request budget.
+@pytest.mark.slow
 def test_a_gaussian_field_image_fits_by_least_squares_and_diagnoses():
     data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
     truth = System(

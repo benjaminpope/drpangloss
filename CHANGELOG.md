@@ -9,6 +9,31 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
+  flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
+  `chi2-high`, `sep-below-resolution`, `flux-at-bound`), each with a
+  reason (`NightFlag`, `EpochPositions.flags`, `.flagged`,
+  `.flag_codes()`), with the keywords `flag_nights`, `flag_alias_nats`,
+  `flag_min_gap`, `flag_chi2_factor`, `flag_sep_fraction` and
+  `flag_flux_tol`. `primary_diam=` fits the per-night companion beside a
+  uniform-disc primary (also `start_from_positions(primary_diam=,
+  flag_options=)`). `AliasResult.unseeded` records the nights that seeded
+  nothing, and is kept by `save` and `load`.
+
+
+- **`image_field`, `second_moment_fwhm` and `OIData.unflagged`.** The image
+  field is now set by the data. `image_field(data)` is `field_fwhms` (6)
+  times the source's FWHM, at least `inner_elements` (4) resolution
+  elements λ/(2 B_max) across, and at most `field_of_view(data)`; the
+  FWHM is `second_moment_fwhm(data)`, a straight-line fit of −ln V² against
+  (B/λ)² on the unflagged samples with V² ≥ 0.3 (or the FWHM you give).
+  `OIData.unflagged` is the mask of the samples an observable uses: a
+  flagged sample keeps its u, v in the data but measures nothing.
+  `field_of_view` also takes `aperture_mas` (a telescope's field), and
+  stops at the bandwidth-smearing field R λ/B_max when the data carry
+  channel widths. `starting_image` takes `field_fwhms`, `inner_elements`
+  and `aperture_mas`; `EnsembleSpec` takes `field_mas` (the field that the
+  factors multiply) and `aperture_mas`.
 - **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
   `fit` and `numpyro_model` and covers them in the matrix, under their
   numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
@@ -31,6 +56,41 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Seeding skips flagged nights by default.** `fit_orbit_aliases`
+  accepts the `EpochPositions` of `epoch_positions` and, with
+  `skip_flagged=True` (default), a flagged night seeds nothing, though
+  its data still count in the likelihood; fewer than two seeding nights
+  fall back to random starts with a warning, and seeds from three or
+  fewer nights keep random candidates beside them.
+  `EpochPositions.positions` and `start_from_positions` also skip flagged
+  nights by default (`skip_flagged=False` restores the old behaviour).
+
+- **The default image field comes from the data, not from λ/B_min.**
+  `starting_image` took `min(max(500 mas, 6 FWHM), λ/B_min)`; the 500 mas
+  was a holdover from one system, and since λ/B_min is 14 to 80 mas for
+  every VLTI or CHARA dataset, the field was always λ/B_min and the size of
+  the source made no difference (2.9 mas sources on 58 mas fields). It is
+  now six FWHMs of the envelope (or of the short baselines' second moment,
+  if larger), between four resolution elements across and the
+  interferometric field of view; for a 2.9 mas Gaussian seen by 130 m
+  baselines at 2.2 µm that is 17 mas. Pass `field_fwhms` to change the
+  six.
+- **Resolution and field use unflagged samples only.** `beam`,
+  `fringe_scales`, `nyquist_pixel_scale`, `field_of_view`, `Epochs.resolution_mas`
+  and the pipelines' geometry report no longer count flagged samples,
+  whose u, v stay in the data (for example, the provider flags 59 to 95%
+  of V² of the 2024 contest's Obj1 GRAVITY at SNR < 1, which gave a beam of
+  4.3 × 3.3 mas against 11.6 × 8.1 mas from the unflagged data). Data
+  without flags, and projected (kernel, DISCO) data, are unchanged.
+- **The ensemble sweeps the data's field.** `EnsembleSpec.field_factors`
+  defaults to `(0.75, 1.0, 1.5)` times `image_field(data)` (or `field_mas`),
+  never beyond `field_of_view(data)`, instead of `(1, 2, 4)` times
+  λ/B_min, which gave fields beyond what the data constrain. The field is
+  sized from the envelope fit of `starting_image` (`envelope_fwhm`), so a
+  bright star does not shrink it. Every field is now capped at
+  `field_of_view(data)` (λ/B_min at most), `field_mas` included, so the
+  old 2× and 4× λ/B_min fields are no longer possible; `field_factors`
+  above 1 only reach the ceiling. `reference_starts` takes `aperture_mas`.
 - **`variational` starts error terms and gains data at their
   Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
   so fitted error terms get widths from the curvature instead of
@@ -105,8 +165,12 @@ anything before 1.0 may change between minor versions.
   the `RadialGP` docstring, the contributors page and the bibliography.
 - **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
   a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
-  `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
-  periodic one in azimuth, interpolated onto the pixels. Whitened latents,
+  `PolarField.from_disk` copies them, or with `geometry_from="disk"` the field
+  takes the geometry of its sibling disk whenever the `System` is evaluated,
+  with no geometry parameters of its own; `System.resolved()` bakes the ties
+  in), with the Matérn kernel of `RadialGP` in radius and the azimuthal
+  spectrum of `PolarKernel` (one shared definition, `nu` up to infinity,
+  `nu_theta`), interpolated onto the pixels. Whitened latents,
   so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
   `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
   `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP

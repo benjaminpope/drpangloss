@@ -711,6 +711,7 @@ def _small_problem():
     return start, data
 
 
+@pytest.mark.slow
 def test_nuts_samples_the_whitened_latents_and_the_hyperparameters():
     start, data = _small_problem()
     priors = gp_priors(start, sigma=(0.3, 3.0), ell=(1.0, 6.0))
@@ -747,6 +748,7 @@ def numpyro_init(values):
     return init_to_value(values=values)
 
 
+@pytest.mark.slow
 def test_log_evidence_runs_for_every_gaussian_process_part():
     truth = System(
         star=PointSource(),
@@ -799,6 +801,7 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
         )
 
 
+@pytest.mark.slow
 def test_the_evidence_prefers_the_correlation_length_the_data_came_from():
     # Truth drawn from a smooth GP profile of length 1.5 on a compact range
     # (so the visibility stays positive and the closure phases cannot flip by

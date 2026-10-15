@@ -154,6 +154,7 @@ def test_error_scale_rejects_bad_factors_and_pixel_images():
         error_scale(scene, DATA)
 
 
+@pytest.mark.slow
 def test_error_scale_solves_mackays_fixed_point():
     # s² = χ² / (N − γ) with γ = Σ βλ / (1 + βλ) evaluated at β = 1/s²
     # itself (MacKay 1992, eqs. 4.9-4.10), not at β = 1.
@@ -348,6 +349,7 @@ def test_the_evidence_with_gains_matches_model_loglike():
     assert abs(-0.5 * float(r @ r) - (exact - constant)) > 1.0
 
 
+@pytest.mark.slow
 def test_the_evidence_prefers_the_simulated_gain_width():
     latent = jax.random.normal(jax.random.PRNGKey(7), (NG, NG))
     truth = _small_scene(latent)
@@ -370,6 +372,7 @@ def test_the_evidence_prefers_the_simulated_gain_width():
     assert max(bare, key=bare.get) == 0.5
 
 
+@pytest.mark.slow
 def test_laplace_samples_have_the_gauss_newton_covariance():
     from virgil.imaging import _residual_jacobian
 

@@ -326,6 +326,7 @@ def test_ambiguous_flux_needs_flux_param():
     assert explicit.shape == (2,) + tuple(v.size for v in small.values())[:2]
 
 
+@pytest.mark.slow
 def test_flux_inference_matches_explicit_and_model_class():
     small = {key: value[::6] for key, value in _path_samples().items()}
     inferred = optimized_flux_grid(_composed_binary(), oidata, small)
