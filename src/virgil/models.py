@@ -3282,6 +3282,23 @@ def _matern(d, nu):
     return np.exp(-0.5 * d * d)
 
 
+def _log_azimuthal_spectrum(m, angle, nu):
+    """Log of the unnormalized spectral density at the integer azimuthal
+    order ``m`` of a periodic Matérn kernel of angular length ``angle``
+    (radians):
+
+    ``log S(m) = (-nu - 1/2) log(1 + (m angle)^2 / (2 nu))``, or
+    ``-(m angle)^2 / 2`` for ``nu = inf``.
+
+    Work in log space: ``S`` underflows to zero at high orders, where
+    the derivative of ``sqrt`` is infinite and the chain rule gives NaN.
+    """
+    x2 = (m * angle) ** 2
+    if math.isinf(nu):
+        return -0.5 * x2
+    return (-nu - 0.5) * np.log1p(x2 / (2.0 * nu))
+
+
 def _azimuthal_spectrum(m, angle, nu):
     """Unnormalized spectral density at the integer azimuthal order ``m`` of a
     periodic Matérn kernel of angular length ``angle`` (radians):
@@ -3290,12 +3307,9 @@ def _azimuthal_spectrum(m, angle, nu):
     ``exp(-(m angle)^2 / 2)`` for ``nu = inf``. The single definition of the
     azimuthal kernel, shared by [`PolarKernel`][virgil.models.PolarKernel]
     (harmonic coefficients) and [`PolarField`][virgil.fields.PolarField]
-    (pixels).
+    (pixels), both through its logarithm.
     """
-    x2 = (m * angle) ** 2
-    if math.isinf(nu):
-        return np.exp(-0.5 * x2)
-    return (1.0 + x2 / (2.0 * nu)) ** (-nu - 0.5)
+    return np.exp(_log_azimuthal_spectrum(m, angle, nu))
 
 
 def _check_nu(nu, owner):
@@ -3773,8 +3787,10 @@ class PolarKernel(zdx.Base):
         m = np.arange(1, int(degree) + 1)
         angle = self.ell_theta / r_ref
         nu = self.nu_theta
-        return _azimuthal_spectrum(m, angle, nu) / _azimuthal_spectrum(
-            1.0, angle, nu
+        # The ratio in log space: S(1) alone underflows for a long angle.
+        return np.exp(
+            _log_azimuthal_spectrum(m, angle, nu)
+            - _log_azimuthal_spectrum(1.0, angle, nu)
         )
 
     def values(self, z, r):
@@ -5622,6 +5638,18 @@ class System(SourceModel):
 
     def resolved(self):
         parts = tuple(self._tied(p.resolved()) for p in self.parts)
+        for name, part in zip(self.names, parts):
+            fields = jax.tree.leaves(
+                part, is_leaf=lambda x: hasattr(x, "geometry_from")
+            )
+            if any(getattr(f, "geometry_from", None) for f in fields):
+                raise ValueError(
+                    f"Component {name!r} holds a PolarField with "
+                    f"geometry_from set that cannot be resolved: a tie is "
+                    f"only followed for an Image that is a direct component "
+                    f"of the System (not inside Rotated or Attached). Give "
+                    f"the field its own geometry (geometry_from=None) there."
+                )
         if all(a is b for a, b in zip(parts, self.parts)):
             return self
         return eqx.tree_at(lambda s: s.parts, self, parts)

@@ -572,7 +572,7 @@ def test_the_tied_geometry_is_differentiable_in_the_disks_parameters():
 def test_ties_account_for_the_images_rotation_and_offset():
     # The field's lit ellipse is the disk's on the sky, independent of the
     # Image's own rotation and offset: compare with an analytic ellipse.
-    rot, d_ra, d_dec = 35.0, 2.0, -1.0
+    rot, d_ra, d_dec = 35.0, 6.0, -4.0
     scene = _tied_scene(
         rotation_deg=rot, image_dra=d_ra, image_ddec=d_dec, shape=(48, 48)
     )
@@ -603,6 +603,22 @@ def test_ties_account_for_the_images_rotation_and_offset():
         return (lit & ellipse).sum() / (lit | ellipse).sum()
 
     assert overlap(scene) > 0.9
+    # The centre pins the sign of the rotation of the offset: the lit
+    # centroid is the disk's (dra, ddec) to within a pixel, while the
+    # opposite sign would put it more than three pixels away.
+    pixel = fov / npix
+    lit = onp.asarray(scene.render(npix, fov)) > 1e-4
+    centroid = (onp.asarray(xx)[lit].mean(), onp.asarray(yy)[lit].mean())
+    assert (
+        onp.hypot(
+            centroid[0] - GEOMETRY["dra"], centroid[1] - GEOMETRY["ddec"]
+        )
+        < pixel
+    )
+    angle = onp.radians(rot)
+    off = onp.array([GEOMETRY["dra"] - d_ra, GEOMETRY["ddec"] - d_dec])
+    wrong_centre = 2.0 * onp.hypot(*off) * onp.sin(angle)
+    assert wrong_centre > 3 * pixel  # the +rot centre would be this far off
     # The same geometry without the Image's rotation and offset (the disk's
     # values taken as grid-frame ones) is a different, tilted ellipse.
     wrong = _untied_like(scene, **GEOMETRY)
@@ -684,3 +700,41 @@ def test_freeze_geometry_still_works_with_a_tied_field():
     assert not onp.allclose(
         moved.model(data.u, data.v, data.wavel), got, atol=1e-4
     )
+
+
+def test_a_tied_image_inside_a_wrapper_raises_instead_of_using_the_fallback():
+    from virgil.models import Rotated
+
+    field = _tied_scene().env.log_brightness
+    wrapped = System(
+        star=PointSource(),
+        disk=_disk(),
+        env=Rotated(Image(field, 1.0), 20.0),
+    )
+    with pytest.raises(ValueError, match="cannot be resolved"):
+        wrapped.render(16, 16.0)
+
+
+@pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, onp.inf])
+def test_the_gradient_in_the_azimuthal_length_is_finite_at_high_orders(nu):
+    # exp(-0.5 (m length)^2) underflows at the highest orders for a long
+    # length; the log-space filter keeps the derivative finite.
+    from virgil.fields import _azimuthal_filter
+
+    latent = np.asarray(onp.random.default_rng(0).normal(size=(4, 40)))
+
+    def power(length):
+        return np.sum(_azimuthal_filter(latent, length, nu) ** 2)
+
+    assert onp.isfinite(float(jax.grad(power)(np.asarray(6.0))))
+
+
+def test_the_polar_kernel_spectrum_is_finite_for_a_long_angle():
+    from virgil.models import PolarKernel
+
+    for nu in (1.5, onp.inf):
+        kernel = PolarKernel(
+            1.0, 90.0, r_in=4.0, r_out=8.0, r_ref=6.0, nu_theta=nu
+        )
+        spectrum = onp.asarray(kernel.spectrum(4))
+        assert onp.all(onp.isfinite(spectrum)) and spectrum[0] == 1.0

@@ -31,7 +31,7 @@ from jax.scipy.fft import idctn
 
 from ._geometry import pixel_offsets, undo_elliptical_transf_coord
 from ._utils import concrete
-from .models import _azimuthal_spectrum, _check_nu, _gp_factor
+from .models import _check_nu, _gp_factor, _log_azimuthal_spectrum
 
 __all__ = [
     "GaussianField",
@@ -284,8 +284,16 @@ def _azimuthal_filter(latent, angle, nu):
     """
     n_theta = latent.shape[1]
     m = np.minimum(np.arange(n_theta), n_theta - np.arange(n_theta))
-    power = _azimuthal_spectrum(m, angle, nu)
-    amplitude = np.sqrt(power / np.mean(power))
+    # In log space, so that no order underflows (a gradient of NaN).
+    log_power = _log_azimuthal_spectrum(m, angle, nu)
+    amplitude = np.exp(
+        0.5
+        * (
+            log_power
+            - jax.scipy.special.logsumexp(log_power)
+            + np.log(n_theta)
+        )
+    )
     return np.real(np.fft.ifft(amplitude * np.fft.fft(latent, axis=1), axis=1))
 
 
@@ -708,8 +716,8 @@ def polar_field_priors(
     azimuthal order ``m`` falls as the spectrum of
     [`PolarKernel`][virgil.models.PolarKernel] in ``m * length_theta``, so a
     length above about 2 leaves almost only the order 0, an axisymmetric
-    field (for ``nu`` = 3/2 the first order has 0.6 per cent of the variance
-    at a length of 6), and the default upper limit is effectively
+    field (for ``nu`` = 3/2 the first order, cos θ and sin θ together, has about
+    1 per cent of the variance at a length of 6), and the default upper limit is effectively
     axisymmetric.
 
     Parameters
