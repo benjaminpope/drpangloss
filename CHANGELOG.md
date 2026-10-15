@@ -9,6 +9,18 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
+  flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
+  `chi2-high`, `sep-below-resolution`, `flux-at-bound`), each with a
+  reason (`NightFlag`, `EpochPositions.flags`, `.flagged`,
+  `.flag_codes()`), with the keywords `flag_nights`, `flag_alias_nats`,
+  `flag_min_gap`, `flag_chi2_factor`, `flag_sep_fraction` and
+  `flag_flux_tol`. `primary_diam=` fits the per-night companion beside a
+  uniform-disc primary (also `start_from_positions(primary_diam=,
+  flag_options=)`). `AliasResult.unseeded` records the nights that seeded
+  nothing, and is kept by `save` and `load`.
+
+
 - **`image_field`, `second_moment_fwhm` and `OIData.unflagged`.** The image
   field is now set by the data. `image_field(data)` is `field_fwhms` (6)
   times the source's FWHM, at least `inner_elements` (4) resolution
@@ -43,6 +55,15 @@ anything before 1.0 may change between minor versions.
   `NoLeastSquaresForm`, as its curvature is not diagonal.
 
 ### Changed
+
+- **Seeding skips flagged nights by default.** `fit_orbit_aliases`
+  accepts the `EpochPositions` of `epoch_positions` and, with
+  `skip_flagged=True` (default), a flagged night seeds nothing, though
+  its data still count in the likelihood; fewer than two seeding nights
+  fall back to random starts with a warning, and seeds from three or
+  fewer nights keep random candidates beside them.
+  `EpochPositions.positions` and `start_from_positions` also skip flagged
+  nights by default (`skip_flagged=False` restores the old behaviour).
 
 - **The default image field comes from the data, not from λ/B_min.**
   `starting_image` took `min(max(500 mas, 6 FWHM), λ/B_min)`; the 500 mas

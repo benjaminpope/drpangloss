@@ -1,6 +1,7 @@
 """Named epochs, per-dataset snapshots and multi-epoch orbit fits to
 visibilities and closure phases."""
 
+import dataclasses
 import warnings
 
 import equinox as eqx
@@ -18,6 +19,7 @@ from virgil.epochs import (  # noqa: E402
     _loss_order,
     _warn_if_coarse,
     chain_starts,
+    epoch_positions,
     rank_orbits,
     start_from_positions,
 )
@@ -34,6 +36,7 @@ from virgil.models import (  # noqa: E402
     PointSource,
     System,
     TruncatedCone,
+    UniformDisk,
 )
 from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import (  # noqa: E402
@@ -649,3 +652,230 @@ def test_each_chain_starts_at_its_own_values():
         samples = mcmc.get_samples(group_by_chain=True)
     assert samples["period"].shape == (2, 2)
     assert all(onp.all(onp.isfinite(v)) for v in samples.values())
+
+
+# ---------------------------------------------------------------------------
+# Night flags with reasons, and UD-aware seeds
+# ---------------------------------------------------------------------------
+
+FLAG_AXIS = onp.arange(-12.0, 12.01, 0.5)
+FLAG_GRID = {"dra": FLAG_AXIS, "ddec": FLAG_AXIS, "flux": [0.25, 0.5, 1.0]}
+
+
+def _binary_night(mjd, position, flux, key, **options):
+    """A noisy night of a static binary (``position`` in mas)."""
+    scene = BinaryModelCartesian(position[0], position[1], flux)
+    return simulate(scene, _night(mjd, frames=3, **options), key)
+
+
+def _flag_epochs():
+    """Four nights: a clean one, a twin (flux 1, whose mirror peak ties:
+    a perfect single-night alias), a companion inside λ/2B_max, and a
+    night whose quoted errors are 5x too small."""
+    keys = jax.random.split(jax.random.PRNGKey(4), 4)
+    bad = _binary_night(
+        T_REF + 3, (5.0, -3.0), 0.25, keys[3], d_vis=0.01, d_phi=0.02
+    )
+    bad = bad.set(["d_vis", "d_phi"], [bad.d_vis / 5.0, bad.d_phi / 5.0])
+    return Epochs(
+        {
+            "clean": _binary_night(
+                T_REF, (5.0, -3.0), 0.25, keys[0], d_vis=0.01, d_phi=0.02
+            ),
+            "twin": _binary_night(
+                T_REF + 1, (5.0, -3.0), 1.0, keys[1], d_vis=0.01, d_phi=0.02
+            ),
+            "close": _binary_night(
+                T_REF + 2, (0.2, 0.1), 0.25, keys[2], d_vis=0.01, d_phi=0.02
+            ),
+            "bad": bad,
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def flagged_positions():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return _flag_epochs(), epoch_positions(
+            _flag_epochs(), FLAG_GRID, n_peaks=3
+        )
+
+
+@pytest.mark.slow
+def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
+    flagged_positions,
+):
+    _, found = flagged_positions
+    codes = {
+        n: {f.code for f in fl} for n, fl in zip(found.names, found.flags)
+    }
+    # Single-night alias peaks (Gl 229 2024-02-27): a twin's mirror peak
+    # ties with it, and its flux sits at the top of the range.
+    assert {"alias-peaks", "flux-at-bound"} <= codes["twin"]
+    assert "sep-below-resolution" in codes["close"]
+    assert "chi2-high" in codes["bad"]
+    assert codes["clean"] == set()
+    assert found.flagged.tolist() == [False, True, True, True]
+    assert set(found.flag_codes()) == {"twin", "close", "bad"}
+    for fl in found.flags:
+        for f in fl:
+            assert f.reason and f.reason != f.code  # a human sentence
+    close = dict(zip(found.names, found.flags))["close"]
+    assert any(
+        "mas" in f.reason for f in close if f.code == "sep-below-resolution"
+    )
+
+
+@pytest.mark.slow
+def test_flag_thresholds_are_keywords_and_can_be_switched_off(
+    flagged_positions,
+):
+    epochs, found = flagged_positions
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        off = epoch_positions(epochs, FLAG_GRID, n_peaks=3, flag_nights=False)
+        wide = epoch_positions(
+            epochs,
+            FLAG_GRID,
+            n_peaks=3,
+            flag_min_gap=1e9,
+            flag_alias_nats=None,
+        )
+    assert not off.flagged.any() and off.flag_codes() == {}
+    # The clean night is decisive (no flag at the default 5 nats) but a
+    # threshold above its gap flags it as low-gap; with the alias flag
+    # disabled the twin is low-gap too.
+    assert found.gap_marginal[0] > 5.0
+    wide_codes = {
+        n: [f.code for f in fl] for n, fl in zip(wide.names, wide.flags)
+    }
+    assert "low-gap" in wide_codes["clean"]
+    assert "alias-peaks" not in wide_codes["twin"]
+    assert "low-gap" in wide_codes["twin"]
+
+
+@pytest.mark.slow
+def test_skip_flagged_positions_drop_the_flagged_nights(flagged_positions):
+    _, found = flagged_positions
+    # Flags cannot be ignored silently: skipping is the default.
+    kept = found.positions(t_ref=T_REF)
+    assert kept.dra.shape == (1,)
+    onp.testing.assert_allclose(kept.dra, found.dra[:1])
+    assert found.positions(t_ref=T_REF, skip_flagged=False).dra.shape == (4,)
+    every = dataclasses.replace(
+        found, flags=tuple(found.flags[1:2] * len(found.names))
+    )
+    with pytest.raises(ValueError, match="No dataset is decisive"):
+        every.positions(t_ref=T_REF)
+
+
+@pytest.mark.slow
+def test_ud_seeds_are_unbiased_for_a_resolved_primary():
+    # A resolved primary (iota Peg-like, 1.05 mas): a point primary
+    # absorbs its V^2 deficit into the companion's flux and position and
+    # fits badly; the UD seed recovers the companion.
+    truth = (5.0, -3.0, 0.25)
+    scene = System(
+        primary=UniformDisk(1.05),
+        companion=PointSource(truth[2], truth[0], truth[1]),
+    )
+    night = simulate(
+        scene,
+        _night(T_REF, frames=3, d_vis=0.005, d_phi=0.5),
+        jax.random.PRNGKey(2),
+    )
+    axis = onp.arange(-10.0, 10.01, 1.0)
+    grid = {"dra": axis, "ddec": axis, "flux": [0.1, 0.25, 0.5]}
+    epochs = Epochs({"night": night})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        point = epoch_positions(epochs, grid)
+        ud = epoch_positions(epochs, grid, primary_diam=1.05)
+    assert ud.primary_diam == 1.05 and point.primary_diam is None
+    assert onp.hypot(ud.dra[0] - truth[0], ud.ddec[0] - truth[1]) < 0.05
+    assert abs(ud.flux[0] - truth[2]) < 0.02
+    assert ud.chi2_raw[0]["all"] < 2.0
+    assert point.chi2_raw[0]["all"] > 10 * ud.chi2_raw[0]["all"]
+    assert abs(point.flux[0] - truth[2]) > 2 * abs(ud.flux[0] - truth[2])
+    # Zero is a point primary, and a negative diameter is refused.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        zero = epoch_positions(epochs, grid, primary_diam=0.0)
+    assert zero.primary_diam is None
+    with pytest.raises(ValueError, match="primary_diam"):
+        epoch_positions(epochs, grid, primary_diam=-1.0)
+
+
+def test_chi2_high_is_outlier_detection_with_a_floor_of_one():
+    from virgil.epochs import _flag_chi2
+
+    # Median 0.3 (errors overestimated): a night at 1.0 is a fair fit,
+    # not an outlier; the limit is 3 x max(median, 1) = 3.
+    assert _flag_chi2([0.3, 0.3, 0.3, 1.0], 3.0) == [[], [], [], []]
+    flagged = _flag_chi2([0.3, 0.3, 0.3, 4.0], 3.0)
+    assert [bool(f) for f in flagged] == [False, False, False, True]
+    assert flagged[3][0].code == "chi2-high"
+    # It cannot catch a uniform failure or a majority of bad nights.
+    assert not any(_flag_chi2([20.0, 20.0, 20.0, 20.0], 3.0))
+    assert not any(_flag_chi2([20.0, 20.0, 20.0, 1.0], 3.0)[:3])
+    # Fewer than three nights have no meaningful median.
+    assert _flag_chi2([1.0, 50.0], 3.0) == [[], []]
+
+
+def test_a_fitted_primary_is_not_supported_by_epoch_positions_yet():
+    epochs = Epochs({"n": _night(T_REF)})
+    with pytest.raises(ValueError, match="only a fixed diameter"):
+        epoch_positions(epochs, FLAG_GRID, primary_diam="fit")
+
+
+def _catalogue(flux, marginal=(0.0, -50.0), sep=5.0):
+    from virgil.epochs import EpochPeaks
+
+    n = len(marginal)
+    return EpochPeaks(
+        dra=onp.full(n, sep),
+        ddec=onp.zeros(n),
+        flux=onp.full(n, flux),
+        loglike=onp.zeros(n),
+        marginal=onp.asarray(marginal, float),
+        weight=onp.ones(n) / n,
+        edge=onp.zeros(n, bool),
+        laplace=onp.ones(n, bool),
+    )
+
+
+def _one_night_flags(catalogue, gap=20.0, **options):
+    from virgil.epochs import _flag_one_night
+
+    keys = dict(alias_nats=2.0, min_gap=5.0, sep_fraction=0.5, flux_tol=0.02)
+    return _flag_one_night(
+        catalogue, gap, (0.005, 1.0), 4.0, **{**keys, **options}
+    )
+
+
+def test_flux_at_the_lower_bound_is_flagged_but_the_grid_minimum_is_not():
+    # The lower bound is a tenth of the grid's lowest flux (0.05 here), so a
+    # faint companion fitted at the grid minimum is fine; one at the bound
+    # is a night with no detected companion.
+    assert _one_night_flags(_catalogue(0.05)) == []
+    flags = _one_night_flags(_catalogue(0.0051))
+    assert [f.code for f in flags] == ["flux-at-bound"]
+    assert "lower bound" in flags[0].reason
+    assert "upper bound" in _one_night_flags(_catalogue(1.0))[0].reason
+
+
+def test_the_alias_reason_mentions_low_gap_only_when_it_applies():
+    close = _catalogue(0.3, marginal=(0.0, -1.0))
+    reason = _one_night_flags(close, gap=1.0)[0].reason
+    assert "low-gap" in reason
+    # Low-gap disabled, or an alias window wider than the gap limit.
+    assert (
+        "low-gap"
+        not in _one_night_flags(close, gap=1.0, min_gap=None)[0].reason
+    )
+    wide = _catalogue(0.3, marginal=(0.0, -6.0))
+    assert (
+        "low-gap"
+        not in _one_night_flags(wide, gap=6.0, alias_nats=8.0)[0].reason
+    )
