@@ -2,7 +2,7 @@
 
 Status: **BinaryPipeline and StarPipeline built** (2026-10-08).
 `OrbitPipeline` and `ImagingPipeline` (both provisional) follow as stacked
-PRs.
+PRs. `DiskPipeline` is a design only (2026-10-15).
 
 ## Goal
 
@@ -123,6 +123,7 @@ is recorded here.
 | `BinaryPipeline` | `binary` | stable | load, overview, search, limits, fit, posterior, quicklook |
 | `StarPipeline` | `star` | stable | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
 | `OrbitPipeline` | `orbit` | provisional (planned) | multi-epoch positions, orbit search, fit, posterior |
+| `DiskPipeline` | `disk` | provisional (planned) | load, overview, geometry, profile, compare, posterior, quicklook; `model=` takes `"rings"`, `"gp"` or `"both"` |
 | `ImagingPipeline` | `imaging` | provisional (planned) | regularised images, weight selection, uncertainty |
 
 ## StarPipeline and its model registry
@@ -173,6 +174,160 @@ Decisions:
   reduced ESS. A bispectrum likelihood (virgil#309) would remove the walls.
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
+
+## DiskPipeline (provisional, planned)
+
+Status: **design only.** Nothing is built, and the build waits for the
+`PolarDisk` PR stack (radial profiles, Hankel transform, harmonics,
+`RadialGP` priors, `spectral_index`, `freeze_geometry`; see
+`design/radial_profiles.md`) to merge. The pipeline would be provisional
+from the start and would stay so until the `PolarDisk` API has been
+unchanged for a release.
+
+`DiskPipeline(data, model=None, *, output="run", **settings)`, CLI `disk`,
+`STABILITY = "provisional"`. The disk is always a `PolarDisk`, the star is
+a point source, and companions are optional (open question 2). The run
+folder, resume rules, `Result` and stability policy are those above; only
+the stages, settings and checks are new.
+
+### Models
+
+`model` is a short name from a registry, as in `StarPipeline`. Each entry
+says how to build the disk and the star from a dict of values, the
+parameter paths, group-invariant priors and starting values, and which
+checks apply to it.
+
+| Name | Disk | Role |
+| --- | --- | --- |
+| `"rings"` | `PolarDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | measures structure that is already known to be there |
+| `"gp"` | `PolarDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and optional `spectral_index` | finds structure with no assumed family |
+| `"both"` (default) | `"gp"` first, then `"rings"` | the GP finds structure, the ring family confirms and measures it |
+
+The `"both"` default follows `notebooks/polar_disk_rings.ipynb`: use the
+Gaussian process to find structure and propose a parametric family, then
+the parametric fit and its evidence to confirm and measure it. The ring
+count for `"rings"` is proposed from the GP profile's peaks, then
+increased or decreased by evidence, with the BIC penalty as the
+tie-break, as `StarPipeline` compares `uniform` and `limb_darkened`.
+
+### Stages
+
+1. `load`: the `OIData`, selections and error floors, as elsewhere.
+2. `overview`: uv coverage, the half-fringe λ/2B of the longest baseline,
+   V² against baseline. It sets the **resolution scale** that later
+   defaults use (inner radius, ring-width floor, ℓ grid), so every such
+   default is stated in half-fringes, not in mas.
+3. `geometry`: a grid over `inc` and `pa` with a single-ring profile at
+   each point, then a single-ring fit from the best cell, then
+   `PolarDisk.freeze_geometry(data)`. Inclination and position angle are
+   multimodal (and `pa` is undefined as `inc` tends to 0), so they are
+   never left to a local optimizer from one start. The grid map goes to
+   `grids.h5`.
+4. `profile`: the GP and ring fits at frozen geometry, so each refit of
+   the profile is one matrix-vector product per call. Fitted by
+   Levenberg–Marquardt to the MAP, with the Laplace covariance.
+5. `compare`: Laplace evidences of rings against the GP, and of the GP at
+   several profile length scales ℓ (the evidence is conditional on the
+   held parameters, which is the cleaner use, as in the tutorial).
+6. `posterior` (optional): NUTS over the free parameters in flat
+   coordinates, geometry released.
+7. `quicklook`: the executed notebook, laid out like the tutorial's
+   figure: image, residual map, profile, colour, lopsidedness, residuals.
+
+The preferred model is saved as `models/best`; `models/gp`,
+`models/rings` and the geometry-only `models/geometry` are kept.
+
+### Checks
+
+In this order. The first is χ²/N of the model on the quoted errors, never
+rescaled; the same rule as above (a fitted error scale makes χ² ≈ 1 by
+construction, so `error_scale="fit"` adds the check for a scale well above
+1). Most of the rest are the caveats of the `polar_disk_rings` tutorial,
+turned into pure functions of plain numbers.
+
+1. `chi2_reduced`: χ²/N on the quoted errors, for the preferred model and
+   (in `"both"`) for the other; the rings family is expected to fit
+   better than the GP when it contains the truth.
+2. `length_scale`: the Laplace evidences of the GP across the ℓ grid. If
+   they differ by less than a few nats (threshold a setting), `warn`:
+   the data do not measure ℓ, which is a prior choice and not a result,
+   and the profile's fine structure is the prior wherever the data are
+   silent. A Matérn length is not a feature width; the message quotes the
+   squared-exponential equivalent ℓ/√3 and the half-fringe.
+3. `inner_edge`: light the profile puts in the innermost nodes (inside
+   about one half-fringe) that trades against the star's flux. `warn`
+   when the star's flux posterior or the profile's inner fraction moves
+   by more than a setting between the first and last inner-edge choices.
+4. `outer_edge`: the fraction of the profile's light in its outermost
+   nodes, as a proxy for light beyond the outer edge that the model
+   cannot place. `warn` above 1 percent.
+5. `inclination`: `inc` near 0 leaves `pa` unconstrained (the Laplace
+   standard deviation of `pa`, or the width of the geometry grid's
+   ridge); `warn` below a setting, and `pa` is then reported without an
+   uncertainty. Also `warn` when the `geometry` grid has more than one
+   comparable minimum.
+6. `absorbed_companion`: the disk absorbing a compact companion. The
+   harmonic degree is compared with the point-source residual (a grid
+   search on the residuals, as in `BinaryPipeline`); `warn` when a
+   significant point source remains in the residuals, or when raising the
+   degree removes it. A low degree is the default for this reason.
+7. `evidence_caveat`: always `pass` with a value, never `fail`. It
+   records that the rings-against-GP difference is indicative, not a
+   calibrated Bayes factor: the GP value holds the other parameters at
+   their MAP with no Occam factor, and the ring family may not contain
+   the truth.
+
+As for `StarPipeline`, warnings captured inside a stage (non-convergence
+and so on) become checks appended after these, only when they occurred.
+
+### Priors and defaults
+
+Group-invariant priors throughout: `IsotropicInclination` for `inc`,
+uniform for position angles, harmonic components and companion offsets,
+log-uniform for scales (ring radii and widths, fluxes, temperatures, GP
+`sigma`). Radial bounds are settings, defaulting to an inner edge at one
+half-fringe and an outer edge a few widths beyond the outermost peak found
+in `geometry`, so that under 1 percent of the light lies outside the model
+(the `outer_edge` check reports whether it does).
+
+### Relation to the tutorial
+
+`polar_disk_rings` gets a closing "As a pipeline" section running
+`DiskPipeline(data, "both", ...)` on the same simulated data. The pipeline
+should reproduce the tutorial's numbers (χ²/N, the planet's position and
+flux, the evidences) within a stated tolerance, and the tutorial asserts
+that it does, as for `BinaryPipeline`. The tutorial sets its GP
+hyperparameters from the truth, which a pipeline cannot do; open question
+1 is how the pipeline replaces that, and the assertion is then against
+the tutorial's numbers at the pipeline's own choice, with the difference
+stated.
+
+### Open questions
+
+Not decided; each has the proposed default and its alternative.
+
+1. **GP hyperparameters.** *Proposed default:* an ℓ grid with ℓ/√3 ≈ 1, 2
+   and 4 half-fringes, chosen by evidence, with σ set from the first ring
+   fit's dynamic range (the spread of ln I₀ over the radial range). The
+   `length_scale` check says when the choice is not measured by the data.
+   *Alternative:* NUTS sampling of the hyperparameters (over the whitened
+   latents), as a provisional upgrade. The tutorial sets them from the
+   truth, which a pipeline cannot do.
+2. **Companions.** *Proposed default:* an optional v1 stage that runs a
+   point-source grid search (`BinaryPipeline`-style) on the
+   disk-subtracted residuals, then fits any detection jointly, as the
+   tutorial's planet. *Alternative:* disk plus star only in v1, with
+   `absorbed_companion` reporting what is left.
+3. **Colour.** *Proposed default:* `spectral_index` turns on
+   automatically when there are more than a few channels (the number a
+   setting). *Alternative:* a setting, defaulting to off.
+4. **Scope.** *Proposed default:* the colliding-wind cone geometry of the
+   Apep analysis stays out of v1; it could become a registry entry later,
+   with no new stage. *Alternative:* include it in v1.
+5. **Timing.** *Proposed default:* build only after the `PolarDisk` PR
+   stack merges, and keep the pipeline provisional until the `PolarDisk`
+   API is unchanged for a release. *Alternative:* build alongside the
+   stack and accept API churn.
 
 ## Dependencies
 
