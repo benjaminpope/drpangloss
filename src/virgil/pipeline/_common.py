@@ -55,18 +55,18 @@ def _save(fig, path):
 
 
 def _geometry(data):
-    """Baseline and resolution figures of ``data`` (metres, mas)."""
-    from .._geometry import fringe_scales
+    """Baseline and resolution figures of ``data`` (metres, mas).
 
-    u = onp.asarray(data.u, dtype=float)
-    v = onp.asarray(data.v, dtype=float)
-    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
-    baseline = onp.hypot(u, v)
-    positive = baseline > 0
+    Only the unflagged samples count (``OIData.unflagged``): a flagged
+    sample keeps its baseline in the data but measures nothing.
+    """
+    from .._geometry import _unflagged_samples, fringe_scales
+
+    baseline, wavel, _ = _unflagged_samples(data)
     finest, coarsest = fringe_scales(data)
     return {
-        "baseline_min_m": float(baseline[positive].min()),
-        "baseline_max_m": float(baseline[positive].max()),
+        "baseline_min_m": float(baseline.min()),
+        "baseline_max_m": float(baseline.max()),
         "wavel_min_m": float(wavel.min()),
         "wavel_max_m": float(wavel.max()),
         # Half of the finest λ/B: inside it, separation and flux are

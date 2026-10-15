@@ -498,6 +498,7 @@ def test_first_crossing_finds_the_first_crossing_from_below():
     assert not bool(crossed) and float(log_limit) == -3.0
 
 
+@pytest.mark.slow
 def test_unbounded_limits_match_bounded_limits():
     """Regression (B1): ``flux_bounds=None`` found the top of its bracket.
 

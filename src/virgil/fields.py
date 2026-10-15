@@ -31,6 +31,7 @@ from jax.scipy.fft import idctn
 
 from ._geometry import pixel_offsets, undo_elliptical_transf_coord
 from ._utils import concrete
+from .models import _check_nu, _gp_factor, _log_azimuthal_spectrum
 
 __all__ = [
     "GaussianField",
@@ -250,51 +251,50 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 _DEG = np.pi / 180.0
 
 
-def _matern(distance, length, nu):
-    """The Matérn correlation ``k(d)`` with ``k(0) = 1`` (``nu`` 1/2, 3/2, 5/2)."""
-    x = distance / length
-    if nu == 0.5:
-        return np.exp(-x)
-    if nu == 1.5:
-        a = np.sqrt(3.0) * x
-        return (1.0 + a) * np.exp(-a)
-    a = np.sqrt(5.0) * x
-    return (1.0 + a + a * a / 3.0) * np.exp(-a)
+def _radial_factor(nodes, length, nu):
+    """Cholesky factor of the radial correlation on ``nodes``.
 
-
-def _radial_factor(n_r, spacing, length, nu, jitter=1e-6):
-    """Cholesky factor ``L`` of the radial correlation on the nodes.
-
-    The diagonal jitter is at least ``10 n_r`` times the machine epsilon of
-    the working precision (1.5e-5 for 128 nodes in float32, below the
-    default 1e-6 in float64), so that the Cholesky factorization of a
-    Matérn matrix whose length is many node spacings stays finite in float32
-    (a jitter of 1e-6 gives NaN for 128 nodes, ``nu`` = 5/2 and a length of
-    5 spacings or more).
+    This is [`RadialGP`][virgil.models.RadialGP]'s factor (one definition,
+    ``models._gp_factor``), with a jitter of at least ``10 n`` times the
+    machine epsilon of the working precision (1.5e-5 for 128 nodes in
+    float32, below the default 1e-6 in float64), so that the factorization
+    of a Matérn matrix whose length is many node spacings stays finite in
+    float32 (a jitter of 1e-6 gives NaN for 128 nodes, ``nu`` = 5/2 and a
+    length of 5 spacings or more).
     """
-    dtype = np.result_type(length)
-    r = np.arange(n_r, dtype=dtype) * spacing
-    cov = _matern(np.abs(r[:, None] - r[None, :]), length, nu)
-    jitter = max(jitter, 10.0 * n_r * float(np.finfo(dtype).eps))
-    return np.linalg.cholesky(cov + jitter * np.eye(n_r, dtype=dtype))
+    n = nodes.shape[0]
+    return _gp_factor(
+        nodes,
+        length,
+        nu,
+        max(1e-6, 10.0 * n * float(np.finfo(nodes.dtype).eps)),
+    )
 
 
-def _periodic_filter(latent, length, nu):
-    """Apply the symmetric square root of the periodic correlation, along axis 1.
+def _azimuthal_filter(latent, angle, nu):
+    """Apply the azimuthal square root of the periodic kernel, along axis 1.
 
-    The correlation of two azimuths ``Δ`` is the Matérn kernel of their
-    chordal distance ``2 sin(Δ/2)`` on the unit circle, a valid kernel (the
-    restriction of a planar Matérn kernel). It is circulant, so its
-    eigenvalues are the real FFT of one row and its square root costs two
-    FFTs; the unit diagonal makes the variance exactly one.
+    The spectral density at the integer order ``m`` is the one that
+    [`PolarKernel`][virgil.models.PolarKernel] gives the harmonics,
+    ``S(m) = [1 + (m angle)^2 / (2 nu)]^(-nu - 1/2)`` (``angle`` is its
+    ``ell_theta / r``), the same function. The kernel is circulant on the
+    ``n_theta`` azimuths, so the filter is two FFTs, scaled so that the
+    mean of ``S`` over the orders is one and the variance of the filtered
+    white noise is exactly one.
     """
     n_theta = latent.shape[1]
-    delta = 2.0 * np.pi * np.arange(n_theta) / n_theta
-    row = _matern(2.0 * np.abs(np.sin(0.5 * delta)), length, nu)
-    eigen = np.real(np.fft.fft(row))
-    positive = eigen > 1e-12
-    root = np.where(positive, np.sqrt(np.where(positive, eigen, 1.0)), 0.0)
-    return np.real(np.fft.ifft(root * np.fft.fft(latent, axis=1), axis=1))
+    m = np.minimum(np.arange(n_theta), n_theta - np.arange(n_theta))
+    # In log space, so that no order underflows (a gradient of NaN).
+    log_power = _log_azimuthal_spectrum(m, angle, nu)
+    amplitude = np.exp(
+        0.5
+        * (
+            log_power
+            - jax.scipy.special.logsumexp(log_power)
+            + np.log(n_theta)
+        )
+    )
+    return np.real(np.fft.ifft(amplitude * np.fft.fft(latent, axis=1), axis=1))
 
 
 def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
@@ -351,8 +351,14 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     $$\mathrm{Cov}[\eta(r, \theta), \eta(r', \theta')] =
     \sigma^2\, k_r(|r - r'|;\, \ell_r)\, k_\theta(\Delta\theta;\, \ell_\theta),$$
 
-    with a Matérn kernel in radius and a Matérn kernel of the chordal
-    distance in azimuth, so periodic. A long ``length_theta`` favours rings
+    with a Matérn kernel in radius (that of
+    [`RadialGP`][virgil.models.RadialGP]) and a periodic Matérn kernel in
+    azimuth, given by the spectral density that
+    [`PolarKernel`][virgil.models.PolarKernel] gives the harmonics of a
+    [`PolarDisk`][virgil.models.PolarDisk],
+    $S(m) \propto [1 + (m\,\ell_\theta)^2 / 2\nu_\theta]^{-\nu_\theta - 1/2}$
+    at the integer order $m$ ($\ell_\theta$ in radians, the angle
+    ``ell_theta / r`` of a ``PolarKernel``). A long ``length_theta`` favours rings
     and arcs without imposing them, and a short ``length_r`` allows radial
     structure such as gaps. Use it, in the frame of a
     [`PolarDisk`][virgil.models.PolarDisk], for emission that the
@@ -362,7 +368,8 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     The parameters are whitened: independent standard-normal ``latent``
     values, ``η = σ L_r Z F_θ`` with ``L_r`` the Cholesky factor of the radial
-    correlation and ``F_θ`` the (circulant) square root of the azimuthal one.
+    correlation and ``F_θ`` the (circulant) square root of the azimuthal one,
+    scaled so that ``σ`` is the standard deviation of the field on the grid.
     Fitting the latents under a standard-normal prior
     ([`image_priors`][virgil.imaging.image_priors]) is MAP estimation, and
     [`log_evidence`][virgil.imaging.log_evidence] and the numpyro model work
@@ -409,8 +416,17 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     dra, ddec : float or array-like, optional
         Centre of the disk relative to the Image's centre, in
         milliarcseconds (East and North positive).
-    nu : {0.5, 1.5, 2.5}, optional
-        Smoothness of the Matérn kernels (default 1.5).
+    nu : {0.5, 1.5, 2.5, inf}, optional
+        Smoothness of the radial Matérn kernel (default 1.5), and of the
+        azimuthal one unless ``nu_theta`` is given.
+    nu_theta : {0.5, 1.5, 2.5, inf} or None, optional
+        Smoothness of the azimuthal kernel (default: ``nu``).
+    geometry_from : str or None, optional
+        Name of a sibling component of the [`System`][virgil.models.System]
+        (a [`PolarDisk`][virgil.models.PolarDisk], or anything with ``inc``,
+        ``pa``, ``dra`` and ``ddec``) whose geometry the field follows when
+        the System is evaluated (default ``None``: the field's own). See
+        Notes.
     mean : array-like, optional
         Positive template image of shape ``image_shape``, as for
         [`GaussianField`][virgil.fields.GaussianField] (default: flat).
@@ -422,13 +438,26 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     Notes
     -----
-    The geometry parameters belong to the field: they are not tied to a
-    ``PolarDisk``'s. Build them from one with
-    [`from_disk`][virgil.fields.PolarField.from_disk] and, if both are fitted,
-    sample the same values for both (a hierarchical prior or a shared
-    parameter in the caller's code). The pixel scale comes from the Image.
-    The azimuth is measured from the projected major axis towards
-    ``pa + 90``, as for ``PolarDisk``'s harmonics.
+    By default the geometry parameters belong to the field: they are copies
+    of a ``PolarDisk``'s (see [`from_disk`][virgil.fields.PolarField.from_disk]),
+    and if both are fitted the caller must sample the same values for both.
+    With ``geometry_from="disk"`` they are tied instead. The field then has
+    no ``inc``, ``pa``, ``dra`` or ``ddec`` parameters (they are ``None``:
+    nothing to fit, no path to set), and when the enclosing ``System`` is
+    evaluated (``model``, ``render``, the likelihood, ``fit``,
+    ``log_evidence``) it takes the geometry of its sibling ``disk``, in the
+    Image's grid frame: ``inc`` and ``pa - rotation_deg`` of the disk, and the
+    disk's centre relative to the Image's, along the Image's rotated axes. The
+    gradient therefore flows into the disk's parameters. The ties are
+    resolved by [`System`][virgil.models.System], so they hold for siblings
+    of one System (not for a disk in another nested System), and the Image
+    is tied only inside a System: evaluated alone (``Image.brightness``,
+    or a regularizer given the bare Image) the field uses the fallback
+    geometry it was built with, which is also what ``from_disk`` stores.
+    `System.resolved` returns the
+    System with the ties baked in, for code that reads the pixels directly.
+    The pixel scale comes from the Image. The azimuth is measured from the
+    projected major axis towards ``pa + 90``, as for ``PolarDisk``'s harmonics.
 
     References
     ----------
@@ -444,15 +473,18 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     sigma: jax.Array
     length_r: jax.Array
     length_theta: jax.Array
-    inc: jax.Array
-    pa: jax.Array
-    dra: jax.Array
-    ddec: jax.Array
+    inc: jax.Array | None
+    pa: jax.Array | None
+    dra: jax.Array | None
+    ddec: jax.Array | None
     mean: jax.Array | None
     image_shape: tuple = eqx.field(static=True)
     r_min_mas: float = eqx.field(static=True)
     r_max_mas: float = eqx.field(static=True)
     nu: float = eqx.field(static=True)
+    nu_theta: float = eqx.field(static=True)
+    geometry_from: str | None = eqx.field(static=True)
+    fallback: tuple = eqx.field(static=True)
     mean_floor: float = eqx.field(static=True)
     outside: float = eqx.field(static=True)
 
@@ -473,6 +505,8 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         mean=None,
         mean_floor=1e-3,
         outside=-20.0,
+        nu_theta=None,
+        geometry_from=None,
     ):
         self.latent = np.asarray(latent, dtype=float)
         if self.latent.ndim != 2 or min(self.latent.shape) < 2:
@@ -492,9 +526,10 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "need finite 0 <= r_min_mas < r_max_mas, not "
                 f"{r_min_mas} and {r_max_mas}."
             )
-        if nu not in (0.5, 1.5, 2.5):
-            raise ValueError(f"nu must be 0.5, 1.5 or 2.5, not {nu}.")
-        self.nu = float(nu)
+        self.nu = _check_nu(nu, "PolarField")
+        self.nu_theta = _check_nu(
+            nu if nu_theta is None else nu_theta, "PolarField"
+        )
         if length_r is None:
             length_r = 5.0 * self.spacing
         self.sigma = np.asarray(sigma, dtype=float)
@@ -506,10 +541,30 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         for name in ("sigma", "length_r", "length_theta"):
             if np.shape(getattr(self, name)) != ():
                 raise ValueError(f"{name} must be a scalar.")
-        self.inc = np.asarray(inc, dtype=float)
-        self.pa = np.asarray(pa, dtype=float)
-        self.dra = np.asarray(dra, dtype=float)
-        self.ddec = np.asarray(ddec, dtype=float)
+        geometry = tuple(
+            np.asarray(g, dtype=float) for g in (inc, pa, dra, ddec)
+        )
+        if geometry_from is None:
+            self.geometry_from = None
+            self.fallback = ()
+            self.inc, self.pa, self.dra, self.ddec = geometry
+        else:
+            # Tied: the geometry is the disk's, so it has no parameters; the
+            # values given are only the fallback for an Image evaluated
+            # outside a System, and must be concrete.
+            if not isinstance(geometry_from, str) or not geometry_from:
+                raise ValueError(
+                    f"geometry_from must be a component name: {geometry_from!r}"
+                )
+            values = tuple(concrete(g) for g in geometry)
+            if any(v is None or v.shape != () for v in values):
+                raise ValueError(
+                    "with geometry_from, inc, pa, dra and ddec are only the "
+                    "fallback geometry and must be concrete scalars."
+                )
+            self.geometry_from = geometry_from
+            self.fallback = tuple(float(v) for v in values)
+            self.inc = self.pa = self.dra = self.ddec = None
         if mean is not None:
             mean = np.asarray(mean, dtype=float)
             if mean.shape != self.image_shape:
@@ -530,12 +585,22 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.outside = float(outside)
 
     @classmethod
-    def from_disk(cls, disk, latent, image_shape, r_max_mas=None, **kwargs):
+    def from_disk(
+        cls,
+        disk,
+        latent,
+        image_shape,
+        r_max_mas=None,
+        geometry_from=None,
+        **kwargs,
+    ):
         """A field in the frame of ``disk`` (its ``inc``, ``pa``, ``dra``, ``ddec``).
 
         ``r_max_mas`` defaults to the outer edge of the disk's profile
-        (``disk.profile.extent()``) plus 20 per cent. The values are copied:
-        see the notes of [`PolarField`][virgil.fields.PolarField].
+        (``disk.profile.extent()``) plus 20 per cent. The values are copied
+        unless ``geometry_from`` is the disk's name in the System the Image
+        will join, which ties them: see the notes of
+        [`PolarField`][virgil.fields.PolarField].
         """
         if r_max_mas is None:
             r_max_mas = 1.2 * float(disk.profile.extent()[1])
@@ -547,8 +612,40 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             pa=disk.pa,
             dra=disk.dra,
             ddec=disk.ddec,
+            geometry_from=geometry_from,
             **kwargs,
         )
+
+    def with_geometry(self, inc, pa, dra, ddec):
+        """This field untied, with the given geometry as its own parameters.
+
+        What [`System`][virgil.models.System] calls to resolve a tie; the
+        arguments are the grid-frame ``inc``, ``pa`` (degrees) and centre
+        (milliarcseconds).
+        """
+        return type(self)(
+            self.latent,
+            self.image_shape,
+            self.r_max_mas,
+            r_min_mas=self.r_min_mas,
+            sigma=self.sigma,
+            length_r=self.length_r,
+            length_theta=self.length_theta,
+            inc=inc,
+            pa=pa,
+            dra=dra,
+            ddec=ddec,
+            nu=self.nu,
+            mean=self.mean,
+            mean_floor=self.mean_floor,
+            outside=self.outside,
+            nu_theta=self.nu_theta,
+        )
+
+    def _geometry(self):
+        if self.inc is not None:
+            return self.inc, self.pa, self.dra, self.ddec
+        return tuple(np.asarray(g, dtype=float) for g in self.fallback)
 
     @property
     def shape(self):
@@ -562,10 +659,12 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     def polar_values(self):
         """The field ``η`` on its polar grid, shape ``(n_r, n_theta)``."""
-        factor = _radial_factor(
-            self.latent.shape[0], self.spacing, self.length_r, self.nu
+        n_r = self.latent.shape[0]
+        nodes = self.r_min_mas + self.spacing * np.arange(n_r, dtype=float)
+        factor = _radial_factor(nodes, self.length_r, self.nu)
+        azimuthal = _azimuthal_filter(
+            self.latent, self.length_theta, self.nu_theta
         )
-        azimuthal = _periodic_filter(self.latent, self.length_theta, self.nu)
         # HIGHEST: the default matmul precision on A100/H100 is TF32.
         return self.sigma * np.matmul(
             factor, azimuthal, precision=jax.lax.Precision.HIGHEST
@@ -574,11 +673,12 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def evaluate(self, pixel_scale_mas):
         """The log-brightness ``η`` on pixels of ``pixel_scale_mas``."""
         nrow, ncol = self.image_shape
-        x = pixel_offsets(ncol, pixel_scale_mas)[None, :] - self.dra
-        y = pixel_offsets(nrow, pixel_scale_mas)[:, None] - self.ddec
+        inc, pa, dra, ddec = self._geometry()
+        x = pixel_offsets(ncol, pixel_scale_mas)[None, :] - dra
+        y = pixel_offsets(nrow, pixel_scale_mas)[:, None] - ddec
         x, y = np.broadcast_arrays(x, y)
-        stretch = np.maximum(np.cos(self.inc * _DEG), 1e-8)
-        xe, ye = undo_elliptical_transf_coord(x, y, self.pa, stretch)
+        stretch = np.maximum(np.cos(inc * _DEG), 1e-8)
+        xe, ye = undo_elliptical_transf_coord(x, y, pa, stretch)
         r = np.hypot(xe, ye)
         # The azimuth runs from the deprojected North towards East, as for
         # PolarDisk's harmonics; the centre has none, so avoid arctan2(0, 0).
@@ -612,11 +712,13 @@ def polar_field_priors(
     bounded. Add the latents' priors with
     [`image_priors`][virgil.imaging.image_priors]. Each range is
     ``(low, high)``: ``sigma`` in log-brightness, ``length_r`` in
-    milliarcseconds and ``length_theta`` in radians. The azimuthal kernel
-    acts on the chord length ``2 sin(Δ/2)`` on the unit circle, at most 2, so
-    a length of about 2 or more varies little with azimuth (opposite
-    azimuths have a correlation of 0.89 at a length of 6 for ``nu`` = 3/2)
-    and the default upper limit of 6 is nearly azimuthally constant.
+    milliarcseconds and ``length_theta`` in radians. The variance of the
+    azimuthal order ``m`` falls as the spectrum of
+    [`PolarKernel`][virgil.models.PolarKernel] in ``m * length_theta``, so a
+    length above about 2 leaves almost only the order 0, an axisymmetric
+    field (for ``nu`` = 3/2 the first order, cos θ and sin θ together, has about
+    1 per cent of the variance at a length of 6), and the default upper limit is effectively
+    axisymmetric.
 
     Parameters
     ----------

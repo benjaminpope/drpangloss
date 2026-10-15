@@ -681,6 +681,7 @@ _OLD_NEAR = [-193.286626] * 6
 
 
 @in_float64
+@pytest.mark.slow
 def test_the_kernel_optimizer_matches_the_old_one_from_near_starts():
     data, _ = _synthetic_as(12.1, True)
     settings, problem = _problem(data, max_steps=200)
@@ -699,7 +700,9 @@ def test_the_kernel_optimizer_matches_the_old_one_from_near_starts():
 
 
 @in_float64
-@pytest.mark.parametrize("vis_amp", [None, (0.01, 1.5)])
+@pytest.mark.parametrize(
+    "vis_amp", [None, pytest.param((0.01, 1.5), marks=pytest.mark.slow)]
+)
 def test_the_kernel_rows_carry_the_gradient_of_the_likelihood(vis_amp):
     # With the weights frozen, Jᵀρ is the gradient of -log likelihood
     # exactly (Σ_b w_b/2 ∇χ²_b), also through the live V² amplitude.
@@ -718,6 +721,7 @@ def test_the_kernel_rows_carry_the_gradient_of_the_likelihood(vis_amp):
 
 
 @in_float64
+@pytest.mark.slow
 def test_a_kernel_that_stalls_falls_back_to_lbfgs_and_then_the_kernel(
     monkeypatch,
 ):

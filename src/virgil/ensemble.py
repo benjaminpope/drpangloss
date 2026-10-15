@@ -52,7 +52,9 @@ from .imaging import (
     StarletL1,
     _chi2,
     beam,
+    envelope_fwhm,
     field_of_view,
+    image_field,
     image_priors,
     l_curve,
     nyquist_pixel_scale,
@@ -116,13 +118,24 @@ class EnsembleSpec:
         ([`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale]),
         drawn uniformly.
     field_factors : tuple of float
-        The field is ``field_of_view(data)`` times one of these, drawn
-        uniformly. A field larger than the interferometric field of view
-        lets the image hold flux the shortest baselines resolve out, which
-        on the contest bench gave better images than a field of 1 or less
-        (field 4 was the best of its arms). On a uv lattice (AMI, data
-        with a ``uv_grid``) a field above 1 aliases, so there the factors
-        are capped at 1.
+        The field is the data's field (``field_mas``, by default
+        [`image_field`][virgil.imaging.image_field]: six FWHMs of the
+        source, within the interferometric field of view) times one of
+        these, drawn uniformly, and never larger than the interferometric
+        field of view ``field_of_view(data)``: a field beyond what the
+        data measure only gives a flux that they do not constrain room to
+        collect in islands. (Earlier versions drew 1, 2 or 4 times
+        λ / B_min, which on the contest bench gave fields 20 to 35 times
+        the source.) On a uv lattice (AMI, data with a ``uv_grid``) the
+        factors are also capped at 1.
+    field_mas : float or None
+        The field, in mas, that the factors multiply, instead of the one
+        that the data give. For example, the field of a task, or
+        ``image_field(data, field_fwhms=4)``. It too is capped at
+        ``field_of_view(data)``.
+    aperture_mas : float or None
+        A telescope's field of view, as a ceiling on every field (see
+        [`field_of_view`][virgil.imaging.field_of_view]).
     starts : tuple of str
         Starting images, drawn uniformly: ``"moments"`` and ``"dirty"``
         (see [`starting_image`][virgil.imaging.starting_image]; a dirty
@@ -173,7 +186,7 @@ class EnsembleSpec:
     )
     n_weights: int = 8
     oversample: tuple = (2.0, 3.0, 4.0)
-    field_factors: tuple = (1.0, 2.0, 4.0)
+    field_factors: tuple = (0.75, 1.0, 1.5)
     starts: tuple = ("moments", "flat")
     max_npix: int = 128
     window_dex: float = 1.0
@@ -183,6 +196,8 @@ class EnsembleSpec:
     max_shift_mas: float | None = None
     mean_rtol: float | None = None
     min_kept: int = 3
+    field_mas: float | None = None
+    aperture_mas: float | None = None
 
     def __post_init__(self):
         unknown = set(self.families) - set(FAMILIES)
@@ -371,12 +386,14 @@ def _datasets(data):
     return list(data) if isinstance(data, (list, tuple)) else [data]
 
 
-def draw_groups(data, n_groups, key, spec=None):
+def draw_groups(data, n_groups, key, spec=None, star=True):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
     Each group draws a regularizer family, a pixel size (the Nyquist scale
-    over one of ``spec.oversample``), a field (``field_of_view(data)``
-    times one of ``spec.field_factors``, at most 1 on a uv lattice; beyond
+    over one of ``spec.oversample``), a field (the data's field,
+    [`image_field`][virgil.imaging.image_field] or ``spec.field_mas``,
+    times one of ``spec.field_factors``, at most 1 on a uv lattice and
+    never beyond ``field_of_view(data)``; beyond
     ``spec.max_npix`` pixels the pixels are coarsened to fit it, down to
     the Nyquist scale), a starting image and
     ``spec.n_weights`` log-uniform weights, one in each equal bin of the
@@ -394,6 +411,10 @@ def draw_groups(data, n_groups, key, spec=None):
         The random key.
     spec : EnsembleSpec, optional
         What to draw (default ``EnsembleSpec()``).
+    star : bool, optional
+        Whether the scene has an unresolved star (default), which the
+        field's envelope fit then allows for
+        ([`envelope_fwhm`][virgil.imaging.envelope_fwhm]).
 
     Returns
     -------
@@ -406,7 +427,14 @@ def draw_groups(data, n_groups, key, spec=None):
         int(jax.random.randint(key, (), 0, 2**31 - 1))
     )
     nyquist = nyquist_pixel_scale(data)
-    field = field_of_view(data)
+    ceiling = field_of_view(data, aperture_mas=spec.aperture_mas)
+    field = spec.field_mas
+    if field is None:
+        field = image_field(
+            data,
+            fwhm_mas=envelope_fwhm(data, star, spec.aperture_mas),
+            aperture_mas=spec.aperture_mas,
+        )
     n_data = sum(d.n_independent for d in _datasets(data))
     # On a uv lattice (AMI) a field beyond field_of_view aliases.
     lattice = any(d.uv_grid is not None for d in _datasets(data))
@@ -417,12 +445,13 @@ def draw_groups(data, n_groups, key, spec=None):
         factor = spec.field_factors[rng.integers(len(spec.field_factors))]
         if lattice:
             factor = min(factor, 1.0)
-        npix = int(onp.ceil(factor * field / scale))
+        size = min(factor * field, ceiling)
+        npix = int(onp.ceil(size / scale))
         if npix > spec.max_npix:
             # Keep the field and coarsen the pixels, but never beyond the
             # Nyquist scale: past that, crop the field instead.
             npix = spec.max_npix
-            scale = min(factor * field / npix, nyquist)
+            scale = min(size / npix, nyquist)
         start = spec.starts[rng.integers(len(spec.starts))]
         low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
         # Stratified: one log-uniform weight in each of n_weights equal bins.
@@ -442,7 +471,9 @@ def draw_groups(data, n_groups, key, spec=None):
     return draws
 
 
-def reference_starts(data, star=True, starts=("moments", "flat")):
+def reference_starts(
+    data, star=True, starts=("moments", "flat"), aperture_mas=None
+):
     """The starting images that each group resamples onto its own grid.
 
     Each is made once by [`starting_image`][virgil.imaging.starting_image],
@@ -450,19 +481,24 @@ def reference_starts(data, star=True, starts=("moments", "flat")):
     Gaussian, ``"dirty"`` the positive part of the dirty image, and
     ``"flat"`` a uniform image with the fitted flux.
 
+    aperture_mas : float, optional
+        The aperture, as for [`EnsembleSpec`][virgil.ensemble.EnsembleSpec].
+
     Returns
     -------
     dict
         Start name to an [`Image`][virgil.models.Image].
     """
     out = {}
-    moments = starting_image(data, star=star)
+    moments = starting_image(data, star=star, aperture_mas=aperture_mas)
     moments = moments.env if star else moments
     for name in starts:
         if name == "moments":
             out[name] = moments
         elif name == "dirty":
-            dirty = starting_image(data, star=star, start="dirty")
+            dirty = starting_image(
+                data, star=star, start="dirty", aperture_mas=aperture_mas
+            )
             out[name] = dirty.env if star else dirty
         elif name == "flat":
             ones = onp.ones(moments.log_brightness.shape)
@@ -838,8 +874,10 @@ def ensemble(data, n_groups, key, *, spec=None, star=True, **fit_options):
     Ensemble
     """
     spec = EnsembleSpec() if spec is None else spec
-    draws = draw_groups(data, n_groups, key, spec)
-    starts = reference_starts(data, star, sorted({d.start for d in draws}))
+    draws = draw_groups(data, n_groups, key, spec, star)
+    starts = reference_starts(
+        data, star, sorted({d.start for d in draws}), spec.aperture_mas
+    )
     groups = [
         run_group(data, d, star=star, starts=starts, **fit_options)
         for d in draws

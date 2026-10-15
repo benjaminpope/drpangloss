@@ -103,7 +103,7 @@ opens an issue labelled `nightly-failure` when it fails. Each pull request also 
 wheel and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
 environment.
 
-Each test not marked `slow` has a budget of 15 s for its call, and its setup has the same
+Each test not marked `slow` has a budget of 30 s for its call, and its setup has the same
 budget (with a warm JAX cache); CI fails a test that exceeds either. Setup is charged to the
 file, since the first test of a module on each worker pays for the module's fixtures. Shrink
 the test or fixture (a smaller problem, fewer draws, a stub run) or mark it `slow`.

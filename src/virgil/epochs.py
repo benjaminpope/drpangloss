@@ -237,6 +237,9 @@ class Epochs:
     def resolution_mas(self):
         """The finest resolution λ/B_max over the datasets (mas).
 
+        Only unflagged samples count (see
+        [`OIData.unflagged`][virgil.oidata.OIData.unflagged]).
+
         Fringe aliases of a companion's position are spaced by about this
         much, so starting orbits closer together than a fraction of it are
         one mode.
