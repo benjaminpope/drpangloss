@@ -8,6 +8,14 @@ folder, the checks and the stability policy, see
 
 ::: virgil.pipeline.star.StarPipeline
 
+::: virgil.pipeline.disk.DiskPipeline
+
+::: virgil.pipeline.disk.DiskModel
+
+::: virgil.pipeline.disk.models
+
+::: virgil.pipeline.disk.plot_summary
+
 ::: virgil.pipeline.load
 
 ::: virgil.pipeline.Result

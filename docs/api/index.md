@@ -31,7 +31,7 @@ The everyday names are importable from the top level, e.g.
 - [Metrics](metrics.md): image-recovery scores for reconstructions
 - [Ensemble](ensemble.md): randomized reconstruction ensembles, selected and averaged into a mean image with a per-pixel spread
 - [Coverage](coverage.md): synthetic uv coverage and noise for simulations
-- [Pipeline](pipeline.md): `BinaryPipeline` and `StarPipeline`, scriptable pipelines that write a run folder
+- [Pipeline](pipeline.md): `BinaryPipeline`, `StarPipeline` and `DiskPipeline`, scriptable pipelines that write a run folder
 - [Simulate](simulate.md): a scene observed with a template's sampling, and bias tests
 - [Plotting](plotting.md): figures
 - [Legacy](legacy.md): ImPlaneIA-derived OIFITS tools

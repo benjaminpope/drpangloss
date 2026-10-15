@@ -732,10 +732,12 @@ class Result:
 
     def grid(self):
         """Grid results: ``"axes"`` (usable as ``grid=``) plus one map per name."""
-        stage = "fit" if self.run["pipeline"] == "star" else "search"
+        stage = {"star": "fit", "disk": "geometry"}.get(
+            self.run["pipeline"], "search"
+        )
         path = self._stage_file("grids.h5", stage)
         out = {"axes": read_h5(path, "axes")}
-        for group in ("search", "limits", "scan"):
+        for group in ("search", "limits", "scan", "geometry"):
             # Each group is written by the stage of its name (the star's
             # scan by its fit); a group left by an unfinished stage is not
             # this run's.
@@ -762,8 +764,18 @@ class Result:
         )
 
     def _model_folder(self, name):
+        stage = "fit"
+        if self.run["pipeline"] == "disk":
+            # The disk pipeline's models come from three stages: the
+            # single-ring geometry fit, the candidates of the profile
+            # stage, and the preferred one chosen by compare.
+            stage = {
+                "geometry": "geometry",
+                None: "compare",
+                "best": "compare",
+            }.get(name, "profile")
         return self._stage_file(
-            "models/best" if name is None else f"models/{name}", "fit"
+            "models/best" if name is None else f"models/{name}", stage
         )
 
     @staticmethod

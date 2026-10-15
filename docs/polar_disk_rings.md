@@ -400,3 +400,42 @@ plt.show()
 ## Summary
 
 A non-parametric `PolarDisk` found the rings, the gap, the outer ring's lopsidedness and the planet from the same 630 numbers that a parametric fit of the true family used, without being told that there are three rings. The ring radii agree with the truth to within about a resolution element, the colour of the inner and outer rings agrees with the blackbody slopes, and the planet's position and flux agree with the parametric fit; the exception is the inner ring's colour, which is spoiled by the edge of the profile. The costs are visible too: the fit is a little worse on the quoted errors ($\chi^2/N$ of 1.20 against 1.03), the colour of the middle ring is poorly determined, a power law in wavelength only approximates a blackbody, and the inner edge of the Gaussian process needed to stay above the resolution. The Laplace log $Z$ is 63 nats higher for the parametric model, but the comparison is only indicative, since the Gaussian process's evidence holds its non-latent parameters at their MAP values, which favours it, while the parametric family contains the truth, which favours the other. For real data, the sensible use of the two is together: the Gaussian process to find the structure and propose a parametric family, and the parametric fit, with its evidence, to confirm and measure it. The Gaussian-process hyperparameters here were fixed; sampling them, with NUTS and the whitened latents, is the next step and is not done in this notebook.
+
+## As a pipeline
+
+Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving, and keeps the count of least BIC; `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only the choices made in this notebook: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 24 mas (the default is half the field of view, which is too small for the 15 mas ring), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.4, 1 and 2 half-fringes of the longest baseline, which includes the 1.5 mas used above. Neither run samples: `posterior=True` would run NUTS with the geometry released.
+
+The pipelines find the rings and the planet without being told how many there are or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. They report $\chi^2/N$ on the quoted errors as the first check of each run.
+
+```python
+from tempfile import mkdtemp
+
+from virgil.pipeline import DiskPipeline
+
+settings = dict(
+    r_out_mas=24.0,
+    star_temperature_k=6000.0,
+    wavel0_m=W0,
+    companion=True,
+    max_rings=4,
+    ell_halffringes=[0.4, 1.0, 2.0],
+    quicklook_execute=False,
+)
+rings_res = DiskPipeline(
+    data, "rings", output=f"{mkdtemp()}/rings_run", **settings
+).run()
+gp_res = DiskPipeline(
+    data, "gp", output=f"{mkdtemp()}/gp_run", **settings
+).run()
+
+print(rings_res.describe())
+print()
+print(gp_res.describe())
+```
+
+```python
+from virgil.pipeline.disk import plot_summary
+
+plot_summary(gp_res.model(), data, r_out_mas=24.0, r_in_mas=gp_res.summary["model"]["r_in_mas"])
+plt.show()
+```
