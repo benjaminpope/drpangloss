@@ -17,9 +17,11 @@ on:
   pull_request_review_comment:
     types: [created, deleted]
 
-concurrency:
-  group: review-response-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+# No concurrency group: a review with inline comments fires several events at
+# once, and a group makes GitHub cancel all but one of those runs. A cancelled
+# run is reported as a failed `label` check on the pull request. The job is
+# idempotent (it recomputes the label from the thread state), so overlapping
+# runs are harmless.
 
 jobs:
   label:

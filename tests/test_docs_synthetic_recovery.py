@@ -4,6 +4,7 @@ import sys
 
 import jax.numpy as np
 import numpy as onp
+import pytest
 
 from virgil.legacy import oifits_implaneia
 from virgil.models import BinaryModelCartesian
@@ -46,6 +47,7 @@ def test_synthetic_docs_builder_writes_closure_phases_in_degrees():
     assert onp.max(onp.abs(observed_cp)) > onp.max(onp.abs(cp_rad))
 
 
+@pytest.mark.slow
 def test_synthetic_docs_binary_recovery_within_two_sigma(tmp_path: Path):
     module = _load_synthetic_module()
 

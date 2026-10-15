@@ -1025,6 +1025,7 @@ def test_last_chunk_is_not_padded_unless_chunk_size_is_set(monkeypatch):
     assert auto.n_null == 5 and auto.n_injected == 3
 
 
+@pytest.mark.slow
 def test_remainder_chunk_matches_unchunked_run():
     # 70 > the default chunk of 64: a full chunk plus a remainder of 6.
     a = _recover(n_null=70, chunk_size=None)
