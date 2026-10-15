@@ -242,8 +242,9 @@ $\ln I_0$ in milliarcseconds, not the width of a feature. A squared-exponential
 bump with the same curvature as the default Matérn-3/2 kernel has width
 $\ell/\sqrt3$ (so $\ell = 1.5$ mas corresponds to a Gaussian $\sigma$ of about
 0.9 mas), and the prior's rms slope in $\ln I_0$ is $\sqrt3\,\sigma/\ell$ per
-mas, so a large `sigma` with a short `ell` is a very rough prior (many
-maxima). Visibilities cannot constrain structure finer than the half-fringe
+mas, so a large `sigma` with a short `ell` is a very rough prior (steep
+slopes; a short `ell` also gives many maxima, which `sigma` does not change).
+Visibilities cannot constrain structure finer than the half-fringe
 $\lambda/2B$ of the longest baseline, so below that scale, and where the data
 have no leverage (the inner edge, the outer tail), the posterior is the prior.
 A modest evidence difference between two `ell` values means the data do not
