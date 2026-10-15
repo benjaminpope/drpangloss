@@ -1077,6 +1077,47 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return int(np.asarray(self.u).size)
 
     @property
+    def unflagged(self):
+        """Which samples an observable uses, as a boolean array over the
+        samples (the shape of ``u``).
+
+        Flagged samples (and those that are not finite or have no positive
+        error) keep their ``u``, ``v`` and ``wavel``, but no observable uses
+        them. A sample is unflagged if its visibility is used, or it is a
+        leg of a closure phase that is used, or its absolute phase is used.
+        The resolution and the field of an image (``beam``,
+        ``nyquist_pixel_scale``, ``field_of_view``) come from these samples
+        only: a sample that measures nothing sets no resolution.
+
+        Projected data (kernel and DISCO observables, whose operators mix
+        the samples) cannot be flagged sample by sample, so all of their
+        samples count; so do data with no used observable at all.
+        """
+        n = int(onp.size(self.u))
+        if (
+            self.observable_kind != "split"
+            or self.vis_mat is not None
+            or self.phi_mat is not None
+            or self.uv_grid is not None
+        ):
+            return onp.ones(n, dtype=bool)
+        used = onp.zeros(n, dtype=bool)
+        if onp.size(self.vis) > 0:
+            if self.vis_index is None:
+                used[:] = True
+            else:
+                used[onp.asarray(self.vis_index)] = True
+        if self.cp_flag:
+            for leg in (self.i_cps1, self.i_cps2, self.i_cps3):
+                used[onp.asarray(leg)] = True
+        elif onp.size(self.phi) > 0:
+            if self.phi_index is None:
+                used[:] = True
+            else:
+                used[onp.asarray(self.phi_index)] = True
+        return used if used.any() else onp.ones(n, dtype=bool)
+
+    @property
     def has_phases(self):
         """Whether the data hold any phase observables. Visibility-only
         data (e.g. V² without closure phases) have an empty phase block."""

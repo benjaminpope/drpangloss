@@ -20,6 +20,7 @@ from virgil.imaging import (
     LCurve,
     _chi2,
     field_of_view,
+    image_field,
     nyquist_pixel_scale,
 )
 from virgil.metrics import score
@@ -270,9 +271,12 @@ def test_draws_span_each_range_and_keep_the_field():
         lambda d: d.uv_grid, DATA, None, is_leaf=lambda x: x is None
     )
     n_data = sparse.n_independent
-    field = field_of_view(sparse)
+    # Without visibility amplitudes to size it, the field is the
+    # interferometric one (here the 500 mas cap).
+    field = image_field(sparse)
+    assert field == field_of_view(sparse)
     nyquist = nyquist_pixel_scale(sparse)
-    spec = EnsembleSpec(field_factors=(4.0,), max_npix=32)
+    spec = EnsembleSpec(field_factors=(1.0,), max_npix=8)
     for d in draw_groups(sparse, 8, jax.random.PRNGKey(0), spec):
         # One weight in each equal bin of log w.
         low, high = onp.log(spec.weight_ranges[d.family]) + onp.log(n_data)
@@ -281,22 +285,23 @@ def test_draws_span_each_range_and_keep_the_field():
         assert sorted(bins) == list(range(spec.n_weights))
         # Too big for max_npix: the field is kept, the pixels coarsened,
         # but not beyond Nyquist.
-        assert d.npix == 32
-        assert onp.isclose(d.npix * d.pixel_scale_mas, 4.0 * field)
+        assert d.npix == 8
+        assert onp.isclose(d.npix * d.pixel_scale_mas, field)
         assert d.pixel_scale_mas <= nyquist
     # Even Nyquist pixels cannot cover it: the field is cropped instead.
-    spec = EnsembleSpec(field_factors=(4.0,), max_npix=16)
+    spec = EnsembleSpec(field_factors=(1.0,), max_npix=4)
     for d in draw_groups(sparse, 4, jax.random.PRNGKey(0), spec):
-        assert d.npix == 16
+        assert d.npix == 4
         assert onp.isclose(d.pixel_scale_mas, nyquist)
 
 
 def test_fields_are_capped_at_one_on_a_uv_lattice():
     assert DATA.uv_grid is not None
-    spec = EnsembleSpec(field_factors=(4.0,), max_npix=1024)
-    field = field_of_view(DATA)
+    # A factor of 4 on 100 mas would be 400 mas, within the 500 mas field
+    # of view; the lattice caps it at the 100 mas itself.
+    spec = EnsembleSpec(field_factors=(4.0,), field_mas=100.0, max_npix=1024)
     for d in draw_groups(DATA, 4, jax.random.PRNGKey(0), spec):
-        assert d.npix * d.pixel_scale_mas <= field + d.pixel_scale_mas
+        assert d.npix * d.pixel_scale_mas <= 100.0 + d.pixel_scale_mas
 
 
 @pytest.mark.parametrize("family", ["tsv", "tv", "maxent", "starlet"])

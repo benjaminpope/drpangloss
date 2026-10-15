@@ -114,7 +114,7 @@ see that repository's `PLAN.md` for the boundary.
 
 | Module | Contents |
 | --- | --- |
-| `oidata.py` | `OIData` (observables, flags, operators, residuals), `closure_phases`, `cp_indices` |
+| `oidata.py` | `OIData` (observables, flags, operators, residuals; `unflagged`, the samples an observable uses, which set every resolution and field), `closure_phases`, `cp_indices` |
 | `gains.py` | `GainModes`: calibration gains correlated across channels (and closure-phase offsets), marginalized analytically; used by `OIData.with_gains`/`with_closure_offsets` and `likelihood` |
 | `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals`; `colour` inverts `whiten` for the residual bootstrap (private) |
 | `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
@@ -124,7 +124,7 @@ see that repository's `PLAN.md` for the boundary.
 | `likelihood.py` | `whitened_residuals`, `build_model`, `loglike`, `model_loglike`, `joint_*`, `numpyro_model`, `chain_init_params` (numpyro `init_params`, one start per chain), `posterior_predictive_summary` |
 | `fitting.py` | `fit(model, priors, data, regularizers)`: MAP fits with `lm`, `lbfgs` or `adam`, float64 by default via `_precision` (sampling uses `likelihood.numpyro_model` with the same arguments), and `gauss_newton_mass`, the Gauss–Newton preconditioner |
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
-| `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
+| `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `image_field` (the data-driven field: k FWHMs from `second_moment_fwhm`, between an inner working angle and the interferometric field), `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `priors.py` | invariant priors that are not plain numpyro priors: `IsotropicInclination`, `IsotropicLatitude`, hierarchical (population) scales; imports nothing from virgil |
 | `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
