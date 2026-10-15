@@ -1,8 +1,8 @@
 # `PolarDisk`: radial profiles by quadrature
 
 A disk, ring or halo described by its radial profile $I(r)$, as one
-[component](composition.md) of a `System`. See [Radial profiles and
-PolarDisk](../../../polar_disk.md) for usage.
+[component](composition.md) of a `System`. See the [PolarDisk reference](../../../polar_disk.md) and the tutorial
+[A planet in a gap between rings](../../../polar_disk_rings.md).
 
 ::: virgil.models.PolarDisk
     options:
