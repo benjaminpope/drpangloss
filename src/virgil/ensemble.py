@@ -24,6 +24,13 @@ The work is split so that a cluster can run it in parallel:
 3. [`combine`][virgil.ensemble.combine] selects the members and averages
    them into an [`Ensemble`][virgil.ensemble.Ensemble].
 
+A group may instead use a Gaussian-process prior (family ``"gp"``):
+[`gp_members`][virgil.ensemble.gp_members] fits an
+[`evidence_grid`][virgil.ensemble.evidence_grid] over the process's
+amplitude and correlation length, and its fits within a few nats of the
+best are the group's members. [`combine`][virgil.ensemble.combine] takes
+both kinds, together or alone.
+
 [`ensemble`][virgil.ensemble.ensemble] runs all three in turn. On a
 cluster, run one group per array task (``run_group(data,
 draw_groups(data, n, key, spec)[task])``), save the
@@ -42,7 +49,8 @@ import jax
 import numpy as onp
 import numpyro.distributions as dist
 
-from .fitting import FitResult
+from .fields import GaussianField
+from .fitting import FitResult, fit
 from .imaging import (
     TSV,
     TV,
@@ -57,12 +65,13 @@ from .imaging import (
     image_field,
     image_priors,
     l_curve,
+    log_evidence,
     nyquist_pixel_scale,
     starting_image,
 )
 from ._precision import cast_tree, run_in
 from .metrics import align, resample
-from .models import Image, PointSource, System
+from .models import EllipticalGaussian, Image, PointSource, System
 from ._deprecate import external_stacklevel
 
 # The regularizer families, by the names used in EnsembleSpec.
@@ -100,7 +109,11 @@ class EnsembleSpec:
         ([`TV`][virgil.imaging.TV]), ``"tsv"``
         ([`TSV`][virgil.imaging.TSV]), ``"maxent"``
         ([`MaxEntropy`][virgil.imaging.MaxEntropy]) and ``"starlet"``
-        ([`StarletL1`][virgil.imaging.StarletL1]).
+        ([`StarletL1`][virgil.imaging.StarletL1]); or ``"gp"``, a
+        Gaussian-process prior ([`GaussianField`][virgil.fields.GaussianField])
+        whose amplitude and correlation length are chosen by the evidence
+        ([`gp_members`][virgil.ensemble.gp_members]), which needs no
+        weight range and no L-curve. Families mix freely in one ensemble.
     weight_ranges : dict
         For each family, the range ``(low, high)`` of the weight per data
         point (the weight divided by the total number of independent data).
@@ -178,6 +191,23 @@ class EnsembleSpec:
     min_kept : int
         [`combine`][virgil.ensemble.combine] warns if fewer members than
         this are kept.
+    gp_sigmas : tuple of float
+        Starting amplitudes ``σ`` of the Gaussian process's log-brightness
+        in the evidence grid.
+    gp_lengths : tuple of float
+        Starting correlation lengths, in units of the beam's minor axis.
+    gp_sigma_limits, gp_length_limits : tuple of float
+        Within these (the lengths in beam minor axes) the grid grows by
+        factors of 2 while its best point is on an edge.
+    gp_growths : int
+        At most this many growth steps.
+    gp_window_nats : float
+        A group's GP members are the grid's fits whose log evidence is
+        within this of the best's (0 keeps the best alone).
+    gp_axis_ratio : float or None
+        If an elliptical-Gaussian fit to the data has an axis ratio below
+        this, the grid also has anisotropic fields, correlated along the
+        fitted position angle. ``None`` keeps the grid isotropic.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
@@ -198,15 +228,22 @@ class EnsembleSpec:
     min_kept: int = 3
     field_mas: float | None = None
     aperture_mas: float | None = None
+    gp_sigmas: tuple = (1.0, 2.0, 4.0)
+    gp_lengths: tuple = (0.5, 1.0, 2.0)
+    gp_sigma_limits: tuple = (0.25, 16.0)
+    gp_length_limits: tuple = (0.125, 8.0)
+    gp_growths: int = 3
+    gp_window_nats: float = 2.0
+    gp_axis_ratio: float | None = 0.9
 
     def __post_init__(self):
-        unknown = set(self.families) - set(FAMILIES)
+        unknown = set(self.families) - set(FAMILIES) - {"gp"}
         if unknown:
             raise ValueError(
                 f"Unknown regularizer families {sorted(unknown)}; choose "
-                f"from {sorted(FAMILIES)}."
+                f"from {sorted(FAMILIES)}, or 'gp'."
             )
-        missing = set(self.families) - set(self.weight_ranges)
+        missing = set(self.families) - set(self.weight_ranges) - {"gp"}
         if missing:
             raise ValueError(f"No weight range for {sorted(missing)}.")
         if self.n_weights < 3:
@@ -225,7 +262,7 @@ class Draw:
     index : int
         Position of the group in the ensemble.
     family : str
-        The regularizer family.
+        The regularizer family, or ``"gp"``.
     npix : int
         Pixels on a side.
     pixel_scale_mas : float
@@ -233,7 +270,7 @@ class Draw:
     start : str
         The starting image.
     weights : tuple of float
-        The regularizer weights, largest first.
+        The regularizer weights, largest first (empty for ``"gp"``).
     """
 
     index: int
@@ -258,12 +295,21 @@ class Group:
     ----------
     draw : Draw
         The group's settings.
-    curve : LCurve
-        Its fits, one per weight, largest weight first.
+    curve : LCurve or None
+        Its fits, one per weight, largest weight first; ``None`` for a
+        Gaussian-process group.
+    gp : tuple of GPFit
+        For a Gaussian-process group
+        ([`gp_members`][virgil.ensemble.gp_members]), the fits it offers
+        as members.
+    grid : EvidenceGrid or None
+        For a Gaussian-process group, the evidence grid they come from.
     """
 
     draw: Draw
-    curve: LCurve
+    curve: LCurve | None
+    gp: tuple = ()
+    grid: object = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -282,9 +328,12 @@ class Member:
         Raw χ² per data point of each dataset (with the quoted errors).
     kept : bool
         Whether it is in the mean image.
+    gp : GPFit or None
+        For a Gaussian-process member, its hyperparameters and evidence
+        (``weight`` is then NaN).
     reason : str or None
         Why it was left out: ``"window"`` (outside its group's L-curve
-        window), ``"diverged"`` (a non-finite χ²: the fit failed), ``"chi2"``
+        window; a Gaussian-process group has none), ``"diverged"`` (a non-finite χ²: the fit failed), ``"chi2"``
         (a dataset fitted too badly), ``"outlier"``
         (total χ² far above the others) or ``"mean"`` (adding it made the
         mean fit a dataset worse). ``None`` if kept.
@@ -296,6 +345,7 @@ class Member:
     chi2_red: tuple
     kept: bool = False
     reason: str | None = None
+    gp: object = None
 
     @property
     def total_chi2_red(self):
@@ -359,7 +409,7 @@ class Ensemble:
         for group in self.groups:
             d = group.draw
             members = [m for m in self.members if m.draw.index == d.index]
-            corner = _corner(group.curve)
+            corner = None if group.curve is None else _corner(group.curve)
             lines.append(
                 f"{d.index:>5} {d.family:>8} {d.npix:>4} "
                 f"{d.pixel_scale_mas:>7.3g} {d.start:>8} "
@@ -453,10 +503,13 @@ def draw_groups(data, n_groups, key, spec=None, star=True):
             npix = spec.max_npix
             scale = min(size / npix, nyquist)
         start = spec.starts[rng.integers(len(spec.starts))]
-        low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
-        # Stratified: one log-uniform weight in each of n_weights equal bins.
-        edges = onp.linspace(low, high, spec.n_weights + 1)
-        weights = onp.exp(rng.uniform(edges[:-1], edges[1:]))
+        if family == "gp":
+            weights = onp.empty(0)  # the evidence chooses the hyperparameters
+        else:
+            low, high = onp.log(spec.weight_ranges[family]) + onp.log(n_data)
+            # Stratified: one log-uniform weight in each of n_weights bins.
+            edges = onp.linspace(low, high, spec.n_weights + 1)
+            weights = onp.exp(rng.uniform(edges[:-1], edges[1:]))
         draws.append(
             Draw(
                 index,
@@ -522,8 +575,11 @@ def _start_model(reference, draw, star):
     return System(star=PointSource(), env=image) if star else image
 
 
-def run_group(data, draw, *, star=True, starts=None, **fit_options):
+def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
     """Fit one group of an ensemble: an L-curve over its weights.
+
+    A group of family ``"gp"`` is instead an evidence grid
+    ([`gp_members`][virgil.ensemble.gp_members]).
 
     Parameters
     ----------
@@ -539,6 +595,8 @@ def run_group(data, draw, *, star=True, starts=None, **fit_options):
         From [`reference_starts`][virgil.ensemble.reference_starts];
         computed here if not given (pass it to avoid refitting the
         envelope for every group).
+    spec : EnsembleSpec, optional
+        Used only by a ``"gp"`` group, for its grid.
     **fit_options
         Passed to [`l_curve`][virgil.imaging.l_curve] and so to
         [`fit`][virgil.fitting.fit], e.g. ``method`` and ``max_steps``.
@@ -548,7 +606,16 @@ def run_group(data, draw, *, star=True, starts=None, **fit_options):
     Group
     """
     if starts is None or draw.start not in starts:
-        starts = reference_starts(data, star, (draw.start,))
+        starts = reference_starts(
+            data,
+            star,
+            (draw.start,),
+            None if spec is None else spec.aperture_mas,
+        )
+    if draw.family == "gp":
+        return gp_members(
+            data, draw, star=star, starts=starts, spec=spec, **fit_options
+        )
     model = _start_model(starts[draw.start], draw, star)
     path = "env" if star else None
     priors = image_priors(model)
@@ -570,6 +637,344 @@ def run_group(data, draw, *, star=True, starts=None, **fit_options):
     return Group(draw, curve)
 
 
+@dataclasses.dataclass(frozen=True)
+class GPFit:
+    """One Gaussian-process fit of an evidence grid.
+
+    Attributes
+    ----------
+    variant : str
+        ``"iso"`` or ``"aniso"``.
+    length_mas : float
+        Correlation length in mas (for ``"aniso"`` the geometric mean of
+        the two lengths).
+    sigma : float
+        Standard deviation of the log-brightness.
+    log_evidence : float
+        [`log_evidence`][virgil.imaging.log_evidence] of the fit.
+    result : FitResult
+        The fit.
+    """
+
+    variant: str
+    length_mas: float
+    sigma: float
+    log_evidence: float
+    result: FitResult
+
+
+@dataclasses.dataclass(frozen=True)
+class EvidenceGrid:
+    """The result of [`evidence_grid`][virgil.ensemble.evidence_grid].
+
+    Attributes
+    ----------
+    lengths_mas, sigmas : dict of tuple
+        For each variant (``"iso"``, and ``"aniso"`` if the data are
+        elongated), the grid's axes: correlation lengths in mas and
+        amplitudes, ascending.
+    log_evidence : dict of array
+        Per variant, the log evidence, with rows over ``lengths_mas`` and
+        columns over ``sigmas``.
+    fits : dict
+        ``(variant, length_mas, sigma)`` to the [`GPFit`][virgil.ensemble.GPFit].
+    best : GPFit
+        The fit of largest evidence.
+    interior : bool
+        Whether the best point is inside its grid's edges: on an edge the
+        optimum may lie beyond it, because the growth stopped at a limit.
+    axis_ratio, pa_deg : float or None
+        The elliptical-Gaussian fit's minor-to-major ratio and position
+        angle (``None`` if it was not made).
+    """
+
+    lengths_mas: dict
+    sigmas: dict
+    log_evidence: dict
+    fits: dict
+    best: GPFit
+    interior: bool
+    axis_ratio: float | None = None
+    pa_deg: float | None = None
+
+
+def _grow_grid(
+    evaluate, lengths, sigmas, length_limits, sigma_limits, growths
+):
+    """Evaluate ``evaluate(length, sigma)``, a log evidence, on the grid.
+
+    While the best point is on an edge that can move (within the limits),
+    add a row or column a factor of 2 beyond it, at most ``growths``
+    times. Returns the sorted axes and the values keyed by
+    ``(length, sigma)``.
+    """
+    ls, ss = sorted(lengths), sorted(sigmas)
+    values = {}
+
+    def fill():
+        for length in ls:
+            for sigma in ss:
+                if (length, sigma) not in values:
+                    values[length, sigma] = evaluate(length, sigma)
+
+    def value(key):
+        return values[key] if onp.isfinite(values[key]) else -onp.inf
+
+    fill()
+    for _ in range(growths):
+        length, sigma = max(values, key=value)
+        grew = False
+        if length == ls[0] and length / 2 >= length_limits[0]:
+            ls.insert(0, length / 2)
+            grew = True
+        elif length == ls[-1] and length * 2 <= length_limits[1]:
+            ls.append(length * 2)
+            grew = True
+        if sigma == ss[0] and sigma / 2 >= sigma_limits[0]:
+            ss.insert(0, sigma / 2)
+            grew = True
+        elif sigma == ss[-1] and sigma * 2 <= sigma_limits[1]:
+            ss.append(sigma * 2)
+            grew = True
+        if not grew:
+            break
+        fill()
+    return ls, ss, values
+
+
+def _elongation(data, star, field_mas):
+    """Axis ratio and position angle (deg) of an elliptical-Gaussian fit.
+
+    The fit (with an analytic star if ``star``) starts from four position
+    angles and keeps the best.
+    """
+    best = None
+    for pa0 in (0.0, 45.0, 90.0, 135.0):
+        env = EllipticalGaussian(0.3 * field_mas, 0.7, pa0, flux=0.1)
+        priors = {
+            "env.fwhm": dist.LogUniform(0.01, field_mas),
+            "env.ratio": dist.LogUniform(0.05, 1.0),
+            "env.pa": dist.Uniform(pa0 - 90.0, pa0 + 90.0),
+        }
+        if star:
+            model = System(star=PointSource(), env=env)
+            priors["env.flux"] = dist.LogUniform(1e-4, 1e3)
+        else:
+            model = System(env=EllipticalGaussian(0.3 * field_mas, 0.7, pa0))
+        result = fit(model, priors, data)
+        chi2 = float(sum(result.info["chi2"]))
+        if best is None or chi2 < best[0]:
+            best = (
+                chi2,
+                float(result.values["env.ratio"]),
+                float(result.values["env.pa"]) % 180.0,
+            )
+    return best[1], best[2]
+
+
+def _oriented(template, pa_deg, pixel_scale_mas):
+    """``template`` on a grid whose "up" axis points at ``pa_deg``.
+
+    The rotation's sign is chosen by comparing the sky rendering of an
+    Image with ``rotation_deg=pa_deg`` against the unrotated template.
+    """
+    from scipy import ndimage
+
+    n = template.shape[0]
+    target = template / template.sum()
+    best = None
+    for sign in (1.0, -1.0):
+        rotated = (
+            onp.clip(
+                ndimage.rotate(
+                    template, sign * pa_deg, reshape=False, order=1
+                ),
+                0.0,
+                None,
+            )
+            + 1e-6 * template.max()
+        )
+        sky = onp.asarray(
+            Image.from_brightness(
+                rotated, pixel_scale_mas, rotation_deg=pa_deg
+            ).render(n, n * pixel_scale_mas)
+        )
+        corr = float(onp.sum((sky - sky.mean()) * (target - target.mean())))
+        if best is None or corr > best[0]:
+            best = (corr, rotated)
+    return best[1]
+
+
+def evidence_grid(
+    data, draw, *, star=True, starts=None, spec=None, **fit_options
+):
+    """Fit Gaussian-process images over a grid of amplitude and length.
+
+    Each point is a MAP fit of an image whose log-brightness is a
+    [`GaussianField`][virgil.fields.GaussianField] of amplitude ``σ`` and
+    correlation length ``ℓ`` about the group's starting image, scored by
+    [`log_evidence`][virgil.imaging.log_evidence]. The grid starts at
+    ``spec.gp_sigmas`` by ``spec.gp_lengths`` (in beam minor axes) and
+    grows by factors of 2 while its best point is on an edge that can
+    move. Fits are warm-started from the previous one. If an elliptical
+    Gaussian fits the data with an axis ratio below ``spec.gp_axis_ratio``,
+    a second, anisotropic grid correlates the field along its position
+    angle, over ``ℓ/√r`` along and ``ℓ√r`` across (``r`` the ratio).
+
+    The evidence assumes correct error bars; check them with
+    [`error_scale`][virgil.imaging.error_scale].
+
+    Parameters
+    ----------
+    data : OIData or sequence of OIData
+        The data.
+    draw : Draw
+        Geometry and starting image, as from
+        [`draw_groups`][virgil.ensemble.draw_groups].
+    star : bool, optional
+        As for [`run_group`][virgil.ensemble.run_group].
+    starts : dict, optional
+        From [`reference_starts`][virgil.ensemble.reference_starts].
+    spec : EnsembleSpec, optional
+        The grid's settings (default ``EnsembleSpec()``).
+    **fit_options
+        Passed to [`fit`][virgil.fitting.fit].
+
+    Returns
+    -------
+    EvidenceGrid
+    """
+    spec = EnsembleSpec() if spec is None else spec
+    if starts is None or draw.start not in starts:
+        starts = reference_starts(data, star, (draw.start,), spec.aperture_mas)
+    reference = starts[draw.start]
+    n, scale = draw.npix, draw.pixel_scale_mas
+    template = onp.maximum(
+        onp.asarray(resample(reference, None, n, scale)), 0.0
+    )
+    template = template + 1e-3 * max(template.max(), 1e-30)
+    flux = reference.flux
+    minor = beam(data).minor_mas
+    lengths0 = [f * minor for f in spec.gp_lengths]
+    length_limits = [f * minor for f in spec.gp_length_limits]
+
+    def scene(field, rotation):
+        env = Image(field, scale, flux=flux, rotation_deg=rotation)
+        return System(star=PointSource(), env=env) if star else env
+
+    extra = {"env.flux": dist.LogUniform(1e-4, 1e3)} if star else {}
+    others = () if star else (Centroid(0.1 * minor),)
+
+    variants = {"iso": (template, 0.0, lambda length: length)}
+    ratio = pa = None
+    if spec.gp_axis_ratio is not None:
+        ratio, pa = _elongation(data, star, n * scale)
+        if ratio < spec.gp_axis_ratio:
+            root = onp.sqrt(ratio)
+            variants["aniso"] = (
+                _oriented(template, pa, scale),
+                pa,
+                lambda length: (length / root, length * root),
+            )
+
+    fits, log_z, axes = {}, {}, {}
+    for name, (mean, rotation, lens) in variants.items():
+        previous = None
+
+        def evaluate(
+            length, sigma, name=name, mean=mean, rotation=rotation, lens=lens
+        ):
+            nonlocal previous
+            field = GaussianField(
+                onp.zeros((n, n)), sigma, lens(length), mean=mean
+            )
+            model = scene(field, rotation)
+            result = fit(
+                model,
+                image_priors(model) | extra,
+                data,
+                others,
+                init=None if previous is None else previous.values,
+                **fit_options,
+            )
+            previous = result
+            # The Centroid penalty of a star-free fit is not in the evidence.
+            z = float(log_evidence(result, data, "env" if star else None))
+            fits[name, length, sigma] = GPFit(name, length, sigma, z, result)
+            return z
+
+        ls, ss, values = _grow_grid(
+            evaluate,
+            lengths0,
+            spec.gp_sigmas,
+            length_limits,
+            spec.gp_sigma_limits,
+            spec.gp_growths,
+        )
+        axes[name] = (tuple(ls), tuple(ss))
+        log_z[name] = onp.array(
+            [[values[length, sigma] for sigma in ss] for length in ls]
+        )
+    finite = {k: v for k, v in fits.items() if onp.isfinite(v.log_evidence)}
+    if not finite:
+        raise ValueError(
+            "Every Gaussian-process fit had a non-finite evidence."
+        )
+    best = max(finite.values(), key=lambda f: f.log_evidence)
+    ls, ss = axes[best.variant]
+    i, j = ls.index(best.length_mas), ss.index(best.sigma)
+    interior = 0 < i < len(ls) - 1 and 0 < j < len(ss) - 1
+    return EvidenceGrid(
+        {k: a[0] for k, a in axes.items()},
+        {k: a[1] for k, a in axes.items()},
+        log_z,
+        fits,
+        best,
+        bool(interior),
+        ratio,
+        pa,
+    )
+
+
+def gp_members(
+    data, draw, *, star=True, starts=None, spec=None, **fit_options
+):
+    """Fit one Gaussian-process group of an ensemble.
+
+    The group's members are the fits of its
+    [`evidence_grid`][virgil.ensemble.evidence_grid] whose log evidence is
+    within ``spec.gp_window_nats`` of the best (the posterior over
+    hyperparameters, truncated), so that [`combine`][virgil.ensemble.combine]
+    averages over the amplitude and length the data leave open. There is
+    no L-curve, and so no window of weights.
+
+    Parameters
+    ----------
+    data, draw, star, starts, spec, **fit_options
+        As for [`evidence_grid`][virgil.ensemble.evidence_grid].
+
+    Returns
+    -------
+    Group
+        With ``curve=None``, ``gp`` the members and ``grid`` the grid.
+    """
+    spec = EnsembleSpec() if spec is None else spec
+    grid = evidence_grid(
+        data, draw, star=star, starts=starts, spec=spec, **fit_options
+    )
+    top = grid.best.log_evidence
+    chosen = sorted(
+        (
+            f
+            for f in grid.fits.values()
+            if onp.isfinite(f.log_evidence)
+            and f.log_evidence >= top - spec.gp_window_nats
+        ),
+        key=lambda f: -f.log_evidence,
+    )
+    return Group(draw, None, tuple(chosen), grid)
+
+
 def _corner(curve):
     try:
         return curve.corner()
@@ -577,13 +982,28 @@ def _corner(curve):
         return None
 
 
+def _on_common_grid(image, npix, scale):
+    """The image's pixels on the common grid, flux conserved.
+
+    A rotated image (an anisotropic Gaussian process) is rendered straight
+    onto the common grid, so that its corners are not cropped by a rotation
+    within its own frame; others are resampled.
+    """
+    if float(image.rotation_deg) == 0.0:
+        return onp.asarray(
+            resample(image, image.pixel_scale_mas, npix, scale), dtype=float
+        )
+    sky = onp.asarray(image.render(npix, npix * scale), dtype=float)
+    return sky / sky.sum() * float(onp.sum(image.brightness))
+
+
 def _parts(model, star):
-    """(unit-sum image pixels, the image's fraction of the total flux)."""
+    """(the member's image, its fraction of the total flux)."""
     if not star:
-        return onp.asarray(model.brightness, dtype=float), 1.0
+        return model, 1.0
     env, fs = model.env, float(model.star.flux)
     fe = float(env.flux)
-    return onp.asarray(env.brightness, dtype=float), fe / (fs + fe)
+    return env, fe / (fs + fe)
 
 
 def _mean_model(pixels, fraction, scale, star):
@@ -637,9 +1057,12 @@ def combine(data, groups, *, spec=None, star=True):
 
     The selection follows MYTHRA (Drevon et al. 2026):
 
-    1. In each group, keep the weights from ``spec.window_dex`` below the
-       L-curve's corner up to the corner: the weights just before the
-       turnover.
+    1. In each L-curve group, keep the weights from ``spec.window_dex``
+       below the L-curve's corner up to the corner: the weights just before
+       the turnover. A Gaussian-process group
+       ([`gp_members`][virgil.ensemble.gp_members]) has no L-curve and
+       skips this step; its members are already the evidence-selected fits.
+       The steps below are the same for both kinds, which may be mixed.
     2. Drop members whose fit diverged (a non-finite χ²), then keep
        members whose raw χ² per data point is below
        ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
@@ -682,16 +1105,31 @@ def combine(data, groups, *, spec=None, star=True):
     datasets = _datasets(data)
     groups = sorted(groups, key=lambda g: g.draw.index)
 
+    def chi2_of(result):
+        info = result.info
+        return tuple(
+            float(c) / n
+            for c, n in zip(info["chi2"][: len(datasets)], info["ndata"])
+        )
+
     members = []
     for group in groups:
+        if group.curve is None:
+            # A Gaussian-process group has no L-curve and so no window.
+            for fit_ in group.gp:
+                members.append(
+                    Member(
+                        group.draw,
+                        float("nan"),
+                        fit_.result,
+                        chi2_of(fit_.result),
+                        gp=fit_,
+                    )
+                )
+            continue
         curve = group.curve
         corner = _corner(curve)
         for weight, result in zip(curve.weights, curve.results):
-            info = result.info
-            chi2_red = tuple(
-                float(c) / n
-                for c, n in zip(info["chi2"][: len(datasets)], info["ndata"])
-            )
             inside = corner is None or (
                 corner * 10**-spec.window_dex * (1 - 1e-9)
                 <= float(weight)
@@ -702,7 +1140,7 @@ def combine(data, groups, *, spec=None, star=True):
                     group.draw,
                     float(weight),
                     result,
-                    chi2_red,
+                    chi2_of(result),
                     reason=None if inside else "window",
                 )
             )
@@ -753,11 +1191,8 @@ def combine(data, groups, *, spec=None, star=True):
     npix = int(onp.ceil(field / scale - 1e-6))
     pixels, fractions = [], []
     for i in live:
-        draw = members[i].draw
         image, fraction = _parts(members[i].result.model, star)
-        pixels.append(
-            onp.asarray(resample(image, draw.pixel_scale_mas, npix, scale))
-        )
+        pixels.append(_on_common_grid(image, npix, scale))
         fractions.append(fraction)
     shifts = [(0.0, 0.0)] * len(live)
     if not star:
@@ -879,7 +1314,7 @@ def ensemble(data, n_groups, key, *, spec=None, star=True, **fit_options):
         data, star, sorted({d.start for d in draws}), spec.aperture_mas
     )
     groups = [
-        run_group(data, d, star=star, starts=starts, **fit_options)
+        run_group(data, d, star=star, starts=starts, spec=spec, **fit_options)
         for d in draws
     ]
     return combine(data, groups, spec=spec, star=star)

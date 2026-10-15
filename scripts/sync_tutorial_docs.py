@@ -63,6 +63,11 @@ MAPPINGS = {
 }
 
 
+# A code cell tagged "hide-input" is folded in the published page, under this
+# collapsed admonition (pymdownx.details), with its outputs left visible.
+HIDE_INPUT_SUMMARY = '??? note "Code"'
+
+
 def _to_md_source(cell_source: list[str] | str) -> str:
     if isinstance(cell_source, list):
         return "".join(cell_source).rstrip()
@@ -126,7 +131,8 @@ def render_notebook_markdown(
         cell_type = cell.get("cell_type")
         # Cells tagged "remove-cell" still run in the notebook (so their
         # asserts guard it) but are left out of the published page.
-        if "remove-cell" in cell.get("metadata", {}).get("tags", []):
+        tags = cell.get("metadata", {}).get("tags", [])
+        if "remove-cell" in tags:
             continue
         source = _to_md_source(cell.get("source", []))
         if not source.strip():
@@ -136,9 +142,15 @@ def render_notebook_markdown(
             lines.append(source.strip())
             lines.append("")
         elif cell_type == "code":
-            lines.append("```python")
-            lines.append(source)
-            lines.append("```")
+            fenced = ["```python", *source.split("\n"), "```"]
+            if "hide-input" in tags:
+                # A collapsed block: the long code is one click away and the
+                # outputs below stay visible.
+                lines.append(HIDE_INPUT_SUMMARY)
+                lines.append("")
+                lines.extend(f"    {line}" if line else "" for line in fenced)
+            else:
+                lines.extend(fenced)
             lines.append("")
 
             for output_index, output in enumerate(
