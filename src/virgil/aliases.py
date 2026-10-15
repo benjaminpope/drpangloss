@@ -49,7 +49,8 @@ from ._deprecate import external_stacklevel
 from ._precision import cast_tree, in_float64, run_in
 from ._utils import clean_json
 from .detection import _fingerprint
-from .epochs import EpochPositions, _Surface
+from ._geometry import fringe_scales
+from .epochs import EpochPositions, _Surface, estimate_primary_diameter
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
@@ -63,6 +64,7 @@ __all__ = [
     "UNRECORDED",
     "alias_bands",
     "fit_orbit_aliases",
+    "period_window",
     "position_profile",
     "spectral_window",
 ]
@@ -92,6 +94,27 @@ _N_FLUX = 4  # fluxes tried for each position-level candidate
 # ``primary_diam`` and ``vis_amp`` were saved). It is not None, which means
 # "point primary" or "no V² amplitude": the accessors refuse to guess.
 UNRECORDED = "unrecorded"
+# The label swap (problem 8): two modes of a band are the stars' labels
+# swapped when one track is the point reflection of the other. The labels are
+# *free* when the reflected mode's evidence is within this many nats of the
+# best mode's: the data cannot tell the stars apart. 3 nats is odds of 1 to 20
+# (Δχ² ≈ 6): a twin is degenerate to well within it (the two modes have equal
+# evidence up to the Laplace error), a pair with a real flux contrast is
+# separated by far more. The evidences are untempered until plan phase 1d,
+# which overstates differences, so this errs towards "not free".
+LABELS_FREE_NATS = 3.0
+# Where a period is "at the upper bound" of the window (period window, problem
+# 5): the best period within this fraction of ``p_range[1]`` (a likelihood
+# that is flat towards long periods, as for a short arc, is maximized at the
+# edge).
+_PERIOD_BOUND_FRACTION = 0.9
+# Default per-epoch V² amplitude range (problem 13): a contrast loss from
+# seeing or calibration; above 1 only for a calibration that overshoots.
+_VIS_AMP_DEFAULT = (0.5, 1.2)
+# Where a fitted diameter may reach with ``primary_diam="auto"`` (problem
+# 10): the lower bound is effectively 0 (1e-3 mas changes V² by < 1e-9), so a
+# primary that turns out unresolved in the orbit fit is a point.
+_DIAM_RANGE_AUTO = (1e-3, 5.0)
 _ELEMENTS = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
 
 
@@ -163,6 +186,96 @@ def alias_bands(times, p_range):
         if hi > lo:
             bands.append(AliasBand(n, lo, hi))
     return bands
+
+
+def period_window(
+    times,
+    field,
+    night_length,
+    *,
+    resolution,
+    motion_fraction=0.5,
+    span_factor=4.0,
+):
+    """The periods worth searching, from the data alone: ``(p_min, p_max)``.
+
+    Solved problem 5 (the period window): a window centred on a published
+    period leaked the answer into the fit, and a fixed window (say 1 to 100
+    d) is wrong for most data sets. This one never uses published
+    information.
+
+    **Lower end.** Each night is modelled as a static snapshot (the
+    per-night seeds of [`epoch_positions`][virgil.epochs.epoch_positions]),
+    which is valid while the companion moves by less than a fraction of the
+    resolution during the night. On a circular orbit of radius at most
+    ``field`` the companion moves ``2π field night_length / P``, so
+    ``p_min = 2π field night_length / (motion_fraction resolution)``, and at
+    least ``night_length`` (a period shorter than the night is not a
+    snapshot at all).
+
+    **Upper end.** ``p_max = span_factor × T`` with ``T`` the span from the
+    first to the last epoch. A longer period is not constrained by the data:
+    less than a quarter of an orbit is seen, and a fit that ends at this
+    bound is a short arc ([`AliasResult.period_bound`][virgil.aliases.AliasResult]).
+
+    Parameters
+    ----------
+    times : array-like
+        The epochs' times (days).
+    field : float
+        The largest separation (mas) the companion can have: the semimajor
+        axis bound. [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]
+        uses the largest separation of the unflagged night positions when
+        it has them, else ``a_range[1]``.
+    night_length : float
+        The longest span (days) of observations within one night.
+    resolution : float
+        The finest resolution λ/B_max (mas).
+    motion_fraction : float, optional
+        The fraction of ``resolution`` the companion may move during a
+        night (default 0.5).
+    span_factor : float, optional
+        The upper end in units of the span (default 4).
+
+    Returns
+    -------
+    (float, float)
+        ``(p_min, p_max)`` in days.
+
+    Raises
+    ------
+    ValueError
+        If the epochs span no time, an input is not positive, or the window
+        is empty (the night is too long for the span).
+    """
+    times = onp.asarray(times, float)
+    span = float(onp.ptp(times))
+    if not (
+        span > 0
+        and field > 0
+        and resolution > 0
+        and motion_fraction > 0
+        and span_factor > 0
+        and night_length >= 0
+    ):
+        raise ValueError(
+            "period_window needs epochs spanning a positive time and "
+            "positive field, resolution, motion_fraction and span_factor."
+        )
+    p_min = max(
+        2 * math.pi * field * night_length / (motion_fraction * resolution),
+        night_length,
+    )
+    p_max = span_factor * span
+    if p_min <= 0:  # one instant per night: only the span limits the window
+        p_min = span / 1000.0
+    if not p_min < p_max:
+        raise ValueError(
+            f"The period window is empty: p_min = {p_min:.3g} d (a night of "
+            f"{night_length:.3g} d at a field of {field:.3g} mas) is not "
+            f"below p_max = {p_max:.3g} d. Pass p_range."
+        )
+    return float(p_min), float(p_max)
 
 
 def position_profile(
@@ -447,6 +560,7 @@ class _Settings:
     sign_free: bool = False
     primary_diam: float | str | None = None  # None, mas, or "fit"
     diam_range: tuple = (0.05, 5.0)  # mas: log-uniform prior of a fitted one
+    diam_seed: float = 0.5  # mas: where a fitted diameter starts
     vis_amp: tuple | None = None  # per-epoch V² amplitude range, or None
     flip_flux: bool = True
     init: tuple | None = (
@@ -770,7 +884,7 @@ def _candidates(settings, band, bounds, rng, orbits):
     χ²), ...]`` or None) at several fluxes and both senses of motion, then
     ``n_random`` random orbits."""
     s = settings
-    diam = _DIAM_SEED if s.fit_diam else None
+    diam = s.diam_seed if s.fit_diam else None
     pool = [
         x
         for orbit, _ in orbits or ()
@@ -803,9 +917,6 @@ def _candidates(settings, band, bounds, rng, orbits):
     return onp.asarray(pool)
 
 
-_DIAM_SEED = 0.5  # mas: where a fitted diameter starts
-
-
 def _init_orbit(settings):
     """The warm start's ``(KeplerOrbit, flux)``, or None."""
     if settings.init is None:
@@ -829,7 +940,7 @@ def _init_starts(settings, band, bounds):
     start = _init_orbit(settings)
     if start is None:
         return []
-    diam = _DIAM_SEED if settings.fit_diam else None
+    diam = settings.diam_seed if settings.fit_diam else None
     return [_start_vector(*start, settings.t_ref, band, bounds, diam)]
 
 
@@ -1074,6 +1185,36 @@ def _is_flipped(result, flips, settings, times):
     )
 
 
+def _labels_free(result, settings, times, nats=LABELS_FREE_NATS):
+    """Whether a mode whose track is the point reflection of the best
+    mode's has an evidence within ``nats`` of it.
+
+    Label swap, solved problem 8 (AL Dor, twins): swapping the stars'
+    labels reflects the companion's sky track through the primary
+    (ω + 180°), and for near-equal fluxes it predicts the same closure
+    phases and V², so the data cannot say which star is which. Comparing
+    such a fit with a published orbit is then meaningful only up to the
+    reflection. The modes are the distinct fits of the band (``sign_free``
+    starts and the flux flip put both labelings in the pool), so the test
+    is whether the best mode has a reflected partner among them.
+    """
+    live = [m for m in result.modes if onp.isfinite(m["log_z"])]
+    if len(live) < 2:
+        return False
+    live.sort(key=lambda m: -m["log_z"])
+    best = _track(onp.array(live[0]["x"]), settings.t_ref, times)
+    return any(
+        m["log_z"] >= live[0]["log_z"] - nats
+        and onp.max(
+            onp.hypot(
+                *(best + _track(onp.array(m["x"]), settings.t_ref, times)).T
+            )
+        )
+        <= settings.min_distance_mas
+        for m in live[1:]
+    )
+
+
 def _track(x, t_ref, times):
     orbit, _ = _elements(np.asarray(x), t_ref)
     dra, ddec, _ = orbit.relative(np.asarray(times))
@@ -1099,6 +1240,9 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, bounds, pool, times, forced
     )
     flips = []
+    # Flux flip (problem 9): a companion brighter than the primary has a
+    # flux ratio above the prior's top, so a fit pinned there is refit with
+    # the stars' labels swapped (default on).
     if settings.flip_flux and _flip_is_relabelling(problem, settings):
         modes_xy, flips, n_flip_failed = _flip_modes(
             problem, settings, bounds, modes_xy, times
@@ -1111,6 +1255,7 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, band, modes, z_lap, z_is, n_failed
     )
     result.flipped = _is_flipped(result, flips, settings, times)
+    result.labels_free = _labels_free(result, settings, times)
     if result.flipped:
         _LOG.info(
             "band N=%d: the best mode has the stars' labels swapped "
@@ -1243,6 +1388,12 @@ class AliasBandResult:
     vis_amp : tuple or None
         The ``(lo, hi)`` range of the per-epoch V² amplitude if it was
         fitted (the amplitudes themselves are in ``epochs``), else None.
+    flipped : bool
+        The best mode has the stars' labels swapped (flux flip).
+    labels_free : bool
+        The best mode has a point-reflected partner (the stars' labels
+        swapped) whose evidence is within ``LABELS_FREE_NATS`` of its own:
+        the data do not say which star is which.
 
     Both are [`UNRECORDED`][virgil.aliases.UNRECORDED] on a band loaded
     from a file that did not save them; the accessors then raise unless
@@ -1268,6 +1419,7 @@ class AliasBandResult:
         default_factory=list
     )  # per-epoch raw χ²/ν and scales
     flipped: bool = False  # best mode has the stars' labels swapped
+    labels_free: bool = False  # a label-swapped mode has comparable evidence
     error: str = ""  # the exception, if the band failed (flag ``band-failed``)
     n_starts_failed: int = (
         0  # optimizer starts that raised (``starts-failed``)
@@ -1540,6 +1692,17 @@ class AliasResult:
         The primary of the fit's scene, as ``fit_orbit_aliases`` took it.
     vis_amp : tuple or None
         The range of the per-epoch V² amplitude, if it was fitted.
+    p_range : tuple of float or None
+        The period window (days) the bands tile: the argument, or
+        [`period_window`][virgil.aliases.period_window]'s.
+    period_bound : bool
+        The best period is at the upper end of ``p_range``: P is
+        unconstrained (a short arc).
+    primary_fit : dict or None
+        The ``primary_diam="auto"`` estimate: ``diam``, ``sigma``,
+        ``delta_nats`` and ``resolved`` (see
+        [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter]);
+        None otherwise.
     unseeded : tuple of dict
         The nights that were flagged by
         [`epoch_positions`][virgil.epochs.epoch_positions] and so seeded
@@ -1569,6 +1732,9 @@ class AliasResult:
     primary_diam: float | str | None = None
     vis_amp: tuple | None = None
     unseeded: tuple = ()
+    p_range: tuple | None = None
+    period_bound: bool = False
+    primary_fit: dict | None = None
 
     def __post_init__(self):
         for b in self.bands:
@@ -1583,6 +1749,15 @@ class AliasResult:
     def best(self):
         """The band with the highest evidence."""
         return self.bands[0]
+
+    @property
+    def labels_free(self):
+        """Whether the stars' labels are not determined by the data: in the
+        best band, a mode that is the point reflection of the best mode
+        has an evidence within ``LABELS_FREE_NATS`` (3 nats) of it. A
+        comparison with another orbit may then accept the reflection
+        (ω + 180°, Ω unchanged)."""
+        return bool(self.best.labels_free)
 
     def table(self):
         """One row per band: raw χ²/ν, error scales (``scales`` flat over
@@ -1608,6 +1783,7 @@ class AliasResult:
                 flagged=b.flagged,
                 flags=b.flags,
                 n_modes=len(b.modes),
+                labels_free=b.labels_free,
             )
             for b in self.bands
         ]
@@ -1637,6 +1813,9 @@ class AliasResult:
             primary_diam=self.primary_diam,
             vis_amp=self.vis_amp,
             unseeded=list(self.unseeded),
+            p_range=self.p_range,
+            period_bound=self.period_bound,
+            primary_fit=self.primary_fit,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -1746,6 +1925,9 @@ class AliasResult:
                 for n, s in p["samples"].items()
             },
             unseeded=tuple(p.get("unseeded", ())),
+            p_range=None if p.get("p_range") is None else tuple(p["p_range"]),
+            period_bound=bool(p.get("period_bound", False)),
+            primary_fit=p.get("primary_fit"),
             **settings,
         )
 
@@ -1947,6 +2129,8 @@ def _check_seed_diameter(positions, primary_diam):
         return
     seed = positions.primary_diam or None
     engine = primary_diam or None
+    if engine == "fit" and seed is not None:
+        return  # a fitted diameter starts from the seeds' (problem 10)
     if seed != engine:
         warnings.warn(
             f"The positions were fitted with primary_diam={seed!r} but "
@@ -1956,6 +2140,70 @@ def _check_seed_diameter(positions, primary_diam):
             UserWarning,
             stacklevel=external_stacklevel(),
         )
+
+
+def _default_vis_amp(data):
+    """``_VIS_AMP_DEFAULT`` when every dataset has squared visibilities as
+    its visibility channel (what ``vis_amp`` needs), else None."""
+    ok = all(d.vis_mode == "v2" and d.observable_kind == "split" for d in data)
+    return _VIS_AMP_DEFAULT if ok else None
+
+
+def _auto_primary(data, positions):
+    """``primary_diam="auto"``: ``(primary_diam, positions, estimate)``.
+
+    A cheap first pass fits a shared uniform-disc diameter to the
+    per-night positions
+    ([`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter]).
+    If the data resolve the primary the engine fits the diameter
+    (``"fit"``) and the seeds are the positions re-refined with it, so that
+    seeds and engine share one primary; otherwise it is a point. Without
+    ``EpochPositions`` there is nothing to estimate from: a point primary.
+    """
+    if not isinstance(positions, EpochPositions):
+        _LOG.info(
+            "primary_diam='auto' needs EpochPositions to estimate a "
+            "diameter: using a point primary."
+        )
+        return None, positions, None
+    estimate = estimate_primary_diameter(data, positions)
+    _LOG.info(
+        "primary_diam='auto': %s (diameter %.3g mas, +%.1f nats over a "
+        "point primary).",
+        "resolved" if estimate.resolved else "not resolved",
+        estimate.diam,
+        estimate.delta_nats,
+    )
+    return (
+        "fit" if estimate.resolved else None,
+        estimate.positions,
+        estimate,
+    )
+
+
+def _primary_fit_record(estimate):
+    """The JSON-ready summary of a ``PrimaryDiameter`` (or None)."""
+    if estimate is None:
+        return None
+    return dict(
+        diam=float(estimate.diam),
+        sigma=float(estimate.sigma),
+        delta_nats=float(estimate.delta_nats),
+        resolved=bool(estimate.resolved),
+    )
+
+
+def _field_mas(positions, a_range):
+    """The largest separation (mas) the companion is seen at: the largest
+    of the unflagged ``EpochPositions`` (all if every night is flagged),
+    at most ``a_range[1]``; ``a_range[1]`` without positions."""
+    if not isinstance(positions, EpochPositions):
+        return float(a_range[1])
+    sep = onp.hypot(positions.dra, positions.ddec)
+    keep = ~positions.flagged
+    sep = sep[keep] if keep.any() else sep
+    top = float(onp.max(sep)) if sep.size else float(a_range[1])
+    return float(min(max(top, 1e-3), a_range[1]))
 
 
 def _resample(results, store, t_ref, n_samples, p_min, seed):
@@ -2009,7 +2257,7 @@ def _flatten_init(init, t_ref):
 @in_float64
 def fit_orbit_aliases(
     data,
-    p_range,
+    p_range=None,
     *,
     positions=None,
     times=None,
@@ -2023,7 +2271,7 @@ def fit_orbit_aliases(
     n_random=None,
     k=9.0,
     eccs=None,
-    sign_free=False,
+    sign_free=True,
     min_distance_mas=0.5,
     max_steps=200,
     n_is=2000,
@@ -2034,9 +2282,9 @@ def fit_orbit_aliases(
     seed=0,
     checkpoint_dir=None,
     on_band=None,
-    primary_diam=None,
-    diam_range=(0.05, 5.0),
-    vis_amp=None,
+    primary_diam="auto",
+    diam_range=None,
+    vis_amp=True,
     flip_flux=True,
     init=None,
     skip_flagged=True,
@@ -2049,8 +2297,15 @@ def fit_orbit_aliases(
         One dataset per epoch, with per-exposure times. The scene is a
         primary and a point companion on a Keplerian orbit
         ([`OrbitalBinary`][virgil.models.OrbitalBinary]).
-    p_range : (float, float)
+    p_range : (float, float), optional
         The shortest and longest period (days): the log-uniform prior on P.
+        By default (None) it is computed from the data by
+        [`period_window`][virgil.aliases.period_window]: the lower end is
+        where a static snapshot within a night stays valid (from the
+        largest separation seen, the night length and the resolution), the
+        upper end 4 times the span. It uses no published information. When
+        the best period sits at the upper end the result has
+        ``period_bound=True``: the period is unconstrained (a short arc).
     positions : PositionData or EpochPositions, optional
         Per-epoch positions: ``PositionData``, or the
         [`EpochPositions`][virgil.epochs.EpochPositions] of
@@ -2070,9 +2325,16 @@ def fit_orbit_aliases(
     ecc_max : float, optional
         Eccentricity is uniform on ``[0, ecc_max]``.
     sign_free : bool, optional
-        The companion is nearly as bright as the primary, so each epoch's
-        position is known only up to a sign (the point reflection): seed
-        with sign-free Thiele–Innes fits and flux seeds near ``flux_range[1]``.
+        Explore the label swap (default True; solved problem 8: twins such
+        as AL Dor). A companion nearly as bright as the primary leaves each
+        epoch's position known only up to a sign (the point reflection), so
+        the seeds are sign-free Thiele–Innes fits with flux seeds near
+        ``flux_range[1]``. With both labelings in the pool, a band whose
+        best mode has a reflected partner of comparable evidence (within
+        ``LABELS_FREE_NATS``, 3 nats) is marked ``labels_free``
+        (``AliasBandResult.labels_free``, ``AliasResult.labels_free``), so a
+        comparison with another orbit may accept the reflection. The cost
+        is about half as many seeds again; False restores the plain seeds.
     s_max : float, optional
         Bound on the error scales, as in
         [`marginal_loglike`][virgil.epochs.marginal_loglike].
@@ -2115,16 +2377,33 @@ def fit_orbit_aliases(
         [`AliasBandResult`][virgil.aliases.AliasBandResult] as soon as it is
         fitted or loaded (``p`` is not yet set: it needs all bands).
 
-    primary_diam : float or "fit", optional
-        The primary's uniform-disk diameter (mas). ``None`` (default) or 0 is
-        a point source (the fast path); a float fixes it; ``"fit"`` samples
-        one shared diameter, log-uniform over ``diam_range``, as an extra
-        coordinate (reported as ``diam`` in the band's ``best`` and the
-        samples).
+    primary_diam : float, "fit", "auto" or None, optional
+        The primary's uniform-disk diameter (mas). ``"auto"`` (default;
+        solved problem 10, ι Peg's 1.05 mas primary) fits a diameter when
+        the data resolve the primary and uses a point primary otherwise: a
+        cheap first pass
+        ([`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter])
+        fits a shared diameter to the per-night ``positions``; the primary
+        is resolved when it improves the summed scale-marginalized score by
+        at least 5 nats over a point. If so the engine fits the diameter
+        (as ``"fit"``, with lower bound effectively 0, starting from the
+        estimate) and the seeds are the positions re-refined with the
+        estimated diameter, so that seeds and engine share one primary; the
+        estimate is in ``AliasResult.primary_fit``. Without
+        ``EpochPositions`` ``"auto"`` has nothing to estimate from and is a
+        point primary. ``None`` or 0 is a point source (the fast path); a
+        float fixes it; ``"fit"`` samples one shared diameter, log-uniform
+        over ``diam_range``, as an extra coordinate (reported as ``diam``
+        in the band's ``best`` and the samples).
     diam_range : (float, float), optional
-        Prior range (mas) of a fitted diameter.
-    vis_amp : (float, float), optional
-        Give every epoch's squared visibilities their own multiplicative
+        Prior range (mas) of a fitted diameter: by default (0.05, 5) for
+        ``"fit"`` and (0.001, 5) for ``"auto"``.
+    vis_amp : bool or (float, float), optional
+        ``True`` (default; solved problem 13, V² contrast loss) gives every
+        epoch a V² amplitude in the range (0.5, 1.2) when the data are
+        squared visibilities, and none when they are not (closure phases
+        only, say); ``False`` or None never does; a range always does and
+        raises for data without squared visibilities. Give every epoch's squared visibilities their own multiplicative
         amplitude ``A`` (a contrast loss that is the same on every baseline
         and wavelength, unlike a resolved primary), profiled analytically:
         the best ``A``, clipped to this range (which only bounds it: no
@@ -2132,9 +2411,10 @@ def fit_orbit_aliases(
         profile in ``A``; every band has the same number of them). It is
         reported per epoch as ``vis_amp``. It needs squared-visibility data
         (``vis_mode="v2"``) and raises otherwise. The error scale of the
-        epoch is kept. ``None`` (default) leaves the visibilities as they are.
+        epoch is kept.
     flip_flux : bool, optional
-        When a band's mode has its flux ratio at the top of ``flux_range``
+        On by default (solved problem 9: a companion brighter than the
+        primary). When a band's mode has its flux ratio at the top of ``flux_range``
         refit it with the stars' labels swapped
         (ω + 180°, flux → 1/flux), since a ratio above 1 sits outside the
         prior; the better result is kept and ``flipped`` is set on the band
@@ -2160,6 +2440,10 @@ def fit_orbit_aliases(
     Returns
     -------
     AliasResult
+        Besides the bands: ``labels_free`` (the stars' labels are not
+        determined), ``period_bound`` (the best period is at the upper end
+        of ``p_range``: P unconstrained, a short arc), ``p_range`` (the
+        window used) and ``primary_fit`` (the ``"auto"`` estimate).
 
     Raises
     ------
@@ -2242,6 +2526,16 @@ def fit_orbit_aliases(
         if t_ref is None
         else float(t_ref)
     )
+    # Period window (problem 5): without p_range, the window follows from
+    # the data (a static snapshot within a night, and 4x the span), never
+    # from a published period.
+    if p_range is None:
+        p_range = period_window(
+            mean_times,
+            _field_mas(positions, a_range),
+            max(float(onp.ptp(onp.asarray(d.mjd, float))) for d in data),
+            resolution=float(fringe_scales(data)[0]),
+        )
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
@@ -2249,12 +2543,32 @@ def fit_orbit_aliases(
     # peak (Gl 229 2024-02-27 and 2024-03-28), so a flagged night must not
     # seed the bands. Only its seed is dropped: ``data`` keeps the night,
     # so the likelihood still sees it and can reject a wrong band.
+    # Resolved primary (problem 10): a first pass estimates the UD diameter
+    # and reseeds the per-night positions with it, so that the seeds and the
+    # engine share one primary (a point primary biases a resolved star's
+    # seeds, ι Peg 1.05 mas).
+    primary_fit = None
+    diam_seed = 0.5
+    if isinstance(primary_diam, str) and primary_diam == "auto":
+        primary_diam, positions, estimate = _auto_primary(data, positions)
+        primary_fit = _primary_fit_record(estimate)
+        if primary_diam == "fit":
+            diam_range = _DIAM_RANGE_AUTO if diam_range is None else diam_range
+            diam_seed = float(
+                onp.clip(
+                    estimate.diam, diam_range[0] * 1.01, diam_range[1] * 0.99
+                )
+            )
+    if diam_range is None:
+        diam_range = (0.05, 5.0)
     seed_positions = positions
     positions, unseeded, fell_back = _seeding_positions(
         positions, t_ref, skip_flagged, mean_times
     )
     profile = None
     if positions is not None:
+        # Label swap (problem 8): sign_free (default) seeds both labelings,
+        # so a twin's reflected mode is found and can set ``labels_free``.
         profile = position_profile(
             positions,
             bands,
@@ -2282,6 +2596,13 @@ def fit_orbit_aliases(
         )
     elif n_random is None:
         n_random = 0 if len(positions.dt) > _FEW_SEED_NIGHTS else _N_RANDOM_FEW
+    # V² amplitude (problem 13): per-night contrast loss, profiled; on by
+    # default for squared visibilities (a calibration loss otherwise looks
+    # like a wrong flux or a resolved primary).
+    if vis_amp is True:
+        vis_amp = _default_vis_amp(data)
+    elif vis_amp is False:
+        vis_amp = None
     if vis_amp is not None:
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:
@@ -2312,6 +2633,7 @@ def fit_orbit_aliases(
         sign_free=sign_free,
         primary_diam=primary_diam,
         diam_range=tuple(map(float, diam_range)),
+        diam_seed=diam_seed,
         vis_amp=vis_amp,
         flip_flux=bool(flip_flux),
         init=init_flat,
@@ -2355,6 +2677,12 @@ def fit_orbit_aliases(
     results = _band_probabilities(results)
     _check_fit_quality(results, k)
     samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
+    # A short arc (problem 5): the likelihood is flat towards long periods,
+    # so the best period sits at the top of the window: P is unconstrained.
+    p_top = float(p_range[1])
+    period_bound = bool(
+        results[0].best.get("period", 0.0) >= _PERIOD_BOUND_FRACTION * p_top
+    )
     return AliasResult(
         t_ref,
         mean_times,
@@ -2365,4 +2693,7 @@ def fit_orbit_aliases(
         primary_diam=primary_diam,
         vis_amp=vis_amp,
         unseeded=unseeded,
+        p_range=tuple(map(float, p_range)),
+        period_bound=period_bound,
+        primary_fit=primary_fit,
     )

@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import functools
 import json
+import types
 import warnings
 
 import jax
@@ -1567,3 +1568,349 @@ def test_a_real_fit_saves_and_loads_back(tmp_path):
     assert loaded.samples.keys() == result.samples.keys()
     for a, b in zip(loaded.chi2_per_night(data), result.chi2_per_night(data)):
         assert a["chi2_fit"] == pytest.approx(b["chi2_fit"], rel=1e-5)
+
+
+# --- plan phase 1c: automatic engine defaults -----------------------------------------
+# Each test passes no per-system argument (no p_range, no flux range, no
+# twin or diameter list): the defaults must be enough.
+
+
+def test_the_engine_defaults_need_no_per_system_arguments():
+    # Problems 5, 8, 9, 10, 13 of the orbit-consolidation plan.
+    import inspect
+
+    sig = inspect.signature(fit_orbit_aliases).parameters
+    assert sig["p_range"].default is None  # period_window (5)
+    assert sig["sign_free"].default is True  # label swap (8)
+    assert sig["flip_flux"].default is True  # flux flip (9)
+    assert sig["primary_diam"].default == "auto"  # UD primary (10)
+    assert sig["vis_amp"].default is True  # V² amplitude (13)
+
+
+def test_period_window_limits_on_simple_inputs():
+    # Upper end: 4 x the span. Lower end: a night of 0.1 d at a field of
+    # 10 mas and a resolution of 2 mas moves 2π·10·0.1/P mas, at most
+    # half the resolution (1 mas): P >= 2π·10·0.1/1.
+    lo, hi = aliases.period_window(
+        [0.0, 40.0, 100.0], 10.0, 0.1, resolution=2.0
+    )
+    assert hi == pytest.approx(400.0)
+    assert lo == pytest.approx(2 * onp.pi * 10.0 * 0.1 / 1.0)
+    # The window follows the field, the night and the resolution...
+    lo2, _ = aliases.period_window([0.0, 100.0], 20.0, 0.1, resolution=2.0)
+    assert lo2 == pytest.approx(2 * lo)
+    # ...but is never shorter than the night itself,
+    lo3, _ = aliases.period_window([0.0, 100.0], 1e-3, 0.5, resolution=2.0)
+    assert lo3 == pytest.approx(0.5)
+    # and a span_factor changes only the top.
+    _, hi4 = aliases.period_window(
+        [0.0, 100.0], 10.0, 0.1, resolution=2.0, span_factor=2.0
+    )
+    assert hi4 == pytest.approx(200.0)
+    with pytest.raises(ValueError, match="positive time"):
+        aliases.period_window([5.0, 5.0], 10.0, 0.1, resolution=2.0)
+    with pytest.raises(ValueError, match="window is empty"):
+        aliases.period_window([0.0, 1.0], 10.0, 5.0, resolution=2.0)
+
+
+def _spy_settings(monkeypatch, **options):
+    """The ``_Settings`` and seeds ``fit_orbit_aliases`` settles on, read at
+    its preflight (the optimizer never runs)."""
+    seen = {}
+
+    def preflight(problem, settings, band):
+        seen["settings"], seen["band"] = settings, band
+        raise _Stop
+
+    monkeypatch.setattr(aliases, "_preflight", preflight)
+    monkeypatch.setattr(
+        aliases,
+        "position_profile",
+        lambda pos, bands, **kw: [dict(orbits=[]) for _ in bands],
+    )
+    data, _ = _synthetic(12.1)
+    with pytest.raises(_Stop):
+        fit_orbit_aliases(data, t_ref=T_REF, n_random=5, **options)
+    return seen
+
+
+def test_without_p_range_the_window_comes_from_the_data(monkeypatch):
+    # Period window (problem 5): never a published period.
+    seen = _spy_settings(monkeypatch)
+    data, _ = _synthetic(12.1)
+    times = [float(onp.mean(d.mjd)) for d in data]
+    night = max(float(onp.ptp(d.mjd)) for d in data)
+    expected = aliases.period_window(
+        times,
+        30.0,  # no positions: the field is a_range[1]
+        night,
+        resolution=float(aliases.fringe_scales(data)[0]),
+    )
+    assert seen["settings"].p_range == pytest.approx(expected)
+    assert expected[1] == pytest.approx(4 * onp.ptp(times))
+    # Defaults reach the settings (8, 13), and a point primary without
+    # positions (10).
+    s = seen["settings"]
+    assert s.sign_free and s.flip_flux and s.primary_diam is None
+    assert s.vis_amp == aliases._VIS_AMP_DEFAULT
+
+
+def test_vis_amp_true_is_off_for_data_without_squared_visibilities():
+    data, _ = _synthetic(12.1)
+    assert aliases._default_vis_amp(data) == aliases._VIS_AMP_DEFAULT
+    closure_only = [
+        types.SimpleNamespace(vis_mode="amp", observable_kind="split")
+    ] * 2
+    assert aliases._default_vis_amp(closure_only) is None
+
+
+def _resolved(diam, positions):
+    from virgil.epochs import PrimaryDiameter
+
+    return PrimaryDiameter(
+        diam=diam,
+        sigma=0.05,
+        delta_nats=60.0 if diam else 0.1,
+        resolved=bool(diam),
+        grid=onp.array([0.0, diam or 0.5]),
+        profile=onp.array([0.0, 60.0]),
+        positions=positions,
+    )
+
+
+@pytest.mark.filterwarnings("error:The positions were fitted")
+def test_auto_primary_reseeds_with_the_diameter_it_fits(monkeypatch):
+    # UD primary (problem 10): when the first pass resolves a 1.05 mas
+    # primary, the engine fits a diameter starting there with a lower bound
+    # of effectively 0, and the seeds carry the same diameter (no
+    # seed/engine mismatch warning).
+    reseeded = _stub_positions(primary_diam=1.05)
+    monkeypatch.setattr(
+        aliases,
+        "estimate_primary_diameter",
+        lambda data, positions, **kw: _resolved(1.05, reseeded),
+    )
+    seen = _spy_settings(monkeypatch, positions=_stub_positions())
+    s = seen["settings"]
+    assert s.primary_diam == "fit" and s.diam_seed == pytest.approx(1.05)
+    assert s.diam_range[0] < 0.01 and s.fit_diam
+    # An unresolved primary is a point, whatever the seeds were fitted with.
+    monkeypatch.setattr(
+        aliases,
+        "estimate_primary_diameter",
+        lambda data, positions, **kw: _resolved(0.0, _stub_positions()),
+    )
+    seen = _spy_settings(monkeypatch, positions=_stub_positions())
+    assert seen["settings"].primary_diam is None
+    # An explicit diameter is never overridden.
+    seen = _spy_settings(
+        monkeypatch,
+        positions=_stub_positions(primary_diam=0.7),
+        primary_diam=0.7,
+    )
+    assert seen["settings"].primary_diam == 0.7
+
+
+def _stub_band_fit(monkeypatch, period):
+    """Replace the band fits by one mode at ``period`` (days), so that the
+    result's own bookkeeping can be tested without an optimizer."""
+
+    def fake(problem, settings, band, orbits, times):
+        result = AliasBandResult(
+            n=band.n, p_lo=band.p_lo, p_hi=band.p_hi, modes=[],
+            log_z=-float(band.n), log_z_is=-float(band.n), ess=100.0,
+            flagged=False, best=dict(period=period), chi2_red=1.0,
+        )  # fmt: skip
+        return result, (None, None)
+
+    monkeypatch.setattr(aliases, "_preflight", lambda *a: None)
+    monkeypatch.setattr(aliases, "_fit_band", fake)
+
+
+def test_a_best_period_at_the_top_of_the_window_is_period_bound(monkeypatch):
+    # Short arc (problem 5): the window ends at 4 x the span, and a best
+    # period there means P is unconstrained.
+    data, _ = _synthetic(12.1)
+    times = [float(onp.mean(d.mjd)) for d in data]
+    _, top = aliases.period_window(times, 30.0, 0.1, resolution=2.0)
+    window = (20.0, top)
+    _stub_band_fit(monkeypatch, 0.98 * top)
+    bound = fit_orbit_aliases(data, window, t_ref=T_REF, n_samples=1)
+    assert bound.period_bound and bound.p_range == pytest.approx(window)
+    _stub_band_fit(monkeypatch, 12.1)
+    assert not fit_orbit_aliases(
+        data, window, t_ref=T_REF, n_samples=1
+    ).period_bound
+
+
+def _reflected(x):
+    """``x`` seen from the other star: the reflected track (ω + 180°)."""
+    y = onp.array(x, float)
+    y[4] += 180.0
+    return aliases._fold(y)
+
+
+@in_float64
+def test_a_twin_is_labels_free_and_a_contrast_pair_is_not():
+    # Label swap (problem 8): for near-equal fluxes the stars' labels are
+    # not determined, so the reflected mode has the same evidence.
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    verdict = {}
+    for name, flux in (("twin", 1.0), ("contrast", FLUX)):
+        key = jax.random.PRNGKey(4)
+        data = [
+            simulate(
+                OrbitalBinary(orbit, flux),
+                _night(m, rotation=7.0 * k),
+                key=jax.random.fold_in(key, k),
+            )
+            for k, m in enumerate(EPOCHS)
+        ]
+        settings, problem = _problem(data)
+        x = _x_truth(flux=flux)
+        x[7] = onp.log(flux)  # (the start vector keeps it off the bound)
+        modes = [
+            dict(x=v.tolist(), log_z=float(problem.value_and_grad(
+                jax.numpy.asarray(v))[0]), flags=[])
+            for v in (x, _reflected(x))
+        ]  # fmt: skip
+        result = AliasBandResult(
+            n=20, p_lo=12.0, p_hi=12.2, modes=modes, log_z=0.0, log_z_is=0.0,
+            ess=100.0, flagged=False,
+        )  # fmt: skip
+        verdict[name] = aliases._labels_free(result, settings, EPOCHS)
+    assert verdict == {"twin": True, "contrast": False}
+
+
+def test_labels_period_bound_and_the_auto_estimate_survive_save_and_load(
+    tmp_path,
+):
+    data, result = _tiny_fit()
+    result = copy.deepcopy(result)
+    result.bands[0].labels_free = True
+    result.period_bound = True
+    result.p_range = (0.5, 990.0)
+    result.primary_fit = dict(
+        diam=1.05, sigma=0.03, delta_nats=60.0, resolved=True
+    )
+    assert result.labels_free
+    path = tmp_path / "r.json"
+    result.save(path)
+    back = AliasResult.load(path)
+    assert back.labels_free and back.period_bound
+    assert back.p_range == (0.5, 990.0)
+    assert back.primary_fit == result.primary_fit
+    assert back.table()[0]["labels_free"]
+    # A file from before these fields loads as "not free, not bound".
+    old = json.loads(path.read_text())
+    for k in ("p_range", "period_bound", "primary_fit"):
+        del old[k]
+    del old["band_details"][0]["labels_free"]
+    path.write_text(json.dumps(old))
+    back = AliasResult.load(path)
+    assert not back.labels_free and not back.period_bound
+    assert back.p_range is None and back.primary_fit is None
+
+
+# The real fits: short arcs of 4 nights within 4 days, so the window holds
+# a handful of bands, with the default arguments only.
+
+
+def _short_arc(flux, period=12.1, diam=None):
+    orbit = KeplerOrbit(**{**TRUTH, "period": period}, t_ref=T_REF)
+    times = T_REF + onp.array([0.0, 1.3, 2.6, 4.0])
+    scene = (
+        OrbitalBinary(orbit, flux)
+        if diam is None
+        else aliases._UDBinary(orbit, flux, diam)
+    )
+    key = jax.random.PRNGKey(11)
+    data = [
+        simulate(
+            scene, _night(m, rotation=7.0 * k), key=jax.random.fold_in(key, k)
+        )
+        for k, m in enumerate(times)
+    ]
+    return orbit, data, times
+
+
+FAST_DEFAULTS = dict(n_candidates=10, n_refine=2, n_is=200, n_samples=20)
+
+
+def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
+    """Per-night ``EpochPositions`` of a short arc without a grid search:
+    the true companion positions, off by ``offset`` (mas) and, where
+    ``signs`` is -1, reflected through the primary (a twin's positions are
+    known only up to that sign)."""
+    from virgil.epochs import EpochPositions
+
+    n = len(times)
+    sign = onp.ones(n) if signs is None else onp.asarray(signs, float)
+    dra, ddec, _ = orbit.relative(times)
+    return EpochPositions(
+        names=tuple(f"n{k}" for k in range(n)),
+        mjd=onp.asarray(times),
+        dra=sign * onp.asarray(dra) + offset[0],
+        ddec=sign * onp.asarray(ddec) + offset[1],
+        cov=onp.tile(0.05 * onp.eye(2), (n, 1, 1)),
+        flux=onp.full(n, min(flux, 0.9)),
+        gap=onp.ones(n),
+        gap_marginal=onp.full(n, 20.0),
+        chi2_raw=({},) * n,
+        scale=({},) * n,
+    )
+
+
+@pytest.mark.slow
+def test_a_twin_fit_is_labels_free_with_default_arguments():
+    # Equal fluxes: each night's position is known only up to the point
+    # reflection, which the data cannot undo.
+    orbit, data, times = _short_arc(1.0)
+    positions = _arc_positions(orbit, times, 1.0, signs=[1, -1, 1, -1])
+    result = fit_orbit_aliases(
+        data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
+    )
+    assert result.labels_free
+    assert result.best.chi2_red < 3.0
+
+
+@pytest.mark.slow
+def test_a_brighter_companion_is_flipped_with_default_arguments():
+    # The companion is the brighter star (1.4): the fit has the primary
+    # label swapped and the ratio 1/1.4, the reflected track.
+    orbit, data, times = _short_arc(1.4)
+    positions = _arc_positions(orbit, times, 1 / 1.4, signs=-onp.ones(4))
+    result = fit_orbit_aliases(
+        data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
+    )
+    assert result.best.chi2_red < 3.0
+    assert result.best.best["flux"] == pytest.approx(1 / 1.4, rel=0.15)
+
+
+@pytest.mark.slow
+def test_a_short_arc_fit_is_period_bound_with_default_arguments():
+    # 4 days of a 60-day orbit: the window ends at 16 d and so does the fit.
+    orbit, data, times = _short_arc(0.3, period=60.0)
+    positions = _arc_positions(orbit, times, 0.3)
+    result = fit_orbit_aliases(
+        data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
+    )
+    assert result.p_range[1] == pytest.approx(4 * onp.ptp(times), rel=0.01)
+    assert result.period_bound
+
+
+@pytest.mark.slow
+def test_a_resolved_primary_is_fitted_and_an_unresolved_one_is_a_point():
+    for diam, resolved in ((1.05, True), (None, False)):
+        orbit, data, times = _short_arc(0.3, diam=diam)
+        dra, ddec, _ = orbit.relative(times)
+        positions = _arc_positions(orbit, times, 0.25)
+        result = fit_orbit_aliases(
+            data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
+        )
+        assert result.primary_fit["resolved"] is resolved
+        if resolved:
+            assert result.primary_diam == "fit"
+            assert result.best.best["diam"] == pytest.approx(1.05, rel=0.2)
+        else:
+            assert result.primary_diam is None

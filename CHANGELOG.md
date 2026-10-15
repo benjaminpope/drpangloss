@@ -56,6 +56,23 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`fit_orbit_aliases` needs no per-system arguments.** The defaults
+  changed, so results change: `p_range` is optional and defaults to a
+  window computed from the data by `period_window` (a static snapshot
+  within a night stays valid, up to 4 times the span; no published period);
+  `sign_free=True` (the label swap is always explored, and a twin sets
+  `labels_free`); `primary_diam="auto"` (a first pass fits a shared
+  uniform-disc diameter to the per-night positions, resolved at a gain of
+  5 nats over a point primary, then the diameter is fitted and the seeds
+  are refined with it; a point primary otherwise, and also without
+  `EpochPositions`); `vis_amp=True` (a per-night V² amplitude in 0.5 to
+  1.2 for squared-visibility data, none otherwise); `flip_flux` stays on.
+  Pass `p_range=`, `sign_free=False`, `primary_diam=None` or
+  `vis_amp=None` for the old behaviour. `AliasResult` gains `labels_free`,
+  `period_bound` (the best period is at the top of the window: a short
+  arc), `p_range` and `primary_fit`, all kept by `save` and `load`. New:
+  `period_window`, `estimate_primary_diameter` and `PrimaryDiameter`.
+
 - **Seeding skips flagged nights by default.** `fit_orbit_aliases`
   accepts the `EpochPositions` of `epoch_positions` and, with
   `skip_flagged=True` (default), a flagged night seeds nothing, though

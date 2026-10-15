@@ -14,6 +14,8 @@ from a fit of positions.
         - RankedOrbits
         - chain_starts
         - epoch_positions
+        - estimate_primary_diameter
+        - PrimaryDiameter
         - marginal_loglike
         - EpochPositions
         - EpochPeaks

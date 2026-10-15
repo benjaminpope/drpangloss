@@ -823,3 +823,74 @@ def test_a_fitted_primary_is_not_supported_by_epoch_positions_yet():
     epochs = Epochs({"n": _night(T_REF)})
     with pytest.raises(ValueError, match="only a fixed diameter"):
         epoch_positions(epochs, FLAG_GRID, primary_diam="fit")
+
+
+# --- plan phase 1c: the primary's diameter from the data ----------------------------
+
+
+def _start_positions(n, dra, ddec, flux):
+    """``EpochPositions`` of ``n`` nights at a rough start, without a grid
+    search: ``estimate_primary_diameter`` refines from each."""
+    from virgil.epochs import EpochPositions
+
+    return EpochPositions(
+        names=tuple(f"n{k}" for k in range(n)),
+        mjd=T_REF + onp.arange(n, dtype=float),
+        dra=onp.full(n, dra),
+        ddec=onp.full(n, ddec),
+        cov=onp.tile(onp.eye(2), (n, 1, 1)),
+        flux=onp.full(n, flux),
+        gap=onp.ones(n),
+        gap_marginal=onp.full(n, 20.0),
+        chi2_raw=({},) * n,
+        scale=({},) * n,
+        flags=((),) * n,
+    )
+
+
+@pytest.mark.slow
+def test_a_resolved_primary_is_estimated_and_an_unresolved_one_is_a_point():
+    # Resolved primary (problem 10): 1.05 mas (iota Peg) is resolved by a
+    # 4-night VLTI-like set; the seeds come back refined with that disc.
+    truth = (5.0, -3.0, 0.25)
+
+    def nights(diam):
+        primary = PointSource(1.0, 0.0, 0.0) if not diam else UniformDisk(diam)
+        scene = System(
+            primary=primary,
+            companion=PointSource(truth[2], truth[0], truth[1]),
+        )
+        return [
+            simulate(
+                scene,
+                _night(T_REF + k, frames=2, rotation=7.0 * k, d_vis=0.01),
+                jax.random.PRNGKey(k),
+            )
+            for k in range(4)
+        ]
+
+    from virgil.epochs import RESOLVE_NATS, estimate_primary_diameter
+
+    start = _start_positions(4, 5.3, -2.8, 0.2)
+    ud = estimate_primary_diameter(nights(1.05), start)
+    assert ud.resolved and ud.delta_nats > RESOLVE_NATS
+    assert ud.diam == pytest.approx(1.05, rel=0.1)
+    assert ud.sigma < 0.2  # mas
+    seeds = ud.positions  # consistent with the diameter that was fitted
+    assert seeds.primary_diam == pytest.approx(ud.diam)
+    assert onp.all(
+        onp.hypot(seeds.dra - truth[0], seeds.ddec - truth[1]) < 0.1
+    )
+    assert onp.all(abs(seeds.flux - truth[2]) < 0.03)
+    point = estimate_primary_diameter(nights(None), start)
+    assert not point.resolved and point.delta_nats < RESOLVE_NATS
+    assert point.positions is start  # unchanged: a point primary
+
+
+def test_the_diameter_estimate_needs_the_nights_of_the_positions():
+    from virgil.epochs import estimate_primary_diameter
+
+    with pytest.raises(ValueError, match="same nights"):
+        estimate_primary_diameter(
+            [_night(T_REF)], _start_positions(4, 5.0, -3.0, 0.2)
+        )
