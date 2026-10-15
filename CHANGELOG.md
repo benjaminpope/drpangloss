@@ -58,10 +58,13 @@ anything before 1.0 may change between minor versions.
 
 - **`fit_orbit_aliases` needs no per-system arguments.** The defaults
   changed, so results change: `p_range` is optional and defaults to a
-  window computed from the data by `period_window` (a static snapshot
-  within a night stays valid, up to 4 times the span; no published period);
-  `sign_free=True` (the label swap is always explored, and a twin sets
-  `labels_free`); `primary_diam="auto"` (a first pass fits a shared
+  window computed from the data by `period_window` (a Nyquist-style
+  sampling limit at the bottom: the companion moves less than half the
+  resolution during the longest night, with the median unflagged separation
+  as the field, or λ/B_min without positions; 4 times the span at the top;
+  no published period; capped at `n_bands_max=200` bands with a warning);
+  `sign_free=True` (sign-free seeds are added to the signed ones, so the
+  label swap is always explored, and a twin sets `labels_free`); `primary_diam="auto"` (a first pass fits a shared
   uniform-disc diameter to the per-night positions, resolved at a gain of
   5 nats over a point primary, then the diameter is fitted and the seeds
   are refined with it; a point primary otherwise, and also without
@@ -69,8 +72,9 @@ anything before 1.0 may change between minor versions.
   1.2 for squared-visibility data, none otherwise); `flip_flux` stays on.
   Pass `p_range=`, `sign_free=False`, `primary_diam=None` or
   `vis_amp=None` for the old behaviour. `AliasResult` gains `labels_free`,
-  `period_bound` (the best period is at the top of the window: a short
-  arc), `p_range` and `primary_fit`, all kept by `save` and `load`. New:
+  `period_bound` (the best period is at the top of the window, or its
+  σ(log P) is wide: a short arc), `period_at_lower_bound`, `window_capped`,
+  `p_range` and `primary_fit`, all kept by `save` and `load`. New:
   `period_window`, `estimate_primary_diameter` and `PrimaryDiameter`.
 
 - **Seeding skips flagged nights by default.** `fit_orbit_aliases`

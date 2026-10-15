@@ -891,6 +891,33 @@ def test_a_resolved_primary_is_estimated_and_an_unresolved_one_is_a_point():
     assert point.positions is start  # unchanged: a point primary
 
 
+@pytest.mark.slow
+def test_an_amplitude_loss_with_a_point_primary_is_not_a_resolved_disc():
+    # V² amplitude (problem 13) in the first pass: a night that lost 15%
+    # of its contrast looks like a disc to a fit without the amplitude,
+    # and does not with it.
+    from virgil.epochs import estimate_primary_diameter
+
+    scene = System(
+        primary=PointSource(1.0, 0.0, 0.0),
+        companion=PointSource(0.25, 5.0, -3.0),
+    )
+    loss = (0.85, 0.80, 0.85, 0.80)
+    data = []
+    for k in range(4):
+        night = simulate(
+            scene,
+            _night(T_REF + k, frames=2, rotation=7.0 * k, d_vis=0.01),
+            jax.random.PRNGKey(k),
+        )
+        data.append(night.set("vis", night.vis * loss[k]))
+    start = _start_positions(4, 5.3, -2.8, 0.2)
+    with_amp = estimate_primary_diameter(data, start, vis_amp=(0.5, 1.2))
+    assert not with_amp.resolved
+    without = estimate_primary_diameter(data, start)
+    assert without.delta_nats > with_amp.delta_nats
+
+
 def test_the_diameter_estimate_needs_the_nights_of_the_positions():
     from virgil.epochs import estimate_primary_diameter
 

@@ -1297,12 +1297,41 @@ def _grid_marginal(chi2, dof, data, surface):
     return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
 
 
-def _negative_marginal(x, dof, data, surface, diam=None):
-    return -surface.score(surface.chi2(_binary(x, diam), data), dof, data)
+def _amp_residuals(model, data, surface, amp_range):
+    """The whitened residuals of ``model``, with the squared visibilities
+    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
+    when ``amp_range`` (lo, hi) is given: the weighted least-squares ``A``
+    clipped to the range, as in the orbit fit's per-epoch amplitude
+    (``aliases._epoch_residuals``). Without ``amp_range``, or without a
+    visibility block, the plain residuals."""
+    r = whitened_residuals(model, data)
+    if amp_range is None or surface.names[0] != "vis":
+        return r
+    n = surface.blocks[0][2]
+    obs = np.reshape(data.vis, -1)
+    err = np.reshape(data.d_vis, -1)
+    mod = obs + r[:n] * err
+    w = 1.0 / err**2
+    tiny = np.finfo(r.dtype).tiny
+    amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
+    amp = np.clip(amp, *amp_range)
+    return r.at[:n].set((amp * mod - obs) / err)
+
+
+def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
+    if amp_range is None:
+        chi2 = surface.chi2(_binary(x, diam), data)
+    else:
+        r = _amp_residuals(_binary(x, diam), data, surface, amp_range)
+        chi2 = np.stack(
+            [np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
+        )
+    return -surface.score(chi2, dof, data)
 
 
 _negative_marginal_hessian = jax.jit(
-    jax.hessian(_negative_marginal), static_argnames="surface"
+    jax.hessian(_negative_marginal),
+    static_argnames=("surface", "amp_range"),
 )
 _block_chi2 = jax.jit(
     lambda x, data, surface, diam=None: surface.chi2(_binary(x, diam), data),
@@ -1444,28 +1473,31 @@ class _RefineProblem(eqx.Module):
     dof: jax.Array
     surface: _Surface = eqx.field(static=True)
     diam: object = None  # the primary's diameter (mas), or None: a point
+    amp_range: object = eqx.field(static=True, default=None)  # V² amplitude
 
     def loss(self, x):
         return _negative_marginal(
-            x, self.dof, self.data, self.surface, self.diam
+            x, self.dof, self.data, self.surface, self.diam, self.amp_range
         )
 
     def rows(self, x):
-        r = whitened_residuals(_binary(x, self.diam), self.data)
+        r = _amp_residuals(
+            _binary(x, self.diam), self.data, self.surface, self.amp_range
+        )
         return self.surface.weighted_rows(r, self.dof, self.data)
 
     def diag(self, x):
         return np.zeros_like(x)
 
 
-def _refine_marginal(x0, dof, d64, surface, bounds, diam=None):
+def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
     """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
     the IRLS curvature, in float64, deterministic) within ``bounds``.
     Returns the point and the surface's negative value there; a run that
     does not converge (or starts non-finite) returns ``x0`` and ``inf``,
     which the caller reads as no improvement."""
     state = _gauss_newton.solve(
-        _RefineProblem(d64, dof, surface, diam),
+        _RefineProblem(d64, dof, surface, diam, amp_range),
         onp.asarray(x0, float),
         lower=[b[0] for b in bounds],
         upper=[b[1] for b in bounds],
@@ -1981,6 +2013,10 @@ class PrimaryDiameter:
     resolved : bool
         ``diam > 0`` and ``delta_nats`` at least the threshold
         ``resolve_nats``: the data resolve the primary.
+    at_grid_edge : bool
+        The best diameter is the last grid point: the primary may be larger
+        than the grid reaches (1.3 λ/B_max by default), so ``diam`` is a
+        lower limit.
     grid, profile : numpy.ndarray
         The diameters tried (``grid[0]`` is 0, a point primary) and the
         summed score of the nights at each (positions re-refined at each
@@ -1999,6 +2035,7 @@ class PrimaryDiameter:
     grid: onp.ndarray
     profile: onp.ndarray
     positions: EpochPositions
+    at_grid_edge: bool = False
 
 
 def estimate_primary_diameter(
@@ -2008,6 +2045,7 @@ def estimate_primary_diameter(
     resolve_nats=RESOLVE_NATS,
     diam_grid=None,
     s_max=None,
+    vis_amp=None,
 ):
     """Estimate a shared uniform-disc primary diameter from per-night
     positions, and decide whether the data resolve the primary.
@@ -2049,10 +2087,27 @@ def estimate_primary_diameter(
         fractions of λ/B_max above.
     s_max : float, optional
         As in ``marginal_loglike``.
+    vis_amp : (float, float), optional
+        Profile one V² amplitude per night in this range, as the orbit fit
+        does (``fit_orbit_aliases(vis_amp=...)``), so that a contrast loss
+        that is the same on every baseline is not read as a disc. It needs
+        squared-visibility data (``vis_mode="v2"``).
 
     Returns
     -------
     PrimaryDiameter
+
+    Raises
+    ------
+    ValueError
+        If ``data`` and ``positions`` are not the same nights, or
+        ``diam_grid`` holds a non-positive diameter.
+
+    Warns
+    -----
+    UserWarning
+        If the best diameter is the largest tried (``at_grid_edge``): the
+        primary may be bigger; widen ``diam_grid``.
 
     Notes
     -----
@@ -2093,6 +2148,7 @@ def estimate_primary_diameter(
             for i in range(len(sets))
         ]
         dof = np.asarray(1.0)
+        amp = None if vis_amp is None else tuple(map(float, vis_amp))
 
         def refit(i, x0, diam):
             """Refine night ``i`` from ``x0`` at ``diam``: (x, score)."""
@@ -2109,12 +2165,12 @@ def estimate_primary_diameter(
             ]
             dm = None if diam <= 0 else np.asarray(float(diam))
             x, value = _refine_marginal(
-                x0, dof, d64[i], surfaces[i], bounds, dm
+                x0, dof, d64[i], surfaces[i], bounds, dm, amp
             )
             if not onp.isfinite(value):  # no improvement: score the start
                 value = float(
                     _negative_marginal(
-                        np.asarray(x0), dof, d64[i], surfaces[i], dm
+                        np.asarray(x0), dof, d64[i], surfaces[i], dm, amp
                     )
                 )
             return x, -value
@@ -2157,6 +2213,14 @@ def estimate_primary_diameter(
             curve = 2 * peak - up - down
             if curve > 0:
                 sigma = float(h / onp.sqrt(curve))
+        at_edge = bool(best == len(grid) - 1 and diam > 0)
+        if at_edge:
+            warnings.warn(
+                f"The best primary diameter, {diam:.3g} mas, is the largest "
+                "tried: the primary may be larger. Widen diam_grid.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
         resolved = bool(diam > 0 and gain >= resolve_nats)
         chosen = diam if resolved else 0.0
         reseed = resolved or positions.primary_diam is not None
@@ -2168,7 +2232,7 @@ def estimate_primary_diameter(
                 xs_all.append(x)
                 full = onp.asarray(
                     _negative_marginal_hessian(
-                        np.asarray(x), dof, d64[i], surfaces[i], dm
+                        np.asarray(x), dof, d64[i], surfaces[i], dm, amp
                     ),
                     dtype=float,
                 )
@@ -2197,6 +2261,7 @@ def estimate_primary_diameter(
         grid=grid,
         profile=profile,
         positions=seeded,
+        at_grid_edge=at_edge,
     )
 
 
