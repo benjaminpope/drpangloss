@@ -23,6 +23,8 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - image_priors
         - nyquist_pixel_scale
         - field_of_view
+        - image_field
+        - second_moment_fwhm
         - beam
         - Beam
         - convolve_beam

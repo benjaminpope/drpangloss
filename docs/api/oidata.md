@@ -58,6 +58,7 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
         - __init__
         - flatten_data
         - has_phases
+        - unflagged
         - n_independent
         - n_residuals
         - standardize_model

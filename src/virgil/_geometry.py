@@ -179,36 +179,95 @@ def separation_pa(dra, ddec):
     return xp.hypot(dra, ddec), position_angle(dra, ddec)
 
 
+def _unflagged_samples(data):
+    """Baseline length, wavelength and channel width of the unflagged samples.
+
+    ``data`` is an ``OIData`` or a sequence of them. A sample counts if an
+    observable of the data uses it (``OIData.unflagged``): a flagged sample
+    keeps its u, v in the data, but it measures nothing, so it must not set
+    a resolution or a field. Samples with a zero baseline are dropped (a
+    zero baseline measures no fringe). Returns three flat arrays in metres:
+    the baseline, the wavelength and the channel width (NaN where the data
+    carry none).
+    """
+    observations = data if isinstance(data, (list, tuple)) else [data]
+    baseline, wavel, width = [], [], []
+    for d in observations:
+        u = onp.ravel(onp.asarray(d.u, float))
+        v = onp.ravel(onp.asarray(d.v, float))
+        shape = u.shape
+        lam = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), shape)
+        bandwidth = getattr(d, "bandwidth", None)
+        if bandwidth is None:
+            dlam = onp.full(shape, onp.nan)
+        else:
+            dlam = onp.broadcast_to(
+                onp.ravel(onp.asarray(bandwidth, float)), shape
+            )
+        unflagged = getattr(d, "unflagged", None)
+        keep = (
+            onp.ones(shape, bool)
+            if unflagged is None
+            else onp.asarray(unflagged, bool)
+        )
+        b = onp.hypot(u, v)
+        keep = keep & (b > 0)
+        baseline.append(b[keep]), wavel.append(lam[keep])
+        width.append(dlam[keep])
+    baseline, wavel, width = (
+        onp.concatenate(x) for x in (baseline, wavel, width)
+    )
+    if baseline.size == 0:
+        raise ValueError(
+            "The data have no unflagged sample with a non-zero baseline."
+        )
+    return baseline, wavel, width
+
+
 def fringe_scales(data):
     """The finest and coarsest fringe spacings of ``data``, in mas.
 
     ``data`` is an ``OIData`` or a sequence of them. Each sample ``k`` has
     a spatial frequency ``B_k / λ_k`` (its own baseline over its own
     wavelength), and the finest fringes are ``1 / max(B/λ)`` and the
-    coarsest ``1 / min(B/λ)``, over the samples with a non-zero baseline
-    (a zero baseline measures no fringe, and would make the coarsest
-    infinite). This is not ``λ_max / B_min``, which pairs a baseline with a
-    wavelength it may not have been observed at.
+    coarsest ``1 / min(B/λ)``, over the unflagged samples with a non-zero
+    baseline. A flagged sample (see
+    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]) keeps its u, v in
+    the data but carries no signal, so it counts for nothing here: the
+    provider's flags often remove most of the long baselines of a resolved
+    source, and the resolution that remains is the coarser one. A zero
+    baseline measures no fringe, and would make the coarsest infinite. This
+    is not ``λ_max / B_min``, which pairs a baseline with a wavelength it
+    may not have been observed at.
 
     Returns
     -------
     tuple[float, float]
         ``(finest, coarsest)``.
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
-    rho = onp.concatenate(
-        [
-            onp.ravel(
-                onp.hypot(onp.asarray(d.u, float), onp.asarray(d.v, float))
-                / onp.asarray(d.wavel, float)
-            )
-            for d in observations
-        ]
-    )
-    rho = rho[rho > 0]
-    if rho.size == 0:
-        raise ValueError("The data have no sample with a non-zero baseline.")
+    baseline, wavel, _ = _unflagged_samples(data)
+    rho = baseline / wavel
     return 1.0 / (rho.max() * mas2rad), 1.0 / (rho.min() * mas2rad)
+
+
+def smearing_scale(data):
+    """The field (mas) within which bandwidth smearing is negligible.
+
+    A channel of full width ``Δλ`` multiplies the visibility of a source at
+    offset ``s`` by ``sinc(π Δλ B s / λ²)``, which first vanishes at
+    ``s = λ² / (Δλ B) = R λ / B`` with the resolving power ``R = λ / Δλ``.
+    The scale is the smallest such offset over the unflagged samples with a
+    non-zero baseline, so ``R λ / B_max`` for one channel width: the
+    structure beyond it is washed out on the long baselines. It is
+    infinite when the data carry no channel widths (see
+    [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
+    """
+    baseline, wavel, width = _unflagged_samples(data)
+    known = onp.isfinite(width) & (width > 0)
+    if not known.any():
+        return onp.inf
+    scale = wavel[known] ** 2 / (width[known] * baseline[known])
+    return float(scale.min() / mas2rad)
 
 
 class UVGrid(eqx.Module):
