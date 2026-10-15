@@ -315,6 +315,7 @@ def test_hyperpriors_are_bounded_log_uniform():
         polar_field_priors(sigma=(2.0, 1.0))
 
 
+@pytest.mark.slow
 def test_a_polar_field_image_fits_and_has_a_finite_evidence():
     data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
     truth = System(
@@ -670,6 +671,7 @@ def test_a_tie_must_name_a_sibling_with_geometry():
         )(1.0)
 
 
+@pytest.mark.slow
 def test_a_tied_field_fits_with_the_disk_geometry_and_has_a_finite_evidence():
     data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
     truth = _tied_scene(seed=3)
