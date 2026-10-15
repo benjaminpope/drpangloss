@@ -3,6 +3,7 @@
 import copy
 import functools
 import json
+import warnings
 
 import jax
 import numpy as onp
@@ -11,6 +12,7 @@ import pytest
 pytest.importorskip("jaxoplanet")
 
 from virgil import _gauss_newton, aliases  # noqa: E402
+from virgil.epochs import Epochs, epoch_positions  # noqa: E402
 from virgil.aliases import (  # noqa: E402
     AliasBandResult,
     AliasResult,
@@ -1227,3 +1229,114 @@ def test_a_fitted_primary_diameter_works_end_to_end(tmp_path):
     assert float(loaded.scene().diam) == pytest.approx(band.best["diam"])
     for a, b in zip(loaded.chi2_per_night(data), band.chi2_per_night(data)):
         assert a["chi2_fit"] == pytest.approx(b["chi2_fit"], rel=1e-5)
+
+
+# --- night flags: a flagged night seeds nothing, but its data still count -----
+
+
+@functools.cache
+def _alias_night_data():
+    """Six single-frame nights of the true orbit, drawn so that the last
+    one's best static-binary peak is a single-night alias (24 mas from the
+    truth: the Gl 229 2024-02-27 situation), found by scanning seeds."""
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    scene = OrbitalBinary(orbit, FLUX)
+    key = jax.random.PRNGKey(4)
+    data = [
+        simulate(
+            scene,
+            _night(m, frames=1, rotation=7.0 * k),
+            key=jax.random.fold_in(key, k),
+        )
+        for k, m in enumerate(EPOCHS)
+    ]
+    dra, ddec, _ = orbit.relative(EPOCHS)
+    return data, onp.asarray(dra), onp.asarray(ddec)
+
+
+@functools.cache
+def _alias_night_positions():
+    data, *_ = _alias_night_data()
+    axis = onp.arange(-14.0, 14.01, 0.5)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return epoch_positions(
+            Epochs({f"n{k}": d for k, d in enumerate(data)}),
+            {"dra": axis, "ddec": axis, "flux": [0.1, 0.3, 0.6]},
+        )
+
+
+def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
+    monkeypatch,
+):
+    data, dra, ddec = _alias_night_data()
+    found = _alias_night_positions()
+    miss = onp.hypot(found.dra - dra, found.ddec - ddec)
+    # The last night's best peak is an alias, 3 mas or more from the truth,
+    # and it is flagged; every other night is right and unflagged.
+    assert miss[5] > 3.0 and onp.all(miss[:5] < 0.5)
+    assert found.flagged.tolist() == [False] * 5 + [True]
+    assert "alias-peaks" in found.flag_codes()["n5"]
+    seeded = []
+    real = aliases.position_profile
+
+    def spy(positions, *args, **kw):
+        seeded.append(positions)
+        return real(positions, *args, **kw)
+
+    monkeypatch.setattr(aliases, "position_profile", spy)
+    result = fit_orbit_aliases(
+        data,
+        (11.3, 12.9),
+        positions=found,
+        t_ref=T_REF,
+        n_candidates=30,
+        n_refine=3,
+        n_is=400,
+        n_samples=50,
+    )
+    n_true = round(float(onp.ptp(result.times)) / TRUTH["period"])
+    assert result.best.n == n_true
+    assert abs(result.best.best["period"] - TRUTH["period"]) < 0.05
+    # The flagged night seeded nothing ...
+    assert len(seeded) == 1 and seeded[0].dra.shape == (5,)
+    assert [u["name"] for u in result.unseeded] == ["n5"]
+    assert "alias-peaks" in [f["code"] for f in result.unseeded[0]["flags"]]
+    # ... but its data are in the likelihood: it is fitted at the true
+    # orbit (the true position, not the alias), like every other night.
+    nights = result.chi2_per_night(data)
+    assert len(nights) == 6 and nights[5]["n"] == nights[0]["n"] > 0
+    assert len(result.best.epochs) == 6
+    assert nights[5]["chi2_per_n"] < 4.0
+
+
+def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
+    monkeypatch, tmp_path
+):
+    data, *_ = _alias_night_data()
+    found = _alias_night_positions()
+    seeded = []
+    real = aliases.position_profile
+    monkeypatch.setattr(
+        aliases,
+        "position_profile",
+        lambda positions, *a, **k: (
+            seeded.append(positions) or real(positions, *a, **k)
+        ),
+    )
+    kw = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
+    everyone = fit_orbit_aliases(
+        data, (12.0, 12.4), positions=found, skip_flagged=False, **kw
+    )
+    assert seeded[0].dra.shape == (6,) and everyone.unseeded == ()
+    skipped = fit_orbit_aliases(data, (12.0, 12.4), positions=found, **kw)
+    assert seeded[1].dra.shape == (5,)
+    skipped.save(tmp_path / "r.json")
+    loaded = AliasResult.load(tmp_path / "r.json")
+    assert loaded.unseeded == skipped.unseeded
+    assert loaded.unseeded[0]["flags"][0]["reason"]
+    # A file written before the record was kept has none.
+    payload = json.loads((tmp_path / "r.json").read_text())
+    del payload["unseeded"]
+    (tmp_path / "old.json").write_text(json.dumps(payload))
+    assert AliasResult.load(tmp_path / "old.json").unseeded == ()
