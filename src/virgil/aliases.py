@@ -2130,8 +2130,17 @@ def _check_seed_diameter(positions, primary_diam):
     seed = positions.primary_diam or None
     engine = primary_diam or None
     if engine == "fit" and seed is not None:
-        return  # a fitted diameter starts from the seeds' (problem 10)
-    if seed != engine:
+        return  # a UD estimate seeds a fitted diameter: nothing to warn of
+    if engine == "fit":
+        warnings.warn(
+            "The positions were fitted with a point primary but "
+            "fit_orbit_aliases fits the primary's diameter: a resolved "
+            "primary biases the seeds. Pass an estimated primary_diam to "
+            "epoch_positions.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    elif seed != engine:
         warnings.warn(
             f"The positions were fitted with primary_diam={seed!r} but "
             f"fit_orbit_aliases has primary_diam={primary_diam!r}: the seeds "

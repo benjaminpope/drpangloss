@@ -799,6 +799,10 @@ def test_ud_seeds_are_unbiased_for_a_resolved_primary():
     assert point.chi2_raw[0]["all"] > 10 * ud.chi2_raw[0]["all"]
     assert abs(point.flux[0] - truth[2]) > 2 * abs(ud.flux[0] - truth[2])
     # Zero is a point primary, and a negative diameter is refused.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        zero = epoch_positions(epochs, grid, primary_diam=0.0)
+    assert zero.primary_diam is None
     with pytest.raises(ValueError, match="primary_diam"):
         epoch_positions(epochs, grid, primary_diam=-1.0)
 
@@ -894,3 +898,55 @@ def test_the_diameter_estimate_needs_the_nights_of_the_positions():
         estimate_primary_diameter(
             [_night(T_REF)], _start_positions(4, 5.0, -3.0, 0.2)
         )
+
+
+def _catalogue(flux, marginal=(0.0, -50.0), sep=5.0):
+    from virgil.epochs import EpochPeaks
+
+    n = len(marginal)
+    return EpochPeaks(
+        dra=onp.full(n, sep),
+        ddec=onp.zeros(n),
+        flux=onp.full(n, flux),
+        loglike=onp.zeros(n),
+        marginal=onp.asarray(marginal, float),
+        weight=onp.ones(n) / n,
+        edge=onp.zeros(n, bool),
+        laplace=onp.ones(n, bool),
+    )
+
+
+def _one_night_flags(catalogue, gap=20.0, **options):
+    from virgil.epochs import _flag_one_night
+
+    keys = dict(alias_nats=2.0, min_gap=5.0, sep_fraction=0.5, flux_tol=0.02)
+    return _flag_one_night(
+        catalogue, gap, (0.005, 1.0), 4.0, **{**keys, **options}
+    )
+
+
+def test_flux_at_the_lower_bound_is_flagged_but_the_grid_minimum_is_not():
+    # The lower bound is a tenth of the grid's lowest flux (0.05 here), so a
+    # faint companion fitted at the grid minimum is fine; one at the bound
+    # is a night with no detected companion.
+    assert _one_night_flags(_catalogue(0.05)) == []
+    flags = _one_night_flags(_catalogue(0.0051))
+    assert [f.code for f in flags] == ["flux-at-bound"]
+    assert "lower bound" in flags[0].reason
+    assert "upper bound" in _one_night_flags(_catalogue(1.0))[0].reason
+
+
+def test_the_alias_reason_mentions_low_gap_only_when_it_applies():
+    close = _catalogue(0.3, marginal=(0.0, -1.0))
+    reason = _one_night_flags(close, gap=1.0)[0].reason
+    assert "low-gap" in reason
+    # Low-gap disabled, or an alias window wider than the gap limit.
+    assert (
+        "low-gap"
+        not in _one_night_flags(close, gap=1.0, min_gap=None)[0].reason
+    )
+    wide = _catalogue(0.3, marginal=(0.0, -6.0))
+    assert (
+        "low-gap"
+        not in _one_night_flags(wide, gap=6.0, alias_nats=8.0)[0].reason
+    )
