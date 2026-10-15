@@ -16,6 +16,7 @@ import numpyro.distributions as dist
 import pytest
 from numpyro.distributions.transforms import biject_to
 
+from virgil._precision import cast_tree, run_in
 from virgil.angles import AngleVector
 from virgil.coverage import nrm_oidata
 from virgil.fields import GaussianField
@@ -206,7 +207,20 @@ def test_gauss_newton_mass_is_in_numpyros_coordinates(flat):
             z = bijection.inv(np.asarray(values[p], float))
             t.append(jax.grad(bijection)(z))
         t = onp.array(t)
-    expected = sigma_x / onp.outer(t, t)
+    # The matrix also has the curvature P of the priors' transforms.
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(TRUTH, LOG_UNIFORM, data, flat=flat), "float64"
+        )
+        assert problem.coordinate_keys == tuple(paths)
+        p = onp.asarray(
+            problem.curvature_diag(
+                problem.init(cast_tree(values, "float64")), True
+            )
+        )
+    expected = onp.linalg.inv(
+        onp.linalg.inv(sigma_x / onp.outer(t, t)) + onp.diag(p)
+    )
     assert onp.allclose(covariance, expected, rtol=1e-4)
 
 

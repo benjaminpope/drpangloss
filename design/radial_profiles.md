@@ -68,7 +68,7 @@ This mirrors `Image(GaussianField(...))`: one component built from small interch
   - Parametrise h by complex reflection coefficients k_1…k_M with |k_j| < 1, built by the Levinson step-up recursion h^{(j)}_i = h^{(j−1)}_i + k_j conj(h^{(j−1)}_{j−i}).
   - This is a bijection onto the minimum-phase factors, whose roots all lie outside the unit circle. That is the unique canonical representative of each positive image (Schur–Cohn; as for stable AR models, Barndorff-Nielsen & Schou 1973).
   - Each k_j comes from an unconstrained Cartesian latent w_j ∈ ℂ through k = w tanh|w| / |w|, which is smooth at 0. There is no funnel, no label switching, no polar singularity and no constraint.
-  - **Numerical check.** Random w at M = 1–6 always gave min-phase h. A root-flipped twin of a k = (0.6, 0.6, 0.6) model gives the same image, but its reflection coefficients are (2.25, 1.21, 0.71), outside the disk, so the parametrisation excludes it. The degree-1 form fits 1 + 0.9 cos θ exactly (|k| = 0.63).
+  - **Numerical check.** Random w at M = 1–6 always gave min-phase h. Every root-flipped twin of a k = (0.6, 0.6, 0.6) model gives the same image, but each twin's step-down coefficients have some |k_j| > 1, outside the disk, so the parametrisation excludes it (for the twin that flips one real-axis root, |k| = (1.64, 1.51, 0.79); the other single and double flips give e.g. (2.08, 3.44, 0.96) and (1.64, 1.51, 1.26); flipping all three gives (0.60, 0.60, 1.67)). An earlier draft quoted (2.25, 1.21, 0.71), which no twin reproduces. The degree-1 form fits 1 + 0.9 cos θ exactly (|k| = 0.63).
 - **What the reflection coefficients are.**
   - **Step-up recursion.** It builds h one degree at a time, h^{(j)}(z) = h^{(j−1)}(z) + k_j z^j h̄^{(j−1)}(1/z), using the reversed conjugate of the previous polynomial.
   - **Schur–Cohn.** The final h has every root outside the unit circle if and only if every |k_j| < 1. The unit-disk box of k's is therefore a one-to-one chart of the minimum-phase polynomials. The step-down recursion inverts it.
@@ -169,15 +169,17 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **One shared engine.** `PolarDisk` and every subsumed class call one engine, `polar_disk_cvis(...)`.
 - **Names and paths are kept.** An old class keeps its public name and parameter names, so prior dicts keyed by path still work. Only its `_centred_cvis` changes, to call the engine.
 - **Old code goes after equality tests.** The old private visibility code is deleted once the tests pass.
-- **Deprecation.** At the next minor release, each old class gets a deprecation note and a changelog migration line, and it is removed one release later.
+- **Deprecation rule.** A class is deprecated only if it is reproducible as a special case of the general one, or replaced by a decided change of shape flagged in the changelog (`GaussianArc`, see its row). `FlaredDisk*` is neither (see its row), so it is exempt. At the next minor release, each other subsumed class gets a deprecation note and a changelog migration line, and it is removed one release later.
 
 | Class | Engine form | Test |
 |---|---|---|
 | `ModulatedGaussianRim` | `ThinRing` + `Harmonics` + `blur_fwhm`. The legacy amplitude/phase parameters are converted to (c, s) inside the wrapper. | Exact to rounding |
 | `TruncatedCone` | `ExpTail` profile in slant distance + `Cone` height + `Harmonics`, with the legacy `az_amps`/`az_pas` converted | Agreement with the old class at n_rings → ∞ (the midpoint error is about 1/n²). The new rule should reach 1e-5 with about 16–24 nodes, against 256 midpoint rings. |
 | `GaussianArc` | `GaussianRing` + `VonMises` (decided) | A notebook check of old against new shape before switching. The changelog flags the change of shape, and `GaussianArc` raises a `FutureWarning` for one release first. |
-| `FlaredDisk*` | profile + `height` + scattering harmonics | Agreement within the numerical-FT error, coordinated with the `pds70-disk` branch |
+| `FlaredDisk*` | **Not subsumed, not deprecated.** Kept as is. | Verified in P6 (PR #340): Blakely+2024 Eq. 3 (sin i, z at the pixel mid-plane radius, z² added, no brightness Jacobian) is an approximation. Only a thin-surface version (tan i, z at the surface point's radius, no z², brightness Jacobian) equals `PolarDisk` + `PowerLawHeight(h0 = −z)`, to 1.5e-9. The flat case (aspect = 0) matches to about 1e-9. |
 | Per-class inc/pa (`EllipticalGaussian`) | `Projected` (Stage 8) | Separate PR |
+
+Sign convention for the `FlaredDisk*` row: positive h shifts towards pa + 90°. A top surface lifted towards the observer shifts the ring to the far side, so h0 < 0.
 
 Stellar disks (`UniformDisk`, limb-darkened disks, `GaussianDisk`) are out of scope. They are closed forms on the core star path and stay as they are; they serve as the analytic m = 0 tests.
 
@@ -189,7 +191,7 @@ Stellar disks (`UniformDisk`, limb-darkened disks, `GaussianDisk`) are out of sc
 | P3 | `Harmonics` positive form (reflection coefficients) added to P2's linear form; the `virgil.harmonics` conversion helpers with round-trip tests; a test that reproduces the multimodality check and `VonMises`. Tests against a DFT of the rendered image. Subsume `ModulatedGaussianRim`; `GaussianArc` becomes von Mises. | 4–5 h |
 | P4 | `RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`; NUTS with flat coordinates; `log_evidence` support. *Enables A2.* | 5–7 h |
 | P5 | Tutorial notebook (§7) | 3–4 h |
-| P6 | `PolarField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; the switch waits for Ben and the `pds70-disk` branch. | 4–6 h |
+| P6 | `PolarField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; `FlaredDisk*` is not switched (decided, see §5 and §10). | 4–6 h |
 | V | virgil-validation benchmarks against reference implementations (§12), committed at the end | 6–8 h |
 
 Each stage is one PR with tests. P5 is the only virgil notebook. V comes last: commits to virgil-validation, following its independence rule. Docs describe the component, never this note. Every PR keeps the credit (§11) up to date.
@@ -276,6 +278,9 @@ This is done as a real worked example in its own analysis repository, never in v
   - `freeze_geometry` is an explicit method returning a cached model;
   - the stages are reordered so the dust-plume worked example benefits first (A1 after P2, A2 after P4);
   - credit to the original papers and codes goes in docstrings and the contributors page (§11).
+- **FlaredDisk\* stays (2026-10-14).** Ben's decision: `FlaredDisk*` stays undeprecated, and no PR carries a deprecation notice. Options for later:
+  - add a pixel-evaluated height mode to `PolarDisk`, which would reproduce the Blakely approximation; or
+  - keep `FlaredDisk*` for flared fits and use `PolarDisk` + `PowerLawHeight(h0 < 0)` for new thin-surface work.
 
 ## 11. Credit
 We reimplement ideas and copy no code (frank is LGPL). Credit is still mandatory, in two places:
@@ -331,7 +336,7 @@ Each benchmark records software versions and a pinned virgil commit hash, and gi
 - **Merging.** Never merge. Ben merges stacked PRs in order, and they are retargeted to `main` as their bases merge.
 - **Git.** Merge, never rebase. Merge `origin/main` before pushing, and never use `--no-verify`.
 - **Python environment.** Use a worktree venv (Python 3.12); never `uv sync`/`uv run` in `~/code/virgil`. In virgil-validation, install frank, vis-r, astro-frap and PMOIRED into that repository's own environment.
-- **Compute.** Nothing on OzSTAR: no ssh, no job scripts, no prompts to Ben. Keep all JAX light on the laptop. That means:
+- **Compute.** *(Overridden 2026-10-14: heavy runs moved to OzSTAR, see §14.)* Nothing on OzSTAR: no ssh, no job scripts, no prompts to Ben. Keep all JAX light on the laptop. That means:
   - timings at N_vis ≤ 10⁴ on CPU, with GPU and 10⁵ timings deferred;
   - MAP and Laplace only for the tutorial and V4, with NUTS at most a few hundred draws on tiny problems;
   - A1 is fixed-parameter likelihood evaluations only. Compare the old and new cone at the stored best-fit parameters: Δlog L against nodes, and time per call. Write a short report in the Apep analysis directory. Commit nothing to virgil. A1 and A2 fits wait for Ben.
@@ -339,3 +344,6 @@ Each benchmark records software versions and a pinned virgil commit hash, and gi
 - **Delegated PRs.** Check `gh pr files` before calling any delegated PR ready; an agent once reported tests it never wrote.
 - **Decisions.** Record any decision needed from Ben in a `QUESTIONS.md` at the worktree root, choose the conservative option, and continue.
 - **Status.** Keep a `STATUS.md` at the worktree root: stage, branch, PR URL, CI state, open questions. It is the hand-off for Ben in the morning.
+
+## 14. Execution log (2026-10-14)
+The run produced stacked PRs P1–P6 (#335 and #336 merged; #338 P3; #343 P4; #347 P5; #340 P6) plus a validation PR in virgil-validation. Heavy runs (experiments, tutorial execution, V4) were moved to OzSTAR by Ben's decision ("Option A"), overriding the no-HPC rule in §13. No deprecations were made.

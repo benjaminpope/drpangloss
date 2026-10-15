@@ -67,6 +67,7 @@ nav:
       - "Variational inference": variational_inference.md
       - "Contrast limits": contrast_limits.md
       - "Detection ROC curves": detection_roc.md
+      - "Chromatic companion search": wr_chromatic_search.md
       - "Hierarchical inference across filters": hierarchical_inference.md
       - "Orbits from interferometric data": orbit_fitting.md
   - Sources:
@@ -74,6 +75,7 @@ nav:
       - "Extended source models": source_models.md
       - "Composing models": composition.md
       - "Radial profiles and PolarDisk": polar_disk.md
+      - "A planet in a gap between rings": polar_disk_rings.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
@@ -103,6 +105,7 @@ nav:
               - PolarDisk: api/models/classes/polar_disk.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
+      - Harmonics: api/harmonics.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
       - Linear marginalization (internal): api/linear.md

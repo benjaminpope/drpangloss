@@ -7,6 +7,7 @@ The everyday names are importable from the top level, e.g.
 - [OIFITS](oifits.md): reading and writing OIFITS files
 - [AMIGO](amigo.md): AMIGO mixed-DISCO products
 - [Models](models/index.md): source models and visibilities
+- [Harmonics](harmonics.md): azimuthal harmonics of a `PolarDisk` and conversions between their forms
 - [Likelihood](likelihood.md): likelihoods and numpyro models
 - [Gains](gains.md): calibration gains correlated across channels, marginalized analytically
 - [Linear marginalization](linear.md): the shared algebra for parameters marginalized analytically

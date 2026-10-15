@@ -60,6 +60,7 @@ from . import (  # noqa: E402
     fitting,
     gains,
     grid_fit,
+    harmonics,
     imaging,
     inference,
     likelihood,
@@ -79,7 +80,7 @@ from . import (  # noqa: E402
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
-from .fields import GaussianField  # noqa: E402
+from .fields import GaussianField, PolarField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -132,8 +133,10 @@ from .models import (  # noqa: E402
     OrbitalBinary,
     PointSource,
     PolarDisk,
+    PolarKernel,
     PowerLawHeight,
     QuadraticLimbDarkenedDisk,
+    RadialGP,
     RadialLinear,
     RadialPower,
     RadialPowerLaw,
@@ -145,7 +148,9 @@ from .models import (  # noqa: E402
     ThinRing,
     TruncatedCone,
     UniformDisk,
+    VonMises,
     circular_support,
+    gp_priors,
     polar_disk_cvis,
 )
 from .oidata import OIData  # noqa: E402
@@ -167,6 +172,7 @@ from .spectra import (  # noqa: E402
     LorentzianLine,
     Nodes,
     PowerLaw,
+    Scaled,
     Sum,
 )
 
@@ -198,6 +204,7 @@ __all__ = [
     "GaussianArc",
     "GaussianDisk",
     "GaussianField",
+    "PolarField",
     "GaussianRing",
     "GaussianLine",
     "GravityDarkenedStar",
@@ -213,11 +220,13 @@ __all__ = [
     "OrbitalBinary",
     "PointSource",
     "PolarDisk",
+    "PolarKernel",
     "PowerLawHeight",
     "PositionData",
     "RVData",
     "PowerLaw",
     "QuadraticLimbDarkenedDisk",
+    "RadialGP",
     "RadialLinear",
     "RadialPower",
     "RadialPowerLaw",
@@ -226,12 +235,14 @@ __all__ = [
     "SourceModel",
     "StateVectorOrbit",
     "SquareRootLimbDarkenedDisk",
+    "Scaled",
     "Sum",
     "System",
     "ThieleInnesOrbit",
     "ThinRing",
     "TruncatedCone",
     "UniformDisk",
+    "VonMises",
     "absil_limits",
     "injection_limits",
     "circular_support",
@@ -256,6 +267,7 @@ __all__ = [
     "optimized_flux_grid",
     "optimized_likelihood_grid",
     "pixel_offsets",
+    "gp_priors",
     "polar_disk_cvis",
     "radial_profile",
     "rank_orbits",

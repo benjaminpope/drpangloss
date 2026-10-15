@@ -10,6 +10,8 @@ PolarDisk](../../../polar_disk.md) for usage.
       heading_level: 2
       members:
         - suggest_n_r
+        - freeze_geometry
+        - gp_sites
 
 ## Profiles
 
@@ -53,7 +55,19 @@ PolarDisk](../../../polar_disk.md) for usage.
     options:
       show_root_heading: true
       heading_level: 3
-      members: false
+      members:
+        - image_harmonics
+        - convert
+        - coefficients
+        - polynomial
+
+::: virgil.models.VonMises
+    options:
+      show_root_heading: true
+      heading_level: 3
+      members:
+        - image_harmonics
+        - truncation_power
 
 ::: virgil.models.RadialLinear
     options:
@@ -78,3 +92,26 @@ PolarDisk](../../../polar_disk.md) for usage.
       show_root_heading: true
       heading_level: 3
       members: false
+
+## Gaussian-process priors
+
+::: virgil.models.RadialGP
+    options:
+      show_root_heading: true
+      heading_level: 3
+      members:
+        - draws
+        - nodes
+
+::: virgil.models.PolarKernel
+    options:
+      show_root_heading: true
+      heading_level: 3
+      members:
+        - spectrum
+        - draws
+
+::: virgil.models.gp_priors
+    options:
+      show_root_heading: true
+      heading_level: 3

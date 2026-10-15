@@ -43,6 +43,7 @@ MAPPINGS = {
     "notebooks/data_io.ipynb": "docs/data_io.md",
     "notebooks/contrast_limits.ipynb": "docs/contrast_limits.md",
     "notebooks/detection_roc.ipynb": "docs/detection_roc.md",
+    "notebooks/wr_chromatic_search.ipynb": "docs/wr_chromatic_search.md",
     "notebooks/hierarchical_inference.ipynb": "docs/hierarchical_inference.md",
     "notebooks/orbit_fitting.ipynb": "docs/orbit_fitting.md",
     "notebooks/model_syntax.ipynb": "docs/model_syntax.md",
@@ -58,6 +59,7 @@ MAPPINGS = {
     "notebooks/harmonix.ipynb": "docs/harmonix.md",
     "notebooks/limb_darkening.ipynb": "docs/limb_darkening.md",
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
+    "notebooks/polar_disk_rings.ipynb": "docs/polar_disk_rings.md",
 }
 
 

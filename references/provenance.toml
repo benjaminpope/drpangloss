@@ -1101,3 +1101,35 @@ bibcode = "2025RASTI...4....4D"
 arxiv = "2502.17619"
 verified = true
 verified_via = "ads"
+
+[ref.dumitrescu2007]
+authors = "Dumitrescu"
+year = 2007
+title = "Positive Trigonometric Polynomials and Signal Processing Applications"
+doi = "10.1007/978-1-4020-5125-8"
+used_in = ["virgil.models:Harmonics", "virgil.harmonics:from_image_harmonics"]
+note = "Springer (book); the Fejér-Riesz theorem, spectral factorization and the Schur-Levinson recursion behind the positive form of Harmonics. Standard mathematics, credited here and in docstrings, not on the contributors page."
+verified = true
+verified_via = "crossref"
+
+[ref.barndorff-nielsen1973]
+authors = "Barndorff-Nielsen & Schou"
+year = 1973
+title = "On the parametrization of autoregressive models by partial autocorrelations"
+doi = "10.1016/0047-259X(73)90030-4"
+used_in = ["virgil.models:Harmonics", "virgil.harmonics:reflection_coefficients"]
+note = "J. Multivariate Anal. 3, 408-419; the unconstrained reflection-coefficient parametrization of a minimum-phase polynomial. Standard mathematics, credited here and in docstrings, not on the contributors page."
+verified = true
+verified_via = "crossref"
+
+[ref.frap]
+authors = "Yoshida et al."
+year = 2026
+title = "Direct Retrieval of Protoplanetary Disk Dust Properties Using Auto-differentiable Gaussian Processes and Their Application to the HD 169142 Disk"
+used_in = ["virgil.models:RadialGP", "virgil.models:PolarKernel"]
+note = "ApJ 1007, 198 (2026); github.com/tomyoshida/frap. Ideas only, no code copied: whitened Gaussian-process latents (g = mu + L z) at radial nodes with a dense kernel, sampled by NUTS, and a radial GP per physical quantity."
+bibcode = "2026ApJ..1007..198Y"
+arxiv = "2607.12618"
+doi = "10.3847/1538-4357/ae89ad"
+verified = true
+verified_via = "ads"

@@ -92,6 +92,9 @@ def test_gauss_newton_mass_matches_the_curvature_and_its_layout():
     assert onp.all(variances <= 1.0 + 1e-9) and variances.min() < 0.5
 
 
+_IMPROPER_FLUX = dist.ImproperUniform(dist.constraints.positive, (), ())
+
+
 def _dense_gauss_newton(model, priors, data, values):
     """(JᵀJ)⁻¹ with J the full Jacobian of the residuals, priors included."""
     with run_in("float64"):
@@ -116,7 +119,9 @@ def test_gauss_newton_mass_is_the_inverse_curvature(case):
     # The covariance is computed from the data's Jacobian and the priors'
     # diagonal curvature: by Woodbury when there are fewer data than
     # parameters (an image, with or without a flat-prior flux), else
-    # directly. Each must equal (JᵀJ)⁻¹ from the full Jacobian.
+    # directly. Each must equal (JᵀJ)⁻¹ from the full Jacobian. The flux
+    # priors are improper (a bounded Uniform adds the curvature of its
+    # transform; see tests/test_fitting.py).
     data = vlti_oidata(
         hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
     ).with_model(_scene(onp.zeros((N, N)), 1.5, 2.0))
@@ -124,14 +129,14 @@ def test_gauss_newton_mass_is_the_inverse_curvature(case):
         scene = System(star=PointSource(), env=GaussianDisk(3.0, flux=0.3))
         priors = {
             "env.sigma": dist.Normal(3.0, 1.0),
-            "env.flux": dist.Uniform(0.0, 1.0),
+            "env.flux": _IMPROPER_FLUX,
         }
         values = {"env.sigma": 3.2, "env.flux": 0.35}
     else:
         scene = _scene(onp.zeros((N, N)), 1.5, 2.0)
         priors = image_priors(scene)
         if case == "latents and flux":
-            priors |= {"env.flux": dist.Uniform(0.0, 1.0)}
+            priors |= {"env.flux": _IMPROPER_FLUX}
         latent = jax.random.normal(jax.random.PRNGKey(3), (N, N))
         values = {"env.log_brightness.latent": 0.3 * latent, "env.flux": 0.4}
         values = {k: v for k, v in values.items() if k in priors}
@@ -143,11 +148,33 @@ def test_gauss_newton_mass_is_the_inverse_curvature(case):
     onp.testing.assert_allclose(covariance, expected, atol=1e-9 * scale)
 
 
-def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
-    # A zero-flux companion's position leaves the data unchanged.
+def test_gauss_newton_mass_gives_a_bounded_parameter_the_transforms_curvature():
+    # A zero-flux companion's position leaves the data unchanged. Under a
+    # bounded prior the sampler's logistic transform still curves the
+    # potential, 2σ(1 - σ) for the fraction σ of the range, so the matrix is
+    # finite (it raised before): the variance is its inverse.
     data = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
     scene = System(star=PointSource(), c=PointSource(flux=0.0, dra=5.0))
     priors = {"c.dra": dist.Uniform(-10.0, 10.0)}
+    mass = gauss_newton_mass(scene, priors, data, {"c.dra": 5.0})
+    (sites,) = mass["dense_mass"]
+    fraction = 0.75
+    onp.testing.assert_allclose(
+        mass["inverse_mass_matrix"][sites],
+        [[1.0 / (2 * fraction * (1 - fraction))]],
+        rtol=1e-9,
+    )
+    assert mass.condition == pytest.approx(1.0)
+
+
+def test_gauss_newton_mass_rejects_an_unconstrained_parameter():
+    # An improper prior adds no curvature, so a direction the data leave
+    # free is singular: nothing constrains it.
+    data = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
+    scene = System(star=PointSource(), c=PointSource(flux=0.0, dra=5.0))
+    priors = {
+        "c.dra": dist.ImproperUniform(dist.constraints.real, (), ()),
+    }
     with pytest.raises(ValueError, match="singular"):
         gauss_newton_mass(scene, priors, data, {"c.dra": 5.0})
 
@@ -208,3 +235,154 @@ def test_gauss_newton_mass_whitens_the_posterior():
     white = onp.linalg.eigvalsh(chol.T @ hess @ chol)
     assert raw[-1] / raw[0] > 1e3
     assert 0.25 < white[0] and white[-1] < 4
+
+
+def _small_scene(npix=4):
+    template = onp.asarray(GaussianDisk(1.0).render(npix, npix * H))
+    field = GaussianField(onp.zeros((npix, npix)), 1.5, 2.0, mean=template)
+    return System(star=PointSource(), env=Image(field, H, flux=0.4))
+
+
+@pytest.mark.parametrize("hours", [(0.0,), (-2.0, 0.0, 2.0)])
+@pytest.mark.parametrize("flux", [False, True])
+def test_the_size_guard_returns_the_diagonal_of_the_dense_matrix(
+    monkeypatch, hours, flux
+):
+    # More coordinates than _DENSE_MASS_MAX: the diagonal of the covariance,
+    # without forming it. Fewer rows than coordinates takes the Woodbury
+    # branch (with the zero-P correction if the flux is improper), more the
+    # Cholesky one.
+    from virgil import fitting
+
+    scene = _small_scene()
+    data = vlti_oidata(hour_angles_h=hours, wavelengths_m=[3.5e-6]).with_model(
+        scene
+    )
+    priors = image_priors(scene)
+    if flux:
+        priors |= {"env.flux": _IMPROPER_FLUX}
+    values = {
+        "env.log_brightness.latent": 0.3
+        * jax.random.normal(jax.random.PRNGKey(3), (4, 4)),
+        "env.flux": 0.4,
+    }
+    values = {k: v for k, v in values.items() if k in priors}
+    dense = gauss_newton_mass(scene, priors, data, values)
+    (sites,) = dense["dense_mass"]
+    assert dense.condition is not None
+    monkeypatch.setattr(fitting, "_DENSE_MASS_MAX", 10)
+    with pytest.warns(UserWarning, match="diagonal"):
+        thin = gauss_newton_mass(scene, priors, data, values)
+    assert thin["dense_mass"] == [] and thin.condition is None
+    # One block over all the sites, a vector: numpyro takes it as a diagonal
+    # block (test_a_nuts_chain_runs_with_the_diagonal_mass).
+    ((thin_sites, diagonal),) = thin["inverse_mass_matrix"].items()
+    assert thin_sites == sites and diagonal.ndim == 1
+    covariance = dense["inverse_mass_matrix"][sites]
+    if hours == (0.0,):  # fewer rows than coordinates: Woodbury, exact
+        expected = onp.diag(covariance)
+    else:  # at least as many rows as coordinates: 1 / diag(F)
+        expected = 1.0 / onp.diag(onp.linalg.inv(covariance))
+    onp.testing.assert_allclose(diagonal, expected, rtol=1e-10)
+
+
+def _shapes(jaxpr, primitive=None):
+    """Every array shape in a jaxpr, nested calls included, or (with
+    ``primitive``) the input shapes of that primitive's equations."""
+    found = set()
+    if primitive is None:
+        for var in [*jaxpr.invars, *jaxpr.outvars]:
+            found.add(tuple(getattr(var.aval, "shape", ())))
+    for eqn in jaxpr.eqns:
+        if primitive is None:
+            for var in [*eqn.invars, *eqn.outvars]:
+                found.add(tuple(getattr(var.aval, "shape", ())))
+        elif eqn.primitive.name == primitive:
+            found.add(tuple(eqn.invars[0].aval.shape))
+        for param in eqn.params.values():
+            for sub in param if isinstance(param, (list, tuple)) else [param]:
+                inner = getattr(sub, "jaxpr", sub)
+                if hasattr(inner, "eqns"):
+                    found |= _shapes(inner, primitive)
+    return found
+
+
+@pytest.mark.parametrize("hours", [(0.0,), (-2.0, 0.0, 2.0)])
+def test_the_diagonal_covariance_forms_no_n_by_n_matrix(hours):
+    # The size guard's diagonal must not allocate or factor n x n, or the
+    # guard saves nothing. With fewer rows than coordinates (Woodbury) no
+    # n x n array exists at all; with more, the Jacobian is already at least
+    # n x n, but F is not formed or Cholesky-factored.
+    from virgil.fitting import _covariance
+
+    scene = _small_scene()
+    data = vlti_oidata(hour_angles_h=hours, wavelengths_m=[3.5e-6]).with_model(
+        scene
+    )
+    priors = image_priors(scene)
+    problem = _Objective(scene, priors, data, flat=False)
+    z = problem.init({"env.log_brightness.latent": onp.zeros((4, 4))})
+    n = 16
+    rows = jax.eval_shape(problem.curvature_rows, z).shape[0]
+    dense = jax.make_jaxpr(lambda z: _covariance(problem, z, True))(z)
+    thin = jax.make_jaxpr(lambda z: _covariance(problem, z, False))(z)
+    # The helper sees nested calls: the dense matrix is factored.
+    assert (n, n) in _shapes(dense.jaxpr, "cholesky")
+    assert (n, n) not in _shapes(thin.jaxpr, "cholesky")
+    if rows < n:
+        assert (n, n) in _shapes(dense.jaxpr)
+        assert (n, n) not in _shapes(thin.jaxpr)
+
+
+def test_a_non_positive_definite_covariance_is_not_ok_in_float32():
+    # e7b: a 16² image, errors 1000 times smaller, float32. The Woodbury
+    # cancellation gave a covariance that was not positive definite while
+    # the factors looked fine, and the old check passed it.
+    from virgil.fitting import _gauss_newton_covariance
+
+    scene = _scene(onp.zeros((N, N)), 1.5, 2.0)
+    data = vlti_oidata(
+        hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6]
+    ).with_model(scene)
+    priors = image_priors(scene)
+    latent = 0.3 * jax.random.normal(jax.random.PRNGKey(3), (N, N))
+    with run_in("float64"):
+        problem = _Objective(
+            scene, priors, data.with_error_scale(0.001), flat=False
+        )
+        z = problem.init({"env.log_brightness.latent": latent})
+    problem32, z32 = cast_tree((problem, z), "float32")
+    _, ok, _ = _gauss_newton_covariance(problem32, z32)
+    assert not ok
+    # The same curvature in float64 is fine.
+    with run_in("float64"):
+        _, ok64, _ = _gauss_newton_covariance(
+            *cast_tree((problem, z), "float64")
+        )
+    assert ok64
+
+
+def test_a_nuts_chain_runs_with_the_diagonal_mass(monkeypatch):
+    from numpyro.infer import MCMC, NUTS
+
+    from virgil import fitting
+
+    scene = _small_scene()
+    data = vlti_oidata(
+        hour_angles_h=(0.0,), wavelengths_m=[3.5e-6]
+    ).with_model(scene)
+    priors = image_priors(scene)
+    values = {"env.log_brightness.latent": onp.zeros((4, 4))}
+    monkeypatch.setattr(fitting, "_DENSE_MASS_MAX", 10)
+    with pytest.warns(UserWarning, match="diagonal"):
+        mass = gauss_newton_mass(scene, priors, data, values)
+    kernel = NUTS(
+        numpyro_model(scene, priors, data),
+        init_strategy=init_to_value(values=values),
+        **mass,
+    )
+    mcmc = MCMC(kernel, num_warmup=10, num_samples=10, progress_bar=False)
+    mcmc.run(jax.random.PRNGKey(0))
+    samples = mcmc.get_samples()
+    assert set(samples) == set(priors)
+    assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())

@@ -37,12 +37,14 @@ import pathlib
 import pickle
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
 from scipy import optimize
 from scipy.special import logsumexp
 
+from . import _gauss_newton
 from ._deprecate import external_stacklevel
 from ._precision import cast_tree, in_float64
 from ._utils import clean_json
@@ -243,19 +245,20 @@ def _model(x, cfg):
     return OrbitalBinary(orbit, flux)
 
 
-def _epoch_chi2(surface, model, d, amp_range):
-    """Raw χ² per block of one epoch and its V² amplitude.
+def _epoch_residuals(surface, model, d, amp_range):
+    """The whitened residuals of one epoch and its V² amplitude.
 
     With ``amp_range`` (lo, hi), the squared visibilities are multiplied by
     one amplitude ``A``, a per-epoch contrast loss that does not depend on
     baseline or wavelength. Its profile (the weighted least-squares ``A``,
     clipped to the range, which is the bound of its Jeffreys prior) is
-    analytic because the model is linear in ``A``. ``A`` is 1 without it.
+    analytic because the model is linear in ``A``, so the visibility
+    residuals are those of ``A`` times the model, with ``A`` live (variable
+    projection). ``A`` is 1 without it.
     """
     r = whitened_residuals(model, d)
-    chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks])
     if amp_range is None or surface.names[0] != "vis":
-        return chi2, np.ones((), chi2.dtype)
+        return r, np.ones((), r.dtype)
     if d.vis_mode != "v2" or d.observable_kind != "split":
         raise NotImplementedError(
             "vis_amp needs squared visibilities as the visibility channel "
@@ -266,10 +269,17 @@ def _epoch_chi2(surface, model, d, amp_range):
     err = np.reshape(d.d_vis, -1)
     mod = obs + r[:n] * err
     w = 1.0 / err**2
-    tiny = np.finfo(chi2.dtype).tiny
+    tiny = np.finfo(r.dtype).tiny
     amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
     amp = np.clip(amp, *amp_range)
-    return chi2.at[0].set(np.sum(((obs - amp * mod) / err) ** 2)), amp
+    return r.at[:n].set((amp * mod - obs) / err), amp
+
+
+def _epoch_chi2(surface, model, d, amp_range):
+    """Raw χ² per block of one epoch and its V² amplitude."""
+    r, amp = _epoch_residuals(surface, model, d, amp_range)
+    chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks])
+    return chi2, amp
 
 
 # The kernels take the data as traced arguments, so one compilation serves
@@ -285,6 +295,41 @@ def _loglike(surfaces, x, data, cfg):
         s.score(_epoch_chi2(s, model, d, cfg[3])[0], 1.0, d)
         for s, d in zip(surfaces, data)
     )
+
+
+class _KernelProblem(eqx.Module):
+    """The negative scale-marginalized log likelihood as a kernel problem
+    ([`_gauss_newton`][virgil._gauss_newton]), in the sampled coordinates.
+
+    The curvature rows are each epoch's block residuals (the V² amplitude
+    live, as in the likelihood) multiplied by √(stop_gradient ``w_b``), with
+    ``w_b`` the IRLS weights of the surface
+    ([`_Surface.weights`][virgil.epochs._Surface.weights]): iteratively
+    reweighted least squares. The priors are flat in these coordinates, so
+    there is no diagonal. ``data`` is traced, so one compilation serves
+    every band and start of the same shapes.
+    """
+
+    data: tuple
+    surfaces: tuple = eqx.field(static=True)
+    cfg: tuple = eqx.field(static=True)
+
+    def loss(self, x):
+        return -_loglike(self.surfaces, x, self.data, self.cfg)
+
+    def rows(self, x):
+        model = _model(x, self.cfg)
+        return np.concatenate(
+            [
+                s.weighted_rows(
+                    _epoch_residuals(s, model, d, self.cfg[3])[0], 1.0, d
+                )
+                for s, d in zip(self.surfaces, self.data)
+            ]
+        )
+
+    def diag(self, x):
+        return np.zeros_like(x)
 
 
 _value_and_grad = functools.partial(jax.jit, static_argnums=(0, 3))(
@@ -310,6 +355,7 @@ class _Problem:
         self.data, self.t_ref = list(data), settings.t_ref
         self.cfg = settings.cfg
         self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
+        self.kernel = _KernelProblem(tuple(self.data), self.surfaces, self.cfg)
         # Proper priors: log P log-uniform over the whole p_range, tau
         # uniform over one cycle, e uniform, cos i uniform, omega and Omega
         # uniform with the (Omega + 180, omega + 180) mirror folded away
@@ -491,87 +537,62 @@ def _senses(x):
     return [x, other]
 
 
-# L-BFGS-B stops early on the narrow, curved likelihood ridge of a
-# many-cycle orbit (its relative-reduction test fires 50-250 nats short of
-# the optimum), so it restarts from its own optimum, which resets its
-# curvature memory, until a restart gains less than _RESTART_GAIN nats.
-_MAX_RESTARTS = 6
-_RESTART_GAIN = 0.05
+# The likelihood is a narrow, curved ridge for an orbit of many cycles, where
+# L-BFGS-B stops 50-250 nats short of the optimum. Damped Newton on the IRLS
+# curvature (``_KernelProblem``) follows the ridge; L-BFGS-B is only the
+# fallback for a start where the kernel stalls.
+_DTOL = 1e-9  # Newton decrement, nats, at which a mode is converged
 
 
 def _optimize(problem, bounds, x0, max_steps):
-    """Maximize the marginal likelihood from ``x0`` (L-BFGS-B, in the
-    sampled coordinates, restarted until it stops improving)."""
+    """Maximize the marginal likelihood from ``x0``, in the sampled
+    coordinates and within ``bounds``.
 
-    def fun(x):
-        value, grad = problem.value_and_grad(np.asarray(x))
-        return -float(value), -onp.asarray(grad, float)
+    Damped Newton on the IRLS curvature
+    ([`_gauss_newton`][virgil._gauss_newton], at most ``max_steps``
+    iterations). If it does not converge, L-BFGS-B from its point, then
+    the kernel again from there. Returns the folded point and its log
+    likelihood (``-inf`` if the likelihood or its gradient is not finite
+    at ``x0``).
+    """
 
-    limits = [
-        [None if not onp.isfinite(v) else float(v) for v in side]
-        for side in (bounds.lower, bounds.upper)
-    ]
-    x, best = onp.asarray(x0, float), -onp.inf
-    for _ in range(_MAX_RESTARTS):
+    def kernel(start):
+        return _gauss_newton.solve(
+            problem.kernel,
+            start,
+            lower=bounds.lower,
+            upper=bounds.upper,
+            dtol=_DTOL,
+            max_steps=max_steps,
+        )
+
+    state = kernel(onp.asarray(x0, float))
+    if int(state.stop) == _gauss_newton.NON_FINITE:
+        return _fold(x0), -onp.inf
+    if int(state.stop) != _gauss_newton.CONVERGED:
+
+        def fun(x):
+            value, grad = problem.value_and_grad(np.asarray(x))
+            return -float(value), -onp.asarray(grad, float)
+
         res = optimize.minimize(
             fun,
-            x,
+            onp.asarray(state.z, float),
             jac=True,
             method="L-BFGS-B",
-            bounds=list(zip(*limits)),
+            bounds=list(
+                zip(
+                    *(
+                        [None if not onp.isfinite(v) else float(v) for v in b]
+                        for b in (bounds.lower, bounds.upper)
+                    )
+                )
+            ),
             options=dict(maxiter=max_steps, ftol=1e-13, gtol=1e-9),
         )
-        value = -float(res.fun)
-        gain = value - best
-        if value > best:
-            x, best = res.x, value
-        if not gain > _RESTART_GAIN:  # also stops on a NaN
-            break
-    x, value = _newton_polish(problem, limits, _fold(x), best)
-    return x, value
-
-
-def _newton_polish(problem, limits, x, value, n_steps=25):
-    """Levenberg–Marquardt steps from L-BFGS's stopping point.
-
-    L-BFGS stops short of the stationary point along the narrow curved
-    ridges of this likelihood (the ``not-converged`` and
-    ``hessian-not-positive-definite`` flags), and the Laplace proposal built
-    there is poor. A step is accepted only if the log likelihood rises; the
-    coordinates stay inside the bounds. Returns the polished point and its
-    value; the input if no step helps or the Hessian is not finite.
-    """
-    lo = onp.array([-onp.inf if a is None else a for a in limits[0]])
-    hi = onp.array([onp.inf if b is None else b for b in limits[1]])
-    lam = 1e-3
-    for _ in range(n_steps):
-        grad = onp.asarray(problem.value_and_grad(np.asarray(x))[1], float)
-        h = onp.asarray(problem.hessian(np.asarray(x)), float)
-        if not (onp.all(onp.isfinite(grad)) and onp.all(onp.isfinite(h))):
-            break
-        h = 0.5 * (h + h.T)
-        free = (x - lo > 1e-6) & (hi - x > 1e-6)
-        improved = False
-        for _try in range(8):
-            a = -h[onp.ix_(free, free)]
-            a = a + lam * onp.diag(onp.maximum(onp.abs(onp.diag(a)), 1e-12))
-            try:
-                step = onp.linalg.solve(a, grad[free])
-            except onp.linalg.LinAlgError:
-                lam *= 10.0
-                continue
-            trial = x.copy()
-            trial[free] += step
-            trial = onp.clip(trial, lo, hi)
-            new = float(problem.value_and_grad(np.asarray(trial))[0])
-            if onp.isfinite(new) and new > value:
-                improved = new - value > 1e-9 * max(abs(value), 1.0)
-                x, value, lam = trial, new, max(lam / 10.0, 1e-9)
-                break
-            lam *= 10.0
-        if not improved:
-            break
-    return _fold(x), value
+        if res.fun < float(state.value):  # also false for a NaN
+            state = kernel(onp.asarray(res.x, float))
+    return _fold(state.z), -float(state.value)
 
 
 # ---------------------------------------------------------------------------
@@ -1475,6 +1496,9 @@ def fit_orbit_aliases(
         ``positions`` and none with them.
     min_distance_mas : float, optional
         Fitted modes whose tracks at the epochs differ by less are one mode.
+    max_steps : int, optional
+        Iterations of the optimizer for each start (default 200); see the
+        Notes.
     n_is : int, optional
         Importance draws per mode.
     n_samples : int, optional
@@ -1573,6 +1597,17 @@ def fit_orbit_aliases(
     When modes straddle the Ω fold, ``log_z_is`` and the resampled draws can
     be slightly biased. ``log_z``, which uses the Laplace value except near
     prior bounds, is unaffected.
+
+    Each start is optimized by damped Newton (Levenberg–Marquardt) steps
+    on the scale-marginalized log likelihood. Its curvature is that of
+    iteratively reweighted least squares: each observable block's
+    residuals weighted by the slope of the log likelihood in its χ² (for
+    ``s_max=None``, 1/ŝ² with ŝ² = χ²/ν the error scale those residuals
+    imply), and the profiled V² amplitude differentiated through.
+    A step is kept only if the log likelihood rises, so the curvature
+    sets the speed and not the optimum. If a start does not converge in
+    ``max_steps`` (or stalls), L-BFGS-B continues from where it stopped,
+    and the damped Newton steps polish its result.
 
     ``flags`` lists why a band should not be trusted:
     ``near-prior-bound``, ``not-converged`` (the optimizer stopped more

@@ -7,6 +7,43 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
+  `fit` and `numpyro_model` and covers them in the matrix, under their
+  numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
+  is the Fisher information, with the extra rows √2 log σ for each
+  visibility and phase error. It now also accepts data with gains, any
+  elementwise prior (HalfNormal, Beta, Uniform and so on, each with the
+  curvature of the sampler's transform) and likelihood terms with a
+  `log_norm`. With more than 8192 coordinates it returns the diagonal of
+  the covariance, with a `UserWarning`, instead of an n² matrix.
+  `SingularCurvature` now means a direction that neither the data nor a
+  proper prior constrains (an `ImproperUniform` or flat-in-coordinate
+  parameter the data do not fix), or a matrix that is not positive
+  definite: a parameter under a bounded prior no longer raises. The
+  result's `condition` attribute is the condition number of its
+  correlation matrix. The matrix checks positive definiteness on the
+  covariance itself, which a float32 Woodbury result could fail while
+  the old check passed. A prior that is neither elementwise nor an
+  angle vector (`MultivariateNormal`, `Dirichlet`) raises
+  `NoLeastSquaresForm`, as its curvature is not diagonal.
+
+### Changed
+
+- **`variational` starts error terms and gains data at their
+  Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
+  so fitted error terms get widths from the curvature instead of
+  `init_scale`; data with gains, and priors without a least-squares form
+  (HalfNormal, Beta), now get a Gauss–Newton start rather than
+  `init_scale`. The posterior is unchanged; only the starting width, so
+  the number of steps to converge.
+- A bounded elementwise prior (`Uniform`, `LogUniform` and so on) now adds
+  the curvature of the sampler's transform to `gauss_newton_mass`'s
+  matrix, where `Uniform` added none before. The matrix is a
+  preconditioner, so this changes the efficiency of NUTS with it, not its
+  samples.
+
 ### Migration from 0.3.0
 
 - **Model before data in the grid, limit and detection tools.**
@@ -47,6 +84,66 @@ anything before 1.0 may change between minor versions.
   component offset (`models.smeared_model`). Off by default: results are
   unchanged.
 
+- **Tutorial: a planet in a gap between inclined rings (stage P5).**
+  `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
+  simulates chromatic VLTI-like V² and closure phases of a star, three
+  coplanar blackbody rings (the outer one lopsided) and a planet in the
+  gap; fits the parametric family with invariant priors (MAP, Laplace
+  covariance and evidence); then recovers the rings, their colours, the
+  lopsidedness and the planet with one `PolarDisk` whose profile, spectral
+  index and harmonics are Gaussian processes, and compares the Laplace
+  evidences and the prior and posterior of the profile and index.
+- **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
+  (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
+  (or radial function) with latents `z`; `PolarKernel` is a prior over the
+  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `PolarDisk` takes
+  `spectral_index=` (number, function or `RadialGP`) with `wavel0=`;
+  `freeze_geometry(data)` caches the Bessel matrices; `gp_priors` builds the
+  priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
+  `imaging.log_evidence` (Laplace over the latents) support them. The
+  Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
+  the `RadialGP` docstring, the contributors page and the bibliography.
+- **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
+  a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
+  `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
+  periodic one in azimuth, interpolated onto the pixels. Whitened latents,
+  so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
+  `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
+  `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
+  (Yoshida et al. 2026) and frank's polar representation (Jennings et al.
+  2020). `FlaredDisk*` is unchanged: its comparison with `PolarDisk` is
+  tested in `tests/test_flared_vs_polar_disk.py`.
+
+- **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
+  `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
+  *positive* form by default: brightness `|h(e^{i theta})|^2` normalized to the
+  azimuthal mean, with `h(z) = 1 + h_1 z + ... + h_M z^M` the minimum-phase
+  polynomial of complex reflection coefficients `k_j = w_j tanh|w_j| / |w_j|`
+  (unconstrained Cartesian latents `w_j`, a Levinson step-up recursion).
+  Every non-negative image of degree `M` is reachable (Fejér-Riesz), the image
+  is positive for every parameter value, its degree is exactly `M`, and the
+  root-flip multimodality of `|h|^2` is removed. Value and gradient are finite
+  at `w = 0`. The linear form (`c=`, `s=`) is unchanged and is still chosen
+  whenever `c` or `s` is given. `VonMises(kappa, theta0, degree=M)` is a
+  `PolarDisk` arc with analytic harmonics (a small FFT), and
+  `truncation_power()` reports the dropped power. The new module
+  `virgil.harmonics` converts every form to and from the image harmonics
+  (`to_image_harmonics`, `from_image_harmonics`, `Harmonics.convert`), including
+  image-to-positive by spectral factorization, and the legacy `az_amps`/`az_pas`
+  conventions of `ModulatedGaussianRim` and `TruncatedCone` (`from_legacy`,
+  `to_legacy`). The positive form is credited to Dumitrescu 2007 and
+  Barndorff-Nielsen & Schou 1973 in the docstrings and `references/`.
+
+- **`spectra.Scaled(template, ratio)`**: a fixed spectral shape with one
+  free reference flux (`ratio` at the template's `wavel0`), so any spectrum (a library SED, a `Sum` with lines) can be a
+  companion in the grids, limits and detection statistics, with
+  `comp.flux.ratio` as the flux axis; the template's parameters get no
+  gradient. Regression tests (`tests/test_chromatic_search.py`) run
+  `likelihood_grid`, `linear_flux_grid`, `injection_limits`, `absil_limits`,
+  `detection_statistics` and `injection_recovery` on a WR + OB system with V²,
+  closure phases, differential phases and a flux spectrum, and show a
+  differential-phase-only detection of a 0.1 mas companion that a grey V²/T3 fit
+  misses. Tutorial: *Chromatic companion search*.
 - **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
   tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
   normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
@@ -285,6 +382,39 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **`GaussianArc` is a von Mises arc (a change of shape).** The weight along
+  the arc is now `exp(kappa cos(angle - pa))` with `kappa = (2 sqrt(2 ln 2)
+  radius / length)^2`, where it was a Gaussian in arc length taken once round
+  the circle and cut off at the antipode of `pa`. `length` is still the FWHM
+  along the arc and the parameter names and paths are unchanged, and the two
+  shapes agree to about 1e-3 in V for arcs with `length` below a tenth of the
+  semicircle (1e-2 at a fifth) but differ for long arcs, so refit if you rely
+  on those. The visibility is analytic (a `ThinRing` with `VonMises` harmonics
+  and a blur on the `PolarDisk` engine); `degree` (default chosen from the
+  starting `radius` and `length`) replaces `nodes` for the visibility, and
+  `nodes` only samples the rendered image. Arcs narrower than 256 harmonics
+  allow (`length / radius` below about 0.05) are integrated along the arc
+  with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
+  so their cost does not grow; `is_physical` is false when the series drops
+  more than 1e-4 of its power. Building one gives a `FutureWarning` for this
+  release.
+- **`ModulatedGaussianRim` runs on the `PolarDisk` engine** (a `ThinRing`,
+  linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
+  same name and parameters; it agrees with the old code to rounding.
+- **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton
+  steps.** Each start of the alias search, and each peak refinement of
+  `epoch_positions`, now runs Levenberg–Marquardt on the
+  iteratively-reweighted curvature of the scale-marginalized likelihood,
+  instead of L-BFGS-B with restarts and a Newton polish; L-BFGS-B remains
+  the fallback for a start that does not converge. It reaches the same
+  optima (positions agree to 1e-4 mas) and is faster. Which local
+  optimum a start far from the ridge reaches can differ, so a band's modes
+  and evidence can change for such starts. `fit_orbit_aliases(max_steps=)`
+  now caps the kernel's iterations (rejected steps count) and the
+  L-BFGS-B fallback's, instead of each L-BFGS-B run's; a refinement of
+  `epoch_positions` that does not converge keeps its grid point.
+  `_Surface.weights` is new
+  (private).
 - **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
   `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
   sharply at long baselines, and its visibilities at fixed parameters shift
@@ -297,7 +427,6 @@ anything before 1.0 may change between minor versions.
 - **`fit_orbit_aliases` flips a pinned flux ratio by default** (`flip_flux=True`): a mode at the top of
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
-
 - **The evidence helpers take several field Images.** `log_evidence`,
   `error_scale` and `laplace_samples` accept `path=None` (every Image whose
   log-brightness is a `GaussianField`) or a tuple of paths, and take the
