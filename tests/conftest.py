@@ -152,12 +152,14 @@ def _keep_shard(config, items):
 
 
 # The per-test time budget: CI sets VIRGIL_TEST_BUDGET (seconds) on the
-# pull-request jobs, when the JAX cache is warm. A test not marked slow whose
-# setup and call together take longer fails, so the fast tier stays fast as
-# the suite grows. Setup counts: the first test of a module pays for its
-# module-scoped fixtures, which is where sampler runs hide. Shrink the test,
-# or mark it slow. tests/over_budget.txt lists the tests that were over
-# budget when it was introduced; it should only get shorter.
+# pull-request jobs, when the JAX cache is warm. A test not marked slow fails
+# when its call, or its setup, takes longer, so the fast tier stays fast as
+# the suite grows. Setup is charged to the file, not the test: under xdist
+# the first test of a module on each worker pays for the module-scoped
+# fixtures (where sampler runs hide), and which test that is varies from run
+# to run. Shrink the test or fixture, or mark it slow. tests/over_budget.txt
+# lists the tests (node ids, for the call) and files (for setup) that were
+# over budget when it was introduced; it should only get shorter.
 _BUDGET = float(os.environ.get("VIRGIL_TEST_BUDGET") or 0)
 _EXEMPT = {
     line.strip()
@@ -169,25 +171,27 @@ _EXEMPT = {
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     report = (yield).get_result()
-    if not _BUDGET:
+    if (
+        not _BUDGET
+        or report.when == "teardown"
+        or not report.passed
+        or report.duration <= _BUDGET
+        or item.get_closest_marker("slow") is not None
+    ):
         return
-    if report.when == "setup":
-        item._budget_setup_s = report.duration
-        return
-    if report.when != "call" or not report.passed:
-        return
-    seconds = getattr(item, "_budget_setup_s", 0.0) + report.duration
     # pytest-xdist's loadgroup appends "@group" to the node id.
     nodeid = re.sub(r"@[^\]]*$", "", item.nodeid)
-    if (
-        seconds > _BUDGET
-        and item.get_closest_marker("slow") is None
-        and nodeid not in _EXEMPT
-    ):
-        report.outcome = "failed"
-        report.longrepr = (
-            f"{nodeid} took {seconds:.1f} s (setup and call), over the "
-            f"{_BUDGET:g} s budget for tests not marked slow. Shrink it "
-            "(a smaller problem, fewer draws, a stub run) or mark it "
-            "@pytest.mark.slow; see tests/conftest.py."
-        )
+    path = nodeid.split("::")[0]
+    if report.when == "setup" and path not in _EXEMPT:
+        what = f"setup of {nodeid} (the fixtures of {path})"
+    elif report.when == "call" and nodeid not in _EXEMPT:
+        what = nodeid
+    else:
+        return
+    report.outcome = "failed"
+    report.longrepr = (
+        f"The {what} took {report.duration:.1f} s, over the {_BUDGET:g} s "
+        "budget for tests not marked slow. Shrink it (a smaller problem, "
+        "fewer draws, a stub run) or mark it @pytest.mark.slow; see "
+        "tests/conftest.py."
+    )

@@ -103,10 +103,12 @@ opens an issue labelled `nightly-failure` when it fails. Each pull request also 
 wheel and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
 environment.
 
-Each test not marked `slow` has a budget of 15 s (setup and call, with a warm JAX cache);
-CI fails a test that exceeds it. Shrink the test (a smaller problem, fewer draws, a stub
-run) or mark it `slow`. `tests/over_budget.txt` lists the tests that were already over
-budget; remove lines from it as they are fixed, and never add to it. `pytest-timeout`
+Each test not marked `slow` has a budget of 15 s for its call, and its setup has the same
+budget (with a warm JAX cache); CI fails a test that exceeds either. Setup is charged to the
+file, since the first test of a module on each worker pays for the module's fixtures. Shrink
+the test or fixture (a smaller problem, fewer draws, a stub run) or mark it `slow`.
+`tests/over_budget.txt` lists the tests and files that were already over budget; remove
+lines from it as they are fixed, and never add to it. `pytest-timeout`
 fails any test that runs past 300 s. The float32 jobs pack whole test files by the timings
 in `tests/test_durations.json`; refresh them occasionally with
 `scripts/update_test_durations.py`.

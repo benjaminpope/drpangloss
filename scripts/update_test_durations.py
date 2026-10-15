@@ -8,9 +8,10 @@ of a run on main, or the nightly's ``junit-*`` artifacts) and writes
   reports given. ``--shard K/N`` (tests/conftest.py) packs whole files into
   shards with these, so module-scoped fixtures run once per job.
 - with ``--over-budget SECONDS``, ``tests/over_budget.txt``: the tests that
-  are not marked slow and took longer than SECONDS in any report. They are
-  exempt from the per-test budget until they are shrunk or marked slow; the
-  list should only ever get shorter.
+  are not marked slow and took longer than SECONDS in any report, and their
+  files. JUnit times include setup, so each such test is exempt from the
+  budget on its call and its file on setup (module fixtures), until they
+  are shrunk or marked slow; the list should only ever get shorter.
 
     gh run download RUN_ID -R benjaminpope/virgil -D /tmp/junit
     python scripts/update_test_durations.py /tmp/junit/*/*.xml
@@ -103,7 +104,13 @@ def main():
             "add them. Written by\n# scripts/update_test_durations.py "
             f"--over-budget {args.over_budget:g}.\n"
         )
-        OVER_BUDGET.write_text(header + "".join(n + "\n" for n in over))
+        files = sorted({nid.split("::")[0] for nid in over})
+        OVER_BUDGET.write_text(
+            header
+            + "".join(n + "\n" for n in over)
+            + "# Files whose setup (module fixtures) is exempt.\n"
+            + "".join(f + "\n" for f in files)
+        )
         print(f"{len(over)} tests -> {OVER_BUDGET.relative_to(ROOT)}")
 
 

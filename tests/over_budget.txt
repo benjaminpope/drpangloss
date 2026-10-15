@@ -59,3 +59,20 @@ tests/test_svi.py::test_laplace_guide_covariance_matches_gauss_newton[False]
 tests/test_svi.py::test_laplace_guide_covariance_matches_gauss_newton[True]
 tests/test_svi.py::test_samples_are_keyed_like_nuts[False]
 tests/test_svi.py::test_samples_are_keyed_like_nuts[True]
+# Files whose setup (module fixtures) is exempt.
+tests/test_aliases.py
+tests/test_benchmark_harness.py
+tests/test_broadcast_in_time.py
+tests/test_chromatic_search.py
+tests/test_ensemble.py
+tests/test_epochs.py
+tests/test_evidence.py
+tests/test_fitting.py
+tests/test_flat_coordinates.py
+tests/test_gravity_darkened_star.py
+tests/test_orbit_positions.py
+tests/test_orbit_search.py
+tests/test_pipeline_binary.py
+tests/test_pipeline_star.py
+tests/test_sparse_imaging.py
+tests/test_svi.py

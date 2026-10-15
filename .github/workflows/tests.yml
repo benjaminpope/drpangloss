@@ -1,7 +1,7 @@
 # Author : Benjamin Pope
 # Date : 23/2/2024
 # Title : tests.yml
-# Description : Runs the test suite in tiers (design/ci_review_2026-10.md):
+# Description : Runs the test suite in tiers:
 #   pull requests run a fast gate; pushes to main, manual dispatches and the
 #   `full-ci` label run the full matrix; a daily run adds the dependency
 #   floors and a newest-dependencies canary, and reports failures in an
@@ -28,6 +28,8 @@ permissions:
 jobs:
   # | tier    | trigger                         | jobs                                       |
   # | PR gate | pull request                    | py3.12 f32 and x64, 3 shards each; no slow |
+  # Job names do not change between tiers, so the same required checks
+  # report on every pull request, labelled full-ci or not.
   # |         |   ... changing pyproject.toml   | + py3.11 at the dependency floors          |
   # | full    | push to main, dispatch, full-ci | the gate with slow tests, + macOS py3.11,  |
   # |         |                                 |   py3.13                                   |
@@ -73,15 +75,13 @@ jobs:
               for k in (1, 2, 3)
           ]
           # x64 exercises the float64 paths, and finds tests silently
-          # written for float32. Sharded on pull requests too, or it alone
-          # sets their wall time; one job on full runs, whose artifact
-          # (virgil-evidence-ubuntu-latest-py3.12-x641) virgil-validation
-          # reads.
-          x64 = {**linux, "x64": "1", "slow": full, "budget": True}
-          if full:
-              include.append(x64)
-          else:
-              include += [{**x64, "shard": f"{k}/3"} for k in (1, 2, 3)]
+          # written for float32. The x64-evidence job joins its shards'
+          # reports for virgil-validation.
+          include += [
+              {**linux, "x64": "1", "shard": f"{k}/3", "slow": full,
+               "budget": True}
+              for k in (1, 2, 3)
+          ]
           if full:
               # The oldest Python on macOS: x64 dtype mix-ups have surfaced
               # on macOS and Python 3.11 but not in Linux CI.
@@ -115,7 +115,7 @@ jobs:
           EOF
 
   build:
-    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.canary && ' canary' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}${{ matrix.slow && ' +slow' || '' }}
+    name: ${{ matrix.os }} py${{ matrix.python-version }}${{ matrix.x64 == '1' && ' x64' || '' }}${{ matrix.lowest && ' lowest' || '' }}${{ matrix.canary && ' canary' || '' }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }}
     needs: matrix
     runs-on: ${{ matrix.os }}
     # Fail a hung job instead of holding a runner for GitHub's 6 hours.
@@ -157,23 +157,39 @@ jobs:
       # variant, shard), the JAX version and the ISO week. The first push
       # to main or nightly of each week saves it; pull requests restore the
       # latest match. The nightly deletes older weeks' caches.
-      - name: JAX version and week
+      # A shard's files depend on the packing (tests/test_durations.json
+      # and the set of test files), so that goes in the key too: when the
+      # packing changes, the next push to main saves a new cache, and the
+      # budget stays off until then rather than charging moved files for
+      # cold compiles.
+      - name: JAX version, week and packing
         id: key
+        shell: bash
         run: |
           echo "jax=$(.venv/bin/python -c 'import jax; print(jax.__version__)')" >> "$GITHUB_OUTPUT"
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          pack=$( (cat tests/test_durations.json; git ls-files 'tests/*test_*.py') | shasum -a 256 | cut -c1-8)
+          echo "prefix=jax-${{ matrix.id }}-jax$(.venv/bin/python -c 'import jax; print(jax.__version__)')-pack$pack-" >> "$GITHUB_OUTPUT"
 
       - name: restore JAX compilation cache
         id: cache
         uses: actions/cache/restore@v4
         with:
           path: .jax-cache
-          key: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-${{ steps.key.outputs.week }}
-          # Last, any cache of the same OS, Python and x64 (an older JAX,
-          # another shard): JAX ignores entries it cannot use.
+          key: ${{ steps.key.outputs.prefix }}${{ steps.key.outputs.week }}
+          # Then any cache of this job and JAX, and last any of the same OS,
+          # Python and x64 (another packing or JAX): JAX ignores entries it
+          # cannot use.
           restore-keys: |
+            ${{ steps.key.outputs.prefix }}
             jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
             jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
+
+      # A job that saves starts from nothing rather than carry another JAX
+      # version's entries forward into its new key.
+      - name: drop a cache from another JAX version
+        if: (github.event_name == 'push' || github.event_name == 'schedule') && !startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax))
+        run: rm -rf .jax-cache
 
       # ===== Tests =====
       # pytest-xdist runs one worker per core; loadgroup keeps each
@@ -184,10 +200,14 @@ jobs:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
+          # Least-recently-used eviction past 1 GB, so a cache carried from
+          # week to week does not grow without bound. It needs filelock,
+          # which the lowest-direct environment may lack.
+          JAX_COMPILATION_CACHE_MAX_SIZE: ${{ matrix.lowest && '-1' || '1000000000' }}
           # Seconds per test not marked slow (tests/conftest.py); only with
-          # a warm cache (this job, this JAX), since a cold one makes every
-          # compile count.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '15' || '' }}
+          # a warm cache (this job, JAX and packing), since a cold one makes
+          # every compile count.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '15' || '' }}
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # The memory sampler needs GNU free and procps ps: Linux only.
@@ -207,7 +227,6 @@ jobs:
         if: always() && runner.os == 'Linux'
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
 
-      # virgil-validation reads virgil-evidence-ubuntu-latest-py3.12-x641.
       - name: upload evidence
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
@@ -231,7 +250,41 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .jax-cache
-          key: jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-${{ steps.key.outputs.week }}
+          key: ${{ steps.key.outputs.prefix }}${{ steps.key.outputs.week }}
+
+  # virgil-validation reads one x64 report from main,
+  # virgil-evidence-ubuntu-latest-py3.12-x641: join the shards' reports.
+  x64-evidence:
+    name: join the x64 evidence
+    needs: build
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: virgil-evidence-ubuntu-latest-py3.12-x641-shard*
+          path: shards
+
+      - name: join the JUnit reports
+        run: |
+          python3 - <<'EOF'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          joined = ET.Element("testsuites")
+          for path in sorted(glob.glob("shards/*/junit-evidence.xml")):
+              root = ET.parse(path).getroot()
+              joined.extend(root if root.tag == "testsuites" else [root])
+          ET.ElementTree(joined).write(
+              "junit-evidence.xml", encoding="utf-8", xml_declaration=True
+          )
+          print(len(joined), "suites")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virgil-evidence-ubuntu-latest-py3.12-x641
+          path: junit-evidence.xml
 
   # Builds the distributions as publish.yml does, installs the wheel into a
   # clean environment (no test or dev extras) and imports it, so packaging

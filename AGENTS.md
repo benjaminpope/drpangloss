@@ -84,7 +84,7 @@ see that repository's `PLAN.md` for the boundary.
 - Ruff is pinned to **0.11.0**; `[tool.ruff] required-version`, the `.pre-commit-config.yaml`
   rev, and `RUFF_VERSION` in the workflows must always match. A different ruff version will
   reformat files differently and fail CI.
-- Line length 79, double quotes, rules `E` + `F` + `ICN` (see `pyproject.toml` for ignores).
+- Line length 79, double quotes, rules `E` + `F` + `ICN` + `W605` (see `pyproject.toml` for ignores).
 - Import `jax.numpy as np` and `numpy as onp` (ruff ICN001; notebooks are exempt until re-executed).
 - virgil does not enable float64: library code must work in JAX's default float32
   (e.g. use `np.finfo(x.dtype)`, not `onp.finfo(float)`). Tests run in float32 unless
