@@ -49,7 +49,7 @@ from ._deprecate import external_stacklevel
 from ._precision import cast_tree, in_float64
 from ._utils import clean_json
 from .detection import _fingerprint
-from .epochs import _Surface
+from .epochs import _Surface, _blocks
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
@@ -272,7 +272,21 @@ def _epoch_residuals(surface, model, d, amp_range):
     tiny = np.finfo(r.dtype).tiny
     amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
     amp = np.clip(amp, *amp_range)
-    return r.at[:n].set((amp * mod - obs) / err), amp
+    return _scale_vis(r, d, n, amp), amp
+
+
+def _scale_vis(r, d, n, amp):
+    """The whitened residuals ``r`` with the first ``n`` (the squared
+    visibilities) recomputed for the model scaled by the V² amplitude
+    ``amp``: ``(amp * model - obs) / err``, the model being recovered from
+    the residual as ``obs + r * err``. Shared by the fit
+    (``_epoch_residuals``, ``amp`` profiled) and the accessors of
+    [`AliasBandResult`][virgil.aliases.AliasBandResult] (``amp`` as fitted),
+    so that both score the same residuals."""
+    obs = np.reshape(d.vis, -1)
+    err = np.reshape(d.d_vis, -1)
+    mod = obs + r[:n] * err
+    return r.at[:n].set((amp * mod - obs) / err)
 
 
 def _epoch_chi2(surface, model, d, amp_range):
@@ -1203,7 +1217,28 @@ def _save_band(directory, band, key, done):
 
 @dataclasses.dataclass
 class AliasBandResult:
-    """The fit of one alias band (see [`AliasResult`][virgil.aliases.AliasResult])."""
+    """The fit of one alias band (see [`AliasResult`][virgil.aliases.AliasResult]).
+
+    Besides the fields below, the band records what it needs to rebuild
+    the scene it was fitted with: ``t_ref``, ``primary_diam`` and
+    ``vis_amp``, which
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] (through
+    [`AliasResult`][virgil.aliases.AliasResult]) fills in. They back the
+    accessors [`scene`][virgil.aliases.AliasBandResult.scene],
+    [`residuals`][virgil.aliases.AliasBandResult.residuals] and
+    [`chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night].
+
+    Attributes
+    ----------
+    t_ref : float or None
+        Reference time (MJD) of ``best["dt_peri"]``.
+    primary_diam : float, ``"fit"`` or None
+        The fit's primary: a point (None), a uniform disk of this diameter
+        (mas), or one whose diameter was fitted (``best["diam"]``).
+    vis_amp : tuple or None
+        The ``(lo, hi)`` range of the per-epoch V² amplitude if it was
+        fitted (the amplitudes themselves are in ``epochs``), else None.
+    """
 
     n: int
     p_lo: float
@@ -1227,6 +1262,174 @@ class AliasBandResult:
     n_starts_failed: int = (
         0  # optimizer starts that raised (``starts-failed``)
     )
+    t_ref: float | None = None
+    primary_diam: float | str | None = None
+    vis_amp: tuple | None = None
+
+    def scene(self, params=None):
+        """The scene the band was fitted with, at its best orbit.
+
+        A point or uniform-disk primary and one orbiting point companion,
+        built from ``best`` (or from ``params``) exactly as the fit's
+        likelihood builds it, so that it reproduces the fit's model.
+
+        If the stars' labels were swapped in the fit (``flipped``), the
+        scene is the swapped one: ``best["flux"]`` is already the ratio of
+        the refit, with the labels as the fit used them, so nothing is
+        undone here.
+
+        Parameters
+        ----------
+        params : dict, optional
+            Orbital elements (``period``, ``dt_peri``, ``ecc``, ``inc``,
+            ``omega``, ``Omega``, ``a_mas`` and ``flux``, and ``diam`` for
+            a fitted primary) to build the scene for instead of ``best``,
+            for example a published orbit, to score it with the band's own
+            model.
+
+        Returns
+        -------
+        virgil.models.OrbitalBinary
+            An [`OrbitalBinary`][virgil.models.OrbitalBinary], or, with a
+            resolved primary, the same with a uniform-disk primary (private
+            ``_UDBinary``). Evaluate it with ``.at(mjd, t_ref)`` or pass it
+            to [`whitened_residuals`][virgil.likelihood.whitened_residuals].
+
+        Raises
+        ------
+        ValueError
+            If the band has no best orbit (it failed), no ``t_ref``, or
+            ``primary_diam="fit"`` but no diameter is available.
+        """
+        b = self.best if params is None else params
+        if not b:
+            raise ValueError(
+                f"band N={self.n} has no best orbit (flags: {self.flags})."
+            )
+        if self.t_ref is None:
+            raise ValueError("this band does not record its t_ref.")
+        orbit = KeplerOrbit(
+            b["period"],
+            b["dt_peri"],
+            b["ecc"],
+            b["inc"],
+            b["omega"],
+            b["Omega"],
+            b["a_mas"],
+            t_ref=self.t_ref,
+        )
+        diam = b.get("diam")
+        if diam is None:  # ``params`` without a diameter: use the fitted one
+            diam = (
+                self.best.get("diam")
+                if self.primary_diam == "fit"
+                else self.primary_diam
+            )
+        if self.primary_diam == "fit" and diam is None:
+            raise ValueError(
+                "primary_diam is 'fit' but no fitted 'diam' is available: "
+                "cannot rebuild the fit's scene."
+            )
+        if diam:  # 0 or None: a point primary, as in ``_model``
+            return _UDBinary(orbit, b["flux"], diam)
+        return OrbitalBinary(orbit, b["flux"])
+
+    def _whitened(self, data, params=None):
+        """Per epoch, ``[(block name, ν, whitened residuals)]`` at the best
+        orbit (or ``params``) with the fit's V² amplitudes."""
+        if len(data) != len(self.epochs):
+            raise ValueError(
+                f"{len(data)} datasets for a fit of {len(self.epochs)} epochs."
+            )
+        model = self.scene(params)
+        out = []
+        for d, e in zip(data, self.epochs):
+            r = np.asarray(whitened_residuals(model, d))
+            blocks = _blocks(d)
+            # The fit scales the squared visibilities by one amplitude per
+            # epoch (``vis_amp``): score with the fitted amplitude, not 1.
+            if self.vis_amp is not None and blocks[0][0] == "vis":
+                if d.vis_mode != "v2" or d.observable_kind != "split":
+                    raise NotImplementedError(
+                        "vis_amp needs squared visibilities as the "
+                        f"visibility channel, got vis_mode={d.vis_mode!r}."
+                    )
+                r = _scale_vis(r, d, blocks[0][2], e["vis_amp"])
+            r = onp.asarray(r, dtype=float)
+            out.append([(name, nu, r[a:z]) for name, a, z, nu, _ in blocks])
+        return out
+
+    def residuals(self, data, params=None):
+        """Whitened residuals of ``data`` at the best orbit, block by block.
+
+        These are the residuals the fit's likelihood is built from
+        ([`whitened_residuals`][virgil.likelihood.whitened_residuals] of
+        [`scene`][virgil.aliases.AliasBandResult.scene], on the quoted
+        errors), with each epoch's squared visibilities scaled by the
+        fitted ``vis_amp``, if the fit had one. They are virgil's own
+        model, so they check the bookkeeping, not the model: for that,
+        compare with an independent forward model.
+
+        Parameters
+        ----------
+        data : sequence of OIData
+            The epochs the band was fitted to, in the same order.
+        params : dict, optional
+            Elements to use instead of ``best``; see
+            [`scene`][virgil.aliases.AliasBandResult.scene].
+
+        Returns
+        -------
+        list of dict
+            One ``{block name: residuals}`` per epoch. The blocks (``"vis"``, ``"phi"``, ...) are in
+            the order of the whitened residual vector, so
+            ``numpy.concatenate(list(blocks.values()))`` is that vector.
+            The penalty rows of correlated closure phases are in ``"phi"``,
+            as in the fit's χ².
+        """
+        rows = self._whitened(list(data), params)
+        return [{name: r for name, _, r in row} for row in rows]
+
+    def chi2_per_night(self, data, params=None):
+        """Raw χ² and its count of independent observables, per night.
+
+        On the quoted errors (no error scales), at the best orbit with the
+        fitted V² amplitudes: the quantity to quote against the papers'
+        χ²/N, unlike ``chi2_red``, which is the same sum over all epochs.
+
+        Parameters
+        ----------
+        data : sequence of OIData
+            The epochs the band was fitted to, in the same order.
+        params : dict, optional
+            Elements to use instead of ``best``; see
+            [`scene`][virgil.aliases.AliasBandResult.scene].
+
+        Returns
+        -------
+        list of dict
+            One dict per epoch with ``chi2``, ``n`` (``data.n_independent``) and ``chi2_per_n``,
+            and ``blocks``: the same three numbers for each observable
+            block. Sum ``chi2`` and ``n`` over nights for a pooled value.
+        """
+        rows = self._whitened(list(data), params)
+        out = []
+        for row in rows:
+            blocks = {
+                name: _chi2_entry(float(onp.sum(r**2)), int(nu))
+                for name, nu, r in row
+            }
+            total = _chi2_entry(
+                sum(b["chi2"] for b in blocks.values()),
+                sum(b["n"] for b in blocks.values()),
+            )
+            out.append(dict(total, blocks=blocks))
+        return out
+
+
+def _chi2_entry(chi2, n):
+    """``{"chi2", "n", "chi2_per_n"}`` (``chi2_per_n`` None without data)."""
+    return dict(chi2=chi2, n=n, chi2_per_n=chi2 / n if n else None)
 
 
 @dataclasses.dataclass
@@ -1250,6 +1453,23 @@ class AliasResult:
         ``inc``, ``omega``, ``Omega``, ``a_mas``, ``flux``.
     positions : list of dict or None
         The position-level diagnostic per band, if positions were given.
+        Not saved by [`save`][virgil.aliases.AliasResult.save]: None after
+        a [`load`][virgil.aliases.AliasResult.load].
+    primary_diam : float, ``"fit"`` or None
+        The primary of the fit's scene, as ``fit_orbit_aliases`` took it.
+    vis_amp : tuple or None
+        The range of the per-epoch V² amplitude, if it was fitted.
+
+    Notes
+    -----
+    ``primary_diam`` and ``vis_amp`` (and ``t_ref``) are copied into every
+    band that lacks them, so the band accessors
+    ([`scene`][virgil.aliases.AliasResult.scene],
+    [`residuals`][virgil.aliases.AliasResult.residuals] and
+    [`chi2_per_night`][virgil.aliases.AliasResult.chi2_per_night], which
+    delegate to ``best``) can rebuild the scene without the fit's
+    settings. A result written by [`save`][virgil.aliases.AliasResult.save]
+    and read back by [`load`][virgil.aliases.AliasResult.load] keeps them.
     """
 
     t_ref: float
@@ -1258,6 +1478,17 @@ class AliasResult:
     bands: list
     samples: dict
     positions: list = None
+    primary_diam: float | str | None = None
+    vis_amp: tuple | None = None
+
+    def __post_init__(self):
+        for b in self.bands:
+            if b.t_ref is None:
+                b.t_ref = self.t_ref
+            if b.primary_diam is None:
+                b.primary_diam = self.primary_diam
+            if b.vis_amp is None:
+                b.vis_amp = self.vis_amp
 
     @property
     def best(self):
@@ -1292,24 +1523,136 @@ class AliasResult:
             for b in self.bands
         ]
 
-    def to_json(self, path, n_samples=0):
-        """Write the band table and each band's modes to ``path``."""
-        payload = dict(
+    def scene(self, params=None):
+        """The best band's fitted scene; see
+        [`AliasBandResult.scene`][virgil.aliases.AliasBandResult.scene]."""
+        return self.best.scene(params)
+
+    def residuals(self, data, params=None):
+        """Whitened residuals at the best band's best orbit; see
+        [`AliasBandResult.residuals`][virgil.aliases.AliasBandResult.residuals]."""
+        return self.best.residuals(data, params)
+
+    def chi2_per_night(self, data, params=None):
+        """Raw χ² and N per night at the best band's best orbit; see
+        [`AliasBandResult.chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night]."""
+        return self.best.chi2_per_night(data, params)
+
+    def _payload(self, n_samples):
+        """The JSON-ready dict of ``to_json`` and ``save``: ``n_samples``
+        draws per band (all if None)."""
+        return dict(
             t_ref=self.t_ref,
             times=self.times.tolist(),
             span=self.span,
+            primary_diam=self.primary_diam,
+            vis_amp=self.vis_amp,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
                 str(n): {k: v[:n_samples].tolist() for k, v in s.items()}
                 for n, s in self.samples.items()
             }
-            if n_samples
+            if n_samples is None or n_samples
             else {},
         )
 
+    def to_json(self, path, n_samples=0):
+        """Write the band table and each band's modes to ``path``, with
+        ``n_samples`` posterior draws per band (none by default).
+
+        [`load`][virgil.aliases.AliasResult.load] reads it back; use
+        [`save`][virgil.aliases.AliasResult.save] to keep every draw.
+        """
         with open(path, "w") as f:
-            json.dump(clean_json(payload), f, indent=1, default=str)
+            json.dump(
+                clean_json(self._payload(n_samples)), f, indent=1, default=str
+            )
+
+    def save(self, path):
+        """Write the whole result to ``path`` as JSON, every posterior draw
+        included; [`load`][virgil.aliases.AliasResult.load] is its inverse.
+
+        Non-finite numbers are written as null (strict JSON) and restored
+        on loading. ``positions`` is a diagnostic and is not written.
+        """
+        self.to_json(path, n_samples=None)
+
+    @classmethod
+    def load(cls, path):
+        """Read a result written by
+        [`save`][virgil.aliases.AliasResult.save] (or
+        [`to_json`][virgil.aliases.AliasResult.to_json]).
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The JSON file.
+
+        Returns
+        -------
+        AliasResult
+            With every band's modes, evidences, flags, best orbit, per-epoch
+            ``epochs`` and ``flipped``, the resampled ``samples`` (those
+            written; none after ``to_json`` with the default
+            ``n_samples=0``), and the settings the accessors need, so
+            ``scene``, ``residuals`` and ``chi2_per_night`` work on it.
+            ``positions`` is None.
+        """
+        with open(path) as f:
+            p = json.load(f)
+        vis_amp = p.get("vis_amp")
+        return cls(
+            t_ref=p["t_ref"],
+            times=onp.asarray(p["times"], dtype=float),
+            span=p["span"],
+            bands=[_band_from_dict(d) for d in p["band_details"]],
+            samples={
+                int(n): {k: onp.asarray(v) for k, v in s.items()}
+                for n, s in p["samples"].items()
+            },
+            primary_diam=p.get("primary_diam"),
+            vis_amp=None if vis_amp is None else tuple(vis_amp),
+        )
+
+
+def _nan_for_none(value):
+    """``value`` with every None (how ``clean_json`` writes NaN and
+    infinities) turned back into NaN, through lists and dicts."""
+    if value is None:
+        return float("nan")
+    if isinstance(value, list):
+        return [_nan_for_none(v) for v in value]
+    return value
+
+
+def _band_from_dict(d):
+    """An [`AliasBandResult`][virgil.aliases.AliasBandResult] from its
+    ``dataclasses.asdict`` JSON, restoring what ``clean_json`` made null:
+    evidences of failed modes and bands are ``-inf``, other non-finite
+    numbers NaN."""
+    names = {f.name for f in dataclasses.fields(AliasBandResult)}
+    d = {k: v for k, v in d.items() if k in names}
+    for k in ("log_z", "log_z_is"):
+        if d.get(k) is None:
+            d[k] = -onp.inf
+    for k in ("p", "chi2_red"):
+        if k in d and d[k] is None:
+            d[k] = float("nan")
+    d["modes"] = [
+        {
+            k: (-onp.inf if v is None and k.startswith("log_z") else v)
+            for k, v in m.items()
+        }
+        for m in d.get("modes", [])
+    ]
+    d["epochs"] = [
+        {k: _nan_for_none(v) for k, v in e.items()}
+        for e in d.get("epochs", [])
+    ]
+    if d.get("vis_amp") is not None:
+        d["vis_amp"] = tuple(d["vis_amp"])
+    return AliasBandResult(**d)
 
 
 def _physical(x, t_ref):
@@ -1737,4 +2080,6 @@ def fit_orbit_aliases(
         results,
         samples,
         profile,
+        primary_diam=primary_diam,
+        vis_amp=vis_amp,
     )
