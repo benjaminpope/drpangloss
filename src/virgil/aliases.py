@@ -49,7 +49,7 @@ from ._deprecate import external_stacklevel
 from ._precision import cast_tree, in_float64, run_in
 from ._utils import clean_json
 from .detection import _fingerprint
-from .epochs import _Surface
+from .epochs import EpochPositions, _Surface
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
@@ -1540,6 +1540,13 @@ class AliasResult:
         The primary of the fit's scene, as ``fit_orbit_aliases`` took it.
     vis_amp : tuple or None
         The range of the per-epoch V² amplitude, if it was fitted.
+    unseeded : tuple of dict
+        The nights that were flagged by
+        [`epoch_positions`][virgil.epochs.epoch_positions] and so seeded
+        nothing: ``{"name", "mjd", "flags": [{"code", "reason"}, ...]}``.
+        Their data still count in every band's likelihood. Empty when
+        nothing was skipped (also for ``positions`` that were not an
+        ``EpochPositions``). Kept by ``save`` and ``load``.
 
     Notes
     -----
@@ -1561,6 +1568,7 @@ class AliasResult:
     positions: list = None
     primary_diam: float | str | None = None
     vis_amp: tuple | None = None
+    unseeded: tuple = ()
 
     def __post_init__(self):
         for b in self.bands:
@@ -1628,6 +1636,7 @@ class AliasResult:
             span=self.span,
             primary_diam=self.primary_diam,
             vis_amp=self.vis_amp,
+            unseeded=list(self.unseeded),
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -1736,6 +1745,7 @@ class AliasResult:
                 int(n): {k: onp.asarray(v, dtype=float) for k, v in s.items()}
                 for n, s in p["samples"].items()
             },
+            unseeded=tuple(p.get("unseeded", ())),
             **settings,
         )
 
@@ -1852,6 +1862,113 @@ def _check_fit_quality(results, k):
     )
 
 
+_MIN_SEED_NIGHTS = 2  # a Thiele-Innes fit needs at least two positions
+_FEW_SEED_NIGHTS = 3  # at most this many seeding nights: add random starts
+_N_RANDOM_FEW = 200  # random candidates beside seeds from few nights
+_N_RANDOM_NONE = 1000  # random candidates when nothing seeds
+
+
+def _seeding_positions(positions, t_ref, skip_flagged, times):
+    """The ``PositionData`` that seeds the bands, the nights it skipped and
+    whether the seeds fell back to random starts.
+
+    ``positions`` may be ``PositionData`` (used as given) or the
+    ``EpochPositions`` of ``epoch_positions`` for this data (checked by
+    count and by time against ``times``, the epochs' mean times). With the
+    latter and ``skip_flagged``, every flagged night seeds nothing; the
+    skipped nights are recorded for ``AliasResult.unseeded``. Skipping
+    drops a night's *seed* only: ``data`` is untouched, so its observables
+    still enter the likelihood. Fewer than two seeding nights (in any
+    ``positions``) make an underdetermined Thiele-Innes fit whose
+    chi2 = 0 seeds mean nothing, so the seeds are dropped with a warning
+    and the bands start from random orbits (the third return value).
+    """
+    skipped = ()
+    if isinstance(positions, EpochPositions):
+        times = onp.asarray(times, float)
+        if len(positions.names) != len(times) or not onp.allclose(
+            positions.mjd, times, atol=0.1
+        ):
+            raise ValueError(
+                f"positions ({len(positions.names)} datasets at MJD "
+                f"{onp.round(positions.mjd, 2).tolist()}) are not the "
+                f"epoch_positions of this data ({len(times)} epochs at MJD "
+                f"{onp.round(times, 2).tolist()})."
+            )
+        if skip_flagged:
+            skipped = tuple(
+                dict(
+                    name=name,
+                    mjd=float(mjd),
+                    flags=[dict(code=f.code, reason=f.reason) for f in fl],
+                )
+                for name, mjd, fl in zip(
+                    positions.names, positions.mjd, positions.flags
+                )
+                if fl
+            )
+        n_seed = len(positions.names) - (
+            int(positions.flagged.sum()) if skip_flagged else 0
+        )
+        if n_seed >= _MIN_SEED_NIGHTS:
+            positions = positions.positions(
+                t_ref=t_ref, skip_flagged=skip_flagged
+            )
+        else:
+            positions = None
+            detail = (
+                f" (flagged: {_skipped_codes(skipped)})" if skipped else ""
+            )
+    elif positions is not None and len(positions.dt) < _MIN_SEED_NIGHTS:
+        n_seed, detail, positions = len(positions.dt), "", None
+    else:
+        return positions, skipped, False
+    if positions is None:
+        warnings.warn(
+            f"fit_orbit_aliases(): only {n_seed} night(s) can seed the "
+            f"bands (at least {_MIN_SEED_NIGHTS} are needed){detail}; "
+            "falling back to random starts.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        return None, skipped, True
+    return positions, skipped, False
+
+
+def _skipped_codes(skipped):
+    """``{name: [code, ...]}`` of the skipped-night records."""
+    return {u["name"]: [f["code"] for f in u["flags"]] for u in skipped}
+
+
+def _check_seed_diameter(positions, primary_diam):
+    """Warn when ``EpochPositions`` were fitted with another primary than
+    the engine's: the seeds then carry the bias of the wrong star."""
+    if not isinstance(positions, EpochPositions):
+        return
+    seed = positions.primary_diam or None
+    engine = primary_diam or None
+    if engine == "fit" and seed is not None:
+        return  # a UD estimate seeds a fitted diameter: nothing to warn of
+    if engine == "fit":
+        warnings.warn(
+            "The positions were fitted with a point primary but "
+            "fit_orbit_aliases fits the primary's diameter: a resolved "
+            "primary biases the seeds. Pass an estimated primary_diam to "
+            "epoch_positions.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    elif seed != engine:
+        warnings.warn(
+            f"The positions were fitted with primary_diam={seed!r} but "
+            f"fit_orbit_aliases has primary_diam={primary_diam!r}: the seeds "
+            "are biased by a different primary. Pass the same diameter to "
+            "epoch_positions.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+
+
 def _resample(results, store, t_ref, n_samples, p_min, seed):
     """Posterior draws by importance resampling, for the best band and every
     band with ``p > p_min``."""
@@ -1933,6 +2050,7 @@ def fit_orbit_aliases(
     vis_amp=None,
     flip_flux=True,
     init=None,
+    skip_flagged=True,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -1944,10 +2062,12 @@ def fit_orbit_aliases(
         ([`OrbitalBinary`][virgil.models.OrbitalBinary]).
     p_range : (float, float)
         The shortest and longest period (days): the log-uniform prior on P.
-    positions : PositionData, optional
-        Per-epoch positions (e.g. from
-        [`epoch_positions`][virgil.epochs.epoch_positions]). They seed each
-        band's fits through Thiele–Innes grids
+    positions : PositionData or EpochPositions, optional
+        Per-epoch positions: ``PositionData``, or the
+        [`EpochPositions`][virgil.epochs.EpochPositions] of
+        [`epoch_positions`][virgil.epochs.epoch_positions] for the same
+        ``data`` (then its night flags apply, see ``skip_flagged``). They
+        seed each band's fits through Thiele–Innes grids
         ([`position_profile`][virgil.aliases.position_profile]); without them
         the candidates are random orbits.
     times : array-like, optional
@@ -1974,7 +2094,12 @@ def fit_orbit_aliases(
         The best distinct candidates per band that are refined into modes.
     n_random : int, optional
         Extra random candidates per band; by default 1000 without
-        ``positions`` and none with them.
+        ``positions``, 200 beside positions from three or fewer seeding
+        nights (a few positions are loosely determined, and one wrong
+        night misleads them all) and none beside more. When fewer than two
+        nights can seed (one unflagged night, or every night flagged) the
+        positions are dropped with a warning and at least 200 random
+        candidates are used, even if ``n_random=0``.
     min_distance_mas : float, optional
         Fitted modes whose tracks at the epochs differ by less are one mode.
     max_steps : int, optional
@@ -2027,6 +2152,15 @@ def fit_orbit_aliases(
         if it won. It applies to a point primary without differential
         phases only (otherwise the swap is not a relabelling) and acts on a
         mode within 0.02 of the top in log flux.
+    skip_flagged : bool, optional
+        With ``EpochPositions``, a night flagged by ``epoch_positions``
+        (a single-night alias peak, a low gap, a χ²/N far above the median
+        night, an unresolved separation, a flux at its bound) **seeds
+        nothing**, but its data still count in the likelihood of every
+        band (default True). The skipped nights are recorded in
+        ``AliasResult.unseeded``. False seeds with every night. If every
+        night is flagged, the bands start from random orbits, with a
+        warning.
     init : (KeplerOrbit, float) or dict, optional
         A warm start: an orbit and flux ratio, or a dict with ``period``,
         ``dt_peri`` (relative to ``t_ref``), ``ecc``, ``inc``, ``omega``,
@@ -2122,6 +2256,14 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
+    # Single-night alias peaks: the true position is often not the best
+    # peak (Gl 229 2024-02-27 and 2024-03-28), so a flagged night must not
+    # seed the bands. Only its seed is dropped: ``data`` keeps the night,
+    # so the likelihood still sees it and can reject a wrong band.
+    seed_positions = positions
+    positions, unseeded, fell_back = _seeding_positions(
+        positions, t_ref, skip_flagged, mean_times
+    )
     profile = None
     if positions is not None:
         profile = position_profile(
@@ -2132,12 +2274,25 @@ def fit_orbit_aliases(
             eccs=eccs,
             sign_free=sign_free,
         )
-    if n_random is None:
-        n_random = 1000 if positions is None else 0
     if primary_diam is not None and primary_diam != "fit":
         primary_diam = float(primary_diam)
         if not primary_diam >= 0:
             raise ValueError("primary_diam must be None, >= 0, or 'fit'.")
+    _check_seed_diameter(seed_positions, primary_diam)
+    # Seeds from few nights (position-level orbits from two or three
+    # positions are loosely determined, and one wrong night misleads all
+    # of them) keep random candidates beside them; a fallback with no
+    # seeds at all must supply random starts even if n_random=0 was given.
+    if positions is None:
+        n_random = (
+            _N_RANDOM_NONE
+            if n_random is None
+            else max(n_random, _N_RANDOM_FEW)
+            if fell_back
+            else n_random
+        )
+    elif n_random is None:
+        n_random = 0 if len(positions.dt) > _FEW_SEED_NIGHTS else _N_RANDOM_FEW
     if vis_amp is not None:
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:
@@ -2220,4 +2375,5 @@ def fit_orbit_aliases(
         profile,
         primary_diam=primary_diam,
         vis_amp=vis_amp,
+        unseeded=unseeded,
     )
