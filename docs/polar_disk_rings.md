@@ -353,9 +353,12 @@ for j, (m, name) in enumerate(models):
                saturate=0.99, beam=bm, title=name)
 true_image = truth_model.render(npix=256, fov_mas=FOV)
 for j, (m, name) in enumerate(models[1:]):
-    plot_residual_map(np.asarray(m.render(npix=256, fov_mas=FOV) - true_image), FOV,
-                      ax=fig.add_subplot(grid[1, 2 * j:2 * j + 2]),
-                      title=f"{name} minus truth")
+    ax = plot_residual_map(np.asarray(m.render(npix=256, fov_mas=FOV) - true_image), FOV,
+                           ax=fig.add_subplot(grid[1, 2 * j:2 * j + 2]),
+                           title=f"{name} minus truth")
+    cbar = ax.images[0].colorbar  # the title names the quantity; the bar's label collided with the spectra panel
+    cbar.set_label("")
+    cbar.ax.tick_params(labelsize=9)
 ax = fig.add_subplot(grid[2, 0:2])
 i_t, a_t, h_t = truth_profile(rg, truth)
 i_p, a_p, h_p = truth_profile(rg, dict(par.values))
