@@ -365,10 +365,16 @@ def _wrap(angle):
     return (onp.asarray(angle) + 360.0) % 360.0
 
 
-def _quantiles(x, angle=False):
-    """Median, 16th and 84th percentiles; angles about their mean direction."""
+def _quantiles(x, angle=False, period=360.0):
+    """Median, 16th and 84th percentiles; angles about their mean direction.
+
+    ``period`` is the angle's period in degrees (180 for an axis, a position
+    angle without a sense).
+    """
     x = onp.asarray(x, dtype=float).ravel()
     if angle:
+        scale = 360.0 / period
+        x = x * scale
         mean = math.degrees(
             math.atan2(
                 onp.mean(onp.sin(onp.radians(x))),
@@ -378,7 +384,10 @@ def _quantiles(x, angle=False):
         dev = (x - mean + 180.0) % 360.0 - 180.0
         q = onp.percentile(dev, [50, 16, 84])
         median = float(_wrap(q[0] + mean))
-        q = onp.array([median, median + q[1] - q[0], median + q[2] - q[0]])
+        q = (
+            onp.array([median, median + q[1] - q[0], median + q[2] - q[0]])
+            / scale
+        )
     else:
         q = onp.percentile(x, [50, 16, 84])
     return {"median": float(q[0]), "q16": float(q[1]), "q84": float(q[2])}

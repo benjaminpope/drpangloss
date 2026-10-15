@@ -345,7 +345,8 @@ and so on) become checks appended after these, only when they occurred.
 ### Priors and defaults
 
 Group-invariant priors throughout: `IsotropicInclination` for `inc`,
-uniform for harmonic components and companion offsets, log-uniform for
+an isotropic Gaussian for harmonic components (a uniform box would favour
+the diagonals of the complex plane), uniform for companion offsets, log-uniform for
 scales (ring radii and widths, fluxes, temperatures, GP `sigma`). Position
 angles are `AngleVector`s: a bounded uniform prior puts a hard wall at the
 wrap, and NUTS chains pile up against it. With `Harmonics` on, `pa` and

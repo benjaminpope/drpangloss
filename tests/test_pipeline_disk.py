@@ -35,6 +35,7 @@ from virgil.pipeline import (  # noqa: E402
     load,
 )
 from virgil.pipeline import cli, disk  # noqa: E402
+from virgil.pipeline._common import _quantiles  # noqa: E402
 
 pytestmark = pytest.mark.xdist_group("pipeline_disk")
 
@@ -395,9 +396,15 @@ def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
     assert planet["detection_delta_chi2"] > 100.0
     assert s["compare"]["residual_search"]["delta_chi2"] < 25.0
     assert s["model"]["colour"] is True
+    # The profile itself: the light is where the ring is (within a
+    # half-fringe) and its total is the truth's, not traded against the star.
+    hf = s["model"]["resolution_mas"]
+    disk_model = res.model().disk
+    r, w = (onp.asarray(a) for a in disk_model.profile.quadrature())
+    assert abs(float(onp.sum(w * r) / onp.sum(w)) - 5.0) < hf
+    assert float(disk_model.flux) == pytest.approx(0.4, rel=0.3)
     # ℓ is a Matérn length: the grid is √3 times the squared-exponential
     # equivalents of one and three half-fringes.
-    hf = s["model"]["resolution_mas"]
     assert s["model"]["ell_mas"] == pytest.approx(
         [3**0.5 * hf, 3**0.5 * 3 * hf]
     )
@@ -468,6 +475,9 @@ def test_rings_run_contract_and_recovery(rings_run):
     assert (pipeline.output / "samples.h5").exists()
     assert s["disk"]["n_rings"] == 1
     ring = s["disk"]["rings"][0]
+    # The geometry is the truth's, with pa folded into [0, 180).
+    assert abs(s["disk"]["inc_deg"] - 50.0) < 8.0
+    assert abs(s["disk"]["pa_deg"] - 30.0) < 10.0
     assert abs(ring["r_mas"] - 5.0) < 0.3
     assert ring["flux"] == pytest.approx(0.4, rel=0.2)
     # Raw chi^2/N on the quoted errors, with the harmonics and companion
@@ -489,8 +499,9 @@ def test_rings_posterior_is_folded(rings_run):
     _, res = rings_run
     samples = res.samples()
     assert samples["pa"].shape == (2, 20)
-    # pa is folded into [0, 180) and its harmonics rotated to match.
-    assert samples["pa"].min() >= 0.0 and samples["pa"].max() < 180.0
+    # pa is folded to within 90 degrees of the MAP, harmonics rotated to match.
+    map_pa = res.summary["disk"]["pa_deg"]
+    assert onp.all(abs(samples["pa"] - map_pa) <= 90.0)
     assert {"inc", "pa", "r1", "s1", "f1", "dra", "ddec", "fp"} <= set(samples)
     assert res.sample_stats()["diverging"].shape == (2, 20)
     params = res.summary["posterior"]["params"]
@@ -546,6 +557,7 @@ def test_fold_pa_keeps_the_disk():
         samples,
         "pa",
         {"h1": -1.0, "z": onp.array([-1.0, 1.0])[None, :, None]},
+        30.0,
     )
     onp.testing.assert_allclose(folded["pa"], [[30.0, 30.0, 35.0]])
     onp.testing.assert_allclose(folded["h1"], [[0.3, 0.3, 0.3]])
@@ -554,25 +566,69 @@ def test_fold_pa_keeps_the_disk():
     assert onp.all(folded["z"][0, 1, :, 1] == 1.0)
     assert onp.all(folded["z"][0, 0] == 1.0)
 
+    # About a MAP near the cut a fixed [0, 180) fold would split the samples:
+    # here they stay together, and the harmonic keeps one sign.
+    near = {
+        "pa": onp.array([[2.0, 358.0, 182.0, 178.0]]),
+        "h1": onp.array([[0.3, 0.3, -0.3, -0.3]]),
+    }
+    folded = disk._fold_pa(near, "pa", {"h1": -1.0}, 2.0)
+    onp.testing.assert_allclose(folded["pa"], [[2.0, -2.0, 2.0, -2.0]])
+    onp.testing.assert_allclose(folded["h1"], [[0.3, 0.3, 0.3, 0.3]])
+    q = _quantiles(folded["pa"], angle=True, period=180.0)
+    assert min(q["median"], 180.0 - q["median"]) < 1.5
+    assert q["q84"] - q["q16"] < 10.0
+
+
+def test_fold_fit_folds_the_map():
+    # A MAP at pa = 210° is the disk at 30° with the harmonics turned.
+    data = vlti_oidata(
+        wavelengths_m=onp.array([2.0e-6]),
+        hour_angles_h=(-1.0, 1.0),
+        sigma_v2=0.01,
+        sigma_cp_deg=3.0,
+    )
+    ctx = _context()
+    shape = disk._Shape(1, False, 1, False)
+    priors = disk._ring_priors(ctx, shape)
+    values = {
+        "inc": 55.0,
+        "pa": 210.0,
+        "pa_vec": onp.array(
+            [onp.cos(onp.radians(210.0)), onp.sin(onp.radians(210.0))]
+        ),
+        "r1": 5.0,
+        "s1": 1.0,
+        "f1": 0.4,
+        "h1_re1": 0.3,
+        "h1_im1": 0.1,
+    }
+    model = disk._ring_scene(ctx, shape, values)
+    folded_model, folded = disk._fold_fit(ctx, shape, priors, model, values)
+    assert float(folded["pa"]) == pytest.approx(30.0)
+    onp.testing.assert_allclose(
+        folded["pa_vec"],
+        [onp.cos(onp.radians(30.0)), onp.sin(onp.radians(30.0))],
+    )
+    assert float(folded["h1_re1"]) == pytest.approx(-0.3)
+    assert float(folded["h1_im1"]) == pytest.approx(-0.1)
+    onp.testing.assert_allclose(
+        onp.asarray(data.model(folded_model)),
+        onp.asarray(data.model(model)),
+        atol=1e-5,
+    )
+    # A MAP already in [0, 180) is returned as it is.
+    same, unchanged = disk._fold_fit(
+        ctx, shape, priors, model, {**values, "pa": 30.0}
+    )
+    assert same is model and float(unchanged["pa"]) == 30.0
+
 
 # --- helpers --------------------------------------------------------------------
 
 
-def test_grid_minima_wrap_the_position_angle():
-    # A bowl about (inc index 2, pa index 0): the pa axis is periodic.
-    ii, jj = onp.meshgrid(onp.arange(4), onp.arange(6), indexing="ij")
-    delta = 20.0 * abs(ii - 2) + 10.0 * onp.minimum(jj, 6 - jj)
-    delta[3, 3] = 10.0  # a genuine second minimum
-    inc = onp.array([2.0, 20.0, 40.0, 60.0])
-    found = disk._grid_minima(delta, inc)
-    assert [(i, j) for _, i, j in found] == [(2, 0), (3, 3)]
-    # Face-on cells have no position angle and are skipped.
-    delta[0, 2] = -5.0
-    assert (0, 2) not in [(i, j) for _, i, j in disk._grid_minima(delta, inc)]
-
-
-def test_dynamic_range_sigma_is_clipped():
-    ctx = disk._Context(
+def _context():
+    return disk._Context(
         halffringe=1.0,
         r_in=1.0,
         r_out=11.0,
@@ -588,6 +644,32 @@ def test_dynamic_range_sigma_is_clipped():
         inc_max=85.0,
         ells=(1.7, 3.5),
     )
+
+
+def test_grid_minima_wrap_the_position_angle():
+    # A bowl about (inc index 2, pa index 0): the pa axis is periodic.
+    ii, jj = onp.meshgrid(onp.arange(4), onp.arange(6), indexing="ij")
+    delta = 20.0 * abs(ii - 2) + 10.0 * onp.minimum(jj, 6 - jj)
+    delta[3, 3] = 10.0  # a genuine second minimum
+    inc = onp.array([2.0, 20.0, 40.0, 60.0])
+    found = disk._grid_minima(delta, inc)
+    assert [(i, j) for _, i, j in found] == [(2, 0), (3, 3)]
+    # Face-on cells have no position angle and are skipped.
+    delta[0, 2] = -5.0
+    assert (0, 2) not in [(i, j) for _, i, j in disk._grid_minima(delta, inc)]
+
+
+def test_bic_scores_the_fitted_scales():
+    quoted = disk._DiskFit(None, {}, {}, 400.0, {}, 6)
+    assert disk._bic(quoted, 100) == pytest.approx(400.0 + 6 * onp.log(100))
+    # Under error_scale="fit" the score is -2 log L at the fitted scales, not
+    # the quoted-error chi^2 that unmodelled noise inflates.
+    fitted = disk._DiskFit(None, {}, {}, 400.0, {"vis_scale": 2.0}, 7, 250.0)
+    assert disk._bic(fitted, 100) == pytest.approx(250.0 + 7 * onp.log(100))
+
+
+def test_dynamic_range_sigma_is_clipped():
+    ctx = _context()
     # A thin ring has a large peak-to-mean contrast, a broad one almost none.
     thin = disk._dynamic_range_sigma(ctx, 5.0, 0.01)
     broad = disk._dynamic_range_sigma(ctx, 5.0, 8.0)

@@ -96,7 +96,7 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 | `posterior` (`posterior=True`) | NUTS with the geometry released; the position angle is folded into [0°, 180°) with the harmonics rotated to match | `numpyro_model`, `chain_init_params` |
 | `quicklook` | The geometry grid and a six-panel summary of the disk | |
 
-Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes. The fit is on the quoted errors, and `error_scale="fit"` is available for the rings only (the Gaussian process's evidence needs the quoted errors). The spectral index is relative to the star, a grey reference source unless `star_temperature_k` is given. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
+Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The fit is on the quoted errors, and `error_scale="fit"` is available for the rings only (the Gaussian process's evidence needs the quoted errors). The spectral index is relative to the star, a grey reference source unless `star_temperature_k` is given. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
 
 ## The run folder
 

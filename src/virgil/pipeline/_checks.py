@@ -924,10 +924,12 @@ def absorbed_companion(
 
     ``delta_chi2`` is the improvement in χ² from adding a point source to
     the best model, at the best position of a grid search on the residuals.
-    A significant point source remaining means the model does not hold it;
-    if raising the harmonic ``degree`` removes it (``delta_chi2_raised``),
-    the disk's harmonics were absorbing it. Either is ``None`` when it was
-    not computed.
+    A significant point source remaining means the model does not hold it.
+    If a refit at harmonic ``degree`` + 1 removes it (``delta_chi2_raised``)
+    the source is ambiguous: it may be disk asymmetry that the current degree
+    cannot represent, or a disk of the higher degree may be flexible enough
+    to absorb a real compact source. Either is ``None`` when it was not
+    computed.
     """
     if delta_chi2 is None or not _finite(delta_chi2):
         return Check(
@@ -953,8 +955,9 @@ def absorbed_companion(
     )
     detail = (
         f" Raising the harmonic degree from {degree} to {degree + 1} removes "
-        f"it (Δχ² = {delta_chi2_raised:.3g}): the disk's harmonics were "
-        "absorbing a compact source."
+        f"it (Δχ² = {delta_chi2_raised:.3g}): it may be asymmetry of the "
+        f"disk rather than a companion, or a disk of degree {degree + 1} can "
+        "absorb a compact source."
         if removed
         else ""
     )

@@ -324,5 +324,7 @@ def test_absorbed_companion():
     found = checks.absorbed_companion(60.0, 6.0, 1)
     assert _status(found) == "warn"
     assert "from 1 to 2 removes it" in found.message
+    assert "asymmetry of the disk rather than a companion" in found.message
+    assert "degree 2 can absorb a compact source" in found.message
     found = checks.absorbed_companion(60.0, 55.0, 1)
     assert "removes" not in found.message

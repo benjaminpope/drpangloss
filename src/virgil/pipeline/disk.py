@@ -17,6 +17,7 @@ from ._common import (
     _SAMPLER_SETTINGS,
     _bound_samples,
     _chi2,
+    _m2loglike,
     _diagnostics,
     _geometry,
     _load_report,
@@ -36,7 +37,10 @@ _WIDTH_FLOOR = 0.1
 _FLUX_RANGE = (1e-3, 10.0)
 _PLANET_FLUX_RANGE = (1e-4, 1.0)
 _INDEX_RANGE = (-10.0, 10.0)
-_HARMONIC_RANGE = (-1.0, 1.0)
+# The rings' harmonics are fractions of the ring's light (|w| <= 1 keeps the
+# intensity positive); an isotropic Gaussian on re and im has a uniform phase,
+# where a box would favour the diagonals.
+_HARMONIC_SCALE = 0.4
 # Fluxes (relative to the star at the reference wavelength) tried by the
 # grid searches; the geometry grid profiles over them.
 _FLUX_GRID = onp.geomspace(0.003, 3.0, 8)
@@ -207,7 +211,9 @@ class DiskPipeline(_Pipeline):
     process's evidence needs the quoted errors), and χ²/N is always
     reported on the quoted errors. Priors are group-invariant: uniform in
     ``cos inc``, uniform angles (an ``AngleVector``, with no wrap),
-    log-uniform in ring radii, widths and fluxes.
+    log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian
+    (scale 0.4) on the real and imaginary parts of each ring's harmonics, so
+    that the phase of the lopsidedness is uniform.
 
     Parameters
     ----------
@@ -669,8 +675,8 @@ def _ring_priors(ctx, shape):
         if shape.colour:
             priors[f"a{i}"] = dist.Uniform(*_INDEX_RANGE)
         for j in range(1, shape.degree + 1):
-            priors[f"h{i}_re{j}"] = dist.Uniform(*_HARMONIC_RANGE)
-            priors[f"h{i}_im{j}"] = dist.Uniform(*_HARMONIC_RANGE)
+            priors[f"h{i}_re{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
+            priors[f"h{i}_im{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
     if shape.planet:
         priors.update(_planet_priors(ctx, shape.colour))
     return priors
@@ -687,7 +693,13 @@ def _scalars(values):
 
 @dataclasses.dataclass(frozen=True)
 class _DiskFit:
-    """A fitted model with its χ² on the quoted errors."""
+    """A fitted model with its χ² on the quoted errors.
+
+    ``score`` is the −2 log L the BIC uses: at the fitted error scales (with
+    their normalization) under ``error_scale="fit"``, where χ² on the quoted
+    errors would reward every extra ring by the unmodelled noise; None means
+    the quoted-error χ².
+    """
 
     model: object
     values: dict
@@ -695,6 +707,7 @@ class _DiskFit:
     chi2: float
     scales: dict
     n_free: int
+    score: float | None = None
 
 
 def _scales_of(values):
@@ -710,6 +723,11 @@ def _chi2_64(model, data):
     return _chi2(model, data)
 
 
+@in_float64
+def _m2loglike_64(model, data, scales):
+    return _m2loglike(model, data, **scales)
+
+
 def _n_free(values, priors):
     return int(
         sum(onp.size(values[k]) for k in priors if k in values)
@@ -720,13 +738,15 @@ def _n_free(values, priors):
 def _finish(model, values, info, priors, data):
     """A ``_DiskFit`` from a ``fit`` result's pieces."""
     chi2, _ = _chi2_64(model, data)
+    scales = _scales_of(values)
     return _DiskFit(
         model=model,
         values={k: onp.asarray(v) for k, v in values.items()},
         info=_io.clean_json(dict(info)),
         chi2=float(chi2),
-        scales=_scales_of(values),
+        scales=scales,
         n_free=_n_free(values, priors),
+        score=_m2loglike_64(model, data, scales) if scales else None,
     )
 
 
@@ -739,7 +759,37 @@ def _fit_rings(p, shape, init):
     result = fit(
         _builder(ctx, shape), priors, data, noise=p._noise(), init=init
     )
-    return _finish(result.model, result.values, result.info, priors, data)
+    model, values = _fold_fit(ctx, shape, priors, result.model, result.values)
+    return _finish(model, values, result.info, priors, data)
+
+
+def _fold_fit(ctx, shape, priors, model, values):
+    """The fit with ``pa`` in [0°, 180°), the harmonics turned to match.
+
+    ``AngleVector`` returns [0°, 360°), and ``pa`` and ``pa`` + 180° are the
+    same disk once the order-*m* harmonics are multiplied by ``(-1)^m``. The
+    grid and the posterior use [0°, 180°); the MAP is folded to match before
+    it is saved or summarized.
+    """
+    pa = float(onp.asarray(values["pa"]))
+    if 0.0 <= pa < 180.0:
+        return model, values
+    out = dict(values)
+    folded = pa % 180.0
+    out["pa"] = onp.asarray(folded)
+    if "pa_vec" in out:
+        angle = math.radians(folded)
+        out["pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
+    if (pa % 360.0) >= 180.0:
+        for i in range(1, shape.n + 1):
+            for j in range(1, shape.degree + 1):
+                for part in ("re", "im"):
+                    key = f"h{i}_{part}{j}"
+                    out[key] = onp.asarray(out[key]) * (-1.0) ** j
+    scene = _builder(ctx, shape)(
+        **{k: onp.asarray(out[k]) for k in priors if k in out}
+    )
+    return scene, out
 
 
 # === STAGE: GEOMETRY ===
@@ -1084,7 +1134,8 @@ def _scan_new_ring(p, ctx, shape, base):
 
 
 def _bic(fit, n):
-    return fit.chi2 + fit.n_free * math.log(n)
+    score = fit.chi2 if fit.score is None else fit.score
+    return score + fit.n_free * math.log(n)
 
 
 def _fit_with_planet(p, shape, start):
@@ -1764,13 +1815,14 @@ def _plot_summary_file(p, model):
 # === STAGE: POSTERIOR ===
 
 
-def _fold_pa(samples, pa_site, parity):
-    """``pa`` folded into [0°, 180°), the harmonics rotated to match.
+def _fold_pa(samples, pa_site, parity, centre):
+    """``pa`` folded to within 90° of ``centre``, the harmonics rotated to match.
 
     A disk without height is the same under ``pa`` → ``pa`` + 180° with the
     order-*m* harmonic turned by 180°, i.e. multiplied by ``(-1)^m``, so
-    harmonics let a sampler move between the two. Folding every sample into
-    [0°, 180°) makes the summary unimodal.
+    harmonics let a sampler move between the two. Folding every sample to
+    the half-circle around the MAP makes the summary unimodal wherever the
+    MAP lies; a cut at a fixed angle would split a posterior near it.
 
     Parameters
     ----------
@@ -1781,11 +1833,14 @@ def _fold_pa(samples, pa_site, parity):
     parity : dict
         Harmonic site to its sign ``(-1)^m``, an array broadcast against the
         site's trailing dimensions.
+    centre : float
+        The position angle (degrees) to fold about, normally the MAP's.
     """
     pa = onp.asarray(samples[pa_site], dtype=float)
-    flip = (pa % 360.0) >= 180.0
+    turns = onp.floor((pa - centre + 90.0) / 180.0)
+    flip = (turns % 2.0) == 1.0
     out = dict(samples)
-    out[pa_site] = pa % 180.0
+    out[pa_site] = pa - 180.0 * turns
     for site, sign in parity.items():
         x = onp.asarray(samples[site], dtype=float)
         f = flip.reshape(flip.shape + (1,) * (x.ndim - flip.ndim))
@@ -1815,7 +1870,14 @@ def _posterior_setup(p):
             for j in range(1, ctx.degree + 1)
             for part in ("re", "im")
         }
-        return _builder(ctx, shape), priors, start, "pa", parity
+        return (
+            _builder(ctx, shape),
+            priors,
+            start,
+            "pa",
+            parity,
+            float(values["pa"]),
+        )
     geo = _gp_geometry(p)
     row = next(r for r in compare["rows"] if r["name"] == compare["best"])
     planet = _planet_values(values, ctx.colour) if row["planet"] else None
@@ -1835,7 +1897,7 @@ def _posterior_setup(p):
         if ctx.degree
         else {}
     )
-    return model, priors, start, "disk.pa", parity
+    return model, priors, start, "disk.pa", parity, float(geo["pa"])
 
 
 @in_float64
@@ -1866,10 +1928,13 @@ def _posterior(p):
     if not s["posterior"]:
         (p.output / "samples.h5").unlink(missing_ok=True)
         return {"skipped": True, "reason": "posterior=False"}
-    model, priors, start, pa_site, parity = _posterior_setup(p)
+    model, priors, start, pa_site, parity, centre = _posterior_setup(p)
     samples, stats = _nuts(p, model, priors, start)
     samples = _fold_pa(
-        samples, pa_site, {k: v for k, v in parity.items() if k in samples}
+        samples,
+        pa_site,
+        {k: v for k, v in parity.items() if k in samples},
+        centre,
     )
     floats = {
         k: x
@@ -1879,7 +1944,7 @@ def _posterior(p):
     diagnostics = {k: _diagnostics([x]) for k, x in floats.items()}
     summary = {
         k: {
-            **_quantiles(x, angle=k == pa_site),
+            **_quantiles(x, angle=k == pa_site, period=180.0),
             "std": float(onp.std(x)),
             **diagnostics[k],
         }
@@ -1898,7 +1963,7 @@ def _posterior(p):
             "/": {
                 "schema": _io.SCHEMA,
                 "pa_site": pa_site,
-                "pa_folded": "pa in [0, 180), harmonics of order m times (-1)^m",
+                "pa_folded": "pa within 90 degrees of the MAP, harmonics of order m times (-1)^m",
                 "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
             }
         },
