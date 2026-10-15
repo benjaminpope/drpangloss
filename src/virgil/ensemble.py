@@ -902,7 +902,8 @@ def evidence_grid(
                 **fit_options,
             )
             previous = result
-            z = float(log_evidence(result, data))
+            # The Centroid penalty of a star-free fit is not in the evidence.
+            z = float(log_evidence(result, data, "env" if star else None))
             fits[name, length, sigma] = GPFit(name, length, sigma, z, result)
             return z
 
@@ -985,21 +986,28 @@ def _corner(curve):
         return None
 
 
-def _sky_pixels(image):
-    """The image's pixels on the sky grid (rotated if it has a rotation)."""
+def _on_common_grid(image, npix, scale):
+    """The image's pixels on the common grid, flux conserved.
+
+    A rotated image (an anisotropic Gaussian process) is rendered straight
+    onto the common grid, so that its corners are not cropped by a rotation
+    within its own frame; others are resampled.
+    """
     if float(image.rotation_deg) == 0.0:
-        return onp.asarray(image.brightness, dtype=float)
-    n = image.brightness.shape[0]
-    return onp.asarray(image.render(n, n * image.pixel_scale_mas), dtype=float)
+        return onp.asarray(
+            resample(image, image.pixel_scale_mas, npix, scale), dtype=float
+        )
+    sky = onp.asarray(image.render(npix, npix * scale), dtype=float)
+    return sky / sky.sum() * float(onp.sum(image.brightness))
 
 
 def _parts(model, star):
-    """(unit-sum image pixels, the image's fraction of the total flux)."""
+    """(the member's image, its fraction of the total flux)."""
     if not star:
-        return _sky_pixels(model), 1.0
+        return model, 1.0
     env, fs = model.env, float(model.star.flux)
     fe = float(env.flux)
-    return _sky_pixels(env), fe / (fs + fe)
+    return env, fe / (fs + fe)
 
 
 def _mean_model(pixels, fraction, scale, star):
@@ -1187,11 +1195,8 @@ def combine(data, groups, *, spec=None, star=True):
     npix = int(onp.ceil(field / scale - 1e-6))
     pixels, fractions = [], []
     for i in live:
-        draw = members[i].draw
         image, fraction = _parts(members[i].result.model, star)
-        pixels.append(
-            onp.asarray(resample(image, draw.pixel_scale_mas, npix, scale))
-        )
+        pixels.append(_on_common_grid(image, npix, scale))
         fractions.append(fraction)
     shifts = [(0.0, 0.0)] * len(live)
     if not star:

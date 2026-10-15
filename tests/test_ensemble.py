@@ -13,6 +13,7 @@ from virgil.ensemble import (
     Group,
     combine,
     _grow_grid,
+    _on_common_grid,
     _oriented,
     draw_groups,
     ensemble,
@@ -462,14 +463,37 @@ def test_grid_grows_toward_an_optimum_off_the_edge_and_stops_at_limits():
     assert (ls, ss) == ([1.0, 2.0], [0.5, 1.0, 2.0])
 
 
-def test_oriented_template_has_its_long_axis_up():
-    n = 33
+def test_oriented_template_renders_back_onto_the_sky_template():
+    # An asymmetric template (a blob to the North-East), so that the sign of
+    # the rotation matters.
+    n = 41
     y, x = onp.mgrid[:n, :n] - n // 2
-    template = onp.exp(-(x**2 / 50.0 + y**2 / 2.0))  # long along x (East)
-    rotated = _oriented(template, 90.0, 1.0)
-    var_x = (rotated * x**2).sum() / rotated.sum()
-    var_y = (rotated * y**2).sum() / rotated.sum()
-    assert var_y > var_x
+    template = onp.exp(-((x - 6.0) ** 2 + (y + 8.0) ** 2) / 8.0) + 1e-6
+    rotated = _oriented(template, 30.0, 1.0)
+    sky = onp.asarray(
+        Image.from_brightness(rotated, 1.0, rotation_deg=30.0).render(n, n)
+    )
+    assert onp.unravel_index(sky.argmax(), sky.shape) == (
+        onp.unravel_index(template.argmax(), template.shape)
+    )
+    wrong = _oriented(template, -30.0, 1.0)
+    sky_wrong = onp.asarray(
+        Image.from_brightness(wrong, 1.0, rotation_deg=30.0).render(n, n)
+    )
+    assert onp.unravel_index(sky_wrong.argmax(), sky.shape) != (
+        onp.unravel_index(template.argmax(), template.shape)
+    )
+
+
+def test_rotated_member_is_rendered_onto_the_common_grid_without_cropping():
+    n = 16
+    blob = gaussian_blob(n, 1.0, 2.0, dra=5.0, ddec=5.0)
+    image = Image.from_brightness(blob, 1.0, rotation_deg=45.0)
+    pixels = _on_common_grid(image, n, 1.0)
+    sky = onp.asarray(image.render(n, float(n)))
+    # The member keeps its unit flux, and is the rendering up to that.
+    assert abs(pixels.sum() - 1.0) < 1e-9
+    onp.testing.assert_allclose(pixels / pixels.sum(), sky / sky.sum())
 
 
 def test_evidence_grid_and_gp_members():
@@ -493,6 +517,14 @@ def test_evidence_grid_and_gp_members():
     # A zero window keeps the best alone.
     tight = dataclasses.replace(GP_SPEC, gp_window_nats=0.0)
     assert len(gp_members(data, draw, spec=tight, **GP_OPTIONS).gp) == 1
+
+
+def test_gp_group_without_a_star():
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
+    group = gp_members(data, draw, star=False, spec=GP_SPEC, **GP_OPTIONS)
+    assert group.gp
+    assert onp.all(onp.isfinite(group.grid.log_evidence["iso"]))
 
 
 def test_evidence_grid_adds_an_anisotropic_variant_for_elongated_data():
