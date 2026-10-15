@@ -12,6 +12,7 @@ integrated out.
         - AliasResult
         - AliasBandResult
         - alias_bands
+        - period_window
         - position_profile
         - spectral_window
         - AliasBand

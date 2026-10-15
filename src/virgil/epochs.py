@@ -77,9 +77,12 @@ __all__ = [
     "EpochPositions",
     "NightFlag",
     "OrbitStart",
+    "PrimaryDiameter",
+    "RESOLVE_NATS",
     "RankedOrbits",
     "chain_starts",
     "epoch_positions",
+    "estimate_primary_diameter",
     "marginal_loglike",
     "rank_orbits",
     "start_from_positions",
@@ -1294,12 +1297,41 @@ def _grid_marginal(chi2, dof, data, surface):
     return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
 
 
-def _negative_marginal(x, dof, data, surface, diam=None):
-    return -surface.score(surface.chi2(_binary(x, diam), data), dof, data)
+def _amp_residuals(model, data, surface, amp_range):
+    """The whitened residuals of ``model``, with the squared visibilities
+    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
+    when ``amp_range`` (lo, hi) is given: the weighted least-squares ``A``
+    clipped to the range, as in the orbit fit's per-epoch amplitude
+    (``aliases._epoch_residuals``). Without ``amp_range``, or without a
+    visibility block, the plain residuals."""
+    r = whitened_residuals(model, data)
+    if amp_range is None or surface.names[0] != "vis":
+        return r
+    n = surface.blocks[0][2]
+    obs = np.reshape(data.vis, -1)
+    err = np.reshape(data.d_vis, -1)
+    mod = obs + r[:n] * err
+    w = 1.0 / err**2
+    tiny = np.finfo(r.dtype).tiny
+    amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
+    amp = np.clip(amp, *amp_range)
+    return r.at[:n].set((amp * mod - obs) / err)
+
+
+def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
+    if amp_range is None:
+        chi2 = surface.chi2(_binary(x, diam), data)
+    else:
+        r = _amp_residuals(_binary(x, diam), data, surface, amp_range)
+        chi2 = np.stack(
+            [np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
+        )
+    return -surface.score(chi2, dof, data)
 
 
 _negative_marginal_hessian = jax.jit(
-    jax.hessian(_negative_marginal), static_argnames="surface"
+    jax.hessian(_negative_marginal),
+    static_argnames=("surface", "amp_range"),
 )
 _block_chi2 = jax.jit(
     lambda x, data, surface, diam=None: surface.chi2(_binary(x, diam), data),
@@ -1441,28 +1473,31 @@ class _RefineProblem(eqx.Module):
     dof: jax.Array
     surface: _Surface = eqx.field(static=True)
     diam: object = None  # the primary's diameter (mas), or None: a point
+    amp_range: object = eqx.field(static=True, default=None)  # V² amplitude
 
     def loss(self, x):
         return _negative_marginal(
-            x, self.dof, self.data, self.surface, self.diam
+            x, self.dof, self.data, self.surface, self.diam, self.amp_range
         )
 
     def rows(self, x):
-        r = whitened_residuals(_binary(x, self.diam), self.data)
+        r = _amp_residuals(
+            _binary(x, self.diam), self.data, self.surface, self.amp_range
+        )
         return self.surface.weighted_rows(r, self.dof, self.data)
 
     def diag(self, x):
         return np.zeros_like(x)
 
 
-def _refine_marginal(x0, dof, d64, surface, bounds, diam=None):
+def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
     """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
     the IRLS curvature, in float64, deterministic) within ``bounds``.
     Returns the point and the surface's negative value there; a run that
     does not converge (or starts non-finite) returns ``x0`` and ``inf``,
     which the caller reads as no improvement."""
     state = _gauss_newton.solve(
-        _RefineProblem(d64, dof, surface, diam),
+        _RefineProblem(d64, dof, surface, diam, amp_range),
         onp.asarray(x0, float),
         lower=[b[0] for b in bounds],
         upper=[b[1] for b in bounds],
@@ -1940,6 +1975,293 @@ def epoch_positions(
         peaks=tuple(r[6] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
+    )
+
+
+# Resolved primary, problem 10 of the orbit-consolidation plan (ι Peg's
+# primary is 1.05 mas; a point primary gives χ²/N in the thousands). The
+# data resolve the primary when a shared uniform-disc diameter improves the
+# summed scale-marginalized score of the nights by this many nats over a
+# point primary: one extra parameter, so 5 nats is Δχ² ≈ 10, about 3σ.
+RESOLVE_NATS = 5.0
+# The diameters tried, as fractions of the finest fringe spacing λ/B_max: a
+# disc much smaller than 0.03 λ/B_max changes V² by less than a part in
+# 10⁴, and one of 1.5 λ/B_max has crossed the first visibility null.
+_DIAM_FRACTIONS = (0.03, 0.06, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3)
+# A position is searched within this many resolution elements of its start.
+_REFINE_WINDOW = 3.0
+
+
+@dataclasses.dataclass(frozen=True)
+class PrimaryDiameter:
+    """The primary's uniform-disc diameter estimated from per-night
+    positions, from
+    [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter].
+
+    Attributes
+    ----------
+    diam : float
+        The best diameter (mas); 0 when a point primary is as good (or
+        better) on the grid.
+    sigma : float
+        Its 1σ uncertainty (mas) from the curvature of the profile around
+        the maximum, or NaN when the maximum sits on the edge of the grid
+        and the curvature is undetermined.
+    delta_nats : float
+        The gain in summed scale-marginalized score of the nights, at
+        ``diam`` over a point primary (nats; 0 for ``diam == 0``).
+    resolved : bool
+        ``diam > 0`` and ``delta_nats`` at least the threshold
+        ``resolve_nats``: the data resolve the primary.
+    at_grid_edge : bool
+        The best diameter is the last grid point: the primary may be larger
+        than the grid reaches (1.3 λ/B_max by default), so ``diam`` is a
+        lower limit.
+    grid, profile : numpy.ndarray
+        The diameters tried (``grid[0]`` is 0, a point primary) and the
+        summed score of the nights at each (positions re-refined at each
+        diameter).
+    positions : EpochPositions
+        The input positions, re-seeded for the chosen model: refined at
+        ``diam`` with ``primary_diam=diam`` when ``resolved``, else
+        unchanged for a point primary. See Notes of
+        ``estimate_primary_diameter``.
+    """
+
+    diam: float
+    sigma: float
+    delta_nats: float
+    resolved: bool
+    grid: onp.ndarray
+    profile: onp.ndarray
+    positions: EpochPositions
+    at_grid_edge: bool = False
+
+
+def estimate_primary_diameter(
+    data,
+    positions,
+    *,
+    resolve_nats=RESOLVE_NATS,
+    diam_grid=None,
+    s_max=None,
+    vis_amp=None,
+):
+    """Estimate a shared uniform-disc primary diameter from per-night
+    positions, and decide whether the data resolve the primary.
+
+    This is the cheap first pass of ``primary_diam="auto"`` in
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] (a resolved
+    primary, e.g. ι Peg's at 1.05 mas, makes a point-star model fit badly
+    and biases the seeds). Each night's static binary is re-refined from
+    its ``positions`` entry at each diameter of a grid, on the
+    scale-marginalized score ``m`` of
+    [`marginal_loglike`][virgil.epochs.marginal_loglike], and the nights'
+    scores are summed: the diameter is shared by every night. Flagged
+    nights are left out of the sum (their positions may be wrong peaks)
+    unless every night is flagged.
+
+    **The rule.** The diameters tried are 0 (a point primary) and the
+    fractions 0.03 to 1.3 of the finest fringe spacing λ/B_max. The best
+    diameter is the maximum of the summed score, refined by a parabola in
+    the diameter through its two neighbours, whose curvature gives
+    ``sigma``. The data **resolve** the primary when the best diameter is
+    positive and its summed score exceeds the point primary's by at least
+    ``resolve_nats`` (default 5 nats: one extra parameter, Δχ² ≈ 10, about
+    3σ). Because ``m`` integrates out each block's error scale, a night
+    whose errors are underestimated does not look more decisive than it
+    is. The rule uses no published value.
+
+    Parameters
+    ----------
+    data : Epochs or sequence of OIData
+        The datasets, in the order of ``positions``.
+    positions : EpochPositions
+        The per-night positions (from
+        [`epoch_positions`][virgil.epochs.epoch_positions]); each night's
+        best position and flux start its refinements.
+    resolve_nats : float, optional
+        The gain (nats) at which the primary counts as resolved.
+    diam_grid : array-like, optional
+        Positive diameters (mas) to try besides 0; by default the
+        fractions of λ/B_max above.
+    s_max : float, optional
+        As in ``marginal_loglike``.
+    vis_amp : (float, float), optional
+        Profile one V² amplitude per night in this range, as the orbit fit
+        does (``fit_orbit_aliases(vis_amp=...)``), so that a contrast loss
+        that is the same on every baseline is not read as a disc. It needs
+        squared-visibility data (``vis_mode="v2"``).
+
+    Returns
+    -------
+    PrimaryDiameter
+
+    Raises
+    ------
+    ValueError
+        If ``data`` and ``positions`` are not the same nights, or
+        ``diam_grid`` holds a non-positive diameter.
+
+    Warns
+    -----
+    UserWarning
+        If the best diameter is the largest tried (``at_grid_edge``): the
+        primary may be bigger; widen ``diam_grid``.
+
+    Notes
+    -----
+    The static snapshot ignores motion within a night, as the seeds do.
+    A V² contrast loss that is the same on every baseline (a calibration
+    error) is partly degenerate with a small disc here; the orbit fit's
+    per-night amplitude (``vis_amp``) absorbs it, and the diameter is
+    refitted there. The returned ``positions`` keep the original night
+    flags, ``gap`` and peak catalogues (which belong to the point-primary
+    surface); only the best position, flux and covariance are refitted.
+    """
+    sets = list(data.data) if isinstance(data, Epochs) else list(data)
+    if len(sets) != len(positions.names):
+        raise ValueError(
+            f"{len(sets)} datasets but positions for "
+            f"{len(positions.names)}: they must be the same nights."
+        )
+    use = ~positions.flagged
+    if not use.any():
+        use = onp.ones(len(sets), bool)
+    with run_in("float64"):
+        d64 = [cast_tree(d, "float64") for d in sets]
+        surfaces = [_Surface(d, s_max) for d in d64]
+        resolution = [float(fringe_scales(d)[0]) for d in sets]
+        finest = min(resolution)
+        grid = onp.concatenate(
+            [
+                [0.0],
+                finest * onp.asarray(_DIAM_FRACTIONS)
+                if diam_grid is None
+                else onp.sort(onp.asarray(diam_grid, float)),
+            ]
+        )
+        if (grid[1:] <= 0).any():
+            raise ValueError("diam_grid must hold positive diameters.")
+        start = [
+            onp.array([positions.dra[i], positions.ddec[i], positions.flux[i]])
+            for i in range(len(sets))
+        ]
+        dof = np.asarray(1.0)
+        amp = None if vis_amp is None else tuple(map(float, vis_amp))
+
+        def refit(i, x0, diam):
+            """Refine night ``i`` from ``x0`` at ``diam``: (x, score)."""
+            window = _REFINE_WINDOW * resolution[i]
+            x0 = onp.clip(
+                x0,
+                [x0[0] - window, x0[1] - window, 1e-4],
+                [x0[0] + window, x0[1] + window, 1.0],
+            )
+            bounds = [
+                (x0[0] - window, x0[0] + window),
+                (x0[1] - window, x0[1] + window),
+                (1e-4, 1.0),
+            ]
+            dm = None if diam <= 0 else np.asarray(float(diam))
+            x, value = _refine_marginal(
+                x0, dof, d64[i], surfaces[i], bounds, dm, amp
+            )
+            if not onp.isfinite(value):  # no improvement: score the start
+                value = float(
+                    _negative_marginal(
+                        np.asarray(x0), dof, d64[i], surfaces[i], dm, amp
+                    )
+                )
+            return x, -value
+
+        def profile_at(diam, begin):
+            """Summed score over the used nights at ``diam``, and the
+            fitted positions (None for the nights left out)."""
+            total, xs = 0.0, list(begin)
+            for i in onp.flatnonzero(use):
+                xs[i], score = refit(i, begin[i], diam)
+                total += score
+            return total, xs
+
+        profile, xs, fits = [], start, []
+        for diam in grid:  # ascending: each starts from the last fit
+            total, xs = profile_at(diam, xs)
+            profile.append(total)
+            fits.append(xs)
+        profile = onp.asarray(profile)
+        best = int(onp.argmax(profile))
+        diam, sigma = float(grid[best]), float("nan")
+        gain = float(profile[best] - profile[0])
+        if 0 < best < len(grid) - 1:
+            # A parabola through the best grid point and its neighbours
+            # locates the maximum between grid points.
+            a, b, _ = onp.polyfit(
+                grid[best - 1 : best + 2], profile[best - 1 : best + 2], 2
+            )
+            vertex = -b / (2 * a) if a < 0 else float("nan")
+            if grid[best - 1] <= vertex <= grid[best + 1]:
+                total, _ = profile_at(vertex, fits[best])
+                if total >= profile[best]:
+                    diam, gain = float(vertex), float(total - profile[0])
+            # The uncertainty is the curvature of the profile at the
+            # maximum, from steps of 15% of the diameter.
+            h = 0.15 * diam
+            up, _ = profile_at(diam + h, fits[best])
+            down, _ = profile_at(diam - h, fits[best])
+            peak = gain + profile[0]
+            curve = 2 * peak - up - down
+            if curve > 0:
+                sigma = float(h / onp.sqrt(curve))
+        at_edge = bool(best == len(grid) - 1 and diam > 0)
+        if at_edge:
+            warnings.warn(
+                f"The best primary diameter, {diam:.3g} mas, is the largest "
+                "tried: the primary may be larger. Widen diam_grid.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
+        resolved = bool(diam > 0 and gain >= resolve_nats)
+        chosen = diam if resolved else 0.0
+        reseed = resolved or positions.primary_diam is not None
+        if reseed:
+            dm = None if chosen <= 0 else np.asarray(float(chosen))
+            xs_all, covs = [], []
+            for i in range(len(sets)):
+                x, _ = refit(i, start[i], chosen)
+                xs_all.append(x)
+                full = onp.asarray(
+                    _negative_marginal_hessian(
+                        np.asarray(x), dof, d64[i], surfaces[i], dm, amp
+                    ),
+                    dtype=float,
+                )
+                cov = positions.cov[i]
+                if onp.all(onp.isfinite(full)):
+                    inv = onp.linalg.pinv(full)[:2, :2]
+                    if onp.all(onp.linalg.eigvalsh(inv) > 0):
+                        cov = inv
+                covs.append(cov)
+            xs_all = onp.asarray(xs_all)
+            seeded = dataclasses.replace(
+                positions,
+                dra=xs_all[:, 0],
+                ddec=xs_all[:, 1],
+                flux=xs_all[:, 2],
+                cov=onp.asarray(covs),
+                primary_diam=chosen or None,
+            )
+        else:
+            seeded = positions
+    return PrimaryDiameter(
+        diam=diam,
+        sigma=sigma,
+        delta_nats=float(gain),
+        resolved=resolved,
+        grid=grid,
+        profile=profile,
+        positions=seeded,
+        at_grid_edge=at_edge,
     )
 
 
