@@ -748,8 +748,6 @@ def _elongation(data, star, field_mas):
     The fit (with an analytic star if ``star``) starts from four position
     angles and keeps the best.
     """
-    import numpyro.distributions as dist
-
     best = None
     for pa0 in (0.0, 45.0, 90.0, 135.0):
         env = EllipticalGaussian(0.3 * field_mas, 0.7, pa0, flux=0.1)
@@ -846,8 +844,6 @@ def evidence_grid(
     -------
     EvidenceGrid
     """
-    import numpyro.distributions as dist
-
     spec = EnsembleSpec() if spec is None else spec
     if starts is None or draw.start not in starts:
         starts = reference_starts(data, star, (draw.start,), spec.aperture_mas)
