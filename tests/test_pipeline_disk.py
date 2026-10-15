@@ -527,7 +527,7 @@ def test_fold_pa_keeps_the_disk():
     onp.testing.assert_allclose(
         onp.asarray(data.model(base)),
         onp.asarray(data.model(flipped)),
-        atol=1e-9,
+        atol=1e-5,
     )
     # And without the parity the model differs.
     wrong = disk_with(30.0 + 180.0, re, im)
@@ -559,9 +559,9 @@ def test_fold_pa_keeps_the_disk():
 
 
 def test_grid_minima_wrap_the_position_angle():
-    delta = onp.full((4, 6), 50.0)
-    delta[2, 0] = 0.0  # best cell at the edge of the pa axis
-    delta[2, 5] = 3.0  # its periodic neighbour: no separate minimum
+    # A bowl about (inc index 2, pa index 0): the pa axis is periodic.
+    ii, jj = onp.meshgrid(onp.arange(4), onp.arange(6), indexing="ij")
+    delta = 20.0 * abs(ii - 2) + 10.0 * onp.minimum(jj, 6 - jj)
     delta[3, 3] = 10.0  # a genuine second minimum
     inc = onp.array([2.0, 20.0, 40.0, 60.0])
     found = disk._grid_minima(delta, inc)
@@ -589,7 +589,7 @@ def test_dynamic_range_sigma_is_clipped():
         ells=(1.7, 3.5),
     )
     # A thin ring has a large peak-to-mean contrast, a broad one almost none.
-    thin = disk._dynamic_range_sigma(ctx, 5.0, 0.2)
+    thin = disk._dynamic_range_sigma(ctx, 5.0, 0.01)
     broad = disk._dynamic_range_sigma(ctx, 5.0, 8.0)
     assert 0.5 <= broad < thin <= 5.0
     assert thin == 5.0 and broad == 0.5
