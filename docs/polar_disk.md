@@ -275,13 +275,21 @@ parametric fit and a Gaussian-process disk of the same data.
 A parametric disk misses some of the light. Rather than a Cartesian
 [`GaussianField`](api/fields.md), which knows nothing about the disk, a
 `PolarField` is a Gaussian-process residual on a polar grid in the disk's
-frame, with a Matérn kernel in radius (length `length_r`) and a periodic one
-in azimuth (`length_theta`, radians). A long `length_theta` favours rings and
-arcs without imposing them; a short `length_r` allows gaps. It is evaluated
-on the grid, deprojected with `inc`, `pa` and the centre, and interpolated
-onto the pixels of an `Image`, whose brightness stays positive (a softmax).
-The latents are whitened, so `image_priors`, `fit`, `log_evidence` and the
-numpyro model work as for a `GaussianField`:
+frame. Its prior is the one used elsewhere in this guide: the radial
+correlation is that of a `RadialGP` (a Matérn kernel of length `length_r`,
+mas), and the azimuthal one is the spectral form of `PolarKernel`, whose
+variance at the integer order $m$ is
+
+$$S(m) \propto \left[1 + \frac{(m\,\ell_\theta)^2}{2\nu_\theta}\right]^{-\nu_\theta-1/2},$$
+
+with `length_theta` $= \ell_\theta$ in radians (the `ell_theta / r` of a
+`PolarKernel`). The two share their code. A long `length_theta` favours rings
+and arcs without imposing them; a short `length_r` allows gaps. The field is
+evaluated on the grid, deprojected with `inc`, `pa` and the centre, and
+interpolated onto the pixels of an `Image`, whose brightness stays positive
+(a softmax). The latents are whitened, so `image_priors`, `fit`,
+`log_evidence` and the numpyro model work as for a `GaussianField`; `sigma` is
+the standard deviation of the field on the grid.
 
 ```python
 from virgil import Image, PolarField
@@ -290,7 +298,7 @@ from virgil.imaging import image_priors
 
 field = PolarField.from_disk(
     disk, np.zeros((24, 32)), image_shape=(64, 64), sigma=1.0,
-    length_r=4.0, length_theta=1.0,
+    length_r=4.0, length_theta=1.0, geometry_from="disk",
 )
 scene = System(star=PointSource(), disk=disk, resid=Image(field, 1.5, flux=0.1))
 priors = image_priors(scene) | polar_field_priors("resid.log_brightness")
@@ -298,8 +306,27 @@ priors = image_priors(scene) | polar_field_priors("resid.log_brightness")
 
 `polar_field_priors` gives `sigma` and the two lengths bounded log-uniform
 priors, so the evidence is proper; fit them by sampling or from the evidence,
-not by MAP (`fit` warns). The geometry is copied from the disk, not tied to
-it. The construction follows the whitened latents of
+not by MAP (`fit` warns).
+
+**The geometry is the disk's, if you tie it.** With `geometry_from="disk"`
+(the name of a sibling component of the `System`, a `PolarDisk` or anything
+with `inc`, `pa`, `dra` and `ddec`) the field has no geometry parameters of
+its own: when the `System` is evaluated (`model`, `render`, the likelihood,
+`fit`, `log_evidence`) it takes the disk's `inc`, `pa` and centre, expressed
+in the `Image`'s grid frame (so an `Image` with `rotation_deg` or its own
+offset is handled), and gradients reach the disk's parameters. Fitting the
+disk and the field together then has one set of geometry parameters, which
+cannot disagree, and the priors list only the disk's. The default,
+`geometry_from=None`, keeps the field's own copies of the geometry (what
+`from_disk` makes), for a field fitted on its own. A tied field is tied
+inside a `System` only, to a sibling of the same `System`: an `Image`
+evaluated alone uses the fallback geometry it was built with, and
+`system.resolved()` returns the `System` with the ties baked in, for code
+that reads the pixels directly. A disk with `freeze_geometry` still works
+as the source: the tie reads its current `inc` and `pa`, and the cache is
+used while they are unchanged.
+
+The construction follows the whitened latents of
 [FRAP](https://github.com/tomyoshida/frap) (Yoshida et al. 2026) and the polar
 representation of [frank](https://github.com/discsim/frank) (Jennings et al.
 2020); no code is shared.

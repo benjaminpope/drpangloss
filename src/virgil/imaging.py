@@ -87,6 +87,7 @@ class _ImageRegulariser(eqx.Module):
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
+        model = model.resolved()
         image = model if self.path is None else model.get(self.path)
         if not isinstance(image, Image):
             raise TypeError(
@@ -2677,6 +2678,7 @@ def _parts(model, path=None):
 
     The path is ``None`` for the model itself, else e.g. ``"env"``.
     """
+    model = model.resolved()
     found = [(path, model)]
     prefix = "" if path is None else path + "."
     if isinstance(model, System):
@@ -2689,6 +2691,7 @@ def _parts(model, path=None):
 
 def _map_images(model, fn):
     """``model`` with ``fn`` applied to each of its Images."""
+    model = model.resolved()
     if isinstance(model, Image):
         return fn(model)
     if isinstance(model, Rotated):
