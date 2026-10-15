@@ -224,23 +224,25 @@ def test_the_pilot_on_white_channels_gives_f_of_one():
 
 
 def test_the_pilot_on_correlated_channels_gives_f_above_one():
-    # ρ = 0.85: f = 1.85/0.15 = 12.3; the estimate is a little low because
-    # the pilot fits the night's position and flux.
+    # ρ = 0.85 between neighbours of an eight-channel chain: the finite-chain
+    # factor 1 + 2 Σ (1 - k/8) ρ^k = 5.5 (the asymptotic 1.85/0.15 = 12.3
+    # would exceed the eight channels there are). The estimate is a little
+    # low because the pilot fits the night's position and flux.
     factors = _pilot(0.85)
-    assert 8.0 < factors.f < 14.0
-    assert all(8.0 < v < 14.0 for v in factors.blocks.values())
+    assert 3.5 < factors.f < 8.0
+    assert all(3.5 < v < 8.0 for v in factors.blocks.values())
+    assert factors.f_raw >= factors.f >= 1.0
 
 
 # --- the tempered likelihood -------------------------------------------------
 
 
-def _cfg(dof=()):
-    return (T_REF, None, False, None, dof)
+def _cfg():
+    return (T_REF, None, False, None)
 
 
 def test_temper_false_reproduces_the_untempered_evidence():
-    # No dof (cfg[4] empty) is the old likelihood: every block of every
-    # epoch scored with dof = 1.
+    # dof = 1 in every block is the old likelihood (temper=False).
     data, _ = _cached(0.85, n=2)
     with jax.enable_x64(True):
         data = [cast_tree(d, "float64") for d in data]
@@ -255,17 +257,40 @@ def test_temper_false_reproduces_the_untempered_evidence():
             s.score(aliases._epoch_chi2(s, model, d, None)[0], 1.0, d)
             for s, d in zip(surfaces, data)
         )
-        new = aliases._loglike(surfaces, x, tuple(data), _cfg())
+        ones = tuple(onp.ones(len(s.names)) for s in surfaces)
+        new = aliases._loglike(surfaces, x, tuple(data), _cfg(), ones)
         assert float(new) == pytest.approx(float(old), rel=1e-12)
         # a dof of 1/f in every block divides the log likelihood by f
         f = 12.0
-        temp = aliases._loglike(
-            surfaces,
-            x,
-            tuple(data),
-            _cfg((("phi", 1.0 / f), ("vis", 1.0 / f))),
-        )
+        dof = tuple(onp.full(len(s.names), 1.0 / f) for s in surfaces)
+        temp = aliases._loglike(surfaces, x, tuple(data), _cfg(), dof)
         assert float(temp) == pytest.approx(float(old) / f, rel=1e-12)
+
+
+def test_the_problem_value_is_the_untempered_value_over_f():
+    data, _ = _cached(0.85, n=2)
+
+    def value(f):
+        settings = _settings_stub(
+            dof=() if f == 1 else (("phi", 1 / f), ("vis", 1 / f))
+        )
+        return aliases._Problem(data, settings)
+
+    with jax.enable_x64(True):
+        data = [cast_tree(d, "float64") for d in data]
+        band = types.SimpleNamespace(p_lo=11.0, p_hi=14.0)
+        free = aliases._Bounds(onp.full(8, -onp.inf), onp.full(8, onp.inf))
+        x = aliases._start_vector(
+            KeplerOrbit(**TRUTH, t_ref=T_REF), FLUX, T_REF, band, free
+        )
+        a, b = value(1), value(4.0)
+        va = float(
+            aliases._loglike(a.surfaces, x, tuple(a.data), a.cfg, a.dof)
+        )
+        vb = float(
+            aliases._loglike(b.surfaces, x, tuple(b.data), b.cfg, b.dof)
+        )
+        assert vb == pytest.approx(va / 4.0, rel=1e-10)
 
 
 def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
@@ -329,7 +354,7 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
                 primary_diam=None, n_random=5,
             )  # fmt: skip
     dof = dict(seen["settings"].dof)
-    assert set(dof) == {"vis", "phi"} and all(v < 0.2 for v in dof.values())
+    assert set(dof) == {"vis", "phi"} and all(v < 0.5 for v in dof.values())
 
 
 def test_several_channels_without_positions_warn_and_stay_untempered(
@@ -420,23 +445,28 @@ def _modes(gap):
     )  # fmt: skip
 
 
-def test_the_label_threshold_is_on_tempered_nats_and_unchanged_for_f_one():
-    # The rule compares the evidences the fit reports, which are tempered:
-    # a gap of 3 nats there is 3 f raw nats. On white noise (f = 1) a gap
-    # of 2 nats is free and one of 4 is not, as before tempering existed.
-    settings = aliases._Settings(
+def _settings_stub(**kw):
+    args = dict(
         p_range=(1.0, 2.0), a_range=(1.0, 30.0), flux_range=(0.01, 1.0),
         ecc_max=0.9, s_max=None, t_ref=T_REF, n_candidates=1, n_refine=1,
         n_random=1, pool_size=64, k=3.0, eccs=None, min_distance_mas=0.5,
         max_steps=1, n_is=1, flag_nats=1.0, ess_min=1.0, seed=0,
     )  # fmt: skip
+    return aliases._Settings(**{**args, **kw})
+
+
+def test_the_label_threshold_is_on_tempered_nats_and_unchanged_for_f_one():
+    # The rule compares the evidences the fit reports, which are tempered:
+    # a gap of 3 nats there is 3 f raw nats. On white noise (f = 1) a gap
+    # of 2 nats is free and one of 4 is not, as before tempering existed.
+    settings = _settings_stub()
     times = onp.array([0.0, 1.0, 2.0])
     assert aliases.LABELS_FREE_NATS == 3.0
     for gap, free in ((2.0, True), (4.0, False)):
         got = aliases._labels_free(_modes(gap), settings, times)
         assert got is free or got == free
     # a raw gap of 12 nats at f = 4 is a tempered gap of 3: still free
-    raw, f = 11.0, 4.0
+    raw, f = 12.0, 4.0
     assert aliases._labels_free(_modes(raw / f), settings, times)
     assert not aliases._labels_free(_modes(raw), settings, times)
 
@@ -491,11 +521,11 @@ def _single(k):
 @pytest.mark.slow
 @pytest.mark.filterwarnings("ignore:fit_orbit_aliases")  # f, poor-fit
 def test_tempering_turns_an_overconfident_band_probability_into_a_calibrated_one():
-    # Eight correlated channels (ρ = 0.85, f ≈ 12) with noise 3.5 times the
+    # Eight correlated channels (ρ = 0.85, f ≈ 5.5) with noise 3.5 times the
     # quoted errors (χ²/N = 11 at the best band). The untempered evidence
-    # separates the bands by a gap of about f times the tempered one, tens of
-    # nats: p = 1.000, which the data do not support. Tempered, the same
-    # bands are 5 nats apart: p < 1.
+    # separates the bands by a gap of about f times the tempered one: p =
+    # 1.000, which the data do not support. Tempered, the same bands are
+    # f times closer together and p is below 1.
     data, positions = _cached(0.85, period=12.1)
     result = aliases.fit_orbit_aliases(
         data,
@@ -508,11 +538,28 @@ def test_tempering_turns_an_overconfident_band_probability_into_a_calibrated_one
         n_samples=20,
         primary_diam=None,
     )
-    assert result.temper_f > 8.0 and result.tempering
+    assert 4.0 < result.temper_f < 7.0
     best, rival = result.bands[0], result.bands[1]
     assert best.n == 20
     assert 9.0 < best.chi2_red < 14.0
-    assert 0.5 < best.p < 1.0 - 1e-4
-    # the untempered gap is f times larger: p = 1.000 to eight places
+    assert 0.5 < best.p < 1.0
     gap = best.log_z - rival.log_z
-    assert gap < 10.0 < gap * result.temper_f
+    # temper=False is the old behaviour: p = 1.000
+    old = aliases.fit_orbit_aliases(
+        data,
+        (11.8, 12.9),
+        positions=positions,
+        t_ref=T_REF,
+        n_candidates=10,
+        n_refine=2,
+        n_is=200,
+        n_samples=20,
+        primary_diam=None,
+        temper=False,
+    )
+    assert old.temper_f is None
+    # the untempered gap is f times the tempered one, and the band is
+    # certain to better than 1e-8 where the tempered one is 1e-5 uncertain
+    old_gap = old.bands[0].log_z - old.bands[1].log_z
+    assert old_gap == pytest.approx(gap * result.temper_f, rel=0.25)
+    assert 1.0 - old.bands[0].p < 1e-8 < 1.0 - best.p

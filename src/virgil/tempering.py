@@ -28,11 +28,17 @@ correlation is
 
     ρ = Σ z_i z_(i+1) / (½ Σ (z_i² + z_(i+1)²)),
 
-which is scale free (the same inflation of the errors cancels). For an
-AR(1) chain of correlation ρ the effective number of points is
-``N (1 - ρ)/(1 + ρ)``, so
+which is scale free (the same inflation of the errors cancels). The
+channels of one baseline (or triangle) form a *chain* of ``n`` channels
+with, as a model, AR(1) correlations ρ^|i-j|. The mean of such a chain has
+the variance of ``n / f`` independent points, with
 
-    f = (1 + ρ) / (1 - ρ).
+    f(ρ, n) = 1 + 2 Σ_(k=1..n-1) (1 - k/n) ρ^k,
+
+which tends to (1 + ρ)/(1 - ρ) for a long chain but is at most ``n``: a
+chain never carries less than one independent point (8 channels at
+ρ = 0.85 are worth 5.5 times fewer points, not 12.3). ``n`` is the mean
+chain length of the block, read from the neighbouring pairs.
 
 White noise has ρ = 0, so ``f = 1`` (to 1/√m for m pairs; a ρ below 2/√m,
 two standard errors, is taken as zero, so white noise gives exactly 1 about
@@ -43,8 +49,13 @@ channels share. Blocks with fewer than ``MIN_PAIRS`` neighbouring pairs, or
 without a channel axis (extra observables), take the pooled ``f`` of all
 pairs. Data with a single wavelength have no neighbours and ``f = 1``: the
 tempering is then off, and a fixed ``f`` is the way to temper them.
-``f`` is limited to ``[F_MIN, F_MAX]`` and the result is flagged
-(``AliasResult.tempering``) outside ``FLAG_RANGE``, [0.5, 2].
+
+**Tempering never sharpens.** A significantly negative ρ (differenced or
+over-fitted residuals) gives a raw ``f`` below 1, which would make every
+evidence gap and posterior *more* confident than the untempered fit. The
+``f`` used is therefore at least 1; the raw value is kept
+(``ChannelFactors.f_raw``) so that the result is still flagged
+(``AliasResult.tempering``) when it is outside ``FLAG_RANGE``, [0.5, 2].
 
 This module imports nothing from virgil.
 """
@@ -58,8 +69,10 @@ __all__ = [
     "FLAG_RANGE",
     "MIN_PAIRS",
     "adjacent_channels",
+    "chain_factor",
     "estimate_factors",
     "lag1_correlation",
+    "out_of_range",
     "factor_from_correlation",
 ]
 
@@ -70,10 +83,9 @@ FLAG_RANGE = (0.5, 2.0)
 # A block with fewer neighbouring pairs than this takes the pooled f: its
 # own correlation is uncertain by 1/√m, 0.18 at 30 pairs.
 MIN_PAIRS = 30
-# The limits of f: ρ is kept below 0.98 (f = 99, one independent point in
-# a hundred) and f above 1/3 (ρ = -0.5).
+# The limits of the raw f: ρ is kept below 0.98 and f above 1/3.
 F_MIN = 1.0 / 3.0
-F_MAX = 99.0
+_RHO_MAX = 0.98
 # Neighbouring samples share a baseline when their (u, v) agree to this many
 # metres.
 _UV_TOL = 1e-3
@@ -88,23 +100,31 @@ class ChannelFactors:
     Attributes
     ----------
     f : float
-        The pooled factor ``N / N_eff`` of all neighbouring pairs; 1 when
-        the data have none.
+        The pooled factor ``N / N_eff`` of all neighbouring pairs that the
+        likelihood is tempered by, at least 1; 1 when the data have none.
+    f_raw : float
+        The pooled factor before the floor at 1: below 1 for
+        anticorrelated residuals (which are flagged, not used).
     blocks : dict
-        ``{block name: f_b}`` for every block of the data (``"vis"``,
-        ``"phi"``, ``"extra[k]"``), each the pooled value unless it has
-        ``MIN_PAIRS`` pairs of its own.
+        ``{block name: f_b}`` used for every block of the data
+        (``"vis"``, ``"phi"``, ``"extra[k]"``), each the pooled value unless
+        it has ``MIN_PAIRS`` pairs of its own; at least 1.
     rho : dict
         ``{block name: ρ}`` of the blocks with enough pairs of their own,
         plus ``"pooled"`` (NaN without pairs).
     n_pairs : dict
         ``{block name: pairs}``, plus ``"pooled"``.
+    n_channels : dict
+        ``{block name: mean chain length}``, plus ``"pooled"``: the ``n`` of
+        ``f(ρ, n)``.
     """
 
     f: float
     blocks: dict
     rho: dict
     n_pairs: dict
+    f_raw: float = 1.0
+    n_channels: dict = dataclasses.field(default_factory=dict)
 
     def dof(self):
         """``{block name: 1/f_b}``: the ``dof`` of the tempered score."""
@@ -208,6 +228,13 @@ def _pairs(keys, wavel):
     return onp.asarray(a, int), onp.asarray(b, int)
 
 
+def out_of_range(f, f_raw=None):
+    """Whether the factor is outside ``FLAG_RANGE``: the ``f`` used above
+    its top, or the raw (unfloored) ``f_raw`` below its bottom."""
+    f_raw = f if f_raw is None else f_raw
+    return bool(f > FLAG_RANGE[1] or f_raw < FLAG_RANGE[0])
+
+
 def lag1_correlation(z, pairs):
     """The correlation of neighbouring residuals, ``Σ z_a z_b`` over
     ``½ Σ (z_a² + z_b²)``, and the number of pairs.
@@ -225,18 +252,38 @@ def lag1_correlation(z, pairs):
     return float(onp.sum(z[a] * z[b]) / den), len(a)
 
 
-def factor_from_correlation(rho, n_pairs):
-    """``f = (1 + ρ)/(1 - ρ)`` for ρ significant at two standard errors
-    (1/√m for ``n_pairs`` = m), else 1; limited to ``[F_MIN, F_MAX]``.
+def chain_factor(rho, n_channels=onp.inf):
+    """``f(ρ, n) = 1 + 2 Σ (1 - k/n) ρ^k``: the ratio of points to
+    effective points for a chain of ``n_channels`` with AR(1) correlation
+    ρ (``(1 + ρ)/(1 - ρ)`` for a long chain; at most ``n_channels``)."""
+    if not onp.isfinite(n_channels):
+        return (1.0 + rho) / (1.0 - rho)
+    n = max(int(round(n_channels)), 1)
+    k = onp.arange(1, n)
+    return float(1.0 + 2.0 * onp.sum((1.0 - k / n) * rho**k))
 
-    NaN (no information) gives 1.
+
+def factor_from_correlation(rho, n_pairs, n_channels=onp.inf):
+    """The raw ``f(ρ, n)`` (see ``chain_factor``) for ρ significant at two
+    standard errors (1/√m for ``n_pairs`` = m), else 1; ρ limited to
+    ``[-0.5, 0.98]`` and f to at least ``F_MIN``.
+
+    NaN (no information) gives 1. The result is below 1 for a significantly
+    negative ρ; ``estimate_factors`` floors what it uses at 1.
     """
     if not onp.isfinite(rho) or n_pairs < 1:
         return 1.0
     if abs(rho) < _SIGNIFICANCE / onp.sqrt(n_pairs):
         return 1.0
-    rho = min(float(rho), (F_MAX - 1.0) / (F_MAX + 1.0))
-    return float(onp.clip((1.0 + rho) / (1.0 - rho), F_MIN, F_MAX))
+    rho = float(onp.clip(rho, -0.5, _RHO_MAX))
+    return max(chain_factor(rho, n_channels), F_MIN)
+
+
+def _chains(pairs):
+    """The number of chains of consecutive channels that ``pairs`` link (the
+    pairs whose first sample is no pair's second)."""
+    a, b = pairs
+    return len(set(a.tolist()) - set(b.tolist()))
 
 
 def estimate_factors(residuals, pairs, names=()):
@@ -260,7 +307,7 @@ def estimate_factors(residuals, pairs, names=()):
         The estimator is described in the module docstring. Pooling sums
         the numerators and denominators of ρ over all blocks and datasets.
     """
-    num, den, count = {}, {}, {}
+    num, den, count, chains = {}, {}, {}, {}
     for resid, pair in zip(residuals, pairs):
         for name, z in resid.items():
             a, b = pair.get(name, _EMPTY)
@@ -272,13 +319,17 @@ def estimate_factors(residuals, pairs, names=()):
                 onp.sum(z[a] ** 2 + z[b] ** 2)
             )
             count[name] = count.get(name, 0) + len(a)
+            chains[name] = chains.get(name, 0) + _chains((a, b))
     total = sum(count.values())
+    n_chain = {k: count[k] / max(chains[k], 1) + 1.0 for k in count}
+    n_pooled = total / max(sum(chains.values()), 1) + 1.0 if total else onp.inf
     pooled = (
         sum(num.values()) / sum(den.values())
         if total and sum(den.values()) > 0
         else float("nan")
     )
-    f_pooled = factor_from_correlation(pooled, total)
+    raw_pooled = factor_from_correlation(pooled, total, n_pooled)
+    f_pooled = max(raw_pooled, 1.0)  # tempering never sharpens
     everything = set(names) | {n for r in residuals for n in r}
     blocks, rho = {}, {"pooled": pooled}
     for name in sorted(everything):
@@ -286,7 +337,9 @@ def estimate_factors(residuals, pairs, names=()):
         own = num.get(name, 0.0) / den[name] if m and den[name] > 0 else None
         if m >= MIN_PAIRS and own is not None:
             rho[name] = own
-            blocks[name] = factor_from_correlation(own, m)
+            blocks[name] = max(
+                factor_from_correlation(own, m, n_chain[name]), 1.0
+            )
         else:
             blocks[name] = f_pooled
     return ChannelFactors(
@@ -294,4 +347,6 @@ def estimate_factors(residuals, pairs, names=()):
         blocks=blocks,
         rho=rho,
         n_pairs={**count, "pooled": total},
+        f_raw=raw_pooled,
+        n_channels={**n_chain, "pooled": n_pooled},
     )

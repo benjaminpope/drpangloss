@@ -13,12 +13,14 @@ anything before 1.0 may change between minor versions.
   `fit_orbit_aliases(temper=True)` (default) divides every block's log
   likelihood by the effective-channel factor `f = N / N_eff`, estimated from
   the lag-1 correlation of neighbouring channels in the residuals of each
-  night's best static fit (`f = (1 + rho)/(1 - rho)`; white noise and
-  single-wavelength data give `f = 1`, so their evidences are unchanged).
+  night's best static fit, as the factor of a chain of the data's channels
+  (`1 + 2 sum (1 - k/n) rho^k`, at most the channel count and at least 1;
+  white noise and single-wavelength data give `f = 1`, so their evidences
+  are unchanged).
   The untempered evidence gave the best alias band p = 1.000 at chi2/N 12
   and posteriors far too narrow. `temper=False` is the old behaviour and a
   float a fixed `f`. `AliasResult.temper_f`, `.temper_blocks` and
-  `.tempering` (f outside [0.5, 2]) record it; `save` and `load` keep them
+  `.tempering` (f above 2, or raw f below 0.5) record it; `save` and `load` keep them
   (older files load with `temper_f=None`). New module `virgil.tempering`
   (`adjacent_channels`, `estimate_factors`, `ChannelFactors`); the block
   score takes a per-block `dof`, and `estimate_primary_diameter(dof=)`
@@ -71,6 +73,13 @@ anything before 1.0 may change between minor versions.
   `NoLeastSquaresForm`, as its curvature is not diagonal.
 
 ### Changed
+
+- `fit_orbit_aliases` now tempers by default, so its evidences, band
+  probabilities and posteriors are not comparable with those of earlier
+  untempered runs on data with correlated channels (pass `temper=False` to
+  reproduce them). It warns when data with several channels have no
+  `EpochPositions` to estimate `f` from, and when `f` is outside the range
+  of `AliasResult.tempering`.
 
 - **`fit_orbit_aliases` needs no per-system arguments.** The defaults
   changed, so results change: `p_range` is optional and defaults to a

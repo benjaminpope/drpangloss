@@ -11,6 +11,8 @@ residuals, and the factor ``f = N / N_eff`` by which the log likelihood of
         - estimate_factors
         - adjacent_channels
         - lag1_correlation
+        - chain_factor
+        - out_of_range
         - factor_from_correlation
         - ChannelFactors
         - FLAG_RANGE
