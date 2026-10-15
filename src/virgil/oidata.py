@@ -23,6 +23,7 @@ from .observables import (
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
+from .models import smeared_model
 from .oifits import _phase_unit_scale, read_oifits
 from ._deprecate import external_stacklevel
 
@@ -102,6 +103,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     u: jax.Array
     v: jax.Array
     wavel: jax.Array
+    bandwidth: jax.Array | None
     vis: jax.Array
     d_vis: jax.Array
     phi: jax.Array
@@ -127,7 +129,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     cp_flag: bool = eqx.field(static=True)
     t_ref: float | None = eqx.field(static=True)
 
-    def __init__(self, data, target=None, extras=()):
+    def __init__(self, data, target=None, extras=(), bandwidth=False):
         """
         Initialize from an OIFITS file or explicit arrays.
 
@@ -193,11 +195,24 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         extras : sequence of str, optional
             For OIFITS input, the extra observables to read (see
             [`read_oifits`][virgil.oifits.read_oifits]).
+        bandwidth : bool, optional
+            For OIFITS input, keep the channel widths (``EFF_BAND``) as
+            ``OIData.bandwidth`` so models are smeared over each channel
+            (see [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
+            Off by default, so the widths are ignored. For a dictionary,
+            give ``bandwidth`` as a key instead.
         """
         if not isinstance(data, dict):
-            data = read_oifits(data, target=target, extras=extras)
+            data = read_oifits(
+                data, target=target, extras=extras, bandwidth=bandwidth
+            )
         elif target is not None:
             raise ValueError("target only applies to OIFITS input.")
+        elif bandwidth:
+            raise ValueError(
+                "bandwidth=True only applies to OIFITS input; give a "
+                "'bandwidth' key in the dictionary."
+            )
         elif extras:
             raise ValueError(
                 "extras only applies to OIFITS input; a dictionary carries "
@@ -208,6 +223,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             for name, value in mixed_disco_fields(data).items():
                 setattr(self, name, value)
             self.dt = self.frame = self.t_ref = None
+            self.bandwidth = None
             self.stations = self.gains = self.phase_offsets = None
             self.extras = ()
             return
@@ -215,6 +231,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         u = onp.asarray(data["u"], dtype=float)
         v = onp.asarray(data["v"], dtype=float)
         wavel = onp.atleast_1d(onp.asarray(data["wavel"], dtype=float))
+        bandwidth = data.get("bandwidth")
+        if bandwidth is not None:
+            bandwidth = onp.atleast_1d(onp.asarray(bandwidth, dtype=float))
+            _check_bandwidth(bandwidth)
         vis = onp.asarray(data["vis"], dtype=float)
         d_vis = onp.asarray(data["d_vis"], dtype=float)
         phi_unit = data.get("phi_unit", data.get("phase_unit", "rad"))
@@ -273,6 +293,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 stations = onp.repeat(stations, vis.shape[1], axis=0)
         if vis.ndim == 2:
             u, v, wavel, indices = _expand_channels(u, v, wavel, vis, indices)
+            if bandwidth is not None and bandwidth.size > 1:
+                bandwidth = onp.tile(bandwidth, vis.shape[0])
             vis, d_vis = vis.reshape(-1), d_vis.reshape(-1)
             phi, d_phi = phi.reshape(-1), d_phi.reshape(-1)
             vis_flag = None if vis_flag is None else onp.ravel(vis_flag)
@@ -282,6 +304,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 f"wavel has {wavel.size} values for {u.size} samples. For "
                 "several wavelength channels give vis with shape "
                 "(n_baseline, n_wavel), or give one wavelength per sample."
+            )
+        if bandwidth is not None and bandwidth.size not in (1, u.size):
+            raise ValueError(
+                f"bandwidth has {bandwidth.size} values for {u.size} "
+                "samples: give one, or one per sample (or per channel "
+                "with vis of shape (n_baseline, n_wavel))."
             )
 
         has_disco_vis = "disco_vis_mat" in data
@@ -355,6 +383,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.u = np.asarray(u)
         self.v = np.asarray(v)
         self.wavel = np.asarray(wavel)
+        self.bandwidth = None if bandwidth is None else np.asarray(bandwidth)
         self.vis = np.asarray(vis)
         self.d_vis = np.asarray(d_vis)
         self.phi = np.asarray(phi)
@@ -726,6 +755,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             phi_rows, phi_index = observed(self.phi_index)
             legs, closure = [None] * 3, None
         wavel = self.wavel if self.wavel.size == 1 else self.wavel[keep]
+        bandwidth = self.bandwidth
+        if bandwidth is not None and bandwidth.size > 1:
+            bandwidth = bandwidth[keep]
         times = [
             None if x is None else x[keep]
             for x in (self.dt, self.frame, self.stations)
@@ -748,6 +780,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 d.u,
                 d.v,
                 d.wavel,
+                d.bandwidth,
                 d.vis,
                 d.d_vis,
                 d.phi,
@@ -768,6 +801,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 self.u[keep],
                 self.v[keep],
                 wavel,
+                bandwidth,
                 self.vis[vis_rows],
                 self.d_vis[vis_rows],
                 self.phi[phi_rows],
@@ -1214,6 +1248,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """The model's complex visibility at every sample."""
         if getattr(model, "time_dependent", False):
             return self._cvis_in_time(model)
+        if self.bandwidth is not None:
+            return smeared_model(
+                model, self.u, self.v, self.wavel, self.bandwidth
+            )
         if self.uv_grid is None:
             return model.model(self.u, self.v, self.wavel)
         return model.model_on_grid(self.u, self.v, self.wavel, self.uv_grid)
@@ -1226,21 +1264,32 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "read them from OIFITS, or give mjd per sample."
             )
         wavel = np.broadcast_to(self.wavel, np.shape(self.u))
+        bandwidth = self.bandwidth
+        if bandwidth is not None:
+            bandwidth = np.broadcast_to(bandwidth, np.shape(self.u))
         if getattr(model, "broadcast_in_time", False):
             # One time per sample: the snapshot's positions are arrays and
             # the Fourier transform broadcasts, with no loop and no vmap.
-            return model.at(self.dt, self.t_ref).model(self.u, self.v, wavel)
+            scene = model.at(self.dt, self.t_ref)
+            if bandwidth is None:
+                return scene.model(self.u, self.v, wavel)
+            return smeared_model(scene, self.u, self.v, wavel, bandwidth)
 
-        def one(dt, u, v, w):
+        def one(dt, u, v, w, b):
             scene = model.at(dt, self.t_ref)
-            return scene.model(u[None], v[None], w[None])[0]
+            if bandwidth is None:
+                return scene.model(u[None], v[None], w[None])[0]
+            return smeared_model(scene, u[None], v[None], w[None], b[None])[0]
 
         # A compiled loop over samples, not vmap: with JAX 0.11, vmapping
         # components whose angles vary per sample (an Attached disc's bound
         # inclination or position angle) and differentiating made JAX run
         # executables with the wrong batch size (RuntimeProgramInputMismatch,
         # or "Expected cotangent type" in fit). Only such models need it.
-        return jax.lax.map(lambda x: one(*x), (self.dt, self.u, self.v, wavel))
+        bw = np.zeros_like(wavel) if bandwidth is None else bandwidth
+        return jax.lax.map(
+            lambda x: one(*x), (self.dt, self.u, self.v, wavel, bw)
+        )
 
     def with_error_scale(self, factor):
         """A copy of the data with its uncertainties multiplied by ``factor``.
@@ -1562,8 +1611,45 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             in metres and divided by the wavelength where it is used, so
             it still matches the samples.
         """
+        out = eqx.tree_at(lambda d: d.wavel, self, self.wavel * scale + offset)
+        if self.bandwidth is None:
+            return out
+        # Channel widths scale with the wavelengths; a shift does not.
+        return eqx.tree_at(lambda d: d.bandwidth, out, self.bandwidth * scale)
+
+    def with_bandwidth(self, dlambda):
+        """A copy of the data with channel widths ``dlambda`` (bandwidth smearing).
+
+        Use it for simulated data, which have no ``EFF_BAND`` (or to override
+        one read with ``OIData(path, bandwidth=True)``). Models are then evaluated with each
+        component's offset phasor multiplied by the boxcar-channel envelope
+        ``sinc(π Δλ (u dra + v ddec) / λ²)``, so a wide companion loses
+        amplitude on long baselines. See
+        [`smeared_model`][virgil.models.smeared_model] for the model and its
+        limits.
+
+        Parameters
+        ----------
+        dlambda : float, array-like or None
+            Full channel width in metres: one value, or one per sample.
+            ``None`` switches smearing off.
+
+        Returns
+        -------
+        OIData
+            The data with ``bandwidth`` set.
+        """
+        if dlambda is not None:
+            dlambda = onp.atleast_1d(onp.asarray(dlambda, dtype=float))
+            _check_bandwidth(dlambda)
+            if dlambda.size not in (1, self.u.size):
+                raise ValueError(
+                    f"dlambda has {dlambda.size} values for {self.u.size} "
+                    "samples: give one, or one per sample."
+                )
+            dlambda = np.asarray(dlambda)
         return eqx.tree_at(
-            lambda d: d.wavel, self, self.wavel * scale + offset
+            lambda d: d.bandwidth, self, dlambda, is_leaf=lambda x: x is None
         )
 
     def with_north_angle(self, angle):
@@ -2019,6 +2105,11 @@ def cp_indices(vis_sta_index, cp_sta_index):
         for leg, pair in zip(legs, ((a, b), (b, c), (a, c))):
             leg.append(baseline(pair))
     return tuple(onp.asarray(leg, dtype=int) for leg in legs)
+
+
+def _check_bandwidth(bandwidth):
+    if not onp.all(onp.isfinite(bandwidth)) or onp.any(bandwidth < 0):
+        raise ValueError("bandwidth must be finite and non-negative (metres).")
 
 
 def _expand_channels(u, v, wavel, vis, indices):

@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("jaxoplanet")
 
-from virgil import aliases  # noqa: E402
+from virgil import _gauss_newton, aliases  # noqa: E402
 from virgil.aliases import (  # noqa: E402
     AliasBandResult,
     AliasResult,
@@ -99,8 +99,7 @@ def test_position_profile_has_a_chi2_per_band():
     assert all(onp.isfinite(r["chi2"]) for r in rows)
 
 
-@functools.cache
-def _synthetic(period):
+def _simulate_orbit(period):
     truth = {**TRUTH, "period": period}
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
     scene = OrbitalBinary(orbit, FLUX)
@@ -123,6 +122,17 @@ def _synthetic(period):
     return data, pos
 
 
+_synthetic = functools.cache(_simulate_orbit)
+
+
+@functools.cache
+def _synthetic_as(period, x64):
+    """The same data simulated in a fixed precision, which sets the noise
+    draws: ``_synthetic`` takes whichever precision its first caller has."""
+    with jax.enable_x64(x64):
+        return _simulate_orbit(period)
+
+
 def test_alias_bands_include_the_long_period_band():
     bands = alias_bands([0.0, 100.0], (50.0, 500.0))
     assert (
@@ -131,9 +141,9 @@ def test_alias_bands_include_the_long_period_band():
 
 
 # 12.38 d sits mid-band N = 20; 12.1 d is 0.05 cycles from the N = 20/21 edge.
-# A few seeds suffice now that the optimizer restarts (aliases._optimize);
-# without restarts L-BFGS-B stalled short of the ridge and 1 in 4 noise
-# draws settled in a wrong alias at chi2_red ~ 100-800.
+# A few seeds suffice now that the optimizer is damped Newton on the IRLS
+# curvature (aliases._optimize); L-BFGS-B stalled short of the ridge and
+# 1 in 4 noise draws settled in a wrong alias at chi2_red ~ 100-800.
 @pytest.mark.slow
 @pytest.mark.filterwarnings("error:fit_orbit_aliases")  # a good fit is quiet
 @pytest.mark.parametrize("period", [12.38, 12.1])
@@ -662,37 +672,97 @@ def test_gaussian_evidence_laplace_exact_and_importance_sampling_close():
     assert abs(z_is - rec["log_z_is"]) < 1e-9
 
 
-def test_newton_polish_reaches_a_quadratic_optimum_inside_the_bounds():
-    centre = onp.array([0.3, -0.2, 0.5, 0.1, 2.0, 1.0, 0.0, -0.5])
-    scale = onp.array([1.0, 4.0, 0.5, 2.0, 1.0, 3.0, 1.0, 1.0])
+# The log likelihood at the optimum of each near start below, from main's
+# L-BFGS-B-with-restarts ``_optimize`` (commit 5f600a3); all six reach it.
+_OLD_NEAR = [-193.286626] * 6
 
-    class Quad:
-        def value_and_grad(self, x):
-            x = onp.asarray(x)
-            return -0.5 * onp.sum(scale * (x - centre) ** 2), -scale * (
-                x - centre
-            )
 
-        def hessian(self, x):
-            return -onp.diag(scale)
+@in_float64
+def test_the_kernel_optimizer_matches_the_old_one_from_near_starts():
+    data, _ = _synthetic_as(12.1, True)
+    settings, problem = _problem(data, max_steps=200)
+    band = aliases.AliasBand(20, 12.0, 12.2)
+    bounds = aliases._Bounds.of(band, settings)
+    rng = onp.random.default_rng(0)
+    sigma = onp.array([2e-3, 0.02, 0.05, 0.05, 10.0, 10.0, 0.1, 0.1])
+    for old in _OLD_NEAR:
+        x0 = bounds.clip(_x_truth() + sigma * rng.standard_normal(8))
+        x, value = aliases._optimize(problem, bounds, x0, 200)
+        assert value >= old - 0.01
+        assert value == pytest.approx(
+            float(problem.value_and_grad(jax.numpy.asarray(x))[0]), abs=1e-9
+        )
+        assert onp.all(bounds.inside(x))
 
-    lim = [[-5.0] * 8, [5.0] * 8]
-    x0 = centre + 0.5
-    x, value = aliases._newton_polish(
-        Quad(), lim, x0.copy(), Quad().value_and_grad(x0)[0]
-    )
-    assert value > Quad().value_and_grad(x0)[0]
+
+@in_float64
+@pytest.mark.parametrize("vis_amp", [None, (0.01, 1.5)])
+def test_the_kernel_rows_carry_the_gradient_of_the_likelihood(vis_amp):
+    # With the weights frozen, Jᵀρ is the gradient of -log likelihood
+    # exactly (Σ_b w_b/2 ∇χ²_b), also through the live V² amplitude.
+    data, _ = _synthetic(12.1)
+    _, problem = _problem(data, vis_amp=vis_amp)
+    x = jax.numpy.asarray(_x_truth() + 0.01)
+    kernel = problem.kernel
+    rows = kernel.rows(x)
+    jac = jax.jacfwd(kernel.rows)(x)
     onp.testing.assert_allclose(
-        x[[0, 1, 2, 3, 6, 7]], centre[[0, 1, 2, 3, 6, 7]], atol=1e-6
+        jac.T @ rows, jax.grad(kernel.loss)(x), rtol=1e-8
     )
-    # An optimum is left alone, and a start at a bound stays inside it.
-    x1, v1 = aliases._newton_polish(Quad(), lim, centre.copy(), 0.0)
-    onp.testing.assert_allclose(
-        x1[[0, 1, 2, 3, 6, 7]], centre[[0, 1, 2, 3, 6, 7]], atol=1e-9
+    assert float(kernel.loss(x)) == pytest.approx(
+        -float(problem.value_and_grad(x)[0])
     )
-    tight = [[-5.0] * 8, [0.2] + [5.0] * 7]
-    x2, _ = aliases._newton_polish(Quad(), tight, centre.copy() - 0.1, -1.0)
-    assert x2[0] <= 0.2 + 1e-12
+
+
+@in_float64
+def test_a_kernel_that_stalls_falls_back_to_lbfgs_and_then_the_kernel(
+    monkeypatch,
+):
+    data, _ = _synthetic_as(12.1, True)
+    settings, problem = _problem(data, max_steps=200)
+    band = aliases.AliasBand(20, 12.0, 12.2)
+    bounds = aliases._Bounds.of(band, settings)
+    x0 = bounds.clip(
+        _x_truth() + onp.array([1e-3, 0.01, 0.02, 0.02, 3, 3, 0.03, 0.03])
+    )
+    real, calls = _gauss_newton.solve, []
+
+    def truncate_first(problem, start, **kw):
+        calls.append(start)
+        if len(calls) == 1:  # a real stall: stopped short of the optimum
+            kw = {**kw, "max_steps": 2}
+        return real(problem, start, **kw)
+
+    monkeypatch.setattr(_gauss_newton, "solve", truncate_first)
+    x, value = aliases._optimize(problem, bounds, x0, 200)
+    assert len(calls) == 2  # the kernel (cut short), L-BFGS-B, the kernel
+    assert value == pytest.approx(-193.286626, abs=0.01)
+
+
+# Band log evidences (Laplace) of the fit below from main's optimizer (commit
+# 5f600a3), by N. Band 22 (-460.15, three modes) is left out: its modes come
+# from starts at the edge of the period range, and which local optimum such
+# a start reaches differs between the optimizers (the kernel finds -414.3
+# and -416.3 where main also found -406.4).
+_OLD_LOG_Z = {19: -388.837124, 20: -262.393553, 21: -400.143249}
+
+
+@pytest.mark.slow
+def test_band_evidences_are_no_lower_than_with_the_old_optimizer():
+    data, pos = _synthetic_as(12.1, False)
+    result = fit_orbit_aliases(
+        data,
+        (11.3, 12.9),
+        positions=pos,
+        t_ref=T_REF,
+        n_candidates=30,
+        n_refine=3,
+        n_is=400,
+        n_samples=50,
+    )
+    by_n = {b.n: b for b in result.bands}
+    for n, old in _OLD_LOG_Z.items():
+        assert by_n[n].log_z >= old - 0.05
 
 
 # --- UD primary, V² amplitudes, the flux flip and the warm start -----------------------

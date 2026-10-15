@@ -257,7 +257,8 @@ def vlti_oidata(
     hour angle. The defaults resemble VLTI/MATISSE in the L band at low
     spectral resolution with the four UTs. MATISSE's LOW mode (R ~ 30)
     smears structure further than about R λ / B from the field centre
-    (~170 mas here), which virgil does not model.
+    (~170 mas here); virgil models this only if you opt in with
+    [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth].
 
     Parameters
     ----------

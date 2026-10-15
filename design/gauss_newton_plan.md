@@ -535,8 +535,8 @@ sampling any posterior with one peak").
 ### GN3. `fit` on the kernel, and the marginal objective
 
 **Files.** `fitting.py` (`fit`, `_Objective.flat_problem`, a `_gn`
-solver beside `_lm`), `epochs.py` (`_MarginalObjective`, `_Surface.score`
-with per-block dof), `docs/gauss_newton.md` (new), `mkdocs.yml`
+solver beside `_lm`), `epochs.py` (`_MarginalObjective`; per-block dof in
+`_Surface.score` and `_Surface.weights`), `docs/gauss_newton.md` (new), `mkdocs.yml`
 (Background nav, after "Conventions"), `CHANGELOG.md`.
 
 **Behaviour.**
@@ -593,9 +593,11 @@ with per-block dof), `docs/gauss_newton.md` (new), `mkdocs.yml`
   `epochs.py`:
   - `_Surface.score` accepts `dof` as a scalar or a per-block array
     (indexed `dof[k]` in the `s_max` loop);
-  - new `_Surface.weights(chi2, dof, data)` = `jax.grad` of −score with
-    respect to `chi2` times 2 (w_b ≥ 0 because the score falls as any
-    χ²_b rises; for `s_max=None` it is dof_b·ν_b/χ²_b).
+  - `_Surface.weights(chi2, dof, data)` (2 × `jax.grad` of −score with
+    respect to `chi2`, w_b ≥ 0 because the score falls as any χ²_b rises;
+    for `s_max=None` it is dof_b·ν_b/χ²_b) already exists: GN4 added it
+    with a scalar `dof`, because the alias kernel needs it. GN3 extends
+    `score` and `weights` to a per-block `dof` array.
 
 **Default switch (D1).** GN3 merges with the kernel reached by `method="lm"` only (rule 2 behind a module flag `_GN_DEFAULT_ON = False`). When the OzSTAR comparison below shows the kernel beating L-BFGS, a follow-up sets the flag, updates the regression tests' expected solver and adds the CHANGELOG entry.
 
@@ -662,9 +664,14 @@ later, but `fit_orbit_aliases` stays public, and its users get the
 speed-up now.
 
 **Files.** `aliases.py` (`_Problem`, `_optimize`), `epochs.py`
-(`_refine_marginal`).
+(`_refine_marginal`, and `_Surface.weights` and `weighted_rows`, moved
+here from GN3 with a scalar `dof`; GN3 extends them to per-block `dof`).
 
 **Behaviour.**
+- `_Surface.weights(chi2, dof, data)` with scalar `dof`, as GN3 specifies
+  it, tested against dof·ν_b/χ²_b (no `s_max`) and finite differences of
+  the score (`s_max=3`); `_Surface.weighted_rows(r, dof, data)` multiplies
+  each block of the whitened residuals by √(stop_gradient w_b).
 - New `aliases._KernelProblem(eqx.Module)`: fields `data` (traced, the
   epochs' OIData tuple); static `surfaces`, `cfg`. `loss(x)` =
   `−_loglike(surfaces, x, data, cfg)`. `rows(x)`: per epoch, the block
