@@ -927,17 +927,17 @@ def test_vis_amp_refuses_data_that_are_not_squared_visibilities():
 
 DIAM = 0.5  # mas: a fixed uniform-disk primary, so the UD path is covered
 VIS_AMP = (0.01, 1.5)
+FAST = dict(n_candidates=10, n_refine=1, n_is=100, n_samples=8)
 
 
 @functools.cache
-def _tiny_fit():
-    """One quick fit with a UD primary and V² amplitudes, shared by the
-    tests of the result API: one band, one start."""
-    data, pos = _synthetic(12.1)
+def _tiny_fit(primary_diam=DIAM):
+    """One quick fit with V² amplitudes, shared by the tests of the result
+    API: one band, one start. float32 data, as a user has them."""
+    data, pos = _synthetic_as(12.1, False)
     result = fit_orbit_aliases(
-        data, (11.95, 12.25), positions=pos, t_ref=T_REF, n_candidates=10,
-        n_refine=1, n_is=100, n_samples=8, primary_diam=DIAM,
-        vis_amp=VIS_AMP,
+        data, (11.95, 12.25), positions=pos, t_ref=T_REF, primary_diam=primary_diam,
+        vis_amp=VIS_AMP, **FAST,
     )  # fmt: skip
     return data, result
 
@@ -946,6 +946,40 @@ def _best_x(band):
     """The sampled vector of the band's best mode."""
     live = [m for m in band.modes if onp.isfinite(m["log_z"])]
     return onp.array(max(live, key=lambda m: m["log_z"])["x"])
+
+
+def _objective(data, x, primary_diam=DIAM):
+    """The fit's own scale-marginalized log likelihood at ``x``, in float64."""
+    with jax.enable_x64(True):
+        data = [cast_tree(d, "float64") for d in data]
+        _, problem = _problem(data, primary_diam=primary_diam, vis_amp=VIS_AMP)
+        return float(problem.value_and_grad(jax.numpy.asarray(x))[0])
+
+
+def _score(data, nights, primary_diam=DIAM):
+    """The same log likelihood from ``chi2_per_night``'s ``chi2_fit``."""
+    with jax.enable_x64(True):
+        data = [cast_tree(d, "float64") for d in data]
+        _, problem = _problem(data, primary_diam=primary_diam, vis_amp=VIS_AMP)
+        total = 0.0
+        for s, d, row in zip(problem.surfaces, data, nights):
+            chi2 = jax.numpy.asarray(
+                [row["blocks"][n]["chi2_fit"] for n in s.names]
+            )
+            total += float(s.score(chi2, 1.0, d))
+        return total
+
+
+def _same_epochs(a, b):
+    """Per-field comparison of two ``epochs`` lists (NaN equal to NaN)."""
+    assert len(a) == len(b)  # empty for a band with no valid mode
+    for x, y in zip(a, b):
+        assert x.keys() == y.keys()
+        for k in x:
+            if k == "blocks":  # block names
+                assert x[k] == y[k]
+            else:
+                assert onp.allclose(x[k], y[k], rtol=1e-9, equal_nan=True), k
 
 
 def test_a_saved_result_loads_back_equal(tmp_path):
@@ -960,15 +994,20 @@ def test_a_saved_result_loads_back_equal(tmp_path):
     assert [b.n for b in loaded.bands] == [b.n for b in result.bands]
     for a, b in zip(loaded.bands, result.bands):
         for name in ("log_z", "log_z_is", "ess", "p", "chi2_red"):
-            assert getattr(a, name) == pytest.approx(
-                getattr(b, name), nan_ok=True
-            )
+            got, want = getattr(a, name), getattr(b, name)
+            assert got == pytest.approx(want, nan_ok=True), name
         assert a.flags == b.flags and a.flipped == b.flipped
-        assert a.best == pytest.approx(b.best)
-        assert a.epochs == pytest.approx(b.epochs, nan_ok=True)
-        assert len(a.modes) == len(b.modes) > 0
-        assert a.modes[0]["x"] == pytest.approx(b.modes[0]["x"])
-        assert a.modes[0]["flags"] == b.modes[0]["flags"]
+        assert a.best.keys() == b.best.keys()
+        for k in b.best:
+            assert a.best[k] == pytest.approx(b.best[k])
+        _same_epochs(a.epochs, b.epochs)
+        assert a.modes or not b.modes
+        assert len(a.modes) == len(b.modes)
+        for m, n in zip(a.modes, b.modes):
+            assert onp.allclose(m["x"], n["x"])
+            assert m["flags"] == n["flags"]
+            assert m["loglike"] == pytest.approx(n["loglike"], nan_ok=True)
+    assert result.best.epochs and result.best.modes
     assert loaded.samples.keys() == result.samples.keys()
     for n, draws in result.samples.items():
         for name, values in draws.items():
@@ -979,47 +1018,73 @@ def test_a_saved_result_loads_back_equal(tmp_path):
 
 
 def test_non_finite_numbers_survive_a_round_trip(tmp_path):
-    # ``clean_json`` writes NaN and infinity as null: loading restores them
-    # (-inf evidences for a failed band, NaN for the rest).
-    failed = aliases._failed_band(AliasBandResult(
-        n=4, p_lo=1.0, p_hi=2.0, modes=[], log_z=0.0, log_z_is=0.0, ess=0.0,
-        flagged=True,
-    ), ValueError("no"))  # fmt: skip
-    ok = _band(3, [dict(scale=[float("nan")], chi2_red=[1.0])], p=0.5)
-    ok.modes = [dict(x=[0.0], log_z=-onp.inf, log_z_is=-onp.inf, flags=[])]
-    res = AliasResult(60000.0, onp.zeros(2), 1.0, [ok, failed], {})
+    # ``clean_json`` writes NaN and infinity as null: loading restores -inf
+    # for evidences and NaN for everything else, and keeps them distinct.
+    failed = aliases._failed_band(
+        AliasBandResult(
+            n=4, p_lo=1.0, p_hi=2.0, modes=[], log_z=0.0, log_z_is=0.0,
+            ess=0.0, flagged=True,
+        ),
+        ValueError("no"),
+    )  # fmt: skip
+    nan = float("nan")
+    ok = _band(3, [dict(scale=[nan], chi2_red=[1.0])], p=0.5, flipped=True)
+    ok.modes = [
+        dict(
+            x=[0.0, nan], loglike=nan, log_z=-onp.inf, log_z_is=-onp.inf,
+            flags=[],
+        )
+    ]  # fmt: skip
+    res = AliasResult(
+        60000.0, onp.zeros(2), 1.0, [ok, failed], {5: {"period": onp.array([1.0, nan])}}
+    )  # fmt: skip
     res.save(tmp_path / "r.json")
     back = AliasResult.load(tmp_path / "r.json")
-    assert (
-        back.bands[1].log_z == -onp.inf and back.bands[1].error == failed.error
-    )
+    assert back.bands[1].log_z == -onp.inf
+    assert back.bands[1].error == failed.error
     assert onp.isnan(back.bands[1].p) and onp.isnan(back.bands[1].chi2_red)
     assert onp.isnan(back.bands[0].epochs[0]["scale"][0])
-    assert back.bands[0].modes[0]["log_z"] == -onp.inf
+    mode = back.bands[0].modes[0]
+    assert mode["log_z"] == -onp.inf and onp.isnan(mode["loglike"])
+    assert mode["x"][0] == 0.0 and onp.isnan(mode["x"][1])
+    assert back.bands[0].flipped is True  # the flip survives
+    assert onp.isnan(back.samples[5]["period"][1])
+    assert back.samples[5]["period"].dtype == float
 
 
-@in_float64
 def test_scene_reproduces_the_model_of_the_fit():
+    # No float64 wrapper: the accessors run in float64 themselves.
     data, result = _tiny_fit()
-    data = [cast_tree(d, "float64") for d in data]
-    settings, problem = _problem(data, primary_diam=DIAM, vis_amp=VIS_AMP)
     band = result.best
-    # The fit's own log likelihood at the best mode ...
-    fit_value = float(
-        problem.value_and_grad(jax.numpy.asarray(_best_x(band)))[0]
+    fit_value = _objective(data, _best_x(band))
+    assert _score(data, band.chi2_per_night(data)) == pytest.approx(
+        fit_value, rel=1e-4, abs=1e-3
     )
-    # ... and the same score from the public scene(): χ² of the residuals
-    # block by block, then the scale-marginalized score of each epoch.
-    chi2 = band.chi2_per_night(data)
-    score = 0.0
-    for s, d, row in zip(problem.surfaces, data, chi2):
-        blocks = jax.numpy.asarray([row["blocks"][n]["chi2"] for n in s.names])
-        score += float(s.score(blocks, 1.0, d))
-    assert score == pytest.approx(fit_value, rel=1e-4, abs=1e-3)
     # It is the model the fit builds: a UD primary (not a point source).
     assert isinstance(band.scene(), aliases._UDBinary)
     assert float(band.scene().diam) == DIAM
     assert result.scene().orbit.period == pytest.approx(band.best["period"])
+
+
+def test_params_reprofile_the_amplitude_and_match_the_fit_objective():
+    # At a perturbed orbit the V² amplitude is profiled again there, so the
+    # χ² equals the fit's likelihood at that orbit, not best's amplitude.
+    data, result = _tiny_fit()
+    x = _best_x(result.best).copy()
+    x[6] += 0.1  # a 10% larger semimajor axis
+    params = {k: float(v[0]) for k, v in aliases._physical(x, T_REF).items()}
+    nights = result.best.chi2_per_night(data, params=params)
+    assert _score(data, nights) == pytest.approx(
+        _objective(data, x), rel=1e-4, abs=1e-3
+    )
+    best = result.best.chi2_per_night(data)
+    assert any(
+        a["vis_amp"] != pytest.approx(b["vis_amp"], rel=1e-3)
+        for a, b in zip(nights, best)
+    )  # the amplitude moved with the orbit
+    assert sum(n["chi2_fit"] for n in nights) > sum(
+        n["chi2_fit"] for n in best
+    )
 
 
 def test_scene_primary_follows_the_fit_settings():
@@ -1036,36 +1101,45 @@ def test_scene_primary_follows_the_fit_settings():
         band.scene()
 
 
-@in_float64
 def test_per_night_chi2_equals_a_direct_computation():
     data, result = _tiny_fit()
-    data = [cast_tree(d, "float64") for d in data]
     band = result.best
     nights = band.chi2_per_night(data)
     assert len(nights) == len(data)
-    model = band.scene()
-    for d, e, night in zip(data, band.epochs, nights):
-        # Direct: the visibilities, scaled by this epoch's fitted amplitude,
-        # and the closure phases, summed from virgil's whitened residuals.
-        r = jax.numpy.asarray(aliases.whitened_residuals(model, d))
-        n_vis = int(onp.asarray(d.vis).size)
-        obs, err = onp.ravel(d.vis), onp.ravel(d.d_vis)
-        mod = obs + onp.asarray(r[:n_vis]) * err
-        vis = ((e["vis_amp"] * mod - obs) / err) ** 2
-        phi = onp.asarray(r[n_vis:]) ** 2
-        assert night["blocks"]["vis"]["chi2"] == pytest.approx(
-            vis.sum(), rel=1e-6
-        )
-        assert night["blocks"]["phi"]["chi2"] == pytest.approx(
-            phi.sum(), rel=1e-6
-        )
-        assert night["n"] == d.n_independent
-        assert night["chi2_per_n"] == pytest.approx(night["chi2"] / night["n"])
-        # and what the fit recorded for this epoch (raw χ²/ν per block)
-        for name, red in zip(night["blocks"], e["chi2_red"]):
-            assert night["blocks"][name]["chi2_per_n"] == pytest.approx(
-                red, rel=1e-3
+    with jax.enable_x64(True):
+        model = band.scene()
+        for d, e, night in zip(data, band.epochs, nights):
+            d = cast_tree(d, "float64")
+            # Direct: the visibilities, scaled by this epoch's fitted
+            # amplitude, and the closure phases, from virgil's whitened
+            # residuals; the phase block includes the penalty rows.
+            r = onp.asarray(aliases.whitened_residuals(model, d))
+            n_vis = int(onp.asarray(d.vis).size)
+            obs, err = onp.ravel(d.vis), onp.ravel(d.d_vis)
+            mod = obs + r[:n_vis] * err
+            vis = ((e["vis_amp"] * mod - obs) / err) ** 2
+            phi = r[n_vis:] ** 2
+            blocks = night["blocks"]
+            assert blocks["vis"]["chi2_fit"] == pytest.approx(
+                vis.sum(), rel=1e-5
             )
+            assert blocks["phi"]["chi2_fit"] == pytest.approx(
+                phi.sum(), rel=1e-5
+            )
+            # the data χ² leaves the penalty rows out and counts ν rows
+            nu = blocks["phi"]["n"]
+            assert blocks["phi"]["chi2"] == pytest.approx(
+                phi[:nu].sum(), rel=1e-5
+            )
+            assert blocks["phi"]["chi2"] <= blocks["phi"]["chi2_fit"]
+            assert night["n"] == d.n_independent
+            assert night["chi2_per_n"] == pytest.approx(
+                night["chi2"] / night["n"]
+            )
+            # and what the fit recorded for this epoch (raw χ²/ν per block)
+            for name, red in zip(blocks, e["chi2_red"]):
+                got = blocks[name]["chi2_per_n_fit"]
+                assert got == pytest.approx(red, rel=1e-3)
     assert nights == result.chi2_per_night(data)
 
 
@@ -1074,7 +1148,12 @@ def test_residuals_are_whitened_blocks_in_vector_order():
     blocks = result.residuals(data)
     assert len(blocks) == len(data) and list(blocks[0]) == ["vis", "phi"]
     flat = onp.concatenate(list(blocks[0].values()))
-    raw = onp.asarray(aliases.whitened_residuals(result.scene(), data[0]))
+    with jax.enable_x64(True):
+        raw = onp.asarray(
+            aliases.whitened_residuals(
+                result.scene(), cast_tree(data[0], "float64")
+            )
+        )
     assert flat.shape == raw.shape
     n_vis = blocks[0]["vis"].size
     assert onp.array_equal(flat[n_vis:], raw[n_vis:])  # closure phases as is
@@ -1090,3 +1169,61 @@ def test_a_loaded_result_scores_like_the_original(tmp_path):
     assert [x["chi2"] for x in b] == pytest.approx(
         [x["chi2"] for x in a], rel=1e-5
     )
+
+
+def test_a_file_that_lacks_the_settings_is_not_read_as_a_point_primary(
+    tmp_path,
+):
+    # Files written before ``primary_diam`` and ``vis_amp`` were saved.
+    data, result = _tiny_fit()
+    result.save(tmp_path / "new.json")
+    old = json.loads((tmp_path / "new.json").read_text())
+    for key in ("primary_diam", "vis_amp"):
+        del old[key]
+    for band in old["band_details"]:
+        for key in ("primary_diam", "vis_amp", "t_ref"):
+            del band[key]
+    (tmp_path / "old.json").write_text(json.dumps(old))
+    loaded = AliasResult.load(tmp_path / "old.json")
+    assert loaded.primary_diam == aliases.UNRECORDED
+    assert loaded.bands[0].vis_amp == aliases.UNRECORDED
+    for call in (
+        lambda: loaded.scene(),
+        lambda: loaded.residuals(data),
+        lambda: loaded.chi2_per_night(data),
+    ):
+        with pytest.raises(ValueError, match="does not record"):
+            call()
+    # A diameter alone is not enough: the V² amplitude is unrecorded too.
+    half = AliasResult.load(tmp_path / "old.json", primary_diam=DIAM)
+    assert float(half.scene().diam) == DIAM
+    with pytest.raises(ValueError, match="vis_amp"):
+        half.chi2_per_night(data)
+    full = AliasResult.load(
+        tmp_path / "old.json", primary_diam=DIAM, vis_amp=list(VIS_AMP)
+    )
+    got = full.chi2_per_night(data)
+    want = result.chi2_per_night(data)
+    assert [g["chi2"] for g in got] == pytest.approx([w["chi2"] for w in want])
+    # None is a recorded answer (point primary, no amplitude), not unrecorded.
+    point = AliasResult.load(
+        tmp_path / "old.json", primary_diam=None, vis_amp=None
+    )
+    assert type(point.scene()) is OrbitalBinary
+
+
+def test_a_fitted_primary_diameter_works_end_to_end(tmp_path):
+    data, result = _tiny_fit("fit")
+    band = result.best
+    assert result.primary_diam == "fit" and "diam" in band.best
+    assert float(band.scene().diam) == pytest.approx(band.best["diam"])
+    x = _best_x(band)
+    assert _score(data, band.chi2_per_night(data), "fit") == pytest.approx(
+        _objective(data, x, "fit"), rel=1e-4, abs=1e-3
+    )
+    result.save(tmp_path / "fit.json")
+    loaded = AliasResult.load(tmp_path / "fit.json")
+    assert loaded.primary_diam == "fit"
+    assert float(loaded.scene().diam) == pytest.approx(band.best["diam"])
+    for a, b in zip(loaded.chi2_per_night(data), band.chi2_per_night(data)):
+        assert a["chi2_fit"] == pytest.approx(b["chi2_fit"], rel=1e-5)

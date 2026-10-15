@@ -46,10 +46,10 @@ from scipy.special import logsumexp
 
 from . import _gauss_newton
 from ._deprecate import external_stacklevel
-from ._precision import cast_tree, in_float64
+from ._precision import cast_tree, in_float64, run_in
 from ._utils import clean_json
 from .detection import _fingerprint
-from .epochs import _Surface, _blocks
+from .epochs import _Surface
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
@@ -60,6 +60,7 @@ __all__ = [
     "AliasBand",
     "AliasBandResult",
     "AliasResult",
+    "UNRECORDED",
     "alias_bands",
     "fit_orbit_aliases",
     "position_profile",
@@ -87,6 +88,10 @@ _PERIODIC = {
     5: 180.0,
 }  # periodic coordinates and their periods
 _N_FLUX = 4  # fluxes tried for each position-level candidate
+# Marks a setting a loaded result does not record (a file written before
+# ``primary_diam`` and ``vis_amp`` were saved). It is not None, which means
+# "point primary" or "no V² amplitude": the accessors refuse to guess.
+UNRECORDED = "unrecorded"
 _ELEMENTS = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
 
 
@@ -1238,6 +1243,11 @@ class AliasBandResult:
     vis_amp : tuple or None
         The ``(lo, hi)`` range of the per-epoch V² amplitude if it was
         fitted (the amplitudes themselves are in ``epochs``), else None.
+
+    Both are [`UNRECORDED`][virgil.aliases.UNRECORDED] on a band loaded
+    from a file that did not save them; the accessors then raise unless
+    they were given to
+    [`AliasResult.load`][virgil.aliases.AliasResult.load].
     """
 
     n: int
@@ -1299,7 +1309,9 @@ class AliasBandResult:
         ------
         ValueError
             If the band has no best orbit (it failed), no ``t_ref``, or
-            ``primary_diam="fit"`` but no diameter is available.
+            ``primary_diam="fit"`` but no diameter is available, or the
+            band's ``primary_diam`` is unrecorded (see
+            [`UNRECORDED`][virgil.aliases.UNRECORDED]).
         """
         b = self.best if params is None else params
         if not b:
@@ -1308,6 +1320,8 @@ class AliasBandResult:
             )
         if self.t_ref is None:
             raise ValueError("this band does not record its t_ref.")
+        if _unrecorded(self.primary_diam):
+            raise ValueError(_UNRECORDED_MESSAGE.format("primary_diam"))
         orbit = KeplerOrbit(
             b["period"],
             b["dt_peri"],
@@ -1335,28 +1349,38 @@ class AliasBandResult:
         return OrbitalBinary(orbit, b["flux"])
 
     def _whitened(self, data, params=None):
-        """Per epoch, ``[(block name, ν, whitened residuals)]`` at the best
-        orbit (or ``params``) with the fit's V² amplitudes."""
+        """Per epoch, ``([(block name, ν, whitened residuals)], amp)`` at
+        the best orbit (or ``params``).
+
+        Like the fit, it runs on float64 copies of the data, in float64.
+        The V² amplitude is re-profiled at the orbit scored (the weighted
+        least-squares step of ``_epoch_residuals``) rather than read from
+        ``epochs``, so that the residuals at ``params`` are those of the
+        fit's likelihood there; at ``best`` it returns the fitted one.
+        """
+        if _unrecorded(self.vis_amp):
+            raise ValueError(_UNRECORDED_MESSAGE.format("vis_amp"))
         if len(data) != len(self.epochs):
             raise ValueError(
                 f"{len(data)} datasets for a fit of {len(self.epochs)} epochs."
             )
-        model = self.scene(params)
         out = []
-        for d, e in zip(data, self.epochs):
-            r = np.asarray(whitened_residuals(model, d))
-            blocks = _blocks(d)
-            # The fit scales the squared visibilities by one amplitude per
-            # epoch (``vis_amp``): score with the fitted amplitude, not 1.
-            if self.vis_amp is not None and blocks[0][0] == "vis":
-                if d.vis_mode != "v2" or d.observable_kind != "split":
-                    raise NotImplementedError(
-                        "vis_amp needs squared visibilities as the "
-                        f"visibility channel, got vis_mode={d.vis_mode!r}."
+        with run_in("float64"):
+            model = self.scene(params)  # inside: built in float64
+            for d in data:
+                d = cast_tree(d, "float64")
+                surface = _Surface(d)
+                r, amp = _epoch_residuals(surface, model, d, self.vis_amp)
+                r = onp.asarray(r, dtype=float)
+                out.append(
+                    (
+                        [
+                            (name, a, z, nu, r[a:z])
+                            for name, a, z, nu, _ in surface.blocks
+                        ],
+                        float(amp),
                     )
-                r = _scale_vis(r, d, blocks[0][2], e["vis_amp"])
-            r = onp.asarray(r, dtype=float)
-            out.append([(name, nu, r[a:z]) for name, a, z, nu, _ in blocks])
+                )
         return out
 
     def residuals(self, data, params=None):
@@ -1365,10 +1389,12 @@ class AliasBandResult:
         These are the residuals the fit's likelihood is built from
         ([`whitened_residuals`][virgil.likelihood.whitened_residuals] of
         [`scene`][virgil.aliases.AliasBandResult.scene], on the quoted
-        errors), with each epoch's squared visibilities scaled by the
-        fitted ``vis_amp``, if the fit had one. They are virgil's own
-        model, so they check the bookkeeping, not the model: for that,
-        compare with an independent forward model.
+        errors), evaluated in float64 as the fit is. If the fit had a V²
+        amplitude, each epoch's squared visibilities are scaled by the
+        amplitude re-profiled at the orbit scored, which is the fitted
+        one at ``best``. They are virgil's own model, so they check the
+        bookkeeping, not the model: for that, compare with an independent
+        forward model.
 
         Parameters
         ----------
@@ -1381,21 +1407,36 @@ class AliasBandResult:
         Returns
         -------
         list of dict
-            One ``{block name: residuals}`` per epoch. The blocks (``"vis"``, ``"phi"``, ...) are in
-            the order of the whitened residual vector, so
-            ``numpy.concatenate(list(blocks.values()))`` is that vector.
-            The penalty rows of correlated closure phases are in ``"phi"``,
-            as in the fit's χ².
+            One ``{block name: residuals}`` per epoch. The blocks
+            (``"vis"``, ``"phi"``, ...) are in the order of the whitened
+            residual vector, so ``numpy.concatenate(list(blocks.values()))``
+            is that vector. The penalty rows of correlated closure phases
+            are the last rows of ``"phi"``, as in the fit's χ².
+
+        Raises
+        ------
+        ValueError
+            If ``primary_diam`` or ``vis_amp`` is unrecorded (see
+            [`UNRECORDED`][virgil.aliases.UNRECORDED]), or ``data`` does
+            not match the epochs.
         """
         rows = self._whitened(list(data), params)
-        return [{name: r for name, _, r in row} for row in rows]
+        return [{name: r for name, _, _, _, r in row} for row, _ in rows]
 
     def chi2_per_night(self, data, params=None):
         """Raw χ² and its count of independent observables, per night.
 
         On the quoted errors (no error scales), at the best orbit with the
-        fitted V² amplitudes: the quantity to quote against the papers'
-        χ²/N, unlike ``chi2_red``, which is the same sum over all epochs.
+        V² amplitude re-profiled there (the fitted one at ``best``), in
+        float64: the quantity to quote against the papers' χ²/N. Two
+        sums are given. ``chi2`` is the data χ²: the ``n`` independent
+        observables only. ``chi2_fit`` is the χ² the fit used: for
+        correlated closure phases (four or more telescopes) it adds the
+        periodic penalty rows, ``2 sin²(Δ/2)/σ``, which have no
+        independent degree of freedom of their own (see
+        [`whitened_residuals`][virgil.likelihood.whitened_residuals]).
+        ``chi2_fit / n`` is the ``chi2_red`` the fit recorded in
+        ``epochs``; without correlated closure phases the two agree.
 
         Parameters
         ----------
@@ -1408,28 +1449,57 @@ class AliasBandResult:
         Returns
         -------
         list of dict
-            One dict per epoch with ``chi2``, ``n`` (``data.n_independent``) and ``chi2_per_n``,
-            and ``blocks``: the same three numbers for each observable
-            block. Sum ``chi2`` and ``n`` over nights for a pooled value.
+            One dict per epoch with ``chi2``, ``chi2_fit``, ``n``
+            (``data.n_independent``), ``chi2_per_n``, ``chi2_per_n_fit``
+            and ``vis_amp`` (the amplitude used, 1 without ``vis_amp``),
+            and ``blocks``: the same sums for each observable block. Sum
+            ``chi2`` and ``n`` over nights for a pooled value.
+
+        Raises
+        ------
+        ValueError
+            As for [`residuals`][virgil.aliases.AliasBandResult.residuals].
         """
-        rows = self._whitened(list(data), params)
         out = []
-        for row in rows:
-            blocks = {
-                name: _chi2_entry(float(onp.sum(r**2)), int(nu))
-                for name, nu, r in row
-            }
+        for row, amp in self._whitened(list(data), params):
+            blocks = {}
+            for name, a, z, nu, r in row:
+                # The first ν rows are the independent observables; any
+                # rows after them are the closure-phase penalty.
+                blocks[name] = _chi2_entry(
+                    float(onp.sum(r[:nu] ** 2)), float(onp.sum(r**2)), nu
+                )
             total = _chi2_entry(
                 sum(b["chi2"] for b in blocks.values()),
+                sum(b["chi2_fit"] for b in blocks.values()),
                 sum(b["n"] for b in blocks.values()),
             )
-            out.append(dict(total, blocks=blocks))
+            out.append(dict(total, vis_amp=amp, blocks=blocks))
         return out
 
 
-def _chi2_entry(chi2, n):
-    """``{"chi2", "n", "chi2_per_n"}`` (``chi2_per_n`` None without data)."""
-    return dict(chi2=chi2, n=n, chi2_per_n=chi2 / n if n else None)
+def _unrecorded(value):
+    """Whether ``value`` is the [`UNRECORDED`][virgil.aliases.UNRECORDED]
+    marker."""
+    return isinstance(value, str) and value == UNRECORDED
+
+
+_UNRECORDED_MESSAGE = (
+    "this result does not record {0} (it was saved before it was kept): "
+    "pass the fit's value to AliasResult.load(path, {0}=...)."
+)
+
+
+def _chi2_entry(chi2, chi2_fit, n):
+    """The χ² of the data and of the fit, ``n`` and their ratios to it
+    (None without data)."""
+    return dict(
+        chi2=chi2,
+        chi2_fit=chi2_fit,
+        n=int(n),
+        chi2_per_n=chi2 / n if n else None,
+        chi2_per_n_fit=chi2_fit / n if n else None,
+    )
 
 
 @dataclasses.dataclass
@@ -1558,15 +1628,28 @@ class AliasResult:
         )
 
     def to_json(self, path, n_samples=0):
-        """Write the band table and each band's modes to ``path``, with
-        ``n_samples`` posterior draws per band (none by default).
+        """Write the band table and each band's modes to ``path`` as JSON.
 
-        [`load`][virgil.aliases.AliasResult.load] reads it back; use
-        [`save`][virgil.aliases.AliasResult.save] to keep every draw.
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write.
+        n_samples : int or None, optional
+            Posterior draws written per band: none by default, the first
+            ``n_samples``, or, with ``None``, all of them (what
+            [`save`][virgil.aliases.AliasResult.save] does).
+
+        Notes
+        -----
+        [`load`][virgil.aliases.AliasResult.load] reads the file back.
+        ``positions`` is not written.
         """
         with open(path, "w") as f:
             json.dump(
-                clean_json(self._payload(n_samples)), f, indent=1, default=str
+                clean_json(self._payload(n_samples)),
+                f,
+                indent=1,
+                default=str,
             )
 
     def save(self, path):
@@ -1574,12 +1657,12 @@ class AliasResult:
         included; [`load`][virgil.aliases.AliasResult.load] is its inverse.
 
         Non-finite numbers are written as null (strict JSON) and restored
-        on loading. ``positions`` is a diagnostic and is not written.
+        on loading. The ``positions`` diagnostic is not written.
         """
         self.to_json(path, n_samples=None)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path, primary_diam=UNRECORDED, vis_amp=UNRECORDED):
         """Read a result written by
         [`save`][virgil.aliases.AliasResult.save] (or
         [`to_json`][virgil.aliases.AliasResult.to_json]).
@@ -1588,6 +1671,13 @@ class AliasResult:
         ----------
         path : str or os.PathLike
             The JSON file.
+        primary_diam, vis_amp : optional
+            The fit's settings, for a file written before they were saved
+            (they would otherwise stay
+            [`UNRECORDED`][virgil.aliases.UNRECORDED], and the accessors
+            would raise instead of guessing a point primary or no V²
+            amplitude). Given for a file that does record them, they
+            override it.
 
         Returns
         -------
@@ -1601,18 +1691,37 @@ class AliasResult:
         """
         with open(path) as f:
             p = json.load(f)
-        vis_amp = p.get("vis_amp")
+        saved = p.get("vis_amp", UNRECORDED)
+        recorded = dict(
+            primary_diam=p.get("primary_diam", UNRECORDED),
+            vis_amp=saved
+            if _unrecorded(saved) or saved is None
+            else tuple(saved),
+        )
+        given = dict(primary_diam=primary_diam, vis_amp=vis_amp)
+        if not _unrecorded(vis_amp) and vis_amp is not None:
+            given["vis_amp"] = tuple(vis_amp)
+        settings = {
+            k: recorded[k] if _unrecorded(given[k]) else given[k]
+            for k in recorded
+        }
+        bands = [_band_from_dict(d) for d in p["band_details"]]
+        for b in bands:
+            # A band that did not record a setting, or one that was
+            # overridden, takes the result's.
+            for k in settings:
+                if _unrecorded(getattr(b, k)) or not _unrecorded(given[k]):
+                    setattr(b, k, settings[k])
         return cls(
             t_ref=p["t_ref"],
             times=onp.asarray(p["times"], dtype=float),
             span=p["span"],
-            bands=[_band_from_dict(d) for d in p["band_details"]],
+            bands=bands,
             samples={
-                int(n): {k: onp.asarray(v) for k, v in s.items()}
+                int(n): {k: onp.asarray(v, dtype=float) for k, v in s.items()}
                 for n, s in p["samples"].items()
             },
-            primary_diam=p.get("primary_diam"),
-            vis_amp=None if vis_amp is None else tuple(vis_amp),
+            **settings,
         )
 
 
@@ -1628,11 +1737,17 @@ def _nan_for_none(value):
 
 def _band_from_dict(d):
     """An [`AliasBandResult`][virgil.aliases.AliasBandResult] from its
-    ``dataclasses.asdict`` JSON, restoring what ``clean_json`` made null:
-    evidences of failed modes and bands are ``-inf``, other non-finite
-    numbers NaN."""
+    ``dataclasses.asdict`` JSON, restoring what ``clean_json`` made null.
+    The evidences (``log_z`` fields) of failed modes and bands are ``-inf``;
+    every other non-finite number (``p``, ``chi2_red``, a mode's
+    ``loglike``, ``sigma`` and ``x``, the per-epoch numbers) is NaN, so
+    that the two stay distinct. Settings the file did not record are
+    [`UNRECORDED`][virgil.aliases.UNRECORDED]."""
     names = {f.name for f in dataclasses.fields(AliasBandResult)}
     d = {k: v for k, v in d.items() if k in names}
+    for k in ("primary_diam", "vis_amp"):
+        if k not in d:
+            d[k] = UNRECORDED
     for k in ("log_z", "log_z_is"):
         if d.get(k) is None:
             d[k] = -onp.inf
@@ -1641,7 +1756,9 @@ def _band_from_dict(d):
             d[k] = float("nan")
     d["modes"] = [
         {
-            k: (-onp.inf if v is None and k.startswith("log_z") else v)
+            k: (-onp.inf if v is None else v)
+            if k.startswith("log_z")
+            else _nan_for_none(v)
             for k, v in m.items()
         }
         for m in d.get("modes", [])
@@ -1650,7 +1767,7 @@ def _band_from_dict(d):
         {k: _nan_for_none(v) for k, v in e.items()}
         for e in d.get("epochs", [])
     ]
-    if d.get("vis_amp") is not None:
+    if isinstance(d.get("vis_amp"), list):
         d["vis_amp"] = tuple(d["vis_amp"])
     return AliasBandResult(**d)
 
