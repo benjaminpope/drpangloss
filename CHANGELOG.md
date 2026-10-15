@@ -9,6 +9,22 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Tempered orbit evidence for correlated spectral channels.**
+  `fit_orbit_aliases(temper=True)` (default) divides every block's log
+  likelihood by the effective-channel factor `f = N / N_eff`, estimated from
+  the lag-1 correlation of neighbouring channels in the residuals of each
+  night's best static fit (`f = (1 + rho)/(1 - rho)`; white noise and
+  single-wavelength data give `f = 1`, so their evidences are unchanged).
+  The untempered evidence gave the best alias band p = 1.000 at chi2/N 12
+  and posteriors far too narrow. `temper=False` is the old behaviour and a
+  float a fixed `f`. `AliasResult.temper_f`, `.temper_blocks` and
+  `.tempering` (f outside [0.5, 2]) record it; `save` and `load` keep them
+  (older files load with `temper_f=None`). New module `virgil.tempering`
+  (`adjacent_channels`, `estimate_factors`, `ChannelFactors`); the block
+  score takes a per-block `dof`, and `estimate_primary_diameter(dof=)`
+  tempers the resolved-primary test. `LABELS_FREE_NATS` (3) and
+  `RESOLVE_NATS` (5) keep their values and are now in tempered nats.
+
 - **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
   flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
   `chi2-high`, `sep-below-resolution`, `flux-at-bound`), each with a
