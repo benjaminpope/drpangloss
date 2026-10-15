@@ -210,8 +210,11 @@ jobs:
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
           # Seconds per test not marked slow (tests/conftest.py); only with
           # a warm cache (this job, JAX and packing), since a cold one makes
-          # every compile count.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '15' || '' }}
+          # every compile count. Even warm, a test's time varies up to about
+          # 2.6x between runs: the first test on a worker to reach a shared
+          # jit pays its tracing, and xdist's order changes. Fast tests peak
+          # near 25 s, so 30 s leaves room and still catches heavy new ones.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '30' || '' }}
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
         # The memory sampler needs GNU free and procps ps: Linux only.
