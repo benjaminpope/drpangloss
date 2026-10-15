@@ -446,7 +446,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     is tied only inside a System: evaluated alone (``Image.brightness``,
     or a regularizer given the bare Image) the field uses the fallback
     geometry it was built with, which is also what ``from_disk`` stores.
-    [`System.resolved`][virgil.models.SourceModel.resolved] returns the
+    `System.resolved` returns the
     System with the ties baked in, for code that reads the pixels directly.
     The pixel scale comes from the Image. The azimuth is measured from the
     projected major axis towards ``pa + 90``, as for ``PolarDisk``'s harmonics.
