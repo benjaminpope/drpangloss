@@ -5,6 +5,8 @@ on:
     branches:
       - main
   pull_request:
+  # Dispatched on the lock-upgrade branch by lock-upgrade.yml.
+  workflow_dispatch:
 
 concurrency:
   group: lint-${{ github.workflow }}-${{ github.ref }}
@@ -38,3 +40,24 @@ jobs:
       # --diff prints the changes ruff would make, so the log shows the fix.
       - name: ruff format --check
         run: uvx ruff@${RUFF_VERSION} format --diff --force-exclude src tests examples scripts
+
+  # Checks that need virgil importable but no JAX compiles: generated docs in
+  # sync with the notebooks, notebook outputs not stale, the package layout.
+  # tests.yml skips tests/lint, so one stale markdown file fails one job, not
+  # every test job.
+  checks:
+    name: docs sync, notebook outputs, package layout
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: create environment
+        run: uv sync --locked --python 3.12 --extra test
+
+      - name: tests/lint
+        run: .venv/bin/python -m pytest tests/lint -rs

@@ -84,6 +84,7 @@ pipeline = [
 test = [
   "pytest>=8.0",
   "pytest-xdist>=3.5",
+  "pytest-timeout>=2.3",
   "pyoifits>=0.4.10",
   "virgil-astro[plots,pipeline]",
 ]
@@ -107,6 +108,12 @@ dev = [
   "twine",
 ]
 
+[dependency-groups]
+# harmonix is not an extra (see integrations above). CI installs it from
+# uv.lock with `uv sync --locked --group harmonix`, so its tests run against
+# a locked version like everything else.
+harmonix = ["harmonix>=0.1.0"]
+
 [tool.ruff]
 line-length = 79
 # Must match the rev in .pre-commit-config.yaml and RUFF_VERSION in the workflows.
@@ -119,7 +126,9 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "ICN"]
+# W605: an invalid escape such as a LaTeX backslash ($\mu$) in a docstring
+# that is not a raw string; Python warns on every fresh compile.
+select = ["E", "F", "ICN", "W605"]
 ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
 
 [tool.ruff.lint.flake8-import-conventions]
@@ -141,9 +150,11 @@ indent-style = "space"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
-# Dump every thread's traceback when a test runs past 5 minutes, so a hung
-# CI job shows where it stopped. It only prints; the test carries on.
-faulthandler_timeout = 300
+# A test that runs past 5 minutes has hung: pytest-timeout fails it (and
+# dumps every thread's traceback) instead of holding the runner until the
+# job times out. The duration budget for ordinary tests is much tighter
+# (tests/conftest.py).
+timeout = 300
 # The 0.4 argument-order shims (virgil._deprecate) warn on the 0.3 order and
 # the old argument names. No virgil code, test or tutorial may use them; the
 # tests of the shims opt in with pytest.warns.
