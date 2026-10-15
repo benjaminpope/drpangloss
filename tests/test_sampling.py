@@ -28,6 +28,7 @@ def _scene(latent, sigma, length):
 @pytest.mark.skipif(
     not jax.config.jax_enable_x64, reason="NUTS on an image needs x64"
 )
+@pytest.mark.slow
 def test_nuts_runs_on_an_injected_field():
     # A smoke test: NUTS runs through numpyro_model, stays finite and
     # rarely diverges. Whether its posterior is calibrated (the injected
