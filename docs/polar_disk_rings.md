@@ -93,6 +93,12 @@ plot_model(truth_model, fov_mas=FOV, npix=256, ax=ax, saturate=0.99,
 plt.show()
 ```
 
+```text
+planet: sky separation 14.40 mas, disk-plane radius 14.40 mas (rings at 4.5, 10.0, 21.5 mas)
+```
+
+![polar_disk_rings output 3.2](generated/polar_disk_rings_cell003_out02.png)
+
 ## The parametric fit
 
 The truth family has 20 parameters: shared geometry, a radius, width, flux and temperature per ring, the outer harmonic's two components, and the planet's offset, flux and temperature. Their priors are invariant ones: `IsotropicInclination` (uniform in $\cos i$) for the inclination, uniform for angles and locations (position angle, harmonic components, planet offsets), and log-uniform for scales (ring radii, widths, fluxes, temperatures). We start 5 percent from the truth, as a local optimizer needs, run `fit` (Levenberg–Marquardt) to the MAP, and take the Laplace covariance with `laplace_cov`.
@@ -119,6 +125,31 @@ print(f"chi2 = {par.info['chi2'][0]:.0f} for N = {par.info['ndata'][0]} "
 print(f"{'':>6}{'truth':>9}{'MAP':>9}{'Laplace sd':>12}")
 for k, x, s in zip(names, x_map, sigma):
     print(f"{k:>6}{truth[k]:9.3f}{x:9.3f}{s:12.3f}")
+```
+
+```text
+chi2 = 572 for N = 567 independent data (chi2/N = 1.01), converged: True
+          truth      MAP  Laplace sd
+   inc   50.000   50.108       0.205
+    pa   30.000   29.968       0.277
+  h_re    0.500    0.600       0.049
+  h_im    0.200    0.229       0.021
+   dra   -7.200   -7.254       0.026
+  ddec  -12.471  -12.488       0.027
+    fp    0.040    0.041       0.001
+    tp 1000.000 1021.563      26.289
+    r1    4.500    4.465       0.072
+    s1    1.300    1.296       0.169
+    f1    0.150    0.165       0.015
+    t1 1500.000 1285.476      71.295
+    r2   10.000    9.940       0.122
+    s2    1.500    1.519       0.130
+    f2    0.250    0.277       0.015
+    t2  900.000  940.208      29.298
+    r3   21.500   21.488       0.029
+    s3    2.400    2.403       0.042
+    f3    0.500    0.454       0.019
+    t3  600.000  582.920       9.105
 ```
 
 ## The non-parametric fit
@@ -173,6 +204,13 @@ print(f"disk flux at 3 micron = {gv['disk.flux']:.2f} "
       f"(parametric rings: {v['f1'] + v['f2'] + v['f3']:.2f}; truth {true_disk_flux:.2f})")
 ```
 
+```text
+chi2 = 648 for N = 567 independent data (chi2/N = 1.14), converged: True, 64 steps
+planet offset (dra, ddec) = (-7.25, -12.50) mas (parametric: -7.25, -12.49; truth -7.20, -12.47)
+planet flux at 3 micron = 0.041 of the star (parametric: 0.041; truth 0.040)
+disk flux at 3 micron = 0.89 (parametric rings: 0.90; truth 0.90)
+```
+
 ## The evidence, parametric against Gaussian process
 
 For the parametric model the Laplace evidence is $\log Z \approx -\tfrac12\chi^2 + \log\pi(\hat\theta) + \tfrac d2\log 2\pi + \tfrac12\log\det\Sigma$, and `log_evidence` computes the equivalent for the Gaussian-process latents, $-\tfrac12\chi^2 - \tfrac12|z|^2 - \tfrac12\log\det(I + J^TJ)$. The two share a normalization, so only their difference means anything, and it is not a calibrated Bayes factor, for two reasons that pull opposite ways. The Gaussian-process value holds every non-latent parameter (disk flux, planet, and geometry, which was tuned on these data) at its MAP with no Occam factor, which favours the Gaussian process. The parametric family contains the truth, which no real analysis can assume, and it marginalizes all 20 parameters, which favours the parametric model. The Laplace approximation is also rough for the width pressed against its prior edge.
@@ -199,6 +237,13 @@ for ell, z in logz.items():
           + ("  (used below)" if ell == ell_gp else ""))
 print(f"log Z(ell = {ell_gp:g}) - log Z(ell = {ell_alt:g}) = {logz[ell_gp] - logz[ell_alt]:.1f}; "
       f"parametric - GP = {logz_par - logz[ell_gp]:.1f}")
+```
+
+```text
+parametric (20 parameters, Laplace-marginalized): log Z =   -381.7
+GP (other parameters at MAP), profile length scale 5.00 mas: log Z =   -414.4  (used below)
+GP (other parameters at MAP), profile length scale 2.00 mas: log Z =   -412.7
+log Z(ell = 5) - log Z(ell = 2) = -1.6; parametric - GP = 32.6
 ```
 
 ## What the data taught the Gaussian process
@@ -268,6 +313,8 @@ fig.suptitle("The data's effect on the GP profile and colour (MAP latents' Lapla
 plt.tight_layout()
 plt.show()
 ```
+
+![polar_disk_rings output 11.1](generated/polar_disk_rings_cell011_out01.png)
 
 ## Truth, parametric fit and deconvolution side by side
 
@@ -361,6 +408,12 @@ near = i_t > i_t.max() * np.exp(-6)
 rms_ln = lambda i: np.sqrt(np.mean((np.log(i[near]) - np.log(i_t[near])) ** 2))
 print(f"rms error of ln I0 over {rg[near].min():.1f}-{rg[near].max():.1f} mas "
       f"(truth within e^-6 of its peak): GP {rms_ln(i_map):.2f}, parametric {rms_ln(i_p):.2f}")
+```
+
+![polar_disk_rings output 13.1](generated/polar_disk_rings_cell013_out01.png)
+
+```text
+rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, parametric 0.10
 ```
 
 ## Summary
