@@ -74,7 +74,7 @@ nav:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
-      - "Radial profiles and PolarDisk": polar_disk.md
+      - "PolarDisk reference": polar_disk.md
       - "A planet in a gap between rings": polar_disk_rings.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
