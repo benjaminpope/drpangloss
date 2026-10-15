@@ -10,6 +10,11 @@ See the [Composing Models](../../../composition.md) tutorial for usage.
         - model
         - render
 
+::: virgil.models.smeared_model
+    options:
+      show_root_heading: true
+      heading_level: 2
+
 ::: virgil.models.Component
     options:
       show_root_heading: true

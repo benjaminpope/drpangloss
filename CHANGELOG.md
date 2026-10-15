@@ -7,6 +7,43 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
+  `fit` and `numpyro_model` and covers them in the matrix, under their
+  numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
+  is the Fisher information, with the extra rows √2 log σ for each
+  visibility and phase error. It now also accepts data with gains, any
+  elementwise prior (HalfNormal, Beta, Uniform and so on, each with the
+  curvature of the sampler's transform) and likelihood terms with a
+  `log_norm`. With more than 8192 coordinates it returns the diagonal of
+  the covariance, with a `UserWarning`, instead of an n² matrix.
+  `SingularCurvature` now means a direction that neither the data nor a
+  proper prior constrains (an `ImproperUniform` or flat-in-coordinate
+  parameter the data do not fix), or a matrix that is not positive
+  definite: a parameter under a bounded prior no longer raises. The
+  result's `condition` attribute is the condition number of its
+  correlation matrix. The matrix checks positive definiteness on the
+  covariance itself, which a float32 Woodbury result could fail while
+  the old check passed. A prior that is neither elementwise nor an
+  angle vector (`MultivariateNormal`, `Dirichlet`) raises
+  `NoLeastSquaresForm`, as its curvature is not diagonal.
+
+### Changed
+
+- **`variational` starts error terms and gains data at their
+  Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
+  so fitted error terms get widths from the curvature instead of
+  `init_scale`; data with gains, and priors without a least-squares form
+  (HalfNormal, Beta), now get a Gauss–Newton start rather than
+  `init_scale`. The posterior is unchanged; only the starting width, so
+  the number of steps to converge.
+- A bounded elementwise prior (`Uniform`, `LogUniform` and so on) now adds
+  the curvature of the sampler's transform to `gauss_newton_mass`'s
+  matrix, where `Uniform` added none before. The matrix is a
+  preconditioner, so this changes the efficiency of NUTS with it, not its
+  samples.
+
 ### Migration from 0.3.0
 
 - **Model before data in the grid, limit and detection tools.**
@@ -40,6 +77,12 @@ anything before 1.0 may change between minor versions.
   command line is matched literally, so it would not catch them.
 
 ### Added
+
+- **Opt-in bandwidth smearing.** `OIData(path, bandwidth=True)` (or `read_oifits(..., bandwidth=True)`) keeps `EFF_BAND`
+  as `OIData.bandwidth` (`with_bandwidth(dlambda)` sets it for simulated data);
+  models are then smeared over boxcar channels by a `sinc` envelope on each
+  component offset (`models.smeared_model`). Off by default: results are
+  unchanged.
 
 - **Tutorial: a planet in a gap between inclined rings (stage P5).**
   `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
@@ -358,6 +401,20 @@ anything before 1.0 may change between minor versions.
 - **`ModulatedGaussianRim` runs on the `PolarDisk` engine** (a `ThinRing`,
   linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
   same name and parameters; it agrees with the old code to rounding.
+- **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton
+  steps.** Each start of the alias search, and each peak refinement of
+  `epoch_positions`, now runs Levenberg–Marquardt on the
+  iteratively-reweighted curvature of the scale-marginalized likelihood,
+  instead of L-BFGS-B with restarts and a Newton polish; L-BFGS-B remains
+  the fallback for a start that does not converge. It reaches the same
+  optima (positions agree to 1e-4 mas) and is faster. Which local
+  optimum a start far from the ridge reaches can differ, so a band's modes
+  and evidence can change for such starts. `fit_orbit_aliases(max_steps=)`
+  now caps the kernel's iterations (rejected steps count) and the
+  L-BFGS-B fallback's, instead of each L-BFGS-B run's; a refinement of
+  `epoch_positions` that does not converge keeps its grid point.
+  `_Surface.weights` is new
+  (private).
 - **`TruncatedCone` (released in 0.3.0) changes numerically.** Its default
   `n_rings` goes from 32 to 48, since too few Gauss-Legendre nodes fail
   sharply at long baselines, and its visibilities at fixed parameters shift
