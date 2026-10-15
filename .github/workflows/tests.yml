@@ -155,8 +155,9 @@ jobs:
       # keys its entries on the code and the JAX version itself, so the
       # store is keyed only on what changes the programs (OS, Python, x64,
       # variant, shard), the JAX version and the ISO week. The first push
-      # to main or nightly of each week saves it; pull requests restore the
-      # latest match. The nightly deletes older weeks' caches.
+      # to main or nightly of each week saves it, starting from an empty
+      # cache; pull requests restore the latest match. The nightly deletes
+      # older weeks' caches.
       # A shard's files depend on the packing (tests/test_durations.json
       # and the set of test files), so that goes in the key too: when the
       # packing changes, the next push to main saves a new cache, and the
@@ -171,8 +172,21 @@ jobs:
           pack=$( (cat tests/test_durations.json; git ls-files 'tests/*test_*.py') | shasum -a 256 | cut -c1-8)
           echo "prefix=jax-${{ matrix.id }}-jax$(.venv/bin/python -c 'import jax; print(jax.__version__)')-pack$pack-" >> "$GITHUB_OUTPUT"
 
+      # A push or nightly that will save a new key starts from nothing, so
+      # each saved cache holds exactly one run's programs and the store
+      # cannot grow from week to week. That run compiles cold; every other
+      # run restores.
+      - name: look up this week's cache
+        id: lookup
+        uses: actions/cache/restore@v4
+        with:
+          path: .jax-cache
+          key: ${{ steps.key.outputs.prefix }}${{ steps.key.outputs.week }}
+          lookup-only: true
+
       - name: restore JAX compilation cache
         id: cache
+        if: (github.event_name != 'push' && github.event_name != 'schedule') || steps.lookup.outputs.cache-hit == 'true'
         uses: actions/cache/restore@v4
         with:
           path: .jax-cache
@@ -185,12 +199,6 @@ jobs:
             jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
             jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
 
-      # A job that saves starts from nothing rather than carry another JAX
-      # version's entries forward into its new key.
-      - name: drop a cache from another JAX version
-        if: (github.event_name == 'push' || github.event_name == 'schedule') && !startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax))
-        run: rm -rf .jax-cache
-
       # ===== Tests =====
       # pytest-xdist runs one worker per core; loadgroup keeps each
       # xdist_group module (shared module-scoped fixtures) on one worker.
@@ -200,10 +208,6 @@ jobs:
           JAX_COMPILATION_CACHE_DIR: .jax-cache
           JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS: "0"
           JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES: "0"
-          # Least-recently-used eviction past 1 GB, so a cache carried from
-          # week to week does not grow without bound. It needs filelock,
-          # which the lowest-direct environment may lack.
-          JAX_COMPILATION_CACHE_MAX_SIZE: ${{ matrix.lowest && '-1' || '1000000000' }}
           # Seconds per test not marked slow (tests/conftest.py); only with
           # a warm cache (this job, JAX and packing), since a cold one makes
           # every compile count.
@@ -246,7 +250,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: save JAX compilation cache
-        if: always() && (github.event_name == 'push' || github.event_name == 'schedule') && steps.cache.outputs.cache-hit != 'true'
+        if: always() && (github.event_name == 'push' || github.event_name == 'schedule') && steps.lookup.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .jax-cache
