@@ -63,22 +63,6 @@ uv pip install --python .venv/bin/python -e ".[test]"
 
 Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpope.github.io/virgil/).
 
-### Using these docs
-
-The sections in the sidebar hold worked examples on simulated and bundled data:
-- **Background:** [who contributed what](https://benjaminpope.github.io/virgil/contributors/), [Gaussian-process priors and information field theory](https://benjaminpope.github.io/virgil/gp_and_ift/), and [coordinate, sign and flux conventions](https://benjaminpope.github.io/virgil/conventions/).
-- **Data Handling:** [reading OIFITS files into `OIData`](https://benjaminpope.github.io/virgil/data_io/), and [AMIGO's DISCO data from JWST aperture masking](https://benjaminpope.github.io/virgil/amigo_disco/), and [spectro-interferometric observables](https://benjaminpope.github.io/virgil/spectro_observables/) (OI_FLUX spectra, differential phases and calibration nuisances).
-- **Binaries:** [searching for companions](https://benjaminpope.github.io/virgil/binary_search/), [detection limits](https://benjaminpope.github.io/virgil/contrast_limits/), [detection ROC curves](https://benjaminpope.github.io/virgil/detection_roc/) calibrated by injection and recovery, [fitting several datasets together](https://benjaminpope.github.io/virgil/hierarchical_inference/), and [orbits from interferometric epochs](https://benjaminpope.github.io/virgil/orbit_fitting/) (needs the `[orbits]` extra).
-- **Sources:** [visibility models](https://benjaminpope.github.io/virgil/model_syntax/), [extended sources](https://benjaminpope.github.io/virgil/source_models/), [composing scenes](https://benjaminpope.github.io/virgil/composition/), [spotted stars](https://benjaminpope.github.io/virgil/harmonix/), [limb-darkened stars](https://benjaminpope.github.io/virgil/limb_darkening/) and [gravity-darkened stars](https://benjaminpope.github.io/virgil/gravity_darkened_star/).
-- **Imaging:** image reconstruction in six parts: [simulating data](https://benjaminpope.github.io/virgil/imaging_ami/), [regularized maximum likelihood](https://benjaminpope.github.io/virgil/imaging_rml/), [Gaussian-process priors](https://benjaminpope.github.io/virgil/imaging_gp/), [a ring around a binary](https://benjaminpope.github.io/virgil/imaging_composite/), [sampling the posterior](https://benjaminpope.github.io/virgil/imaging_sampling/) and [sparse images and CLEAN](https://benjaminpope.github.io/virgil/imaging_clean/).
-- **[API Reference](https://benjaminpope.github.io/virgil/api/)** documents every public class and function.
-
-The documentation is built with Zensical. Local docs check:
-
-```bash
-.venv/bin/python -m zensical build --clean
-```
-
 ## Independent validation
 
 virgil's own tests mostly check virgil against itself. The companion repository [virgil-validation](https://github.com/benjaminpope/virgil-validation) checks it against code that shares nothing with it: geometric primitives with textbook visibilities, uv tracks and OIFITS files built from first principles, and aperture-masking images simulated with [dLux](https://github.com/LouisDesdoigts/dLux), which virgil then reads and fits. If you would like something else validated, please [open an Issue there](https://github.com/benjaminpope/virgil-validation/issues) describing the model or function, the independent result it should match, and the precision you expect.
