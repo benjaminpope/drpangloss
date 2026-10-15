@@ -1211,7 +1211,7 @@ class EpochPositions:
         position grid (see ``EpochPeaks.edge``)."""
         return onp.array([bool(p.edge[0]) for p in self.peaks], dtype=bool)
 
-    def positions(self, *, t_ref, min_gap=None, skip_flagged=False):
+    def positions(self, *, t_ref, min_gap=None, skip_flagged=True):
         """The positions as [`PositionData`][virgil.orbits.PositionData],
         for [`starting_orbits`][virgil.orbits.starting_orbits].
 
@@ -1226,8 +1226,12 @@ class EpochPositions:
             every orbit at the wrong peak; the visibility fit judges those
             datasets instead.
         skip_flagged : bool, optional
-            Also drop the flagged datasets (``flagged``): the same idea
-            with several reasons, none of them tied to one threshold.
+            Drop the flagged datasets (``flagged``; default True, so that
+            the flags cannot be ignored silently): the same idea as
+            ``min_gap`` with several reasons. ``min_gap`` and the
+            ``flag_min_gap`` of ``epoch_positions`` are the same
+            threshold on ``gap_marginal``. Pass False to keep every
+            dataset.
         """
         keep = (
             onp.ones(len(self.names), bool)
@@ -1496,8 +1500,8 @@ def _flag_one_night(
             NightFlag(
                 "alias-peaks",
                 f"{close} other peak(s) within {alias_nats:g} nats of the "
-                "best: a single-night alias, the true position may be a "
-                "rival",
+                f"best (marginal gap {gap_marginal:.1f}, so also low-gap): a "
+                "single-night alias, the true position may be a rival",
             )
         )
     elif min_gap is not None and gap_marginal < min_gap:
@@ -1526,7 +1530,8 @@ def _flag_one_night(
                 NightFlag(
                     "flux-at-bound",
                     f"flux {flux:.3g} is at the upper bound {hi:g}: the "
-                    "labels of the stars may be swapped",
+                    "labels of the stars are undetermined (genuine for a "
+                    "near-equal pair)",
                 )
             )
         elif flux <= lo * (1.0 + flux_tol):
@@ -1551,14 +1556,18 @@ def _flag_chi2(chi2_all, factor):
     median = float(onp.median(chi2_all))
     # A night whose chi2 stands far above the others (a bad night, a
     # triple, extra light) fits no binary well, so its position is not a
-    # trustworthy seed whatever its peaks look like.
+    # trustworthy seed whatever its peaks look like. The floor of 1 stops
+    # nights with chi2/N well below 1 (overestimated errors) from making a
+    # fair night an outlier. Outlier detection only: uniform failures and
+    # a majority of bad nights pass.
+    limit = factor * max(median, 1.0)
     for k, c in enumerate(chi2_all):
-        if c > factor * median:
+        if c > limit:
             out[k].append(
                 NightFlag(
                     "chi2-high",
-                    f"raw chi2/N {c:.1f} is {c / median:.1f}x the median "
-                    f"night's {median:.1f} (limit {factor:g}x)",
+                    f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
+                    f"({factor:g} x max(median night {median:.1f}, 1))",
                 )
             )
     return out
@@ -1612,7 +1621,17 @@ def epoch_positions(
     Gl 229 on 2024-02-27 and 2024-03-28, where the true position is often
     not the best peak), a low ``gap_marginal``, a raw χ²/N far above the
     median night's, a separation below λ/2B_max, or a flux at its bound.
-    The thresholds are relative, with no per-system numbers. A flagged
+    No threshold is a per-system number. Two are in nats of the
+    scale-marginalized score (``flag_alias_nats``, ``flag_min_gap``): they
+    are not dimensionless, and the gaps grow with the amount of data (the
+    number of frames and baselines), so retune them for very different
+    data volumes. Three are relative: a multiple of the median night
+    (``flag_chi2_factor``), a fraction of the night's own λ/B_max
+    (``flag_sep_fraction``) and a fraction of a flux bound
+    (``flag_flux_tol``). ``chi2-high`` is outlier detection only: it
+    cannot catch a uniform failure (every night underestimated alike) or
+    a majority of bad nights, and the raw χ²/N column of
+    ``EpochPositions.chi2_raw`` should be read in any case. A flagged
     night should seed nothing: [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]
     skips it when seeding, but its data still count in the likelihood.
 
@@ -1668,30 +1687,43 @@ def epoch_positions(
         The primary's uniform-disc diameter (mas), fixed. ``None``
         (default) or 0 is a point primary (the fast path). Give a value
         estimated from the data or from a calibrator, never from the
-        orbit being tested.
+        orbit being tested. Fitting it (``"fit"``) is not supported yet
+        and raises.
     flag_nights : bool, optional
         Compute the night flags (default True). With False every night is
         unflagged.
     flag_alias_nats : float or None, optional
-        ``alias-peaks``: flag a night whose catalogue has another peak
-        within this many nats (marginal score m, Δχ² ≈ 2 × nats) of the
-        best (default 2). It needs ``n_peaks`` of at least 2 to see a
-        rival. None disables it.
+        ``alias-peaks`` (nats): flag a night whose catalogue has another
+        peak within this many nats (scale-marginalized score m, Δχ² ≈
+        2 × nats) of the best (default 2). It needs ``n_peaks`` of at
+        least 2 to see a rival. None disables it.
     flag_min_gap : float or None, optional
-        ``low-gap``: flag a night, not already ``alias-peaks``, whose
-        ``gap_marginal`` is below this (default 5 nats). None disables it.
+        ``low-gap`` (nats): flag a night whose ``gap_marginal`` is below
+        this (default 5), the same quantity as the ``min_gap`` of
+        ``decisive`` and ``EpochPositions.positions``. An ``alias-peaks``
+        night has a gap below ``flag_alias_nats``, so it is also below
+        this while ``flag_alias_nats <= flag_min_gap`` (the defaults):
+        ``alias-peaks`` then implies ``low-gap``, and only the more
+        specific code is listed. None disables it.
     flag_chi2_factor : float or None, optional
-        ``chi2-high``: flag a night whose raw χ²/N exceeds this multiple of
-        the median night's (default 3; only with three or more nights).
-        None disables it.
+        ``chi2-high`` (relative): flag a night whose raw χ²/N exceeds this
+        multiple of ``max(median, 1)`` over the nights (default 3; only
+        with three or more nights). The floor of 1 keeps a set of nights
+        with small χ²/N from flagging a night that fits well. None
+        disables it.
     flag_sep_fraction : float or None, optional
-        ``sep-below-resolution``: flag a night whose separation is below
-        this fraction of λ/B_max (default 0.5, i.e. λ/2B_max). None
+        ``sep-below-resolution`` (relative): flag a night whose separation
+        is below this fraction of its own λ/B_max, from that night's
+        baselines and wavelengths (default 0.5, i.e. λ/2B_max). None
         disables it.
     flag_flux_tol : float or None, optional
-        ``flux-at-bound``: flag a night whose flux is within this relative
-        distance of the fitted range's upper (the grid's top, at most 1)
-        or lower bound (default 0.02). None disables it.
+        ``flux-at-bound`` (relative): flag a night whose flux is within
+        this relative distance of the fitted range's bounds (default
+        0.02). The upper bound is fixed at 1 (a brighter companion is the
+        fainter one on the other side); the lower bound is a tenth of the
+        grid's lowest flux. A flux at 1 may be genuine for a near-equal
+        pair: the flag says the labels of the stars are not determined,
+        not that the night is wrong.
 
     Returns
     -------
@@ -1700,6 +1732,12 @@ def epoch_positions(
     if not isinstance(data, Epochs):
         raise TypeError(f"data must be an Epochs, not {type(data).__name__}.")
     _check_n_peaks(n_peaks)
+    if isinstance(primary_diam, str):
+        raise ValueError(
+            f"primary_diam={primary_diam!r}: epoch_positions supports only "
+            "a fixed diameter (a float, in mas) or None for now; fitting "
+            "it ('fit') may be added later."
+        )
     diam = None if primary_diam is None else float(primary_diam)
     if diam is not None and not diam >= 0:
         raise ValueError(f"primary_diam must be None or >= 0, not {diam}.")
@@ -2008,6 +2046,9 @@ def start_from_positions(
     refine_positions=True,
     n_peaks=5,
     batch_size=None,
+    primary_diam=None,
+    skip_flagged=True,
+    flag_options=None,
     **fit_options,
 ):
     """Start an orbit fit to multi-epoch visibilities from a positions fit.
@@ -2101,6 +2142,16 @@ def start_from_positions(
         step 1 grows linearly with it.
     batch_size : int, optional
         Orbits ranked together (see ``rank_orbits``).
+    primary_diam : float, optional
+        The primary's uniform-disc diameter (mas) for the per-dataset
+        positions (see ``epoch_positions``); ``None`` is a point primary.
+    skip_flagged : bool, optional
+        Seed orbits only with datasets that ``epoch_positions`` did not
+        flag (default True); flagged datasets join ``OrbitStart.ambiguous``
+        and still enter the ranking and the fits.
+    flag_options : dict, optional
+        The ``flag_*`` keywords of ``epoch_positions``. ``flag_min_gap``
+        defaults to ``min_gap``, so that decisive and unflagged agree.
     **fit_options
         Passed to the refinement fits (e.g. ``method``, ``max_steps``,
         ``time_limit`` in seconds per fit, ``progress``). A fit that raises
@@ -2128,8 +2179,12 @@ def start_from_positions(
         n_peaks=n_peaks,
         dof=dof,
         s_max=s_max,
+        primary_diam=primary_diam,
+        **{"flag_min_gap": min_gap, **(flag_options or {})},
     )
     decisive = positions.decisive(min_gap)
+    if skip_flagged:
+        decisive = decisive & ~positions.flagged
     seeded = tuple(n for n, d in zip(positions.names, decisive) if d)
     ambiguous = tuple(n for n, d in zip(positions.names, decisive) if not d)
     if ambiguous and seeded:
@@ -2142,7 +2197,9 @@ def start_from_positions(
             stacklevel=external_stacklevel(),
         )
     with run_in("float64"):
-        seeds = positions.positions(t_ref=t_ref, min_gap=min_gap)
+        seeds = positions.positions(
+            t_ref=t_ref, min_gap=min_gap, skip_flagged=skip_flagged
+        )
     if len(seeds.dt) < 2:
         raise ValueError(
             "At least two decisive datasets are needed to seed orbits; "

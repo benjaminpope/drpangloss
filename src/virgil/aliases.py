@@ -1841,47 +1841,100 @@ def _check_fit_quality(results, k):
     )
 
 
-def _seeding_positions(positions, t_ref, skip_flagged, n_data):
-    """The ``PositionData`` that seeds the bands, and the nights it skipped.
+_MIN_SEED_NIGHTS = 2  # a Thiele-Innes fit needs at least two positions
+_FEW_SEED_NIGHTS = 3  # at most this many seeding nights: add random starts
+_N_RANDOM_FEW = 200  # random candidates beside seeds from few nights
+_N_RANDOM_NONE = 1000  # random candidates when nothing seeds
+
+
+def _seeding_positions(positions, t_ref, skip_flagged, times):
+    """The ``PositionData`` that seeds the bands, the nights it skipped and
+    whether the seeds fell back to random starts.
 
     ``positions`` may be ``PositionData`` (used as given) or the
-    ``EpochPositions`` of ``epoch_positions``. With the latter and
-    ``skip_flagged``, every flagged night seeds nothing. Returns the
-    seeding positions (None if no night is left) and a record of each
-    skipped night for ``AliasResult.unseeded``. Skipping drops a night's
-    *seed* only: ``data`` is untouched, so its observables still enter
-    the likelihood.
+    ``EpochPositions`` of ``epoch_positions`` for this data (checked by
+    count and by time against ``times``, the epochs' mean times). With the
+    latter and ``skip_flagged``, every flagged night seeds nothing; the
+    skipped nights are recorded for ``AliasResult.unseeded``. Skipping
+    drops a night's *seed* only: ``data`` is untouched, so its observables
+    still enter the likelihood. Fewer than two seeding nights (in any
+    ``positions``) make an underdetermined Thiele-Innes fit whose
+    chi2 = 0 seeds mean nothing, so the seeds are dropped with a warning
+    and the bands start from random orbits (the third return value).
     """
-    if not isinstance(positions, EpochPositions):
-        return positions, ()
-    if len(positions.names) != n_data:
-        raise ValueError(
-            f"positions has {len(positions.names)} datasets but data has "
-            f"{n_data}: pass the epoch_positions of this data."
+    skipped = ()
+    if isinstance(positions, EpochPositions):
+        times = onp.asarray(times, float)
+        if len(positions.names) != len(times) or not onp.allclose(
+            positions.mjd, times, atol=0.1
+        ):
+            raise ValueError(
+                f"positions ({len(positions.names)} datasets at MJD "
+                f"{onp.round(positions.mjd, 2).tolist()}) are not the "
+                f"epoch_positions of this data ({len(times)} epochs at MJD "
+                f"{onp.round(times, 2).tolist()})."
+            )
+        if skip_flagged:
+            skipped = tuple(
+                dict(
+                    name=name,
+                    mjd=float(mjd),
+                    flags=[dict(code=f.code, reason=f.reason) for f in fl],
+                )
+                for name, mjd, fl in zip(
+                    positions.names, positions.mjd, positions.flags
+                )
+                if fl
+            )
+        n_seed = len(positions.names) - (
+            int(positions.flagged.sum()) if skip_flagged else 0
         )
-    if not skip_flagged:
-        return positions.positions(t_ref=t_ref), ()
-    skipped = tuple(
-        dict(
-            name=name,
-            mjd=float(mjd),
-            flags=[dict(code=f.code, reason=f.reason) for f in fl],
-        )
-        for name, mjd, fl in zip(
-            positions.names, positions.mjd, positions.flags
-        )
-        if fl
-    )
-    if positions.flagged.all():
+        if n_seed >= _MIN_SEED_NIGHTS:
+            positions = positions.positions(
+                t_ref=t_ref, skip_flagged=skip_flagged
+            )
+        else:
+            positions = None
+            detail = (
+                f" (flagged: {_skipped_codes(skipped)})" if skipped else ""
+            )
+    elif positions is not None and len(positions.dt) < _MIN_SEED_NIGHTS:
+        n_seed, detail, positions = len(positions.dt), "", None
+    else:
+        return positions, skipped, False
+    if positions is None:
         warnings.warn(
-            "fit_orbit_aliases(): every night is flagged "
-            f"({positions.flag_codes()}), so none seeds the bands; "
+            f"fit_orbit_aliases(): only {n_seed} night(s) can seed the "
+            f"bands (at least {_MIN_SEED_NIGHTS} are needed){detail}; "
             "falling back to random starts.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
-        return None, skipped
-    return positions.positions(t_ref=t_ref, skip_flagged=True), skipped
+        return None, skipped, True
+    return positions, skipped, False
+
+
+def _skipped_codes(skipped):
+    """``{name: [code, ...]}`` of the skipped-night records."""
+    return {u["name"]: [f["code"] for f in u["flags"]] for u in skipped}
+
+
+def _check_seed_diameter(positions, primary_diam):
+    """Warn when ``EpochPositions`` were fitted with another primary than
+    the engine's: the seeds then carry the bias of the wrong star."""
+    if not isinstance(positions, EpochPositions):
+        return
+    seed = positions.primary_diam or None
+    engine = primary_diam or None
+    if seed != engine:
+        warnings.warn(
+            f"The positions were fitted with primary_diam={seed!r} but "
+            f"fit_orbit_aliases has primary_diam={primary_diam!r}: the seeds "
+            "are biased by a different primary. Pass the same diameter to "
+            "epoch_positions.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
 
 
 def _resample(results, store, t_ref, n_samples, p_min, seed):
@@ -2009,7 +2062,12 @@ def fit_orbit_aliases(
         The best distinct candidates per band that are refined into modes.
     n_random : int, optional
         Extra random candidates per band; by default 1000 without
-        ``positions`` and none with them.
+        ``positions``, 200 beside positions from three or fewer seeding
+        nights (a few positions are loosely determined, and one wrong
+        night misleads them all) and none beside more. When fewer than two
+        nights can seed (one unflagged night, or every night flagged) the
+        positions are dropped with a warning and at least 200 random
+        candidates are used, even if ``n_random=0``.
     min_distance_mas : float, optional
         Fitted modes whose tracks at the epochs differ by less are one mode.
     max_steps : int, optional
@@ -2170,8 +2228,9 @@ def fit_orbit_aliases(
     # peak (Gl 229 2024-02-27 and 2024-03-28), so a flagged night must not
     # seed the bands. Only its seed is dropped: ``data`` keeps the night,
     # so the likelihood still sees it and can reject a wrong band.
-    positions, unseeded = _seeding_positions(
-        positions, t_ref, skip_flagged, len(data)
+    seed_positions = positions
+    positions, unseeded, fell_back = _seeding_positions(
+        positions, t_ref, skip_flagged, mean_times
     )
     profile = None
     if positions is not None:
@@ -2183,12 +2242,25 @@ def fit_orbit_aliases(
             eccs=eccs,
             sign_free=sign_free,
         )
-    if n_random is None:
-        n_random = 1000 if positions is None else 0
     if primary_diam is not None and primary_diam != "fit":
         primary_diam = float(primary_diam)
         if not primary_diam >= 0:
             raise ValueError("primary_diam must be None, >= 0, or 'fit'.")
+    _check_seed_diameter(seed_positions, primary_diam)
+    # Seeds from few nights (position-level orbits from two or three
+    # positions are loosely determined, and one wrong night misleads all
+    # of them) keep random candidates beside them; a fallback with no
+    # seeds at all must supply random starts even if n_random=0 was given.
+    if positions is None:
+        n_random = (
+            _N_RANDOM_NONE
+            if n_random is None
+            else max(n_random, _N_RANDOM_FEW)
+            if fell_back
+            else n_random
+        )
+    elif n_random is None:
+        n_random = 0 if len(positions.dt) > _FEW_SEED_NIGHTS else _N_RANDOM_FEW
     if vis_amp is not None:
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:

@@ -169,16 +169,19 @@ phase of the orbit-consolidation plan adds it (virgil-validation's
 | Problem | Fix | Where | Test |
 |---|---|---|---|
 | Integer orbit count (alias band N = round(T/P)) | band scan over the period range, mode-keeping, evidence per band | `aliases.fit_orbit_aliases`, `alias_bands` | `test_aliases.py::test_injected_alias_wins_in_closure_phases` |
-| Single-night alias peaks (Gl 229 2024-02-27, 2024-03-28) | flag the night (`alias-peaks`, `low-gap`, `chi2-high`, ...): it seeds no position, its data still count | `epochs.epoch_positions` (`EpochPositions.flags`), `aliases.fit_orbit_aliases(skip_flagged=True)`, `AliasResult.unseeded` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason`, `test_aliases.py::test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band` |
+| Single-night alias peaks (Gl 229 2024-02-27, 2024-03-28) | flag the night (`alias-peaks`, `low-gap`, `chi2-high`, ...): it seeds no position, its data still count | `epochs.epoch_positions` (`EpochPositions.flags`), `aliases.fit_orbit_aliases(skip_flagged=True)`, `start_from_positions`, `AliasResult.unseeded` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason`, `test_aliases.py::test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band` |
 | Separation below λ/2B_max | flag (`sep-below-resolution`), do not seed | `epochs.epoch_positions` | `test_epochs.py::test_epoch_positions_flags_each_night_with_a_code_and_a_reason` |
 | Flux at its bound (twin / label swap) | flag (`flux-at-bound`) | `epochs.epoch_positions` | same test |
-| Resolved primary (ι Peg, 1.05 mas) | uniform-disc primary in the per-night seeds | `epochs.epoch_positions(primary_diam=)` | `test_epochs.py::test_ud_seeds_are_unbiased_for_a_resolved_primary` |
+| Resolved primary (ι Peg, 1.05 mas) | uniform-disc primary in the per-night seeds | `epochs.epoch_positions(primary_diam=)` (a fixed diameter or None; `"fit"` raises, 1c may add it) | `test_epochs.py::test_ud_seeds_are_unbiased_for_a_resolved_primary` |
 | Resolved primary in the orbit fit | `primary_diam` fixed or `"fit"` | `aliases.fit_orbit_aliases` | `test_aliases.py::test_a_fitted_diameter_is_recovered` |
-| Flux flip (companion brighter than the primary) | `flip_flux` refit with the labels swapped | `aliases.fit_orbit_aliases` | `test_aliases.py::test_the_flip_acts_only_on_a_flux_pinned_at_the_top`; the default-on `sign_free`/`flip_flux` is plan phase 1c |
+| Flux flip (companion brighter than the primary) | `flip_flux` refit with the labels swapped (already the default) | `aliases.fit_orbit_aliases` | `test_aliases.py::test_the_flip_acts_only_on_a_flux_pinned_at_the_top` |
 | V² amplitude (contrast loss) | per-night amplitude, profiled | `aliases.fit_orbit_aliases(vis_amp=)` | `test_aliases.py::test_the_epoch_v2_amplitude_is_profiled` |
 | Result must be reloadable and checkable | `AliasResult.save/load`, `scene`, `residuals`, `chi2_per_night` | `aliases.AliasResult` | `test_aliases.py::test_a_saved_result_loads_back_equal` |
-| Untempered evidence (band p = 1.000 at χ²/N 12) | tempered likelihood, effective channels | `aliases` | test pending: plan phase 1d |
-| Period window taken from a paper | computed from the data (`period_window`) | `aliases` | test pending: plan phase 1c |
+| Too few seeding nights (one unflagged night, all flagged) | fewer than two seeds fall back to random starts with a warning; seeds from three or fewer nights keep random candidates | `aliases._seeding_positions` | `test_aliases.py::test_fewer_than_two_seeding_nights_fall_back_to_random_starts` |
+
+**Planned (not yet in code).** `sign_free` on by default (plan phase 1c), a
+data-driven period window (`period_window`, 1c), and a tempered evidence with
+effective channels (1d). Add a row, with its test, when each lands.
 
 ## Flux and contrast
 

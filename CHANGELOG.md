@@ -9,6 +9,17 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
+  flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
+  `chi2-high`, `sep-below-resolution`, `flux-at-bound`), each with a
+  reason (`NightFlag`, `EpochPositions.flags`, `.flagged`,
+  `.flag_codes()`), with the keywords `flag_nights`, `flag_alias_nats`,
+  `flag_min_gap`, `flag_chi2_factor`, `flag_sep_fraction` and
+  `flag_flux_tol`. `primary_diam=` fits the per-night companion beside a
+  uniform-disc primary (also `start_from_positions(primary_diam=,
+  flag_options=)`). `AliasResult.unseeded` records the nights that seeded
+  nothing, and is kept by `save` and `load`.
+
 - **`gauss_newton_mass(..., noise=...)`** takes the fitted error terms of
   `fit` and `numpyro_model` and covers them in the matrix, under their
   numpyro site names (`"noise.vis_scale"`). For Gaussian data the matrix
@@ -31,6 +42,14 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Seeding skips flagged nights by default.** `fit_orbit_aliases`
+  accepts the `EpochPositions` of `epoch_positions` and, with
+  `skip_flagged=True` (default), a flagged night seeds nothing, though
+  its data still count in the likelihood; fewer than two seeding nights
+  fall back to random starts with a warning, and seeds from three or
+  fewer nights keep random candidates beside them.
+  `EpochPositions.positions` and `start_from_positions` also skip flagged
+  nights by default (`skip_flagged=False` restores the old behaviour).
 - **`variational` starts error terms and gains data at their
   Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
   so fitted error terms get widths from the curvature instead of

@@ -1,6 +1,7 @@
 """Period aliases of an undersampled orbit: bands, window and evidences."""
 
 import copy
+import dataclasses
 import functools
 import json
 import warnings
@@ -1302,12 +1303,28 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     assert len(seeded) == 1 and seeded[0].dra.shape == (5,)
     assert [u["name"] for u in result.unseeded] == ["n5"]
     assert "alias-peaks" in [f["code"] for f in result.unseeded[0]["flags"]]
-    # ... but its data are in the likelihood: it is fitted at the true
-    # orbit (the true position, not the alias), like every other night.
-    nights = result.chi2_per_night(data)
-    assert len(nights) == 6 and nights[5]["n"] == nights[0]["n"] > 0
+    # ... but its data are in the likelihood: the best orbit predicts the
+    # true position on that night (within 0.5 mas), not the alias peak
+    # (more than 3 mas away).
     assert len(result.best.epochs) == 6
-    assert nights[5]["chi2_per_n"] < 4.0
+    best = result.best.best
+    orbit = KeplerOrbit(**{k: best[k] for k in TRUTH}, t_ref=result.t_ref)
+    pred_dra, pred_ddec, _ = orbit.relative(EPOCHS)
+    assert onp.hypot(pred_dra[5] - dra[5], pred_ddec[5] - ddec[5]) < 0.5
+    assert (
+        onp.hypot(pred_dra[5] - found.dra[5], pred_ddec[5] - found.ddec[5])
+        > 3.0
+    )
+    # Negative control: seeding with the flagged night's alias peak
+    # misleads the position-level profile of the true band.
+    bands = [
+        b for b in alias_bands(result.times, (11.3, 12.9)) if b.n == n_true
+    ]
+    with_alias = position_profile(
+        found.positions(t_ref=T_REF, skip_flagged=False), bands
+    )
+    without = position_profile(found.positions(t_ref=T_REF), bands)
+    assert with_alias[0]["chi2"] > 5 * without[0]["chi2"]
 
 
 def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
@@ -1340,3 +1357,92 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     del payload["unseeded"]
     (tmp_path / "old.json").write_text(json.dumps(payload))
     assert AliasResult.load(tmp_path / "old.json").unseeded == ()
+
+
+def _manual_flags(found, names):
+    from virgil.epochs import NightFlag
+
+    flags = tuple(
+        (NightFlag("manual", "flagged by the test"),) if n in names else ()
+        for n in found.names
+    )
+    return dataclasses.replace(found, flags=flags)
+
+
+@pytest.fixture
+def spy_candidates(monkeypatch):
+    """The ``n_random`` each band's candidate pool is built with."""
+    seen = []
+    real = aliases._candidates
+
+    def spy(settings, *args, **kw):
+        seen.append(settings.n_random)
+        return real(settings, *args, **kw)
+
+    monkeypatch.setattr(aliases, "_candidates", spy)
+    return seen
+
+
+_FAST = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
+
+
+@pytest.mark.filterwarnings("ignore:fit_orbit_aliases\\(\\)")
+@pytest.mark.parametrize(
+    "flagged",
+    [("n0", "n1", "n2", "n3", "n4"), ("n0", "n1", "n2", "n3", "n4", "n5")],
+    ids=["one-unflagged-night", "every-night-flagged"],
+)
+def test_fewer_than_two_seeding_nights_fall_back_to_random_starts(
+    flagged, spy_candidates
+):
+    # Fewer than two positions give an underdetermined Thiele-Innes fit
+    # whose chi2 = 0 seeds mean nothing, and used to leave n_random = 0
+    # ("No candidate orbits" when every night was flagged).
+    data, *_ = _alias_night_data()
+    found = _manual_flags(_alias_night_positions(), flagged)
+    for n_random in (None, 0):
+        spy_candidates.clear()
+        with pytest.warns(UserWarning, match="falling back to random"):
+            result = fit_orbit_aliases(
+                data,
+                (12.0, 12.4),
+                positions=found,
+                n_random=n_random,
+                **_FAST,
+            )
+        assert result.positions is None
+        assert {u["name"] for u in result.unseeded} == set(flagged)
+        assert spy_candidates and min(spy_candidates) >= 200
+        assert len(result.best.epochs) == 6
+
+
+def test_seeds_from_three_or_fewer_nights_keep_random_candidates(
+    spy_candidates,
+):
+    data, *_ = _alias_night_data()
+    found = _manual_flags(_alias_night_positions(), ("n3", "n4", "n5"))
+    fit_orbit_aliases(data, (12.0, 12.4), positions=found, **_FAST)
+    assert spy_candidates and min(spy_candidates) == 200
+    spy_candidates.clear()
+    four = _manual_flags(_alias_night_positions(), ("n4", "n5"))
+    fit_orbit_aliases(data, (12.0, 12.4), positions=four, **_FAST)
+    assert spy_candidates and min(spy_candidates) == 0
+
+
+def test_epoch_positions_must_match_the_data_and_the_primary():
+    data, *_ = _alias_night_data()
+    found = _alias_night_positions()
+    times = [float(onp.mean(d.mjd)) for d in data]
+    with pytest.raises(ValueError, match="not the epoch_positions"):
+        aliases._seeding_positions(found, T_REF, True, times[:-1])
+    shifted = dataclasses.replace(found, mjd=found.mjd + 5.0)
+    with pytest.raises(ValueError, match="not the epoch_positions"):
+        aliases._seeding_positions(shifted, T_REF, True, times)
+    # Seeds fitted with another primary than the engine's warn.
+    ud = dataclasses.replace(found, primary_diam=1.05)
+    with pytest.warns(UserWarning, match="primary_diam=1.05"):
+        aliases._check_seed_diameter(ud, None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        aliases._check_seed_diameter(ud, 1.05)
+        aliases._check_seed_diameter(found, None)

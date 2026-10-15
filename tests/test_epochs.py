@@ -720,7 +720,10 @@ def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     for fl in found.flags:
         for f in fl:
             assert f.reason and f.reason != f.code  # a human sentence
-    assert "mas" in dict(zip(found.names, found.flags))["close"][0].reason
+    close = dict(zip(found.names, found.flags))["close"]
+    assert any(
+        "mas" in f.reason for f in close if f.code == "sep-below-resolution"
+    )
 
 
 def test_flag_thresholds_are_keywords_and_can_be_switched_off(
@@ -752,15 +755,16 @@ def test_flag_thresholds_are_keywords_and_can_be_switched_off(
 
 def test_skip_flagged_positions_drop_the_flagged_nights(flagged_positions):
     _, found = flagged_positions
-    kept = found.positions(t_ref=T_REF, skip_flagged=True)
+    # Flags cannot be ignored silently: skipping is the default.
+    kept = found.positions(t_ref=T_REF)
     assert kept.dra.shape == (1,)
     onp.testing.assert_allclose(kept.dra, found.dra[:1])
-    assert found.positions(t_ref=T_REF).dra.shape == (4,)
+    assert found.positions(t_ref=T_REF, skip_flagged=False).dra.shape == (4,)
     every = dataclasses.replace(
         found, flags=tuple(found.flags[1:2] * len(found.names))
     )
     with pytest.raises(ValueError, match="No dataset is decisive"):
-        every.positions(t_ref=T_REF, skip_flagged=True)
+        every.positions(t_ref=T_REF)
 
 
 def test_ud_seeds_are_unbiased_for_a_resolved_primary():
@@ -792,3 +796,25 @@ def test_ud_seeds_are_unbiased_for_a_resolved_primary():
     # Zero is a point primary, and a negative diameter is refused.
     with pytest.raises(ValueError, match="primary_diam"):
         epoch_positions(epochs, grid, primary_diam=-1.0)
+
+
+def test_chi2_high_is_outlier_detection_with_a_floor_of_one():
+    from virgil.epochs import _flag_chi2
+
+    # Median 0.3 (errors overestimated): a night at 1.0 is a fair fit,
+    # not an outlier; the limit is 3 x max(median, 1) = 3.
+    assert _flag_chi2([0.3, 0.3, 0.3, 1.0], 3.0) == [[], [], [], []]
+    flagged = _flag_chi2([0.3, 0.3, 0.3, 4.0], 3.0)
+    assert [bool(f) for f in flagged] == [False, False, False, True]
+    assert flagged[3][0].code == "chi2-high"
+    # It cannot catch a uniform failure or a majority of bad nights.
+    assert not any(_flag_chi2([20.0, 20.0, 20.0, 20.0], 3.0))
+    assert not any(_flag_chi2([20.0, 20.0, 20.0, 1.0], 3.0)[:3])
+    # Fewer than three nights have no meaningful median.
+    assert _flag_chi2([1.0, 50.0], 3.0) == [[], []]
+
+
+def test_a_fitted_primary_is_not_supported_by_epoch_positions_yet():
+    epochs = Epochs({"n": _night(T_REF)})
+    with pytest.raises(ValueError, match="only a fixed diameter"):
+        epoch_positions(epochs, FLAG_GRID, primary_diam="fit")
