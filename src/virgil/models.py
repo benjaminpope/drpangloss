@@ -3396,9 +3396,26 @@ class RadialGP(_RadialProfile, _RadialFunction):
     (``dist.LogUniform``; [`gp_priors`][virgil.models.gp_priors] writes
     them), which also make the evidence proper; fitted by MAP they are biased
     (``fit`` warns), so fix them, sample them, or choose them by the
-    evidence of [`log_evidence`][virgil.imaging.log_evidence]. Draws from the
-    prior, to show beside the posterior, come from
-    [`draws`][virgil.models.RadialGP.draws].
+    evidence of [`log_evidence`][virgil.imaging.log_evidence] at several
+    values (that evidence is over the latents, conditional on the
+    hyperparameters). Draws from the prior, to show beside the posterior,
+    come from [`draws`][virgil.models.RadialGP.draws].
+
+    **What ``ell`` means.** The Matérn length is a correlation length of
+    $g$ in milliarcseconds, not the width of a feature. A squared-exponential
+    bump with the same curvature at the peak as the Matérn-$\nu$ kernel has
+    width $\ell\sqrt{(\nu - 1)/\nu}$, and the prior's rms slope of $g$ is
+    $\sigma\sqrt{\nu/(\nu - 1)}/\ell$ per milliarcsecond. For the default
+    $\nu = 3/2$ these are $\ell/\sqrt3$ (so $\ell = 1.5$ mas is a Gaussian
+    $\sigma$ of about 0.9 mas) and $\sqrt3\,\sigma/\ell$; for $\nu = 1/2$
+    $g$ is not differentiable and there is no finite slope. A large ``sigma``
+    with a short ``ell`` is a very rough prior (a short ``ell`` also gives
+    many maxima, which ``sigma`` does not change). Visibilities cannot
+    constrain structure finer than the half-fringe $\lambda/2B$ of the longest baseline, so below that scale,
+    and where the data have no leverage (the inner edge, the outer tail), the
+    posterior is the prior. A modest evidence difference between two ``ell``
+    values means that the data do not choose between them: report ``ell`` as
+    a prior choice.
 
     Parameters
     ----------
@@ -4810,7 +4827,29 @@ class PolarDisk(Component):
 
     The transform needs ``n_r`` nodes enough to sample the Bessel oscillations
     across the profile's range: about $\pi q_{\max} (r_{\rm out} - r_{\rm in})$,
-    plus a dozen.
+    plus a dozen. A profile's reference nodes are built in the default
+    precision when the disk is made, so to evaluate in float64 construct the
+    disk inside ``jax.enable_x64(True)``.
+
+    Parameters are reached by path, so they can be fitted like any other:
+    ``"disk.inc"``, ``"disk.profile.r0"``, ``"disk.profile.base.sigma"``,
+    ``"disk.profile.outer.weight"`` (a part of a
+    [`RadialSum`][virgil.models.RadialSum]). The blur is a Gaussian envelope
+    in the Fourier plane, applied in the plane of the disk: exact and free.
+
+    The options each have a home: the profiles and
+    [`RadialGP`][virgil.models.RadialGP] (a non-parametric profile, see its
+    notes on what ``ell`` means); azimuthal structure in
+    [`Harmonics`][virgil.models.Harmonics], [`VonMises`][virgil.models.VonMises]
+    and the priors of [`PolarKernel`][virgil.models.PolarKernel], converted by
+    [`virgil.harmonics`][virgil.harmonics]; height in
+    [`Cone`][virgil.models.Cone] and [`PowerLawHeight`][virgil.models.PowerLawHeight];
+    priors in [`gp_priors`][virgil.models.gp_priors]; and a residual aligned
+    with the disk in [`PolarField`][virgil.fields.PolarField].
+    [`GaussianArc`][virgil.models.GaussianArc],
+    [`TruncatedCone`][virgil.models.TruncatedCone] and
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] are special
+    cases of it.
 
     Examples
     --------
@@ -4820,6 +4859,16 @@ class PolarDisk(Component):
     >>> disk = PolarDisk(profile, inc=50.0, pa=30.0, blur_fwhm=1.0, n_r=48)
     >>> scene = System(star=PointSource(), disk=disk.set("flux", 0.3))
     >>> vis = scene.model(np.array([30.0]), np.array([10.0]), 2.2e-6)
+
+    Two named rings, with the outer one's weight a parameter:
+
+    >>> rings = RadialSum(
+    ...     inner=GaussianRing(3.0, 0.5),
+    ...     outer=GaussianRing(8.0, 1.0, weight=0.5),
+    ... )
+    >>> disk = PolarDisk(rings, inc=40.0, pa=20.0, n_r=32)
+    >>> float(disk.get("profile.outer.weight"))
+    0.5
 
     References
     ----------

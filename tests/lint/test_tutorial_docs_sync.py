@@ -119,3 +119,36 @@ def test_remove_cell_tag_hides_cell_from_docs(tmp_path):
     rendered = module.render_notebook_markdown(nb_path)
     assert "visible = 1" in rendered
     assert "hidden_check" not in rendered and "secret" not in rendered
+
+
+def test_hide_input_tag_folds_the_code_but_keeps_the_outputs(tmp_path):
+    import json
+
+    module = _load_sync_module(Path(__file__).resolve().parents[2])
+    (tmp_path / "notebooks").mkdir()
+    nb_path = tmp_path / "notebooks" / "toy.ipynb"
+    stream = {"output_type": "stream", "name": "stdout", "text": ["result 3"]}
+    cells = [
+        {
+            "cell_type": "code",
+            "metadata": {},
+            "outputs": [],
+            "source": ["shown = 1"],
+        },
+        {
+            "cell_type": "code",
+            "metadata": {"tags": ["hide-input"]},
+            "outputs": [stream],
+            "source": ["def f():\n", "    return 1\n", "\n", "folded = f()"],
+        },
+    ]
+    nb_path.write_text(json.dumps({"cells": cells}))
+    rendered = module.render_notebook_markdown(nb_path)
+    assert "```python\nshown = 1\n```" in rendered
+    assert module.HIDE_INPUT_SUMMARY + "\n\n    ```python\n" in rendered
+    # Every line of the folded code, blank ones included, sits in the block.
+    assert (
+        "    def f():\n        return 1\n\n    folded = f()\n    ```\n"
+        in rendered
+    )
+    assert "```text\nresult 3\n```" in rendered
