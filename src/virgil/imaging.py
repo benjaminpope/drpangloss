@@ -2884,6 +2884,196 @@ def l_curve(
     )
 
 
+@eqx.filter_jit
+def _jitted_residuals(model, observations):
+    return tuple(whitened_residuals(model, d) for d in observations)
+
+
+def _as_list(data):
+    return list(data) if isinstance(data, (list, tuple)) else [data]
+
+
+def _residual_vector(model, observations):
+    """All the whitened residuals as one float64 array."""
+    with run_in("float64"):
+        model64, obs64 = cast_tree((model, tuple(observations)), "float64")
+        parts = _jitted_residuals(model64, obs64)
+        return onp.concatenate([onp.ravel(onp.asarray(x)) for x in parts])
+
+
+def chi2_by_observable(model, data, path=None):
+    """Raw χ² of a model for each kind of observable, on the quoted errors.
+
+    The errors are the data's own (no ``noise=`` terms). Closure phases
+    from four or more telescopes contribute their whitened combinations,
+    and their periodic penalty rows (see
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals]) add to
+    the χ² but not to the count.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The model.
+    data : OIData or sequence of OIData
+        The data.
+    path : str or tuple of str, optional
+        Path(s) of the Gaussian-process Images, as for
+        [`log_evidence`][virgil.imaging.log_evidence]. If given, the
+        result also holds ``n_gamma``.
+
+    Returns
+    -------
+    dict
+        ``chi2``, ``n`` and ``chi2_red`` (χ² per independent datum), each
+        a dict from the kinds of observable (``"vis"``, ``"phi"``, then
+        any extras) and ``"total"`` to a number. With ``path``,
+        ``n_gamma``: MacKay's number of well-determined latent
+        parameters, ``Σ s²/(1 + s²)`` over the singular values ``s`` of
+        the Jacobian of the whitened residuals by the latents.
+    """
+    observations = _as_list(data)
+    rows, counts = _observable_blocks(observations)
+    r = _residual_vector(model, observations)
+    chi2 = {kind: float(onp.sum(r[idx] ** 2)) for kind, idx in rows.items()}
+    n = dict(counts)
+    chi2["total"] = float(onp.sum(r**2))
+    n["total"] = sum(counts.values())
+    out = {
+        "chi2": chi2,
+        "n": n,
+        "chi2_red": {k: chi2[k] / n[k] for k in chi2},
+    }
+    if path is not None:
+        single = _single_model(model, "chi2_by_observable")
+        latents = _evidence_latents(single, path, "chi2_by_observable")
+        _, jac = _residual_jacobian(single, data, latents)
+        s2 = onp.linalg.svd(jac, compute_uv=False) ** 2
+        out["n_gamma"] = float(onp.sum(s2 / (1.0 + s2)))
+    return out
+
+
+def _no_baselines(observations):
+    """Why the visibility residual rows have no baselines, or ``None``."""
+    for d in observations:
+        if d.vis_mat is not None:
+            return (
+                "The visibilities are a linear combination of samples "
+                "(vis_mat), so they have no baseline of their own."
+            )
+        if d.gains is not None:
+            return (
+                "The visibilities carry calibration gains, whose "
+                "marginalization mixes the residual rows, so a row does "
+                "not belong to one baseline."
+            )
+    if not _observable_blocks(observations)[0].get("vis", ()).size:
+        return "The data have no visibilities."
+    return None
+
+
+def _visibility_frequencies(observations):
+    """Spatial frequency B/λ of each visibility row of the residuals."""
+    rho = []
+    for d in observations:
+        b = onp.hypot(
+            onp.ravel(onp.asarray(d.u, float)),
+            onp.ravel(onp.asarray(d.v, float)),
+        )
+        lam = onp.broadcast_to(onp.ravel(onp.asarray(d.wavel, float)), b.shape)
+        if d.vis_index is not None:
+            keep = onp.asarray(d.vis_index)
+            b, lam = b[keep], lam[keep]
+        rho.append(b / lam)
+    return onp.concatenate(rho)
+
+
+def short_baseline_residual(model, data, quantile=0.2):
+    """Mean whitened visibility residual on the shortest baselines.
+
+    A reconstruction that loses flux on large scales leaves a coherent
+    residual on the shortest spatial frequencies though the total χ² looks
+    fine (the test of MACIM, Ireland et al. 2006). The residuals are
+    (model − data)/σ, so they have unit variance if the model is right and
+    the mean of ``n`` of them has standard error ``1/√n``.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The model.
+    data : OIData or sequence of OIData
+        The data. Visibilities in a linear combination (``vis_mat``, as in
+        kernel-phase and DISCO data) and data with calibration gains are
+        not supported: a ``ValueError``.
+    quantile : float, optional
+        The fraction of visibility samples, shortest first by B/λ, that
+        are used (default 0.2).
+
+    Returns
+    -------
+    tuple of float
+        ``(mean, standard_error)``.
+    """
+    if not 0.0 < quantile <= 1.0:
+        raise ValueError(f"quantile must be in (0, 1], not {quantile}.")
+    observations = _as_list(data)
+    reason = _no_baselines(observations)
+    if reason:
+        raise ValueError(reason)
+    rows, _ = _observable_blocks(observations)
+    r = _residual_vector(model, observations)[rows["vis"]]
+    rho = _visibility_frequencies(observations)
+    n = max(1, int(round(quantile * rho.size)))
+    shortest = onp.argsort(rho, kind="stable")[:n]
+    return float(onp.mean(r[shortest])), float(1.0 / onp.sqrt(n))
+
+
+def residual_image(model, data, npix, pixel_scale_mas, rotation_deg=0.0):
+    """The residual dirty map of a model, for any observable.
+
+    The normalised χ² gradient ``-g_p / |J e_p|`` of adding a little flux
+    at each pixel ``p`` of the grid, where ``g`` is the gradient of χ²
+    and ``J e_p`` the response of the whitened residuals to that flux, as
+    CLEAN uses ([`clean`][virgil.imaging.clean]). For data linear in the
+    image it is the dirty image of the residuals; for closure phases it
+    is the gradient the fit still feels. Positive pixels are where the
+    model needs more flux. Pixels the model cannot respond to are zero.
+
+    Parameters
+    ----------
+    model : SourceModel
+        The model, which needs a flux for the added point sources to be
+        measured against.
+    data : OIData or sequence of OIData
+        The data.
+    npix, pixel_scale_mas : int, float
+        The centred grid of the map, as in [`clean`][virgil.imaging.clean].
+    rotation_deg : float, optional
+        The grid's rotation, as in ``clean``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(npix, npix)``.
+    """
+    observations = _as_list(data)
+    shapes = _scale_shapes(
+        (0.0,), onp.ones((npix, npix), bool), pixel_scale_mas
+    )
+    with run_in("float64"):
+        fixed = cast_tree((model, None, shapes), "float64")
+        obs = cast_tree(tuple(observations), "float64")
+        fluxes = np.zeros((1, npix, npix))
+        geometry = (pixel_scale_mas, rotation_deg)
+        norms = _atom_norms(fixed, obs, fluxes, *geometry)
+        residuals = _clean_residuals(fixed, obs, *geometry)
+        r, vjp = jax.vjp(residuals, fluxes)
+        (gradient,) = vjp(2.0 * r)
+        norms, gradient = onp.asarray(norms), onp.asarray(gradient)
+    live = norms > (100.0 * onp.finfo(float).eps) ** 2 * norms.max()
+    safe = onp.where(live, norms, 1.0)
+    return onp.where(live, -gradient / onp.sqrt(safe), 0.0)[0]
+
+
 @dataclasses.dataclass(frozen=True)
 class Diagnosis:
     """The result of :func:`diagnose`.
@@ -3001,7 +3191,14 @@ def diagnose(model, data, regularizers=()):
         (fraction of the flux in the outer 2 pixels) and ``centroid_mas``
         (East, North offset in mas); and ``anchored`` (whether something
         fixes the position), ``flip_dchi2`` (Δχ² when every Image is
-        rotated by 180° about the origin).
+        rotated by 180° about the origin). Also ``chi2_red_by_observable``
+        (per dataset, χ² per datum of each kind of observable; see
+        [`chi2_by_observable`][virgil.imaging.chi2_by_observable]) and
+        ``short_baseline_mean`` (mean whitened visibility residual on the
+        shortest 20% of baselines, or ``None`` for data without
+        baseline-ordered visibilities: ``vis_mat`` operators such as
+        kernel-phase and DISCO data, calibration gains; see
+        [`short_baseline_residual`][virgil.imaging.short_baseline_residual]).
     """
     observations = list(data) if isinstance(data, (list, tuple)) else [data]
     parts = _parts(model)
@@ -3025,6 +3222,20 @@ def diagnose(model, data, regularizers=()):
                 "over-fits or the errors are overestimated; regularize more "
                 "or check the error bars."
             )
+
+    checks["chi2_red_by_observable"] = [
+        {
+            k: v
+            for k, v in chi2_by_observable(model, d)["chi2_red"].items()
+            if k != "total"
+        }
+        for d in observations
+    ]
+    checks["short_baseline_mean"] = (
+        None
+        if _no_baselines(observations)
+        else short_baseline_residual(model, observations)[0]
+    )
 
     checks["anchored"] = (
         any(isinstance(part, PointSource) for _, part in parts)
