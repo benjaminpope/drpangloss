@@ -935,12 +935,42 @@ FAST = dict(n_candidates=10, n_refine=1, n_is=100, n_samples=8)
 
 @functools.cache
 def _tiny_fit(primary_diam=DIAM):
-    """One quick fit with V² amplitudes, shared by the tests of the result
-    API: one band, one start. float32 data, as a user has them."""
+    """The result of a fit, built without running the optimizer (which
+    costs tens of seconds): the truth orbit as the one mode of one band,
+    through the fit's own ``_band_result``. float32 data, as a user has
+    them; V² amplitudes are fitted."""
+    data, _ = _synthetic_as(12.1, False)
+    fitted = primary_diam == "fit"
+    with jax.enable_x64(True):
+        x = _x_truth(diam=1.0 if fitted else None)
+        settings, problem = _problem(
+            data, primary_diam=primary_diam, vis_amp=VIS_AMP
+        )
+        value = float(problem.value_and_grad(jax.numpy.asarray(x))[0])
+        mode = dict(
+            x=onp.asarray(x).tolist(), loglike=value, log_z=value,
+            log_z_is=value, ess=100.0, flags=[],
+        )  # fmt: skip
+        band = aliases._band_result(
+            problem, settings, aliases.AliasBand(20, 12.0, 12.2), [mode],
+            value, value, 0,
+        )  # fmt: skip
+        band.p = 1.0
+    result = AliasResult(
+        T_REF, onp.asarray(EPOCHS), float(onp.ptp(EPOCHS)), [band],
+        {20: aliases._physical(onp.asarray(x), T_REF)},
+        primary_diam=primary_diam, vis_amp=VIS_AMP,
+    )  # fmt: skip
+    return data, result
+
+
+@functools.cache
+def _real_fit(primary_diam):
+    """A real, slow fit (the optimizer, evidences and draws included)."""
     data, pos = _synthetic_as(12.1, False)
     result = fit_orbit_aliases(
-        data, (11.95, 12.25), positions=pos, t_ref=T_REF, primary_diam=primary_diam,
-        vis_amp=VIS_AMP, **FAST,
+        data, (11.95, 12.25), positions=pos, t_ref=T_REF,
+        primary_diam=primary_diam, vis_amp=VIS_AMP, **FAST,
     )  # fmt: skip
     return data, result
 
@@ -1148,20 +1178,56 @@ def test_per_night_chi2_equals_a_direct_computation():
 
 def test_residuals_are_whitened_blocks_in_vector_order():
     data, result = _tiny_fit()
+    # Epoch 0 lost half its V² contrast, so its fitted amplitude is ~0.5.
+    data = [data[0].set("vis", data[0].vis * 0.5), *data[1:]]
     blocks = result.residuals(data)
     assert len(blocks) == len(data) and list(blocks[0]) == ["vis", "phi"]
+    amps = [n["vis_amp"] for n in result.chi2_per_night(data)]
+    assert amps[0] == pytest.approx(0.5, rel=0.1) and amps[1] != amps[0]
     flat = onp.concatenate(list(blocks[0].values()))
     with jax.enable_x64(True):
-        raw = onp.asarray(
-            aliases.whitened_residuals(
-                result.scene(), cast_tree(data[0], "float64")
-            )
-        )
+        d = cast_tree(data[0], "float64")
+        raw = onp.asarray(aliases.whitened_residuals(result.scene(), d))
+        obs, err = onp.ravel(d.vis), onp.ravel(d.d_vis)
     assert flat.shape == raw.shape
     n_vis = blocks[0]["vis"].size
     assert onp.array_equal(flat[n_vis:], raw[n_vis:])  # closure phases as is
+    # The visibility rows: (amp * model - obs) / err, not the raw rows.
+    model = obs + raw[:n_vis] * err
+    assert onp.allclose(
+        blocks[0]["vis"], (amps[0] * model - obs) / err, rtol=1e-6, atol=1e-6
+    )
+    assert not onp.allclose(blocks[0]["vis"], raw[:n_vis], atol=1e-3)
     with pytest.raises(ValueError, match="epochs"):
         result.residuals(data[:2])
+
+
+def test_a_diameter_in_params_needs_a_fitted_primary():
+    _, result = _tiny_fit()  # a fixed-disk primary
+    with pytest.raises(ValueError, match="not 'fit'"):
+        result.scene(dict(result.best.best, diam=2.0))
+    band = copy.copy(result.best)
+    band.primary_diam = None
+    with pytest.raises(ValueError, match="not 'fit'"):
+        band.scene(dict(band.best, diam=2.0))
+    _, fitted = _tiny_fit("fit")
+    assert float(fitted.scene(dict(fitted.best.best, diam=2.0)).diam) == 2.0
+
+
+def test_a_fitted_diameter_is_recognised_in_an_old_file(tmp_path):
+    _, result = _tiny_fit("fit")
+    result.save(tmp_path / "new.json")
+    old = json.loads((tmp_path / "new.json").read_text())
+    del old["primary_diam"], old["vis_amp"]
+    for band in old["band_details"]:
+        del band["primary_diam"], band["vis_amp"]
+    (tmp_path / "old.json").write_text(json.dumps(old))
+    loaded = AliasResult.load(tmp_path / "old.json")
+    assert loaded.primary_diam == "fit"
+    assert float(loaded.scene().diam) == pytest.approx(
+        loaded.best.best["diam"]
+    )
+    assert loaded.bands[0].vis_amp == aliases.UNRECORDED  # not recoverable
 
 
 def test_a_loaded_result_scores_like_the_original(tmp_path):
@@ -1215,8 +1281,7 @@ def test_a_file_that_lacks_the_settings_is_not_read_as_a_point_primary(
     assert type(point.scene()) is OrbitalBinary
 
 
-def test_a_fitted_primary_diameter_works_end_to_end(tmp_path):
-    data, result = _tiny_fit("fit")
+def _check_fitted_diameter(data, result, tmp_path):
     band = result.best
     assert result.primary_diam == "fit" and "diam" in band.best
     assert float(band.scene().diam) == pytest.approx(band.best["diam"])
@@ -1267,6 +1332,7 @@ def _alias_night_positions():
         )
 
 
+@pytest.mark.slow
 def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     monkeypatch,
 ):
@@ -1327,6 +1393,7 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     assert with_alias[0]["chi2"] > 5 * without[0]["chi2"]
 
 
+@pytest.mark.slow
 def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     monkeypatch, tmp_path
 ):
@@ -1359,90 +1426,140 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     assert AliasResult.load(tmp_path / "old.json").unseeded == ()
 
 
-def _manual_flags(found, names):
-    from virgil.epochs import NightFlag
+class _Stop(Exception):
+    """Raised by the spy that ends a fit before the optimizer starts."""
 
-    flags = tuple(
-        (NightFlag("manual", "flagged by the test"),) if n in names else ()
-        for n in found.names
+
+def _stub_positions(flagged=(), primary_diam=None):
+    """``EpochPositions`` of the synthetic data without running
+    ``epoch_positions``: only the names, times and flags matter to the
+    seeding logic these tests exercise."""
+    from virgil.epochs import EpochPositions, NightFlag
+
+    data, _ = _synthetic(12.1)
+    n = len(data)
+    return EpochPositions(
+        names=tuple(f"n{k}" for k in range(n)),
+        mjd=onp.array([onp.mean(onp.asarray(d.mjd, float)) for d in data]),
+        dra=onp.zeros(n),
+        ddec=onp.zeros(n),
+        cov=onp.tile(onp.eye(2), (n, 1, 1)),
+        flux=onp.full(n, 0.3),
+        gap=onp.ones(n),
+        gap_marginal=onp.full(n, 20.0),
+        chi2_raw=({},) * n,
+        scale=({},) * n,
+        flags=tuple(
+            (NightFlag("manual", "flagged by the test"),)
+            if f"n{k}" in flagged
+            else ()
+            for k in range(n)
+        ),
+        primary_diam=primary_diam,
     )
-    return dataclasses.replace(found, flags=flags)
 
 
-@pytest.fixture
-def spy_candidates(monkeypatch):
-    """The ``n_random`` each band's candidate pool is built with."""
-    seen = []
-    real = aliases._candidates
+def _seed_settings(monkeypatch, positions, **options):
+    """Run ``fit_orbit_aliases`` up to its preflight and return the
+    ``n_random`` it settled on and whether any position-level seeding
+    (``position_profile``) ran, without running the optimizer."""
+    data, _ = _synthetic(12.1)
+    seen = {}
 
-    def spy(settings, *args, **kw):
-        seen.append(settings.n_random)
-        return real(settings, *args, **kw)
+    def preflight(problem, settings, band):
+        seen["n_random"] = settings.n_random
+        raise _Stop
 
-    monkeypatch.setattr(aliases, "_candidates", spy)
+    monkeypatch.setattr(aliases, "_preflight", preflight)
+    monkeypatch.setattr(
+        aliases,
+        "position_profile",
+        lambda pos, bands, **kw: seen.setdefault("seeded", len(pos.dt))
+        and [dict(orbits=[]) for _ in bands],
+    )
+    with pytest.raises(_Stop):
+        fit_orbit_aliases(
+            data, (12.0, 12.4), positions=positions, t_ref=T_REF, **options
+        )
     return seen
 
 
-_FAST = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
-
-
-@pytest.mark.filterwarnings("ignore:fit_orbit_aliases\\(\\)")
 @pytest.mark.parametrize(
     "flagged",
     [("n0", "n1", "n2", "n3", "n4"), ("n0", "n1", "n2", "n3", "n4", "n5")],
     ids=["one-unflagged-night", "every-night-flagged"],
 )
 def test_fewer_than_two_seeding_nights_fall_back_to_random_starts(
-    flagged, spy_candidates
+    flagged, monkeypatch
 ):
     # Fewer than two positions give an underdetermined Thiele-Innes fit
     # whose chi2 = 0 seeds mean nothing, and used to leave n_random = 0
     # ("No candidate orbits" when every night was flagged).
-    data, *_ = _alias_night_data()
-    found = _manual_flags(_alias_night_positions(), flagged)
     for n_random in (None, 0):
-        spy_candidates.clear()
         with pytest.warns(UserWarning, match="falling back to random"):
-            result = fit_orbit_aliases(
-                data,
-                (12.0, 12.4),
-                positions=found,
-                n_random=n_random,
-                **_FAST,
+            seen = _seed_settings(
+                monkeypatch, _stub_positions(flagged), n_random=n_random
             )
-        assert result.positions is None
-        assert {u["name"] for u in result.unseeded} == set(flagged)
-        assert spy_candidates and min(spy_candidates) >= 200
-        assert len(result.best.epochs) == 6
+        assert "seeded" not in seen and seen["n_random"] >= 200
+    # The same for PositionData with a single row.
+    one = PositionData([60000.0], [1.0], [1.0], [0.04 * onp.eye(2)])
+    with pytest.warns(UserWarning, match="falling back to random"):
+        seen = _seed_settings(monkeypatch, one, n_random=0)
+    assert seen["n_random"] >= 200
 
 
 def test_seeds_from_three_or_fewer_nights_keep_random_candidates(
-    spy_candidates,
+    monkeypatch,
 ):
-    data, *_ = _alias_night_data()
-    found = _manual_flags(_alias_night_positions(), ("n3", "n4", "n5"))
-    fit_orbit_aliases(data, (12.0, 12.4), positions=found, **_FAST)
-    assert spy_candidates and min(spy_candidates) == 200
-    spy_candidates.clear()
-    four = _manual_flags(_alias_night_positions(), ("n4", "n5"))
-    fit_orbit_aliases(data, (12.0, 12.4), positions=four, **_FAST)
-    assert spy_candidates and min(spy_candidates) == 0
+    seen = _seed_settings(monkeypatch, _stub_positions(("n3", "n4", "n5")))
+    assert seen["seeded"] == 3 and seen["n_random"] == 200
+    seen = _seed_settings(monkeypatch, _stub_positions(("n4", "n5")))
+    assert seen["seeded"] == 4 and seen["n_random"] == 0
+    # An explicit n_random is respected when there are seeds.
+    seen = _seed_settings(
+        monkeypatch, _stub_positions(("n3", "n4", "n5")), n_random=7
+    )
+    assert seen["n_random"] == 7
 
 
 def test_epoch_positions_must_match_the_data_and_the_primary():
-    data, *_ = _alias_night_data()
-    found = _alias_night_positions()
-    times = [float(onp.mean(d.mjd)) for d in data]
+    found = _stub_positions(("n5",))
+    times = found.mjd
     with pytest.raises(ValueError, match="not the epoch_positions"):
         aliases._seeding_positions(found, T_REF, True, times[:-1])
     shifted = dataclasses.replace(found, mjd=found.mjd + 5.0)
     with pytest.raises(ValueError, match="not the epoch_positions"):
         aliases._seeding_positions(shifted, T_REF, True, times)
+    seeds, skipped, fell_back = aliases._seeding_positions(
+        found, T_REF, True, times
+    )
+    assert len(seeds.dt) == 5 and not fell_back
+    assert [u["name"] for u in skipped] == ["n5"]
     # Seeds fitted with another primary than the engine's warn.
-    ud = dataclasses.replace(found, primary_diam=1.05)
+    ud = _stub_positions(primary_diam=1.05)
     with pytest.warns(UserWarning, match="primary_diam=1.05"):
         aliases._check_seed_diameter(ud, None)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         aliases._check_seed_diameter(ud, 1.05)
         aliases._check_seed_diameter(found, None)
+
+
+def test_a_fitted_primary_diameter_works_end_to_end(tmp_path):
+    _check_fitted_diameter(*_tiny_fit("fit"), tmp_path)
+
+
+@pytest.mark.slow
+def test_a_fitted_primary_diameter_after_a_real_fit(tmp_path):
+    _check_fitted_diameter(*_real_fit("fit"), tmp_path)
+
+
+@pytest.mark.slow
+def test_a_real_fit_saves_and_loads_back(tmp_path):
+    data, result = _real_fit(DIAM)
+    result.save(tmp_path / "fit.json")
+    loaded = AliasResult.load(tmp_path / "fit.json")
+    assert loaded.best.n == result.best.n
+    assert loaded.samples.keys() == result.samples.keys()
+    for a, b in zip(loaded.chi2_per_night(data), result.chi2_per_night(data)):
+        assert a["chi2_fit"] == pytest.approx(b["chi2_fit"], rel=1e-5)

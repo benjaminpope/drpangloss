@@ -702,6 +702,7 @@ def flagged_positions():
         )
 
 
+@pytest.mark.slow
 def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     flagged_positions,
 ):
@@ -726,6 +727,7 @@ def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     )
 
 
+@pytest.mark.slow
 def test_flag_thresholds_are_keywords_and_can_be_switched_off(
     flagged_positions,
 ):
@@ -753,6 +755,7 @@ def test_flag_thresholds_are_keywords_and_can_be_switched_off(
     assert "low-gap" in wide_codes["twin"]
 
 
+@pytest.mark.slow
 def test_skip_flagged_positions_drop_the_flagged_nights(flagged_positions):
     _, found = flagged_positions
     # Flags cannot be ignored silently: skipping is the default.
@@ -767,6 +770,7 @@ def test_skip_flagged_positions_drop_the_flagged_nights(flagged_positions):
         every.positions(t_ref=T_REF)
 
 
+@pytest.mark.slow
 def test_ud_seeds_are_unbiased_for_a_resolved_primary():
     # A resolved primary (iota Peg-like, 1.05 mas): a point primary
     # absorbs its V^2 deficit into the companion's flux and position and
@@ -781,7 +785,8 @@ def test_ud_seeds_are_unbiased_for_a_resolved_primary():
         _night(T_REF, frames=3, d_vis=0.005, d_phi=0.5),
         jax.random.PRNGKey(2),
     )
-    grid = {"dra": FLAG_AXIS, "ddec": FLAG_AXIS, "flux": [0.1, 0.25, 0.5]}
+    axis = onp.arange(-10.0, 10.01, 1.0)
+    grid = {"dra": axis, "ddec": axis, "flux": [0.1, 0.25, 0.5]}
     epochs = Epochs({"night": night})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)

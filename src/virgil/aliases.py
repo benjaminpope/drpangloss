@@ -1292,8 +1292,8 @@ class AliasBandResult:
         ----------
         params : dict, optional
             Orbital elements (``period``, ``dt_peri``, ``ecc``, ``inc``,
-            ``omega``, ``Omega``, ``a_mas`` and ``flux``, and ``diam`` for
-            a fitted primary) to build the scene for instead of ``best``,
+            ``omega``, ``Omega``, ``a_mas`` and ``flux``, and ``diam``,
+            allowed only when the primary's diameter was fitted) to build the scene for instead of ``best``,
             for example a published orbit, to score it with the band's own
             model.
 
@@ -1308,8 +1308,9 @@ class AliasBandResult:
         Raises
         ------
         ValueError
-            If the band has no best orbit (it failed), no ``t_ref``, or
-            ``primary_diam="fit"`` but no diameter is available, or the
+            If the band has no best orbit (it failed), no ``t_ref``,
+            ``params`` has a ``diam`` but the primary's diameter was not
+            fitted, ``primary_diam="fit"`` but no diameter is available, or the
             band's ``primary_diam`` is unrecorded (see
             [`UNRECORDED`][virgil.aliases.UNRECORDED]).
         """
@@ -1332,6 +1333,16 @@ class AliasBandResult:
             b["a_mas"],
             t_ref=self.t_ref,
         )
+        if params is not None and "diam" in params:
+            # A diameter in ``params`` is the fit's own free parameter: for
+            # a fixed or point primary it would silently replace the setting
+            # the fit used, so refuse it rather than score another model.
+            if self.primary_diam != "fit":
+                raise ValueError(
+                    "params has a 'diam' but the fit's primary_diam is "
+                    f"{self.primary_diam!r}, not 'fit': a diameter is only "
+                    "a free parameter when it was fitted."
+                )
         diam = b.get("diam")
         if diam is None:  # ``params`` without a diameter: use the fitted one
             diam = (
@@ -1683,7 +1694,8 @@ class AliasResult:
         primary_diam, vis_amp : optional
             The fit's settings, for a file written before they were saved
             (they would otherwise stay
-            [`UNRECORDED`][virgil.aliases.UNRECORDED], and the accessors
+            [`UNRECORDED`][virgil.aliases.UNRECORDED], except that a
+            fitted diameter is recognized from the best orbit, and the accessors
             would raise instead of guessing a point primary or no V²
             amplitude). Given for a file that does record them, they
             override it.
@@ -1700,9 +1712,13 @@ class AliasResult:
         """
         with open(path) as f:
             p = json.load(f)
+        bands = [_band_from_dict(d) for d in p["band_details"]]
         saved = p.get("vis_amp", UNRECORDED)
         recorded = dict(
-            primary_diam=p.get("primary_diam", UNRECORDED),
+            # (an old file: the best band's, which may be inferred)
+            primary_diam=p.get(
+                "primary_diam", bands[0].primary_diam if bands else UNRECORDED
+            ),
             vis_amp=saved
             if _unrecorded(saved) or saved is None
             else tuple(saved),
@@ -1714,7 +1730,6 @@ class AliasResult:
             k: recorded[k] if _unrecorded(given[k]) else given[k]
             for k in recorded
         }
-        bands = [_band_from_dict(d) for d in p["band_details"]]
         for b in bands:
             # A band that did not record a setting, or one that was
             # overridden, takes the result's.
@@ -1758,6 +1773,12 @@ def _band_from_dict(d):
     for k in ("primary_diam", "vis_amp"):
         if k not in d:
             d[k] = UNRECORDED
+    # A file from before the settings were saved: a best orbit with a
+    # ``diam`` can only come from a fitted diameter. (A point or fixed-disk
+    # primary, and whether V² amplitudes were fitted, cannot be told, and
+    # stay unrecorded: ``vis_amp`` is a range, which ``epochs`` do not keep.)
+    if _unrecorded(d["primary_diam"]) and "diam" in d.get("best", {}):
+        d["primary_diam"] = "fit"
     for k in ("log_z", "log_z_is"):
         if d.get(k) is None:
             d[k] = -onp.inf
