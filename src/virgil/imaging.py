@@ -2952,15 +2952,29 @@ def chi2_by_observable(model, data, path=None):
     return out
 
 
+def _no_baselines(observations):
+    """Why the visibility residual rows have no baselines, or ``None``."""
+    for d in observations:
+        if d.vis_mat is not None:
+            return (
+                "The visibilities are a linear combination of samples "
+                "(vis_mat), so they have no baseline of their own."
+            )
+        if d.gains is not None:
+            return (
+                "The visibilities carry calibration gains, whose "
+                "marginalization mixes the residual rows, so a row does "
+                "not belong to one baseline."
+            )
+    if not _observable_blocks(observations)[0].get("vis", ()).size:
+        return "The data have no visibilities."
+    return None
+
+
 def _visibility_frequencies(observations):
     """Spatial frequency B/λ of each visibility row of the residuals."""
     rho = []
     for d in observations:
-        if d.vis_mat is not None:
-            raise ValueError(
-                "The visibilities are a linear combination of samples "
-                "(vis_mat), so they have no baseline of their own."
-            )
         b = onp.hypot(
             onp.ravel(onp.asarray(d.u, float)),
             onp.ravel(onp.asarray(d.v, float)),
@@ -2987,8 +3001,9 @@ def short_baseline_residual(model, data, quantile=0.2):
     model : SourceModel
         The model.
     data : OIData or sequence of OIData
-        The data. Visibilities in a linear combination (``vis_mat``) are
-        not supported.
+        The data. Visibilities in a linear combination (``vis_mat``, as in
+        kernel-phase and DISCO data) and data with calibration gains are
+        not supported: a ``ValueError``.
     quantile : float, optional
         The fraction of visibility samples, shortest first by B/λ, that
         are used (default 0.2).
@@ -3001,9 +3016,10 @@ def short_baseline_residual(model, data, quantile=0.2):
     if not 0.0 < quantile <= 1.0:
         raise ValueError(f"quantile must be in (0, 1], not {quantile}.")
     observations = _as_list(data)
+    reason = _no_baselines(observations)
+    if reason:
+        raise ValueError(reason)
     rows, _ = _observable_blocks(observations)
-    if "vis" not in rows:
-        raise ValueError("The data have no visibilities.")
     r = _residual_vector(model, observations)[rows["vis"]]
     rho = _visibility_frequencies(observations)
     n = max(1, int(round(quantile * rho.size)))
@@ -3179,7 +3195,9 @@ def diagnose(model, data, regularizers=()):
         (per dataset, χ² per datum of each kind of observable; see
         [`chi2_by_observable`][virgil.imaging.chi2_by_observable]) and
         ``short_baseline_mean`` (mean whitened visibility residual on the
-        shortest 20% of baselines; see
+        shortest 20% of baselines, or ``None`` for data without
+        baseline-ordered visibilities: ``vis_mat`` operators such as
+        kernel-phase and DISCO data, calibration gains; see
         [`short_baseline_residual`][virgil.imaging.short_baseline_residual]).
     """
     observations = list(data) if isinstance(data, (list, tuple)) else [data]
@@ -3213,12 +3231,11 @@ def diagnose(model, data, regularizers=()):
         }
         for d in observations
     ]
-    try:
-        checks["short_baseline_mean"] = short_baseline_residual(
-            model, observations
-        )[0]
-    except ValueError:  # no visibilities, or a vis_mat operator
-        pass
+    checks["short_baseline_mean"] = (
+        None
+        if _no_baselines(observations)
+        else short_baseline_residual(model, observations)[0]
+    )
 
     checks["anchored"] = (
         any(isinstance(part, PointSource) for _, part in parts)

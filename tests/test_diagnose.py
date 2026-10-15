@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -186,16 +187,45 @@ def test_n_gamma_counts_the_constrained_latents():
     assert 0.0 <= ngamma[0.01] < ngamma[1.0] <= n * n
 
 
-def test_short_baseline_residual_is_unbiased_for_the_truth_and_sees_missing_flux():
+def _offset_shortest(data, n, sigmas):
+    """``data`` with its ``n`` shortest-B/λ visibilities raised by ``sigmas``."""
+    rho = onp.hypot(onp.asarray(data.u), onp.asarray(data.v)) / onp.asarray(
+        data.wavel
+    )
+    short = onp.argsort(rho.ravel(), kind="stable")[:n]
+    vis = onp.array(data.vis, float)
+    vis[short] += sigmas * onp.asarray(data.d_vis)[short]
+    return eqx.tree_at(lambda d: d.vis, data, np.asarray(vis))
+
+
+def test_short_baseline_residual_is_unbiased_for_the_truth():
     mean, error = short_baseline_residual(VTRUTH, VDATA)
-    n = round(0.2 * VDATA.vis.size)
-    assert error == pytest.approx(1 / onp.sqrt(n))
+    assert error == pytest.approx(1 / onp.sqrt(round(0.2 * VDATA.vis.size)))
     assert abs(mean) < 4 * error
-    biased, _ = short_baseline_residual(_disk(flux=0.9), VDATA)
-    assert abs(biased) > 10 * error
     assert diagnose(VTRUTH, VDATA).checks[
         "short_baseline_mean"
     ] == pytest.approx(mean)
+
+
+def test_short_baseline_residual_selects_the_shortest_baselines():
+    # Only the 4 shortest baselines (20% of 18) are 10 sigma off: the data
+    # exceed the model there, so the residual (model - data) is -10 sigma.
+    shifted = _offset_shortest(VDATA, 4, 10.0)
+    base, error = short_baseline_residual(VTRUTH, VDATA)
+    mean, _ = short_baseline_residual(VTRUTH, shifted)
+    assert mean - base == pytest.approx(-10.0, abs=0.1)
+    # Over every baseline the offset is diluted by 4 / 18.
+    all_base, _ = short_baseline_residual(VTRUTH, VDATA, quantile=1.0)
+    all_mean, _ = short_baseline_residual(VTRUTH, shifted, quantile=1.0)
+    assert all_mean - all_base == pytest.approx(-10.0 * 4 / 18, abs=0.1)
+
+
+def test_short_baseline_residual_refuses_gains_and_operators():
+    with pytest.raises(ValueError, match="gains"):
+        short_baseline_residual(VTRUTH, VDATA.with_gains(telescope=0.05))
+    with pytest.raises(ValueError, match="vis_mat"):
+        short_baseline_residual(TRUTH, DATA)
+    assert diagnose(TRUTH, DATA).checks["short_baseline_mean"] is None
 
 
 def test_short_baseline_residual_with_every_baseline_is_the_mean_residual():
@@ -213,7 +243,6 @@ def test_diagnose_adds_the_observable_keys_without_changing_the_old_ones():
 
 
 def test_the_residual_image_points_at_the_missing_flux():
-    star_only = System(star=PointSource())
     star_only = System(
         star=PointSource(),
         env=Image.from_brightness(
@@ -227,6 +256,11 @@ def test_the_residual_image_points_at_the_missing_flux():
     inside = blob > 0.5 * blob.max()
     assert residual[inside].mean() > 0.0
     assert residual[inside].mean() > 5 * abs(residual[~inside].mean())
+    # The V^2 map is centrosymmetric; the phases pick the right side.
+    mirror = onp.asarray(gaussian_blob(NPIX, SCALE, 100.0, -150.0, 100.0))
+    assert (
+        residual[inside].mean() > residual[mirror > 0.5 * mirror.max()].mean()
+    )
     # The truth leaves a far smaller residual map than the star alone.
     fitted = residual_image(TRUTH, DATA, NPIX, SCALE)
     assert onp.abs(fitted).max() < 0.5 * residual.max()
