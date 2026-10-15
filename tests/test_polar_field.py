@@ -47,8 +47,22 @@ def _matern(d, ell, nu):
     return (1 + a + a * a / 3) * onp.exp(-a)
 
 
-@pytest.mark.parametrize("nu", [0.5, 1.5, 2.5])
-def test_covariance_is_the_separable_polar_matern_kernel(nu):
+def _azimuthal_covariance(n, angle, nu):
+    """The circulant covariance whose order-m variance is PolarKernel's
+    S(m) = [1 + (m angle)^2 / 2 nu]^(-nu - 1/2), written out independently
+    and scaled to a unit diagonal."""
+    m = onp.arange(n)
+    m = onp.minimum(m, n - m)
+    if onp.isinf(nu):
+        power = onp.exp(-0.5 * (m * angle) ** 2)
+    else:
+        power = (1 + (m * angle) ** 2 / (2 * nu)) ** (-nu - 0.5)
+    row = onp.real(onp.fft.ifft(power / power.mean()))
+    return onp.array([onp.roll(row, k) for k in range(n)])
+
+
+@pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, onp.inf])
+def test_covariance_is_the_radial_matern_times_the_polarkernel_spectrum(nu):
     sigma, ell_r, ell_t = 1.7, 3.0, 0.8
     field = _field(sigma=sigma, length_r=ell_r, length_theta=ell_t, nu=nu)
     jac = jax.jacfwd(lambda z: field.set("latent", z).polar_values().ravel())(
@@ -56,15 +70,38 @@ def test_covariance_is_the_separable_polar_matern_kernel(nu):
     )
     jac = onp.asarray(jac).reshape(N_R * N_T, -1)
     r = onp.arange(N_R) * field.spacing
-    th = 2 * onp.pi * onp.arange(N_T) / N_T
-    k_r = _matern(onp.abs(r[:, None] - r[None]), ell_r, nu)
-    k_t = _matern(
-        2 * onp.abs(onp.sin(0.5 * (th[:, None] - th[None]))), ell_t, nu
-    )
-    expected = sigma**2 * onp.kron(k_r, k_t)
+    d = onp.abs(r[:, None] - r[None]) / ell_r
+    k_r = onp.exp(-0.5 * d * d) if onp.isinf(nu) else _matern(d, 1.0, nu)
+    expected = sigma**2 * onp.kron(k_r, _azimuthal_covariance(N_T, ell_t, nu))
     assert onp.allclose(jac @ jac.T, expected, atol=2e-5 * sigma**2)
     # sigma is the standard deviation of the field.
     assert onp.mean(onp.diag(jac @ jac.T)) == pytest.approx(sigma**2, rel=1e-4)
+
+
+@pytest.mark.parametrize("nu_theta", [0.5, 1.5, onp.inf])
+def test_the_azimuthal_spectrum_is_polarkernels(nu_theta):
+    # One definition: the order-m variance of the field relative to order 1
+    # is PolarKernel.spectrum with ell_theta = length_theta * r_ref.
+    from virgil.fields import _azimuthal_filter
+    from virgil.models import PolarKernel
+
+    n, angle = 32, 0.7
+    filt = _azimuthal_filter(np.eye(n), np.asarray(angle), nu_theta)
+    cov = onp.asarray(filt @ filt.T, dtype=float)
+    eigen = onp.real(onp.fft.fft(cov[0]))
+    prior = PolarKernel(
+        ell_r=1.0,
+        ell_theta=angle * 5.0,
+        r_in=4.0,
+        r_out=6.0,
+        nu_theta=nu_theta,
+    )
+    expected = onp.asarray(
+        prior.spectrum(6)
+    )  # orders 1..6, above float32 noise
+    assert onp.allclose(eigen[1:7] / eigen[1], expected, rtol=1e-3)
+    # A unit-variance filter: its diagonal is one.
+    assert onp.allclose(onp.diag(cov), 1.0, atol=1e-5)
 
 
 def test_latents_are_whitened_and_zero_latent_is_the_template():
@@ -315,6 +352,8 @@ def test_fitting_polar_field_scales_by_map_warns():
         {"length_r": -1.0},
         {"length_theta": 0.0},
         {"nu": 2.0},
+        {"nu_theta": 2.0},
+        {"geometry_from": ""},
         {"r_max_mas": 0.0},
         {"r_min_mas": 20.0},
         {"mean": onp.zeros((4, 4))},
@@ -398,12 +437,11 @@ def test_pixels_outside_the_polar_grid_are_dark():
     )
 
 
-def test_the_azimuthal_kernel_is_chordal():
-    # Opposite azimuths at length 6 are still only 0.89 correlated (nu 3/2),
-    # so a length above 2 does not make the field constant exactly.
-    from virgil.fields import _matern
-
-    assert float(_matern(2.0, 6.0, 1.5)) == pytest.approx(0.89, abs=5e-3)
+def test_a_long_azimuthal_length_leaves_only_the_axisymmetric_order():
+    # Above about 2 radians the orders m >= 1 carry almost no variance.
+    field = _field(length_theta=6.0)
+    values = onp.asarray(field.polar_values())
+    assert onp.std(values, axis=1).max() < 0.25 * onp.std(values)
 
 
 def test_the_radial_factor_is_finite_in_float32():
@@ -411,8 +449,9 @@ def test_the_radial_factor_is_finite_in_float32():
     # jitter of 1e-6 the float32 Cholesky factor is NaN.
     from virgil.fields import _radial_factor
 
-    factor = _radial_factor(128, 0.3, np.float32(50.0), 2.5)
-    assert factor.dtype == np.float32
+    nodes = 0.3 * np.arange(128, dtype=float)
+    factor = _radial_factor(nodes, np.asarray(50.0, dtype=float), 2.5)
+    assert factor.dtype == nodes.dtype
     assert onp.all(onp.isfinite(onp.asarray(factor)))
     latent = onp.random.default_rng(0).normal(size=(128, 16))
     field = PolarField(
@@ -424,3 +463,224 @@ def test_the_radial_factor_is_finite_in_float32():
         inc=40.0,
     )
     assert onp.all(onp.isfinite(onp.asarray(field.evaluate(1.5))))
+
+
+# ---------------------------------------------------------------------------
+# Geometry tied to a disk
+# ---------------------------------------------------------------------------
+
+GEOMETRY = dict(inc=45.0, pa=30.0, dra=1.5, ddec=-1.0)
+
+
+def _disk(**options):
+    options = GEOMETRY | {"flux": 0.0} | options
+    return PolarDisk(GaussianRing(r0=6.0, sigma=1.5), **options)
+
+
+def _tied_scene(
+    rotation_deg=0.0, image_dra=0.0, image_ddec=0.0, seed=0, shape=SHAPE
+):
+    disk = _disk()
+    latent = onp.random.default_rng(seed).normal(size=(N_R, N_T))
+    field = PolarField.from_disk(
+        disk,
+        latent,
+        shape,
+        r_max_mas=R_MAX,
+        geometry_from="disk",
+        length_r=3.0,
+        length_theta=1.0,
+    )
+    image = Image(
+        field,
+        1.0,
+        flux=0.5,
+        dra=image_dra,
+        ddec=image_ddec,
+        rotation_deg=rotation_deg,
+    )
+    return System(star=PointSource(), disk=disk, env=image)
+
+
+def _untied_like(scene, **geometry):
+    """The same scene with the field's own, untied geometry."""
+    field = scene.env.log_brightness.with_geometry(
+        *(geometry[k] for k in ("inc", "pa", "dra", "ddec"))
+    )
+    return eqx.tree_at(lambda s: s.env.log_brightness, scene, field)
+
+
+def test_a_tied_field_has_no_geometry_parameters():
+    scene = _tied_scene()
+    field = scene.env.log_brightness
+    untied = _field()
+    assert field.geometry_from == "disk"
+    assert field.inc is None and field.pa is None
+    assert field.dra is None and field.ddec is None
+    # Four leaves (latent and the three scales) against eight untied.
+    assert len(jax.tree.leaves(field)) == 4
+    assert len(jax.tree.leaves(untied)) == 8
+    assert list(image_priors(scene)) == ["env.log_brightness.latent"]
+
+
+def test_the_default_is_untied_with_own_geometry():
+    field = PolarField.from_disk(_disk(), onp.zeros((6, 8)), SHAPE)
+    assert field.geometry_from is None and field.fallback == ()
+    assert float(field.inc) == 45.0
+
+
+def test_a_tied_field_follows_the_disk_when_its_geometry_changes():
+    scene = _tied_scene()
+    u, v = onp.array([20.0, -35.0, 8.0]), onp.array([15.0, 40.0, -12.0])
+    wavel = 1.6e-6
+    for values in (GEOMETRY, dict(inc=60.0, pa=-40.0, dra=-0.5, ddec=2.0)):
+        moved = scene.set(
+            ["disk.inc", "disk.pa", "disk.dra", "disk.ddec"],
+            [np.asarray(values[k]) for k in ("inc", "pa", "dra", "ddec")],
+        )
+        expected = _untied_like(scene, **values)
+        assert onp.allclose(
+            moved.model(u, v, wavel), expected.model(u, v, wavel), atol=1e-6
+        )
+        assert onp.allclose(
+            moved.render(32, 24.0), expected.render(32, 24.0), atol=1e-6
+        )
+    # And the answer does change with the disk's inclination and angle.
+    other = scene.set(
+        ["disk.inc", "disk.pa"], [np.asarray(70.0), np.asarray(80.0)]
+    )
+    assert not onp.allclose(other.model(u, v, wavel), scene.model(u, v, wavel))
+
+
+def test_the_tied_geometry_is_differentiable_in_the_disks_parameters():
+    scene = _tied_scene()
+    u, v = onp.array([20.0, -35.0]), onp.array([15.0, 40.0])
+    paths = ["disk.inc", "disk.pa", "disk.dra", "disk.ddec"]
+
+    def power(values):
+        return np.sum(
+            np.abs(scene.set(paths, values).model(u, v, 1.6e-6)) ** 2
+        )
+
+    grads = jax.grad(power)(
+        [np.asarray(GEOMETRY[k.split(".")[1]]) for k in paths]
+    )
+    for path, g in zip(paths, grads):
+        assert onp.isfinite(float(g)) and float(g) != 0.0, path
+
+
+def test_ties_account_for_the_images_rotation_and_offset():
+    # The field's lit ellipse is the disk's on the sky, independent of the
+    # Image's own rotation and offset: compare with an analytic ellipse.
+    rot, d_ra, d_dec = 35.0, 2.0, -1.0
+    scene = _tied_scene(
+        rotation_deg=rot, image_dra=d_ra, image_ddec=d_dec, shape=(48, 48)
+    )
+    scene = scene.set("star.flux", np.asarray(0.0))
+    # The ellipse is the dark-outside support of the zero-latent field.
+    scene = eqx.tree_at(
+        lambda s: s.env.log_brightness.latent,
+        scene,
+        np.zeros((N_R, N_T)),
+    )
+    npix, fov = 96, 48.0
+    from virgil._geometry import image_coordinates
+
+    xx, yy = image_coordinates(npix, fov)
+    xs, ys = (
+        onp.asarray(xx) - GEOMETRY["dra"],
+        onp.asarray(yy) - GEOMETRY["ddec"],
+    )
+    p, i = onp.radians(GEOMETRY["pa"]), onp.radians(GEOMETRY["inc"])
+    major = xs * onp.sin(p) + ys * onp.cos(p)
+    minor = (xs * onp.cos(p) - ys * onp.sin(p)) / onp.cos(i)
+    spacing = R_MAX / (N_R - 1)
+    ellipse = onp.hypot(major, minor) < R_MAX + 0.5 * spacing
+    assert ellipse.sum() > 200
+
+    def overlap(model):
+        lit = onp.asarray(model.render(npix, fov)) > 1e-4
+        return (lit & ellipse).sum() / (lit | ellipse).sum()
+
+    assert overlap(scene) > 0.9
+    # The same geometry without the Image's rotation and offset (the disk's
+    # values taken as grid-frame ones) is a different, tilted ellipse.
+    wrong = _untied_like(scene, **GEOMETRY)
+    assert overlap(wrong) < 0.8
+
+
+def test_resolved_bakes_the_tie_in():
+    scene = _tied_scene()
+    resolved = scene.resolved()
+    field = resolved.env.log_brightness
+    assert field.geometry_from is None
+    assert float(field.inc) == 45.0 and float(field.pa) == 30.0
+    assert float(field.dra) == pytest.approx(1.5)
+    # Idempotent, and a System without ties is returned as it is.
+    assert resolved.resolved() is resolved
+    plain = System(star=PointSource(), env=Image(_field(), 1.0))
+    assert plain.resolved() is plain
+    # Pixels read directly (a regularizer, diagnostics) use the disk's values.
+    from virgil.imaging import TSV
+
+    moved = scene.set("disk.pa", np.asarray(-70.0))
+    penalty = TSV(1.0, "env")
+    direct = Image(moved.env.log_brightness, 1.0).brightness
+    assert not onp.allclose(penalty.image(moved).brightness, direct, atol=1e-6)
+    assert onp.allclose(
+        penalty.image(moved).brightness,
+        _untied_like(
+            moved, inc=45.0, pa=-70.0, dra=1.5, ddec=-1.0
+        ).env.brightness,
+        atol=1e-6,
+    )
+
+
+def test_a_tie_must_name_a_sibling_with_geometry():
+    field = _tied_scene().env.log_brightness
+    lonely = System(star=PointSource(), env=Image(field, 1.0))
+    with pytest.raises(ValueError, match="siblings"):
+        lonely.render(16, 16.0)
+    wrong = System(
+        star=PointSource(), disk=GaussianDisk(2.0), env=Image(field, 1.0)
+    )
+    with pytest.raises(ValueError, match="no 'inc'"):
+        wrong.render(16, 16.0)
+    with pytest.raises(ValueError, match="concrete"):
+        jax.jit(
+            lambda inc: PolarField(
+                onp.zeros((N_R, N_T)), SHAPE, R_MAX, inc=inc, geometry_from="d"
+            ).latent
+        )(1.0)
+
+
+def test_a_tied_field_fits_with_the_disk_geometry_and_has_a_finite_evidence():
+    data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
+    truth = _tied_scene(seed=3)
+    data = data.with_model(truth, key=jax.random.PRNGKey(0))
+    start = _tied_scene(seed=3).set(
+        "env.log_brightness.latent", np.zeros((N_R, N_T))
+    )
+    priors = image_priors(start) | {"disk.inc": dist.Uniform(20.0, 70.0)}
+    result = fit(start, priors, data, max_steps=5)
+    # The disk's inclination moved, and it is the only inclination there is.
+    assert float(result.model.disk.inc) != 45.0
+    assert result.model.env.log_brightness.inc is None
+    assert onp.isfinite(log_evidence(result, data))
+
+
+def test_freeze_geometry_still_works_with_a_tied_field():
+    data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
+    scene = _tied_scene()
+    frozen = eqx.tree_at(
+        lambda s: s.disk, scene, scene.disk.freeze_geometry(data)
+    )
+    got = frozen.model(data.u, data.v, data.wavel)
+    assert onp.allclose(
+        got, scene.model(data.u, data.v, data.wavel), atol=1e-4
+    )
+    # Tying reads the (frozen) disk's geometry: moving it moves the field.
+    moved = frozen.set("disk.pa", np.asarray(80.0))
+    assert not onp.allclose(
+        moved.model(data.u, data.v, data.wavel), got, atol=1e-4
+    )

@@ -149,7 +149,7 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **`PolarKernel(ℓ_r, ℓ_θ)`.** A prior over the harmonic coefficients.
   - **Structure.** Each m's (c_m, s_m) profiles are `RadialGP`s with length ℓ_r. Their variance falls with m as the spectral density of a periodic Matérn kernel in θ, roughly S(m) ∝ (1 + (m ℓ_θ / r̄)²)^(−ν−½).
   - **Effect.** A long ℓ_θ favours rings and arcs without imposing them. It is diagonal in m, so it costs nothing extra.
-- **`PolarField` for `Image`.** The same prior on pixels, as a residual field aligned with the disk. It is evaluated on a polar grid and interpolated onto the pixels in the disk's frame.
+- **`PolarField` for `Image`.** The same prior on pixels, as a residual field aligned with the disk. It is evaluated on a polar grid and interpolated onto the pixels in the disk's frame. Its kernels are `RadialGP`'s (radius) and `PolarKernel`'s spectral form (azimuth), one shared definition; its geometry can be tied to a sibling disk (`geometry_from=`, resolved by `System` at evaluation).
 
 ## 4. Composition and interactions
 - **Composition contract.** `System._mix` sums unit-flux visibilities weighted by `flux`. `PolarDisk` must therefore:

@@ -221,6 +221,18 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             self._image(xx, yy, float(fov_mas) / float(npix))
         )
 
+    def resolved(self):
+        """This model with its tied parameters replaced by their values.
+
+        A [`PolarField`][virgil.fields.PolarField] built with
+        ``geometry_from="name"`` takes the geometry of the sibling component
+        ``name`` of its [`System`][virgil.models.System] when the System is
+        evaluated. ``resolved`` returns the System with those ties baked in
+        (untied fields holding the disk's current values), for code that reads an
+        Image's pixels directly. Models without ties return themselves.
+        """
+        return self
+
     def _weight(self, wavel=None):
         """Relative flux of this model inside a [`System`][virgil.models.System].
 
@@ -3268,6 +3280,22 @@ def _matern(d, nu):
     return np.exp(-0.5 * d * d)
 
 
+def _azimuthal_spectrum(m, angle, nu):
+    """Unnormalized spectral density at the integer azimuthal order ``m`` of a
+    periodic Matérn kernel of angular length ``angle`` (radians):
+
+    ``S(m) = [1 + (m angle)^2 / (2 nu)]^(-nu - 1/2)``, or
+    ``exp(-(m angle)^2 / 2)`` for ``nu = inf``. The single definition of the
+    azimuthal kernel, shared by [`PolarKernel`][virgil.models.PolarKernel]
+    (harmonic coefficients) and [`PolarField`][virgil.fields.PolarField]
+    (pixels).
+    """
+    x2 = (m * angle) ** 2
+    if math.isinf(nu):
+        return np.exp(-0.5 * x2)
+    return (1.0 + x2 / (2.0 * nu)) ** (-nu - 0.5)
+
+
 def _check_nu(nu, owner):
     nu = float(nu)
     if nu not in (0.5, 1.5, 2.5, math.inf):
@@ -3743,10 +3771,9 @@ class PolarKernel(zdx.Base):
         m = np.arange(1, int(degree) + 1)
         angle = self.ell_theta / r_ref
         nu = self.nu_theta
-        if math.isinf(nu):
-            return np.exp(-0.5 * angle**2 * (m**2 - 1.0))
-        a2 = angle**2 / (2.0 * nu)
-        return ((1.0 + a2) / (1.0 + m**2 * a2)) ** (nu + 0.5)
+        return _azimuthal_spectrum(m, angle, nu) / _azimuthal_spectrum(
+            1.0, angle, nu
+        )
 
     def values(self, z, r):
         """The coefficients at the radii ``r`` from the latents ``z`` of
@@ -5562,21 +5589,58 @@ class System(SourceModel):
             u, v, wavel, lambda c: c.model_on_grid(u, v, wavel, grid)
         )
 
+    def _tied(self, part):
+        """``part`` with its field's geometry taken from the sibling it names."""
+        field = part.log_brightness if isinstance(part, Image) else None
+        name = getattr(field, "geometry_from", None)
+        if name is None:
+            return part
+        if name not in self.names:
+            raise ValueError(
+                f"The field of this Image takes its geometry from "
+                f"{name!r}, which is not a component of the System "
+                f"{list(self.names)}: tied components must be siblings."
+            )
+        disk = self.parts[self.names.index(name)]
+        for attr in ("inc", "pa", "dra", "ddec"):
+            if not hasattr(disk, attr):
+                raise ValueError(
+                    f"Component {name!r} ({type(disk).__name__}) has no "
+                    f"{attr!r} for a PolarField to follow."
+                )
+        # The disk's sky position and angle in the Image's grid frame: the
+        # field's centre is relative to the Image's, along its rotated axes.
+        x, y = rotate(
+            disk.dra - part.dra, disk.ddec - part.ddec, -part.rotation_deg
+        )
+        field = field.with_geometry(
+            disk.inc, disk.pa - part.rotation_deg, x, y
+        )
+        return eqx.tree_at(lambda image: image.log_brightness, part, field)
+
+    def resolved(self):
+        parts = tuple(self._tied(p.resolved()) for p in self.parts)
+        if all(a is b for a, b in zip(parts, self.parts)):
+            return self
+        return eqx.tree_at(lambda s: s.parts, self, parts)
+
     def _mix(self, u, v, wavel, part_model):
         """Flux-weighted mean of ``part_model(part)``, then the offset."""
-        weights = [c._weight(wavel) for c in self.parts]
-        total = sum(
-            w * part_model(c) for w, c in zip(weights, self.parts)
-        ) / sum(weights)
+        parts = self.resolved().parts
+        weights = [c._weight(wavel) for c in parts]
+        total = sum(w * part_model(c) for w, c in zip(weights, parts)) / sum(
+            weights
+        )
         uu, vv = u / wavel, v / wavel
         return total * offset_phase(uu, vv, self.dra, self.ddec)
 
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = xx - self.dra, yy - self.ddec
-        weights = [c._weight() for c in self.parts]
+        parts = self.resolved().parts
+        weights = [c._weight() for c in parts]
         return sum(
             w * _unit_flux(c._image(xx, yy, pixel_scale_mas))
-            for w, c in zip(weights, self.parts)
+            for w, c in zip(weights, parts)
         ) / sum(weights)
 
     def _weight(self, wavel=None):
@@ -5641,6 +5705,12 @@ class Rotated(SourceModel):
     def model(self, u, v, wavel):
         u, v = rotate(u, v, -self.rotation_deg)
         return self.source.model(u, v, wavel)
+
+    def resolved(self):
+        source = self.source.resolved()
+        if source is self.source:
+            return self
+        return eqx.tree_at(lambda r: r.source, self, source)
 
     def _image(self, xx, yy, pixel_scale_mas):
         xx, yy = rotate(xx, yy, -self.rotation_deg)

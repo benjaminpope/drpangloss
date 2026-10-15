@@ -62,8 +62,12 @@ anything before 1.0 may change between minor versions.
   the `RadialGP` docstring, the contributors page and the bibliography.
 - **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
   a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
-  `PolarField.from_disk` copies them), with a Matérn kernel in radius and a
-  periodic one in azimuth, interpolated onto the pixels. Whitened latents,
+  `PolarField.from_disk` copies them, or with `geometry_from="disk"` the field
+  takes the geometry of its sibling disk whenever the `System` is evaluated,
+  with no geometry parameters of its own; `System.resolved()` bakes the ties
+  in), with the Matérn kernel of `RadialGP` in radius and the azimuthal
+  spectrum of `PolarKernel` (one shared definition, `nu` up to infinity,
+  `nu_theta`), interpolated onto the pixels. Whitened latents,
   so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
   `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
   `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
