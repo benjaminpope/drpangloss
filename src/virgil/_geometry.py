@@ -251,14 +251,16 @@ def fringe_scales(data):
 
 
 def smearing_scale(data):
-    """The field (mas) within which bandwidth smearing is negligible.
+    """The field (mas) beyond which bandwidth smearing washes out a source.
 
     A channel of full width ``Δλ`` multiplies the visibility of a source at
     offset ``s`` by ``sinc(π Δλ B s / λ²)``, which first vanishes at
     ``s = λ² / (Δλ B) = R λ / B`` with the resolving power ``R = λ / Δλ``.
     The scale is the smallest such offset over the unflagged samples with a
     non-zero baseline, so ``R λ / B_max`` for one channel width: the
-    structure beyond it is washed out on the long baselines. It is
+    first null of the long baselines' visibility, an order-of-magnitude
+    limit rather than a field of negligible smearing (at half this offset,
+    the edge of a field this wide, the visibility is down by 36%). It is
     infinite when the data carry no channel widths (see
     [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
     """

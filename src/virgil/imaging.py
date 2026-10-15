@@ -593,7 +593,13 @@ def second_moment_fwhm(data, v2_min=0.3):
     the short baselines, where the source is resolved only a little and the
     approximation holds. It needs no image and no fit. It is the rms width
     of the whole source, a star included, so a faint extended envelope
-    around a bright star gives a smaller value than its own FWHM.
+    around a bright star gives a smaller value than its own FWHM. When a
+    bright unresolved component (a star with flux fraction above about
+    0.55) keeps V² above ``v2_min`` on every baseline, the fit is set by
+    the long baselines' constant offset, not by a curvature, and the
+    value is meaningless (an order of magnitude too small, unrelated to
+    the envelope); use
+    [`envelope_fwhm`][virgil.imaging.envelope_fwhm] there.
 
     Parameters
     ----------
@@ -800,6 +806,60 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     return np.asarray(image / total)
 
 
+def _envelope_fit(data, star, aperture_mas):
+    """The fitted envelope and the FWHM (mas) that sizes the image field.
+
+    The FWHM is the envelope's or, if larger, the one that the short
+    baselines see ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]),
+    which guards against an envelope fit that collapsed onto the star.
+    """
+    import numpyro.distributions as dist
+
+    from .models import GaussianDisk
+
+    resolution = beam(data).major_mas
+    widest = field_of_view(
+        data, largest_mas=onp.inf, aperture_mas=aperture_mas
+    )
+    best = None
+    for width in (0.25 * resolution, resolution, 4.0 * resolution):
+        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
+        if star:
+            model = System(
+                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
+            )
+            priors = {
+                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
+                "env.flux": dist.LogUniform(1e-4, 100.0),
+            }
+        else:
+            model = GaussianDisk(sigma)
+            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
+        result = fit(model, priors, data)
+        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
+            best = result
+    envelope = best.model.env if star else best.model
+    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
+    # The envelope can collapse onto the star when the structure is not
+    # Gaussian; the short baselines' own second moment then sets the size.
+    moment = second_moment_fwhm(data)
+    return envelope, fwhm if moment is None else max(fwhm, moment)
+
+
+def envelope_fwhm(data, star=True, aperture_mas=None):
+    """The FWHM (mas) of the source's envelope, from a quick parametric fit.
+
+    This is the width that [`starting_image`][virgil.imaging.starting_image]
+    sizes its field from: a star (if ``star``) plus a Gaussian envelope is
+    fitted, and the FWHM is the envelope's or, if larger, the one the short
+    baselines see. Unlike
+    [`second_moment_fwhm`][virgil.imaging.second_moment_fwhm] alone it is
+    not diluted by a bright star. Pass it to
+    [`image_field`][virgil.imaging.image_field].
+    """
+    return _envelope_fit(data, star, aperture_mas)[1]
+
+
 def starting_image(
     data,
     star=True,
@@ -879,39 +939,12 @@ def starting_image(
     SourceModel
         ``System(star=PointSource(), env=Image(...))``, or the Image alone.
     """
-    import numpyro.distributions as dist
-
     from .models import GaussianDisk
 
-    resolution = beam(data).major_mas
-    widest = field_of_view(
-        data, largest_mas=onp.inf, aperture_mas=aperture_mas
-    )
-    best = None
-    for width in (0.25 * resolution, resolution, 4.0 * resolution):
-        sigma = min(width, widest / 6.0) / FWHM_PER_SIGMA
-        if star:
-            model = System(
-                star=PointSource(), env=GaussianDisk(sigma, flux=0.1)
-            )
-            priors = {
-                "env.sigma": dist.LogUniform(1e-3 * resolution, widest),
-                "env.flux": dist.LogUniform(1e-4, 100.0),
-            }
-        else:
-            model = GaussianDisk(sigma)
-            priors = {"sigma": dist.LogUniform(1e-3 * resolution, widest)}
-        result = fit(model, priors, data)
-        if best is None or sum(result.info["chi2"]) < sum(best.info["chi2"]):
-            best = result
-    envelope = best.model.env if star else best.model
-    fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
-    # The envelope can collapse onto the star when the structure is not
-    # Gaussian; the short baselines' own second moment then sets the size.
-    moment = second_moment_fwhm(data)
+    envelope, fwhm = _envelope_fit(data, star, aperture_mas)
     fov = image_field(
         data,
-        fwhm_mas=fwhm if moment is None else max(fwhm, moment),
+        fwhm_mas=fwhm,
         field_fwhms=field_fwhms,
         inner_elements=inner_elements,
         aperture_mas=aperture_mas,

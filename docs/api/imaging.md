@@ -25,6 +25,7 @@ Gaussian-field images, the Laplace evidence (`log_evidence`).
         - field_of_view
         - image_field
         - second_moment_fwhm
+        - envelope_fwhm
         - beam
         - Beam
         - convolve_beam

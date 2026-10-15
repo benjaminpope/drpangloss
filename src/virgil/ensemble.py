@@ -52,6 +52,7 @@ from .imaging import (
     StarletL1,
     _chi2,
     beam,
+    envelope_fwhm,
     field_of_view,
     image_field,
     image_priors,
@@ -385,7 +386,7 @@ def _datasets(data):
     return list(data) if isinstance(data, (list, tuple)) else [data]
 
 
-def draw_groups(data, n_groups, key, spec=None):
+def draw_groups(data, n_groups, key, spec=None, star=True):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
     Each group draws a regularizer family, a pixel size (the Nyquist scale
@@ -410,6 +411,10 @@ def draw_groups(data, n_groups, key, spec=None):
         The random key.
     spec : EnsembleSpec, optional
         What to draw (default ``EnsembleSpec()``).
+    star : bool, optional
+        Whether the scene has an unresolved star (default), which the
+        field's envelope fit then allows for
+        ([`envelope_fwhm`][virgil.imaging.envelope_fwhm]).
 
     Returns
     -------
@@ -425,7 +430,11 @@ def draw_groups(data, n_groups, key, spec=None):
     ceiling = field_of_view(data, aperture_mas=spec.aperture_mas)
     field = spec.field_mas
     if field is None:
-        field = image_field(data, aperture_mas=spec.aperture_mas)
+        field = image_field(
+            data,
+            fwhm_mas=envelope_fwhm(data, star, spec.aperture_mas),
+            aperture_mas=spec.aperture_mas,
+        )
     n_data = sum(d.n_independent for d in _datasets(data))
     # On a uv lattice (AMI) a field beyond field_of_view aliases.
     lattice = any(d.uv_grid is not None for d in _datasets(data))
@@ -462,7 +471,9 @@ def draw_groups(data, n_groups, key, spec=None):
     return draws
 
 
-def reference_starts(data, star=True, starts=("moments", "flat")):
+def reference_starts(
+    data, star=True, starts=("moments", "flat"), aperture_mas=None
+):
     """The starting images that each group resamples onto its own grid.
 
     Each is made once by [`starting_image`][virgil.imaging.starting_image],
@@ -470,19 +481,24 @@ def reference_starts(data, star=True, starts=("moments", "flat")):
     Gaussian, ``"dirty"`` the positive part of the dirty image, and
     ``"flat"`` a uniform image with the fitted flux.
 
+    aperture_mas : float, optional
+        The aperture, as for [`EnsembleSpec`][virgil.ensemble.EnsembleSpec].
+
     Returns
     -------
     dict
         Start name to an [`Image`][virgil.models.Image].
     """
     out = {}
-    moments = starting_image(data, star=star)
+    moments = starting_image(data, star=star, aperture_mas=aperture_mas)
     moments = moments.env if star else moments
     for name in starts:
         if name == "moments":
             out[name] = moments
         elif name == "dirty":
-            dirty = starting_image(data, star=star, start="dirty")
+            dirty = starting_image(
+                data, star=star, start="dirty", aperture_mas=aperture_mas
+            )
             out[name] = dirty.env if star else dirty
         elif name == "flat":
             ones = onp.ones(moments.log_brightness.shape)
@@ -858,8 +874,10 @@ def ensemble(data, n_groups, key, *, spec=None, star=True, **fit_options):
     Ensemble
     """
     spec = EnsembleSpec() if spec is None else spec
-    draws = draw_groups(data, n_groups, key, spec)
-    starts = reference_starts(data, star, sorted({d.start for d in draws}))
+    draws = draw_groups(data, n_groups, key, spec, star)
+    starts = reference_starts(
+        data, star, sorted({d.start for d in draws}), spec.aperture_mas
+    )
     groups = [
         run_group(data, d, star=star, starts=starts, **fit_options)
         for d in draws

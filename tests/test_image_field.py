@@ -15,6 +15,7 @@ from virgil.coverage import ami_grid_record
 from virgil.ensemble import EnsembleSpec, draw_groups
 from virgil.imaging import (
     beam,
+    envelope_fwhm,
     field_of_view,
     image_field,
     nyquist_pixel_scale,
@@ -234,13 +235,16 @@ def test_the_ensemble_field_follows_the_data():
         data = _gaussian(fwhm, u, v)
         fields[fwhm] = image_field(data)
         for d in draw_groups(data, 6, key, spec):
-            assert _size(d) == pytest.approx(6.0 * fwhm, abs=d.pixel_scale_mas)
+            # The envelope fit sizes it, within the fit and a pixel.
+            assert _size(d) == pytest.approx(
+                6.0 * fwhm, rel=0.08, abs=d.pixel_scale_mas
+            )
     assert fields[6.0] == pytest.approx(2.0 * fields[3.0], rel=0.02)
 
 
 def test_the_ensemble_sweep_is_a_range_around_the_data_field():
     data = _gaussian(3.0, *_baselines())
-    field = image_field(data)
+    field = image_field(data, fwhm_mas=envelope_fwhm(data))
     sizes = [
         _size(d) / field
         for d in draw_groups(data, 24, jax.random.PRNGKey(1), EnsembleSpec())
@@ -274,3 +278,47 @@ def test_a_given_field_replaces_the_data_field_in_the_ensemble():
     spec = EnsembleSpec(field_factors=(1.0,), field_mas=1000.0)
     for d in draw_groups(data, 4, jax.random.PRNGKey(3), spec):
         assert _size(d) <= field_of_view(data) + d.pixel_scale_mas
+
+
+def _star_and_envelope(star_fraction, fwhm_mas, u, v):
+    """V² of an unresolved star plus a Gaussian envelope."""
+    model = GaussianDisk(fwhm_mas / FWHM_PER_SIGMA)
+    env = onp.abs(onp.asarray(model.model(u, v, WAVEL)))
+    amp = star_fraction + (1.0 - star_fraction) * env
+    return OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": WAVEL,
+            "vis": amp**2,
+            "d_vis": onp.full(u.size, 0.01),
+        }
+    )
+
+
+def test_a_bright_star_does_not_shrink_the_ensemble_field():
+    # With 80% of the flux in the star, V² stays above 0.3 everywhere and
+    # the second moment alone is set by the long-baseline plateau.
+    u, v = _baselines()
+    data = _star_and_envelope(0.8, 10.0, u, v)
+    assert second_moment_fwhm(data) < 3.0
+    spec = EnsembleSpec(field_factors=(1.0,))
+    sizes = [
+        _size(d) for d in draw_groups(data, 4, jax.random.PRNGKey(4), spec)
+    ]
+    # The envelope fit sizes the field, not the moment: well beyond the
+    # 7 mas floor that the moment gives.
+    assert min(sizes) > 2.0 * image_field(data, fwhm_mas=2.0)
+    # The envelope fit sees through the star.
+    assert envelope_fwhm(data, star=True) > 3.0 * second_moment_fwhm(data)
+
+
+def test_starting_image_takes_the_larger_of_envelope_and_moment(monkeypatch):
+    import virgil.imaging as imaging
+
+    u, v = _baselines()
+    data = _gaussian(4.7, u, v)
+    monkeypatch.setattr(imaging, "second_moment_fwhm", lambda d: 6.0)
+    start = starting_image(data, star=False)
+    field = start.log_brightness.shape[0] * start.pixel_scale_mas
+    assert field == pytest.approx(6.0 * 6.0, rel=0.08)

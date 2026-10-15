@@ -64,9 +64,12 @@ anything before 1.0 may change between minor versions.
 - **The ensemble sweeps the data's field.** `EnsembleSpec.field_factors`
   defaults to `(0.75, 1.0, 1.5)` times `image_field(data)` (or `field_mas`),
   never beyond `field_of_view(data)`, instead of `(1, 2, 4)` times
-  λ/B_min, which gave fields beyond what the data constrain. Pass
-  `field_factors=(1.0, 2.0, 4.0)` for the old sweep (the ceiling still
-  applies).
+  λ/B_min, which gave fields beyond what the data constrain. The field is
+  sized from the envelope fit of `starting_image` (`envelope_fwhm`), so a
+  bright star does not shrink it. Every field is now capped at
+  `field_of_view(data)` (λ/B_min at most), `field_mas` included, so the
+  old 2× and 4× λ/B_min fields are no longer possible; `field_factors`
+  above 1 only reach the ceiling. `reference_starts` takes `aperture_mas`.
 - **`variational` starts error terms and gains data at their
   Gauss–Newton width.** The start passes `noise=` to `gauss_newton_mass`,
   so fitted error terms get widths from the curvature instead of
