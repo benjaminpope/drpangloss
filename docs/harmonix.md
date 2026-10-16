@@ -52,10 +52,10 @@ A jaxoplanet `Surface` holds the spherical-harmonic map (`y`), the orientation o
 
 `Harmonix(surface, radius)` adds the angular radius in milliarcseconds, and `HarmonixModel` makes it a virgil model observed at `observation_time` (in the same units as the period).
 
-Our star is ζ And-like: a limb-darkened diameter of 2.54 mas, an inclination of 70°, and a rotation period of 17.8 days, with one large spot. Degree 4 is a coarse expansion of a spot this size (it resolves scales of about 45°, the spot is about 17° in radius), but it keeps the fit cheap; higher degrees give sharper spots but slower fits, and with these invariant priors the L-BFGS fit did not converge at degree 8 in our tests. The truth and the fit use the same degree, so the fitted `size` is the parameter of the smoothed degree-4 map, not a sharp physical spot radius.
+Our star is ζ And-like: a limb-darkened diameter of 2.54 mas, an inclination of 70°, and a rotation period of 17.8 days, with one large spot. Degree 8 resolves a spot of this size; higher degrees give sharper spots but slower fits.
 
 ```python
-ydeg = 4
+ydeg = 8
 spot = ylm_spot(ydeg)
 period = 17.8  # days
 inc, obl = jnp.radians(70.0), jnp.radians(25.0)
