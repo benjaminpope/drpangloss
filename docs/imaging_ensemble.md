@@ -35,6 +35,10 @@ The group is then one L-curve ([`l_curve`](api/imaging.md#virgil.imaging.l_curve
 
 With a star, the members are averaged as whole normalized skies: the star's share of the flux is their mean, and the image's pixels the mean of their fluxes.
 
+## Gaussian-process members {#gaussian-process-members}
+
+A group of family `"gp"` has no weights. [`evidence_grid`](api/ensemble.md#virgil.ensemble.evidence_grid) fits a MAP image whose log-brightness is a [`GaussianField`](api/fields.md) of amplitude σ and correlation length ℓ about the group's starting image at each point of a grid, and scores it by [`log_evidence`](api/imaging.md#virgil.imaging.log_evidence). The grid starts at `gp_sigmas` by `gp_lengths` (lengths in beam minor axes) and grows by factors of 2, within `gp_sigma_limits` and `gp_length_limits`, while its best point is on an edge, at most `gp_growths` times; fits are warm-started from the previous one. If an elliptical Gaussian fits the data with an axis ratio r below `gp_axis_ratio`, a second, anisotropic grid correlates the field along its position angle, over ℓ/√r along and ℓ√r across. The group's members are the fits within `gp_window_nats` of the best log evidence, a truncated posterior over the hyperparameters, so `combine` averages over the amplitude and length that the data leave open. The evidence assumes correct error bars: check them with [`error_scale`](api/imaging.md#virgil.imaging.error_scale).
+
 ## A small example
 
 A star with two blobs of dust, observed with the AMI coverage of part 1.

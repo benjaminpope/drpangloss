@@ -7,7 +7,6 @@ module, which gives its weight at each wavelength. Inside a
 
 ```python
 star = UniformDisk(0.5, flux=PowerLaw(1.0, index=-4.0, wavel0=1.65e-6))
-disk = GaussianDisk(5.0, flux=PowerLaw(0.3, index=1.0, wavel0=1.65e-6))
 ring = GaussianDisk(5.0, flux=BlackBody(0.3, temperature=1200.0))
 wind = GaussianDisk(
     2.0,
@@ -20,18 +19,15 @@ free = PointSource(flux=Nodes(values, channel_wavelengths))
 ```
 
 Spectrum parameters are reached by path like any other, e.g.
-``"disk.flux.ratio"``, ``"disk.flux.index"``, ``"ring.flux.temperature"``,
-``"wind.flux.brg.amplitude"`` or ``"free.flux.values"`` (one value per
-node). Flux ratios are relative: component ``i``'s fraction of the total at
-the reference wavelength is ``f_i / Σ f``, as SPARCO's ``f_i``.
-
-Every spectrum has a reference wavelength ``wavel0``, and its reference
-flux (``spectrum()``, used when rendering images) is its value there.
-Only the evaluated flux must be non-negative: a line or node excess inside a
-[`Sum`][virgil.spectra.Sum] may be negative (absorption) as long as the
-total is not. [`is_physical`][virgil.spectra.Spectrum.is_physical] checks
-the total at each spectrum's characteristic wavelengths (``wavel0``, nodes
-and line centres), which is where a sum of these shapes has its minima.
+``"ring.flux.temperature"`` or ``"wind.flux.brg.amplitude"``. Flux ratios are
+relative: component ``i``'s fraction of the total at the reference
+wavelength is ``f_i / Σ f``. Every spectrum has a reference wavelength
+``wavel0``, and its reference flux (``spectrum()``, used when rendering
+images) is its value there. Only the evaluated flux must be non-negative:
+a part of a [`Sum`][virgil.spectra.Sum] may be negative (absorption) as long
+as the total is not, which
+[`is_physical`][virgil.spectra.Spectrum.is_physical] checks at ``wavel0``,
+the nodes and the line centres.
 """
 
 import warnings
@@ -65,11 +61,10 @@ class Spectrum(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     """Base class for component spectra.
 
     Subclasses implement ``_at(wavel)``, the flux at ``wavel`` (metres, any
-    shape), and have a reference wavelength ``wavel0``; calling the
-    spectrum with no wavelength gives its reference flux, the value at
-    ``wavel0`` (as used when rendering images). ``_params_valid`` checks
-    the parameters' domains, and ``_check_wavel`` lists the wavelengths
-    where the flux must be non-negative.
+    shape), and have a reference wavelength ``wavel0``; calling the spectrum
+    with no wavelength gives the flux there. ``_params_valid`` checks the
+    parameters' domains and ``_check_wavel`` lists the wavelengths where the
+    flux must be non-negative.
     """
 
     def __call__(self, wavel=None):
@@ -154,10 +149,10 @@ class PowerLaw(Spectrum):
 class BlackBody(Spectrum):
     """Planck spectrum ``ratio * B_λ(T, λ) / B_λ(T, wavel0)``.
 
-    The shape of a blackbody at ``temperature`` in F_λ, normalized to
-    ``ratio`` at ``wavel0``, as SPARCO uses for dust and companions (e.g.
-    Hillen et al. 2016, https://arxiv.org/abs/1603.03023). At long wavelengths (``hc/λkT`` small) it tends to
-    the Rayleigh-Jeans ``PowerLaw`` with index -4.
+    A blackbody at ``temperature`` in F_λ, normalized to ``ratio`` at
+    ``wavel0``, as SPARCO uses for dust and companions (Hillen et al. 2016,
+    https://arxiv.org/abs/1603.03023). At long wavelengths it tends to the
+    Rayleigh-Jeans ``PowerLaw`` with index -4.
 
     Parameters
     ----------
@@ -270,13 +265,11 @@ class _Line(Spectrum):
 class GaussianLine(_Line):
     """A Gaussian emission or absorption line.
 
-    ``amplitude * exp(-4 ln 2 ((λ - line_wavel) / fwhm)²)``: the flux at the
-    line centre, with the full width at half maximum ``fwhm``. Its integral
-    over wavelength is ``amplitude * fwhm * sqrt(π / (4 ln 2))``.
-
-    On its own a line is the whole flux of a component, so ``amplitude``
-    must be non-negative; inside a [`Sum`][virgil.spectra.Sum] with a
-    continuum a negative amplitude is an absorption line.
+    ``amplitude * exp(-4 ln 2 ((λ - line_wavel) / fwhm)²)``, with the full width
+    at half maximum ``fwhm``. On its own a line is the whole flux of a
+    component, so ``amplitude`` must be non-negative; inside a
+    [`Sum`][virgil.spectra.Sum] with a continuum a negative amplitude is an
+    absorption line.
 
     Parameters
     ----------
@@ -304,12 +297,9 @@ class GaussianLine(_Line):
 class LorentzianLine(_Line):
     """A Lorentzian emission or absorption line.
 
-    ``amplitude / (1 + 4 ((λ - line_wavel) / fwhm)²)``: the flux at the line
-    centre, with the full width at half maximum ``fwhm``. Its integral over
-    wavelength is ``amplitude * π fwhm / 2``. Its wings fall off slowly, so
-    over a wide band it adds a near-constant pedestal.
-
-    Parameters are as for [`GaussianLine`][virgil.spectra.GaussianLine].
+    ``amplitude / (1 + 4 ((λ - line_wavel) / fwhm)²)``. Its wings fall off
+    slowly, so over a wide band it adds a near-constant pedestal. Parameters are
+    as for [`GaussianLine`][virgil.spectra.GaussianLine].
 
     Examples
     --------
@@ -326,23 +316,18 @@ class LorentzianLine(_Line):
 class Scaled(Spectrum):
     """A fixed spectral shape with a free reference flux, ``ratio`` at ``wavel0``.
 
-    The value is ``ratio * template(λ) / template()``: the template's shape,
-    normalized to ``ratio`` at the template's reference wavelength, as for
-    ``PowerLaw.ratio``. Any spectrum, e.g. a library SED or a
-    [`Sum`][virgil.spectra.Sum] with lines, can then be a companion in the
-    grids, limits and detection statistics, whose flux axis is
-    ``comp.flux.ratio``, and that axis is a flux ratio in physical units
-    whatever the template's own normalization (which must be positive).
-
-    The template's parameters are held fixed: no gradient flows to them, so
-    do not give priors to, or fit, paths such as ``comp.flux.template.index``
-    (they would not move, and sampling them would be wrong). Only ``ratio``
-    is free.
+    The value is ``ratio * template(λ) / template()``. Any spectrum, e.g. a
+    library SED or a [`Sum`][virgil.spectra.Sum] with lines, can then be a
+    companion in the grids, limits and detection statistics, whose flux axis is
+    ``comp.flux.ratio``. The template's parameters are held fixed: no gradient
+    flows to them, so do not give priors to paths such as
+    ``comp.flux.template.index``. Only ``ratio`` is free.
 
     Parameters
     ----------
     template : Spectrum
-        The shape; only its shape matters.
+        The shape; only its shape matters, and its normalization must be
+        positive.
     ratio : float or array-like, optional
         The flux at the template's ``wavel0`` (default 1).
 
@@ -402,29 +387,24 @@ class Nodes(Spectrum):
     """A spectrum through free values at fixed wavelengths.
 
     Linear or natural-cubic interpolation between the nodes. Beyond the end
-    nodes the flux is either held at the end values (``outside="constant"``)
-    or a fixed number (e.g. ``outside=0.0`` for an excess that lives only in
-    a line window, on top of a continuum in a [`Sum`][virgil.spectra.Sum]).
-    With ``outside=0.0`` the continuum is fixed by the channels outside the
-    window, so the two are identifiable; give the end nodes the value 0 (or
-    fix them there) to keep the spectrum continuous.
-
-    Fit the ``values`` with a prior of their shape; a smooth spectrum is a
-    prior on them (e.g. a Gaussian process over wavelength), not a feature
+    nodes the flux is held at the end values (``outside="constant"``) or a fixed
+    number (e.g. ``outside=0.0`` for an excess that lives only in a line window,
+    on top of a continuum in a [`Sum`][virgil.spectra.Sum]; give the end nodes
+    the value 0 to keep the spectrum continuous). Fit the ``values`` with a
+    prior of their shape; a smooth spectrum is a prior on them, not a feature
     of this class.
 
     Parameters
     ----------
     values : array-like, shape (n,)
         Flux at each node, relative to the other components. They may be
-        negative (an absorption excess) as long as a component's total flux
-        is not.
+        negative (an absorption excess) as long as a component's total flux is
+        not.
     wavel : array-like, shape (n,)
-        Node wavelengths in metres: finite, positive and strictly
-        increasing. Fixed (not fitted) in practice.
+        Node wavelengths in metres: finite, positive and strictly increasing.
     kind : {"linear", "cubic"}, optional
-        Interpolation; ``"cubic"`` is a natural cubic spline and needs at
-        least three nodes.
+        Interpolation; ``"cubic"`` is a natural cubic spline and needs at least
+        three nodes.
     outside : "constant" or float, optional
         The flux beyond the end nodes (default ``"constant"``).
     wavel0 : float, optional
@@ -535,17 +515,17 @@ class Sum(Spectrum):
     """The sum of named spectra, e.g. a continuum plus lines.
 
     Parts are reached by name, like the components of a
-    [`System`][virgil.models.System]: ``"star.flux.continuum.index"``,
-    ``"star.flux.brg.amplitude"``. Only the total must be non-negative, so a
-    part may be an absorption line or a negative node excess.
+    [`System`][virgil.models.System]: ``"star.flux.continuum.index"``. Only the
+    total must be non-negative, so a part may be an absorption line or a
+    negative node excess.
 
     Parameters
     ----------
     parts : dict, optional
         ``{name: Spectrum}``, positionally; or give them by keyword.
     wavel0 : float, optional
-        Reference wavelength in metres, where the reference flux is the sum
-        of the parts; the first part's ``wavel0`` by default.
+        Reference wavelength in metres, where the reference flux is the sum of
+        the parts; the first part's ``wavel0`` by default.
 
     Examples
     --------
@@ -624,16 +604,10 @@ class Sum(Spectrum):
 class Tabulated(Spectrum):
     """A free flux in every spectral channel, interpolated linearly between.
 
-    **Deprecated**: use [`Nodes`][virgil.spectra.Nodes], which also has
-    cubic interpolation, a fixed value outside the nodes, and a reference
-    flux at ``wavel0`` like every other spectrum. ``Tabulated(ratio,
-    wavel)`` is ``Nodes(ratio, wavel)`` except for its reference flux (the
-    mean over the nodes) and its parameter name (``ratio``). It is kept so
-    that existing scripts run unchanged, and will be removed in 0.5.
-
-    For fitting a spectrum channel by channel, e.g. a companion's flux ratio
-    across emission lines: give ``wavel`` the data's channel wavelengths and
-    fit ``ratio`` (one value per channel) with a prior of that shape.
+    **Deprecated**: use [`Nodes`][virgil.spectra.Nodes]. ``Tabulated(ratio,
+    wavel)`` is ``Nodes(ratio, wavel)`` except for its reference flux (the mean
+    over the nodes) and its parameter name (``ratio``). It will be removed in
+    0.5.
 
     Parameters
     ----------
@@ -641,13 +615,8 @@ class Tabulated(Spectrum):
         Flux at each node, relative to the other components: finite and
         non-negative, with n >= 1.
     wavel : array-like, shape (n,)
-        Node wavelengths in metres: finite, positive and strictly
-        increasing. Beyond the end nodes the flux is constant.
-
-    Notes
-    -----
-    The reference flux (``wavel=None``, used when rendering) is the mean
-    over the nodes.
+        Node wavelengths in metres: finite, positive and strictly increasing.
+        Beyond the end nodes the flux is constant.
 
     Examples
     --------
@@ -780,12 +749,9 @@ def _natural_cubic(x, nodes, values):
 def _cubic_extrema(nodes, values):
     """Where each segment of the natural spline is stationary, clipped in.
 
-    On a segment of width ``h`` the derivative is the quadratic
-    ``a s² + b s + c`` in ``s = x - nodes[i]``. Both roots are returned
-    (shape ``(2 (n - 1),)``), solved without branching (a stable quadratic
-    formula, and the linear root where ``a`` vanishes), so the result is
-    traceable and finite. A root outside the segment, or a complex one, is
-    clipped to an end or the vertex, where the spline is merely evaluated.
+    Both roots of the segment's derivative are returned (shape ``(2 (n - 1),)``),
+    solved without branching so the result is traceable and finite; a root
+    outside the segment or a complex one is clipped to an end or the vertex.
     """
     h = np.diff(nodes)
     m = _spline_moments(nodes, values)

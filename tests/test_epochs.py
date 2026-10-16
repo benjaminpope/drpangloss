@@ -436,6 +436,57 @@ def _binary(orbit):
     return OrbitalBinary(orbit, FLUX)
 
 
+@pytest.mark.parametrize("scales", ["quoted", "marginal"])
+def test_rank_orbits_compiles_once_per_layout(scales):
+    from virgil import epochs as epochs_module
+
+    kernel = epochs_module._loglike_kernel
+    candidates = [_orbit(), _orbit(period=410.0), _orbit(ecc=0.5)]
+    rank = lambda epochs, **kw: rank_orbits(  # noqa: E731
+        _binary, epochs, candidates, scales=scales, **kw
+    )
+    first = rank(_simulated_epochs(seed=1))
+    size = kernel._cache_size()
+    # New data, or a new dof, of the same layout: no new compile, and the
+    # reused trace still answers for them.
+    second = rank(_simulated_epochs(seed=2))
+    halved = rank(_simulated_epochs(seed=1), dof=0.5)
+    again = rank(_simulated_epochs(seed=1))
+    assert kernel._cache_size() == size
+    assert not onp.allclose(first.loglike, second.loglike)
+    assert scales == "quoted" or not onp.allclose(
+        first.loglike, halved.loglike
+    )
+    onp.testing.assert_array_equal(first.loglike, again.loglike)
+    if scales == "marginal":
+        # A different s_max is a different layout: it recompiles.
+        bounded = rank(_simulated_epochs(seed=1), s_max=3.0)
+        assert kernel._cache_size() == size + 1
+        assert not onp.allclose(first.loglike, bounded.loglike)
+
+
+def test_start_from_positions_model_wrapper_shares_one_compile():
+    from virgil import epochs as epochs_module
+
+    from virgil.epochs import _stack
+
+    def model(orbit):
+        return _binary(orbit)
+
+    stacked = _stack([_orbit(), _orbit(ecc=0.5)])
+    epochs = _simulated_epochs(seed=1)
+    kernel = epochs_module._loglike_kernel
+    # start_from_positions wraps its model afresh on every call.
+    run = lambda: epochs_module._loglikes(  # noqa: E731
+        epochs_module._Kwargs(model), {"orbit": stacked}, epochs, None, None,
+        "float64", scales="quoted",
+    )  # fmt: skip
+    run()
+    size = kernel._cache_size()
+    run()
+    assert kernel._cache_size() == size
+
+
 def test_rank_orbits_puts_the_truth_first_among_starting_orbits():
     epochs = _simulated_epochs()
     with jax.enable_x64(True):

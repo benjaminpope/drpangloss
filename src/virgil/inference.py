@@ -1,22 +1,20 @@
 """Local curvature tools: Hessians, Laplace covariances and Fisher matrices.
 
-Two different matrices are kept apart by name. The *observed information*
-is the Hessian of the negative log likelihood at a point
-([`observed_information`][virgil.inference.observed_information] for a
+The *observed information* is the Hessian of the negative log likelihood at a
+point ([`observed_information`][virgil.inference.observed_information] for a
 model and data, [`hessian_matrix`][virgil.inference.hessian_matrix] for a
 flat objective). The *expected Fisher* matrix is ``Jᵀ Σ⁻¹ J`` for a
 prediction with fixed Gaussian errors
-([`expected_fisher`][virgil.inference.expected_fisher]). They agree at the
-maximum of a linear-Gaussian problem. The Laplace covariance is the
-inverse of the observed information:
+([`expected_fisher`][virgil.inference.expected_fisher]); the two agree at the
+maximum of a linear-Gaussian problem. The Laplace covariance is the inverse
+of the observed information:
 [`laplace_cov`][virgil.inference.laplace_cov] for a model and data, and
 [`objective_laplace_covariance`][virgil.inference.objective_laplace_covariance]
 for a flat objective.
 
 Objectives are negative log likelihoods of a flat 1D parameter vector,
-except for [`expected_fisher`][virgil.inference.expected_fisher], which accepts any parameter pytree.
-Checks that need concrete values (positive errors, positive-definite
-matrices) are skipped inside ``jax.jit``.
+except for ``expected_fisher``, which accepts any parameter pytree. Checks
+that need concrete values are skipped inside ``jax.jit``.
 """
 
 import warnings
@@ -273,24 +271,16 @@ def _hessian_then(finish, values, params, data, model, dtype):
 
 @old_order("values", "params", "data", "model", data="data")
 def laplace_cov(values, params, model, data, *, dtype="float64"):
-    """
-    Compute the full Laplace covariance matrix for all model parameters jointly.
+    """Compute the full Laplace covariance matrix for all model parameters jointly.
 
-    Computes the inverse of the Hessian of the negative log-likelihood with
-    respect to all parameters in ``params`` simultaneously, returning an
-    ``N x N`` covariance matrix.
-
-    A path in ``params`` may be array-valued (e.g. ``"rim.az_amps"``). Then
-    ``values`` is the flat concatenation of every path's elements, in the
-    order of ``params`` (each array flattened C-order), and ``N`` is the
-    total number of elements (``N = len(params)`` when all are scalars). The
-    covariance is over those flattened elements. Array paths need a
-    [`SourceModel`][virgil.models.SourceModel] template, whose leaves give
-    the sizes; a callable ``model`` takes scalar parameters only.
-
-    This returns the *full* covariance matrix over all ``N`` elements. For
-    the uncertainty of one parameter with the others held fixed (e.g. the
-    flux at a fixed position), use :func:`laplace_parameter_uncertainty`.
+    The inverse of the Hessian of the negative log-likelihood with respect to
+    all parameters in ``params`` simultaneously, an ``N x N`` matrix. A path
+    may be array-valued (e.g. ``"rim.az_amps"``): then ``values`` is the flat
+    concatenation of every path's elements (each flattened C-order), ``N`` is
+    the total number of elements, and the template must be a
+    [`SourceModel`][virgil.models.SourceModel] whose leaves give the sizes. For
+    the uncertainty of one parameter with the others held fixed, use
+    [`laplace_parameter_uncertainty`][virgil.inference.laplace_parameter_uncertainty].
 
     Parameters
     ----------
@@ -302,13 +292,13 @@ def laplace_cov(values, params, model, data, *, dtype="float64"):
     model : SourceModel or callable
         Template model whose parameters at the dot-separated paths ``params``
         are replaced by ``values``, or a class/callable called as
-        ``model(**dict(zip(params, values)))`` (see [`build_model`][virgil.likelihood.build_model]).
+        ``model(**dict(zip(params, values)))`` (see
+        [`build_model`][virgil.likelihood.build_model]); a callable takes
+        scalar parameters only.
     data : OIData
         Object containing the data to be fitted.
     dtype : {"float64", "float32"}, optional
-        Precision of the calculation, as for [`fit`][virgil.fitting.fit]:
-        float64 by default, inside a local ``jax.enable_x64`` context. The
-        result is returned in JAX's precision outside it.
+        Precision of the calculation, as for [`fit`][virgil.fitting.fit].
 
     Returns
     -------
