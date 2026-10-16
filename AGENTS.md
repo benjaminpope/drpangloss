@@ -393,7 +393,7 @@ If the kernel is missing, recreate it with
 
 ## OzSTAR outputs and PRs
 
-The `OzSTAR outputs synced` check fails while a PR carries the `awaiting-ozstar` label.
+The `OzSTAR outputs synced` check passes with a warning (and a job-summary note) while a PR carries the `awaiting-ozstar` label: waiting is not a failure. The `Notebook outputs not stale` check fails on a stale notebook.
 When you hand the user a submit block for a PR, add the label and put a line
 `Awaiting OzSTAR: <job ids>` in the PR body. When you commit the pulled outputs, remove
 the label and stamp each executed notebook with
