@@ -135,3 +135,70 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     monkeypatch.setenv("NIGHTLY", "false")
     ci.main()
     assert "canary" not in capsys.readouterr().out
+
+
+def _script(name):
+    spec = importlib.util.spec_from_file_location(
+        name, ROOT / ".github" / "scripts" / f"{name}.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _job(name, conclusion="success"):
+    return {"name": name, "conclusion": conclusion}
+
+
+FULL_JOBS = [
+    _job("ubuntu-latest py3.12 shard 1/3"),
+    _job("macos-latest py3.11"),
+    _job("ubuntu-latest py3.13"),
+    _job("ubuntu-latest py3.11 lowest"),
+    _job("build and install the wheel"),
+    _job("join the x64 evidence", "skipped"),
+]
+
+
+def test_release_gate_accepts_a_green_full_run():
+    gate = _script("check_release_gate")
+    assert gate.problems({"conclusion": "success"}, FULL_JOBS) == []
+
+
+def test_release_gate_names_what_fails():
+    gate = _script("check_release_gate")
+    assert gate.problems({"conclusion": "failure"}, FULL_JOBS) == [
+        "concluded failure"
+    ]
+    # A run without the full tier's jobs is only the gate.
+    partial = [j for j in FULL_JOBS if "macos" not in j["name"]]
+    assert gate.problems({"conclusion": "success"}, partial) == [
+        "missing job macos-latest py3.11"
+    ]
+    red = FULL_JOBS + [_job("ubuntu-latest py3.13 x", "cancelled")]
+    assert gate.problems({"conclusion": "success"}, red) == [
+        "ubuntu-latest py3.13 x failed"
+    ]
+
+
+def test_release_gate_job_names_match_the_matrix():
+    """The substrings the gate requires are what tests.yml names the jobs."""
+    gate = _script("check_release_gate")
+    names = [
+        f"{j['os']} py{j['python-version']}"
+        f"{' lowest' if j.get('lowest') else ''}"
+        for j in _jobs("workflow_dispatch")
+    ]
+    for needle in gate.FULL_JOBS:
+        assert any(needle in n for n in names), needle
+    assert set(gate.FULL_EVENTS) == {"workflow_dispatch", "schedule"}
+    # A push run is the gate alone, so it must not satisfy the gate.
+    assert "push" not in gate.FULL_EVENTS
+
+
+def test_publish_waits_for_the_gate_and_floors_install_orbits():
+    publish = (ROOT / ".github/workflows/publish.yml").read_text()
+    assert "check_release_gate.py" in publish
+    assert re.search(r"\bbuild:\n    needs: gate\b", publish)
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert '--resolution lowest-direct -e ".[test,orbits]"' in tests

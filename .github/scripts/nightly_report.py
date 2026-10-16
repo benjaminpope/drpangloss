@@ -1,13 +1,16 @@
-"""Open, update or close the one nightly-failure issue (tests.yml).
+"""Open, update or close the one failure issue of a tests.yml tier.
 
     RESULT=failure RUN_URL=... python3 .github/scripts/nightly_report.py DIR
 
-DIR holds the nightly's JUnit reports (one ``junit-*`` artifact per job).
+DIR holds the run's JUnit reports (one ``junit-*`` artifact per job).
 On failure, the failing test ids, the run and the commits since the last
-green nightly go into the open issue labelled ``nightly-failure``, or a new
-one. On success, an open issue is closed. Either way it then deletes the JAX
-caches of earlier weeks, keeping the store under GitHub's 10 GB. Uses the
-``gh`` CLI and the standard library only.
+green run go into the open issue labelled ``nightly-failure``, or a new
+one. On success, an open issue is closed. Either way the nightly then
+deletes the JAX caches of earlier weeks, keeping the store under GitHub's
+10 GB. Uses the ``gh`` CLI and the standard library only.
+
+``REPORT=main`` reports a push to main instead (label ``red-main``, the
+last green push, no cache cleaning).
 """
 
 import json
@@ -18,7 +21,24 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-LABEL = "nightly-failure"
+TIERS = {
+    "nightly": {
+        "label": "nightly-failure",
+        "event": "schedule",
+        "name": "Nightly",
+        "title": "Nightly CI is failing",
+        "description": "The nightly CI run is failing",
+    },
+    "main": {
+        "label": "red-main",
+        "event": "push",
+        "name": "Main",
+        "title": "main is red",
+        "description": "Tests on main are failing",
+    },
+}
+TIER = TIERS[os.environ.get("REPORT", "nightly")]
+LABEL = TIER["label"]
 
 
 def gh(*args):
@@ -50,7 +70,7 @@ def last_green():
             "--workflow",
             "tests.yml",
             "--event",
-            "schedule",
+            TIER["event"],
             "--status",
             "success",
             "--limit",
@@ -65,7 +85,10 @@ def last_green():
 def body(directory):
     repo = os.environ["GITHUB_REPOSITORY"]
     sha = os.environ["GITHUB_SHA"]
-    lines = [f"Nightly run {os.environ['RUN_URL']} failed at {sha[:12]}.", ""]
+    lines = [
+        f"{TIER['name']} run {os.environ['RUN_URL']} failed at {sha[:12]}.",
+        "",
+    ]
     found = failures(directory)
     if not found:
         lines.append(
@@ -81,11 +104,11 @@ def body(directory):
     green = last_green()
     if green and green != sha:
         lines.append(
-            f"Commits since the last green nightly: "
+            f"Commits since the last green run: "
             f"https://github.com/{repo}/compare/{green[:12]}...{sha[:12]}"
         )
     elif not green:
-        lines.append("No green nightly on record yet.")
+        lines.append("No green run on record yet.")
     return "\n".join(lines)
 
 
@@ -93,8 +116,16 @@ def clean_caches():
     """Delete every ``jax-`` cache not of the current ISO week."""
     week = time.strftime("%G-W%V", time.gmtime())
     caches = json.loads(
-        gh("cache", "list", "--key", "jax-", "--limit", "500",
-           "--json", "id,key")
+        gh(
+            "cache",
+            "list",
+            "--key",
+            "jax-",
+            "--limit",
+            "500",
+            "--json",
+            "id,key",
+        )
     )
     for cache in caches:
         if not cache["key"].endswith(f"-{week}"):
@@ -121,7 +152,7 @@ def report(directory):
                 "close",
                 open_issue,
                 "--comment",
-                f"Nightly run {os.environ['RUN_URL']} is green.",
+                f"{TIER['name']} run {os.environ['RUN_URL']} is green.",
             )
         return
     text = body(directory)
@@ -137,13 +168,13 @@ def report(directory):
             "--color",
             "B60205",
             "--description",
-            "The nightly CI run is failing",
+            TIER["description"],
         )
         gh(
             "issue",
             "create",
             "--title",
-            "Nightly CI is failing",
+            TIER["title"],
             "--label",
             LABEL,
             "--body",
@@ -155,7 +186,8 @@ def main():
     try:
         report(sys.argv[1])
     finally:
-        clean_caches()
+        if TIER is TIERS["nightly"]:
+            clean_caches()
 
 
 if __name__ == "__main__":

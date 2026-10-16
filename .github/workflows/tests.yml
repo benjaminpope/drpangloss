@@ -53,13 +53,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
 
+      # The floors include the orbits extra, so jaxoplanet's is tested too.
       # Versions come from uv.lock (lock-upgrade.yml keeps it current; the
       # nightly canary runs ahead of it). harmonix is a dependency group.
       - name: create environment
         run: |
           if [ "${{ matrix.lowest }}" = "true" ]; then
             uv venv .venv
-            uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test]"
+            uv pip install --python .venv/bin/python --resolution lowest-direct -e ".[test,orbits]"
           elif [ "${{ matrix.canary }}" = "true" ]; then
             uv lock --upgrade
             uv sync --extra test --extra integrations --group harmonix
@@ -197,3 +198,28 @@ jobs:
           RESULT: ${{ needs.build.result == 'success' && needs.package.result == 'success' && 'success' || 'failure' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 .github/scripts/nightly_report.py junit
+
+  # A red push to main opens (or adds to) one issue labelled `red-main`
+  # naming the failing tests; the next green push closes it. A cancelled
+  # run (a newer push) reports nothing.
+  main-report:
+    name: report the main run
+    needs: [build, package]
+    if: ${{ !cancelled() && github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions: {actions: read, contents: read, issues: write}
+    steps:
+      - uses: actions/checkout@v4
+        with: {sparse-checkout: .github/scripts}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "junit-*", path: junit}
+      - name: open, update or close the issue
+        env:
+          REPORT: main
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ (needs.build.result == 'failure' || needs.package.result == 'failure') && 'failure' || needs.build.result == 'success' && needs.package.result == 'success' && 'success' || 'skipped' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$RESULT" = skipped ]; then echo "nothing to report"; exit 0; fi
+          python3 .github/scripts/nightly_report.py junit
