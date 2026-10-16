@@ -104,7 +104,7 @@ see that repository's `PLAN.md` for the boundary.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
-- New model code goes in `src/virgil/models.py`.
+- New model code goes in `virgil.models`.
 - New public features start **provisional**: list the name in the module's
   `__provisional__` tuple (`("*",)` for a whole new module), put the notice
   from `virgil._stability.ADMONITION` in its docstring, and add it to
@@ -115,6 +115,48 @@ see that repository's `PLAN.md` for the boundary.
   shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
+
+## Keeping the code small
+
+`src/` doubled in the ten days after 0.3.0. The growth was features, not
+duplication: it came from building ahead of need, keeping what was superseded
+and writing history into docstrings. So:
+
+1. **Delete before you add.** A feature PR names what it supersedes and removes
+   it in the same PR, or opens a removal issue for the next minor release.
+2. **Build on demand.** A plan stage lands in `src/` when a test system,
+   validation case or user needs it. Keep exploratory engines in
+   virgil-validation or a notebook until then, and land them provisional.
+3. **Docstrings say what, docs say why** (next section).
+4. **Reuse before writing a numerical helper.** Check `_linear`, `_grid`,
+   `_geometry`, `_utils`, `_gauss_newton`, `_flat` and `_precision`, and
+   `pipeline/_common`, before adding a quadrature, solver or linear-algebra routine.
+5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py`, and
+   shared constants and helpers in `tests/_shared.py` or data in `tests/_test_data.py`
+   (extend these, don't add a second module); parametrize near-identical tests, and never redefine a
+   `_scene`/`_data` helper that exists.
+6. **Keep pipelines thin.** A new pipeline subclasses `pipeline/_core` and reuses
+   `_common`; aim at about 500 lines.
+7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
+   Above +1,000 `src` lines, the PR description says what the size buys and what
+   it supersedes.
+
+## Docstring style
+
+Ben is surprised how long some docstrings are. Keep them short.
+
+- **Public docstring:** a one-line summary; at most about five lines of
+  description; numpydoc `Parameters`, `Returns` and `Raises`; at most one short
+  `Example`. Aim for 40 lines or fewer. Over 60 is a defect.
+- **Notes:** only the formula a user needs to call the function correctly.
+- **Leave out:** derivations, design history, plan or "problem N" numbers,
+  PR/issue numbers and named science targets. Put a derivation in a docs page
+  and link it with a markdown link; put history in `design/` notes.
+- **Shared parameters** (`noise`, `priors`, `flat_coordinates`, `dtype`,
+  `regularizers`, ...) are documented once, in `docs/conventions.md` (see "Which
+  priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
+  there rather than creating a page), and each docstring says one line and links it.
+- **Private helpers:** one or two lines.
 
 ## Package layout
 
