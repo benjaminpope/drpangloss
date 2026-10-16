@@ -113,7 +113,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             )
         return self.vis_encoding
 
-    def __init__(self, data, target=None, extras=(), bandwidth=False):
+    def __init__(
+        self, data, target=None, extras=(), bandwidth=False, insname=None
+    ):
         """Initialize from an OIFITS file or explicit arrays.
 
         Parameters
@@ -134,13 +136,21 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             ``OIData.bandwidth`` so models are smeared over each channel (see
             [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). For a
             dictionary, give a ``bandwidth`` key instead.
+        insname : str or sequence of str, optional
+            For OIFITS input, the instrument table(s) to keep, as in
+            [`read_oifits`][virgil.oifits.read_oifits]; needed for GRAVITY
+            files that hold both fringe-tracker and science tables.
         """
         if not isinstance(data, dict):
             data = read_oifits(
-                data, target=target, extras=extras, bandwidth=bandwidth
+                data,
+                target=target,
+                insname=insname,
+                extras=extras,
+                bandwidth=bandwidth,
             )
-        elif target is not None:
-            raise ValueError("target only applies to OIFITS input.")
+        elif target is not None or insname is not None:
+            raise ValueError("target and insname only apply to OIFITS input.")
         elif bandwidth:
             raise ValueError(
                 "bandwidth=True only applies to OIFITS input; give a "

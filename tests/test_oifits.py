@@ -367,6 +367,16 @@ def test_gravity_fringe_tracker_and_science_tables_are_not_merged():
         read_oifits(hdul, insname="GRAVITY_SC_P1")
 
 
+def test_oidata_passes_insname_to_the_reader():
+    hdul = _two_instrument_file(["GRAVITY_FT", "GRAVITY_SC"])
+    with pytest.raises(ValueError, match="insname="):
+        OIData(hdul)
+    data = OIData(hdul, insname="GRAVITY_SC")
+    assert onp.unique(onp.asarray(data.wavel)).size == 3
+    with pytest.raises(ValueError, match="only apply to OIFITS input"):
+        OIData(read_oifits(hdul, insname="GRAVITY_SC"), insname="GRAVITY_SC")
+
+
 def test_insname_selects_tables_from_other_instruments():
     hdul = _two_instrument_file(["PIONIER_A", "PIONIER_B"])
     both = read_oifits(hdul)  # not GRAVITY FT + SC: merged as before
