@@ -15,20 +15,11 @@ from ._utils import concrete, is_flux_param, resolve_flux_param
 from ._deprecate import external_stacklevel
 
 
-# Grid points are evaluated in batches, which bounds memory on large grids:
-# each point holds a full model evaluation and, in the optimizers, a BFGS
-# state, so memory per point grows with the number of model visibilities
-# (measured on CPU: ~25 bytes per visibility for a float32 likelihood grid,
-# up to ~450 for a float64 flux optimization of a three-component System).
-# By default a batch holds about batch_visibilities() model visibilities,
-# and never fewer than MIN_BATCH_SIZE points, the earlier fixed default, so
-# large data use as little memory as before. Each batch is a loop iteration
-# with fixed overheads (on a GPU, a few kernel launches), so small data run
-# much faster in large batches. Warm grid times stop improving at ~1e6
-# visibilities per batch on an M4 CPU and ~1e7 on an A100 GPU, which is
-# 10-50x faster there than at 256 points for 24 baselines (2026-10-03,
-# ozstar_scripts drpangloss_prof PROF=batch). The public functions take
-# ``batch_size=`` to override it.
+# Grid points are evaluated in batches of about batch_visibilities() model
+# visibilities (at least MIN_BATCH_SIZE points), bounding memory; larger
+# batches are faster on small data, especially on GPUs. The public
+# functions take ``batch_size=`` to override it. Warm grid times stop
+# improving at ~1e6 visibilities per batch on a CPU and ~1e7 on an A100.
 CPU_BATCH_VISIBILITIES = 2**20
 ACCELERATOR_BATCH_VISIBILITIES = 2**23
 MIN_BATCH_SIZE = 256
@@ -109,21 +100,15 @@ def first_crossing(
 ):
     """Bracket a crossing in log flux by fixed steps, then bisect it.
 
-    ``reached(log_flux)`` says whether the target (e.g. a significance) is
-    reached at ``10**log_flux``. From ``log_start`` (inside
-    ``[log_low, log_high]``, which may be infinite), the flux steps up by
-    ``step`` decades while the target is not reached, or down while it is,
-    clamped to the range and for at most ``max_steps`` steps, until
-    ``reached`` changes. The last step is then bisected ``bisections``
-    times. Starting below the target, this finds its first crossing above
-    ``log_start``, even where the target is not reached again at higher
-    flux, unless the target is reached only on an interval narrower than
-    ``step``, between two samples.
+    ``reached(log_flux)`` says whether the target is reached at
+    ``10**log_flux``. From ``log_start`` (inside ``[log_low, log_high]``,
+    possibly infinite) the flux steps up by ``step`` decades while the
+    target is not reached, or down while it is, for at most ``max_steps``,
+    then the last step is bisected ``bisections`` times. A target reached
+    only on an interval narrower than ``step`` can be missed.
 
-    Returns ``(log_limit, crossed)``. Without a crossing, ``log_limit`` is
-    where the search stopped (an end of the range, or ``max_steps`` steps
-    away) and ``crossed`` is False; ``reached(log_start)`` then tells which
-    end.
+    Returns ``(log_limit, crossed)``. Without a crossing ``log_limit`` is
+    where the search stopped and ``crossed`` is False.
     """
     above = reached(log_start)
     direction = np.where(above, -step, step)

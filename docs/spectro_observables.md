@@ -100,7 +100,10 @@ The Gaussian is a *proposal*: k is a positive scale, whose Jeffreys prior is
 1/k on stated bounds. For a well-measured spectrum the two differ by about
 σ_k/k. For the Jeffreys posterior, reweight samples of k from its conditional
 posterior by 1/(k N(k; mean, sd²)) within the bounds, or sample log k
-directly. Make no evidence claims that depend on the Gaussian's width.
+directly. Make no evidence claims that depend on the Gaussian's width: the
+Jeffreys prior is improper, so an evidence needs finite positive bounds
+$[k_{\min}, k_{\max}]$ and the density $1/(k\ln(k_{\max}/k_{\min}))$.
+Marginalizing in log k is not linear and is not done here.
 After a fit, report the scale's conditional posterior:
 
 ```python
