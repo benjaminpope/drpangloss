@@ -1306,29 +1306,44 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-@functools.cache
-def _alias_night_data():
+def _draw_alias_night_data():
     """Six single-frame nights of the true orbit, drawn so that the last
-    one's best static-binary peak is a single-night alias (24 mas from the
-    truth: the Gl 229 2024-02-27 situation), found by scanning seeds."""
+    one's best static-binary peak is a single-night alias (8 mas from the
+    truth: the Gl 229 2024-02-27 situation), found by scanning seeds.
+
+    The noise is drawn with numpy, not ``jax.random``: a JAX key gives
+    different bits in float32 and float64, so a seed scanned under one
+    precision gives a different night, usually without the alias, under the
+    other. The seed was scanned in both, and
+    ``test_the_alias_night_fixture_is_the_same_in_float32_and_float64``
+    checks that the two agree."""
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
     scene = OrbitalBinary(orbit, FLUX)
-    key = jax.random.PRNGKey(4)
-    data = [
-        simulate(
-            scene,
-            _night(m, frames=1, rotation=7.0 * k),
-            key=jax.random.fold_in(key, k),
+    rng = onp.random.default_rng(33)
+    data = []
+    for k, m in enumerate(EPOCHS):
+        night = simulate(scene, _night(m, frames=1, rotation=7.0 * k))
+        data.append(
+            night.set(
+                ["vis", "phi"],
+                [
+                    onp.asarray(night.vis)
+                    + onp.asarray(night.d_vis)
+                    * rng.standard_normal(night.vis.shape),
+                    onp.asarray(night.phi)
+                    + onp.asarray(night.d_phi)
+                    * rng.standard_normal(night.phi.shape),
+                ],
+            )
         )
-        for k, m in enumerate(EPOCHS)
-    ]
     dra, ddec, _ = orbit.relative(EPOCHS)
     return data, onp.asarray(dra), onp.asarray(ddec)
 
 
-@functools.cache
-def _alias_night_positions():
-    data, *_ = _alias_night_data()
+_alias_night_data = functools.cache(_draw_alias_night_data)
+
+
+def _locate_alias_nights(data):
     axis = onp.arange(-14.0, 14.01, 0.5)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
@@ -1336,6 +1351,31 @@ def _alias_night_positions():
             Epochs({f"n{k}": d for k, d in enumerate(data)}),
             {"dra": axis, "ddec": axis, "flux": [0.1, 0.3, 0.6]},
         )
+
+
+@functools.cache
+def _alias_night_positions():
+    data, *_ = _alias_night_data()
+    return _locate_alias_nights(data)
+
+
+@pytest.mark.slow
+def test_the_alias_night_fixture_is_the_same_in_float32_and_float64():
+    # jaxoplanet turns x64 on, so orbit users run float64 while the default
+    # JAX is float32: the night-flag fixtures must mean the same in both.
+    found = {}
+    for x64 in (False, True):
+        with jax.enable_x64(x64):
+            data, dra, ddec = _draw_alias_night_data()
+            found[x64] = _locate_alias_nights(data)
+    f32, f64 = found[False], found[True]
+    assert f32.flagged.tolist() == f64.flagged.tolist() == [False] * 5 + [True]
+    assert f32.flag_codes() == f64.flag_codes()
+    # Every night, the alias included, lands on the same grid peak.
+    assert onp.allclose(f32.dra, f64.dra, atol=0.1)
+    assert onp.allclose(f32.ddec, f64.ddec, atol=0.1)
+    miss = onp.hypot(f64.dra - dra, f64.ddec - ddec)
+    assert miss[5] > 3.0 and onp.all(miss[:5] < 0.5)
 
 
 @pytest.mark.slow
