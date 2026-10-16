@@ -659,6 +659,42 @@ def test_chainconsumer_diagnostics_return_their_figures():
     plt.close("all")
 
 
+def test_chainconsumer_diagnostics_stay_fast_on_real_sample_counts():
+    # The docs example plots two 2000-sample HMC chains; a GPU run once
+    # reported 7,971 s for its first call. Warm up (import, font lookup),
+    # then time ten times the docs' sample count.
+    import time
+
+    import pandas as pd
+
+    from virgil.plotting import plot_chainconsumer_diagnostics
+
+    rng = onp.random.default_rng(0)
+    columns = ["dra", "ddec", "flux"]
+
+    def chains(n):
+        return {
+            label: pd.DataFrame(
+                {
+                    "dra": rng.normal(120.0, 2.0, n),
+                    "ddec": rng.normal(-80.0, 2.0, n),
+                    "flux": rng.normal(4e-3, 4e-4, n),
+                }
+            ).astype("float32")
+            for label in ("HMC", "Fisher-HMC")
+        }
+
+    truth = {"dra": 120.0, "ddec": -80.0, "flux": 4e-3}
+    kwargs = dict(columns=columns, truth=truth, colors=["#1f77b4", "#ff7f0e"])
+    plot_chainconsumer_diagnostics(chains(2000), **kwargs)
+    plt.close("all")
+    start = time.perf_counter()
+    plot_chainconsumer_diagnostics(chains(20000), **kwargs)
+    elapsed = time.perf_counter() - start
+    plt.close("all")
+    assert elapsed < 10.0, f"20000-sample corner plot took {elapsed:.1f} s"
+
+
 def test_batched_grid_matches_unbatched():
     from virgil.grid_fit import likelihood_grid
     from virgil.models import BinaryModelCartesian
