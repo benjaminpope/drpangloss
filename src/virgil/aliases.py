@@ -83,7 +83,6 @@ __all__ = [
     "AliasBandResult",
     "AliasResult",
     "LABELS_FREE_NATS",
-    "UNRECORDED",
     "alias_bands",
     "fit_orbit_aliases",
     "period_window",
@@ -114,29 +113,19 @@ _PERIODIC = {
     5: 180.0,
 }  # periodic coordinates and their periods
 _N_FLUX = 4  # fluxes tried for each position-level candidate
-# Marks a setting a loaded result does not record (a file written before
-# ``primary_diam`` and ``vis_amp`` were saved). It is not None, which means
-# "point primary" or "no V² amplitude": the accessors refuse to guess.
+# Marks a setting a loaded legacy file (format 0) does not record. It is not
+# None, which means "point primary" or "no V² amplitude": the accessors
+# refuse to guess.
 UNRECORDED = "unrecorded"
-# The label swap (problem 8): two modes of a band are the stars' labels
-# swapped when one track is the point reflection of the other. The labels are
-# *free* when the reflected mode's evidence is within this many nats of the
-# best mode's: the data cannot tell the stars apart. 3 nats is odds of 1 to 20
-# (Δχ² ≈ 6): a twin is degenerate to well within it (the two modes have equal
-# evidence up to the Laplace error), a pair with a real flux contrast is
-# separated by far more. The nats are on the *tempered* evidence (plan phase
-# 1d, ``virgil.tempering``): ``log_z`` is the log likelihood divided by the
-# effective-channel factor f, so 3 nats there are 3 f raw nats. Untempered, a
-# difference of 3 nats on N correlated channels was really about 3/f nats of
-# evidence and a twin looked "not free"; tempered, the threshold is the odds
-# statement it always claimed to be. The value is unchanged because f = 1
-# (white noise, a single channel, ``temper=False``) reproduces the old
-# evidence exactly: on those data the rule behaves as before.
+_RESULT_FORMAT = 1  # AliasResult JSON; a file without the field is format 0
+# The labels are *free* when a point-reflected mode's evidence is within this
+# many nats (tempered; odds of 1 to 20) of the best mode's. Why 3: docs/
+# orbit_fitting.md, "Alias search"; AGENTS.md, "Label swap" row.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
-# Where a period is "at a bound" of the window (period window, problem 5): the
-# best period within this fraction of ``p_range[1]`` (a likelihood that is flat
+# Where a period is "at a bound" of the window (AGENTS.md, "Period window from
+# the data" row): the best period within this fraction of ``p_range[1]`` (a likelihood that is flat
 # towards long periods, as for a short arc, is maximized at the edge) or
 # within this factor of ``p_range[0]``.
 _PERIOD_BOUND_FRACTION = 0.9
@@ -154,7 +143,7 @@ _N_BANDS_MAX = 200
 # A lower end above this many nights' length is reported (a Nyquist-style
 # sampling limit that excludes short periods is the user's to see).
 _WARN_P_MIN_NIGHTS = 5.0
-# Default per-epoch V² amplitude range (problem 13): a contrast loss from
+# Default per-epoch V² amplitude range (AGENTS.md, "V² amplitude" row): a contrast loss from
 # seeing or calibration; above 1 only for a calibration that overshoots.
 _VIS_AMP_DEFAULT = (0.5, 1.2)
 # Where a fitted diameter may reach with ``primary_diam="auto"`` (problem
@@ -250,49 +239,27 @@ def period_window(
 ):
     """The periods worth searching, from the data alone: ``(p_min, p_max)``.
 
-    Solved problem 5 (the period window): a window centred on a published
-    period leaked the answer into the fit, and a fixed window (say 1 to 100
-    d) is wrong for most data sets. This one never uses published
-    information.
-
-    **Lower end: a Nyquist-style sampling limit.** A night is sampled as one
-    snapshot (the per-night seeds of
-    [`epoch_positions`][virgil.epochs.epoch_positions] and the orbit fit's
-    per-night positions), so the companion must not move by more than a
-    fraction of the resolution while it is observed: a shorter period is
-    not sampled by the night, as a frequency above the Nyquist limit is
-    not sampled by a time series. On a circular orbit of radius at most
-    ``field`` the companion moves ``2π field night_length / P``, so
-    ``p_min = 2π field night_length / (motion_fraction resolution)``, and at
-    least ``night_length`` (a period shorter than the night is not a
-    snapshot at all) and ``p_floor`` (a physical floor, 0.2 d: two stars in
-    contact).
-
-    **Upper end.** ``p_max = span_factor × T`` with ``T`` the span from the
-    first to the last epoch. A longer period is not constrained by the data:
-    less than a quarter of an orbit is seen, and a fit that ends at this
-    bound is a short arc ([`AliasResult.period_bound`][virgil.aliases.AliasResult]).
+    The lower end is a Nyquist-style sampling limit, ``2 pi field night_length /
+    (motion_fraction resolution)``, and at least ``night_length`` and
+    ``p_floor``: the companion must not move much during a night. The upper
+    end is ``span_factor`` times the span. No published period enters. The
+    [orbit tutorial](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)
+    gives the reasoning.
 
     Parameters
     ----------
     times : array-like
         The epochs' times (days).
     field : float
-        The largest separation (mas) the companion is taken to have: the
-        semimajor-axis scale of the limit.
-        [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] uses the
-        *median* separation of the unflagged night positions (one wrong
-        alias peak at a large separation must not raise the limit), at most
-        ``a_range[1]``; without positions the coarsest fringe spacing
-        λ/B_min, the interferometer's field of view.
+        The largest separation (mas) the companion is taken to have.
+        [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] uses the median unflagged night separation, at most
+        ``a_range[1]``, or the coarsest fringe spacing without positions.
     night_length : float
-        The longest span (days) of observations within one night
-        (consecutive frames less than half a day apart).
+        The longest span (days) of observations within one night.
     resolution : float
-        The finest resolution λ/B_max (mas).
+        The finest resolution lambda/B_max (mas).
     motion_fraction : float, optional
-        The fraction of ``resolution`` the companion may move during a
-        night (default 0.5).
+        The fraction of ``resolution`` the companion may move in a night.
     span_factor : float, optional
         The upper end in units of the span (default 4).
     p_floor : float, optional
@@ -306,8 +273,12 @@ def period_window(
     Raises
     ------
     ValueError
-        If the epochs span no time, an input is not positive, or the window
-        is empty (the night is too long for the span).
+        If the epochs span no time, an input is not positive, or the window is
+        empty.
+
+    Examples
+    --------
+    >>> period_window([0.0, 30.0, 400.0], 5.0, 0.1, resolution=2.0)  # doctest: +SKIP
     """
     times = onp.asarray(times, float)
     span = float(onp.ptp(times))
@@ -398,11 +369,8 @@ def position_profile(
             positions, periods, eccs=eccs, n_best=n_best, sign_free=False
         )
         if sign_free:
-            # Label swap (problem 8): the sign-free orbits are *added* to
-            # the signed ones. The signs that the closure phases do fix
-            # (a contrast pair) are kept by the signed fit, which a
-            # sign-free fit alone would throw away, crowding the true
-            # orbit out of the best ``n_best`` with mixed-sign orbits.
+            # AGENTS.md, "Label swap" row: the sign-free orbits are *added*
+            # to the signed ones, which keep the signs closure phases fix.
             found = found + starting_orbits(
                 positions, periods, eccs=eccs, n_best=n_best, sign_free=True
             )
@@ -1329,8 +1297,7 @@ def _labels_free(result, settings, times, nats=LABELS_FREE_NATS):
     """Whether a mode whose track is the point reflection of the best
     mode's has an evidence within ``nats`` of it.
 
-    Label swap, solved problem 8 (AL Dor, twins): swapping the stars'
-    labels reflects the companion's sky track through the primary
+    Swapping the stars' labels reflects the companion's sky track through the primary
     (ω + 180°), and for near-equal fluxes it predicts the same closure
     phases and V², so the data cannot say which star is which. Comparing
     such a fit with a published orbit is then meaningful only up to the
@@ -1390,9 +1357,8 @@ def _fit_band(problem, settings, band, orbits, times):
         problem, settings, bounds, pool, times, forced
     )
     flips = []
-    # Flux flip (problem 9): a companion brighter than the primary has a
-    # flux ratio above the prior's top, so a fit pinned there is refit with
-    # the stars' labels swapped (default on).
+    # AGENTS.md, "Flux flip" row: a fit pinned at the prior's top flux is
+    # refit with the stars' labels swapped.
     if settings.flip_flux and _flip_is_relabelling(problem, settings):
         modes_xy, flips, n_flip_failed = _flip_modes(
             problem, settings, bounds, modes_xy, times
@@ -1526,7 +1492,10 @@ class AliasBandResult:
     [`AliasResult`][virgil.aliases.AliasResult]) fills in. They back the
     accessors [`scene`][virgil.aliases.AliasBandResult.scene],
     [`residuals`][virgil.aliases.AliasBandResult.residuals] and
-    [`chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night].
+    [`chi2_per_night`][virgil.aliases.AliasBandResult.chi2_per_night]. On a
+    band loaded from a legacy file that did not save ``primary_diam`` or
+    ``vis_amp`` they are ``UNRECORDED``, and the accessors raise unless
+    [`AliasResult.load`][virgil.aliases.AliasResult.load] was given them.
 
     Attributes
     ----------
@@ -1544,11 +1513,6 @@ class AliasBandResult:
         The best mode has a point-reflected partner (the stars' labels
         swapped) whose evidence is within ``LABELS_FREE_NATS`` of its own:
         the data do not say which star is which.
-
-    Both are [`UNRECORDED`][virgil.aliases.UNRECORDED] on a band loaded
-    from a file that did not save them; the accessors then raise unless
-    they were given to
-    [`AliasResult.load`][virgil.aliases.AliasResult.load].
     """
 
     n: int
@@ -1614,7 +1578,7 @@ class AliasBandResult:
             ``params`` has a ``diam`` but the primary's diameter was not
             fitted, ``primary_diam="fit"`` but no diameter is available, or the
             band's ``primary_diam`` is unrecorded (see
-            [`UNRECORDED`][virgil.aliases.UNRECORDED]).
+            ``UNRECORDED``).
         """
         b = self.best if params is None else params
         if not b:
@@ -1730,7 +1694,7 @@ class AliasBandResult:
         ------
         ValueError
             If ``primary_diam`` or ``vis_amp`` is unrecorded (see
-            [`UNRECORDED`][virgil.aliases.UNRECORDED]), or ``data`` does
+            ``UNRECORDED``), or ``data`` does
             not match the epochs.
         """
         rows = self._whitened(list(data), params)
@@ -1792,7 +1756,7 @@ class AliasBandResult:
 
 
 def _unrecorded(value):
-    """Whether ``value`` is the [`UNRECORDED`][virgil.aliases.UNRECORDED]
+    """Whether ``value`` is the ``UNRECORDED``
     marker."""
     return isinstance(value, str) and value == UNRECORDED
 
@@ -1819,6 +1783,10 @@ def _chi2_entry(chi2, chi2_fit, n):
 class AliasResult:
     """Result of [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases].
 
+    [`save`][virgil.aliases.AliasResult.save] and [`load`][virgil.aliases.AliasResult.load] keep it as JSON. The settings the band accessors need
+    (``primary_diam``, ``vis_amp``, ``t_ref``) are copied into every band, so
+    ``scene``, ``residuals`` and ``chi2_per_night`` act on the best band.
+
     Attributes
     ----------
     t_ref : float
@@ -1826,79 +1794,39 @@ class AliasResult:
     times : numpy.ndarray
         The epochs' mean times (MJD).
     span : float
-        First-to-last epoch span T (days).
+        First-to-last epoch span (days).
     bands : list of AliasBandResult
         One per alias band, in order of decreasing ``log_z``.
     samples : dict
-        ``{N: {name: array}}`` posterior draws (importance resampling from
-        the modes' Laplace proposals) in the winning band and in every band
-        with ``p > p_min_samples``. Keys: ``period``, ``dt_peri``, ``ecc``,
-        ``inc``, ``omega``, ``Omega``, ``a_mas``, ``flux``.
+        ``{N: {name: array}}`` posterior draws in the winning band and in
+        every band with ``p > p_min_samples``.
     positions : list of dict or None
-        The position-level diagnostic per band, if positions were given.
-        Not saved by [`save`][virgil.aliases.AliasResult.save]: None after
-        a [`load`][virgil.aliases.AliasResult.load].
+        The position-level diagnostic per band; not saved, None after a load.
     primary_diam : float, ``"fit"`` or None
-        The primary of the fit's scene, as ``fit_orbit_aliases`` took it.
+        The primary of the fit's scene.
     vis_amp : tuple or None
-        The range of the per-epoch V² amplitude, if it was fitted.
+        The range of the per-epoch V^2 amplitude, if it was fitted.
     p_range : tuple of float or None
-        The period window (days) the bands tile: the argument, or
-        [`period_window`][virgil.aliases.period_window]'s.
+        The period window (days) the bands tile.
     period_bound : bool
-        The best period is at the upper end of ``p_range``, or the best
-        mode's Laplace σ(log P) is at least a quarter of the window's width
-        in log P: P is unconstrained (a short arc).
+        The period is unconstrained (a short arc): the best period is at the
+        top of ``p_range``, or its sigma(log P) spans a quarter of the window.
     period_at_lower_bound : bool
-        The best period is within 10% of the lower end of ``p_range``: the
-        window's sampling limit (see
-        [`period_window`][virgil.aliases.period_window]) may have cut the
-        true period.
+        The best period is at the bottom of ``p_range``, where the sampling
+        limit may have cut the true period.
     window_capped : float or None
-        For the default window, the lower end that was wanted when it held
-        more than ``n_bands_max`` bands and was raised to fit (so
-        ``p_range[0]`` is above it); None otherwise.
+        The lower end wanted for a default window that held more than
+        ``n_bands_max`` bands and was raised to fit.
     primary_fit : dict or None
-        The ``primary_diam="auto"`` estimate: ``diam``, ``sigma``,
-        ``delta_nats``, ``resolved`` and ``at_grid_edge`` (see
-        [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter]);
-        None otherwise.
-    temper_f : float or None
-        The pooled effective-channel factor ``f = N / N_eff`` the likelihood
-        was tempered by (``1/f``; see
-        [`virgil.tempering`][virgil.tempering]); 1 for white noise or a
-        single channel; None when no tempering was applied or estimated
-        (``temper=False``, or a file written before 1d).
-    temper_blocks : dict or None
-        ``{block name: f_b}`` actually used (``"vis"``, ``"phi"``, ...).
-    temper_f_raw : float or None
-        The lowest unfloored factor (pooled and per block) before the floor
-        at 1 (tempering never sharpens): below 1 for anticorrelated
-        residuals, which set ``tempering`` when below 0.5.
-    temper_rho : dict or None
-        ``{block name: [ρ1, ρ2, m]}``: the lag-1 and lag-2 correlations of
-        neighbouring channels' residuals (m pairs behind ρ2), plus ``"pooled"``. Diagnostics,
-        not inputs of ``f``: an AR(1) chain has ρ2 = ρ1², a flat
-        (common-mode or misfit) one ρ2 ≈ ρ1, which sets ``tempering`` and
-        warns (``tempering.flat_signature``).
+        The ``primary_diam="auto"`` estimate (``diam``, ``sigma``, ``resolved``,
+        ...; see [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter]).
+    temper_f, temper_blocks, temper_f_raw, temper_rho : optional
+        The tempering of the likelihood: the pooled factor ``f``, the factor of
+        each block, the lowest unfloored factor, and the lag correlations of
+        the residuals (see [`virgil.tempering`][virgil.tempering]).
     unseeded : tuple of dict
-        The nights that were flagged by
-        [`epoch_positions`][virgil.epochs.epoch_positions] and so seeded
-        nothing: ``{"name", "mjd", "flags": [{"code", "reason"}, ...]}``.
-        Their data still count in every band's likelihood. Empty when
-        nothing was skipped (also for ``positions`` that were not an
-        ``EpochPositions``). Kept by ``save`` and ``load``.
-
-    Notes
-    -----
-    ``primary_diam`` and ``vis_amp`` (and ``t_ref``) are copied into every
-    band that lacks them, so the band accessors
-    ([`scene`][virgil.aliases.AliasResult.scene],
-    [`residuals`][virgil.aliases.AliasResult.residuals] and
-    [`chi2_per_night`][virgil.aliases.AliasResult.chi2_per_night], which
-    delegate to ``best``) can rebuild the scene without the fit's
-    settings. A result written by [`save`][virgil.aliases.AliasResult.save]
-    and read back by [`load`][virgil.aliases.AliasResult.load] keeps them.
+        The nights flagged by [`epoch_positions`][virgil.epochs.epoch_positions] that seeded nothing; their data
+        still count in every band's likelihood.
     """
 
     t_ref: float
@@ -2021,6 +1949,7 @@ class AliasResult:
         """The JSON-ready dict of ``to_json`` and ``save``: ``n_samples``
         draws per band (all if None)."""
         return dict(
+            format=_RESULT_FORMAT,
             t_ref=self.t_ref,
             times=self.times.tolist(),
             span=self.span,
@@ -2093,7 +2022,7 @@ class AliasResult:
         primary_diam, vis_amp : optional
             The fit's settings, for a file written before they were saved
             (they would otherwise stay
-            [`UNRECORDED`][virgil.aliases.UNRECORDED], except that a
+            ``UNRECORDED``, except that a
             fitted diameter is recognized from the best orbit, and the accessors
             would raise instead of guessing a point primary or no V²
             amplitude). Given for a file that does record them, they
@@ -2111,6 +2040,12 @@ class AliasResult:
         """
         with open(path) as f:
             p = json.load(f)
+        fmt = p.get("format", 0)  # a file without the field is legacy
+        if not isinstance(fmt, int) or fmt > _RESULT_FORMAT:
+            raise ValueError(
+                f"{path} has AliasResult format {fmt!r}, newer than this "
+                f"virgil reads (up to {_RESULT_FORMAT}): upgrade virgil."
+            )
         bands = [_band_from_dict(d) for d in p["band_details"]]
         saved = p.get("vis_amp", UNRECORDED)
         recorded = dict(
@@ -2175,7 +2110,7 @@ def _band_from_dict(d):
     every other non-finite number (``p``, ``chi2_red``, a mode's
     ``loglike``, ``sigma`` and ``x``, the per-epoch numbers) is NaN, so
     that the two stay distinct. Settings the file did not record are
-    [`UNRECORDED`][virgil.aliases.UNRECORDED]."""
+    ``UNRECORDED``."""
     names = {f.name for f in dataclasses.fields(AliasBandResult)}
     d = {k: v for k, v in d.items() if k in names}
     for k in ("primary_diam", "vis_amp"):
@@ -2789,268 +2724,63 @@ def fit_orbit_aliases(
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
+    Each alias band (an integer number of orbits between the epochs) is fitted
+    to all epochs, with a point companion on a Keplerian orbit
+    ([`OrbitalBinary`][virgil.models.OrbitalBinary]), and given an evidence. The
+    [orbit tutorial](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults)
+    gives the reasons for the defaults.
+
     Parameters
     ----------
     data : sequence of OIData
-        One dataset per epoch, with per-exposure times. The scene is a
-        primary and a point companion on a Keplerian orbit
-        ([`OrbitalBinary`][virgil.models.OrbitalBinary]).
+        One dataset per epoch, with per-exposure times.
     p_range : (float, float), optional
-        The shortest and longest period (days): the log-uniform prior on P.
-        By default (None) it is computed from the data by
-        [`period_window`][virgil.aliases.period_window]. The lower end is a
-        Nyquist-style sampling limit: a night is a snapshot, so the
-        companion may not move more than half the resolution during it
-        (``2π field night / (0.5 resolution)``, with ``field`` the median
-        separation of the unflagged night positions, or λ/B_min without
-        positions, at most ``a_range[1]``, and ``night`` the longest run of
-        frames with no gap above half a day), and at least 0.2 d. The upper
-        end is 4 times the span. It uses no published information. The
-        window is logged at INFO. A window that starts above 5 nights'
-        length warns; one with more than ``n_bands_max`` alias bands is
-        warned about and its lower end raised to fit (``window_capped``).
-        The result has ``period_bound=True`` when the best period sits at
-        the upper end (or its σ(log P) spans a quarter of the window): the
-        period is unconstrained (a short arc); and
-        ``period_at_lower_bound=True`` when it sits at the lower end.
+        Shortest and longest period (days; log-uniform prior); by default
+        [`period_window`][virgil.aliases.period_window] takes it from the data.
     positions : PositionData or EpochPositions, optional
-        Per-epoch positions: ``PositionData``, or the
-        [`EpochPositions`][virgil.epochs.EpochPositions] of
-        [`epoch_positions`][virgil.epochs.epoch_positions] for the same
-        ``data`` (then its night flags apply, see ``skip_flagged``). They
-        seed each band's fits through Thiele–Innes grids
-        ([`position_profile`][virgil.aliases.position_profile]); without them
-        the candidates are random orbits.
-    times : array-like, optional
-        Epoch times (MJD) used for the bands and distinctness; by default
-        each dataset's mean time.
-    t_ref : float, optional
-        Reference MJD of ``dt_peri``; by default the mean epoch.
-    a_range, flux_range : (float, float), optional
-        Log-uniform prior ranges of the semimajor axis (mas) and the
-        companion/primary flux.
-    ecc_max : float, optional
-        Eccentricity is uniform on ``[0, ecc_max]``.
-    sign_free : bool, optional
-        Explore the label swap (default True; solved problem 8: twins such
-        as AL Dor). A companion nearly as bright as the primary leaves each
-        epoch's position known only up to a sign (the point reflection), so
-        the seeds add sign-free Thiele–Innes orbits to the signed ones (the
-        signs that closure phases fix for a contrast pair are kept) and
-        flux seeds near ``flux_range[1]`` are tried. With both labelings in
-        the pool, a band whose best mode has a reflected partner of
-        comparable evidence (within ``LABELS_FREE_NATS``, 3 nats, and the
-        tracks within a quarter of λ/B_max) is marked ``labels_free``
-        (``AliasBandResult.labels_free``, ``AliasResult.labels_free``), so a
-        comparison with another orbit may accept the reflection. The cost
-        is twice the seed orbits and half as many fluxes again; False
-        restores the signed seeds only.
-    s_max : float, optional
-        Bound on the error scales, as in
-        [`marginal_loglike`][virgil.epochs.marginal_loglike].
-    n_candidates : int, optional
-        Position-level candidate orbits per band (each in both senses of
-        motion and at several fluxes), ranked by the observables.
-    n_refine : int, optional
-        The best distinct candidates per band that are refined into modes.
-    n_random : int, optional
-        Extra random candidates per band; by default 1000 without
-        ``positions``, 200 beside positions from three or fewer seeding
-        nights (a few positions are loosely determined, and one wrong
-        night misleads them all) and none beside more. When fewer than two
-        nights can seed (one unflagged night, or every night flagged) the
-        positions are dropped with a warning and at least 200 random
-        candidates are used, even if ``n_random=0``.
-    min_distance_mas : float, optional
-        Fitted modes whose tracks at the epochs differ by less are one mode.
-    max_steps : int, optional
-        Iterations of the optimizer for each start (default 200); see the
-        Notes.
-    n_is : int, optional
-        Importance draws per mode.
-    n_samples : int, optional
-        Posterior draws per reported band.
-    p_min_samples : float, optional
-        Bands with at least this probability get posterior samples (and the
-        winner always does).
-    flag_nats : float, optional
-        A band gets the flag ``laplace-is-differ`` when its Laplace and
-        importance-sampling log evidences differ by more than this.
-    checkpoint_dir : path-like, optional
-        Each finished band is written here (``band_<N>.pkl`` for reuse and
-        ``band_<N>.json`` to read) before the next starts. A rerun with the
-        same data (every field), positions, ranges and settings loads the
-        finished bands instead of refitting them; a band that raised is not
-        saved, so it is retried.
-    on_band : callable, optional
-        Called with each band's
-        [`AliasBandResult`][virgil.aliases.AliasBandResult] as soon as it is
-        fitted or loaded (``p`` is not yet set: it needs all bands).
-
+        Per-epoch positions that seed each band's fits (else random orbits).
+    times, t_ref, a_range, flux_range, ecc_max, s_max : optional
+        Epoch times (MJD; default each dataset's mean), the reference MJD of
+        ``dt_peri``, the prior ranges of the semimajor axis (mas) and flux
+        ratio, the maximum eccentricity, and the bound on the error scales
+        ([`marginal_loglike`][virgil.epochs.marginal_loglike]).
+    n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, seed, flag_nats, ess_min : optional
+        Search effort per band (candidates, refined, random, mode distinct-
+        ness, optimizer steps), the importance and posterior draws, the
+        probability above which a band gets draws, the seed, and the flag
+        thresholds ``laplace-is-differ`` and ``low-ess``.
+    checkpoint_dir, on_band, init : optional
+        A directory for finished bands (a rerun loads them), a callback for each
+        [`AliasBandResult`][virgil.aliases.AliasBandResult], and a warm start
+        (orbit and flux ratio) for every band.
     primary_diam : float, "fit", "auto" or None, optional
-        The primary's uniform-disk diameter (mas). ``"auto"`` (default;
-        solved problem 10, ι Peg's 1.05 mas primary) fits a diameter when
-        the data resolve the primary and uses a point primary otherwise: a
-        cheap first pass
-        ([`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter])
-        fits a shared diameter to the per-night ``positions``; the primary
-        is resolved when it improves the summed scale-marginalized score by
-        at least 5 nats over a point. If so the engine fits the diameter
-        (as ``"fit"``, with lower bound effectively 0, starting from the
-        estimate) and the seeds are the positions re-refined with the
-        estimated diameter, so that seeds and engine share one primary; the
-        estimate is in ``AliasResult.primary_fit``. The first pass costs a
-        few dozen small per-night fits (about a tenth of a second each
-        after compilation, a few seconds to compile) and uses the same
-        per-night V² amplitude as the fit. Without ``EpochPositions``
-        ``"auto"`` has nothing to estimate from: it warns, is a point
-        primary and records ``primary_fit = dict(resolved=None, reason=...)``.
-        ``EpochPositions`` refined at a fixed ``primary_diam`` that the
-        data do not resolve are kept, with a warning, and the fit uses a
-        point primary. ``None`` or 0 is a point source (the fast path); a
-        float fixes it; ``"fit"`` samples one shared diameter, log-uniform
-        over ``diam_range``, as an extra coordinate (reported as ``diam``
-        in the band's ``best`` and the samples).
-    diam_range : (float, float), optional
-        Prior range (mas) of a fitted diameter: by default (0.05, 5) for
-        ``"fit"`` and, for ``"auto"``, 0.001 to 1.5 times the finest
-        fringe spacing λ/B_max (at least twice the estimate).
-    vis_amp : bool or (float, float), optional
-        Give every epoch's squared visibilities their own multiplicative
-        amplitude ``A`` (solved problem 13: a contrast loss that is the same
-        on every baseline and wavelength, unlike a resolved primary),
-        profiled analytically: the best ``A``, clipped to a range (which
-        only bounds it: no prior or Occam factor for ``A`` enters
-        ``log_z``, which is then a profile in ``A``; every band has the
-        same number of them). It is reported per epoch as ``vis_amp``. The
-        error scale of the epoch is kept.
-
-        ``True`` (default) uses the range (0.5, 1.2) when every dataset has
-        squared visibilities (``vis_mode="v2"``) and no amplitude
-        otherwise (closure phases only, say; the datasets that disqualify
-        it are logged at INFO). ``False`` or None never fits one. A range
-        ``(lo, hi)`` given explicitly always does, and raises for data
-        without squared visibilities.
-    flip_flux : bool, optional
-        On by default (solved problem 9: a companion brighter than the
-        primary). When a band's mode has its flux ratio at the top of
-        ``flux_range`` refit it with the stars' labels swapped
-        (ω + 180°, flux → 1/flux), since a ratio above 1 sits outside the
-        prior; the better result is kept and ``flipped`` is set on the band
-        if it won. It applies to a point primary without differential
-        phases only (otherwise the swap is not a relabelling) and acts on a
-        mode within 0.02 of the top in log flux.
-    skip_flagged : bool, optional
-        With ``EpochPositions``, a night flagged by ``epoch_positions``
-        (a single-night alias peak, a low gap, a χ²/N far above the median
-        night, an unresolved separation, a flux at its bound) **seeds
-        nothing**, but its data still count in the likelihood of every
-        band (default True). The skipped nights are recorded in
-        ``AliasResult.unseeded``. False seeds with every night. If every
-        night is flagged, the bands start from random orbits, with a
-        warning.
-    n_bands_max : int or None, optional
-        With the default ``p_range``, the most alias bands (each a set of
-        fits) of the window: a window with more warns and has its lower end
-        raised to fit (recorded in ``AliasResult.window_capped``). None
-        sets no cap. Not used with an explicit ``p_range``.
-    temper : bool or float, optional
-        Temper the likelihood for correlated spectral channels. ``True``
-        (default) estimates the factor ``f_b >= 1`` of every block from the
-        residuals of each night's best static fit (needs ``EpochPositions``;
-        one wavelength gives 1) and divides the block's log likelihood by it
-        ([`virgil.tempering`][virgil.tempering]). ``False`` or None is
-        untempered; a finite float ``f >= 1`` is a fixed factor, which also
-        tempers the ``primary_diam="auto"`` test. The result records ``f``
-        (``temper_f``, ``temper_blocks``, ``temper_rho``) and sets
-        ``tempering`` (with a warning) for a block ``f`` above 2, a raw
-        ``f`` below 0.5 or a flat correlation. ``LABELS_FREE_NATS`` and
-        ``RESOLVE_NATS`` are in tempered nats.
-    init : (KeplerOrbit, float) or dict, optional
-        A warm start: an orbit and flux ratio, or a dict with ``period``,
-        ``dt_peri`` (relative to ``t_ref``), ``ecc``, ``inc``, ``omega``,
-        ``Omega``, ``a_mas`` and ``flux``. It joins every band's candidate
-        pool, and is refined in the band that contains its period whatever
-        its rank.
+        The primary's uniform-disk diameter (mas): ``"auto"`` (default) fits
+        one when the data resolve it, a float fixes it, ``"fit"`` samples it
+        (prior ``diam_range``), None is a point.
+    vis_amp, sign_free, flip_flux, skip_flagged : optional
+        Profile a per-epoch V^2 amplitude (a range, default (0.5, 1.2)); seed
+        with sign-free orbits, and refit a flux ratio at the prior's top with
+        the labels swapped (near-equal stars); let flagged nights seed nothing.
+    n_bands_max, temper : optional
+        The most bands of a default ``p_range`` (a longer window is cut), and
+        the tempering for correlated channels
+        ([`virgil.tempering`][virgil.tempering]): estimated, a factor, or off.
 
     Returns
     -------
     AliasResult
-        Besides the bands: ``labels_free`` (the stars' labels are not
-        determined), ``period_bound`` (the best period is at the upper end
-        of ``p_range``: P unconstrained, a short arc), ``p_range`` (the
-        window used), ``period_at_lower_bound``, ``window_capped`` and
-        ``primary_fit`` (the ``"auto"`` estimate).
+        The bands, with evidences, probabilities and diagnostics.
 
     Raises
     ------
     RuntimeError
         If every band fails (chained to the last error).
     ValueError
-        If no band lies within ``p_range``, or ``checkpoint_dir`` is given
-        and the data or positions cannot be hashed.
-        Also whatever the preflight likelihood evaluation raises
-        (misconfiguration), before any band is fitted.
+        If no band lies within ``p_range``.
 
-    Notes
-    -----
-    A band that raises is kept as a ``band-failed`` row (``error`` holds the
-    exception) with ``log_z = -inf``; the other bands are unaffected, unless
-    all fail. Misconfiguration surfaces first: the likelihood and its
-    gradient are evaluated once at the centre of the first band before any
-    band is fitted, so an error there propagates unchanged, and so does a
-    ``TypeError`` anywhere. Any other exception in a band is isolated. An
-    optimizer start that raises is dropped and counted (flag
-    ``starts-failed``, ``n_starts_failed``); if every start of a band
-    fails the band fails.
-
-    The band evidence ``log_z`` is the sum, over the band's distinct fitted
-    modes (both senses of motion; the (Ω+180, ω+180) mirror is folded
-    away by ``Ω < 180``), of the Laplace approximation to the marginal
-    likelihood of the scale-marginalized closure-phase (and visibility)
-    likelihood, times the proper prior. A mode on a prior bound (a period
-    edge between bands) uses its importance-sampling value instead, which
-    truncates the target at the bound. It misses modes the multistart does
-    not find. ``log_z_is`` is the importance-sampling estimate from the
-    deterministic mixture of the modes' Student-t proposals (so overlapping
-    tails are not counted twice), and the posterior samples are resampled
-    with the same weights, with the mirror folded.
-
-    The mixture is an approximation: each mode's Student-t proposal is
-    evaluated without periodic images of the angles, and each mode's draws
-    are restricted to its own window (within half a period of the mode).
-    When modes straddle the Ω fold, ``log_z_is`` and the resampled draws can
-    be slightly biased. ``log_z``, which uses the Laplace value except near
-    prior bounds, is unaffected.
-
-    Each start is optimized by damped Newton (Levenberg–Marquardt) steps
-    on the scale-marginalized log likelihood. Its curvature is that of
-    iteratively reweighted least squares: each observable block's
-    residuals weighted by the slope of the log likelihood in its χ² (for
-    ``s_max=None``, 1/ŝ² with ŝ² = χ²/ν the error scale those residuals
-    imply), and the profiled V² amplitude differentiated through.
-    A step is kept only if the log likelihood rises, so the curvature
-    sets the speed and not the optimum. If a start does not converge in
-    ``max_steps`` (or stalls), L-BFGS-B continues from where it stopped,
-    and the damped Newton steps polish its result.
-
-    ``flags`` lists why a band should not be trusted:
-    ``near-prior-bound``, ``not-converged`` (the optimizer stopped more
-    than 0.1σ from a stationary point), ``hessian-not-positive-definite``,
-    ``hessian-singular``, ``band-failed`` (an exception in the band; the
-    others are unaffected), ``starts-failed`` (some optimizer start raised),
-    ``laplace-is-differ``, ``low-ess`` (best mode's ESS below ``ess_min``),
-    ``no-valid-mode`` and ``poor-fit``. ``chi2_red`` is the raw χ²/ν on the
-    quoted errors at the best mode, before any error scale.
-
-    ``poor-fit`` is set on the winning band only, with a ``UserWarning``,
-    when its ``chi2_red`` exceeds 10: the fits missed the orbit, or the
-    errors are underestimated by more than 3x (the per-epoch error scales
-    absorb smaller underestimates without a flag).
-
-    Without ``s_max`` the Jeffreys prior on each error scale is improper, so
-    the absolute ``log_z`` is defined only up to a constant shared by all
-    bands (``p`` and differences are meaningful).
+    Examples
+    --------
+    >>> result = fit_orbit_aliases(data, positions=positions)  # doctest: +SKIP
     """
     data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (
@@ -3063,9 +2793,8 @@ def fit_orbit_aliases(
         if t_ref is None
         else float(t_ref)
     )
-    # Period window (problem 5): without p_range, the window follows from
-    # the data (a Nyquist-style limit on within-night motion, and 4x the
-    # span), never from a published period.
+    # AGENTS.md, "Period window from the data" row: without p_range, the
+    # window follows from the data alone.
     window_capped = None
     if p_range is None:
         night = _night_length(data)
@@ -3107,25 +2836,18 @@ def fit_orbit_aliases(
     bands = alias_bands(mean_times, p_range)
     if not bands:
         raise ValueError("No alias band lies within p_range.")
-    # V² amplitude (problem 13): per-night contrast loss, profiled; on by
-    # default for squared visibilities (a calibration loss otherwise looks
-    # like a wrong flux or a resolved primary), and shared by the first
-    # pass of ``primary_diam="auto"``.
+    # AGENTS.md, "V² amplitude" row: per-night contrast loss, profiled; shared
+    # by the first pass of ``primary_diam="auto"``.
     if isinstance(vis_amp, (bool, onp.bool_)):
         vis_amp = _default_vis_amp(data) if vis_amp else None
     if vis_amp is not None:
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:
             raise ValueError("vis_amp must be (lo, hi) with 0 < lo < hi.")
-    # Resolved primary (problem 10): a first pass estimates the UD diameter
-    # and reseeds the per-night positions with it, so that the seeds and the
-    # engine share one primary (a point primary biases a resolved star's
-    # seeds, ι Peg 1.05 mas).
-    # Tempering (see AGENTS.md, solved problems): the factors f of the effective channels come
-    # from the residuals of the per-night fits at the primary that is
-    # finally chosen (a resolved primary fitted as a point is a smooth
-    # residual the channels share, and must not be tempered away before the
-    # disc that explains it is allowed).
+    # AGENTS.md, "Resolved primary in the orbit fit, automatically" row: a
+    # first pass estimates the diameter and reseeds the positions with it.
+    # AGENTS.md, "Untempered evidence" row: the factors f come from the
+    # residuals of the per-night fits at the primary finally chosen.
     factors, names = None, sorted({n for d in data for n in _Surface(d).names})
     estimate_f, fixed_f = False, False
     if isinstance(temper, (bool, onp.bool_)):
@@ -3225,18 +2947,15 @@ def fit_orbit_aliases(
             UserWarning,
             stacklevel=external_stacklevel(),
         )
-    # Single-night alias peaks: the true position is often not the best
-    # peak (Gl 229 2024-02-27 and 2024-03-28), so a flagged night must not
-    # seed the bands. Only its seed is dropped: ``data`` keeps the night,
-    # so the likelihood still sees it and can reject a wrong band.
+    # AGENTS.md, "Single-night alias peaks" row: a flagged night must not
+    # seed the bands; ``data`` keeps it, so the likelihood still sees it.
     seed_positions = positions
     positions, unseeded, fell_back = _seeding_positions(
         positions, t_ref, skip_flagged, mean_times
     )
     profile = None
     if positions is not None:
-        # Label swap (problem 8): sign_free (default) seeds both labelings,
-        # so a twin's reflected mode is found and can set ``labels_free``.
+        # AGENTS.md, "Label swap" row: sign_free seeds both labelings.
         profile = position_profile(
             positions,
             bands,
@@ -3340,9 +3059,8 @@ def fit_orbit_aliases(
     results = _band_probabilities(results)
     _check_fit_quality(results, k)
     samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
-    # A short arc (problem 5): the likelihood is flat towards long periods,
-    # so the best period sits at the top of the window (or has a σ(log P)
-    # that spans much of it): P is unconstrained.
+    # AGENTS.md, "Period window from the data" row: a short arc is flat
+    # towards long periods, so P is unconstrained (``period_bound``).
     period_bound, period_at_lower = _period_flags(results, p_range)
     return AliasResult(
         t_ref,

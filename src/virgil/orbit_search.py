@@ -42,6 +42,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
+from ._deprecate import old_order
 from ._precision import cast_tree, run_in
 from .epochs import (
     _SCALES,
@@ -930,9 +931,10 @@ def _peak_scales(scorers, chi2_peak, dofs, s_max):
     return onp.stack(scale, axis=1), onp.stack(at_bound, axis=1)
 
 
+@old_order("epochs", "model", data="epochs")
 def score_orbits(
-    epochs,
     model,
+    epochs,
     orbits,
     *,
     shared=None,
@@ -979,15 +981,17 @@ def score_orbits(
 
     Parameters
     ----------
-    epochs : Epochs
-        The data. Datasets without sample times (``mjd``) are evaluated at
-        their snapshot time (``Epochs.times``).
     model : callable
         ``model(orbit, flux)`` returns the time-dependent scene, e.g.
-        [`OrbitalBinary`][virgil.models.OrbitalBinary] itself. It must be
+        [`OrbitalBinary`][virgil.models.OrbitalBinary] itself. (Unlike
+        [`rank_orbits`][virgil.epochs.rank_orbits], whose
+        ``model(orbit)`` has a fixed flux.) It must be
         linear in ``flux`` (a component weight), and the scene at flux 0
         must not depend on the orbit; both are checked on the first and
         last candidates.
+    epochs : Epochs
+        The data. Datasets without sample times (``mjd``) are evaluated at
+        their snapshot time (``Epochs.times``).
     orbits : sequence or orbit
         A list of orbits (or ``starting_orbits`` pairs), or one orbit whose
         elements have a leading candidate axis. All share one class and
@@ -1020,6 +1024,8 @@ def score_orbits(
         fits almost exactly makes a narrow spike in the score, which can
         dominate the profile (``profiled``, ``flux``, ``slope``). A finite
         ``s_max`` bounds each block's gain at about ν ln s_max.
+        ``rank_orbits`` defaults to ``s_max=None`` because it has no flux
+        to profile, so no spike to bound.
     batch_size : int, optional
         Candidates evaluated together by ``jax.lax.map`` (default: as many
         as keep about a million model visibilities in memory at once,
@@ -1043,7 +1049,7 @@ def score_orbits(
 
     Examples
     --------
-    >>> scores = score_orbits(epochs, OrbitalBinary, candidates,
+    >>> scores = score_orbits(OrbitalBinary, epochs, candidates,
     ...                       shared=SharedFlux((0.01, 1.0, 16)))  # doctest: +SKIP
     >>> best = scores.order()[0]  # doctest: +SKIP
     >>> scores.flux[best], scores.flux_err[best]  # doctest: +SKIP
