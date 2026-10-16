@@ -658,8 +658,9 @@ def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
         "f2": 0.4,
     }
     wrong = disk._fit_rings(pipeline, shape, start)
-    better = disk._backfit(pipeline, shape, wrong)
+    better, steps = disk._backfit(pipeline, shape, wrong)
     assert better.chi2 <= wrong.chi2
+    assert any(s["accepted"] for s in steps)
     radii = sorted(float(better.values[f"r{i}"]) for i in (1, 2))
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
@@ -703,11 +704,14 @@ def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):
         "s2": 1.0,
         "f2": 0.4,
     }
-    plain, _, _ = disk._fit_with_planet(pipeline, shape, start)
-    fit, found, search = disk._fit_with_planet(
+    plain, _, _, _ = disk._fit_with_planet(pipeline, shape, start)
+    fit, found, search, steps = disk._fit_with_planet(
         pipeline, shape, start, backfit=True
     )
     assert found.planet and search is not None
+    assert steps and {"ring", "scan_r", "delta_bic", "accepted"} <= set(
+        steps[0]
+    )
     assert fit.chi2 <= plain.chi2
     radii = sorted(float(fit.values[f"r{i}"]) for i in (1, 2))
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)

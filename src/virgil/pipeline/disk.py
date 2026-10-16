@@ -1197,9 +1197,10 @@ def _fit_with_planet(p, shape, start, backfit=False):
 
     With ``backfit`` the rings are then re-placed (``_backfit``) in the scene
     that is returned, planet included: the objective is the one reported, so
-    the back-fit can only lower it. Returns ``(fit, shape, search)``: the
-    search result is None unless ``companion`` is on, and the returned shape
-    has the planet if the search found one.
+    the back-fit can only lower it. Returns ``(fit, shape, search, steps)``:
+    the search result is None unless ``companion`` is on, the returned shape
+    has the planet if the search found one, and ``steps`` records each
+    back-fit step (empty without ``backfit``).
     """
     ctx = p._ctx()
     fit = _fit_rings(p, shape, start)
@@ -1212,9 +1213,10 @@ def _fit_with_planet(p, shape, start, backfit=False):
             shape = dataclasses.replace(shape, planet=True)
             values = {**_scalars(fit.values), **_planet_start(search, ctx)}
             fit = _fit_rings(p, shape, values)
+    steps = []
     if backfit:
-        fit = _backfit(p, shape, fit)
-    return fit, shape, search
+        fit, steps = _backfit(p, shape, fit)
+    return fit, shape, search, steps
 
 
 _RING_KEY = re.compile(r"^(?:[rsfa]|h)(\d+)(?:_(?:re|im)\d+)?$")
@@ -1244,13 +1246,19 @@ def _backfit(p, shape, fit):
     left away from where the others would put it once they are all there. For
     each ring in turn this drops it, scans for the best radius of a ring added
     to the rest on a grid twice as fine as the first scan's, refits every
-    parameter from there and keeps the result if the BIC is lower. A pass
-    that changes nothing ends it, as does ``_BACKFIT_PASSES``.
+    parameter (geometry included) from there and keeps the result if the BIC
+    falls by more than ``_BACKFIT_MIN_GAIN``. A pass that changes nothing ends
+    it, as does ``_BACKFIT_PASSES``.
+
+    Returns ``(fit, steps)``; each step records the pass, the ring dropped and
+    its radius, the scan's best radius and flux, the refit's χ², geometry and
+    radii, the BIC change (negative is better) and whether it was kept.
     """
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
+    steps = []
     if shape.n < 2:
-        return fit
-    for _ in range(_BACKFIT_PASSES):
+        return fit, steps
+    for sweep in range(1, _BACKFIT_PASSES + 1):
         improved = False
         for k in range(1, shape.n + 1):
             held = _without_ring(_scalars(fit.values), k)
@@ -1262,11 +1270,32 @@ def _backfit(p, shape, fit):
                 ctx, held, shape.n, new, ctx.degree, ctx.colour
             )
             trial = _fit_rings(p, shape, start)
-            if _bic(trial, n_data) < _bic(fit, n_data) - _BACKFIT_MIN_GAIN:
+            d_bic = _bic(trial, n_data) - _bic(fit, n_data)
+            accepted = d_bic < -_BACKFIT_MIN_GAIN
+            steps.append(
+                {
+                    "pass": sweep,
+                    "ring": k,
+                    "dropped_r": float(fit.values[f"r{k}"]),
+                    "scan_r": new["r"],
+                    "scan_f": new["f"],
+                    "chi2_reduced": trial.chi2 / n_data,
+                    "inc": float(trial.values["inc"]),
+                    "pa": float(trial.values["pa"]),
+                    "radii": [
+                        float(trial.values[f"r{i}"])
+                        for i in range(1, shape.n + 1)
+                    ],
+                    "delta_bic": d_bic,
+                    "converged": trial.info.get("converged"),
+                    "accepted": accepted,
+                }
+            )
+            if accepted:
                 fit, improved = trial, True
         if not improved:
             break
-    return fit
+    return fit, steps
 
 
 def _profile_rings(p):
@@ -1290,7 +1319,9 @@ def _profile_rings(p):
         else:
             new = _scan_new_ring(p, ctx, shape, _fill_new(ctx, held, n))
             start = _ring_start(ctx, held, n, new, ctx.degree, ctx.colour)
-        fit, shape, search = _fit_with_planet(p, shape, start, backfit=True)
+        fit, shape, search, steps = _fit_with_planet(
+            p, shape, start, backfit=True
+        )
         if search is not None:
             searches.append({"rings": n, **search})
         previous = _scalars(fit.values)
@@ -1308,6 +1339,7 @@ def _profile_rings(p):
                 "bic": _bic(fit, n_data),
                 "converged": fit.info.get("converged"),
                 "planet": shape.planet,
+                "backfit": steps,
             }
         )
         if n > 1 and candidates[-1]["bic"] >= candidates[-2]["bic"]:
