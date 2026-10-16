@@ -58,6 +58,12 @@ def _warn_if_not_positive_definite(matrix, what):
         )
 
 
+def _add_ridge(matrix, ridge):
+    """``matrix + max(ridge, 0) * I``."""
+    ident = np.eye(matrix.shape[-1], dtype=matrix.dtype)
+    return matrix + np.maximum(ridge, 0.0) * ident
+
+
 def hessian_matrix(objective, x):
     """Return the Hessian matrix of ``objective`` evaluated at ``x``.
 
@@ -80,9 +86,7 @@ def regularized_inverse(matrix, ridge=1e-10):
     matrix is not positive definite, since its inverse is then not a
     covariance.
     """
-    matrix = np.asarray(matrix, dtype=float)
-    ident = np.eye(matrix.shape[-1], dtype=matrix.dtype)
-    regularized = matrix + np.maximum(ridge, 0.0) * ident
+    regularized = _add_ridge(np.asarray(matrix, dtype=float), ridge)
     _warn_if_not_positive_definite(regularized, "matrix to invert")
     return np.linalg.inv(regularized)
 
@@ -144,8 +148,7 @@ def expected_fisher(prediction_fn, params, errors, ridge=0.0):
 
     weighted_jacobian = jacobian / errors[:, None]
     information = weighted_jacobian.T @ weighted_jacobian
-    ident = np.eye(information.shape[-1], dtype=information.dtype)
-    return information + np.maximum(ridge, 0.0) * ident, unravel
+    return _add_ridge(information, ridge), unravel
 
 
 def fisher_projection(fmat, eps=1e-12):
@@ -207,8 +210,11 @@ def _leaf_shapes(params, model):
     return None if all(s == () for s in shapes) else shapes
 
 
-def _split(values, shapes):
-    """Cut a flat ``values`` into one array per path (``shapes`` not None)."""
+def _unpack(values, shapes):
+    """Cut a flat ``values`` into one array per path; ``values`` itself if
+    ``shapes`` is None."""
+    if shapes is None:
+        return values
     sizes = [int(onp.prod(shape, dtype=int)) for shape in shapes]
     if sum(sizes) != values.shape[0]:
         raise ValueError(
@@ -220,10 +226,6 @@ def _split(values, shapes):
         out.append(values[start : start + size].reshape(shape))
         start += size
     return out
-
-
-def _unpack(values, shapes):
-    return values if shapes is None else _split(values, shapes)
 
 
 @eqx.filter_jit
@@ -412,11 +414,14 @@ def observed_information(
         of parameter elements.
     """
 
-    def add_ridge(information):
-        ident = np.eye(information.shape[-1], dtype=information.dtype)
-        return information + np.maximum(ridge, 0.0) * ident
-
-    return _hessian_then(add_ridge, values, params, data, model, dtype)
+    return _hessian_then(
+        lambda hess: _add_ridge(hess, ridge),
+        values,
+        params,
+        data,
+        model,
+        dtype,
+    )
 
 
 # Names before 0.4 (released in 0.3.0); they stop working in 0.5.

@@ -166,11 +166,7 @@ def _laplace_started(base):
         def gaussian(self, params):
             """The affine part (centre and Cholesky factor in z): the whole
             guide when there is no flow."""
-            start = (
-                onp.identity(self.latent_dim)
-                if self.start_tril is None
-                else onp.asarray(self.start_tril)
-            )
+            start = onp.asarray(self._start())
             shift = onp.asarray(params[f"{self.prefix}_shift"])
             tril = onp.asarray(params[f"{self.prefix}_scale_tril"])
             return onp.asarray(self._init_latent) + start @ shift, start @ tril
@@ -210,17 +206,12 @@ def _start_scale(
     flat,
     init_scale,
 ):
-    """The Cholesky factor of the guide's starting covariance, and whether it is
-    dense: ``(L, dense)``.
-
-    The Gauss–Newton covariance at ``values`` for the sites the guide covers,
-    ``init_scale`` times the identity for any others. More than
-    ``fitting._DENSE_MASS_MAX`` coordinates raise ``ValueError``.
-    """
+    """``(L, dense)``: the Cholesky factor of the guide's starting covariance
+    (Gauss–Newton at ``values`` for the sites the guide covers, ``init_scale``
+    times the identity elsewhere) and whether it is dense."""
     n = guide_obj.latent_dim
     _check_dense_size(n, "The guide's starting width", _DENSE_HINT)
-    # The guide's own map from its latent vector to sites gives each
-    # site's indices in it, whatever order numpyro packs them in.
+    # Each site's indices in the latent vector, in numpyro's packing order.
     index = guide_obj._unpack_latent(np.arange(n, dtype=float))
     latent_index = {k: onp.asarray(v, int).ravel() for k, v in index.items()}
     sizes = {k: v.size for k, v in latent_index.items()}
