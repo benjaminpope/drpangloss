@@ -25,7 +25,7 @@ from virgil.oifits import read_oifits
 record = read_oifits(
     "gravity.fits",
     insname="GRAVITY_SC",
-    extras=("flux", "t3amp", "visamp", "visphi"),
+    extras=("flux", "t3amp", "visphi"),
 )
 data = OIData(record)
 # State the grey scale's prior, in the data's units (here Jy): required for
@@ -33,6 +33,8 @@ data = OIData(record)
 data = data.with_flux_scale(scale=(2.0, 2.0))
 [block.kind for block in data.extras]
 ```
+
+The example does not also read `"visamp"`: GRAVITY's `VIS2` and `VISAMP` come from the same frames, so reading both would count the visibility information twice (see the note after the table).
 
 | `extras` | Table and column | Model |
 |---|---|---|
@@ -178,7 +180,7 @@ pipeline's, then N N_pipe = N, so re-normalizing the data does no harm.
 
 ```python
 continuum = [(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)]
-line = [(2.163e-6, 2.169e-6)]
+# `line` is the window defined with the fit above.
 data = data.with_continuum(
     continuum=continuum,
     lines=line,

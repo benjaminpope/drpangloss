@@ -36,7 +36,7 @@ import jax
 import matplotlib.pyplot as plt
 import numpy as onp
 import numpyro.distributions as dist
-from numpyro.diagnostics import gelman_rubin
+from numpyro.diagnostics import split_gelman_rubin
 from numpyro.infer import MCMC, NUTS, init_to_value
 
 from virgil.coverage import vlti_oidata
@@ -190,7 +190,7 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 limb-darkened: diam = 6.022 mas, chi2 per point 0.79 (234 points)
 ```
 
-A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS: `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
+A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS, four chains that all start at the best fit (so the split R-hat printed below checks that they mix within and between chains from a common start, not that they converge from dispersed ones): `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
 
 ```python
 kernel = NUTS(
@@ -209,10 +209,10 @@ mcmc = MCMC(
 mcmc.run(jax.random.PRNGKey(4))
 posterior = mcmc.get_samples()  # the four chains together
 r_hat = max(
-    float(gelman_rubin(v))
+    float(split_gelman_rubin(v))
     for v in mcmc.get_samples(group_by_chain=True).values()
 )
-print(f"largest r_hat over the four chains: {r_hat:.2f}")
+print(f"largest split r_hat over the four chains: {r_hat:.2f}")
 samples = QuadraticLimbDarkenedDisk(
     posterior["diam"], q1=posterior["q1"], q2=posterior["q2"]
 )
