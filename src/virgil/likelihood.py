@@ -86,70 +86,16 @@ def _whiten_with_log_norm(
 ):
     """Whitened residuals, effective errors, and the marginal log-normalizer.
 
-    Returns ``(whitened, errors_out, log_norm)``. ``log_norm`` is the part
-    of ``Σ log errors_out`` that comes from marginalized linear nuisances
-    and so may depend on the model: ½ log det of the gains' and the
-    closure offsets' covariance factors (``Σ extra`` of
-    [`GainModes.whiten`][virgil.gains.GainModes.whiten] and
-    [`ClosureOffsets.whiten`][virgil.gains.ClosureOffsets.whiten]), and
-    for each extra observable block ``Σ log(errors_out / errors)``. It is
-    zero for visibilities and phases without gains or offsets. The rest of
-    the normalizer (the quoted errors, the von Mises and correlated
-    closure-phase terms) depends only on the data and error terms.
-
-    Residuals are
-    ``(prediction - reference) / errors``, except:
-
-    - With gains (``OIData.gains``), the visibility residuals are whitened
-      by their covariance with the gains marginalized (see
-      [`virgil.gains`][virgil.gains]), with widths from ``gain_terms``
-      (``vis_gain_<group>``) or the defaults. ``errors_out`` then holds
-      effective errors whose log-sum is ½ log of that covariance's
-      determinant.
-
-    - An unprojected phase residual Δ becomes 2 sin(Δ/2). Its square,
-      2(1 - cos Δ), equals Δ² to fourth order, repeats every 2π and is
-      smooth at ±π, so the Gaussian likelihood built on it is a von Mises
-      likelihood with concentration κ = 1/σ². Its exact normalizer,
-      -log(2π I₀(κ)) + κ = -log 2π - log i0e(κ), is returned as the
-      effective error √(2π) i0e(κ), so that ``_gaussian_loglike`` gives a
-      density normalized on the circle; for σ ≪ 1 this is σ. Projected
-      (kernel or DISCO) phases are linear combinations that are not
-      wrapped, and are left as Δ.
-    - Closure phases from four or more telescopes are correlated, and only
-      some are independent. A chord changes sign under Δ → Δ + 2π, which
-      is harmless in a single square but not in correlated cross terms
-      (wrapping the residuals first just moves the discontinuity to
-      ±π). So the sines s = sin Δ, which are smooth and 2π-periodic, are
-      mapped to the independent combinations and whitened with the
-      covariance (``OIData.cp_noise``): ``k`` residuals, fewer than the
-      closure phases. Then, for each closure phase, a periodic penalty
-      q/σ = 2 sin²(Δ/2)/σ = (1 - cos Δ)/σ is appended, uncorrelated, so
-      there are ``n_phase`` more residuals (``OIData.n_residuals`` in all).
-      Near Δ = 0, sin Δ = Δ - Δ³/6 and q/σ = Δ²/(2σ), so the χ² is the
-      correlated Gaussian ΔᵀC⁻¹Δ to O(Δ³), with the penalty adding only
-      O(Δ⁴/σ²). At Δ = π the sines vanish, which alone would be a false
-      minimum; the penalty there is (2/σ)², which removes it. The
-      penalty rows carry the effective error 1/√(2π), so that they add
-      nothing to the normalization (their ``-log σ - ½ log 2π`` is zero);
-      ``errors_out`` for the whitened rows holds effective errors whose
-      log-sum is ½ log of the covariance's pseudo-determinant, keeping the
-      Gaussian normalizer (a correlated von Mises density has no
-      closed-form one, and the Gaussian is its limit for σ ≪ 1).
-      With closure-phase offsets (``OIData.phase_offsets``), the whitened
-      sines are whitened again for the offsets' covariance (see
-      [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with widths from
-      ``offset_terms`` (``phi_offset_<group>``) or the defaults; the
-      penalty rows are unchanged.
-    - Extra observables (``OIData.extras``) follow the phases, each block
-      whitened by itself (see [`virgil.observables`][virgil.observables]).
-
-    With ``frozen=True`` the diagonal ``errors`` (those of
-    ``inflated_errors``, and nothing else) pass through
-    ``jax.lax.stop_gradient``: the curvature rows of
-    ``_curvature_rows`` differentiate the residuals at fixed errors, and
-    add the errors' own dependence as normalizer rows. Gains, offsets and
-    the extra blocks stay differentiable.
+    Returns ``(whitened, errors_out, log_norm)``. ``log_norm`` is the part of
+    ``Σ log errors_out`` from marginalized linear nuisances (gains, closure
+    offsets, extra blocks), which may depend on the model; the rest of the
+    normalizer depends only on the data and error terms. Residuals are
+    ``(prediction - reference) / errors``, except for gains, unprojected phases
+    and correlated closure phases (chords, sines and the periodic penalty), which
+    follow ``docs/conventions.md`` (Observables; Closure phases with four or more
+    telescopes; Likelihood normalization). Extra observables follow the phases,
+    each block whitened by itself. With ``frozen=True`` the diagonal ``errors``
+    pass through ``jax.lax.stop_gradient`` for ``_curvature_rows``.
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
@@ -434,12 +380,9 @@ def _whitened_and_errors(model, data, noise):
 def _whitened_and_log_norm(model, data, noise=None):
     """Whitened residuals and the marginal nuisances' log-normalizer.
 
-    ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends
-    only on the data and the error terms (``-Σ log σ - ½ n log 2π`` and
-    its von Mises and correlated-closure-phase forms), where ``log_norm``
-    is ½ log det of the covariance factors of marginalized gains and
-    closure offsets, which may depend on the model (see
-    ``_whiten_with_log_norm``). Without them it is zero.
+    ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends only on
+    the data and the error terms; ``log_norm`` is ½ log det of the covariance
+    factors of marginalized gains and closure offsets (zero without them).
     """
     whitened, _, log_norm = _whitened_errors_and_log_norm(
         model, data, {} if noise is None else noise
@@ -450,10 +393,9 @@ def _whitened_and_log_norm(model, data, noise=None):
 def _prediction_and_errors(model, data, noise):
     """The model prediction and the diagonal errors of ``data``.
 
-    Returns ``(prediction, errors, values, gain_terms, offset_terms)``:
-    the prediction with the wavelength and North-angle terms applied, the
-    errors of ``inflated_errors``, the data vector, and the gain and
-    closure-offset widths in ``noise``.
+    Returns ``(prediction, errors, values, gain_terms, offset_terms)``: the
+    prediction with the wavelength and North-angle terms applied, the errors of
+    ``inflated_errors``, the data vector, and the gain and offset widths.
     """
     unknown = set(noise) - set(NOISE_TERMS)
     if unknown:
@@ -509,28 +451,11 @@ def _whitened_errors_and_log_norm(model, data, noise):
 def _curvature_rows(model, data, noise):
     """The curvature rows of one dataset (see ``_Objective.curvature_rows``).
 
-    Their Jacobian J gives the Gauss–Newton curvature JᵀJ of the negative
-    log likelihood. Two kinds of row, concatenated:
-
-    - *mean rows*: ``whitened_residuals`` with the diagonal errors frozen
-      (``_whiten_with_log_norm(frozen=True)``). Gains, closure offsets,
-      extra observable blocks and the mean terms (``wavel_scale``,
-      ``wavel_offset``, ``north_angle``, which act through the
-      prediction) stay differentiable;
-    - *normalizer rows* ``√2 log σ_k`` for the diagonal errors σ_k of the
-      visibility and phase observables, when error terms are fitted. For
-      Gaussian data, mean plus normalizer rows give the Fisher
-      information: ``blockdiag(JᵀJ, 2 N)`` in ``ln s`` for one scale ``s``
-      of ``N`` errors. Uncorrelated phases use the Gaussian σ, not the von
-      Mises effective error (which would overstate the curvature in a weak
-      phase's scale). Correlated closure phases use the effective errors
-      of the whitened rows (``ClosureNoise.whiten``), without the periodic
-      penalty rows, whose errors are constants. Extra blocks get none:
-      their ``whiten`` has its own error model, and their differentiable
-      rows already carry a positive semi-definite curvature.
-
-    Gain and offset widths get curvature only through the mean rows, a
-    positive semi-definite heuristic rather than the Fisher information.
+    Their Jacobian J gives the Gauss–Newton curvature JᵀJ of the negative log
+    likelihood: *mean rows* (``_whiten_with_log_norm(frozen=True)``) plus, when
+    error terms are fitted, *normalizer rows* ``√2 log σ_k`` for the diagonal
+    errors of the visibility and phase observables. See
+    ``docs/gauss_newton_mass.md``.
     """
     prediction, errors, values, gain_terms, offset_terms = (
         _prediction_and_errors(model, data, noise)
@@ -568,27 +493,14 @@ def _curvature_rows(model, data, noise):
 def whitened_residuals(model, data, **noise):
     """Residuals of a model divided by the data uncertainties.
 
-    This is the one residual vector behind every likelihood in virgil:
-    ``model_loglike`` is ``-0.5 * sum(whitened_residuals**2)`` plus the
-    Gaussian normalization, and least-squares fits minimize its sum of
-    squares.
-
-    Visibility and projected-phase (kernel or DISCO) residuals are
-    ``(model - data) / σ``. Unprojected phase residuals Δ are
-    ``2 sin(Δ/2) / σ``: equal to Δ/σ for small Δ, but smooth where Δ wraps
-    at ±π, so that a χ² surface has no kinks there. The resulting
-    likelihood is a von Mises distribution with concentration 1/σ²,
-    normalized exactly on the circle.
-
-    Closure phases from four or more telescopes are the exception: they are
-    correlated, so the sines sin Δ of the residuals are whitened together
-    and replaced by their independent combinations, and a periodic penalty
-    2 sin²(Δ/2)/σ per closure phase is appended (chords would flip sign at
-    Δ → Δ + 2π, making correlated combinations discontinuous). The χ² is
-    continuous and smooth everywhere, equals the correlated Gaussian
-    ΔᵀC⁻¹Δ to O(Δ³) for small residuals, and has no false minimum at
-    Δ = π. There are then ``n_independent`` + (number of closure phases)
-    residuals, namely ``OIData.n_residuals``.
+    The one residual vector behind every likelihood in virgil: ``model_loglike``
+    is ``-0.5 * sum(whitened_residuals**2)`` plus the normalization, and
+    least-squares fits minimize its sum of squares. Visibility and projected-phase
+    residuals are ``(model - data) / σ``; an unprojected phase residual Δ is the
+    chord ``2 sin(Δ/2) / σ``; correlated closure phases are replaced by whitened
+    independent combinations plus periodic penalty rows. See
+    [conventions](../conventions.md#observables) and
+    [closure phases with four or more telescopes](../conventions.md#closure-phases-with-four-or-more-telescopes).
 
     Parameters
     ----------
@@ -597,28 +509,13 @@ def whitened_residuals(model, data, **noise):
     data : OIData
         Data to compare with.
     **noise
-        Error-inflation terms, ``vis_scale``, ``phi_scale``,
-        ``vis_error_rel`` and ``phi_error`` (see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
-        widths of the data's gains, ``vis_gain_<group>`` (see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
-        closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), the
-        wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
-        and the North angle, ``north_angle`` (degrees; see
-        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
+        Error terms (see [common arguments](../common_arguments.md#noise)).
 
     Returns
     -------
     array-like
-        One dimensionless residual per independent observable
-        ([`n_independent`][virgil.oidata.OIData.n_independent] of
-        them), in the order of
-        [`flatten_data`][virgil.oidata.OIData.flatten_data]; correlated
-        closure phases are replaced by their whitened independent
-        combinations, followed by one periodic penalty residual per
-        closure phase, so the length is
+        One dimensionless residual per independent observable, in the order of
+        [`flatten_data`][virgil.oidata.OIData.flatten_data]; the length is
         [`n_residuals`][virgil.oidata.OIData.n_residuals].
     """
     return _whitened_and_errors(model, data, noise)[0]
@@ -629,16 +526,9 @@ def model_loglike(model, data, *, reject_unphysical=False, **noise):
     """Evaluate the log likelihood for an instantiated model object.
 
     This is ``-0.5 * sum(r**2)`` for the residuals ``r`` of
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals], plus
-    each density's normalization: Gaussian in visibilities and projected
-    phases, ``-log σ - ½ log 2π``; von Mises with concentration
-    κ = 1/σ² in uncorrelated unprojected phases, ``-log 2π - log i0e(κ)``,
-    which is the Gaussian one for σ ≪ 1 but stays a normalized density
-    on the circle when σ is large (e.g. a fitted ``phi_error``).
-    Correlated closure phases (``OIData.cp_noise``) keep the Gaussian
-    normalization, their small-σ limit, since a correlated circular
-    density has no closed-form normalizer; their periodic penalty
-    residuals add nothing to it.
+    [`whitened_residuals`][virgil.likelihood.whitened_residuals], plus each
+    density's normalization (Gaussian, or von Mises for unprojected phases; see
+    [likelihood normalization](../conventions.md#likelihood-normalization)).
 
     Parameters
     ----------
@@ -648,26 +538,12 @@ def model_loglike(model, data, *, reject_unphysical=False, **noise):
         Data to compare with.
     reject_unphysical : bool, optional
         If True, return ``-inf`` when
-        [`is_physical`][virgil.models.SourceModel.is_physical] is false,
-        e.g. for a negative flux or a rim whose brightness goes negative.
-        This works inside ``jax.jit``, so samplers can use it as a hard prior
-        boundary.
+        [`is_physical`][virgil.models.SourceModel.is_physical] is false, e.g. for a
+        negative flux. Works inside ``jax.jit``, as a hard prior boundary.
     **noise
-        Error-inflation terms, e.g. fitted as nuisance parameters:
-        ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
-        ``vis_error_rel`` (relative to the model visibility) and
-        ``phi_error`` (radians) are added in quadrature (see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]). The
-        Gaussian normalization uses the inflated errors. For data with
-        gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]),
-        ``vis_gain_<group>`` sets the width of a group of gains, which are
-        marginalized: the normalization then includes the log-determinant
-        of the visibility covariance. ``phi_offset_<group>`` does the same
-        for closure-phase offsets ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
-        ``wavel_scale`` and ``wavel_offset`` evaluate the model at corrected
-        wavelengths (see [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]),
-        and ``north_angle`` on a rotated sky (see
-        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]).
+        Error terms (see [common arguments](../common_arguments.md#noise)). The
+        normalization uses the inflated errors; for data with gains it includes
+        the log-determinant of the marginalized covariance.
     """
     whitened, errors = _whitened_and_errors(model, data, noise)
     logl = _gaussian_loglike(whitened, errors)
@@ -784,12 +660,9 @@ def _check_positive_flux_prior(name, distribution):
 
 
 def _term_loglike(term, values):
-    """Log density of one ``likelihoods=`` term at the fitted ``values``.
-
-    A term built by ``PositionData.term`` or ``RVData.term`` wraps its data,
-    so its full normalized ``loglike`` is used, matching the OIData terms.
-    A plain callable returning whitened residuals has no known
-    normalization, so it contributes ``-0.5 * sum(r**2)`` only.
+    """Log density of one ``likelihoods=`` term at the fitted ``values``: its own
+    normalized ``loglike`` for ``PositionData.term``/``RVData.term``, otherwise
+    ``-0.5 * sum(r**2)`` only.
     """
     if hasattr(term, "loglike"):
         return term.loglike(values)
@@ -797,12 +670,8 @@ def _term_loglike(term, values):
 
 
 def _sample(numpyro, path, prior, flat=False):
-    """Sample the parameter at ``path``: an angle vector at ``<path>_vec``,
-    with the angle (degrees) recorded as the deterministic site ``path``.
-
-    With ``flat``, a prior with a flat coordinate (LogUniform, isotropic
-    angles) is sampled in it (``_flat.flat_sampled``): the site, its value
-    and its density are unchanged, only NUTS's unconstrained coordinate.
+    """Sample the parameter at ``path`` (an angle vector at ``<path>_vec``, with the
+    angle recorded at ``path``); with ``flat``, in its flat coordinate.
     """
     if is_angle_vector(prior):
         vector = numpyro.sample(vector_site(path), prior)
@@ -811,12 +680,8 @@ def _sample(numpyro, path, prior, flat=False):
 
 
 def _host_devices():
-    """The number of local devices, without initializing the backend.
-
-    Once JAX's backend starts, ``XLA_FLAGS`` can no longer set the number
-    of host devices, so before that read the flag instead. Before the
-    backend starts, several GPUs are not counted: the crash is only
-    confirmed on CPU.
+    """The number of local devices, without initializing the backend (by reading
+    ``XLA_FLAGS`` first; several GPUs are not counted before the backend starts).
     """
     try:
         from jax._src import xla_bridge
@@ -833,11 +698,8 @@ def _host_devices():
 
 
 def _warn_zero_size_for_parallel_chains(observations):
-    """Warn if parallel chains would crash on zero-size arrays in the data.
-
-    XLA's Shardy pass segfaults compiling a ``jax.pmap`` (numpyro's
-    ``chain_method="parallel"``) that captures a zero-size array (JAX
-    0.11.2, CPU). Data without closure phases, for example, carry some.
+    """Warn if parallel chains would crash on zero-size arrays in the data (XLA's
+    Shardy pass segfaults compiling a ``jax.pmap`` that captures one).
     """
     if _host_devices() < 2:
         return
@@ -873,98 +735,43 @@ def numpyro_model(
 ):
     """Return a numpyro model sampling the parameters in ``priors``.
 
+    `model`, `priors`, `data`, `regularizers`, `noise` and `likelihoods` are shared
+    with [`fit`][virgil.fitting.fit]; see
+    [common arguments](../common_arguments.md).
+
     Parameters
     ----------
     model : SourceModel or callable
-        Either a template model whose leaves at the paths in ``priors`` are
-        sampled, or a function called with the sampled values as keyword
-        arguments that returns a [`SourceModel`][virgil.models.SourceModel]. A function lets you
-        sample parameters that are not leaves of the model, such as a
-        separation and position angle, or one inclination shared by two
-        components (see [`build_model`][virgil.likelihood.build_model]).
-        As for [`fit`][virgil.fitting.fit], the function may return a
-        list of models, one per dataset in ``data``, sharing
-        parameters: for example binaries at two epochs with one flux
-        ratio and a position each. Model ``i`` is compared with dataset
-        ``i``, and regularizers act on the first model only.
+        A template whose leaves at the paths in ``priors`` are sampled, or a
+        function of the sampled values that returns a
+        [`SourceModel`][virgil.models.SourceModel] (see
+        [`build_model`][virgil.likelihood.build_model]) or a list of models, one
+        per dataset in ``data``.
     priors : dict[str, numpyro.distributions.Distribution]
-        Mapping from parameter path (e.g. ``"comp.flux"``) or function
-        argument name to prior; each key is also used as the numpyro
-        sample-site name. Priors on fluxes (keys named ``flux`` or ending
-        in ``.flux``) must have non-negative support. An angle (degrees)
-        with an [`AngleVector`][virgil.angles.AngleVector] prior is
-        sampled as a 2-D vector at the site ``"<path>_vec"``, with the
-        angle recorded as the deterministic site ``"<path>"``: there is no
-        wrap boundary at 0°/360°.
+        Parameter path (or function argument name) to prior; each key is also the
+        numpyro sample-site name. An angle with an
+        [`AngleVector`][virgil.angles.AngleVector] prior is sampled as a 2-D
+        vector at the site ``"<path>_vec"``, with the angle recorded as the
+        deterministic site ``"<path>"``.
     data : OIData or sequence of OIData
-        Data whose Gaussian log likelihood is added with ``numpyro.factor``.
-        May be ``()`` when ``likelihoods`` holds all the data.
+        Data whose Gaussian log likelihood is added with ``numpyro.factor``; may
+        be ``()`` when ``likelihoods`` holds all the data.
     regularizers : sequence, optional
-        Log-prior terms on the model, e.g. a
-        [`Centroid`][virgil.imaging.Centroid] prior, added with
-        ``numpyro.factor``. Only genuine prior densities
-        (``probabilistic``) are allowed: penalties such as maximum entropy
-        are for [`fit`][virgil.fitting.fit].
+        Log-prior terms on the model, e.g. a [`Centroid`][virgil.imaging.Centroid]
+        prior. Penalties such as maximum entropy are for `fit`.
     noise : dict or list of dict, optional
-        Priors on error-inflation terms (``vis_scale``, ``phi_scale``,
-        ``vis_error_rel``, ``phi_error``; see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]) and on
-        gain widths (``vis_gain_<group>``; see
-        [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), on
-        closure-offset widths (``phi_offset_<group>``; see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), on the
-        wavelength scale (``wavel_scale``, ``wavel_offset``; see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale])
-        and on the North angle (``north_angle``, degrees; see
-        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
-        sampled as sites ``"noise.<term>"``. A list gives each dataset its
-        own terms, as sites ``"noise[i].<term>"``. An entry may instead be
-        a function of the dict of sampled values (keyed like ``priors``),
-        recorded as a deterministic site: a term *tied* to parameters in
-        ``priors``, as in a hierarchical model where each epoch's error
-        scale is drawn from a population with fitted hyperparameters (see
-        [`hierarchical_scales`][virgil.priors.hierarchical_scales]). A
-        tied term's ``log_prior(values)``, if it has one, is added once
-        (site ``"noise_prior"``).
-        **Priors.** As for [`fit`][virgil.fitting.fit]: the default
-        (Jeffreys) prior of these scale parameters is log-uniform on
-        stated bounds that must contain the plausible values.
+        Priors on error and calibration terms, sampled as sites
+        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list); see
+        [common arguments](../common_arguments.md#noise).
     likelihoods : sequence, optional
-        Extra data terms, as for [`fit`][virgil.fitting.fit]: callables of
-        the sampled values (a dict keyed like ``priors``) returning whitened
-        residuals, such as ``PositionData.term(orbit_fn)`` or
-        ``RVData.term(params_fn)``. Term ``i`` is added with
-        ``numpyro.factor`` as site ``"likelihood_<i>"``. Those two built-in
-        terms add their full normalized Gaussian log density, like the OIData
-        terms; a plain callable adds ``-0.5 * sum(r**2)`` only.
+        Extra data terms, such as ``PositionData.term(orbit_fn)``, added as sites
+        ``"likelihood_<i>"``; see
+        [common arguments](../common_arguments.md#likelihoods).
     flat_coordinates : bool, optional
-        Sample each prior that is uniform in some coordinate of its
-        parameter in that coordinate, as [`fit`][virgil.fitting.fit]
-        optimizes it (default ``False``, numpyro's bijection of each prior's
-        support): with ``True``, a ``LogUniform(a, b)`` in the
-        logit of log x on [log a, log b], an
-        [`IsotropicInclination`][virgil.priors.IsotropicInclination] in
-        cos i, an [`IsotropicLatitude`][virgil.priors.IsotropicLatitude]
-        in sin(lat), for parameters and error terms alike. There the
-        prior's potential is exactly logistic in NUTS's unconstrained
-        coordinate, and the coordinates match those of
-        [`fit`][virgil.fitting.fit] and
-        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]. This
-        does not cure hierarchical funnels, which come from the
-        dependence between a group scale and its members: use the
-        non-centred form or the mass matrix for those. Only the
-        coordinate NUTS moves in changes: the sites keep
-        their names, their values are the parameters, and the posterior
-        is the same. Simulation-based calibration (1000 replicates) showed
-        no gain in effective sample size per second, nor in divergences,
-        over numpyro's bijection, hence the default. With ``True``,
-        unconstrained ``init_params`` or a mass matrix computed in numpyro's
-        coordinates no longer apply; pass the same value to
-        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]. The
-        returned function records the choice as its ``flat_coordinates``
-        attribute, which
-        [`chain_init_params`][virgil.likelihood.chain_init_params] checks
-        against a mass matrix.
+        Sample each prior that is uniform in some coordinate in that coordinate,
+        as `fit` optimizes it (default ``False``: numpyro's bijection). Pass the
+        same value to [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]; see
+        [common arguments](../common_arguments.md#flat_coordinates).
     **options
         Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].
@@ -1076,12 +883,9 @@ def _check_mass_coordinates(model, mass):
 def chain_init_params(model, starts, key=None, mass=None):
     """Initial parameters for numpyro's ``MCMC``, one chain per start.
 
-    ``init_to_value`` starts every chain at one point. To start each
-    chain in its own mode (e.g. the distinct fits of
-    [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values]),
-    numpyro instead takes ``init_params``, in its unconstrained
-    coordinates and with a leading axis over chains; this converts one
-    dict of values per chain into them.
+    Converts one dict of values per chain (e.g. the distinct fits of
+    [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values]) into
+    numpyro's ``init_params``: unconstrained, with a leading axis over chains.
 
     Parameters
     ----------
@@ -1089,24 +893,21 @@ def chain_init_params(model, starts, key=None, mass=None):
         The numpyro model, e.g. from
         [`numpyro_model`][virgil.likelihood.numpyro_model].
     starts : sequence of dict
-        One dict of values per chain, keyed by sample site as
-        ``init_to_value`` takes them (e.g. ``FitResult.values``, which
-        holds the ``"<path>_vec"`` sites of angle vectors). Sites missing
-        from a dict start uniformly at random, as ``init_to_value`` does.
+        One dict of values per chain, keyed by sample site as ``init_to_value``
+        takes them (e.g. ``FitResult.values``). Missing sites start uniformly at
+        random.
     key : jax.Array, optional
-        Random key for those missing sites (default ``PRNGKey(0)``).
+        Random key for those sites (default ``PRNGKey(0)``).
     mass : dict, optional
-        The result of [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass],
-        to check that it was computed with the same ``flat_coordinates``
-        as ``model``: a mismatch raises a ``ValueError``, since its
-        matrix would be in the wrong coordinates and never adapted.
+        The result of [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]; a
+        ``ValueError`` is raised if it was computed with another
+        ``flat_coordinates`` than ``model``.
 
     Returns
     -------
     dict
-        Unconstrained parameters by site, with a leading axis of
-        ``len(starts)`` (none for a single start). Pass them as
-        ``mcmc.run(key, init_params=...)`` with
+        Unconstrained parameters by site, with a leading axis of ``len(starts)``
+        (none for a single start), for ``mcmc.run(key, init_params=...)`` with
         ``num_chains=len(starts)``.
 
     Examples

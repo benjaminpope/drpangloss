@@ -1,43 +1,15 @@
 """Keplerian orbits of a binary's secondary about its primary.
 
-The conventions are:
-
-* ``dra`` is positive East and ``ddec`` positive North (mas), as everywhere
-  in virgil, and ``dz`` is positive **away from** the observer, so that
-  (dra, ddec, dz) is right-handed and ``dz`` grows while the secondary
-  recedes. The vector runs from the primary (the scene's reference
-  component) to the secondary.
-* ``inc`` in [0°, 180°): below 90° the position angle increases with time
-  (counterclockwise on the sky, North through East).
-* ``Omega``: the position angle of the ascending node, the node where the
-  secondary recedes. Positions alone fix it only modulo 180°.
-* ``omega``: the **secondary's** argument of periastron (the visual-binary
-  convention); the spectroscopic ω of the primary is ``omega - 180°``.
-* ``dt_peri``: the time of periastron minus the static float64 ``t_ref``
-  (days), so that float32 keeps it precise; ``period`` in days; ``a_mas``
-  the angular semimajor axis of the relative orbit.
-
-Kepler's equation is solved by jaxoplanet (an optional dependency,
-``pip install "virgil-astro[orbits]"``), with its exact derivatives; the
-positions follow from the Thiele–Innes constants (§2.4). jaxoplanet's own
-conventions differ (its ω is the primary's, and its third axis points
-toward the observer) and stay inside :meth:`KeplerOrbit.to_jaxoplanet` and
-:meth:`KeplerOrbit.from_jaxoplanet`.
-
-References
-----------
-The Kepler solver is jaxoplanet (Hattori et al., Zenodo,
-https://doi.org/10.5281/zenodo.10736936), which descends from exoplanet
-(Foreman-Mackey et al. 2021, JOSS 6, 3285, https://arxiv.org/abs/2105.01994).
-The linear Thiele–Innes fit at fixed (P, e, T) is the classical method
-(Thiele 1883, Astron. Nachr. 104, 245), as used for visual binaries by
-Hartkopf, McAlister & Franz (1989, AJ 98, 1014,
-https://doi.org/10.1086/115193), by Wright & Howard (2009, ApJS 182, 205,
-https://arxiv.org/abs/0904.3725) for linear parameters and by Lucy (2014,
-A&A 563, A126, https://arxiv.org/abs/1309.2868) for incomplete orbits. The
-position angle at a reference epoch and the fits to closure phases follow
-Octofitter (Thompson et al. 2023, AJ 166, 164,
-https://arxiv.org/abs/2402.01971). No code is taken from these packages.
+The position of the secondary relative to the primary is ``(dra, ddec, dz)``:
+East and North in mas, and ``dz`` positive away from the observer. ``inc``,
+``Omega`` and ``omega`` are the visual-binary angles (degrees; ``omega`` is
+the secondary's, the spectroscopic one is ``omega - 180``), ``period`` is in
+days, ``a_mas`` the angular semimajor axis, and ``dt_peri`` the time of
+periastron minus the static ``t_ref`` (days). See
+[conventions](../conventions.md#orbits) for the full definitions and
+degeneracies, and [orbit methods](../orbit_methods.md) for the solvers and
+references. Kepler's equation is solved by jaxoplanet, an optional
+dependency (``pip install "virgil-astro[orbits]"``).
 """
 
 import math
@@ -118,9 +90,8 @@ def _check_orbit(cls, orbit):
 def _days_since(mjd, t_ref):
     """``mjd - t_ref`` in days, in float64 on the host when ``mjd`` is known.
 
-    Under ``jit`` the subtraction happens in the traced precision, so pass
-    times already relative to ``t_ref`` there (float32 resolves MJD ≈ 60000
-    to only about 0.004 d).
+    Under ``jit`` pass times already relative to ``t_ref`` (float32 resolves
+    MJD 60000 only to about 0.004 d).
     """
     if isinstance(mjd, jax.core.Tracer):
         return mjd - t_ref
@@ -133,11 +104,7 @@ _MJD_LIKE_DAYS = 15000.0
 
 
 def _warn_if_mjd_without_t_ref(orbit_t_ref, dt):
-    """Warn when an orbit with the default ``t_ref = 0`` is given MJDs.
-
-    The phase is then computed from MJD 0, which is valid but almost never
-    meant, and in float32 it is also imprecise. Concrete times only.
-    """
+    """Warn when an orbit with the default ``t_ref = 0`` is given MJDs."""
     if orbit_t_ref != 0.0:
         return
     days = concrete(dt)
@@ -169,9 +136,8 @@ _KEPLER_FACTOR = 4 * math.pi**2 * _AU_M**3 / (_GM_SUN * _DAY_S**2)
 def _wrap_node(omega, Omega):
     """Move (omega, Omega) (degrees) to the twin with ``0 <= Omega < 180``.
 
-    Shifting both angles by 180° leaves the sky orbit unchanged. The wrap is
-    done in degrees, after conversion, so an ``Omega`` that is 180° to
-    rounding cannot come back as exactly 180; ``omega`` is put in [0, 360).
+    The sky orbit is unchanged by shifting both by 180°. ``omega`` ends in
+    [0, 360).
     """
     shift = np.floor(Omega / 180.0) * 180.0
     Omega = Omega - shift
@@ -760,16 +726,8 @@ _N_SIGN_PAIRS = 16  # epoch pairs tried per grid point by the sign-free fit
 def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
     """Thiele–Innes fit when each position is known only up to a sign.
 
-    A binary of nearly equal fluxes has closure phases and V² that are the
-    same for ``(dra, ddec)`` and ``(-dra, -ddec)``, so the per-epoch signs
-    of its positions are arbitrary. At fixed ``(P, T, e)`` the positions
-    are ``s_i M u_i`` with the unit-orbit points ``u_i`` known and the
-    2x2 matrix ``M`` (the Thiele–Innes constants) unknown. Two epochs fix
-    ``M`` up to one relative sign, so for the best-conditioned pairs of
-    epochs and both relative signs, ``M`` is solved, every sign is set to
-    the one that agrees with ``M u_i``, and the weighted fit is repeated
-    twice on the signed positions. The result is the lowest χ²; the
-    global sign (the point reflection of the whole orbit) stays free.
+    For each of the best-conditioned pairs of epochs and both relative signs,
+    solve for the constants, fix every sign, and refit; return the lowest χ².
     """
     x, y = _unit_orbit(dt, period, dt_peri, ecc)
     n = x.shape[0]
@@ -826,34 +784,16 @@ def _thiele_innes_fit_sign_free(dt, dra, ddec, whitener, period, dt_peri, ecc):
     return params[k], chi2[k]
 
 
-# Trial periods are spaced so that neighbouring ones drift apart by at most
-# 1/k of a cycle over the baseline T: a frequency step of 1/(kT), i.e. δP =
-# P²/(kT). The true period is then within half a step of a trial period,
-# and once the trial times of periastron have centred the phase, its phase
-# error is at most 1/(4k) of a cycle at the ends of the baseline. k = 9
-# makes that 1/36 of a cycle, one step of the default n_phase = 36 grid of
-# times of periastron, so the period grid is about as fine as the phase
-# grid. This is finer than both published rules: ARMADA's periods P =
-# 2fT/n with f = 3 (a frequency step of 1/(6T), k = 6) and The Joker's
-# resolution δP = 4P²/(2πT) (k = π/2). For P = 5–20 d over T = 410 d,
-# ARMADA's rule gives ~370 periods and k = 9 ~550. (A step of 0.0005 d at
-# P ≈ 12 d, which found the Gl 229 B mode unseeded, is ~80 times finer
-# than k = 9 needs on that baseline.)
+# Default k of ``period_grid`` (see docs/orbit_methods.md#period-grid).
 _PHASE_COHERENCE = 9.0
 
 
 def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
     """Trial periods that stay in phase across the observations.
 
-    A period that is wrong by δP drifts by ``T δP / P²`` cycles over the
-    time baseline T, so trial periods must be spaced by no more than δP =
-    P²/(kT) for the best of them to stay within a fraction of a cycle of
-    the truth at every epoch. That is a uniform grid in frequency 1/P, with
-    a step of 1/(kT): many more periods at short periods than a
-    log-spaced grid, which misses short-period orbits on a long baseline.
-    The frequency spacing is that of a periodogram, as in Lucy (2014, A&A
-    563, A126, https://arxiv.org/abs/1309.2868) and The Joker (Price-Whelan
-    et al. 2017, ApJ 837, 20, https://arxiv.org/abs/1610.07602).
+    The grid is uniform in frequency 1/P with a step of 1/(kT) for a baseline
+    T, so that the best trial period stays within a fraction of a cycle of the
+    truth at every epoch; see [period grids](../orbit_methods.md#period-grid).
 
     Parameters
     ----------
@@ -865,17 +805,18 @@ def period_grid(times, p_min, p_max, k=_PHASE_COHERENCE):
         period prior.
     k : float, optional
         Neighbouring trial periods drift apart by at most ``1/k`` of a
-        cycle over the baseline (default 9; the true period then drifts
-        by at most 1/36 of a cycle from the nearest once its phase is
-        centred, a step of ``starting_orbits``' default phase grid). The
-        default is finer than ARMADA's grid, P = 2fT/n with f = 3 (k = 6),
-        and The Joker's resolution, δP = 4P²/(2πT) (k = π/2).
+        cycle over the baseline (default 9).
 
     Returns
     -------
     numpy.ndarray
         The periods (days), increasing from ``p_min`` to ``p_max``, for
         [`starting_orbits`][virgil.orbits.starting_orbits].
+
+    Raises
+    ------
+    ValueError
+        If ``0 < p_min < p_max`` fails, or the times span no baseline.
     """
     times = onp.asarray(times, float)
     baseline = float(onp.ptp(times)) if times.size else 0.0
@@ -908,14 +849,9 @@ def starting_orbits(
 
     At fixed period, eccentricity and time of periastron the positions are
     linear in the Thiele–Innes constants, so each grid point is an exact
-    weighted least-squares solve. This is the classical way to start an
-    orbit fit: it needs no random restarts and handles the several minima
-    of a short arc. The dense (P, e, T) grid with a linear solve follows
-    Lucy (2014, A&A 563, A126, https://arxiv.org/abs/1309.2868); the linear
-    step is that of Hartkopf, McAlister & Franz (1989, AJ 98, 1014,
-    https://doi.org/10.1086/115193) and Wright & Howard (2009, ApJS 182,
-    205, https://arxiv.org/abs/0904.3725). Refine the best orbits with a fit to the visibilities
-    or to the positions.
+    weighted least-squares solve; see
+    [starting orbits](../orbit_methods.md#starting-orbits). Refine the best
+    orbits with a fit to the visibilities or to the positions.
 
     Parameters
     ----------
@@ -933,11 +869,9 @@ def starting_orbits(
         Number of orbits to return.
     sign_free : bool, optional
         Treat each position as known only up to a sign, as for a binary of
-        nearly equal fluxes (the point reflection of the sky is then
-        degenerate in every epoch separately). The signs are chosen per grid
-        point (see ``_thiele_innes_fit_sign_free``); the orbit returned has
-        the global sign of its best fit, and its reflection (``omega`` +
-        180°) fits equally well.
+        nearly equal fluxes (the signs are chosen per grid point; see the
+        page above). The orbit returned has the global sign of its best fit,
+        and its reflection (``omega`` + 180°) fits equally well.
 
     Returns
     -------
@@ -1347,45 +1281,24 @@ class RVData(zdx.Base):
     def term(self, params, jitter=None, marginalize_offsets=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
+        See [radial-velocity terms](../orbit_methods.md#rv-term) for the jitter
+        and marginalized zero-point likelihoods.
+
         Parameters
         ----------
         params : callable
             Maps the fitted values to ``(orbit, q, gamma, distance_pc)``.
         jitter : str, optional
             Path of a fitted value holding an RV jitter ``s`` (km/s), which
-            inflates the errors to ``sqrt(d_rv² + s²)``. As with fitted
-            ``noise=`` terms, the likelihood's normalization ``Σ log σ_eff``
-            then depends on a parameter, so the term reports it
-            (``log_norm``) and ``fit`` adds it to the loss, defaulting to
-            L-BFGS (no least-squares form). Give ``jitter`` a prior with
-            positive support. The jitter is a scale, so the default is
-            ``dist.LogUniform(lo, hi)`` (the Jeffreys prior; pick ``lo``
-            well below the smallest plausible scatter and ``hi`` above the
-            largest). ``dist.HalfNormal`` is a deliberate informative choice
-            (scale about the expected scatter, a few km/s for a spotted
-            star). The likelihood depends on ``s²`` only.
+            inflates the errors to ``sqrt(d_rv² + s²)``. The term then
+            reports ``log_norm``, so ``fit`` defaults to L-BFGS. Give it a
+            positive prior, by default ``dist.LogUniform(lo, hi)``.
         marginalize_offsets : (mean, sd), optional
-            Analytically marginalize one velocity zero point per instrument
-            (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136). The model
-            is ``m_kepler + A w`` with ``A`` the indicator matrix of
-            ``instrument=`` and ``w_j ~ N(mean_j, sd_j²)``. One zero point
-            per instrument, with no separate γ, is the parameterization
-            without a degeneracy: ``w_j`` is the systemic velocity as
-            measured by instrument ``j``, and offsets are differences
-            ``w_j - w_0``. Return ``gamma = 0`` from ``params`` (a nonzero
-            value just shifts the prior mean). ``mean`` and ``sd`` are
-            scalars or one per instrument (in ``RVData.instruments``
-            order, km/s); ``True`` is an error, because the prior must be stated. The
-            density is the dense ``N(m + Aμ, C + AΛAᵀ)`` log density with
-            ``C = diag(σ_eff²)``, evaluated by the Woodbury identity and
-            the matrix-determinant lemma in O(N k²), so the jitter enters
-            the full log-determinant. For a broad prior this is the profile
-            likelihood plus a log-determinant correction; a flat prior is
-            the ``Λ → ∞`` limit up to a ``Λ``-dependent constant, and only
-            finite ``sd`` is supported. The term's residuals have length N
-            and its ``log_norm`` carries the marginal log-determinant.
-            ``term.posterior(values)`` returns the zero points' conditional
-            mean and covariance, to report after a fit.
+            Analytically marginalize one velocity zero point per instrument,
+            with prior ``N(mean, sd²)`` in km/s (scalars, or one per
+            instrument in ``RVData.instruments`` order). Return ``gamma = 0``
+            from ``params``.
+            ``True`` is an error: the prior must be stated.
         """
         if marginalize_offsets not in (None, False):
             marginalize_offsets = self._prior(marginalize_offsets)
@@ -1450,32 +1363,12 @@ def orientation_priors(
 ):
     """Angle-vector priors for an orbit's node and periastron.
 
-    Vectors remove the wrap at 0°/360° (see
-    [`AngleVector`][virgil.angles.AngleVector]); these choose which angles
-    to sample, so that exact symmetries become single points rather than
-    separate modes:
-
-    * ``positions_only=True``: ``"two_Omega"`` (2Ω, i.e. Ω modulo 180°)
-      and ``"varpi"`` (ϖ = Ω + ω, the longitude of periastron). Positions
-      alone cannot tell (Ω, ω) from (Ω + 180°, ω + 180°); both have the same
-      2Ω and ϖ, so the two modes collapse to one.
-    * ``positions_only=False``, when RVs or other data fix the node:
-      ``"Omega"`` and ``"varpi"``.
-
-    Near face-on, positions fix ϖ but not Ω and ω separately; ϖ is then
-    the well-measured angle and Ω the broad one. Build the orbit with
+    With ``positions_only`` the keys are ``"two_Omega"`` (2Ω) and ``"varpi"``
+    (ϖ = Ω + ω), which merge the twin modes (Ω, ω) and (Ω + 180°, ω + 180°)
+    of a positions-only fit; otherwise ``"Omega"`` and ``"varpi"``.
+    Build the orbit with
     [`KeplerOrbit.from_varpi`][virgil.orbits.KeplerOrbit.from_varpi].
-
-    The angles are uniform, which with a prior uniform in cos i is the
-    invariant (Haar) prior on the orbit's orientation: (Ω, ω) → (2Ω, ϖ) is
-    linear with a constant Jacobian, so uniform (Ω, ω) is uniform (2Ω, ϖ).
-
-    With ``inclination=True`` the inclination prior
-    [`IsotropicInclination`][virgil.priors.IsotropicInclination] (density
-    ∝ sin i on 0° to 180°) is added under ``"inc"``, so one call gives the
-    full Haar (isotropic) prior on the orientation. It is off by default so
-    that existing code, which fixes or places its own prior on ``inc``,
-    keeps getting exactly the keys it did.
+    See [orientation priors](../orbit_methods.md#orientation-priors).
 
     Parameters
     ----------
@@ -1484,7 +1377,7 @@ def orientation_priors(
     prefix : str, optional
         Prepended to the keys, e.g. ``"orbit."``.
     ring_width : float, optional
-        Passed to ``AngleVector``.
+        Passed to [`AngleVector`][virgil.angles.AngleVector].
     inclination : bool, optional
         Also return ``IsotropicInclination()`` under ``prefix + "inc"``
         (default ``False``).

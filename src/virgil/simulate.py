@@ -58,12 +58,7 @@ def simulate(scene, template, key=None, noise_scale=1.0, shift_days=None):
 
 
 def _shift_times(data, days):
-    """``data`` with every time moved by ``days``.
-
-    The float64 ``t_ref`` moves and the small float32 offsets ``dt`` are
-    kept, so even a shift of decades keeps the samples' times to well under
-    a second. ``t_ref`` is a static field, so it is set on a copy.
-    """
+    """``data`` with every time moved by ``days`` (shifts float64 ``t_ref``)."""
     shifted = copy.copy(data)
     object.__setattr__(shifted, "t_ref", data.t_ref + float(days))
     return shifted

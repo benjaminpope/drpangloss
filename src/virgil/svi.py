@@ -1,5 +1,8 @@
 """Variational inference with numpyro's SVI, started from a fit.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 [`variational`][virgil.svi.variational] takes the same arguments as
 [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model], and fits a guide (an
@@ -56,6 +59,8 @@ from .fitting import (
 )
 from .likelihood import numpyro_model
 from ._deprecate import external_stacklevel
+
+__provisional__ = ("*",)
 
 GUIDES = ("bnaf", "iaf", "mvn", "laplace")
 

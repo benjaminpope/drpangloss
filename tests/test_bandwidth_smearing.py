@@ -3,7 +3,15 @@
 import numpy as onp
 import pytest
 
-from virgil.models import GaussianDisk, PointSource, System
+from virgil.models import (
+    BinaryModelAngular,
+    BinaryModelCartesian,
+    GaussianDisk,
+    PointSource,
+    Resolved,
+    Rotated,
+    System,
+)
 from virgil.oidata import OIData
 from virgil.oifits import read_oifits, write_oifits
 
@@ -160,13 +168,66 @@ def test_eff_band_round_trip(tmp_path):
     assert OIData(plain, bandwidth=True).bandwidth is None
 
 
-def test_unsupported_model_raises():
-    from virgil.models import BinaryModelCartesian
+def test_unsupported_model_raises_naming_the_model():
+    from virgil.models import OrbitalBinary, smeared_model
+    from virgil.orbits import KeplerOrbit
 
-    with pytest.raises(TypeError, match="Bandwidth smearing"):
-        _data(bandwidth=True)._cvis(
-            BinaryModelCartesian(dra=5.0, ddec=2.0, flux=0.1)
+    orbit = KeplerOrbit(700.0, 0.0, 0.3, 50.0, 60.0, 120.0, 20.0, t_ref=0.0)
+    with pytest.raises(TypeError, match="OrbitalBinary"):
+        data = _data(bandwidth=True)
+        smeared_model(
+            OrbitalBinary(orbit, 0.1),
+            data.u,
+            data.v,
+            data.wavel,
+            data.bandwidth,
         )
+
+
+@pytest.mark.parametrize(
+    "scene",
+    [
+        BinaryModelCartesian(dra=200.0, ddec=-60.0, flux=FLUX),
+        BinaryModelAngular(sep=250.0, pa=40.0, flux=FLUX),
+    ],
+)
+def test_binary_models_are_smeared_like_their_system(scene):
+    data = _data(bandwidth=True)
+    cart = scene.to_cartesian() if hasattr(scene, "to_cartesian") else scene
+    smeared = onp.abs(onp.asarray(data._cvis(scene)))
+    exact = _brute_force(data, float(cart.dra), float(cart.ddec))
+    assert onp.max(onp.abs(smeared - exact)) < 1e-3
+    assert onp.allclose(
+        smeared, onp.abs(onp.asarray(data._cvis(cart.to_system())))
+    )
+
+
+def test_resolved_background_is_smeared_as_the_other_components():
+    data = _data(bandwidth=True)
+    plain = System(star=PointSource(), comp=PointSource(dra=200.0, flux=FLUX))
+    with_bg = System(
+        star=PointSource(),
+        comp=PointSource(dra=200.0, flux=FLUX),
+        bg=Resolved(flux=0.5),
+    )
+    smeared = onp.asarray(data._cvis(with_bg))
+    # The background only adds to the normalization: V = V_plain * (1 + f) / (1 + f + 0.5).
+    ratio = (1.0 + FLUX) / (1.0 + FLUX + 0.5)
+    assert onp.allclose(smeared, ratio * onp.asarray(data._cvis(plain)))
+
+
+def test_rotated_scene_is_smeared_about_the_rotated_offset():
+    data = _data(bandwidth=True)
+    # A companion to the North, rotated by 90 degrees, lands to the East.
+    scene = Rotated(_binary(dra=0.0, ddec=200.0), 90.0)
+    smeared = onp.abs(onp.asarray(data._cvis(scene)))
+    assert onp.max(onp.abs(smeared - _brute_force(data, 200.0, 0.0))) < 1e-3
+    # The complex visibilities fix the direction (West would differ).
+    assert onp.allclose(
+        onp.asarray(data._cvis(scene)),
+        onp.asarray(data._cvis(_binary(dra=200.0, ddec=0.0))),
+        atol=1e-5,
+    )
 
 
 def test_read_oifits_leaves_widths_out_by_default(tmp_path):
@@ -274,3 +335,19 @@ def test_diagnose_smears_the_phase_regime_check():
     plain = diagnose(model, build(False)).checks["phase_regime"][0]
     smeared = diagnose(model, build(True)).checks["phase_regime"][0]
     assert smeared > plain
+
+
+def test_rotated_scene_inside_an_offset_system_keeps_the_outer_frame():
+    data = _data(bandwidth=True)
+    inner = System(a=PointSource(), b=PointSource(flux=FLUX, ddec=150.0))
+    rotated = System(dra=300.0, s=Rotated(inner, 90.0))
+    # The same scene unrotated: the companion 150 mas East of the primary.
+    flat = System(
+        dra=300.0,
+        s=System(a=PointSource(), b=PointSource(flux=FLUX, dra=150.0)),
+    )
+    assert onp.allclose(
+        onp.asarray(data._cvis(rotated)),
+        onp.asarray(data._cvis(flat)),
+        atol=1e-5,
+    )

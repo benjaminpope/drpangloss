@@ -261,7 +261,7 @@ def test_run_folder_layout(full_run):
     out = pipeline.output
     run = json.loads((out / "run.json").read_text())
     assert run["schema"] == SCHEMA and run["status"] == "complete"
-    assert run["stability"] == "stable" and run["error"] is None
+    assert run["stability"] == "provisional" and run["error"] is None
     assert list(run["stages"]) == list(STAGES)
     assert run["provenance"]["virgil"] == virgil.__version__
     assert set(run["config"]) == set(DEFAULTS)

@@ -14,7 +14,7 @@ virgil does not copy PMOIRED's interface.
 | Inclined ring with azimuthal harmonics | `diam`+`fwhmin`/`fwhmout`, `az ampN`, `incl`, `projang` | `ModulatedGaussianRim` (Gaussian radial profile only) |
 | Power-law spectra | `spectrum` string in `$WL` | `PowerLaw` |
 | Blackbody spectra | not built in | `BlackBody` |
-| LM least squares and covariance | `scipy.optimize.leastsq` | `fit` (LM, L-BFGS, Adam); `inference.laplace_cov`, `fisher` |
+| LM least squares and covariance | `scipy.optimize.leastsq` | `fit` (LM, L-BFGS, Adam); `inference.laplace_cov`, `observed_information` |
 | Grid and random-start searches | `gridFit` | `grid_fit` |
 | Detection limits | `detectionLimit` (Absil/CANDID χ² ratio) | `limits.absil_limits`, `ruffio_upperlimit` |
 | Simulated data | `oifake.makeFakeVLTI` | `coverage.vlti_oidata`, `nrm_oidata`, `OIData.with_model` |

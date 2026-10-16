@@ -1,5 +1,8 @@
 # Imaging, part 7: ensembles of reconstructions
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 Every reconstruction in parts 2–6 rests on choices the data do not make: the regularizer, its weight, the pixel size, the field and the starting image. Part 2 chose them carefully, with L-curves and the discrepancy principle, but a different careful choice would give a somewhat different image. Which features survive any reasonable choice, and which belong to one choice alone?
 
 Drevon et al. (2025, [arXiv:2609.15365](https://arxiv.org/abs/2609.15365)) won the 2024 interferometric imaging contest by not choosing. Their PYRA runs thousands of reconstructions with these settings drawn at random, and their MYTHRA keeps the ones that fit the data and averages them, adding members only while the average still fits. The mean is less sensitive to any one choice than a single reconstruction is, and the spread of the members shows where the image depends on the choices. [`virgil.ensemble`](api/ensemble.md) does the same with virgil's own fits. It is written from the paper's description, not from their code.

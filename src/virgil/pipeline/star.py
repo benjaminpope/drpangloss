@@ -244,6 +244,9 @@ def _entry_for(instance):
 class StarPipeline(_Pipeline):
     """Measure a star's angular diameter, with and without limb darkening.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Stages: ``load → overview → fit → posterior → quicklook``.
 
     * ``load`` applies ``wavel_range`` and ``error_floor`` and writes the
@@ -323,7 +326,7 @@ class StarPipeline(_Pipeline):
     """
 
     NAME = "star"
-    STABILITY = "stable"
+    STABILITY = "provisional"
     STAGES = ("load", "overview", "fit", "posterior", "quicklook")
     _DEFAULTS = {
         "diam_range_mas": None,
@@ -591,8 +594,8 @@ def _scan(data, lo, hi, n_scan, batch_size):
     ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
-            data,
-            {"diam": np.asarray(axis)},
+            data=data,
+            grid={"diam": np.asarray(axis)},
             batch_size=batch_size,
         )
     )
@@ -665,8 +668,8 @@ def _refine(data, centre, lo, hi, step, batch_size):
     ll = onp.asarray(
         likelihood_grid(
             UniformDisk,
-            data,
-            {"diam": np.asarray(fine)},
+            data=data,
+            grid={"diam": np.asarray(fine)},
             batch_size=batch_size,
         )
     )

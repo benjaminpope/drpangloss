@@ -93,10 +93,8 @@ class GaussNewtonMass(dict):
 def _prior_residuals(path, distribution, value):
     """Residuals ``r`` with ``-log p(value) = 0.5 sum r² + const``, or None.
 
-    ``None`` means the prior adds nothing to a least-squares objective:
-    it is flat on its support (Uniform, ImproperUniform), or flat in the
-    coordinate ``fit`` optimizes it in (LogUniform and the other priors with
-    a flat coordinate; see ``_flat_coordinate``).
+    ``None`` means the prior is flat on its support or in the coordinate ``fit``
+    optimizes it in, so it adds nothing to a least-squares objective.
     """
     import numpyro.distributions as dist
 
@@ -119,12 +117,8 @@ def _prior_residuals(path, distribution, value):
 
 
 def _traced(prior):
-    """``prior`` with its Python-number parameters as JAX arrays.
-
-    The jitted solvers take the problem as an argument, and equinox treats
-    Python numbers in it as static, so that every new prior bound (say
-    ``Uniform(lo, 50.0)`` for a new ``lo``) would recompile the fit. Arrays
-    are traced instead.
+    """``prior`` with its Python-number parameters as JAX arrays, so that a new prior
+    bound does not recompile the jitted solvers (equinox treats numbers as static).
     """
 
     def to_array(leaf):
@@ -171,20 +165,13 @@ def _log_jacobian(bijection, z):
 class _Objective(eqx.Module):
     """The negative log posterior of a fit, as a loss and as residuals.
 
-    ``residuals(z)`` is a vector whose half sum of squares is ``loss(z)``
-    (up to a constant), for least-squares solvers; it raises ``TypeError``
-    if a regularizer or prior has no least-squares form, or if error terms
-    are fitted. ``z`` are the unconstrained coordinates of the parameters
-    and of any error terms (keyed by their ``noise`` sites).
-
-    With ``flat=True`` (for ``fit``), a parameter whose prior has a flat
-    coordinate (``_flat_coordinate``: LogUniform, isotropic angles) is
-    unconstrained through that coordinate, where its prior is constant and
-    adds nothing to the loss; ``numpyro_model(..., flat_coordinates=True)``
-    samples the same coordinates (``_flat.flat_sampled``). With
-    ``flat=False`` (for ``gauss_newton_mass``'s default), every parameter
-    uses numpyro's bijection of its prior's support, as ``numpyro_model``
-    samples by default.
+    ``residuals(z)`` has half sum of squares ``loss(z)`` (up to a constant), for
+    least-squares solvers; it raises ``TypeError`` if a regularizer or prior has
+    no least-squares form, or if error terms are fitted. ``z`` are the
+    unconstrained coordinates of the parameters and error terms. With ``flat=True``
+    (for ``fit``) a prior with a flat coordinate is unconstrained through it; with
+    ``flat=False``, as ``numpyro_model`` samples by default, every parameter uses
+    numpyro's bijection of its prior's support.
     """
 
     model: object
@@ -268,11 +255,9 @@ class _Objective(eqx.Module):
     def init(self, values=None):
         """Unconstrained coordinates of ``values`` (default: the template's).
 
-        Error terms start at 1 (scales, including ``wavel_scale``, and the
-        width of supplied gain modes), 0 (``wavel_offset``, ``north_angle``)
-        or 0.01 (added
-        errors and other gain widths), or at their prior's mean if that is
-        outside the prior's support or on its boundary.
+        Error terms start at 1 (scales and supplied gain widths), 0 (``wavel_offset``,
+        ``north_angle``) or 0.01 (added errors, other gain widths), or at their
+        prior's mean if that is outside the support or on its boundary.
         """
         values = {} if values is None else dict(values)
         z = {}
@@ -316,9 +301,8 @@ class _Objective(eqx.Module):
     def constrain(self, z):
         """Map unconstrained coordinates to parameter and error-term values.
 
-        An angle with an [`AngleVector`][virgil.angles.AngleVector] prior
-        appears twice: in degrees at its path, and as the vector at
-        ``"<path>_vec"``.
+        An ``AngleVector`` angle appears twice: in degrees at its path, and as the
+        vector at ``"<path>_vec"``.
         """
         values = {}
         for path, prior in self.priors.items():
@@ -398,9 +382,8 @@ class _Objective(eqx.Module):
     def residuals(self, z):
         """Residual vector whose half sum of squares is ``loss(z)`` + const.
 
-        Raises :class:`NoLeastSquaresForm` (a ``TypeError``) if a
-        regularizer or prior has no least-squares form (then use L-BFGS or
-        Adam).
+        Raises :class:`NoLeastSquaresForm` if a regularizer or prior has no
+        least-squares form (use L-BFGS or Adam).
         """
         self._check_least_squares()
         model = self.build(z)
@@ -453,15 +436,9 @@ class _Objective(eqx.Module):
     def curvature_rows(self, z):
         """The curvature rows ρ(z), whose Jacobian J gives JᵀJ.
 
-        Four kinds of row, in this order: each dataset's mean rows (the
-        whitened residuals with the diagonal errors frozen, so that gains,
-        closure offsets and extra observable blocks stay live) and, with
-        fitted error terms, its normalizer rows √2 log σ_k (see
-        ``likelihood._curvature_rows``); each likelihood term's residuals
-        (live; a term's ``log_norm`` has no rows and adds no curvature);
-        and the residuals of the ``AngleVector`` priors. Regularizers are
-        not included. ``z`` is the dict of unconstrained coordinates, as
-        for ``loss``.
+        In order: each dataset's mean and normalizer rows
+        (``likelihood._curvature_rows``), each likelihood term's residuals, and the
+        residuals of ``AngleVector`` priors. Regularizers are not included.
         """
         model = self.build(z)
         values = self.constrain(z)
@@ -479,13 +456,12 @@ class _Objective(eqx.Module):
         return np.concatenate(rows) if rows else np.zeros(0)
 
     def _no_prior_curvature(self, prior, jacobian):
-        """Whether ``prior``'s coordinates have P = 0 by type (known when
-        tracing): angle vectors (their residuals are rows);
-        ``ImproperUniform``; and, without the Jacobian, priors flat in their
-        fitted coordinate and ``Uniform``. A prior that is neither
-        elementwise nor an angle vector (a ``MultivariateNormal``, a
-        ``Dirichlet``) has a curvature that is not diagonal, and raises
-        :class:`NoLeastSquaresForm`."""
+        """Whether ``prior``'s coordinates have P = 0 by type (known when tracing).
+
+        Angle vectors, ``ImproperUniform``, and, without the Jacobian, priors flat in
+        their fitted coordinate and ``Uniform``. A prior that is neither elementwise
+        nor an angle vector raises :class:`NoLeastSquaresForm`.
+        """
         import numpyro.distributions as dist
 
         base = _base(prior)
@@ -520,19 +496,12 @@ class _Objective(eqx.Module):
         )
 
     def curvature_diag(self, z, jacobian):
-        """P, the diagonal of curvature from elementwise priors, over the
-        flat coordinates.
+        """P, the diagonal of curvature from elementwise priors, over the flat coordinates.
 
-        For each coordinate whose prior is elementwise (a base
-        ``event_shape == ()``, under any ``.expand`` or ``.to_event``), P is
-        ``max(0, ∂²/∂z² [-log p(x(z)) - log|dx/dz|])``, the second term
-        only if ``jacobian`` (NUTS's potential includes it; ``fit``'s loss
-        does not). The terms are separable, so a ``jax.jvp`` of ``jax.grad``
-        with a tangent of ones gives the diagonal. A prior with a flat
-        coordinate adds nothing to ``fit``'s loss, so without the Jacobian
-        its P is 0. An ``AngleVector`` gives 0 (it has rows), and a
-        prior that is neither elementwise nor an angle vector raises
-        :class:`NoLeastSquaresForm`. A Normal prior on the real line gives 1/σ².
+        For each elementwise prior, ``max(0, ∂²/∂z² [-log p(x(z)) - log|dx/dz|])``,
+        the Jacobian term only if ``jacobian`` (NUTS's potential has it, ``fit``'s
+        loss does not). An ``AngleVector`` gives 0 (it has rows); a prior that is
+        neither elementwise nor an angle vector raises :class:`NoLeastSquaresForm`.
         """
         parts = []
         for key, prior in self._coordinate_priors():
@@ -556,12 +525,8 @@ class _Objective(eqx.Module):
     def loss(self, z):
         """Negative log posterior (up to a constant) at ``z``.
 
-        A prior with a flat coordinate (LogUniform, isotropic angles) is
-        constant in it, and adds nothing: the minimum is the maximum a
-        posteriori in that coordinate. Other priors are evaluated at the
-        constrained values, without the Jacobian of the bijection, so for
-        them the minimum is the maximum a posteriori in the model's own
-        parameters.
+        A prior with a flat coordinate adds nothing; other priors are evaluated at the
+        constrained values, without the Jacobian of the bijection.
         """
         model = self.build(z)
         values = self.constrain(z)
@@ -657,187 +622,71 @@ def fit(
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
+    `model`, `priors`, `data`, `regularizers`, `noise`, `likelihoods` and `dtype`
+    are shared with [`numpyro_model`][virgil.likelihood.numpyro_model]; see
+    [common arguments](../common_arguments.md). A prior that is uniform in some
+    coordinate (`LogUniform`, an isotropic inclination, ...) is optimized in it;
+    the returned `values` are always in the model's own parameters.
+
     Parameters
     ----------
     model : SourceModel or callable
-        A template model whose leaves at the paths in ``priors`` are fitted
-        (their values are the starting point), or a function called with the
-        parameters as keyword arguments, as for
-        [`numpyro_model`][virgil.likelihood.numpyro_model]. The function
-        may return a list of models, one per dataset, sharing parameters:
-        for example a scene and a [`Rotated`][virgil.models.Rotated]
-        copy of it, for two epochs between which it turns. Regularizers
-        then act on the first model only: an Image that appears only in a
-        later model is not regularized.
+        A template whose leaves at the paths in ``priors`` are fitted (their
+        values are the starting point), or a function of the parameters that
+        returns a model or a list of models, one per dataset.
     priors : dict[str, numpyro.distributions.Distribution]
-        A prior for each free parameter, keyed by its path (e.g.
-        ``"comp.flux"`` or ``"env.log_brightness"``; see
-        [`image_priors`][virgil.imaging.image_priors]). Priors on
-        fluxes must have non-negative support. An angle (degrees) with an
-        [`AngleVector`][virgil.angles.AngleVector] prior is fitted as a
-        2-D vector, with no wrap boundary; its von Mises prior, if any, has
-        a least-squares form.
-
-        A prior that is uniform in some coordinate of its parameter has a
-        *flat coordinate*, and ``fit`` optimizes the parameter in it:
-        ``LogUniform(a, b)`` is uniform in ``log x`` on ``[log a, log b]``,
-        an isotropic inclination in ``cos i`` and an isotropic latitude in
-        ``sin(lat)`` (any prior with a ``flat_coordinate()`` method), and
-        ``Uniform`` in the parameter itself. The prior is then constant and
-        adds nothing to the loss, so the fit is the maximum of the
-        likelihood (times the other priors) inside the prior's range, and
-        Levenberg–Marquardt applies. This is the maximum a posteriori in the
-        coordinates in which the invariant (Jeffreys) prior is uniform, the
-        choice consistent with virgil's prior rule; a mode in ``x`` itself
-        would depend on the parametrization (for ``LogUniform``, the density
-        ``1/x`` would pull every scale towards ``a``). Other priors, such as
-        ``Normal``, ``Beta`` or ``HalfNormal``, are evaluated in the model's
-        own parameters, without the Jacobian of the bijection, as before.
-        Either way the returned ``values`` are in the model's own
-        parameters.
+        A prior for each free parameter, keyed by its path.
     data : OIData or sequence of OIData
-        The data, fitted jointly. May be empty (``()``) when
-        ``likelihoods`` holds all the data.
+        The data, fitted jointly; may be ``()`` when ``likelihoods`` holds all
+        the data.
     regularizers : sequence, optional
-        Penalties added to the loss, e.g. from
-        [`virgil.imaging`][virgil.imaging].
+        Penalties added to the loss, e.g. from [`virgil.imaging`][virgil.imaging].
     noise : dict or list of dict, optional
-        Priors on error-inflation terms to fit with the parameters:
-        ``vis_scale`` and ``phi_scale`` multiply the uncertainties, and
-        ``vis_error_rel`` (a fraction of the model visibility) and
-        ``phi_error`` (radians) are added in quadrature (see
-        [`inflated_errors`][virgil.likelihood.inflated_errors]), and the
-        widths of gains correlated across channels, ``vis_gain_<group>``
-        (see [`OIData.with_gains`][virgil.oidata.OIData.with_gains]), and
-        of closure-phase offsets, ``phi_offset_<group>`` (see
-        [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]), and
-        the wavelength scale, ``wavel_scale`` and ``wavel_offset`` (see
-        [`OIData.with_wavelength_scale`][virgil.oidata.OIData.with_wavelength_scale]), and the North
-        angle, ``north_angle`` in degrees (see
-        [`OIData.with_north_angle`][virgil.oidata.OIData.with_north_angle]),
-        whose priors may be of either sign (e.g. ``Normal(1, 2e-4)``). A dict
-        applies to every dataset (values ``"noise.<term>"``); a list gives
-        each dataset its own (``"noise[i].<term>"``). An entry may be a
-        function of the fitted values instead of a prior, tying the term to
-        parameters in ``priors`` (see
-        [`hierarchical_scales`][virgil.priors.hierarchical_scales]). The loss is then the
-        full Gaussian negative log likelihood, including ``Σ log σ``, so the
-        default method is L-BFGS. So it is for data with gains, whose
-        covariance depends on the model. Fitting error terms with an image is
-        degenerate (a smoother image with larger errors fits as well):
-        estimate them with a parametric model first.
-        **Priors.** These terms are scale parameters, so their default
-        (Jeffreys) prior is log-uniform on stated bounds; a
-        ``Uniform(0, ...)`` favours large values. The bounds must contain
-        the plausible values: for the factors ``vis_scale`` and
-        ``phi_scale``, whose neutral value is 1, e.g.
-        ``dist.LogUniform(0.1, 10.0)``; for the added errors and widths
-        (``vis_error_rel``, ``phi_error``, ``vis_gain_<group>``,
-        ``phi_offset_<group>``), e.g. ``dist.LogUniform(1e-4, 0.3)``.
-        ``wavel_scale`` is a scale too: log-uniform about 1 unless a
-        calibration gives a Gaussian (``Normal(1, 2e-4)`` for GRAVITY is
-        such information).
+        Priors on error and calibration terms fitted with the parameters; see
+        [common arguments](../common_arguments.md#noise).
     init : dict, optional
-        Starting values by path (or ``noise`` site), overriding the
-        template's (required for a function model).
+        Starting values by path (or ``noise`` site); required for a function model.
     method : {"lm", "lbfgs", "adam"}, optional
-        ``"lm"``: Levenberg–Marquardt (optimistix) on the residuals. Its
-        inner solve is a dense QR of the Jacobian for up to 200 unconstrained
-        coordinates, and otherwise matrix-free (``cg_steps``
-        conjugate-gradient steps on the normal equations), so that the
-        Jacobian of a larger image is never formed. The default when the whole
-        objective has a least-squares form: Normal priors, and priors that
-        are flat in their fitted coordinate (Uniform, ImproperUniform,
-        LogUniform and the other priors with a flat coordinate).
-        ``"lbfgs"``: L-BFGS (optax) on the loss, for penalties
-        such as maximum entropy and total variation; the default otherwise.
-        No unconstrained coordinate moves by more than ``max_step_size``
-        per step, so that log-brightness pixels cannot be switched off by
-        one long step.
-        ``"adam"``: Adam with ``learning_rate``, run for ``max_steps``.
+        ``"lm"``: Levenberg–Marquardt, the default when the objective has a
+        least-squares form (Normal priors and priors flat in their fitted
+        coordinate); matrix-free (``cg_steps``) above 200 coordinates.
+        ``"lbfgs"``: for penalties such as maximum entropy and total variation,
+        and the default otherwise. ``"adam"``: with ``learning_rate``.
     max_steps : int, optional
         Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
-        It sets the length of LM's and Adam's loops, so a new value
-        recompiles them (not L-BFGS); other numbers do not.
     gtol : float, optional
-        LM and L-BFGS stop when no component of the gradient of the loss
-        per data point exceeds ``gtol``, nor 1/1000 of its largest starting
-        value (so that a fit started near a solution, e.g. along an
-        L-curve, still converges). The tolerance is never below √eps of the
-        dtype times that starting value (3.5e-4 times it in float32), which
-        rounding errors in the gradient would not let the fit reach, nor
-        below ``1e-6 * gtol``, so that a fit started exactly at a
-        zero-residual optimum, whose gradient is rounding noise, is
-        converged at once.
+        LM and L-BFGS stop when no component of the gradient of the loss per data
+        point exceeds ``gtol``, nor 1/1000 of its largest starting value (floored
+        at √eps of the dtype times that value, and at ``1e-6 * gtol``).
     max_step_size : float, optional
-        L-BFGS moves no unconstrained coordinate by more than this per step
-        (for a log-brightness pixel, a factor ``exp(max_step_size)``).
-        Uncapped, its line search accepts steps that drive pixels so dark
-        that their gradient vanishes and they never recover, leaving the fit
-        at a spurious stationary point far above the minimum. Coordinates
-        with real support (e.g. a position under a Normal prior) are in
-        their own units, so raise this if they must move far.
+        L-BFGS moves no unconstrained coordinate by more than this per step (a
+        factor ``exp(max_step_size)`` for a log-brightness pixel).
     lbfgs_memory : int, optional
-        Number of past steps L-BFGS keeps to model the curvature (default
-        50; optax's own default is 10). On regularized images, 10 left the
-        fits short of their optimum at many weights, and weakly
-        regularized ones running to the step limit; 50 found lower losses
-        and converged in fewer steps, at a higher cost per step.
+        Past steps L-BFGS keeps to model the curvature.
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
-        Conjugate-gradient steps per LM step, for more than 200 coordinates.
-        The inner solve runs for exactly this many steps, or as many as
-        there are coordinates if fewer: its tolerances are zero, because an
-        inner solve that stops at a step limit would abort the outer one.
+        Conjugate-gradient steps per LM step, above 200 coordinates.
     dtype : {"float64", "float32"}, optional
-        Precision of the fit. The default runs in float64 inside a local
-        ``jax.enable_x64`` context. The returned model and values are cast
-        back to JAX's precision outside the fit (float32, unless x64 is
-        enabled), so that they work with the rest of your code.
+        Precision of the fit; see [common arguments](../common_arguments.md#dtype).
     likelihoods : sequence, optional
-        Further Gaussian likelihood terms that are not visibilities: each is
-        a callable of the fitted values (a dict, by path or keyword) that
-        returns whitened residuals, such as
-        [`PositionData.term`][virgil.orbits.PositionData.term] or
-        [`RVData.term`][virgil.orbits.RVData.term] for an orbit's
-        positions and radial velocities. Their χ² follow the datasets' in
-        ``info``.
+        Further Gaussian likelihood terms, such as
+        [`PositionData.term`][virgil.orbits.PositionData.term].
     time_limit : float, optional
-        Wall-clock budget (seconds) for the optimizer, for LM and L-BFGS.
-        The optimizer then runs in chunks of steps, and stops after the
-        first chunk that ends past the limit, unconverged, with
-        ``info["stop"] == "time"`` and a warning; the time to compile the
-        first chunk counts. L-BFGS carries its whole state from chunk to
-        chunk, so its path is the same as without a limit. optimistix's LM
-        restarts from the last point in each chunk (with its damping
-        reset), so its path can differ slightly. Adam, whose cost is set
-        by ``max_steps``, takes neither this nor ``progress``.
+        Wall-clock budget (seconds) for LM and L-BFGS, which run in chunks and
+        stop after the first chunk that ends past it, with
+        ``info["stop"] == "time"`` and a warning. Compilation counts.
     progress : callable or bool, optional
-        Report progress between chunks (as for ``time_limit``): a function
-        called with a dict of ``steps``, ``loss`` (the negative log
-        posterior), ``grad_norm`` (as in ``info``) and ``elapsed``
-        (seconds), or ``True`` to print them.
+        Between chunks, call a function with a dict of ``steps``, ``loss``,
+        ``grad_norm`` and ``elapsed`` (seconds), or print them if ``True``.
 
     Returns
     -------
     FitResult
-        The fitted model, parameter values and diagnostics. A warning is
-        raised if LM or L-BFGS did not converge; for L-BFGS it says whether
-        the fit reached ``max_steps`` or ``time_limit``, met a non-finite
-        loss or gradient, or stopped earlier because a step no longer
-        changed the parameters (its precision ran out, as can happen in
-        float32). ``info["stop"]`` holds the reason.
-
-        ``info["grad_norm"]`` is the infinity norm (largest absolute
-        component) of the gradient of the loss per data point at the
-        returned point, in the unconstrained coordinates the optimizer
-        works in: the quantity LM and L-BFGS compare with their tolerance
-        (see ``gtol``). It is computed the same way for every method, so a
-        fit that stopped early (at ``max_steps``, or after Adam's fixed
-        number of steps) shows a larger value. L-BFGS tests the gradient
-        at the point before its last step, so a converged L-BFGS fit's
-        ``grad_norm`` can be slightly above the tolerance.
+        The fitted model, values and diagnostics. A warning is raised if LM or
+        L-BFGS did not converge; ``info["stop"]`` holds the reason, and
+        ``info["grad_norm"]`` the largest absolute component of the gradient of
+        the loss per data point, in the unconstrained coordinates.
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -968,12 +817,7 @@ class _Budget:
         return self.time_limit is not None and elapsed >= self.time_limit
 
     def finish(self, steps, loss_and_gradient):
-        """Report progress at ``steps`` unless it was just reported.
-
-        Called on completion too, so that a fit that converges within
-        its first chunk, or in its last, still reports. Returns the
-        elapsed time.
-        """
+        """Report progress at ``steps`` unless just reported; return the elapsed time."""
         elapsed = time.monotonic() - self.start
         if self.progress is not None and self._reported != steps:
             self._reported = steps
@@ -997,14 +841,9 @@ _AT_BOUND = 1e-3
 def _bound_fraction(prior, value, flat=True):
     """Where ``value`` lies in its prior's finite interval, as a fraction.
 
-    Only genuine edges of the support count: a LogUniform's (in log x,
-    the coordinate it is fitted in) and an interval support's, such as a
-    Uniform's. ``None`` for priors with an unbounded side, angle vectors,
-    tied terms and other priors with a flat coordinate: the ends of an
-    isotropic inclination's (face-on) or latitude's (the poles) are poles
-    of the coordinates, not edges of the prior. ``flat`` says whether a
-    LogUniform is fitted (or, for samples, read) in its flat coordinate,
-    log x; otherwise it is read in x, as a fraction of ``[low, high]``.
+    Only genuine edges of the support count (a LogUniform's, in log x if ``flat``,
+    or an interval support's); ``None`` for unbounded priors, angle vectors, tied
+    terms and other priors with a flat coordinate, whose ends are coordinate poles.
     """
     if is_tied(prior) or is_angle_vector(prior):
         return None
@@ -1078,147 +917,61 @@ def gauss_newton_mass(
 ):
     """A NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
-    NUTS is the No-U-Turn Sampler of Hoffman & Gelman (2014,
-    https://arxiv.org/abs/1111.4246;
-    https://en.wikipedia.org/wiki/Hamiltonian_Monte_Carlo), as implemented
-    in numpyro; see
-    Betancourt (2017, https://arxiv.org/abs/1701.02434) for an introduction.
+    Near the maximum a posteriori, a posterior with one peak is close to a
+    Gaussian whose precision is F = JᵀJ + diag(P) in the unconstrained
+    coordinates numpyro samples (J: Jacobian of the whitened residuals; P: curvature
+    of the priors and transforms). Its inverse is the mass matrix, so that
+    directions the data fix tightly take the same step size as those left to the
+    prior. See [the Gauss–Newton mass matrix](../gauss_newton_mass.md) for the
+    construction, fitted error terms and gains, what it leaves out, and
+    [when not to use it](../gauss_newton_mass.md#when-not-to-use-it). Use it at
+    fixed field hyperparameters, with every sampled parameter in ``priors``.
 
-    **The matrix.** Near the maximum a posteriori, a posterior with one peak
-    is close to a Gaussian whose precision, in the unconstrained coordinates
-    z that numpyro samples, is F = JᵀJ + diag(P). Here J is the Jacobian of
-    a vector of *curvature rows* with respect to z: the whitened residuals
-    of every dataset (with the diagonal errors held fixed), the residuals of
-    likelihood terms, and of angle-vector priors. JᵀJ is never negative in
-    any direction, since δᵀJᵀJδ = |Jδ|², so F is positive semi-definite.
-    P is the curvature of the elementwise priors and of the coordinate
-    transforms, each coordinate's own, with the Jacobian of numpyro's
-    bijection included, as NUTS's potential has it (a Normal prior on the
-    real line gives 1/σ²). The covariance F⁻¹ is the inverse mass matrix: it
-    whitens that Gaussian, so that directions the data fix tightly take the
-    same step size as those left to the prior. Without it, the step size
-    shrinks to suit the tightest direction. On a 62² Gaussian-field image
-    fitted to 588 AMI observables the matrix cut NUTS from its full tree
-    depth (1023 leapfrog steps) per draw to 63; on an 8-parameter orbit,
-    from 87 steps to about 6.
-
-    **Fitted error terms.** With ``noise=`` the matrix covers the error
-    terms too, under their numpyro site names (``"noise.vis_scale"``,
-    ``"noise[1].phi_scale"``). The likelihood then has a second term,
-    Σ log σ_k, that is not a sum of squares, but its expected curvature is
-    known for Gaussian data: a scale s multiplying N errors adds 2N in ln s,
-    whatever the model, and the matrix is blockdiag(JᵀJ, 2N). virgil builds
-    it with extra rows √2 log σ_k next to the residuals. Added errors
-    (``vis_error_rel``) get their cross terms with the model parameters the
-    same way. This is the Fisher information. Phases with errors above
-    about 0.5 rad (a von Mises, not a Gaussian, likelihood) have their
-    scale's curvature overstated, by up to a few times, which costs
-    efficiency only.
-
-    **Gains.** Gains and closure-phase offsets that are correlated across
-    channels are integrated out analytically: their covariance whitens the
-    residuals, and F differentiates through that whitening. That is a good
-    curvature for the model parameters. For fitted gain widths it is a
-    positive semi-definite heuristic rather than the Fisher information.
-
-    **What is dropped.** The exact Hessian also has Σ r ∇²r, each residual
-    times the curvature of the model. It is small when the residuals are
-    noise-like or the model is nearly linear over the error bars. It
-    matters when the fit is poor (χ²/N ≫ 1) or the model bends on the scale
-    of the errors, where F is still a safe direction but a poorer guide to
-    the error bars. A likelihood term's ``log_norm`` (a fitted RV jitter's,
-    or the Jacobian of
-    [`position_angle_prior`][virgil.orbits.position_angle_prior]) has no
-    rows, so its curvature is left out. The matrix is a preconditioner:
-    errors in it cost efficiency, not correctness.
-
-    **When not to use it.**
-
-    - Several modes (orbit aliases, the 180° flip of a symmetric binary):
-      the matrix describes one mode. Sample each separately.
-    - Nearly circular orbits (e ≲ 0.05): ω and the periastron time are
-      degenerate, and NUTS reports divergences.
-    - Companions too faint to detect, whose posterior fills the prior.
-    - Closure phases that can pass through ±180°, where the likelihood has
-      sharp walls.
-    - χ²/N ≫ 1 (a misspecified model).
-
-    Use it at fixed field hyperparameters (σ and ℓ, chosen for example by
-    [`log_evidence`][virgil.imaging.log_evidence]). The curvature
-    depends on them, so a matrix computed at one σ and ℓ is wrong when
-    they move. Every sampled parameter must be in ``priors``: a
-    tightly constrained one left out (such as an image's flux) keeps its
-    identity mass and its tiny step size.
-
-    **Size.** The dense matrix has n² entries. With more than 4096
-    coordinates the result is a diagonal mass, with a ``UserWarning``:
-    images larger than 64² get this. Its entries are the diagonal of the
-    covariance F⁻¹, computed without forming the matrix, when there are
-    fewer rows than coordinates (an image), and 1/diag(F) otherwise.
+    With more than 4096 coordinates (images larger than 64²) the result is a
+    diagonal mass, with a ``UserWarning``.
 
     Parameters
     ----------
     model, priors, data
-        As for [`fit`][virgil.fitting.fit]. Any elementwise prior is
-        accepted (those with ``event_shape == ()``, including array-valued
-        parameters with an elementwise prior; a ``MultivariateNormal`` or
-        ``Dirichlet`` raises
-        ``NoLeastSquaresForm``): Normal, HalfNormal, Beta,
-        Uniform, LogUniform and so on. Its curvature P is taken in the
-        coordinates of the sampler. ``ImproperUniform`` priors add none, nor
-        do [`AngleVector`][virgil.angles.AngleVector] priors, whose
-        residuals are rows instead; an angle vector's block is keyed by its
-        site, ``"<path>_vec"``. Data may carry gains. The matrix is in the
-        unconstrained coordinates NUTS samples for
-        [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
-        ``flat_coordinates``: by default numpyro's bijection of each prior's
-        support, or with ``flat_coordinates=True`` ``fit``'s flat coordinates
-        (for ``LogUniform(a, b)`` the logit of ``log x`` on ``[log a, log
-        b]``).
+        As for [`fit`][virgil.fitting.fit]. Any elementwise prior is accepted
+        (``event_shape == ()``; a ``MultivariateNormal`` or ``Dirichlet`` raises
+        ``NoLeastSquaresForm``). ``ImproperUniform`` priors add no curvature, nor
+        do [`AngleVector`][virgil.angles.AngleVector] priors, whose residuals are
+        rows instead; an angle vector's block is keyed by its site,
+        ``"<path>_vec"``. Data may carry gains.
     values : dict
         The parameter values at which to take the curvature, normally
-        ``fit(model, priors, data).values``, including the fitted error
-        terms if ``noise`` is given.
+        ``fit(model, priors, data).values``, including the fitted error terms if
+        ``noise`` is given.
     likelihoods : sequence, optional
-        Further likelihood terms, as for ``fit`` (e.g.
-        [`PositionData.term`][virgil.orbits.PositionData.term]); data may
-        then be ``()``. Their residuals join the data's in J.
+        Further likelihood terms, as for ``fit``; ``data`` may then be ``()``.
     noise : dict or list of dict, optional
-        Priors on error terms, as for ``fit`` and ``numpyro_model``. They
-        are coordinates of the matrix. A term tied to the parameters (a
-        function instead of a prior) is not one.
+        Priors on error terms, as for ``fit``; they are coordinates of the matrix.
+        A term tied to the parameters (a function instead of a prior) is not one.
     flat_coordinates : bool, optional
         Whether the sampler moves in the priors' flat coordinates, as for
-        ``numpyro_model`` (default ``False``). Pass the same value to both:
-        with ``adapt_mass_matrix=False`` a matrix in the wrong coordinates
-        is never corrected, and sampling is silently slow. The result
-        records the value, and
-        [`chain_init_params`][virgil.likelihood.chain_init_params] (given
-        ``mass=``) raises on a mismatch with the numpyro model.
+        ``numpyro_model`` (default ``False``); pass the same value to both. See
+        [common arguments](../common_arguments.md#flat_coordinates).
 
     Returns
     -------
     GaussNewtonMass
         A dict of keyword arguments for ``numpyro.infer.NUTS``:
-        ``inverse_mass_matrix``, ``dense_mass``, and
-        ``adapt_mass_matrix=False``. Warmup adaptation is switched off
-        because a dense covariance estimated from a few hundred draws in
-        thousands of dimensions is far worse than this matrix. The
-        attribute ``condition`` is the condition number of the correlation
-        matrix (the covariance scaled to unit diagonal, so independent of
-        the parameters' units), or ``None`` for a diagonal mass. Above 1e10
-        the matrix is numerically unreliable. For the diagonal mass
-        (more than 4096 coordinates) ``dense_mass`` is empty and
-        ``inverse_mass_matrix`` holds a vector.
+        ``inverse_mass_matrix``, ``dense_mass`` and ``adapt_mass_matrix=False``
+        (a covariance estimated from a few hundred draws in thousands of
+        dimensions is far worse than this matrix). The attribute ``condition`` is
+        the condition number of the correlation matrix, or ``None`` for a
+        diagonal mass; above 1e10 the matrix is numerically unreliable. For the
+        diagonal mass ``dense_mass`` is empty and ``inverse_mass_matrix`` holds a
+        vector.
 
     Raises
     ------
     SingularCurvature
-        If a direction is constrained by neither the data nor a proper
-        prior (an ``ImproperUniform`` or flat-in-coordinate parameter the
-        data do not fix), or the matrix is not positive definite. A
-        parameter under a bounded prior is not one: it gets the curvature
-        of the transform.
+        If a direction is constrained by neither the data nor a proper prior (an
+        ``ImproperUniform`` or flat-in-coordinate parameter the data do not
+        fix), or the matrix is not positive definite. A parameter under a
+        bounded prior is not one: it gets the curvature of the transform.
 
     Examples
     --------
@@ -1289,11 +1042,9 @@ def _correlation_condition(covariance):
 def _gauss_newton_covariance(problem, z, dense=True):
     """F⁻¹ for F = JᵀJ + diag(P) over the flat coordinates of ``problem``.
 
-    Returns ``(covariance, ok, condition)``: the covariance (a vector, its
-    diagonal, if ``dense`` is false), whether it is positive definite and
-    finite, and the condition number of its correlation matrix (``None``
-    unless ``dense``). The coordinates are ``problem.coordinate_keys``:
-    parameters, then fitted noise terms.
+    Returns ``(covariance, ok, condition)``: the covariance (its diagonal if
+    ``dense`` is false), whether it is positive definite and finite, and the
+    condition number of its correlation matrix (``None`` unless ``dense``).
     """
     covariance, ok = _covariance(problem, z, dense)
     covariance, ok = onp.asarray(covariance), bool(ok)
@@ -1303,21 +1054,11 @@ def _gauss_newton_covariance(problem, z, dense=True):
 
 @eqx.filter_jit
 def _covariance(problem, z, dense):
-    """``(covariance, ok)`` of ``_gauss_newton_covariance``.
+    """``(covariance, ok)`` of ``_gauss_newton_covariance``, from J and P.
 
-    J is the Jacobian of ``problem.curvature_rows`` and P is
-    ``problem.curvature_diag(z, jacobian=True)``. With at least as many rows
-    as coordinates, F is formed and Cholesky-factored. With fewer (an
-    image's latents) it is inverted by Woodbury, which solves a system the
-    size of the rows: with W = P^-½ and K = JW,
-    (P + JᵀJ)⁻¹ = W (I - Kᵀ(I + KKᵀ)⁻¹K) W. The coordinates with P = 0 by
-    type (``curvature_zero``) are given P = 1, then that is taken back off,
-    (A - EᵀE)⁻¹ = A⁻¹ + A⁻¹Eᵀ(I - EA⁻¹Eᵀ)⁻¹EA⁻¹ with E picking them out of
-    A. Every other P is floored at 1e-12 times the largest, so that W is
-    finite, since ``max(0, ·)`` can give zero at run time. Positive
-    definiteness is checked on the result, by a Cholesky factorization of
-    the covariance itself: a cancellation in float32 can give a
-    non-positive-definite matrix from factors that look fine.
+    Cholesky of F = JᵀJ + diag(P) with at least as many rows as coordinates,
+    otherwise a Woodbury inverse of the size of the rows; positive definiteness is
+    checked on the covariance itself. See ``design/fitting_internals.md``.
     """
     flat, unravel = problem.ravel(z)
     n = flat.size
@@ -1413,12 +1154,8 @@ def _has_residuals(problem, z):
 
 @eqx.filter_jit
 def _summary(problem, z, scale):
-    """The loss, each dataset's chi-squared and the gradient norm at ``z``.
-
-    With fitted error terms, chi-squared uses the inflated errors. The
-    gradient norm is the largest absolute component of the gradient of the
-    loss per data point in the unconstrained coordinates, the quantity the
-    convergence test of LM and L-BFGS compares with its tolerance.
+    """The loss, each dataset's chi-squared (with inflated errors) and the gradient
+    norm at ``z``, as reported in ``FitResult.info``.
     """
     values = problem.constrain(z)
     residuals = problem.data_residuals(problem.build(z), values)
@@ -1446,16 +1183,9 @@ def _scaled_loss(problem, scale):
 def _tolerance(gradient, gtol):
     """The gradient tolerance of LM and L-BFGS, from the starting gradient.
 
-    It is ``gtol``, or 1/1000 of the starting gradient's largest component
-    if that is smaller (so that a warm start still converges), but no less
-    than √eps times it. The gradient is a sum of terms that cancel at the
-    minimum, and rounding them leaves it a floor which, relative to the
-    starting gradient, is about eps times the data's signal-to-noise ratio
-    over the starting residuals: up to ~1e-4 in float32 (eps ≈ 1.2e-7),
-    where a fixed ``gtol = 1e-4`` was out of reach and LM ran all its
-    steps. The √eps floor (3.5e-4 in float32, 1.5e-8 in float64) clears
-    it, and is the usual stopping limit for finite-precision optimizers.
-    Neither part is allowed below ``1e-6 * gtol``.
+    ``gtol``, or 1/1000 of the starting gradient's largest component if smaller,
+    but no less than √eps times it, nor below ``1e-6 * gtol``. See
+    ``design/fitting_internals.md``.
     """
     largest = _largest(gradient)
     floor = np.sqrt(np.finfo(largest.dtype).eps) * largest
@@ -1468,16 +1198,12 @@ def _tolerance(gradient, gtol):
 
 
 class _GradientStoppedLM(optx.LevenbergMarquardt):
-    """Levenberg-Marquardt that stops when the gradient of the loss is small.
+    """Levenberg-Marquardt that stops when the gradient of the loss is small, like the
+    L-BFGS path (optimistix's own tests pass at once from a warm start, or never for
+    pixels drifting to -inf).
 
-    optimistix's own test, on the change of the residuals, passes at once
-    from a warm start, and a test on the parameters never passes for
-    log-brightness pixels that should be dark (they drift towards -inf
-    without changing the image). This stops like the L-BFGS path instead.
-
-    ``limit`` is the step bound, a traced array rather than optimistix's
-    static ``max_steps``, so that runs with different bounds (the last,
-    shorter chunk of a chunked fit) share one compiled kernel.
+    ``limit`` is the step bound, traced rather than optimistix's static
+    ``max_steps``, so that a shorter last chunk reuses the compiled kernel.
     """
 
     tolerance: jax.Array
@@ -1518,12 +1244,8 @@ _DENSE_LM = 200
 
 
 def _lm_linear_solver(z0, cg_steps):
-    """QR for a few coordinates, else CG on the normal equations.
-
-    CG runs for exactly ``cg_steps`` steps (its tolerances are zero),
-    because an inner solve that stops at a step limit would abort the outer
-    one; it is exact after as many steps as there are coordinates, so it
-    runs no more than that.
+    """QR for a few coordinates, else CG on the normal equations, run for exactly
+    ``cg_steps`` steps (no more than the number of coordinates).
     """
     n = sum(int(np.size(x)) for x in jax.tree.leaves(z0))
     if n <= _DENSE_LM:
@@ -1544,12 +1266,9 @@ _RESTART_GAIN = 1e-7
 def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     """Levenberg–Marquardt, returning ``(z, steps, converged, stop)``.
 
-    With a time limit or progress report (``budget.chunked``), optimistix
-    runs ``_LM_CHUNK`` steps at a time, each restarting from where the last
-    ended. optimistix's LM state (its damping, the last Jacobian) holds
-    closures that cannot be carried between jitted calls without
-    recompiling, so a restart resets the damping: the path can differ
-    slightly from an unchunked run.
+    With a time limit or progress report (``budget.chunked``), optimistix runs
+    ``_LM_CHUNK`` steps at a time, each restarting from the last point with its
+    damping reset, so the path can differ slightly from an unchunked run.
     """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
     linear_solver = _lm_linear_solver(z0, cg_steps)
@@ -1588,14 +1307,9 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
 def _capped_lbfgs(max_step_size, memory):
     """optax's L-BFGS, with no coordinate moving more than ``max_step_size``.
 
-    The L-BFGS direction is scaled down to the cap before the zoom line
-    search, whose step is then at most 1, so the line search evaluates the
-    points actually taken (as ``optax.value_and_grad_from_state`` needs).
-    Without the cap, a softmax image can take a step of ~20 in its
-    log-brightnesses that sends most pixels to ~exp(-20): their gradient,
-    proportional to their brightness, then vanishes, and the fit stalls.
-    Scaling the whole step, rather than clipping each coordinate, keeps the
-    quasi-Newton direction.
+    The whole direction is scaled down to the cap before the zoom line search (so
+    the quasi-Newton direction is kept and the line search evaluates the points
+    actually taken).
     """
 
     def cap(updates, state, params=None):
@@ -1617,14 +1331,10 @@ def _capped_lbfgs(max_step_size, memory):
 def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
     """L-BFGS steps from ``carry`` until step ``stop_at`` or a stop.
 
-    ``carry`` is ``(count, z, optimizer state, loss, gradient, moved)``,
-    the loss per data point and the largest component of its gradient
-    being those at the point before the last step. The loop stops at
-    ``stop_at`` steps, when the gradient is within ``tolerance``, when a
-    step no longer moves the parameters, or when the loss or gradient is
-    not finite (a NaN gradient fails the comparison with ``tolerance``).
-    ``stop_at`` is traced, so a fit run in chunks (see ``_lbfgs``) compiles
-    the loop once.
+    ``carry`` is ``(count, z, optimizer state, loss, gradient, moved)``. Stops at
+    ``stop_at`` steps, within ``tolerance``, when a step no longer moves the
+    parameters, or when the loss or gradient is not finite. ``stop_at`` is traced,
+    so chunked fits compile the loop once.
     """
     optimizer = _capped_lbfgs(step_size, memory)
     loss = _scaled_loss(problem, scale)
@@ -1741,13 +1451,9 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     """L-BFGS in rounds, returning ``(z, steps, converged, stop)``.
 
-    A round that ends at its step limit without converging restarts from
-    its last point with fresh curvature memory, so that a memory spoilt on
-    the way (by a parameter running into a bound, say) cannot hold the fit
-    for the rest of ``max_steps``: on macOS a limb-darkened star's fit with
-    fitted error scales crawled for all 20 000 steps in one round, where
-    Linux converged in under 700. Restarts stop once a round gains less
-    than ``_RESTART_GAIN`` in the loss per data point.
+    A round that ends at its step limit without converging restarts from its last
+    point with fresh curvature memory, until a round gains less than
+    ``_RESTART_GAIN`` in the loss per data point.
     """
     limit, total, z, tolerance = int(max_steps), 0, z0, None
     while True:
@@ -1805,18 +1511,11 @@ def _lbfgs_round(
 ):
     """One round of L-BFGS: ``(z, steps, converged, stop, tolerance)``.
 
-    ``tolerance`` is the convergence test of the first round (``None``
-    there), which later rounds keep.
-
-    ``stop`` says why an unconverged fit ended: ``"limit"`` (``max_steps``),
-    ``"time"`` (the budget's time limit), ``"stalled"`` (a step no longer
-    moved the parameters) or ``"non-finite"`` (a NaN or infinite loss or
-    gradient); it is ``None`` when the fit converged.
-
-    With a time limit or progress report (``budget.chunked``), the loop runs
-    ``_LBFGS_CHUNK`` steps per jitted call, carrying the whole optimizer
-    state, so that the path is the one an unchunked run takes, and checks
-    the clock between calls.
+    ``tolerance`` is the first round's convergence test (``None`` there), kept by
+    later rounds. ``stop`` is ``"limit"``, ``"time"``, ``"stalled"`` or
+    ``"non-finite"`` for an unconverged fit, and ``None`` if it converged. With a
+    time limit or progress report the loop runs ``_LBFGS_CHUNK`` steps per call,
+    carrying the whole optimizer state, so the path is the unchunked one.
     """
     limit = int(max_steps)
     first = min(limit, _LBFGS_CHUNK) if budget.chunked else limit
