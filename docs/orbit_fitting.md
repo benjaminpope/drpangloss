@@ -1,6 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/orbit_fitting.ipynb by scripts/sync_tutorial_docs.py. -->
 # Fitting a binary's orbit to interferometric data
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 A long-baseline interferometer resolves a close binary into two stars, and if we observe it again over months and years we can watch the companion move around its primary. This tutorial infers the Keplerian orbit **directly from the interferometric data of every epoch at once**: one model predicts the squared visibilities and closure phases of all the nights, with the companion at its orbital position at the time of each night, and one sampler explores the orbit, the flux ratio and each night's calibration together.
 
 **What you'll get.** The orbit, recovered from eight epochs that cover about half of it:

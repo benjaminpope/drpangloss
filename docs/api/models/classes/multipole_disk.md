@@ -1,5 +1,8 @@
 # `MultipoleDisk`: radial profiles by quadrature
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 A disk, ring or halo described by its radial brightness profile $I(r)$ in
 the plane of the disk, as one [component](composition.md) of a `System`. It is
 placed and weighted like any other component, and its visibility is the

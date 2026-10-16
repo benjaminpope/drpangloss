@@ -1,5 +1,8 @@
 """Named epochs of data, with one snapshot of a moving scene per dataset.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 An orbit fit to interferometric data across epochs predicts each epoch's
 visibilities and closure phases from the scene at that epoch's time. When
 nothing moves appreciably during an observation (a binary whose period is
@@ -87,6 +90,8 @@ __all__ = [
     "rank_orbits",
     "start_from_positions",
 ]
+
+__provisional__ = ("*",)
 
 _AT = ("dataset", "epoch")
 

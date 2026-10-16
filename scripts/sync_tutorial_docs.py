@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -61,6 +62,24 @@ MAPPINGS = {
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
     "notebooks/multipole_disk_rings.ipynb": "docs/multipole_disk_rings.md",
 }
+
+
+# Tutorials about provisional features (docs/stability.md) get the standard
+# notice under their title; its text is virgil._stability.ADMONITION, loaded
+# by path because that module imports nothing (so no JAX here).
+PROVISIONAL_NOTEBOOKS = {
+    "notebooks/orbit_fitting.ipynb",
+    "notebooks/multipole_disk_rings.ipynb",
+    "notebooks/imaging_clean.ipynb",
+}
+
+
+def _provisional_admonition() -> str:
+    path = Path(__file__).resolve().parents[1] / "src/virgil/_stability.py"
+    spec = importlib.util.spec_from_file_location("_stability", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.ADMONITION
 
 
 # A code cell tagged "hide-input" is folded in the published page, under this
@@ -126,6 +145,7 @@ def render_notebook_markdown(
         f"<!-- AUTO-GENERATED FROM {relative_nb_path} "
         "by scripts/sync_tutorial_docs.py. -->"
     )
+    noticed = False
 
     for cell_index, cell in enumerate(nb.get("cells", []), start=1):
         cell_type = cell.get("cell_type")
@@ -139,7 +159,19 @@ def render_notebook_markdown(
             continue
 
         if cell_type == "markdown":
-            lines.append(source.strip())
+            text = source.strip()
+            if (
+                relative_nb_path in PROVISIONAL_NOTEBOOKS
+                and not noticed
+                and text.startswith("# ")
+            ):
+                noticed = True
+                # Under the title: the first heading of the page.
+                head, _, rest = text.partition("\n")
+                text = f"{head}\n\n{_provisional_admonition()}"
+                if rest.strip():
+                    text += f"\n\n{rest.strip()}"
+            lines.append(text)
             lines.append("")
         elif cell_type == "code":
             fenced = ["```python", *source.split("\n"), "```"]
@@ -179,6 +211,11 @@ def render_notebook_markdown(
                     lines.append("```")
                     lines.append("")
 
+    if relative_nb_path in PROVISIONAL_NOTEBOOKS and not noticed:
+        raise ValueError(
+            f"{relative_nb_path} is provisional but its first markdown cell "
+            "does not start with a '# ' title to put the notice under."
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 

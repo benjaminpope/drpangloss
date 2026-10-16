@@ -1,74 +1,30 @@
 """A dense damped-Newton (Levenberg–Marquardt) kernel for negative log posteriors.
 
-The objective Φ(z) is any scalar function of a flat vector z. Its gradient
-is the exact ∇Φ from autodiff. Only the curvature is approximated:
+Minimizes a scalar Φ(z) of a flat vector z using the exact autodiff
+gradient and the curvature ``F = JᵀJ + diag(P)``, ``J = ∂ρ/∂z``, where ρ(z)
+are *curvature rows* (for least squares, the whitened residuals) and
+``P ≥ 0`` is the diagonal from elementwise priors and transforms. Steps are
+accepted only if Φ falls, so an error in F costs speed or a ``STALLED``
+stop, never a wrong answer.
 
-    F(z) = J(z)ᵀ J(z) + diag(P(z)),    J = ∂ρ/∂z,
+A *kernel problem* is an ``eqx.Module`` with methods of a flat float
+vector: ``loss(z)`` (scalar Φ), ``rows(z)`` (any length, possibly 0) and
+``diag(z)`` (P, length n). Data are module fields so they are traced;
+static layouts use ``eqx.field(static=True)``.
 
-where ρ(z) is a vector of *curvature rows* (for a least-squares objective,
-the whitened residuals, with Φ = ½|ρ|² + …) and P ≥ 0 is the diagonal from
-elementwise priors and coordinate transforms. F is positive semi-definite
-by construction. Because steps are accepted only if Φ itself falls, an
-error in F costs speed, or a ``STALLED`` stop that a caller answers with a
-fallback optimizer; it never gives a wrong answer. (A coordinate with a
-non-zero gradient but no curvature in F, because a term of Φ is missing
-from ``rows`` and ``diag``, is the way to get ``STALLED``: its step is
-~1/(λ·1e-12) long, so every trial is rejected.)
+`step` solves ``(F + λM) δ = -g`` by Cholesky on the free coordinates
+(M: Marquardt scaling of diag F, floored), clips the trial into the box and
+accepts it if everything is finite and Φ falls (λ/3 on accept, 4λ on
+reject; a failed Cholesky gives NaNs, so it is a rejection). Coordinates
+at a bound with the descent direction pointing out of the box are held.
+Stop codes: ``CONVERGED`` (projected gradient ≤ ``gtol``, Newton decrement
+≤ ``dtol``, or, once λ > 1e10, decrement at the rounding floor),
+``STALLED`` (λ > 1e10 otherwise), ``LIMIT``, and ``NON_FINITE`` from
+`init`. A stopped state is unchanged by ``step``; `solve` resumes from a
+`State`, counting ``max_steps`` from ``state.steps``.
 
-A *kernel problem* is an ``eqx.Module`` with three methods of a flat 1-D
-float vector: ``loss(z)`` (scalar Φ), ``rows(z)`` (curvature rows, any
-length, possibly 0) and ``diag(z)`` (P, length n). Data are module fields,
-so they are traced; layouts that must be static are
-``eqx.field(static=True)``. (A ``functools.partial`` would be static to
-``eqx.filter_jit``: it would fail to hash or recompile per dataset.)
-
-**Step** (`step`). At z with gradient g and
-curvature F, find the coordinates held at a bound (below), set
-``M = diag(max(F_ii, 1e-12 max_j F_jj, tiny))`` over the free ones and
-solve ``(F + λM) δ = -g`` by Cholesky on the free coordinates (δ = 0 on
-held ones). The trial is ``clip(z + δ, lower, upper)``. It is accepted if
-δ, Φ, ∇Φ and F at the trial are all finite and Φ has fallen. A failed
-Cholesky gives NaNs in JAX rather than an exception, so it counts as a
-rejection. ``steps`` counts accepted and rejected iterations.
-
-**Damping.** λ starts at 1e-3. An accepted step divides it by 3 (floor
-1e-12), a rejected step multiplies it by 4. Small λ is the Gauss–Newton
-step; large λ is a short step down the gradient with each coordinate
-scaled by its own curvature. M is Marquardt's scaling, floored so that a
-coordinate the rows ignore (F_ii = 0) still gives a positive-definite
-system and no NaN.
-
-**Active set** (ε-active, Bertsekas 1982). With
-``ε = max(1e-10, 10 eps) (1 + |bound|)``, with eps the machine epsilon of
-the dtype (so ε is above rounding in float32 too), coordinate i is held if
-``z_i ≤ lower_i + ε`` and ``g_i > 0``, or ``z_i ≥ upper_i - ε`` and
-``g_i < 0``: the descent direction ``-g_i`` points out of the box. Holding
-only coordinates exactly on a bound makes a coordinate that sits just
-inside one clip and be rejected over and over. A coordinate on a bound
-whose gradient points inward is free, so it leaves. The projected gradient
-is g with held entries zeroed.
-
-**Stop codes**, tested after each step (the first that applies):
-
-- ``CONVERGED``: the projected gradient's infinity norm is ≤ ``gtol``, or
-  the Newton decrement ``½ gᵀF⁻¹g`` on the free coordinates is ≤ ``dtol``;
-- once λ > 1e10: ``CONVERGED`` if the decrement is ≤ ``10 eps max(|Φ|, 1)``,
-  so that the rounding floor (e.g. in float32) does not read as a failure;
-  ``STALLED`` otherwise;
-- ``LIMIT``: ``steps`` has reached the limit.
-
-``NON_FINITE`` is set by `init` when Φ, g or F
-is not finite at the start. A stopped state is left unchanged by ``step``,
-so a ``lax.scan`` of k steps equals ``solve(max_steps=k)`` and ``vmap``
-over starts is well defined. The default tolerances (0) rely on the
-rounding-floor rule; pass ``gtol`` or ``dtol`` to stop earlier.
-
-`solve` is a ``lax.while_loop`` over ``step``
-under ``eqx.filter_jit``. Given a ``State`` it resumes: ``stop`` is reset
-to ``RUNNING`` (``NON_FINITE`` is kept) and ``max_steps`` counts from
-``state.steps``, so a caller can run in chunks with λ carried over.
-
-Private; imports nothing from virgil. See ``design/gauss_newton_plan.md``.
+Private; imports nothing from virgil. The algorithm, tolerances and tests
+are in ``design/gauss_newton_plan.md``.
 """
 
 import equinox as eqx

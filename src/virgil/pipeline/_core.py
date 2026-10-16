@@ -19,7 +19,6 @@ import numpy as onp
 
 from . import _io
 from ._checks import stage_warning_checks, worst_status
-from .._deprecate import external_stacklevel
 
 SCHEMA = _io.SCHEMA
 
@@ -138,10 +137,9 @@ class _Pipeline:
     """
 
     NAME = ""
-    STABILITY = "stable"
+    STABILITY = "provisional"
     STAGES: tuple = ()
     _DEFAULTS: dict = {}
-    _warned_provisional = False
 
     def __init__(self, data, model=None, *, output="run", **settings):
         self.data = data
@@ -151,17 +149,6 @@ class _Pipeline:
         self.settings = self._resolve(settings)
         _io.require_extra("h5py")
         self.inputs = getattr(self, "_input_paths", None)
-        if (
-            self.STABILITY == "provisional"
-            and not type(self)._warned_provisional
-        ):
-            type(self)._warned_provisional = True
-            warnings.warn(
-                f"{type(self).__name__} is provisional: its settings and "
-                "outputs may change while the virgil APIs it calls settle.",
-                FutureWarning,
-                stacklevel=external_stacklevel(),
-            )
 
     # --- settings -------------------------------------------------------
 

@@ -1,3 +1,4 @@
+import sys
 import warnings
 import jax
 import jax.numpy as np
@@ -123,11 +124,35 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     gains: GainModes | None
     phase_offsets: ClosureOffsets | None
     extras: tuple
-    observable_kind: str = eqx.field(static=True)
+    # "split" (V² or amplitude, and phases, as separate rows) or
+    # "mixed_log_complex" (an AMIGO mixed-DISCO product); named for its
+    # layout so that it is not mistaken for the record key ``vis_mode``.
+    vis_encoding: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
     t_ref: float | None = eqx.field(static=True)
+
+    @property
+    def observable_kind(self):
+        """The 0.3 name of [`vis_encoding`][virgil.oidata.OIData.vis_encoding].
+
+        Warns, from outside virgil, that it stops working in 0.5.
+        """
+        frame = sys._getframe(1)
+        while frame.f_back is not None and (
+            frame.f_globals.get("__name__", "").partition(".")[0]
+            in ("equinox", "jax", "zodiax")
+        ):  # attribute access goes through equinox's wrapper
+            frame = frame.f_back
+        if frame.f_globals.get("__name__", "").partition(".")[0] != "virgil":
+            warnings.warn(
+                "OIData.observable_kind is now OIData.vis_encoding; "
+                "observable_kind stops working in virgil 0.5.",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
+        return self.vis_encoding
 
     def __init__(self, data, target=None, extras=(), bandwidth=False):
         """
@@ -159,10 +184,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             * ``vis_flag``, ``phi_flag`` (optional): boolean masks, True
               for bad samples, shaped like ``vis`` and ``phi``. Samples with
               non-finite values or errors are flagged automatically.
-            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``;
-              ``observable_kind`` is an alias): the visibility channel that
-              data and model are compared in. ``"auto"`` keeps the channel
-              of ``vis``.
+            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``):
+              the visibility channel that data and model are compared in.
+              ``"auto"`` keeps the channel of ``vis``. The key
+              ``observable_vis_mode`` is read as an old name for it. Neither
+              sets the ``vis_encoding`` attribute, which says how ``vis``
+              and ``phi`` are laid out (``"split"``, or
+              ``"mixed_log_complex"`` for an AMIGO mixed-DISCO product),
+              not what they measure.
             * ``mjd``, ``frame`` (optional): the time (days) and an integer
               exposure label of each sample (or of each baseline, for
               several channels). Without ``frame``, samples with the same
@@ -423,7 +452,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         self.vis_mode = self._resolve_vis_mode(vis_mode_in)
         self.uv_grid = None
-        self.observable_kind = "split"
+        self.vis_encoding = "split"
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
@@ -710,7 +739,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         which are not visibility samples.
         """
         if (
-            self.observable_kind != "split"
+            self.vis_encoding != "split"
             or self.vis_mat is not None
             or self.phi_mat is not None
             or self.uv_grid is not None
@@ -875,7 +904,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Apply an ``(n_out, n_in)`` operator to a length-``n_in`` vector."""
         if operator is None:
             return values
-        return operator @ np.asarray(values, dtype=float).reshape(-1)
+        return np.matmul(
+            operator,
+            np.asarray(values, dtype=float).reshape(-1),
+            precision=jax.lax.Precision.HIGHEST,
+        )
 
     @classmethod
     def _diagonalized(cls, operator, channel_sigma, correlation=None):
@@ -897,47 +930,61 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         the eigenvectors of A D^½ R D^½ Aᵀ, keeping those with non-zero
         variance, so that the new outputs are independent with errors √λ.
         """
-        operator = np.asarray(operator, dtype=float)
-        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        # Built on the host in float64: this runs once at construction and is
+        # never traced, and the rank cut below (1e-10 of the largest
+        # eigenvalue) is under float32 eps, so a float32 ``eigh`` would keep
+        # the numerically zero directions of a rank-deficient operator.
+        operator = onp.asarray(operator, dtype=onp.float64)
+        sigma = onp.asarray(channel_sigma, dtype=onp.float64).reshape(-1)
+        if correlation is not None:
+            correlation = onp.asarray(correlation, dtype=onp.float64)
 
         def projected_covariance(sigma):
             weighted = operator * sigma[None, :]
             if correlation is None:
                 return weighted @ weighted.T
-            return weighted @ np.asarray(correlation) @ weighted.T
+            return weighted @ correlation @ weighted.T
+
+        def as_output(matrix, errors):
+            # Back to the default dtype (float32 unless x64 is enabled).
+            return np.asarray(matrix, dtype=float), np.asarray(
+                errors, dtype=float
+            )
 
         covariance = projected_covariance(sigma)
-        diagonal = np.diag(covariance)
+        diagonal = onp.diag(covariance)
         # A tolerance relative to the covariance's own scale, so that
         # rescaling an operator or its errors cannot bypass this check.
-        scale = float(np.max(np.abs(diagonal)))
-        off = covariance - np.diag(diagonal)
-        if scale == 0.0 or float(np.max(np.abs(off))) <= 1e-7 * scale:
+        scale = float(onp.max(onp.abs(diagonal)))
+        off = covariance - onp.diag(diagonal)
+        if scale == 0.0 or float(onp.max(onp.abs(off))) <= 1e-7 * scale:
             # Already independent; drop outputs with no variance (e.g. a
             # closure relation of correlated closure phases), which carry
             # no measurement and would divide 0 by 0.
             keep = diagonal > 1e-10 * scale
             # A non-zero row with no variance has a zero projected error
             # (zero input errors); a zero row projects everything away.
-            used = np.any(operator != 0.0, axis=1)
-            if correlation is None and bool(np.any(used & ~keep)):
+            used = onp.any(operator != 0.0, axis=1)
+            if correlation is None and bool(onp.any(used & ~keep)):
                 raise ValueError(_ZERO_PROJECTED_ERROR)
-            return operator[keep], np.sqrt(diagonal[keep])
-        variance, vectors = np.linalg.eigh(covariance)
-        keep = variance > 1e-10 * float(np.max(variance))
+            return as_output(operator[keep], onp.sqrt(diagonal[keep]))
+        variance, vectors = onp.linalg.eigh(covariance)
+        keep = variance > 1e-10 * float(onp.max(variance))
         zero = sigma == 0.0
-        if np.any(zero) and np.any(operator[:, zero] != 0.0):
+        if onp.any(zero) and onp.any(operator[:, zero] != 0.0):
             # A zero error on an input the operator uses must not make a
             # direction vanish unseen: with a positive placeholder for it,
             # the same covariance keeps more directions if it did. (Rank
             # lost to the correlation itself is lost in both.)
             placeholder = projected_covariance(
-                np.where(zero, np.max(sigma), sigma)
+                onp.where(zero, onp.max(sigma), sigma)
             )
-            expected = np.linalg.eigvalsh(placeholder)
-            if np.sum(keep) < np.sum(expected > 1e-10 * np.max(expected)):
+            expected = onp.linalg.eigvalsh(placeholder)
+            if onp.sum(keep) < onp.sum(expected > 1e-10 * onp.max(expected)):
                 raise ValueError(_ZERO_PROJECTED_ERROR)
-        return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
+        return as_output(
+            vectors[:, keep].T @ operator, onp.sqrt(variance[keep])
+        )
 
     @classmethod
     def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
@@ -1095,7 +1142,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         n = int(onp.size(self.u))
         if (
-            self.observable_kind != "split"
+            self.vis_encoding != "split"
             or self.vis_mat is not None
             or self.phi_mat is not None
             or self.uv_grid is not None
@@ -1121,7 +1168,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def has_phases(self):
         """Whether the data hold any phase observables. Visibility-only
         data (e.g. V² without closure phases) have an empty phase block."""
-        if self.observable_kind != "split":
+        if self.vis_encoding != "split":
             return True
         return self._n_phi_samples() > 0
 
@@ -1166,7 +1213,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             in the order of
             [`model`][virgil.oidata.OIData.model], and matching one-sigma uncertainties.
         """
-        if self.observable_kind == "mixed_log_complex":
+        if self.vis_encoding == "mixed_log_complex":
             return self.vis, self.d_vis
         return (
             np.concatenate(
@@ -1190,7 +1237,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     @property
     def _phases_wrap(self):
         """Whether the phase block is raw angles that wrap at ±π."""
-        return self.observable_kind == "split" and self.phi_mat is None
+        return self.vis_encoding == "split" and self.phi_mat is None
 
     def residuals(self, prediction, reference=None):
         """Return ``prediction - reference`` with phase residuals wrapped.
@@ -1231,13 +1278,16 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         The result lines up with the first vector of :meth:`flatten_data`.
         """
-        if self.observable_kind == "mixed_log_complex":
+        if self.vis_encoding == "mixed_log_complex":
             if self.vis_mat is None or self.phi_mat is None:
                 raise ValueError(
                     "Mixed log-complex observables require model operators."
                 )
             log_cvis = np.log(cvis)
-            return self.vis_mat @ log_cvis.real + self.phi_mat @ log_cvis.imag
+            highest = jax.lax.Precision.HIGHEST
+            return np.matmul(
+                self.vis_mat, log_cvis.real, precision=highest
+            ) + np.matmul(self.phi_mat, log_cvis.imag, precision=highest)
         return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
 
     def to_vis(self, cvis):

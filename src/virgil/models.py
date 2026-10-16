@@ -55,6 +55,27 @@ from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
+__provisional__ = (
+    "MultipoleDisk",
+    "ThinRing",
+    "GaussianRing",
+    "RadialPowerLaw",
+    "ExpTail",
+    "Gap",
+    "RadialSum",
+    "RadialLinear",
+    "RadialPower",
+    "RadialGP",
+    "RadialGPFunction",
+    "MultipoleKernel",
+    "Harmonics",
+    "VonMises",
+    "Cone",
+    "PowerLawHeight",
+    "multipole_disk_cvis",
+    "gp_priors",
+)
+
 
 def _normalize_image(image):
     """Return a finite unit-sum image for render outputs.
@@ -1308,7 +1329,9 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
         for n in range(1, order + 1):
             for k in range(n + 1):
                 expand[n - 1, k] = math.comb(n, k) * (-1.0) ** k
-        coeffs = np.zeros(order + 1).at[0].set(1.0) - self.u @ expand
+        coeffs = np.zeros(order + 1).at[0].set(1.0) - np.matmul(
+            self.u, expand, precision=jax.lax.Precision.HIGHEST
+        )
         return coeffs, tuple(float(k) for k in range(order + 1))
 
 
@@ -2756,6 +2779,9 @@ class ThinRing(_RadialProfile):
     r"""Infinitely thin ring of radius ``radius``,
     $I \propto \delta(r - r_0)$ with $r_0$ = ``radius``.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Its Hankel transform is $J_0(2\pi q r_0)$, so it needs no quadrature
     (``n_r`` is irrelevant). Rendered, it is a Gaussian a pixel wide.
 
@@ -2799,6 +2825,9 @@ class ThinRing(_RadialProfile):
 class GaussianRing(_RadialProfile):
     r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with
     $r \ge 0$ and $r_0$ = ``radius``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The quadrature runs over $r_0 \pm 6\sigma$ (clipped at the centre) with
     a Gauss-Legendre rule, which converges spectrally.
@@ -2857,6 +2886,9 @@ class GaussianRing(_RadialProfile):
 
 class RadialPowerLaw(_RadialProfile):
     r"""Power law $I \propto r^{\rm index}$ between ``r_in`` and ``r_out``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     With ``edge_sigma`` (a length in milliarcseconds) both edges are soft,
     error functions of that standard deviation, as in vis-r; the quadrature
@@ -2936,6 +2968,9 @@ class RadialPowerLaw(_RadialProfile):
 class ExpTail(_RadialProfile):
     r"""Exponential tail, $I \propto \exp[-(r - r_{\rm in})/L]$ for
     $r \ge r_{\rm in}$.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
     so no outer radius is needed and none of the tail is dropped. ``r_in = 0``
@@ -3028,6 +3063,9 @@ class ExpTail(_RadialProfile):
 
 class Gap(_RadialProfile):
     r"""A Gaussian gap cut in another profile.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The brightness is that of ``base`` times
     $1 - d \exp[-(r - r_0)^2 / 2 \sigma^2]$ ($r_0$ = ``radius``), so
@@ -3124,6 +3162,9 @@ class _Term(zdx.Base):
 
 class RadialSum(_RadialProfile):
     """Sum of named radial profiles, mixed by their weights.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     A part is a profile, or a ``(profile, weight)`` pair (a bare profile has
     weight 1). Each part is normalized to unit total light and then weighted
@@ -3239,6 +3280,9 @@ class _RadialFunction(zdx.Base):
 class RadialLinear(_RadialFunction):
     """``value + slope (r - r_ref)``: a coefficient that varies linearly.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Parameters
     ----------
     value : float or array-like
@@ -3264,6 +3308,9 @@ class RadialLinear(_RadialFunction):
 
 class RadialPower(_RadialFunction):
     """``value (r / r_ref) ** index``: a coefficient that follows a power law.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Parameters
     ----------
@@ -3474,7 +3521,9 @@ class _RadialGPBase(zdx.Base):
         if self.z is None or self.z.shape[0] != nodes.shape[0]:
             raise ValueError("the latents do not match the nodes.")
         factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
-        return nodes, self.mu + self.sigma * (factor @ self.z)
+        return nodes, self.mu + self.sigma * np.matmul(
+            factor, self.z, precision=jax.lax.Precision.HIGHEST
+        )
 
     def draws(self, key, n=1, r=None, positive=False):
         """``n`` draws from the prior at the radii ``r`` (the nodes by default).
@@ -3487,7 +3536,9 @@ class _RadialGPBase(zdx.Base):
         nodes = self._nodes()
         factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
         z = jax.random.normal(key, (int(n), nodes.shape[0]), nodes.dtype)
-        g = self.mu + self.sigma * (z @ factor.T)
+        g = self.mu + self.sigma * np.matmul(
+            z, factor.T, precision=jax.lax.Precision.HIGHEST
+        )
         if r is not None:
             g = _linear_interp(r, nodes, g)
         return np.exp(g) if positive else g
@@ -3508,6 +3559,9 @@ class _RadialGPBase(zdx.Base):
 class RadialGP(_RadialGPBase, _RadialProfile):
     r"""A non-parametric radial profile: the exponential of a Gaussian
     process in the radius, $I_0(r) = \exp g(r)$, positive.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The nodes are the Gauss-Legendre nodes of $[r_{\rm in}, r_{\rm out}]$
     that the disk's quadrature uses, one latent each (so ``n_r`` latents),
@@ -3669,6 +3723,9 @@ class RadialGPFunction(_RadialGPBase, _RadialFunction):
     [`Harmonics`][virgil.models.Harmonics]; for a non-negative profile use
     [`RadialGP`][virgil.models.RadialGP].
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The values at the nodes $r_k$ are $g = \mu + \sigma L z$, with $LL^\top$
     the Matérn correlation matrix of the nodes (length ``ell``, smoothness
     ``nu``) and **whitened latents** $z \sim N(0, I)$, the parameters (path
@@ -3752,6 +3809,9 @@ class MultipoleKernel(zdx.Base):
     r"""A prior over the azimuthal-harmonic coefficients of a
     [`MultipoleDisk`][virgil.models.MultipoleDisk]: a Matérn kernel in the radius and
     in the azimuth.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Give it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. The
     coefficients of every order $m = 1 \dots M$ ($c_m$ and $s_m$ of the linear
@@ -3909,7 +3969,12 @@ class MultipoleKernel(zdx.Base):
         nodes = self.nodes()
         factor = _gp_factor(nodes, self.ell_r, self.nu_r, 1e-6)
         scale = self.sigma * np.sqrt(self.spectrum(z.shape[1]))
-        g = np.einsum("ij,kmj->kmi", factor, z) * scale[None, :, None]
+        g = (
+            np.einsum(
+                "ij,kmj->kmi", factor, z, precision=jax.lax.Precision.HIGHEST
+            )
+            * scale[None, :, None]
+        )
         return _linear_interp(r, nodes, g)
 
     def draws(self, key, degree, n=1, r=None):
@@ -4044,6 +4109,9 @@ class _Azimuthal(zdx.Base):
 class Harmonics(_Azimuthal):
     r"""Azimuthal harmonics of a [`MultipoleDisk`][virgil.models.MultipoleDisk], of
     exact degree ``M``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The brightness at radius $r$ and azimuth $\theta$ in the plane of the
     disk is the profile $I_0(r)$ times an azimuthal factor of mean 1.
@@ -4351,6 +4419,9 @@ class VonMises(_Azimuthal):
     r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$,
     for [`MultipoleDisk`][virgil.models.MultipoleDisk], truncated at ``degree``.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The profile (an arc of width $\sim 1/\sqrt\kappa$ radians centred on
     the azimuth $\theta_0$; $\kappa = 0$ is a uniform ring) has the analytic
     harmonics $c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$
@@ -4482,6 +4553,9 @@ class Cone(_Height):
     r"""A conical surface: the ring at radius $r$ lies at the height
     $h = r \cot\alpha - \mathrm{tip}$ along the disk's normal.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     This is the geometry of [`TruncatedCone`][virgil.models.TruncatedCone]:
     the normal is the cone's axis, so the disk's inclination is
     $90^\circ - $ the axis's tilt out of the sky, and ``pa`` is the
@@ -4514,6 +4588,9 @@ class Cone(_Height):
 
 class PowerLawHeight(_Height):
     r"""A flared surface: $h = h_{\rm ref} (r / r_{\rm ref})^\psi$.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Positive heights shift towards position angle ``pa + 90`` on the sky
     (see [`Cone`][virgil.models.Cone]); a negative ``h_ref`` puts the surface
@@ -4587,6 +4664,9 @@ def multipole_disk_cvis(
     stretch=None,
 ):
     r"""Unit-flux visibility of a disk from radial quadrature.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The disk is a sum of thin rings, the nodes ``r`` weighted by ``w``,
     after undoing the inclination ``inc`` and the position angle ``pa`` of
@@ -4834,6 +4914,9 @@ class _FrozenGeometry(zdx.Base):
 class MultipoleDisk(Component):
     r"""Axisymmetric disk with a radial profile, evaluated by quadrature.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The brightness is a radial profile $I(r)$ in the plane of the disk,
     inclined by ``inc`` and rotated by ``pa``. Its visibility is the
     Hankel transform $2\pi \int I(r) J_0(2\pi q r) r\,dr$, evaluated by
@@ -5067,8 +5150,9 @@ class MultipoleDisk(Component):
             valid = valid & self.height.is_physical()
         if self.harmonics is not None and self.harmonics.degree:
             valid = valid & (self.min_intensity() >= -1e-6)
-            if self.harmonics.prior is not None:
-                valid = valid & self.harmonics.prior.is_physical()
+            prior = getattr(self.harmonics, "prior", None)
+            if prior is not None:
+                valid = valid & prior.is_physical()
         if isinstance(self.spectral_index, RadialGPFunction):
             valid = valid & self.spectral_index.is_physical()
         if self.wavel0 is not None:
@@ -5472,6 +5556,9 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     r"""Priors for the Gaussian-process parts of a scene's
     [`MultipoleDisk`][virgil.models.MultipoleDisk]s, for ``fit`` and ``numpyro_model``.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Returns a dict from parameter path to prior for every
     [`RadialGP`][virgil.models.RadialGP] profile and every
     [`RadialGPFunction`][virgil.models.RadialGPFunction] (a harmonics
@@ -5870,9 +5957,16 @@ def smeared_model(model, u, v, wavel, bandwidth):
     component are taken at the channel centre, and an extended component
     is smeared as if it sat at its centre offset (its internal structure
     is not smeared). Only [`System`][virgil.models.System] trees of
-    [`Component`][virgil.models.Component] shapes are supported; other
-    models, including ``Image``, raise ``TypeError``. A component at zero offset is exactly
-    unaffected.
+    [`Component`][virgil.models.Component] shapes are supported, along
+    with [`Resolved`][virgil.models.Resolved] pieces (which have no offset to
+    smear), the binary models
+    ([`BinaryModelCartesian`][virgil.models.BinaryModelCartesian] and
+    [`BinaryModelAngular`][virgil.models.BinaryModelAngular], smeared as
+    their ``to_system()``), and [`Rotated`][virgil.models.Rotated] scenes of
+    these (the baselines are rotated). Other models, including ``Image`` and
+    an [`OrbitalBinary`][virgil.models.OrbitalBinary] (smear its
+    ``at(mjd)`` snapshot, as `OIData` does), raise ``TypeError``
+    naming the model. A component at zero offset is exactly unaffected.
 
     [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is
     set (read from ``EFF_BAND``, or by
@@ -5904,9 +5998,28 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
+    if isinstance(model, Resolved):
+        # Zero on every non-zero baseline and at no offset: nothing to smear.
+        return model.model(u, v, wavel)
+    if isinstance(model, BinaryModelAngular):
+        model = model.to_cartesian()
+    if isinstance(model, BinaryModelCartesian):
+        return _smeared(model.to_system(), u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, Rotated):
+        # The inherited offset is in the outer frame: rotate it with (u, v),
+        # which keeps u . offset invariant.
+        u, v = rotate(u, v, -model.rotation_deg)
+        ra0, dec0 = rotate(ra0, dec0, -model.rotation_deg)
+        return _smeared(model.source, u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, OrbitalBinary):
+        raise TypeError(
+            "OrbitalBinary changes with time: smear a snapshot, "
+            "model.at(mjd) (OIData.model does this per sample)."
+        )
     raise TypeError(
-        "Bandwidth smearing supports Systems of Component shapes (not Image,"
-        " whose flux is not at its offset); got "
+        "Bandwidth smearing supports Systems of Component shapes, Resolved, "
+        "BinaryModelCartesian, BinaryModelAngular and Rotated of these (not "
+        "Image, whose flux is not at its offset); got "
         f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
         " to evaluate it unsmeared."
     )

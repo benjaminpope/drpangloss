@@ -100,7 +100,10 @@ The Gaussian is a *proposal*: k is a positive scale, whose Jeffreys prior is
 1/k on stated bounds. For a well-measured spectrum the two differ by about
 σ_k/k. For the Jeffreys posterior, reweight samples of k from its conditional
 posterior by 1/(k N(k; mean, sd²)) within the bounds, or sample log k
-directly. Make no evidence claims that depend on the Gaussian's width.
+directly. Make no evidence claims that depend on the Gaussian's width: the
+Jeffreys prior is improper, so an evidence needs finite positive bounds
+$[k_{\min}, k_{\max}]$ and the density $1/(k\ln(k_{\max}/k_{\min}))$.
+Marginalizing in log k is not linear and is not done here.
 After a fit, report the scale's conditional posterior:
 
 ```python
@@ -253,6 +256,13 @@ by the boxcar-channel envelope `sinc(π Δλ (u dra + v ddec) / λ²)`, applied 
 the components of a `System` before they are weighted and summed. An extended
 component is smeared as if it sat at its centre offset. Without a bandwidth
 (the default) nothing changes. See `virgil.models.smeared_model`.
+
+Supported models are `System`s of components (nested to any depth),
+`BinaryModelCartesian` and `BinaryModelAngular` (smeared as their
+`to_system()`), `Resolved` pieces (zero visibility, so nothing to smear) and
+`Rotated` scenes of these. `Image` and any other model raise a `TypeError`
+naming it; an `OrbitalBinary` is smeared through its `at(mjd)` snapshot, which
+`OIData` evaluates for each sample.
 
 ## Not yet
 

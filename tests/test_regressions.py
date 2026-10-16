@@ -670,14 +670,16 @@ def test_batched_grid_matches_unbatched():
         "flux": np.array([1e-4, 1e-3, 1e-2]),
     }
     whole = likelihood_grid(
-        BinaryModelCartesian, oidata, samples, batch_size=10**6
+        BinaryModelCartesian, data=oidata, grid=samples, batch_size=10**6
     )
     batched = likelihood_grid(
-        BinaryModelCartesian, oidata, samples, batch_size=10
+        BinaryModelCartesian, data=oidata, grid=samples, batch_size=10
     )
     assert np.allclose(batched, whole)
     with pytest.raises(ValueError, match="batch_size"):
-        likelihood_grid(BinaryModelCartesian, oidata, samples, batch_size=0)
+        likelihood_grid(
+            BinaryModelCartesian, data=oidata, grid=samples, batch_size=0
+        )
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,8 @@
 # `virgil.pipeline`
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 The classes and functions of the pipelines. For what a pipeline does, the run
 folder, the checks and the stability policy, see
 [Pipelines and their stability](../pipeline.md).

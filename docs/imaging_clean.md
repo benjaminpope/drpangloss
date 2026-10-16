@@ -1,6 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_clean.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 6: sparse images and CLEAN
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 The regularisers of parts 2 and 3 prefer smooth images. Some scenes are not smooth: a companion or two and a few compact knots next to a bright star. **CLEAN** (Högbom 1974), the oldest image reconstruction algorithm in radio astronomy, builds an image for such scenes from point sources, one at a time.
 
 Högbom's CLEAN works on the *dirty image*: it finds the brightest point in the residual dirty image, adds a small fraction (the **loop gain**) of a point source there to the model, subtracts its dirty beam from the residuals, and repeats. That needs data that are linear in the image, such as calibrated complex visibilities. Closure phases, kernel phases, DISCOs and squared visibilities are not linear, so classic CLEAN cannot use them directly.

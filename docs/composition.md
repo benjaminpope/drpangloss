@@ -241,7 +241,7 @@ grid = {
     "comp.ddec": jnp.linspace(-100.0, 100.0, 61),
     "comp.flux": 10.0 ** jnp.linspace(-3.5, -1.0, 16),
 }
-loglike_grid = likelihood_grid(search, data, grid)
+loglike_grid = likelihood_grid(search, data=data, grid=grid)
 
 best = best_grid_point(loglike_grid, grid)
 print("best grid point:", {path: round(value, 4) for path, value in best.items()})

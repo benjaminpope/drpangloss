@@ -81,6 +81,9 @@ def _global_nsigma(local_nsigma, n_trials):
 class BinaryPipeline(_Pipeline):
     """Search for a companion, set contrast limits, fit and sample a binary.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Stages: ``load → overview → search → limits → fit → posterior →
     quicklook``.
 
@@ -162,7 +165,7 @@ class BinaryPipeline(_Pipeline):
     """
 
     NAME = "binary"
-    STABILITY = "stable"
+    STABILITY = "provisional"
     STAGES = (
         "load",
         "overview",

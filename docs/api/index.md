@@ -3,6 +3,10 @@
 The everyday names are importable from the top level, e.g.
 `from virgil import OIData, System, PointSource, likelihood_grid`.
 
+Everything here is stable except the entries marked **Provisional**, which
+may change in any 0.4.x release without a deprecation. See
+[Stability](../stability.md) for the list.
+
 - [OIData](oidata.md): observables and their conventions
 - [OIFITS](oifits.md): reading and writing OIFITS files
 - [AMIGO](amigo.md): AMIGO mixed-DISCO products
