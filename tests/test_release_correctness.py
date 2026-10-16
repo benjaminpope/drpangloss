@@ -4,7 +4,6 @@
   applied to correlated closure phases (a singular correlation), in float32
   as well as float64.
 * ``PolarDisk.is_physical`` works with a ``VonMises`` azimuthal model.
-* ``SharedFlux(grid=(lo, hi, n))`` is a range only when ``n`` is an ``int``.
 * Matmuls and contractions in forward models use ``Precision.HIGHEST``
   (checked on the jaxpr, since on CPU the default is already exact).
 """
@@ -28,7 +27,6 @@ from virgil.models import (
 )
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData
-from virgil.orbit_search import SharedFlux, _axis
 from tests._shared import CALIBRATED_VISIBILITY
 
 WAVEL = 2.2e-6
@@ -110,51 +108,6 @@ def test_reject_unphysical_with_von_mises_harmonics():
     )
     loglike = model_loglike(model, data, reject_unphysical=True)
     assert onp.isfinite(float(loglike))
-
-
-# --- R4: the (lo, hi, n) grid form is unambiguous ---------------------------
-
-
-def test_axis_range_form_needs_a_python_int():
-    x, w = _axis((0.01, 0.1, 5), True, "flux")
-    assert onp.allclose(onp.exp(x), onp.geomspace(0.01, 0.1, 5))
-    assert x.shape == w.shape
-    x, _ = _axis((0.01, 0.1, 1), True, "flux")
-    assert x.shape == (1,)
-
-
-@pytest.mark.parametrize(
-    "spec",
-    [
-        (0.01, 0.1, 1.0),
-        [0.01, 0.1, 1.0],
-        onp.array([0.01, 0.1, 1.0]),
-        (0.01, 0.1, 2.0),
-    ],
-)
-def test_axis_floats_are_values(spec):
-    x, _ = _axis(spec, True, "flux")
-    assert onp.allclose(onp.exp(x), onp.asarray(spec, dtype=float))
-
-
-def test_shared_flux_grid_ending_at_one_is_three_fluxes():
-    x, _ = _axis(SharedFlux(grid=(0.01, 0.1, 1.0)).grid, True, "flux")
-    assert x.shape == (3,)
-
-
-def test_axis_numpy_integer_size_is_a_range():
-    x, _ = _axis((0.01, 0.1, onp.int64(5)), True, "flux")
-    assert x.shape == (5,)
-
-
-def test_axis_bool_size_is_not_a_range():
-    x, _ = _axis((0.01, 0.1, True), True, "flux")
-    assert x.shape == (3,)
-
-
-def test_axis_range_size_must_be_positive():
-    with pytest.raises(ValueError, match="size"):
-        _axis((0.01, 0.1, 0), True, "flux")
 
 
 # --- Precision.HIGHEST in contractions --------------------------------------
