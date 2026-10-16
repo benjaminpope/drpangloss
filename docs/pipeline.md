@@ -83,7 +83,7 @@ res = DiskPipeline(data, "rings", output="runs/rings", companion=True).run()
 res.summary["disk"], res.model(), res.model("geometry")
 ```
 
-`DiskPipeline` fits a [`PolarDisk`][virgil.models.PolarDisk] around one star. It is **provisional**: the settings, stages and summary keys may change while the `PolarDisk` API settles, and it emits one `FutureWarning` per session. `model=` picks one of two parallel options, never a chain:
+`DiskPipeline` fits a [`PolarDisk`][virgil.models.PolarDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
 
 - `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept.
 - `"rings"`: *N* [`GaussianRing`][virgil.models.GaussianRing] profiles that share the inclination and position angle, added one at a time (each starting at the radius of a one-ring scan) until the BIC stops improving or `max_rings` is reached. The Laplace evidence and the BIC of every count are reported and the count of least BIC is kept.

@@ -303,10 +303,12 @@ def test_api_snapshot():
         )
 
 
-def test_provisional_warning_and_default_model(data):
-    DiskPipeline._warned_provisional = False
-    with pytest.warns(FutureWarning, match="provisional"):
-        pipeline = DiskPipeline(data)
+def test_provisional_tier_and_default_model(data):
+    from virgil import _stability
+
+    assert DiskPipeline.STABILITY == "provisional"
+    assert _stability.ADMONITION.splitlines()[0].strip() in DiskPipeline.__doc__
+    pipeline = DiskPipeline(data)
     assert pipeline.name == "gp" and pipeline.model == "gp"
     assert repr(pipeline) == "DiskPipeline(output='run', model='gp')"
     assert DiskPipeline(data, "rings").name == "rings"

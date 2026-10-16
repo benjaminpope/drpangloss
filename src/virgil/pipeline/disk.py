@@ -160,9 +160,10 @@ def models():
 class DiskPipeline(_Pipeline):
     """Fit a disk, ring or halo with a [`PolarDisk`][virgil.models.PolarDisk].
 
-    **Provisional**: the settings, stages and summary keys may change while
-    the ``PolarDisk`` API settles (it emits one ``FutureWarning`` per
-    session). The disk is always a ``PolarDisk`` and the star a single point
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
+    The disk is always a ``PolarDisk`` and the star a single point
     source; a companion search is an opt-in expert setting.
 
     Stages: ``load → overview → geometry → profile → compare → posterior →
@@ -821,8 +822,8 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     ll = onp.asarray(
         likelihood_grid(
             functools.partial(_single_ring, ctx),
-            p.processed,
-            {
+            data=p.processed,
+            grid={
                 "cos_inc": np.asarray(cos_axis),
                 "pa": np.asarray(pa_axis),
                 "r1": np.asarray(r_axis),
@@ -1126,8 +1127,8 @@ def _scan_new_ring(p, ctx, shape, base):
     ll = onp.asarray(
         likelihood_grid(
             functools.partial(_scan_model, ctx, shape, base),
-            p.processed,
-            {"rnew": np.asarray(r_axis), "fnew": np.asarray(_FLUX_GRID)},
+            data=p.processed,
+            grid={"rnew": np.asarray(r_axis), "fnew": np.asarray(_FLUX_GRID)},
             batch_size=p.settings["batch_size"],
         )
     )
