@@ -1625,7 +1625,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         The likelihood marginalizes offsets common to the channels of a frame
         analytically (see [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with
         these widths unless fitted as the noise terms ``phi_offset_baseline``,
-        ``phi_offset_triangle`` or ``phi_offset_modes``. Off by default; use it only
+        ``phi_offset_triangle`` or ``phi_offset_modes`` (log-uniform priors on
+        stated bounds). Off by default; use it only
         if calibrators show such offsets. Needs closure phases from four or more
         telescopes, and is a small-offset approximation (δ ≲ 0.3 rad).
 

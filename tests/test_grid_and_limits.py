@@ -79,26 +79,30 @@ def test_likelihood_grid():
 
 
 @pytest.mark.parametrize(
-    "function, data, kwargs, order",
+    "function, data, kwargs, order, keeps_flux",
     [
-        (likelihood_grid, oidata, {}, ("flux", "dra", "ddec")),
+        (likelihood_grid, oidata, {}, ("flux", "dra", "ddec"), True),
         (
             optimized_likelihood_grid,
             oidata,
             {"flux_param": "flux"},
             ("ddec", "flux", "dra"),
+            False,
         ),
-        (optimized_flux_grid, oidata_sim, {}, ("ddec", "flux", "dra")),
+        (optimized_flux_grid, oidata_sim, {}, ("ddec", "flux", "dra"), False),
         (
             laplace_flux_uncertainty_grid,
             oidata_sim,
             {},
             ("ddec", "flux", "dra"),
+            False,
         ),
     ],
     ids=["likelihood", "optimized_likelihood", "optimized_flux", "laplace"],
 )
-def test_grid_axis_order_tracks_key_order(function, data, kwargs, order):
+def test_grid_axis_order_tracks_key_order(
+    function, data, kwargs, order, keeps_flux
+):
     reduced = {key: value[::12] for key, value in samples_dict.items()}
     ordered = function(BinaryModelCartesian, data=data, grid=reduced, **kwargs)
     permuted = function(
@@ -107,8 +111,7 @@ def test_grid_axis_order_tracks_key_order(function, data, kwargs, order):
         grid={key: reduced[key] for key in order},
         **kwargs,
     )
-    # The flux axis is only there when the function keeps it.
-    axes = [key for key in reduced if ordered.ndim == 3 or key != "flux"]
+    axes = [key for key in reduced if keeps_flux or key != "flux"]
     assert ordered.shape == tuple(len(reduced[key]) for key in axes)
     kept = [key for key in order if key in axes]
     assert permuted.shape == tuple(len(reduced[key]) for key in kept)

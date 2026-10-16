@@ -761,13 +761,17 @@ def numpyro_model(
         prior.
     noise : dict or list of dict, optional
         Priors on error and calibration terms, sampled as sites
-        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list).
+        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list); the terms are
+        listed under [common arguments](../common_arguments.md#noise).
     likelihoods : sequence, optional
         Extra data terms, such as ``PositionData.term(orbit_fn)``, added as sites
-        ``"likelihood_<i>"``.
+        ``"likelihood_<i>"``; see
+        [common arguments](../common_arguments.md#likelihoods).
     flat_coordinates : bool, optional
         Sample each prior that is uniform in some coordinate in that coordinate,
-        as `fit` optimizes it (default ``False``). Pass the same value to
+        as `fit` optimizes it (default ``False``; see
+        [common arguments](../common_arguments.md#flat_coordinates)). Pass the
+        same value to
         [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
     **options
         Fixed error terms and ``reject_unphysical``, passed to
