@@ -1,34 +1,11 @@
 """Angles sampled as 2-D vectors, so that no prior has a wrap boundary.
 
-A prior on an angle θ (degrees) with support on an interval, such as
-``Uniform(0, 360)``, numpyro's ``VonMises`` or
-[`AxialVonMises`][virgil.orbits.AxialVonMises], reaches samplers and
-[`fit`][virgil.fitting.fit] through a bijection onto the real line, so an
-angle whose posterior straddles the end of the interval meets a wall there.
-[`AngleVector`][virgil.angles.AngleVector] removes the wall: put it in a
-``priors`` dict under the angle's path, and a vector v = r(cos θ, sin θ) in
-ℝ² is sampled at the site ``"<path>_vec"`` instead. The angle itself, in
-degrees in [0°, 360°), is what the model receives, and what
-[`numpyro_model`][virgil.likelihood.numpyro_model] records as a deterministic
-site ``"<path>"`` and ``fit`` reports under ``"<path>"`` (with the vector
-under ``"<path>_vec"``).
-
-The radius r is a nuisance with a ring prior, ∝ exp(-(r - 1)²/2s²), so the
-mode is the unit circle and a maximum a posteriori fit keeps away from the
-origin, where θ is undefined. The prior is rotationally symmetric, so θ is
-exactly uniform unless a von Mises (or axial von Mises) prior is given;
-that one enters as a chord, √κ (v̂ - m̂), the same form as virgil's
-unprojected phase residuals (see
-[`whitened_residuals`][virgil.likelihood.whitened_residuals]). Every term has
-a least-squares form, so Levenberg–Marquardt and
-[`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] take it unchanged,
-and the density is normalized in ℝ², so evidences stay normalized.
-
-The construction follows Octofitter's ``UniformCircular`` (Thompson et al.
-2023, AJ 166, 164, https://arxiv.org/abs/2402.01971) and exoplanet's
-``Angle`` (Foreman-Mackey et al. 2021, JOSS 6, 3285,
-https://arxiv.org/abs/2105.01994), which sample v ~ N(0, I); the ring and the chord priors are
-virgil's.
+[`AngleVector`][virgil.angles.AngleVector] in a ``priors`` dict, under an
+angle's path, samples a vector ``v = r(cos θ, sin θ)`` at the site
+``"<path>_vec"`` instead of the angle; the model receives θ in degrees in
+[0°, 360°), recorded (by [`numpyro_model`][virgil.likelihood.numpyro_model])
+and reported (by [`fit`][virgil.fitting.fit]) under ``"<path>"``. See
+[angle priors without a wrap](../conventions.md#angle-vectors).
 """
 
 import jax
@@ -71,40 +48,15 @@ class AngleVector(dist.Distribution):
     Put it in a ``priors`` dict, keyed by the angle's path, for
     [`fit`][virgil.fitting.fit],
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] or
-    [`numpyro_model`][virgil.likelihood.numpyro_model]. They sample the
-    vector v at the site ``"<path>_vec"`` and give the model its direction
-    θ = atan2(v₂, v₁) in degrees, in [0°, 360°). A ``fit`` starts from the
-    unit vector of the angle's starting value (in degrees, from ``init`` or
-    the template), or from ``init["<path>_vec"]``.
-
-    The density of v = r(cos θ, sin θ) is
-
-        p(v) = exp(-(r - 1)²/2s²) / Z_s × p(θ),
-
-    with Z_s = ∫₀^∞ r exp(-(r - 1)²/2s²) dr, so that r and θ are independent
-    and θ has exactly the density p(θ) (per radian):
-
-    * uniform, 1/2π, by default;
-    * a von Mises, exp(κ(cos(θ - μ) - 1)) / (2π i0e(κ)), given ``mean`` and
-      ``kappa``;
-    * with ``axial=True``, the von Mises of 2θ, so that θ and θ + 180° are
-      equally likely (as [`AxialVonMises`][virgil.orbits.AxialVonMises]).
-
-    Its least-squares residuals (``residuals``) are the ring, (r - 1)/s,
-    and for a von Mises the chord √κ (v̂ - m̂), with v̂ = v/r and m̂ =
-    (cos μ, sin μ): half its square is κ(1 - cos(θ - μ)), the von Mises
-    exponent, just as virgil's phase residuals 2 sin(Δ/2)/σ are chords with
-    κ = 1/σ². The axial chord is the same on the doubled direction,
-    (cos 2θ, sin 2θ) = (x² - y², 2xy)/r².
-
-    The default, uniform θ, is the invariant prior for an angle. A von Mises
-    prior is strong information, from an external measurement.
-
-    The construction follows Octofitter's ``UniformCircular`` (Thompson et
-    al. 2023, AJ 166, 164) and exoplanet's ``Angle`` (Foreman-Mackey et al.
-    2021, JOSS 6, 3285), whose v ~ N(0, I) peaks at the origin, where θ is
-    undefined: a maximum a posteriori fit would drive r → 0. The ring's mode
-    is the unit circle instead, and every term has a least-squares form.
+    [`numpyro_model`][virgil.likelihood.numpyro_model]. They sample the vector v
+    at the site ``"<path>_vec"`` and give the model θ = atan2(v₂, v₁) in degrees,
+    in [0°, 360°). A ``fit`` starts from the unit vector of the angle's starting
+    value, or from ``init["<path>_vec"]``. The prior on θ is uniform (the
+    invariant prior for an angle) unless ``mean`` and ``kappa`` give a von Mises
+    prior, which is strong information from an external measurement; the radius
+    has a ring prior of width ``ring_width``. See
+    [angle priors without a wrap](../conventions.md#angle-vectors) for the
+    density and least-squares residuals.
 
     Parameters
     ----------

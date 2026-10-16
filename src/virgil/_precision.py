@@ -1,9 +1,7 @@
 """Local numerical precision for fitting and sampling entry points.
 
-virgil never enables float64 globally. Entry points such as
-[`fit`][virgil.fitting.fit] instead run inside :func:`run_in`, a local
-``jax.enable_x64`` context, after casting their inputs with
-:func:`cast_tree`. Forward-model code works in either precision.
+virgil never enables float64 globally: entry points such as ``fit`` run
+inside :func:`run_in` (a local ``jax.enable_x64``) after :func:`cast_tree`.
 """
 
 import contextlib
@@ -40,12 +38,7 @@ def run_in(dtype):
 
 
 def cast_tree(tree, dtype):
-    """Cast every floating-point and complex array in a pytree to ``dtype``.
-
-    Real arrays become ``dtype`` and complex arrays the matching complex
-    type; everything else (integers, booleans, Python scalars) is left
-    alone. Call it inside :func:`run_in` for float64.
-    """
+    """Cast every float and complex array in a pytree to ``dtype`` (complex to the matching type); leave the rest."""
     _check(dtype)
     real, cplx = _DTYPES[dtype]
 
@@ -62,14 +55,10 @@ def cast_tree(tree, dtype):
 
 
 def in_float64(fn):
-    """Run ``fn`` inside :func:`run_in` ``("float64")``, with every
-    positional and keyword argument cast by :func:`cast_tree`.
+    """Run ``fn`` in float64 with every argument cast by :func:`cast_tree`.
 
-    For private entry points whose Hessians, Cholesky factors or χ² near a
-    visibility null need double precision; arguments that are not arrays
-    (or pytrees of them) pass through unchanged. So do iterators (a
-    generator of datasets, say), which are not pytrees: ``fn`` casts what
-    it reads from them.
+    Non-array arguments and iterators pass through unchanged (``fn`` casts
+    what it reads from an iterator).
     """
 
     def cast(arg):

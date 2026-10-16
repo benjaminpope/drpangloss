@@ -363,6 +363,25 @@ def solve(problem, start, *, lower=None, upper=None, gtol=0.0, dtol=0.0,
   λ carried over.
 - `lower`/`upper` default to ±inf.
 
+**Rationale** (moved from the `_gauss_newton` module docstring).
+
+- F is positive semi-definite by construction. Because a step is accepted
+  only if Φ itself falls, an error in F costs speed, or a `STALLED` stop
+  that a caller answers with a fallback optimizer; it never gives a wrong
+  answer. The way to get `STALLED` is a coordinate with a non-zero
+  gradient but no curvature in F (a term of Φ missing from `rows` and
+  `diag`): its step is ~1/(λ·1e-12) long, so every trial is rejected.
+- Small λ is the Gauss–Newton step; large λ is a short step down the
+  gradient with each coordinate scaled by its own curvature. M is
+  Marquardt's scaling, floored so that a coordinate the rows ignore
+  (F_ii = 0) still gives a positive-definite system and no NaN.
+- Holding only coordinates exactly on a bound makes a coordinate that
+  sits just inside one clip and be rejected over and over, hence the
+  ε-active set. A coordinate on a bound whose gradient points inward is
+  free, so it leaves.
+- The default tolerances (0) rely on the rounding-floor rule; pass `gtol`
+  or `dtol` to stop earlier.
+
 **Deleted.** Nothing yet.
 
 **Tests** (`tests/test_gauss_newton.py`):

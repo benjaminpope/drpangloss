@@ -2,11 +2,10 @@
 
 Each function returns a unit-sum ``(npix, npix)`` array in the virgil
 image orientation (East left, North up, centre at the middle of the pixel
-grid, as in [`render`][virgil.models.SourceModel.render]), ready for [`Image.from_brightness`][virgil.models.Image.from_brightness].
-Position angles run North to East. The ring and spiral shapes are inspired by
-the training scenes of Jonah Goldfine's ``frito``
-(https://github.com/JonahDG/frito), re-implemented here in virgil
-conventions.
+grid, as in [`render`][virgil.models.SourceModel.render]), ready for
+[`Image.from_brightness`][virgil.models.Image.from_brightness]. Position
+angles run North to East. The ring and spiral are inspired by the training
+scenes of Jonah Goldfine's ``frito`` (https://github.com/JonahDG/frito).
 """
 
 import jax.numpy as np
@@ -75,7 +74,7 @@ def spiral(
     pa_deg=0.0,
     fade_mas=None,
 ):
-    """Archimedean spiral, like the dust pinwheels of WR 104 and WR 137.
+    """Archimedean spiral, like a dust pinwheel.
 
     The arm is ``r = step_mas * theta / (2 pi)``, starting at the centre and
     winding towards increasing position angle as it moves outwards.
