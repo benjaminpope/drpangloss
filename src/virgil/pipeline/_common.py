@@ -389,7 +389,9 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
         raise ValueError(
             "NUTS cannot start from the best fit: the log-posterior is not "
             "finite there. Start values: "
-            + ", ".join(f"{k}={onp.asarray(v).tolist()}" for k, v in start.items())
+            + ", ".join(
+                f"{k}={onp.asarray(v).tolist()}" for k, v in start.items()
+            )
             + ". Check that the fitted model and its priors agree."
         ) from error
     mcmc = _mcmc(posterior, settings, dense_mass=dense_mass)

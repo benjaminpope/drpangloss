@@ -807,9 +807,7 @@ def _run_nuts(p, priors, angular):
         if k in priors
     }
     posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
-    return _run_chains(
-        posterior, s, start, dense_mass=False, priors=priors
-    )
+    return _run_chains(posterior, s, start, dense_mass=False, priors=priors)
 
 
 def _write_samples(p, samples, sample_stats, reported, priors):

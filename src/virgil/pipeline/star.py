@@ -1143,9 +1143,7 @@ def _nuts(model, data, p, name, priors, start):
     entry = models()[name]
     noise = p._noise()
     posterior = numpyro_model(model, priors, data, noise=noise)
-    mcmc = _run_chains(
-        posterior, s, start, dense_mass=True, priors=priors
-    )
+    mcmc = _run_chains(posterior, s, start, dense_mass=True, priors=priors)
     samples = {
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()

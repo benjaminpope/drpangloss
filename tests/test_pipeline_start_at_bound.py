@@ -80,7 +80,9 @@ def test_run_chains_starts_from_a_value_on_the_bound():
 
 def test_run_chains_without_priors_gives_a_clear_error_not_numpyros():
     start = {"flux": onp.asarray(1e-5), "sep": onp.asarray(100.0)}
-    with pytest.raises(ValueError, match="NUTS cannot start from the best fit"):
+    with pytest.raises(
+        ValueError, match="NUTS cannot start from the best fit"
+    ):
         _run_chains(_toy(), SETTINGS, start, dense_mass=False)
 
 
