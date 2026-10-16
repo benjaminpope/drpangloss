@@ -262,6 +262,15 @@ Provisional in 0.4:
   and `DifferentialPhase.prior_width` are now NumPy arrays that jit traces,
   so scanning a prior width does not recompile. Read them with `tuple(...)`
   where you compared them with a tuple.
+- **Models simplification (no numerical change).** The long derivations and
+  accuracy notes in the docstrings of `virgil.models` and
+  `virgil.fields.MultipoleField` moved to the new
+  [model notes page](docs/api/models/notes.md); the docstrings keep the
+  summary, parameters and an example. The class shape checks
+  (`__check_init__` and `is_physical`) share one definition, and the ring
+  splatting of `TruncatedCone` and `MultipoleDisk` and the in-plane blur of
+  `ModulatedGaussianRim` and `MultipoleDisk` each share one helper. Results
+  are unchanged to rounding.
 
 ### Migration from 0.3.0
 
