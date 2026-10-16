@@ -899,7 +899,8 @@ def starting_orbits(
         and its reflection (``omega`` + 180°) fits equally well.
     batch_size : int, optional
         Grid points solved together (default: from the number of positions);
-        bounds the memory, not the result.
+        bounds the memory, not the result. Capped at the grid size (rounded
+        up to a power of two), even when given explicitly.
 
     Returns
     -------
@@ -919,8 +920,9 @@ def starting_orbits(
     size = min(
         _position_batch(batch_size, positions), 1 << (n_grid - 1).bit_length()
     )
-    # Fixed-size batches, the last padded, so that every grid shares one
-    # compile (per number of positions) and memory is bounded by ``size``.
+    # Fixed-size batches, the last padded: grids share a compile per number
+    # of positions and power-of-two size (up to the batch), and memory is
+    # bounded by ``size``.
     padded = onp.concatenate(
         [grid, onp.repeat(grid[-1:], -n_grid % size, axis=0)]
     )
