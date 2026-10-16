@@ -222,6 +222,12 @@ def test_rotated_scene_is_smeared_about_the_rotated_offset():
     scene = Rotated(_binary(dra=0.0, ddec=200.0), 90.0)
     smeared = onp.abs(onp.asarray(data._cvis(scene)))
     assert onp.max(onp.abs(smeared - _brute_force(data, 200.0, 0.0))) < 1e-3
+    # The complex visibilities fix the direction (West would differ).
+    assert onp.allclose(
+        onp.asarray(data._cvis(scene)),
+        onp.asarray(data._cvis(_binary(dra=200.0, ddec=0.0))),
+        atol=1e-5,
+    )
 
 
 def test_read_oifits_leaves_widths_out_by_default(tmp_path):

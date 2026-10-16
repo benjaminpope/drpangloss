@@ -589,7 +589,7 @@ anything before 1.0 may change between minor versions.
 
 - **`PolarDisk.is_physical` works with a `VonMises` azimuthal model.** It read `harmonics.prior`, which `VonMises` does not have, so `model_loglike(..., reject_unphysical=True)` and `System.is_physical` raised `AttributeError` on any scene containing one.
 
-- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value tuple was a range whenever its last element was at least 1, so `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The `(lo, hi, n)` form now needs a tuple with a Python `int` `n`; a list, an array or a tuple whose last element is a float is a list of flux values (the same for `slope`).
+- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value tuple was a range whenever its last element was at least 1, so `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The `(lo, hi, n)` form now needs a tuple with an integer `n` (Python or NumPy); a list, an array or a tuple whose last element is a float is a list of flux values (the same for `slope`).
 
 - **`Precision.HIGHEST` in more contractions.** The limb-darkening coefficient matmul (binomials up to C(22, 11) with alternating signs), the `RadialGP` and `PolarKernel` contractions and the DISCO operator application now request full precision, as the other forward-model matmuls do; on A100/H100 the default (TF32) loses the cancellation.
 

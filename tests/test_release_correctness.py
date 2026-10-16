@@ -142,6 +142,16 @@ def test_shared_flux_grid_ending_at_one_is_three_fluxes():
     assert x.shape == (3,)
 
 
+def test_axis_numpy_integer_size_is_a_range():
+    x, _ = _axis((0.01, 0.1, onp.int64(5)), True, "flux")
+    assert x.shape == (5,)
+
+
+def test_axis_bool_size_is_not_a_range():
+    x, _ = _axis((0.01, 0.1, True), True, "flux")
+    assert x.shape == (3,)
+
+
 def test_axis_range_size_must_be_positive():
     with pytest.raises(ValueError, match="size"):
         _axis((0.01, 0.1, 0), True, "flux")
