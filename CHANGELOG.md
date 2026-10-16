@@ -137,11 +137,12 @@ the command line is matched literally, so it would not catch them.
   `(-180, 180]`).
 - **`DetectionMC.load`** raises `ValueError` for a file format other than 1
   (a file without `format` reads as 1).
-- **Warnings.** Four warnings that set no category now say `UserWarning`. A pipeline no longer
-  emits a `FutureWarning` (it is provisional).
+- **Warnings.** Four warnings that set no category now say `UserWarning`. A
+  pipeline no longer emits a `FutureWarning` (it is provisional).
 
-**`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised (see
-Removed); the other deprecations wait for 0.5.
+**`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised:
+`Tabulated(ratio, wavel)` → `Nodes(ratio, wavel)`, with the free values at
+`flux.values` (see Removed). The other deprecations wait for 0.5.
 
 ### Added
 
