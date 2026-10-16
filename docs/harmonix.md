@@ -52,10 +52,10 @@ A jaxoplanet `Surface` holds the spherical-harmonic map (`y`), the orientation o
 
 `Harmonix(surface, radius)` adds the angular radius in milliarcseconds, and `HarmonixModel` makes it a virgil model observed at `observation_time` (in the same units as the period).
 
-Our star is ζ And-like: a limb-darkened diameter of 2.54 mas, an inclination of 70°, and a rotation period of 17.8 days, with one large spot. Degree 8 resolves a spot of this size; higher degrees give sharper spots but slower fits.
+Our star is ζ And-like: a limb-darkened diameter of 2.54 mas, an inclination of 70°, and a rotation period of 17.8 days, with one large spot. Degree 4 resolves a spot of this size, and keeps the fit cheap; higher degrees give sharper spots but slower fits.
 
 ```python
-ydeg = 8
+ydeg = 4
 spot = ylm_spot(ydeg)
 period = 17.8  # days
 inc, obl = jnp.radians(70.0), jnp.radians(25.0)
