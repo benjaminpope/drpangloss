@@ -255,6 +255,29 @@ def test_starting_orbits_share_one_compile_across_period_counts():
     assert orbits._fit_batch._cache_size() == size
 
 
+def test_starting_orbits_default_batch_is_not_padded_past_the_grid(
+    monkeypatch,
+):
+    # The default batch holds ~1e6 position-epochs, far more than a small
+    # grid: padding to it once made every fit solve ~60x more points.
+    from virgil import orbits
+
+    sizes = []
+    real = orbits._fit_batch
+
+    def spy(fitter, dt, dra, ddec, whitener, period, *rest):
+        sizes.append(period.shape[0])
+        return real(fitter, dt, dra, ddec, whitener, period, *rest)
+
+    monkeypatch.setattr(orbits, "_fit_batch", spy)
+    mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0])
+    positions = _positions(_orbit(), mjd)
+    starting_orbits(
+        positions, [300.0, 400.0, 500.0], eccs=[0.1, 0.4], n_phase=5
+    )
+    assert sizes == [32]  # 3 * 2 * 5 = 30 grid points
+
+
 def test_starting_orbits_sign_free_recovers_orbit_from_random_signs():
     # A near-equal-flux binary: each epoch's position is known up to a sign.
     truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)
