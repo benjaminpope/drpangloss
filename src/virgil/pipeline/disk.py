@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+import re
 import warnings
 from typing import Callable
 
@@ -56,6 +57,8 @@ _ALPHA_NODES = 22
 _ELL_PER_EQUIVALENT = math.sqrt(3.0)
 # Δχ² within which another cell of the geometry grid is a rival minimum.
 _RIVAL_DELTA_CHI2 = _checks.RIVAL_DELTA_CHI2
+_BACKFIT_PASSES = 2
+_BACKFIT_MIN_GAIN = 2.0  # BIC units: below this a re-placement is noise
 # Coarse starts for the Gaussian process's geometry, beside the single ring's.
 _GEOMETRY_LATTICE_INC = (30.0, 50.0, 70.0)
 _GEOMETRY_LATTICE_PA = (0.0, 45.0, 90.0, 135.0)
@@ -1161,13 +1164,16 @@ def _scan_model(ctx, shape, base, *, rnew, fnew):
 
 
 @in_float64
-def _scan_new_ring(p, ctx, shape, base):
-    """The radius and flux of one more ring, scanned with the rest held."""
+def _scan_new_ring(p, ctx, shape, base, step=None):
+    """The radius and flux of one more ring, scanned with the rest held.
+
+    The radii are ``step`` apart (default one half-fringe).
+    """
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
 
-    r_axis = onp.arange(ctx.r_in, ctx.r_out + 1e-9, ctx.halffringe)
+    r_axis = onp.arange(ctx.r_in, ctx.r_out + 1e-9, step or ctx.halffringe)
     ll = onp.asarray(
         likelihood_grid(
             functools.partial(_scan_model, ctx, shape, base),
@@ -1186,15 +1192,18 @@ def _bic(fit, n):
     return score + fit.n_free * math.log(n)
 
 
-def _fit_with_planet(p, shape, start):
+def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape`` (without a planet), search the residuals, refit with one.
 
-    Returns ``(fit, shape, search)``: the search result is None unless
+    With ``backfit`` the rings are re-placed (``_backfit``) before the
+    search. Returns ``(fit, shape, search)``: the search result is None unless
     ``companion`` is on, and the returned shape has the planet if the search
     found one.
     """
     ctx = p._ctx()
     fit = _fit_rings(p, shape, start)
+    if backfit:
+        fit = _backfit(p, shape, fit)
     if not ctx.companion:
         return fit, shape, None
     search = _point_source_search(
@@ -1205,6 +1214,58 @@ def _fit_with_planet(p, shape, start):
     with_planet = dataclasses.replace(shape, planet=True)
     values = {**_scalars(fit.values), **_planet_start(search, ctx)}
     return _fit_rings(p, with_planet, values), with_planet, search
+
+
+_RING_KEY = re.compile(r"^(?:[rsfa]|h)(\d+)(?:_(?:re|im)\d+)?$")
+
+
+def _without_ring(values, k):
+    """``values`` of a ring scene without ring ``k``, the later rings
+    renumbered down (geometry, planet and noise terms kept)."""
+    out = {}
+    for key, v in values.items():
+        m = _RING_KEY.match(key)
+        if m is None:
+            out[key] = v
+            continue
+        i = int(m.group(1))
+        if i == k:
+            continue
+        j = i - (i > k)
+        out[key[: m.start(1)] + str(j) + key[m.end(1) :]] = v
+    return out
+
+
+def _backfit(p, shape, fit):
+    """Re-place each ring in turn and keep what improves the fit.
+
+    Rings are added one at a time at the radius of a scan, so a ring can be
+    left away from where the others would put it once they are all there. For
+    each ring in turn this drops it, scans for the best radius of a ring added
+    to the rest on a grid twice as fine as the first scan's, refits every
+    parameter from there and keeps the result if the BIC is lower. A pass
+    that changes nothing ends it, as does ``_BACKFIT_PASSES``.
+    """
+    ctx, n_data = p._ctx(), int(p.processed.n_independent)
+    if shape.n < 2:
+        return fit
+    for _ in range(_BACKFIT_PASSES):
+        improved = False
+        for k in range(1, shape.n + 1):
+            held = _without_ring(_scalars(fit.values), k)
+            base = _fill_new(ctx, held, shape.n)
+            new = _scan_new_ring(
+                p, ctx, shape, base, step=0.5 * ctx.halffringe
+            )
+            start = _ring_start(
+                ctx, held, shape.n, new, ctx.degree, ctx.colour
+            )
+            trial = _fit_rings(p, shape, start)
+            if _bic(trial, n_data) < _bic(fit, n_data) - _BACKFIT_MIN_GAIN:
+                fit, improved = trial, True
+        if not improved:
+            break
+    return fit
 
 
 def _profile_rings(p):
@@ -1228,7 +1289,7 @@ def _profile_rings(p):
         else:
             new = _scan_new_ring(p, ctx, shape, _fill_new(ctx, held, n))
             start = _ring_start(ctx, held, n, new, ctx.degree, ctx.colour)
-        fit, shape, search = _fit_with_planet(p, shape, start)
+        fit, shape, search = _fit_with_planet(p, shape, start, backfit=True)
         if search is not None:
             searches.append({"rings": n, **search})
         previous = _scalars(fit.values)

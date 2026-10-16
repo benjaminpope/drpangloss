@@ -602,6 +602,68 @@ def test_blackbody_ring_colour_recovers_the_temperature(tmp_path):
     assert chi2["power_law"] > chi2["blackbody"]
 
 
+def test_without_ring_renumbers_the_later_rings():
+    values = {
+        "inc": 50.0,
+        "fp": 0.04,
+        **{
+            f"{k}{i}": 10.0 * i + j
+            for i in (1, 2, 3)
+            for j, k in enumerate("rsfa")
+        },
+        **{f"h{i}_{c}1": float(i) for i in (1, 2, 3) for c in ("re", "im")},
+    }
+    out = disk._without_ring(values, 2)
+    assert out["inc"] == 50.0 and out["fp"] == 0.04
+    assert out["r1"] == values["r1"] and out["r2"] == values["r3"]
+    assert out["a2"] == values["a3"] and out["h2_im1"] == 3.0
+    assert not any(k.endswith("3") or "3_" in k for k in out)
+    assert len(out) == len(values) - 6
+
+
+def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(11))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 2,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    shape = disk._Shape(2, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 6.0,
+        "s1": 1.0,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+    }
+    wrong = disk._fit_rings(pipeline, shape, start)
+    better = disk._backfit(pipeline, shape, wrong)
+    assert better.chi2 <= wrong.chi2
+    radii = sorted(float(better.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+
+
 def test_fold_pa_keeps_the_disk():
     # The fold's parity rule: pa → pa + 180° with the order-m harmonic times
     # (-1)^m is the same disk. Check it against MultipoleDisk itself.
