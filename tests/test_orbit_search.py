@@ -320,6 +320,21 @@ def test_independent_of_batch_size(scored):
     onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
+def test_compiles_once_per_layout(scored):
+    from virgil import orbit_search
+
+    epochs, base = scored
+    size = orbit_search._score_kernel._cache_size()
+    # New data, a new dof and new candidates, same layout: no new compile.
+    other = _epochs(sigma_v2=0.03)
+    moved = [TRUTH, OTHER, OTHER]
+    for kwargs in ({"dof": 0.5}, {"dof": {"vis": 0.5, "phi": 0.8}}, {}):
+        score_orbits(other, OrbitalBinary, moved, shared=SHARED, **kwargs)
+    again = score_orbits(epochs, OrbitalBinary, CANDIDATES, shared=SHARED)
+    assert orbit_search._score_kernel._cache_size() == size
+    onp.testing.assert_array_equal(again.score, base.score)
+
+
 def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):
     epochs, f64 = scored
     f32 = score_orbits(

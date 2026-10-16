@@ -436,6 +436,24 @@ def _binary(orbit):
     return OrbitalBinary(orbit, FLUX)
 
 
+@pytest.mark.parametrize("scales", ["quoted", "marginal"])
+def test_rank_orbits_compiles_once_per_layout(scales):
+    from virgil import epochs as epochs_module
+
+    candidates = [_orbit(), _orbit(period=410.0), _orbit(ecc=0.5)]
+    rank = lambda epochs, **kw: rank_orbits(  # noqa: E731
+        _binary, epochs, candidates, scales=scales, **kw
+    )
+    first = rank(_simulated_epochs(seed=1))
+    size = epochs_module._loglike_kernel._cache_size()
+    # New data and a new dof, same layout: no new compile.
+    second = rank(_simulated_epochs(seed=2), dof=0.5)
+    again = rank(_simulated_epochs(seed=1))
+    assert epochs_module._loglike_kernel._cache_size() == size
+    assert not onp.allclose(first.loglike, second.loglike)
+    onp.testing.assert_array_equal(first.loglike, again.loglike)
+
+
 def test_rank_orbits_puts_the_truth_first_among_starting_orbits():
     epochs = _simulated_epochs()
     with jax.enable_x64(True):

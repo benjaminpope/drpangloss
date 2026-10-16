@@ -45,6 +45,7 @@ basin. The tools for starting and sampling such a fit are:
 import dataclasses
 import functools
 import math
+import types
 import warnings
 
 import equinox as eqx
@@ -777,6 +778,80 @@ def _orbit_batch_size(batch_size, datasets, n, per_candidate=1):
     return min(max(fit, 1), max(int(n), 1))
 
 
+class _Static:
+    """A hashable bundle for a static jit argument: equal when ``key`` is.
+
+    The ``payload`` is read at trace time, so ``key`` must determine
+    everything in it that the compiled kernel bakes in.
+    """
+
+    def __init__(self, key, payload):
+        self.key = key
+        self.payload = payload
+
+    def __hash__(self):
+        return hash(self.key)
+
+    def __eq__(self, other):
+        return isinstance(other, _Static) and self.key == other.key
+
+
+def _ident(x):
+    """``x`` if hashable, else its id (kept alive by the payload)."""
+    try:
+        hash(x)
+    except TypeError:
+        return ("id", id(x))
+    return x
+
+
+def _loglike_static(scene_of, data, noise_terms, batch_size, surfaces,
+                    scales, s_max):  # fmt: skip
+    """The static argument of ``_loglike_kernel`` (see ``_Static``)."""
+    times = tuple(float(t) for t in data.times)
+    names = tuple(
+        tuple(sorted((k, _ident(v)) for k, v in n.items()))
+        for n in noise_terms
+    )
+    key = (
+        _ident(scene_of), names, int(batch_size), times, scales, s_max,
+        tuple(sf._key() for sf in surfaces),
+    )  # fmt: skip
+    payload = types.SimpleNamespace(
+        scene_of=scene_of,
+        epochs=types.SimpleNamespace(data=(None,) * len(times), times=times),
+        noise=tuple(noise_terms),
+        surfaces=tuple(surfaces),
+        scales=scales,
+        batch_size=int(batch_size),
+    )
+    return _Static(key, payload)
+
+
+@functools.partial(jax.jit, static_argnames=("static",))
+def _loglike_kernel(static, inputs, datasets, dofs):
+    """One compile per layout: the data and the dofs are traced."""
+    p = static.payload
+
+    def one(x):
+        snapshots = Epochs.snapshots(p.epochs, p.scene_of(x))
+        if p.scales == "marginal":
+            total = sum(
+                f.score(f.chi2(s, d, n), dofs[k], d)
+                for k, (s, d, n, f) in enumerate(
+                    zip(snapshots, datasets, p.noise, p.surfaces)
+                )
+            )
+        else:
+            total = sum(
+                model_loglike(s, d, **n)
+                for s, d, n in zip(snapshots, datasets, p.noise)
+            )
+        return np.where(np.isfinite(total), total, -np.inf)
+
+    return jax.lax.map(one, inputs, batch_size=p.batch_size)
+
+
 def _loglikes(
     scene_of,
     inputs,
@@ -803,50 +878,23 @@ def _loglikes(
     batch_size = _orbit_batch_size(
         batch_size, data.data, jax.tree_util.tree_leaves(inputs)[0].shape[0]
     )
+    surfaces = ()
+    dofs = np.ones(len(data))
     if scales == "marginal":
         surfaces = tuple(_Surface(d, s_max) for d in data.data)
         dofs = np.asarray(
             [_check_dof(_dof_for(dof, data, k)) for k in range(len(data))]
         )
-        with run_in(dtype):
-            inputs = cast_tree(inputs, dtype)
-            datasets = cast_tree(tuple(data.data), dtype)
-
-            @jax.jit
-            def every_marginal(inputs, datasets, dofs):
-                def one(x):
-                    snapshots = data.snapshots(scene_of(x))
-                    total = sum(
-                        f.score(f.chi2(s, d, n), dofs[k], d)
-                        for k, (s, d, n, f) in enumerate(
-                            zip(snapshots, datasets, per_dataset, surfaces)
-                        )
-                    )
-                    return np.where(np.isfinite(total), total, -np.inf)
-
-                return jax.lax.map(one, inputs, batch_size=batch_size)
-
-            dofs = np.asarray(dofs, dtype)
-            return onp.asarray(
-                every_marginal(inputs, datasets, dofs), dtype=float
-            )
+    static = _loglike_static(
+        scene_of, data, per_dataset, batch_size, surfaces, scales, s_max
+    )
     with run_in(dtype):
         inputs = cast_tree(inputs, dtype)
         datasets = cast_tree(tuple(data.data), dtype)
-
-        @jax.jit
-        def every(inputs, datasets):
-            def one(x):
-                snapshots = data.snapshots(scene_of(x))
-                total = sum(
-                    model_loglike(s, d, **n)
-                    for s, d, n in zip(snapshots, datasets, per_dataset)
-                )
-                return np.where(np.isfinite(total), total, -np.inf)
-
-            return jax.lax.map(one, inputs, batch_size=batch_size)
-
-        return onp.asarray(every(inputs, datasets), dtype=float)
+        out = _loglike_kernel(
+            static, inputs, datasets, np.asarray(dofs, dtype)
+        )
+        return onp.asarray(out, dtype=float)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1668,7 +1716,7 @@ def epoch_positions(
     n_peaks=5,
     dof=1.0,
     s_max=None,
-    batch_size=4096,
+    batch_size=None,
     primary_diam=None,
     flag_nights=True,
     flag_alias_nats=2.0,
@@ -1768,7 +1816,7 @@ def epoch_positions(
         ``marginal_loglike``), for weak closure phases with a large
         scale.
     batch_size : int, optional
-        Grid points evaluated together.
+        Grid points evaluated together (default: from the data's size).
     primary_diam : float, optional
         The primary's uniform-disc diameter (mas), fixed. ``None``
         (default) or 0 is a point primary (the fast path). Give a value
@@ -1857,7 +1905,7 @@ def epoch_positions(
                 np.asarray(points),
                 d64,
                 surface,
-                min(batch_size, len(points)),
+                min(batch_size_or_default(batch_size, d), len(points)),
                 diam64,
             )
             marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
