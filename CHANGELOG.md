@@ -11,20 +11,34 @@ anything before 1.0 may change between minor versions.
 
 - **Tempered orbit evidence for correlated spectral channels.**
   `fit_orbit_aliases(temper=True)` (default) divides every block's log
-  likelihood by the effective-channel factor `f = N / N_eff`, estimated from
-  the lag-1 correlation of neighbouring channels in the residuals of each
-  night's best static fit, as the factor of a chain of the data's channels
-  (`1 + 2 sum (1 - k/n) rho^k`, at most the channel count and at least 1;
-  white noise and single-wavelength data give `f = 1`, so their evidences
-  are unchanged).
-  The untempered evidence gave the best alias band p = 1.000 at chi2/N 12
-  and posteriors far too narrow. `temper=False` is the old behaviour and a
-  float a fixed `f`. `AliasResult.temper_f`, `.temper_blocks` and
-  `.tempering` (f above 2, or raw f below 0.5) record it; `save` and `load` keep them
-  (older files load with `temper_f=None`). New module `virgil.tempering`
-  (`adjacent_channels`, `estimate_factors`, `ChannelFactors`); the block
-  score takes a per-block `dof`, and `estimate_primary_diameter(dof=)`
-  tempers the resolved-primary test. `LABELS_FREE_NATS` (3) and
+  likelihood by the effective-channel factor `f = N / N_eff`, estimated as
+  the empirical within-chain covariance factor
+  `sum (sum_chain z)^2 / sum z^2` of the residuals of each night's best
+  static fit, over the chains of consecutive channels of a baseline or
+  triangle. It is exact for AR(1) and for common-mode (shared calibration)
+  correlation alike, where a lag-1 AR(1) estimate undercounts the latter
+  (8 channels, c = 0.6: 3.2 for a truth of 5.2); it is 1 for white noise,
+  at most the channel count, used as `max(f, 1)` (tempering never sharpens;
+  no significance threshold, a slight upward bias that is the safe
+  direction). The lag-1 and lag-2 correlations are kept as diagnostics
+  (`AliasResult.temper_rho`); a flat signature (rho2 well above rho1^2) warns
+  and sets `tempering`. Tempering by 1/f is exact for signals flat across
+  channels (a position) and conservative for chromatic templates. The
+  untempered evidence gave the best alias band p = 1.000 at chi2/N 12 and
+  posteriors far too narrow; on 20 seeds of such noise (AR(1) 0.85 and
+  common mode 0.6) the median sky-plane offset/spread is 1.1 and 1.3
+  tempered, 2.6 and 3.0 untempered. `temper=False` is the old behaviour and
+  a finite float >= 1 a fixed `f`, which also tempers the
+  `primary_diam="auto"` resolution test. `AliasResult.temper_f`,
+  `.temper_blocks`, `.temper_rho` and `.tempering` (largest block `f` above
+  2, raw `f` below 0.5, or a flat correlation) record it; `save` and `load`
+  keep them (older files load with `temper_f=None`), and
+  `AliasResult.block_dof()` / `virgil.tempering.block_dof` give the
+  block-keyed `dof` for later stages. New module `virgil.tempering`
+  (`channel_chains`, `estimate_factors`, `ChannelFactors`); the block score
+  takes a per-block `dof`: `marginal_loglike(block_dof=)` and
+  `estimate_primary_diameter(block_dof=)` (keyed by block, unlike the
+  dataset-keyed `epoch_positions(dof=)`). `LABELS_FREE_NATS` (3) and
   `RESOLVE_NATS` (5) keep their values and are now in tempered nats.
 
 - **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
@@ -78,8 +92,10 @@ anything before 1.0 may change between minor versions.
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to
   reproduce them). It warns when data with several channels have no
-  `EpochPositions` to estimate `f` from, and when `f` is outside the range
-  of `AliasResult.tempering`.
+  `EpochPositions` to estimate `f` from, when a block takes the pooled `f`
+  for want of chains of its own, and when `f` is outside the range or flat
+  across channels (`AliasResult.tempering`). Checkpoints of earlier
+  versions are refitted (format 4).
 
 - **`fit_orbit_aliases` needs no per-system arguments.** The defaults
   changed, so results change: `p_range` is optional and defaults to a
