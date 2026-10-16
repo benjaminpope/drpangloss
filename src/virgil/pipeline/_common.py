@@ -320,6 +320,21 @@ def _mcmc(posterior, settings, *, dense_mass):
     )
 
 
+def _run_chains(posterior, settings, start, *, dense_mass):
+    """Run NUTS from ``start`` (one jittered start per chain); the finished MCMC."""
+    import jax
+
+    from ..likelihood import chain_init_params
+
+    init_key, run_key = jax.random.split(jax.random.PRNGKey(settings["seed"]))
+    init = chain_init_params(
+        posterior, [start] * settings["num_chains"], key=init_key
+    )
+    mcmc = _mcmc(posterior, settings, dense_mass=dense_mass)
+    mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
+    return mcmc
+
+
 def _sample_stats(mcmc):
     """NUTS diagnostics per transition, ``(chain, draw)``, by clean name."""
     extra = mcmc.get_extra_fields(group_by_chain=True)
