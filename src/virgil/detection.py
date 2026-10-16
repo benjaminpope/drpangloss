@@ -1,57 +1,28 @@
 """Detection statistics for companion searches, for ROC curves.
 
 [`detection_statistics`][virgil.detection.detection_statistics] reduces a
-companion search over a grid to three numbers that measure how strongly the
-data prefer a companion to none:
+companion search over a grid to three numbers (``delta_chi2``,
+``log_bayes_factor``, ``max_snr``) that measure how strongly the data prefer
+a companion to none. The null hypothesis is the same model with the
+companion flux set to zero. The function is traceable in the data, so it
+compiles once inside ``jax.lax.map`` over simulated observations.
 
-- ``delta_chi2``, the profile likelihood ratio 2 [max log L − log L₀] over
-  the grid, with the companion flux constrained to be non-negative;
-- ``log_bayes_factor``, the log evidence ratio of "a companion somewhere on
-  the grid" to "no companion", marginalized over the grid;
-- ``max_snr``, the largest best-fit flux over its Laplace uncertainty, the
-  significance map of the composition tutorial.
+- [`local_nsigma`][virgil.detection.local_nsigma] converts ``delta_chi2`` to
+  a local significance, which ignores the look-elsewhere effect.
+- [`gaussian_null`][virgil.detection.gaussian_null],
+  [`bootstrap_null`][virgil.detection.bootstrap_null] and
+  [`rescale_errors`][virgil.detection.rescale_errors] build the null
+  simulators, ``simulate(key, scene=None) -> OIData``.
+- [`injection_grid`][virgil.detection.injection_grid] lays out companions to
+  inject, and [`injection_recovery`][virgil.detection.injection_recovery]
+  runs the statistics on null and injected simulations.
+- Its result, a [`DetectionMC`][virgil.detection.DetectionMC], gives
+  empirical false-alarm probabilities, thresholds, ROC curves, completeness
+  maps and contrast curves, and saves, loads and concatenates.
 
-The null hypothesis is the same model with the companion flux set to zero
-and every other parameter as given, so fixed known components (a resolved
-star, a disk, a companion already found) stay in both hypotheses.
-
-The function is traceable in the data: inside ``jax.jit`` or
-``jax.lax.map`` over simulated observations it compiles once, which is what
-Monte Carlo estimates of false-alarm rates and completeness need.
-
-[`local_nsigma`][virgil.detection.local_nsigma] converts ``delta_chi2`` to
-Wilks's Gaussian-equivalent significance at a single position. It ignores
-the look-elsewhere effect of searching a grid, so it overstates the
-significance of the best of many positions; calibrate with simulations.
-The look-elsewhere effect and its trial factor are reviewed by Gross &
-Vitells (2010, https://arxiv.org/abs/1005.1891;
-https://en.wikipedia.org/wiki/Look-elsewhere_effect).
-
-The simulations:
-
-- [`gaussian_null`][virgil.detection.gaussian_null] and
-  [`bootstrap_null`][virgil.detection.bootstrap_null] build simulators,
-  ``simulate(key, scene=None) -> OIData``: Gaussian noise from a template's
-  errors, or a residual bootstrap of real data about the null scene.
-  [`rescale_errors`][virgil.detection.rescale_errors] first scales errors so
-  that the null scene has χ²_r = 1.
-- [`injection_grid`][virgil.detection.injection_grid] lays out companions
-  to inject, and
-  [`injection_recovery`][virgil.detection.injection_recovery] runs the
-  statistics on null and injected simulations with one compiled kernel.
-- Its result, a [`DetectionMC`][virgil.detection.DetectionMC], holds plain
-  NumPy arrays and gives empirical false-alarm probabilities, thresholds,
-  ROC curves, completeness maps and contrast curves; it saves, loads and
-  concatenates, so that array jobs can be merged.
-
-References: the residual bootstrap is Efron (1979,
-https://doi.org/10.1214/aos/1176344552); the ROC curve and its area are
-reviewed by Fawcett (2006, https://doi.org/10.1016/j.patrec.2005.10.010;
-https://en.wikipedia.org/wiki/Receiver_operating_characteristic);
-injection-recovery completeness and small-sample false-alarm rates follow
-the practice of direct imaging (e.g. Mawet et al. 2014,
-https://arxiv.org/abs/1407.2247) and CANDID's bootstrap (Gallenne et al.
-2015, https://arxiv.org/abs/1505.02715).
+See [Detection statistics](../detection_statistics.md) for the definitions
+and methods, and [Detection ROC curves](../detection_roc.md) for a
+tutorial.
 """
 
 import dataclasses
@@ -117,93 +88,47 @@ def detection_statistics(
     ----------
     model : SourceModel or class
         Companion model, as for
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]: a template
-        whose parameters at the paths in ``grid`` are varied (e.g.
-        a [System][virgil.models.System] with ``"comp.dra"``), or a class
-        called with ``grid``'s keys (e.g. ``BinaryModelCartesian``).
-        The null hypothesis is this model with ``flux_param`` set to zero
-        and everything else as given.
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The null
+        hypothesis is this model with ``flux_param`` set to zero and everything
+        else as given.
     data : OIData
         Data to search. It may be traced (e.g. a simulation built inside
         ``jax.lax.map`` with
-        [`OIData.with_model`][virgil.oidata.OIData.with_model]); the
-        function then compiles once for all of them.
+        [`OIData.with_model`][virgil.oidata.OIData.with_model]).
     grid : dict[str, array-like]
         Grid axes, as for
         [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]: the
-        coordinate keys (e.g. ``dra``, ``ddec`` in mas) and a non-negative
-        flux axis. The flux axis is both the starting grid of the flux
-        optimizer and the flux prior of ``log_bayes_factor``.
-    flux_param : str, optional
-        The key of ``grid`` holding the companion flux. By default,
-        the one key whose last part is ``flux``.
-    batch_size : int, optional
-        Number of grid points evaluated at once, as for
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+        coordinate keys and a non-negative flux axis, which is both the
+        optimizer's starting grid and the flux prior of ``log_bayes_factor``.
+        It must [resolve the likelihood
+        peak](../detection_statistics.md#grid-resolution).
+    flux_param, batch_size : optional
+        The key of ``grid`` holding the companion flux (by default, the one
+        key whose last part is ``flux``), and the grid points evaluated at
+        once, as for ``likelihood_grid``.
 
     Returns
     -------
     dict[str, jax.Array]
-        Scalars:
+        Scalars, defined in
+        [Detection statistics](../detection_statistics.md#statistics):
 
-        - ``delta_chi2``: 2 [max over positions and fluxes ≥ 0 of log L −
-          log L₀], always ≥ 0. At each position the flux is the best grid
-          flux refined by BFGS (as in
-          [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]);
-          where the unconstrained best flux is negative the constrained
-          one is 0, so that position adds nothing.
-        - ``log_bayes_factor``: log of the prior-weighted mean of L / L₀
-          over the full grid, ``logsumexp(log L − log L₀ + log w)``. The
-          prior weights ``w`` sum to 1 and follow each axis's own spacing:
-          trapezoid weights in the grid index (1 inside, ½ at the two
-          ends) along every axis. So the prior is uniform over the
-          searched box for evenly spaced coordinates, and uniform in log
-          flux between the axis's ends for a log-spaced flux axis (uniform
-          in flux for a linear one). Positive values favour a companion.
-        - ``max_snr``: the largest unconstrained best flux over its Laplace
-          uncertainty, over positions (NaN-safe).
-        - one entry per key of ``grid`` (e.g. ``dra``, ``ddec``,
-          ``flux``): the position where ``delta_chi2`` is reached and the
-          non-negative best flux there. If ``delta_chi2`` is 0 the flux is
-          0 and the position is the first grid position.
-        - ``flux_peak_steps``: a diagnostic, the full width at half
-          maximum of the likelihood peak in flux at that position (2.355
-          times the Laplace uncertainty) divided by the local spacing of
-          the flux axis. Below about 2 the flux axis does not resolve the
-          peak and ``log_bayes_factor`` is inaccurate.
+        - ``delta_chi2``: profile likelihood ratio over the grid, flux >= 0.
+        - ``log_bayes_factor``: log evidence ratio of a companion somewhere on
+          the grid to none (positive favours one); ``max_snr``: the largest
+          best flux over its Laplace uncertainty.
+        - one entry per key of ``grid``: where ``delta_chi2`` is reached (the
+          first position, with flux 0, if it is 0).
+        - ``flux_peak_steps``: the likelihood peak's FWHM in flux over the
+          flux axis's spacing; below about 2, ``log_bayes_factor`` is
+          inaccurate.
 
     Warns
     -----
     RuntimeWarning
-        With concrete (untraced) data only: if the flux axis does not
-        resolve the likelihood peak (``flux_peak_steps`` < 2), if the
-        best flux lies above the flux axis, or if the flux optimizer did not
-        converge at some positions. Under ``jit``/``lax.map`` nothing is
-        checked; inspect ``flux_peak_steps`` instead.
-
-    Notes
-    -----
-    Every statistic uses the full likelihood grid, evaluated once. The flux
-    axis must resolve the likelihood peak in flux for ``log_bayes_factor``
-    to approximate the evidence integral, and the coordinate spacing must
-    resolve it in position (not checked); a coarse grid still gives a
-    valid test statistic when its null distribution is simulated, but not
-    an accurate evidence. A strong detection has a narrow peak, so a
-    log-spaced axis needs many points per decade: the peak's relative width
-    (FWHM over flux) is about 2.4/SNR, so two steps across it at SNR 10
-    need a step of 0.12 in ln(flux), about 20 points per decade.
-
-    The trapezoid weights make ``log_bayes_factor`` a trapezoid-rule
-    integral over a prior with fixed bounds (the axes' ends), so it
-    converges as the grid is refined. Equal weights per point would put
-    the prior's edges half a step beyond the axes' ends, and, since L / L₀
-    stays near 1 far from a companion, would change the result at first
-    order in the step.
-
-    ``delta_chi2`` at one fixed position follows ½δ₀ + ½χ²₁ under the null
-    (Chernoff 1954, the flux being on its boundary at 0); searching a grid
-    makes it larger (the look-elsewhere effect). See
-    [`local_nsigma`][virgil.detection.local_nsigma].
+        With concrete data only: if the flux axis does not resolve the peak,
+        the best flux lies above it, or the optimizer did not converge
+        somewhere. Under ``jit`` nothing is checked: see ``flux_peak_steps``.
 
     Examples
     --------
@@ -235,21 +160,12 @@ def local_nsigma(delta_chi2):
     """Local (Wilks) significance of ``delta_chi2``, in Gaussian sigma.
 
     The significance a ``delta_chi2`` would have **at one position fixed in
-    advance**: under the null hypothesis it then follows ½δ₀ + ½χ²₁ (one
-    flux, bounded at zero), whose upper tail at ``delta_chi2`` is the
-    one-sided Gaussian tail at ``sqrt(delta_chi2)``. This is
-    [`nsigma`][virgil.limits.nsigma] with one degree of freedom. The χ²
-    law of the likelihood ratio is Wilks's theorem (Wilks 1938,
-    https://doi.org/10.1214/aoms/1177732360;
-    https://en.wikipedia.org/wiki/Wilks%27_theorem), and the half-χ²₁
-    mixture at a boundary is Chernoff's (1954,
-    https://doi.org/10.1214/aoms/1177728725; see
-    https://en.wikipedia.org/wiki/Likelihood-ratio_test).
-
-    It is local: it does not account for the look-elsewhere effect of
-    taking the best of many grid positions, so for a search it overstates
-    the significance. The global false-alarm probability needs simulations
-    of the null over the same grid.
+    advance**: [`nsigma`][virgil.limits.nsigma] with one degree of freedom, the
+    one-sided Gaussian tail at ``sqrt(delta_chi2)``. It does not account for the
+    look-elsewhere effect of taking the best of many grid positions, so for a
+    search it overstates the significance; the global false-alarm probability
+    needs simulations of the null over the same grid. See
+    [Detection statistics](../detection_statistics.md#local).
 
     Parameters
     ----------
@@ -356,10 +272,8 @@ def _constrained_profile(
     """Profile log likelihood and flux with flux >= 0 at every position.
 
     The refined optimum is used only where its flux is non-negative and it
-    improves on the best grid point; otherwise (a negative or failed, e.g.
-    NaN, refinement) the grid candidate is kept, whose flux is non-negative
-    because flux axes are. A position whose candidate does not improve on
-    the null gets the null's log likelihood and flux 0.
+    improves on the best grid point; a position whose candidate does not
+    improve on the null gets the null's log likelihood and flux 0.
     """
     use_opt = (opt_flux >= 0.0) & (opt_loglike >= grid_loglike)
     alt_loglike = np.where(use_opt, opt_loglike, grid_loglike)
@@ -494,9 +408,8 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
 
     Each draw is ``template.with_model(scene, key=key)``
     ([`OIData.with_model`][virgil.oidata.OIData.with_model]): the scene's
-    prediction plus Gaussian noise from the template's errors, closure
-    phases correlated through ``cp_noise``, and draws of the template's
-    gains and closure-phase offsets if it has them.
+    prediction plus Gaussian noise from the template's errors. See
+    [Detection statistics](../detection_statistics.md#null).
 
     Parameters
     ----------
@@ -505,22 +418,17 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
     template : OIData
         Sampling and errors to simulate. Its values are not used.
     error_scale : float, optional
-        The true noise as a multiple of the template's errors. The draws
-        still carry the template's errors, as real data analysed with
-        mis-estimated errors would, so ``error_scale`` ≠ 1 tests how the
-        statistics fare when the errors are wrong. (To change the errors
-        themselves, pass ``template.with_error_scale(...)`` or the result
-        of [`rescale_errors`][virgil.detection.rescale_errors].) It is a
-        static Python float: a new value compiles anew.
+        The true noise as a multiple of the template's errors, which the draws
+        still carry; ``error_scale`` != 1 tests how the statistics fare when the
+        errors are wrong. A static Python float: a new value compiles anew.
 
     Returns
     -------
     callable
         ``simulate(key, scene=None) -> OIData``, observing ``scene`` (by
-        default ``null_scene``) with fresh noise for each ``key``. It is
-        an equinox Module, a pytree whose arrays ``jax.jit`` traces, and is
-        traceable in ``key`` and ``scene``, so it runs under ``jax.lax.map``
-        over keys.
+        default ``null_scene``) with fresh noise for each ``key``. An equinox
+        Module, traceable in ``key`` and ``scene``, so it runs under
+        ``jax.lax.map`` over keys.
 
     Examples
     --------
@@ -539,15 +447,9 @@ def gaussian_null(null_scene, template, *, error_scale=1.0):
 def rescale_errors(null_scene, data):
     """Scale the errors so that the null scene has χ²_r = 1.
 
-    The visibility errors and the phase errors are scaled separately, each
-    by ``s = sqrt(χ² / n)``: χ² is the sum of squares of that block of
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals] of
-    ``null_scene`` (including the periodic penalty rows of correlated
-    closure phases), and ``n`` its independent observables, as in
-    [`n_independent`][virgil.oidata.OIData.n_independent] (the
-    independent closure-phase combinations, not the triangles). Without
-    gains, the whitened residuals scale as 1 / s, so afterwards each block
-    has χ² / n = 1 exactly; with gains, approximately.
+    The visibility and phase errors are scaled separately, each by
+    ``s = sqrt(χ² / n)`` of the whitened residuals of ``null_scene``. See
+    [Detection statistics](../detection_statistics.md#null).
 
     Parameters
     ----------
@@ -562,14 +464,8 @@ def rescale_errors(null_scene, data):
         A copy with ``d_vis`` and ``d_phi`` scaled. Extra observables
         (``data.extras``) keep their errors.
     factors : dict[str, float]
-        The scale factors, ``{"vis": s_vis, "phi": s_phi}`` (``s_phi`` is
-        1 for data without phases).
-
-    Notes
-    -----
-    ``n`` does not subtract the parameters fitted to obtain
-    ``null_scene``; with few data and several fitted parameters, the
-    factors are biased low by about ``p / (2n)``.
+        The scale factors, ``{"vis": s_vis, "phi": s_phi}`` (``s_phi`` is 1 for
+        data without phases).
     """
     r = onp.asarray(whitened_residuals(null_scene, data))
     n_vis = int(onp.size(data.vis))
@@ -601,29 +497,12 @@ def rescale_errors(null_scene, data):
 def bootstrap_null(null_scene, data, *, method="sign_flip"):
     """A simulator of the null hypothesis by residual bootstrap.
 
-    The residuals of ``data`` about ``null_scene``'s prediction are
-    whitened, sign-flipped (``"sign_flip"``, a wild bootstrap) or resampled
-    with replacement (``"resample"``), re-coloured and added back to the
-    prediction of the scene being simulated:
-
-    - visibilities are independent per sample: whitened as r / σ;
-    - unprojected phases are wrapped into [−π, π) first, as in
-      [`OIData.residuals`][virgil.oidata.OIData.residuals]. Uncorrelated
-      phases are whitened as Δ / σ, which equals the likelihood's chord
-      2 sin(Δ/2) / σ to O(Δ³); both are odd in Δ, so a sign flip flips
-      the likelihood's whitened residual exactly;
-    - closure phases from four or more telescopes are whitened with
-      ``data.cp_noise`` (``ClosureNoise.whiten``) into independent
-      combinations, which are flipped or resampled and re-coloured with
-      ``ClosureNoise.colour``, so the triangles' correlations survive;
-    - projected phases (kernel or DISCO phases) are linear and not
-      wrapped.
-
-    Sign flipping keeps each whitened residual's magnitude, so a
-    heteroscedastic or mis-estimated error survives into every draw, and it
-    removes any mean offset; it is the default. Resampling mixes the
-    residuals of different samples (within the visibilities, and within the
-    phases).
+    The residuals of ``data`` about ``null_scene``'s prediction are whitened,
+    sign-flipped or resampled, re-coloured and added back to the prediction of
+    the scene being simulated, keeping the closure-phase correlations. It needs
+    a null that fits, and a companion in the data biases the null distribution
+    upward. See [Detection statistics](../detection_statistics.md#null) for the
+    method and its caveats.
 
     Parameters
     ----------
@@ -633,34 +512,16 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
         The real data, concrete. Data with gains, closure-phase offsets or
         extra observables are not supported.
     method : {"sign_flip", "resample"}, optional
-        How to draw new whitened residuals.
+        How to draw new whitened residuals: a wild bootstrap that keeps each
+        residual's magnitude (the default), or resampling with replacement.
 
     Returns
     -------
     callable
         ``simulate(key, scene=None) -> OIData``: ``scene``'s prediction (by
-        default ``null_scene``'s) plus bootstrapped residuals, with
-        ``data``'s errors. Like
-        [`gaussian_null`][virgil.detection.gaussian_null] it is an equinox
-        Module, traceable in ``key`` and ``scene``.
-
-    Notes
-    -----
-    Caveats:
-
-    - It needs a null that fits: residuals from a poor fit carry the
-      misfit into every draw.
-    - A real companion in the data is part of the residuals, so it
-      appears, scrambled, in every null draw and biases the null
-      distribution upward (and the injections' too).
-    - Only the closure-phase covariance model is kept: correlations
-      between visibilities, between baselines beyond the closure
-      triangles, or between frames are lost.
-    - That covariance model is Kammerer et al.'s equal-baseline-noise
-      approximation (see ``virgil._closure``): with unequal errors within
-      a group, the part of a real residual outside its column space is
-      not recovered, and the re-coloured residuals are not exact closures
-      of baseline phases.
+        default ``null_scene``'s) plus bootstrapped residuals, with ``data``'s
+        errors. Like [`gaussian_null`][virgil.detection.gaussian_null] it is an
+        equinox Module, traceable in ``key`` and ``scene``.
     """
     if method not in BOOTSTRAP_METHODS:
         raise ValueError(
@@ -773,84 +634,45 @@ def injection_recovery(
 ):
     """Detection statistics of simulated null and injected observations.
 
-    Every draw simulates an observation (null, or with a companion
-    injected), runs the companion search of
-    [`detection_statistics`][virgil.detection.detection_statistics] on it,
-    and keeps the statistics and the best position. One compiled kernel,
-    ``(key, injection) -> statistics``, serves every draw, null and
-    injected, mapped with ``jax.lax.map(..., batch_size=draw_batch)``, so
-    memory stays bounded (there is no vmap over grid × draws). The default
-    grid ``batch_size`` is divided by ``draw_batch``, and ``draw_batch`` is
-    capped at that default, so the working set stays within the usual
-    budget of one search whatever ``draw_batch`` is.
+    Every draw simulates an observation (null, or with a companion injected),
+    runs the search of
+    [`detection_statistics`][virgil.detection.detection_statistics] on it, and
+    keeps the statistics and the best position, with one compiled kernel and
+    bounded memory. See [Detection statistics](../detection_statistics.md#injection)
+    for the batching and seeding.
 
     Parameters
     ----------
     model : SourceModel or class
-        Companion model, as for
-        [`detection_statistics`][virgil.detection.detection_statistics]:
-        a template with dotted paths or a class called with
-        ``grid``'s keys. Injections are this model at the injected
-        coordinates and flux; null draws are this model at zero flux.
-    null_scene : SourceModel
-        The scene without a companion. It must predict the same data as
-        ``model`` with zero companion flux, the null hypothesis that the
-        statistics test (checked on ``template``).
-    template : OIData
-        For ``noise="gaussian"``, the sampling and errors to simulate; for
-        ``noise="bootstrap"``, the real data.
-    grid : dict[str, array-like]
-        The search grid.
-    key : jax.Array or int
-        Random key, or an integer seed. Draw ``i`` of the null (or of the
-        injections) uses ``fold_in(fold_in(key, 0 or 1), i)``, so results
-        do not depend on ``draw_batch`` or ``chunk_size``.
-    n_null : int
-        Number of null draws (may be 0).
+        Companion model, as for ``detection_statistics``: injections are this
+        model at the injected position and flux, null draws at zero flux.
+    null_scene, template : SourceModel, OIData
+        The scene without a companion (it must predict the same data as
+        ``model`` at zero flux, checked on ``template``), and the sampling
+        and errors to simulate (``noise="gaussian"``) or the real data
+        (``noise="bootstrap"``).
+    grid, flux_param
+        The search grid and its flux key, as for ``detection_statistics``.
+    key, n_null : jax.Array or int, int
+        Random key (or integer seed) and the number of null draws (may be 0).
     injections : dict[str, array-like], optional
         Companions to inject, e.g. from
-        [`injection_grid`][virgil.detection.injection_grid]: one array per
-        grid key, found by its full name (``"comp.dra"``) or its last part
-        (``"dra"``), all of one length. None for no injections.
+        [`injection_grid`][virgil.detection.injection_grid]: one array per grid
+        key, by its full name (``"comp.dra"``) or last part (``"dra"``), all of
+        one length.
     noise : {"gaussian", "bootstrap"} or simulator, optional
-        Null noise model: [`gaussian_null`][virgil.detection.gaussian_null]
-        or [`bootstrap_null`][virgil.detection.bootstrap_null] of
-        ``template`` and ``null_scene`` with their defaults, or a simulator
-        built by either (for ``error_scale`` or ``method="resample"``)
-        from ``template`` itself (checked by fingerprint), whose null
-        scene must predict the same data as ``null_scene``.
+        Null noise model: [`gaussian_null`][virgil.detection.gaussian_null] or
+        [`bootstrap_null`][virgil.detection.bootstrap_null] (defaults), or a
+        simulator built by either from ``template`` itself.
     match_radius : float, optional
-        In mas, finite and non-negative. When set, an injection counts as
-        detected only if its best position lies within ``match_radius`` of
-        the injected one. Needs coordinate keys ending in ``dra`` and
-        ``ddec`` (Cartesian, mas) or ``sep`` and ``pa`` (mas and degrees,
-        as in ``BinaryModelAngular``). Stored in ``meta``; the best
-        positions are stored either way.
-    flux_param : str, optional
-        The flux key of ``grid``, as for the grid tools.
-    draw_batch : int, optional
-        Draws evaluated together (vectorized) within ``jax.lax.map``. When
-        ``batch_size`` is omitted, it is capped at the default grid batch
-        size, so that ``draw_batch`` searches of at least one grid point
-        each never exceed the budget of one search.
-    chunk_size : int, optional
-        Draws per call of the compiled kernel, rounded up to a multiple of
-        ``draw_batch``. The null and the injected draws run in chunks of
-        this size, with a progress bar over chunks. By default it is the
-        smaller of 64 and the larger number of draws, and the last chunk of
-        each run is exactly as long as the draws that remain (one extra
-        compilation, and no wasted draws). If you set it, the last chunk
-        is padded to ``chunk_size`` instead, so the compilation is reused
-        across calls with different numbers of draws, at the cost of up to
-        ``chunk_size - 1`` discarded draws.
-    batch_size : int, optional
-        Grid points evaluated at once within each search, as for
-        [`detection_statistics`][virgil.detection.detection_statistics].
-        An explicit value is used as given for each of the ``draw_batch``
-        searches evaluated together, so the working set is ``draw_batch``
-        times larger; the default is divided by ``draw_batch`` instead.
-    progress : bool, optional
-        Show a ``tqdm.auto`` progress bar, if tqdm is installed.
+        In mas. An injection counts as detected only if its best position lies
+        within it of the injected one. Needs coordinate keys ending in ``dra``
+        and ``ddec``, or ``sep`` and ``pa``.
+    draw_batch, chunk_size, batch_size, progress : optional
+        Draws evaluated together within ``jax.lax.map``; draws per call of
+        the compiled kernel (default the smaller of 64 and the larger number
+        of draws); grid points per search, as for ``detection_statistics``;
+        whether to show a ``tqdm`` bar.
 
     Returns
     -------
@@ -1208,15 +1030,9 @@ class _Unfingerprintable(Exception):
 
 
 def _fingerprint(obj):
-    """Hash of a whole object, or None if part of it cannot be hashed.
-
-    Equinox Modules (``OIData``, models, ``ClosureNoise``, ...) are
-    dataclasses: every field is hashed, static or not, with the class of
-    every node, so two objects hash equally only if they hold the same
-    arrays (dtype, shape, bytes), the same Python values and the same
-    structure. Classes and module-level functions are hashed by name;
-    anything else (a lambda, a closure, an arbitrary object) makes the
-    fingerprint None, so that results built on it are never merged.
+    """Hash of a whole object (classes and module-level functions by name), or
+    None if part of it cannot be hashed, so that results built on it are never
+    merged.
     """
     h = hashlib.sha256()
     try:
@@ -1293,41 +1109,26 @@ def _describe(model):
 class DetectionMC:
     """Statistics of simulated null and injected companion searches.
 
-    Made by [`injection_recovery`][virgil.detection.injection_recovery];
-    plain NumPy, with no JAX inside.
+    Made by [`injection_recovery`][virgil.detection.injection_recovery]; plain
+    NumPy, with no JAX inside. The conventions (false-alarm probability,
+    detection, separations and fluxes) are in
+    [Detection statistics](../detection_statistics.md#result).
 
     Attributes
     ----------
     null : dict[str, numpy.ndarray]
-        Per null draw: ``delta_chi2``, ``log_bayes_factor``, ``max_snr``,
-        the diagnostics ``flux_peak_steps`` and ``converged_fraction`` (of
-        the flux optimizer over grid positions), and the best position and
-        flux as ``best_<name>`` (e.g. ``best_dra``, ``best_flux``), where
-        ``name`` is the last dotted part of each grid key.
+        Per null draw: ``delta_chi2``, ``log_bayes_factor``, ``max_snr``, the
+        diagnostics ``flux_peak_steps`` and ``converged_fraction`` (of the flux
+        optimizer over grid positions), and the best position and flux as
+        ``best_<name>`` (e.g. ``best_dra``, ``best_flux``), where ``name`` is
+        the last dotted part of each grid key.
     injected : dict[str, numpy.ndarray]
-        The same per injected draw, plus the injected values under their
-        names (e.g. ``dra``, ``ddec``, ``flux``).
+        The same per injected draw, plus the injected values under their names
+        (e.g. ``dra``, ``ddec``, ``flux``).
     meta : dict
-        JSON-serializable: the grid, fingerprints (hashes of every field,
-        static or not) of the model, the null scene and the template, the
-        noise model,
-        ``match_radius``, the numbers of draws, the seeds and the virgil
-        version.
-
-    Notes
-    -----
-    Conventions: the false-alarm probability of a value is the fraction of
-    null draws at or above it; at a threshold ``t`` a draw is detected
-    when its statistic exceeds ``t`` (and, with ``match_radius``, its best
-    position matches the injection). Separations are ``hypot(dra, ddec)``
-    of the injections, or their ``sep`` for angular grids (``sep`` in mas,
-    ``pa`` in degrees), in mas; fluxes are relative to the primary, as in
-    [`absil_limits`][virgil.limits.absil_limits].
-
-    The single-position null of ``delta_chi2`` is ½δ₀ + ½χ²₁, so a local
-    3σ (``local_nsigma`` = 3, ``delta_chi2`` = 9) is a one-sided FAP of
-    0.135% (``scipy.stats.norm.sf(3)``), not the two-sided 0.27%; over a
-    grid the empirical FAP of that value is larger.
+        JSON-serializable: the grid, fingerprints of the model, the null scene
+        and the template, the noise model, ``match_radius``, the numbers of
+        draws, the seeds and the virgil version.
     """
 
     null: dict
@@ -1446,8 +1247,8 @@ class DetectionMC:
         stat : str
             The statistic.
         fap : float
-            False-alarm probability (e.g. 1.35e-3, the one-sided Gaussian
-            tail at 3σ).
+            False-alarm probability (e.g. 1.35e-3, the one-sided Gaussian tail at
+            3σ).
         n_boot : int, optional
             Bootstrap resamples of the null draws, for the error.
         seed : int, optional
@@ -1456,8 +1257,8 @@ class DetectionMC:
         Returns
         -------
         threshold, error : float
-            The ``1 - fap`` quantile of the null draws (linear
-            interpolation), and its bootstrap standard deviation.
+            The ``1 - fap`` quantile of the null draws (linear interpolation), and
+            its bootstrap standard deviation.
 
         Warns
         -----
@@ -1465,12 +1266,6 @@ class DetectionMC:
             If fewer than one null draw is expected above the threshold
             (``fap * n < 1``): it is then about the largest null value and
             underestimates the true threshold.
-
-        Notes
-        -----
-        The bootstrap runs in batches of resamples, holding about 2²²
-        values at a time, so its memory does not grow with
-        ``n_boot × n``.
         """
         null, value = self._threshold(stat, fap)
         q = 1.0 - float(fap)
