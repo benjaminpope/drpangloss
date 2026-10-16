@@ -74,13 +74,14 @@ def _groups(i1, i2, i3):
 
 def _incidence(group, i1, i2, i3):
     """The group's triangle-by-baseline matrix T."""
-    baselines = onp.unique(onp.concatenate([i1[group], i2[group], i3[group]]))
-    col = {b: j for j, b in enumerate(baselines)}
+    legs = onp.stack([i1[group], i2[group], i3[group]], axis=1)
+    baselines, col = onp.unique(legs, return_inverse=True)
+    col = col.reshape(legs.shape)
     t = onp.zeros((group.size, baselines.size))
-    for row, tri in enumerate(group):
-        t[row, col[i1[tri]]] += 1.0
-        t[row, col[i2[tri]]] += 1.0
-        t[row, col[i3[tri]]] -= 1.0
+    rows = onp.arange(group.size)
+    onp.add.at(t, (rows, col[:, 0]), 1.0)
+    onp.add.at(t, (rows, col[:, 1]), 1.0)
+    onp.add.at(t, (rows, col[:, 2]), -1.0)
     return t
 
 

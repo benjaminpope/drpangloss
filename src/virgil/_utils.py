@@ -73,6 +73,18 @@ def wrap_phase(phase):
 # === TRACED VALUES ===
 
 
+def group_indices(labels, indices=None):
+    """Ascending ``indices`` (default all) of each distinct label, by label.
+
+    One stable sort instead of a pass over ``labels`` per label.
+    """
+    labels = onp.asarray(labels).reshape(-1)
+    indices = onp.arange(labels.size) if indices is None else indices
+    order = onp.argsort(labels, kind="stable")
+    cuts = onp.flatnonzero(onp.diff(labels[order])) + 1
+    return onp.split(indices[order], cuts) if labels.size else []
+
+
 def concrete(value):
     """``value`` as a NumPy array, or ``None`` inside a traced computation.
 

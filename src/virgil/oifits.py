@@ -516,23 +516,42 @@ class _BaselineLookup:
 
     def times(self, frame_mjd):
         """Per-sample ``(mjd, frame)``; see ``read_oifits``."""
+        # The same exposure only if MJD and TIME both agree (within
+        # _MJD_TOLERANCE, as a Chebyshev distance), for rows of one INSNAME.
+        # Rows sorted by MJD can interleave in TIME, so every pair counts,
+        # not just neighbours; the KD-tree finds them in time proportional
+        # to their number, not the square of the rows in an MJD window.
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
+        from scipy.spatial import cKDTree
+
+        n = len(self._order)
+        starts = onp.array([row[0] for row in self._order], dtype=int)
+        position = {int(start): i for i, start in enumerate(starts)}
+        edges = [
+            (i, position[self._root(int(start))])
+            for i, start in enumerate(starts)
+        ]
         by_ins = {}
-        for start, _, mjd, ins, time in self._order:
-            by_ins.setdefault(ins, []).append((mjd, time, start))
+        for i, (_, _, mjd, ins, time) in enumerate(self._order):
+            by_ins.setdefault(ins, []).append((i, mjd, time))
         for rows in by_ins.values():
-            rows.sort()
-            # The same exposure only if MJD and TIME both agree. Rows sorted
-            # by MJD can interleave in TIME, so compare every pair inside the
-            # MJD window, not just neighbours.
-            for i, (mjd0, t0, a) in enumerate(rows):
-                for mjd1, t1, b in rows[i + 1 :]:
-                    if mjd1 - mjd0 > _MJD_TOLERANCE:
-                        break
-                    if abs(t1 - t0) <= _MJD_TOLERANCE:
-                        self.link(a, b)
-        roots = [self._root(start) for start, *_ in self._order]
-        labels = {root: k for k, root in enumerate(dict.fromkeys(roots))}
-        frame = onp.array([labels[root] for root in roots])
+            index, mjd, time = (onp.array(c) for c in zip(*rows))
+            pairs = cKDTree(onp.column_stack([mjd, time])).query_pairs(
+                _MJD_TOLERANCE, p=onp.inf, output_type="ndarray"
+            )
+            edges.extend(zip(index[pairs[:, 0]], index[pairs[:, 1]]))
+        edges = onp.array(edges, dtype=int).reshape(-1, 2)
+        graph = coo_matrix(
+            (onp.ones(len(edges)), (edges[:, 0], edges[:, 1])), shape=(n, n)
+        )
+        label = connected_components(graph, directed=False)[1]
+        # Number the frames by the first row of each, and keep one union-find
+        # root per frame, so that the links persist for later calls.
+        first = onp.unique(label, return_index=True)[1]
+        frame = onp.argsort(onp.argsort(first))[label] if n else label
+        for start, lab in zip(starts, label):
+            self._parent[int(start)] = int(starts[first[lab]])
         row_mjd = onp.array([mjd for _, _, mjd, _, _ in self._order])
         if frame_mjd == "mean":
             sums = onp.bincount(frame, weights=row_mjd)

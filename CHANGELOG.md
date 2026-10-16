@@ -149,6 +149,13 @@ anything before 1.0 may change between minor versions.
   matrix, where `Uniform` added none before. The matrix is a
   preconditioner, so this changes the efficiency of NUTS with it, not its
   samples.
+- The builders of `gain_modes`, `ClosureNoise`, `DifferentialPhase` and the
+  OIFITS reader's frame grouping sort once instead of passing over all
+  samples per group (quadratic before); their output is identical. The
+  numeric prior fields of `FluxSpectrum` (`widths`, `scale`, `poly_width`)
+  and `DifferentialPhase.prior_width` are now NumPy arrays that jit traces,
+  so scanning a prior width does not recompile. Read them with `tuple(...)`
+  where you compared them with a tuple.
 
 ### Migration from 0.3.0
 
