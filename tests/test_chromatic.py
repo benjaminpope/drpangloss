@@ -1,6 +1,5 @@
 """Chromatic scenes: spectra, resolved flux, several files, likelihood options."""
 
-import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -11,16 +10,17 @@ from virgil import (
     BlackBody,
     GaussianDisk,
     ModulatedGaussianRim,
+    Nodes,
     OIData,
     PointSource,
     PowerLaw,
     Resolved,
+    Sum,
     System,
     UniformDisk,
     write_oifits,
 )
 from virgil._utils import is_flux_param, resolve_flux_param
-from virgil.spectra import Tabulated
 from virgil.likelihood import (
     joint_loglike,
     model_loglike,
@@ -334,77 +334,62 @@ def test_temperatures_have_gradients_and_are_not_fluxes():
     assert not is_flux_param("secondary.flux.temperature")
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
-def test_tabulated_interpolates_between_channels():
-    spectrum = Tabulated([0.2, 0.4, 0.1], WAVES)
+def test_nodes_interpolate_between_channels():
+    spectrum = Nodes([0.2, 0.4, 0.1], WAVES)
     assert np.allclose(spectrum(WAVES), np.array([0.2, 0.4, 0.1]))
     assert np.isclose(spectrum(1.60e-6), 0.3)
     assert np.isclose(spectrum(1.0e-6), 0.2)  # constant beyond the ends
-    assert np.isclose(spectrum(), np.mean(np.array([0.2, 0.4, 0.1])))
+    assert np.isclose(spectrum(), 0.2)  # the reference flux, at wavel0
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
 def test_reference_flux_is_each_spectrums_own_reference():
     from virgil.spectra import reference_flux
 
-    nodes = Tabulated([0.2, 0.4, 0.1], WAVES)
+    nodes = Nodes([0.2, 0.4, 0.1], WAVES, wavel0=WAVES[1])
     assert reference_flux(nodes).shape == ()
-    assert np.isclose(
-        reference_flux(nodes), np.mean(np.array([0.2, 0.4, 0.1]))
-    )
+    assert np.isclose(reference_flux(nodes), 0.4)
     assert np.isclose(reference_flux(PowerLaw(0.3, 1.0)), 0.3)
     assert np.isclose(reference_flux(BlackBody(0.3, 3000.0)), 0.3)
     assert reference_flux(0.25) == 0.25
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
-def test_negative_tabulated_node_is_rejected_despite_positive_mean():
-    # Tabulated rejects negatives itself, so inject one past its constructor.
-    bad = eqx.tree_at(
-        lambda s: s.ratio,
-        Tabulated([0.2, 0.4, 0.1], WAVES),
-        np.array([0.5, -0.1, 0.4]),
-    )
-    assert float(bad()) > 0.0
+def test_negative_node_is_rejected_despite_positive_mean():
     with pytest.raises(ValueError, match="must be non-negative"):
-        PointSource(flux=bad)
+        PointSource(flux=Nodes([0.5, -0.1, 0.4], WAVES))
+    # A negative node is fine in a Sum, whose total is what must be positive.
+    PointSource(flux=Sum(a=Nodes([0.5, -0.1, 0.4], WAVES), b=PowerLaw(0.5)))
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
-def test_tabulated_rejects_bad_tables():
-    with pytest.raises(ValueError, match="non-negative"):
-        Tabulated([0.2, -0.1, 0.1], WAVES)
+def test_nodes_reject_bad_tables():
     with pytest.raises(ValueError, match="increasing"):
-        Tabulated([0.2, 0.1, 0.1], WAVES[::-1])
-    with pytest.raises(ValueError, match="finite and non-negative"):
-        Tabulated([0.2, onp.nan, 0.1], WAVES)
-    with pytest.raises(ValueError, match="positive"):
-        Tabulated([0.2, 0.1, 0.1], onp.array([-1.0e-6, 1.6e-6, 1.7e-6]))
+        Nodes([0.2, 0.1, 0.1], WAVES[::-1])
     with pytest.raises(ValueError, match="finite"):
-        Tabulated([0.2, 0.1, 0.1], onp.array([1.5e-6, onp.nan, 1.7e-6]))
+        Nodes([0.2, onp.nan, 0.1], WAVES)
+    with pytest.raises(ValueError, match="positive"):
+        Nodes([0.2, 0.1, 0.1], onp.array([-1.0e-6, 1.6e-6, 1.7e-6]))
+    with pytest.raises(ValueError, match="finite"):
+        Nodes([0.2, 0.1, 0.1], onp.array([1.5e-6, onp.nan, 1.7e-6]))
     with pytest.raises(ValueError, match="non-empty"):
-        Tabulated([], [])
+        Nodes([], [])
+    with pytest.raises(ValueError, match="same length"):
+        Nodes([0.2, 0.1], WAVES)
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
-def test_tabulated_is_physical_checks_traced_tables():
-    good = Tabulated([0.2, 0.4, 0.1], WAVES)
+def test_nodes_is_physical_checks_traced_tables():
+    good = Nodes([0.2, 0.4, 0.1], WAVES)
     assert bool(good.is_physical())
     assert not bool(
-        good.set("ratio", np.array([0.2, -0.4, 0.1])).is_physical()
+        good.set("values", np.array([0.2, -0.4, 0.1])).is_physical()
     )
     assert not bool(good.set("wavel", WAVES[::-1]).is_physical())
-    with pytest.raises(ValueError, match="same length"):
-        Tabulated([0.2, 0.1], WAVES)
 
 
-@pytest.mark.filterwarnings("ignore:Tabulated is deprecated:FutureWarning")
-def test_tabulated_flux_per_channel_matches_achromatic_scenes():
+def test_node_flux_per_channel_matches_achromatic_scenes():
     u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
     ratios = onp.array([0.05, 0.3, 0.1])
     chromatic = System(
         star=PointSource(),
-        comp=PointSource(flux=Tabulated(ratios, WAVES), dra=5.0),
+        comp=PointSource(flux=Nodes(ratios, WAVES), dra=5.0),
     )
     for wavel, ratio in zip(WAVES, ratios):
         plain = System(star=PointSource(), comp=PointSource(ratio, dra=5.0))
