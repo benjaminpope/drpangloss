@@ -506,3 +506,37 @@ def test_new_centroid_widths_and_tv_smoothing_do_not_recompile(
     with count_compiles() as compiles:
         run(7.0)
     assert not compiles
+
+
+def test_dirty_image_in_chunks_matches_the_dense_synthesis(monkeypatch):
+    # The chunked sum equals the all-samples einsum it replaced, whatever
+    # the chunk size (including one that leaves a short last chunk).
+    from virgil import imaging
+    from virgil._utils import mas2rad
+
+    rng = onp.random.default_rng(7)
+    u, v = rng.uniform(-6.0, 6.0, (2, 203))
+    cvis = onp.asarray(PointSource(dra=-50.0, ddec=30.0).model(u, v, 4.8e-6))
+    data = OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": 4.8e-6,
+            "vis": onp.abs(cvis),
+            "d_vis": onp.full(203, 0.01),
+            "phi": onp.angle(cvis),
+            "d_phi": onp.full(203, 0.01),
+            "v2_flag": False,
+            "cp_flag": False,
+        }
+    )
+    npix, scale = 24, 20.0
+    offsets = onp.asarray(imaging.pixel_offsets(npix, scale))
+    fu, fv = u / 4.8e-6 * mas2rad, v / 4.8e-6 * mas2rad
+    cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))
+    rows = onp.exp(2j * onp.pi * onp.outer(fv, offsets))
+    dense = onp.real(onp.einsum("k,kr,kc->rc", cvis, rows, cols)) / 203
+    for batch in (1, 50, 203, 4096):
+        monkeypatch.setattr(imaging, "_DIRTY_BATCH", batch)
+        got = onp.asarray(dirty_image(data, npix, scale))
+        onp.testing.assert_allclose(got, dense, rtol=1e-5, atol=1e-6)

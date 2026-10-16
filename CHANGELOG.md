@@ -118,6 +118,16 @@ Provisional in 0.4:
 
 ### Changed
 
+- **Imaging and metrics performance.** The evidence helpers (`log_evidence`,
+  `error_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
+  take the Jacobian's SVD on the device in float64, QR-reduced when it is
+  far from square, instead of NumPy's SVD on the host (#328). `dirty_image`
+  sums the visibilities in chunks of samples, so its memory no longer grows
+  as samples x pixels. `metrics.align` sweeps its shift table in one
+  compiled `lax.map` instead of a call per shift. Results are unchanged up to
+  rounding, except that `laplace_samples` with a given `key` returns
+  different draws than before (the singular vectors' signs differ between
+  the host and device SVDs); they have the same distribution.
 - **One naming scheme for the `MultipoleDisk` family** (new since 0.3.0, so
   there are no shims). The classes are `MultipoleDisk`, `MultipoleKernel`
   and `MultipoleField` (were `PolarDisk`, `PolarKernel`, `PolarField`),

@@ -136,3 +136,31 @@ def test_rms_convolved_beam_needs_pixel_scale_for_arrays():
     beam = Beam(1.0, 1.0, 0.0)
     with pytest.raises(ValueError, match="pixel_scale_mas"):
         metrics.rms_convolved(truth, truth, beam=beam)
+
+
+def test_align_matches_a_shift_by_shift_loop():
+    # The jitted sweep over the shift table gives the NCC table the old
+    # call-per-shift loop did, so the same shift is chosen and applied.
+    truth = _scene()
+    moved = metrics._shift(truth, 2.3, -1.4)
+    n = 4
+    steps = range(-n, n + 1)
+    loop = onp.array(
+        [
+            [
+                float(metrics.ncc(metrics._shift(moved, i, j), truth))
+                for j in steps
+            ]
+            for i in steps
+        ]
+    )
+    pairs = onp.stack(
+        onp.meshgrid(*[onp.arange(-n, n + 1)] * 2, indexing="ij"), axis=-1
+    ).reshape(-1, 2)
+    table = onp.asarray(
+        metrics._ncc_table(moved, truth, np.asarray(pairs, dtype=float))
+    ).reshape(loop.shape)
+    onp.testing.assert_allclose(table, loop, atol=1e-5)
+    _, (dra, ddec) = metrics.align(moved, truth, float(n), SCALE)
+    assert dra == pytest.approx(-1.4, abs=0.15)
+    assert ddec == pytest.approx(2.3, abs=0.15)
