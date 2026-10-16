@@ -815,3 +815,48 @@ def test_the_two_image_jacobian_compiles_once():
         log_evidence(second, DATA, path=None)
         error_scale(second, DATA, path=None)
     assert not compiles
+
+
+@pytest.mark.parametrize("shape", [(120, 20), (20, 120), (30, 25)])
+def test_the_device_singular_values_match_a_numpy_svd(shape):
+    # log_evidence, error_scale and friends take their spectrum from
+    # _singular_values (JAX, float64, QR-reduced when the matrix is far from
+    # square); it must agree with NumPy's SVD of the whole matrix, including
+    # a spectrum over twelve decades, whose small values a Gram matrix loses.
+    from virgil.imaging import _singular_values, _svd
+
+    rng = onp.random.default_rng(0)
+    m, n = shape
+    k = min(m, n)
+    u, _ = onp.linalg.qr(rng.normal(size=(m, k)))
+    w, _ = onp.linalg.qr(rng.normal(size=(n, k)))
+    s = onp.logspace(6, -6, k)
+    jac = (u * s) @ w.T
+    reference = onp.linalg.svd(jac, compute_uv=False)
+    got = _singular_values(jac)
+    onp.testing.assert_allclose(got, reference, rtol=1e-9, atol=1e-9)
+    onp.testing.assert_allclose(
+        onp.sum(onp.log1p(got**2)),
+        onp.sum(onp.log1p(reference**2)),
+        rtol=1e-12,
+    )
+    uu, ss, vt = _svd(jac)
+    onp.testing.assert_allclose((uu * ss) @ vt, jac, atol=1e-9)
+
+
+def test_the_evidence_jacobian_stays_on_the_device_for_the_spectrum():
+    from virgil.imaging import _residual_jacobian, _singular_values
+
+    latent = jax.random.normal(jax.random.PRNGKey(0), (N, N))
+    data = DATA.with_model(_gp_scene(latent, 1.5), key=jax.random.PRNGKey(1))
+    model = _gp_scene(onp.zeros((N, N)), 1.5)
+    path = "env.log_brightness.latent"
+    _, host = _residual_jacobian(model, data, path)
+    _, dev = _residual_jacobian(model, data, path, on_device=True)
+    assert isinstance(host, onp.ndarray) and isinstance(dev, jax.Array)
+    onp.testing.assert_allclose(
+        _singular_values(dev),
+        onp.linalg.svd(host, compute_uv=False),
+        rtol=1e-9,
+        atol=1e-9,
+    )

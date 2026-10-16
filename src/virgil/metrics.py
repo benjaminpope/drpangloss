@@ -25,6 +25,7 @@ interferometric data do not fix the absolute position, usually aligned
 first.
 """
 
+import jax
 import jax.numpy as np
 import numpy as onp
 from jax.scipy.ndimage import map_coordinates
@@ -255,6 +256,22 @@ def lawson_sigma_over_peak(image, truth):
     return sigma / np.max(r)
 
 
+# Shifts per lax.map batch in ``align``: bounds the intermediates to
+# _ALIGN_BATCH images at a time instead of one per shift.
+_ALIGN_BATCH = 64
+
+
+@jax.jit
+def _ncc_table(image, truth, shifts):
+    """The NCC of ``image`` shifted by each of ``shifts`` (rows, columns)
+    against ``truth``, as a ``(len(shifts),)`` array; compiled once."""
+    return jax.lax.map(
+        lambda s: ncc(_shift(image, s[0], s[1]), truth),
+        shifts,
+        batch_size=_ALIGN_BATCH,
+    )
+
+
 def align(image, truth, max_shift_mas, pixel_scale_mas=None):
     """Shift an image to best match the truth, by maximizing the NCC.
 
@@ -291,11 +308,20 @@ def align(image, truth, max_shift_mas, pixel_scale_mas=None):
     n = int(onp.floor(max_shift_mas / scale + 1e-9))
     if n < 1:
         return e, (0.0, 0.0)
-    shifts = range(-n, n + 1)
-    # Row i of the NCC table is the shift in rows, column j in columns.
-    table = onp.array(
-        [[float(ncc(_shift(e, i, j), r)) for j in shifts] for i in shifts]
-    )
+    steps = onp.arange(-n, n + 1)
+    # Row i of the NCC table is the shift in rows, column j in columns. One
+    # compiled sweep over the shift table, in batches, not a call per shift.
+    pairs = onp.stack(onp.meshgrid(steps, steps, indexing="ij"), axis=-1)
+    table = onp.asarray(
+        _ncc_table(
+            e,
+            r,
+            np.asarray(
+                pairs.reshape(-1, 2), dtype=np.result_type(e.dtype, float)
+            ),
+        ),
+        dtype=float,
+    ).reshape(steps.size, steps.size)
     table = onp.nan_to_num(table, nan=-onp.inf)
     i, j = onp.unravel_index(onp.argmax(table), table.shape)
 

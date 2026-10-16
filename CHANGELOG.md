@@ -74,6 +74,13 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **Imaging and metrics performance.** The evidence helpers (`log_evidence`,
+  `error_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
+  take the Jacobian's SVD on the device in float64, QR-reduced when it is
+  far from square, instead of NumPy's SVD on the host (#328). `dirty_image`
+  sums the visibilities in chunks of samples, so its memory no longer grows
+  as samples x pixels. `metrics.align` sweeps its shift table in one
+  compiled `lax.map` instead of a call per shift. Results are unchanged.
 - `fit_orbit_aliases` now tempers by default, so its evidences, band
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to
