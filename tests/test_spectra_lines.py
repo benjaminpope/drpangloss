@@ -18,7 +18,6 @@ from virgil import (
 )
 from virgil.likelihood import model_loglike
 from virgil.oifits import build_hdulist, read_oifits
-from virgil.spectra import Tabulated
 from tests.test_oifits import TRUTH, _tables
 
 BRG = 2.1661e-6
@@ -179,50 +178,6 @@ def test_total_spectrum_sums_the_components():
     assert onp.allclose(
         single.total_spectrum(wavel), 0.3 * wavel / 2.2e-6, rtol=1e-6
     )
-
-
-def test_nodes_reproduce_tabulated_exactly():
-    # The migration recipe: Tabulated(ratio, wavel) -> Nodes(ratio, wavel).
-    nodes = onp.array([2.0e-6, 2.1e-6, 2.2e-6])
-    ratio = [0.2, 0.4, 0.1]
-    wavel = onp.linspace(1.9e-6, 2.3e-6, 11)
-    u, v = onp.array([30.0, -20.0]), onp.array([10.0, 40.0])
-
-    def scene(spectrum):
-        return System(
-            star=PointSource(),
-            comp=PointSource(spectrum, dra=5.0, ddec=-3.0),
-        )
-
-    with jax.enable_x64(True):
-        with pytest.warns(FutureWarning, match="Nodes"):
-            old = Tabulated(ratio, nodes)
-        new = Nodes(ratio, nodes)
-        # Identical between and at the nodes; beyond the end nodes Nodes
-        # clips before interpolating, which differs by at most an ulp.
-        inside = (wavel >= nodes[0]) & (wavel <= nodes[-1])
-        assert onp.array_equal(old(wavel)[inside], new(wavel)[inside])
-        assert onp.allclose(old(wavel), new(wavel), rtol=1e-15, atol=0.0)
-        for point in wavel[inside]:
-            assert onp.array_equal(
-                scene(old).model(u, v, point), scene(new).model(u, v, point)
-            )
-
-        grad_old = jax.grad(
-            lambda r: np.sum(
-                np.abs(scene(old.set("ratio", r)).model(u, v, 2.05e-6)) ** 2
-            )
-        )(old.ratio)
-        grad_new = jax.grad(
-            lambda r: np.sum(
-                np.abs(scene(new.set("values", r)).model(u, v, 2.05e-6)) ** 2
-            )
-        )(new.values)
-        assert onp.array_equal(grad_old, grad_new)
-    # Only the no-argument reference flux differs: the mean of the nodes
-    # against the value at wavel0 (the first node unless given).
-    assert float(old()) == pytest.approx(onp.mean(ratio))
-    assert float(new()) == pytest.approx(ratio[0])
 
 
 def test_invalid_spectra_are_rejected():

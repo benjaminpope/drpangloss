@@ -30,15 +30,12 @@ as the total is not, which
 the nodes and the line centres.
 """
 
-import warnings
-
 import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
 import zodiax as zdx
 
-from ._deprecate import external_stacklevel
 from ._utils import check_part_name, concrete
 
 
@@ -51,7 +48,6 @@ __all__ = [
     "Scaled",
     "Spectrum",
     "Sum",
-    "Tabulated",
     "flux_at",
     "reference_flux",
 ]
@@ -441,11 +437,13 @@ class Nodes(Spectrum):
         self.wavel = np.asarray(wavel, dtype=float)
         self.kind = kind
         self.outside = outside if outside == "constant" else float(outside)
-        self.wavel0 = (
-            self.wavel[..., 0]
-            if wavel0 is None and self.wavel.ndim == 1 and self.wavel.size
-            else np.asarray(wavel0, dtype=float)
-        )
+        if wavel0 is not None:
+            self.wavel0 = np.asarray(wavel0, dtype=float)
+        elif self.wavel.ndim == 1 and self.wavel.size:
+            self.wavel0 = self.wavel[0]
+        else:
+            # Placeholder: __check_init__ rejects the table with a clear error.
+            self.wavel0 = np.asarray(onp.nan)
 
     def _at(self, wavel):
         clipped = np.clip(wavel, self.wavel[0], self.wavel[-1])
@@ -601,92 +599,6 @@ class Sum(Spectrum):
         )
 
 
-class Tabulated(Spectrum):
-    """A free flux in every spectral channel, interpolated linearly between.
-
-    **Deprecated**: use [`Nodes`][virgil.spectra.Nodes]. ``Tabulated(ratio,
-    wavel)`` is ``Nodes(ratio, wavel)`` except for its reference flux (the mean
-    over the nodes) and its parameter name (``ratio``). It will be removed in
-    0.5.
-
-    Parameters
-    ----------
-    ratio : array-like, shape (n,)
-        Flux at each node, relative to the other components: finite and
-        non-negative, with n >= 1.
-    wavel : array-like, shape (n,)
-        Node wavelengths in metres: finite, positive and strictly increasing.
-        Beyond the end nodes the flux is constant.
-
-    Examples
-    --------
-    >>> spectrum = Tabulated([0.2, 0.4], [2.0e-6, 2.2e-6])
-    >>> round(float(spectrum(2.1e-6)), 6)
-    0.3
-    """
-
-    ratio: jax.Array
-    # Traceable, like PowerLaw.wavel0.
-    wavel: jax.Array
-
-    def __init__(self, ratio, wavel):
-        warnings.warn(
-            "Tabulated is deprecated and will be removed in virgil 0.5; use "
-            "virgil.spectra.Nodes (with wavel0 for the reference flux).",
-            FutureWarning,
-            stacklevel=external_stacklevel(),
-        )
-        self.ratio = np.asarray(ratio, dtype=float)
-        self.wavel = np.asarray(wavel, dtype=float)
-
-    def __call__(self, wavel=None):
-        if wavel is None:
-            return np.mean(self.ratio)
-        return self._at(np.asarray(wavel))
-
-    def _at(self, wavel):
-        return np.interp(wavel, self.wavel, self.ratio)
-
-    def _check_wavel(self):
-        return self.wavel
-
-    def is_physical(self):
-        return (
-            np.all(self.ratio >= 0.0)
-            & np.all(self.wavel > 0.0)
-            & np.all(np.diff(self.wavel) > 0.0)
-        )
-
-    def __check_init__(self):
-        if (
-            self.ratio.shape != self.wavel.shape
-            or self.ratio.ndim != 1
-            or self.ratio.size == 0
-        ):
-            raise ValueError(
-                f"Tabulated needs non-empty 1D ratio and wavel of the same "
-                f"length, not shapes {self.ratio.shape} and {self.wavel.shape}."
-            )
-        value = concrete(self.ratio)
-        if value is not None and not (
-            onp.isfinite(value).all() and (value >= 0.0).all()
-        ):
-            raise ValueError(
-                "Tabulated ratios must be finite and non-negative; fluxes "
-                "cannot be negative."
-            )
-        wavel = concrete(self.wavel)
-        if wavel is not None and not (
-            onp.isfinite(wavel).all()
-            and (wavel > 0.0).all()
-            and (onp.diff(wavel) > 0.0).all()
-        ):
-            raise ValueError(
-                "Tabulated wavel must be finite, positive and strictly "
-                "increasing."
-            )
-
-
 # Planck's second radiation constant h c / k, in metre kelvin.
 _HC_OVER_K = 1.438776877e-2
 
@@ -783,8 +695,7 @@ def reference_flux(flux):
     """The reference flux of a number or a spectrum.
 
     For a spectrum this is ``flux(None)``, its value at ``wavel0`` (the
-    ``ratio`` for ``PowerLaw`` and ``BlackBody``); only the deprecated
-    ``Tabulated`` uses the mean over its nodes instead.
+    ``ratio`` for ``PowerLaw`` and ``BlackBody``).
     """
     if isinstance(flux, Spectrum):
         return flux(None)
