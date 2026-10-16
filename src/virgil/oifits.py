@@ -1,24 +1,12 @@
 """Read and write OIFITS files using only ``astropy.io.fits``.
 
-This is the maintained OIFITS path of virgil.
-
-* [`read_oifits`][virgil.oifits.read_oifits] turns an OIFITS file into the record that
-  [`virgil.oidata.OIData`][virgil.oidata.OIData] is built from. It accepts a file path or
-  any astropy ``HDUList``, including ``pyoifits`` objects (which subclass
-  it). It handles several wavelength channels, several OIFITS tables, several
-  epochs, and ``FLAG`` columns.
-* [`write_oifits`][virgil.oifits.write_oifits] writes a dictionary of OIFITS tables (the layout used
-  by the legacy [`virgil.legacy.oifits_implaneia`][virgil.legacy.oifits_implaneia] writer) to an OIFITS2 file.
-
-Each (baseline, wavelength) sample becomes one element of the flat ``u``,
-``v`` and ``wavel`` arrays of the record. Samples are ordered by table, then
-row, then wavelength channel. Closure phases index into these samples, so a
-multi-wavelength closure phase is formed from visibilities at its own
-wavelength.
-
-The format is the OIFITS standard: version 1 of Pauls et al. (2005, PASP
-117, 1255, https://doi.org/10.1086/444523) and version 2 of Duvert et al.
-(2017, A&A 597, A8, https://arxiv.org/abs/1510.04556).
+[`read_oifits`][virgil.oifits.read_oifits] turns an OIFITS file (a path or
+any astropy ``HDUList``) into the record that
+[`virgil.oidata.OIData`][virgil.oidata.OIData] is built from, and
+[`write_oifits`][virgil.oifits.write_oifits] writes a dictionary of tables to
+an OIFITS2 file. Each (baseline, wavelength) sample is one element of the flat
+``u``, ``v`` and ``wavel`` arrays; closure phases index into them. See
+[OIFITS files](../oifits_files.md) for the details.
 """
 
 import datetime
@@ -62,6 +50,11 @@ def read_oifits(
 ):
     """Read an OIFITS file into a record for [`OIData`][virgil.oidata.OIData].
 
+    Squared visibilities (`OI_VIS2`) are preferred over amplitudes, and
+    closure phases (`OI_T3`) over absolute phases. Which tables are read, how
+    closure-phase triangles are matched to baselines, and how frames are
+    formed are described in [OIFITS files](../oifits_files.md).
+
     Parameters
     ----------
     source : str, os.PathLike, astropy.io.fits.HDUList, or a list of them
@@ -73,35 +66,21 @@ def read_oifits(
         a file contains data on more than one target. With several files it
         must be the name, since ``TARGET_ID`` numbering is per file.
     insname : str or sequence of str, optional
-        Keep only the tables (``OI_WAVELENGTH``, ``OI_VIS``, ``OI_VIS2``,
-        ``OI_T3``, ``OI_FLUX``) with this ``INSNAME``, or one of these. A
-        GRAVITY product holds fringe-tracker tables (``GRAVITY_FT``, a few
-        low-resolution channels) beside the science channel (``GRAVITY_SC``,
-        or ``GRAVITY_SC_P1``/``_P2`` in split polarisation). These are
-        different measurements of the same baselines and must not be
-        merged: reading such a file without ``insname`` raises an error.
-        The two polarisations of the science channel are independent
-        measurements and may be read together.
+        Keep only the tables with this ``INSNAME``, or one of these. Required
+        for a file holding several instruments, such as a GRAVITY product with
+        fringe-tracker and science tables (see
+        [one instrument at a time](../oifits_files.md#insname)).
     frame_mjd : {"mean", "row"}, optional
-        The time given to each sample. ``"mean"`` (the default) gives every
-        sample of a frame (one exposure; see Notes) the mean ``MJD`` of the
-        frame's rows; ``"row"`` keeps each row's own ``MJD``.
+        ``"mean"`` (the default) gives every sample of a frame (one exposure)
+        the mean ``MJD`` of the frame's rows; ``"row"`` keeps each row's own
+        ``MJD``.
     extras : sequence of str, optional
-        Further observables to read beside the visibilities and phases
-        (none by default, so existing analyses are unchanged); see
-        [`virgil.observables`][virgil.observables]:
-
-        * ``"flux"``: ``OI_FLUX`` as a spectrum known up to a grey scale
-          (``FLUXDATA``, or GRAVITY's ``FLUX``);
-        * ``"nflux"``: ``OI_FLUX`` as a spectrum normalized to its
-          continuum (choose one of ``"flux"`` and ``"nflux"``);
-        * ``"t3amp"``: the triple amplitudes ``T3AMP`` of ``OI_T3``;
-        * ``"visamp"``: ``OI_VIS`` ``VISAMP`` beside ``OI_VIS2``, as the
-          table's ``AMPTYP`` declares it (``'absolute'``: |V|;
-          ``'correlated flux'``: |V| times the total flux, up to a grey
-          scale);
-        * ``"visphi"``: ``OI_VIS`` ``VISPHI`` as a differential phase,
-          whatever its ``PHITYP``, beside any closure phases.
+        Further observables to read: any of ``"flux"``, ``"nflux"``,
+        ``"t3amp"``, ``"visamp"``, ``"visphi"`` (none by default); see
+        [extra observables](../oifits_files.md#extras).
+    bandwidth : bool, optional
+        Also return the ``EFF_BAND`` of each sample's channel as
+        ``"bandwidth"`` (default False).
 
     Returns
     -------
@@ -114,67 +93,14 @@ def read_oifits(
         ``i_cps1``/``i_cps2``/``i_cps3`` (or ``None`` for absolute phases),
         the flags ``v2_flag`` and ``cp_flag``, and per sample the time
         ``mjd`` (days, float64) and the integer ``frame``. Each requested
-        extra observable adds a dictionary under its name (``"flux"`` or
-        ``"nflux"``, ``"t3amp"``, ``"visamp"``, ``"visphi"``).
+        extra adds a dictionary under its name.
 
-    Notes
-    -----
-    Squared visibilities (``OI_VIS2``) are preferred over amplitudes
-    (``OI_VIS``), and closure phases (``OI_T3``) over absolute phases
-    (``OI_VIS`` ``VISPHI``). ``VISAMP`` is read only when its table's
-    ``AMPTYP`` is ``'absolute'``, and ``VISPHI`` only when its
-    ``PHITYP`` is ``'absolute'``; a missing keyword counts as
-    ``'absolute'``, as in OIFITS1. Differential amplitudes and phases,
-    and correlated fluxes, raise a ``ValueError``. Nothing in the
-    standard marks ``OI_VIS2`` ``VIS2DATA`` that holds squared correlated
-    flux rather than squared visibility, as in MATISSE products reduced
-    with ``corrFlux=TRUE``; such data are read as visibilities, so
-    calibrate them (e.g. with virgil-vlti) before fitting. A file with
-    only ``OI_T3`` gives closure phases alone: its baselines come from the
-    triangle coordinates, and ``vis`` is empty. A file with neither
-    ``OI_T3`` nor ``VISPHI`` gives visibilities alone: ``phi`` is empty, and
-    files with and without phases cannot be read together. Samples are
-    flagged when their ``FLAG`` is set or their value or uncertainty is
-    not finite.
-
-    Each closure-phase triangle ``(a, b, c)`` is matched to the visibility
-    baselines ``(a, b)``, ``(b, c)`` and ``(a, c)`` with the same ``INSNAME``
-    (or, failing that, any ``INSNAME`` with identical wavelengths) and nearest
-    ``MJD`` and ``TIME``, within its own file. The MJDs (and TIMEs) must agree to within
-    twice the longest ``INT_TIME`` in the visibility table (or about 9
-    seconds if there is none), since pipelines such as GRAVITY's average different
-    frames of one exposure for each table. A leg with no such visibility row,
-    or stored only reversed as ``(b, a)``, gets an extra flagged sample at
-    its own ``(u, v)`` from the ``OI_T3`` row (``U1COORD``...``V2COORD``),
-    as the standard makes ``OI_T3`` self-contained; for a reversed leg the
-    model's visibility there is the conjugate of the stored one. A file
-    with legs that have no visibility row in either orientation (V²
-    coverage incomplete, as in some MIRC-X and ESO phase-3 files) gives one
-    warning with their number.
-
-    A frame is one exposure of one instrument: the baselines that closure
-    phases tie together, together with any rows of the same ``INSNAME`` at
-    the same ``MJD`` and ``TIME`` (each within about 9 seconds). Both are
-    compared because some OIFITS v1 writers (e.g. OYSTER) give a night one
-    ``MJD`` and put each snapshot in ``TIME``; closure phases are correlated
-    only within a snapshot. Frames are numbered within the record, so
-    different files never share one.
-
-    All files in a list must hold the same kinds of observable (squared
-    visibilities or amplitudes; closure or absolute phases; the same
-    extras).
-
-    With ``extras``, a ``VISPHI`` or ``VISAMP`` row is matched to the
-    visibility sample of its baseline and time as closure-phase legs are
-    (a reversed baseline negates the phase). ``VISPHI`` is then never read
-    as an absolute phase: without ``OI_T3`` the phase block is empty. A
-    file whose ``OI_VIS`` holds correlated fluxes and no ``OI_VIS2`` gives
-    flagged visibility samples, with the amplitudes in ``"visamp"``.
-
-    With ``bandwidth=True`` the record also holds ``"bandwidth"``, the
-    ``EFF_BAND`` of each sample's channel (matched by wavelength within the
-    selected ``insname``; absent if the file gives only zeros). It is left
-    out by default, so that data are not smeared unless asked.
+    Raises
+    ------
+    ValueError
+        For several targets or instruments without ``target``/``insname``,
+        differential or correlated-flux data, or unusable ``OI_T3``
+        coordinates.
     """
     extras = _check_extras(extras)
     # An HDUList is itself a list (of HDUs): only other sequences are lists
@@ -434,12 +360,7 @@ def _mjd(hdu, mask):
 
 
 def _time(hdu, mask):
-    """The ``TIME`` column in days (zero where absent or not finite).
-
-    OIFITS v1 gives each row a ``TIME`` (UTC seconds) and an ``MJD``. Some
-    writers set ``MJD`` to the date of the night and put the snapshot in
-    ``TIME``, so two rows are one exposure only if both agree.
-    """
+    """The ``TIME`` column in days (zero where absent or not finite)."""
     if "TIME" in hdu.columns.names:
         return onp.nan_to_num(_column(hdu, "TIME", mask)) / 86400.0
     return onp.zeros(int(mask.sum()))
@@ -480,9 +401,8 @@ def _phase_scale(hdu, column):
 class _BaselineLookup:
     """Find the sample index of a baseline at a given epoch and channel.
 
-    It also groups the baseline rows into frames (exposures): rows that a
-    closure phase ties together (``link``), and rows of one ``INSNAME`` at
-    the same ``MJD`` and ``TIME``.
+    Also groups baseline rows into frames; see
+    [frames](../oifits_files.md#frames).
     """
 
     def __init__(self):
@@ -569,15 +489,10 @@ class _BaselineLookup:
         return onp.repeat(onp.array(self._pairs, int).reshape(-1, 2), nwave, 0)
 
     def find(self, ins, pair, mjd, wave=None, time=0.0):
-        """Return ``(start, nwave)`` of the nearest-epoch row, or ``None``.
+        """Return ``(start, nwave)`` of the nearest row, or None.
 
-        The row must be from the same exposure: see ``_MJD_TOLERANCE``. It
-        is looked up under ``ins``, an ``(ARRNAME, INSNAME)`` pair, first.
-        With ``wave``, other ``INSNAME``s of the same array whose
-        wavelengths equal ``wave`` are tried next: the standard links every
-        table to an ``OI_WAVELENGTH`` table by ``INSNAME`` but does not
-        require the V² and T3 tables to share one. Station numbers belong to
-        an array, so tables of another ``ARRNAME`` are never used.
+        Tried under ``ins`` (an ``(ARRNAME, INSNAME)`` pair) first, then under
+        other ``INSNAME``s of the same array with identical wavelengths.
         """
         found = self._find_in(ins, pair, mjd, time)
         if found is not None or wave is None:
@@ -707,14 +622,7 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
 
 
 def _baselines_from_triangles(tables, wavelengths, target_id):
-    """Baseline samples for closure-phase-only files, from the T3 legs.
-
-    Each triangle ``(a, b, c)`` contributes baselines ``(a, b)`` at
-    ``(U1COORD, V1COORD)``, ``(b, c)`` at ``(U2COORD, V2COORD)`` and
-    ``(a, c)`` at their sum; baselines shared by several triangles (same
-    ``INSNAME`` and epoch) become one sample. There are no visibility
-    observables, so every sample is flagged.
-    """
+    """Flagged baseline samples for closure-phase-only files, from T3 legs."""
     u, v, wavel = [], [], []
     lookup = _BaselineLookup()
     start = 0
@@ -764,14 +672,7 @@ def _baselines_from_triangles(tables, wavelengths, target_id):
 
 
 def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
-    """Refuse T3 coordinates that cannot place leg ``k`` of a triangle.
-
-    The coordinates must be finite and non-zero (older AMI and legacy
-    writers leave ``U1COORD``..``V2COORD`` as NaN or 0), and must agree with
-    the legs of the triangle that do have a visibility row: a T3 table
-    written with the opposite baseline direction would otherwise fit a
-    mirrored closure phase.
-    """
+    """Refuse T3 leg coordinates that are NaN, zero or inconsistent with V2."""
     uu, vv = legs_uv[k]
     where = (
         f"Closure-phase triangle {tuple(int(x) for x in triangle)} (INSNAME "
@@ -800,18 +701,9 @@ def _check_t3_coordinates(legs_uv, founds, record, k, ins, triangle, mjd):
 def _read_closure_phases(tables, wavelengths, target_id, lookup, record):
     """Closure phases, with the sample index of each triangle leg.
 
-    A triangle is matched to the baselines of the table with the same
-    ``INSNAME``, or else of one with the same wavelengths. A leg that no
-    such row holds as ``(a, b)`` gets a flagged sample (no V² or amplitude)
-    at the T3 row's own coordinates, appended to ``record``: ``(U1COORD,
-    V1COORD)`` for ``(a, b)``, ``(U2COORD, V2COORD)`` for ``(b, c)`` and
-    their sum for ``(a, c)``. The OIFITS standard makes ``OI_T3``
-    self-contained, so a writer may omit a baseline's V² (MIRC-X, some ESO
-    phase-3 products). A leg stored reversed as ``(b, a)`` is handled the
-    same way: the model's visibility at the leg's own ``(u, v)`` is the
-    conjugate of the stored one. The new sample is registered in ``lookup``,
-    so later triangles of the same frame share it. One warning per file
-    gives the number of legs with no visibility row in either orientation.
+    Legs with no visibility row get flagged samples appended to ``record`` and
+    registered in ``lookup``; see
+    [closure-phase triangles](../oifits_files.md#closure-phases).
     """
     phi, d_phi, phi_flag = [], [], []
     i_cps = ([], [], [])
@@ -1043,10 +935,9 @@ class _NewSamples:
 def _vis_rows(tables, wavelengths, target_id, lookup, new, value, error):
     """Per-sample values of an ``OI_VIS`` column, matched to the samples.
 
-    Yields ``(hdu, samples, sign, values, errors, flags)`` per table, where
-    ``samples`` has shape ``(n_row, n_wave)`` and ``sign`` is -1 for a row
-    whose baseline is stored reversed among the samples. A row with no
-    sample gets new (flagged) visibility samples at its own (u, v).
+    Yields ``(hdu, samples, sign, values, errors, flags)`` per table; ``sign``
+    is -1 for a baseline stored reversed. A row with no sample gets a new
+    flagged one.
     """
     for hdu in tables.get("OI_VIS", []):
         mask = _row_mask(hdu, target_id)
@@ -1416,32 +1307,16 @@ _OPTIONAL_DATA = {"T3AMP", "T3AMPERR"}
 def write_oifits(tables, filename, overwrite=True):
     """Write a dictionary of OIFITS tables to an OIFITS2 file.
 
+    Phases are in **degrees**. The layout of ``tables`` is described in
+    [writing OIFITS](../oifits_files.md#writing).
+
     Parameters
     ----------
     tables : dict
-        Mapping of table name to a dict of columns, in the layout used by
-        [`virgil.legacy.oifits_implaneia.save`][virgil.legacy.oifits_implaneia.save]:
-
-        * ``"OI_WAVELENGTH"`` (required): ``EFF_WAVE`` and ``EFF_BAND`` in
-          metres, one value per channel.
-        * At least one of ``"OI_VIS2"``, ``"OI_VIS"`` and ``"OI_T3"``, and
-          optionally ``"OI_FLUX"`` (``FLUXDATA``, ``FLUXERR`` and a
-          ``STA_INDEX`` per row). Data
-          columns (e.g. ``VIS2DATA``, ``T3PHI``) have shape ``(nrow,)`` or
-          ``(nrow, nwave)``; phases are in **degrees**. ``T3AMP`` and
-          ``T3AMPERR`` may be omitted (they are then NaN). The keywords
-          ``AMPTYP`` and ``PHITYP`` of ``OI_VIS`` (default ``'absolute'``)
-          and ``CALSTAT`` of ``OI_FLUX`` (default ``'C'``) may be given as
-          entries of their table. ``TARGET_ID``,
-          ``TIME``, ``MJD`` and ``INT_TIME`` may be scalars. ``FLAG`` is
-          optional (default: nothing flagged).
-        * ``"OI_TARGET"`` and ``"OI_ARRAY"`` (optional): columns of those
-          tables. When omitted, a single target named from ``info`` and an
-          array built from ``info["STAXY"]`` (or placeholder stations) are
-          written.
-        * ``"info"`` (optional): primary-header keywords (e.g. ``OBJECT``,
-          ``TELESCOP``, ``INSTRUME``, ``DATE-OBS``) plus ``INSNAME``,
-          ``ARRNAME``, ``TARGET``, ``MJD`` and ``STAXY`` defaults.
+        Mapping of table name to a dict of columns: ``"OI_WAVELENGTH"``
+        (required), at least one of ``"OI_VIS2"``, ``"OI_VIS"`` and
+        ``"OI_T3"``, and optionally ``"OI_FLUX"``, ``"OI_TARGET"``,
+        ``"OI_ARRAY"`` and ``"info"`` (primary-header keywords).
     filename : str or os.PathLike
         Output path. Missing parent directories are created.
     overwrite : bool, optional
@@ -1451,12 +1326,6 @@ def write_oifits(tables, filename, overwrite=True):
     -------
     pathlib.Path
         The path written.
-
-    Notes
-    -----
-    Unlike the legacy writer, this does not query SIMBAD: target coordinates
-    are taken from ``tables["OI_TARGET"]`` or ``info`` (``RA``/``DEC`` in
-    degrees) and are zero otherwise.
     """
     import pathlib
 

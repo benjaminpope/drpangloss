@@ -3,10 +3,8 @@
 [`OIData`][virgil.oidata.OIData] keeps its visibilities (``vis``) and
 phases (``phi``) as before. The observables here are further blocks of the
 same data vector, in ``OIData.extras``, read with
-``read_oifits(..., extras=...)`` (see
-[`read_oifits`][virgil.oifits.read_oifits]). Each block predicts its data
-from the model and whitens its own residuals, so the likelihood keeps one
-whitened residual vector:
+[`read_oifits`][virgil.oifits.read_oifits]``(..., extras=...)``. Each block
+predicts its data and whitens its own residuals:
 
 * ``"flux"``: ``OI_FLUX`` as a spectrum known up to a grey scale,
   ``F(λ) = k Σ fᵢ(λ)`` from
@@ -24,50 +22,9 @@ whitened residual vector:
   pipeline's continuum normalization applied as a linear operator
   ([`DifferentialPhase`][virgil.observables.DifferentialPhase]).
 
-**Grey scales are marginalized, not fitted.** A spectrum's scale k (and an
-optional polynomial in λ times the spectrum) enters linearly, so with a
-Gaussian prior it integrates out in closed form (Luger, Foreman-Mackey &
-Hogg 2017; ``virgil._linear``): the data are Gaussian with covariance
-``D + A Λ Aᵀ`` about ``A μ``, whitened by the same successive rank-one
-steps as the 6d gains, with the log-determinant (which depends on the
-model's spectral shape) kept in the effective errors. The conditional
-posterior of k is
-[`flux_scale_posterior`][virgil.likelihood.flux_scale_posterior].
-
-**The prior on k is stated, never taken from the data.** Give it as
-``scale=(mean, sd)`` in the data's units (e.g. Jy), with
-[`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale]. Normalized
-spectra (``"nflux"``) default to ``(1, 0.1)``. The Gaussian is a
-*proposal*: k is a positive scale, whose Jeffreys prior is 1/k on stated
-bounds. The two differ by about σ_k/k, which is negligible for a
-well-measured spectrum. For the Jeffreys posterior, reweight samples of k
-from the conditional posterior by ``1 / (k N(k; mean, sd²))`` within the
-bounds, or sample log k under a log-uniform prior directly, as a model
-parameter rather than marginalized. Make no evidence claims that depend
-on the Gaussian's width.
-
-**Differential phases.** A pipeline's differential phase is arg V minus a
-fit of a + b/λ (an offset and a delay) over continuum channels, per
-baseline and frame. That fit is a linear operator N = I − L on the phases
-of one row (``continuum_operator``), so virgil applies the same N to the
-exact model phase, never the photocentre approximation, which fails for
-resolved structure. If our basis contains the pipeline's, N N_pipe = N, so
-the data may be re-normalized safely. Their covariance is N D Nᵀ, which is
-whitened as a dense block per frame. Projecting out a linear basis is the
-flat-prior limit of marginalizing those nuisances: the likelihood of N d
-with covariance N D Nᵀ is the same whichever projection with that null
-space is used (restricted maximum likelihood).
-
-**Without double counting closure phases** (the default of the design
-note, S §2.3): with closure phases in the data, each frame's baseline
-phases are also projected onto the telescope-differenced subspace
-φ_ab = a_a − a_b, orthogonal to every closure, and only channels in the
-line windows are kept. The closure phases (everywhere) and this closure-free
-part of the differential phase (in the lines) then measure different
-things. The cross-covariance between them is neglected as an approximation: it is
-exactly zero only when the baseline errors of a frame and channel are equal.
-For unequal errors it is nonzero, and the independent-block likelihood is
-not exact. The joint covariance is preferred when available.
+Grey scales are marginalized, not fitted, under a prior you state; the
+differential phases apply the pipeline's continuum normalization to the exact
+model phase. See [spectro-interferometric observables](../spectro_observables.md).
 """
 
 import equinox as eqx
@@ -270,30 +227,17 @@ class FluxSpectrum(_Block):
 
         mᵢ = Σ_j w_j tᵢ xᵢʲ,   w ~ N((μ, 0, ...), diag(s, τ_1 μ, ...)²),
 
-    with t the model's template: the total spectrum Σ fᵢ(λ)
-    (``"flux"``), the same divided by its continuum fit per row
-    (``"nflux"``), or the total spectrum times |V| (``"corrflux"``),
-    normalized to a mean of 1 per scale group (except ``"nflux"``, which
-    is already normalized). x is λ scaled to [-1, 1] across the group, so
+    with t the model's template: the total spectrum Σ fᵢ(λ) (``"flux"``),
+    the same divided by its continuum fit per row (``"nflux"``), or the total
+    spectrum times |V| (``"corrflux"``), normalized to a mean of 1 per scale
+    group (except ``"nflux"``). x is λ scaled to [-1, 1] across the group, so
     w_0 = k is the grey scale and w_j (j ≥ 1) an optional polynomial.
-    ``(μ, s)`` is the stated prior on k, in the data's units (the same for
-    every group; ``(1, 0.1)`` by default for ``"nflux"``), and τ the
-    polynomial's widths relative to μ. The prior is a proposal for the
-    Jeffreys 1/k (see the module notes). The weights are marginalized
-    analytically.
-
-    **Choice of prior.** k is a scale parameter. Under rescaling of k the
-    invariant (Jeffreys) prior is ∝ 1/k, uniform in log k, but that prior
-    is improper, so an evidence computed with it is undefined. The broad
-    Gaussian used here instead approximates a prior uniform in k. The only
-    claim made is local: when k is sharply measured (σ_k/k ≪ 1, as for any
-    useful OI_FLUX spectrum), the factor 1/k varies by only a fraction
-    σ_k/k across the likelihood's width, so the posteriors of k and of the
-    other parameters are insensitive to the choice. Evidence comparisons
-    need a proper prior: finite positive bounds [k_min, k_max], with density
-    1 / (k ln(k_max/k_min)). With such bounds, that log-uniform prior is the
-    Jeffreys choice under the rule for scale groups. Marginalizing in log k
-    is not linear and is not done here (a follow-up).
+    ``(μ, s)`` is the stated prior on k in the data's units (``(1, 0.1)`` by
+    default for ``"nflux"``), τ the polynomial's relative widths. The Gaussian
+    is a proposal for the Jeffreys 1/k, which is improper: evidence
+    comparisons need a proper prior on bounded k (see
+    [the grey scale](../spectro_observables.md#spectra-and-the-grey-scale)).
+    The weights are marginalized analytically.
 
     Build with :meth:`build`; change the prior, groups and widths with
     [`OIData.with_flux_scale`][virgil.oidata.OIData.with_flux_scale].
@@ -619,33 +563,20 @@ def _row_continuum(wavel, row, continuum, order):
 class DifferentialPhase(_Block):
     """Continuum-normalized phases (``VISPHI``, ``"visphi"``).
 
-    ``values`` and ``errors`` are the per-sample phases (radians, in the
-    orientation of the visibility samples) and their uncertainties, as
-    read. Per frame, the phases of each baseline (a row of channels) are
-    unwrapped along wavelength and mapped by
-
-        Y = Qᵀ Φ Wᵀ,
-
-    where W holds the line-window rows of N = I − L (``continuum_operator``)
-    rotated onto independent combinations, and Q is an orthonormal basis of
-    the telescope-differenced phases (closure-free; with closure phases in
-    the data) or the identity. The data vector is Y of the data, the
-    covariance (Q ⊗ W) D (Q ⊗ W)ᵀ, whitened by its Cholesky factor per
-    frame. Build with :meth:`build`, or change the windows with
+    ``values`` and ``errors`` are the per-sample phases (radians) and their
+    uncertainties. Per frame, each baseline's phases are unwrapped along
+    wavelength and mapped by ``Y = Qᵀ Φ Wᵀ``, where W holds the line-window
+    rows of N = I − L (``continuum_operator``) and Q is an orthonormal basis
+    of the telescope-differenced phases (closure-free, with closure phases in
+    the data) or the identity. The covariance is whitened by its Cholesky
+    factor per frame. With ``prior_width``, the offsets and slopes are
+    instead marginalized under a finite Gaussian prior (the projection is its
+    flat limit), using the low-rank blocks of [`virgil.gains`][virgil.gains].
+    Residuals are treated as linear, which holds while the phases are well
+    below π. See
+    [differential phases](../spectro_observables.md#differential-phases).
+    Build with :meth:`build`, or change the windows with
     [`OIData.with_continuum`][virgil.oidata.OIData.with_continuum].
-
-    With ``prior_width``, the offset and slope of every baseline and frame
-    are instead marginalized under a finite Gaussian prior (the
-    projection is its flat limit): W keeps the channels of both windows
-    unchanged, each channel's closure-free combinations are whitened for
-    their covariance Qᵀ D Q, and the offsets and slopes are whitened out as
-    low-rank modes per frame, by the 6d gains' blocks
-    ([`virgil.gains`][virgil.gains]). Their log-determinant does not depend
-    on the model.
-
-    Residuals are treated as linear (Gaussian), which holds while the
-    differential phases are well below π, as they are after removing the
-    continuum.
     """
 
     sample: onp.ndarray
@@ -931,9 +862,7 @@ class DifferentialPhase(_Block):
     def _with_cholesky(self):
         """This block with its covariance's Cholesky factor cached.
 
-        Only for the projection (the finite prior whitens otherwise), and only
-        with concrete errors: traced ones (e.g. errors set inside ``jit``)
-        leave it to :meth:`whiten`.
+        Only for the projection, and only with concrete (untraced) errors.
         """
         chol = None
         if self.prior_width is None:
@@ -1075,12 +1004,8 @@ def _windows(channels, continuum, lines):
 
 
 def _baseline_basis(pairs):
-    """Qᵀ: an orthonormal basis of the telescope-differenced phases.
-
-    Row b of the incidence matrix A has +1 at telescope a and -1 at
-    telescope c for baseline (a, c), so A t are the phases a_a - a_c of
-    telescope phases t; its column space is orthogonal to every closure.
-    """
+    """Qᵀ: an orthonormal basis of the telescope-differenced phases
+    (the column space of the baseline-telescope incidence matrix)."""
     telescopes = onp.unique(pairs)
     col = {t: j for j, t in enumerate(telescopes)}
     a = onp.zeros((len(pairs), telescopes.size))

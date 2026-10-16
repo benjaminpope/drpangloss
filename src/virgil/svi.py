@@ -1,5 +1,8 @@
 """Variational inference with numpyro's SVI, started from a fit.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 [`variational`][virgil.svi.variational] takes the same arguments as
 [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model], and fits a guide (an
@@ -51,12 +54,28 @@ from .fitting import (
     NoLeastSquaresForm,
     NoStartingValue,
     SingularCurvature,
+    _check_dense_size,
     gauss_newton_mass,
 )
 from .likelihood import numpyro_model
 from ._deprecate import external_stacklevel
 
+__provisional__ = ("*",)
+
 GUIDES = ("bnaf", "iaf", "mvn", "laplace")
+
+_DENSE_HINT = (
+    "Pass guide=autoguide.AutoNormal (a diagonal guide), or use "
+    "imaging.laplace_samples."
+)
+
+
+class _SizedLaplace(autoguide.AutoLaplaceApproximation):
+    """numpyro's Laplace guide, refusing a Hessian above the size limit."""
+
+    def _setup_prototype(self, *args, **kwargs):
+        super()._setup_prototype(*args, **kwargs)
+        _check_dense_size(self.latent_dim, "The Laplace guide", _DENSE_HINT)
 
 
 @dataclasses.dataclass
@@ -135,6 +154,9 @@ def _laplace_started(base):
         start_tril = None
 
         def _get_posterior(self):
+            _check_dense_size(
+                self.latent_dim, "A Laplace-started guide", _DENSE_HINT
+            )
             if getattr(self, "_hidden_dims", ()) is None:
                 # numpyro's IAF default, two layers of latent_dim units, is
                 # too narrow to bend a banana in a few dimensions.
@@ -195,9 +217,7 @@ def _make_guide(guide, posterior, init_loc_fn):
             posterior, init_loc_fn=init_loc_fn
         )
     if guide == "laplace":
-        return autoguide.AutoLaplaceApproximation(
-            posterior, init_loc_fn=init_loc_fn
-        )
+        return _SizedLaplace(posterior, init_loc_fn=init_loc_fn)
     raise ValueError(
         f"guide must be one of {GUIDES} or a callable, not {guide!r}."
     )
@@ -218,13 +238,13 @@ def _start_scale(
 
     The Gauss–Newton covariance at ``values`` (error terms in ``noise``
     included), reordered into the guide's latent vector, for the sites it
-    covers; ``init_scale`` times the identity for any others. A diagonal
-    Gauss–Newton mass (more than ``fitting._DENSE_MASS_MAX`` coordinates)
-    goes on the diagonal, but ``L`` is still n × n: the guides keep a
-    Cholesky factor of the latent covariance, so only the Gauss–Newton
-    step avoids it. Returns ``(L, dense)``.
+    covers; ``init_scale`` times the identity for any others. ``L`` is
+    n × n, as the guides keep a Cholesky factor of the latent covariance, so
+    more than ``fitting._DENSE_MASS_MAX`` coordinates raise ``ValueError``.
+    Returns ``(L, dense)``.
     """
     n = guide_obj.latent_dim
+    _check_dense_size(n, "The guide's starting width", _DENSE_HINT)
     # The guide's own map from its latent vector to sites gives each
     # site's indices in it, whatever order numpyro packs them in.
     index = guide_obj._unpack_latent(np.arange(n, dtype=float))
@@ -331,12 +351,17 @@ def variational(
     too slow. On small test posteriors (a banana, a curved ridge, a scale
     with a tail to its prior bound) BNAF came closest to NUTS's means,
     widths and 5–95% quantiles, where the Gaussian guides missed the
-    banana's curvature and the tail. A flow's cost grows with the square of the
-    number of parameters, so for images use ``"mvn"`` or the Laplace
-    approximation. A callable ``guide(model, init_loc_fn=...)``
-    returning any numpyro autoguide, such as an autoguide class
-    (``autoguide.AutoNormal``), may be passed instead. Flows need at
-    least two parameters.
+    banana's curvature and the tail. A callable
+    ``guide(model, init_loc_fn=...)`` returning any numpyro autoguide, such
+    as an autoguide class (``autoguide.AutoNormal``), may be passed instead.
+    Flows need at least two parameters.
+
+    **Size.** ``"bnaf"``, ``"iaf"`` and ``"mvn"`` keep a dense n × n
+    Cholesky factor, and ``"laplace"`` a dense Hessian, so above
+    ``fitting._DENSE_MASS_MAX`` (4096) coordinates all four raise
+    ``ValueError`` before allocating it. For an image use
+    [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal
+    guide such as ``autoguide.AutoNormal``.
 
     **One mode.** Every guide here covers one mode of the posterior. For
     multimodal posteriors (orbits with Ω/ω flips or period aliases,
@@ -388,9 +413,7 @@ def variational(
         leave the curvature singular, as for an image) the dense start is
         skipped, with a warning. Data with gains and priors without a
         least-squares form (HalfNormal, Beta, ...) get this start too,
-        where they once started at ``init_scale``. Above
-        ``fitting._DENSE_MASS_MAX`` coordinates the start is the
-        covariance's diagonal.
+        where they once started at ``init_scale``.
     init_scale : float, optional
         Starting width, in the unconstrained coordinates, of the
         coordinates not covered by the Gauss–Newton covariance, and of all

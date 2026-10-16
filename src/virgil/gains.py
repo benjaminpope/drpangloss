@@ -279,7 +279,7 @@ def gain_modes(
     -------
     GainModes
     """
-    if data.observable_kind != "split" or data.vis_mat is not None:
+    if data.vis_encoding != "split" or data.vis_mat is not None:
         raise ValueError(
             "Gains act on observed visibilities, not on projected (kernel, "
             "DISCO) observables."

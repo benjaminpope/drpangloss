@@ -93,20 +93,12 @@ def ami_grid_record(
 ):
     """A simulated AMI record in AMIGO's form: a uv grid and a mode basis.
 
-    This follows the construction of AMIGO's latent visibility basis
-    (Desdoigts et al. 2025, arXiv:2510.09806) in simplified form. The
-    complex visibilities live on the half-plane of a square uv grid (as on
-    the detector's Fourier grid, rotated on the sky by ``rotation_deg``, the
-    parallactic angle). Their information is weighted by the mask's transfer
-    function: a cell where the splodges have transfer ``m`` measures the
-    log-amplitude and phase of the visibility with error ``sigma / m``. The
-    responses to the source's flux (a constant log-amplitude) and position
-    (phases linear in u and v) are projected out, and an SVD of what remains
-    gives orthonormal modes, kept in order of precision until a fraction
-    ``keep`` of the total precision is retained. The modes are the DISCO
-    coefficients of the record, with independent errors.
-
-    The coefficients are zero: fill them with
+    A simplified form of AMIGO's latent visibility basis (Desdoigts et al.
+    2025, arXiv:2510.09806): complex visibilities on the half-plane of a
+    square uv grid, a cell with mask transfer ``m`` having log-amplitude and
+    phase error ``sigma / m``. Flux and position responses are projected out
+    and an SVD gives orthonormal modes, kept until a fraction ``keep`` of the
+    precision is retained. The coefficients are zero: fill them with
     [`OIData.with_model`][virgil.oidata.OIData.with_model].
 
     Parameters
@@ -114,13 +106,13 @@ def ami_grid_record(
     wavelength_m : float, optional
         Wavelength in metres (default 4.3 µm, like F430M).
     pitch_m : float, optional
-        Grid spacing in metres. AMIGO products are sampled more finely (ν
-        Hor: 0.2165 m); a coarser grid keeps simulations small.
+        Grid spacing in metres. AMIGO products are sampled more finely
+        (about 0.2 m); a coarser grid keeps simulations small.
     rotation_deg : float, optional
         Position angle, North to East, of the grid's "up" axis.
     sigma : float, optional
         Error of a cell's log-amplitude and phase where the transfer is one
-        (ν Hor's DISCO errors are ~5e-5 to 3e-4).
+        (real DISCO errors are ~5e-5 to 3e-4).
     keep : float, optional
         Fraction of the precision kept (AMIGO uses 0.99).
     holes, diameter : optional
@@ -251,13 +243,10 @@ def vlti_oidata(
 ):
     """A simulated long-baseline observation: V² and closure phases.
 
-    Every pair of telescopes is observed at each hour angle, as the Earth's
-    rotation carries the baselines along tracks in the uv plane, in every
-    wavelength channel; closure phases come from every triangle at each
-    hour angle. The defaults resemble VLTI/MATISSE in the L band at low
-    spectral resolution with the four UTs. MATISSE's LOW mode (R ~ 30)
-    smears structure further than about R λ / B from the field centre
-    (~170 mas here); virgil models this only if you opt in with
+    Every pair of telescopes is observed at each hour angle, in every
+    wavelength channel, with closure phases from every triangle. The defaults
+    resemble VLTI/MATISSE in the L band with the four UTs. Bandwidth smearing
+    (MATISSE LOW, R ~ 30) is modelled only if you opt in with
     [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth].
 
     Parameters

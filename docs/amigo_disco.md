@@ -33,7 +33,7 @@ for name, oidata in observations_by_filter.items():
     print(f"Filter: {name}")
     print(f"Number of observables: {int(oidata.flatten_data()[0].size)}")
     print(f"Number of UV points: {int(oidata.u.size)}")
-    print(f"Observable kind: {oidata.observable_kind}")
+    print(f"Observable kind: {oidata.vis_encoding}")
     print()
 ```
 

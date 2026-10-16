@@ -43,14 +43,7 @@ def _unit_sum(image):
 
 
 def check_part_name(name, owner, kind, example, clashes_with):
-    """Reject the name of a part of a container that cannot be a path step.
-
-    The names of a ``System``'s components and of a ``Sum``'s parts become
-    attributes (``system.star``) and parameter paths (``'comp.flux'``), so
-    they must be identifiers that do not start with an underscore and do
-    not clash with the container's own fields, properties and methods
-    (found on ``owner``, so a new field is protected automatically).
-    """
+    """Reject a part name that is not an identifier, starts with ``_`` or clashes with ``owner``'s attributes."""
     if not isinstance(name, str) or not name.isidentifier():
         raise ValueError(
             f"{kind[0].upper()}{kind[1:]} name {name!r} must be a valid "
@@ -86,12 +79,7 @@ def group_indices(labels, indices=None):
 
 
 def concrete(value):
-    """``value`` as a NumPy array, or ``None`` inside a traced computation.
-
-    Checks that need actual numbers (e.g. "fluxes are non-negative") use
-    this to run on concrete inputs and skip silently under ``jax.jit``,
-    ``jax.vmap`` or ``jax.grad``.
-    """
+    """``value`` as a NumPy array, or ``None`` when traced (so checks skip under ``jit``)."""
     try:
         return onp.asarray(value)
     except (
@@ -114,11 +102,9 @@ def inflate_errors(
 ):
     """Uncertainties scaled, with absolute and relative terms combined.
 
-    The one rule behind both the fitted error terms
-    ([`inflated_errors`][virgil.likelihood.inflated_errors], which add in
-    quadrature relative to the model) and the fixed error floors
-    ([`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor],
-    a maximum relative to the data), so the two cannot drift apart.
+    The one rule behind both ``likelihood.inflated_errors`` (quadrature,
+    relative to the model) and ``OIData.with_error_floor`` (a maximum,
+    relative to the data).
 
     Parameters
     ----------
@@ -184,22 +170,13 @@ def _per_dataset(model, n_data):
 
 
 def is_flux_param(name):
-    """Whether ``name`` (a parameter name or path) is a flux.
-
-    That is, its last part is ``flux`` (``flux``, ``comp.flux``), or it is
-    the reference ratio of a flux spectrum (``comp.flux.ratio``).
-    """
+    """Whether ``name`` ends in ``flux`` or is a flux spectrum's ``flux.ratio``."""
     parts = str(name).split(".")
     return parts[-1] == "flux" or parts[-2:] == ["flux", "ratio"]
 
 
 def resolve_flux_param(keys, flux_param=None):
-    """Return the key among ``keys`` holding the flux to fit or optimize.
-
-    ``flux_param`` is returned if given (and present). Otherwise the one key
-    whose last part is ``flux`` is used; if there is none, or more than one,
-    ``flux_param`` must be passed.
-    """
+    """The key among ``keys`` that is the flux: ``flux_param``, else the one flux key (raises if none or several)."""
     keys = list(keys)
     if flux_param is not None:
         if flux_param not in keys:

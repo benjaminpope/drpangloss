@@ -1,63 +1,13 @@
 """Tempering an evidence for correlated spectral channels.
 
-**The solved problem: untempered evidence (band p = 1.000 at χ²/N 12).**
-Spectral channels of one baseline (and of one closure triangle) are not
-independent measurements: the same atmosphere, the same calibrator and the
-same detector rows sit under all of them. A likelihood that treats ``N``
-channels as ``N`` independent points is therefore too sharp by the factor
-``f = N / N_eff``. On real data (χ²/N ≈ 12 in virgil-validation) the
-alias band with the best evidence got p = 1.000, and every posterior was
-too narrow (sky-plane offset/spread 3.7 to 61).
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
 
-The cure is a *tempered* likelihood, ``L^(1/f)``: the log likelihood, and
-with it every evidence difference and posterior curvature, is divided by
-``f`` (so the posterior is wider by √f). It is applied per observable
-block, ``dof_b = 1 / f_b``, through the ``dof`` argument of the
-scale-marginalized score
-(``_Surface.score`` of ``virgil.epochs``); with ``f = 1`` nothing
-changes.
-
-**The estimator.** ``f`` comes from the residuals of the best static fit of
-each night, not from χ²: the error scale already absorbs a global
-underestimate of the errors (χ²/N = 12 alone says the errors are 3.5 times
-too small, which the per-block scale integrates out, not that the channels
-are correlated), whereas correlation across channels is what the scale
-cannot absorb. For the whitened residuals ``z`` of neighbouring channels
-``i, i+1`` of the same baseline (or triangle) and frame, the lag-1
-correlation is
-
-    ρ = Σ z_i z_(i+1) / (½ Σ (z_i² + z_(i+1)²)),
-
-which is scale free (the same inflation of the errors cancels). The
-channels of one baseline (or triangle) form a *chain* of ``n`` channels
-with, as a model, AR(1) correlations ρ^|i-j|. The mean of such a chain has
-the variance of ``n / f`` independent points, with
-
-    f(ρ, n) = 1 + 2 Σ_(k=1..n-1) (1 - k/n) ρ^k,
-
-which tends to (1 + ρ)/(1 - ρ) for a long chain but is at most ``n``: a
-chain never carries less than one independent point (8 channels at
-ρ = 0.85 are worth 5.5 times fewer points, not 12.3). ``n`` is the mean
-chain length of the block, read from the neighbouring pairs.
-
-White noise has ρ = 0, so ``f = 1`` (to 1/√m for m pairs; a ρ below 2/√m,
-two standard errors, is taken as zero, so white noise gives exactly 1 about
-95% of the time and never far from it). A model error that is smooth in
-wavelength (a resolved primary fitted as a point, say) is also correlated
-between channels and raises ``f``, which is the intent: it is an error the
-channels share. Blocks with fewer than ``MIN_PAIRS`` neighbouring pairs, or
-without a channel axis (extra observables), take the pooled ``f`` of all
-pairs. Data with a single wavelength have no neighbours and ``f = 1``: the
-tempering is then off, and a fixed ``f`` is the way to temper them.
-
-**Tempering never sharpens.** A significantly negative ρ (differenced or
-over-fitted residuals) gives a raw ``f`` below 1, which would make every
-evidence gap and posterior *more* confident than the untempered fit. The
-``f`` used is therefore at least 1; the raw value is kept
-(``ChannelFactors.f_raw``) so that the result is still flagged
-(``AliasResult.tempering``) when it is outside ``FLAG_RANGE``, [0.5, 2].
-
-This module imports nothing from virgil.
+The effective-channel factor ``f = N / N_eff`` is estimated from the
+within-chain covariance of the residuals of neighbouring channels, and the
+log likelihood is divided by it (``dof_b = 1 / f_b``). The derivation,
+the estimator and its limits are in ``docs/api/tempering.md``; the solved
+problem is in the AGENTS.md table. This module imports nothing from virgil.
 """
 
 import dataclasses
@@ -67,30 +17,34 @@ import numpy as onp
 __all__ = [
     "ChannelFactors",
     "FLAG_RANGE",
-    "MIN_PAIRS",
+    "MIN_CHAINS",
     "adjacent_channels",
+    "block_dof",
+    "channel_chains",
     "chain_factor",
     "estimate_factors",
-    "lag1_correlation",
-    "out_of_range",
     "factor_from_correlation",
+    "flat_signature",
+    "lag1_correlation",
+    "lag_correlation",
+    "out_of_range",
 ]
 
-# Outside this range of ``f`` the result is flagged: well below 1 means the
-# residuals are anticorrelated (differenced or over-fitted data), well above
-# 2 that fewer than half the channels carry independent information.
+__provisional__ = ("*",)
+
+# Outside this range the result is flagged: the raw ``f`` well below 1 means
+# the residuals are anticorrelated (differenced or over-fitted data), the
+# largest block ``f`` well above 2 that fewer than half the channels carry
+# independent information.
 FLAG_RANGE = (0.5, 2.0)
-# A block with fewer neighbouring pairs than this takes the pooled f: its
-# own correlation is uncertain by 1/√m, 0.18 at 30 pairs.
-MIN_PAIRS = 30
-# The limits of the raw f: ρ is kept below 0.98 and f above 1/3.
-F_MIN = 1.0 / 3.0
-_RHO_MAX = 0.98
+# A block with fewer chains than this takes the pooled f: its own estimate
+# scatters by √(2 / chains), 0.45 at 10.
+MIN_CHAINS = 10
+# ρ2 above ρ1² by more than this (and by 3 standard errors) is not AR(1).
+FLAT_EXCESS = 0.15
 # Neighbouring samples share a baseline when their (u, v) agree to this many
 # metres.
 _UV_TOL = 1e-3
-# A correlation below this many standard errors (1/√m) is zero.
-_SIGNIFICANCE = 2.0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -100,23 +54,41 @@ class ChannelFactors:
     Attributes
     ----------
     f : float
-        The pooled factor ``N / N_eff`` of all neighbouring pairs that the
-        likelihood is tempered by, at least 1; 1 when the data have none.
-    f_raw : float
-        The pooled factor before the floor at 1: below 1 for
-        anticorrelated residuals (which are flagged, not used).
+        The pooled factor ``N / N_eff`` of all chains that the likelihood
+        is tempered by where a block has none of its own, at least 1; 1
+        when the data have none.
     blocks : dict
         ``{block name: f_b}`` used for every block of the data
-        (``"vis"``, ``"phi"``, ``"extra[k]"``), each the pooled value unless
-        it has ``MIN_PAIRS`` pairs of its own; at least 1.
+        (``"vis"``, ``"phi"``, ``"extra[k]"``): its own estimate where it
+        has ``MIN_CHAINS`` chains, else the pooled ``f``; at least 1.
     rho : dict
-        ``{block name: ρ}`` of the blocks with enough pairs of their own,
-        plus ``"pooled"`` (NaN without pairs).
+        ``{block name: ρ1}``, the lag-1 correlation of the blocks with
+        chains of their own, plus ``"pooled"`` (NaN without chains).
+        Diagnostic: it is not an input of ``f``.
+    rho2 : dict
+        The same for the lag-2 correlation ρ2.
     n_pairs : dict
-        ``{block name: pairs}``, plus ``"pooled"``.
+        ``{block name: neighbouring pairs}``, plus ``"pooled"``.
+    n_chains : dict
+        ``{block name: chains}``, plus ``"pooled"``.
     n_channels : dict
-        ``{block name: mean chain length}``, plus ``"pooled"``: the ``n`` of
-        ``f(ρ, n)``.
+        ``{block name: mean chain length}``, plus ``"pooled"``.
+    f_raw : float
+        The lowest unfloored ``f̂`` of the pooled estimate and every block
+        with its own: below 1 for anticorrelated residuals (flagged, not
+        used).
+    raw : dict
+        ``{block name: unfloored f̂}`` of the blocks with chains of their
+        own, plus ``"pooled"``.
+    fallback : tuple of str
+        The blocks that took the pooled ``f`` for want of an estimate of
+        their own (extras, closure phases with offsets, too few chains).
+    n_pairs2 : dict
+        ``{block name: pairs two channels apart}``, plus ``"pooled"``: the
+        number behind ρ2.
+    flat : tuple of str
+        The blocks whose lag-2 correlation is not AR(1)'s (see
+        ``flat_signature``).
     """
 
     f: float
@@ -125,22 +97,58 @@ class ChannelFactors:
     n_pairs: dict
     f_raw: float = 1.0
     n_channels: dict = dataclasses.field(default_factory=dict)
+    rho2: dict = dataclasses.field(default_factory=dict)
+    n_chains: dict = dataclasses.field(default_factory=dict)
+    raw: dict = dataclasses.field(default_factory=dict)
+    fallback: tuple = ()
+    flat: tuple = ()
+    n_pairs2: dict = dataclasses.field(default_factory=dict)
 
-    def dof(self):
-        """``{block name: 1/f_b}``: the ``dof`` of the tempered score."""
-        return {k: 1.0 / v for k, v in self.blocks.items()}
+    @property
+    def f_max(self):
+        """The largest ``f_b``: what ``AliasResult.tempering`` checks."""
+        return max([self.f, *self.blocks.values()])
+
+    def block_dof(self):
+        """``{block name: 1/f_b}``: the ``block_dof`` of the tempered score."""
+        return block_dof(self.blocks)
 
 
-def adjacent_channels(data):
-    """The neighbouring-channel pairs of each block of ``data``.
+def block_dof(blocks):
+    """The block-keyed ``dof`` that tempers each block by its ``1/f_b``.
 
-    Two samples are neighbours when they share a baseline (the same
-    ``u``, ``v`` in metres) and frame and have adjacent distinct
-    wavelengths; a closure phase is a neighbour of the same triangle in the
-    next channel. Samples are laid out baseline-major with channels
-    fastest, which is how OIData stores several channels, but the pairs are
-    found from the ``u``, ``v``, ``wavel`` and ``frame`` of each sample, not
-    from that order.
+    Parameters
+    ----------
+    blocks : dict
+        ``{block name: f_b}``, e.g. ``AliasResult.temper_blocks``
+        (``"vis"``, ``"phi"``, ``"extra[k]"``).
+
+    Returns
+    -------
+    dict
+        ``{block name: 1/f_b}`` for the ``block_dof`` argument of
+        ``marginal_loglike`` and ``estimate_primary_diameter``, so that a
+        later stage (NUTS) reproduces the tempering of the orbit fit. A
+        ``f_b`` below 1 is taken as 1: tempering never sharpens.
+
+    Examples
+    --------
+    >>> block_dof({"vis": 4.0, "phi": 2.0})
+    {'vis': 0.25, 'phi': 0.5}
+    """
+    return {str(k): 1.0 / max(float(v), 1.0) for k, v in dict(blocks).items()}
+
+
+def channel_chains(data):
+    """The chains of consecutive channels of each block of ``data``.
+
+    A chain is the samples that share a baseline (the same ``u``, ``v`` in
+    metres) and frame, ordered by wavelength (a closure phase: the same
+    triangle in each channel), as indices into the block's residual
+    vector. Samples are laid out baseline-major with channels fastest,
+    which is how OIData stores several channels, but the chains are found
+    from the ``u``, ``v``, ``wavel`` and ``frame`` of each sample, not from
+    that order.
 
     Parameters
     ----------
@@ -152,9 +160,10 @@ def adjacent_channels(data):
     Returns
     -------
     dict
-        ``{"vis": (a, b), "phi": (a, b)}``: integer arrays indexing the
-        residual vector of each block, empty when the block has no
-        neighbours or its layout cannot be read.
+        ``{"vis": [chain, ...], "phi": [chain, ...]}``: each chain an
+        integer array of at least two samples with strictly increasing
+        wavelength; empty lists for a block with one channel or an
+        unreadable layout.
     """
     u = onp.asarray(data.u, float)
     v = onp.asarray(data.v, float)
@@ -172,12 +181,12 @@ def adjacent_channels(data):
         else onp.asarray(data.vis_index)
     )
     out = {
-        "vis": _pairs(_sample_keys(u, v, frame, vis_index), wavel[vis_index])
+        "vis": _chains(_sample_keys(u, v, frame, vis_index), wavel[vis_index])
     }
     if len(vis_index) != n_vis:
-        out["vis"] = _EMPTY
+        out["vis"] = []
     if not n_phi:
-        out["phi"] = _EMPTY
+        out["phi"] = []
     elif data.i_cps1 is not None and onp.size(data.i_cps1) == n_phi:
         # A closure phase is keyed by two of its baselines, at the
         # wavelength of the first.
@@ -186,7 +195,7 @@ def adjacent_channels(data):
         keys = list(
             zip(_sample_keys(u, v, frame, i1), _sample_keys(u, v, frame, i2))
         )
-        out["phi"] = _pairs(keys, wavel[i1])
+        out["phi"] = _chains(keys, wavel[i1])
     else:
         index = (
             onp.arange(u.size)
@@ -194,11 +203,25 @@ def adjacent_channels(data):
             else onp.asarray(data.phi_index)
         )
         out["phi"] = (
-            _pairs(_sample_keys(u, v, frame, index), wavel[index])
+            _chains(_sample_keys(u, v, frame, index), wavel[index])
             if len(index) == n_phi
-            else _EMPTY
+            else []
         )
     return out
+
+
+def adjacent_channels(data):
+    """The neighbouring-channel pairs of each block of ``data``: the
+    consecutive samples of ``channel_chains``.
+
+    Returns
+    -------
+    dict
+        ``{"vis": (a, b), "phi": (a, b)}``: integer arrays indexing the
+        residual vector of each block, empty when the block has no
+        neighbours or its layout cannot be read.
+    """
+    return {k: _pairs_of(c, 1) for k, c in channel_chains(data).items()}
 
 
 _EMPTY = (onp.zeros(0, int), onp.zeros(0, int))
@@ -213,26 +236,63 @@ def _sample_keys(u, v, frame, index):
     ]
 
 
-def _pairs(keys, wavel):
-    """Index pairs of consecutive wavelengths within each key's group."""
+def _chains(keys, wavel):
+    """The wavelength-ordered groups of samples that share a key, with
+    repeated wavelengths dropped; groups of one are left out."""
     groups = {}
     for position, key in enumerate(keys):
         groups.setdefault(key, []).append(position)
-    a, b = [], []
+    chains = []
     for members in groups.values():
         members = sorted(members, key=lambda p: wavel[p])
-        for p, q in zip(members[:-1], members[1:]):
-            if wavel[q] > wavel[p]:
-                a.append(p)
-                b.append(q)
-    return onp.asarray(a, int), onp.asarray(b, int)
+        keep = [members[0]]
+        for p in members[1:]:
+            if wavel[p] > wavel[keep[-1]]:
+                keep.append(p)
+        if len(keep) > 1:
+            chains.append(onp.asarray(keep, int))
+    return chains
+
+
+def _pairs_of(chains, lag):
+    """The index pairs ``lag`` channels apart within each chain."""
+    a = [c[:-lag] for c in chains if len(c) > lag]
+    b = [c[lag:] for c in chains if len(c) > lag]
+    if not a:
+        return _EMPTY
+    return onp.concatenate(a), onp.concatenate(b)
 
 
 def out_of_range(f, f_raw=None):
-    """Whether the factor is outside ``FLAG_RANGE``: the ``f`` used above
-    its top, or the raw (unfloored) ``f_raw`` below its bottom."""
+    """Whether the factor is outside ``FLAG_RANGE``: ``f`` (the largest
+    one used) above its top, or the raw (unfloored) ``f_raw`` below its
+    bottom."""
     f_raw = f if f_raw is None else f_raw
     return bool(f > FLAG_RANGE[1] or f_raw < FLAG_RANGE[0])
+
+
+def lag_correlation(z, chains, lag=1):
+    """The correlation of residuals ``lag`` channels apart within chains,
+    ``Σ z_a z_b`` over ``½ Σ (z_a² + z_b²)``, and the number of pairs.
+
+    It is scale free: inflating every error by one factor leaves it
+    unchanged. NaN for no pairs or a zero residual.
+
+    Parameters
+    ----------
+    z : array
+        Whitened residuals of one block.
+    chains : sequence of array
+        The block's chains (``channel_chains``).
+    lag : int, optional
+        The channel separation (default 1).
+
+    Returns
+    -------
+    rho : float
+    n_pairs : int
+    """
+    return lag1_correlation(z, _pairs_of(chains, lag))
 
 
 def lag1_correlation(z, pairs):
@@ -240,7 +300,20 @@ def lag1_correlation(z, pairs):
     ``½ Σ (z_a² + z_b²)``, and the number of pairs.
 
     It is scale free: inflating every error by one factor leaves it
-    unchanged. NaN for no pairs or a zero residual.
+    unchanged. A diagnostic of ``estimate_factors``, not an input of ``f``.
+
+    Parameters
+    ----------
+    z : array
+        Whitened residuals of one block.
+    pairs : tuple of array
+        Index pairs ``(a, b)`` (``adjacent_channels``).
+
+    Returns
+    -------
+    rho : float
+        NaN for no pairs or a zero residual.
+    n_pairs : int
     """
     a, b = pairs
     if len(a) == 0:
@@ -253,9 +326,25 @@ def lag1_correlation(z, pairs):
 
 
 def chain_factor(rho, n_channels=onp.inf):
-    """``f(ρ, n) = 1 + 2 Σ (1 - k/n) ρ^k``: the ratio of points to
-    effective points for a chain of ``n_channels`` with AR(1) correlation
-    ρ (``(1 + ρ)/(1 - ρ)`` for a long chain; at most ``n_channels``)."""
+    """The factor ``f(ρ, n) = 1 + 2 Σ (1 - k/n) ρ^k`` of an AR(1) chain.
+
+    The ratio of points to effective points of a chain of ``n_channels``
+    with correlation ρ^|i-j|: ``(1 + ρ)/(1 - ρ)`` for a long chain, at
+    most ``n_channels``. ``estimate_factors`` does not use it (it measures
+    ``f`` without a model of the correlation); it is the exact value for
+    AR(1) chains, which the tests compare with.
+
+    Parameters
+    ----------
+    rho : float
+        The lag-1 correlation, in (-1, 1).
+    n_channels : float, optional
+        The chain length (default infinite).
+
+    Returns
+    -------
+    float
+    """
     if not onp.isfinite(n_channels):
         return (1.0 + rho) / (1.0 - rho)
     n = max(int(round(n_channels)), 1)
@@ -263,40 +352,67 @@ def chain_factor(rho, n_channels=onp.inf):
     return float(1.0 + 2.0 * onp.sum((1.0 - k / n) * rho**k))
 
 
-def factor_from_correlation(rho, n_pairs, n_channels=onp.inf):
-    """The raw ``f(ρ, n)`` (see ``chain_factor``) for ρ significant at two
-    standard errors (1/√m for ``n_pairs`` = m), else 1; ρ limited to
-    ``[-0.5, 0.98]`` and f to at least ``F_MIN``.
+def factor_from_correlation(rho, n_pairs=None, n_channels=onp.inf):
+    """The AR(1) ``f(ρ, n)`` of a lag-1 correlation, for comparison.
 
-    NaN (no information) gives 1. The result is below 1 for a significantly
-    negative ρ; ``estimate_factors`` floors what it uses at 1.
+    ρ is limited to ``[-0.5, 0.98]`` and NaN gives 1. This is the old
+    estimator of ``estimate_factors``, kept as a reference: it undercounts
+    common-mode correlation, where ρ2 is not ρ1² (see the module
+    docstring).
+
+    Parameters
+    ----------
+    rho : float
+        The lag-1 correlation.
+    n_pairs : int, optional
+        Unused; kept for the signature of the old estimator.
+    n_channels : float, optional
+        The chain length (default infinite).
+
+    Returns
+    -------
+    float
+        Below 1 for a negative ρ.
     """
-    if not onp.isfinite(rho) or n_pairs < 1:
+    if not onp.isfinite(rho):
         return 1.0
-    if abs(rho) < _SIGNIFICANCE / onp.sqrt(n_pairs):
-        return 1.0
-    rho = float(onp.clip(rho, -0.5, _RHO_MAX))
-    return max(chain_factor(rho, n_channels), F_MIN)
+    rho = float(onp.clip(rho, -0.5, 0.98))
+    return max(chain_factor(rho, n_channels), 1.0 / 3.0)
 
 
-def _chains(pairs):
-    """The number of chains of consecutive channels that ``pairs`` link (the
-    pairs whose first sample is no pair's second)."""
-    a, b = pairs
-    return len(set(a.tolist()) - set(b.tolist()))
+def flat_signature(rho1, rho2, n_pairs):
+    """Whether a lag-2 correlation is not AR(1)'s: ``ρ2 - ρ1²`` above
+    ``FLAT_EXCESS`` and three standard errors (1/√n_pairs).
+
+    An AR(1) chain has ρ2 = ρ1². A flat correlation (common mode, a smooth
+    model error) has ρ2 close to ρ1, so the excess is ρ1 (1 - ρ1). It is
+    the signature of misfit as well as of shared calibration error.
+    """
+    if not (onp.isfinite(rho1) and onp.isfinite(rho2)) or n_pairs < 1:
+        return False
+    excess = rho2 - rho1**2
+    return bool(excess > max(FLAT_EXCESS, 3.0 / onp.sqrt(n_pairs)))
 
 
-def estimate_factors(residuals, pairs, names=()):
+def _moments(z, chains):
+    """``(Σ_chains (Σ z)², Σ z², chains)`` of one block's residuals."""
+    z = onp.asarray(z, float)
+    num = sum(float(onp.sum(z[c]) ** 2) for c in chains)
+    den = sum(float(onp.sum(z[c] ** 2)) for c in chains)
+    return num, den, len(chains)
+
+
+def estimate_factors(residuals, chains, names=()):
     """The effective-channel factors from residuals at the best fit.
 
     Parameters
     ----------
     residuals : sequence of dict
         One dict per dataset, ``{block name: whitened residuals}``, each
-        array in the block's own order (the order ``adjacent_channels``
+        array in the block's own order (the order ``channel_chains``
         indexes).
-    pairs : sequence of dict
-        One dict per dataset from ``adjacent_channels``.
+    chains : sequence of dict
+        One dict per dataset from ``channel_chains``.
     names : sequence of str, optional
         Block names to report beyond those of ``residuals`` (blocks
         without residuals, such as extras, take the pooled ``f``).
@@ -304,49 +420,97 @@ def estimate_factors(residuals, pairs, names=()):
     Returns
     -------
     ChannelFactors
-        The estimator is described in the module docstring. Pooling sums
-        the numerators and denominators of ρ over all blocks and datasets.
+        ``f_b = Σ (Σ_chain z)² / Σ z²`` pooled over the chains of block
+        ``b`` (see `docs/api/tempering.md`); the pooled ``f`` sums all blocks. ρ1
+        and ρ2 are kept as diagnostics.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> z = np.random.default_rng(0).standard_normal(800)
+    >>> chains = [np.arange(8 * i, 8 * i + 8) for i in range(100)]
+    >>> 1.0 <= estimate_factors([{"vis": z}], [{"vis": chains}]).f < 1.3
+    True
     """
-    num, den, count, chains = {}, {}, {}, {}
-    for resid, pair in zip(residuals, pairs):
+    num, den, n_chain, n_len = {}, {}, {}, {}
+    lag = {1: {}, 2: {}}  # name -> [Σ z_a z_b, ½ Σ (z_a² + z_b²), pairs]
+    for resid, chain in zip(residuals, chains):
         for name, z in resid.items():
-            a, b = pair.get(name, _EMPTY)
-            if len(a) == 0:
+            cs = chain.get(name, [])
+            if not len(cs):
                 continue
             z = onp.asarray(z, float)
-            num[name] = num.get(name, 0.0) + float(onp.sum(z[a] * z[b]))
-            den[name] = den.get(name, 0.0) + 0.5 * float(
-                onp.sum(z[a] ** 2 + z[b] ** 2)
-            )
-            count[name] = count.get(name, 0) + len(a)
-            chains[name] = chains.get(name, 0) + _chains((a, b))
-    total = sum(count.values())
-    n_chain = {k: count[k] / max(chains[k], 1) + 1.0 for k in count}
-    n_pooled = total / max(sum(chains.values()), 1) + 1.0 if total else onp.inf
-    pooled = (
-        sum(num.values()) / sum(den.values())
-        if total and sum(den.values()) > 0
-        else float("nan")
-    )
-    raw_pooled = factor_from_correlation(pooled, total, n_pooled)
-    f_pooled = max(raw_pooled, 1.0)  # tempering never sharpens
+            a, b, m = _moments(z, cs)
+            num[name] = num.get(name, 0.0) + a
+            den[name] = den.get(name, 0.0) + b
+            n_chain[name] = n_chain.get(name, 0) + m
+            n_len[name] = n_len.get(name, 0) + sum(len(c) for c in cs)
+            for k in (1, 2):
+                x, y = _pairs_of(cs, k)
+                t = lag[k].setdefault(name, [0.0, 0.0, 0])
+                t[0] += float(onp.sum(z[x] * z[y]))
+                t[1] += 0.5 * float(onp.sum(z[x] ** 2 + z[y] ** 2))
+                t[2] += len(x)
+    total_num, total_den = sum(num.values()), sum(den.values())
+    total_chains = sum(n_chain.values())
+    raw_pooled = total_num / total_den if total_den > 0 else float("nan")
+    f_pooled = max(raw_pooled, 1.0) if onp.isfinite(raw_pooled) else 1.0
+
+    def corr(table, name):
+        t = table.get(name)
+        return t[0] / t[1] if t and t[1] > 0 else float("nan")
+
+    pooled = {
+        k: (
+            sum(t[0] for t in lag[k].values())
+            / max(sum(t[1] for t in lag[k].values()), 1e-300)
+            if lag[k]
+            else float("nan")
+        )
+        for k in (1, 2)
+    }
     everything = set(names) | {n for r in residuals for n in r}
-    blocks, rho = {}, {"pooled": pooled}
+    blocks, raw = {}, {"pooled": raw_pooled}
+    rho, rho2 = {"pooled": pooled[1]}, {"pooled": pooled[2]}
+    fallback, flat = [], []
     for name in sorted(everything):
-        m = count.get(name, 0)
-        own = num.get(name, 0.0) / den[name] if m and den[name] > 0 else None
-        if m >= MIN_PAIRS and own is not None:
-            rho[name] = own
-            blocks[name] = max(
-                factor_from_correlation(own, m, n_chain[name]), 1.0
-            )
+        own = n_chain.get(name, 0) >= MIN_CHAINS and den.get(name, 0.0) > 0
+        if own:
+            raw[name] = num[name] / den[name]
+            blocks[name] = max(raw[name], 1.0)
+            rho[name], rho2[name] = corr(lag[1], name), corr(lag[2], name)
+            if flat_signature(rho[name], rho2[name], lag[2][name][2]):
+                flat.append(name)
         else:
             blocks[name] = f_pooled
+            fallback.append(name)
+    n_lag2 = sum(t[2] for t in lag[2].values())
+    if not total_chains:
+        fallback = []  # nothing to estimate: not a fallback
+    elif (
+        not flat
+        and len(raw) == 1
+        and flat_signature(pooled[1], pooled[2], n_lag2)
+    ):
+        flat.append("pooled")  # no block of its own: judge all chains
+    raws = [v for v in raw.values() if onp.isfinite(v)]
     return ChannelFactors(
         f=f_pooled,
         blocks=blocks,
         rho=rho,
-        n_pairs={**count, "pooled": total},
-        f_raw=raw_pooled,
-        n_channels={**n_chain, "pooled": n_pooled},
+        rho2=rho2,
+        n_pairs={
+            **{k: v[2] for k, v in lag[1].items()},
+            "pooled": sum(t[2] for t in lag[1].values()),
+        },
+        n_chains={**n_chain, "pooled": total_chains},
+        f_raw=min(raws) if raws else 1.0,
+        raw=raw,
+        n_channels={
+            **{k: n_len[k] / n_chain[k] for k in n_chain},
+            "pooled": sum(n_len.values()) / max(total_chains, 1),
+        },
+        fallback=tuple(fallback),
+        n_pairs2={**{k: v[2] for k, v in lag[2].items()}, "pooled": n_lag2},
+        flat=tuple(flat),
     )

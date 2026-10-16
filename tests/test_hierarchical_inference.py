@@ -5,7 +5,7 @@ import sys
 import jax
 import jax.numpy as np
 
-from virgil.inference import gaussian_fisher
+from virgil.inference import expected_fisher
 from virgil.likelihood import (
     joint_loglike,
     joint_prediction,
@@ -58,7 +58,7 @@ def test_joint_expected_fisher_shape_and_shared_geometry():
     prediction = lambda params: joint_prediction(
         params, WORKFLOW.binary_model, observations
     )
-    fmat, _ = gaussian_fisher(
+    fmat, _ = expected_fisher(
         prediction, truth, WORKFLOW.observation_errors(observations)
     )
 

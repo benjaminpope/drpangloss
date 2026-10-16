@@ -1,5 +1,8 @@
 """Named epochs of data, with one snapshot of a moving scene per dataset.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 An orbit fit to interferometric data across epochs predicts each epoch's
 visibilities and closure phases from the scene at that epoch's time. When
 nothing moves appreciably during an observation (a binary whose period is
@@ -87,6 +90,8 @@ __all__ = [
     "rank_orbits",
     "start_from_positions",
 ]
+
+__provisional__ = ("*",)
 
 _AT = ("dataset", "epoch")
 
@@ -532,8 +537,7 @@ class _Surface:
     (0, 1], traced) tempers the blocks' log likelihoods: ν_eff = dof · ν. It
     is one number for every block or one per block (see
     ``dof_vector``): correlated spectral channels temper each block by its
-    own 1/f (``virgil.tempering``, the solved problem of the untempered
-    evidence).
+    own 1/f (``virgil.tempering``).
     """
 
     def __init__(self, data, s_max=None):
@@ -560,10 +564,21 @@ class _Surface:
         return np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
 
     def dof_vector(self, dof):
-        """``dof`` as the per-block vector ``score`` takes: a number
-        (every block), a mapping or sequence of ``(name, dof)`` pairs keyed
-        by block name (``"vis"``, ``"phi"``, ``"extra[k]"``; a missing block
-        is 1), or None (1). A plain number stays a number."""
+        """``dof`` as the per-block vector ``score`` takes.
+
+        Parameters
+        ----------
+        dof : float, mapping, sequence of (str, float) or None
+            A number (every block), a mapping or sequence of
+            ``(name, dof)`` pairs keyed by block name (``"vis"``,
+            ``"phi"``, ``"extra[k]"``; a missing block is 1), or None (1).
+
+        Returns
+        -------
+        float or array
+            A plain number stays a number; otherwise one value per block
+            of this surface, in its order.
+        """
         if dof is None:
             return 1.0
         if not isinstance(dof, (dict, tuple, list)):
@@ -637,7 +652,9 @@ class _Surface:
         return onp.sqrt(onp.asarray(chi2, float) / self.nu)
 
 
-def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
+def marginal_loglike(
+    model, data, *, dof=1.0, block_dof=None, s_max=None, **noise
+):
     """The log likelihood with each block's error scale marginalized.
 
     Each observable block *b* of ``data`` (visibilities, phases, and each
@@ -691,6 +708,12 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
         ν_b is then over-confident by about ν_b/ν_eff; a ``dof`` below 1
         (e.g. calibrated by a residual bootstrap) scales every difference
         of ``m`` down by that factor.
+    block_dof : dict, optional
+        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``; 1
+        for a block not named): each block tempered by its own factor, as
+        ``AliasResult.block_dof()`` gives for the orbit fit's tempering
+        (a NUTS stage reproduces it by passing that here). Multiplies
+        ``dof``.
     s_max : float, optional
         Bound each scale to [1/s_max, s_max] and integrate it out
         numerically, with the exact von Mises normalization for
@@ -711,7 +734,9 @@ def marginal_loglike(model, data, *, dof=1.0, s_max=None, **noise):
     """
     surface = _Surface(data, s_max)
     return surface.score(
-        surface.chi2(model, data, noise), _check_dof(dof), data
+        surface.chi2(model, data, noise),
+        np.asarray(surface.dof_vector(block_dof)) * _check_dof(dof),
+        data,
     )
 
 
@@ -2065,6 +2090,7 @@ def estimate_primary_diameter(
     s_max=None,
     vis_amp=None,
     dof=1.0,
+    block_dof=None,
 ):
     """Estimate a shared uniform-disc primary diameter from per-night
     positions, and decide whether the data resolve the primary.
@@ -2087,11 +2113,8 @@ def estimate_primary_diameter(
     ``sigma``. The data **resolve** the primary when the best diameter is
     positive and its summed score exceeds the point primary's by at least
     ``resolve_nats`` (default 5 nats: one extra parameter, Δχ² ≈ 10, about
-    3σ) **on the tempered score**: with ``dof`` below 1 (correlated
-    spectral channels, ``virgil.tempering``) the score and so the gain are
-    ``dof`` times their untempered values, and the threshold is unchanged
-    because it is a statement about odds, which tempering makes honest;
-    ``RESOLVE_NATS`` was set for ``dof = 1`` and is the same on white noise.
+    3σ) on the tempered score (``dof``, ``block_dof``: the gain is
+    ``dof`` times the untempered one; the threshold is unchanged).
     Because ``m`` integrates out each block's error scale, a night
     whose errors are underestimated does not look more decisive than it
     is. The rule uses no published value.
@@ -2111,10 +2134,15 @@ def estimate_primary_diameter(
         fractions of λ/B_max above.
     s_max : float, optional
         As in ``marginal_loglike``.
-    dof : float or dict, optional
-        Tempers the score: one fraction ``1/f`` for every block, or
-        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``;
-        1 for a block not named). Default 1 (untempered).
+    dof : float, optional
+        Tempers the score: one fraction ``1/f`` for every block. Default 1
+        (untempered).
+    block_dof : dict, optional
+        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``; 1
+        for a block not named), e.g.
+        ``AliasResult.block_dof()``. It is keyed by block, unlike the
+        dataset-keyed dict of ``epoch_positions(dof=)``, and multiplies
+        ``dof``.
     vis_amp : (float, float), optional
         Profile one V² amplitude per night in this range, as the orbit fit
         does (``fit_orbit_aliases(vis_amp=...)``), so that a contrast loss
@@ -2175,7 +2203,11 @@ def estimate_primary_diameter(
             onp.array([positions.dra[i], positions.ddec[i], positions.flux[i]])
             for i in range(len(sets))
         ]
-        dofs = [np.asarray(sf.dof_vector(dof), float) for sf in surfaces]
+        dofs = [
+            np.asarray(sf.dof_vector(block_dof), float)
+            * float(_check_dof(dof))
+            for sf in surfaces
+        ]
         amp = None if vis_amp is None else tuple(map(float, vis_amp))
 
         def refit(i, x0, diam):

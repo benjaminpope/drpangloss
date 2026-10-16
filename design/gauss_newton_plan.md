@@ -121,7 +121,7 @@ with it on every prior it accepted).
 - `gauss_newton_mass(model, priors, data, values, *, likelihoods=(),
   noise=None, flat_coordinates=False)`: new `noise=`, as `fit` and
   `numpyro_model` take it. It also accepts data with gains and any
-  elementwise prior, and returns a diagonal mass above 8192 coordinates.
+  elementwise prior, and returns a diagonal mass above `_DENSE_MASS_MAX` coordinates (4096 since 0.4.0, 8192 before).
   `SingularCurvature` now means a direction constrained by neither the
   data nor a proper prior (an `ImproperUniform` or flat-in-coordinate
   parameter the data do not fix); a parameter under a bounded prior gets
@@ -363,6 +363,25 @@ def solve(problem, start, *, lower=None, upper=None, gtol=0.0, dtol=0.0,
   λ carried over.
 - `lower`/`upper` default to ±inf.
 
+**Rationale** (moved from the `_gauss_newton` module docstring).
+
+- F is positive semi-definite by construction. Because a step is accepted
+  only if Φ itself falls, an error in F costs speed, or a `STALLED` stop
+  that a caller answers with a fallback optimizer; it never gives a wrong
+  answer. The way to get `STALLED` is a coordinate with a non-zero
+  gradient but no curvature in F (a term of Φ missing from `rows` and
+  `diag`): its step is ~1/(λ·1e-12) long, so every trial is rejected.
+- Small λ is the Gauss–Newton step; large λ is a short step down the
+  gradient with each coordinate scaled by its own curvature. M is
+  Marquardt's scaling, floored so that a coordinate the rows ignore
+  (F_ii = 0) still gives a positive-definite system and no NaN.
+- Holding only coordinates exactly on a bound makes a coordinate that
+  sits just inside one clip and be rejected over and over, hence the
+  ε-active set. A coordinate on a bound whose gradient points inward is
+  free, so it leaves.
+- The default tolerances (0) rely on the rounding-floor rule; pass `gtol`
+  or `dtol` to stop earlier.
+
 **Deleted.** Nothing yet.
 
 **Tests** (`tests/test_gauss_newton.py`):
@@ -453,7 +472,7 @@ flag; new `_curvature_rows`), `fitting.py` (`_Objective.curvature_rows`,
      `_Objective`, flat or not as told);
    - accepts data with gains, any elementwise prior, and likelihood terms
      with a `log_norm`;
-   - **size guard**: with n > `_DENSE_MASS_MAX` = 8192 coordinates it
+   - **size guard**: with n > `_DENSE_MASS_MAX` = 4096 coordinates (8192 before 0.4.0) it
      returns `dense_mass=False` with the diagonal of the GN covariance
      (Woodbury branch: `w_i²·(1 − Σ_j (L⁻¹K)_{ji}²)` plus the zero-P
      correction, never forming n×n; Cholesky branch: 1/diag(F)), and a
