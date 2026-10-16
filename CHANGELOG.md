@@ -74,6 +74,16 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- The dense-matrix limit `fitting._DENSE_MASS_MAX` is 4096 coordinates
+  (was 8192; a dense 8192 × 8192 matrix is 537 MB in float64, and its
+  eigendecomposition for `GaussNewtonMass.condition` is slower still). Above
+  it `gauss_newton_mass` still returns the diagonal, and
+  `variational` with `"bnaf"`, `"iaf"` or `"mvn"`, whose Cholesky factor is
+  n × n, now raises `ValueError` before allocating it: use a diagonal guide
+  such as `autoguide.AutoNormal`.
+- `fit(method="lm")` compiles its step kernel once for every chunk and
+  every `max_steps`: the step bound is traced, so the short last chunk no
+  longer recompiles. Results are unchanged.
 - `fit_orbit_aliases` now tempers by default, so its evidences, band
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to

@@ -1044,9 +1044,23 @@ def _at_bound(problem, values):
     return tuple(found)
 
 
-# Above this many coordinates ``gauss_newton_mass`` returns a diagonal mass:
-# the dense covariance is n² (a 128² image is 2 GB in float64, 256² is 34 GB).
-_DENSE_MASS_MAX = 8192
+# The one size limit for dense n × n matrices. Above this many coordinates
+# ``gauss_newton_mass`` returns a diagonal mass (and no condition number), and
+# ``svi.variational`` refuses the dense guides: n² entries are 134 MB in
+# float64 here, and a 128² image (n = 16384) would be 2 GB, 256² 34 GB.
+_DENSE_MASS_MAX = 4096
+
+
+def _check_dense_size(n, what):
+    """Raise ``ValueError`` if ``what`` would need a dense n × n matrix."""
+    if n > _DENSE_MASS_MAX:
+        raise ValueError(
+            f"{what} needs a dense {n} × {n} matrix ({8 * n * n / 1e9:.1f} GB "
+            f"in float64), more than the {_DENSE_MASS_MAX} coordinates "
+            "virgil allows."
+        )
+
+
 # P is floored at this fraction of its largest entry in the Woodbury branch,
 # so that W = P^-½ is finite.
 _P_FLOOR = 1e-12
@@ -1136,7 +1150,7 @@ def gauss_newton_mass(
     tightly constrained one left out (such as an image's flux) keeps its
     identity mass and its tiny step size.
 
-    **Size.** The dense matrix has n² entries. With more than 8192
+    **Size.** The dense matrix has n² entries. With more than 4096
     coordinates the result is a diagonal mass, with a ``UserWarning``:
     images of 128² and above get this. Its entries are the diagonal of the
     covariance F⁻¹, computed without forming the matrix, when there are
@@ -1194,7 +1208,7 @@ def gauss_newton_mass(
         matrix (the covariance scaled to unit diagonal, so independent of
         the parameters' units), or ``None`` for a diagonal mass. Above 1e10
         the matrix is numerically unreliable. For the diagonal mass
-        (more than 8192 coordinates) ``dense_mass`` is empty and
+        (more than 4096 coordinates) ``dense_mass`` is empty and
         ``inverse_mass_matrix`` holds a vector.
 
     Raises
@@ -1460,18 +1474,31 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
     from a warm start, and a test on the parameters never passes for
     log-brightness pixels that should be dark (they drift towards -inf
     without changing the image). This stops like the L-BFGS path instead.
+
+    ``limit`` is the step bound, a traced array rather than optimistix's
+    static ``max_steps``, so that runs with different bounds (the last,
+    shorter chunk of a chunked fit) share one compiled kernel.
     """
 
     tolerance: jax.Array
+    limit: jax.Array
 
-    def __init__(self, tolerance, linear_solver):
+    def __init__(self, tolerance, limit, linear_solver):
         super().__init__(rtol=0.0, atol=0.0, linear_solver=linear_solver)
         self.tolerance = tolerance
+        self.limit = limit
 
     def terminate(self, fn, y, args, options, state, tags):
         problem, scale = args
         gradient = jax.grad(_scaled_loss(problem, scale))(y)
-        return _largest(gradient) <= self.tolerance, optx.RESULTS.successful
+        converged = _largest(gradient) <= self.tolerance
+        spent = state.num_steps >= self.limit
+        result = optx.RESULTS.where(
+            spent & ~converged,
+            optx.RESULTS.nonlinear_max_steps_reached,
+            optx.RESULTS.successful,
+        )
+        return converged | spent, result
 
 
 def _lm_residuals(z, args):
@@ -1525,16 +1552,17 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     slightly from an unchunked run.
     """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
-    solver = _GradientStoppedLM(tolerance, _lm_linear_solver(z0, cg_steps))
+    linear_solver = _lm_linear_solver(z0, cg_steps)
     chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
     z, steps = z0, 0
     while True:
+        limit = np.asarray(min(chunk, max_steps - steps))
         solution = optx.least_squares(
             _lm_residuals,
-            solver,
+            _GradientStoppedLM(tolerance, limit, linear_solver),
             z,
             args=(problem, scale),
-            max_steps=min(chunk, max_steps - steps),
+            max_steps=None,
             throw=False,
         )
         z = solution.value
