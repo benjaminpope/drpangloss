@@ -224,3 +224,12 @@ def test_publish_waits_for_the_gate_and_floors_install_orbits():
     assert re.search(r"\bbuild:\n    needs: gate\b", publish)
     tests = (ROOT / ".github/workflows/tests.yml").read_text()
     assert '--resolution lowest-direct -e ".[test,orbits]"' in tests
+
+
+def test_label_job_can_label_pull_requests():
+    """GITHUB_TOKEN labels a PR only with pull-requests: write (a 403 else)."""
+    review = (ROOT / ".github/workflows/claude-review.yml").read_text()
+    job = review[review.index("\n  label:\n") :]
+    perms = job[job.index("permissions:") :].split("steps:")[0]
+    assert "pull-requests: write" in perms
+    assert "issues: write" in perms
