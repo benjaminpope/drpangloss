@@ -145,6 +145,7 @@ def render_notebook_markdown(
         f"<!-- AUTO-GENERATED FROM {relative_nb_path} "
         "by scripts/sync_tutorial_docs.py. -->"
     )
+    noticed = False
 
     for cell_index, cell in enumerate(nb.get("cells", []), start=1):
         cell_type = cell.get("cell_type")
@@ -161,9 +162,10 @@ def render_notebook_markdown(
             text = source.strip()
             if (
                 relative_nb_path in PROVISIONAL_NOTEBOOKS
-                and len(lines) == 1
+                and not noticed
                 and text.startswith("# ")
             ):
+                noticed = True
                 # Under the title: the first heading of the page.
                 head, _, rest = text.partition("\n")
                 text = f"{head}\n\n{_provisional_admonition()}"
@@ -209,6 +211,11 @@ def render_notebook_markdown(
                     lines.append("```")
                     lines.append("")
 
+    if relative_nb_path in PROVISIONAL_NOTEBOOKS and not noticed:
+        raise ValueError(
+            f"{relative_nb_path} is provisional but its first markdown cell "
+            "does not start with a '# ' title to put the notice under."
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 

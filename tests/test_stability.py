@@ -30,20 +30,51 @@ NAMES = [
 ]
 
 
-def test_there_are_provisional_modules():
-    names = {module.__name__ for module in MODULES}
-    assert {
-        "virgil.epochs",
-        "virgil.aliases",
-        "virgil.orbit_search",
-        "virgil.tempering",
-        "virgil.svi",
-        "virgil.metrics",
-        "virgil.pipeline",
-        "virgil.models",
-        "virgil.imaging",
-        "virgil.ensemble",
-    } <= names
+# The tiers, pinned. Changing a tier, or renaming a provisional name, means
+# changing this table, docs/stability.md and the CHANGELOG together.
+EXPECTED = {
+    "virgil.epochs": {"*"},
+    "virgil.aliases": {"*"},
+    "virgil.orbit_search": {"*"},
+    "virgil.tempering": {"*"},
+    "virgil.svi": {"*"},
+    "virgil.metrics": {"*"},
+    "virgil.pipeline": {"*"},
+    "virgil.models": {
+        "PolarDisk",
+        "ThinRing",
+        "GaussianRing",
+        "RadialPowerLaw",
+        "ExpTail",
+        "Gap",
+        "RadialSum",
+        "RadialLinear",
+        "RadialPower",
+        "RadialGP",
+        "PolarKernel",
+        "Harmonics",
+        "VonMises",
+        "Cone",
+        "PowerLawHeight",
+        "polar_disk_cvis",
+        "gp_priors",
+    },
+    "virgil.fields": {"PolarField", "polar_field_priors"},
+    "virgil.ensemble": {
+        "evidence_grid",
+        "gp_members",
+        "GPFit",
+        "EvidenceGrid",
+    },
+    "virgil.imaging": {"clean", "CleanResult"},
+}
+
+
+def test_provisional_lists_are_pinned():
+    found = {
+        module.__name__: set(module.__provisional__) for module in MODULES
+    }
+    assert found == EXPECTED
 
 
 def test_provisional_is_a_tuple_of_strings():
@@ -94,3 +125,25 @@ def test_stability_module_imports_nothing():
         for n in ast.walk(tree)
         if isinstance(n, (ast.Import, ast.ImportFrom))
     ]
+
+
+PAGES = [
+    "docs/orbit_fitting.md",
+    "docs/polar_disk_rings.md",
+    "docs/imaging_clean.md",
+    "docs/imaging_ensemble.md",
+    "docs/variational_inference.md",
+    "docs/pipeline.md",
+    "docs/api/pipeline.md",
+    "docs/api/models/classes/polar_disk.md",
+    "docs/stability.md",
+]
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_provisional_pages_carry_the_notice(page):
+    from pathlib import Path
+
+    root = Path(virgil.__file__).parents[2]
+    text = (root / page).read_text()
+    assert _stability.ADMONITION in text, page
