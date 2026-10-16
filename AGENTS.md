@@ -125,8 +125,9 @@ and writing history into docstrings. So:
 4. **Reuse before writing a numerical helper.** Check `_linear`, `_grid`,
    `_geometry`, `_utils`, `_gauss_newton`, `_flat` and `_precision`, and
    `pipeline/_common`, before adding a quadrature, solver or linear-algebra routine.
-5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py` or
-   `tests/_helpers.py`, parametrize near-identical tests, and never redefine a
+5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py`, and
+   shared constants and helpers in `tests/_shared.py` or data in `tests/_test_data.py`
+   (extend these, don't add a second module); parametrize near-identical tests, and never redefine a
    `_scene`/`_data` helper that exists.
 6. **Keep pipelines thin.** A new pipeline subclasses `pipeline/_core` and reuses
    `_common`; aim at about 500 lines.
