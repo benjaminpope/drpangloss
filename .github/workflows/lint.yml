@@ -27,12 +27,44 @@ jobs:
   lint:
     name: Ruff check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # only for the size comment below
     steps:
       - name: checkout
         uses: actions/checkout@v4
 
       - name: install uv
         uses: astral-sh/setup-uv@v6
+
+      # One PR comment with the net Python lines changed in src/ and tests/
+      # ("Keeping the code small" in AGENTS.md). Never fails the build: a fork's
+      # read-only token or an API error just skips it. It runs in this job, not
+      # `checks`, because that one executes the PR's code and this one does not.
+      - name: size comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          api=repos/${GITHUB_REPOSITORY}/issues
+          sum() { gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq \
+            ".[] | select(.filename | test(\"^$1/.*[.]py$\")) | \"\(.additions) \(.deletions)\"" \
+            | awk '{ a += $1; r += $2 } END { printf "| `'$1'/` | +%d | -%d | **%d** |", a, r, a - r }'; }
+          src=$(sum src)
+          body="<!-- size-comment -->
+          **Size of this PR** (Python lines)
+
+          | | added | removed | net |
+          |---|---:|---:|---:|
+          $src
+          $(sum tests)"
+          [ "$(echo "$src" | tr -d '*' | awk -F'|' '{ print $5 + 0 }')" -gt 1000 ] && body+="
+
+          Net src growth is over +1,000 lines: say in the PR description what it buys and what it supersedes (rule 7 in AGENTS.md)."
+          id=$(gh api --paginate "$api/${PR}/comments" --jq '.[] | select(.body | startswith("<!-- size-comment -->")) | .id' | head -n 1)
+          if [ -n "$id" ]; then gh api -X PATCH "$api/comments/$id" -f body="$body"; else gh api -X POST "$api/${PR}/comments" -f body="$body"; fi >/dev/null
 
       - name: ruff check
         run: uvx ruff@${RUFF_VERSION} check --output-format=github --force-exclude .
