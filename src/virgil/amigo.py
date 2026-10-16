@@ -140,7 +140,7 @@ def mixed_disco_fields(record):
         "phi_index": None,
         "uv_grid": find_uv_grid(u, v),
         "cp_noise": None,
-        "observable_kind": "mixed_log_complex",
+        "vis_encoding": "mixed_log_complex",
         "vis_mode": "logamp",
         "v2_flag": False,
         "cp_flag": False,

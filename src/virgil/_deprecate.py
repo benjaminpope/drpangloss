@@ -17,7 +17,7 @@ import inspect
 import sys
 import warnings
 
-__all__ = ["old_order", "renamed"]
+__all__ = ["deprecated_name", "keyword_only", "old_order", "renamed"]
 
 #: Old keyword names accepted until 0.5, mapped to their 0.4 names.
 NAME_ALIASES = {
@@ -150,6 +150,83 @@ def renamed(aliases=None):
         def wrapper(*args, **kwargs):
             _apply_aliases(fn.__qualname__, args, kwargs, names, positional)
             return fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def deprecated_name(old, new_fn):
+    """A function named ``old`` that calls ``new_fn``, with a FutureWarning.
+
+    For a public function renamed in 0.4: the old name keeps working, and
+    warns that it stops working in virgil 0.5. The wrapper passes every
+    argument through, so ``new_fn``'s own shims (``old_order``,
+    ``renamed``) still apply to calls made through the old name.
+    """
+    new = new_fn.__name__
+
+    @functools.wraps(new_fn)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"{old} is now {new}; {old} stops working in virgil 0.5.",
+            FutureWarning,
+            stacklevel=external_stacklevel(),
+        )
+        return new_fn(*args, **kwargs)
+
+    wrapper.__name__ = wrapper.__qualname__ = old
+    wrapper.__doc__ = f"Deprecated name of :func:`{new}`; use that."
+    return wrapper
+
+
+def keyword_only(*legacy):
+    """Make the parameters after a bare ``*`` keyword-only, softly.
+
+    ``fn`` is declared with ``*`` after its leading positionals, but 0.3
+    let the parameters named in ``legacy`` (in that order) be passed
+    positionally. Such a call still works until 0.5, with a
+    :class:`FutureWarning` naming the keywords; any further positional
+    argument is a :class:`TypeError`, as for any function.
+    """
+
+    def decorate(fn):
+        params = inspect.signature(fn).parameters
+        unknown = [
+            n
+            for n in legacy
+            if n not in params
+            or params[n].kind is not inspect.Parameter.KEYWORD_ONLY
+        ]
+        if unknown:
+            raise ValueError(f"{fn.__name__}: {unknown} are not keyword-only")
+        n_pos = len(_positional_names(params))
+        qualname = fn.__qualname__
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            extra = args[n_pos:]
+            if not extra:
+                return fn(*args, **kwargs)
+            if len(extra) > len(legacy):
+                raise TypeError(
+                    f"{qualname} takes {n_pos} positional arguments but "
+                    f"{len(args)} were given; pass the rest by keyword."
+                )
+            names = legacy[: len(extra)]
+            clash = [n for n in names if n in kwargs]
+            if clash:
+                raise TypeError(
+                    f"{qualname} got multiple values for {clash[0]}="
+                )
+            warnings.warn(
+                f"{qualname}: pass {', '.join(names)} by keyword "
+                f"({', '.join(f'{n}=...' for n in names)}); "
+                "positional use stops working in virgil 0.5.",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
+            return fn(*args[:n_pos], **dict(zip(names, extra)), **kwargs)
 
         return wrapper
 

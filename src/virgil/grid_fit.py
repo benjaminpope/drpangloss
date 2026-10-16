@@ -34,7 +34,7 @@ from ._grid import (
     warn_unconverged,
 )
 from ._deprecate import old_order, renamed
-from .inference import laplace_parameter_uncertainty
+from .inference import _ambient_dtype, laplace_parameter_uncertainty
 from .likelihood import build_model, loglike, whitened_residuals
 
 
@@ -833,6 +833,8 @@ def _laplace_flux_uncertainty_grid(
             data=data,
             model=model,
             target_param=flux_key,
+            # Inside this jit: stay in the caller's precision.
+            dtype=_ambient_dtype(),
         )
 
     return map_points(

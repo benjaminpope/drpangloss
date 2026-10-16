@@ -666,10 +666,10 @@ def bootstrap_null(null_scene, data, *, method="sign_flip"):
         raise ValueError(
             f"method must be one of {BOOTSTRAP_METHODS}, not {method!r}."
         )
-    if data.observable_kind != "split":
+    if data.vis_encoding != "split":
         raise ValueError(
             "bootstrap_null() supports visibility and phase observables "
-            f"('split'), not {data.observable_kind!r}."
+            f"('split'), not {data.vis_encoding!r}."
         )
     unsupported = [
         name
@@ -1667,7 +1667,10 @@ class DetectionMC:
         return result["sep"], out
 
     def save(self, path):
-        """Write to ``path``, an ``.npz`` with the metadata as JSON."""
+        """Write to ``path``, an ``.npz`` with the metadata as JSON.
+
+        ``meta["format"]`` is the file-format version (1).
+        """
         arrays = {f"null__{k}": onp.asarray(v) for k, v in self.null.items()}
         for k, v in self.injected.items():
             arrays[f"injected__{k}"] = onp.asarray(v)
@@ -1676,9 +1679,21 @@ class DetectionMC:
 
     @classmethod
     def load(cls, path):
-        """Read a file written by :meth:`save`."""
+        """Read a file written by :meth:`save`.
+
+        A file without ``meta["format"]`` is read as version 1. Any other
+        version than the one this virgil writes raises a ``ValueError``,
+        rather than being read in a layout it may not have.
+        """
         with onp.load(path, allow_pickle=False) as f:
             meta = json.loads(str(f["meta"]))
+            version = meta.setdefault("format", 1)
+            if version != _FORMAT:
+                raise ValueError(
+                    f"{path} is a DetectionMC file of format {version!r}; "
+                    f"this virgil reads format {_FORMAT}. Upgrade virgil, "
+                    "or regenerate the file."
+                )
             parts = {"null": {}, "injected": {}}
             for name in f.files:
                 part, _, key = name.partition("__")

@@ -37,7 +37,7 @@ from virgil.grid_fit import (  # noqa: E402
     optimized_likelihood_grid,
 )
 from virgil.inference import (  # noqa: E402
-    fisher,
+    observed_information,
     laplace_cov,
     laplace_parameter_uncertainty,
 )
@@ -278,7 +278,9 @@ def _joint_model(params, index):
 
 
 @pytest.mark.parametrize(
-    "fn", [loglike, laplace_cov, fisher], ids=lambda f: f.__name__
+    "fn",
+    [loglike, laplace_cov, observed_information],
+    ids=lambda f: f.__name__,
 )
 def test_values_first_functions_accept_the_old_order(fn):
     new = _new_order(fn, VALUES, PARAMS, MODEL, DATA)

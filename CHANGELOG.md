@@ -186,6 +186,34 @@ anything before 1.0 may change between minor versions.
   `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
   data argument is `data`. `samples_dict=` and `data_obj=` still work
   with a `FutureWarning` until 0.5.
+- **Curvature tools are named for what they compute (`virgil.inference`).**
+  `fisher` was the observed information (the Hessian of -log L), while
+  `gaussian_fisher` was the expected Fisher matrix, and `laplace_cov` (model
+  and data) sat beside `laplace_covariance` (a flat objective). They are now
+  `observed_information` (also `virgil.observed_information`),
+  `expected_fisher` and `objective_laplace_covariance`; `laplace_cov` keeps
+  its name. The old names `fisher`, `gaussian_fisher` and
+  `laplace_covariance` still work with a `FutureWarning` until 0.5.
+  `laplace_parameter_uncertainty` takes `dtype=` like `laplace_cov` and
+  `observed_information` and now computes in float64 by default (it used
+  the ambient float32, whose second derivatives are noisy); the grid tools
+  keep the ambient precision. `virgil.inference` has an `__all__`.
+- **`starting_image` takes everything after `data` by keyword.**
+  `starting_image(data, star, oversample, largest_mas, start, hole_mas)`
+  in the 0.3 positional form still works with a `FutureWarning` until 0.5;
+  `field_fwhms`, `inner_elements` and `aperture_mas` (new in 0.4) are keyword-only outright.
+  `clean` already took its options by keyword.
+- **`OIData.observable_kind` is now `OIData.vis_encoding`** (`"split"` or
+  `"mixed_log_complex"`), so that it is not mistaken for the record key
+  `vis_mode`, which sets the visibility channel (`"auto"`, `"v2"`, `"amp"`,
+  `"logamp"`; the docstring wrongly called `observable_kind` an alias of it).
+  The old attribute still reads, with a `FutureWarning` outside virgil, until 0.5.
+- **`DetectionMC.load` checks the file format.** `meta["format"]` (1) was
+  written but never read; `load` now raises a `ValueError` for any other
+  version and reads a file without it as version 1.
+- **Removals wait for 0.5.** The 0.2.0 and 0.3.0 entries said `Tabulated`
+  would go in 0.4.0. It stays through 0.4, with a `FutureWarning` that now
+  names 0.5, with every other deprecation.
 - To find the remaining 0.3-order calls in your own code before 0.5, add
   `"error:.*stops working in virgil 0.5:FutureWarning"` to your pytest
   `filterwarnings` (as virgil's own test suite now does), or run

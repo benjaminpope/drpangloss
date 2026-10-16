@@ -59,7 +59,7 @@ from jax.scipy.special import xlogy
 
 from ._geometry import fringe_scales, pixel_offsets, rotate, smearing_scale
 from ._utils import FWHM_PER_SIGMA, _reference, mas2rad
-from ._deprecate import renamed
+from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
@@ -74,7 +74,6 @@ from .models import (
     circular_support,
     smeared_model,
 )
-from ._deprecate import external_stacklevel
 
 _HIGHEST = jax.lax.Precision.HIGHEST
 
@@ -557,7 +556,7 @@ def _squared_visibilities(d):
     """
     empty = onp.zeros(0)
     if (
-        d.observable_kind != "split"
+        d.vis_encoding != "split"
         or d.vis_mat is not None
         or d.uv_grid is not None
         or onp.size(d.vis) == 0
@@ -713,7 +712,7 @@ def _complex_visibilities(d):
     visibilities directly. The weights are 1 on samples that the data
     inform and 0 elsewhere (uniform weighting, as in :func:`beam`).
     """
-    if d.observable_kind == "mixed_log_complex":
+    if d.vis_encoding == "mixed_log_complex":
         sigma = onp.asarray(d.d_vis)[:, None]
         operator = onp.concatenate(
             [onp.asarray(d.vis_mat), onp.asarray(d.phi_mat)], axis=1
@@ -734,7 +733,7 @@ def _complex_visibilities(d):
         logv[:n] -= onp.mean(logv[:n][informed][shortest])
         return onp.exp(logv[:n] + 1j * logv[n:]), informed.astype(float)
     if (
-        d.observable_kind == "split"
+        d.vis_encoding == "split"
         and not d.cp_flag
         and d.phi_mat is None
         and d.vis_mat is None
@@ -861,8 +860,10 @@ def envelope_fwhm(data, star=True, aperture_mas=None):
     return _envelope_fit(data, star, aperture_mas)[1]
 
 
+@keyword_only("star", "oversample", "largest_mas", "start", "hole_mas")
 def starting_image(
     data,
+    *,
     star=True,
     oversample=4.0,
     largest_mas=None,
@@ -1029,7 +1030,7 @@ def beam(data):
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
         weight = onp.asarray(d.unflagged, dtype=float)
-        if d.observable_kind == "mixed_log_complex":
+        if d.vis_encoding == "mixed_log_complex":
             sigma = onp.asarray(d.d_vis)[:, None]
             information = onp.sum(
                 (onp.asarray(d.vis_mat) ** 2 + onp.asarray(d.phi_mat) ** 2)
@@ -3241,9 +3242,7 @@ def diagnose(model, data, regularizers=()):
         any(isinstance(part, PointSource) for _, part in parts)
         or any(isinstance(r, Centroid) for r in regularizers)
         or any(
-            d.observable_kind == "split"
-            and not d.cp_flag
-            and d.phi_mat is None
+            d.vis_encoding == "split" and not d.cp_flag and d.phi_mat is None
             for d in observations
         )
     )
@@ -3295,7 +3294,7 @@ def diagnose(model, data, regularizers=()):
 
     regimes = []
     for d in observations:
-        if d.phi_mat is None and d.observable_kind != "mixed_log_complex":
+        if d.phi_mat is None and d.vis_encoding != "mixed_log_complex":
             continue
         if d.bandwidth is None:
             cvis = model.model(d.u, d.v, d.wavel)

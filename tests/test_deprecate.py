@@ -12,7 +12,12 @@ import jax
 import jax.numpy as np
 import pytest
 
-from virgil._deprecate import old_order, renamed
+from virgil._deprecate import (
+    deprecated_name,
+    keyword_only,
+    old_order,
+    renamed,
+)
 from virgil.oidata import OIData
 
 ORDER = "now takes the model before the data"
@@ -360,3 +365,55 @@ def test_keywords_must_be_keyword_only_parameters_of_the_function():
         @old_order("data", "model", data="data", keywords=("grid",))
         def worse(model, *, data):
             return model, data
+
+
+@keyword_only("b", "c")
+def kw_only_like(a, *, b=1, c=2, d=3):
+    return a, b, c, d
+
+
+def test_keyword_only_warns_on_the_0_3_positional_use():
+    assert kw_only_like(0, b=5, d=6) == (0, 5, 2, 6)
+    with pytest.warns(FutureWarning, match="stops working in virgil 0.5"):
+        assert kw_only_like(0, 5) == (0, 5, 2, 3)
+    with pytest.warns(FutureWarning, match="pass b, c by keyword"):
+        assert kw_only_like(0, 5, 6, d=7) == (0, 5, 6, 7)
+
+
+def test_keyword_only_rejects_positionals_it_never_allowed():
+    # ``d`` is new since 0.3, so it was never positional.
+    with pytest.raises(TypeError, match="pass the rest by keyword"):
+        kw_only_like(0, 1, 2, 3)
+    with pytest.raises(TypeError, match="multiple values for b"):
+        kw_only_like(0, 1, b=2)
+
+
+def test_keyword_only_needs_keyword_only_parameters():
+    with pytest.raises(ValueError, match="not keyword-only"):
+
+        @keyword_only("b")
+        def bad(a, b):
+            return a, b
+
+
+def test_deprecated_name_forwards_and_warns():
+    def new(x, y=2):
+        """New."""
+        return x + y
+
+    old = deprecated_name("old", new)
+    assert old.__name__ == "old"
+    with pytest.warns(FutureWarning, match=r"old is now new; .*virgil 0.5"):
+        assert old(1, y=3) == 4
+
+
+def test_starting_image_options_are_keyword_only():
+    from virgil.imaging import starting_image
+
+    params = inspect.signature(starting_image).parameters
+    assert [
+        n for n, p in params.items() if p.kind is p.POSITIONAL_OR_KEYWORD
+    ] == ["data"]
+    # Parameters new in 0.4 were never positional, so they have no shim.
+    with pytest.raises(TypeError):
+        starting_image(_oidata(), True, 4.0, None, "moments", None, 6.0)
