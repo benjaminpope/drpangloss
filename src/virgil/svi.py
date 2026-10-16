@@ -59,6 +59,19 @@ from ._deprecate import external_stacklevel
 
 GUIDES = ("bnaf", "iaf", "mvn", "laplace")
 
+_DENSE_HINT = (
+    "Pass guide=autoguide.AutoNormal (a diagonal guide), or use "
+    "imaging.laplace_samples."
+)
+
+
+class _SizedLaplace(autoguide.AutoLaplaceApproximation):
+    """numpyro's Laplace guide, refusing a Hessian above the size limit."""
+
+    def _setup_prototype(self, *args, **kwargs):
+        super()._setup_prototype(*args, **kwargs)
+        _check_dense_size(self.latent_dim, "The Laplace guide", _DENSE_HINT)
+
 
 @dataclasses.dataclass
 class VariationalResult:
@@ -136,7 +149,9 @@ def _laplace_started(base):
         start_tril = None
 
         def _get_posterior(self):
-            _check_dense_size(self.latent_dim, "A Laplace-started guide")
+            _check_dense_size(
+                self.latent_dim, "A Laplace-started guide", _DENSE_HINT
+            )
             if getattr(self, "_hidden_dims", ()) is None:
                 # numpyro's IAF default, two layers of latent_dim units, is
                 # too narrow to bend a banana in a few dimensions.
@@ -197,9 +212,7 @@ def _make_guide(guide, posterior, init_loc_fn):
             posterior, init_loc_fn=init_loc_fn
         )
     if guide == "laplace":
-        return autoguide.AutoLaplaceApproximation(
-            posterior, init_loc_fn=init_loc_fn
-        )
+        return _SizedLaplace(posterior, init_loc_fn=init_loc_fn)
     raise ValueError(
         f"guide must be one of {GUIDES} or a callable, not {guide!r}."
     )
@@ -226,7 +239,7 @@ def _start_scale(
     Returns ``(L, dense)``.
     """
     n = guide_obj.latent_dim
-    _check_dense_size(n, "The guide's starting width")
+    _check_dense_size(n, "The guide's starting width", _DENSE_HINT)
     # The guide's own map from its latent vector to sites gives each
     # site's indices in it, whatever order numpyro packs them in.
     index = guide_obj._unpack_latent(np.arange(n, dtype=float))
@@ -339,10 +352,11 @@ def variational(
     Flows need at least two parameters.
 
     **Size.** ``"bnaf"``, ``"iaf"`` and ``"mvn"`` keep a dense n × n
-    Cholesky factor, so above ``fitting._DENSE_MASS_MAX`` (4096)
-    coordinates they raise ``ValueError`` before allocating it. For an
-    image use the Laplace approximation, or a diagonal guide such as
-    ``autoguide.AutoNormal``.
+    Cholesky factor, and ``"laplace"`` a dense Hessian, so above
+    ``fitting._DENSE_MASS_MAX`` (4096) coordinates all four raise
+    ``ValueError`` before allocating it. For an image use
+    [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal
+    guide such as ``autoguide.AutoNormal``.
 
     **One mode.** Every guide here covers one mode of the posterior. For
     multimodal posteriors (orbits with Ω/ω flips or period aliases,

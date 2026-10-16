@@ -1051,13 +1051,13 @@ def _at_bound(problem, values):
 _DENSE_MASS_MAX = 4096
 
 
-def _check_dense_size(n, what):
+def _check_dense_size(n, what, hint=""):
     """Raise ``ValueError`` if ``what`` would need a dense n × n matrix."""
     if n > _DENSE_MASS_MAX:
         raise ValueError(
-            f"{what} needs a dense {n} × {n} matrix ({8 * n * n / 1e9:.1f} GB "
-            f"in float64), more than the {_DENSE_MASS_MAX} coordinates "
-            "virgil allows."
+            f"{what} needs a dense {n} × {n} matrix ({n * n:.1e} entries), "
+            f"more than the {_DENSE_MASS_MAX} coordinates virgil allows."
+            + (f" {hint}" if hint else "")
         )
 
 
@@ -1152,7 +1152,7 @@ def gauss_newton_mass(
 
     **Size.** The dense matrix has n² entries. With more than 4096
     coordinates the result is a diagonal mass, with a ``UserWarning``:
-    images of 128² and above get this. Its entries are the diagonal of the
+    images larger than 64² get this. Its entries are the diagonal of the
     covariance F⁻¹, computed without forming the matrix, when there are
     fewer rows than coordinates (an image), and 1/diag(F) otherwise.
 

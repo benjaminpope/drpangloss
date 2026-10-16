@@ -357,8 +357,8 @@ def test_the_dense_guides_refuse_more_coordinates_than_the_limit(monkeypatch):
         "ddec": dist.Uniform(-100.0, -60.0),
     }
     data = nrm_oidata().with_model(start, key=jax.random.PRNGKey(0))
-    for guide in ("mvn", "bnaf", "iaf"):
-        with pytest.raises(ValueError, match="dense 2 × 2 matrix"):
+    for guide in ("mvn", "bnaf", "iaf", "laplace"):
+        with pytest.raises(ValueError, match="dense 2 × 2 matrix.*AutoNormal"):
             variational(start, priors, data, guide=guide, steps=2)
     result = variational(
         start,
