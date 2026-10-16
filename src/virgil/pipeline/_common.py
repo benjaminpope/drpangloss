@@ -321,9 +321,12 @@ def _mcmc(posterior, settings, *, dense_mass):
 
 
 # How far inside its prior a NUTS start is pulled, as a fraction of the
-# prior's width in its flat coordinate (log x for a LogUniform). The
-# sampler's unconstrained value is then about ``logit(1e-3)`` = -7 at the
-# worst, finite in float32 and float64; a start exactly on a bound is +-inf.
+# prior's width, measured as ``fit`` measures ``at_bound`` (in log x for a
+# LogUniform). A start exactly on a bound has an infinite unconstrained
+# value. Inside, it stays finite in float32 and float64 but its size depends
+# on the sampler's coordinate: about -7 (``logit(1e-3)``) in the flat
+# coordinates, and about ``logit(inset ln(R) / R)`` for a LogUniform with
+# R = high / low in numpyro's linear interval (about -15 for R = 5e4).
 _START_INSET = 1e-3
 
 

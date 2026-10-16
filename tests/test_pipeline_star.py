@@ -1014,3 +1014,20 @@ def test_unconverged_lm_message_says_why():
     assert "no step lowered the loss" in failed
     limit = fitting._not_converged("lm", "limit", 1000, 1000, "float32", None)
     assert "step limit" in limit
+
+
+def test_unresolved_star_starts_inside_the_diameter_prior(tmp_path):
+    # An unresolved star's diameter runs to the lower edge of its range; NUTS
+    # must start just inside it (numpyro's init fails on the bound itself).
+    template = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
+        hour_angles_h=(-2.5, 0.0, 2.5),
+        sigma_v2=0.01,
+        sigma_cp_deg=15.0,
+    )
+    data = template.with_model(UniformDisk(1e-4), key=jax.random.PRNGKey(5))
+    result = StarPipeline(data, output=tmp_path / "run", **TINY).run()
+    assert result.status == "complete"
+    check = {c.name: c for c in result.checks}["start_at_bound"]
+    assert check.status == "warn"
+    assert any(name.endswith(".diam") for name in check.value)
