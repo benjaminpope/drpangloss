@@ -443,8 +443,11 @@ settings = dict(
     ell_halffringes=[0.4, 1.0, 2.0],
     quicklook_execute=False,
 )
+# The rings are blackbodies here, so give the rings model that colour law (the
+# default, a power-law index per ring, cannot follow a blackbody across the band).
 rings_res = DiskPipeline(
-    data, "rings", output=f"{mkdtemp()}/rings_run", **settings
+    data, "rings", output=f"{mkdtemp()}/rings_run", ring_colour="blackbody",
+    **settings
 ).run()
 gp_res = DiskPipeline(
     data, "gp", output=f"{mkdtemp()}/gp_run", **settings

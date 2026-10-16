@@ -36,6 +36,8 @@ _WIDTH_FLOOR = 0.1
 _FLUX_RANGE = (1e-3, 10.0)
 _PLANET_FLUX_RANGE = (1e-4, 1.0)
 _INDEX_RANGE = (-10.0, 10.0)
+_TEMPERATURE_RANGE = (300.0, 3000.0)
+_TEMPERATURE_START = 1000.0
 # The rings' harmonics are fractions of the ring's light (|w| <= 1 keeps the
 # intensity positive); an isotropic Gaussian on re and im has a uniform phase,
 # where a box would favour the diagonals.
@@ -249,6 +251,12 @@ class DiskPipeline(_Pipeline):
         - ``spectral_index`` (None): ``True`` or ``False`` to force the
           colour on or off; by default it is on with more than
           ``spectral_index_min_channels`` (3) channels.
+        - ``ring_colour`` (``"power_law"``): the colour of each ring and
+          of the planet when the colour is on (``"rings"`` only):
+          ``"power_law"`` fits a spectral index, ``"blackbody"`` a
+          temperature (300 to 3000 K, log-uniform) with the flux at the
+          reference wavelength, which represents blackbody-like spectra over
+          a broad band that a power law misses.
         - ``wavel0_m`` (None), ``star_temperature_k`` (None): the
           reference wavelength (default the mean wavelength) and the star's
           blackbody (default a grey reference).
@@ -300,6 +308,7 @@ class DiskPipeline(_Pipeline):
         "harmonic_degree": 1,
         "spectral_index": None,
         "spectral_index_min_channels": 3,
+        "ring_colour": "power_law",
         "wavel0_m": None,
         "star_temperature_k": None,
         "companion": False,
@@ -334,6 +343,11 @@ class DiskPipeline(_Pipeline):
             )
         self.name = name
         super().__init__(data, name, output=output, **settings)
+        if name == "gp" and self.settings["ring_colour"] != "power_law":
+            raise ValueError(
+                'ring_colour="blackbody" is for model="rings": the Gaussian '
+                "process's colour is its own spectral index."
+            )
         if name == "gp" and self.settings["error_scale"] == "fit":
             raise ValueError(
                 'error_scale="fit" is not available for model="gp": the '
@@ -376,6 +390,8 @@ class DiskPipeline(_Pipeline):
             raise ValueError("harmonic_degree must be an integer >= 0.")
         if s["spectral_index"] not in (None, True, False):
             raise ValueError("spectral_index must be None, True or False.")
+        if s["ring_colour"] not in ("power_law", "blackbody"):
+            raise ValueError('ring_colour must be "power_law" or "blackbody".')
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
         for name in ("num_samples", "num_chains"):
@@ -462,6 +478,7 @@ class _Context:
     n_gp: int
     wavel0: float
     colour: bool
+    law: str
     degree: int
     star_teff: float | None
     companion: bool
@@ -480,6 +497,7 @@ class _Context:
             n_gp=overview["n_r_gp"],
             wavel0=overview["wavel0_m"],
             colour=overview["colour"],
+            law=settings["ring_colour"],
             degree=int(settings["harmonic_degree"]),
             star_teff=settings["star_temperature_k"],
             companion=bool(settings["companion"]),
@@ -592,10 +610,29 @@ def _star(ctx):
     return PointSource(flux=BlackBody(1.0, ctx.star_teff, ctx.wavel0))
 
 
-def _flux(ctx, ratio, index, colour):
-    from ..spectra import PowerLaw
+def _flux(ctx, ratio, colour_value, colour):
+    """A source's flux: ``ratio``, or with colour a power law of index
+    ``colour_value`` or a blackbody of that temperature (``ring_colour``)."""
+    from ..spectra import BlackBody, PowerLaw
 
-    return PowerLaw(ratio, index, ctx.wavel0) if colour else ratio
+    if not colour:
+        return ratio
+    if ctx.law == "blackbody":
+        return BlackBody(ratio, colour_value, ctx.wavel0)
+    return PowerLaw(ratio, colour_value, ctx.wavel0)
+
+
+def _colour_start(ctx):
+    """The starting value of a colour parameter."""
+    return _TEMPERATURE_START if ctx.law == "blackbody" else 0.0
+
+
+def _colour_prior(ctx):
+    import numpyro.distributions as dist
+
+    if ctx.law == "blackbody":
+        return dist.LogUniform(*_TEMPERATURE_RANGE)
+    return dist.Uniform(*_INDEX_RANGE)
 
 
 def _planet(ctx, v, colour):
@@ -669,7 +706,7 @@ def _planet_priors(ctx, colour):
         "fp": dist.LogUniform(*_PLANET_FLUX_RANGE),
     }
     if colour:
-        priors["ap"] = dist.Uniform(*_INDEX_RANGE)
+        priors["ap"] = _colour_prior(ctx)
     return priors
 
 
@@ -684,7 +721,7 @@ def _ring_priors(ctx, shape):
         )
         priors[f"f{i}"] = dist.LogUniform(*_FLUX_RANGE)
         if shape.colour:
-            priors[f"a{i}"] = dist.Uniform(*_INDEX_RANGE)
+            priors[f"a{i}"] = _colour_prior(ctx)
         for j in range(1, shape.degree + 1):
             priors[f"h{i}_re{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
             priors[f"h{i}_im{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
@@ -1077,14 +1114,14 @@ def _geometry_values(p):
     return _scalars(_io.load_model_values(p.output / "models" / "geometry"))
 
 
-def _planet_start(search, colour):
+def _planet_start(search, ctx):
     start = {
         "dra": search["dra_mas"],
         "ddec": search["ddec_mas"],
         "fp": min(max(search["flux"], _PLANET_FLUX_RANGE[0] * 2), 0.5),
     }
-    if colour:
-        start["ap"] = 0.0
+    if ctx.colour:
+        start["ap"] = _colour_start(ctx)
     return start
 
 
@@ -1104,7 +1141,7 @@ def _ring_start(ctx, held, n, new, degree, colour):
         )
     for ring in range(1, n + 1):
         if colour:
-            start.setdefault(f"a{ring}", 0.0)
+            start.setdefault(f"a{ring}", _colour_start(ctx))
         for j in range(1, degree + 1):
             start.setdefault(f"h{ring}_re{j}", 0.0)
             start.setdefault(f"h{ring}_im{j}", 0.0)
@@ -1116,7 +1153,7 @@ def _scan_model(ctx, shape, base, *, rnew, fnew):
     i = shape.n
     v[f"r{i}"], v[f"s{i}"], v[f"f{i}"] = rnew, ctx.halffringe, fnew
     if shape.colour:
-        v[f"a{i}"] = 0.0
+        v[f"a{i}"] = _colour_start(ctx)
     for j in range(1, shape.degree + 1):
         v[f"h{i}_re{j}"] = 0.0
         v[f"h{i}_im{j}"] = 0.0
@@ -1166,7 +1203,7 @@ def _fit_with_planet(p, shape, start):
     if search["delta_chi2"] < p.settings["companion_min_delta_chi2"]:
         return fit, shape, search
     with_planet = dataclasses.replace(shape, planet=True)
-    values = {**_scalars(fit.values), **_planet_start(search, shape.colour)}
+    values = {**_scalars(fit.values), **_planet_start(search, ctx)}
     return _fit_rings(p, with_planet, values), with_planet, search
 
 
@@ -1223,7 +1260,7 @@ def _fill_new(ctx, held, n):
     v[f"r{n}"], v[f"s{n}"], v[f"f{n}"] = ctx.r_in, ctx.halffringe, 0.01
     for ring in range(1, n + 1):
         if ctx.colour:
-            v.setdefault(f"a{ring}", 0.0)
+            v.setdefault(f"a{ring}", _colour_start(ctx))
         for j in range(1, ctx.degree + 1):
             v.setdefault(f"h{ring}_re{j}", 0.0)
             v.setdefault(f"h{ring}_im{j}", 0.0)
@@ -1493,7 +1530,7 @@ def _profile_gp(p):
         )
         searches.append(search)
         if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
-            planet = _planet_start(search, ctx.colour)
+            planet = _planet_start(search, ctx)
     candidates = []
     for k, ell in enumerate(ctx.ells):
         fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)

@@ -415,7 +415,10 @@ Ben's, 2026-10-15.
 - **Companions.** One star by default; a companion search is opt-in, an
   expert workflow.
 - **Colour.** `spectral_index` turns on automatically with more than a
-  few channels.
+  few channels. The rings model's colour is a power-law index
+  per ring; `ring_colour="blackbody"` fits a temperature instead, since over a
+  1.5× band a power law misses a blackbody ring by several percent (job
+  18666218: rings χ²/N 1.32 against 1.01 for the parametric blackbody fit).
 - **Scope.** The colliding-wind cone geometry of the Apep analysis is out
   of v1; it may become a registry entry later, with no new stage.
 - **Timing.** Build only after the `MultipoleDisk` PR stack merges (its code

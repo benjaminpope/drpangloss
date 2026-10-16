@@ -125,6 +125,7 @@ DEFAULTS = {
     "harmonic_degree": 1,
     "spectral_index": None,
     "spectral_index_min_channels": 3,
+    "ring_colour": "power_law",
     "wavel0_m": None,
     "star_temperature_k": None,
     "companion": False,
@@ -542,6 +543,65 @@ def test_rings_posterior_is_folded(rings_run):
     assert "pa_vec" not in params
 
 
+def test_ring_colour_is_validated(data, tmp_path):
+    with pytest.raises(ValueError, match="ring_colour"):
+        DiskPipeline(data, "rings", ring_colour="grey")
+    with pytest.raises(ValueError, match="model=.rings."):
+        DiskPipeline(data, "gp", ring_colour="blackbody")
+    assert DiskPipeline.defaults()["ring_colour"] == "power_law"
+
+
+def test_blackbody_ring_colour_recovers_the_temperature(tmp_path):
+    from virgil.spectra import BlackBody
+
+    w0 = 3.0e-6
+    truth = System(
+        star=PointSource(flux=BlackBody(1.0, 6000.0, w0)),
+        ring=MultipoleDisk(
+            GaussianRing(5.0, 1.0),
+            inc=50.0,
+            pa=30.0,
+            flux=BlackBody(0.4, 600.0, w0),
+            n_r=48,
+        ),
+    )
+    broad = vlti_oidata(
+        wavelengths_m=onp.linspace(2.4e-6, 3.6e-6, 5),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.002,
+        sigma_cp_deg=0.5,
+    ).with_model(truth, key=jax.random.PRNGKey(5))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "max_rings": 1,
+        "harmonic_degree": 0,
+        "star_temperature_k": 6000.0,
+        "wavel0_m": w0,
+    }
+    chi2 = {}
+    for law in ("power_law", "blackbody"):
+        pipeline = DiskPipeline(
+            broad,
+            "rings",
+            output=tmp_path / law,
+            ring_colour=law,
+            **settings,
+        )
+        res = pipeline.run(through="profile")
+        row = res.summary["profile"]["candidates"][0]
+        chi2[law] = row["chi2_reduced"]
+        if law == "blackbody":
+            values = _io.load_model_values(
+                pipeline.output / "models" / "rings_1"
+            )
+            assert float(values["a1"]) == pytest.approx(600.0, rel=0.2)
+    # A power law cannot follow the blackbody over this band; the blackbody
+    # fits at the noise.
+    assert chi2["blackbody"] < 1.5
+    assert chi2["power_law"] > chi2["blackbody"]
+
+
 def test_fold_pa_keeps_the_disk():
     # The fold's parity rule: pa → pa + 180° with the order-m harmonic times
     # (-1)^m is the same disk. Check it against MultipoleDisk itself.
@@ -669,6 +729,7 @@ def _context():
         n_gp=24,
         wavel0=2e-6,
         colour=False,
+        law="power_law",
         degree=1,
         star_teff=None,
         companion=False,
