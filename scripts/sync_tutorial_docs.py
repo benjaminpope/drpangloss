@@ -59,7 +59,7 @@ MAPPINGS = {
     "notebooks/harmonix.ipynb": "docs/harmonix.md",
     "notebooks/limb_darkening.ipynb": "docs/limb_darkening.md",
     "notebooks/gravity_darkened_star.ipynb": "docs/gravity_darkened_star.md",
-    "notebooks/polar_disk_rings.ipynb": "docs/polar_disk_rings.md",
+    "notebooks/multipole_disk_rings.ipynb": "docs/multipole_disk_rings.md",
 }
 
 

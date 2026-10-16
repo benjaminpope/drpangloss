@@ -1,4 +1,4 @@
-"""PolarDisk with a height and harmonics, and TruncatedCone on the engine."""
+"""MultipoleDisk with a height and harmonics, and TruncatedCone on the engine."""
 
 import equinox as eqx
 import jax
@@ -17,7 +17,7 @@ from virgil.models import (
     Harmonics,
     ModulatedGaussianRim,
     PointSource,
-    PolarDisk,
+    MultipoleDisk,
     PowerLawHeight,
     RadialLinear,
     RadialPower,
@@ -220,8 +220,10 @@ def test_suggest_n_r_counts_the_height_phase():
         wavel = onp.array([2.2e-6])
 
     profile = ExpTail(3.0, 3.0, cutoff=6.0)
-    flat = PolarDisk(profile, inc=60.0).suggest_n_r(_Data)
-    cone = PolarDisk(profile, height=Cone(20.0), inc=60.0).suggest_n_r(_Data)
+    flat = MultipoleDisk(profile, inc=60.0).suggest_n_r(_Data)
+    cone = MultipoleDisk(profile, height=Cone(20.0), inc=60.0).suggest_n_r(
+        _Data
+    )
     assert cone >= 48 > flat
 
 
@@ -267,11 +269,11 @@ def test_cone_with_more_than_the_node_limit_is_still_valid():
     assert onp.allclose(a, b, atol=1e-5)
 
 
-def test_cone_is_a_polar_disk_with_a_conical_height():
+def test_cone_is_a_multipole_disk_with_a_conical_height():
     p = dict(tip=3.0, alpha=40.0, s0=4.0, length=6.0, tilt=35.0, pa=70.0)
     cone = TruncatedCone(**p, width=1e-4, n_rings=48)
     sin_a = onp.sin(onp.radians(p["alpha"]))
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ExpTail(p["s0"] * sin_a, p["length"] * sin_a, cutoff=5.0),
         height=Cone(p["alpha"], p["tip"]),
         inc=90.0 - p["tilt"],
@@ -300,7 +302,7 @@ def test_harmonics_of_a_thin_ring_match_the_modulated_rim():
     rim = ModulatedGaussianRim(
         diam=12.0, fwhm=1.5, inc=50.0, pa=30.0, az_amps=amps, az_pas=phis
     )
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ThinRing(6.0),
         harmonics=Harmonics(c=c, s=s),
         inc=50.0,
@@ -318,7 +320,7 @@ def test_harmonics_sign_first_order(axis):
     # and V = 1 - 2 pi i (u x + v y) for a source with centroid (x, y).
     pa = 30.0
     harmonics = Harmonics(**{axis: 0.6})
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(5.0, 0.5), harmonics=harmonics, pa=pa, n_r=32
     )
     bright = pa if axis == "c" else pa + 90.0
@@ -355,7 +357,7 @@ def _render_visibilities(model, u, v, npix=384, fov_mas=60.0):
 
 
 _RENDERED = {
-    "harmonics": PolarDisk(
+    "harmonics": MultipoleDisk(
         GaussianRing(9.0, 1.5),
         harmonics=Harmonics(c=(0.3, -0.2, 0.1), s=(-0.4, 0.15)),
         inc=45.0,
@@ -363,7 +365,7 @@ _RENDERED = {
         dra=1.0,
         ddec=-2.0,
     ),
-    "radial harmonics": PolarDisk(
+    "radial harmonics": MultipoleDisk(
         GaussianRing(9.0, 2.5),
         harmonics=Harmonics(
             c=RadialLinear(0.0, 0.05, 9.0), s=(RadialPower(0.2, 1.0, 9.0), 0.1)
@@ -371,20 +373,20 @@ _RENDERED = {
         inc=30.0,
         pa=20.0,
     ),
-    "flared": PolarDisk(
+    "flared": MultipoleDisk(
         GaussianRing(9.0, 1.5),
         height=PowerLawHeight(2.5, 9.0, 1.0),
         inc=60.0,
         pa=110.0,
     ),
-    "cone": PolarDisk(
+    "cone": MultipoleDisk(
         ExpTail(3.0, 3.0, cutoff=6.0),
         height=Cone(35.0, 2.0),
         inc=50.0,
         pa=15.0,
         n_r=64,
     ),
-    "cone with harmonics": PolarDisk(
+    "cone with harmonics": MultipoleDisk(
         ExpTail(3.0, 3.0, cutoff=6.0),
         harmonics=Harmonics(c=0.3, s=(-0.5, 0.2)),
         height=Cone(35.0, 2.0),
@@ -406,7 +408,7 @@ def test_render_fourier_transform_matches_model_visibilities(name):
 
 def test_height_shifts_towards_pa_plus_90_by_h_sin_i():
     h, inc, pa = 3.0, 55.0, 30.0
-    ring = PolarDisk(
+    ring = MultipoleDisk(
         GaussianRing(0.0, 0.01),
         height=PowerLawHeight(h, 1.0, 0.0),
         inc=inc,
@@ -421,7 +423,7 @@ def test_height_shifts_towards_pa_plus_90_by_h_sin_i():
     u, v = _uv(20, seed=8, qmax=0.05)
     assert onp.allclose(_cvis(ring, u, v), _cvis(point, u, v), atol=2e-5)
     # Face-on, a height changes nothing; the render moves with the shift.
-    flat = PolarDisk(
+    flat = MultipoleDisk(
         GaussianRing(0.0, 0.01), height=PowerLawHeight(h, 1.0, 0.0)
     )
     assert onp.allclose(
@@ -437,11 +439,11 @@ def test_height_shifts_towards_pa_plus_90_by_h_sin_i():
 
 def test_cone_height_lifts_rings_by_r_cot_alpha_minus_tip():
     alpha, tip, r0, inc, pa = 40.0, 1.5, 6.0, 65.0, 120.0
-    ring = PolarDisk(
+    ring = MultipoleDisk(
         ThinRing(r0), height=Cone(alpha, tip), inc=inc, pa=pa, blur_fwhm=0.5
     )
     lift = (r0 / onp.tan(onp.radians(alpha)) - tip) * onp.sin(onp.radians(inc))
-    flat = PolarDisk(
+    flat = MultipoleDisk(
         ThinRing(r0),
         inc=inc,
         pa=pa,
@@ -482,7 +484,7 @@ def test_changing_height_and_harmonics_values_does_not_recompile():
 
     u, v = (np.asarray(a) for a in _uv(10))
     for c, h0 in [(0.1, 1.0), (0.3, 2.0), (-0.2, 3.0)]:
-        disk = PolarDisk(
+        disk = MultipoleDisk(
             GaussianRing(5.0, 1.0),
             harmonics=Harmonics(c=c, s=(0.1, c)),
             height=PowerLawHeight(h0, 5.0, 1.0),
@@ -493,7 +495,7 @@ def test_changing_height_and_harmonics_values_does_not_recompile():
     assert len(traces) == 1
     # A different degree is a different program.
     evaluate(
-        PolarDisk(
+        MultipoleDisk(
             GaussianRing(5.0, 1.0),
             harmonics=Harmonics(c=0.1, degree=3),
             n_r=24,
@@ -513,7 +515,7 @@ def test_chunked_evaluation_matches_with_height_and_harmonics(monkeypatch):
 
 
 def test_parameters_are_reachable_through_paths():
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(5.0, 1.0),
         harmonics=Harmonics(c=(0.3, 0.1), s=0.2),
         height=Cone(40.0, 1.0),
@@ -525,17 +527,19 @@ def test_parameters_are_reachable_through_paths():
 
 def test_min_intensity_reports_positivity_violations():
     ring = GaussianRing(5.0, 1.0)
-    assert float(PolarDisk(ring).min_intensity()) == 1.0
-    ok = PolarDisk(ring, harmonics=Harmonics(c=0.5, s=0.5))
+    assert float(MultipoleDisk(ring).min_intensity()) == 1.0
+    ok = MultipoleDisk(ring, harmonics=Harmonics(c=0.5, s=0.5))
     assert float(ok.min_intensity()) == pytest.approx(
         1.0 - onp.sqrt(0.5), abs=1e-4
     )
     assert bool(ok.is_physical())
-    bad = PolarDisk(ring, harmonics=Harmonics(c=1.2))
+    bad = MultipoleDisk(ring, harmonics=Harmonics(c=1.2))
     assert float(bad.min_intensity()) == pytest.approx(-0.2, abs=1e-4)
     assert not bool(bad.is_physical())
     # A radial function: only the outer nodes violate it.
-    grows = PolarDisk(ring, harmonics=Harmonics(c=RadialLinear(0.0, 0.3, 5.0)))
+    grows = MultipoleDisk(
+        ring, harmonics=Harmonics(c=RadialLinear(0.0, 0.3, 5.0))
+    )
     assert float(grows.min_intensity()) < 0.0
 
 
@@ -547,11 +551,11 @@ def test_harmonics_and_height_inputs_are_validated():
     with pytest.raises(ValueError, match="scalar"):
         Harmonics(c=[[0.1, 0.2]])
     with pytest.raises(TypeError, match="Harmonics"):
-        PolarDisk(GaussianRing(5.0, 1.0), harmonics=0.3)
+        MultipoleDisk(GaussianRing(5.0, 1.0), harmonics=0.3)
     with pytest.raises(TypeError, match="height"):
-        PolarDisk(GaussianRing(5.0, 1.0), height=2.0)
+        MultipoleDisk(GaussianRing(5.0, 1.0), height=2.0)
     assert not bool(
-        PolarDisk(GaussianRing(5.0, 1.0), height=Cone(95.0)).is_physical()
+        MultipoleDisk(GaussianRing(5.0, 1.0), height=Cone(95.0)).is_physical()
     )
     assert Harmonics(degree=2).degree == 2
 

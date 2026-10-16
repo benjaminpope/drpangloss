@@ -1,6 +1,6 @@
 r"""Azimuthal harmonics: the image-harmonic convention and conversions.
 
-Every azimuthal profile of a [`PolarDisk`][virgil.models.PolarDisk] is, at
+Every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is, at
 each radius, a real function of the azimuth $\theta$ (in the plane of the
 disk, from the projected major axis towards ``pa + 90``) with the Fourier
 series

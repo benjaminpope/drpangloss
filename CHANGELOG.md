@@ -74,6 +74,35 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- **One naming scheme for the `MultipoleDisk` family** (new since 0.3.0, so
+  there are no shims). The classes are `MultipoleDisk`, `MultipoleKernel`
+  and `MultipoleField` (were `PolarDisk`, `PolarKernel`, `PolarField`),
+  with `multipole_disk_cvis` and `multipole_field_priors` for
+  `polar_disk_cvis` and `polar_field_priors`: the disk is a sum of
+  azimuthal multipoles, and "polar" now means only polar coordinates.
+  Names follow the stable conventions: `radius`,
+  `sigma` (a standard deviation, as `GaussianDisk`), `inc`/`pa` in degrees,
+  a unit suffix nowhere else. Renames:
+  `ThinRing(r0)` is `ThinRing(radius)`; `GaussianRing(r0, sigma, weight)`
+  is `GaussianRing(radius, sigma)`; `RadialPowerLaw(edge=)` is
+  `edge_sigma=`; `ExpTail(r0, scale, weight, cutoff)` is `ExpTail(r_in,
+  scale_length, cutoff)`; `Gap(base, r0, width, depth, weight)` is
+  `Gap(base, radius, sigma, depth)`; `RadialLinear`, `RadialPower`,
+  `PowerLawHeight` and `MultipoleKernel` take the reference radius `r_ref`
+  (was `r0`), and `PowerLawHeight` its height `h_ref` (was `h0`). The
+  profile `weight` is gone: a weight belongs to a term of the sum, as
+  `RadialSum(a, (b, 0.3))` or `RadialSum(core=ring, halo=(tail, 0.2))`
+  (paths `profile.halo.radius`, `profile.halo.weight`), and
+  `RadialSum` takes no `weight=` of its own. `RadialGP` splits in two:
+  `RadialGP(r_in, r_out, ...)` is the profile only, and the new
+  `RadialGPFunction` is the process as a callable function (spectral
+  index, harmonic coefficients, `MultipoleKernel` radial part); both share the
+  fit, prior and `draws` machinery. `Harmonics(c, s, *, degree, form, re,
+  im, w, prior)` takes everything after `s` by keyword. `_multipole_disks`
+  (used by `freeze_geometry`, `gp_priors` and `log_evidence`) now finds
+  the `MultipoleDisk` inside an `Attached` component. The profile
+  parametrization is unchanged.
+
 - `fit_orbit_aliases` now tempers by default, so its evidences, band
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to
@@ -191,38 +220,40 @@ anything before 1.0 may change between minor versions.
   unchanged.
 
 - **Tutorial: a planet in a gap between inclined rings (stage P5).**
-  `notebooks/polar_disk_rings.ipynb` (docs page `polar_disk_rings.md`)
+  `notebooks/multipole_disk_rings.ipynb` (docs page `multipole_disk_rings.md`)
   simulates chromatic VLTI-like V² and closure phases of a star, three
   coplanar blackbody rings (the outer one lopsided) and a planet in the
   gap; fits the parametric family with invariant priors (MAP, Laplace
   covariance and evidence); then recovers the rings, their colours, the
-  lopsidedness and the planet with one `PolarDisk` whose profile, spectral
+  lopsidedness and the planet with one `MultipoleDisk` whose profile, spectral
   index and harmonics are Gaussian processes, and compares the Laplace
   evidences and the prior and posterior of the profile and index.
-- **`RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`
-  (stage P4).** `RadialGP` is a whitened Matérn Gaussian-process profile
-  (or radial function) with latents `z`; `PolarKernel` is a prior over the
-  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `PolarDisk` takes
-  `spectral_index=` (number, function or `RadialGP`) with `wavel0=`;
+- **`RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `spectral_index` and
+  `freeze_geometry` (stage P4).** `RadialGP` is a whitened Matérn
+  Gaussian-process profile (positive, $\exp g$) and `RadialGPFunction` the
+  same process as a radial function $g(r)$ (a spectral index or a harmonic
+  coefficient), each with latents `z`; `MultipoleKernel` is a prior over the
+  harmonic coefficients (`Harmonics(degree=M, prior=...)`); `MultipoleDisk` takes
+  `spectral_index=` (number, function or `RadialGPFunction`) with `wavel0=`;
   `freeze_geometry(data)` caches the Bessel matrices; `gp_priors` builds the
   priors, and `fit`, `numpyro_model` (NUTS, flat coordinates) and
   `imaging.log_evidence` (Laplace over the latents) support them. The
   Gaussian-process idea follows FRAP (Yoshida et al. 2026), now credited in
   the `RadialGP` docstring, the contributors page and the bibliography.
-- **`PolarField` (stage P6).** A polar-kernel residual field for an `Image`:
+- **`MultipoleField` (stage P6).** A multipole-kernel residual field for an `Image`:
   a Gaussian process on a polar grid in a disk's frame (`inc`, `pa`, centre;
-  `PolarField.from_disk` copies them, or with `geometry_from="disk"` the field
+  `MultipoleField.from_disk` copies them, or with `geometry_from="disk"` the field
   takes the geometry of its sibling disk whenever the `System` is evaluated,
   with no geometry parameters of its own; `System.resolved()` bakes the ties
-  in), with the Matérn kernel of `RadialGP` in radius and the azimuthal
-  spectrum of `PolarKernel` (one shared definition, `nu` up to infinity,
+  in), with the Matérn kernel of `RadialGP`/`RadialGPFunction` in radius and the azimuthal
+  spectrum of `MultipoleKernel` (one shared definition, `nu` up to infinity,
   `nu_theta`), interpolated onto the pixels. Whitened latents,
   so `image_priors`, `fit`, `log_evidence` and `numpyro_model` work as for
-  `GaussianField`; `polar_field_priors` gives bounded log-uniform priors on
+  `GaussianField`; `multipole_field_priors` gives bounded log-uniform priors on
   `sigma`, `length_r` and `length_theta`. After the whitened latents of FRAP
   (Yoshida et al. 2026) and frank's polar representation (Jennings et al.
-  2020). `FlaredDisk*` is unchanged: its comparison with `PolarDisk` is
-  tested in `tests/test_flared_vs_polar_disk.py`.
+  2020). `FlaredDisk*` is unchanged: its comparison with `MultipoleDisk` is
+  tested in `tests/test_flared_vs_multipole_disk.py`.
 
 - **Positive azimuthal harmonics, `VonMises` and `virgil.harmonics` (stage P3).**
   `Harmonics(degree=M)` (or `Harmonics(w=...)` / `re=`, `im=`) is now the
@@ -235,7 +266,7 @@ anything before 1.0 may change between minor versions.
   root-flip multimodality of `|h|^2` is removed. Value and gradient are finite
   at `w = 0`. The linear form (`c=`, `s=`) is unchanged and is still chosen
   whenever `c` or `s` is given. `VonMises(kappa, theta0, degree=M)` is a
-  `PolarDisk` arc with analytic harmonics (a small FFT), and
+  `MultipoleDisk` arc with analytic harmonics (a small FFT), and
   `truncation_power()` reports the dropped power. The new module
   `virgil.harmonics` converts every form to and from the image harmonics
   (`to_image_harmonics`, `from_image_harmonics`, `Harmonics.convert`), including
@@ -254,15 +285,15 @@ anything before 1.0 may change between minor versions.
   closure phases, differential phases and a flux spectrum, and show a
   differential-phase-only detection of a 0.1 mas companion that a grey V²/T3 fit
   misses. Tutorial: *Chromatic companion search*.
-- **`PolarDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
-  tip)` or `PowerLawHeight(h0, r0, psi)` (each ring is lifted along the disk's
+- **`MultipoleDisk` height and harmonics (stage P2).** `height=` takes `Cone(alpha,
+  tip)` or `PowerLawHeight(h_ref, r_ref, psi)` (each ring is lifted along the disk's
   normal: a shift of `h sin(inc)` on the sky), and `harmonics=` takes the
   linear-form `Harmonics(c=, s=)` of Cartesian coefficients, constants or
   functions of the radius (`RadialLinear`, `RadialPower`). `min_intensity()`
   reports where the image would go negative. `ExpTail` gains `cutoff=` (a
-  Gauss-Legendre rule on a finite tail). `polar_disk_cvis` takes `c`, `s`,
+  Gauss-Legendre rule on a finite tail). `multipole_disk_cvis` takes `c`, `s`,
   `height` and `stretch`.
-- **`TruncatedCone` runs on the `PolarDisk` engine** with the same name and
+- **`TruncatedCone` runs on the `MultipoleDisk` engine** with the same name and
   parameters. Its quadrature along the walls is Gauss-Legendre, which
   converges spectrally instead of as `1 / n_rings**2`: for the Apep-like cone
   (edge-on, baselines to 130 m at 2.2 µm) 40 nodes agree with a converged
@@ -270,10 +301,10 @@ anything before 1.0 may change between minor versions.
   3e-5, at less than half the cost. The model is unchanged (the tail is still
   cut at five lengths). The released behaviour changes: see Changed.
   Credits carry over from the earlier cone code, `frank` and `vis-r`.
-- **`PolarDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
+- **`MultipoleDisk`**: an axisymmetric disk with a radial profile (`ThinRing`,
   `GaussianRing`, `RadialPowerLaw` with sharp or soft edges, `ExpTail`, `Gap`
   and `RadialSum`), inclined and rotated, with an optional Gaussian blur,
-  built on `polar_disk_cvis`, a Hankel transform by quadrature that each
+  built on `multipole_disk_cvis`, a Hankel transform by quadrature that each
   profile owns the nodes of (Gauss-Legendre, or Gauss-Laguerre for an
   exponential tail). It follows the ideas of frank (Jennings et al. 2020) and
   vis-r (Kennedy 2025), which are credited in the docstrings and on the
@@ -500,15 +531,15 @@ anything before 1.0 may change between minor versions.
   shapes agree to about 1e-3 in V for arcs with `length` below a tenth of the
   semicircle (1e-2 at a fifth) but differ for long arcs, so refit if you rely
   on those. The visibility is analytic (a `ThinRing` with `VonMises` harmonics
-  and a blur on the `PolarDisk` engine); `degree` (default chosen from the
+  and a blur on the `MultipoleDisk` engine); `degree` (default chosen from the
   starting `radius` and `length`) replaces `nodes` for the visibility, and
   `nodes` only samples the rendered image. Arcs narrower than 256 harmonics
   allow (`length / radius` below about 0.05) are integrated along the arc
   with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
   so their cost does not grow; `is_physical` is false when the series drops
-  more than 1e-4 of its power. Building one gives a `FutureWarning` for this
-  release.
-- **`ModulatedGaussianRim` runs on the `PolarDisk` engine** (a `ThinRing`,
+  more than 1e-4 of its power. The change is new since 0.3.0 and builds
+  with no warning.
+- **`ModulatedGaussianRim` runs on the `MultipoleDisk` engine** (a `ThinRing`,
   linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
   same name and parameters; it agrees with the old code to rounding.
 - **`fit_orbit_aliases` and `epoch_positions` optimize with damped Newton

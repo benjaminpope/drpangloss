@@ -723,7 +723,7 @@ See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
 - **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole. Resample whole snapshots or whole baselines, never single points, since the points within one are correlated (as PMOIRED and CANDID's `fitBoot` do). The virgil-validation PMOIRED comparison is its test.
 - **Spectral correlations between channels.** Now Stage 6d, because GRAVITY data need them.
-- **Radial profiles and disk-aware imaging.** `RadialProfile` is scoped further, as `PolarDisk`, in [`radial_profiles.md`](radial_profiles.md) (stages P1–P6).
+- **Radial profiles and disk-aware imaging.** `RadialProfile` is scoped further, as `MultipoleDisk`, in [`radial_profiles.md`](radial_profiles.md) (stages P1–P6).
 
 **Tests:**
 - Hankel profiles against analytic UD, Gaussian and ring visibilities.

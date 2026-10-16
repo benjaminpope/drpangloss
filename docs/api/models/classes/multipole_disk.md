@@ -1,10 +1,10 @@
-# `PolarDisk`: radial profiles by quadrature
+# `MultipoleDisk`: radial profiles by quadrature
 
 A disk, ring or halo described by its radial brightness profile $I(r)$ in
 the plane of the disk, as one [component](composition.md) of a `System`. It is
 placed and weighted like any other component, and its visibility is the
 Hankel transform of the profile. The maths, and a worked fit, are in the
-tutorial [A planet in a gap between rings](../../../polar_disk_rings.md). The
+tutorial [A planet in a gap between rings](../../../multipole_disk_rings.md). The
 ideas follow [frank](https://github.com/discsim/frank) (Jennings et al. 2020)
 and [vis-r](https://github.com/drgmk/vis-r) (Kennedy 2025); virgil
 reimplements them, with no shared code, for V² and closure-phase data and for
@@ -16,23 +16,49 @@ hundreds of a midpoint stack.
 
 | Profile | Brightness | Rule |
 | --- | --- | --- |
-| `ThinRing(r0)` | $\delta(r - r_0)$ | exact: $J_0(2\pi q r_0)$ |
-| `GaussianRing(r0, sigma)` | Gaussian in $r$ | Gauss–Legendre over $r_0 \pm 6\sigma$ |
-| `RadialPowerLaw(r_in, r_out, index, edge)` | $r^{\rm index}$ between the radii, sharp or soft edges | Gauss–Legendre |
-| `ExpTail(r0, scale)` | $\exp[-(r - r_0)/L]$ for $r \ge r_0$ | Gauss–Laguerre, to infinity |
-| `Gap(base, r0, width, depth)` | a Gaussian gap cut in `base` | that of `base` |
-| `RadialSum(a=..., b=...)` | named profiles, each normalized and mixed by its `weight` | each part's |
+| `ThinRing(radius)` | $\delta(r - r_0)$ | exact: $J_0(2\pi q r_0)$ |
+| `GaussianRing(radius, sigma)` | Gaussian in $r$ | Gauss–Legendre over $r_0 \pm 6\sigma$ |
+| `RadialPowerLaw(r_in, r_out, index, edge_sigma)` | $r^{\rm index}$ between the radii, sharp or soft edges | Gauss–Legendre |
+| `ExpTail(r_in, scale_length, cutoff)` | $\exp[-(r - r_{\rm in})/L]$ for $r \ge r_{\rm in}$ | Gauss–Laguerre, to infinity |
+| `Gap(base, radius, sigma, depth)` | a Gaussian gap cut in `base` | that of `base` |
+| `RadialSum(a=..., b=(profile, weight))` | named profiles, each normalized and mixed by its weight | each part's |
 | `RadialGP(r_in, r_out, sigma, ell, nu)` | $\exp g(r)$, $g$ a Gaussian process | its own: Gauss–Legendre on $[r_{\rm in}, r_{\rm out}]$ |
+
+A profile has no weight of its own: only the parts of a `RadialSum` do
+(`disk.profile.outer.weight`).
+
+## Names and units
+
+One name for one concept across the family. Lengths are in milliarcseconds
+in the plane of the disk, angles in degrees, and a name carries a unit
+suffix only where the quantity would otherwise be ambiguous
+(`pixel_scale_mas`, `rotation_deg`), as in the older components.
+
+| Concept | Name | Where |
+| --- | --- | --- |
+| radius of a feature's centre | `radius` | `ThinRing`, `GaussianRing`, `Gap` (as `GaussianArc`, `FlaredDisk`) |
+| edges of the support | `r_in`, `r_out` | `RadialPowerLaw`, `ExpTail` (`r_in`), `RadialGP`, `RadialGPFunction`, `MultipoleKernel` |
+| reference radius of a function | `r_ref` | `RadialLinear`, `RadialPower`, `PowerLawHeight`, `MultipoleKernel` |
+| Gaussian standard deviation | `sigma` (FWHM = 2.355 `sigma`) | `GaussianRing`, `Gap`, as `GaussianDisk`; `edge_sigma` for a soft edge |
+| FWHM of a blur | `blur_fwhm` | `MultipoleDisk` |
+| e-folding length | `scale_length` | `ExpTail` |
+| inclination, position angle of the major axis | `inc`, `pa` (degrees; default 0, face-on, North) | `MultipoleDisk`, `MultipoleField` |
+| height | `h_ref`, `psi`; `alpha`, `tip` | `PowerLawHeight`, `Cone` (as `TruncatedCone`) |
+
+The older components keep their names: `ModulatedGaussianRim` takes a
+diameter `diam` where a profile takes `radius` (`radius = diam / 2`), and
+`EllipticalGaussian` and `TruncatedCone` take an axis ratio `ratio` where the
+disk takes `inc` (`ratio = cos(inc)`).
 
 The options each have their own entry below: azimuthal structure
 ([`Harmonics`](#virgil.models.Harmonics), [`VonMises`](#virgil.models.VonMises),
-and the priors of [`PolarKernel`](#virgil.models.PolarKernel), with
+and the priors of [`MultipoleKernel`](#virgil.models.MultipoleKernel), with
 conversions between the forms in [`virgil.harmonics`](../../harmonics.md)),
 height ([`Cone`](#virgil.models.Cone), [`PowerLawHeight`](#virgil.models.PowerLawHeight)),
 Gaussian-process priors ([`gp_priors`](#virgil.models.gp_priors)), and a
-residual aligned with the disk ([`PolarField`](../../fields.md)).
+residual aligned with the disk ([`MultipoleField`](../../fields.md)).
 
-::: virgil.models.PolarDisk
+::: virgil.models.MultipoleDisk
     options:
       show_root_heading: true
       heading_level: 2
@@ -128,11 +154,21 @@ residual aligned with the disk ([`PolarField`](../../fields.md)).
     options:
       show_root_heading: true
       heading_level: 3
+      inherited_members: true
       members:
         - draws
         - nodes
 
-::: virgil.models.PolarKernel
+::: virgil.models.RadialGPFunction
+    options:
+      show_root_heading: true
+      heading_level: 3
+      inherited_members: true
+      members:
+        - draws
+        - nodes
+
+::: virgil.models.MultipoleKernel
     options:
       show_root_heading: true
       heading_level: 3

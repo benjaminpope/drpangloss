@@ -1,6 +1,6 @@
 # `virgil.harmonics`
 
-Azimuthal harmonics of a [`PolarDisk`](models/classes/polar_disk.md): the image
+Azimuthal harmonics of a [`MultipoleDisk`](models/classes/multipole_disk.md): the image
 harmonics $I_m$ that every form maps to and from (the linear, positive and von
 Mises forms of the azimuthal profile and the legacy `az_amps`/`az_pas` of
 `ModulatedGaussianRim` and `TruncatedCone`), and the reflection-coefficient

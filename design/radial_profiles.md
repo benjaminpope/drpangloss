@@ -29,21 +29,21 @@ The papers' shared core is a discrete Hankel transform (DHT) on nodes at the zer
 5. **Flux and position.** The disk has unit flux, and its weight is `flux` within a `System`. Its centre is the usual `dra`/`ddec` of `Component`, measured from the phase centre (the array centre), default 0, and fitted or fixed like any other component's. An m = 1 term is nearly degenerate with a free offset, so fitting both calls for informative priors on at least one.
 
 
-## 3. Architecture: one component, `PolarDisk`
+## 3. Architecture: one component, `MultipoleDisk`
 
 ```
-PolarDisk(profile, harmonics=None, height=None, spectral_index=None, blur_fwhm=None,
+MultipoleDisk(profile, harmonics=None, height=None, spectral_index=None, blur_fwhm=None,
           inc, pa, flux, dra, ddec, n_r)
   profile         I0(r), positive, with its own support and quadrature rule:
-                  ThinRing(r0) | GaussianRing | PowerLaw (soft edges) | ExpTail | Gap(...) | Sum(...) | RadialGP
-  harmonics       Harmonics(degree=M, form="positive" | "linear", prior=None | PolarKernel(...))
+                  ThinRing(radius) | GaussianRing | RadialPowerLaw (soft edges) | ExpTail | Gap(...) | RadialSum(...) | RadialGP
+  harmonics       Harmonics(degree=M, form="positive" | "linear", prior=None | MultipoleKernel(...))
                   | VonMises(kappa, theta0, degree=M)
-  height          h(r) = h0 (r/r0)^ψ, Cone(alpha, tip), or None
-  spectral_index  α(r): I(r, λ) = I0(r) (λ/λ0)^α(r); a constant, a parametric function or a RadialGP
+  height          h(r) = h_ref (r/r_ref)^ψ, Cone(alpha, tip), or None
+  spectral_index  α(r): I(r, λ) = I0(r) (λ/λ0)^α(r); a constant, a parametric function or a RadialGPFunction
   blur_fwhm       Gaussian smoothing applied as a Fourier-space envelope (exact and cheap)
 ```
 
-This mirrors `Image(GaussianField(...))`: one component built from small interchangeable parts. `PolarDisk` is a `Component`, so it gets `flux` (including SPARCO spectra from `spectra.py`), `dra`/`ddec`, `System` mixing and `render` for free.
+This mirrors `Image(GaussianField(...))`: one component built from small interchangeable parts. `MultipoleDisk` is a `Component`, so it gets `flux` (including SPARCO spectra from `spectra.py`), `dra`/`ddec`, `System` mixing and `render` for free.
 
 ### 3.1 Intensity: positive (Fejér–Riesz) or linear harmonics
 `degree=M` is always the degree of the **image**: its harmonics run exactly from 0 to M. Two forms are offered.
@@ -79,7 +79,7 @@ This mirrors `Image(GaussianField(...))`: one component built from small interch
 - **Numerics.** k = w·tanh|w|/|w| is computed in a form that is finite at w = 0, with value and gradient taken from the series tanh(x)/x ≈ 1 − x²/3 below a threshold (a safe `where`).
 - **Weak asymmetry is near-linear.** I ≈ I0(1 + 2 Re Σ h_m e^{imθ}), and for small k the first-order coefficients are h_m ≈ k_m.
 - **What is reported.** The image harmonics I_m(r) (amplitude and phase per m) are the derived quantities. The reflection coefficients are an internal parametrisation, not something to interpret.
-- **Priors.** A `PolarKernel` or `RadialGP` prior acts on the latents w_j(r). Its variance falling with j plays the role of falling with m, because k_j first enters h at order j.
+- **Priors.** A `MultipoleKernel` or `RadialGP` prior acts on the latents w_j(r). Its variance falling with j plays the role of falling with m, because k_j first enters h at order j.
 
 **Why not log** (decided 2026-10-14; an earlier draft used exp(f)). The reasons below compare linear with log. The positive form keeps every one of them except exact linearity in the coefficients, and adds positivity:
 - **Degree M means what it says.** The image, and so the visibilities, contain harmonics up to M exactly. In log form, exp(·) spreads power to every order, which forces a second cutoff m_out > M, a polar-grid FFT and a truncation error.
@@ -96,7 +96,7 @@ This mirrors `Image(GaussianField(...))`: one component built from small interch
 In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on (c, s) gives a uniform prior on angle, consistent with the invariant-prior rule. Amplitude and phase are derived outputs. Each c_m or s_m is a constant, a parametric function of r, or a `RadialGP`.
 
 **Converting between conventions: `virgil.harmonics` helpers.** Every form maps to and from the image harmonics I_m(r) (complex, m = 0…M) by expanding the expression and equating coefficients.
-- **Linear and legacy forms.** `linear ↔ image` is exact both ways: c_m = 2 Re I_m / I_0 and s_m = −2 Im I_m / I_0. The same holds for the legacy amplitude/phase pairs (`az_amps`/`az_pas`, `az_amps`/`az_phis`), with each class's azimuth origin and sense converted to `PolarDisk`'s.
+- **Linear and legacy forms.** `linear ↔ image` is exact both ways: c_m = 2 Re I_m / I_0 and s_m = −2 Im I_m / I_0. The same holds for the legacy amplitude/phase pairs (`az_amps`/`az_pas`, `az_amps`/`az_phis`), with each class's azimuth origin and sense converted to `MultipoleDisk`'s.
 - **`positive → image`** is exact: the autocorrelation of h.
 - **`image → positive`** is spectral factorisation.
   - **Method.** Take the 2M roots of z^M Σ_m I_m z^m, keep the M outside the unit circle to form h, then step down to k and invert the tanh to get w. It runs in numpy and is not differentiated; it is used for conversion and warm starts.
@@ -112,17 +112,17 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 1. **Radial nodes: the profile owns the quadrature rule.**
    - **Default.** Gauss–Legendre on [r_in, r_out], with the weight r dr folded in.
    - **`ExpTail`.** A Gauss–Laguerre rule for exponential tails integrates the whole tail exactly. `TruncatedCone`'s midpoint rule drops the last 0.7 % past 5 lengths.
-   - **Why it matters.** Both rules converge spectrally, not at second order like the midpoint rule, so a narrow ring needs only a few nodes. n_r is a user-set static integer. `PolarDisk.suggest_n_r(data)` gives a starting value and is never applied silently.
+   - **Why it matters.** Both rules converge spectrally, not at second order like the midpoint rule, so a narrow ring needs only a few nodes. n_r is a user-set static integer. `MultipoleDisk.suggest_n_r(data)` gives a starting value and is never applied silently.
    - **Why not J0-zero nodes.** The order-m Hankel transforms with J_m are exactly what we compute. Only the quadrature rule is at issue. J0-zero nodes give an exact discrete transform only for order 0, and the exact rule for order m uses the zeros of J_m, a different grid for each m. All m share one radial grid, so no Bessel-zero set is special. One test checks the accuracy for every m.
 2. **Visibilities.**
    V(q, φ) = 2π Σ_{|m|≤M} (−i)^m e^{imφ} Σ_k w_k I_m(r_k) J_m(2π q r_k),
    with I_{±m} = I0 (c_m ∓ i s_m)/2 for the linear form, and I_m = I0 Σ_j h_{j+m} h̄_j / Σ_j |h_j|² for the positive form (I_{−m} = Ī_m). Only m ≥ 0 is computed.
    - J_m comes from one call to `bessel_jn(M, ·)`.
-   - `ThinRing` skips quadrature: the result is J_m(2π q r0).
+   - `ThinRing` skips quadrature: the result is J_m(2π q radius).
    - `blur_fwhm` multiplies by exp(−(π fwhm q)²/(4 ln 2)).
    - V(0) = 1 is enforced by the m = 0 sum.
 3. **Height (flaring and cones).** The ring at r_k is offset by h(r_k) along the disk normal. On the sky that is a shift of h sin i along the projected minor axis, applied as a phase factor per node in the sky frame after the stretch. This is why the disk owns inc and PA.
-   - **Flared surface.** h = h0 (r/r0)^ψ.
+   - **Flared surface.** h = h_ref (r/r_ref)^ψ.
    - **Cone.** h = r cot α − tip, with the normal along the cone's axis, so inc = 90° − tilt. That is exactly `TruncatedCone`'s geometry: rings perpendicular to an axis, with centres along it.
    - **Stated approximation.** The emitting surface is thin and nothing is occulted. It is measured against `FlaredDisk*`, not assumed.
 4. **Chromatic profile.** When `spectral_index` is set, I0(r, λ) = I0(r) (λ/λ0)^{α(r)}.
@@ -138,7 +138,7 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **Spectral quadrature.** Gauss–Legendre and Gauss–Laguerre per profile need far fewer nodes than midpoint ring stacks, and narrow rings cost about 10 nodes each.
 - **Memory.** Above a threshold, chunk over visibilities with `jax.lax.map(batch_size=...)`.
 - **Real arithmetic.** Even m feeds only the real part and odd m only the imaginary part, so the sums stay real until the end.
-- **Hoisted Bessel matrix for fixed geometry.** When inc, PA and height are fixed, for example after a parametric fit, the Bessel matrix depends only on the data and the nodes. A non-parametric refit of the profile is then a matrix–vector product per call. This is an explicit `PolarDisk.freeze_geometry(data)` returning a model with the matrix cached, never automatic. Its first consumer is the dust-plume imaging in §8.
+- **Hoisted Bessel matrix for fixed geometry.** When inc, PA and height are fixed, for example after a parametric fit, the Bessel matrix depends only on the data and the nodes. A non-parametric refit of the profile is then a matrix–vector product per call. This is an explicit `MultipoleDisk.freeze_geometry(data)` returning a model with the matrix cached, never automatic. Its first consumer is the dust-plume imaging in §8.
 - **Static and traced fields.**
   - **Static:** n_r and M (they set shapes) and the structure of the parts.
   - **Traced, not differentiated:** the node and weight arrays.
@@ -146,13 +146,13 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 
 ### 3.4 Priors
 - **`RadialGP`.** Latents at the r_k, whitened as g = μ + L z with z ~ N(0, I), and a dense Matérn kernel in r (as in FRAP). The profile is exp(g), so it is positive. The same class supplies c_m(r), s_m(r) and α(r), taking g directly without the exp. σ and ℓ take bounded log-uniform priors, so the Laplace evidence is proper. With n_r ≤ 100 the Cholesky is negligible.
-- **`PolarKernel(ℓ_r, ℓ_θ)`.** A prior over the harmonic coefficients.
+- **`MultipoleKernel(ℓ_r, ℓ_θ)`.** A prior over the harmonic coefficients.
   - **Structure.** Each m's (c_m, s_m) profiles are `RadialGP`s with length ℓ_r. Their variance falls with m as the spectral density of a periodic Matérn kernel in θ, roughly S(m) ∝ (1 + (m ℓ_θ / r̄)²)^(−ν−½).
   - **Effect.** A long ℓ_θ favours rings and arcs without imposing them. It is diagonal in m, so it costs nothing extra.
-- **`PolarField` for `Image`.** The same prior on pixels, as a residual field aligned with the disk. It is evaluated on a polar grid and interpolated onto the pixels in the disk's frame. Its kernels are `RadialGP`'s (radius) and `PolarKernel`'s spectral form (azimuth), one shared definition; its geometry can be tied to a sibling disk (`geometry_from=`, resolved by `System` at evaluation).
+- **`MultipoleField` for `Image`.** The same prior on pixels, as a residual field aligned with the disk. It is evaluated on a polar grid and interpolated onto the pixels in the disk's frame. Its kernels are `RadialGP`'s (radius) and `MultipoleKernel`'s spectral form (azimuth), one shared definition; its geometry can be tied to a sibling disk (`geometry_from=`, resolved by `System` at evaluation).
 
 ## 4. Composition and interactions
-- **Composition contract.** `System._mix` sums unit-flux visibilities weighted by `flux`. `PolarDisk` must therefore:
+- **Composition contract.** `System._mix` sums unit-flux visibilities weighted by `flux`. `MultipoleDisk` must therefore:
   - return V(0) = 1;
   - implement `_centred_image` by polar evaluation, so that `render`, `Image.from_model` and the DFT cross-check tests work. Node-valued profiles (`RadialGP`) are linearly interpolated in r for rendering only;
   - match virgil's existing Fourier sign and position-angle conventions (`offset_phase`, `ModulatedGaussianRim` and `TruncatedCone` tests). A sign test is part of P1;
@@ -160,13 +160,13 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 - **Over-resolved flux and `Resolved`.** Disk emission on scales larger than about 1/q_min shows up in the data only as a uniform loss of visibility, which is exactly what `Resolved` models. So the data constrain the sum of the two, and the split between them is set by their priors (for example, a smooth `RadialGP` that decays to R_out versus a free `Resolved` fraction). Both may be included. The rules:
   - report and plot the total over-resolved flux, never either part alone;
   - warn when the profile has substantial flux near R_out.
-- **Primary beam.** A disk wider than a single-mode fibre's field of view needs the Stage 6a primary beam. The beam multiplies the image, so it is not a composable sum. It can be applied to `PolarDisk` pointwise on the polar grid before the transform, so that is the place to hook it in. Not in scope until a dataset needs it.
+- **Primary beam.** A disk wider than a single-mode fibre's field of view needs the Stage 6a primary beam. The beam multiplies the image, so it is not a composable sum. It can be applied to `MultipoleDisk` pointwise on the polar grid before the transform, so that is the place to hook it in. Not in scope until a dataset needs it.
 - **Bandwidth smearing** for wide disks remains the deferred image-reconstruction item.
 - **`Projected`** stays a separate Stage 8 item for generic shapes. It has no flux option, because a uv stretch preserves V(0) = 1.
 
 
 ## 5. Subsuming the existing disk classes
-- **One shared engine.** `PolarDisk` and every subsumed class call one engine, `polar_disk_cvis(...)`.
+- **One shared engine.** `MultipoleDisk` and every subsumed class call one engine, `multipole_disk_cvis(...)`.
 - **Names and paths are kept.** An old class keeps its public name and parameter names, so prior dicts keyed by path still work. Only its `_centred_cvis` changes, to call the engine.
 - **Old code goes after equality tests.** The old private visibility code is deleted once the tests pass.
 - **Deprecation rule.** A class is deprecated only if it is reproducible as a special case of the general one, or replaced by a decided change of shape flagged in the changelog (`GaussianArc`, see its row). `FlaredDisk*` is neither (see its row), so it is exempt. At the next minor release, each other subsumed class gets a deprecation note and a changelog migration line, and it is removed one release later.
@@ -176,7 +176,7 @@ In (c, s) the posterior is a smooth blob around the origin. A Gaussian prior on 
 | `ModulatedGaussianRim` | `ThinRing` + `Harmonics` + `blur_fwhm`. The legacy amplitude/phase parameters are converted to (c, s) inside the wrapper. | Exact to rounding |
 | `TruncatedCone` | `ExpTail` profile in slant distance + `Cone` height + `Harmonics`, with the legacy `az_amps`/`az_pas` converted | Agreement with the old class at n_rings → ∞ (the midpoint error is about 1/n²). The new rule should reach 1e-5 with about 16–24 nodes, against 256 midpoint rings. |
 | `GaussianArc` | `GaussianRing` + `VonMises` (decided) | A notebook check of old against new shape before switching. The changelog flags the change of shape, and `GaussianArc` raises a `FutureWarning` for one release first. |
-| `FlaredDisk*` | **Not subsumed, not deprecated.** Kept as is. | Verified in P6 (PR #340): Blakely+2024 Eq. 3 (sin i, z at the pixel mid-plane radius, z² added, no brightness Jacobian) is an approximation. Only a thin-surface version (tan i, z at the surface point's radius, no z², brightness Jacobian) equals `PolarDisk` + `PowerLawHeight(h0 = −z)`, to 1.5e-9. The flat case (aspect = 0) matches to about 1e-9. |
+| `FlaredDisk*` | **Not subsumed, not deprecated.** Kept as is. | Verified in P6 (PR #340): Blakely+2024 Eq. 3 (sin i, z at the pixel mid-plane radius, z² added, no brightness Jacobian) is an approximation. Only a thin-surface version (tan i, z at the surface point's radius, no z², brightness Jacobian) equals `MultipoleDisk` + `PowerLawHeight(h0 = −z)`, to 1.5e-9. The flat case (aspect = 0) matches to about 1e-9. |
 | Per-class inc/pa (`EllipticalGaussian`) | `Projected` (Stage 8) | Separate PR |
 
 Sign convention for the `FlaredDisk*` row: positive h shifts towards pa + 90°. A top surface lifted towards the observer shifts the ring to the far side, so h0 < 0.
@@ -186,12 +186,12 @@ Stellar disks (`UniformDisk`, limb-darkened disks, `GaussianDisk`) are out of sc
 ## 6. Stages (ordered so the colliding-wind dust-plume imaging benefits first)
 | Stage | Content | Size |
 |---|---|---|
-| P1 | `polar_disk_cvis` engine and `PolarDisk` with M = 0. Profiles `ThinRing`, `GaussianRing`, `PowerLaw`, `ExpTail`, `Gap` and `Sum`, each with its own quadrature rule (Gauss–Legendre, or Gauss–Laguerre for exponential tails). `blur_fwhm` and the inc/PA stretch. Tests against UD, Gaussian and thin ring; gradients; V(0) = 1. | 3–4 h |
+| P1 | `multipole_disk_cvis` engine and `MultipoleDisk` with M = 0. Profiles `ThinRing`, `GaussianRing`, `PowerLaw`, `ExpTail`, `Gap` and `Sum`, each with its own quadrature rule (Gauss–Legendre, or Gauss–Laguerre for exponential tails). `blur_fwhm` and the inc/PA stretch. Tests against UD, Gaussian and thin ring; gradients; V(0) = 1. | 3–4 h |
 | P2 | `height` with `Cone` (and the flared power law), plus a minimal linear-form `Harmonics` (Cartesian), which `TruncatedCone`'s modulation needs. **Subsume `TruncatedCone`**, converting the legacy `az_amps`/`az_pas` internally. Accuracy and speed against the old midpoint stack. *First payoff for the dust-plume worked example (A1).* | 3–4 h |
 | P3 | `Harmonics` positive form (reflection coefficients) added to P2's linear form; the `virgil.harmonics` conversion helpers with round-trip tests; a test that reproduces the multimodality check and `VonMises`. Tests against a DFT of the rendered image. Subsume `ModulatedGaussianRim`; `GaussianArc` becomes von Mises. | 4–5 h |
-| P4 | `RadialGP`, `PolarKernel`, `spectral_index` and `freeze_geometry`; NUTS with flat coordinates; `log_evidence` support. *Enables A2.* | 5–7 h |
+| P4 | `RadialGP`, `MultipoleKernel`, `spectral_index` and `freeze_geometry`; NUTS with flat coordinates; `log_evidence` support. *Enables A2.* | 5–7 h |
 | P5 | Tutorial notebook (§7) | 3–4 h |
-| P6 | `PolarField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; `FlaredDisk*` is not switched (decided, see §5 and §10). | 4–6 h |
+| P6 | `MultipoleField` for `Image`. For `FlaredDisk*` (on `main`), a comparison test and report only; `FlaredDisk*` is not switched (decided, see §5 and §10). | 4–6 h |
 | V | virgil-validation benchmarks against reference implementations (§12), committed at the end | 6–8 h |
 
 Each stage is one PR with tests. P5 is the only virgil notebook. V comes last: commits to virgil-validation, following its independence rule. Docs describe the component, never this note. Every PR keeps the credit (§11) up to date.
@@ -206,14 +206,14 @@ A five-cell notebook in the house style. It depends on P1–P3.
 
 **Truth scene:**
 - **Star:** a `BlackBody` spectrum.
-- **Rings:** three coplanar `PolarDisk` rings (`GaussianRing` profiles), each with its own spectrum. The outer ring has an m = 1 harmonic, so it is lopsided.
+- **Rings:** three coplanar `MultipoleDisk` rings (`GaussianRing` profiles), each with its own spectrum. The outer ring has an m = 1 harmonic, so it is lopsided.
 - **Gap and planet:** a gap between rings 2 and 3 holds a planet, a `PointSource` with its own `BlackBody`.
 - **Shared geometry:** inc and PA are tied by a function returning the model. If that proves clumsy, add a small coplanar helper.
 
 **Cells:**
 1. **Simulate.** Chromatic VLTI-like coverage from `coverage.py`; V² and closure phases with realistic noise.
 2. **Parametric fit.** The truth model family, with invariant priors: log-uniform fluxes and widths, uniform angles and positions. MAP with `fit`, then Laplace.
-3. **Non-parametric deconvolution.** `System(star, disk=PolarDisk(RadialGP, Harmonics(degree=1, prior=PolarKernel(...)), spectral_index=RadialGP), planet=PointSource(...))`. A single GP disk, with no ring count or radii given, must recover:
+3. **Non-parametric deconvolution.** `System(star, disk=MultipoleDisk(RadialGP, Harmonics(degree=1, prior=MultipoleKernel(...)), spectral_index=RadialGP), planet=PointSource(...))`. A single GP disk, with no ring count or radii given, must recover:
    - the three rings and the gap within about one resolution element;
    - each ring's colour through α(r);
    - the lopsidedness of the outer ring;
@@ -232,7 +232,7 @@ This is done as a real worked example in its own analysis repository, never in v
   - **Method.** Refit the shared-cone scene with `TruncatedCone` now running on the engine (Gauss–Laguerre in slant distance, exact tail).
   - **Report.** Nodes needed for |Δlog L| < 0.5 against the old 64–256 rings; wall time per likelihood call and per fit; parameter shifts. Use the post-#120 closure-phase likelihood throughout.
 - **A2, after P4: non-parametric plume.**
-  - **Model.** Binary + `PolarDisk(Cone height, profile=RadialGP in slant distance, spectral_index=RadialGP, Harmonics(degree=1–2, form="positive", prior=PolarKernel))` + a coarse residual `GaussianField`.
+  - **Model.** Binary + `MultipoleDisk(Cone height, profile=RadialGP in slant distance, spectral_index=RadialGP, Harmonics(degree=1–2, form="positive", prior=MultipoleKernel))` + a coarse residual `GaussianField`.
   - **Workflow.** Geometry first from A1. Then `freeze_geometry` for the GP refit (one matrix–vector product per call), then a free-geometry check.
   - **Questions answered:**
     - Where does dust emission start, and how does it fade? (s0 and the exponential decline become data-driven.)
@@ -258,11 +258,11 @@ This is done as a real worked example in its own analysis repository, never in v
   - **Rejected:** "inclination raises q_max"; "pixels for non-parametric disks", on cost grounds.
 - **Ben's decisions, 2026-10-14:**
   - subsume the old disk classes;
-  - one `PolarDisk`;
+  - one `MultipoleDisk`;
   - node quadrature everywhere;
   - user-set M;
   - the centre is the usual `dra`/`ddec` from the array centre;
-  - keep the polar-kernel prior;
+  - keep the multipole-kernel prior;
   - one tutorial, which must also be deconvolved with the non-parametric GP disk;
   - the `Resolved` split is set by the priors, so report the total;
   - `GaussianArc` becomes von Mises;
@@ -279,8 +279,8 @@ This is done as a real worked example in its own analysis repository, never in v
   - the stages are reordered so the dust-plume worked example benefits first (A1 after P2, A2 after P4);
   - credit to the original papers and codes goes in docstrings and the contributors page (§11).
 - **FlaredDisk\* stays (2026-10-14).** Ben's decision: `FlaredDisk*` stays undeprecated, and no PR carries a deprecation notice. Options for later:
-  - add a pixel-evaluated height mode to `PolarDisk`, which would reproduce the Blakely approximation; or
-  - keep `FlaredDisk*` for flared fits and use `PolarDisk` + `PowerLawHeight(h0 < 0)` for new thin-surface work.
+  - add a pixel-evaluated height mode to `MultipoleDisk`, which would reproduce the Blakely approximation; or
+  - keep `FlaredDisk*` for flared fits and use `MultipoleDisk` + `PowerLawHeight(h_ref < 0)` for new thin-surface work.
 
 ## 11. Credit
 We reimplement ideas and copy no code (frank is LGPL). Credit is still mandatory, in two places:
@@ -297,7 +297,7 @@ The last stage commits benchmarks to virgil-validation. They follow its independ
 
 The benchmarks, in the order they are committed:
 - **V1. Forward transforms (accuracy and speed).**
-  - **Reference codes.** For identical profiles and geometry, compare `PolarDisk` (M = 0) with:
+  - **Reference codes.** For identical profiles and geometry, compare `MultipoleDisk` (M = 0) with:
     - frank's `DiscreteHankelTransform`;
     - vis-r's `r_prof_*` profiles with `uv_trans` and `setup_dht`, including its Gaussian scale-height factor;
     - FRAP's Hankel matrix (`set_visibility` without the primary beam).

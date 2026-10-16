@@ -5,7 +5,7 @@
   [`UniformDisk`][virgil.models.UniformDisk], the limb-darkened disks such
   as [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk],
   [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim],
-  [`PolarDisk`][virgil.models.PolarDisk] (a radial profile, with its
+  [`MultipoleDisk`][virgil.models.MultipoleDisk] (a radial profile, with its
   profiles such as [`GaussianRing`][virgil.models.GaussianRing]), and
   the flared scattered-light disks such as
   [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]) are
@@ -24,7 +24,6 @@ ratio. Likelihoods of these models are in
 import dataclasses
 import math
 import textwrap
-import warnings
 from typing import Any
 
 import equinox as eqx
@@ -224,7 +223,7 @@ class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def resolved(self):
         """This model with its tied parameters replaced by their values.
 
-        A [`PolarField`][virgil.fields.PolarField] built with
+        A [`MultipoleField`][virgil.fields.MultipoleField] built with
         ``geometry_from="name"`` takes the geometry of the sibling component
         ``name`` of its [`System`][virgil.models.System] when the System is
         evaluated. ``resolved`` returns the System with those ties baked in
@@ -543,11 +542,10 @@ class GaussianArc(Component):
     of ``pa``. The two agree for arcs short against the radius (the von
     Mises weight is the periodic version of the Gaussian) but differ when
     ``length`` is comparable to $\pi\,\mathrm{radius}$; refit if you rely on
-    long arcs. The component is a [`PolarDisk`][virgil.models.PolarDisk]: a
+    long arcs. The component is a [`MultipoleDisk`][virgil.models.MultipoleDisk]: a
     [`ThinRing`][virgil.models.ThinRing] with a
     [`VonMises`][virgil.models.VonMises] azimuthal profile and a ``width``
-    blur, and constructing one gives a ``FutureWarning`` that
-    says so (for this release).
+    blur.
 
     The visibility is exact up to the truncation of the von Mises
     harmonics at ``degree``, which is chosen when the arc is built, from its
@@ -613,16 +611,6 @@ class GaussianArc(Component):
         nodes=128,
         degree=None,
     ):
-        warnings.warn(
-            "GaussianArc now has a von Mises weight along the arc, "
-            "exp(kappa cos(angle - pa)) with kappa = (2 sqrt(2 ln 2) radius "
-            "/ length)**2, in place of a Gaussian in the arc length cut off "
-            "at the antipode: the shapes agree for arcs short against the "
-            "radius and differ for long ones. This warning is removed in "
-            "the next release.",
-            FutureWarning,
-            stacklevel=4,  # past equinox's __call__ wrappers
-        )
         self.radius = np.asarray(radius, dtype=float)
         self.width = np.asarray(width, dtype=float)
         self.length = np.asarray(length, dtype=float)
@@ -735,7 +723,7 @@ class GaussianArc(Component):
         # A thin ring with the von Mises weight and a Gaussian blur, on the
         # engine, face-on: its azimuth runs from North towards East.
         c, s = self.harmonics().coefficients(np.reshape(self.radius, (1,)))
-        return polar_disk_cvis(
+        return multipole_disk_cvis(
             uu,
             vv,
             np.reshape(self.radius, (1,)),
@@ -777,7 +765,7 @@ class TruncatedCone(Component):
     over ``s`` from ``s0`` to ``s0 + 5 length`` (the last 0.7 % of the
     flux is dropped) by a Gauss-Legendre rule on ``n_rings`` rings.
 
-    The cone is a [`PolarDisk`][virgil.models.PolarDisk]: an
+    The cone is a [`MultipoleDisk`][virgil.models.MultipoleDisk]: an
     [`ExpTail`][virgil.models.ExpTail] profile in the ring radius, a
     [`Cone`][virgil.models.Cone] height and
     [`Harmonics`][virgil.models.Harmonics] for the modulation below, with the
@@ -1032,7 +1020,7 @@ class TruncatedCone(Component):
         return r, along, w / np.sum(w)
 
     def _centred_cvis(self, uu, vv):
-        # The cone is a PolarDisk: an exponential tail in the radius of the
+        # The cone is a MultipoleDisk: an exponential tail in the radius of the
         # rings (the slant distance times sin alpha), a conical height, and
         # the walls' modulation as linear harmonics. The disk's major axis
         # is perpendicular to the projected axis of the cone, and the
@@ -1042,7 +1030,7 @@ class TruncatedCone(Component):
         c = s = None
         if self.az_amps is not None:
             c, s = self._harmonics(r)
-        cvis = polar_disk_cvis(
+        cvis = multipole_disk_cvis(
             uu,
             vv,
             r,
@@ -2069,14 +2057,14 @@ class ModulatedGaussianRim(Component):
         return _rim_angle(sky_pa, self.pa, self.inc)
 
     def _centred_cvis(self, uu, vv):
-        # The rim is a PolarDisk: a ThinRing of radius diam / 2, the
+        # The rim is a MultipoleDisk: a ThinRing of radius diam / 2, the
         # modulation as linear harmonics (converted from the amplitudes and
         # azimuths), and the blur of the engine.
         c = s = None
         if self.az_amps.size:
             c, s = rim_coefficients(self.az_amps, self.az_pas, self.pa)
             c, s = c[:, None], s[:, None]
-        return polar_disk_cvis(
+        return multipole_disk_cvis(
             uu,
             vv,
             np.reshape(self.diam / 2.0, (1,)),
@@ -2639,7 +2627,7 @@ class FlaredDiskPowerLaw(FlaredDisk):
 
 
 # ---------------------------------------------------------------------------
-# PolarDisk: radial profiles and a quadrature (Hankel-transform) engine
+# MultipoleDisk: radial profiles and a quadrature (Hankel-transform) engine
 # ---------------------------------------------------------------------------
 
 # Largest number of (sample, node) Bessel evaluations held at once; bigger
@@ -2688,21 +2676,26 @@ def _soft_step(x, width):
 
 
 class _RadialProfile(zdx.Base):
-    """Base class of the radial profiles of a [`PolarDisk`][virgil.models.PolarDisk].
+    """Base class of the radial profiles of a [`MultipoleDisk`][virgil.models.MultipoleDisk].
 
     A profile is a non-negative brightness ``I(r)`` of the radius ``r`` in
     the plane of the disk (milliarcseconds). It owns its quadrature rule:
     ``quadrature`` returns nodes ``r_k`` and weights ``w_k`` such that
     ``sum_k w_k f(r_k)`` approximates ``int I(r) f(r) r dr`` for smooth
     ``f``. The rule's reference arrays are fields of the profile, filled by
-    ``with_rule(n_r)`` (which [`PolarDisk`][virgil.models.PolarDisk] calls), so
+    ``with_rule(n_r)`` (which [`MultipoleDisk`][virgil.models.MultipoleDisk] calls), so
     they are traced inputs and changing a parameter never recompiles.
 
-    ``weight`` is the profile's share of the light when it is one part of a
-    [`RadialSum`][virgil.models.RadialSum]; alone it has no effect.
+    A profile has no weight of its own (a lone profile is normalized by the
+    disk): a part of a [`RadialSum`][virgil.models.RadialSum] carries its
+    share of the light there.
+
+    Naming, shared by every profile: ``radius`` is the radius of a feature's
+    centre, ``r_in`` and ``r_out`` the edges of the support, ``sigma`` the
+    standard deviation of a Gaussian width, all in milliarcseconds in the
+    plane of the disk.
     """
 
-    weight: jax.Array
     rule_x: Any
     rule_w: Any
 
@@ -2729,7 +2722,7 @@ class _RadialProfile(zdx.Base):
         if self.rule is None:
             raise ValueError(
                 f"{type(self).__name__} has no quadrature rule; build it "
-                "into a PolarDisk, or call with_rule(n_r)."
+                "into a MultipoleDisk, or call with_rule(n_r)."
             )
 
     def quadrature(self):
@@ -2751,7 +2744,7 @@ class _RadialProfile(zdx.Base):
         return int(onp.ceil(phase)) + 12
 
     def is_physical(self):
-        return np.asarray(self.weight >= 0.0)
+        return np.asarray(True)
 
     def _normalized_quadrature(self):
         """``quadrature`` scaled to unit total, for mixing."""
@@ -2760,24 +2753,22 @@ class _RadialProfile(zdx.Base):
 
 
 class ThinRing(_RadialProfile):
-    r"""Infinitely thin ring of radius ``r0``, $I \propto \delta(r - r_0)$.
+    r"""Infinitely thin ring of radius ``radius``,
+    $I \propto \delta(r - r_0)$ with $r_0$ = ``radius``.
 
     Its Hankel transform is $J_0(2\pi q r_0)$, so it needs no quadrature
     (``n_r`` is irrelevant). Rendered, it is a Gaussian a pixel wide.
 
     Parameters
     ----------
-    r0 : float or array-like
+    radius : float or array-like
         Radius in milliarcseconds, in the plane of the disk.
-    weight : float or array-like, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
     """
 
-    r0: jax.Array
+    radius: jax.Array
 
-    def __init__(self, r0, weight=1.0):
-        self.r0 = np.asarray(r0, dtype=float)
-        self.weight = np.asarray(weight, dtype=float)
+    def __init__(self, radius):
+        self.radius = np.asarray(radius, dtype=float)
         self.rule_x = None
         self.rule_w = None
 
@@ -2785,38 +2776,40 @@ class ThinRing(_RadialProfile):
         return self
 
     def quadrature(self):
-        return np.reshape(self.r0, (1,)), np.ones((1,), dtype=self.r0.dtype)
+        return np.reshape(self.radius, (1,)), np.ones(
+            (1,), dtype=self.radius.dtype
+        )
 
     def intensity(self, r, pixel_scale_mas):
         s = np.maximum(0.5 * pixel_scale_mas, 1e-9)
-        norm = math.sqrt(2.0 * math.pi) * s * np.maximum(self.r0, s)
-        return np.exp(-0.5 * ((r - self.r0) / s) ** 2) / norm
+        norm = math.sqrt(2.0 * math.pi) * s * np.maximum(self.radius, s)
+        return np.exp(-0.5 * ((r - self.radius) / s) ** 2) / norm
 
     def extent(self):
-        r0 = float(onp.max(onp.asarray(self.r0)))
-        return r0, r0
+        radius = float(onp.max(onp.asarray(self.radius)))
+        return radius, radius
 
     def _n_needed(self, q_max):
         return 1
 
     def is_physical(self):
-        return super().is_physical() & np.asarray(self.r0 >= 0.0)
+        return super().is_physical() & np.asarray(self.radius >= 0.0)
 
 
 class GaussianRing(_RadialProfile):
-    r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with $r \ge 0$.
+    r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with
+    $r \ge 0$ and $r_0$ = ``radius``.
 
     The quadrature runs over $r_0 \pm 6\sigma$ (clipped at the centre) with
     a Gauss-Legendre rule, which converges spectrally.
 
     Parameters
     ----------
-    r0 : float or array-like
+    radius : float or array-like
         Radius of the peak in milliarcseconds.
     sigma : float or array-like
-        Standard deviation of the radial profile in milliarcseconds.
-    weight : float or array-like, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
+        Standard deviation of the radial profile in milliarcseconds (the
+        FWHM is $2\sqrt{2\ln 2}\,\sigma \approx 2.355\,\sigma$).
 
     References
     ----------
@@ -2825,19 +2818,18 @@ class GaussianRing(_RadialProfile):
     https://github.com/drgmk/vis-r).
     """
 
-    r0: jax.Array
+    radius: jax.Array
     sigma: jax.Array
 
-    def __init__(self, r0, sigma, weight=1.0):
-        self.r0 = np.asarray(r0, dtype=float)
+    def __init__(self, radius, sigma):
+        self.radius = np.asarray(radius, dtype=float)
         self.sigma = np.asarray(sigma, dtype=float)
-        self.weight = np.asarray(weight, dtype=float)
         self.rule_x = None
         self.rule_w = None
 
     def _range(self):
         half = _POLAR_TAIL_WIDTHS * self.sigma
-        return np.maximum(self.r0 - half, 0.0), self.r0 + half
+        return np.maximum(self.radius - half, 0.0), self.radius + half
 
     def quadrature(self):
         self._check_rule()
@@ -2845,18 +2837,20 @@ class GaussianRing(_RadialProfile):
         return r, dr * r * self.intensity(r, 0.0)
 
     def intensity(self, r, pixel_scale_mas):
-        return np.exp(-0.5 * ((r - self.r0) / self.sigma) ** 2)
+        return np.exp(-0.5 * ((r - self.radius) / self.sigma) ** 2)
 
     def extent(self):
-        r0, s = (float(onp.max(onp.asarray(a))) for a in (self.r0, self.sigma))
+        radius, s = (
+            float(onp.max(onp.asarray(a))) for a in (self.radius, self.sigma)
+        )
         return max(
-            r0 - _POLAR_TAIL_WIDTHS * s, 0.0
-        ), r0 + _POLAR_TAIL_WIDTHS * s
+            radius - _POLAR_TAIL_WIDTHS * s, 0.0
+        ), radius + _POLAR_TAIL_WIDTHS * s
 
     def is_physical(self):
         return (
             super().is_physical()
-            & np.asarray(self.r0 >= 0.0)
+            & np.asarray(self.radius >= 0.0)
             & np.asarray(self.sigma > 0.0)
         )
 
@@ -2864,10 +2858,10 @@ class GaussianRing(_RadialProfile):
 class RadialPowerLaw(_RadialProfile):
     r"""Power law $I \propto r^{\rm index}$ between ``r_in`` and ``r_out``.
 
-    With ``edge`` (a length in milliarcseconds) both edges are soft, error
-    functions of that standard deviation, as in vis-r; the quadrature then
-    runs over ``edge`` * 6 beyond them, and ``n_r`` must resolve ``edge``.
-    With ``edge=None`` the edges are sharp and the Gauss-Legendre rule spans
+    With ``edge_sigma`` (a length in milliarcseconds) both edges are soft,
+    error functions of that standard deviation, as in vis-r; the quadrature
+    then runs over 6 ``edge_sigma`` beyond them, and ``n_r`` must resolve
+    ``edge_sigma``. With ``edge_sigma=None`` the edges are sharp and the Gauss-Legendre rule spans
     exactly ``[r_in, r_out]``, so the transform is spectrally accurate for
     a smooth power law (``index=0``, ``r_in=0`` is a uniform disk).
 
@@ -2877,11 +2871,9 @@ class RadialPowerLaw(_RadialProfile):
         Inner and outer radius in milliarcseconds.
     index : float or array-like, optional
         Power-law index (default 0).
-    edge : float, array-like or None, optional
+    edge_sigma : float, array-like or None, optional
         Standard deviation of the soft edges in milliarcseconds, or ``None``
         for sharp edges (default).
-    weight : float or array-like, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
 
     References
     ----------
@@ -2892,21 +2884,22 @@ class RadialPowerLaw(_RadialProfile):
     r_in: jax.Array
     r_out: jax.Array
     index: jax.Array
-    edge: Any
+    edge_sigma: Any
 
-    def __init__(self, r_in, r_out, index=0.0, edge=None, weight=1.0):
+    def __init__(self, r_in, r_out, index=0.0, edge_sigma=None):
         self.r_in = np.asarray(r_in, dtype=float)
         self.r_out = np.asarray(r_out, dtype=float)
         self.index = np.asarray(index, dtype=float)
-        self.edge = None if edge is None else np.asarray(edge, dtype=float)
-        self.weight = np.asarray(weight, dtype=float)
+        self.edge_sigma = (
+            None if edge_sigma is None else np.asarray(edge_sigma, dtype=float)
+        )
         self.rule_x = None
         self.rule_w = None
 
     def _range(self):
-        if self.edge is None:
+        if self.edge_sigma is None:
             return self.r_in, self.r_out
-        half = _POLAR_TAIL_WIDTHS * self.edge
+        half = _POLAR_TAIL_WIDTHS * self.edge_sigma
         return np.maximum(self.r_in - half, 0.0), self.r_out + half
 
     def quadrature(self):
@@ -2916,13 +2909,13 @@ class RadialPowerLaw(_RadialProfile):
 
     def intensity(self, r, pixel_scale_mas):
         base = np.maximum(r, 1e-9) ** self.index
-        if self.edge is None:
+        if self.edge_sigma is None:
             inside = (r >= self.r_in) & (r <= self.r_out)
             return np.where(inside, base, 0.0)
         return (
             base
-            * _soft_step(r - self.r_in, self.edge)
-            * _soft_step(self.r_out - r, self.edge)
+            * _soft_step(r - self.r_in, self.edge_sigma)
+            * _soft_step(self.r_out - r, self.edge_sigma)
         )
 
     def extent(self):
@@ -2935,16 +2928,17 @@ class RadialPowerLaw(_RadialProfile):
             & np.asarray(self.r_in >= 0.0)
             & np.asarray(self.r_out > self.r_in)
         )
-        if self.edge is not None:
-            valid = valid & np.asarray(self.edge > 0.0)
+        if self.edge_sigma is not None:
+            valid = valid & np.asarray(self.edge_sigma > 0.0)
         return valid
 
 
 class ExpTail(_RadialProfile):
-    r"""Exponential tail, $I \propto \exp[-(r - r_0)/L]$ for $r \ge r_0$.
+    r"""Exponential tail, $I \propto \exp[-(r - r_{\rm in})/L]$ for
+    $r \ge r_{\rm in}$.
 
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
-    so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
+    so no outer radius is needed and none of the tail is dropped. ``r_in = 0``
     is an exponential disk. Gauss-Laguerre nodes cover the oscillating tail
     less efficiently than Gauss-Legendre does a finite range, and the
     accuracy depends on $2\pi q L$ at the longest baseline $q$: the rule of
@@ -2955,34 +2949,31 @@ class ExpTail(_RadialProfile):
     $10^{-5}$. For a tail that is resolved much more finely, prefer a
     [`RadialPowerLaw`][virgil.models.RadialPowerLaw] with a soft edge, or
     give a ``cutoff``: the tail is then cut at
-    $r_0 + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
+    $r_{\rm in} + \mathrm{cutoff}\, L$ (the light beyond is dropped) and
     integrated by a Gauss-Legendre rule, which needs about
     $\pi q\, \mathrm{cutoff}\, L + 12$ nodes (a cutoff of 5 drops 0.7 %
-    of the flux of a thin disk). See ``PolarDisk.suggest_n_r``.
+    of the flux of a thin disk). See ``MultipoleDisk.suggest_n_r``.
 
     Parameters
     ----------
-    r0 : float or array-like
+    r_in : float or array-like
         Inner radius in milliarcseconds, where the tail starts.
-    scale : float or array-like
+    scale_length : float or array-like
         e-folding length $L$ in milliarcseconds.
-    weight : float or array-like, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
     cutoff : float or None, optional
-        Cut the tail at ``r0 + cutoff * scale`` (a static number; ``None``,
-        the default, is the whole tail).
+        Cut the tail at ``r_in + cutoff * scale_length`` (a static number;
+        ``None``, the default, is the whole tail).
     """
 
-    r0: jax.Array
-    scale: jax.Array
+    r_in: jax.Array
+    scale_length: jax.Array
     cutoff: float | None = eqx.field(static=True)
 
-    def __init__(self, r0, scale, weight=1.0, cutoff=None):
+    def __init__(self, r_in, scale_length, cutoff=None):
         if cutoff is not None and not float(cutoff) > 0.0:
             raise ValueError(f"cutoff must be positive or None: {cutoff!r}")
-        self.r0 = np.asarray(r0, dtype=float)
-        self.scale = np.asarray(scale, dtype=float)
-        self.weight = np.asarray(weight, dtype=float)
+        self.r_in = np.asarray(r_in, dtype=float)
+        self.scale_length = np.asarray(scale_length, dtype=float)
         self.cutoff = None if cutoff is None else float(cutoff)
         self.rule_x = None
         self.rule_w = None
@@ -2996,24 +2987,29 @@ class ExpTail(_RadialProfile):
         self._check_rule()
         if self.cutoff is not None:
             r, dr = _legendre_nodes(
-                self.rule, self.r0, self.r0 + self.cutoff * self.scale
+                self.rule,
+                self.r_in,
+                self.r_in + self.cutoff * self.scale_length,
             )
             return r, dr * r * self.intensity(r, 0.0)
         t, w = (jax.lax.stop_gradient(a) for a in self.rule)
-        r = self.r0 + self.scale * t
-        # int_{r0}^inf e^{-(r-r0)/L} f(r) r dr = L int e^{-t} f r dt.
-        return r, self.scale * w * r
+        r = self.r_in + self.scale_length * t
+        # int_{r_in}^inf e^{-(r-r_in)/L} f(r) r dr = L int e^{-t} f r dt.
+        return r, self.scale_length * w * r
 
     def intensity(self, r, pixel_scale_mas):
-        s = np.maximum(r - self.r0, 0.0) / self.scale
-        inside = r >= self.r0
+        s = np.maximum(r - self.r_in, 0.0) / self.scale_length
+        inside = r >= self.r_in
         if self.cutoff is not None:
             inside = inside & (s <= self.cutoff)
         return np.where(inside, np.exp(-s), 0.0)
 
     def extent(self):
-        r0, s = (float(onp.max(onp.asarray(a))) for a in (self.r0, self.scale))
-        return r0, r0 + (10.0 if self.cutoff is None else self.cutoff) * s
+        r_in, s = (
+            float(onp.max(onp.asarray(a)))
+            for a in (self.r_in, self.scale_length)
+        )
+        return r_in, r_in + (10.0 if self.cutoff is None else self.cutoff) * s
 
     def _n_needed(self, q_max):
         lo, hi = self.extent()
@@ -3025,8 +3021,8 @@ class ExpTail(_RadialProfile):
     def is_physical(self):
         return (
             super().is_physical()
-            & np.asarray(self.r0 >= 0.0)
-            & np.asarray(self.scale > 0.0)
+            & np.asarray(self.r_in >= 0.0)
+            & np.asarray(self.scale_length > 0.0)
         )
 
 
@@ -3034,24 +3030,20 @@ class Gap(_RadialProfile):
     r"""A Gaussian gap cut in another profile.
 
     The brightness is that of ``base`` times
-    $1 - d \exp[-(r - r_0)^2 / 2 w^2]$, so ``depth=1`` empties the gap
-    and ``depth=0`` leaves ``base``. The quadrature is the base profile's:
-    its ``n_r`` must resolve ``width``. The base profile's own ``weight`` is
-    ignored; the gap's ``weight`` is used inside a
-    [`RadialSum`][virgil.models.RadialSum].
+    $1 - d \exp[-(r - r_0)^2 / 2 \sigma^2]$ ($r_0$ = ``radius``), so
+    ``depth=1`` empties the gap and ``depth=0`` leaves ``base``. The
+    quadrature is the base profile's: its ``n_r`` must resolve ``sigma``.
 
     Parameters
     ----------
     base : profile
         The profile the gap is cut in. It must have a brightness, so a
         [`ThinRing`][virgil.models.ThinRing] cannot be gapped.
-    r0, width : float or array-like
+    radius, sigma : float or array-like
         Radius of the gap's centre and its standard deviation in
         milliarcseconds.
     depth : float or array-like, optional
         Fractional depth between 0 and 1 (default 1).
-    weight : float or array-like, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
 
     References
     ----------
@@ -3060,21 +3052,20 @@ class Gap(_RadialProfile):
     """
 
     base: _RadialProfile
-    r0: jax.Array
-    width: jax.Array
+    radius: jax.Array
+    sigma: jax.Array
     depth: jax.Array
 
-    def __init__(self, base, r0, width, depth=1.0, weight=1.0):
+    def __init__(self, base, radius, sigma, depth=1.0):
         if not isinstance(base, _RadialProfile) or isinstance(base, ThinRing):
             raise TypeError(
                 "Gap needs a base profile with a brightness (not a "
                 f"ThinRing): {base!r}"
             )
         self.base = base
-        self.r0 = np.asarray(r0, dtype=float)
-        self.width = np.asarray(width, dtype=float)
+        self.radius = np.asarray(radius, dtype=float)
+        self.sigma = np.asarray(sigma, dtype=float)
         self.depth = np.asarray(depth, dtype=float)
-        self.weight = np.asarray(weight, dtype=float)
         self.rule_x = None
         self.rule_w = None
 
@@ -3083,7 +3074,7 @@ class Gap(_RadialProfile):
 
     def _factor(self, r):
         return 1.0 - self.depth * np.exp(
-            -0.5 * ((r - self.r0) / self.width) ** 2
+            -0.5 * ((r - self.radius) / self.sigma) ** 2
         )
 
     def quadrature(self):
@@ -3098,55 +3089,83 @@ class Gap(_RadialProfile):
 
     def _n_needed(self, q_max):
         lo, hi = self.extent()
-        width = float(onp.min(onp.asarray(self.width)))
-        resolve = int(onp.ceil(4.0 * (hi - lo) / max(width, 1e-12)))
+        sigma = float(onp.min(onp.asarray(self.sigma)))
+        resolve = int(onp.ceil(4.0 * (hi - lo) / max(sigma, 1e-12)))
         return max(self.base._n_needed(q_max), resolve)
 
     def is_physical(self):
         return (
             super().is_physical()
             & self.base.is_physical()
-            & np.asarray(self.width > 0.0)
+            & np.asarray(self.sigma > 0.0)
             & np.asarray((self.depth >= 0.0) & (self.depth <= 1.0))
         )
 
 
-class RadialSum(_RadialProfile):
-    """Sum of named radial profiles, mixed by their ``weight``.
+class _Term(zdx.Base):
+    """A part of a [`RadialSum`][virgil.models.RadialSum]: a profile and its
+    ``weight``. Other attributes are those of the profile, so a path reads
+    ``disk.profile.outer.radius`` and ``disk.profile.outer.weight``."""
 
-    Each part is normalized to unit total light and then weighted by its
-    ``weight`` (relative to the others), so the weights are the parts' shares
-    of the disk's flux, as the ``flux`` of a [`System`][virgil.models.System]'s
-    components are. Keep the parts' weights as parameters and fit
-    their ratios. Parts are reached by name: ``disk.profile.inner.r0``.
+    profile: _RadialProfile
+    weight: jax.Array
+
+    def __init__(self, profile, weight=1.0):
+        self.profile = profile
+        self.weight = np.asarray(weight, dtype=float)
+
+    def __getattr__(self, name):
+        try:
+            profile = object.__getattribute__(self, "profile")
+        except AttributeError:
+            raise AttributeError(name) from None
+        return getattr(profile, name)
+
+
+class RadialSum(_RadialProfile):
+    """Sum of named radial profiles, mixed by their weights.
+
+    A part is a profile, or a ``(profile, weight)`` pair (a bare profile has
+    weight 1). Each part is normalized to unit total light and then weighted
+    by its ``weight`` (relative to the others), so the weights are the parts'
+    shares of the disk's flux, as the ``flux`` of a
+    [`System`][virgil.models.System]'s components are. Keep the weights as
+    parameters and fit their ratios: parts are reached by name,
+    ``disk.profile.inner.radius`` and ``disk.profile.outer.weight``.
     Each part keeps its own quadrature rule, so the sum has
     ``n_r`` nodes per part.
 
     Examples
     --------
     >>> profile = RadialSum(
-    ...     inner=GaussianRing(r0=3.0, sigma=0.5),
-    ...     outer=GaussianRing(r0=8.0, sigma=1.0, weight=0.5),
+    ...     inner=GaussianRing(radius=3.0, sigma=0.5),
+    ...     outer=(GaussianRing(radius=8.0, sigma=1.0), 0.5),
     ... )
-    >>> disk = PolarDisk(profile, inc=40.0, pa=20.0, n_r=32)
+    >>> disk = MultipoleDisk(profile, inc=40.0, pa=20.0, n_r=32)
     """
 
     names: tuple = eqx.field(static=True)
     parts: tuple
 
-    def __init__(self, parts=None, /, *, weight=1.0, **named):
+    def __init__(self, parts=None, /, **named):
         parts = {**(parts or {}), **named}
         if not parts:
             raise ValueError("RadialSum needs at least one profile.")
+        terms = []
         for name, part in parts.items():
             check_part_name(
-                name, RadialSum, "part", "inner.r0", "a RadialSum attribute"
+                name,
+                RadialSum,
+                "part",
+                "inner.radius",
+                "a RadialSum attribute",
             )
-            if not isinstance(part, _RadialProfile):
-                raise TypeError(f"Part '{name}' is not a profile: {part!r}")
+            profile, weight = part if isinstance(part, tuple) else (part, 1.0)
+            if not isinstance(profile, _RadialProfile):
+                raise TypeError(f"Part '{name}' is not a profile: {profile!r}")
+            terms.append(_Term(profile, weight))
         self.names = tuple(parts)
-        self.parts = tuple(parts.values())
-        self.weight = np.asarray(weight, dtype=float)
+        self.parts = tuple(terms)
         self.rule_x = None
         self.rule_w = None
 
@@ -3164,18 +3183,21 @@ class RadialSum(_RadialProfile):
         )
 
     def with_rule(self, n_r):
-        parts = tuple(part.with_rule(n_r) for part in self.parts)
+        parts = tuple(
+            eqx.tree_at(lambda t: t.profile, t, t.profile.with_rule(n_r))
+            for t in self.parts
+        )
         return eqx.tree_at(lambda p: p.parts, self, parts)
 
     def _shares(self):
-        weights = np.stack([np.asarray(p.weight) for p in self.parts])
+        weights = np.stack([np.asarray(t.weight) for t in self.parts])
         return weights / np.sum(weights)
 
     def quadrature(self):
         shares = self._shares()
         rs, ws = [], []
-        for share, part in zip(shares, self.parts):
-            r, w = part._normalized_quadrature()
+        for share, term in zip(shares, self.parts):
+            r, w = term.profile._normalized_quadrature()
             rs.append(r)
             ws.append(share * w)
         return np.concatenate(rs), np.concatenate(ws)
@@ -3183,25 +3205,26 @@ class RadialSum(_RadialProfile):
     def intensity(self, r, pixel_scale_mas):
         shares = self._shares()
         total = 0.0
-        for share, part in zip(shares, self.parts):
-            _, w = part.quadrature()
-            total = total + share * part.intensity(
+        for share, term in zip(shares, self.parts):
+            _, w = term.profile.quadrature()
+            total = total + share * term.profile.intensity(
                 r, pixel_scale_mas
             ) / np.sum(w)
         return total
 
     def extent(self):
-        extents = [part.extent() for part in self.parts]
+        extents = [t.profile.extent() for t in self.parts]
         return min(e[0] for e in extents), max(e[1] for e in extents)
 
     def _n_needed(self, q_max):
-        return max(part._n_needed(q_max) for part in self.parts)
+        return max(t.profile._n_needed(q_max) for t in self.parts)
 
     def is_physical(self):
         valid = super().is_physical()
-        for part in self.parts:
-            valid = valid & part.is_physical()
-        total = sum(np.asarray(p.weight) for p in self.parts)
+        for term in self.parts:
+            valid = valid & term.profile.is_physical()
+            valid = valid & np.asarray(term.weight >= 0.0)
+        total = sum(np.asarray(t.weight) for t in self.parts)
         return valid & (total > 0.0)
 
 
@@ -3214,55 +3237,55 @@ class _RadialFunction(zdx.Base):
 
 
 class RadialLinear(_RadialFunction):
-    """``value + slope (r - r0)``: a coefficient that varies linearly.
+    """``value + slope (r - r_ref)``: a coefficient that varies linearly.
 
     Parameters
     ----------
     value : float or array-like
-        The function at ``r = r0``.
+        The function at ``r = r_ref``.
     slope : float or array-like, optional
         Gradient per milliarcsecond (default 0).
-    r0 : float or array-like, optional
+    r_ref : float or array-like, optional
         Reference radius in milliarcseconds (default 0).
     """
 
     value: jax.Array
     slope: jax.Array
-    r0: jax.Array
+    r_ref: jax.Array
 
-    def __init__(self, value, slope=0.0, r0=0.0):
+    def __init__(self, value, slope=0.0, r_ref=0.0):
         self.value = np.asarray(value, dtype=float)
         self.slope = np.asarray(slope, dtype=float)
-        self.r0 = np.asarray(r0, dtype=float)
+        self.r_ref = np.asarray(r_ref, dtype=float)
 
     def __call__(self, r):
-        return self.value + self.slope * (r - self.r0)
+        return self.value + self.slope * (r - self.r_ref)
 
 
 class RadialPower(_RadialFunction):
-    """``value (r / r0) ** index``: a coefficient that follows a power law.
+    """``value (r / r_ref) ** index``: a coefficient that follows a power law.
 
     Parameters
     ----------
     value : float or array-like
-        The function at ``r = r0``.
+        The function at ``r = r_ref``.
     index : float or array-like
         Power-law index.
-    r0 : float or array-like
+    r_ref : float or array-like
         Reference radius in milliarcseconds (positive).
     """
 
     value: jax.Array
     index: jax.Array
-    r0: jax.Array
+    r_ref: jax.Array
 
-    def __init__(self, value, index, r0):
+    def __init__(self, value, index, r_ref):
         self.value = np.asarray(value, dtype=float)
         self.index = np.asarray(index, dtype=float)
-        self.r0 = np.asarray(r0, dtype=float)
+        self.r_ref = np.asarray(r_ref, dtype=float)
 
     def __call__(self, r):
-        return self.value * np.maximum(r / self.r0, 1e-12) ** self.index
+        return self.value * np.maximum(r / self.r_ref, 1e-12) ** self.index
 
 
 def _matern(d, nu):
@@ -3305,8 +3328,8 @@ def _azimuthal_spectrum(m, angle, nu):
 
     ``S(m) = [1 + (m angle)^2 / (2 nu)]^(-nu - 1/2)``, or
     ``exp(-(m angle)^2 / 2)`` for ``nu = inf``. The single definition of the
-    azimuthal kernel, shared by [`PolarKernel`][virgil.models.PolarKernel]
-    (harmonic coefficients) and [`PolarField`][virgil.fields.PolarField]
+    azimuthal kernel, shared by [`MultipoleKernel`][virgil.models.MultipoleKernel]
+    (harmonic coefficients) and [`MultipoleField`][virgil.fields.MultipoleField]
     (pixels), both through its logarithm.
     """
     return np.exp(_log_azimuthal_spectrum(m, angle, nu))
@@ -3359,37 +3382,144 @@ def _linear_interp(r, nodes, values):
 _GP_NODES = 16
 
 
-class RadialGP(_RadialProfile, _RadialFunction):
-    r"""A Gaussian process in the radius, on nodes, in whitened form.
+class _RadialGPBase(zdx.Base):
+    r"""The Gaussian process shared by [`RadialGP`][virgil.models.RadialGP] (a
+    profile) and [`RadialGPFunction`][virgil.models.RadialGPFunction] (a
+    function of the radius): the values at the nodes $r_k$ are $g = \mu +
+    \sigma L z$, with $LL^\top$ the Matérn correlation matrix of the nodes
+    (length ``ell``, smoothness ``nu``) and **whitened latents** $z \sim
+    N(0, I)$, the parameters (path ``z``): a standard-normal prior on ``z``
+    is the Gaussian-process prior, and optimizers and samplers see a
+    unit-scale, uncorrelated coordinate (as for
+    [`GaussianField`][virgil.fields.GaussianField]). The matrix is dense and
+    its Cholesky factor is recomputed at every call, which costs nothing for
+    the ``n`` of at most about 100 nodes used here. A jitter keeps it
+    positive definite when ``ell`` is long against the node spacing. A
+    subclass gives the nodes.
+    """
 
-    The values at the nodes $r_k$ are $g = \mu + \sigma L z$, with
-    $LL^\top$ the Matérn correlation matrix of the nodes (length ``ell``,
-    smoothness ``nu``) and **whitened latents** $z \sim N(0, I)$, the
-    parameters (path ``z``): a standard-normal prior on ``z`` is the
-    Gaussian-process prior, and optimizers and samplers see a unit-scale,
-    uncorrelated coordinate (as for [`GaussianField`][virgil.fields.GaussianField]).
-    The matrix is dense and its Cholesky factor is recomputed at every
-    call, which costs nothing for the ``n`` of at most about 100 nodes used here.
-    A jitter keeps it positive definite when ``ell`` is long against the node
-    spacing.
+    z: Any
+    mu: jax.Array
+    sigma: jax.Array
+    ell: jax.Array
+    r_in: Any
+    r_out: Any
+    nu: float = eqx.field(static=True)
+    jitter: float = eqx.field(static=True)
 
-    One class serves two roles.
+    def _init_process(self, name, r_in, r_out, sigma, ell, mu, z, nu, jitter):
+        if (r_in is None) != (r_out is None):
+            raise ValueError("give both r_in and r_out, or neither.")
+        if z is not None:
+            z = np.asarray(z, dtype=float)
+            if z.ndim != 1:
+                raise ValueError(f"z must be 1-D, got shape {z.shape}.")
+        self.z = z
+        self.mu = np.asarray(mu, dtype=float)
+        self.sigma = np.asarray(sigma, dtype=float)
+        self.ell = np.asarray(ell, dtype=float)
+        self.r_in = None if r_in is None else np.asarray(r_in, dtype=float)
+        self.r_out = None if r_out is None else np.asarray(r_out, dtype=float)
+        self.nu = _check_nu(nu, name)
+        self.jitter = float(jitter)
+        _check_shape_params(
+            name,
+            (
+                ("sigma", self.sigma, lambda x: x > 0.0, "positive"),
+                ("ell", self.ell, lambda x: x > 0.0, "positive"),
+            ),
+        )
 
-    **As the profile** of a [`PolarDisk`][virgil.models.PolarDisk]
-    (``PolarDisk(RadialGP(r_in, r_out), n_r=48)``) the brightness is
-    $I_0(r) = \exp g(r)$, positive. The nodes are the Gauss-Legendre nodes
-    of $[r_{\rm in}, r_{\rm out}]$ that the disk's quadrature uses, one
-    latent each (so ``n_r`` latents), and a non-parametric profile of ``n_r``
-    values is exactly a quadrature of the Hankel transform. Rendering
-    interpolates linearly in $r$. The disk's visibility is normalized, so
-    the mean ``mu`` of $g$ is not identifiable: leave it at 0.
+    def with_range(self, r_in, r_out):
+        """This process on ``[r_in, r_out]`` (and ``_GP_NODES`` latents) if it
+        has no range or latents yet; otherwise unchanged."""
+        out = self
+        if out.r_in is None and r_in is not None:
+            out = eqx.tree_at(
+                lambda p: (p.r_in, p.r_out),
+                out,
+                (
+                    np.asarray(r_in, dtype=float),
+                    np.asarray(r_out, dtype=float),
+                ),
+                is_leaf=lambda x: x is None,
+            )
+        if out.z is None:
+            out = eqx.tree_at(
+                lambda p: p.z,
+                out,
+                np.zeros(_GP_NODES),
+                is_leaf=lambda x: x is None,
+            )
+        return out
 
-    **As a function of the radius** (a coefficient of
-    [`Harmonics`][virgil.models.Harmonics], the spectral index
-    ``spectral_index`` of a disk) it is $g(r)$ itself (no exponential): the
-    nodes are ``n`` equally spaced radii on $[r_{\rm in}, r_{\rm out}]$ and
-    ``g`` is interpolated linearly between them. The range, when not given,
-    is that of the disk's profile.
+    def _check_range(self):
+        if self.r_in is None:
+            raise ValueError(
+                f"{type(self).__name__} has no radial range: give r_in and "
+                "r_out, or use it inside a MultipoleDisk, whose profile sets "
+                "them."
+            )
+
+    def _nodes(self):
+        raise NotImplementedError
+
+    def nodes(self):
+        """The nodes in milliarcseconds."""
+        return self._nodes()
+
+    def _values(self):
+        """The nodes and the process ``g`` at them."""
+        nodes = self._nodes()
+        if self.z is None or self.z.shape[0] != nodes.shape[0]:
+            raise ValueError("the latents do not match the nodes.")
+        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
+        return nodes, self.mu + self.sigma * (factor @ self.z)
+
+    def draws(self, key, n=1, r=None, positive=False):
+        """``n`` draws from the prior at the radii ``r`` (the nodes by default).
+
+        Draws $g = \\mu + \\sigma L z$ with $z \\sim N(0, I)$ at the current
+        ``mu``, ``sigma``, ``ell``; with ``positive``, $\\exp g$ (the
+        profile). Shape ``(n,) + shape(r)``. Use them to show the prior beside
+        the posterior.
+        """
+        nodes = self._nodes()
+        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
+        z = jax.random.normal(key, (int(n), nodes.shape[0]), nodes.dtype)
+        g = self.mu + self.sigma * (z @ factor.T)
+        if r is not None:
+            g = _linear_interp(r, nodes, g)
+        return np.exp(g) if positive else g
+
+    def is_physical(self):
+        valid = np.asarray(self.sigma > 0.0) & np.asarray(self.ell > 0.0)
+        if self.r_in is not None:
+            valid = (
+                valid
+                & np.asarray(self.r_in >= 0.0)
+                & np.asarray(self.r_out > self.r_in)
+            )
+        if self.z is not None:
+            valid = valid & np.all(np.isfinite(self.z))
+        return valid
+
+
+class RadialGP(_RadialGPBase, _RadialProfile):
+    r"""A non-parametric radial profile: the exponential of a Gaussian
+    process in the radius, $I_0(r) = \exp g(r)$, positive.
+
+    The nodes are the Gauss-Legendre nodes of $[r_{\rm in}, r_{\rm out}]$
+    that the disk's quadrature uses, one latent each (so ``n_r`` latents),
+    and a non-parametric profile of ``n_r`` values is exactly a quadrature of
+    the Hankel transform. Rendering interpolates linearly in $r$. The disk's
+    visibility is normalized, so the mean ``mu`` of $g$ is not identifiable:
+    leave it at 0. The process $g(r)$ itself, with no exponential and on
+    equally spaced nodes, is
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] (a spectral index,
+    a harmonic coefficient). The whitened-latent construction, with
+    $g = \mu + \sigma L z$ and $z \sim N(0, I)$ (path ``z``), is described
+    there and shared.
 
     **Priors.** ``z`` has a standard-normal prior. ``sigma`` and ``ell`` are
     scales, so their invariant priors are log-uniform on stated bounds
@@ -3419,41 +3549,35 @@ class RadialGP(_RadialProfile, _RadialFunction):
 
     Parameters
     ----------
-    r_in, r_out : float or None, optional
+    r_in, r_out : float
         Radii in milliarcseconds of the first and last node (the range of the
-        process). Required for a profile; for a function of the radius, the
-        disk's profile range by default.
+        process).
     sigma : float, optional
-        Standard deviation of $g$ (default 1; for a profile, the dynamic
-        range is about $e^{\pm\sigma}$).
+        Standard deviation of $g$ (default 1; the dynamic range is about
+        $e^{\pm\sigma}$).
     ell : float, optional
         Correlation length in milliarcseconds (default 1).
     mu : float, optional
         Mean of $g$ (default 0).
-    z : array-like, shape (n,), optional
-        Whitened latents (default 0). Its size is the number of nodes of the
-        function; for a profile it must equal the disk's ``n_r`` (the default
-        is set from it).
-    n : int, optional
-        Number of nodes when ``z`` is not given (default 16 for a function of
-        the radius; for a profile ``n_r``).
+    z : array-like, shape (n_r,), optional
+        Whitened latents (default 0). It must have as many entries as the
+        disk's ``n_r``; by default one per node, set when the profile is
+        built into a disk.
     nu : {0.5, 1.5, 2.5, inf}, optional
         Matérn smoothness (default 1.5; ``inf`` is the squared exponential
         used by FRAP). Static.
     jitter : float, optional
         Relative jitter on the correlation matrix's diagonal (default 1e-6;
         static).
-    weight : float, optional
-        Relative weight inside a [`RadialSum`][virgil.models.RadialSum].
 
     Examples
     --------
     A non-parametric profile with a fitted prior, and a spectral index:
 
     >>> profile = RadialGP(r_in=0.5, r_out=12.0, sigma=1.5, ell=2.0)
-    >>> disk = PolarDisk(
+    >>> disk = MultipoleDisk(
     ...     profile,
-    ...     spectral_index=RadialGP(sigma=0.5, ell=4.0),
+    ...     spectral_index=RadialGPFunction(sigma=0.5, ell=4.0),
     ...     wavel0=2.2e-6,
     ...     inc=30.0,
     ...     n_r=24,
@@ -3472,90 +3596,28 @@ class RadialGP(_RadialProfile, _RadialFunction):
     copied.
     """
 
-    z: Any
-    mu: jax.Array
-    sigma: jax.Array
-    ell: jax.Array
-    r_in: Any
-    r_out: Any
-    nu: float = eqx.field(static=True)
-    jitter: float = eqx.field(static=True)
-
     def __init__(
         self,
-        r_in=None,
-        r_out=None,
+        r_in,
+        r_out,
         sigma=1.0,
         ell=1.0,
         mu=0.0,
         z=None,
-        n=None,
         nu=1.5,
         jitter=1e-6,
-        weight=1.0,
     ):
-        if (r_in is None) != (r_out is None):
-            raise ValueError("give both r_in and r_out, or neither.")
-        if z is not None:
-            z = np.asarray(z, dtype=float)
-            if z.ndim != 1:
-                raise ValueError(f"z must be 1-D, got shape {z.shape}.")
-            if n is not None and int(n) != z.shape[0]:
-                raise ValueError(f"n={n} but z has {z.shape[0]} entries.")
-        elif n is not None:
-            if int(n) != n or n < 1:
-                raise ValueError(f"n must be a positive integer: {n!r}.")
-            z = np.zeros(int(n))
-        self.z = z
-        self.mu = np.asarray(mu, dtype=float)
-        self.sigma = np.asarray(sigma, dtype=float)
-        self.ell = np.asarray(ell, dtype=float)
-        self.r_in = None if r_in is None else np.asarray(r_in, dtype=float)
-        self.r_out = None if r_out is None else np.asarray(r_out, dtype=float)
-        self.nu = _check_nu(nu, "RadialGP")
-        self.jitter = float(jitter)
-        self.weight = np.asarray(weight, dtype=float)
+        if r_in is None or r_out is None:
+            raise ValueError("RadialGP needs r_in and r_out.")
+        self._init_process(
+            "RadialGP", r_in, r_out, sigma, ell, mu, z, nu, jitter
+        )
         self.rule_x = None
         self.rule_w = None
-        _check_shape_params(
-            "RadialGP",
-            (
-                ("sigma", self.sigma, lambda x: x > 0.0, "positive"),
-                ("ell", self.ell, lambda x: x > 0.0, "positive"),
-            ),
-        )
-
-    # -- nodes and values ---------------------------------------------
-
-    def _check_range(self):
-        if self.r_in is None:
-            raise ValueError(
-                "RadialGP has no radial range: give r_in and r_out, or use "
-                "it inside a PolarDisk, whose profile sets them."
-            )
 
     def with_range(self, r_in, r_out):
-        """This process on ``[r_in, r_out]`` (and ``_GP_NODES`` latents) if it
-        has no range or latents yet; otherwise unchanged."""
-        out = self
-        if out.r_in is None and r_in is not None:
-            out = eqx.tree_at(
-                lambda p: (p.r_in, p.r_out),
-                out,
-                (
-                    np.asarray(r_in, dtype=float),
-                    np.asarray(r_out, dtype=float),
-                ),
-                is_leaf=lambda x: x is None,
-            )
-        if out.z is None and out.rule_x is None:
-            out = eqx.tree_at(
-                lambda p: p.z,
-                out,
-                np.zeros(_GP_NODES),
-                is_leaf=lambda x: x is None,
-            )
-        return out
+        """This profile: its range is always given."""
+        return self
 
     def with_rule(self, n_r):
         """This profile with an ``n_r``-node rule, and ``n_r`` latents (zero)
@@ -3576,53 +3638,9 @@ class RadialGP(_RadialProfile, _RadialFunction):
         return out
 
     def _nodes(self):
-        """The nodes (mas): the quadrature nodes of a profile, else ``n``
-        equally spaced radii."""
-        self._check_range()
-        if self.rule is not None:
-            return _legendre_nodes(self.rule, self.r_in, self.r_out)[0]
-        if self.z is None:
-            raise ValueError(
-                "this RadialGP has no latents: give z or n, or use it inside "
-                "a PolarDisk."
-            )
-        return np.linspace(self.r_in, self.r_out, self.z.shape[0])
-
-    def _values(self):
-        """The nodes and the process ``g`` at them."""
-        nodes = self._nodes()
-        if self.z is None or self.z.shape[0] != nodes.shape[0]:
-            raise ValueError("the latents do not match the nodes.")
-        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
-        return nodes, self.mu + self.sigma * (factor @ self.z)
-
-    def nodes(self):
-        """The nodes in milliarcseconds."""
-        return self._nodes()
-
-    def __call__(self, r):
-        """The process $g(r)$ (no exponential), interpolated linearly
-        between the nodes (constant beyond them)."""
-        nodes, g = self._values()
-        return _linear_interp(r, nodes, g)
-
-    def draws(self, key, n=1, r=None, positive=False):
-        """``n`` draws from the prior at the radii ``r`` (the nodes by default).
-
-        Draws $g = \\mu + \\sigma L z$ with $z \\sim N(0, I)$ at the current
-        ``mu``, ``sigma``, ``ell``; with ``positive``, $\\exp g$ (the
-        profile). Shape ``(n,) + shape(r)``. Use them to show the prior beside
-        the posterior.
-        """
-        nodes = self._nodes()
-        factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
-        z = jax.random.normal(key, (int(n), nodes.shape[0]), nodes.dtype)
-        g = self.mu + self.sigma * (z @ factor.T)
-        if r is not None:
-            g = _linear_interp(r, nodes, g)
-        return np.exp(g) if positive else g
-
-    # -- the profile role -----------------------------------------------
+        """The Gauss-Legendre nodes (mas) of the quadrature rule."""
+        self._check_rule()
+        return _legendre_nodes(self.rule, self.r_in, self.r_out)[0]
 
     def quadrature(self):
         self._check_rule()
@@ -3636,35 +3654,109 @@ class RadialGP(_RadialProfile, _RadialFunction):
         return np.where(inside, np.exp(_linear_interp(r, nodes, g)), 0.0)
 
     def extent(self):
-        self._check_range()
         return float(onp.asarray(self.r_in)), float(onp.asarray(self.r_out))
 
     def is_physical(self):
-        valid = (
-            np.asarray(self.sigma > 0.0)
-            & np.asarray(self.ell > 0.0)
-            & np.asarray(self.weight >= 0.0)
+        return _RadialGPBase.is_physical(self) & _RadialProfile.is_physical(
+            self
         )
-        if self.r_in is not None:
-            valid = (
-                valid
-                & np.asarray(self.r_in >= 0.0)
-                & np.asarray(self.r_out > self.r_in)
+
+
+class RadialGPFunction(_RadialGPBase, _RadialFunction):
+    r"""A Gaussian process in the radius as a function: $g(r)$ itself, with
+    no exponential. Use it for the spectral index ``spectral_index`` of a
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] or a coefficient of
+    [`Harmonics`][virgil.models.Harmonics]; for a non-negative profile use
+    [`RadialGP`][virgil.models.RadialGP].
+
+    The values at the nodes $r_k$ are $g = \mu + \sigma L z$, with $LL^\top$
+    the Matérn correlation matrix of the nodes (length ``ell``, smoothness
+    ``nu``) and **whitened latents** $z \sim N(0, I)$, the parameters (path
+    ``z``): a standard-normal prior on ``z`` is the Gaussian-process prior,
+    and optimizers and samplers see a unit-scale, uncorrelated coordinate
+    (as for [`GaussianField`][virgil.fields.GaussianField]). The nodes are
+    ``n`` equally spaced radii on $[r_{\rm in}, r_{\rm out}]$, and ``g`` is
+    interpolated linearly between them (constant beyond). The range, when
+    not given, is that of the disk's profile. The priors, and what ``ell``
+    means, are as for [`RadialGP`][virgil.models.RadialGP].
+
+    Parameters
+    ----------
+    r_in, r_out : float or None, optional
+        Radii in milliarcseconds of the first and last node; both or
+        neither (the disk's profile range by default).
+    sigma : float, optional
+        Standard deviation of $g$ (default 1).
+    ell : float, optional
+        Correlation length in milliarcseconds (default 1).
+    mu : float, optional
+        Mean of $g$ (default 0).
+    z : array-like, shape (n,), optional
+        Whitened latents (default 0). Its size is the number of nodes.
+    n : int, optional
+        Number of nodes when ``z`` is not given (default 16).
+    nu : {0.5, 1.5, 2.5, inf}, optional
+        Matérn smoothness (default 1.5). Static.
+    jitter : float, optional
+        Relative jitter on the correlation matrix's diagonal (default 1e-6;
+        static).
+
+    Examples
+    --------
+    >>> alpha = RadialGPFunction(sigma=0.5, ell=4.0, n=12)
+    >>> alpha.z.shape
+    (12,)
+    """
+
+    def __init__(
+        self,
+        r_in=None,
+        r_out=None,
+        sigma=1.0,
+        ell=1.0,
+        mu=0.0,
+        z=None,
+        n=None,
+        nu=1.5,
+        jitter=1e-6,
+    ):
+        if z is not None:
+            if n is not None and int(n) != np.shape(z)[0]:
+                raise ValueError(f"n={n} but z has {np.shape(z)[0]} entries.")
+        elif n is not None:
+            if int(n) != n or n < 1:
+                raise ValueError(f"n must be a positive integer: {n!r}.")
+            z = np.zeros(int(n))
+        self._init_process(
+            "RadialGPFunction", r_in, r_out, sigma, ell, mu, z, nu, jitter
+        )
+
+    def _nodes(self):
+        """``n`` equally spaced radii (mas)."""
+        self._check_range()
+        if self.z is None:
+            raise ValueError(
+                "this RadialGPFunction has no latents: give z or n, or use "
+                "it inside a MultipoleDisk."
             )
-        if self.z is not None:
-            valid = valid & np.all(np.isfinite(self.z))
-        return valid
+        return np.linspace(self.r_in, self.r_out, self.z.shape[0])
+
+    def __call__(self, r):
+        """The process $g(r)$ (no exponential), interpolated linearly
+        between the nodes (constant beyond them)."""
+        nodes, g = self._values()
+        return _linear_interp(r, nodes, g)
 
 
-class PolarKernel(zdx.Base):
+class MultipoleKernel(zdx.Base):
     r"""A prior over the azimuthal-harmonic coefficients of a
-    [`PolarDisk`][virgil.models.PolarDisk]: a Matérn kernel in the radius and
+    [`MultipoleDisk`][virgil.models.MultipoleDisk]: a Matérn kernel in the radius and
     in the azimuth.
 
     Give it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. The
     coefficients of every order $m = 1 \dots M$ ($c_m$ and $s_m$ of the linear
     form, the latents $\mathrm{re}_m$ and $\mathrm{im}_m$ of the positive
-    one) are independent [`RadialGP`][virgil.models.RadialGP]s with the
+    one) are independent [`RadialGPFunction`][virgil.models.RadialGPFunction]s with the
     same radial length ``ell_r`` (mas), and their variance falls with the
     order as the spectral density of a periodic Matérn kernel in the azimuth,
 
@@ -3713,9 +3805,9 @@ class PolarKernel(zdx.Base):
 
     Examples
     --------
-    >>> prior = PolarKernel(ell_r=3.0, ell_theta=4.0, sigma=0.4)
+    >>> prior = MultipoleKernel(ell_r=3.0, ell_theta=4.0, sigma=0.4)
     >>> harmonics = Harmonics(degree=2, prior=prior)
-    >>> disk = PolarDisk(GaussianRing(6.0, 1.5), harmonics=harmonics, n_r=32)
+    >>> disk = MultipoleDisk(GaussianRing(6.0, 1.5), harmonics=harmonics, n_r=32)
     >>> disk.harmonics.z.shape
     (2, 2, 16)
 
@@ -3759,10 +3851,10 @@ class PolarKernel(zdx.Base):
         self.r_out = None if r_out is None else np.asarray(r_out, dtype=float)
         self.r_ref = None if r_ref is None else np.asarray(r_ref, dtype=float)
         self.n = int(n)
-        self.nu_r = _check_nu(nu_r, "PolarKernel")
-        self.nu_theta = _check_nu(nu_theta, "PolarKernel")
+        self.nu_r = _check_nu(nu_r, "MultipoleKernel")
+        self.nu_theta = _check_nu(nu_theta, "MultipoleKernel")
         _check_shape_params(
-            "PolarKernel",
+            "MultipoleKernel",
             (
                 ("ell_r", self.ell_r, lambda x: x > 0.0, "positive"),
                 ("ell_theta", self.ell_theta, lambda x: x > 0.0, "positive"),
@@ -3784,8 +3876,8 @@ class PolarKernel(zdx.Base):
     def _check_range(self):
         if self.r_in is None:
             raise ValueError(
-                "PolarKernel has no radial range: give r_in and r_out, or "
-                "use it in a PolarDisk, whose profile sets them."
+                "MultipoleKernel has no radial range: give r_in and r_out, or "
+                "use it in a MultipoleDisk, whose profile sets them."
             )
 
     def nodes(self):
@@ -3880,7 +3972,7 @@ def _scalar_or_function(value, name):
 
 class _Azimuthal(zdx.Base):
     """Base class of the azimuthal profiles of a
-    [`PolarDisk`][virgil.models.PolarDisk]: a brightness
+    [`MultipoleDisk`][virgil.models.MultipoleDisk]: a brightness
     ``I(r, theta) / I0(r)`` with azimuthal mean 1 and harmonics ``0..degree``.
 
     A subclass gives the linear coefficients ``coefficients(r)``, the
@@ -3950,7 +4042,7 @@ class _Azimuthal(zdx.Base):
 
 
 class Harmonics(_Azimuthal):
-    r"""Azimuthal harmonics of a [`PolarDisk`][virgil.models.PolarDisk], of
+    r"""Azimuthal harmonics of a [`MultipoleDisk`][virgil.models.MultipoleDisk], of
     exact degree ``M``.
 
     The brightness at radius $r$ and azimuth $\theta$ in the plane of the
@@ -3994,11 +4086,14 @@ class Harmonics(_Azimuthal):
     phase). It reproduces `ModulatedGaussianRim` and `TruncatedCone`, but
     does not keep the image positive: the sum of the amplitudes,
     ``sum(sqrt(c_m**2 + s_m**2)) <= 1``, guarantees it (an rms of the
-    coefficients at most 1 does not), and ``PolarDisk.min_intensity``
+    coefficients at most 1 does not), and ``MultipoleDisk.min_intensity``
     reports violations.
 
     [`virgil.harmonics`][virgil.harmonics] converts between the forms and the
     image harmonics.
+
+    Which arguments are valid depends on the form, so everything after
+    ``c`` and ``s`` is keyword-only.
 
     Parameters
     ----------
@@ -4018,14 +4113,14 @@ class Harmonics(_Azimuthal):
     form : {"positive", "linear"}, optional
         By default ``"linear"`` if ``c`` or ``s`` is given, else
         ``"positive"``.
-    prior : PolarKernel, optional
+    prior : MultipoleKernel, optional
         A Gaussian-process prior over the coefficients of every order
         (``degree`` is then required, and none of ``c``, ``s``, ``re``, ``im``
         or ``w``): the coefficients ($c_m$ and $s_m$, or $\mathrm{re}_j$ and
-        $\mathrm{im}_j$) are [`RadialGP`][virgil.models.RadialGP]s whose
+        $\mathrm{im}_j$) are [`RadialGPFunction`][virgil.models.RadialGPFunction]s whose
         whitened latents are the parameter ``z`` of shape ``(2, M, n)``
         (standard-normal prior), with the variances and lengths of the
-        [`PolarKernel`][virgil.models.PolarKernel]. The form is then the
+        [`MultipoleKernel`][virgil.models.MultipoleKernel]. The form is then the
         positive one unless ``form="linear"``.
 
     Examples
@@ -4033,7 +4128,7 @@ class Harmonics(_Azimuthal):
     A lopsided ring that stays positive, with a second harmonic:
 
     >>> w = (0.4 + 0.1j, 0.2j)
-    >>> disk = PolarDisk(GaussianRing(6.0, 1.0), harmonics=Harmonics(w=w), inc=30.0)
+    >>> disk = MultipoleDisk(GaussianRing(6.0, 1.0), harmonics=Harmonics(w=w), inc=30.0)
 
     The linear form, with a second order that grows outwards:
 
@@ -4066,6 +4161,7 @@ class Harmonics(_Azimuthal):
         self,
         c=(),
         s=(),
+        *,
         degree=None,
         form=None,
         re=(),
@@ -4133,8 +4229,8 @@ class Harmonics(_Azimuthal):
         self.form = form
 
     def _init_prior(self, prior, c, s, degree, form, re, im, w):
-        if not isinstance(prior, PolarKernel):
-            raise TypeError(f"prior must be a PolarKernel: {prior!r}")
+        if not isinstance(prior, MultipoleKernel):
+            raise TypeError(f"prior must be a MultipoleKernel: {prior!r}")
         if (
             any(len(_harmonic_entries(x, "x")) for x in (c, s, re, im))
             or w is not None
@@ -4253,7 +4349,7 @@ class Harmonics(_Azimuthal):
 
 class VonMises(_Azimuthal):
     r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$,
-    for [`PolarDisk`][virgil.models.PolarDisk], truncated at ``degree``.
+    for [`MultipoleDisk`][virgil.models.MultipoleDisk], truncated at ``degree``.
 
     The profile (an arc of width $\sim 1/\sqrt\kappa$ radians centred on
     the azimuth $\theta_0$; $\kappa = 0$ is a uniform ring) has the analytic
@@ -4291,7 +4387,7 @@ class VonMises(_Azimuthal):
     An arc brightest at azimuth 30 degrees, about 25 degrees wide:
 
     >>> arc = VonMises(kappa=5.0, theta0=30.0, degree=20)
-    >>> ring = PolarDisk(GaussianRing(6.0, 1.0), harmonics=arc, inc=40.0)
+    >>> ring = MultipoleDisk(GaussianRing(6.0, 1.0), harmonics=arc, inc=40.0)
     """
 
     kappa: Any
@@ -4417,38 +4513,38 @@ class Cone(_Height):
 
 
 class PowerLawHeight(_Height):
-    r"""A flared surface: $h = h_0 (r / r_0)^\psi$.
+    r"""A flared surface: $h = h_{\rm ref} (r / r_{\rm ref})^\psi$.
 
     Positive heights shift towards position angle ``pa + 90`` on the sky
-    (see [`Cone`][virgil.models.Cone]); a negative ``h0`` puts the surface
+    (see [`Cone`][virgil.models.Cone]); a negative ``h_ref`` puts the surface
     on the other side. A top surface lifted towards the observer shifts the
     apparent ring towards the far side, so when ``pa + 90`` is the near side
-    of the disk it has ``h0 < 0``.
+    of the disk it has ``h_ref < 0``.
 
     Parameters
     ----------
-    h0 : float or array-like
-        Height at ``r0`` in milliarcseconds.
-    r0 : float or array-like
+    h_ref : float or array-like
+        Height at ``r_ref`` in milliarcseconds.
+    r_ref : float or array-like
         Reference radius in milliarcseconds (positive).
     psi : float or array-like, optional
         Flaring index (default 1, a cone through the centre).
     """
 
-    h0: jax.Array
-    r0: jax.Array
+    h_ref: jax.Array
+    r_ref: jax.Array
     psi: jax.Array
 
-    def __init__(self, h0, r0, psi=1.0):
-        self.h0 = np.asarray(h0, dtype=float)
-        self.r0 = np.asarray(r0, dtype=float)
+    def __init__(self, h_ref, r_ref, psi=1.0):
+        self.h_ref = np.asarray(h_ref, dtype=float)
+        self.r_ref = np.asarray(r_ref, dtype=float)
         self.psi = np.asarray(psi, dtype=float)
 
     def __call__(self, r):
-        return self.h0 * np.maximum(r / self.r0, 1e-12) ** self.psi
+        return self.h_ref * np.maximum(r / self.r_ref, 1e-12) ** self.psi
 
     def is_physical(self):
-        return np.all(self.r0 > 0.0)
+        return np.all(self.r_ref > 0.0)
 
 
 def _polar_frequencies(u, v, inc, pa, stretch=None):
@@ -4477,7 +4573,7 @@ def _polar_frequencies(u, v, inc, pa, stretch=None):
     return q, q2, phase, q_minor
 
 
-def polar_disk_cvis(
+def multipole_disk_cvis(
     u,
     v,
     r,
@@ -4620,21 +4716,22 @@ def polar_disk_cvis(
 
 def _with_gp_range(obj, lo, hi):
     """``obj`` with the radial range ``[lo, hi]`` given to every
-    [`RadialGP`][virgil.models.RadialGP] and
-    [`PolarKernel`][virgil.models.PolarKernel] in it that has none."""
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] and
+    [`MultipoleKernel`][virgil.models.MultipoleKernel] in it that has none."""
+    gps = (RadialGPFunction, MultipoleKernel)
 
     def fill(x):
-        if isinstance(x, (RadialGP, PolarKernel)):
+        if isinstance(x, gps):
             return x.with_range(lo, hi)
         return x
 
     return jax.tree_util.tree_map(
-        fill, obj, is_leaf=lambda x: isinstance(x, (RadialGP, PolarKernel))
+        fill, obj, is_leaf=lambda x: isinstance(x, gps)
     )
 
 
 def _polar_basis(u, v, r, inc, pa, n_orders, height=None):
-    """The data- and geometry-dependent part of ``polar_disk_cvis``.
+    """The data- and geometry-dependent part of ``multipole_disk_cvis``.
 
     Returns ``(q2, p0, cos, sin)``: ``q2`` the squared frequency in the disk
     plane, ``p0`` the order-0 matrix ``J_0(2 pi q r_k)`` (with the phase of
@@ -4642,7 +4739,7 @@ def _polar_basis(u, v, r, inc, pa, n_orders, height=None):
     and ``sin[m - 1]`` that multiply the coefficients $c_m$ and $s_m$ (each of
     shape ``u.shape + (n_r,)``, complex). Then
     ``V = sum_k w_k (p0 + sum_m c_mk cos[m - 1] + s_mk sin[m - 1])`` with
-    normalized weights ``w``: what ``polar_disk_cvis`` computes.
+    normalized weights ``w``: what ``multipole_disk_cvis`` computes.
     """
     q, q2, phase, q_minor = _polar_frequencies(u, v, inc, pa)
     arg = 2.0 * np.pi * q[..., None] * (r * mas2rad)
@@ -4674,7 +4771,7 @@ def _dot(matrix, x):
 
 
 class _FrozenGeometry(zdx.Base):
-    """The cached matrices of ``PolarDisk.freeze_geometry``: the baselines,
+    """The cached matrices of ``MultipoleDisk.freeze_geometry``: the baselines,
     nodes and geometry they were built for (to check against at every call)
     and ``_polar_basis``'s matrices."""
 
@@ -4734,7 +4831,7 @@ class _FrozenGeometry(zdx.Base):
         return out + 0j
 
 
-class PolarDisk(Component):
+class MultipoleDisk(Component):
     r"""Axisymmetric disk with a radial profile, evaluated by quadrature.
 
     The brightness is a radial profile $I(r)$ in the plane of the disk,
@@ -4769,7 +4866,7 @@ class PolarDisk(Component):
     height : Cone, PowerLawHeight or None, optional
         The height of each ring above the disk plane, as a function of its
         radius: a cone ``r cot(alpha) - tip`` or a flared power law
-        ``h0 (r / r0) ** psi``. The ring is shifted on the sky by
+        ``h_ref (r / r_ref) ** psi``. The ring is shifted on the sky by
         ``h sin(inc)`` towards position angle ``pa + 90`` (a phase factor
         after the stretch). The surface is thin and nothing is occulted.
     inc : float or array-like, optional
@@ -4790,15 +4887,15 @@ class PolarDisk(Component):
     n_r : int, optional
         Number of quadrature nodes per profile (default 64). It sets the
         shapes of arrays, so it is static: changing it recompiles, and
-        changing any parameter does not. [`suggest_n_r`][virgil.models.PolarDisk.suggest_n_r]
+        changing any parameter does not. [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r]
         gives a starting value; it is never applied silently.
-    spectral_index : float, radial function, RadialGP or None, optional
+    spectral_index : float, radial function, RadialGPFunction or None, optional
         Makes the profile chromatic: $I_0(r, \lambda) = I_0(r)
         (\lambda/\lambda_0)^{\alpha(r)}$, with $\alpha$ a constant, a
         function of the radius ([`RadialLinear`][virgil.models.RadialLinear],
         [`RadialPower`][virgil.models.RadialPower]) or a
-        [`RadialGP`][virgil.models.RadialGP] (the process itself, no
-        exponential). The profile is evaluated per wavelength at the nodes
+        [`RadialGPFunction`][virgil.models.RadialGPFunction] (the process
+        itself, no exponential). The profile is evaluated per wavelength at the nodes
         and the visibility is normalized per wavelength; the harmonics are
         grey (they share $\alpha$). The component's weight at $\lambda$ is
         ``flux`` times the profile's light at $\lambda$ relative to
@@ -4832,7 +4929,7 @@ class PolarDisk(Component):
     disk inside ``jax.enable_x64(True)``.
 
     Parameters are reached by path, so they can be fitted like any other:
-    ``"disk.inc"``, ``"disk.profile.r0"``, ``"disk.profile.base.sigma"``,
+    ``"disk.inc"``, ``"disk.profile.radius"``, ``"disk.profile.base.sigma"``,
     ``"disk.profile.outer.weight"`` (a part of a
     [`RadialSum`][virgil.models.RadialSum]). The blur is a Gaussian envelope
     in the Fourier plane, applied in the plane of the disk: exact and free.
@@ -4841,11 +4938,11 @@ class PolarDisk(Component):
     [`RadialGP`][virgil.models.RadialGP] (a non-parametric profile, see its
     notes on what ``ell`` means); azimuthal structure in
     [`Harmonics`][virgil.models.Harmonics], [`VonMises`][virgil.models.VonMises]
-    and the priors of [`PolarKernel`][virgil.models.PolarKernel], converted by
+    and the priors of [`MultipoleKernel`][virgil.models.MultipoleKernel], converted by
     [`virgil.harmonics`][virgil.harmonics]; height in
     [`Cone`][virgil.models.Cone] and [`PowerLawHeight`][virgil.models.PowerLawHeight];
     priors in [`gp_priors`][virgil.models.gp_priors]; and a residual aligned
-    with the disk in [`PolarField`][virgil.fields.PolarField].
+    with the disk in [`MultipoleField`][virgil.fields.MultipoleField].
     [`GaussianArc`][virgil.models.GaussianArc],
     [`TruncatedCone`][virgil.models.TruncatedCone] and
     [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] are special
@@ -4855,8 +4952,8 @@ class PolarDisk(Component):
     --------
     A ring with a gap beyond it, seen at 50 degrees:
 
-    >>> profile = Gap(GaussianRing(r0=10.0, sigma=3.0), r0=10.0, width=0.8)
-    >>> disk = PolarDisk(profile, inc=50.0, pa=30.0, blur_fwhm=1.0, n_r=48)
+    >>> profile = Gap(GaussianRing(radius=10.0, sigma=3.0), radius=10.0, sigma=0.8)
+    >>> disk = MultipoleDisk(profile, inc=50.0, pa=30.0, blur_fwhm=1.0, n_r=48)
     >>> scene = System(star=PointSource(), disk=disk.set("flux", 0.3))
     >>> vis = scene.model(np.array([30.0]), np.array([10.0]), 2.2e-6)
 
@@ -4864,9 +4961,9 @@ class PolarDisk(Component):
 
     >>> rings = RadialSum(
     ...     inner=GaussianRing(3.0, 0.5),
-    ...     outer=GaussianRing(8.0, 1.0, weight=0.5),
+    ...     outer=(GaussianRing(8.0, 1.0), 0.5),
     ... )
-    >>> disk = PolarDisk(rings, inc=40.0, pa=20.0, n_r=32)
+    >>> disk = MultipoleDisk(rings, inc=40.0, pa=20.0, n_r=32)
     >>> float(disk.get("profile.outer.weight"))
     0.5
 
@@ -4916,16 +5013,15 @@ class PolarDisk(Component):
         if harmonics is not None:
             harmonics = _with_gp_range(harmonics, *support)
         if spectral_index is not None:
-            if isinstance(spectral_index, _RadialProfile) and not isinstance(
-                spectral_index, RadialGP
-            ):
+            if isinstance(spectral_index, _RadialProfile):
                 raise TypeError(
-                    "spectral_index must be a number, a radial function or a "
-                    f"RadialGP, not a profile: {spectral_index!r}"
+                    "spectral_index must be a number or a radial function "
+                    "(such as a RadialGPFunction), not a profile: "
+                    f"{spectral_index!r}"
                 )
             if isinstance(flux, Spectrum):
                 raise ValueError(
-                    "a PolarDisk with a spectral_index takes a scalar flux "
+                    "a MultipoleDisk with a spectral_index takes a scalar flux "
                     "(its flux at wavel0): its spectrum comes from the "
                     "profile, so a spectrum from virgil.spectra is not "
                     "allowed."
@@ -4973,7 +5069,7 @@ class PolarDisk(Component):
             valid = valid & (self.min_intensity() >= -1e-6)
             if self.harmonics.prior is not None:
                 valid = valid & self.harmonics.prior.is_physical()
-        if isinstance(self.spectral_index, RadialGP):
+        if isinstance(self.spectral_index, RadialGPFunction):
             valid = valid & self.spectral_index.is_physical()
         if self.wavel0 is not None:
             valid = valid & np.all(self.wavel0 > 0.0)
@@ -4983,7 +5079,7 @@ class PolarDisk(Component):
         super().__check_init__()
         if self.spectral_index is not None and isinstance(self.flux, Spectrum):
             raise ValueError(
-                "a PolarDisk with a spectral_index takes a scalar flux (its "
+                "a MultipoleDisk with a spectral_index takes a scalar flux (its "
                 "flux at wavel0), not a spectrum."
             )
 
@@ -5091,7 +5187,7 @@ class PolarDisk(Component):
         height = None if self.height is None else self.height(r)
 
         def full():
-            return polar_disk_cvis(
+            return multipole_disk_cvis(
                 uu,
                 vv,
                 r,
@@ -5147,7 +5243,7 @@ class PolarDisk(Component):
 
         Returns
         -------
-        PolarDisk
+        MultipoleDisk
             This disk with the cache (``frozen``); ``model`` equals the
             unfrozen disk's to rounding.
         """
@@ -5181,9 +5277,10 @@ class PolarDisk(Component):
         """The Gaussian-process parts of the disk, by path.
 
         Returns a dict from the path (relative to the disk) of every
-        [`RadialGP`][virgil.models.RadialGP] (in the profile, the harmonics'
-        coefficients or the spectral index) and of the harmonics when they
-        carry a [`PolarKernel`][virgil.models.PolarKernel], to that object.
+        [`RadialGP`][virgil.models.RadialGP] profile or
+        [`RadialGPFunction`][virgil.models.RadialGPFunction] (a harmonics
+        coefficient or the spectral index) and of the harmonics when they
+        carry a [`MultipoleKernel`][virgil.models.MultipoleKernel], to that object.
         Its whitened latents are at ``<path>.z`` (``harmonics.z`` for the
         kernel), its hyperparameters at ``<path>.sigma``, ``<path>.ell``
         (``harmonics.prior.sigma``, ``.ell_r``, ``.ell_theta``).
@@ -5191,11 +5288,11 @@ class PolarDisk(Component):
         sites = {}
 
         def visit(obj, path):
-            if isinstance(obj, RadialGP):
+            if isinstance(obj, _RadialGPBase):
                 sites[path] = obj
             elif isinstance(obj, RadialSum):
-                for name, part in zip(obj.names, obj.parts):
-                    visit(part, f"{path}.{name}")
+                for name, term in zip(obj.names, obj.parts):
+                    visit(term.profile, f"{path}.{name}")
             elif isinstance(obj, Gap):
                 visit(obj.base, f"{path}.base")
             elif isinstance(obj, (tuple, list)):
@@ -5214,7 +5311,7 @@ class PolarDisk(Component):
                     visit(getattr(self.harmonics, name), f"harmonics.{name}")
             else:
                 visit(self.harmonics, "harmonics")
-        if isinstance(self.spectral_index, RadialGP):
+        if isinstance(self.spectral_index, RadialGPFunction):
             sites["spectral_index"] = self.spectral_index
         return sites
 
@@ -5347,26 +5444,29 @@ class PolarDisk(Component):
         return fftconvolve(image, psf, mode="same")
 
 
-def _polar_disks(model, prefix=""):
-    """``(path, disk)`` for every PolarDisk in ``model`` (path prefix ``""``
+def _multipole_disks(model, prefix=""):
+    """``(path, disk)`` for every MultipoleDisk in ``model`` (path prefix ``""``
     for a bare disk, else ``"name."``-joined)."""
-    if isinstance(model, PolarDisk):
+    if isinstance(model, MultipoleDisk):
         yield prefix, model
     elif isinstance(model, System):
         for name, part in model.components.items():
-            yield from _polar_disks(part, f"{prefix}{name}.")
+            yield from _multipole_disks(part, f"{prefix}{name}.")
     elif isinstance(model, Rotated):
-        yield from _polar_disks(model.source, f"{prefix}source.")
+        yield from _multipole_disks(model.source, f"{prefix}source.")
+    elif isinstance(model, Attached):
+        yield from _multipole_disks(model.component, f"{prefix}component.")
 
 
 def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     r"""Priors for the Gaussian-process parts of a scene's
-    [`PolarDisk`][virgil.models.PolarDisk]s, for ``fit`` and ``numpyro_model``.
+    [`MultipoleDisk`][virgil.models.MultipoleDisk]s, for ``fit`` and ``numpyro_model``.
 
     Returns a dict from parameter path to prior for every
-    [`RadialGP`][virgil.models.RadialGP] (in a profile, the harmonics'
-    coefficients or the spectral index) and every
-    [`PolarKernel`][virgil.models.PolarKernel] of a
+    [`RadialGP`][virgil.models.RadialGP] profile and every
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] (a harmonics
+    coefficient or the spectral index) and every
+    [`MultipoleKernel`][virgil.models.MultipoleKernel] of a
     [`Harmonics`][virgil.models.Harmonics] in ``model`` (a disk, a
     [`System`][virgil.models.System] or a rotated source):
 
@@ -5385,7 +5485,7 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     Examples
     --------
     >>> import numpyro.distributions as dist
-    >>> disk = PolarDisk(RadialGP(0.5, 12.0), n_r=24)
+    >>> disk = MultipoleDisk(RadialGP(0.5, 12.0), n_r=24)
     >>> priors = gp_priors(System(star=PointSource(), disk=disk), sigma=(0.1, 3.0), ell=(0.5, 8.0))
     >>> sorted(priors)
     ['disk.profile.ell', 'disk.profile.sigma', 'disk.profile.z']
@@ -5401,7 +5501,7 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
         return dist.LogUniform(low, high)
 
     priors = {}
-    for prefix, disk in _polar_disks(model):
+    for prefix, disk in _multipole_disks(model):
         for rel, obj in disk.gp_sites().items():
             path = f"{prefix}{rel}"
             latent = dist.Normal(np.zeros(obj.z.shape), 1.0).to_event(
@@ -5421,7 +5521,7 @@ def gp_priors(model, sigma=None, ell=None, ell_theta=None):
                 if bounds is not None:
                     priors[f"{path}.{field}"] = scale(bounds, label)
     if not priors:
-        raise ValueError("The model contains no RadialGP or PolarKernel.")
+        raise ValueError("The model contains no RadialGP or MultipoleKernel.")
     return priors
 
 
@@ -5673,7 +5773,7 @@ class System(SourceModel):
             if not hasattr(disk, attr):
                 raise ValueError(
                     f"Component {name!r} ({type(disk).__name__}) has no "
-                    f"{attr!r} for a PolarField to follow."
+                    f"{attr!r} for a MultipoleField to follow."
                 )
         # The disk's sky position and angle in the Image's grid frame: the
         # field's centre is relative to the Image's, along its rotated axes.
@@ -5693,7 +5793,7 @@ class System(SourceModel):
             )
             if any(getattr(f, "geometry_from", None) for f in fields):
                 raise ValueError(
-                    f"Component {name!r} holds a PolarField with "
+                    f"Component {name!r} holds a MultipoleField with "
                     f"geometry_from set that cannot be resolved: a tie is "
                     f"only followed for an Image that is a direct component "
                     f"of the System (not inside Rotated or Attached). Give "
