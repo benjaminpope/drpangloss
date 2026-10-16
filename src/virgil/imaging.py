@@ -759,6 +759,11 @@ def _complex_visibilities(d):
     )
 
 
+# Samples per chunk in ``dirty_image``: ~16 MB per complex128 phase matrix at
+# npix = 256.
+_DIRTY_BATCH = 4096
+
+
 def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     """The dirty image: direct synthesis of the visibilities, unregularized.
 
@@ -804,9 +809,16 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
             vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
-        cols = onp.exp(2j * onp.pi * onp.outer(fu, offsets))  # (k, col)
-        rows = onp.exp(2j * onp.pi * onp.outer(fv, offsets))  # (k, row)
-        image += onp.real(onp.einsum("k,kr,kc->rc", weight * vis, rows, cols))
+        # In chunks of samples: the (k, npix) phase matrices for all k at
+        # once are hundreds of GB for DISCO-sized data (k ~ 1e5, npix ~ 256).
+        # Each chunk's contribution is one matrix product, so the memory is
+        # O(batch x npix) and the work O(k npix²), as before.
+        wv = weight * vis
+        for lo in range(0, fu.size, _DIRTY_BATCH):
+            sl = slice(lo, lo + _DIRTY_BATCH)
+            cols = onp.exp(2j * onp.pi * onp.outer(fu[sl], offsets))
+            rows = onp.exp(2j * onp.pi * onp.outer(fv[sl], offsets))
+            image += onp.real((rows * wv[sl, None]).T @ cols)  # (row, col)
         total += weight.sum()
     return np.asarray(image / total)
 
@@ -1985,7 +1997,9 @@ class LCurve:
             image = model.get(path)
             if _whitened_field(image.log_brightness):
                 raise TypeError("classic_maxent needs a pixel Image.")
-            _, jac = _residual_jacobian(model, data, path + ".log_brightness")
+            _, jac = _residual_jacobian(
+                model, data, path + ".log_brightness", on_device=True
+            )
             # dr/db = (dr/dη) / b on the support, so √b dr/db = (dr/dη) / √b.
             with run_in("float64"):
                 b = onp.ravel(
@@ -1993,11 +2007,14 @@ class LCurve:
                         cast_tree(image, "float64").brightness, dtype=float
                     )
                 )
-            scaled = jac[:, b > 0] / onp.sqrt(b[b > 0])
+            with run_in("float64"):
+                scaled = jac[:, np.asarray(b > 0)] / np.asarray(
+                    onp.sqrt(b[b > 0])
+                )
             # Eigenvalues of the Gram matrix, as squared singular values:
             # forming the Gram matrix loses them to rounding (see
             # log_evidence).
-            curvature = onp.linalg.svd(scaled, compute_uv=False) ** 2
+            curvature = _singular_values(scaled) ** 2
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
         gap = onp.asarray(gap)
@@ -2093,14 +2110,12 @@ def _jitted_residual_jacobian(model, datasets, path):
     return r, jac.reshape(n_data, -1)
 
 
-def _residual_jacobian(model, data, path):
+def _residual_jacobian(model, data, path, on_device=False):
     """All the whitened residuals, and their Jacobian with respect to leaves.
 
-    ``path`` is one leaf's path or a tuple of paths. Returns NumPy arrays
-    ``(residuals, jacobian)`` of shapes ``(n_data,)`` and
-    ``(n_data, total leaf size)``, computed in float64, with whichever of
-    forward or reverse mode is cheaper for the Jacobian. The columns are
-    the paths' raveled leaves, in the order given.
+    ``path`` is one leaf's path or a tuple of paths. Returns NumPy
+    ``(residuals, jacobian)``, float64; ``on_device=True`` leaves the
+    Jacobian a JAX array.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     if not isinstance(path, str):
@@ -2108,7 +2123,33 @@ def _residual_jacobian(model, data, path):
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
         r, jac = _jitted_residual_jacobian(model, datasets, path)
-        return onp.asarray(r, dtype=float), onp.asarray(jac, dtype=float)
+        r = onp.asarray(r, dtype=float)
+        return r, (jac if on_device else onp.asarray(jac, dtype=float))
+
+
+def _singular_values(jac):
+    """Singular values of ``jac`` (descending, NumPy), on the device in
+    float64; QR-reduced first when far from square."""
+    with run_in("float64"):
+        a = np.asarray(jac, dtype=np.float64)
+        # QR then SVD of the small factor is backward stable; the Gram
+        # matrix JᵀJ would lose the small singular values (see log_evidence).
+        if a.shape[0] > 2 * a.shape[1]:
+            a = np.linalg.qr(a, mode="r")
+        elif a.shape[1] > 2 * a.shape[0]:
+            a = np.linalg.qr(a.T, mode="r")
+        return onp.asarray(np.linalg.svd(a, compute_uv=False), dtype=float)
+
+
+def _svd(jac):
+    """``(s, Vᵀ)`` of the thin SVD of ``jac`` (NumPy), on the device in
+    float64; QR-reduced first when tall, so ``U`` is never formed."""
+    with run_in("float64"):
+        a = np.asarray(jac, dtype=np.float64)
+        if a.shape[0] > 2 * a.shape[1]:
+            a = np.linalg.qr(a, mode="r")  # J = QR has R's V
+        _, s, vt = np.linalg.svd(a, full_matrices=False)
+        return onp.asarray(s, dtype=float), onp.asarray(vt, dtype=float)
 
 
 def _single_model(model, caller):
@@ -2346,7 +2387,7 @@ def log_evidence(model, data, path="env"):
     """
     model = _single_model(model, "log_evidence")
     latent_paths = _evidence_latents(model, path, "log_evidence")
-    r, jac = _residual_jacobian(model, data, latent_paths)
+    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     chi2 = float(r @ r)
     log_norm = _log_norm(model, data)
     z2 = sum(
@@ -2358,7 +2399,7 @@ def log_evidence(model, data, path="env"):
     # Gram matrix is low rank with a huge norm, and its rounding error
     # (~ε‖JJᵀ‖) can exceed the identity, leaving I + JJᵀ numerically
     # indefinite. The singular values avoid forming it.
-    singular = onp.linalg.svd(jac, compute_uv=False)
+    singular = _singular_values(jac)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
 
@@ -2447,12 +2488,12 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     model = _single_model(model, "laplace_samples")
     fields = _field_latents(model, path, "laplace_samples")
     latent_paths = tuple(latent for _, latent in fields)
-    _, jac = _residual_jacobian(model, data, latent_paths)
+    _, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     zs = [
         onp.asarray(model.get(latent), dtype=float) for latent in latent_paths
     ]
     z = onp.concatenate([x.ravel() for x in zs])
-    _, singular, vt = onp.linalg.svd(jac, full_matrices=False)
+    singular, vt = _svd(jac)
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
     e2 = onp.asarray(jax.random.normal(second, (n, z.size)), float)
@@ -2792,12 +2833,13 @@ def error_scale(model, data, path="env", *, by_observable=False):
     latent_paths = tuple(
         latent for _, latent in _field_latents(model, path, "error_scale")
     )
-    r, jac = _residual_jacobian(model, data, latent_paths)
+    r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     datasets = data if isinstance(data, (list, tuple)) else [data]
     if by_observable:
         _check_scalable_blocks(datasets)
         rows, counts = _observable_blocks(datasets)
-        beta = _block_precisions(r, jac, rows, counts)
+        # The block fixed point factors on the host (NumPy QR).
+        beta = _block_precisions(r, onp.asarray(jac), rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
     chi2 = float(r @ r)
     # N counts independent data, not residuals: correlated closure phases
@@ -2805,7 +2847,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
     n_data = sum(d.n_independent for d in datasets)
     # The Gram matrix's eigenvalues, as squared singular values (see
     # log_evidence): never negative, unlike eigvalsh of a rounded JJᵀ.
-    lam = onp.linalg.svd(jac, compute_uv=False) ** 2
+    lam = _singular_values(jac) ** 2
     # Solve g(β) = β χ² + γ(β) − N = 0. g is increasing and concave, so
     # Newton's method from β = 0 (where g = −N) rises monotonically to the
     # root.
@@ -2962,8 +3004,8 @@ def chi2_by_observable(model, data, path=None):
     if path is not None:
         single = _single_model(model, "chi2_by_observable")
         latents = _evidence_latents(single, path, "chi2_by_observable")
-        _, jac = _residual_jacobian(single, data, latents)
-        s2 = onp.linalg.svd(jac, compute_uv=False) ** 2
+        _, jac = _residual_jacobian(single, data, latents, on_device=True)
+        s2 = _singular_values(jac) ** 2
         out["n_gamma"] = float(onp.sum(s2 / (1.0 + s2)))
     return out
 
