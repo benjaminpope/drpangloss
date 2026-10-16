@@ -200,7 +200,10 @@ class DiskPipeline(_Pipeline):
       ``Harmonics`` and, with several channels, a ``RadialGP`` spectral
       index. At the geometry's inclination and position angle (held, so
       each refit is a matrix-vector product) the profile is fitted at each
-      length scale of a grid (ℓ/√3 of 1, 2 and 4 half-fringes by default);
+      length scale of a grid (ℓ/√3 of 1, 2 and 4 half-fringes by default),
+      then refitted with the inclination and position angle released, since
+      a single ring's geometry is a few degrees off for a lopsided,
+      multi-ring disk;
       ``compare`` keeps the length of largest Laplace evidence. σ comes
       from the dynamic range of the single-ring profile, not from a known
       truth, and the Matérn smoothness is fixed at ν = 3/2.
@@ -1307,6 +1310,15 @@ def _gp_geometry(p):
     return {**geo, "gp_sigma": report["gp_sigma"]}
 
 
+def _released_geometry(p, values):
+    """``_gp_geometry`` with the inclination and position angle of ``values``."""
+    return {
+        **_gp_geometry(p),
+        "inc": float(onp.asarray(values["disk.inc"])),
+        "pa": float(onp.asarray(values["disk.pa"])),
+    }
+
+
 def _planet_values(values, colour):
     """A fit's planet as the pipeline's ``dra, ddec, fp, ap`` values."""
     out = {
@@ -1342,8 +1354,16 @@ def _companion_report(p, planet):
     }
 
 
-def _gp_fit(p, ell, planet, degree=None, geo=None):
-    """MAP fit of the Gaussian-process disk at one ℓ, geometry frozen."""
+def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
+    """MAP fit of the Gaussian-process disk at one ℓ.
+
+    The geometry is frozen at ``geo`` (the single-ring fit's by default),
+    which makes the fit fast. A single ring is only an approximation to a
+    lopsided, multi-ring disk, so its inclination and position angle are a
+    few degrees off, and a frozen error is paid for by the profile and the
+    companion. With ``release`` a second fit frees them, starting from the
+    first fit's values, and the returned values and priors include them.
+    """
     import equinox as eqx
 
     from ..fitting import fit
@@ -1357,8 +1377,43 @@ def _gp_fit(p, ell, planet, degree=None, geo=None):
     )
     assert isinstance(frozen, System)
     result = fit(frozen, priors, data)
-    model = _apply(template, result.values, priors)
-    return _finish(model, result.values, result.info, priors, data), priors
+    values, info = result.values, result.info
+    if release:
+        priors = {
+            **priors,
+            **{f"disk.{k}": v for k, v in _geometry_priors(ctx).items()},
+        }
+        start = {k: v for k, v in values.items() if k in priors}
+        start["disk.inc"] = max(float(geo["inc"]), 5.0)
+        result = fit(template, priors, data, init=start)
+        values = _fold_gp_values(ctx, result.values, degree)
+        info = result.info
+    model = _apply(template, values, priors)
+    return _finish(model, values, info, priors, data), priors
+
+
+def _fold_gp_values(ctx, values, degree=None):
+    """``values`` with the disk's ``pa`` in [0°, 180°), the harmonics turned.
+
+    The Gaussian process's version of ``_fold_fit``: the harmonics are a
+    ``PolarKernel``'s latents, of shape ``(2, order, node)``, and the order-*m*
+    latents are multiplied by ``(-1)^m`` when ``pa`` is moved by 180°.
+    """
+    pa = float(onp.asarray(values["disk.pa"]))
+    if 0.0 <= pa < 180.0:
+        return values
+    out = dict(values)
+    folded = pa % 180.0
+    out["disk.pa"] = onp.asarray(folded)
+    if "disk.pa_vec" in out:
+        angle = math.radians(folded)
+        out["disk.pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
+    degree = ctx.degree if degree is None else degree
+    site = "disk.harmonics.prior.z"
+    if degree and (pa % 360.0) >= 180.0 and site in out:
+        orders = onp.arange(1, degree + 1, dtype=float)
+        out[site] = onp.asarray(out[site]) * ((-1.0) ** orders)[None, :, None]
+    return out
 
 
 def _profile_gp(p):
@@ -1378,7 +1433,7 @@ def _profile_gp(p):
             planet = _planet_start(search, ctx.colour)
     candidates = []
     for k, ell in enumerate(ctx.ells):
-        fit, priors = _gp_fit(p, ell, planet, geo=geo)
+        fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)
         name = f"gp_ell{k}"
         _save_fit(p.output / "models" / name, fit, list(priors))
         candidates.append(
@@ -1643,7 +1698,11 @@ def _compare_gp(p):
             else None
         )
         higher, _ = _gp_fit(
-            p, best["ell_mas"], planet_values, degree=ctx.degree + 1
+            p,
+            best["ell_mas"],
+            planet_values,
+            degree=ctx.degree + 1,
+            geo=_released_geometry(p, values),
         )
         raised = _residual_search(p, higher.model)
     report = _common_compare(
@@ -1656,8 +1715,11 @@ def _compare_gp(p):
             "rows": rows,
             "inner_fraction": inner_fraction,
             "inner_correlation": inner_corr,
-            "inc_deg": geometry["inc_deg"],
-            "pa_deg": geometry["pa_deg"],
+            # The released geometry; the position angle's spread is the
+            # single-ring fit's, an approximation used only to gate the
+            # inclination check.
+            "inc_deg": float(onp.asarray(values["disk.inc"])),
+            "pa_deg": float(onp.asarray(values["disk.pa"])),
             "pa_sd_deg": geometry["laplace_sd"].get("pa"),
             "flux": float(onp.asarray(values["disk.flux"])),
             "residual_search": search,
@@ -1878,7 +1940,7 @@ def _posterior_setup(p):
             parity,
             float(values["pa"]),
         )
-    geo = _gp_geometry(p)
+    geo = _released_geometry(p, values)
     row = next(r for r in compare["rows"] if r["name"] == compare["best"])
     planet = _planet_values(values, ctx.colour) if row["planet"] else None
     template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)

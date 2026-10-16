@@ -195,9 +195,11 @@ As built, where the text below left a choice open or the build differed:
   `samples.h5`.
 - `error_scale="fit"` is for `"rings"` only: `log_evidence` needs the quoted
   errors. Constructing `"gp"` with it raises `ValueError`.
-- The Gaussian process holds the geometry of the single-ring `geometry`
-  fit; only the posterior releases it. With harmonics the single ring's
-  position angle can be a few degrees off the truth.
+- Each GP fit starts with the geometry of the single-ring `geometry` fit
+  held (fast, cached Bessel matrices), then is refitted with `inc` and `pa`
+  released: with harmonics and a companion the single ring's position angle
+  is a few degrees off the truth, and a frozen error is paid for by the
+  profile and the companion.
 - The harmonic fold is checked against `PolarDisk` in
   `tests/test_pipeline_disk.py`: `pa + 180°` with the order-*m* harmonic
   times `(-1)^m` is the same disk.

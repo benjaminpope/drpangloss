@@ -34,7 +34,7 @@ from virgil.pipeline import (  # noqa: E402
     DiskPipeline,
     load,
 )
-from virgil.pipeline import cli, disk  # noqa: E402
+from virgil.pipeline import _io, cli, disk  # noqa: E402
 from virgil.pipeline._common import _quantiles  # noqa: E402
 
 pytestmark = pytest.mark.xdist_group("pipeline_disk")
@@ -380,13 +380,23 @@ def test_gp_run_contract(gp_run):
 
 
 def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
-    _, res = gp_run
+    pipeline, res = gp_run
     s = res.summary
     # The ring is lopsided with a companion, so the single-ring geometry is
     # only approximate; the point is that the pipeline finds the geometry's
     # neighbourhood, the companion and a good fit on the quoted errors.
     assert abs(s["geometry"]["inc_deg"] - 50.0) < 6.0
     assert abs(s["geometry"]["pa_deg"] - 30.0) < 15.0
+    # The Gaussian process releases the geometry: the disk's inclination and
+    # position angle are the fitted ones, closer to the truth than a ring's.
+    best_values = _io.load_model_values(pipeline.output / "models" / "best")
+    assert "disk.inc" in best_values and "disk.pa" in best_values
+    assert s["disk"]["inc_deg"] == pytest.approx(
+        float(best_values["disk.inc"])
+    )
+    assert s["disk"]["pa_deg"] == pytest.approx(float(best_values["disk.pa"]))
+    assert abs(s["disk"]["inc_deg"] - 50.0) < 6.0
+    assert abs(s["disk"]["pa_deg"] - 30.0) < 8.0
     assert s["chi2"]["reduced"][s["disk"]["best"]] < 1.6
     planet = s["disk"]["companion"]
     assert planet is not None
@@ -657,6 +667,28 @@ def test_grid_minima_wrap_the_position_angle():
     # Face-on cells have no position angle and are skipped.
     delta[0, 2] = -5.0
     assert (0, 2) not in [(i, j) for _, i, j in disk._grid_minima(delta, inc)]
+
+
+def test_fold_gp_values_turns_the_harmonics():
+    ctx = _context()
+    z = onp.ones((2, 2, 3))
+    values = {
+        "disk.pa": onp.asarray(210.0),
+        "disk.pa_vec": onp.array([-0.8, -0.5]),
+        "disk.harmonics.prior.z": z,
+    }
+    out = disk._fold_gp_values(ctx, values, degree=2)
+    assert float(out["disk.pa"]) == pytest.approx(30.0)
+    onp.testing.assert_allclose(
+        out["disk.pa_vec"],
+        [onp.cos(onp.radians(30.0)), onp.sin(onp.radians(30.0))],
+    )
+    # Order 1 flips, order 2 does not.
+    assert onp.all(out["disk.harmonics.prior.z"][:, 0] == -1.0)
+    assert onp.all(out["disk.harmonics.prior.z"][:, 1] == 1.0)
+    # A position angle already in [0, 180) is left alone.
+    same = {**values, "disk.pa": onp.asarray(30.0)}
+    assert disk._fold_gp_values(ctx, same, degree=2) is same
 
 
 def test_bic_scores_the_fitted_scales():
