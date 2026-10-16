@@ -80,9 +80,12 @@ class SharedFlux:
     ----------
     grid : tuple, array-like or dict, optional
         The coarse flux grid at the reference wavelength λ₀: ``(lo, hi,
-        n)`` for ``n`` points spaced uniformly in ln f from ``lo`` to
-        ``hi``, or the flux values themselves (one value fixes the flux),
-        or a dict ``{band: either}``. The default, ``(1e-3, 1.0, 16)``, is
+        n)`` (a tuple whose last element is an integer, Python or NumPy) for ``n``
+        points spaced uniformly in ln f from ``lo`` to ``hi``, or the flux
+        values themselves (one value fixes the flux; give them as a list
+        or array, or a tuple with a non-``int`` last element, so that
+        ``(0.01, 0.1, 1.0)`` is three fluxes, not a one-point range), or a
+        dict ``{band: either}``. The default, ``(1e-3, 1.0, 16)``, is
         used for every band not in the dict. The prior is log-uniform
         (Jeffreys) between the first and last points. The grid only finds
         the peak: the marginal is integrated adaptively about the profiled
@@ -256,10 +259,17 @@ def rank_scores(score, quantum=_QUANTUM):
 
 def _axis(spec, log, what):
     """Grid values and normalized log trapezoid weights of one nuisance."""
-    if isinstance(spec, tuple) and len(spec) == 3 and float(spec[2]) >= 1:
+    if (
+        isinstance(spec, tuple)
+        and len(spec) == 3
+        and isinstance(spec[2], (int, onp.integer))
+        and not isinstance(spec[2], bool)
+    ):
+        # ``(lo, hi, n)`` only with a Python int ``n``: a tuple whose last
+        # element is a float (or a list or array) is a list of values.
         lo, hi, n = float(spec[0]), float(spec[1]), int(spec[2])
-        if n != spec[2]:
-            raise ValueError(f"The {what} grid's size must be an integer.")
+        if n < 1:
+            raise ValueError(f"The {what} grid's size must be at least 1.")
         if log and not 0.0 < lo <= hi:
             raise ValueError(f"The {what} grid needs 0 < lo <= hi.")
         if not lo <= hi:

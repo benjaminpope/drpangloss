@@ -875,7 +875,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """Apply an ``(n_out, n_in)`` operator to a length-``n_in`` vector."""
         if operator is None:
             return values
-        return operator @ np.asarray(values, dtype=float).reshape(-1)
+        return np.matmul(
+            operator,
+            np.asarray(values, dtype=float).reshape(-1),
+            precision=jax.lax.Precision.HIGHEST,
+        )
 
     @classmethod
     def _diagonalized(cls, operator, channel_sigma, correlation=None):
@@ -897,47 +901,61 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         the eigenvectors of A D^½ R D^½ Aᵀ, keeping those with non-zero
         variance, so that the new outputs are independent with errors √λ.
         """
-        operator = np.asarray(operator, dtype=float)
-        sigma = np.asarray(channel_sigma, dtype=float).reshape(-1)
+        # Built on the host in float64: this runs once at construction and is
+        # never traced, and the rank cut below (1e-10 of the largest
+        # eigenvalue) is under float32 eps, so a float32 ``eigh`` would keep
+        # the numerically zero directions of a rank-deficient operator.
+        operator = onp.asarray(operator, dtype=onp.float64)
+        sigma = onp.asarray(channel_sigma, dtype=onp.float64).reshape(-1)
+        if correlation is not None:
+            correlation = onp.asarray(correlation, dtype=onp.float64)
 
         def projected_covariance(sigma):
             weighted = operator * sigma[None, :]
             if correlation is None:
                 return weighted @ weighted.T
-            return weighted @ np.asarray(correlation) @ weighted.T
+            return weighted @ correlation @ weighted.T
+
+        def as_output(matrix, errors):
+            # Back to the default dtype (float32 unless x64 is enabled).
+            return np.asarray(matrix, dtype=float), np.asarray(
+                errors, dtype=float
+            )
 
         covariance = projected_covariance(sigma)
-        diagonal = np.diag(covariance)
+        diagonal = onp.diag(covariance)
         # A tolerance relative to the covariance's own scale, so that
         # rescaling an operator or its errors cannot bypass this check.
-        scale = float(np.max(np.abs(diagonal)))
-        off = covariance - np.diag(diagonal)
-        if scale == 0.0 or float(np.max(np.abs(off))) <= 1e-7 * scale:
+        scale = float(onp.max(onp.abs(diagonal)))
+        off = covariance - onp.diag(diagonal)
+        if scale == 0.0 or float(onp.max(onp.abs(off))) <= 1e-7 * scale:
             # Already independent; drop outputs with no variance (e.g. a
             # closure relation of correlated closure phases), which carry
             # no measurement and would divide 0 by 0.
             keep = diagonal > 1e-10 * scale
             # A non-zero row with no variance has a zero projected error
             # (zero input errors); a zero row projects everything away.
-            used = np.any(operator != 0.0, axis=1)
-            if correlation is None and bool(np.any(used & ~keep)):
+            used = onp.any(operator != 0.0, axis=1)
+            if correlation is None and bool(onp.any(used & ~keep)):
                 raise ValueError(_ZERO_PROJECTED_ERROR)
-            return operator[keep], np.sqrt(diagonal[keep])
-        variance, vectors = np.linalg.eigh(covariance)
-        keep = variance > 1e-10 * float(np.max(variance))
+            return as_output(operator[keep], onp.sqrt(diagonal[keep]))
+        variance, vectors = onp.linalg.eigh(covariance)
+        keep = variance > 1e-10 * float(onp.max(variance))
         zero = sigma == 0.0
-        if np.any(zero) and np.any(operator[:, zero] != 0.0):
+        if onp.any(zero) and onp.any(operator[:, zero] != 0.0):
             # A zero error on an input the operator uses must not make a
             # direction vanish unseen: with a positive placeholder for it,
             # the same covariance keeps more directions if it did. (Rank
             # lost to the correlation itself is lost in both.)
             placeholder = projected_covariance(
-                np.where(zero, np.max(sigma), sigma)
+                onp.where(zero, onp.max(sigma), sigma)
             )
-            expected = np.linalg.eigvalsh(placeholder)
-            if np.sum(keep) < np.sum(expected > 1e-10 * np.max(expected)):
+            expected = onp.linalg.eigvalsh(placeholder)
+            if onp.sum(keep) < onp.sum(expected > 1e-10 * onp.max(expected)):
                 raise ValueError(_ZERO_PROJECTED_ERROR)
-        return vectors[:, keep].T @ operator, np.sqrt(variance[keep])
+        return as_output(
+            vectors[:, keep].T @ operator, onp.sqrt(variance[keep])
+        )
 
     @classmethod
     def _validate_diagonal_covariance(cls, channel_sigma, operator, label):
@@ -1237,7 +1255,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                     "Mixed log-complex observables require model operators."
                 )
             log_cvis = np.log(cvis)
-            return self.vis_mat @ log_cvis.real + self.phi_mat @ log_cvis.imag
+            highest = jax.lax.Precision.HIGHEST
+            return np.matmul(
+                self.vis_mat, log_cvis.real, precision=highest
+            ) + np.matmul(self.phi_mat, log_cvis.imag, precision=highest)
         return np.concatenate([self.to_vis(cvis), self.to_phases(cvis)])
 
     def to_vis(self, cvis):
