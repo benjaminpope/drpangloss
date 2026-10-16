@@ -87,7 +87,7 @@ def _slow_gain_modes(data, telescope, baseline, chromatic):
 def _gain_data(frame, stations, wavel, vis_index=None):
     n = len(frame)
     return SimpleNamespace(
-        observable_kind="split",
+        vis_encoding="split",
         vis_mat=None,
         frame=onp.asarray(frame),
         stations=onp.asarray(stations),
