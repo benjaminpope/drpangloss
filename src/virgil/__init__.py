@@ -97,7 +97,11 @@ from .grid_fit import (  # noqa: E402
     optimized_flux_grid,
     optimized_likelihood_grid,
 )
-from .inference import fisher, laplace_cov  # noqa: E402
+from .inference import (  # noqa: E402
+    fisher,
+    laplace_cov,
+    observed_information,
+)
 from .likelihood import (  # noqa: E402
     build_model,
     inflated_errors,
@@ -260,7 +264,6 @@ __all__ = [
     "detection_statistics",
     "distance_pc",
     "fit",
-    "fisher",
     "inflated_errors",
     "flux_to_contrast",
     "flux_to_delta_mag",
@@ -270,6 +273,7 @@ __all__ = [
     "loglike",
     "model_loglike",
     "numpyro_model",
+    "observed_information",
     "linear_flux_grid",
     "optimized_flux_grid",
     "optimized_likelihood_grid",

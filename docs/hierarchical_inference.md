@@ -34,7 +34,7 @@ for path in (repo_root, repo_root / "src"):
 
 from virgil.inference import (
     fisher_projection,
-    gaussian_fisher,
+    expected_fisher,
     hessian_matrix,
     regularized_inverse,
 )
@@ -175,7 +175,7 @@ The Fisher Information Matrix tells us the expected information in the data, pro
 ```python
 prediction_fn = lambda values: joint_prediction(values, binary_model, observations)
 errors = joint_errors(observations)
-initial_fisher, unravel = gaussian_fisher(prediction_fn, params, errors, ridge=1e-8)
+initial_fisher, unravel = expected_fisher(prediction_fn, params, errors, ridge=1e-8)
 projection = fisher_projection(initial_fisher, eps=1e-10)
 
 print(f"Fisher matrix: {initial_fisher.shape[0]} x {initial_fisher.shape[1]}")
@@ -230,7 +230,7 @@ def flat_objective(values):
     return -joint_loglike(recovered_unravel(values), binary_model, observations)
 
 
-expected_fisher, _ = gaussian_fisher(prediction_fn, recovered, errors)
+expected_info, _ = expected_fisher(prediction_fn, recovered, errors)
 observed_info = hessian_matrix(flat_objective, recovered_vector)
 laplace_covariance = regularized_inverse(observed_info, ridge=1e-8)
 laplace_sigma = jnp.sqrt(jnp.diag(laplace_covariance))

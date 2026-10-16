@@ -58,7 +58,9 @@ def _assert_sky_oriented(fig):
 
 
 def test_likelihood_grid():
-    loglike_im = likelihood_grid(BinaryModelCartesian, oidata, samples_dict)
+    loglike_im = likelihood_grid(
+        BinaryModelCartesian, data=oidata, grid=samples_dict
+    )
     assert np.all(np.isfinite(loglike_im))
     assert loglike_im.shape == (
         samples_dict["dra"].shape[0],
@@ -82,14 +84,18 @@ def test_likelihood_grid_axis_order_tracks_key_order():
         "ddec": samples_dict["ddec"][::12],
         "flux": samples_dict["flux"][::12],
     }
-    ordered = likelihood_grid(BinaryModelCartesian, oidata, reduced_samples)
+    ordered = likelihood_grid(
+        BinaryModelCartesian, data=oidata, grid=reduced_samples
+    )
 
     permuted_samples = {
         "flux": reduced_samples["flux"],
         "dra": reduced_samples["dra"],
         "ddec": reduced_samples["ddec"],
     }
-    permuted = likelihood_grid(BinaryModelCartesian, oidata, permuted_samples)
+    permuted = likelihood_grid(
+        BinaryModelCartesian, data=oidata, grid=permuted_samples
+    )
 
     assert ordered.shape == (
         reduced_samples["dra"].shape[0],

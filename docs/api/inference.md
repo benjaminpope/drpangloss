@@ -5,9 +5,9 @@
       members:
         - laplace_cov
         - laplace_parameter_uncertainty
-        - fisher
+        - observed_information
         - hessian_matrix
         - regularized_inverse
-        - laplace_covariance
-        - gaussian_fisher
+        - objective_laplace_covariance
+        - expected_fisher
         - fisher_projection

@@ -187,7 +187,7 @@ def test_likelihood_and_linear_flux_grids_recover_the_chromatic_companion(
 ):
     template = _scene(COMPANIONS[companion](0.05))
     grid = _grid([0.04, 0.08, 0.16])
-    loglike = onp.asarray(likelihood_grid(template, wr_data, grid))
+    loglike = onp.asarray(likelihood_grid(template, data=wr_data, grid=grid))
     best = onp.unravel_index(onp.argmax(loglike), loglike.shape)
     assert [float(grid[k][i]) for k, i in zip(grid, best)] == [8.0, -5.0, 0.08]
 

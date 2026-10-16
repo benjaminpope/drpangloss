@@ -1,3 +1,4 @@
+import sys
 import warnings
 import jax
 import jax.numpy as np
@@ -123,11 +124,35 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     gains: GainModes | None
     phase_offsets: ClosureOffsets | None
     extras: tuple
-    observable_kind: str = eqx.field(static=True)
+    # "split" (V² or amplitude, and phases, as separate rows) or
+    # "mixed_log_complex" (an AMIGO mixed-DISCO product); named for its
+    # layout so that it is not mistaken for the record key ``vis_mode``.
+    vis_encoding: str = eqx.field(static=True)
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
     t_ref: float | None = eqx.field(static=True)
+
+    @property
+    def observable_kind(self):
+        """The 0.3 name of [`vis_encoding`][virgil.oidata.OIData.vis_encoding].
+
+        Warns, from outside virgil, that it stops working in 0.5.
+        """
+        frame = sys._getframe(1)
+        while frame.f_back is not None and (
+            frame.f_globals.get("__name__", "").partition(".")[0]
+            in ("equinox", "jax", "zodiax")
+        ):  # attribute access goes through equinox's wrapper
+            frame = frame.f_back
+        if frame.f_globals.get("__name__", "").partition(".")[0] != "virgil":
+            warnings.warn(
+                "OIData.observable_kind is now OIData.vis_encoding; "
+                "observable_kind stops working in virgil 0.5.",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
+        return self.vis_encoding
 
     def __init__(self, data, target=None, extras=(), bandwidth=False):
         """
@@ -159,10 +184,14 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             * ``vis_flag``, ``phi_flag`` (optional): boolean masks, True
               for bad samples, shaped like ``vis`` and ``phi``. Samples with
               non-finite values or errors are flagged automatically.
-            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``;
-              ``observable_kind`` is an alias): the visibility channel that
-              data and model are compared in. ``"auto"`` keeps the channel
-              of ``vis``.
+            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``):
+              the visibility channel that data and model are compared in.
+              ``"auto"`` keeps the channel of ``vis``. The key
+              ``observable_vis_mode`` is read as an old name for it. Neither
+              sets the ``vis_encoding`` attribute, which says how ``vis``
+              and ``phi`` are laid out (``"split"``, or
+              ``"mixed_log_complex"`` for an AMIGO mixed-DISCO product),
+              not what they measure.
             * ``mjd``, ``frame`` (optional): the time (days) and an integer
               exposure label of each sample (or of each baseline, for
               several channels). Without ``frame``, samples with the same
@@ -423,7 +452,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         self.vis_mode = self._resolve_vis_mode(vis_mode_in)
         self.uv_grid = None
-        self.observable_kind = "split"
+        self.vis_encoding = "split"
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
             validate_phi_covariance=has_disco_phi,
@@ -710,7 +739,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         which are not visibility samples.
         """
         if (
-            self.observable_kind != "split"
+            self.vis_encoding != "split"
             or self.vis_mat is not None
             or self.phi_mat is not None
             or self.uv_grid is not None
@@ -1113,7 +1142,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         n = int(onp.size(self.u))
         if (
-            self.observable_kind != "split"
+            self.vis_encoding != "split"
             or self.vis_mat is not None
             or self.phi_mat is not None
             or self.uv_grid is not None
@@ -1139,7 +1168,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def has_phases(self):
         """Whether the data hold any phase observables. Visibility-only
         data (e.g. V² without closure phases) have an empty phase block."""
-        if self.observable_kind != "split":
+        if self.vis_encoding != "split":
             return True
         return self._n_phi_samples() > 0
 
@@ -1184,7 +1213,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             in the order of
             [`model`][virgil.oidata.OIData.model], and matching one-sigma uncertainties.
         """
-        if self.observable_kind == "mixed_log_complex":
+        if self.vis_encoding == "mixed_log_complex":
             return self.vis, self.d_vis
         return (
             np.concatenate(
@@ -1208,7 +1237,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     @property
     def _phases_wrap(self):
         """Whether the phase block is raw angles that wrap at ±π."""
-        return self.observable_kind == "split" and self.phi_mat is None
+        return self.vis_encoding == "split" and self.phi_mat is None
 
     def residuals(self, prediction, reference=None):
         """Return ``prediction - reference`` with phase residuals wrapped.
@@ -1249,7 +1278,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         The result lines up with the first vector of :meth:`flatten_data`.
         """
-        if self.observable_kind == "mixed_log_complex":
+        if self.vis_encoding == "mixed_log_complex":
             if self.vis_mat is None or self.phi_mat is None:
                 raise ValueError(
                     "Mixed log-complex observables require model operators."

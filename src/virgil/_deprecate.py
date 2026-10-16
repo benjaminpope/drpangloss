@@ -17,7 +17,7 @@ import inspect
 import sys
 import warnings
 
-__all__ = ["old_order", "renamed"]
+__all__ = ["deprecated_name", "keyword_only", "old_order", "renamed"]
 
 #: Old keyword names accepted until 0.5, mapped to their 0.4 names.
 NAME_ALIASES = {
@@ -156,7 +156,84 @@ def renamed(aliases=None):
     return decorate
 
 
-def old_order(*old_names, data, aliases=None, removed=False):
+def deprecated_name(old, new_fn):
+    """A function named ``old`` that calls ``new_fn``, with a FutureWarning.
+
+    For a public function renamed in 0.4: the old name keeps working, and
+    warns that it stops working in virgil 0.5. The wrapper passes every
+    argument through, so ``new_fn``'s own shims (``old_order``,
+    ``renamed``) still apply to calls made through the old name.
+    """
+    new = new_fn.__name__
+
+    @functools.wraps(new_fn)
+    def wrapper(*args, **kwargs):
+        warnings.warn(
+            f"{old} is now {new}; {old} stops working in virgil 0.5.",
+            FutureWarning,
+            stacklevel=external_stacklevel(),
+        )
+        return new_fn(*args, **kwargs)
+
+    wrapper.__name__ = wrapper.__qualname__ = old
+    wrapper.__doc__ = f"Deprecated name of :func:`{new}`; use that."
+    return wrapper
+
+
+def keyword_only(*legacy):
+    """Make the parameters after a bare ``*`` keyword-only, softly.
+
+    ``fn`` is declared with ``*`` after its leading positionals, but 0.3
+    let the parameters named in ``legacy`` (in that order) be passed
+    positionally. Such a call still works until 0.5, with a
+    :class:`FutureWarning` naming the keywords; any further positional
+    argument is a :class:`TypeError`, as for any function.
+    """
+
+    def decorate(fn):
+        params = inspect.signature(fn).parameters
+        unknown = [
+            n
+            for n in legacy
+            if n not in params
+            or params[n].kind is not inspect.Parameter.KEYWORD_ONLY
+        ]
+        if unknown:
+            raise ValueError(f"{fn.__name__}: {unknown} are not keyword-only")
+        n_pos = len(_positional_names(params))
+        qualname = fn.__qualname__
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            extra = args[n_pos:]
+            if not extra:
+                return fn(*args, **kwargs)
+            if len(extra) > len(legacy):
+                raise TypeError(
+                    f"{qualname} takes {n_pos} positional arguments but "
+                    f"{len(args)} were given; pass the rest by keyword."
+                )
+            names = legacy[: len(extra)]
+            clash = [n for n in names if n in kwargs]
+            if clash:
+                raise TypeError(
+                    f"{qualname} got multiple values for {clash[0]}="
+                )
+            warnings.warn(
+                f"{qualname}: pass {', '.join(names)} by keyword "
+                f"({', '.join(f'{n}=...' for n in names)}); "
+                "positional use stops working in virgil 0.5.",
+                FutureWarning,
+                stacklevel=external_stacklevel(),
+            )
+            return fn(*args[:n_pos], **dict(zip(names, extra)), **kwargs)
+
+        return wrapper
+
+    return decorate
+
+
+def old_order(*old_names, data, aliases=None, removed=False, keywords=()):
     """Accept calls in the pre-0.4 positional order, with a FutureWarning.
 
     Parameters
@@ -173,6 +250,15 @@ def old_order(*old_names, data, aliases=None, removed=False):
     removed : bool
         Raise a :class:`TypeError` naming the new call instead of
         rebinding (the 0.5 behaviour).
+    keywords : tuple of str
+        Parameters that ``fn`` declares keyword-only and that no call may
+        pass positionally. A call with more positional arguments than
+        ``fn`` has positional parameters (the 0.4 order spelled
+        ``f(model, data, grid)``, or any other permutation of the three)
+        raises a :class:`TypeError` naming the keyword call, rather than
+        letting the arguments land in the wrong parameters or fail deep
+        inside. Old-order calls are rebound as before: the first
+        ``old_names`` are positional in the 0.3 signature.
 
     Calls with data at both positions or at neither are passed through
     unchanged, so new-order code never warns.
@@ -190,12 +276,28 @@ def old_order(*old_names, data, aliases=None, removed=False):
         positional = _positional_names(params)
         qualname = fn.__qualname__
         new_names = [n for n in params if n in old_names]
-        moved = [params[n] for n in old_names] + [
-            p for n, p in params.items() if n not in old_names
+        misplaced = [n for n in keywords if n not in params]
+        if misplaced:
+            raise ValueError(f"{fn.__name__} has no parameters {misplaced}")
+        not_kw = [
+            n
+            for n in keywords
+            if params[n].kind is not inspect.Parameter.KEYWORD_ONLY
         ]
+        if not_kw:
+            raise ValueError(f"{fn.__name__}: {not_kw} are not keyword-only")
+        # The 0.3 signature: the old names positional, in the old order.
+        moved = [
+            params[n].replace(kind=inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for n in old_names
+        ] + [p for n, p in params.items() if n not in old_names]
         old_sig = sig.replace(parameters=moved)
         i_old, i_new = old_names.index(data), new_names.index(data)
-        new_call = f"{qualname}({', '.join(new_names)}, ...)"
+        new_call = (
+            f"{qualname}("
+            + ", ".join(f"{n}=..." if n in keywords else n for n in new_names)
+            + ", ...)"
+        )
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -205,6 +307,13 @@ def old_order(*old_names, data, aliases=None, removed=False):
                 and _is_data(args[i_old])
                 and not (len(args) > i_new and _is_data(args[i_new]))
             ):
+                if keywords and len(args) > len(positional):
+                    raise TypeError(
+                        f"{qualname} takes {', '.join(positional)} "
+                        f"positionally and {', '.join(keywords)} by keyword "
+                        f"(got {len(args)} positional arguments); "
+                        f"call {new_call}."
+                    )
                 return fn(*args, **kwargs)
             if removed:
                 raise TypeError(
