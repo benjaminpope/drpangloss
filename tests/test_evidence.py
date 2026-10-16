@@ -840,8 +840,13 @@ def test_the_device_singular_values_match_a_numpy_svd(shape):
         onp.sum(onp.log1p(reference**2)),
         rtol=1e-12,
     )
-    uu, ss, vt = _svd(jac)
-    onp.testing.assert_allclose((uu * ss) @ vt, jac, atol=1e-9)
+    ss, vt = _svd(jac)
+    onp.testing.assert_allclose(ss, reference, rtol=1e-9, atol=1e-9)
+    # The rows of Vᵀ are the right singular vectors, up to sign: J v = s u.
+    onp.testing.assert_allclose(
+        onp.linalg.norm(jac @ vt.T, axis=0), ss, rtol=1e-9, atol=1e-9
+    )
+    onp.testing.assert_allclose(vt @ vt.T, onp.eye(k), atol=1e-9)
 
 
 def test_the_evidence_jacobian_stays_on_the_device_for_the_spectrum():

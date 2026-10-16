@@ -2113,15 +2113,9 @@ def _jitted_residual_jacobian(model, datasets, path):
 def _residual_jacobian(model, data, path, on_device=False):
     """All the whitened residuals, and their Jacobian with respect to leaves.
 
-    ``path`` is one leaf's path or a tuple of paths. Returns
-    ``(residuals, jacobian)`` of shapes ``(n_data,)`` and
-    ``(n_data, total leaf size)``, computed in float64, with whichever of
-    forward or reverse mode is cheaper for the Jacobian. The columns are
-    the paths' raveled leaves, in the order given. Both are NumPy arrays,
-    except that ``on_device=True`` leaves the Jacobian on the device that
-    computed it (a float64 JAX array), for ``_singular_values`` and
-    ``_svd``: an N_data x N_pix Jacobian of ~2e8 entries then never
-    crosses to the host, whose SVD took hours (issue 328).
+    ``path`` is one leaf's path or a tuple of paths. Returns NumPy
+    ``(residuals, jacobian)``, float64; ``on_device=True`` leaves the
+    Jacobian a JAX array.
     """
     datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
     if not isinstance(path, str):
@@ -2134,19 +2128,12 @@ def _residual_jacobian(model, data, path, on_device=False):
 
 
 def _singular_values(jac):
-    """The singular values of a Jacobian, computed on the device in float64.
-
-    ``jac`` is a NumPy or JAX array. A matrix much taller than it is wide
-    (or wider than tall) is first reduced by a QR decomposition to its
-    square triangular factor, which has the same singular values and costs
-    ``O(N n²)`` once, then the SVD of the small factor is ``O(n³)``. Both
-    steps are backward stable, so the small singular values keep their
-    accuracy, which forming the Gram matrix ``JᵀJ`` would lose (see
-    ``log_evidence``); NumPy's SVD of the full matrix on the host is what
-    this replaces. Returns a NumPy array, in descending order.
-    """
+    """Singular values of ``jac`` (descending, NumPy), on the device in
+    float64; QR-reduced first when far from square."""
     with run_in("float64"):
         a = np.asarray(jac, dtype=np.float64)
+        # QR then SVD of the small factor is backward stable; the Gram
+        # matrix JᵀJ would lose the small singular values (see log_evidence).
         if a.shape[0] > 2 * a.shape[1]:
             a = np.linalg.qr(a, mode="r")
         elif a.shape[1] > 2 * a.shape[0]:
@@ -2155,16 +2142,14 @@ def _singular_values(jac):
 
 
 def _svd(jac):
-    """The thin SVD ``(U, s, Vᵀ)`` of a Jacobian, on the device in float64.
-
-    Returned as NumPy arrays. Used where the right singular vectors are
-    needed; ``_singular_values`` is cheaper where they are not.
-    """
+    """``(s, Vᵀ)`` of the thin SVD of ``jac`` (NumPy), on the device in
+    float64; QR-reduced first when tall, so ``U`` is never formed."""
     with run_in("float64"):
-        out = np.linalg.svd(
-            np.asarray(jac, dtype=np.float64), full_matrices=False
-        )
-        return tuple(onp.asarray(x, dtype=float) for x in out)
+        a = np.asarray(jac, dtype=np.float64)
+        if a.shape[0] > 2 * a.shape[1]:
+            a = np.linalg.qr(a, mode="r")  # J = QR has R's V
+        _, s, vt = np.linalg.svd(a, full_matrices=False)
+        return onp.asarray(s, dtype=float), onp.asarray(vt, dtype=float)
 
 
 def _single_model(model, caller):
@@ -2504,7 +2489,7 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
         onp.asarray(model.get(latent), dtype=float) for latent in latent_paths
     ]
     z = onp.concatenate([x.ravel() for x in zs])
-    _, singular, vt = _svd(jac)
+    singular, vt = _svd(jac)
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (n, singular.size)), float)
     e2 = onp.asarray(jax.random.normal(second, (n, z.size)), float)

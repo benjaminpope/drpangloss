@@ -110,7 +110,9 @@ Provisional in 0.4:
   far from square, instead of NumPy's SVD on the host (#328). `dirty_image`
   sums the visibilities in chunks of samples, so its memory no longer grows
   as samples x pixels. `metrics.align` sweeps its shift table in one
-  compiled `lax.map` instead of a call per shift. Results are unchanged.
+  compiled `lax.map` instead of a call per shift. Results are unchanged up to
+  rounding; `laplace_samples` draws for a given key may differ (same
+  distribution).
 - `fit_orbit_aliases` now tempers by default, so its evidences, band
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to
