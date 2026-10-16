@@ -53,6 +53,7 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
+  - Quickstart: quickstart.md
   - Background:
       - Contributions: contributors.md
       - "Comparison with other packages": comparison.md
@@ -75,6 +76,7 @@ nav:
       - "Detection ROC curves": detection_roc.md
       - "Chromatic companion search": wr_chromatic_search.md
       - "Hierarchical inference across filters": hierarchical_inference.md
+      - "Which orbit tool?": which_orbit_tool.md
       - "Orbits from interferometric data": orbit_fitting.md
       - "Orbit methods": orbit_methods.md
   - Sources:

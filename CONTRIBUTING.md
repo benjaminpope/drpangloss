@@ -28,9 +28,11 @@ with `uv pip install --python .venv/bin/python --upgrade -e ".[dev,notebooks]"`.
 `jax` on its own can leave optax, equinox etc. too old for it.
 
 The extras are `plots` (pandas and ChainConsumer, for the corner-plot helpers in
-`virgil.plotting`), `legacy` (astroquery, for `virgil.legacy`), `integrations`
-(jaxoplanet, for `HarmonixModel`), `test`, `docs`, `notebooks` and `dev` (`test` and
-`docs` plus the tools). harmonix itself is not an extra; to run its tests, install it
+`virgil.plotting`), `legacy` (astroquery, for `virgil.legacy`), `orbits` (jaxoplanet,
+for `virgil.orbits`, `epochs` and `aliases`), `integrations` (the `orbits` extra again,
+for `HarmonixModel`), `pipeline` (h5py and the notebook tools, for `virgil.pipeline`),
+`test`, `docs`, `notebooks` (everything the tutorials use) and `dev` (`test`, `docs`
+and `orbits` plus the tools). harmonix itself is not an extra; to run its tests, install it
 from PyPI as CI does:
 `uv pip install --python .venv/bin/python "harmonix>=0.1.0"`.
 

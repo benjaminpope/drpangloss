@@ -1,0 +1,24 @@
+# Which orbit tool?
+
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle. `virgil.orbit_search` is provisional in the whole; `virgil.epochs` and `virgil.aliases` too (see [stability](stability.md)).
+
+virgil has four ways to look for a binary's orbit in interferometric data of several epochs. They answer different questions, and each takes the data in a different form. All need the `orbits` extra (`pip install "virgil-astro[orbits]"`), which provides jaxoplanet to solve Kepler's equation. The data in all four are an [`Epochs`][virgil.epochs.Epochs] (one named snapshot per dataset), except for `fit_orbit_aliases`, which takes a list of [`OIData`][virgil.oidata.OIData], one per epoch, with per-exposure times.
+
+| You want | Use | Goes in | Comes out | Use it when |
+| --- | --- | --- | --- | --- |
+| A quick ranking of trial orbits, or a start for a fit | [`rank_orbits`][virgil.epochs.rank_orbits], or [`start_from_positions`][virgil.epochs.start_from_positions] to rank and fit in one call | `Epochs`, a function from an orbit to a scene, and the trial orbits (for example from [`starting_orbits`][virgil.orbits.starting_orbits]) | [`RankedOrbits`][virgil.epochs.RankedOrbits]: orbits best first with their scale-marginalized log likelihoods; `start_from_positions` returns an [`OrbitStart`][virgil.epochs.OrbitStart] with the ranked candidates and fits from the best distinct ones | You have orbits to compare, or a fit that needs a start in the right basin |
+| Scores with a flux shared across epochs, with radial-velocity or position terms | [`score_orbits`][virgil.orbit_search.score_orbits] (provisional) | `Epochs`, a function `model(orbit, flux)` returning a scene, candidate orbits, and optionally [`RVData`][virgil.orbits.RVData] or [`PositionData`][virgil.orbits.PositionData] terms | [`OrbitScores`][virgil.orbit_search.OrbitScores]: one score per candidate with the companion's flux integrated out, the profiled flux and its error, and flags; rank them with `OrbitScores.order` | The candidates are many, the flux is the same on every night, or other measurements of the orbit exist |
+| The period aliases of an undersampled orbit, with evidences | [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] | A list of `OIData`, one per epoch, optionally the [`epoch_positions`][virgil.epochs.epoch_positions] of the same data, and a period range (by default taken from the data) | [`AliasResult`][virgil.aliases.AliasResult]: a band for each integer number of orbits between epochs with its evidence and probability, the best orbit, and posterior samples; `AliasResult.save` and `load` keep it | The epochs are further apart than the period, so that more than one period fits the positions |
+| One orbit, and its posterior | [`fit`][virgil.fitting.fit] with a [`KeplerOrbit`][virgil.orbits.KeplerOrbit] scene | `epochs.model_fn(scene_fn)`, where `scene_fn` maps the sampled parameters to an [`OrbitalBinary`][virgil.models.OrbitalBinary]; priors; and `epochs.data` | [`FitResult`][virgil.fitting.FitResult]: the maximum a posteriori orbit; sample the posterior with `numpyro_model` and NUTS | You know which period alias is the right one, or the orbit is well sampled |
+
+## How to choose
+
+1. **The period is well constrained by the sampling.** Start from per-night positions ([`epoch_positions`][virgil.epochs.epoch_positions]), rank trial orbits with `rank_orbits` or run `start_from_positions`, then fit and sample the best orbit with `fit`. [Orbits from interferometric data](orbit_fitting.md) does this end to end.
+2. **You have many candidate orbits, a flux shared by all the epochs that you want to marginalize over, or radial velocities or astrometry as well:** score the candidates with `score_orbits`, which adds those terms, then fit the best.
+3. **The epochs undersample the period** (the gaps are longer than the period): run `fit_orbit_aliases`. It fits each alias band to the observables of all epochs, and says how probable each is. Flagged nights (an alias peak, a separation below the resolution) seed nothing but still count in the likelihood. Read `AliasResult.period_bound` and `period_at_lower_bound` before quoting a period.
+4. **Then fit the winner.** The best orbit of an alias band is a starting point for `fit` with a `KeplerOrbit`, and its posterior samples come with the result.
+
+The ranking functions judge candidates by the data themselves, with each dataset's error scale integrated out, so a dataset with underestimated errors does not dominate. Pass `scales="marginal"` to `rank_orbits` and `start_from_positions` to ask for this; today their default is `"quoted"`, with a `FutureWarning`, and will become `"marginal"`. `score_orbits` already marginalizes.
+
+The conventions of the angles and signs are on the [conventions](conventions.md#orbits) page, and the helpers behind these tools are in [orbit methods](orbit_methods.md).
