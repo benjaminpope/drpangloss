@@ -795,7 +795,7 @@ def test_the_grey_scale_prior_is_stated_not_taken_from_the_data():
     stated = data.with_flux_scale(scale=SCALE_PRIOR)
     (block,) = stated.extras
     louder = block.rebuild(values=10 * onp.asarray(block.values))
-    assert louder.scale == block.scale == SCALE_PRIOR
+    assert tuple(louder.scale) == tuple(block.scale) == SCALE_PRIOR
     onp.testing.assert_array_equal(louder.mu, block.mu)
 
 
@@ -947,3 +947,58 @@ def test_a_step_of_pi_wraps_the_same_in_data_and_model():
     onp.testing.assert_allclose(
         block.predict(_scene(), cvis), block.data(), atol=1e-5
     )
+
+
+# -- values of the prior widths are traced: no recompile ------------------
+
+
+def _compiles_once(data_a, data_b):
+    """Loglikelihoods of two datasets through one jit; compiled entries."""
+    loss = jax.jit(lambda model, data: model_loglike(model, data))
+    scene = _scene()
+    a, b = loss(scene, data_a), loss(scene, data_b)
+    return loss._cache_size(), float(a), float(b)
+
+
+def _flux_data(**scale):
+    data = OIData(read_oifits(build_hdulist(_tables()), extras=("flux",)))
+    return data.with_flux_scale(**scale)
+
+
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        (dict(scale=(3.7, 0.3)), dict(scale=(3.7, 0.9))),  # widths, scale
+        (dict(scale=(3.7, 0.3)), dict(scale=(4.5, 0.3))),  # mu, widths, scale
+        (
+            dict(scale=SCALE_PRIOR, poly_order=1, poly_width=0.1),
+            dict(scale=SCALE_PRIOR, poly_order=1, poly_width=0.4),
+        ),
+    ],
+)
+def test_the_flux_scale_prior_is_traced_and_does_not_recompile(first, second):
+    size, a, b = _compiles_once(_flux_data(**first), _flux_data(**second))
+    assert size == 1
+    assert a != b  # the prior does reach the likelihood
+
+
+def test_the_visphi_prior_width_is_traced_and_does_not_recompile():
+    def data(width):
+        return OIData(
+            read_oifits(build_hdulist(_tables()), extras=("visphi",))
+        ).with_continuum(lines=[LINE], prior_width=width)
+
+    size, a, b = _compiles_once(data((0.3, 0.5)), data((0.6, 0.2)))
+    assert size == 1
+    assert a != b
+
+
+def test_a_missing_prior_is_a_different_structure_not_a_value():
+    # None-ness stays structural: no prior gives the projection's code path.
+    def data(width):
+        return OIData(
+            read_oifits(build_hdulist(_tables()), extras=("visphi",))
+        ).with_continuum(lines=[LINE], prior_width=width)
+
+    size, _, _ = _compiles_once(data(None), data((0.3, 0.5)))
+    assert size == 2

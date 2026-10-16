@@ -1,4 +1,33 @@
-# virgil imaging: staged execution plan (revision 4)
+# virgil imaging: staged execution plan (revision 5)
+
+Status (2026-10-16): stages 0 to 6a.1, 6d and the cross-cutting marginalisation are built; what remains is listed in the table below, which is the single place to read progress. The sections after it keep each stage's design decisions and the reasons for them, not a log of the work.
+
+## Status by stage
+
+| Stage | What | Status | Notes |
+|---|---|---|---|
+| 0 | Groundwork, `whitened_residuals` | done | One residual vector for grids, limits, `numpyro_model` and `fit` |
+| 1 | `Image`, exact DFT | done | |
+| 2 | NUFFT backend | abandoned | Built, benchmarked and removed (issue #75); see Stage 2 |
+| 2b | Exact MFT on uv lattices | done | |
+| 3 | `fit`, regularizers, `diagnose` | done | Also `Laplacian`, `StarletL1`, `LogSum`; MWE-B uses synthetic DISCOs |
+| 4, 4b, 4c | Grey long-baseline imaging, rotating epochs, real PIONIER data | done | Real-data notebooks live outside this repository |
+| 5, 5a–5e | GP pixels, evidence, error scale, Laplace draws, Gauss–Newton mass | done | Open: a TSV evidence (needs a decision; propose "won't do") and the discrepancy target N − γ in `l_curve` |
+| 6.0 | Reader and likelihood fixes | done | Open: closure-phase legs from OI_T3 (`oifits.py` TODO) |
+| 6a.0 | Times and frames in `OIData` | done | |
+| 6a.1 | Orbits and binary-frame scenes | done | Orbit search continues in [`orbit_pipeline.md`](orbit_pipeline.md); physical skew and Thiele–Innes marginalisation not started |
+| 6a | Spectro-interferometry | mostly done | Not built: spectral-resolution kernel, primary beam, differential VISAMP, VISAMP debiasing, fitted `noise=` terms for extras |
+| 6d | Correlated channel nuisances | done | |
+| 6e | Closure amplitudes | not started | Not estimated |
+| 6b, 6c | Joint multi-filter AMI, `ImageCube` | not started | Milestone 2 not reached |
+| 6.5 | 0.2.0 release | done | |
+| 7 | Hardening | mostly not started | MEM preconditioning, L-curve success test, multi-start, K-fold CV, MFT caching, a regularizer guide |
+| 8 | PMOIRED parity | partial | `RadialProfile` is realized as `PolarDisk` ([`radial_profiles.md`](radial_profiles.md)); `Projected` and `bootstrap_fit` not built |
+| – | Binary-detection parity | done | `injection_limits`, `linear_flux_grid`, `detection.py` |
+| – | Sparse imaging | done to S2 | [`sparse_imaging.md`](sparse_imaging.md) |
+| – | Pipelines | partly done | [`pipeline.md`](pipeline.md) |
+
+Items that wait for 0.5 rather than 0.4: removing the deprecated `Tabulated` and the argument-order shims.
 
 ## Context
 We are adding regularised maximum-likelihood image reconstruction, and optional Bayesian sampling, to virgil.
@@ -15,7 +44,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 ## Standing design decisions
 1. **Numerical precision.**
-   - Every Fourier transform and matmul uses `precision=lax.Precision.HIGHEST`, which defeats TF32 on A100/H100 GPUs.
+   - Every Fourier transform and every matmul over pixels or the DISCO operators uses `precision=lax.Precision.HIGHEST`, which defeats TF32 on A100/H100 GPUs (`AGENTS.md` states the rule).
    - Fitting entry points (`fit`) take `dtype="float64"` by default and run inside a local `jax.enable_x64(True)` context, casting inputs. `dtype="float32"` is opt-in.
    - Forward-model code is dtype-agnostic and still passes the float32 test suite; x64 is never set globally.
    - `AGENTS.md` is updated to say that library code works in both precisions and that imaging entry points default to local x64.
@@ -24,12 +53,12 @@ The design rationale was established in the earlier research: the gauge survey, 
    - **2 sin(Δ/2)/σ** for unprojected closure phases, which is a von Mises likelihood and is smooth at ±π. (From Stage 6.0, for four or more telescopes this chord is applied to independent, whitened closure-phase combinations whose covariance is not diagonal, so the likelihood is no longer exactly von Mises there; three-telescope data are unchanged.)
 
    `model_loglike` is redefined on top of it, so grids, limits, `numpyro_model` and fitting all share it.
-3. **One specification for fitting and sampling.** `fit(model, priors, data, regularisers)` and `numpyro_model(model, priors, data, regularisers)` take the same arguments:
+3. **One specification for fitting and sampling.** `fit(model, priors, data, regularizers)` and `numpyro_model(model, priors, data, regularizers)` take the same arguments:
    - Free parameters are exactly the keys of `priors`, a dict of NumPyro *distributions*; numpyro is used only as a distributions library.
    - Support-respecting transforms come from `biject_to`.
    - `fit` finds the MAP; `numpyro_model` is the posterior for samplers, and accepts only genuine prior regularisers (it rejects MEM, TV and TSV).
 4. **Optimisers:** `fit(..., method=...)` with:
-   - `"lm"`: optimistix Levenberg–Marquardt with a matrix-free, fixed-length `lx.Normal(lx.CG)` or `lx.LSMR` inner solve. It never materialises a Jacobian and is the default when residuals exist.
+   - `"lm"`: optimistix Levenberg–Marquardt, the default when residuals exist. The inner solve is a dense QR for few coordinates and a matrix-free, fixed-length `lx.Normal(lx.CG)` above that, so it materializes a Jacobian only for small problems.
    - `"lbfgs"`: optax L-BFGS with a zoom line search (stopped on the gradient), for MEM, TV and free error inflation.
    - `"adam"`: optax, now a declared runtime dependency.
 5. **Image parameterisation.**
@@ -41,12 +70,12 @@ The design rationale was established in the earlier research: the gauge survey, 
    - A NUFFT backend (jax-finufft) was built in Stage 2 and **removed** after Stage 3 (issue #75): on an A100 it cost a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157). Its code is in the git history of PR #71; revisit only when jax-finufft can reuse plans.
    - Padded FFT plus interpolation is never used.
 7. **Rules for users:**
-   - The default field of view is the smaller of 500 mas and the interferometric field of view, λ/B_min (`imaging.field_of_view`); pixels are finer than Nyquist (`imaging.nyquist_pixel_scale`).
+   - The default field of view comes from the data (`imaging.image_field`): six FWHMs of the data's second moment, between an inner working angle of four resolution elements and the interferometric field of view λ/B_min (`imaging.field_of_view`); pixels are finer than Nyquist (`imaging.nyquist_pixel_scale`).
    - Reconstructed images are shown with the beam (`imaging.beam`, the FWHM of the dirty beam's core) shaded in the lower left, and next to a residual map on a symmetric diverging scale: signed residuals for MAP images, z-scores whenever there are uncertainties.
    - Unresolved things are analytic; resolved emission goes in pixels.
    - Something must fix the origin: an analytic star, a `Centroid` prior, or a centred mean.
    - Initialise from a parametric fit.
-8. **Dependencies:** optax (and lineax) become required. `blackjax` (`[sampling]`) is an optional extra. zodiax stays at `>=0.4`.
+8. **Dependencies:** optax, lineax and optimistix are required. There is no `[sampling]` extra and no blackjax; NUTS is numpyro's. zodiax is `>=0.4.1`.
 9. **Priors: Jeffreys priors under the relevant group actions.** Default priors are the invariant measures of the groups that act on a parameter, unless there is strong information otherwise, because statistical correctness comes first. Ben: "we should always be adopting Jeffreys priors under the relevant group actions, unless we have strong information otherwise, because we prioritise statistical correctness."
 
    | Parameter kind | Group | Default prior |
@@ -68,18 +97,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
    **Log (2026-10-05):** `fit` now optimises each prior in its flat coordinate (approved by Ben): a LogUniform scale in log x, an isotropic inclination in cos i, an isotropic latitude in sin(lat) (any prior with a `flat_coordinate()` method). There the prior is constant and adds nothing, so Levenberg–Marquardt works with the Jeffreys priors, and the MAP is the maximum of the likelihood times the invariant prior in the coordinates where that prior is uniform, rather than the mode of 1/x in x. Reported values are in the model's parameters; `gauss_newton_mass` stays in numpyro's coordinates.
 
-## Branching and workflow
-- **Branch.** Create `imaging` in `~/code/drpangloss` (the local folder keeps its old name), branched from `chromatic-scenes`. It needs the chromatic work (`Spectrum`, `Resolved`, multi-channel `OIData`), and `chromatic-scenes` is 3 commits ahead of `main`. Once `chromatic-scenes` merges, rebase `imaging` onto `main`.
-- **Each stage is a PR** from `imaging-sN-<name>` (git cannot hold both `imaging` and `imaging/…` branches), stacked on the previous stage's branch and retargeted to `imaging` as earlier stages merge. Each PR has:
-  - the code;
-  - its tests;
-  - an MWE notebook (or a section of one) in `notebooks/`, synced to the docs by `scripts/sync_tutorial_docs.py`;
-  - a short entry in `design/image_reconstruction.md`.
-- **Merge `imaging` into `main`** at two milestones: after Stage 4 (the AMI and long-baseline MAP imaging are usable) and after Stage 6.
-- **Feedback checkpoint** at the end of every stage: I show you the MWE figures and numbers, and the next stage starts only after your comments. That is where stage scope can change.
-- **Every stage must pass:** `uv run pytest` (float32 and x64 paths), `ruff check` (0.11.0), the tutorial sync test, and the docs build.
-
-**Time estimates** are Claude-agent working time (writing code, tests and MWEs, running them, iterating). They exclude waiting for your feedback, data transfers, and OzSTAR GPU queue time. They assume no major surprises; the flagged risks say where the surprises could come from.
+Every stage ships its code, its tests, a minimal working example notebook (synced to the docs by `scripts/sync_tutorial_docs.py`) and a short entry in `design/image_reconstruction.md`, and passes the checks under Verification.
 
 ---
 
@@ -119,27 +137,8 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **Checkpoint:** do the image API and the sky conventions read naturally?
 
-## Stage 2: NUFFT backend and benchmark (about 3–4 h, plus your GPU run)
-**Status:** done (PR #71), including the OzSTAR A100 run. Outcome: the NUFFT is accurate but too slow on GPUs (issue #75), and was removed after Stage 3; the DFT and MFT are the supported paths.
-
-**Build:**
-- `backend="nufft"` in `image_visibilities`, via jax-finufft `nufft2`:
-  - `iflag=+1`; the image rows pair with v; even N gets the half-pixel phase factor;
-  - `eps` defaults to 1e-7 under x64, and must be ≥ 1e-5 under float32 (below that it raises).
-- A `nufft` extra with a lazy import and a clear error if it is missing (removed with the backend; there is no such extra now).
-- `scripts/bench_ft.py` (DFT against jax-finufft, value+grad, npix 64–512, M 10³–10⁵, both dtypes).
-
-**Tests** (skipped without the extra): agreement with the DFT per point, |ΔV| ≤ 3·eps·V(0), including phases on low-|V| baselines; odd and even N; orientation; `check_grads`; vmap; inside `System` with CP and DISCO data. A CI job with the extra installed.
-
-**MWE ("which transform, when"):**
-- The Stage 1 simulation evaluated with both backends, with an accuracy table of max |ΔV| and phase error on low-|V| baselines, in float32 and float64.
-- Laptop timing curves.
-- Slurm commands for you to run the same benchmark on an OzSTAR GPU, including a DFT accuracy assertion that confirms HIGHEST beats TF32.
-- A documented rule of thumb for the crossover.
-
-**Risk:** jax-finufft's use of private jax internals and the fact that it re-plans every call (#157). The DFT fallback makes this non-blocking.
-
-**Checkpoint:** do you accept the default-backend rule?
+## Stage 2: NUFFT backend (abandoned)
+Built in PR #71 and benchmarked on an A100, then removed after Stage 3 (issue #75): the NUFFT is accurate but cost a flat ~7 ms per call because jax-finufft re-plans every time (jax-finufft #157). The DFT and the MFT (Stage 2b) are the supported paths. The code is in the git history of PR #71; reinstate it only under the trigger in Deferred.
 
 ## Stage 2b: exact MFT on uv lattices (added after Stage 2)
 **Status:** done (PR #72). AMIGO DISCO data lie exactly on a detector-frame uv lattice rotated by the parallactic angle. `OIData.uv_grid` records it, `SourceModel.model_on_grid` defaults to `model`, and `Image(rotation_deg=...)` matching the lattice uses the two-sided MFT (Soummer et al. 2007): exact, and 3–8× faster on the ν Hor coverage. `coverage.ami_grid_record` (then called `amigo.simulated_disco_record`) gives a small AMI-like record with diagonal errors, which replaces large fixtures in tests and tutorials; `disco_covariance` is optional.
@@ -202,7 +201,7 @@ The design rationale was established in the earlier research: the gauge survey, 
 
 **Log (2026-10-01):** the numbers below were measured before Stage 6.0 changed the closure-phase count (`nrm_oidata` keeps 15 of its 35 closure phases now), and have not been re-measured ("pre-6.0").
 - No new fitting code was needed: `fit` and `l_curve` already take a list of datasets, and the worst-fitted one sets the discrepancy weight.
-- Coverage is synthetic. `coverage.vlti_oidata` gives four-UT Earth-rotation tracks over many channels, and `coverage.nrm_oidata` gives the 21 V² and 35 closure phases of the NIRISS mask. This is the fallback in "Coverage fixtures", so no ν Hor fixture is committed. Stage 4c uses real PIONIER data instead.
+- Coverage is synthetic. `coverage.vlti_oidata` gives four-UT Earth-rotation tracks over many channels, and `coverage.nrm_oidata` gives the 21 V² and 35 closure phases of the NIRISS mask. No ν Hor fixture is committed. Stage 4c uses real PIONIER data instead.
 - `models.circular_support(..., inner_radius_mas)` makes the support hole, and `starting_image(..., hole_mas=...)` applies it. Both MWEs use it, at half the beam's minor axis.
 - Fitting the envelope flux (a prior on `"env.flux"`) turned out to be what removes the spurious spot next to the star. With the flux fixed at `starting_image`'s estimate, the excess piles up at the centre; with the flux fitted, NCC rises from 0.86 to 0.93 in the SAM MWE. A hole of half a beam under the star (`starting_image(..., hole_mas=...)`) then clears the remaining core flux, which is degenerate with the star's. In the VLTI MWE it removes the bias in the SPARCO ratio, which goes from 0.545 to 0.509 against a truth of 0.5.
 - MWEs:
@@ -262,17 +261,6 @@ They compare results with the papers' text, not their images.
 - IW Car: the paper fixes d_prim = −3.17, so their d_rim of 0.89 is 4.06 relative to the star, against our 4.0 with a λ⁻⁴ star.
 
 A background split off as a `Resolved` component also changes what the image's index means, and a smooth image is degenerate with a resolved background.
-
-## Status after Stage 4, and next steps
-**Done:**
-- AMI and long-baseline MAP imaging: per-dataset models (`Rotated` epochs), SPARCO with power-law and blackbody spectra, the support hole, and synthetic VLTI and NRM coverage.
-- Synthetic MWEs: SAM V² + CP, two-night VLTI, and rotating epochs.
-
-**Next:**
-1. Merge this stack into `imaging`, then `imaging` into `main` (milestone 1).
-2. Stage 5: Gaussian-process pixels, sampling (posteriors for the companion's flux and separation, which are correlated), and evidence-based weights.
-3. Stage 3c: PDS 70, now deferred (see Deferred).
-4. Cache MFT matrices (Stage 7).
 
 ## Stage 5: Gaussian-process pixels and sampling (about 6–8 h)
 **Build:**
@@ -389,28 +377,10 @@ A background split off as a `Resolved` component also changes what the image's i
   - A clear error when there is no field latent, a pixel Image in a tuple, repeated or empty paths; the multi-path Jacobian compiles once.
 - **Open (plan, stage 2):** the Laplace evidence holds the flux ratio at its MAP, so it lacks that Occam factor; `SumField` (one latent, a summed spectrum) and the identifiability bench in virgil-validation come next.
 
-## Order of work after Stage 5 (updated 2026-10-03)
-These stages draw on three notes:
-- [`pmoired_parity.md`](pmoired_parity.md), which compares virgil with PMOIRED;
-- [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) (S);
-- [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O).
+## Notes behind stages 6.0 to 8
+These stages draw on three notes: [`pmoired_parity.md`](pmoired_parity.md), which compares virgil with PMOIRED; [`spectro_interferometry_workflow.md`](spectro_interferometry_workflow.md) (S) and [`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md) (O), which came out of fitting GRAVITY data and are written as general capabilities. The order of work is the Status table above.
 
-The last two came out of fitting GRAVITY data on Apep, but are written as general capabilities.
-
-0. **6.0: urgent reader and likelihood fixes** (PR #120; from the GRAVITY review). These come first because GRAVITY and PIONIER are in active use.
-1. **6a.0: times and frames in `OIData`** (S §2.5). A small PR, which unblocks the orbits, VISPHI and Stage 6d.
-2. **6a.1: orbits and binary-frame scenes.** Decided 2026-10-03: they are needed now, for the Apep analysis.
-3. **6a: spectro-interferometry.**
-4. **The Apep agent's library commits.** These were merged in PR #124 (they sat on the local branch `apep-gravity`): `EllipticalGaussian`, `Tabulated`, `noise=`, the anisotropic `GaussianField`, `GaussianArc` and the rim-gradient fix. `Tabulated` is provisional and private, and 6a's `Nodes` and error floors replace it (decided).
-5. **6d: correlated channel nuisances,** then the wavelength-scale nuisance. (The dual-field recipe is done, in virgil-vlti.)
-6. **6b and 6c** (joint multi-filter AMI; `ImageCube`), then **milestone 2**.
-7. **Stage 7** (hardening and release), then **Stage 8** (the rest of the PMOIRED parity).
-
-**Binary-detection parity (from validation).** Two features that CANDID and fouriever have for finding companions are being implemented, each in its own PR:
-- injection-method detection limits (CANDID): in progress;
-- a fast linearised flux map (fouriever's `lincmap`): in progress.
-
-**Log (2026-10-05):** the additions to Stages 6a, 6e, 7 and 8 and the note above come from feature suggestions made in the virgil-validation session, which compared virgil with eht-imaging, CANDID, fouriever, MPoL and PMOIRED. Ben approved them the same day.
+**Binary-detection parity.** CANDID's injection-method limits and fouriever's linearised flux map are built (`injection_limits`, `linear_flux_grid`); the additions to Stages 6a, 6e, 7 and 8 came from the same comparison with eht-imaging, CANDID, fouriever, MPoL and PMOIRED (approved 2026-10-05).
 
 ## Stage 6.0: urgent reader and likelihood fixes (done; PR #120)
 From the GRAVITY calibration review ([`gravity_calibration_review.md`](https://github.com/benjaminpope/virgil-vlti/blob/main/design/gravity_calibration_review.md), now in virgil-vlti), footguns 1, 2, 3 and 9. These affected every existing analysis of GRAVITY and of PIONIER (or any four-telescope) data.
@@ -677,22 +647,13 @@ From the virgil-validation comparison with eht-imaging, which fits closure ampli
 
 **Checkpoint:** **merge milestone 2**.
 
-## Stage 6.5: the 0.2.0 release (added after the October 2026 codebase review)
-The version is already 0.2.0 but the release is not out. The review (`codebase_review_2026-10.md`, summarised in the PRs that fix it) found blockers B1 to B5 and a set of documentation and reference errors. All of these are being fixed on parallel branches, in review at the time of writing, and will be combined into one correctness PR and one performance PR:
-- the blockers (B1 to B5), including the `Tabulated` API (B5; see `chromatic_sources.md`);
-- `CHANGELOG.md`, with the rename and the Stage 6.0 change to every four-telescope χ²;
-- the text fixes in this plan, the design notes, `AGENTS.md` and `MIGRATION_VIRGIL.md`, and the reference corrections;
-- re-executing the six MWEs (`mwe_sam_v2_cp`, `mwe_vlti`, `mwe_stress_test`, `mwe_gaussian_field`, `mwe_evidence`, `mwe_elr_chara`): **done 2026-10-04** on OzSTAR (job `virgil_notebooks`, virgil `ad131bd`); the new numbers are logged beside the old ones;
-- publishing `virgil-astro` 0.2.0 and a final `drpangloss` 0.2.0 that forwards to it with a `FutureWarning` (the human's job).
-
-**Open debts** (not blockers):
-- `Tabulated` is private in 0.2.0 (Ben's decision) and becomes `Nodes` in Stage 6a;
+## Stage 6.5: the 0.2.0 release (done)
+Released after the October 2026 codebase review ([`history/codebase_review_2026-10.md`](history/codebase_review_2026-10.md)). Debts it left open:
+- `Tabulated` is deprecated for `Nodes` and removed in 0.5;
 - `inflated_errors(where=, combine=)`;
-- MFT caching (formerly in Stage 7's list);
-- the discrepancy target N − γ for `l_curve` (γ now exists, `imaging.error_scale`);
-- the TSV-evidence decision: Stage 5 promised an evidence for TSV, which was not built, and no decision is recorded.
-
-The review also suggests restructuring the plan: replace "Order of work" with a status table, split 6a into spectra, observables with the reader, and instrument effects (budgeted at about 20–25 h, spectra first), give 6d a design item for composing its offsets with `ClosureNoise` grouping, give MEM preconditioning its own estimate, and archive the orchestration section. None of that is done here; see the review's "What should change in the plan".
+- MFT caching (Stage 7);
+- the discrepancy target N − γ for `l_curve` (γ exists, `imaging.error_scale`);
+- the TSV-evidence decision: Stage 5 promised an evidence for TSV, which was not built.
 
 ## Stage 7: hardening and release (about 8–11 h, of which 3–4 h is release chores and the rest MEM preconditioning)
 - **Maximum-entropy preconditioning and better solvers** (Ben, 2026-10-03; important in the long run).
@@ -723,25 +684,12 @@ See [`pmoired_parity.md`](pmoired_parity.md). Orbits, first listed here, are now
 - **`RadialProfile`.** A callable I(r) with inner and outer radii, transformed by a fixed-quadrature Hankel transform: order 0, plus order n for azimuthal harmonics. It covers thick rings, power-law and limb-darkened disks, and harmonics on any profile. Crescents are differences of offset disks.
 - **`bootstrap_fit`.** Resamples by date and baseline, keeping spectral vectors whole. Resample whole snapshots or whole baselines, never single points, since the points within one are correlated (as PMOIRED and CANDID's `fitBoot` do). The virgil-validation PMOIRED comparison is its test.
 - **Spectral correlations between channels.** Now Stage 6d, because GRAVITY data need them.
-- **Radial profiles and disk-aware imaging.** `RadialProfile` is scoped further, as `PolarDisk`, in [`radial_profiles.md`](radial_profiles.md) (stages P1–P6).
+- **Radial profiles and disk-aware imaging.** `RadialProfile` is scoped further, as `MultipoleDisk`, in [`radial_profiles.md`](radial_profiles.md) (stages P1–P6).
 
 **Tests:**
 - Hankel profiles against analytic UD, Gaussian and ring visibilities.
 - `Projected` against inclined analytic models.
 - Bootstrap spreads against the Laplace errors on a simple fit.
-
-## Totals
-- **Stages 0–4** (MAP imaging for AMI and long-baseline data, the transform benchmark, reproduction of the dorito result): about 18–26 h of agent time.
-- **Stages 5–7:** about 22–31 h more (Stage 7 now includes MEM preconditioning), plus:
-  - 6a.0 and 6a: about 12–16 h;
-  - 6a.1 (orbits and binary-frame scenes): about 25–30 h;
-  - 6d: about 9–13 h.
-- **Stage 8** (the rest of the PMOIRED parity): about 8–11 h.
-- **Overall:** the stage headings sum to about 94–127 h of agent time (6a.1 at 25–30 h, Stage 7 at 8–11 h), of which about 70–93 h remains from Stage 6a.0 on, before re-estimating 6a. The old "35–50 h" was the serial estimate for Stages 0–7 before 6a.1, 6d and Stage 8 were added. There are 8 feedback checkpoints.
-
-External waits: only the OzSTAR GPU benchmark run, which you launch. All test data are simulated using ν Hor baselines and noise.
-
-**Coverage fixtures.** The MATISSE ν Hor OIFITS files live in `/Users/benpope/code/nuHor/data/`, where they are git-ignored. In Stage 4, a script (`scripts/make_coverage_fixture.py`) extracts **only the geometry and noise**: u, v, wavelengths, closure-triangle indices, flags and per-point σ. These go into a small `data/coverage_nuhor_matisse.npz`, with no measured visibilities or phases, so tests and notebooks are self-contained. The AMI record already in the repo covers AMI. If you'd rather not commit even the derived coverage, the fallback is synthetic 4-telescope coverage with σ statistics matched to ν Hor.
 
 ## Deferred (triggers recorded in the design note)
 | Item | Revisit when |
@@ -762,12 +710,12 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
   - `src/virgil/fitting.py`, `src/virgil/imaging.py`, `src/virgil/fields.py`, `src/virgil/_precision.py`
   - `design/image_reconstruction.md`
   - `tests/test_image_model.py`, `tests/test_fitting.py`, `tests/test_imaging.py`, `tests/test_fields.py`
-  - Notebooks: `imaging_ami.ipynb` (Stages 1–3), `imaging_long_baseline.ipynb` (Stage 4), `imaging_gp_sampling.ipynb` (Stage 5), `imaging_chromatic.ipynb` (Stage 6)
+  - Notebooks: `imaging_ami`, `imaging_rml`, `imaging_gp`, `imaging_composite`, `imaging_sampling` and `imaging_clean` (the ensemble page, `docs/imaging_ensemble.md`, has no notebook)
 - **Modified:**
   - `models.py`: `Image`, later `ImageCube`.
   - `_geometry.py`: `image_visibilities`.
   - `likelihood.py`: `whitened_residuals`, `model_loglike`.
-  - `__init__.py`, `pyproject.toml` (optax, lineax; `[sampling]` extra), `AGENTS.md`, `mkdocs.yml`, `scripts/sync_tutorial_docs.py`, `design/chromatic_sources.md`.
+  - `__init__.py`, `pyproject.toml` (optax, lineax, optimistix), `AGENTS.md`, `scripts/sync_tutorial_docs.py`, `design/chromatic_sources.md`.
 - **Reused unchanged:** `OIData` (including `with_model`), `amigo.load_oi_data`, `build_model`, `System`, `spectra.PowerLaw`, `plot_model`, `inference.gaussian_fisher` (for parametric uncertainties), `_grid.warn_unconverged`.
 
 ## Verification
@@ -782,80 +730,15 @@ External waits: only the OzSTAR GPU benchmark run, which you launch. All test da
 
 **Scope changes since revision 4:**
 - The OzSTAR GPU benchmark was run on 2026-09-30 (A100; results in `design/image_reconstruction.md`). It confirmed the TF32 fix and led to shelving the NUFFT (issue #75).
-- Coverage is synthetic, the fallback named under "Coverage fixtures": `coverage.vlti_oidata` (four-telescope Earth-rotation tracks over many channels) and `coverage.nrm_oidata`. No ν Hor fixture was committed, and real data (PIONIER) are analysed in nuHor instead.
+- Coverage is synthetic, committed instead of a real-data fixture: `coverage.vlti_oidata` (four-telescope Earth-rotation tracks over many channels) and `coverage.nrm_oidata`. No ν Hor fixture was committed, and real data (PIONIER) are analysed in nuHor instead.
 
 ### OzSTAR GPU test (done 2026-09-30)
-Run by the user (Claude never connects to OzSTAR) on an A100. It confirmed that `Precision.HIGHEST` gives float32-accurate DFTs on the GPU (7.9e-7, against 2.7e-5 with TF32), and that the jax-finufft NUFFT was too slow there, which led to its removal. Results and figures are in `design/image_reconstruction.md`; the scripts are in the git history of PR #71.
+Run on an A100. It confirmed that `Precision.HIGHEST` gives float32-accurate DFTs on the GPU (7.9e-7, against 2.7e-5 with TF32), and that the jax-finufft NUFFT was too slow there, which led to its removal. Results and figures are in `design/image_reconstruction.md`; the scripts are in the git history of PR #71.
 
 ---
 
-## Implementation orchestration
-
-### Dependency graph (chunks)
-```
-C0a design note ─────────────────────────────────────────────┐
-C0b whitened_residuals + model_loglike + regression ──┐       │
-C4a coverage fixture + synthetic coverage generator ─────────┼──▶ C4 long-baseline MWEs
-C1a image_visibilities (DFT) ──┬─▶ C1b Image ──┬─▶ C1c tests/MWE (AMI simulation)
-                               │               ├─▶ C1d scene library (spiral/ring/star+comp)
-                               │               ├─▶ C5a GaussianField (math; can start here)
-                               └─▶ C2 NUFFT backend + CPU bench
-C0b + C1b ─▶ C3a fit + _precision ─┬─▶ C3c diagnose ─▶ C3d AMI MWEs (needs C1d)
-C1b ─▶ C3b regularisers ────────────┘
-C3a + C5a ─▶ C5b image_priors/GN diagonal/sampling MWE
-C3 + C5 ─▶ C6 polychromatic (design first) ─▶ C7 hardening
-```
-- **Critical path:** C1a → C1b → C3a → C3c/C3d → C4.
-- **Parallel lanes:**
-  - C0a runs alongside C0b.
-  - C2 runs alongside C1b–C1d.
-  - C3b runs alongside C3a.
-  - C5a starts as soon as C1b exists, alongside Stage 3.
-- **Shared files** (`models.py`, `__init__.py`, `AGENTS.md`, `pyproject.toml`) have a single owner per stage, which is the orchestrator. Sub-agents return diffs to those files and do not edit them directly, which avoids merge conflicts between parallel worktrees.
-
-### Model allocation
-| Chunk | Model | Why |
-|---|---|---|
-| C0b likelihood unification | **Opus** | Changes existing semantics; the regression judgement is subtle |
-| C1a DFT conventions and precision | **Opus** | Sign and orientation errors are the historical bug source |
-| C2 NUFFT convention mapping | **Opus** | Half-pixel factors, axis pairing, eps floors |
-| C3a `fit` (transforms, LM pitfalls, dtype policy) | **Opus** | The core API; numerical subtleties |
-| C5a `GaussianField` (DCT spectrum, normalisation, exact-covariance test) | **Opus** | Mathematical correctness |
-| C6 polychromatic design | **Opus** (orchestrator) | Open design questions |
-| C1b `Image`, C3b regularisers, C3c `diagnose`, C5b helpers | **Sonnet** | Well specified by this plan; Opus reviews the diff |
-| All tests except the exactness tests, C1d scenes, MWE notebooks, tutorials | **Sonnet** | Clear specs; iterate against running code |
-| C0a design note, C7 docstrings, mkdocs pages | **Sonnet** | Writing from existing material |
-| C4a fixture extraction, running the suite/ruff/docs build, tutorial sync, benchmark runs and reporting | **Haiku** | Mechanical |
-| Every PR's final review before a checkpoint | **Opus** (orchestrator) | Consistency across chunks |
-
-Fable 5.1 is also available in this environment, but I have no evidence about how it compares to Opus on this kind of numerical work. Try it on one Opus-tier chunk, e.g. C5a with its exact tests as the arbiter, before relying on it.
-
-### Wall-clock estimates with this orchestration
-These are agent time only, excluding your checkpoint reviews. The serial estimate was 35–50 h.
-
-| Stage | Serial | Orchestrated | Notes |
-|---|---|---|---|
-| 0 | 2–3 h | **~1.5 h** | Four parallel chunks; C0b is the long pole |
-| 1 + 2 | 6–8 h | **~3.5–4.5 h** | C2 runs in parallel with C1b–d |
-| 3 | 6–9 h | **~4–5 h** | C3a and C3b in parallel, then C3c/C3d |
-| 4 | 4–6 h | **~2.5–3 h** | Mostly Sonnet MWE work plus the fixture |
-| 5 | 6–8 h | **~3–4 h** | C5a is largely done during Stage 3 |
-| 6 | 8–12 h | **~5–7 h** | Design by Opus first, then parallel implementation |
-| 7 | 3–4 h (release chores only; 8–11 h with MEM preconditioning) | **~1.5–2 h** | Sonnet and Haiku |
-| **Total** | 35–50 h | **~21–27 h** | Plus the 8 checkpoint waits |
-
-Orchestration overhead (reviews, integration, fixing cross-chunk mismatches) is included, at about 20% per stage. The main risk to these numbers is iteration on numerical issues in C1a, C3a and C5a, which could add 1–3 h each.
-
-### Recommended interface
-- **Run the orchestrator in the Claude Code CLI or the desktop app, one session per stage,** in `~/code/drpangloss` (the local folder keeps its old name):
-  - They handle long autonomous runs, background sub-agents and `isolation: "worktree"` (each parallel chunk gets its own git worktree and branch) better than an editor-bound session.
-  - A session per stage keeps context clean. The plan file and `design/image_reconstruction.md` are the handoff between sessions.
-- **Use VS Code (this extension) for checkpoints:** reviewing diffs, running the MWE notebooks and looking at the figures. It is good for that, less so for multi-hour orchestration tied to an open editor window.
-- **For the parallel stages** (0, 1+2, 3), you can say "use a workflow" to have the orchestrator run a scripted multi-agent workflow (a fan-out of chunks, each followed by an Opus review) instead of hand-launching agents. The size guideline is under 10 agents per workflow, which fits these stages.
-- **Checkpoints as GitHub PRs** (`imaging-sN-*`, stacked, into `imaging`), so you can comment asynchronously; the next session starts by reading those comments.
-
-### Stage 3c: real AMI data, PDS 70 (deferred; original scope)
-**Data:** the AMIGO DISCO products for PDS 70 in `/Users/benpope/code/nuHor/data/PDS70/` (local only; never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
+## Stage 3c: real AMI data, PDS 70 (deferred; original scope)
+**Data:** the AMIGO DISCO products for PDS 70 in a local data folder (never committed). Read only the fields needed (operators, coefficients, σ, uv, wavelength, rotation), and avoid listing or printing large files.
 **Scope:** virgil supplies a fast JAX library with the features interferometrists expect; synthetic truths for calibrating PDS 70 reconstructions are being built separately, so this stage does not do that.
 **Build:** an agent that deconvolves PDS 70 in each filter, separately and jointly (Stage 6's joint multi-filter machinery when available), with a wide range of options: regularisers (maximum entropy expected best, then TSV, then TV), weights from L-curves (discrepancy and corner), fields of view and pixel scales, starts (flat, parametric fit), analytic star or not, supports, and centroid priors. "Beat it to death": the aim is a general picture of what is robust across choices.
 **Tooling:** `virgil.ensemble` (`ensemble`, or `draw_groups` / `run_group` / `combine` for one group per OzSTAR array task) now runs this sweep: random regulariser families, L-curve weights, pixel scales, fields and starts, selected and averaged PYRA/MYTHRA-style (Drevon et al., arXiv:2609.15365) into a mean image with a per-pixel spread. Use it for the "beat it to death" grid rather than a bespoke agent; see `docs/imaging_ensemble.md`.

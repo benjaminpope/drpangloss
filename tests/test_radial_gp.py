@@ -1,4 +1,4 @@
-"""RadialGP, PolarKernel, spectral_index and freeze_geometry (stage P4).
+"""RadialGP, MultipoleKernel, spectral_index and freeze_geometry (stage P4).
 
 Everything is tiny: a few dozen visibilities, at most 48 nodes, and NUTS
 runs of a couple of hundred draws.
@@ -26,9 +26,10 @@ from virgil.models import (
     GaussianRing,
     Harmonics,
     PointSource,
-    PolarDisk,
-    PolarKernel,
+    MultipoleDisk,
+    MultipoleKernel,
     RadialGP,
+    RadialGPFunction,
     VonMises,
     RadialLinear,
     RadialSum,
@@ -80,7 +81,7 @@ def _cvis(model, u, v, wavel=WAVEL):
 
 
 def test_whitened_latents_give_the_matern_prior():
-    gp = RadialGP(0.0, 10.0, sigma=2.0, ell=3.0, mu=0.5, n=8)
+    gp = RadialGPFunction(0.0, 10.0, sigma=2.0, ell=3.0, mu=0.5, n=8)
     nodes = onp.asarray(gp.nodes())
     # The defining map: g = mu + sigma L z, linear in z, g(z = 0) = mu.
     assert onp.allclose(gp(nodes), 0.5)
@@ -98,10 +99,12 @@ def test_whitened_latents_give_the_matern_prior():
 
 @pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, float("inf")])
 def test_every_matern_smoothness_builds_a_valid_factor(nu):
-    gp = RadialGP(0.0, 10.0, ell=6.0, nu=nu, n=20)  # ell >> spacing
+    gp = RadialGPFunction(0.0, 10.0, ell=6.0, nu=nu, n=20)  # ell >> spacing
     g = onp.asarray(gp.set("z", np.ones(20))(np.linspace(0.0, 10.0, 5)))
     assert onp.all(onp.isfinite(g))
     assert bool(gp.is_physical())
+    with pytest.raises(ValueError, match="nu"):
+        RadialGPFunction(0.0, 10.0, nu=3.0, n=4)
     with pytest.raises(ValueError, match="nu"):
         RadialGP(0.0, 10.0, nu=3.0)
 
@@ -109,7 +112,7 @@ def test_every_matern_smoothness_builds_a_valid_factor(nu):
 def test_profile_is_positive_and_the_disk_is_normalized():
     rng = onp.random.default_rng(2)
     z = rng.standard_normal(32) * 2.0
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 12.0, sigma=1.5, ell=2.0, z=z), inc=40.0, pa=10.0, n_r=32
     )
     r, w = disk.profile.quadrature()
@@ -126,16 +129,18 @@ def test_profile_is_positive_and_the_disk_is_normalized():
 
 def test_a_profile_needs_one_latent_per_node_and_a_range():
     with pytest.raises(ValueError, match="one latent per quadrature node"):
-        PolarDisk(RadialGP(0.5, 5.0, z=np.zeros(7)), n_r=16)
+        MultipoleDisk(RadialGP(0.5, 5.0, z=np.zeros(7)), n_r=16)
+    with pytest.raises(TypeError):
+        RadialGP()
     with pytest.raises(ValueError, match="radial range"):
-        PolarDisk(RadialGP(), n_r=16).model(np.ones(2), np.ones(2), WAVEL)
+        RadialGPFunction(n=4)(np.ones(2))
 
 
 def test_gradients_are_finite_in_every_parameter():
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 10.0, sigma=1.0, ell=2.0, z=0.3 * onp.arange(24) / 24.0),
-        harmonics=Harmonics(degree=2, prior=PolarKernel(3.0, 4.0, 0.4)),
-        spectral_index=RadialGP(sigma=0.5, ell=3.0),
+        harmonics=Harmonics(degree=2, prior=MultipoleKernel(3.0, 4.0, 0.4)),
+        spectral_index=RadialGPFunction(sigma=0.5, ell=3.0),
         wavel0=WAVEL,
         inc=35.0,
         n_r=24,
@@ -168,9 +173,9 @@ def test_gradients_are_finite_in_every_parameter():
 
 
 def test_a_gp_profile_recovers_a_known_ring_in_a_noiseless_map_problem():
-    truth = PolarDisk(GaussianRing(5.0, 0.8), n_r=48)
+    truth = MultipoleDisk(GaussianRing(5.0, 0.8), n_r=48)
     data = simulate(truth, DATA)
-    start = PolarDisk(RadialGP(0.5, 10.0, sigma=1.5, ell=1.5), n_r=24)
+    start = MultipoleDisk(RadialGP(0.5, 10.0, sigma=1.5, ell=1.5), n_r=24)
     result = fit(start, gp_priors(start), data)
     assert result.info["converged"]
     model = result.model
@@ -189,7 +194,7 @@ def test_a_gp_profile_recovers_a_known_ring_in_a_noiseless_map_problem():
 
 def test_the_dft_of_the_render_matches_the_node_profile_visibility():
     rng = onp.random.default_rng(3)
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(
             0.5,
             11.0,
@@ -199,7 +204,7 @@ def test_the_dft_of_the_render_matches_the_node_profile_visibility():
         ),
         harmonics=Harmonics(
             degree=2,
-            prior=PolarKernel(3.0, 5.0, 0.5, n=12),
+            prior=MultipoleKernel(3.0, 5.0, 0.5, n=12),
         ).set("z", rng.standard_normal((2, 2, 12))),
         inc=40.0,
         pa=25.0,
@@ -224,10 +229,10 @@ def test_the_dft_of_the_render_matches_the_node_profile_visibility():
 def test_a_gp_works_in_a_radial_sum_and_a_system():
     profile = RadialSum(
         ring=GaussianRing(3.0, 0.5),
-        halo=RadialGP(1.0, 9.0, ell=2.0, weight=0.2),
+        halo=(RadialGP(1.0, 9.0, ell=2.0), 0.2),
     )
     scene = System(
-        star=PointSource(), disk=PolarDisk(profile, n_r=16, flux=0.5)
+        star=PointSource(), disk=MultipoleDisk(profile, n_r=16, flux=0.5)
     )
     assert list(scene.disk.gp_sites()) == ["profile.halo"]
     priors = gp_priors(scene, sigma=(0.1, 3.0))
@@ -236,11 +241,11 @@ def test_a_gp_works_in_a_radial_sum_and_a_system():
     assert onp.all(onp.isfinite(vis))
 
 
-# --- PolarKernel -----------------------------------------------------------------
+# --- MultipoleKernel -----------------------------------------------------------------
 
 
-def test_the_polar_kernel_variance_falls_with_the_order_as_the_spectral_density():
-    kernel = PolarKernel(
+def test_the_multipole_kernel_variance_falls_with_the_order_as_the_spectral_density():
+    kernel = MultipoleKernel(
         ell_r=3.0, ell_theta=4.0, sigma=0.5, r_in=2.0, r_out=10.0
     )
     degree = 5
@@ -264,13 +269,13 @@ def test_the_polar_kernel_variance_falls_with_the_order_as_the_spectral_density(
     )
     # The squared-exponential limit is the Gaussian in m, and a large nu
     # approaches it; it does not collapse to the first order alone.
-    inf = PolarKernel(
+    inf = MultipoleKernel(
         2.0, 4.0, 0.5, r_in=3.0, r_out=9.0, nu_theta=float("inf")
     )
     sq = onp.asarray(inf.spectrum(degree))
     assert onp.allclose(sq, onp.exp(-0.5 * a**2 * (m**2 - 1.0)), rtol=1e-5)
     assert onp.all(sq > 0.0)
-    big = PolarKernel(2.0, 4.0, 0.5, r_in=3.0, r_out=9.0, nu_theta=2.5)
+    big = MultipoleKernel(2.0, 4.0, 0.5, r_in=3.0, r_out=9.0, nu_theta=2.5)
     assert onp.all(onp.abs(onp.asarray(big.spectrum(degree)) - sq) < 0.2)
     # Diagonal in m, and a Matern correlation in r with the length ell_r.
     flat = values.transpose(1, 2, 0, 3)  # (kind, m, draw, r)
@@ -289,7 +294,7 @@ def test_ell_theta_is_the_same_length_as_ell_r():
     # of the Matern correlation function of length ell_theta along the ring.
     # Check against numerical quadrature of the correlation function.
     r_ref, ell, nu_theta = 5.0, 3.0, 1.5
-    kernel = PolarKernel(
+    kernel = MultipoleKernel(
         2.0, ell, r_in=1.0, r_out=9.0, r_ref=r_ref, nu_theta=nu_theta
     )
     x = onp.linspace(0.0, 400.0, 400001)  # arc length in mas
@@ -307,7 +312,7 @@ def test_ell_theta_is_the_same_length_as_ell_r():
 
 @pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, float("inf")])
 def test_the_azimuthal_spectrum_is_finite_for_every_smoothness(nu):
-    kernel = PolarKernel(2.0, 3.0, r_in=1.0, r_out=9.0, nu_theta=nu)
+    kernel = MultipoleKernel(2.0, 3.0, r_in=1.0, r_out=9.0, nu_theta=nu)
     spectrum = onp.asarray(kernel.spectrum(5))
     assert onp.all(onp.isfinite(spectrum)) and onp.isclose(spectrum[0], 1.0)
     assert onp.all(onp.diff(spectrum) < 0.0) and spectrum[1] > 0.0
@@ -320,19 +325,19 @@ def test_the_azimuthal_spectrum_is_finite_for_every_smoothness(nu):
 
 
 def test_a_longer_azimuthal_length_suppresses_high_orders():
-    short = PolarKernel(2.0, 0.5, r_in=1.0, r_out=9.0).spectrum(4)
-    long = PolarKernel(2.0, 20.0, r_in=1.0, r_out=9.0).spectrum(4)
+    short = MultipoleKernel(2.0, 0.5, r_in=1.0, r_out=9.0).spectrum(4)
+    long = MultipoleKernel(2.0, 20.0, r_in=1.0, r_out=9.0).spectrum(4)
     assert onp.all(onp.asarray(long)[1:] < onp.asarray(short)[1:])
     assert onp.isclose(float(short[0]), 1.0)
 
 
 @pytest.mark.parametrize("form", ["positive", "linear"])
-def test_polar_kernel_harmonics_in_a_disk(form):
-    kernel = PolarKernel(ell_r=3.0, ell_theta=4.0, sigma=0.15, n=10)
+def test_multipole_kernel_harmonics_in_a_disk(form):
+    kernel = MultipoleKernel(ell_r=3.0, ell_theta=4.0, sigma=0.15, n=10)
     harmonics = Harmonics(degree=3, prior=kernel, form=form)
     assert harmonics.z.shape == (2, 3, 10) and harmonics.form == form
     z = onp.random.default_rng(5).standard_normal((2, 3, 10))
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(5.0, 1.0),
         harmonics=harmonics.set("z", z),
         inc=30.0,
@@ -370,7 +375,7 @@ def _ring_profile(r, wavel, wavel0, alpha):
 def test_spectral_index_matches_a_brute_force_hankel_transform():
     wavel0 = 3.5e-6
     alpha = RadialLinear(-1.0, 0.5, 4.0)
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(4.0, 0.7),
         spectral_index=alpha,
         wavel0=wavel0,
@@ -401,10 +406,12 @@ def test_spectral_index_matches_a_brute_force_hankel_transform():
 
 def test_chromatic_model_equals_the_per_wavelength_model():
     rng = onp.random.default_rng(8)
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 9.0, sigma=1.0, ell=2.0, z=rng.standard_normal(24)),
         harmonics=Harmonics(w=(0.3 + 0.1j, -0.2j)),
-        spectral_index=RadialGP(sigma=0.8, ell=3.0, z=rng.standard_normal(16)),
+        spectral_index=RadialGPFunction(
+            sigma=0.8, ell=3.0, z=rng.standard_normal(16)
+        ),
         wavel0=3.5e-6,
         inc=35.0,
         pa=20.0,
@@ -436,7 +443,7 @@ def test_chromatic_model_equals_the_per_wavelength_model():
     assert not onp.allclose(weights, weights[0])
     # Harmonics are grey: the closure-phase signal of the azimuthal structure
     # is the same at every wavelength for the same baseline in cycles/mas.
-    thin = PolarDisk(
+    thin = MultipoleDisk(
         ThinRing(4.0),
         harmonics=Harmonics(c=0.4, s=0.2),
         spectral_index=1.0,
@@ -445,7 +452,7 @@ def test_chromatic_model_equals_the_per_wavelength_model():
         pa=20.0,
         n_r=8,
     )
-    flat = PolarDisk(
+    flat = MultipoleDisk(
         ThinRing(4.0),
         harmonics=Harmonics(c=0.4, s=0.2),
         inc=40.0,
@@ -463,7 +470,7 @@ def test_spectral_index_makes_the_inner_edge_redder_than_the_outer():
     rings = RadialSum(
         inner=GaussianRing(2.0, 0.4), outer=GaussianRing(6.0, 0.4)
     )
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         rings,
         spectral_index=RadialLinear(0.0, 1.0, 4.0),
         wavel0=3.5e-6,
@@ -481,22 +488,22 @@ def test_spectral_index_validation():
     from virgil.spectra import PowerLaw
 
     with pytest.raises(ValueError, match="scalar flux"):
-        PolarDisk(
+        MultipoleDisk(
             GaussianRing(4.0, 1.0),
             spectral_index=0.5,
             wavel0=3.5e-6,
             flux=PowerLaw(1.0, index=0.0, wavel0=3.5e-6),
         )
     with pytest.raises(ValueError, match="wavel0"):
-        PolarDisk(GaussianRing(4.0, 1.0), spectral_index=0.5)
+        MultipoleDisk(GaussianRing(4.0, 1.0), spectral_index=0.5)
     with pytest.raises(TypeError, match="not a profile"):
-        PolarDisk(
+        MultipoleDisk(
             GaussianRing(4.0, 1.0),
             spectral_index=GaussianRing(1.0, 1.0),
             wavel0=3.5e-6,
         )
     # A disk without a spectral index still takes a spectrum.
-    PolarDisk(
+    MultipoleDisk(
         GaussianRing(4.0, 1.0), flux=PowerLaw(1.0, index=0.0, wavel0=3.5e-6)
     )
 
@@ -506,13 +513,15 @@ def test_spectral_index_validation():
 
 def _frozen_pair(f32=False):
     rng = onp.random.default_rng(10)
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 9.0, sigma=1.0, ell=2.0, z=rng.standard_normal(24)),
         harmonics=Harmonics(
-            degree=2, prior=PolarKernel(3.0, 4.0, 0.3, n=8)
+            degree=2, prior=MultipoleKernel(3.0, 4.0, 0.3, n=8)
         ).set("z", rng.standard_normal((2, 2, 8))),
         height=Cone(55.0, 0.5),
-        spectral_index=RadialGP(sigma=0.5, ell=3.0, z=rng.standard_normal(16)),
+        spectral_index=RadialGPFunction(
+            sigma=0.5, ell=3.0, z=rng.standard_normal(16)
+        ),
         wavel0=3.5e-6,
         inc=50.0,
         pa=30.0,
@@ -569,8 +578,35 @@ def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
         assert onp.max(onp.abs(onp.asarray(diff))) < 1e-12
 
 
+def test_a_matching_cache_skips_the_unfrozen_branch_under_vmap(monkeypatch):
+    # With the geometry and nodes concrete, the cache is checked at trace
+    # time: a lax.cond would become a select under vmap and run both
+    # branches (the Bessel functions the cache exists to avoid).
+    import virgil.models as models
+
+    calls = []
+    original = models.multipole_disk_cvis
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    disk, frozen = _frozen_pair()
+    zs = onp.random.default_rng(12).standard_normal((3, 24))
+    args = (DATA.u, DATA.v, DATA.wavel)
+    expected = jax.vmap(lambda z: disk.set("profile.z", z).model(*args))(zs)
+    monkeypatch.setattr(models, "multipole_disk_cvis", counting)
+    got = jax.vmap(lambda z: frozen.set("profile.z", z).model(*args))(zs)
+    assert calls == []
+    assert onp.max(onp.abs(onp.asarray(got - expected))) < 1e-4
+    # A cache for other geometry falls back to the full computation.
+    moved = frozen.set("inc", 20.0)
+    jax.vmap(lambda z: moved.set("profile.z", z).model(*args))(zs)
+    assert calls != []
+
+
 def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 9.0, z=np.linspace(-1.0, 1.0, 24)), inc=30.0, n_r=24
     )
     frozen = disk.freeze_geometry(DATA)
@@ -669,7 +705,7 @@ def test_a_frozen_profile_refit_is_faster_and_does_not_recompile():
         hour_angles_h=tuple(onp.linspace(-4, 4, 20)),
         wavelengths_m=onp.linspace(3.0e-6, 4.0e-6, 20),
     )
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         RadialGP(0.5, 12.0, sigma=1.0, ell=2.0), inc=40.0, pa=10.0, n_r=n_r
     )
     frozen = disk.freeze_geometry(big)
@@ -705,9 +741,9 @@ def test_a_frozen_profile_refit_is_faster_and_does_not_recompile():
 
 
 def _small_problem():
-    truth = PolarDisk(GaussianRing(4.0, 0.7), n_r=32)
+    truth = MultipoleDisk(GaussianRing(4.0, 0.7), n_r=32)
     data = simulate(truth, SMALL, key=jax.random.PRNGKey(0))
-    start = PolarDisk(RadialGP(0.5, 9.0, sigma=1.0, ell=2.0), n_r=12)
+    start = MultipoleDisk(RadialGP(0.5, 9.0, sigma=1.0, ell=2.0), n_r=12)
     return start, data
 
 
@@ -752,7 +788,7 @@ def numpyro_init(values):
 def test_log_evidence_runs_for_every_gaussian_process_part():
     truth = System(
         star=PointSource(),
-        disk=PolarDisk(
+        disk=MultipoleDisk(
             GaussianRing(4.0, 0.7),
             harmonics=Harmonics(c=0.3, s=0.1),
             spectral_index=0.5,
@@ -764,12 +800,12 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
     data = simulate(truth, SMALL, key=jax.random.PRNGKey(2))
     start = System(
         star=PointSource(),
-        disk=PolarDisk(
+        disk=MultipoleDisk(
             RadialGP(0.5, 9.0, sigma=1.5, ell=2.0),
             harmonics=Harmonics(
-                degree=1, prior=PolarKernel(3.0, 4.0, 0.3, n=8)
+                degree=1, prior=MultipoleKernel(3.0, 4.0, 0.3, n=8)
             ),
-            spectral_index=RadialGP(sigma=0.5, ell=4.0),
+            spectral_index=RadialGPFunction(sigma=0.5, ell=4.0),
             wavel0=3.6e-6,
             flux=0.5,
             n_r=12,
@@ -793,9 +829,11 @@ def test_log_evidence_runs_for_every_gaussian_process_part():
         "disk.harmonics.z",
         "disk.spectral_index.z",
     )
-    with pytest.raises(TypeError, match="RadialGP or a PolarKernel"):
+    with pytest.raises(TypeError, match="RadialGP or a MultipoleKernel"):
         log_evidence(
-            System(star=PointSource(), disk=PolarDisk(GaussianRing(4.0, 1.0))),
+            System(
+                star=PointSource(), disk=MultipoleDisk(GaussianRing(4.0, 1.0))
+            ),
             data,
             path="disk",
         )
@@ -814,10 +852,10 @@ def test_the_evidence_prefers_the_correlation_length_the_data_came_from():
         sigma_v2=0.002,
         sigma_cp_deg=0.1,
     )
-    gp = RadialGP(0.5, 2.5, sigma=1.5, ell=1.5, n=16)
+    gp = RadialGP(0.5, 2.5, sigma=1.5, ell=1.5)
     # numpy, so that the draw is the same in float32 and float64.
     z = onp.random.default_rng(4).standard_normal(16)
-    truth = PolarDisk(gp.set("z", z), n_r=16)
+    truth = MultipoleDisk(gp.set("z", z), n_r=16)
     assert onp.all(
         onp.asarray(
             truth.model(low_noise.u, low_noise.v, low_noise.wavel)
@@ -827,7 +865,7 @@ def test_the_evidence_prefers_the_correlation_length_the_data_came_from():
     data = simulate(truth, low_noise, key=jax.random.PRNGKey(5))
     evidence = {}
     for ell in (0.1, 1.5, 12.0):
-        start = PolarDisk(gp.set("ell", ell), n_r=16)
+        start = MultipoleDisk(gp.set("ell", ell), n_r=16)
         result = fit(start, gp_priors(start), data)
         evidence[ell] = log_evidence(result, data, path=None)
     assert evidence[1.5] > evidence[0.1] and evidence[1.5] > evidence[12.0]
@@ -841,10 +879,10 @@ def test_fitting_a_gp_hyperparameter_by_map_warns():
 
 
 def test_a_radial_gp_as_a_harmonics_coefficient_has_resolving_paths():
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(4.0, 1.0),
         harmonics=Harmonics(
-            c=(RadialGP(sigma=0.3, ell=2.0, z=onp.zeros(8)),),
+            c=(RadialGPFunction(sigma=0.3, ell=2.0, z=onp.zeros(8)),),
             s=0.0,
         ),
         n_r=16,
@@ -859,10 +897,10 @@ def test_a_radial_gp_as_a_harmonics_coefficient_has_resolving_paths():
     )
 
 
-def test_gp_priors_for_a_polar_kernel():
-    disk = PolarDisk(
+def test_gp_priors_for_a_multipole_kernel():
+    disk = MultipoleDisk(
         GaussianRing(4.0, 1.0),
-        harmonics=Harmonics(degree=2, prior=PolarKernel(2.0, 3.0, n=6)),
+        harmonics=Harmonics(degree=2, prior=MultipoleKernel(2.0, 3.0, n=6)),
         n_r=16,
     )
     priors = gp_priors(
@@ -877,23 +915,25 @@ def test_gp_priors_for_a_polar_kernel():
     assert priors["harmonics.z"].event_shape == (2, 2, 6)
     assert isinstance(priors["harmonics.prior.sigma"], dist.LogUniform)
     with pytest.raises(ValueError, match="no RadialGP"):
-        gp_priors(PolarDisk(ThinRing(3.0)))
+        gp_priors(MultipoleDisk(ThinRing(3.0)))
     with pytest.raises(ValueError, match="bounds"):
         gp_priors(disk, sigma=(2.0, 1.0))
 
 
 def test_a_radial_gp_as_a_harmonics_coefficient_or_a_von_mises_kappa():
-    coefficient = PolarDisk(
+    coefficient = MultipoleDisk(
         GaussianRing(4.0, 1.0),
         harmonics=Harmonics(
-            c=(RadialGP(0.5, 9.0, sigma=0.2, ell=2.0),), s=0.1, form="linear"
+            c=(RadialGPFunction(0.5, 9.0, sigma=0.2, ell=2.0),),
+            s=0.1,
+            form="linear",
         ),
         n_r=16,
     )
-    arc = PolarDisk(
+    arc = MultipoleDisk(
         GaussianRing(4.0, 1.0),
         harmonics=VonMises(
-            kappa=RadialGP(0.5, 9.0, sigma=1.0, ell=2.0),
+            kappa=RadialGPFunction(0.5, 9.0, sigma=1.0, ell=2.0),
             theta0=30.0,
             degree=12,
         ),
@@ -927,7 +967,7 @@ def test_a_radial_gp_as_a_harmonics_coefficient_or_a_von_mises_kappa():
     "form, fields", [("linear", ("c", "s")), ("positive", ("re", "im"))]
 )
 def test_array_valued_harmonics_paths_can_be_set(form, fields):
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(4.0, 1.0),
         harmonics=Harmonics(
             **{fields[0]: (0.1, 0.05), fields[1]: (0.0, 0.1)}, form=form
@@ -948,3 +988,55 @@ def test_array_valued_harmonics_paths_can_be_set(form, fields):
     a = onp.asarray(whole.model(DATA.u, DATA.v, DATA.wavel))
     b = onp.asarray(each.model(DATA.u, DATA.v, DATA.wavel))
     assert onp.all(onp.isfinite(a)) and onp.allclose(a, b, atol=1e-6)
+
+
+def test_gp_priors_find_a_multipole_disk_inside_an_attached_component():
+    pytest.importorskip("jaxoplanet")
+    from virgil.models import Attached
+    from virgil.orbits import KeplerOrbit
+
+    orbit = KeplerOrbit(
+        period=730.0,
+        dt_peri=-100.0,
+        ecc=0.3,
+        inc=50.0,
+        omega=60.0,
+        Omega=120.0,
+        a_mas=20.0,
+        t_ref=60500.0,
+    )
+    disk = MultipoleDisk(RadialGP(0.5, 9.0, sigma=1.0, ell=2.0), n_r=12)
+    scene = System(star=PointSource(), comp=Attached(disk, orbit))
+    priors = gp_priors(scene, sigma=(0.1, 3.0), ell=(0.5, 8.0))
+    assert set(priors) == {
+        "comp.component.profile.z",
+        "comp.component.profile.sigma",
+        "comp.component.profile.ell",
+    }
+    assert scene.get("comp.component.profile.z").shape == (12,)
+
+
+def test_the_two_roles_are_two_classes():
+    # A profile has a range and a quadrature rule; a function has neither
+    # until it is placed, and has no weight or unused rule fields.
+    profile = RadialGP(0.5, 9.0)
+    function = RadialGPFunction(0.5, 9.0, n=8)
+    assert not hasattr(profile, "weight") and not hasattr(function, "weight")
+    assert not hasattr(function, "rule_x")
+    assert callable(function) and not callable(profile)
+    with pytest.raises(TypeError, match="not a profile"):
+        MultipoleDisk(
+            RadialGP(0.5, 9.0), spectral_index=RadialGP(0.5, 9.0), wavel0=WAVEL
+        )
+    with pytest.raises(TypeError):
+        MultipoleDisk(function)
+    # The profile's brightness is exp g(r) of its own nodes.
+    z = onp.random.default_rng(6).standard_normal(16)
+    disk = MultipoleDisk(RadialGP(0.5, 9.0, sigma=1.0, ell=2.0, z=z), n_r=16)
+    r = onp.linspace(1.0, 8.0, 5)
+    nodes, g = (onp.asarray(a) for a in disk.profile._values())
+    assert onp.allclose(
+        disk.profile.intensity(r, 0.0),
+        onp.exp(onp.interp(r, nodes, g)),
+        rtol=1e-5,
+    )

@@ -13,17 +13,22 @@ jobs:
     name: OzSTAR outputs synced
     runs-on: ubuntu-latest
     steps:
-      - name: Fail while the PR is labelled awaiting-ozstar
+      # Waiting is not a failure: the check stays green, with a warning
+      # annotation and a note in the job summary, so a red cross always means
+      # something is broken. The stale-notebook check below does fail.
+      - name: Note that the PR is labelled awaiting-ozstar
         env:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           BODY: ${{ github.event.pull_request.body }}
         run: |
           if echo "$LABELS" | jq -e 'index("awaiting-ozstar")' >/dev/null; then
             ids=$(printf '%s\n' "$BODY" | sed -n 's/^Awaiting OzSTAR:[[:space:]]*//p' | head -n1)
-            echo "::error::Waiting on OzSTAR outputs (job IDs: ${ids:-not listed}). Pull and commit them, then remove the awaiting-ozstar label."
-            exit 1
+            msg="Waiting on OzSTAR outputs (job IDs: ${ids:-not listed}). Pull and commit them, then remove the awaiting-ozstar label."
+            echo "::warning::$msg"
+            printf '### Awaiting OzSTAR\n\n%s\n' "$msg" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No awaiting-ozstar label."
           fi
-          echo "No awaiting-ozstar label."
 
   notebooks:
     name: Notebook outputs not stale

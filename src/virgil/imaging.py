@@ -2256,13 +2256,14 @@ def _field_latents(model, path, caller):
 def _evidence_latents(model, path, caller):
     """The paths of every whitened latent that ``path`` selects, for the
     Laplace evidence: the fields of Images with a GaussianField, and the
-    Gaussian-process latents of PolarDisks (``RadialGP`` profiles,
-    coefficients and spectral indices, and ``PolarKernel`` harmonics).
+    Gaussian-process latents of MultipoleDisks (``RadialGP`` profiles,
+    ``RadialGPFunction`` coefficients and spectral indices, and
+    ``MultipoleKernel`` harmonics).
 
     ``path`` is a path or a tuple of paths of such Images or disks, or
     ``None`` for all of them in ``model`` (a ``TypeError`` if there are none).
     """
-    from .models import PolarDisk, _polar_disks
+    from .models import MultipoleDisk, _multipole_disks
 
     def disk_latents(prefix, disk):
         return tuple(f"{prefix}{rel}.z" for rel in disk.gp_sites())
@@ -2273,11 +2274,13 @@ def _evidence_latents(model, path, caller):
             for p, part in _parts(model)
             if isinstance(part, Image) and _whitened_field(part.log_brightness)
         )
-        disks = [(pre, d) for pre, d in _polar_disks(model) if d.gp_sites()]
+        disks = [
+            (pre, d) for pre, d in _multipole_disks(model) if d.gp_sites()
+        ]
         if not images and not disks:
             raise TypeError(
                 f"{caller} found no Image with a GaussianField and no "
-                "PolarDisk with a RadialGP or PolarKernel in the model; "
+                "MultipoleDisk with a RadialGP or MultipoleKernel in the model; "
                 "give path= for one."
             )
     else:
@@ -2286,11 +2289,11 @@ def _evidence_latents(model, path, caller):
             raise ValueError(f"{caller} needs at least one path.")
         images, disks = [], []
         for p in paths:
-            if isinstance(model.get(p), PolarDisk):
+            if isinstance(model.get(p), MultipoleDisk):
                 if not model.get(p).gp_sites():
                     raise TypeError(
-                        f"{caller} needs a PolarDisk with a RadialGP or a "
-                        f"PolarKernel at {p!r}."
+                        f"{caller} needs a MultipoleDisk with a RadialGP or a "
+                        f"MultipoleKernel at {p!r}."
                     )
                 disks.append((p + ".", model.get(p)))
             else:
@@ -2316,9 +2319,10 @@ def log_evidence(model, data, path="env"):
 
     For a model whose Image log-brightness is a
     [`GaussianField`][virgil.fields.GaussianField], or whose
-    [`PolarDisk`][virgil.models.PolarDisk] has Gaussian-process parts
-    ([`RadialGP`][virgil.models.RadialGP] profiles, harmonics and spectral
-    indices, and the [`PolarKernel`][virgil.models.PolarKernel] prior of
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] has Gaussian-process parts
+    ([`RadialGP`][virgil.models.RadialGP] profiles,
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] harmonics and spectral
+    indices, and the [`MultipoleKernel`][virgil.models.MultipoleKernel] prior of
     its harmonics), with standard-normal whitened latents ``z``, at the MAP
     ``model`` from [`fit`][virgil.fitting.fit],
 
@@ -2368,7 +2372,7 @@ def log_evidence(model, data, path="env"):
         The data it was fitted to.
     path : str or tuple of str or None, optional
         Path of the Image in the model (default ``"env"``), a tuple of
-        paths of Images with GaussianFields and PolarDisks with
+        paths of Images with GaussianFields and MultipoleDisks with
         Gaussian-process parts (all their latents together), or ``None``
         for every such Image and disk in the model (a ``TypeError`` if there
         is none). The evidence is conditional on the hyperparameters (the

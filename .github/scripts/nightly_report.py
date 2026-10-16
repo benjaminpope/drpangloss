@@ -5,14 +5,16 @@
 DIR holds the nightly's JUnit reports (one ``junit-*`` artifact per job).
 On failure, the failing test ids, the run and the commits since the last
 green nightly go into the open issue labelled ``nightly-failure``, or a new
-one. On success, an open issue is closed. Uses the ``gh`` CLI and the
-standard library only.
+one. On success, an open issue is closed. Either way it then deletes the JAX
+caches of earlier weeks, keeping the store under GitHub's 10 GB. Uses the
+``gh`` CLI and the standard library only.
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -87,8 +89,19 @@ def body(directory):
     return "\n".join(lines)
 
 
-def main():
-    directory = sys.argv[1]
+def clean_caches():
+    """Delete every ``jax-`` cache not of the current ISO week."""
+    week = time.strftime("%G-W%V", time.gmtime())
+    caches = json.loads(
+        gh("cache", "list", "--key", "jax-", "--limit", "500",
+           "--json", "id,key")
+    )
+    for cache in caches:
+        if not cache["key"].endswith(f"-{week}"):
+            gh("cache", "delete", str(cache["id"]))
+
+
+def report(directory):
     open_issue = gh(
         "issue",
         "list",
@@ -136,6 +149,13 @@ def main():
             "--body",
             text,
         )
+
+
+def main():
+    try:
+        report(sys.argv[1])
+    finally:
+        clean_caches()
 
 
 if __name__ == "__main__":

@@ -232,7 +232,7 @@ The construction follows Octofitter's `UniformCircular` (Thompson et al. 2023, A
 
 ### Azimuthal harmonics {#azimuthal-harmonics}
 
-Every azimuthal profile of a [`PolarDisk`][virgil.models.PolarDisk] is, at each radius, a real function of the azimuth $\theta$ (in the plane of the disk, from the projected major axis towards `pa + 90`) with the Fourier series
+Every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is, at each radius, a real function of the azimuth $\theta$ (in the plane of the disk, from the projected major axis towards `pa + 90`) with the Fourier series
 
 $$
 \frac{I(\theta)}{I_0} = \sum_{m=-M}^{M} I_m e^{im\theta}, \qquad I_0 = 1, \quad I_{-m} = \bar I_m,

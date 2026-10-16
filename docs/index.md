@@ -20,15 +20,17 @@ virgil is a package for modelling optical interferometry data in JAX. It is a on
 
 ## Stability
 
-Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `PolarDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](stability.md).
+Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](stability.md).
 
 ## Installation
 
-virgil is hosted on PyPI; the easiest way to install it is:
+virgil is hosted on PyPI under the name `virgil-astro`; the easiest way to install it is:
 
 ```
 pip install virgil-astro
 ```
+
+`pip install virgil` installs an unrelated package. Use Python 3.12 or newer: JAX 0.11 needs it, and Python 3.11 gets the last JAX release that supports it.
 
 Optional extras add the corner-plot helpers in `virgil.plotting`
 (`pip install "virgil-astro[plots]"`, for pandas and ChainConsumer) and the
@@ -39,6 +41,8 @@ Kepler's equation in `virgil.orbits` needs
 loads jaxoplanet only when a Kepler-solving path is called (evaluating an
 orbit's positions or `to_jaxoplanet`); that call raises an error naming the
 extra if jaxoplanet is missing.
+
+The tutorials are in the [GitHub repository](https://github.com/benjaminpope/virgil/tree/main/notebooks), not in the wheel. `pip install "virgil-astro[notebooks,pipeline]"` installs everything they use.
 
 You can also build from source. To do so, clone the git repo and enter the directory:
 
@@ -58,15 +62,25 @@ We recommend using a virtual environment to avoid dependency conflicts.
 Using `uv` (recommended):
 
 ```bash
-uv python install 3.11
-uv venv --python 3.11 .venv
+uv python install 3.12
+uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e ".[test]"
 .venv/bin/python -m pytest tests/test_models_core.py -q
 ```
 
-## Use & Documentation
+## Where to start
 
-Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpope.github.io/virgil/).
+Documentation is published at [benjaminpope.github.io/virgil](https://benjaminpope.github.io/virgil/). New here? The [quickstart](quickstart.md) loads an OIFITS file and fits a binary in about twenty lines.
+
+| I want to | Go to |
+| --- | --- |
+| Read my OIFITS file | [Reading data](data_io.md) |
+| Find and fit a companion | [Binary search](binary_search.md) |
+| Set a contrast limit or a detection limit | [Contrast limits](contrast_limits.md) |
+| Fit a binary's orbit | [Which orbit tool?](which_orbit_tool.md), then [Orbits from interferometric data](orbit_fitting.md) |
+| Make an image | [Simulating AMI data](imaging_ami.md), then [Regularized maximum likelihood](imaging_rml.md) |
+| Run a whole analysis in one command | [Pipelines](pipeline.md) |
+| Check which features may change | [Stability](stability.md) |
 
 ## Independent validation
 

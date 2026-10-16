@@ -46,6 +46,7 @@ import jax.scipy.linalg as jsl
 import numpy as onp
 
 from ._linear import whiten_blocks
+from ._utils import group_indices
 
 __all__ = [
     "GainModes",
@@ -107,6 +108,7 @@ class GainModes(eqx.Module):
     spanning: jax.Array | None
     spanning_group: jax.Array | None
     widths: jax.Array
+    # Names, not numbers: they key the noise terms, so they are structure.
     groups: tuple = eqx.field(static=True)
     n_vis: int = eqx.field(static=True)
 
@@ -311,8 +313,7 @@ def gain_modes(
             for name, w in built_in.items()
             if w is not None
         }
-        for f in onp.unique(frame):
-            in_frame = onp.flatnonzero(frame == f)
+        for in_frame in group_indices(frame):
             pairs = stations[in_frame]
             if "telescope" in ids:
                 for t in onp.unique(pairs):
@@ -320,8 +321,9 @@ def gain_modes(
                     columns.append(
                         (ids["telescope"], rows, onp.ones(rows.size))
                     )
-            for pair in onp.unique(pairs, axis=0):
-                rows = in_frame[(pairs == pair).all(axis=1)]
+            for rows in group_indices(
+                onp.unique(pairs, axis=0, return_inverse=True)[1], in_frame
+            ):
                 if "baseline" in ids:
                     columns.append(
                         (ids["baseline"], rows, onp.ones(rows.size))

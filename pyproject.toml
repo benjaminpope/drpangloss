@@ -15,8 +15,7 @@ authors = [
   {name = "Louis Desdoigts", email = "ldes9555@uni.sydney.edu.au"},
   {name = "Jonah Goldfine"},
 ]
-keywords = ["python", "optics", "machine-learning", "jax", "autodiff", "differentiable", "diffraction", "simulation", "telescope", "virgil"]
-urls = {repository = "https://github.com/benjaminpope/virgil"}
+keywords = ["interferometry", "oifits", "aperture-masking", "astronomy", "jax", "autodiff", "differentiable", "image-reconstruction", "virgil"]
 dependencies = [
   # Floors are the oldest versions CI tests (the "lowest" job in
   # tests.yml installs exactly these). jax.enable_x64 needs jax 0.8.
@@ -39,12 +38,22 @@ dependencies = [
   "astropy>=6.1",
 ]
 classifiers=[
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Astronomy",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
+
+[project.urls]
+Homepage = "https://github.com/benjaminpope/virgil"
+Documentation = "https://benjaminpope.github.io/virgil/"
+Changelog = "https://github.com/benjaminpope/virgil/blob/main/CHANGELOG.md"
+Issues = "https://github.com/benjaminpope/virgil/issues"
+Repository = "https://github.com/benjaminpope/virgil"
 
 [project.scripts]
 virgil-pipeline = "virgil.pipeline.cli:main"
@@ -161,6 +170,4 @@ timeout = 300
 filterwarnings = [
     "error:.*now takes the model before the data:FutureWarning",
     "error:.*stops working in virgil 0.5:FutureWarning",
-    # GaussianArc's change of shape (tests that build one are not about it).
-    "ignore:GaussianArc now has a von Mises weight:FutureWarning",
 ]

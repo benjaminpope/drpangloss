@@ -1,8 +1,10 @@
 # Pipelines: a stable contract over virgil's analyses
 
-Status: **BinaryPipeline and StarPipeline built** (2026-10-08).
-`OrbitPipeline` and `ImagingPipeline` (both provisional) follow as stacked
-PRs. `DiskPipeline` is a design only (2026-10-15).
+Status (2026-10-16): **BinaryPipeline and StarPipeline built** (2026-10-08);
+the pipelines are provisional in 0.4.0 (`docs/stability.md`). `DiskPipeline`
+is in review (virgil#369). `OrbitPipeline` is next, planned in
+[`orbit_pipeline.md`](orbit_pipeline.md) (phase 1e); `ImagingPipeline` is not
+started.
 
 ## Goal
 
@@ -182,18 +184,18 @@ Decisions:
 
 ## DiskPipeline (provisional, planned)
 
-Status: **design only.** Nothing is built. The `PolarDisk` code the
+Status: **design only.** Nothing is built. The `MultipoleDisk` code the
 pipeline needs (radial profiles, Hankel transform, `Harmonics`, `RadialGP`
 priors, `spectral_index`, `freeze_geometry`; see
 `design/radial_profiles.md`) is on `main` as of 2026-10-15; what is still
 unmerged is the stack's last PR (virgil#356: the reference page and the
-tutorial `polar_disk_rings`, which the pipeline is checked against). The
+tutorial `multipole_disk_rings`, which the pipeline is checked against). The
 build waits for that PR to merge. The pipeline is provisional from the
-start and stays so until the `PolarDisk` API has been unchanged for a
+start and stays so until the `MultipoleDisk` API has been unchanged for a
 release.
 
 `DiskPipeline(data, model=None, *, output="run", **settings)`, CLI `disk`,
-`STABILITY = "provisional"`. The disk is always a `PolarDisk` and the star
+`STABILITY = "provisional"`. The disk is always a `MultipoleDisk` and the star
 is a single point source. A companion search is an opt-in expert setting,
 never a default stage. The run folder, resume rules, `Result` and
 stability policy are those above; only the stages, settings and checks are
@@ -211,8 +213,8 @@ with their own settings and checks, and a run fits one of them.
 
 | Name | Disk | Role |
 | --- | --- | --- |
-| `"rings"` | `PolarDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | the analytic option: measures structure of an assumed family |
-| `"gp"` | `PolarDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and `spectral_index` | the non-parametric option: finds structure with no assumed family |
+| `"rings"` | `MultipoleDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | the analytic option: measures structure of an assumed family |
+| `"gp"` | `MultipoleDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and `spectral_index` | the non-parametric option: finds structure with no assumed family |
 
 Whether `model=None` means one of these, or is an error that asks for a
 choice, is the open question below. The tutorial's workflow (a GP run to
@@ -239,7 +241,7 @@ work for each model.
    default is stated in half-fringes, not in mas.
 3. `geometry`: a grid over `inc` and `pa` with a single-ring profile at
    each point, then a single-ring fit from the best cell, then (for the
-   GP) `PolarDisk.freeze_geometry(data)`. Inclination and position angle
+   GP) `MultipoleDisk.freeze_geometry(data)`. Inclination and position angle
    are multimodal (and `pa` is undefined as `inc` tends to 0), so they
    are never left to a local optimizer from one start. The grid is
    uniform in cos `inc` (as `IsotropicInclination`) and `pa` is on
@@ -283,7 +285,7 @@ contain the truth) stay in the tutorial.
 In this order. The first is χ²/N of the model on the quoted errors, never
 rescaled; the same rule as above (a fitted error scale makes χ² ≈ 1 by
 construction, so `error_scale="fit"` adds the check for a scale well above
-1). Most of the rest are the caveats of the `polar_disk_rings` tutorial,
+1). Most of the rest are the caveats of the `multipole_disk_rings` tutorial,
 turned into pure functions of plain numbers. The model-specific ones apply
 to the entries named.
 
@@ -340,7 +342,7 @@ wrap, and NUTS chains pile up against it. With `Harmonics` on, `pa` and
 `pa` + 180° with the first-harmonic phase turned by 180° are the same
 disk, so a sampler can move between them; the pipeline reports `pa` folded
 into [0°, 180°) with the harmonic phase rotated to match, per sample, so
-the summary is unimodal. (To be checked against `PolarDisk`'s harmonic
+the summary is unimodal. (To be checked against `MultipoleDisk`'s harmonic
 convention when the build starts.)
 
 Radial bounds are settings, defaulting to an inner edge at one
@@ -364,7 +366,7 @@ detection jointly, as in the tutorial.
 
 ### Relation to the tutorial
 
-`polar_disk_rings` gets a closing "As a pipeline" section running
+`multipole_disk_rings` gets a closing "As a pipeline" section running
 `DiskPipeline(data, "rings", ...)` and `DiskPipeline(data, "gp", ...)` on
 the same simulated data. The tutorial's scene has a planet, so the section
 runs with the opt-in companion setting on; without it the pipeline has no
@@ -396,9 +398,9 @@ Ben's, 2026-10-15.
   few channels.
 - **Scope.** The colliding-wind cone geometry of the Apep analysis is out
   of v1; it may become a registry entry later, with no new stage.
-- **Timing.** Build only after the `PolarDisk` PR stack merges (its code
+- **Timing.** Build only after the `MultipoleDisk` PR stack merges (its code
   is on `main`; virgil#356 is the last piece); stay provisional until the
-  `PolarDisk` API is unchanged for a release.
+  `MultipoleDisk` API is unchanged for a release.
 
 ### Open questions
 

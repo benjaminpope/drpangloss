@@ -3,7 +3,7 @@
 * ``OIData._diagonalized`` keeps only the real directions of an operator
   applied to correlated closure phases (a singular correlation), in float32
   as well as float64.
-* ``PolarDisk.is_physical`` works with a ``VonMises`` azimuthal model.
+* ``MultipoleDisk.is_physical`` works with a ``VonMises`` azimuthal model.
 * ``SharedFlux(grid=(lo, hi, n))`` is a range only when ``n`` is an ``int``.
 * Matmuls and contractions in forward models use ``Precision.HIGHEST``
   (checked on the jaxpr, since on CPU the default is already exact).
@@ -21,9 +21,10 @@ from virgil.likelihood import model_loglike
 from virgil.models import (
     GaussianRing,
     LimbDarkenedDisk,
-    PolarDisk,
-    PolarKernel,
+    MultipoleDisk,
+    MultipoleKernel,
     RadialGP,
+    RadialGPFunction,
     VonMises,
 )
 from virgil.models import BinaryModelCartesian
@@ -82,16 +83,16 @@ def test_rank_deficient_operator_keeps_only_real_directions(seed):
     assert float(errors.min()) > 1e-3
 
 
-# --- R3: PolarDisk.is_physical with a VonMises azimuthal model --------------
+# --- R3: MultipoleDisk.is_physical with a VonMises azimuthal model --------------
 
 
 def _polar(harmonics):
-    return PolarDisk(
+    return MultipoleDisk(
         GaussianRing(15.0, 2.0), harmonics=harmonics, inc=40.0, pa=10.0, n_r=24
     )
 
 
-def test_polar_disk_is_physical_with_von_mises():
+def test_multipole_disk_is_physical_with_von_mises():
     assert bool(_polar(VonMises(4.0, 30.0, degree=20)).is_physical())
 
 
@@ -188,13 +189,15 @@ def test_limb_darkening_coefficient_matmul_is_highest():
 
 
 def test_radial_gp_contractions_are_highest():
-    gp = RadialGP(0.5, 10.0, sigma=1.0, ell=2.0, z=np.zeros(24), n=24)
+    gp = RadialGPFunction(0.5, 10.0, sigma=1.0, ell=2.0, z=np.zeros(24))
     _assert_highest(lambda g: g._values()[1], gp)
     _assert_highest(lambda g: g.draws(jax.random.key(0), 2), gp)
+    profile = RadialGP(0.5, 10.0, sigma=1.0, ell=2.0).with_rule(24)
+    _assert_highest(lambda g: g._values()[1], profile)
 
 
-def test_polar_kernel_values_are_highest():
-    kernel = PolarKernel(3.0, 4.0, 0.4, r_in=1.0, r_out=9.0, n=12)
+def test_multipole_kernel_values_are_highest():
+    kernel = MultipoleKernel(3.0, 4.0, 0.4, r_in=1.0, r_out=9.0, n=12)
     z = np.zeros((2, 3, 12))
     _assert_highest(lambda k, zz: k.values(zz, np.ones(5)), kernel, z)
 

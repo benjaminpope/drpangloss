@@ -34,7 +34,7 @@ from ._flat import _base, _flat_coordinate, _FlatBijection
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
 from .angles import is_angle_vector, vector_angle, vector_site
-from .fields import GaussianField, PolarField
+from .fields import GaussianField, MultipoleField
 from .likelihood import (
     _check_positive_flux_prior,
     _curvature_rows,
@@ -45,7 +45,7 @@ from .likelihood import (
     noise_sites,
     tied_log_prior,
 )
-from .models import PolarKernel, RadialGP, SourceModel
+from .models import MultipoleKernel, RadialGP, RadialGPFunction, SourceModel
 from ._deprecate import external_stacklevel
 
 
@@ -144,7 +144,13 @@ def _warn_if_field_hyperparameter(model, path):
     if name in hyper and parent:
         if isinstance(
             model.get(parent),
-            (GaussianField, RadialGP, PolarKernel, PolarField),
+            (
+                GaussianField,
+                RadialGP,
+                RadialGPFunction,
+                MultipoleKernel,
+                MultipoleField,
+            ),
         ):
             warnings.warn(
                 f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "

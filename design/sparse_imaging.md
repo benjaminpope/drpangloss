@@ -1,5 +1,7 @@
 # Design note: sparse image reconstruction
 
+Status (2026-10-16): **S1 and S2 built and extended** (multi-scale CLEAN, major cycles and stall detection, a final major cycle, base fitting); S3 and S4 deliberately deferred; multi-frequency CLEAN is the open item (see "Still open").
+
 ## Purpose and scope
 
 This note plans support for **sparse** reconstructions in virgil: images
@@ -163,14 +165,14 @@ Horseshoe or Laplace priors on starlet coefficients through `numpyro_model`.
 Deferred: the posterior mean under a Laplace prior is not sparse (the
 "Bayesian lasso"), and the Gaussian-process prior already covers sampling.
 
-## Status and next steps (paused 2026-10-05)
+## What was built and what the runs taught us (2026-10-05)
 
 S1 and S2 are merged (#165, #166). Users have `StarletL1`, `LogSum`,
 `Laplacian`, `starlet`, `clean` and `CleanResult`. The docs have imaging part 6,
 "Sparse images and CLEAN" (`notebooks/imaging_clean.ipynb`), and there are two
 MWEs: `notebooks/mwe/mwe_clean.ipynb` (five cells) and
 `notebooks/mwe/mwe_sparse_imaging.ipynb` (CLEAN against MEM, StarletL1 and
-LogSum). Work is paused here.
+LogSum). Later work is logged below.
 
 ### What the runs taught us
 

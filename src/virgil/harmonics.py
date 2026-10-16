@@ -1,6 +1,6 @@
 r"""Azimuthal harmonics: the image-harmonic convention and conversions.
 
-Every azimuthal profile of a [`PolarDisk`][virgil.models.PolarDisk] is, at
+Every azimuthal profile of a [`MultipoleDisk`][virgil.models.MultipoleDisk] is, at
 each radius, $I(\theta)/I_0 = \sum_{m=-M}^{M} I_m e^{im\theta}$ with
 $I_0 = 1$ and $I_{-m} = \bar I_m$, where $\theta$ is the azimuth in the plane
 of the disk, from the projected major axis towards ``pa + 90``. The linear,
