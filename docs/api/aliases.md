@@ -16,4 +16,3 @@ integrated out.
         - position_profile
         - spectral_window
         - AliasBand
-        - UNRECORDED
