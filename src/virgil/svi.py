@@ -6,32 +6,23 @@
 [`variational`][virgil.svi.variational] takes the same arguments as
 [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model], and fits a guide (an
-approximate posterior) to ``numpyro_model``'s posterior by maximizing the
-evidence lower bound (ELBO) with numpyro's ``SVI``. The guide works in the
-unconstrained coordinates NUTS samples (numpyro's bijection of each
-prior's support by default, or the priors' flat coordinates with
-``flat_coordinates=True``), and starts at the Laplace approximation: its
+approximate posterior) to the posterior by maximizing the evidence lower
+bound (ELBO) with numpyro's ``SVI``. The guide works in the unconstrained
+coordinates NUTS samples, and starts at the Laplace approximation: its
 centre at a [`FitResult`][virgil.fitting.FitResult] and its width from
-[`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
+[`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]. The default guide
+is a normalizing flow that bends that Gaussian to follow curved ridges and
+skewed scales; a Gaussian guide is close to the Laplace approximation, for
+which see [`laplace_cov`][virgil.inference.laplace_cov]. Every guide covers
+one mode.
 
-A Gaussian guide (``guide="mvn"``) is close to that Laplace approximation
-for a well-behaved posterior: use
-[`laplace_cov`][virgil.inference.laplace_cov] or the Gauss–Newton
-covariance if a Gaussian is all you need. The default guide is a
-normalizing flow (a block neural autoregressive flow) after the Laplace
-affine map, which can bend and skew the Gaussian to follow curved ridges,
-skewed scales and parameters pressed against a prior bound. Every guide
-covers one mode.
-
-References: ADVI (Kucukelbir et al. 2017, https://arxiv.org/abs/1603.00788;
-https://en.wikipedia.org/wiki/Variational_Bayesian_methods), normalizing
-flows (https://en.wikipedia.org/wiki/Flow-based_generative_model), the
-block neural autoregressive flow (De Cao, Titov & Aziz 2019,
-https://arxiv.org/abs/1904.04676), the inverse autoregressive flow (Kingma
-et al. 2016, https://arxiv.org/abs/1606.04934), and Pareto-smoothed
-importance sampling, whose shape estimate k̂ diagnoses the fit (Vehtari et
-al. 2024, https://arxiv.org/abs/1507.02646;
-https://en.wikipedia.org/wiki/Importance_sampling).
+See [Variational inference](../variational_inference.md) for the choice of
+guide and how to check the result. References: ADVI (Kucukelbir et al.
+2017, https://arxiv.org/abs/1603.00788), the block neural autoregressive
+flow (De Cao, Titov & Aziz 2019, https://arxiv.org/abs/1904.04676), the
+inverse autoregressive flow (Kingma et al. 2016,
+https://arxiv.org/abs/1606.04934) and Pareto-smoothed importance sampling
+(Vehtari et al. 2024, https://arxiv.org/abs/1507.02646).
 """
 
 import dataclasses
@@ -87,9 +78,7 @@ class VariationalResult:
     samples : dict
         Draws from the guide, ``num_samples`` per site, in the model's own
         parameters and under the site names NUTS uses
-        (``MCMC.get_samples()``), deterministic sites (an angle with an
-        [`AngleVector`][virgil.angles.AngleVector] prior, in degrees)
-        included.
+        (``MCMC.get_samples()``), deterministic sites included.
     losses : numpy.ndarray
         The loss (the negative ELBO, a Monte Carlo estimate) at each step.
     guide : numpyro.infer.autoguide.AutoGuide
@@ -98,21 +87,17 @@ class VariationalResult:
     params : dict
         The guide's fitted parameters.
     converged : bool
-        Whether the loss stopped falling: the mean loss over the last
-        ``window`` steps is not below that of the ``window`` steps before it
-        by more than twice their combined standard error. A plateau is
-        necessary, not sufficient: compare with NUTS on a test problem.
+        Whether the loss stopped falling: the mean loss over the last ``window``
+        steps is not below that of the ``window`` steps before it by more than
+        twice their combined standard error. Necessary, not sufficient.
     info : dict
-        ``guide`` (its name), ``steps``, ``elbo`` (minus the mean loss over
-        the last window; ``None`` for a point-mass guide, ``AutoDelta`` or
-        ``AutoLaplaceApproximation``, whose loss is minus the log joint,
-        given as ``log_joint``), ``dense_start`` (whether the guide's width
-        started from the Gauss–Newton covariance), ``khat`` (the Pareto
-        k̂ of the importance weights p/q of ``num_samples`` draws, PSIS;
-        below 0.7 the guide is good enough to reweight, above it the guide
-        misses mass the posterior has; ``None`` if not computed or for a
-        point-mass guide), ``time``
-        (seconds, compilation included) and ``dtype``.
+        ``guide`` (its name), ``steps``, ``elbo`` (minus the mean loss over the
+        last window; ``None`` for a point-mass guide, whose loss is given as
+        ``log_joint``), ``dense_start`` (whether the width started from the
+        Gauss–Newton covariance), ``khat`` (the Pareto k̂ of the importance
+        weights p/q of ``num_samples`` draws: below 0.7 the guide is good enough
+        to reweight; ``None`` if not computed or for a point-mass guide),
+        ``time`` (seconds, compilation included) and ``dtype``.
     """
 
     samples: dict
@@ -134,20 +119,11 @@ class _NoFlow(autoguide.AutoContinuous):
 def _laplace_started(base):
     """``base`` (a numpyro flow autoguide, or none) in the Laplace frame.
 
-    numpyro's flow guides start near a standard normal in the
-    unconstrained coordinates z, far from a fit, and its Gaussian guides
-    learn their centre and width in z itself, whose scales differ by
-    orders of magnitude between parameters (a position known to 1 mas on
-    a 1000 mas prior range, a log flux known to 10%), so that one step
-    size cannot suit them all. Here the guide is
-
-        z = z0 + L0 (shift + L u),   u = flow(ε),   ε ~ N(0, I),
-
-    with z0 and L0 fixed at the fit and the Cholesky factor of its
-    Gauss–Newton covariance (``start_tril``), and ``shift`` (from zero),
-    the lower-triangular ``L`` (from the identity) and the flow learnt.
-    Every learnt parameter is then in units of the Laplace widths, and the
-    guide starts at the Laplace approximation (exactly, without a flow).
+    The guide is ``z = z0 + L0 (shift + L u)``, ``u = flow(ε)``, with ``z0`` and
+    ``L0`` fixed at the fit and its Gauss–Newton Cholesky factor
+    (``start_tril``), and ``shift``, ``L`` and the flow learnt. Every learnt
+    parameter is then in units of the Laplace widths, and the guide starts at
+    the Laplace approximation (exactly, without a flow).
     """
 
     class Guide(base):
@@ -234,14 +210,12 @@ def _start_scale(
     flat,
     init_scale,
 ):
-    """The Cholesky factor of the guide's starting covariance.
+    """The Cholesky factor of the guide's starting covariance, and whether it is
+    dense: ``(L, dense)``.
 
-    The Gauss–Newton covariance at ``values`` (error terms in ``noise``
-    included), reordered into the guide's latent vector, for the sites it
-    covers; ``init_scale`` times the identity for any others. ``L`` is
-    n × n, as the guides keep a Cholesky factor of the latent covariance, so
-    more than ``fitting._DENSE_MASS_MAX`` coordinates raise ``ValueError``.
-    Returns ``(L, dense)``.
+    The Gauss–Newton covariance at ``values`` for the sites the guide covers,
+    ``init_scale`` times the identity for any others. More than
+    ``fitting._DENSE_MASS_MAX`` coordinates raise ``ValueError``.
     """
     n = guide_obj.latent_dim
     _check_dense_size(n, "The guide's starting width", _DENSE_HINT)
@@ -326,116 +300,55 @@ def variational(
     """Approximate the posterior with a guide fitted by numpyro's SVI.
 
     The guide is fitted to the posterior of
-    [`numpyro_model`][virgil.likelihood.numpyro_model] with the same
-    arguments, by maximizing the ELBO (``Trace_ELBO``) with Adam. It works
-    in the unconstrained coordinates NUTS samples, and starts at the Laplace
-    approximation at ``start``: its centre at the fitted values and, by
-    default, its width from
-    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
-
-    **Which guide.** ``"mvn"`` is a Gaussian with a dense covariance. For a
-    well-behaved posterior it is close to the Laplace approximation that
-    ``start`` and ``gauss_newton_mass`` already give (SVI minimizes the
-    KL divergence over the whole posterior, Laplace uses the curvature at
-    the mode, and for a near-Gaussian posterior the two agree), so if a
-    Gaussian is all you need, use
-    [`laplace_cov`][virgil.inference.laplace_cov] or
-    [`laplace_samples`][virgil.imaging.laplace_samples].
-    ``"laplace"`` is numpyro's ``AutoLaplaceApproximation``, the MAP and
-    the Hessian of the log posterior there. The flows ``"bnaf"`` (the
-    default; a block neural autoregressive flow) and ``"iaf"`` (an
-    inverse autoregressive flow) bend the Laplace Gaussian into a curved,
-    skewed or truncated shape: a banana between a separation and a flux,
-    or a scale pressed against its prior bound. They are worth their cost
-    when the posterior is not Gaussian in the flat coordinates and NUTS is
-    too slow. On small test posteriors (a banana, a curved ridge, a scale
-    with a tail to its prior bound) BNAF came closest to NUTS's means,
-    widths and 5–95% quantiles, where the Gaussian guides missed the
-    banana's curvature and the tail. A callable
-    ``guide(model, init_loc_fn=...)`` returning any numpyro autoguide, such
-    as an autoguide class (``autoguide.AutoNormal``), may be passed instead.
-    Flows need at least two parameters.
-
-    **Size.** ``"bnaf"``, ``"iaf"`` and ``"mvn"`` keep a dense n × n
-    Cholesky factor, and ``"laplace"`` a dense Hessian, so above
-    ``fitting._DENSE_MASS_MAX`` (4096) coordinates all four raise
-    ``ValueError`` before allocating it. For an image use
-    [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal
-    guide such as ``autoguide.AutoNormal``.
-
-    **One mode.** Every guide here covers one mode of the posterior. For
-    multimodal posteriors (orbits with Ω/ω flips or period aliases,
-    images with a mirrored solution), run it from several starts, such as
-    the fits of
-    [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values],
-    and compare their ELBOs, or reweight the draws by p/q and check
-    ``info["khat"]``.
+    [`numpyro_model`][virgil.likelihood.numpyro_model] with the same arguments,
+    by maximizing the ELBO with Adam, in the unconstrained coordinates NUTS
+    samples. It starts at the Laplace approximation at ``start``. See
+    [Variational inference](../variational_inference.md) for which guide to
+    use, the one-mode limit and how to check the result.
 
     Parameters
     ----------
     model, priors, data, regularizers, noise, likelihoods
-        As for [`numpyro_model`][virgil.likelihood.numpyro_model]
-        (and [`fit`][virgil.fitting.fit]).
+        As for [`numpyro_model`][virgil.likelihood.numpyro_model] and
+        [`fit`][virgil.fitting.fit]; see
+        [Common arguments](../common_arguments.md).
     start : FitResult or dict, optional
-        Where the guide starts: a fit, normally ``fit(model, priors,
-        data)``, or its ``values``. ``None`` starts at the priors' medians
-        with width ``init_scale``.
+        Where the guide starts: a fit, or its ``values``. ``None`` starts at
+        the priors' medians with width ``init_scale``.
     guide : str or callable, optional
-        ``"bnaf"`` (default), ``"iaf"``, ``"mvn"`` or ``"laplace"``; see
-        above.
-    steps : int, optional
-        Optimization steps (default 3000).
-    optimizer : numpyro or optax optimizer, optional
-        Default ``optax.adam(learning_rate)``.
-    learning_rate : float, optional
-        Adam's step size when ``optimizer`` is not given (default 3e-3).
-        Started at the Laplace approximation, the guide is already close,
-        so a small step suffices.
-    num_particles : int, optional
-        Draws per step in the ELBO estimate (default 8): more give a
-        smoother loss and gradient, at proportional cost.
-    num_samples : int, optional
-        Draws returned in ``samples`` (default 2000), also used for PSIS.
-    key : jax.Array, optional
-        Random key (default ``PRNGKey(0)``).
-    flat_coordinates : bool, optional
-        Passed to ``numpyro_model`` and ``gauss_newton_mass`` (default
-        ``False``): the coordinates the guide is defined in. A Gaussian guide
-        is Gaussian in them, e.g. in the logit of ``log x`` on ``[log a,
-        log b]`` for a ``LogUniform(a, b)`` with ``flat_coordinates=True``.
-    dense_start : bool, optional
-        Start the guide's width from the Gauss–Newton covariance at
-        ``start`` (default ``True``). That covariance holds the data's,
-        the likelihood terms' and the priors' curvature, and the error
-        terms in ``noise`` get their own widths from it (it takes them as
-        coordinates); fixed error terms in ``**options`` and
-        ``regularizers`` are left out. With regularizers (whose absence can
-        leave the curvature singular, as for an image) the dense start is
-        skipped, with a warning. Data with gains and priors without a
-        least-squares form (HalfNormal, Beta, ...) get this start too,
-        where they once started at ``init_scale``.
-    init_scale : float, optional
-        Starting width, in the unconstrained coordinates, of the
-        coordinates not covered by the Gauss–Newton covariance, and of all
-        of them when it cannot be computed (default 0.1).
-    window : int, optional
-        Steps per window of the convergence test (default ``steps // 10``).
-    psis : bool, optional
-        Compute the Pareto k̂ of the importance weights (default ``True``).
-    dtype : {"float64", "float32"}, optional
-        Precision of the SVI run (default ``"float64"``, in a local
-        ``jax.enable_x64`` context, as for ``fit``). The returned samples
-        are in this precision.
+        ``"bnaf"`` (default, a block neural autoregressive flow), ``"iaf"``
+        (inverse autoregressive flow), ``"mvn"`` (a dense Gaussian) or
+        ``"laplace"`` (numpyro's ``AutoLaplaceApproximation``); or a callable
+        ``guide(model, init_loc_fn=...)`` returning any numpyro autoguide. The
+        flows need at least two parameters. The dense guides keep an n × n
+        factor, so above ``fitting._DENSE_MASS_MAX`` (4096) coordinates they
+        raise ``ValueError``: for an image use
+        [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal guide
+        such as ``autoguide.AutoNormal``.
+    steps, num_particles, num_samples, optimizer, learning_rate : optional
+        Optimization steps (3000), draws per step in the ELBO estimate (8),
+        draws returned and used for PSIS (2000), a numpyro or optax optimizer
+        (default ``optax.adam(learning_rate)``) and its step size (3e-3).
+    key, flat_coordinates : optional
+        Random key (default ``PRNGKey(0)``), and the guide's coordinates, as
+        for ``numpyro_model`` (default ``False``).
+    dense_start, init_scale : optional
+        Start the guide's width from the Gauss–Newton covariance at ``start``
+        (default ``True``; skipped with a warning when regularizers leave it
+        singular); the starting width of the coordinates it does not cover
+        (default 0.1).
+    window, psis, dtype : optional
+        Steps per window of the convergence test (default ``steps // 10``);
+        whether to compute the Pareto k̂ of the importance weights (default
+        ``True``); and the precision (default ``"float64"``, as for ``fit``).
     **options
-        Fixed error terms and ``reject_unphysical``, as for
-        ``numpyro_model``.
+        Fixed error terms and ``reject_unphysical``, as for ``numpyro_model``.
 
     Returns
     -------
     VariationalResult
-        The draws in the model's parameters (keyed as NUTS's), the loss
-        history, the guide and its parameters, and diagnostics. A warning
-        is raised if the loss had not settled.
+        The draws, losses, guide and diagnostics; warns if the loss had not
+        settled.
 
     Examples
     --------

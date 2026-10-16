@@ -2,44 +2,31 @@
 
 A single regularized reconstruction depends on choices the data do not fix:
 the regularizer and its weight, the pixel size, the field and the starting
-image. Drevon et al. (2026, https://arxiv.org/abs/2609.15365), who won the 2024
-interferometric imaging contest, run many reconstructions with these
-choices drawn at random (their PYRA), keep those that fit the data, and
-average them while the average still fits (their MYTHRA). The mean is less
-sensitive to any one choice than a single reconstruction, and the spread of
-the members is a map of how much the image depends on those choices. This
-module does the same with virgil's own fits; it is written from the paper's
-description, not from their code.
+image. Following Drevon et al. (2026, https://arxiv.org/abs/2609.15365),
+this module runs many reconstructions with these choices drawn at random,
+keeps those that fit the data, and averages them while the average still
+fits. The mean is less sensitive to any one choice than a single
+reconstruction, and the spread of the members maps how much the image depends
+on those choices. It is written from the paper's description, not from their
+code; see [Imaging, part 7](../imaging_ensemble.md).
 
 The work is split so that a cluster can run it in parallel:
 
-1. [`draw_groups`][virgil.ensemble.draw_groups] draws the reconstruction
-   settings. Each *group* has one geometry (pixel size and number of
-   pixels), one regularizer family, one starting image and several
+1. [`draw_groups`][virgil.ensemble.draw_groups] draws the settings of each
+   *group*: one geometry, regularizer family and starting image, and several
    weights.
-2. [`run_group`][virgil.ensemble.run_group] fits one group, as an
-   [`l_curve`][virgil.imaging.l_curve] over its weights. The weights are
-   traced, so a group compiles once, and groups that share a geometry and
-   a family share the compilation.
+2. [`run_group`][virgil.ensemble.run_group] fits one group as an
+   [`l_curve`][virgil.imaging.l_curve]; groups that share a geometry and a
+   family share a compilation. A group of family ``"gp"`` is instead an
+   [`evidence_grid`][virgil.ensemble.evidence_grid] over a Gaussian-process
+   prior ([`gp_members`][virgil.ensemble.gp_members]).
 3. [`combine`][virgil.ensemble.combine] selects the members and averages
    them into an [`Ensemble`][virgil.ensemble.Ensemble].
 
-A group may instead use a Gaussian-process prior (family ``"gp"``):
-[`gp_members`][virgil.ensemble.gp_members] fits an
-[`evidence_grid`][virgil.ensemble.evidence_grid] over the process's
-amplitude and correlation length, and its fits within a few nats of the
-best are the group's members. [`combine`][virgil.ensemble.combine] takes
-both kinds, together or alone.
-
-[`ensemble`][virgil.ensemble.ensemble] runs all three in turn. On a
-cluster, run one group per array task (``run_group(data,
-draw_groups(data, n, key, spec)[task])``), save the
-[`Group`][virgil.ensemble.Group]s and combine them in one more job.
-
-The ensemble's standard deviation is not a posterior uncertainty. It
-measures how much the image changes between reasonable reconstruction
-choices, not the noise in the data; for the posterior, sample an image
-(see the tutorial "Imaging, part 5").
+[`ensemble`][virgil.ensemble.ensemble] runs all three. The ensemble's
+standard deviation is not a posterior uncertainty: it measures how much the
+image changes between reasonable reconstruction choices, not the noise in the
+data.
 """
 
 import dataclasses
@@ -86,17 +73,9 @@ FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 
 
 def _default_weight_ranges():
-    # Weight per data point. The penalties of a unit-sum image are O(1) for
-    # TV, maximum entropy and the starlet L1 norm, and much smaller for
-    # TSV, whose steps are squared. On the 60 datasets of virgil-validation's
-    # contest bench (12 groups each), the L-curve corners per data point
-    # fell (5th to 95th percentile) at 0.003-1.6 for TV, 0.004-1.9 for
-    # maximum entropy, 0.003-1.2 for the starlet L1 norm and 3-2000 for
-    # TSV, with no trend with the number of pixels; most of the scatter is
-    # within a dataset, from the sparse sweeps. Each range reaches a decade
-    # below the lowest of these, so that the window below a corner (one
-    # decade by default) is sampled, and half a decade or more above the
-    # highest, so that the corner is an interior point of the sweep.
+    # Weight per data point; each range holds the L-curve corners of the
+    # contest bench with a decade to spare below them. See
+    # docs/imaging_ensemble.md ("What is drawn").
     return {
         "tv": (1e-4, 1e1),
         "tsv": (1e-1, 1e4),
@@ -109,112 +88,63 @@ def _default_weight_ranges():
 class EnsembleSpec:
     """What an ensemble draws at random, and how it selects members.
 
+    See [Imaging, part 7](../imaging_ensemble.md#what-is-drawn).
+
     Attributes
     ----------
     families : tuple of str
-        Regularizer families to draw from, uniformly: ``"tv"``
-        ([`TV`][virgil.imaging.TV]), ``"tsv"``
-        ([`TSV`][virgil.imaging.TSV]), ``"maxent"``
-        ([`MaxEntropy`][virgil.imaging.MaxEntropy]) and ``"starlet"``
-        ([`StarletL1`][virgil.imaging.StarletL1]); or ``"gp"``, a
-        Gaussian-process prior ([`GaussianField`][virgil.fields.GaussianField])
-        whose amplitude and correlation length are chosen by the evidence
-        ([`gp_members`][virgil.ensemble.gp_members]), which needs no
-        weight range and no L-curve. Families mix freely in one ensemble.
+        Regularizer families drawn uniformly: ``"tv"``, ``"tsv"``,
+        ``"maxent"``, ``"starlet"`` (the regularizers of
+        [`virgil.imaging`][virgil.imaging]), or ``"gp"``, a Gaussian-process
+        prior chosen by the evidence ([`gp_members`][virgil.ensemble.gp_members]).
     weight_ranges : dict
-        For each family, the range ``(low, high)`` of the weight per data
-        point (the weight divided by the total number of independent data).
-        Weights are drawn log-uniformly in it, the invariant prior for a
-        scale, one in each of ``n_weights`` equal bins of ``log w`` so that
-        every sweep spans the range. The defaults are wide enough to hold
-        the corners of the contest bench's datasets with a window's width
-        to spare below them; if the L-curve corners fall at the edges, move
-        the range.
-    n_weights : int
-        Weights per group, at least three (the L-curve's corner needs
-        them).
+        For each family, the ``(low, high)`` range of the weight per
+        independent data point, from which ``n_weights`` (at least three)
+        log-uniform weights are drawn, one per equal bin of ``log w``. If the
+        L-curve corners fall at the edges, move the range.
     oversample : tuple of float
         Pixels per Nyquist pixel
-        ([`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale]),
-        drawn uniformly.
+        ([`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale]).
     field_factors : tuple of float
-        The field is the data's field (``field_mas``, by default
-        [`image_field`][virgil.imaging.image_field]: six FWHMs of the
-        source, within the interferometric field of view) times one of
-        these, drawn uniformly, and never larger than the interferometric
-        field of view ``field_of_view(data)``: a field beyond what the
-        data measure only gives a flux that they do not constrain room to
-        collect in islands. (Earlier versions drew 1, 2 or 4 times
-        λ / B_min, which on the contest bench gave fields 20 to 35 times
-        the source.) On a uv lattice (AMI, data with a ``uv_grid``) the
-        factors are also capped at 1.
-    field_mas : float or None
-        The field, in mas, that the factors multiply, instead of the one
-        that the data give. For example, the field of a task, or
-        ``image_field(data, field_fwhms=4)``. It too is capped at
-        ``field_of_view(data)``.
-    aperture_mas : float or None
-        A telescope's field of view, as a ceiling on every field (see
-        [`field_of_view`][virgil.imaging.field_of_view]).
+        The field is ``field_mas`` times one of these, never larger than
+        ``field_of_view(data)`` (and, on a uv lattice, never above 1).
+    field_mas, aperture_mas : float or None
+        The field in mas that the factors multiply (by default
+        [`image_field`][virgil.imaging.image_field]), and a telescope's field
+        of view as a ceiling on every field.
     starts : tuple of str
-        Starting images, drawn uniformly: ``"moments"`` and ``"dirty"``
-        (see [`starting_image`][virgil.imaging.starting_image]; a dirty
-        start needs data with phases) and ``"flat"``.
+        Starting images, drawn uniformly: ``"moments"``, ``"dirty"`` (needs
+        phases) and ``"flat"`` (see
+        [`starting_image`][virgil.imaging.starting_image]).
     max_npix : int
-        Largest number of pixels on a side. A field that would need more
-        keeps its size and takes coarser pixels instead, so its pixels per
-        Nyquist pixel fall below ``oversample``, but never below one: if
-        even Nyquist pixels cannot cover it, the field is cropped.
+        Largest number of pixels on a side; a larger field takes coarser pixels
+        (never coarser than Nyquist), or is cropped.
     window_dex : float
-        Width of the window of weights kept in each group, in dex, from
-        ``corner / 10**window_dex`` up to the L-curve's corner: as in
-        MYTHRA, the weights just before the turnover, where the fit to the
-        data has stopped improving but the image is not yet over-smoothed.
-        Stronger weights, past the corner, trade fit for smoothness fast.
-    max_chi2_red : float
-        Drop a member if the raw χ² per data point of any dataset exceeds
-        this.
-    chi2_ratio : float
-        Drop a member if, on any dataset, its χ² per data point exceeds
-        this multiple of the best member's on that dataset. With
-        miscalibrated errors no member reaches χ²/N ≈ 1, so a relative
-        threshold is the one that bites.
-    mad_cut : float
-        Then drop members whose total χ² per data point lies more than this
-        many robust standard deviations (1.4826 times the median absolute
-        deviation) above the median.
+        Each group keeps the weights from ``corner / 10**window_dex`` to the
+        L-curve's corner.
+    max_chi2_red, chi2_ratio, mad_cut : float
+        Drop a member whose raw χ² per data point on any dataset exceeds
+        ``max_chi2_red`` or ``chi2_ratio`` times the best member's, then
+        members whose total is more than ``mad_cut`` robust standard deviations
+        above the median.
     max_shift_mas : float or None
-        Without a star, the members are recentred on the best one, searching
-        shifts up to this (default: the beam's major axis). With a star,
-        the star fixes the position and they are not shifted.
+        Without a star, the largest shift when recentring members on the best
+        one (default: the beam's major axis).
     mean_rtol : float or None
         A member joins the mean if, on every dataset, the mean's χ² stays
-        within this fraction of the best member's. The default, ``None``,
-        is each dataset's χ²/N noise, √(2/N): a mean that fits as well as
-        the best member, up to the noise. ``0`` keeps the mean's χ² at or
-        below the best member's, which on data the best member fits to the
-        noise often keeps that member alone (and the spread is then zero);
-        on the contest bench it kept 1 of 72 members on most datasets.
+        within this fraction of the best member's; ``None`` (default) is the
+        χ²/N noise ``sqrt(2/N)``, and ``0`` often keeps the best member alone.
     min_kept : int
-        [`combine`][virgil.ensemble.combine] warns if fewer members than
-        this are kept.
-    gp_sigmas : tuple of float
-        Starting amplitudes ``σ`` of the Gaussian process's log-brightness
-        in the evidence grid.
-    gp_lengths : tuple of float
-        Starting correlation lengths, in units of the beam's minor axis.
-    gp_sigma_limits, gp_length_limits : tuple of float
-        Within these (the lengths in beam minor axes) the grid grows by
-        factors of 2 while its best point is on an edge.
-    gp_growths : int
-        At most this many growth steps.
+        [`combine`][virgil.ensemble.combine] warns below this many members.
+    gp_sigmas, gp_lengths, gp_sigma_limits, gp_length_limits, gp_growths
+        Starting amplitudes and correlation lengths (in beam minor axes) of
+        the Gaussian process's evidence grid, its limits, and the most
+        growth steps (see [`evidence_grid`][virgil.ensemble.evidence_grid]).
     gp_window_nats : float
-        A group's GP members are the grid's fits whose log evidence is
-        within this of the best's (0 keeps the best alone).
+        A group's GP members are the fits within this log evidence of the best.
     gp_axis_ratio : float or None
-        If an elliptical-Gaussian fit to the data has an axis ratio below
-        this, the grid also has anisotropic fields, correlated along the
-        fitted position angle. ``None`` keeps the grid isotropic.
+        If an elliptical Gaussian fits the data with an axis ratio below this,
+        the grid also has anisotropic fields (``None``: isotropic only).
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
@@ -328,7 +258,7 @@ class Member:
     draw : Draw
         The settings of its group.
     weight : float
-        Its regularizer weight.
+        Its regularizer weight (NaN for a Gaussian-process member).
     result : FitResult
         The fit.
     chi2_red : tuple of float
@@ -336,14 +266,13 @@ class Member:
     kept : bool
         Whether it is in the mean image.
     gp : GPFit or None
-        For a Gaussian-process member, its hyperparameters and evidence
-        (``weight`` is then NaN).
+        For a Gaussian-process member, its hyperparameters and evidence.
     reason : str or None
         Why it was left out: ``"window"`` (outside its group's L-curve
-        window; a Gaussian-process group has none), ``"diverged"`` (a non-finite χ²: the fit failed), ``"chi2"``
-        (a dataset fitted too badly), ``"outlier"``
-        (total χ² far above the others) or ``"mean"`` (adding it made the
-        mean fit a dataset worse). ``None`` if kept.
+        window), ``"diverged"`` (non-finite χ²), ``"chi2"`` (a dataset fitted
+        too badly), ``"outlier"`` (total χ² far above the others) or
+        ``"mean"`` (adding it made the mean fit a dataset worse). ``None`` if
+        kept.
     """
 
     draw: Draw
@@ -368,26 +297,24 @@ class Ensemble:
     Attributes
     ----------
     model : System
-        The mean scene, exactly: the kept members' images on their own
-        grids (``member0``, ``member1``, ...), each carrying its share of
-        the flux, and with a star a ``star`` component. ``chi2_red`` and
-        ``trace`` are of this model.
+        The mean scene, exactly: the kept members' images on their own grids
+        (``member0``, ``member1``, ...), each carrying its share of the flux,
+        and with a star a ``star`` component. ``chi2_red`` and ``trace`` are of
+        this model.
     mean : Image
-        The mean extended emission, on the common grid (the finest pixels
-        and the largest field of the kept members). Its brightness sums to
-        one; with a star its ``flux`` is the mean flux relative to the
-        star. Resampling smooths the members' images a little, so this
-        image is for display and scoring; it fits the data less well than
+        The mean extended emission on a common grid (the finest pixels and the
+        largest field of the kept members), summing to one; with a star its
+        ``flux`` is the mean flux relative to the star. For display and
+        scoring: resampling smooths it, so it fits the data less well than
         ``model``.
     std : array, shape (npix, npix)
-        Standard deviation across the kept members of the same quantity as
-        ``mean.brightness``, pixel by pixel.
+        Standard deviation across the kept members of ``mean.brightness``,
+        pixel by pixel.
     chi2_red : tuple of float
         Raw χ² per data point of the mean scene on each dataset.
     trace : list of tuple
-        ``chi2_red`` of the running mean after each accepted member, from
-        the best member alone; on every dataset it stays within
-        ``spec.mean_rtol`` of the first entry.
+        ``chi2_red`` of the running mean after each accepted member; on every
+        dataset it stays within ``spec.mean_rtol`` of the first entry.
     members : list of Member
         Every reconstruction, kept or not.
     groups : list of Group
@@ -446,17 +373,11 @@ def _datasets(data):
 def draw_groups(data, n_groups, key, spec=None, star=True):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
-    Each group draws a regularizer family, a pixel size (the Nyquist scale
-    over one of ``spec.oversample``), a field (the data's field,
-    [`image_field`][virgil.imaging.image_field] or ``spec.field_mas``,
-    times one of ``spec.field_factors``, at most 1 on a uv lattice and
-    never beyond ``field_of_view(data)``; beyond
-    ``spec.max_npix`` pixels the pixels are coarsened to fit it, down to
-    the Nyquist scale), a starting image and
-    ``spec.n_weights`` log-uniform weights, one in each equal bin of the
-    family's range in ``log w``. The draws
-    depend only on ``key`` and ``spec``, so every task of a cluster array
-    can draw them all and run its own.
+    Each group draws a regularizer family, pixel size, field, starting image
+    and ``spec.n_weights`` log-uniform weights, as set by the
+    [`EnsembleSpec`][virgil.ensemble.EnsembleSpec]. The draws depend only on
+    ``key`` and ``spec``, so every task of a cluster array can draw them all and
+    run its own.
 
     Parameters
     ----------
@@ -469,15 +390,15 @@ def draw_groups(data, n_groups, key, spec=None, star=True):
     spec : EnsembleSpec, optional
         What to draw (default ``EnsembleSpec()``).
     star : bool, optional
-        Whether the scene has an unresolved star (default), which the
-        field's envelope fit then allows for
+        Whether the scene has an unresolved star (default), which the field's
+        envelope fit then allows for
         ([`envelope_fwhm`][virgil.imaging.envelope_fwhm]).
 
     Returns
     -------
     list of Draw
-        Sorted by geometry, so that groups sharing a compilation run one
-        after the other.
+        Sorted by geometry, so that groups sharing a compilation run one after
+        the other.
     """
     spec = EnsembleSpec() if spec is None else spec
     rng = onp.random.default_rng(
@@ -830,14 +751,10 @@ def evidence_grid(
     [`GaussianField`][virgil.fields.GaussianField] of amplitude ``σ`` and
     correlation length ``ℓ`` about the group's starting image, scored by
     [`log_evidence`][virgil.imaging.log_evidence]. The grid starts at
-    ``spec.gp_sigmas`` by ``spec.gp_lengths`` (in beam minor axes) and
-    grows by factors of 2 while its best point is on an edge that can
-    move. Fits are warm-started from the previous one. If an elliptical
-    Gaussian fits the data with an axis ratio below ``spec.gp_axis_ratio``,
-    a second, anisotropic grid correlates the field along its position
-    angle, over ``ℓ/√r`` along and ``ℓ√r`` across (``r`` the ratio).
-
-    The evidence assumes correct error bars; check them with
+    ``spec.gp_sigmas`` by ``spec.gp_lengths`` and grows while its best point is
+    on an edge; for elongated data a second grid is anisotropic. See
+    [Imaging, part 7](../imaging_ensemble.md#gaussian-process-members). The
+    evidence assumes correct error bars; check them with
     [`error_scale`][virgil.imaging.error_scale].
 
     Parameters
@@ -962,10 +879,9 @@ def gp_members(
 
     The group's members are the fits of its
     [`evidence_grid`][virgil.ensemble.evidence_grid] whose log evidence is
-    within ``spec.gp_window_nats`` of the best (the posterior over
-    hyperparameters, truncated), so that [`combine`][virgil.ensemble.combine]
-    averages over the amplitude and length the data leave open. There is
-    no L-curve, and so no window of weights.
+    within ``spec.gp_window_nats`` of the best, so that
+    [`combine`][virgil.ensemble.combine] averages over the amplitude and length
+    the data leave open. There is no L-curve window.
 
     Parameters
     ----------
@@ -1074,41 +990,19 @@ def _chi2_red(model, datasets):
 def combine(data, groups, *, spec=None, star=True):
     """Select the members of an ensemble and average them.
 
-    The selection follows MYTHRA (Drevon et al. 2026):
-
-    1. In each L-curve group, keep the weights from ``spec.window_dex``
-       below the L-curve's corner up to the corner: the weights just before
-       the turnover. A Gaussian-process group
-       ([`gp_members`][virgil.ensemble.gp_members]) has no L-curve and
-       skips this step; its members are already the evidence-selected fits.
-       The steps below are the same for both kinds, which may be mixed.
-    2. Drop members whose fit diverged (a non-finite χ²), then keep
-       members whose raw χ² per data point is below
-       ``spec.max_chi2_red`` and within ``spec.chi2_ratio`` of the best
-       member's on every dataset, then drop total-χ² outliers by their
-       median absolute deviation (``spec.mad_cut``).
-    3. Resample the survivors' images to a common grid, the finest pixels
-       and the largest field among them, conserving flux; without a star,
-       recentre each on the best member
-       ([`align`][virgil.metrics.align]).
-    4. In order of total χ², add members to a running mean one at a time,
-       keeping each only if the mean's χ² on every dataset stays within
-       ``spec.mean_rtol`` (by default the χ²/N noise, √(2/N)) of the best
-       member's (so visibilities and closure phases, given as separate
-       datasets, are judged separately). Judging against the best member,
-       not the running mean, keeps the tolerance from compounding. The running mean is judged as the mixture of
-       the members' images on their own grids, which is exact; resampling
-       to the common grid smooths them, which on precise data can raise
-       χ² several-fold and so let worse members through.
-
-    With a star, the mean is of the whole normalized sky, star included:
-    the star's fraction of the flux is the members' mean, and the image's
-    pixels the mean of their fluxes.
+    The selection follows MYTHRA (Drevon et al. 2026): keep the weights just
+    before each L-curve's corner (Gaussian-process members skip this), drop
+    diverged, badly fitting and outlying members, resample the survivors to a
+    common grid, and add them to a running mean in order of χ² while the mean
+    still fits every dataset as well as the best member, up to
+    ``spec.mean_rtol``. See [Imaging, part 7](../imaging_ensemble.md#selection-and-the-mean).
+    With a star, the mean is of the whole normalized sky, star included.
 
     Parameters
     ----------
     data : OIData or sequence of OIData
-        The data the groups were fitted to.
+        The data the groups were fitted to. Give visibilities and closure
+        phases as separate datasets to judge each separately.
     groups : sequence of Group
         From [`run_group`][virgil.ensemble.run_group].
     spec : EnsembleSpec, optional

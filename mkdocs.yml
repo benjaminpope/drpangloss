@@ -69,9 +69,11 @@ nav:
       - "Spectro-interferometric observables": spectro_observables.md
   - Binaries:
       - "Binary search": binary_search.md
+      - "Grid searches": grid_searches.md
       - "Variational inference": variational_inference.md
       - "Contrast limits": contrast_limits.md
       - "Detection limits and plots": detection_limits.md
+      - "Detection statistics": detection_statistics.md
       - "Detection ROC curves": detection_roc.md
       - "Chromatic companion search": wr_chromatic_search.md
       - "Hierarchical inference across filters": hierarchical_inference.md

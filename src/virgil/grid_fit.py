@@ -53,12 +53,10 @@ def _optimize_flux_grid(
 ):
     """Refine the best grid flux at every position with BFGS.
 
-    Returns ``(flux, loglike, converged)``, each with one axis per
-    coordinate key; a point has converged when it is within a quarter sigma
-    of the likelihood maximum along the flux. The optimizer works in units of the starting flux, and on the log
-    likelihood relative to its starting value, so its default tolerances are
-    relative to the problem's own scale. The starting points are the best
-    fluxes of the full likelihood grid.
+    Returns ``(flux, loglike, converged)``, each with one axis per coordinate
+    key; a point has converged when within a quarter sigma of the likelihood
+    maximum along the flux. Starts from the best fluxes of the full likelihood
+    grid, in units of the starting flux.
     """
     loglike_im = _likelihood_grid(data, model, grid, params, batch_size)
     start_flux, start_loglike = _best_grid_flux(
@@ -90,10 +88,9 @@ def _refine_flux_grid(
 ):
     """BFGS refinement of :func:`_optimize_flux_grid` from given starts.
 
-    ``start_flux`` and ``start_loglike`` have one axis per coordinate key,
-    e.g. from :func:`_best_grid_flux`. Not jitted itself: it is traced
-    inside :func:`_optimize_flux_grid` and the detection statistics, which
-    reuse a full likelihood grid they have already computed.
+    ``start_flux`` and ``start_loglike`` have one axis per coordinate key. Not
+    jitted itself: traced inside ``_optimize_flux_grid`` and the detection
+    statistics.
     """
     coords, shape = coordinate_points(grid, coord_keys)
 
@@ -162,21 +159,18 @@ def _refine_flux_grid(
 def likelihood_grid(model, *, data, grid, batch_size=None):
     """Evaluate the log likelihood at every point of a parameter grid.
 
-    Only ``model`` may be passed positionally: ``data`` and ``grid`` are
-    keyword-only, so a call reads
-    ``likelihood_grid(model, data=data, grid=grid)`` and the model, the
-    data and the grid axes cannot be swapped by position. Calls in the
-    0.3 order, ``likelihood_grid(data, model, grid)``, still work with a
-    `FutureWarning` until 0.5; any other positional call raises a
-    `TypeError` naming the keyword call.
+    Only ``model`` may be passed positionally; ``data`` and ``grid`` are
+    keyword-only: ``likelihood_grid(model, data=data, grid=grid)``. The 0.3
+    order, ``likelihood_grid(data, model, grid)``, still works with a
+    `FutureWarning` until 0.5.
 
     Parameters
     ----------
     model : SourceModel or class
-        Template model whose parameters at the paths in ``grid`` are
-        varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``grid``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``).
+        Template model whose parameters at the paths in ``grid`` are varied
+        (e.g. a [System][virgil.models.System] with paths such as
+        ``"comp.dra"``), or a model class called with ``grid``'s keys as
+        keyword arguments (e.g. ``BinaryModelCartesian``).
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
@@ -185,19 +179,16 @@ def likelihood_grid(model, *, data, grid, batch_size=None):
         companion/primary flux ratio). The output has one axis per key, in
         this order.
     batch_size : int, optional
-        Number of grid points evaluated at once. By default, enough for
-        about 2**20 model visibilities on a CPU and 2**23 on other backends
-        (GPU, TPU), and at least 256. Larger can be faster for small data;
-        smaller bounds memory for large models.
+        Grid points evaluated at once. By default, enough for about 2**20
+        model visibilities on a CPU and 2**23 on other backends, and at least
+        256. Larger can be faster for small data; smaller bounds memory.
 
     Returns
     -------
     array-like
-        Log likelihood with shape
-        ``tuple(len(v) for v in grid.values())``. Axis ``k`` follows
-        the ``k``-th key (``indexing="ij"``), so for
-        ``{"dra", "ddec", "flux"}`` axis 0 is ``dra``: transpose a 2D slice
-        before showing it as an image with North up.
+        Log likelihood with shape ``tuple(len(v) for v in grid.values())``.
+        Axis ``k`` follows the ``k``-th key (``indexing="ij"``): transpose a
+        2D slice before showing it as an image with North up.
     """
     params = tuple(grid.keys())
     check_flux_axes(grid)
@@ -227,16 +218,12 @@ _OPTIMIZED_PARAMS_DOC = """
     Parameters
     ----------
     model : SourceModel or class
-        Template model whose parameters at the paths in ``grid`` are
-        varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``grid``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``).
+        Template model or model class, as for
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values
-        (e.g. ``dra``/``ddec`` in milliarcseconds and ``flux`` as a
-        companion/primary flux ratio). The output has one axis per
+        Grid axes, as for ``likelihood_grid``. The output has one axis per
         coordinate key (every key except ``flux_param``), in this order;
         the flux axis only sets the optimizer's starting points.
     flux_param : str, optional
@@ -244,9 +231,7 @@ _OPTIMIZED_PARAMS_DOC = """
         position, e.g. ``"comp.flux"``. By default, the one key whose last
         part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once, by default enough for
-        a fixed number of model visibilities; see
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+        Grid points evaluated at once, as for ``likelihood_grid``.
 """
 
 
@@ -329,9 +314,8 @@ optimized_flux_grid.__doc__ = (
 class Gaussian(NamedTuple):
     """Gaussian prior ``N(mean, sd**2)`` on the companion flux ratio.
 
-    Gaussian-prior evidence (a computational approximation; ``f`` may go
-    negative): the prior has support on negative flux, so its evidence is
-    only a convenient closed form. Prefer [`LogUniform`][virgil.grid_fit.LogUniform].
+    Its support includes negative flux, so its evidence is only a convenient
+    closed form. Prefer [`LogUniform`][virgil.grid_fit.LogUniform].
     """
 
     mean: float
@@ -341,14 +325,9 @@ class Gaussian(NamedTuple):
 class LogUniform(NamedTuple):
     """Log-uniform (scale-invariant) prior on the companion flux ratio.
 
-    ``p(f) = 1 / (f ln(f_max / f_min))`` on ``f_min <= f <= f_max``. The flux
-    ratio is a scale parameter spanning decades, so this is the invariant
-    measure of the scaling group (the Jeffreys prior under that group
-    action), not the root-Fisher-information prior of the linearized
-    likelihood, which has constant Fisher information in ``f`` and so would
-    be flat. It is improper without bounds, so the evidence needs
-    ``0 < f_min < f_max`` (finite), in the units of
-    the flux (companion/primary).
+    ``p(f) = 1 / (f ln(f_max / f_min))`` on ``f_min <= f <= f_max``, with
+    ``0 < f_min < f_max`` finite, in units of the companion/primary flux. See
+    [Grid searches](../grid_searches.md#linear-flux-prior).
     """
 
     f_min: float
@@ -363,14 +342,10 @@ _TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
 def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     """Evidence, posterior mean and sd of f under ``LogUniform(f_min, f_max)``.
 
-    In the linear model the likelihood relative to ``f = 0`` is
-    ``h(f) = -((f - f_hat)**2 - f_hat**2) / (2 sigma**2)``, and the evidence
-    is ``(1 / ln(f_max / f_min)) * integral h-exponential d ln f``. It is
-    computed by fixed-node Gauss-Legendre quadrature in ``ln f`` over the
-    part of ``[f_min, f_max]`` where the likelihood is not negligible (within
-    ``_WINDOW_SIGMA`` sigma of ``f_hat``, or, with ``f_hat`` outside the
-    bounds, within the decay length of the nearer bound), so a narrow peak
-    inside wide bounds is resolved. Returns ``(log_B, mean, sd)``.
+    The Gaussian likelihood of ``f`` (mean ``f_hat``, sd ``sigma``) relative to
+    ``f = 0`` is integrated by Gauss-Legendre quadrature in ``ln f`` over the
+    part of the bounds where it is not negligible. Returns
+    ``(log_B, mean, sd)``.
     """
     d = np.maximum(f_min - f_hat, f_hat - f_max)  # > 0 outside the bounds
     outside = d > sigma
@@ -572,147 +547,49 @@ def linear_flux_grid(
     """Linearized best-fit companion flux at every grid position, in closed form.
 
     A fast first pass for companion searches, beside the iterative
-    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid], and the
-    equivalent of fouriever's linear contrast map (``lincmap``; Kammerer,
-    https://github.com/kammerje/fouriever, which has no paper). For a faint
-    companion (flux ``f`` much smaller than 1) the whitened residuals
-    ``r`` of virgil's likelihood are linear in ``f`` at fixed position:
-    ``r(f) = r(0) + f g``, where ``g = dr/df`` at ``f = 0`` is computed
-    exactly by forward-mode automatic differentiation of the model (no
-    finite difference, no hand-derived closure-phase derivative). The
-    weighted least-squares solution is then
-
-    ``f_hat = -(g . r(0)) / (g . g)``, ``sigma_f = (g . g) ** -0.5``,
-
-    which is ``(gᵀ C⁻¹ (d - m₀)) / (gᵀ C⁻¹ g)`` with ``C`` the data
-    covariance, because ``r`` is already whitened: correlated closure phases
-    are handled exactly as in the likelihood
-    ([`whitened_residuals`][virgil.likelihood.whitened_residuals]), and
-    every observable in the data (|V| or V², and phases) contributes.
-    One model evaluation with its derivative per grid position, and no
-    optimizer.
-
-    ``f_hat`` is not constrained to be positive (as with
-    ``optimized_flux_grid`` and fouriever's ``lincmap``), so noise gives
-    negative values with SNR of either sign. Unlike fouriever, whose
-    ``lincmap`` returns the *variance* ``1 / (g . g)`` (and warns not to
-    trust it), ``sigma_f`` here is the standard deviation.
-
-    **Limitation, and ``n_iter``.** With ``n_iter=0`` the linearization
-    holds only for ``f`` much smaller than 1. The
-    closure phase of a binary scales as ``f`` only to first order, with
-    corrections of order ``f**2`` (and ``f`` times the |V| change for
-    amplitudes), so for a bright companion (for example ``f ~ 0.3``)
-    ``f_hat`` is biased, by tens of percent, and ``sigma_f`` is
-    unreliable. ``n_iter`` Gauss–Newton steps soften this: each relinearizes
-    at the current ``f_hat`` per pixel (``g = dr/df`` at ``f_hat``, then
-    ``f_hat <- f_hat - (g . r(f_hat)) / (g . g)``), and ``sigma_f`` comes
-    from the final ``g``, so a few steps (3 at ``f ~ 0.3``) reach
-    the optimizer's ``f_hat`` and the Laplace ``sigma_f``, at
-    ``n_iter + 1`` model evaluations per pixel. The steps are not
-    safeguarded, so for companions far brighter than the primary or
-    strongly non-linear residuals they can fail to converge; use
-    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid] to refine
-    candidates. At
-    Δ-phase residuals of order 1 rad the phase wrapping is not
-    linear either. A companion at a position where ``g`` is nearly zero
-    (for example at a null of the baselines) has a large ``sigma_f``
-    and so a small SNR.
+    [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]. For a faint
+    companion the whitened residuals are linear in the flux ``f``, so
+    ``f_hat = -(g . r(0)) / (g . g)`` and ``sigma_f = (g . g) ** -0.5``, with
+    ``g = dr/df`` from automatic differentiation: one model evaluation per grid
+    position and no optimizer. ``f_hat`` is not constrained to be positive. See
+    [Grid searches](../grid_searches.md#linear-flux-grid) for the derivation and
+    the limits of the linearization: for a bright companion (``f`` of order 0.3)
+    raise ``n_iter``, or refine candidates with ``optimized_flux_grid``.
 
     Parameters
     ----------
-    model : SourceModel or class
-        Template model whose parameters at the paths in ``grid`` are
-        varied (e.g. a [System][virgil.models.System] with paths such as
-        ``"comp.dra"``), or a model class called with ``grid``'s keys
-        as keyword arguments (e.g. ``BinaryModelCartesian``). At zero flux
-        it must reduce to the primary alone (flux 1).
-    data : OIData
-        Data to fit.
-    grid : dict[str, array-like]
-        Grid axes, as for
-        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]:
-        ``dra``/``ddec`` in milliarcseconds, plus a flux key, whose values
-        are ignored (the flux is solved for, at ``f = 0``), but which must
-        be present to name the parameter. The output has one axis per
-        coordinate key (every key except ``flux_param``), in this order.
-    flux_param : str, optional
-        The key of ``grid`` holding the flux, e.g. ``"comp.flux"``.
-        By default, the one key whose last part is ``flux``.
-    batch_size : int, optional
-        Number of grid points evaluated at once, by default enough for
-        a fixed number of model visibilities; see
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+    model, data, grid, flux_param, batch_size
+        As for [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]. At
+        zero flux ``model`` must reduce to the primary alone (flux 1). The
+        values of the flux key of ``grid`` are ignored (the flux is solved for,
+        at ``f = 0``), but the key must be present to name the parameter.
     n_iter : int, optional
-        Number of Gauss–Newton refinement steps after the first
-        linearization at ``f = 0`` (default 0, the closed-form result).
+        Gauss-Newton refinement steps after the first linearization at
+        ``f = 0`` (default 0, the closed-form result).
     prior : numpyro LogUniform or Normal, optional
-        Prior on the flux ratio ``f``. By default none, and the posterior
-        and Bayes-factor fields of the result are ``None``. With a prior
-        they hold the posterior mean and sd and the marginal-likelihood
-        detection map ``log_bayes_factor`` (see Returns); ``log B > 0``
-        favours a companion at that pixel. All of
-        these hold in the linear model about the final linearization point,
-        i.e. exactly only where the residuals are linear in ``f`` over the
-        posterior (``f`` much smaller than 1, or after enough ``n_iter`` for
-        the point to sit near the posterior); the position is not
-        marginalized. Give numpyro's ``dist.LogUniform(low, high)`` or
-        ``dist.Normal(mean, sd)`` with scalar parameters (the ``LogUniform``
-        and ``Gaussian`` named tuples of this module are still accepted); a
-        bare ``(mean, sd)`` tuple is an error.
-
-        **Recommended: ``dist.LogUniform(f_min, f_max)``**, the scale-invariant
-        (Jeffreys, under the scaling group) prior for a flux ratio,
-        ``p(f) = 1 / (f ln(f_max / f_min))``. The flux ratio is a scale
-        parameter spanning decades, so the prior is the invariant measure of
-        the scaling group, not the root-Fisher prior of the linearized
-        likelihood (which would be flat). It is improper without bounds, and the evidence needs a
-        proper prior, so both bounds are required (``0 < f_min < f_max``).
-        The Bayes factor depends on them, as it must for a scale prior: for
-        ``f_hat`` well inside the bounds, widening them by a factor changes
-        ``log B`` by about ``-Δ ln(ln(f_max / f_min))`` (the Occam
-        factor). Choose them from the physics or the data, for example
-        ``f_max`` the brightest companion you would entertain and ``f_min``
-        a little below the faintest contrast the data can reach (its
-        dynamic range, e.g. the smallest ``flux_error`` over the grid). The likelihood in ``f`` is Gaussian with
-        mean ``f_hat`` and sd ``sigma_f``, so ``Z = ∫ N(f; f_hat,
-        sigma_f**2) p(f) df / N(0; f_hat, sigma_f**2)``, computed by fixed
-        256-node Gauss–Legendre quadrature in ``ln f`` over the part of the
-        bounds where the likelihood is not negligible; the posterior mean
-        and sd come from the same quadrature. It is vmappable and
-        jit-compatible.
-
-        ``dist.Normal(mean, sd)`` gives a Gaussian-prior evidence (a
-        computational approximation; ``f`` may go negative). With ``P = g . g
-        + 1 / sd**2`` (``g`` the final whitened derivative) the posterior is
-        Gaussian with mean ``(g . (g f_hat) + mean / sd**2) / P`` and sd
-        ``P ** -0.5``, and the log Bayes factor against ``f = 0`` is the
-        closed-form Gaussian evidence ratio
-
-        ``log B = -0.5 log(sd**2 P) + (g.g f_hat + mean/sd**2)**2 / (2P)
-        - mean**2 / (2 sd**2)``
-
-        (Luger, Foreman-Mackey & Hogg 2017, arXiv:1710.11136).
+        Prior on ``f``. With one, the posterior and Bayes-factor fields of the
+        result are filled in, in the linear model about the final
+        linearization point and without marginalizing the position.
+        ``dist.LogUniform(f_min, f_max)`` (scalar, both bounds required) is
+        recommended: the Bayes factor depends on the bounds, as it must for a
+        scale prior. See [Grid searches](../grid_searches.md#linear-flux-prior).
 
     Returns
     -------
     LinearFluxGrid
-        A named tuple, always of the same type, whose fields are arrays with
-        one axis per coordinate key (axis 0 is the first, e.g. ``dra``):
+        A named tuple of arrays with one axis per coordinate key (axis 0 is the
+        first, e.g. ``dra``):
 
-        - ``flux``: best-fit flux ratio (companion/primary), unconstrained
-          in sign.
-        - ``flux_error``: one-sigma uncertainty on ``flux``, NaN where the
-          model does not depend on the flux.
-        - ``snr``: ``flux / flux_error``, the detection significance map.
+        - ``flux``: best-fit flux ratio (companion/primary), unconstrained in
+          sign.
+        - ``flux_error``: one-sigma uncertainty on ``flux`` (NaN where the
+          model does not depend on it), and ``snr``: ``flux / flux_error``.
         - ``posterior_mean``, ``posterior_sd``, ``log_bayes_factor``: the
-          posterior under the given ``prior`` and the log evidence ratio
-          against ``f = 0``; ``None`` if ``prior`` is not given, whatever
-          the kind of prior.
+          posterior under ``prior`` and the log evidence ratio against
+          ``f = 0`` (``log B > 0`` favours a companion); ``None`` without a
+          ``prior``.
 
-        Because there are six fields, unpack by attribute (``res.flux``) or
-        take the first three with ``flux, error, snr = res[:3]``; unpacking
-        the result directly into three names fails.
+        Unpack by attribute, or take the first three with ``res[:3]``.
 
     Examples
     --------
@@ -724,9 +601,8 @@ def linear_flux_grid(
     >>> res = linear_flux_grid(
     ...     BinaryModelCartesian, data, grid
     ... )  # doctest: +SKIP
-    >>> i, j = np.unravel_index(
-    ...     np.nanargmax(res.snr), res.snr.shape
-    ... )  # doctest: +SKIP
+    >>> res.snr.shape  # doctest: +SKIP
+    (61, 61)
     """
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     return _linear_flux_grid(
@@ -754,39 +630,36 @@ def laplace_flux_uncertainty_grid(
 ):
     """Laplace uncertainty of the flux at every grid position.
 
-    At each position the coordinates are held fixed and the uncertainty is
-    the inverse square root of the curvature of the negative log likelihood
-    along the flux.
+    At each position the coordinates are held fixed and the uncertainty is the
+    inverse square root of the curvature of the negative log likelihood along
+    the flux.
 
     Parameters
     ----------
     model : SourceModel or class
-        Template model or model class, as for :func:`likelihood_grid`.
+        Template model or model class, as for
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
-        Grid axes, as for :func:`optimized_flux_grid`. The output has one
-        axis per coordinate key (every key except the flux), in this order.
+        Grid axes, as for
+        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid].
     flux : array-like, optional
-        Flux at which to evaluate the curvature, with one axis per
-        coordinate key. By default this is the best fit from
-        :func:`optimized_flux_grid`, which is also the mean that
-        [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit] expects;
-        pass it if you have already computed it.
+        Flux at which to evaluate the curvature, with one axis per coordinate
+        key. By default the best fit from ``optimized_flux_grid``, which is
+        also the mean that [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit]
+        expects.
     flux_param : str, optional
-        The key of ``grid`` holding the flux. By default, the one key
-        whose last part is ``flux``.
+        The key of ``grid`` holding the flux. By default, the one key whose
+        last part is ``flux``.
     batch_size : int, optional
-        Number of grid points evaluated at once, by default enough for
-        a fixed number of model visibilities; see
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+        Grid points evaluated at once, as for ``likelihood_grid``.
 
     Returns
     -------
     array-like
-        One-sigma flux uncertainty, with one axis per coordinate key. It is
-        NaN where the curvature is not positive (the flux is not at a
-        likelihood maximum).
+        One-sigma flux uncertainty, with one axis per coordinate key; NaN where
+        the curvature is not positive (the flux is not at a likelihood maximum).
     """
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     if flux is None:
@@ -849,8 +722,8 @@ def best_grid_point(loglike_grid, grid):
     Parameters
     ----------
     loglike_grid : array-like
-        Output of [`likelihood_grid`][virgil.grid_fit.likelihood_grid] for ``grid``, with one axis
-        per key. NaNs are ignored.
+        Output of [`likelihood_grid`][virgil.grid_fit.likelihood_grid] for
+        ``grid``, with one axis per key. NaNs are ignored.
     grid : dict[str, array-like]
         The grid axes used to compute ``loglike_grid``.
 
