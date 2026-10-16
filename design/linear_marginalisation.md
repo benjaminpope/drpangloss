@@ -55,4 +55,4 @@ on this module.
 
 In float32, χ² is off by ~7e-5 relative at a prior sd of 200σ and ~2e-5 at
 2 × 10⁴σ against dense float64; the Cholesky and rank-one paths agree and
-the log-determinants are exact (see `codebase_review_2026-10b.md`).
+the log-determinants are exact (see `history/codebase_review_2026-10b.md`).
