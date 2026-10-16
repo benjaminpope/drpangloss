@@ -56,6 +56,26 @@ from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
+__provisional__ = (
+    "PolarDisk",
+    "ThinRing",
+    "GaussianRing",
+    "RadialPowerLaw",
+    "ExpTail",
+    "Gap",
+    "RadialSum",
+    "RadialLinear",
+    "RadialPower",
+    "RadialGP",
+    "PolarKernel",
+    "Harmonics",
+    "VonMises",
+    "Cone",
+    "PowerLawHeight",
+    "polar_disk_cvis",
+    "gp_priors",
+)
+
 
 def _normalize_image(image):
     """Return a finite unit-sum image for render outputs.
@@ -2762,6 +2782,9 @@ class _RadialProfile(zdx.Base):
 class ThinRing(_RadialProfile):
     r"""Infinitely thin ring of radius ``r0``, $I \propto \delta(r - r_0)$.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Its Hankel transform is $J_0(2\pi q r_0)$, so it needs no quadrature
     (``n_r`` is irrelevant). Rendered, it is a Gaussian a pixel wide.
 
@@ -2805,6 +2828,9 @@ class ThinRing(_RadialProfile):
 
 class GaussianRing(_RadialProfile):
     r"""Gaussian ring, $I \propto \exp[-(r - r_0)^2 / 2\sigma^2]$, with $r \ge 0$.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The quadrature runs over $r_0 \pm 6\sigma$ (clipped at the centre) with
     a Gauss-Legendre rule, which converges spectrally.
@@ -2863,6 +2889,9 @@ class GaussianRing(_RadialProfile):
 
 class RadialPowerLaw(_RadialProfile):
     r"""Power law $I \propto r^{\rm index}$ between ``r_in`` and ``r_out``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     With ``edge`` (a length in milliarcseconds) both edges are soft, error
     functions of that standard deviation, as in vis-r; the quadrature then
@@ -2942,6 +2971,9 @@ class RadialPowerLaw(_RadialProfile):
 
 class ExpTail(_RadialProfile):
     r"""Exponential tail, $I \propto \exp[-(r - r_0)/L]$ for $r \ge r_0$.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     By default a Gauss-Laguerre rule integrates the whole tail to infinity,
     so no outer radius is needed and none of the tail is dropped. ``r0 = 0``
@@ -3033,6 +3065,9 @@ class ExpTail(_RadialProfile):
 class Gap(_RadialProfile):
     r"""A Gaussian gap cut in another profile.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The brightness is that of ``base`` times
     $1 - d \exp[-(r - r_0)^2 / 2 w^2]$, so ``depth=1`` empties the gap
     and ``depth=0`` leaves ``base``. The quadrature is the base profile's:
@@ -3113,6 +3148,9 @@ class Gap(_RadialProfile):
 
 class RadialSum(_RadialProfile):
     """Sum of named radial profiles, mixed by their ``weight``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Each part is normalized to unit total light and then weighted by its
     ``weight`` (relative to the others), so the weights are the parts' shares
@@ -3216,6 +3254,9 @@ class _RadialFunction(zdx.Base):
 class RadialLinear(_RadialFunction):
     """``value + slope (r - r0)``: a coefficient that varies linearly.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Parameters
     ----------
     value : float or array-like
@@ -3241,6 +3282,9 @@ class RadialLinear(_RadialFunction):
 
 class RadialPower(_RadialFunction):
     """``value (r / r0) ** index``: a coefficient that follows a power law.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Parameters
     ----------
@@ -3361,6 +3405,9 @@ _GP_NODES = 16
 
 class RadialGP(_RadialProfile, _RadialFunction):
     r"""A Gaussian process in the radius, on nodes, in whitened form.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The values at the nodes $r_k$ are $g = \mu + \sigma L z$, with
     $LL^\top$ the Matérn correlation matrix of the nodes (length ``ell``,
@@ -3661,6 +3708,9 @@ class PolarKernel(zdx.Base):
     [`PolarDisk`][virgil.models.PolarDisk]: a Matérn kernel in the radius and
     in the azimuth.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Give it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. The
     coefficients of every order $m = 1 \dots M$ ($c_m$ and $s_m$ of the linear
     form, the latents $\mathrm{re}_m$ and $\mathrm{im}_m$ of the positive
@@ -3952,6 +4002,9 @@ class _Azimuthal(zdx.Base):
 class Harmonics(_Azimuthal):
     r"""Azimuthal harmonics of a [`PolarDisk`][virgil.models.PolarDisk], of
     exact degree ``M``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The brightness at radius $r$ and azimuth $\theta$ in the plane of the
     disk is the profile $I_0(r)$ times an azimuthal factor of mean 1.
@@ -4255,6 +4308,9 @@ class VonMises(_Azimuthal):
     r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$,
     for [`PolarDisk`][virgil.models.PolarDisk], truncated at ``degree``.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The profile (an arc of width $\sim 1/\sqrt\kappa$ radians centred on
     the azimuth $\theta_0$; $\kappa = 0$ is a uniform ring) has the analytic
     harmonics $c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$
@@ -4386,6 +4442,9 @@ class Cone(_Height):
     r"""A conical surface: the ring at radius $r$ lies at the height
     $h = r \cot\alpha - \mathrm{tip}$ along the disk's normal.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     This is the geometry of [`TruncatedCone`][virgil.models.TruncatedCone]:
     the normal is the cone's axis, so the disk's inclination is
     $90^\circ - $ the axis's tilt out of the sky, and ``pa`` is the
@@ -4418,6 +4477,9 @@ class Cone(_Height):
 
 class PowerLawHeight(_Height):
     r"""A flared surface: $h = h_0 (r / r_0)^\psi$.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Positive heights shift towards position angle ``pa + 90`` on the sky
     (see [`Cone`][virgil.models.Cone]); a negative ``h0`` puts the surface
@@ -4491,6 +4553,9 @@ def polar_disk_cvis(
     stretch=None,
 ):
     r"""Unit-flux visibility of a disk from radial quadrature.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The disk is a sum of thin rings, the nodes ``r`` weighted by ``w``,
     after undoing the inclination ``inc`` and the position angle ``pa`` of
@@ -4736,6 +4801,9 @@ class _FrozenGeometry(zdx.Base):
 
 class PolarDisk(Component):
     r"""Axisymmetric disk with a radial profile, evaluated by quadrature.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The brightness is a radial profile $I(r)$ in the plane of the disk,
     inclined by ``inc`` and rotated by ``pa``. Its visibility is the
@@ -5362,6 +5430,9 @@ def _polar_disks(model, prefix=""):
 def gp_priors(model, sigma=None, ell=None, ell_theta=None):
     r"""Priors for the Gaussian-process parts of a scene's
     [`PolarDisk`][virgil.models.PolarDisk]s, for ``fit`` and ``numpyro_model``.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Returns a dict from parameter path to prior for every
     [`RadialGP`][virgil.models.RadialGP] (in a profile, the harmonics'

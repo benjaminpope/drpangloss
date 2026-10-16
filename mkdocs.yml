@@ -56,6 +56,7 @@ nav:
   - Background:
       - Contributions: contributors.md
       - "Comparison with other packages": comparison.md
+      - Stability: stability.md
       - Development carbon: dev_carbon.md
       - Conventions: conventions.md
       - "Gaussian processes and information field theory": gp_and_ift.md

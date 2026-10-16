@@ -41,6 +41,11 @@ __all__ = [
     "polar_interpolate",
 ]
 
+__provisional__ = (
+    "PolarField",
+    "polar_field_priors",
+)
+
 
 def _check_positive(name, value):
     """Reject a concrete value that is not finite and positive."""
@@ -341,6 +346,9 @@ def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
 
 class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     r"""A polar-kernel residual field for an [`Image`][virgil.models.Image].
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The log-brightness of an Image is a Gaussian process on a polar grid
     in the frame of a disk: ``n_r`` radii ``r_k`` from ``r_min_mas`` to
@@ -705,6 +713,9 @@ def polar_field_priors(
     length_theta=(0.1, 6.0),
 ):
     """Bounded log-uniform priors on a [`PolarField`][virgil.fields.PolarField]'s scales.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Returns a priors dict for [`fit`][virgil.fitting.fit] or
     [`numpyro_model`][virgil.likelihood.numpyro_model]: ``LogUniform`` priors,

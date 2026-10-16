@@ -7,6 +7,36 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Stability
+
+virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
+**Stable**: a change needs a deprecation cycle. **Provisional**: may change
+in any 0.4.x release without a deprecation, so that new features can settle.
+Everything public that is not listed here is stable. Nothing warns at
+runtime; provisional pages and API entries carry a "Provisional" notice, and
+each module lists its provisional names in `__provisional__`, which
+`tests/test_stability.py` checks. New public features start provisional.
+
+Provisional in 0.4:
+
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
+  `virgil.tempering` (the orbit fitting, aliases and search);
+- the `PolarDisk` family in `virgil.models`: `PolarDisk`, `ThinRing`,
+  `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
+  `RadialLinear`, `RadialPower`, `RadialGP`, `PolarKernel`, `Harmonics`,
+  `VonMises`, `Cone`, `PowerLawHeight`, `polar_disk_cvis` and `gp_priors`;
+  and in `virgil.fields`, `PolarField` and `polar_field_priors`;
+- the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
+  `gp_members`, `GPFit` and `EvidenceGrid`;
+- `virgil.svi` (`variational`);
+- all of `virgil.pipeline`: `BinaryPipeline` and `StarPipeline` were
+  documented as stable and are now provisional, to be promoted after a
+  release of use (`global_nsigma` is to be settled first). The run schema
+  `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
+  longer emits a `FutureWarning`;
+- `virgil.imaging.clean` and `CleanResult`;
+- `virgil.metrics`.
+
 ### Added
 
 - **Tempered orbit evidence for correlated spectral channels.**
