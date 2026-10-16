@@ -93,17 +93,20 @@ Locally, run the lint checks plus the tests relevant to your change, for example
 Do not run the full suite locally: the JAX tests are heavy, and GitHub Actions runs the full suite on every pull request. Call the venv interpreter directly rather than `uv run`, which resyncs the venv to the lock.
 
 Note that passing locally does not guarantee cross-platform compatibility. GitHub Actions
-(`.github/workflows/tests.yml`) runs the suite in tiers. Every pull request runs the tests
-not marked `slow` on Linux with Python 3.12, in float32 (split across three jobs) and in
-float64, with the versions in `uv.lock`; a pull request that edits `pyproject.toml` also
-runs once with every dependency at the oldest version it allows. A pull request that edits
-`aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
-`test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those float32 and float64 jobs. Pushes to main, and pull requests labelled `full-ci`, add
-the slow tests everywhere, macOS with Python 3.11 and Python 3.13.
-A daily run does all of that, plus a canary with dependencies newer than the lock, and
-opens an issue labelled `nightly-failure` when it fails. Each pull request also builds the
-wheel and sdist, checks them with `twine check --strict`, and imports the wheel in a clean
-environment.
+(`.github/workflows/tests.yml`, with the tiers tabulated in `.github/scripts/ci_matrix.py`)
+runs the suite in tiers. Every pull request runs the tests not marked `slow` on Linux with
+Python 3.12, in float32 (split across three jobs) and in float64 (three jobs, skipping the
+files listed in `DTYPE_INDEPENDENT` in `tests/conftest.py`, whose results cannot depend on
+the float width), with the versions in `uv.lock`; a pull request that edits `pyproject.toml`
+also runs once with every dependency at the oldest version it allows. A pull request that
+edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
+`test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those jobs. Pushes to main run
+the same jobs with all the slow tests. Pull requests labelled `full-ci` (always the release
+pull request) and manual dispatches add macOS with Python 3.11, Python 3.13 and the
+dependency floors. A daily run does all of that, plus a canary with dependencies newer than
+the lock, and opens an issue labelled `nightly-failure` when it fails. Each pull request also
+builds the wheel and sdist, checks them with `twine check --strict`, and imports the wheel in
+a clean environment.
 
 Each test not marked `slow` has a budget of 30 s for its call, and its setup has the same
 budget (with a warm JAX cache); CI fails a test that exceeds either. Setup is charged to the

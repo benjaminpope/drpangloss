@@ -1,0 +1,117 @@
+"""Choose the job matrix of tests.yml.
+
+    EVENT=pull_request FULL_CI=true PR=123 python3 .github/scripts/ci_matrix.py
+
+prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
+
+| tier    | trigger                      | jobs                                    |
+|---------|------------------------------|-----------------------------------------|
+| gate    | pull request                 | py3.12 float32 and float64, 3 shards    |
+|         |                              | each, no slow tests; a PR touching the  |
+|         |                              | orbit modules adds their slow tests, one |
+|         |                              | changing pyproject.toml adds the floors |
+| main    | push to main                 | the gate, with the slow tests           |
+| full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13, the floors |
+| nightly | daily schedule               | full, all with slow tests, + the        |
+|         |                              | newest-dependencies canary              |
+
+Job names do not change between tiers, so the same checks report on every
+pull request. Standard library and the ``gh`` CLI only.
+"""
+
+import json
+import os
+import re
+import subprocess
+
+# The orbit modules and their tests: a pull request touching one runs the
+# slow tests of these test files too (tests/conftest.py, VIRGIL_SLOW_FILES).
+ORBIT_PATHS = re.compile(
+    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*)"
+    r"|tests/test_(aliases|epochs|orbit[a-z_]*))\.py$"
+)
+ORBIT_SLOW_FILES = "test_aliases.py test_epochs.py test_orbit*.py"
+
+LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
+
+
+def changed_flags(files):
+    """(pyproject changed, orbit module or test changed) for a file list."""
+    return (
+        "pyproject.toml" in files,
+        any(ORBIT_PATHS.match(f) for f in files),
+    )
+
+
+def choose(event, full_label=False, pyproject=False, orbit_slow=False):
+    """The job matrix for a workflow event, as ``{"include": [...]}``."""
+    nightly = event == "schedule"
+    full = nightly or event == "workflow_dispatch" or full_label
+    slow = full or event == "push"
+    orbit_files = ORBIT_SLOW_FILES if orbit_slow and not slow else ""
+
+    # Whole files per shard, packed by tests/test_durations.json. The
+    # per-test budget (tests/conftest.py) is enforced on these Linux py3.12
+    # jobs, whose timings it was set from. x64 exercises the float64 paths
+    # on the numerical test files only.
+    include = [
+        {
+            **LINUX,
+            "x64": x64,
+            "shard": f"{k}/3",
+            "slow": slow,
+            "orbit_slow": orbit_files,
+            "budget": True,
+        }
+        for x64 in ("0", "1")
+        for k in (1, 2, 3)
+    ]
+    if full:
+        # x64 dtype mix-ups have surfaced on macOS and Python 3.11 but not
+        # in Linux CI.
+        include.append(
+            {"os": "macos-latest", "python-version": "3.11", "x64": "0",
+             "slow": nightly}
+        )
+        include.append({**LINUX, "python-version": "3.13", "slow": nightly})
+    if full or pyproject:
+        # Every direct dependency at the oldest version pyproject.toml
+        # allows.
+        include.append(
+            {**LINUX, "python-version": "3.11", "lowest": True, "slow": nightly}
+        )
+    if nightly:
+        # Newer than uv.lock: catches a break from a new release before
+        # lock-upgrade.yml's pull request merges.
+        include.append({**LINUX, "canary": True, "slow": True})
+
+    for job in include:
+        shard = job.get("shard", "").replace("/", "of")
+        variant = (
+            "-lowest" if job.get("lowest")
+            else "-canary" if job.get("canary") else ""
+        )
+        job["id"] = (
+            f"{job['os']}-py{job['python-version']}-x64{job['x64']}"
+            f"{variant}{'-shard' + shard if shard else ''}"
+        )
+    return {"include": include}
+
+
+def main():
+    event = os.environ["EVENT"]
+    pyproject = orbit_slow = False
+    if event == "pull_request":
+        files = subprocess.run(
+            ["gh", "pr", "diff", os.environ["PR"], "--name-only"],
+            check=True, capture_output=True, text=True,
+        ).stdout.split()
+        pyproject, orbit_slow = changed_flags(files)
+    matrix = choose(
+        event, os.environ.get("FULL_CI") == "true", pyproject, orbit_slow
+    )
+    print("matrix=" + json.dumps(matrix))
+
+
+if __name__ == "__main__":
+    main()
