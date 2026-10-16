@@ -659,6 +659,91 @@ def test_chainconsumer_diagnostics_return_their_figures():
     plt.close("all")
 
 
+_COLD_CORNER_PLOT = """
+import time
+import matplotlib
+matplotlib.use("Agg")
+import numpy as np
+import pandas as pd
+from virgil.plotting import plot_chainconsumer_diagnostics
+
+rng = np.random.default_rng(0)
+chains = {
+    label: pd.DataFrame(
+        {
+            "dra": rng.normal(120.0, 2.0, 2000),
+            "ddec": rng.normal(-80.0, 2.0, 2000),
+            "flux": rng.normal(4e-3, 4e-4, 2000),
+        }
+    ).astype("float32")
+    for label in ("HMC", "Fisher-HMC")
+}
+start = time.perf_counter()
+plot_chainconsumer_diagnostics(
+    chains,
+    columns=["dra", "ddec", "flux"],
+    truth={"dra": 120.0, "ddec": -80.0, "flux": 4e-3},
+    colors=["#1f77b4", "#ff7f0e"],
+)
+print(time.perf_counter() - start)
+"""
+
+
+def test_chainconsumer_diagnostics_first_call_is_fast():
+    # A GPU docs run once reported 7,971 s for the first call on the docs'
+    # two 2000-sample chains. Time that first call (lazy chainconsumer
+    # import, font lookup, first plot) in a fresh interpreter, since an
+    # in-process test would find them already warm.
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c", _COLD_CORNER_PLOT],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    )
+    elapsed = float(out.stdout.strip().splitlines()[-1])
+    assert elapsed < 20.0, f"cold corner plot took {elapsed:.1f} s"
+
+
+def test_chainconsumer_diagnostics_scale_linearly_in_samples():
+    # Ten times the docs' sample count must not be super-linearly slower.
+    import time
+
+    import pandas as pd
+
+    from virgil.plotting import plot_chainconsumer_diagnostics
+
+    rng = onp.random.default_rng(0)
+
+    def chains(n):
+        return {
+            label: pd.DataFrame(
+                {
+                    "dra": rng.normal(120.0, 2.0, n),
+                    "ddec": rng.normal(-80.0, 2.0, n),
+                    "flux": rng.normal(4e-3, 4e-4, n),
+                }
+            ).astype("float32")
+            for label in ("HMC", "Fisher-HMC")
+        }
+
+    kwargs = dict(
+        columns=["dra", "ddec", "flux"],
+        truth={"dra": 120.0, "ddec": -80.0, "flux": 4e-3},
+        colors=["#1f77b4", "#ff7f0e"],
+    )
+    plot_chainconsumer_diagnostics(chains(2000), **kwargs)
+    plt.close("all")
+    start = time.perf_counter()
+    plot_chainconsumer_diagnostics(chains(20000), **kwargs)
+    elapsed = time.perf_counter() - start
+    plt.close("all")
+    assert elapsed < 10.0, f"20000-sample corner plot took {elapsed:.1f} s"
+
+
 def test_batched_grid_matches_unbatched():
     from virgil.grid_fit import likelihood_grid
     from virgil.models import BinaryModelCartesian

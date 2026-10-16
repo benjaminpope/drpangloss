@@ -285,14 +285,6 @@ def test_warning_points_at_the_caller_for_equinox_methods():
     assert "OIData.model(model_object=" in str(record[0].message)
 
 
-def test_tabulated_warning_points_at_the_caller():
-    from virgil.spectra import Tabulated
-
-    with pytest.warns(FutureWarning, match="Tabulated") as record:
-        Tabulated([1.0, 2.0], [1e-6, 2e-6])
-    assert record[0].filename == __file__
-
-
 def test_new_name_positional_with_old_keyword_is_the_shims_type_error():
     with pytest.raises(TypeError, match="got both data= and data_obj="):
         residuals_like("m", "d", data_obj="d")

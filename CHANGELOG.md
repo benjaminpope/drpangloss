@@ -137,14 +137,11 @@ the command line is matched literally, so it would not catch them.
   `(-180, 180]`).
 - **`DetectionMC.load`** raises `ValueError` for a file format other than 1
   (a file without `format` reads as 1).
-- **Warnings.** `Tabulated` warns with `FutureWarning` like every other
-  deprecation (it was a default-hidden `DeprecationWarning`), and four
-  warnings that set no category now say `UserWarning`. A pipeline no longer
+- **Warnings.** Four warnings that set no category now say `UserWarning`. A pipeline no longer
   emits a `FutureWarning` (it is provisional).
 
-**Removals wait for 0.5.** The 0.2.0 and 0.3.0 entries said `Tabulated` would
-go in 0.4.0; it stays through 0.4 with a `FutureWarning` that names 0.5, as
-every other deprecation does.
+**`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised (see
+Removed); the other deprecations wait for 0.5.
 
 ### Added
 
@@ -708,12 +705,25 @@ contributors page; no code was copied)
 
 ### Removed
 
-Nothing is removed from the released 0.3 API in 0.4: every deprecation above
-works with a `FutureWarning` until 0.5 (the `legacy.oifits_implaneia`
-helpers until 0.6). Dead and duplicated internals are gone with no behaviour
-change (`_utils.i2pi`, `meshgrid_vectors` in favour of `coordinate_points`,
-and one `_unit_sum`); the `batch_size` and noise-term "Priors" docstrings
-are stated once and referred to.
+- **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
+  0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`: the
+  flux at every wavelength is the same (identical between the end nodes,
+  within an ulp beyond them). Two things change. The free values are
+  `flux.values`, not `flux.ratio` (fit and prior paths such as
+  `"comp.flux.ratio"` become `"comp.flux.values"`), and the reference flux
+  `spectrum()` (used by `render` and the zero-baseline normalization) is the
+  value at `wavel0`, the first node, not the mean over the nodes; pass
+  `wavel0=` to set it. Negative values now pass the constructor and are
+  checked on the total flux, as for every other spectrum. Priors on
+  `comp.flux.values` are therefore not checked for non-negative support (as
+  `comp.flux.ratio` was): keep a non-negative prior (such as a log-uniform
+  scale) if every channel must stay positive, and pass `flux_param=` where a
+  grid or plot auto-detected the old key.
+
+Nothing else is removed from the released 0.3 API in 0.4: every other
+deprecation above works with a `FutureWarning` until 0.5 (the
+`legacy.oifits_implaneia` helpers until 0.6). Dead and duplicated internals
+are gone with no behaviour change.
 
 ### Provisional
 
