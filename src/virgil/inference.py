@@ -1,7 +1,20 @@
 """Local curvature tools: Hessians, Laplace covariances and Fisher matrices.
 
+Two different matrices are kept apart by name. The *observed information*
+is the Hessian of the negative log likelihood at a point
+([`observed_information`][virgil.inference.observed_information] for a
+model and data, [`hessian_matrix`][virgil.inference.hessian_matrix] for a
+flat objective). The *expected Fisher* matrix is ``Jᵀ Σ⁻¹ J`` for a
+prediction with fixed Gaussian errors
+([`expected_fisher`][virgil.inference.expected_fisher]). They agree at the
+maximum of a linear-Gaussian problem. The Laplace covariance is the
+inverse of the observed information:
+[`laplace_cov`][virgil.inference.laplace_cov] for a model and data, and
+[`objective_laplace_covariance`][virgil.inference.objective_laplace_covariance]
+for a flat objective.
+
 Objectives are negative log likelihoods of a flat 1D parameter vector,
-except for [`gaussian_fisher`][virgil.inference.gaussian_fisher], which accepts any parameter pytree.
+except for [`expected_fisher`][virgil.inference.expected_fisher], which accepts any parameter pytree.
 Checks that need concrete values (positive errors, positive-definite
 matrices) are skipped inside ``jax.jit``.
 """
@@ -14,12 +27,22 @@ import jax.numpy as np
 import numpy as onp
 from jax.flatten_util import ravel_pytree
 
-from ._deprecate import old_order
+from ._deprecate import deprecated_name, external_stacklevel, old_order
 from ._precision import cast_tree, run_in
 from ._utils import concrete as _concrete
 from .likelihood import loglike
 from .models import SourceModel
-from ._deprecate import external_stacklevel
+
+__all__ = [
+    "expected_fisher",
+    "fisher_projection",
+    "hessian_matrix",
+    "laplace_cov",
+    "laplace_parameter_uncertainty",
+    "objective_laplace_covariance",
+    "observed_information",
+    "regularized_inverse",
+]
 
 
 def _warn_if_not_positive_definite(matrix, what):
@@ -66,9 +89,10 @@ def regularized_inverse(matrix, ridge=1e-10):
     return np.linalg.inv(regularized)
 
 
-def laplace_covariance(objective, x, ridge=1e-10):
+def objective_laplace_covariance(objective, x, ridge=1e-10):
     """Return the Laplace covariance, the inverse Hessian of ``objective``.
 
+    For a model and data use [`laplace_cov`][virgil.inference.laplace_cov].
     ``objective`` is a negative log likelihood of the flat vector ``x``,
     which should be at (or near) its minimum. A small ``ridge`` (default
     1e-10) is added to the diagonal before inverting.
@@ -77,8 +101,11 @@ def laplace_covariance(objective, x, ridge=1e-10):
     return regularized_inverse(hess, ridge=ridge)
 
 
-def gaussian_fisher(prediction_fn, params, errors, ridge=0.0):
+def expected_fisher(prediction_fn, params, errors, ridge=0.0):
     """Return expected Fisher information for fixed independent Gaussian errors.
+
+    Not the Hessian of a likelihood: for that, see
+    [`observed_information`][virgil.inference.observed_information].
 
     Parameters
     ----------
@@ -221,6 +248,11 @@ def _neg_loglike_curvature(values, idx, params, data, model, shapes=None):
     return jax.grad(jax.grad(objective))(values[idx])
 
 
+def _ambient_dtype():
+    """``"float64"`` if JAX's 64-bit mode is on outside any local context."""
+    return "float64" if jax.config.jax_enable_x64 else "float32"
+
+
 def _hessian_then(finish, values, params, data, model, dtype):
     """``finish(H)`` for the Hessian ``H`` of ``-log L``, computed in ``dtype``.
 
@@ -228,7 +260,7 @@ def _hessian_then(finish, values, params, data, model, dtype):
     inside a local ``jax.enable_x64`` context, and the result is cast back
     to JAX's precision outside it (float32, unless x64 is enabled).
     """
-    ambient = "float64" if jax.config.jax_enable_x64 else "float32"
+    ambient = _ambient_dtype()
     shapes = _leaf_shapes(params, model)
     with run_in(dtype):
         values, data, model = cast_tree(
@@ -294,7 +326,9 @@ def laplace_cov(values, params, model, data, *, dtype="float64"):
 
 
 @old_order("values", "params", "data", "model", data="data")
-def laplace_parameter_uncertainty(values, params, model, data, target_param):
+def laplace_parameter_uncertainty(
+    values, params, model, data, target_param, *, dtype="float64"
+):
     """Compute scalar Laplace uncertainty for one parameter with all others fixed.
 
     Parameters
@@ -312,6 +346,9 @@ def laplace_parameter_uncertainty(values, params, model, data, target_param):
     target_param : str
         The scalar parameter whose uncertainty is returned (a path whose
         template leaf has more than one element is rejected).
+    dtype : {"float64", "float32"}, optional
+        Precision of the calculation, as for
+        [`laplace_cov`][virgil.inference.laplace_cov].
 
     Returns
     -------
@@ -337,19 +374,27 @@ def laplace_parameter_uncertainty(values, params, model, data, target_param):
                 "it must be a single scalar parameter."
             )
         idx = sum(sizes[:k])
-    values = np.asarray(values, dtype=float)
-
-    d2_axis = _neg_loglike_curvature(
-        values, idx, tuple(params), data, model, shapes
-    )
-    return np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
+    ambient = _ambient_dtype()
+    with run_in(dtype):
+        values, data, model = cast_tree(
+            (np.asarray(values, dtype=float), data, model), dtype
+        )
+        d2_axis = _neg_loglike_curvature(
+            values, idx, tuple(params), data, model, shapes
+        )
+        sigma = np.sqrt(1.0 / np.asarray(d2_axis, dtype=float))
+    return cast_tree(sigma, ambient)
 
 
 @old_order("values", "params", "data", "model", data="data")
-def fisher(values, params, model, data, ridge=0.0, *, dtype="float64"):
+def observed_information(
+    values, params, model, data, ridge=0.0, *, dtype="float64"
+):
     """Observed information (Hessian of ``-log L``) at a parameter point.
 
-    At the maximum-likelihood point this approximates the Fisher matrix.
+    At the maximum-likelihood point this approximates the Fisher matrix
+    (for the expected Fisher matrix of a fixed-error prediction, see
+    [`expected_fisher`][virgil.inference.expected_fisher]).
 
     Parameters
     ----------
@@ -382,3 +427,11 @@ def fisher(values, params, model, data, ridge=0.0, *, dtype="float64"):
         return information + np.maximum(ridge, 0.0) * ident
 
     return _hessian_then(add_ridge, values, params, data, model, dtype)
+
+
+# Names before 0.4 (released in 0.3.0); they stop working in 0.5.
+fisher = deprecated_name("fisher", observed_information)
+gaussian_fisher = deprecated_name("gaussian_fisher", expected_fisher)
+laplace_covariance = deprecated_name(
+    "laplace_covariance", objective_laplace_covariance
+)

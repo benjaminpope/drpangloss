@@ -1,56 +1,21 @@
 """Analytic marginalization of parameters that enter the model linearly.
 
-The data are ``d = m + A w + n``: a model m, a design A (n × k) times
-linear parameters w, and noise ``n ~ N(0, D)``, ``D = diag(σ²)``. With a
-Gaussian prior ``w ~ N(μ, Λ)``, w integrates out in closed form (Luger,
-Foreman-Mackey & Hogg 2017, *AJ* 153, 216):
+The data are ``d = m + A w + n`` with noise ``N(0, D)`` and a stated
+Gaussian prior ``w ~ N(μ, Λ)``, so ``d ~ N(m + A μ, D + A Λ Aᵀ)``. In
+whitened coordinates ``x = D^-½ (d - m - A μ)`` and ``U = D^-½ A Λ^½`` the
+covariance is ``I + U Uᵀ``, and everything here works on ``(x, U)``: it
+returns a whitened residual of the length of x and the log-determinant
+``½ log det(I + UᵀU)``, which must be kept (it depends on the model).
 
-    d ~ N(m + A μ, D + A Λ Aᵀ).
+The prior must be stated, finite and independent of the data. A Gaussian
+on a positive scale parameter is a proposal only (reweight to Jeffreys).
 
-In whitened coordinates, ``x = D^-½ (d - m - A μ)`` and
-``U = D^-½ A Λ^½`` (one column per parameter), the covariance is
-``I + U Uᵀ``. Everything here works on ``(x, U)``. It returns a whitened
-residual of the same length as x, so the likelihood keeps one residual
-vector, and the log-determinant ``½ log det(I + UᵀU)``, kept as effective
-errors or a log-normalization.
+Two whitenings agree: successive rank-one steps (`whiten_rank_one`,
+`whiten_blocks`; smooth gradients for degenerate columns; for gains,
+offsets and grey scales) and a dense Cholesky (`whiten_cholesky`; a few
+well-conditioned columns). `LinearMarginal` wraps either.
 
-**Rules**:
-
-- **Keep the log-determinant.** It depends on the model wherever A or σ
-  does, e.g. a flux scale times the model's spectrum, or fitted jitter.
-- **The prior is stated by the caller, finite, and never derived from the
-  data.** A flat prior is only a limit, up to a constant that depends on
-  its width: the width is part of the model.
-- **Report the conditional posterior of w** ([`posterior`][virgil._linear.posterior]).
-- **A Gaussian on a scale-type parameter is a proposal only.** For a
-  positive scale such as an OI_FLUX grey scale k, the Jeffreys prior is
-  1/k on stated bounds. Reweight samples of the conditional posterior by
-  ``1 / (k N(k; μ, Λ))`` (with bounds), and make no evidence claims from
-  the Gaussian.
-
-**Two ways to whiten, with the same result.**
-
-- **Successive rank-one steps** ([`whiten_rank_one`][virgil._linear.whiten_rank_one],
-  [`whiten_blocks`][virgil._linear.whiten_blocks]): a rank-one covariance
-  ``I + w wᵀ`` is whitened by ``R = I - w wᵀ / (q (q + 1))``,
-  ``q = √(1 + wᵀw)``, since ``R (I + w wᵀ) Rᵀ = I``, with log-determinant
-  ``log(1 + wᵀw)``. Applying R to x and to the remaining columns, column by
-  column, whitens ``I + U Uᵀ``. Only scalar square roots appear, so the
-  gradients stay smooth where columns are degenerate (equal visibilities
-  on every baseline) or widths go to zero, where an eigendecomposition's
-  are not. Use it for the calibration gains, closure offsets and grey
-  scales, blocked by frame.
-- **A dense Cholesky** ([`whiten_cholesky`][virgil._linear.whiten_cholesky]):
-  ``S = I + UᵀU = L Lᵀ`` and ``u = x - W (I + L⁻ᵀ)⁻¹ Wᵀ x``, with
-  ``W = U L⁻ᵀ``. This is an exact square root, again without an
-  eigendecomposition. Use it for a few well-conditioned columns, such as
-  RV zero points or a four-column Thiele–Innes basis. It is O(n k²).
-
-[`LinearMarginal`][virgil._linear.LinearMarginal] wraps either for one
-design with a stated prior. The Laplace covariance of a fit's latent
-parameters (``fitting._gauss_newton_covariance``) uses the same Woodbury
-identity, but to invert a curvature, not to marginalize a likelihood, so
-it is not built on this module.
+Derivations and rules: ``design/linear_marginalisation.md``.
 """
 
 import equinox as eqx
@@ -80,18 +45,17 @@ def _rank_one_step(stack, j):
 
 
 def whiten_blocks(x, rows, local, spanning=None):
-    """Whiten ``x`` for the covariance ``I + Σ w_j w_jᵀ``, block by block.
+    """Whiten ``x`` for ``I + Σ w_j w_jᵀ`` by rank-one steps, block by block.
 
-    ``rows`` (n_block, n_row) indexes ``x`` (padded out of range) and
-    ``local`` (n_block, n_row, n_mode) holds each block's columns there;
-    ``spanning`` (n, n_spanning) holds columns across blocks, whitened after
-    them. Successive rank-one steps (see the module notes).
+    ``rows`` (n_block, n_row) indexes ``x`` (padded out of range),
+    ``local`` (n_block, n_row, n_mode) holds each block's columns, and
+    ``spanning`` (n, n_spanning) columns across blocks, whitened after.
 
     Returns
     -------
     tuple
-        The whitened ``x`` and, per entry, the log of the factor its
-        effective error grows by. These sum to ``½ log det(I + UᵀU)``.
+        The whitened ``x`` and, per entry, its share of
+        ``½ log det(I + UᵀU)`` (these sum to it).
     """
     x = np.asarray(x)
     n = x.shape[0]
@@ -168,11 +132,9 @@ def whiten_cholesky(x, U):
 
 
 def posterior(x, U):
-    """Conditional posterior of the standardized parameters ω.
+    """Conditional posterior ``N(S⁻¹ Uᵀ x, S⁻¹)``, ``S = I + UᵀU``, of ω.
 
-    With ``w = μ + Λ^½ ω``, the prior is ``ω ~ N(0, I)``. Given
-    ``x = D^-½ (d - m - A μ)``, the posterior is ``ω ~ N(S⁻¹ Uᵀ x, S⁻¹)``,
-    with ``S = I + UᵀU``.
+    ``ω`` is the standardized parameter, ``w = μ + Λ^½ ω``.
 
     Returns
     -------
@@ -190,6 +152,9 @@ def posterior(x, U):
 class LinearMarginal(eqx.Module):
     """A design ``A`` whose parameters w are marginalized under a stated prior.
 
+    The prior must be finite (a flat prior is not supported); a Gaussian on
+    a scale-type parameter is a proposal only (reweight to Jeffreys).
+
     Parameters
     ----------
     design : array-like
@@ -202,16 +167,8 @@ class LinearMarginal(eqx.Module):
     prior_cov : array-like, optional
         A full prior covariance ``(k, k)``, instead of ``prior_sd``.
     method : {"cholesky", "rank_one"}, optional
-        How to whiten (see the module notes). ``"cholesky"`` (the default)
-        suits a few well-conditioned columns. ``"rank_one"`` keeps
-        gradients smooth when columns are degenerate.
-
-    Notes
-    -----
-    The prior must be finite: a flat prior is a limit only up to a
-    constant that depends on its width. For a scale-type parameter the
-    Gaussian is a proposal: see the module notes on reweighting to the
-    Jeffreys prior.
+        ``"cholesky"`` (the default) suits a few well-conditioned columns;
+        ``"rank_one"`` keeps gradients smooth when columns are degenerate.
     """
 
     design: jax.Array

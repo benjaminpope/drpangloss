@@ -112,16 +112,21 @@ tests (`tests/test_pipeline_*.py`) pin the signatures, defaults, summary
 keys and check order, so an accidental change fails the tests.
 
 **Provisional** pipelines write the same folder layout and use the same
-`Result`, but their stages, settings and summary keys may change while
-the virgil APIs underneath settle. They emit one `FutureWarning` per
-session. A provisional pipeline becomes stable when its tutorial and its
-underlying functions have stopped changing for a release; the promotion
-is recorded here.
+`Result`, but their stages, settings and summary keys may change in any
+0.4.x release while the virgil APIs underneath settle. Nothing warns at
+runtime (the tier is in the docs, `virgil._stability` and `run.json`). A
+provisional pipeline becomes stable when its tutorial and its underlying
+functions have stopped changing for a release; the promotion is recorded
+here.
+
+As of 0.4 every pipeline is provisional, `BinaryPipeline` and
+`StarPipeline` included: the stable contract above is what they promise
+after promotion, and the snapshot tests already pin it.
 
 | Pipeline | CLI | Tier | Stages |
 | --- | --- | --- | --- |
-| `BinaryPipeline` | `binary` | stable | load, overview, search, limits, fit, posterior, quicklook |
-| `StarPipeline` | `star` | stable | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
+| `BinaryPipeline` | `binary` | provisional (stable after one release of use) | load, overview, search, limits, fit, posterior, quicklook |
+| `StarPipeline` | `star` | provisional (stable after one release of use) | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
 | `OrbitPipeline` | `orbit` | provisional (planned) | multi-epoch positions, orbit search, fit, posterior |
 | `DiskPipeline` | `disk` | provisional | load, overview, geometry, profile, compare, posterior, quicklook; `model=` takes `"rings"` or `"gp"` |
 | `ImagingPipeline` | `imaging` | provisional (planned) | regularised images, weight selection, uncertainty |
@@ -446,7 +451,7 @@ tutorial asserts that it does.
   `virgil/__init__.py` to stop importing it eagerly.
 - Multi-file inputs with different instruments: one `OIData` per file, or
   joint fits through `joint_*` likelihoods (a later, additive setting).
-- Before the first stable release, settle `global_nsigma`. It is a Šidák
+- Before the pipelines are promoted to stable, settle `global_nsigma`. It is a Šidák
   estimate with a nominal number of resolution elements, not a simulated
   false-alarm probability: grid maxima are correlated and the resolution
   element is anisotropic, so the true trial count may be far off. It is

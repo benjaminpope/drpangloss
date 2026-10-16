@@ -3,6 +3,10 @@
 The everyday names are importable from the top level, e.g.
 `from virgil import OIData, System, PointSource, likelihood_grid`.
 
+Everything here is stable except the entries marked **Provisional**, which
+may change in any 0.4.x release without a deprecation. See
+[Stability](../stability.md) for the list.
+
 - [OIData](oidata.md): observables and their conventions
 - [OIFITS](oifits.md): reading and writing OIFITS files
 - [AMIGO](amigo.md): AMIGO mixed-DISCO products
@@ -20,6 +24,7 @@ The everyday names are importable from the top level, e.g.
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Orbits](orbits.md): Keplerian orbits in virgil's conventions, solved with jaxoplanet
 - [Orbit aliases](aliases.md): `fit_orbit_aliases`, evidences of the period alias bands of an undersampled orbit
+- [Tempering](tempering.md): the effective-channel factor that tempers an orbit evidence for correlated spectral channels
 - [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits
 - [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances
 - [Fields](fields.md): Gaussian-process log-brightness priors for pixel images

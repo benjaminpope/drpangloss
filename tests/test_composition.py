@@ -139,7 +139,7 @@ def test_traced_fluxes_are_not_checked():
 def test_negative_flux_grid_axis_is_rejected():
     grid = {**_path_samples(), "comp.flux": np.array([-1e-3, 1e-3])}
     with pytest.raises(ValueError, match="negative values"):
-        likelihood_grid(_composed_binary(), oidata, grid)
+        likelihood_grid(_composed_binary(), data=oidata, grid=grid)
 
 
 def test_negative_explicit_flux_param_axis_is_rejected():
@@ -367,7 +367,7 @@ def test_new_template_values_do_not_recompile(monkeypatch):
             disk=GaussianDisk(sigma, flux=0.1),
             comp=PointSource(flux=1e-3),
         )
-        likelihood_grid(template, oidata, grid)
+        likelihood_grid(template, data=oidata, grid=grid)
     assert len(traces) == 1
 
 
@@ -398,7 +398,7 @@ def test_unknown_flux_param_is_rejected():
 
 def test_best_grid_point_returns_named_values():
     grid = _path_samples()
-    loglike = likelihood_grid(_composed_binary(), oidata, grid)
+    loglike = likelihood_grid(_composed_binary(), data=oidata, grid=grid)
     best = best_grid_point(loglike, grid)
     assert list(best) == list(grid)
     assert np.isclose(
@@ -408,15 +408,15 @@ def test_best_grid_point_returns_named_values():
 
 def test_likelihood_grid_with_paths_matches_model_class():
     assert np.allclose(
-        likelihood_grid(_composed_binary(), oidata, _path_samples()),
-        likelihood_grid(BinaryModelCartesian, oidata, samples_dict),
+        likelihood_grid(_composed_binary(), data=oidata, grid=_path_samples()),
+        likelihood_grid(BinaryModelCartesian, data=oidata, grid=samples_dict),
         rtol=1e-4,
     )
 
 
 def test_optimized_likelihood_grid_with_paths_matches_model_class():
     grid_best = onp.asarray(
-        likelihood_grid(BinaryModelCartesian, oidata, samples_dict)
+        likelihood_grid(BinaryModelCartesian, data=oidata, grid=samples_dict)
     ).max(axis=2)
     composed = onp.asarray(
         optimized_likelihood_grid(

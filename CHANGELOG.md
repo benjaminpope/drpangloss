@@ -7,7 +7,55 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Stability
+
+virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
+**Stable**: a change needs a deprecation cycle. **Provisional**: may change
+in any 0.4.x release without a deprecation, so that new features can settle.
+Everything public that is not listed here is stable. Nothing warns at
+runtime; provisional pages and API entries carry a "Provisional" notice, and
+each module lists its provisional names in `__provisional__`, which
+`tests/test_stability.py` checks. New public features start provisional.
+
+Provisional in 0.4:
+
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
+  `virgil.tempering` (the orbit fitting, aliases and search);
+- the `PolarDisk` family in `virgil.models`: `PolarDisk`, `ThinRing`,
+  `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
+  `RadialLinear`, `RadialPower`, `RadialGP`, `PolarKernel`, `Harmonics`,
+  `VonMises`, `Cone`, `PowerLawHeight`, `polar_disk_cvis` and `gp_priors`;
+  and in `virgil.fields`, `PolarField` and `polar_field_priors`;
+- the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
+  `gp_members`, `GPFit` and `EvidenceGrid`;
+- `virgil.svi` (`variational`);
+- all of `virgil.pipeline`: `BinaryPipeline` and `StarPipeline` were
+  documented as stable and are now provisional, to be promoted after a
+  release of use (`global_nsigma` is to be settled first). The run schema
+  `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
+  longer emits a `FutureWarning`;
+- `virgil.imaging.clean` and `CleanResult`;
+- `virgil.metrics`.
+
 ### Added
+
+- **Tempered orbit evidence for correlated spectral channels.**
+  `fit_orbit_aliases(temper=True)` (default) divides every block's log
+  likelihood by the effective-channel factor `f = N / N_eff`, estimated from
+  the lag-1 correlation of neighbouring channels in the residuals of each
+  night's best static fit, as the factor of a chain of the data's channels
+  (`1 + 2 sum (1 - k/n) rho^k`, at most the channel count and at least 1;
+  white noise and single-wavelength data give `f = 1`, so their evidences
+  are unchanged).
+  The untempered evidence gave the best alias band p = 1.000 at chi2/N 12
+  and posteriors far too narrow. `temper=False` is the old behaviour and a
+  float a fixed `f`. `AliasResult.temper_f`, `.temper_blocks` and
+  `.tempering` (f above 2, or raw f below 0.5) record it; `save` and `load` keep them
+  (older files load with `temper_f=None`). New module `virgil.tempering`
+  (`adjacent_channels`, `estimate_factors`, `ChannelFactors`); the block
+  score takes a per-block `dof`, and `estimate_primary_diameter(dof=)`
+  tempers the resolved-primary test. `LABELS_FREE_NATS` (3) and
+  `RESOLVE_NATS` (5) keep their values and are now in tempered nats.
 
 - **Night flags and UD-aware seeds for orbit starts.** `epoch_positions`
   flags nights that should not seed an orbit (`alias-peaks`, `low-gap`,
@@ -55,6 +103,13 @@ anything before 1.0 may change between minor versions.
   `NoLeastSquaresForm`, as its curvature is not diagonal.
 
 ### Changed
+
+- `fit_orbit_aliases` now tempers by default, so its evidences, band
+  probabilities and posteriors are not comparable with those of earlier
+  untempered runs on data with correlated channels (pass `temper=False` to
+  reproduce them). It warns when data with several channels have no
+  `EpochPositions` to estimate `f` from, and when `f` is outside the range
+  of `AliasResult.tempering`.
 
 - **`fit_orbit_aliases` needs no per-system arguments.** The defaults
   changed, so results change: `p_range` is optional and defaults to a
@@ -127,6 +182,16 @@ anything before 1.0 may change between minor versions.
 
 ### Migration from 0.3.0
 
+- **`likelihood_grid` takes `data` and `grid` by keyword.** It is
+  `likelihood_grid(model, data=..., grid=...)`: only the model is
+  positional, so no positional call can swap the model, the data and the
+  grid axes. A 0.3-order call, `likelihood_grid(data, model, grid)`, still
+  works with a `FutureWarning` until 0.5; any other positional call (such
+  as `likelihood_grid(model, data, grid)`) raises a `TypeError` naming the
+  keyword call. The 0.4 order change was never silent: the shim recognizes
+  data by type and rebinds the arguments, and any other permutation failed
+  with an `AttributeError`; the keyword form makes the failure a clear one
+  (`virgil-validation` finding F21).
 - **Model before data in the grid, limit and detection tools.**
   `likelihood_grid`, `optimized_likelihood_grid`, `optimized_flux_grid`,
   `linear_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`,
@@ -151,6 +216,34 @@ anything before 1.0 may change between minor versions.
   `best_grid_point`, `plot_grid_map` and `plot_contrast_curve`, and their
   data argument is `data`. `samples_dict=` and `data_obj=` still work
   with a `FutureWarning` until 0.5.
+- **Curvature tools are named for what they compute (`virgil.inference`).**
+  `fisher` was the observed information (the Hessian of -log L), while
+  `gaussian_fisher` was the expected Fisher matrix, and `laplace_cov` (model
+  and data) sat beside `laplace_covariance` (a flat objective). They are now
+  `observed_information` (also `virgil.observed_information`),
+  `expected_fisher` and `objective_laplace_covariance`; `laplace_cov` keeps
+  its name. The old names `fisher`, `gaussian_fisher` and
+  `laplace_covariance` still work with a `FutureWarning` until 0.5.
+  `laplace_parameter_uncertainty` takes `dtype=` like `laplace_cov` and
+  `observed_information` and now computes in float64 by default (it used
+  the ambient float32, whose second derivatives are noisy); the grid tools
+  keep the ambient precision. `virgil.inference` has an `__all__`.
+- **`starting_image` takes everything after `data` by keyword.**
+  `starting_image(data, star, oversample, largest_mas, start, hole_mas)`
+  in the 0.3 positional form still works with a `FutureWarning` until 0.5;
+  `field_fwhms`, `inner_elements` and `aperture_mas` (new in 0.4) are keyword-only outright.
+  `clean` already took its options by keyword.
+- **`OIData.observable_kind` is now `OIData.vis_encoding`** (`"split"` or
+  `"mixed_log_complex"`), so that it is not mistaken for the record key
+  `vis_mode`, which sets the visibility channel (`"auto"`, `"v2"`, `"amp"`,
+  `"logamp"`; the docstring wrongly called `observable_kind` an alias of it).
+  The old attribute still reads, with a `FutureWarning` outside virgil, until 0.5.
+- **`DetectionMC.load` checks the file format.** `meta["format"]` (1) was
+  written but never read; `load` now raises a `ValueError` for any other
+  version and reads a file without it as version 1.
+- **Removals wait for 0.5.** The 0.2.0 and 0.3.0 entries said `Tabulated`
+  would go in 0.4.0. It stays through 0.4, with a `FutureWarning` that now
+  names 0.5, with every other deprecation.
 - To find the remaining 0.3-order calls in your own code before 0.5, add
   `"error:.*stops working in virgil 0.5:FutureWarning"` to your pytest
   `filterwarnings` (as virgil's own test suite now does), or run
@@ -584,6 +677,16 @@ anything before 1.0 may change between minor versions.
   docs now describe flat-coordinate sampling as opt-in.
 
 ### Fixed
+
+- **Projected correlated closure phases keep only their real directions in float32.** When an operator (a kernel-phase or DISCO phase projection) is applied to closure phases with four or more telescopes, their correlation matrix is singular, and `OIData` rotates the operator onto the eigenvectors of the projected covariance with a cut at 1e-10 of the largest eigenvalue. That is below float32 eps, so the numerically zero directions were kept (33 to 36 outputs where 30 are real, for ten four-telescope frames, in float32), with errors of 1e-5 against 1e-2 and so a weight 10⁶ times that of a real one. The covariance and its `eigh` are now computed on the host in float64, as this runs once at construction and is never traced; the arrays returned are in the default dtype. Operators that already whiten the covariance (as DISCO operators do) take the unchanged diagonal branch.
+
+- **`PolarDisk.is_physical` works with a `VonMises` azimuthal model.** It read `harmonics.prior`, which `VonMises` does not have, so `model_loglike(..., reject_unphysical=True)` and `System.is_physical` raised `AttributeError` on any scene containing one.
+
+- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value tuple was a range whenever its last element was at least 1, so `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The `(lo, hi, n)` form now needs a tuple with an integer `n` (Python or NumPy); a list, an array or a tuple whose last element is a float is a list of flux values (the same for `slope`).
+
+- **`Precision.HIGHEST` in more contractions.** The limb-darkening coefficient matmul (binomials up to C(22, 11) with alternating signs), the `RadialGP` and `PolarKernel` contractions and the DISCO operator application now request full precision, as the other forward-model matmuls do; on A100/H100 the default (TF32) loses the cancellation.
+
+- **Bandwidth smearing for binaries, rotated scenes and resolved backgrounds.** With `bandwidth` set, `BinaryModelCartesian`, `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())` raised a `TypeError` saying only that Systems of Components are supported. They are now smeared (binaries as their `to_system()`, `Resolved` has no offset to smear, `Rotated` rotates the baselines), and an unsupported model, such as an `OrbitalBinary` that is not a snapshot, raises a `TypeError` that names it and lists the supported ones.
 
 - **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
 

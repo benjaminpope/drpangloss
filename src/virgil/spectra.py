@@ -629,8 +629,7 @@ class Tabulated(Spectrum):
     flux at ``wavel0`` like every other spectrum. ``Tabulated(ratio,
     wavel)`` is ``Nodes(ratio, wavel)`` except for its reference flux (the
     mean over the nodes) and its parameter name (``ratio``). It is kept so
-    that existing scripts run unchanged, and will be removed in a later
-    release.
+    that existing scripts run unchanged, and will be removed in 0.5.
 
     For fitting a spectrum channel by channel, e.g. a companion's flux ratio
     across emission lines: give ``wavel`` the data's channel wavelengths and
@@ -663,8 +662,8 @@ class Tabulated(Spectrum):
 
     def __init__(self, ratio, wavel):
         warnings.warn(
-            "Tabulated is deprecated; use virgil.spectra.Nodes (with wavel0 "
-            "for the reference flux).",
+            "Tabulated is deprecated and will be removed in virgil 0.5; use "
+            "virgil.spectra.Nodes (with wavel0 for the reference flux).",
             FutureWarning,
             stacklevel=external_stacklevel(),
         )

@@ -104,11 +104,59 @@ see that repository's `PLAN.md` for the boundary.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
-- New model code goes in `src/virgil/models.py`.
+- New model code goes in `virgil.models`.
+- New public features start **provisional**: list the name in the module's
+  `__provisional__` tuple (`("*",)` for a whole new module), put the notice
+  from `virgil._stability.ADMONITION` in its docstring, and add it to
+  `docs/stability.md` and the CHANGELOG's Stability section;
+  `tests/test_stability.py` checks the first two. Promotion to stable is
+  Ben's decision at a release.
 - Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
   shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
+
+## Keeping the code small
+
+`src/` doubled in the ten days after 0.3.0. The growth was features, not
+duplication: it came from building ahead of need, keeping what was superseded
+and writing history into docstrings. So:
+
+1. **Delete before you add.** A feature PR names what it supersedes and removes
+   it in the same PR, or opens a removal issue for the next minor release.
+2. **Build on demand.** A plan stage lands in `src/` when a test system,
+   validation case or user needs it. Keep exploratory engines in
+   virgil-validation or a notebook until then, and land them provisional.
+3. **Docstrings say what, docs say why** (next section).
+4. **Reuse before writing a numerical helper.** Check `_linear`, `_grid`,
+   `_geometry`, `_utils`, `_gauss_newton`, `_flat` and `_precision`, and
+   `pipeline/_common`, before adding a quadrature, solver or linear-algebra routine.
+5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py`, and
+   shared constants and helpers in `tests/_shared.py` or data in `tests/_test_data.py`
+   (extend these, don't add a second module); parametrize near-identical tests, and never redefine a
+   `_scene`/`_data` helper that exists.
+6. **Keep pipelines thin.** A new pipeline subclasses `pipeline/_core` and reuses
+   `_common`; aim at about 500 lines.
+7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
+   Above +1,000 `src` lines, the PR description says what the size buys and what
+   it supersedes.
+
+## Docstring style
+
+Ben is surprised how long some docstrings are. Keep them short.
+
+- **Public docstring:** a one-line summary; at most about five lines of
+  description; numpydoc `Parameters`, `Returns` and `Raises`; at most one short
+  `Example`. Aim for 40 lines or fewer. Over 60 is a defect.
+- **Notes:** only the formula a user needs to call the function correctly.
+- **Leave out:** derivations, design history, plan or "problem N" numbers,
+  PR/issue numbers and named science targets. Put a derivation in a docs page
+  and link it with a markdown link; put history in `design/` notes.
+- **Shared parameters** (`noise`, `priors`, `flat_coordinates`, `dtype`,
+  `regularizers`, ...) are documented once, in `docs/conventions.md` (see "Which
+  priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
+  there rather than creating a page), and each docstring says one line and links it.
+- **Private helpers:** one or two lines.
 
 ## Package layout
 
@@ -126,7 +174,7 @@ see that repository's `PLAN.md` for the boundary.
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
 | `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `image_field` (the data-driven field: k FWHMs from `second_moment_fwhm`, between an inner working angle and the interferometric field), `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `priors.py` | invariant priors that are not plain numpyro priors: `IsotropicInclination`, `IsotropicLatitude`, hierarchical (population) scales; imports nothing from virgil |
-| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
+| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `observed_information` (and `expected_fisher` for a fixed-error prediction) |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `detection.py` | `detection_statistics` (Δχ², grid-marginalized log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
@@ -136,8 +184,10 @@ see that repository's `PLAN.md` for the boundary.
 | `angles.py` | `AngleVector`: an angle prior sampled as a 2-D vector (site `<path>_vec`, ring and von Mises chord residuals), recognized by `fit`, `gauss_newton_mass` and `numpyro_model`; imports nothing from virgil |
 | `orbits.py` | Keplerian orbits in virgil's conventions (`KeplerOrbit`, `ThieleInnesOrbit`), solved with jaxoplanet (the optional `[orbits]` extra, imported lazily); see `design/orbit_scene_joint_fitting.md` |
 | `epochs.py` | `Epochs`: datasets grouped into named epochs, one snapshot of a time-dependent scene per dataset (or epoch), name-keyed per-dataset `noise`, and the model function, data and summed log likelihood for multi-epoch orbit fits; starting them: `rank_orbits` (trial orbits ranked by the data), `chain_starts` (distinct modes, one per chain), `epoch_positions` (per-dataset positions on the scale-marginalized surface, `marginal_loglike`; `gap_marginal`, `chi2_raw`, `scale`; night `flags` with reasons, `NightFlag`; a uniform-disc `primary_diam`) and `start_from_positions` (positions → `starting_orbits` → ranking with `scales=` → `fit` from distinct starts, as an `OrbitStart`); see `design/visibility_orbits.md` |
-| `aliases.py` | `fit_orbit_aliases`: orbits whose epochs undersample the period; alias bands `N = round(T/P)` fitted to the observables of all epochs (error scales marginalized), Laplace and importance-sampling evidences per band, band probabilities and posterior samples; optional uniform-disk primary, per-epoch V² amplitude and flux-flip refits; flagged nights (`EpochPositions.flags`) seed nothing but still count (`skip_flagged`, `AliasResult.unseeded`); the result API (`AliasResult.save`/`load`, and `scene()`, `residuals(data)` and `chi2_per_night(data)` on bands and the result, which rebuild the fit's scene and raw per-night χ²/N); imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models` and `orbits`; see `design/orbit_aliases.md` |
+| `aliases.py` | `fit_orbit_aliases`: orbits whose epochs undersample the period; alias bands `N = round(T/P)` fitted to the observables of all epochs (error scales marginalized), Laplace and importance-sampling evidences per band, band probabilities and posterior samples; optional uniform-disk primary, per-epoch V² amplitude and flux-flip refits; flagged nights (`EpochPositions.flags`) seed nothing but still count (`skip_flagged`, `AliasResult.unseeded`); the result API (`AliasResult.save`/`load`, and `scene()`, `residuals(data)` and `chi2_per_night(data)` on bands and the result, which rebuild the fit's scene and raw per-night χ²/N); imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models`, `orbits` and `tempering`; `temper=True` tempers every evidence by the effective-channel factor (`AliasResult.temper_f`); see `design/orbit_aliases.md` |
+| `tempering.py` | tempering the orbit evidence for correlated spectral channels: `adjacent_channels` (neighbouring-channel pairs of a dataset), `estimate_factors` (the effective-channel factors f = N/N_eff from residuals, per block and pooled, as `ChannelFactors`), `lag1_correlation`, `factor_from_correlation`; imports nothing from virgil; used by `aliases` |
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
+| `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
@@ -145,7 +195,7 @@ see that repository's `PLAN.md` for the boundary.
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
-| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
+| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5; `keywords=` names the parameters a function declares keyword-only, e.g. `likelihood_grid`'s `data` and `grid`, and any other positional call raises a `TypeError` naming the keyword call) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them with `flat_coordinates=True` (opt-in; private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `_linear.py` | the shared algebra for parameters that enter linearly and are marginalized analytically (`LinearMarginal`), used by `gains`, `observables` and `orbits` (private) |
@@ -154,7 +204,7 @@ see that repository's `PLAN.md` for the boundary.
 | `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: stable, scriptable pipelines (`BinaryPipeline`, `StarPipeline`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_common` (helpers both pipelines share: χ², residual moments, quantiles, data geometry, prior-bound fractions, figure saving), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `star` (with a registry of models by short name), `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |
 
-Module-level imports flow one way. `_utils` is at the bottom; `_geometry`, `_linear`, `_grid`, `spectra`, `scenes` and `_elr` import only `_utils` (and `scenes` also `_geometry`); `_precision`, `_flat`, `_gauss_newton`, `angles`, `priors` and `_closure` import nothing from virgil; `_deprecate` is imported everywhere and imports `oidata` only lazily. Then `oifits`, `amigo`, `_closure`, `gains` and `observables` (both on `_linear`) → `oidata` → `coverage`. `orbits` imports `_utils`, `_geometry`, `_linear`, `angles` and `priors` (and jaxoplanet lazily); `_elr`, `spectra` and `orbits` → `models` → `fields` (which also imports `_utils` and `_geometry`) and `likelihood` (which also imports `angles`, `_flat` and `gains`) → `fitting` (also `fields`) → `imaging` (also `fields` and `spectra`). `likelihood` → `inference` → `grid_fit`, and `likelihood` → `limits`; `grid_fit` and `limits` both use `_grid` and do not import each other; `limits` → `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `metrics` imports `imaging`; `ensemble` imports `fields`, `fitting`, `imaging`, `metrics` and `models`. `epochs` imports `_gauss_newton`, `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`; `aliases` imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models` and `orbits`. `svi` imports `fitting` and `likelihood`; `simulate` imports `fitting`.
+Module-level imports flow one way. `_utils` is at the bottom; `_geometry`, `_linear`, `_grid`, `spectra`, `scenes` and `_elr` import only `_utils` (and `scenes` also `_geometry`); `_precision`, `_flat`, `_gauss_newton`, `angles`, `priors` and `_closure` import nothing from virgil; `_deprecate` is imported everywhere and imports `oidata` only lazily. Then `oifits`, `amigo`, `_closure`, `gains` and `observables` (both on `_linear`) → `oidata` → `coverage`. `orbits` imports `_utils`, `_geometry`, `_linear`, `angles` and `priors` (and jaxoplanet lazily); `_elr`, `spectra` and `orbits` → `models` → `fields` (which also imports `_utils` and `_geometry`) and `likelihood` (which also imports `angles`, `_flat` and `gains`) → `fitting` (also `fields`) → `imaging` (also `fields` and `spectra`). `likelihood` → `inference` → `grid_fit`, and `likelihood` → `limits`; `grid_fit` and `limits` both use `_grid` and do not import each other; `limits` → `plotting`. `detection` imports `grid_fit`, `limits`, `_grid` and `likelihood`. `metrics` imports `imaging`; `ensemble` imports `fields`, `fitting`, `imaging`, `metrics` and `models`. `epochs` imports `_gauss_newton`, `likelihood`, `fitting`, `models` and `orbits`; `orbit_search` imports `epochs`, `likelihood`, `models` and `orbits`; `aliases` imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models`, `orbits` and `tempering` (which imports nothing from virgil). `svi` imports `fitting` and `likelihood`; `simulate` imports `fitting`.
 
 Five imports run inside functions, to break what would be cycles: `amigo` → `oidata`, `_deprecate` → `oidata`, `epochs` → `orbit_search`, `likelihood` → `observables` and `plotting` → `imaging`. Keep new cross-module imports at module level and in the order above; a new lazy import needs a comment saying which cycle it breaks.
 
@@ -181,9 +231,8 @@ phase of the orbit-consolidation plan adds it (virgil-validation's
 | V² amplitude (contrast loss) | per-night amplitude, profiled; on by default (range 0.5 to 1.2) for squared visibilities | `aliases.fit_orbit_aliases(vis_amp=True)` | `test_aliases.py::test_the_epoch_v2_amplitude_is_profiled`, `test_aliases.py::test_default_vis_amp_is_off_for_data_without_squared_visibilities`, `test_epochs.py::test_an_amplitude_loss_with_a_point_primary_is_not_a_resolved_disc`, `test_aliases.py::test_the_engine_defaults_need_no_per_system_arguments` |
 | Result must be reloadable and checkable | `AliasResult.save/load`, `scene`, `residuals`, `chi2_per_night` | `aliases.AliasResult` | `test_aliases.py::test_a_saved_result_loads_back_equal` |
 | Too few seeding nights (one unflagged night, all flagged) | fewer than two seeds fall back to random starts with a warning; seeds from three or fewer nights keep random candidates | `aliases._seeding_positions` | `test_aliases.py::test_fewer_than_two_seeding_nights_fall_back_to_random_starts` |
+| Untempered evidence (correlated channels: band p = 1.000 at χ²/N 12, posteriors far too narrow) | `temper=True` (default): per-block `dof = 1/f_b` in the likelihood, `f = (1 + ρ)/(1 - ρ)` from the lag-1 correlation ρ of neighbouring channels in the residuals of each night's best static fit (white noise gives f = 1); `temper=False` is the old evidence, a float a fixed f; `LABELS_FREE_NATS` and `RESOLVE_NATS` are in tempered nats | `tempering.estimate_factors`, `aliases._temper_factors`, `aliases._loglike`, `epochs._Surface.score`, `AliasResult.temper_f`, `.temper_blocks`, `.tempering` (f outside [0.5, 2]) | `test_tempering.py::test_tempering_turns_an_overconfident_band_probability_into_a_calibrated_one`, `test_tempering.py::test_white_noise_gives_f_within_five_percent_of_one`, `test_tempering.py::test_temper_false_reproduces_the_untempered_evidence`, `test_tempering.py::test_the_factor_is_saved_and_loaded` |
 
-**Planned (not yet in code).** A tempered evidence with effective channels
-(plan phase 1d). Add a row, with its test, when it lands.
 
 ## Flux and contrast
 

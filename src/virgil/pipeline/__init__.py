@@ -1,4 +1,4 @@
-"""Stable, scriptable pipelines on top of virgil.
+"""Scriptable pipelines on top of virgil (provisional in 0.4).
 
 A pipeline runs a standard analysis in named stages with simple defaults
 that keywords override, and writes a standard run folder: ``run.json``
@@ -13,11 +13,15 @@ reloads into real virgil objects with [`load`][virgil.pipeline.load].
     res = load("runs/hd1234")          # later, in a fresh session
     res.summary["companion"]["sep_mas"], res.checks
 
-The class names, constructor keywords, stage names, ``Result`` accessors,
-the output schema ``virgil-pipeline-run-v1`` and the keys of
-``summary.json`` form a stable contract: they change only by addition.
-The pipelines need the ``pipeline`` extra
-(``pip install 'virgil-astro[pipeline]'``).
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
+The whole of ``virgil.pipeline`` is provisional in 0.4: class names,
+constructor keywords, stage names, settings, summary keys and checks may
+change in any 0.4.x release. The run folder is versioned
+(``virgil-pipeline-run-v1``) and ``load`` refuses schemas it does not know.
+The pipelines are promoted to stable after a release of use. They need
+the ``pipeline`` extra (``pip install 'virgil-astro[pipeline]'``).
 """
 
 import importlib
@@ -43,6 +47,8 @@ __all__ = [
     "StarPipeline",
     "load",
 ]
+
+__provisional__ = ("*",)
 
 
 def __getattr__(name):

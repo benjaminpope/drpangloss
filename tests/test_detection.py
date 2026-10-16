@@ -80,7 +80,7 @@ def test_delta_chi2_is_non_negative_and_at_least_the_grid_maximum():
         result = _quiet(detection_statistics, BinaryModelCartesian, data, grid)
         assert float(result["delta_chi2"]) >= 0.0
         # The flux optimizer only improves on the best grid point.
-        grid_ll = likelihood_grid(BinaryModelCartesian, data, grid)
+        grid_ll = likelihood_grid(BinaryModelCartesian, data=data, grid=grid)
         loglike0 = loglike(np.array([0.0, 0.0, 0.0]), *_args(data))
         grid_delta = 2.0 * float(np.max(grid_ll) - loglike0)
         assert float(result["delta_chi2"]) >= grid_delta - 1e-3
@@ -510,6 +510,38 @@ def test_save_load_and_concatenate_round_trip(tmp_path):
     inj_only = _recover(key=4, n_null=0, injections=inj)
     both = DetectionMC.concatenate([null_only, inj_only])
     assert both.n_null == 4 and both.n_injected == 2
+
+
+def _rewrite_meta(path, out, **changes):
+    """Copy a saved result with ``meta`` changed (``None`` drops a key)."""
+    import json
+
+    with onp.load(path, allow_pickle=False) as f:
+        arrays = {name: f[name] for name in f.files}
+    meta = json.loads(str(arrays["meta"]))
+    for key, value in changes.items():
+        if value is None:
+            meta.pop(key)
+        else:
+            meta[key] = value
+    arrays["meta"] = onp.array(json.dumps(meta))
+    onp.savez(out, **arrays)
+
+
+def test_load_checks_the_file_format_version(tmp_path):
+    a = _recover(key=1, n_null=4)
+    path = tmp_path / "mc.npz"
+    a.save(path)
+    assert DetectionMC.load(path).meta["format"] == 1
+    # A file without a version is version 1.
+    old = tmp_path / "old.npz"
+    _rewrite_meta(path, old, format=None)
+    assert DetectionMC.load(old).n_null == a.n_null
+    # An unknown version is refused, not misread.
+    new = tmp_path / "new.npz"
+    _rewrite_meta(path, new, format=2)
+    with pytest.raises(ValueError, match="format 2"):
+        DetectionMC.load(new)
 
 
 def test_concatenate_refuses_incompatible_results():

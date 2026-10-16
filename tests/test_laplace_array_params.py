@@ -1,4 +1,4 @@
-"""laplace_cov, fisher and laplace_parameter_uncertainty with array paths.
+"""laplace_cov, observed_information and laplace_parameter_uncertainty with array paths.
 
 ``values`` is the flat concatenation of every path's elements, so an array
 path of size k takes k entries and the covariance is over those elements.
@@ -11,7 +11,7 @@ import pytest
 import virgil.models as vm
 from virgil.coverage import vlti_oidata
 from virgil.inference import (
-    fisher,
+    observed_information,
     laplace_cov,
     laplace_parameter_uncertainty,
 )
@@ -46,7 +46,7 @@ def test_array_of_size_one_matches_scalar_only_covariance():
         keep = [0, 1, 2, 3, 6]
         # The scalar-only model has fixed (not free) az_amps/az_pas, so
         # compare through the full information matrix instead.
-        info = fisher(values, paths, model, data)
+        info = observed_information(values, paths, model, data)
         sub = onp.linalg.inv(info)[onp.ix_(keep, keep)]
         assert onp.allclose(sub, cov[onp.ix_(keep, keep)])
         assert onp.all(onp.isfinite(scalar))
@@ -67,7 +67,7 @@ def test_array_path_of_size_two_is_flattened():
         values = onp.array([6.0, 0.5, 0.5, 120.0, 60.0, 0.8])
         cov = laplace_cov(values, paths, model, data)
         assert cov.shape == (6, 6)
-        info = fisher(values, paths, model, data, ridge=1e-10)
+        info = observed_information(values, paths, model, data, ridge=1e-10)
         assert onp.allclose(cov, onp.linalg.inv(info + 1e-10 * onp.eye(6)))
         sigma = laplace_parameter_uncertainty(
             values, paths, model, data, "rim.flux"
@@ -83,7 +83,7 @@ def test_array_path_of_size_two_is_flattened():
 
 @pytest.mark.validates(
     "virgil.inference.laplace_cov",
-    "virgil.inference.fisher",
+    "virgil.inference.observed_information",
     roots=["mathematics"],
 )
 def test_information_matches_finite_difference_hessian():
@@ -108,7 +108,7 @@ def test_information_matches_finite_difference_hessian():
                     - nll(x0 - ei + ej)
                     + nll(x0 - ei - ej)
                 ) / (4 * h[i] * h[j])
-        info = onp.asarray(fisher(x0, paths, model, data))
+        info = onp.asarray(observed_information(x0, paths, model, data))
         scale = onp.sqrt(
             onp.outer(onp.abs(onp.diag(info)), onp.abs(onp.diag(info)))
         )
