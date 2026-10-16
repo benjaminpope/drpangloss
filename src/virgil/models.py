@@ -1320,7 +1320,9 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
         for n in range(1, order + 1):
             for k in range(n + 1):
                 expand[n - 1, k] = math.comb(n, k) * (-1.0) ** k
-        coeffs = np.zeros(order + 1).at[0].set(1.0) - self.u @ expand
+        coeffs = np.zeros(order + 1).at[0].set(1.0) - np.matmul(
+            self.u, expand, precision=jax.lax.Precision.HIGHEST
+        )
         return coeffs, tuple(float(k) for k in range(order + 1))
 
 
@@ -3594,7 +3596,9 @@ class RadialGP(_RadialProfile, _RadialFunction):
         if self.z is None or self.z.shape[0] != nodes.shape[0]:
             raise ValueError("the latents do not match the nodes.")
         factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
-        return nodes, self.mu + self.sigma * (factor @ self.z)
+        return nodes, self.mu + self.sigma * np.matmul(
+            factor, self.z, precision=jax.lax.Precision.HIGHEST
+        )
 
     def nodes(self):
         """The nodes in milliarcseconds."""
@@ -3617,7 +3621,9 @@ class RadialGP(_RadialProfile, _RadialFunction):
         nodes = self._nodes()
         factor = _gp_factor(nodes, self.ell, self.nu, self.jitter)
         z = jax.random.normal(key, (int(n), nodes.shape[0]), nodes.dtype)
-        g = self.mu + self.sigma * (z @ factor.T)
+        g = self.mu + self.sigma * np.matmul(
+            z, factor.T, precision=jax.lax.Precision.HIGHEST
+        )
         if r is not None:
             g = _linear_interp(r, nodes, g)
         return np.exp(g) if positive else g
@@ -3817,7 +3823,12 @@ class PolarKernel(zdx.Base):
         nodes = self.nodes()
         factor = _gp_factor(nodes, self.ell_r, self.nu_r, 1e-6)
         scale = self.sigma * np.sqrt(self.spectrum(z.shape[1]))
-        g = np.einsum("ij,kmj->kmi", factor, z) * scale[None, :, None]
+        g = (
+            np.einsum(
+                "ij,kmj->kmi", factor, z, precision=jax.lax.Precision.HIGHEST
+            )
+            * scale[None, :, None]
+        )
         return _linear_interp(r, nodes, g)
 
     def draws(self, key, degree, n=1, r=None):
@@ -4971,8 +4982,9 @@ class PolarDisk(Component):
             valid = valid & self.height.is_physical()
         if self.harmonics is not None and self.harmonics.degree:
             valid = valid & (self.min_intensity() >= -1e-6)
-            if self.harmonics.prior is not None:
-                valid = valid & self.harmonics.prior.is_physical()
+            prior = getattr(self.harmonics, "prior", None)
+            if prior is not None:
+                valid = valid & prior.is_physical()
         if isinstance(self.spectral_index, RadialGP):
             valid = valid & self.spectral_index.is_physical()
         if self.wavel0 is not None:
@@ -5760,9 +5772,16 @@ def smeared_model(model, u, v, wavel, bandwidth):
     component are taken at the channel centre, and an extended component
     is smeared as if it sat at its centre offset (its internal structure
     is not smeared). Only [`System`][virgil.models.System] trees of
-    [`Component`][virgil.models.Component] shapes are supported; other
-    models, including ``Image``, raise ``TypeError``. A component at zero offset is exactly
-    unaffected.
+    [`Component`][virgil.models.Component] shapes are supported, along
+    with [`Resolved`][virgil.models.Resolved] pieces (which have no offset to
+    smear), the binary models
+    ([`BinaryModelCartesian`][virgil.models.BinaryModelCartesian] and
+    [`BinaryModelAngular`][virgil.models.BinaryModelAngular], smeared as
+    their ``to_system()``), and [`Rotated`][virgil.models.Rotated] scenes of
+    these (the baselines are rotated). Other models, including ``Image`` and
+    an [`OrbitalBinary`][virgil.models.OrbitalBinary] (smear its
+    ``at(mjd)`` snapshot, as `OIData` does), raise ``TypeError``
+    naming the model. A component at zero offset is exactly unaffected.
 
     [`OIData`][virgil.oidata.OIData] calls this when its ``bandwidth`` is
     set (read from ``EFF_BAND``, or by
@@ -5794,9 +5813,25 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
         ra, dec = ra0 + model.dra, dec0 + model.ddec
         arg = bandwidth * mas2rad * (u * ra + v * dec) / wavel**2
         return model.model(u, v, wavel) * np.sinc(arg)
+    if isinstance(model, Resolved):
+        # Zero on every non-zero baseline and at no offset: nothing to smear.
+        return model.model(u, v, wavel)
+    if isinstance(model, BinaryModelAngular):
+        model = model.to_cartesian()
+    if isinstance(model, BinaryModelCartesian):
+        return _smeared(model.to_system(), u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, Rotated):
+        u, v = rotate(u, v, -model.rotation_deg)
+        return _smeared(model.source, u, v, wavel, bandwidth, ra0, dec0)
+    if isinstance(model, OrbitalBinary):
+        raise TypeError(
+            "OrbitalBinary changes with time: smear a snapshot, "
+            "model.at(mjd) (OIData.model does this per sample)."
+        )
     raise TypeError(
-        "Bandwidth smearing supports Systems of Component shapes (not Image,"
-        " whose flux is not at its offset); got "
+        "Bandwidth smearing supports Systems of Component shapes, Resolved, "
+        "BinaryModelCartesian, BinaryModelAngular and Rotated of these (not "
+        "Image, whose flux is not at its offset); got "
         f"{type(model).__name__}. Remove the bandwidth (with_bandwidth(None))"
         " to evaluate it unsmeared."
     )

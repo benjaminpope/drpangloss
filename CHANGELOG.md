@@ -585,6 +585,16 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- **Projected correlated closure phases keep only their real directions in float32.** When an operator (a kernel-phase or DISCO phase projection) is applied to closure phases with four or more telescopes, their correlation matrix is singular, and `OIData` rotates the operator onto the eigenvectors of the projected covariance with a cut at 1e-10 of the largest eigenvalue. That is below float32 eps, so the numerically zero directions were kept (33 to 36 outputs where 30 are real, for ten four-telescope frames, in float32), with errors of 1e-5 against 1e-2 and so a weight 10⁶ times that of a real one. The covariance and its `eigh` are now computed on the host in float64, as this runs once at construction and is never traced; the arrays returned are in the default dtype. Operators that already whiten the covariance (as DISCO operators do) take the unchanged diagonal branch.
+
+- **`PolarDisk.is_physical` works with a `VonMises` azimuthal model.** It read `harmonics.prior`, which `VonMises` does not have, so `model_loglike(..., reject_unphysical=True)` and `System.is_physical` raised `AttributeError` on any scene containing one.
+
+- **`SharedFlux` grids are no longer misread as `(lo, hi, n)`.** A three-value tuple was a range whenever its last element was at least 1, so `SharedFlux(grid=(0.01, 0.1, 1.0))` became the single flux 0.01. The `(lo, hi, n)` form now needs a tuple with a Python `int` `n`; a list, an array or a tuple whose last element is a float is a list of flux values (the same for `slope`).
+
+- **`Precision.HIGHEST` in more contractions.** The limb-darkening coefficient matmul (binomials up to C(22, 11) with alternating signs), the `RadialGP` and `PolarKernel` contractions and the DISCO operator application now request full precision, as the other forward-model matmuls do; on A100/H100 the default (TF32) loses the cancellation.
+
+- **Bandwidth smearing for binaries, rotated scenes and resolved backgrounds.** With `bandwidth` set, `BinaryModelCartesian`, `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())` raised a `TypeError` saying only that Systems of Components are supported. They are now smeared (binaries as their `to_system()`, `Resolved` has no offset to smear, `Rotated` rotates the baselines), and an unsupported model, such as an `OrbitalBinary` that is not a snapshot, raises a `TypeError` that names it and lists the supported ones.
+
 - **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
 
 - **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'

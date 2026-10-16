@@ -254,6 +254,13 @@ the components of a `System` before they are weighted and summed. An extended
 component is smeared as if it sat at its centre offset. Without a bandwidth
 (the default) nothing changes. See `virgil.models.smeared_model`.
 
+Supported models are `System`s of components (nested to any depth),
+`BinaryModelCartesian` and `BinaryModelAngular` (smeared as their
+`to_system()`), `Resolved` pieces (zero visibility, so nothing to smear) and
+`Rotated` scenes of these. `Image` and any other model raise a `TypeError`
+naming it; an `OrbitalBinary` is smeared through its `at(mjd)` snapshot, which
+`OIData` evaluates for each sample.
+
 ## Not yet
 
 virgil does not model the following yet: the
