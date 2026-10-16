@@ -60,11 +60,13 @@ def test_log_integral_of_a_steep_cutoff_edge():
     assert float(got) == pytest.approx(exact, abs=1e-3)
 
 
-def test_log_integral_has_no_window_gradient():
-    """d/dm of log ∫ exp(-(t-m)²/2) is 0: the window carries no gradient."""
-    grad = jax.grad(
-        lambda m: log_integral(
-            lambda t: -0.5 * (t - m) ** 2, -8.0, 8.0, np.asarray(0.0)
-        )
-    )(np.asarray(0.5))
-    assert abs(float(grad)) < 1e-6
+def test_log_integral_gradient_matches_a_finite_difference():
+    """The window carries no gradient, and the quadrature's own is exact:
+    d/dm of log ∫ exp(-(t-m)²/2) (the peak guess moves with m) is 0."""
+
+    def value(m):
+        return log_integral(lambda t: -0.5 * (t - m) ** 2, -8.0, 8.0, m)
+
+    m, h = np.asarray(0.5), 1e-4
+    fd = (value(m + h) - value(m - h)) / (2 * h)
+    assert abs(float(jax.grad(value)(m)) - float(fd)) < 1e-6
