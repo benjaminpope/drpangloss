@@ -35,7 +35,9 @@ score.
 
 import copy
 import dataclasses
+import functools
 import math
+import types
 
 import equinox as eqx
 import jax
@@ -47,6 +49,8 @@ from ._precision import cast_tree, run_in
 from .epochs import (
     _SCALES,
     Epochs,
+    _ident,
+    _Static,
     _check_dof,
     _dof_for,
     _orbit_batch_size,
@@ -838,11 +842,11 @@ def _first(stacked, k):
     return jax.tree_util.tree_map(lambda x: x[k], stacked)
 
 
-def _cvis_at_times(epochs, k, data, scene):
+def _cvis_at_times(times, k, data, scene):
     """The scene's complex visibilities at every sample's own time, or at
     the dataset's snapshot time when the data carry no times."""
     if data.dt is None:
-        return data._cvis(scene.at(float(epochs.times[k])))
+        return data._cvis(scene.at(float(times[k])))
     return data._cvis(scene)
 
 
@@ -873,7 +877,7 @@ def _fixed_parts(epochs, model, stacked, n, dtype):
                     )
                 t0 = np.broadcast_to(s0.total_spectrum(wavel), wavel.shape)
                 t1 = np.broadcast_to(s1.total_spectrum(wavel), wavel.shape)
-                a = _cvis_at_times(epochs, k, d, s0) * t0
+                a = _cvis_at_times(epochs.times, k, d, s0) * t0
                 values.append((a, t0, t1))
             (a, t0, t1), (a2, t02, t12) = values
             scale = float(np.max(np.abs(a))) or 1.0
@@ -891,9 +895,12 @@ def _fixed_parts(epochs, model, stacked, n, dtype):
             if k == 0:
                 half = model(first, 0.5)
                 th = np.broadcast_to(half.total_spectrum(wavel), wavel.shape)
-                b = _cvis_at_times(epochs, k, d, model(first, 1.0)) * t1 - a
+                b = (
+                    _cvis_at_times(epochs.times, k, d, model(first, 1.0)) * t1
+                    - a
+                )
                 expect = (a + 0.5 * b) / (t0 + 0.5 * (t1 - t0))
-                got = _cvis_at_times(epochs, k, d, half)
+                got = _cvis_at_times(epochs.times, k, d, half)
                 if (
                     not onp.allclose(
                         onp.asarray(th),
@@ -929,6 +936,105 @@ def _peak_scales(scorers, chi2_peak, dofs, s_max):
             reach = s_hat * onp.exp(1.0 / onp.sqrt(2.0 * dof * nu))
             at_bound.append(onp.any(reach >= float(s_max), axis=1))
     return onp.stack(scale, axis=1), onp.stack(at_bound, axis=1)
+
+
+def _score_static(
+    model, epochs, bands, scorers, term_fns, terms, shared, scales,
+    batch_size, s_max,
+):  # fmt: skip
+    """The static argument of ``_score_kernel``: everything the trace
+    bakes in apart from the traced data (see ``_Static``)."""
+    slim = []
+    for sc in scorers:
+        sc = copy.copy(sc)
+        sc.plain = sc.gains = sc.offsets = None
+        slim.append(sc)
+    times = tuple(float(t) for t in epochs.times)
+    band_key = tuple(
+        (
+            b.name, b.shape, b.datasets, float(b.wavel0),
+            *(onp.asarray(x).tobytes() for x in (
+                b.log_weight, b.flux_axis, b.slope_axis)),
+        )
+        for b in bands
+    )  # fmt: skip
+    key = (
+        _ident(model), tuple(_ident(t) for t in terms), scales, s_max,
+        int(batch_size), times, band_key, int(shared.newton),
+        int(shared.order),
+        tuple((s.surface._key(), tuple(s.surface.nu), s.n_vis, s.n_phase)
+              for s in slim),
+    )  # fmt: skip
+    payload = types.SimpleNamespace(
+        model=model, times=times, bands=bands, scorers=tuple(slim),
+        term_fns=term_fns, scales=scales, batch_size=int(batch_size),
+        shared=types.SimpleNamespace(
+            newton=int(shared.newton), order=int(shared.order)
+        ),
+    )  # fmt: skip
+    return _Static(key, payload)
+
+
+@functools.partial(jax.jit, static_argnames=("static",))
+def _score_kernel(
+    static, stacked, plains, gains, offsets, fixed, log_ratio, grids, dofs
+):
+    """One compile per layout: the data and the dof tempering are traced."""
+    p = static.payload
+
+    def one(orbit):
+        b_parts = []
+        for k, plain in enumerate(plains):
+            a, t0, _ = fixed[k]
+            scene = p.model(orbit, 1.0)
+            t1 = t0 + fixed[k][2]
+            b_parts.append(_cvis_at_times(p.times, k, plain, scene) * t1 - a)
+        marginals, best, summaries = [], [], []
+        chi2_peak = [None] * len(plains)
+        for band, (log_flux, slope) in zip(p.bands, grids):
+
+            def at(lf, beta, band=band):
+                total = 0.0
+                for k in band.datasets:
+                    a, t0, dt = fixed[k]
+                    f = np.exp(lf + beta * log_ratio[k])
+                    cvis = (a + f * b_parts[k]) / (t0 + f * dt)
+                    s = p.scorers[k]
+                    chi2 = s.chi2(cvis, plains[k], gains[k], offsets[k])
+                    total = total + s.score(chi2, dofs[k], plains[k], p.scales)
+                return total
+
+            scores = jax.vmap(at)(log_flux, slope)
+            m, top, summary = _band_marginal(band, p.shared, at, scores)
+            for k in band.datasets:
+                a, t0, dt = fixed[k]
+                f = summary[0] * np.exp(summary[3] * log_ratio[k])
+                cvis = (a + f * b_parts[k]) / (t0 + f * dt)
+                chi2_peak[k] = p.scorers[k].chi2(
+                    cvis, plains[k], gains[k], offsets[k]
+                )
+            marginals.append(m)
+            best.append(top)
+            summaries.append(summary)
+        # Never a zero-size output: lax.map's remainder reshapes it.
+        extra = (
+            np.stack([np.asarray(f(orbit)) for f in p.term_fns])
+            if p.term_fns
+            else np.zeros((1,), log_flux.dtype)
+        )
+        extra_sum = np.sum(extra) if p.term_fns else 0.0
+        score = sum(marginals) + extra_sum
+        profiled = sum(best) + extra_sum
+        columns = [np.stack(c) for c in zip(*summaries)]
+        return (
+            np.where(np.isfinite(score), score, -np.inf),
+            np.where(np.isfinite(profiled), profiled, -np.inf),
+            *columns,
+            extra,
+            tuple(chi2_peak),
+        )
+
+    return jax.lax.map(one, stacked, batch_size=p.batch_size)
 
 
 @old_order("epochs", "model", data="epochs")
@@ -1101,6 +1207,10 @@ def score_orbits(
         for k, d in enumerate(epochs.data)
     )
 
+    static = _score_static(
+        model, epochs, bands, scorers, term_fns, terms, shared, scales,
+        batch_size, s_max,
+    )  # fmt: skip
     with run_in(dtype):
         args = cast_tree(
             (
@@ -1116,71 +1226,7 @@ def score_orbits(
             dtype,
         )
 
-        @jax.jit
-        def every(
-            stacked, plains, gains, offsets, fixed, log_ratio, grids, dofs
-        ):
-            def one(orbit):
-                b_parts = []
-                for k, plain in enumerate(plains):
-                    a, t0, _ = fixed[k]
-                    scene = model(orbit, 1.0)
-                    t1 = t0 + fixed[k][2]
-                    b_parts.append(
-                        _cvis_at_times(epochs, k, plain, scene) * t1 - a
-                    )
-                marginals, best, summaries = [], [], []
-                chi2_peak = [None] * len(plains)
-                for band, (log_flux, slope) in zip(bands, grids):
-
-                    def at(lf, beta, band=band):
-                        total = 0.0
-                        for k in band.datasets:
-                            a, t0, dt = fixed[k]
-                            f = np.exp(lf + beta * log_ratio[k])
-                            cvis = (a + f * b_parts[k]) / (t0 + f * dt)
-                            s = scorers[k]
-                            chi2 = s.chi2(
-                                cvis, plains[k], gains[k], offsets[k]
-                            )
-                            total = total + s.score(
-                                chi2, dofs[k], plains[k], scales
-                            )
-                        return total
-
-                    scores = jax.vmap(at)(log_flux, slope)
-                    m, top, summary = _band_marginal(band, shared, at, scores)
-                    for k in band.datasets:
-                        a, t0, dt = fixed[k]
-                        f = summary[0] * np.exp(summary[3] * log_ratio[k])
-                        cvis = (a + f * b_parts[k]) / (t0 + f * dt)
-                        chi2_peak[k] = scorers[k].chi2(
-                            cvis, plains[k], gains[k], offsets[k]
-                        )
-                    marginals.append(m)
-                    best.append(top)
-                    summaries.append(summary)
-                # Never a zero-size output: lax.map's remainder reshapes it.
-                extra = (
-                    np.stack([np.asarray(f(orbit)) for f in term_fns])
-                    if term_fns
-                    else np.zeros((1,), log_flux.dtype)
-                )
-                extra_sum = np.sum(extra) if term_fns else 0.0
-                score = sum(marginals) + extra_sum
-                profiled = sum(best) + extra_sum
-                columns = [np.stack(c) for c in zip(*summaries)]
-                return (
-                    np.where(np.isfinite(score), score, -np.inf),
-                    np.where(np.isfinite(profiled), profiled, -np.inf),
-                    *columns,
-                    extra,
-                    tuple(chi2_peak),
-                )
-
-            return jax.lax.map(one, stacked, batch_size=batch_size)
-
-        out = every(*args)
+        out = _score_kernel(static, *args)
     chi2_peak = out[-1]
     out = [onp.asarray(x) for x in out[:-1]]
     scale, scale_at_bound = _peak_scales(scorers, chi2_peak, dofs, s_max)

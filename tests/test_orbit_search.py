@@ -320,6 +320,40 @@ def test_independent_of_batch_size(scored):
     onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
+@pytest.mark.slow  # a second compile for the changed flux grid
+def test_compiles_once_per_layout(scored):
+    from virgil import orbit_search
+
+    kernel = orbit_search._score_kernel
+    epochs, base = scored
+    size = kernel._cache_size()
+    # New data, a new dof and new candidates, same layout: no new compile,
+    # and the reused trace answers for them.
+    other = _epochs(sigma_v2=0.03)
+    moved = [TRUTH, OTHER, OTHER]
+    full = score_orbits(OrbitalBinary, other, moved, shared=SHARED)
+    half = score_orbits(OrbitalBinary, other, moved, shared=SHARED, dof=0.5)
+    blocks = score_orbits(
+        OrbitalBinary,
+        other,
+        moved,
+        shared=SHARED,
+        dof={"vis": 0.5, "phi": 0.8},
+    )
+    again = score_orbits(OrbitalBinary, epochs, CANDIDATES, shared=SHARED)
+    assert kernel._cache_size() == size
+    assert not onp.allclose(full.score, base.score)
+    assert not onp.allclose(half.score, full.score)
+    assert not onp.allclose(blocks.score, half.score)
+    onp.testing.assert_array_equal(again.score, base.score)
+    # A different flux grid of the same shape is a different layout.
+    grid = score_orbits(
+        OrbitalBinary, epochs, CANDIDATES, shared=SharedFlux((0.05, 1.0, 8))
+    )
+    assert kernel._cache_size() == size + 1
+    assert not onp.allclose(grid.score, base.score)
+
+
 def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):
     epochs, f64 = scored
     f32 = score_orbits(
@@ -602,5 +636,5 @@ def test_the_old_data_first_order_still_works_with_a_warning():
     epochs = _epochs()
     new = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
     with pytest.warns(FutureWarning, match="model before the data"):
-        old = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
+        old = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
     assert old.score[0] == new.score[0]

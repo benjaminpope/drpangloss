@@ -39,6 +39,9 @@ Provisional in 0.4:
 
 ### Added
 
+- `starting_orbits(batch_size=)` bounds the memory of the grid solve (the
+  grid is solved in fixed-size batches).
+
 - **Tempered orbit evidence for correlated spectral channels.**
   `fit_orbit_aliases(temper=True)` (default) divides every block's log
   likelihood by the effective-channel factor `f = N / N_eff`, estimated as
@@ -117,6 +120,11 @@ Provisional in 0.4:
   `NoLeastSquaresForm`, as its curvature is not diagonal.
 
 ### Changed
+
+- `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
+  per layout of the data instead of on every call. Results are unchanged.
+  `epoch_positions(batch_size=)` now defaults from the data's size, as the
+  other grid functions do (it was 4096), and `batch_size=0` raises.
 
 - **Imaging and metrics performance.** The evidence helpers (`log_evidence`,
   `error_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
