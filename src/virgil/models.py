@@ -5821,7 +5821,10 @@ def _smeared(model, u, v, wavel, bandwidth, ra0, dec0):
     if isinstance(model, BinaryModelCartesian):
         return _smeared(model.to_system(), u, v, wavel, bandwidth, ra0, dec0)
     if isinstance(model, Rotated):
+        # The inherited offset is in the outer frame: rotate it with (u, v),
+        # which keeps u . offset invariant.
         u, v = rotate(u, v, -model.rotation_deg)
+        ra0, dec0 = rotate(ra0, dec0, -model.rotation_deg)
         return _smeared(model.source, u, v, wavel, bandwidth, ra0, dec0)
     if isinstance(model, OrbitalBinary):
         raise TypeError(

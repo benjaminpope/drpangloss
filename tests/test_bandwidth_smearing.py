@@ -329,3 +329,19 @@ def test_diagnose_smears_the_phase_regime_check():
     plain = diagnose(model, build(False)).checks["phase_regime"][0]
     smeared = diagnose(model, build(True)).checks["phase_regime"][0]
     assert smeared > plain
+
+
+def test_rotated_scene_inside_an_offset_system_keeps_the_outer_frame():
+    data = _data(bandwidth=True)
+    inner = System(a=PointSource(), b=PointSource(flux=FLUX, ddec=150.0))
+    rotated = System(dra=300.0, s=Rotated(inner, 90.0))
+    # The same scene unrotated: the companion 150 mas East of the primary.
+    flat = System(
+        dra=300.0,
+        s=System(a=PointSource(), b=PointSource(flux=FLUX, dra=150.0)),
+    )
+    assert onp.allclose(
+        onp.asarray(data._cvis(rotated)),
+        onp.asarray(data._cvis(flat)),
+        atol=1e-5,
+    )
