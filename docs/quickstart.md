@@ -6,7 +6,11 @@ Install virgil (the PyPI name is `virgil-astro`; `pip install virgil` is a diffe
 pip install virgil-astro
 ```
 
-The file is `data/NuHor_F480M.oifits` in the [repository](https://github.com/benjaminpope/virgil): JWST aperture-masking observations of a single star, so the data contain no companion. To show what a detection looks like, the example injects one into the file's own sampling and errors with [`simulate`][virgil.simulate.simulate]. To fit your own file, load it and skip that line.
+The file is `data/NuHor_F480M.oifits` in the [repository](https://github.com/benjaminpope/virgil): JWST aperture-masking observations of a single star, so the data contain no companion. To show what a detection looks like, the example injects one into the file's own sampling and errors with [`simulate`][virgil.simulate.simulate]. To fit your own file, load it and skip that line. After `pip install`, the file is not on your disk: download it first and point `OIData` at the copy.
+
+```bash
+curl -LO https://raw.githubusercontent.com/benjaminpope/virgil/main/data/NuHor_F480M.oifits
+```
 
 ```python
 import jax

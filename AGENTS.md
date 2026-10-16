@@ -14,8 +14,8 @@ scripts in `examples/`, and tests in `tests/`.
 ## Setup
 
 ```bash
-uv python install 3.11
-uv venv --python 3.11 .venv
+uv python install 3.12
+uv venv --python 3.12 .venv
 uv pip install --python .venv/bin/python -e ".[dev]"
 pre-commit install
 ```
