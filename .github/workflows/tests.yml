@@ -123,7 +123,7 @@ jobs:
             .github/scripts/mem_sampler.sh &
           fi
           echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
-          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
+          .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 ${{ matrix.lowest && '-v --timeout=90' || '' }} \
             --ignore=tests/lint \
             ${{ !matrix.slow && !matrix.orbit_slow && '-m "not slow"' || '' }} \
             ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
