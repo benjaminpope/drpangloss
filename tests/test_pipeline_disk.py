@@ -664,6 +664,57 @@ def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
 
+def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):
+    # The back-fit must lower the objective that is reported, planet included:
+    # on the planet-free scene a ring and the geometry can move to mimic the
+    # planet's signal and the refit with the planet starts from there.
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+        planet=PointSource(dra=-6.0, ddec=-3.0, flux=0.06),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(12))
+    settings = {
+        **SMALL,
+        "harmonic_degree": 0,
+        "max_rings": 2,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    shape = disk._Shape(2, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 6.0,
+        "s1": 1.0,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+    }
+    plain, _, _ = disk._fit_with_planet(pipeline, shape, start)
+    fit, found, search = disk._fit_with_planet(
+        pipeline, shape, start, backfit=True
+    )
+    assert found.planet and search is not None
+    assert fit.chi2 <= plain.chi2
+    radii = sorted(float(fit.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+    assert float(fit.values["dra"]) == pytest.approx(-6.0, abs=0.3)
+    assert float(fit.values["ddec"]) == pytest.approx(-3.0, abs=0.3)
+
+
 def test_fold_pa_keeps_the_disk():
     # The fold's parity rule: pa → pa + 180° with the order-m harmonic times
     # (-1)^m is the same disk. Check it against MultipoleDisk itself.

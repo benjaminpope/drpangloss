@@ -1195,25 +1195,26 @@ def _bic(fit, n):
 def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape`` (without a planet), search the residuals, refit with one.
 
-    With ``backfit`` the rings are re-placed (``_backfit``) before the
-    search. Returns ``(fit, shape, search)``: the search result is None unless
-    ``companion`` is on, and the returned shape has the planet if the search
-    found one.
+    With ``backfit`` the rings are then re-placed (``_backfit``) in the scene
+    that is returned, planet included: the objective is the one reported, so
+    the back-fit can only lower it. Returns ``(fit, shape, search)``: the
+    search result is None unless ``companion`` is on, and the returned shape
+    has the planet if the search found one.
     """
     ctx = p._ctx()
     fit = _fit_rings(p, shape, start)
+    search = None
+    if ctx.companion:
+        search = _point_source_search(
+            fit.model, p.processed, ctx, p.settings["batch_size"]
+        )
+        if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
+            shape = dataclasses.replace(shape, planet=True)
+            values = {**_scalars(fit.values), **_planet_start(search, ctx)}
+            fit = _fit_rings(p, shape, values)
     if backfit:
         fit = _backfit(p, shape, fit)
-    if not ctx.companion:
-        return fit, shape, None
-    search = _point_source_search(
-        fit.model, p.processed, ctx, p.settings["batch_size"]
-    )
-    if search["delta_chi2"] < p.settings["companion_min_delta_chi2"]:
-        return fit, shape, search
-    with_planet = dataclasses.replace(shape, planet=True)
-    values = {**_scalars(fit.values), **_planet_start(search, ctx)}
-    return _fit_rings(p, with_planet, values), with_planet, search
+    return fit, shape, search
 
 
 _RING_KEY = re.compile(r"^(?:[rsfa]|h)(\d+)(?:_(?:re|im)\d+)?$")
