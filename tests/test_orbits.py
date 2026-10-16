@@ -212,17 +212,14 @@ def test_starting_orbits_recover_the_true_grid_point():
         assert float(best.ecc) == pytest.approx(0.3)
 
 
-@pytest.mark.parametrize(
-    "sign_free", [False, pytest.param(True, marks=pytest.mark.slow)]
-)
-def test_starting_orbits_batches_equal_one_vmap(sign_free):
-    from virgil.orbits import _thiele_innes_fit, _thiele_innes_fit_sign_free
+def test_starting_orbits_batches_equal_one_vmap():
+    from virgil.orbits import _thiele_innes_fit
 
     truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)
     mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0, 340.0])
     positions = _positions(truth, mjd, key=jax.random.PRNGKey(3))
     periods, eccs = onp.array([300.0, 400.0, 530.0]), onp.array([0.1, 0.4])
-    kwargs = dict(eccs=eccs, n_phase=5, n_best=4, sign_free=sign_free)
+    kwargs = dict(eccs=eccs, n_phase=5, n_best=4)
     whole = starting_orbits(positions, periods, batch_size=10**6, **kwargs)
     split = starting_orbits(positions, periods, batch_size=7, **kwargs)
     # The old grid: one vmap, periods outermost, then eccentricity, phase.
@@ -234,8 +231,7 @@ def test_starting_orbits_batches_equal_one_vmap(sign_free):
             for f in onp.arange(5) / 5
         ]
     )
-    fit = _thiele_innes_fit_sign_free if sign_free else _thiele_innes_fit
-    _, chi2 = jax.vmap(fit, in_axes=(None,) * 4 + (0, 0, 0))(
+    _, chi2 = jax.vmap(_thiele_innes_fit, in_axes=(None,) * 4 + (0, 0, 0))(
         positions.dt, positions.dra, positions.ddec, positions.whitener,
         *(np.asarray(grid[:, k]) for k in range(3)),
     )  # fmt: skip

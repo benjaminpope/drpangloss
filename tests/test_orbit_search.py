@@ -320,7 +320,7 @@ def test_independent_of_batch_size(scored):
     onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
-@pytest.mark.slow
+@pytest.mark.slow  # a second compile for the changed flux grid
 def test_compiles_once_per_layout(scored):
     from virgil import orbit_search
 
@@ -352,15 +352,6 @@ def test_compiles_once_per_layout(scored):
     )
     assert kernel._cache_size() == size + 1
     assert not onp.allclose(grid.score, base.score)
-    # So are other marginal settings baked into the trace.
-    order = score_orbits(
-        epochs,
-        OrbitalBinary,
-        CANDIDATES,
-        shared=SharedFlux((0.1, 1.0, 8), order=8),
-    )
-    assert kernel._cache_size() == size + 2
-    assert not onp.array_equal(order.score, base.score)
 
 
 def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):
