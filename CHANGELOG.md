@@ -274,7 +274,11 @@ Provisional in 0.4:
   `spectrum()` (used by `render` and the zero-baseline normalization) is the
   value at `wavel0`, the first node, not the mean over the nodes; pass
   `wavel0=` to set it. Negative values now pass the constructor and are
-  checked on the total flux, as for every other spectrum.
+  checked on the total flux, as for every other spectrum. Priors on
+  `comp.flux.values` are therefore not checked for non-negative support (as
+  `comp.flux.ratio` was): keep a non-negative prior (e.g. a log-uniform
+  scale) if every channel must stay positive, and pass `flux_param=` where a
+  grid or plot auto-detected the old key.
 
 ### Migration from 0.3.0
 
