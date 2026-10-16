@@ -123,7 +123,6 @@ def _positions(dra, ddec):
         ddec=onp.asarray(ddec) - 0.2,
         cov=onp.tile(onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, FLUX),
-        gap=onp.ones(n),
         gap_marginal=onp.full(n, 20.0),
         chi2_raw=({},) * n,
         scale=({},) * n,
