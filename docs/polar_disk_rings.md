@@ -1,6 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/polar_disk_rings.ipynb by scripts/sync_tutorial_docs.py. -->
 # A planet in a gap between inclined rings
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 A [`PolarDisk`](api/models/classes/polar_disk.md) describes a disk, ring or halo by a radial brightness profile $I_0(r)$ in the plane of the disk, tilted by `inc` and rotated by `pa`. Its visibility is the Hankel transform of the profile, normalized to one at zero baseline,
 
 $$

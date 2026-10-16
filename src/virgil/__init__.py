@@ -32,11 +32,18 @@ Modules:
   named epochs of data, one snapshot of a moving scene per dataset.
 * [`simulate`][virgil.simulate]: simulated observations and bias tests.
 * [`plotting`][virgil.plotting]: figures.
-* [`pipeline`][virgil.pipeline]: stable, scriptable pipelines with
+* [`pipeline`][virgil.pipeline]: scriptable pipelines (provisional) with
   standard output folders (imported on first use; needs the ``pipeline``
   extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
+
+Everything public is **stable** (a deprecation cycle before any change)
+except the **provisional** features that a module lists in its
+``__provisional__`` tuple and flags in its docstring (new in 0.4: orbit
+search, ``PolarDisk``, pipelines, GP ensembles, SVI), which may change in
+any 0.4.x release. See ``virgil._stability`` and the Stability page of the
+documentation.
 """
 
 import importlib.metadata as _metadata

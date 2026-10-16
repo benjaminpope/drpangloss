@@ -76,6 +76,11 @@ from .models import (
 )
 from ._deprecate import external_stacklevel
 
+__provisional__ = (
+    "clean",
+    "CleanResult",
+)
+
 _HIGHEST = jax.lax.Precision.HIGHEST
 
 
@@ -1420,6 +1425,9 @@ def _joint_refit(
 class CleanResult:
     """The result of :func:`clean`.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Attributes
     ----------
     model : SourceModel
@@ -1491,6 +1499,9 @@ def clean(
     scale_bias=0.0,
 ):
     """Build an image from components, one at a time: gradient CLEAN.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Högbom's CLEAN (Högbom 1974, A&AS 15, 417) repeatedly finds the peak of the residual dirty image
     and adds a fraction (the loop ``gain``) of a point source there. For

@@ -1,5 +1,8 @@
 """Orbits whose epochs undersample the period: alias bands and their evidences.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 When epochs are far apart compared with the period, the number of orbital
 cycles between them is ambiguous, and the likelihood has one narrow ridge
 for each candidate count. [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]
@@ -84,6 +87,8 @@ __all__ = [
     "position_profile",
     "spectral_window",
 ]
+
+__provisional__ = ("*",)
 
 # Sampled coordinates (flat under the Jeffreys prior): log P, the time of
 # periastron as a fraction of the period, e, cos i, omega, Omega (degrees),

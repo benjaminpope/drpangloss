@@ -105,6 +105,12 @@ see that repository's `PLAN.md` for the boundary.
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
 - New model code goes in `src/virgil/models.py`.
+- New public features start **provisional**: list the name in the module's
+  `__provisional__` tuple (`("*",)` for a whole new module), put the notice
+  from `virgil._stability.ADMONITION` in its docstring, and add it to
+  `docs/stability.md` and the CHANGELOG's Stability section;
+  `tests/test_stability.py` checks the first two. Promotion to stable is
+  Ben's decision at a release.
 - Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
   shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
@@ -139,6 +145,7 @@ see that repository's `PLAN.md` for the boundary.
 | `aliases.py` | `fit_orbit_aliases`: orbits whose epochs undersample the period; alias bands `N = round(T/P)` fitted to the observables of all epochs (error scales marginalized), Laplace and importance-sampling evidences per band, band probabilities and posterior samples; optional uniform-disk primary, per-epoch V² amplitude and flux-flip refits; flagged nights (`EpochPositions.flags`) seed nothing but still count (`skip_flagged`, `AliasResult.unseeded`); the result API (`AliasResult.save`/`load`, and `scene()`, `residuals(data)` and `chi2_per_night(data)` on bands and the result, which rebuild the fit's scene and raw per-night χ²/N); imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models`, `orbits` and `tempering`; `temper=True` tempers every evidence by the effective-channel factor (`AliasResult.temper_f`); see `design/orbit_aliases.md` |
 | `tempering.py` | tempering the orbit evidence for correlated spectral channels: `adjacent_channels` (neighbouring-channel pairs of a dataset), `estimate_factors` (the effective-channel factors f = N/N_eff from residuals, per block and pooled, as `ChannelFactors`), `lag1_correlation`, `factor_from_correlation`; imports nothing from virgil; used by `aliases` |
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
+| `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
