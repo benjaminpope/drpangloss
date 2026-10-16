@@ -456,10 +456,12 @@ def test_rescaling_one_dataset_leaves_the_marginal_ranking_unchanged():
     )
     quoted = ranked(nights[0], "quoted")
     assert not onp.array_equal(ranked(rescaled, "quoted").order, quoted.order)
-    # The default is the marginal ranking.
-    both = Epochs({"a": nights[0], "b": nights[1]})
+    # The default is the marginal ranking: on the rescaled night the quoted
+    # ranking moves (above) and the default does not.
+    both = Epochs({"a": rescaled, "b": nights[1]})
     default = rank_orbits(model, both, orbits)
     onp.testing.assert_array_equal(default.order, marginal.order)
+    assert not onp.array_equal(ranked(rescaled, "quoted").order, default.order)
 
 
 # ---------------------------------------------------------------------------

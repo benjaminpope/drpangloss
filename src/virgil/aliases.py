@@ -2740,23 +2740,22 @@ def fit_orbit_aliases(
     positions : PositionData or EpochPositions, optional
         Per-epoch positions that seed each band's fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
-        Epoch times (MJD; default each dataset's mean), the reference MJD of
-        ``dt_peri``, the prior ranges of the semimajor axis (mas) and flux
-        ratio, the maximum eccentricity, and the bound on the error scales
-        ([`marginal_loglike`][virgil.epochs.marginal_loglike]).
+        Epoch times (MJD), the reference MJD of ``dt_peri``, the prior ranges
+        of the semimajor axis (mas) and flux ratio, the maximum eccentricity,
+        and the error-scale bound of
+        [`marginal_loglike`][virgil.epochs.marginal_loglike].
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, seed, flag_nats, ess_min : optional
-        Search effort per band (candidates, refined, random, mode distinct-
-        ness, optimizer steps), the importance and posterior draws, the
-        probability above which a band gets draws, the seed, and the flag
-        thresholds ``laplace-is-differ`` and ``low-ess``.
+        Search effort per band, draws, the probability above which a band gets
+        draws, the seed, and the ``laplace-is-differ`` and ``low-ess`` flag
+        thresholds.
     checkpoint_dir, on_band, init : optional
-        A directory for finished bands (a rerun loads them), a callback for each
-        [`AliasBandResult`][virgil.aliases.AliasBandResult], and a warm start
-        (orbit and flux ratio) for every band.
-    primary_diam : float, "fit", "auto" or None, optional
+        A directory of finished bands (a rerun loads them), a callback for each
+        [`AliasBandResult`][virgil.aliases.AliasBandResult], and a warm start.
+    primary_diam, diam_range : optional
         The primary's uniform-disk diameter (mas): ``"auto"`` (default) fits
-        one when the data resolve it, a float fixes it, ``"fit"`` samples it
-        (prior ``diam_range``), None is a point.
+        one when the data resolve it, a float fixes it, ``"fit"`` samples it,
+        None is a point. ``diam_range`` is a fitted diameter's prior range:
+        (0.05, 5) for ``"fit"``, 0.001 to 1.5 lambda/B_max for ``"auto"``.
     vis_amp, sign_free, flip_flux, skip_flagged : optional
         Profile a per-epoch V^2 amplitude (a range, default (0.5, 1.2)); seed
         with sign-free orbits, and refit a flux ratio at the prior's top with
@@ -2776,7 +2775,8 @@ def fit_orbit_aliases(
     RuntimeError
         If every band fails (chained to the last error).
     ValueError
-        If no band lies within ``p_range``.
+        If no band lies within ``p_range``, or ``checkpoint_dir`` data cannot
+        be hashed. Preflight likelihood errors propagate unchanged.
 
     Examples
     --------
