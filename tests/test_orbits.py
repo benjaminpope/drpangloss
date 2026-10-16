@@ -212,7 +212,9 @@ def test_starting_orbits_recover_the_true_grid_point():
         assert float(best.ecc) == pytest.approx(0.3)
 
 
-@pytest.mark.parametrize("sign_free", [False, True])
+@pytest.mark.parametrize(
+    "sign_free", [False, pytest.param(True, marks=pytest.mark.slow)]
+)
 def test_starting_orbits_batches_equal_one_vmap(sign_free):
     from virgil.orbits import _thiele_innes_fit, _thiele_innes_fit_sign_free
 

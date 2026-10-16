@@ -320,6 +320,7 @@ def test_independent_of_batch_size(scored):
     onp.testing.assert_allclose(batched.flux, every.flux, rtol=1e-6)
 
 
+@pytest.mark.slow
 def test_compiles_once_per_layout(scored):
     from virgil import orbit_search
 
