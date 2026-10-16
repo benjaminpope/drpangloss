@@ -245,6 +245,18 @@ def test_starting_orbits_batches_equal_one_vmap(sign_free):
     ]
 
 
+def test_starting_orbits_share_one_compile_across_period_counts():
+    from virgil import orbits
+
+    mjd = T_REF + onp.array([0.0, 37.0, 81.0, 150.0, 210.0, 299.0])
+    positions = _positions(_orbit(), mjd)
+    kwargs = dict(n_phase=4, eccs=[0.1, 0.4], batch_size=16)
+    starting_orbits(positions, [300.0, 400.0, 500.0], **kwargs)
+    size = orbits._fit_batch._cache_size()
+    starting_orbits(positions, onp.linspace(200.0, 600.0, 7), **kwargs)
+    assert orbits._fit_batch._cache_size() == size
+
+
 def test_starting_orbits_sign_free_recovers_orbit_from_random_signs():
     # A near-equal-flux binary: each epoch's position is known up to a sign.
     truth = _orbit(period=400.0, dt_peri=100.0, ecc=0.3)

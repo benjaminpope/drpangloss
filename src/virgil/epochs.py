@@ -796,6 +796,24 @@ class _Static:
         return isinstance(other, _Static) and self.key == other.key
 
 
+class _Kwargs:
+    """``v -> model(**v)``, equal for equal models (a stable cache key)."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def __call__(self, v):
+        return self.model(**v)
+
+    def __hash__(self):
+        return hash(_ident(self.model))
+
+    def __eq__(self, other):
+        return isinstance(other, _Kwargs) and _ident(self.model) == _ident(
+            other.model
+        )
+
+
 def _ident(x):
     """``x`` if hashable, else its id (kept alive by the payload)."""
     try:
@@ -2665,7 +2683,7 @@ def start_from_positions(
         [{k: v[k] for k in priors} for v in values], "starting values"
     )
     loglike = _loglikes(
-        lambda v: model(**v),
+        _Kwargs(model),
         stacked,
         data,
         None,

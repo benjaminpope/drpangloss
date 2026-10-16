@@ -323,16 +323,43 @@ def test_independent_of_batch_size(scored):
 def test_compiles_once_per_layout(scored):
     from virgil import orbit_search
 
+    kernel = orbit_search._score_kernel
     epochs, base = scored
-    size = orbit_search._score_kernel._cache_size()
-    # New data, a new dof and new candidates, same layout: no new compile.
+    size = kernel._cache_size()
+    # New data, a new dof and new candidates, same layout: no new compile,
+    # and the reused trace answers for them.
     other = _epochs(sigma_v2=0.03)
     moved = [TRUTH, OTHER, OTHER]
-    for kwargs in ({"dof": 0.5}, {"dof": {"vis": 0.5, "phi": 0.8}}, {}):
-        score_orbits(other, OrbitalBinary, moved, shared=SHARED, **kwargs)
+    full = score_orbits(other, OrbitalBinary, moved, shared=SHARED)
+    half = score_orbits(other, OrbitalBinary, moved, shared=SHARED, dof=0.5)
+    blocks = score_orbits(
+        other,
+        OrbitalBinary,
+        moved,
+        shared=SHARED,
+        dof={"vis": 0.5, "phi": 0.8},
+    )
     again = score_orbits(epochs, OrbitalBinary, CANDIDATES, shared=SHARED)
-    assert orbit_search._score_kernel._cache_size() == size
+    assert kernel._cache_size() == size
+    assert not onp.allclose(full.score, base.score)
+    assert not onp.allclose(half.score, full.score)
+    assert not onp.allclose(blocks.score, half.score)
     onp.testing.assert_array_equal(again.score, base.score)
+    # A different flux grid of the same shape is a different layout.
+    grid = score_orbits(
+        epochs, OrbitalBinary, CANDIDATES, shared=SharedFlux((0.05, 1.0, 8))
+    )
+    assert kernel._cache_size() == size + 1
+    assert not onp.allclose(grid.score, base.score)
+    # So are other marginal settings baked into the trace.
+    order = score_orbits(
+        epochs,
+        OrbitalBinary,
+        CANDIDATES,
+        shared=SharedFlux((0.1, 1.0, 8), order=8),
+    )
+    assert kernel._cache_size() == size + 2
+    assert not onp.array_equal(order.score, base.score)
 
 
 def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):

@@ -12,6 +12,7 @@ references. Kepler's equation is solved by jaxoplanet, an optional
 dependency (``pip install "virgil-astro[orbits]"``).
 """
 
+import functools
 import math
 import warnings
 
@@ -843,6 +844,14 @@ def _phase_drift(periods, baseline):
     return float(baseline * onp.max(onp.diff(frequencies)))
 
 
+@functools.partial(jax.jit, static_argnums=0)
+def _fit_batch(fitter, dt, dra, ddec, whitener, period, dt_peri, ecc):
+    """``fitter`` at a batch of grid points (positions traced)."""
+    return jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))(
+        dt, dra, ddec, whitener, period, dt_peri, ecc
+    )
+
+
 def _position_batch(batch_size, positions):
     """Grid points per ``lax.map`` batch: about ``batch_visibilities()``
     position-epochs in all, and at least ``MIN_BATCH_SIZE`` points."""
@@ -904,17 +913,26 @@ def starting_orbits(
     p, e, f = onp.meshgrid(periods, eccs, phases, indexing="ij")
     grid = onp.stack([p.ravel(), (f * p).ravel(), e.ravel()], axis=1)
     fitter = _thiele_innes_fit_sign_free if sign_free else _thiele_innes_fit
-    params, chi2 = jax.lax.map(
-        lambda g: fitter(
+    size = _position_batch(batch_size, positions)
+    # Fixed-size batches, the last padded, so that every grid shares one
+    # compile (per number of positions) and memory is bounded by ``size``.
+    n_grid = len(grid)
+    padded = onp.concatenate(
+        [grid, onp.repeat(grid[-1:], -n_grid % size, axis=0)]
+    )
+    out = [
+        _fit_batch(
+            fitter,
             positions.dt,
             positions.dra,
             positions.ddec,
             positions.whitener,
-            *g,
-        ),
-        tuple(np.asarray(grid[:, k]) for k in range(3)),
-        batch_size=_position_batch(batch_size, positions),
-    )
+            *(np.asarray(padded[i : i + size, k]) for k in range(3)),
+        )
+        for i in range(0, len(padded), size)
+    ]
+    params = onp.concatenate([onp.asarray(x[0]) for x in out])[:n_grid]
+    chi2 = onp.concatenate([onp.asarray(x[1]) for x in out])[:n_grid]
     best = onp.argsort(onp.asarray(chi2))[:n_best]
     return [
         (
