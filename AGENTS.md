@@ -104,11 +104,59 @@ see that repository's `PLAN.md` for the boundary.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
-- New model code goes in `src/virgil/models.py`.
+- New model code goes in `virgil.models`.
+- New public features start **provisional**: list the name in the module's
+  `__provisional__` tuple (`("*",)` for a whole new module), put the notice
+  from `virgil._stability.ADMONITION` in its docstring, and add it to
+  `docs/stability.md` and the CHANGELOG's Stability section;
+  `tests/test_stability.py` checks the first two. Promotion to stable is
+  Ben's decision at a release.
 - Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
   shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
   and unmaintained: do not read, edit, lint or cite them.
+
+## Keeping the code small
+
+`src/` doubled in the ten days after 0.3.0. The growth was features, not
+duplication: it came from building ahead of need, keeping what was superseded
+and writing history into docstrings. So:
+
+1. **Delete before you add.** A feature PR names what it supersedes and removes
+   it in the same PR, or opens a removal issue for the next minor release.
+2. **Build on demand.** A plan stage lands in `src/` when a test system,
+   validation case or user needs it. Keep exploratory engines in
+   virgil-validation or a notebook until then, and land them provisional.
+3. **Docstrings say what, docs say why** (next section).
+4. **Reuse before writing a numerical helper.** Check `_linear`, `_grid`,
+   `_geometry`, `_utils`, `_gauss_newton`, `_flat` and `_precision`, and
+   `pipeline/_common`, before adding a quadrature, solver or linear-algebra routine.
+5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py`, and
+   shared constants and helpers in `tests/_shared.py` or data in `tests/_test_data.py`
+   (extend these, don't add a second module); parametrize near-identical tests, and never redefine a
+   `_scene`/`_data` helper that exists.
+6. **Keep pipelines thin.** A new pipeline subclasses `pipeline/_core` and reuses
+   `_common`; aim at about 500 lines.
+7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
+   Above +1,000 `src` lines, the PR description says what the size buys and what
+   it supersedes.
+
+## Docstring style
+
+Ben is surprised how long some docstrings are. Keep them short.
+
+- **Public docstring:** a one-line summary; at most about five lines of
+  description; numpydoc `Parameters`, `Returns` and `Raises`; at most one short
+  `Example`. Aim for 40 lines or fewer. Over 60 is a defect.
+- **Notes:** only the formula a user needs to call the function correctly.
+- **Leave out:** derivations, design history, plan or "problem N" numbers,
+  PR/issue numbers and named science targets. Put a derivation in a docs page
+  and link it with a markdown link; put history in `design/` notes.
+- **Shared parameters** (`noise`, `priors`, `flat_coordinates`, `dtype`,
+  `regularizers`, ...) are documented once, in `docs/conventions.md` (see "Which
+  priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
+  there rather than creating a page), and each docstring says one line and links it.
+- **Private helpers:** one or two lines.
 
 ## Package layout
 
@@ -126,7 +174,7 @@ see that repository's `PLAN.md` for the boundary.
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
 | `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `image_field` (the data-driven field: k FWHMs from `second_moment_fwhm`, between an inner working angle and the interferometric field), `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `priors.py` | invariant priors that are not plain numpyro priors: `IsotropicInclination`, `IsotropicLatitude`, hierarchical (population) scales; imports nothing from virgil |
-| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
+| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `observed_information` (and `expected_fisher` for a fixed-error prediction) |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `detection.py` | `detection_statistics` (Δχ², grid-marginalized log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
@@ -139,6 +187,7 @@ see that repository's `PLAN.md` for the boundary.
 | `aliases.py` | `fit_orbit_aliases`: orbits whose epochs undersample the period; alias bands `N = round(T/P)` fitted to the observables of all epochs (error scales marginalized), Laplace and importance-sampling evidences per band, band probabilities and posterior samples; optional uniform-disk primary, per-epoch V² amplitude and flux-flip refits; flagged nights (`EpochPositions.flags`) seed nothing but still count (`skip_flagged`, `AliasResult.unseeded`); the result API (`AliasResult.save`/`load`, and `scene()`, `residuals(data)` and `chi2_per_night(data)` on bands and the result, which rebuild the fit's scene and raw per-night χ²/N); imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models`, `orbits` and `tempering`; `temper=True` tempers every evidence by the effective-channel factor (`AliasResult.temper_f`); see `design/orbit_aliases.md` |
 | `tempering.py` | tempering the orbit evidence for correlated spectral channels: `channel_chains`/`adjacent_channels` (the chains of consecutive channels of a dataset), `estimate_factors` (the effective-channel factors f = N/N_eff as the empirical within-chain covariance factor of residuals, per block and pooled, as `ChannelFactors`; lag-1/lag-2 correlations are diagnostics, `flat_signature`), `block_dof`; imports nothing from virgil; used by `aliases` |
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
+| `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
@@ -146,7 +195,7 @@ see that repository's `PLAN.md` for the boundary.
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
-| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
+| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5; `keywords=` names the parameters a function declares keyword-only, e.g. `likelihood_grid`'s `data` and `grid`, and any other positional call raises a `TypeError` naming the keyword call) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them with `flat_coordinates=True` (opt-in; private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `_linear.py` | the shared algebra for parameters that enter linearly and are marginalized analytically (`LinearMarginal`), used by `gains`, `observables` and `orbits` (private) |

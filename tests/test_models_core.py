@@ -6,9 +6,9 @@ import pytest
 
 import virgil.models as models
 from virgil.inference import (
-    fisher,
+    observed_information,
     laplace_cov,
-    laplace_covariance,
+    objective_laplace_covariance,
     laplace_parameter_uncertainty,
 )
 from virgil.likelihood import (
@@ -181,6 +181,20 @@ def _reference_logpdf(data_obj, prediction, reference):
     )
 
 
+def test_vis_encoding_replaces_observable_kind():
+    import warnings
+
+    assert oidata.vis_encoding == "split"
+    with pytest.warns(FutureWarning, match="vis_encoding"):
+        assert oidata.observable_kind == "split"
+    # virgil's own modules may still read it, silently.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        exec(
+            "data.observable_kind", {"__name__": "virgil.x"}, {"data": oidata}
+        )
+
+
 def test_laplace_and_fisher_wrappers_are_finite():
     params = ["dra", "ddec", "flux"]
     values = np.array([120.0, -80.0, 2e-3])
@@ -189,7 +203,9 @@ def test_laplace_and_fisher_wrappers_are_finite():
     data, errors = oidata.flatten_data()
 
     cov = laplace_cov(values, params, BinaryModelCartesian, oidata)
-    fmat = fisher(values, params, BinaryModelCartesian, oidata, ridge=1e-10)
+    fmat = observed_information(
+        values, params, BinaryModelCartesian, oidata, ridge=1e-10
+    )
     like = loglike(values, params, BinaryModelCartesian, oidata)
     expected_like = _reference_logpdf(oidata, model_data, data)
 
@@ -220,8 +236,10 @@ def test_laplace_wrappers_match_closures_and_compile_once():
     objective = lambda x: -loglike(x, *args)
 
     cov = laplace_cov(values, *args)
-    assert np.allclose(cov, laplace_covariance(objective, values), rtol=1e-4)
-    hess = fisher(values, *args)
+    assert np.allclose(
+        cov, objective_laplace_covariance(objective, values), rtol=1e-4
+    )
+    hess = observed_information(values, *args)
     sigma = laplace_parameter_uncertainty(values, *args, "flux")
     assert np.allclose(sigma, hess[2, 2] ** -0.5, rtol=1e-4)
 
@@ -229,7 +247,7 @@ def test_laplace_wrappers_match_closures_and_compile_once():
     calls.clear()
     with count_compiles() as compiles:
         laplace_cov(moved, *args)
-        fisher(moved, *args)
+        observed_information(moved, *args)
         laplace_parameter_uncertainty(moved, *args, "flux")
     assert not compiles
     assert not calls
@@ -319,7 +337,7 @@ def test_oidata_linear_observables_transform_and_model_alignment():
 
     assert disco_data.vis.shape == (m_vis,)
     assert disco_data.phi.shape == (m_phi,)
-    assert disco_data.observable_kind == "split"
+    assert disco_data.vis_encoding == "split"
     assert flattened_data.shape == (m_vis + m_phi,)
     assert np.allclose(model_vector, disco_data.standardize_model(cvis_model))
     assert flattened_data.shape == model_vector.shape

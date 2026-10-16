@@ -1,5 +1,8 @@
 # Pipelines
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without running the code again. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
 
 A pipeline adds no science. Every number it reports comes from a public virgil function that a tutorial also calls, so any result can be reproduced by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
@@ -140,25 +143,30 @@ Deprecation notices are recorded in `warnings` but raise no check. The quicklook
 
 ## Stability
 
-A pipeline is either **stable** or **provisional**; the tier is the class attribute `STABILITY`, and it is written to `run.json` and `summary.json`.
+The pipelines are **provisional in 0.4**: their constructor keywords, settings and defaults, stage names, `summary.json` keys, check names, thresholds and order, and file names may change in any 0.4.x release, without a deprecation. They are promoted to stable after a release of use. The tier is the class attribute `STABILITY` (`"provisional"`), written to `run.json` and `summary.json`; nothing warns at runtime. See [Stability](stability.md) for the tiers.
 
-A stable pipeline keeps the following within a schema version (`virgil-pipeline-run-v1`):
+What does not change under the provisional tier:
+
+- the folder layout is versioned by its schema, `virgil-pipeline-run-v1`, and `load` refuses schemas it does not know;
+- every number a pipeline reports comes from a public virgil function, so a result can always be reproduced by hand.
+
+When a pipeline is promoted to stable, it keeps the following within a schema version:
 
 - the constructor and `run` signatures, the stage names and their order, and the setting names and defaults;
 - every key of `summary.json` and `run.json`, and its meaning;
 - the check names, their order and their thresholds;
 - the file names in the run folder.
 
-Changes are additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version, and `load` refuses schemas it does not know. Snapshot tests pin the signatures, defaults, summary keys and check order.
+Changes to a stable pipeline are then additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
 
-A provisional pipeline writes the same folder layout and uses the same `Result`, but its stages, settings and summary keys may change while the virgil functions underneath settle. It emits one `FutureWarning` per session.
+Open before promotion: `global_nsigma` is a Šidák estimate with a nominal number of resolution elements, not a simulated false-alarm probability (the grid maxima are correlated, and the resolution element is anisotropic). It must be calibrated by simulation, or dropped from the summary keys and the `detection` check, before the pipelines become stable. Until then it is labelled an approximation in `summary.json` (`global_nsigma_method`).
 
 | Pipeline | CLI command | Tier |
 | --- | --- | --- |
-| `BinaryPipeline` | `binary` | stable |
-| `StarPipeline` | `star` | stable |
+| `BinaryPipeline` | `binary` | provisional |
+| `StarPipeline` | `star` | provisional |
 
-Further pipelines (orbit and imaging, both provisional) will be added to this table as they land.
+Further pipelines (orbit, disk and imaging) will be added to this table as they land, all provisional.
 
 ## Command line
 

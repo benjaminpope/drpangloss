@@ -1,5 +1,8 @@
 # Variational inference
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 NUTS (see [Binary search](binary_search.md)) draws from the posterior itself, but each draw costs many likelihood gradients. Variational inference (VI) instead fits a distribution of a chosen form, the *guide*, to the posterior, by maximizing the evidence lower bound (ELBO), which is the same as minimizing the KL divergence from the guide to the posterior. Once the guide is fitted, draws from it cost almost nothing. [`variational`][virgil.svi.variational] runs numpyro's stochastic VI (SVI) on the posterior of [`numpyro_model`][virgil.likelihood.numpyro_model], with the same arguments as [`fit`][virgil.fitting.fit].
 
 ## Which guide

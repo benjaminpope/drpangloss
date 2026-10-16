@@ -17,8 +17,10 @@
 
 Sky images follow the package convention: East (positive ``dra``) to the
 left and North (positive ``ddec``) up. Importing this module does not change
-matplotlib's global settings; call [`set_style`][virgil.plotting.set_style] to opt in to the
-virgil look for every figure.
+matplotlib's global settings; call [`set_style`][virgil.plotting.set_style]
+to opt in to the virgil look. See
+[detection limits](../detection_limits.md#detection-plots) for how to read the
+detection plots.
 """
 
 import contextlib
@@ -67,13 +69,8 @@ def set_style():
 
 @contextlib.contextmanager
 def _style_context(style=None):
-    """Temporarily apply ``style`` (default ``STYLE``) to ``rcParams``.
-
-    Only the keys in ``style`` are saved and restored. ``plt.rc_context``
-    restores every key, including ``backend``, and in Jupyter that can
-    switch backends on exit, which closes the open figures before they are
-    shown.
-    """
+    """Temporarily apply ``style``; unlike ``plt.rc_context`` it restores only
+    its own keys (restoring ``backend`` closes Jupyter's open figures)."""
     style = STYLE if style is None else style
     saved = {key: matplotlib.rcParams[key] for key in style}
     matplotlib.rcParams.update(style)
@@ -114,13 +111,9 @@ def _is_sky_key(key, name):
 
 
 def _image_axes(grid, coord_keys):
-    """Pick the plotted x/y keys and orient ``grid`` as ``image[y, x]``.
+    """Plotted x/y keys (``dra``/``ddec`` if present) and ``image[y, x]``.
 
-    ``grid`` has one axis per entry of ``coord_keys``, in that order. If the
-    keys include a ``dra`` and a ``ddec`` (possibly as zodiax paths such as
-    ``"comp.dra"``), those are used as x and y whatever their order.
-    Otherwise the first two keys are used. Returns
-    ``(x_key, y_key, image, is_sky)``.
+    Returns ``(x_key, y_key, image, is_sky)``.
     """
     grid = onp.asarray(grid)
     if grid.ndim != 2 or len(coord_keys) != 2:
@@ -163,13 +156,7 @@ def _range_aware_float_formatter(
 
 
 def _enforce_sky_orientation(ax):
-    """Ensure the displayed x-axis increases toward the left (East) and
-    the y-axis increases toward the top (North), matching virgil's
-    image coordinate convention. Works regardless of
-    whether the plotted array's ``dra``/``ddec`` axis was built ascending
-    or descending, since it corrects the axes' final displayed limits
-    rather than assuming any particular extent/origin construction.
-    """
+    """Make x increase to the left (East) and y upward (North)."""
     if ax.get_xlim()[0] < ax.get_xlim()[1]:
         ax.invert_xaxis()
     if ax.get_ylim()[0] > ax.get_ylim()[1]:
@@ -763,12 +750,8 @@ def _convert_flux(values, units):
 
 
 def _grid_axes(values, grid, kind, flux_param):
-    """Coordinate keys of ``values``, reducing a flux axis if present.
-
-    Returns ``(values, coord_keys)``. ``values`` may have one axis per key of
-    ``grid`` (a full grid), or one per key except the flux. A full
-    log-likelihood grid is reduced to its maximum over the flux axis.
-    """
+    """``(values, coord_keys)``; a full log-likelihood grid is reduced to its
+    maximum over the flux axis."""
     values = onp.asarray(values, dtype=float)
     keys = list(grid)
     if values.ndim == len(keys):
@@ -825,23 +808,20 @@ def plot_grid_map(
     Parameters
     ----------
     values : array-like
-        Grid result with one axis per coordinate key of ``grid``
-        (every key except the flux), in key order, as returned by
-        [`virgil.grid_fit`][virgil.grid_fit] and
-        [`virgil.limits`][virgil.limits]. A full
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid] (with the
-        flux axis) is reduced to its maximum over flux. One coordinate gives
-        a line plot.
+        Grid result with one axis per coordinate key of ``grid`` (every key
+        except the flux), as returned by [`virgil.grid_fit`][virgil.grid_fit]
+        and [`virgil.limits`][virgil.limits]. A full
+        [`likelihood_grid`][virgil.grid_fit.likelihood_grid] is reduced to its
+        maximum over flux. One coordinate gives a line plot.
     grid : dict[str, array-like]
         The grid axes used to compute ``values``.
     kind : {"loglike", "flux", "sigma", "snr", "limit"}, optional
-        What ``values`` holds, which sets the default colour map, scale and
-        labels: a log likelihood, a best-fit flux, a flux uncertainty, a
-        signal-to-noise ratio, or a flux upper limit.
+        What ``values`` holds (log likelihood, best-fit flux, flux
+        uncertainty, signal-to-noise ratio, flux upper limit), which sets the
+        default colour map, scale and labels.
     units : {"flux", "contrast", "delta_mag"}, optional
-        For ``kind="flux"`` and ``"limit"``, show the values as flux ratios
-        (companion/primary, default), contrasts (primary/companion, e.g.
-        100), or magnitude differences (e.g. 5 mag).
+        For ``kind="flux"`` and ``"limit"``: flux ratios (companion/primary),
+        contrasts (primary/companion) or magnitude differences.
     sigma, percentile : float, optional
         Confidence of a ``kind="limit"`` map, for its title (e.g.
         ``sigma=5`` gives "5σ limit").
@@ -867,16 +847,12 @@ def plot_grid_map(
 
     Notes
     -----
-    When the coordinates include ``dra`` and ``ddec`` (also as paths such as
-    ``"comp.dra"``) they are drawn as x and y, East-left and North-up,
-    whatever their order in ``grid``; pixels are centred on the
-    samples.
+    Coordinates ``dra`` and ``ddec`` (also as paths such as ``"comp.dra"``)
+    are drawn as x and y, East-left and North-up, whatever their order in
+    ``grid``.
 
     Examples
     --------
-    >>> fig, (a, b) = plt.subplots(1, 2)  # doctest: +SKIP
-    >>> plot_grid_map(flux, grid, kind="flux", ax=a)  # doctest: +SKIP
-    >>> plot_grid_map(flux / sigma, grid, kind="snr", ax=b)  # doctest: +SKIP
     >>> plot_grid_map(limits, grid, kind="limit", units="delta_mag", sigma=5)  # doctest: +SKIP
     """
     if kind not in _KINDS:
@@ -988,12 +964,8 @@ def plot_grid_map(
 
 
 def _sky_map(values, grid):
-    """A sky map with axes ``(dra, ddec)``, and those two axes.
-
-    ``values`` has one axis per coordinate key of ``grid`` (every key
-    whose name does not end in ``flux``), in key order, so it is transposed
-    when ``ddec`` comes before ``dra``.
-    """
+    """A sky map with axes ``(dra, ddec)``, and those two axes (transposed
+    when ``ddec`` comes before ``dra``)."""
     keys = [key for key in grid if not is_flux_param(key)]
     found = []
     for name in ("dra", "ddec"):
@@ -1138,13 +1110,9 @@ def _stat_label(stat):
 
 
 def _local_threshold(stat, n_sigma):
-    """The statistic at a local (one-position) significance of n_sigma.
-
-    At one position fixed in advance, ``delta_chi2`` follows ½δ₀ + ½χ²₁
-    and the unconstrained flux SNR is a standard normal, so a one-sided
-    ``n_sigma`` is ``delta_chi2 = n_sigma²`` or ``max_snr = n_sigma``. The
-    log Bayes factor has no such reference (None).
-    """
+    """The statistic at a one-position significance of n_sigma (None for the
+    log Bayes factor): ``n_sigma**2`` for ``delta_chi2``, ``n_sigma`` for
+    ``max_snr``."""
     if stat == "delta_chi2":
         return float(n_sigma) ** 2
     if stat == "max_snr":
@@ -1223,11 +1191,7 @@ def _legend_outside(ax):
 
 
 def _rates_at(fpr, tpr, thresholds, value):
-    """False- and true-positive rates of the threshold ``value``.
-
-    ``thresholds`` decrease from ``+inf`` through every distinct score, so
-    the smallest one at or above ``value`` has the same rates as ``value``.
-    """
+    """False- and true-positive rates at the threshold ``value``."""
     i = int(onp.count_nonzero(onp.asarray(thresholds) >= value)) - 1
     return float(fpr[i]), float(tpr[i])
 
@@ -1247,13 +1211,9 @@ def plot_roc(
 ):
     """Plot ROC curves: completeness against false-alarm probability.
 
-    Each curve follows a detection threshold from high to low: its
-    false-positive rate (the fraction of companion-free simulations above
-    the threshold, i.e. its false-alarm probability) on the x-axis and its
-    true-positive rate (the fraction of injected companions recovered, the
-    completeness) on the y-axis. A statistic that cannot tell companions
-    from noise lies on the chance curve TPR = FPR; a better one lies above
-    it.
+    False-alarm probability (x) against completeness (y) as the threshold
+    falls; a useless statistic lies on the chance curve TPR = FPR. See
+    [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
     ----------
@@ -1273,48 +1233,25 @@ def plot_roc(
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     log_fpr : bool, optional
-        Logarithmic false-positive axis (default), from half a null draw's
-        worth (0.5 / n_null) to 1, since detections are claimed at small
-        false-alarm probabilities. On it the chance curve TPR = FPR is a
-        curve, not a straight line.
+        Logarithmic false-positive axis (default), from ``0.5 / n_null`` to 1.
     mark_wilks : sequence of float, optional
-        Local significances (default 3σ and 5σ) to mark. A vertical line
-        shows the false-alarm probability that Wilks's theorem gives them
-        at one position fixed in advance, the one-sided Gaussian tail
-        (0.135% at 3σ, 2.9×10⁻⁷ at 5σ), when it lies on the axis. A circle
-        on every ``delta_chi2`` or ``max_snr`` curve shows where the
-        threshold equals that local significance (``delta_chi2`` = 9 or
-        ``max_snr`` = 3 at 3σ): its horizontal distance from the line is
-        the look-elsewhere effect of searching a grid. None or ``()`` marks
-        nothing.
+        Local significances (default 3σ and 5σ) at which to mark the
+        single-position false-alarm probability (a line) and the matching
+        threshold on each ``delta_chi2`` or ``max_snr`` curve (a circle); the
+        gap is the look-elsewhere effect. None or ``()`` marks nothing.
     title : str, optional
-        Title; by default it names what all the curves share (one
-        statistic, one flux or separation selection), and the legend
-        names what differs.
+        Title; by default it names what all the curves share.
     figsize : tuple, optional
-        Size of a new figure. The legend is drawn outside the axes; a
-        tight bounding box (as Jupyter uses) includes it.
+        Size of a new figure. The legend is drawn outside the axes.
 
     Returns
     -------
     tuple
         ``(fig, ax)``.
 
-    Notes
-    -----
-    With several statistics, the line style tells the statistics apart
-    and the colour the flux or separation selections; with one statistic,
-    both change from curve to curve. The legend sits outside the axes, to
-    their right, as in
-    [`plot_null_distribution`][virgil.plotting.plot_null_distribution].
-
     Examples
     --------
-    Three statistics at one injected flux, then one statistic at several:
-
-    >>> plot_roc(mc, ["delta_chi2", "log_bayes_factor", "max_snr"],
-    ...          flux=4e-3)  # doctest: +SKIP
-    >>> plot_roc(mc, "delta_chi2", flux=[2e-3, 4e-3, 8e-3])  # doctest: +SKIP
+    >>> plot_roc(mc, ["delta_chi2", "max_snr"], flux=4e-3)  # doctest: +SKIP
     """
     stats = [stat] if isinstance(stat, str) else list(stat)
     if not stats:
@@ -1465,12 +1402,12 @@ def plot_completeness(
 ):
     """Plot a completeness map against separation and companion brightness.
 
-    Each cell is the fraction of injected companions of that separation and
-    flux that a search detects at the false-alarm probability ``fap``
-    ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]).
-    Lines mark where the completeness reaches each level in ``contours``,
-    the empirical contrast curves of
-    [`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve].
+    Each cell is the fraction of injected companions detected at the
+    false-alarm probability ``fap``
+    ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]);
+    lines mark the levels in ``contours`` (the curves of
+    [`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve]).
+    See [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
     ----------
@@ -1480,15 +1417,13 @@ def plot_completeness(
     stat : str
         The detection statistic, e.g. ``"delta_chi2"``.
     fap : float
-        False-alarm probability of the detection threshold, e.g. 1.35e-3
-        (the one-sided Gaussian tail at 3σ).
+        False-alarm probability of the threshold, e.g. 1.35e-3 (3σ).
     units : {"delta_mag", "contrast", "flux"}, optional
         The y-axis, as in
         [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve]:
         magnitude difference (default, linear), contrast
         (primary/companion, log) or flux ratio (companion/primary, log).
-        Fainter companions are always drawn lower down, so limit curves
-        from ``plot_contrast_curve`` can be drawn on the same axes.
+        Fainter companions are always drawn lower down.
     contours : sequence of float, optional
         Completeness levels to draw as lines (default 50% and 90%); ``()``
         draws none.
@@ -1511,27 +1446,9 @@ def plot_completeness(
     tuple
         ``(fig, ax)``.
 
-    Notes
-    -----
-    Cells span halfway to their neighbours, in separation and in log flux.
-    Injections of zero flux have no Δmag or contrast and are left out. The
-    contour lines are ``contrast_curve``'s: in each separation bin the
-    completeness is made non-decreasing in flux and interpolated linearly
-    in log flux (linearly in Δmag), so they are exactly the curves that
-    method returns, and they are absent where the injected fluxes do not
-    bracket the level. The map sets the axis limits to its cells, so
-    curves drawn afterwards do not widen them.
-
     Examples
     --------
-    A completeness map with Absil limits of companion-free data
-    overplotted (``plot_contrast_curve`` redraws the legend, so place it
-    again at the end):
-
-    >>> fig, ax = plot_completeness(mc, "delta_chi2", 1.35e-3)  # doctest: +SKIP
-    >>> plot_contrast_curve(absil_map, grid, sigma=3, band=False,
-    ...                     ax=ax)  # doctest: +SKIP
-    >>> ax.legend(loc="lower left", fontsize="small")  # doctest: +SKIP
+    >>> plot_completeness(mc, "delta_chi2", 1.35e-3)  # doctest: +SKIP
     """
     import matplotlib.patheffects as path_effects
 
@@ -1620,11 +1537,9 @@ def plot_null_distribution(
 ):
     """Plot how often companion-free searches exceed each threshold.
 
-    The curve is the empirical exceedance (survival) function of the
-    statistic over the null simulations: at each threshold, the fraction
-    of companion-free searches at or above it, that is the threshold's
-    false-alarm probability. It is drawn on a log scale, so the tail that
-    sets detection thresholds is visible.
+    The empirical exceedance function of the statistic over the null
+    simulations: at each threshold, its false-alarm probability, on a log
+    scale. See [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
     ----------
@@ -1635,40 +1550,29 @@ def plot_null_distribution(
         ``"delta_chi2"`` (default), ``"log_bayes_factor"`` or
         ``"max_snr"``.
     observed : float, optional
-        The statistic of the real data. It is drawn as a vertical line, with
-        its empirical false-alarm probability
+        The statistic of the real data: a vertical line, with its empirical
+        false-alarm probability
         ([`DetectionMC.false_alarm_probability`][virgil.detection.DetectionMC.false_alarm_probability])
-        and the 95% interval of that probability as a point with error
-        bars.
+        and its 95% interval.
     fap : float, optional
         A false-alarm probability to draw as a horizontal line, with the
         empirical threshold that reaches it
-        ([`DetectionMC.threshold`][virgil.detection.DetectionMC.threshold])
-        as a vertical line.
+        ([`DetectionMC.threshold`][virgil.detection.DetectionMC.threshold]).
     reference : bool, optional
-        Draw what the statistic would do at one position fixed in advance
-        (default True): ½ P(χ²₁ ≥ x) for ``delta_chi2`` (Wilks's theorem
-        with the flux on its boundary at zero), the Gaussian tail for
-        ``max_snr``. The gap between this curve and the empirical one is
-        the look-elsewhere effect. ``log_bayes_factor`` has no reference.
+        Draw the single-position reference curve (default True): Wilks's
+        theorem for ``delta_chi2``, the Gaussian tail for ``max_snr``; none
+        for ``log_bayes_factor``.
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     title : str, optional
         Title; by default it names the statistic and the number of draws.
     figsize : tuple, optional
-        Size of a new figure. The legend is drawn outside the axes; a
-        tight bounding box (as Jupyter uses) includes it.
+        Size of a new figure. The legend is drawn outside the axes.
 
     Returns
     -------
     tuple
         ``(fig, ax)``.
-
-    Notes
-    -----
-    The legend sits outside the axes, to their right, so that it never
-    covers the tail of the distribution. When drawing on axes in a grid of
-    subplots, leave room for it or move it with ``ax.legend(...)``.
 
     Examples
     --------

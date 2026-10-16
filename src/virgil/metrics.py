@@ -1,5 +1,8 @@
 """Scores for comparing a reconstructed image with a known truth.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 The image-recovery figures of merit used by the interferometric imaging
 contests, written from their published definitions:
 
@@ -31,6 +34,8 @@ from jax.scipy.ndimage import map_coordinates
 
 from ._utils import _unit_sum
 from .imaging import convolve_beam
+
+__provisional__ = ("*",)
 
 
 def _array_and_scale(image, pixel_scale_mas):

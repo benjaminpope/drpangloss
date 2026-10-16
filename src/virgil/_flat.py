@@ -1,18 +1,11 @@
 """Flat coordinates of priors, shared by ``fit`` and the samplers.
 
-A prior that is an invariant measure written in a coordinate where it is
-not uniform (a log-uniform scale, an isotropic inclination) is uniform in
-some other coordinate of its parameter, its *flat coordinate*:
-``_flat_coordinate`` finds it. ``_FlatBijection`` maps the real line onto
-the parameter through that coordinate. [`fit`][virgil.fitting.fit]
-optimizes in it, and [`numpyro_model`][virgil.likelihood.numpyro_model]
-samples in it when asked (``flat_coordinates=True``; off by default, as the
-SBC showed no gain): ``flat_sampled`` wraps a prior so that numpyro's
-``biject_to`` of its support is the same bijection, with its Jacobian,
-while the site keeps its name, its value (the parameter) and its density.
-See ``design/sampler_flat_coordinates.md``.
-
-Private; imports nothing from virgil.
+A prior that is an invariant measure written in a non-uniform coordinate
+(a log-uniform scale, an isotropic inclination) is uniform in its *flat
+coordinate*, found by ``_flat_coordinate``. ``_FlatBijection`` maps the real
+line onto the parameter through it; ``fit`` optimizes in it and
+``numpyro_model`` samples in it with ``flat_coordinates=True``
+(``flat_sampled``). See ``design/sampler_flat_coordinates.md``.
 """
 
 import jax
@@ -36,21 +29,12 @@ def _base(distribution):
 
 
 def _flat_coordinate(distribution):
-    """The coordinate in which a prior is uniform, or None.
+    """``(to_flat, from_flat, low, high)`` for a prior uniform in ``u``, or None.
 
-    Returns ``(to_flat, from_flat, low, high)``: a monotonic map ``u =
-    to_flat(x)`` of the parameter, its inverse, and the interval ``[low,
-    high]`` of ``u`` on which the prior's density is constant. Such a prior
-    is an invariant measure written in a coordinate where it is not flat:
-
-    * ``LogUniform(a, b)``: ``u = log x`` on ``[log a, log b]``;
-    * any prior with a ``flat_coordinate()`` method returning that tuple,
-      such as an isotropic inclination (``u = cos i``) or latitude (``u =
-      sin(lat)``).
-
-    ``Uniform`` is its own flat coordinate (the identity) and keeps
-    numpyro's bijection; Normal and other priors have none and are
-    evaluated in the model's own parameters.
+    ``u = to_flat(x)`` is monotonic and the density is constant on
+    ``[low, high]``. Covers ``LogUniform`` (``u = log x``) and any prior with
+    a ``flat_coordinate()`` method returning that tuple; ``Uniform`` and
+    Normal priors have none.
     """
     base = _base(distribution)
     if isinstance(base, _FlatPrior):

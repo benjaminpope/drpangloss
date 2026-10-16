@@ -1,5 +1,8 @@
 """Tempering an evidence for correlated spectral channels.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 The effective-channel factor ``f = N / N_eff`` is estimated from the
 within-chain covariance of the residuals of neighbouring channels, and the
 log likelihood is divided by it (``dof_b = 1 / f_b``). The derivation,
@@ -26,6 +29,8 @@ __all__ = [
     "lag_correlation",
     "out_of_range",
 ]
+
+__provisional__ = ("*",)
 
 # Outside this range the result is flagged: the raw ``f`` well below 1 means
 # the residuals are anticorrelated (differenced or over-fitted data), the

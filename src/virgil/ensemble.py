@@ -74,6 +74,13 @@ from .metrics import align, resample
 from .models import EllipticalGaussian, Image, PointSource, System
 from ._deprecate import external_stacklevel
 
+__provisional__ = (
+    "evidence_grid",
+    "gp_members",
+    "GPFit",
+    "EvidenceGrid",
+)
+
 # The regularizer families, by the names used in EnsembleSpec.
 FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 
@@ -641,6 +648,9 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
 class GPFit:
     """One Gaussian-process fit of an evidence grid.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Attributes
     ----------
     variant : str
@@ -666,6 +676,9 @@ class GPFit:
 @dataclasses.dataclass(frozen=True)
 class EvidenceGrid:
     """The result of [`evidence_grid`][virgil.ensemble.evidence_grid].
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     Attributes
     ----------
@@ -810,6 +823,9 @@ def evidence_grid(
 ):
     """Fit Gaussian-process images over a grid of amplitude and length.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     Each point is a MAP fit of an image whose log-brightness is a
     [`GaussianField`][virgil.fields.GaussianField] of amplitude ``σ`` and
     correlation length ``ℓ`` about the group's starting image, scored by
@@ -940,6 +956,9 @@ def gp_members(
     data, draw, *, star=True, starts=None, spec=None, **fit_options
 ):
     """Fit one Gaussian-process group of an ensemble.
+
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
 
     The group's members are the fits of its
     [`evidence_grid`][virgil.ensemble.evidence_grid] whose log evidence is

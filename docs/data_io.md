@@ -97,7 +97,7 @@ OIData(
   gains=None,
   phase_offsets=None,
   extras=(),
-  observable_kind='split',
+  vis_encoding='split',
   vis_mode='v2',
   v2_flag=True,
   cp_flag=True,
