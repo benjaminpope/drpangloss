@@ -83,8 +83,8 @@ Every sampled parameter must be in `priors`: a tightly constrained one left out
 
 ## Size {#size}
 
-The dense matrix has $n^2$ entries. With more than 8192 coordinates the result
-is a diagonal mass, with a `UserWarning`: images of 128² and above get this. Its
+The dense matrix has $n^2$ entries. With more than 4096 coordinates the result
+is a diagonal mass, with a `UserWarning`: images larger than 64² get this. Its
 entries are the diagonal of the covariance $F^{-1}$, computed without forming
 the matrix, when there are fewer rows than coordinates (an image), and
 $1/\mathrm{diag}(F)$ otherwise.

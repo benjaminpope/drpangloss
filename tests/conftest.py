@@ -44,12 +44,16 @@ def pytest_configure(config):
         "(see virgil-validation's docs/design.md)",
     )
     # The heaviest, compile-dominated tests. Pull requests run
-    # `-m "not slow"`; pushes to main, the `full-ci` label and the nightly
-    # run everything (.github/workflows/tests.yml).
+    # `-m "not slow"`, except that a pull request touching the orbit modules
+    # also runs the slow tests of their own test files (VIRGIL_SLOW_FILES
+    # below); pushes to main, the `full-ci` label and the nightly run
+    # everything (.github/workflows/tests.yml).
     config.addinivalue_line(
         "markers",
         "slow: heaviest, compile-dominated tests; skipped on pull requests "
-        "(-m 'not slow') but run on main, with the full-ci label and nightly",
+        "(-m 'not slow'; a pull request touching the orbit modules still runs "
+        "the orbit test files) but run on main, with the full-ci label and "
+        "nightly",
     )
 
 
@@ -65,6 +69,18 @@ def pytest_addoption(parser):
 # trylast: after -m has deselected, so --shard packs only what will run.
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
+    # VIRGIL_SLOW_FILES (space-separated file-name globs): run only the slow
+    # tests of those files, in place of `-m "not slow"` (see tests.yml).
+    globs = os.environ.get("VIRGIL_SLOW_FILES", "").split()
+    if globs:
+        drop = [
+            item
+            for item in items
+            if item.get_closest_marker("slow")
+            and not any(item.path.match(g) for g in globs)
+        ]
+        items[:] = [item for item in items if item not in drop]
+        config.hook.pytest_deselected(items=drop)
     for item in items:
         for mark in item.iter_markers("validates"):
             roots = list(mark.kwargs.get("roots", ()))

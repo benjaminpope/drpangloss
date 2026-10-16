@@ -343,3 +343,30 @@ def test_default_flow_follows_a_banana():
     assert skew > 0.5  # 2.2 for the exact posterior
     mean, skew = mean_and_skew("mvn")
     assert mean < 0.25 and abs(skew) < 0.3  # what the flow must beat
+
+
+def test_the_dense_guides_refuse_more_coordinates_than_the_limit(monkeypatch):
+    from numpyro.infer import autoguide
+
+    from virgil import fitting
+
+    monkeypatch.setattr(fitting, "_DENSE_MASS_MAX", 1)
+    start = BinaryModelCartesian(120.0, -80.0, 0.02)
+    priors = {
+        "dra": dist.Uniform(100.0, 140.0),
+        "ddec": dist.Uniform(-100.0, -60.0),
+    }
+    data = nrm_oidata().with_model(start, key=jax.random.PRNGKey(0))
+    for guide in ("mvn", "bnaf", "iaf", "laplace"):
+        with pytest.raises(ValueError, match="dense 2 × 2 matrix.*AutoNormal"):
+            variational(start, priors, data, guide=guide, steps=2)
+    result = variational(
+        start,
+        priors,
+        data,
+        guide=autoguide.AutoNormal,
+        steps=2,
+        num_samples=10,
+        psis=False,
+    )
+    assert result.samples["dra"].shape == (10,)
