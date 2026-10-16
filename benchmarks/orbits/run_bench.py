@@ -201,7 +201,7 @@ def quality_epoch_positions(result, system):
     return dict(
         max_position_error_mas=float(err.max()),
         n_true_peak=int((err < 1.0).sum()),
-        min_gap=float(result.gap.min()),
+        min_gap=float(result.gap_marginal.min()),
     )
 
 
@@ -248,12 +248,20 @@ def prep_rank_orbits(system, ctx, variant):
     if variant == "prior_draws":
         orbits = _prior_draws(system, system.case.n_candidates)
         return lambda: rank_orbits(
-            _binary_of(flux), system.epochs, orbits, batch_size=batch
+            _binary_of(flux),
+            system.epochs,
+            orbits,
+            scales="quoted",  # the truth is scored on the quoted errors
+            batch_size=batch,
         )
     cands = _candidates(system, ctx)
     orbits = [orbit for orbit, _ in cands]
     return lambda: rank_orbits(
-        _binary_of(flux), system.epochs, orbits, batch_size=batch
+        _binary_of(flux),
+        system.epochs,
+        orbits,
+        scales="quoted",
+        batch_size=batch,
     )
 
 

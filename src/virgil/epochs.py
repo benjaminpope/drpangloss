@@ -105,38 +105,28 @@ class Epochs:
     epochs : dict
         ``{epoch name: data}``, where ``data`` is one
         [`OIData`][virgil.oidata.OIData], a list of them, or a dict
-        ``{dataset name: OIData}``. One epoch may hold several datasets,
-        e.g. several files of one night, or two filters a day apart. A
-        lone dataset is named after its epoch; datasets in a list are
-        named ``"<epoch>[k]"``. Every name must be unique.
+        ``{dataset name: OIData}``. A lone dataset is named after its epoch;
+        datasets in a list are named ``"<epoch>[k]"``. Names must be unique.
     at : {"dataset", "epoch"}, optional
-        Where each snapshot is taken: at the mean time of each dataset's
-        samples (default), or at the mean time of the whole epoch, shared
-        by its datasets.
+        Take each snapshot at the mean time of each dataset's samples
+        (default), or of the whole epoch, shared by its datasets.
     times : dict, optional
-        ``{epoch or dataset name: MJD}``: snapshot times to use instead of
-        the data's own, e.g. for data without per-sample times (AMIGO
-        DISCOs). A dataset's entry overrides its epoch's.
+        ``{epoch or dataset name: MJD}`` snapshot times to use instead of the
+        data's own (a dataset's entry overrides its epoch's).
 
     Attributes
     ----------
-    names : tuple of str
-        The epochs, in the order given.
-    dataset_names : tuple of str
-        The datasets, epoch by epoch.
-    epoch_of : tuple of str
-        The epoch of each dataset.
+    names, dataset_names, epoch_of : tuple of str
+        The epochs, the datasets (epoch by epoch), and the epoch of each dataset.
     data : tuple of OIData
-        The datasets, in the order of ``dataset_names``: pass this as
-        ``data`` to ``fit`` and ``numpyro_model``.
+        The datasets, in the order of ``dataset_names``: pass this as ``data``
+        to ``fit`` and ``numpyro_model``.
     times : numpy.ndarray
         The snapshot time of each dataset (MJD, float64).
     spread_days : numpy.ndarray
         The largest distance in time of each dataset's samples from its
         snapshot (days). The scene should move by much less than the
-        resolution (λ/B) over this time; if it does not, evaluate the
-        dataset per sample instead (pass it to ``fit`` directly with the
-        time-dependent scene).
+        resolution over it; if not, pass the dataset to ``fit`` directly.
 
     Examples
     --------
@@ -153,8 +143,6 @@ class Epochs:
     (('ut', 'at', '2024'), ('2023', '2023', '2024'))
     >>> [round(float(t), 2) for t in epochs.times]
     [60100.05, 60101.05, 60500.05]
-    >>> epochs.noise({"2023": {"vis_scale": 2.0}, "2024": {"vis_scale": 3.0}})
-    [{'vis_scale': 2.0}, {'vis_scale': 2.0}, {'vis_scale': 3.0}]
     """
 
     def __init__(self, epochs, at="dataset", times=None):
@@ -658,76 +646,40 @@ def marginal_loglike(
 ):
     """The log likelihood with each block's error scale marginalized.
 
-    Each observable block *b* of ``data`` (visibilities, phases, and each
-    extra observable) has an unknown factor ``s_b`` on its quoted errors.
-    Integrating it out under its Jeffreys prior ``1/s_b`` (Jeffreys 1946,
-    https://doi.org/10.1098/rspa.1946.0056) gives, up to a constant,
-
-        m = -Σ_b (ν_b/2) ln χ²_b,
-
-    where χ²_b is the block's χ² on the quoted errors (from
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals]) and
-    ν_b its number of independent observables
-    ([`n_independent`][virgil.oidata.OIData.n_independent], split by
-    block). Profiling ``s_b`` gives the same function, at
-    ŝ_b² = χ²_b/ν_b (the re-estimation of error bars of MacKay 1992,
-    Neural Comput. 4, 415, https://doi.org/10.1162/neco.1992.4.3.415). ``m`` does not change when any block's errors are
-    multiplied by a constant, so its differences between models (e.g.
-    the gap between two peaks) do not depend on how well the errors were
-    quoted. Near a peak, m ≈ -χ²/(2ŝ²): differences are those of the
-    quoted-error log likelihood divided by ŝ².
-
-    Every block uses the Gaussian (small-σ) normalization, including
-    uncorrelated closure phases, whose likelihood in
-    [`model_loglike`][virgil.likelihood.model_loglike] is a von Mises
-    density; for those the unbounded marginal would be improper as
-    s → ∞. ``m`` is a search surface, not a replacement for
-    ``model_loglike``. Where sσ is not small (weak closure phases with a
-    large scale), pass ``s_max``.
-
-    Data whose likelihood has a model-dependent normalization are refused
-    with a ``NotImplementedError``: gains
-    ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]), closure-phase
-    offsets
-    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
-    and extra observables with a model-dependent covariance. Their
-    marginalized nuisance covariance is not multiplied by an error scale,
-    so a block's χ² is not ∝ 1/s² and the scale would not be integrated
-    out. The same holds for ``epoch_positions`` and
-    ``rank_orbits(scales="marginal")``.
+    Each observable block *b* of ``data`` (visibilities, phases, each extra
+    observable) has an unknown factor ``s_b`` on its quoted errors. Integrating
+    it out under its Jeffreys prior gives, up to a constant,
+    ``m = -sum_b (nu_b/2) ln chi2_b``, with ``chi2_b`` the block's chi-squared
+    on the quoted errors and ``nu_b`` its number of independent observables.
+    ``m`` does not change when a block's errors are multiplied by a constant,
+    so differences of ``m`` do not depend on how well the errors were quoted.
+    It is a search surface, not a replacement for
+    [`model_loglike`][virgil.likelihood.model_loglike]; see the
+    [orbit tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags).
 
     Parameters
     ----------
     model : SourceModel
         Model to evaluate.
     data : OIData
-        Data to compare with.
+        Data to compare with. Gains, closure-phase offsets and extra
+        observables with a model-dependent covariance are refused
+        (``NotImplementedError``): a scale does not multiply their covariance.
     dof : float, optional
-        The effective number of degrees of freedom as a fraction of ν_b
-        (default 1). Errors correlated beyond the model of the quoted
-        errors carry fewer than ν_b degrees of freedom, and ``m`` with
-        ν_b is then over-confident by about ν_b/ν_eff; a ``dof`` below 1
-        (e.g. calibrated by a residual bootstrap) scales every difference
-        of ``m`` down by that factor.
+        The effective number of degrees of freedom as a fraction of ``nu_b``
+        (default 1), for errors correlated beyond the quoted model; every
+        difference of ``m`` scales by it.
     block_dof : dict, optional
-        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``; 1
-        for a block not named): each block tempered by its own factor, as
-        ``AliasResult.block_dof()`` gives for the orbit fit's tempering
-        (a NUTS stage reproduces it by passing that here). Multiplies
-        ``dof``.
+        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``), each
+        block tempered by its own factor, as ``AliasResult.block_dof()`` gives.
     s_max : float, optional
-        Bound each scale to [1/s_max, s_max] and integrate it out
-        numerically, with the exact von Mises normalization for
-        uncorrelated closure phases: ``m`` is then Σ_b ln ∫ L_b(s)^dof
-        d ln s over the bounds. The integral is adaptive in ln s (scans
-        narrow it to where the integrand matters, then Gauss–Legendre),
-        so it stays accurate where the likelihood falls steeply from a
-        bound. This is finite and proper where the unbounded marginal is
-        not.
+        Bound each scale to ``[1/s_max, s_max]`` and integrate it out
+        numerically, with the exact von Mises normalization for uncorrelated
+        closure phases. Needed where ``s`` times the error is not small (weak
+        closure phases); finite and proper where the unbounded marginal is not.
     **noise
-        Other noise terms (e.g. ``wavel_scale``), as for
-        ``whitened_residuals``. ``vis_scale`` and ``phi_scale`` should be
-        left out: the scales are integrated out.
+        Other noise terms (e.g. ``wavel_scale``); leave out ``vis_scale`` and
+        ``phi_scale``, which are integrated out.
 
     Returns
     -------
@@ -741,20 +693,10 @@ def marginal_loglike(
     )
 
 
-_SCALES = ("quoted", "marginal")
+_SCALES = ("marginal", "quoted")
 
 
-def _check_scales(scales, name):
-    if scales is None:
-        warnings.warn(
-            f"{name} ranks with the quoted errors when scales is not given; "
-            "the default will become scales='marginal' (each dataset's error "
-            "scales integrated out, see marginal_loglike). Pass "
-            "scales='quoted' or scales='marginal' to choose.",
-            FutureWarning,
-            stacklevel=external_stacklevel(),
-        )
-        return "quoted"
+def _check_scales(scales):
     if scales not in _SCALES:
         raise ValueError(f"scales must be one of {_SCALES}, not {scales!r}.")
     return scales
@@ -1000,7 +942,7 @@ def rank_orbits(
     data,
     orbits,
     *,
-    scales=None,
+    scales="marginal",
     noise=None,
     dof=1.0,
     s_max=None,
@@ -1010,74 +952,56 @@ def rank_orbits(
     """Rank trial orbits by the log likelihood of multi-epoch data.
 
     Each orbit's scene is evaluated at every dataset's snapshot time and
-    compared with all the data at once, by one compiled kernel mapped
-    over the orbits. This judges trial orbits, e.g. from a Thiele–Innes
-    grid on rough positions
-    ([`starting_orbits`][virgil.orbits.starting_orbits]) or from prior
-    draws, by the interferometric data themselves rather than by the
-    positions that seeded them.
+    compared with all the data at once, by one compiled kernel mapped over the
+    orbits. This judges trial orbits, such as a Thiele-Innes grid
+    ([`starting_orbits`][virgil.orbits.starting_orbits]) or prior draws, by the
+    interferometric data themselves.
 
     Parameters
     ----------
     model : callable
-        Maps an orbit to a time-dependent scene, e.g.
-        ``lambda orbit: OrbitalBinary(orbit, 0.1)``. It is traced, so it
-        must not convert the orbit's elements to Python floats; other
-        parameters (fluxes, the shape of an extended component) are fixed
-        at trial values.
+        ``model(orbit)`` returns the time-dependent scene, e.g.
+        ``lambda orbit: OrbitalBinary(orbit, 0.1)``, with the flux fixed
+        (``score_orbits`` takes ``model(orbit, flux)``). It is traced, so it
+        must not convert the orbit's elements to Python floats.
     data : Epochs
         The data, one snapshot per dataset.
     orbits : sequence or orbit
-        A list of orbits, the ``(orbit, χ²)`` pairs of
-        ``starting_orbits``, a ``RankedOrbits``, or one orbit whose
-        elements have a leading axis (e.g. prior draws). All must share
-        one class and ``t_ref``.
-    scales : {"quoted", "marginal"}, optional
-        How the errors are scaled. ``"quoted"`` ranks by
-        ``Epochs.loglike`` on the quoted errors (with ``noise``), so the
-        datasets with the most underestimated errors dominate the
-        ranking. ``"marginal"`` integrates each dataset's error scale out,
-        block by block (visibilities, phases), under its Jeffreys prior,
-        and ranks by the sum of
-        [`marginal_loglike`][virgil.epochs.marginal_loglike]: the
-        ranking then does not change when one dataset's errors are
-        rescaled. Data with gains, closure-phase offsets or a
-        model-dependent covariance are refused (see ``marginal_loglike``). The default is ``"quoted"`` for now, with a
-        ``FutureWarning`` when ``scales`` is not given; it will become
-        ``"marginal"``.
+        A list of orbits, the ``(orbit, chi2)`` pairs of ``starting_orbits``,
+        a ``RankedOrbits``, or one orbit with a leading axis (e.g. prior
+        draws). All must share one class and ``t_ref``.
+    scales : {"marginal", "quoted"}, optional
+        ``"marginal"`` (default) integrates each dataset's error scales out
+        ([`marginal_loglike`][virgil.epochs.marginal_loglike]), so a dataset
+        with underestimated errors does not dominate; ``"quoted"`` ranks by
+        ``Epochs.loglike`` on the quoted errors.
     noise : dict, optional
         Noise values keyed by epoch or dataset name, as for
-        [`Epochs.loglike`][virgil.epochs.Epochs.loglike]; by default
-        the quoted errors. With ``scales="marginal"``, error scales are
-        integrated out and only the other terms (e.g. ``wavel_scale``)
-        matter.
+        [`Epochs.loglike`][virgil.epochs.Epochs.loglike].
     dof, s_max : optional
-        For ``scales="marginal"``: the effective-dof fraction (one
-        number, or a dict keyed by dataset or epoch name) and the bound
-        on the scales, as for ``marginal_loglike``.
+        The effective-dof fraction and the bound on the scales, as for
+        ``marginal_loglike``. ``s_max`` defaults to None here and to 5 in
+        ``score_orbits``, which profiles a flux and needs the bound.
     batch_size : int, optional
-        Orbits evaluated together by ``jax.lax.map`` (default: as many as
-        keep about a million model visibilities, summed over all the
-        datasets, in memory at once, at least one and at most all of
-        them). Lower it if the data are large.
+        Orbits evaluated together (default: about a million model
+        visibilities in memory at once).
     dtype : {"float64", "float32"}, optional
-        Precision of the evaluation (default float64, in a local
-        ``jax.enable_x64`` context).
+        Precision of the evaluation (default float64).
 
     Returns
     -------
     RankedOrbits
-        The orbits sorted by log likelihood, best first. An orbit whose
-        likelihood is not finite ranks last, with ``-inf``.
+        The orbits sorted by log likelihood, best first; a non-finite
+        likelihood ranks last, with ``-inf``.
 
     Examples
     --------
     >>> candidates = starting_orbits(positions, periods)  # doctest: +SKIP
     >>> ranked = rank_orbits(lambda o: OrbitalBinary(o, 0.1), epochs,
-    ...                      candidates, scales="marginal")  # doctest: +SKIP
+    ...                      candidates)  # doctest: +SKIP
     >>> ranked.best, ranked.loglike[:3]  # doctest: +SKIP
     """
-    scales = _check_scales(scales, "rank_orbits")
+    scales = _check_scales(scales)
     listed = _orbit_list(orbits)
     loglike = _loglikes(
         model,
@@ -1225,10 +1149,8 @@ class EpochPositions:
 
     Positions, covariances and ``gap_marginal`` come from the
     scale-marginalized surface
-    ([`marginal_loglike`][virgil.epochs.marginal_loglike]), on which each
-    observable block's error scale is integrated out: they do not change
-    when a dataset's quoted errors, or only its closure-phase errors, are
-    multiplied by a constant.
+    ([`marginal_loglike`][virgil.epochs.marginal_loglike]): they do not change
+    when a dataset's quoted errors are multiplied by a constant.
 
     Attributes
     ----------
@@ -1239,48 +1161,28 @@ class EpochPositions:
     dra, ddec : numpy.ndarray
         The fitted positions (mas, East and North).
     cov : numpy.ndarray
-        The covariance of each position, shape ``(n, 2, 2)`` (mas²), from
-        the curvature of the scale-marginalized surface.
+        The covariance of each position, shape ``(n, 2, 2)`` (mas^2).
     flux : numpy.ndarray
         The fitted companion/primary flux of each dataset (at most 1).
-    gap : numpy.ndarray
-        The gap on the **quoted** errors, as before ``gap_marginal`` was
-        added: the log likelihood of the best grid position minus that of
-        the best grid position more than ``gap_mas`` from it. It grows as
-        1/s² when the errors are underestimated by s, so an ambiguous
-        dataset can look decisive. It is a grid quantity, not refined,
-        and its best grid position need not be the fitted one. Kept
-        unchanged for one release, after
-        which ``gap`` will hold the marginal value.
     gap_marginal : numpy.ndarray
-        How decisive each dataset is, on the scale-marginalized surface:
-        the same difference between the best grid position and its best
-        rival more than ``gap_mas`` away, with each block's error scale
-        integrated out. A small gap means another peak (a fringe alias,
-        or a mirror image when closure phases are weak) fits almost as
-        well. ``decisive`` and ``min_gap`` compare this. With ``refine``
-        it compares refined peaks: the best of the catalogue (``peaks``)
-        and the best of its refined rivals and of the grid points more
-        than ``gap_mas`` from it.
+        How decisive each dataset is: the log likelihood of the best peak
+        minus that of its best rival more than ``gap_mas`` away, on the
+        scale-marginalized surface. A small gap means another peak (a fringe
+        alias, or a mirror image) fits almost as well. ``decisive`` and
+        ``min_gap`` compare this.
     chi2_raw : tuple of dict
-        For each dataset, χ²/N on the quoted errors at the fitted
-        position, N = ``n_independent``: per block (``"vis"``, ``"phi"``,
-        ``"extra[k]"``) and for the whole dataset (``"all"``). A value
-        well above 1 means the quoted errors are too small; it is not
-        made 1 by the scale marginalization.
+        For each dataset, chi-squared/N on the quoted errors at the fitted
+        position, per block and for the whole dataset (``"all"``). Well above 1
+        means the quoted errors are too small.
     scale : tuple of dict
-        For each dataset, the fitted error scale ŝ = √(χ²/ν) of each
-        block (``"vis_scale"``, ``"phi_scale"``, ``"extra[k]_scale"``).
+        For each dataset, the fitted error scale of each block.
     peaks : tuple of EpochPeaks
-        For each dataset, the catalogue of its peaks, best first: the
-        first is the fitted position.
+        For each dataset, the catalogue of its peaks, best first.
     flags : tuple of tuple of NightFlag
-        For each dataset, why its position should not seed an orbit (empty
-        for a trustworthy night), from the relative thresholds of
-        ``epoch_positions``; see ``flagged``.
+        For each dataset, why its position should not seed an orbit (empty for
+        a trustworthy night); see ``flagged``.
     primary_diam : float or None
-        The uniform-disc primary the positions were fitted with (mas), or
-        None for a point primary.
+        The uniform-disk primary the positions were fitted with (mas), or None.
     """
 
     names: tuple
@@ -1289,7 +1191,6 @@ class EpochPositions:
     ddec: onp.ndarray
     cov: onp.ndarray
     flux: onp.ndarray
-    gap: onp.ndarray
     gap_marginal: onp.ndarray
     chi2_raw: tuple
     scale: tuple
@@ -1373,13 +1274,12 @@ class EpochPositions:
 def _binary(x, diam=None):
     """The static binary ``x = (dra, ddec, flux)``: two point stars, or,
     when ``diam`` (mas, traced) is given, a point companion beside a
-    uniform-disc primary. ``diam=None`` keeps the fast point-star path
+    uniform-disk primary. ``diam=None`` keeps the fast point-star path
     (``None`` is an empty pytree, so it never triggers a recompilation)."""
     if diam is None:
         return BinaryModelCartesian(x[0], x[1], x[2])
-    # Resolved primaries: a point primary absorbs the V^2 deficit of a
-    # resolved star into the companion's flux and position (iota Peg,
-    # 1.05 mas), so the per-night seeds are biased and their chi2 poor.
+    # Resolved primaries (AGENTS.md, "Resolved primary" row): a point
+    # primary biases the per-night seeds.
     return System(
         primary=UniformDisk(diam),
         companion=PointSource(x[2], x[0], x[1]),
@@ -1635,8 +1535,7 @@ def _flag_one_night(
     added by [`_flag_chi2`][virgil.epochs._flag_chi2]."""
     flags = []
     best = float(catalogue.marginal[0])
-    # Single-night alias peaks: the true position is often not the best
-    # peak (Gl 229 2024-02-27 and 2024-03-28), so a night whose catalogue
+    # AGENTS.md, "Single-night alias peaks" row: a night whose catalogue
     # holds another peak within a few nats of the best must not seed orbits.
     rivals = catalogue.marginal[1:]
     close = (
@@ -1745,141 +1644,62 @@ def epoch_positions(
 ):
     """The companion's position in each dataset of a binary.
 
-    For each dataset: a static binary
-    ([`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]) on a
-    grid of positions and fluxes, scored on the scale-marginalized
-    surface m = -Σ_b (ν_b/2) ln χ²_b
-    ([`marginal_loglike`][virgil.epochs.marginal_loglike]), in which the
-    error scale of each observable block (visibilities, closure phases)
-    is integrated out under its Jeffreys prior. The ``n_peaks`` highest
-    distinct local maxima of the grid (more than ``gap_mas`` apart) are
-    each refined (with ``refine``) by maximizing m, which is the fit with
-    a free ``vis_scale`` and ``phi_scale`` per dataset, profiled, and
-    ranked by their refined m: the best grid point is not always the best
-    peak once refined, since fringe peaks are often narrower than the
-    grid step. The best refined peak is the position, and the curvature
-    of m there gives its covariance. Every peak is kept in the catalogue
-    ``EpochPositions.peaks``. The
-    positions, covariances and ``gap_marginal`` therefore do not depend
-    on how well each block's errors were quoted, and nights whose errors
-    are underestimated do not look more decisive than they are. These
-    positions are only a starting point for a fit of the orbit to the
-    visibilities: when the scene is more than two point stars they can be
-    biased.
-
-    **Night flags.** Each night also gets flags with reasons
-    (``EpochPositions.flags``, see ``flag_nights``): a night with a rival
-    peak within ``flag_alias_nats`` of the best (the single-night alias of
-    Gl 229 on 2024-02-27 and 2024-03-28, where the true position is often
-    not the best peak), a low ``gap_marginal``, a raw χ²/N far above the
-    median night's, a separation below λ/2B_max, or a flux at its bound.
-    No threshold is a per-system number. Two are in nats of the
-    scale-marginalized score (``flag_alias_nats``, ``flag_min_gap``): they
-    are not dimensionless, and the gaps grow with the amount of data (the
-    number of frames and baselines), so retune them for very different
-    data volumes. Three are relative: a multiple of the median night
-    (``flag_chi2_factor``), a fraction of the night's own λ/B_max
-    (``flag_sep_fraction``) and a fraction of a flux bound
-    (``flag_flux_tol``). ``chi2-high`` is outlier detection only: it
-    cannot catch a uniform failure (every night underestimated alike) or
-    a majority of bad nights, and the raw χ²/N column of
-    ``EpochPositions.chi2_raw`` should be read in any case. A flagged
-    night should seed nothing: [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]
-    skips it when seeding, but its data still count in the likelihood.
-
-    **Resolved primaries.** With ``primary_diam`` the companion is fitted
-    beside a uniform-disc primary instead of a point star, since a point
-    primary absorbs a resolved star's visibility deficit into the
-    companion's flux and position (ι Peg's primary is 1.05 mas).
-
-    The raw χ²/N on the quoted errors and the fitted scale of each block
-    are recorded, and a ``UserWarning`` names the datasets whose raw
-    χ²/N exceeds 4 (errors underestimated by more than 2): their orbit
-    fits need fitted error scales, and a rescaled χ²/N ≈ 1 does not make
-    them good fits.
+    For each dataset a static binary
+    ([`BinaryModelCartesian`][virgil.models.BinaryModelCartesian]) is scored on
+    a grid of positions and fluxes by the scale-marginalized surface
+    ([`marginal_loglike`][virgil.epochs.marginal_loglike]). The ``n_peaks``
+    highest distinct local maxima are refined and ranked; the best is the
+    position, the curvature there its covariance, and all are kept in
+    ``EpochPositions.peaks``. Each night also gets flags with reasons
+    (``EpochPositions.flags``): an alias peak, a low gap, a high raw
+    chi-squared/N, a separation below the resolution, or a flux at its bound.
+    The [orbit tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags) gives the
+    reasoning. The positions are only a starting point for an orbit fit.
 
     Parameters
     ----------
     data : Epochs
-        The data. Datasets with gains, closure-phase offsets or a
-        model-dependent covariance are refused (see ``marginal_loglike``).
+        The data (gains, closure-phase offsets and model-dependent covariances
+        are refused; see ``marginal_loglike``).
     grid : dict
-        ``{"dra": axis, "ddec": axis, "flux": values}``: the positions
-        (mas) and companion/primary fluxes to try. The position step
-        should be finer than the resolution λ/B of the longest baseline.
-        Fluxes must be in (0, 1]: a binary with flux ratio f > 1 at r is
-        the one with 1/f at -r, so f > 1 would only add a twin of every
-        peak.
+        ``{"dra": axis, "ddec": axis, "flux": values}``: positions (mas) and
+        companion/primary fluxes in (0, 1]. The position step should be finer
+        than the resolution of the longest baseline.
     gap_mas : float, optional
-        The distance (mas) beyond which another peak counts as a rival
-        for ``gap`` and ``gap_marginal``; by default each dataset's
-        resolution λ/B_max.
-    refine : bool, optional
-        Refine each grid peak by maximizing m (default). Otherwise the
-        position is the best grid point, with a covariance of one grid
-        step squared, and the peaks are the grid points.
-    n_peaks : int, optional
-        The peaks catalogued and refined per dataset (default 5). Each
-        refinement is a small fit, so the cost of ``refine`` grows
-        linearly with ``n_peaks``; 1 refines only the best grid point,
-        which can commit to the wrong peak.
-    dof : float or dict, optional
-        The effective-dof fraction ν_eff/ν of each dataset's blocks (one
-        number, or a dict keyed by dataset or epoch name; default 1),
-        for errors correlated beyond the quoted ones (see
-        ``marginal_loglike``). It multiplies ``gap_marginal`` by ``dof``
-        and ``cov`` by 1/dof.
-    s_max : float, optional
-        Bound the scales and integrate them out numerically (see
-        ``marginal_loglike``), for weak closure phases with a large
-        scale.
-    batch_size : int, optional
-        Grid points evaluated together (default: from the data's size).
+        The distance (mas) beyond which another peak is a rival for
+        ``gap_marginal``; by default each dataset's resolution.
+    refine, n_peaks : optional
+        Refine each grid peak by maximizing the score (default True), and the
+        peaks catalogued per dataset (default 5; 1 can commit to the wrong peak).
+    dof, s_max, batch_size : optional
+        The effective-dof fraction (a number, or a dict keyed by dataset or
+        epoch name), the bound on the scales (as for ``marginal_loglike``) and
+        the grid points evaluated together.
     primary_diam : float, optional
-        The primary's uniform-disc diameter (mas), fixed. ``None``
-        (default) or 0 is a point primary (the fast path). Give a value
-        estimated from the data or from a calibrator, never from the
-        orbit being tested. Fitting it (``"fit"``) is not supported yet
-        and raises.
+        The primary's uniform-disk diameter (mas), fixed; None or 0 is a point
+        primary. Give a value from the data or a calibrator, never from the orbit
+        being tested.
     flag_nights : bool, optional
-        Compute the night flags (default True). With False every night is
-        unflagged.
-    flag_alias_nats : float or None, optional
-        ``alias-peaks`` (nats): flag a night whose catalogue has another
-        peak within this many nats (scale-marginalized score m, Δχ² ≈
-        2 × nats) of the best (default 2). It needs ``n_peaks`` of at
-        least 2 to see a rival. None disables it.
-    flag_min_gap : float or None, optional
-        ``low-gap`` (nats): flag a night whose ``gap_marginal`` is below
-        this (default 5), the same quantity as the ``min_gap`` of
-        ``decisive`` and ``EpochPositions.positions``. An ``alias-peaks``
-        night has a gap below ``flag_alias_nats``, so it is also below
-        this while ``flag_alias_nats <= flag_min_gap`` (the defaults):
-        ``alias-peaks`` then implies ``low-gap``, and only the more
-        specific code is listed. None disables it.
-    flag_chi2_factor : float or None, optional
-        ``chi2-high`` (relative): flag a night whose raw χ²/N exceeds this
-        multiple of ``max(median, 1)`` over the nights (default 3; only
-        with three or more nights). The floor of 1 keeps a set of nights
-        with small χ²/N from flagging a night that fits well. None
-        disables it.
-    flag_sep_fraction : float or None, optional
-        ``sep-below-resolution`` (relative): flag a night whose separation
-        is below this fraction of its own λ/B_max, from that night's
-        baselines and wavelengths (default 0.5, i.e. λ/2B_max). None
-        disables it.
-    flag_flux_tol : float or None, optional
-        ``flux-at-bound`` (relative): flag a night whose flux is within
-        this relative distance of the fitted range's bounds (default
-        0.02). The upper bound is fixed at 1 (a brighter companion is the
-        fainter one on the other side); the lower bound is a tenth of the
-        grid's lowest flux. A flux at 1 may be genuine for a near-equal
-        pair: the flag says the labels of the stars are not determined,
-        not that the night is wrong.
+        Compute the night flags (default True).
+    flag_alias_nats, flag_min_gap : float or None, optional
+        ``alias-peaks``: another peak within this many nats of the best
+        (default 2); ``low-gap``: ``gap_marginal`` below this (default 5).
+        Both are in nats, so retune them for very different data volumes.
+    flag_chi2_factor, flag_sep_fraction, flag_flux_tol : float or None, optional
+        Relative thresholds: ``chi2-high`` (raw chi-squared/N above this
+        multiple of the median night, default 3), ``sep-below-resolution`` (below
+        this fraction of the night's own resolution, default 0.5) and
+        ``flux-at-bound`` (within this fraction of a flux bound, default 0.02).
+        None disables a flag.
 
     Returns
     -------
     EpochPositions
+
+    Examples
+    --------
+    >>> found = epoch_positions(epochs, grid)  # doctest: +SKIP
+    >>> found.dra, found.decisive(5.0)  # doctest: +SKIP
     """
     if not isinstance(data, Epochs):
         raise TypeError(f"data must be an Epochs, not {type(data).__name__}.")
@@ -1919,7 +1739,7 @@ def epoch_positions(
         with run_in("float64"):
             d64 = cast_tree(d, "float64")
             diam64 = None if diam is None else np.asarray(diam)
-            loglike, chi2 = _grid_scores(
+            _, chi2 = _grid_scores(
                 np.asarray(points),
                 d64,
                 surface,
@@ -1927,14 +1747,11 @@ def epoch_positions(
                 diam64,
             )
             marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
-            loglike = onp.asarray(loglike).reshape(xx.shape)
             marginal = onp.asarray(marginal).reshape(xx.shape)
-        loglike = onp.where(onp.isfinite(loglike), loglike, -onp.inf)
         marginal = onp.where(onp.isfinite(marginal), marginal, -onp.inf)
         rival = (
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
         )
-        _, gap = _gap(loglike, xx, yy, rival)
         _, gap_marginal = _gap(marginal, xx, yy, rival)
         cells = _grid_peaks(marginal, xx, yy, rival, n_peaks)
         grid_points = [
@@ -2024,9 +1841,7 @@ def epoch_positions(
             f"{n}_scale": float(v)
             for n, v in zip(surface.names, surface.scales(chi2_best))
         }
-        rows.append(
-            (best, cov, gap, gap_marginal, per_block, scale, catalogue)
-        )
+        rows.append((best, cov, gap_marginal, per_block, scale, catalogue))
         night_flags.append(
             _flag_one_night(
                 catalogue,
@@ -2068,7 +1883,7 @@ def epoch_positions(
         )
     flags = [[] for _ in rows]
     if flag_nights:
-        extra = _flag_chi2([r[4]["all"] for r in rows], flag_chi2_factor)
+        extra = _flag_chi2([r[3]["all"] for r in rows], flag_chi2_factor)
         flags = [a + b for a, b in zip(night_flags, extra)]
     return EpochPositions(
         names=data.dataset_names,
@@ -2077,24 +1892,22 @@ def epoch_positions(
         ddec=onp.array([r[0][1] for r in rows]),
         cov=onp.array([r[1] for r in rows]),
         flux=onp.array([r[0][2] for r in rows]),
-        gap=onp.array([float(r[2]) for r in rows]),
-        gap_marginal=onp.array([float(r[3]) for r in rows]),
-        chi2_raw=tuple(r[4] for r in rows),
-        scale=tuple(r[5] for r in rows),
-        peaks=tuple(r[6] for r in rows),
+        gap_marginal=onp.array([float(r[2]) for r in rows]),
+        chi2_raw=tuple(r[3] for r in rows),
+        scale=tuple(r[4] for r in rows),
+        peaks=tuple(r[5] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
     )
 
 
-# Resolved primary, problem 10 of the orbit-consolidation plan (ι Peg's
-# primary is 1.05 mas; a point primary gives χ²/N in the thousands). The
-# data resolve the primary when a shared uniform-disc diameter improves the
+# Resolved primary (AGENTS.md, "Resolved primary in the orbit fit" row). The
+# data resolve the primary when a shared uniform-disk diameter improves the
 # summed scale-marginalized score of the nights by this many nats over a
 # point primary: one extra parameter, so 5 nats is Δχ² ≈ 10, about 3σ.
 RESOLVE_NATS = 5.0
 # The diameters tried, as fractions of the finest fringe spacing λ/B_max: a
-# disc much smaller than 0.03 λ/B_max changes V² by less than a part in
+# disk much smaller than 0.03 λ/B_max changes V² by less than a part in
 # 10⁴, and one of 1.5 λ/B_max has crossed the first visibility null.
 _DIAM_FRACTIONS = (0.03, 0.06, 0.12, 0.25, 0.4, 0.6, 0.9, 1.3)
 # A position is searched within this many resolution elements of its start.
@@ -2103,7 +1916,7 @@ _REFINE_WINDOW = 3.0
 
 @dataclasses.dataclass(frozen=True)
 class PrimaryDiameter:
-    """The primary's uniform-disc diameter estimated from per-night
+    """The primary's uniform-disk diameter estimated from per-night
     positions, from
     [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter].
 
@@ -2158,62 +1971,39 @@ def estimate_primary_diameter(
     dof=1.0,
     block_dof=None,
 ):
-    """Estimate a shared uniform-disc primary diameter from per-night
-    positions, and decide whether the data resolve the primary.
+    """Estimate a shared uniform-disk primary diameter from per-night positions,
+    and decide whether the data resolve the primary.
 
-    This is the cheap first pass of ``primary_diam="auto"`` in
-    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] (a resolved
-    primary, e.g. ι Peg's at 1.05 mas, makes a point-star model fit badly
-    and biases the seeds). Each night's static binary is re-refined from
-    its ``positions`` entry at each diameter of a grid, on the
-    scale-marginalized score ``m`` of
-    [`marginal_loglike`][virgil.epochs.marginal_loglike], and the nights'
-    scores are summed: the diameter is shared by every night. Flagged
-    nights are left out of the sum (their positions may be wrong peaks)
-    unless every night is flagged.
-
-    **The rule.** The diameters tried are 0 (a point primary) and the
-    fractions 0.03 to 1.3 of the finest fringe spacing λ/B_max. The best
-    diameter is the maximum of the summed score, refined by a parabola in
-    the diameter through its two neighbours, whose curvature gives
-    ``sigma``. The data **resolve** the primary when the best diameter is
-    positive and its summed score exceeds the point primary's by at least
-    ``resolve_nats`` (default 5 nats: one extra parameter, Δχ² ≈ 10, about
-    3σ) on the tempered score (``dof``, ``block_dof``: the gain is
-    ``dof`` times the untempered one; the threshold is unchanged).
-    Because ``m`` integrates out each block's error scale, a night
-    whose errors are underestimated does not look more decisive than it
-    is. The rule uses no published value.
+    The cheap first pass of ``primary_diam="auto"`` in
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]. Each night's
+    static binary is re-refined from its ``positions`` entry at each diameter
+    of a grid (0 and fractions of the finest fringe spacing), on the
+    scale-marginalized score of [`marginal_loglike`][virgil.epochs.marginal_loglike],
+    and the nights' scores are summed. The data resolve the primary when the
+    best diameter is positive and gains at least ``resolve_nats`` over a point
+    primary. The [orbit tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags) gives
+    the rule.
 
     Parameters
     ----------
     data : Epochs or sequence of OIData
         The datasets, in the order of ``positions``.
     positions : EpochPositions
-        The per-night positions (from
-        [`epoch_positions`][virgil.epochs.epoch_positions]); each night's
-        best position and flux start its refinements.
+        The per-night positions
+        ([`epoch_positions`][virgil.epochs.epoch_positions]); each night's best
+        position and flux start its refinements. Flagged nights are left out
+        unless every night is flagged.
     resolve_nats : float, optional
-        The gain (nats) at which the primary counts as resolved.
+        The gain (nats) at which the primary counts as resolved (default 5).
     diam_grid : array-like, optional
-        Positive diameters (mas) to try besides 0; by default the
-        fractions of λ/B_max above.
-    s_max : float, optional
-        As in ``marginal_loglike``.
-    dof : float, optional
-        Tempers the score: one fraction ``1/f`` for every block. Default 1
-        (untempered).
-    block_dof : dict, optional
-        ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``; 1
-        for a block not named), e.g.
-        ``AliasResult.block_dof()``. It is keyed by block, unlike the
-        dataset-keyed dict of ``epoch_positions(dof=)``, and multiplies
-        ``dof``.
+        Positive diameters (mas) to try besides 0.
+    s_max, dof, block_dof : optional
+        As for ``marginal_loglike``; ``block_dof`` is keyed by block, e.g.
+        ``AliasResult.block_dof()``, and multiplies ``dof``.
     vis_amp : (float, float), optional
-        Profile one V² amplitude per night in this range, as the orbit fit
-        does (``fit_orbit_aliases(vis_amp=...)``), so that a contrast loss
-        that is the same on every baseline is not read as a disc. It needs
-        squared-visibility data (``vis_mode="v2"``).
+        Profile one V^2 amplitude per night in this range, as the orbit fit
+        does, so a contrast loss common to every baseline is not read as a disk.
+        Needs squared-visibility data.
 
     Returns
     -------
@@ -2222,24 +2012,19 @@ def estimate_primary_diameter(
     Raises
     ------
     ValueError
-        If ``data`` and ``positions`` are not the same nights, or
-        ``diam_grid`` holds a non-positive diameter.
+        If ``data`` and ``positions`` are not the same nights, or ``diam_grid``
+        holds a non-positive diameter.
 
     Warns
     -----
     UserWarning
-        If the best diameter is the largest tried (``at_grid_edge``): the
-        primary may be bigger; widen ``diam_grid``.
+        If the best diameter is the largest tried (``at_grid_edge``): widen
+        ``diam_grid``.
 
-    Notes
-    -----
-    The static snapshot ignores motion within a night, as the seeds do.
-    A V² contrast loss that is the same on every baseline (a calibration
-    error) is partly degenerate with a small disc here; the orbit fit's
-    per-night amplitude (``vis_amp``) absorbs it, and the diameter is
-    refitted there. The returned ``positions`` keep the original night
-    flags, ``gap`` and peak catalogues (which belong to the point-primary
-    surface); only the best position, flux and covariance are refitted.
+    Examples
+    --------
+    >>> est = estimate_primary_diameter(epochs, positions)  # doctest: +SKIP
+    >>> est.resolved, est.diam  # doctest: +SKIP
     """
     sets = list(data.data) if isinstance(data, Epochs) else list(data)
     if len(sets) != len(positions.names):
@@ -2490,7 +2275,7 @@ def start_from_positions(
     grid,
     periods,
     t_ref,
-    scales=None,
+    scales="marginal",
     noise=None,
     dof=1.0,
     s_max=None,
@@ -2509,124 +2294,65 @@ def start_from_positions(
 ):
     """Start an orbit fit to multi-epoch visibilities from a positions fit.
 
-    The likelihood of visibilities is multimodal on the scale of the
-    resolution λ/B (fringe aliases), and a sampler started from default
-    values can stick in an alias. This builds a start in four steps:
-
-    1. **Positions**: the companion's position in each dataset, the
-       best of its refined grid peaks
-       ([`epoch_positions`][virgil.epochs.epoch_positions]).
-    2. **Starting orbits**: a Thiele–Innes grid over period, eccentricity
-       and time of periastron on the decisive datasets' positions
-       ([`starting_orbits`][virgil.orbits.starting_orbits]). An
-       ambiguous dataset does not seed them; its other peaks are kept in
-       ``positions.peaks``, but only its visibilities judge between
-       them here.
-    3. **Ranking** of those orbits by the likelihood of all the
-       visibilities, with each orbit mapped to the model's parameters by
-       ``start_values`` and the flux at the median of the positions fits.
-    4. **Refinement** with [`fit`][virgil.fitting.fit] of the full model
-       (noise terms included) from the ``n_refine`` best *distinct*
-       orbits (as for [`chain_starts`][virgil.epochs.chain_starts]).
-
-    Only the start comes from positions: nothing here enters the
-    posterior. Sample from the best fit with numpyro's ``init_to_value``,
-    or start one chain in each mode with
-    [`OrbitStart.chain_values`][virgil.epochs.OrbitStart.chain_values] and
-    [`chain_init_params`][virgil.likelihood.chain_init_params].
+    The likelihood of visibilities is multimodal (fringe aliases). This builds
+    a start in four steps: the companion's position in each dataset
+    ([`epoch_positions`][virgil.epochs.epoch_positions]); Thiele-Innes orbits on
+    the decisive, unflagged positions
+    ([`starting_orbits`][virgil.orbits.starting_orbits]); a ranking of those by
+    the likelihood of all the data; and [`fit`][virgil.fitting.fit] from the
+    best distinct orbits. Nothing here enters the posterior; see the
+    [orbit tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags).
 
     Parameters
     ----------
     model : callable
-        The scene function, called with the parameters in ``priors`` as
-        keyword arguments and returning a time-dependent scene, as for
+        The scene function of the parameters in ``priors``, as for
         [`Epochs.model_fn`][virgil.epochs.Epochs.model_fn].
     priors : dict
         The priors of the fit, as for ``fit``.
     data : Epochs
         The data.
     start_values : callable
-        ``start_values(orbit, flux)``: the starting values (a dict with
-        a value for every key of ``priors``) for a
-        [`KeplerOrbit`][virgil.orbits.KeplerOrbit] (with ``t_ref``) and
-        a companion/primary flux. It may use Python floats.
+        ``start_values(orbit, flux)`` returns a dict with a value for every key
+        of ``priors``, for a [`KeplerOrbit`][virgil.orbits.KeplerOrbit].
     grid : dict
-        The per-dataset grid of positions and fluxes (see
-        ``epoch_positions``).
+        The per-dataset grid of positions and fluxes (see ``epoch_positions``).
     periods : array-like
-        Trial periods (days) for ``starting_orbits``. Build them with
-        [`period_grid`][virgil.orbits.period_grid] over the times of the
-        datasets: a ``UserWarning`` says when neighbouring periods would
-        drift apart by more than 1/9 of a cycle over the baseline of the
-        datasets that seed the orbits, so that the grid can miss the
-        true period.
+        Trial periods (days), e.g. from
+        [`period_grid`][virgil.orbits.period_grid]; a warning says when the
+        grid is too coarse.
     t_ref : float
-        The reference time (MJD) of the starting orbits: the ``t_ref`` of
-        your model.
-    scales : {"quoted", "marginal"}, optional
-        How step 3 ranks the candidates (see ``rank_orbits``):
-        ``"quoted"`` on the quoted errors, where the datasets with the
-        most underestimated errors dominate, or ``"marginal"`` with each
-        dataset's per-block error scale integrated out, so that each
-        dataset counts by its own fitted scale ŝ. The default is
-        ``"quoted"`` for now, with a ``FutureWarning`` when ``scales`` is
-        not given; it will become ``"marginal"``.
+        The reference time (MJD) of the starting orbits: that of your model.
+    scales : {"marginal", "quoted"}, optional
+        How the ranking scales the errors, as for ``rank_orbits``.
     noise : dict or list of dict, optional
-        Noise terms of the refinement fits, as for ``fit`` (e.g. from
-        [`Epochs.noise`][virgil.epochs.Epochs.noise]). The ranking does
-        not use them.
-    dof, s_max : optional
-        Passed to ``epoch_positions`` and, with ``scales="marginal"``, to
-        the ranking.
-    eccs, n_phase : optional
-        Passed to ``starting_orbits``.
-    n_candidates : int, optional
-        Starting orbits to rank (default 200).
-    n_refine : int, optional
-        Distinct orbits to refine (default 4).
+        Noise terms of the refinement fits, as for ``fit``.
+    dof, s_max, batch_size, eccs, n_phase : optional
+        Passed to ``epoch_positions``, the ranking and ``starting_orbits``.
+    n_candidates, n_refine : int, optional
+        Orbits ranked (default 200) and distinct ones refined (default 4).
     min_gap : float, optional
-        Seed orbits only with datasets whose positions are decisive: a
-        ``gap_marginal`` above this (see ``EpochPositions``). This
-        compares the scale-marginalized gap, so a night whose errors are
-        underestimated no longer passes it with a gap inflated by s².
-        The datasets left out are named in ``OrbitStart.ambiguous``, with
-        a ``UserWarning``.
-    refine_positions : bool, optional
-        Refine each grid peak with a fit (see ``epoch_positions``).
-    n_peaks : int, optional
-        Peaks refined per dataset (see ``epoch_positions``); the cost of
-        step 1 grows linearly with it.
-    batch_size : int, optional
-        Orbits ranked together (see ``rank_orbits``).
-    primary_diam : float, optional
-        The primary's uniform-disc diameter (mas) for the per-dataset
-        positions (see ``epoch_positions``); ``None`` is a point primary.
+        Seed only with datasets whose ``gap_marginal`` exceeds this (default 5);
+        the rest are in ``OrbitStart.ambiguous``.
+    refine_positions, n_peaks, primary_diam, flag_options : optional
+        As for ``epoch_positions`` (``flag_options`` holds its ``flag_*``
+        keywords, with ``flag_min_gap`` defaulting to ``min_gap``).
     skip_flagged : bool, optional
-        Seed orbits only with datasets that ``epoch_positions`` did not
-        flag (default True); flagged datasets join ``OrbitStart.ambiguous``
-        and still enter the ranking and the fits.
-    flag_options : dict, optional
-        The ``flag_*`` keywords of ``epoch_positions``. ``flag_min_gap``
-        defaults to ``min_gap``, so that decisive and unflagged agree.
+        Flagged datasets seed nothing but still count (default True).
     **fit_options
-        Passed to the refinement fits (e.g. ``method``, ``max_steps``,
-        ``time_limit`` in seconds per fit, ``progress``). A fit that raises
-        an error is recorded in ``OrbitStart.failed``, with a
-        ``RuntimeWarning``, and the others go on; one that stops at its
-        ``time_limit`` is kept, unconverged. A ``TypeError`` or
-        ``ValueError`` (such as a misspelt option) does not depend on the
-        start, and is raised at once.
+        Passed to the refinement fits (e.g. ``method``, ``time_limit``). A fit
+        that raises is recorded in ``OrbitStart.failed`` and the others go on.
 
     Returns
     -------
     OrbitStart
 
-    Raises
-    ------
-    RuntimeError
-        If every refinement fit raised an error (chained to the last).
+    Examples
+    --------
+    >>> start = start_from_positions(scene, priors, epochs, start_values,
+    ...     grid=grid, periods=periods, t_ref=t_ref)  # doctest: +SKIP
     """
-    scales = _check_scales(scales, "start_from_positions")
+    scales = _check_scales(scales)
     _check_n_peaks(n_peaks)
     positions = epoch_positions(
         data,
