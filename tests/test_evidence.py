@@ -652,7 +652,17 @@ def test_single_image_helpers_are_unchanged():
     out = laplace_samples(model, data, 3, key, npix=8, fov_mas=8.0)
     assert out["latents"].shape == (3, n, n)
     # The old draws: V diag((1+s²)^-½) ε₁ + (I − VVᵀ) ε₂ about z.
-    _, s_vals, vt = onp.linalg.svd(jac, full_matrices=False)
+    # The right singular vectors are fixed only up to sign, which differs
+    # between LAPACK and the device SVD, so the reference takes the device
+    # signs: each row of Vᵀ agrees with NumPy's up to a sign.
+    from virgil.imaging import _svd
+
+    s_vals, vt = _svd(jac)
+    _, s_ref, vt_ref = onp.linalg.svd(jac, full_matrices=False)
+    onp.testing.assert_allclose(s_vals, s_ref, rtol=1e-9)
+    onp.testing.assert_allclose(
+        onp.abs(onp.sum(vt * vt_ref, axis=1)), 1.0, atol=1e-6
+    )
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (3, s_vals.size)), float)
     e2 = onp.asarray(jax.random.normal(second, (3, z.size)), float)
