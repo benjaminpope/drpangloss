@@ -85,8 +85,9 @@ jobs:
   label:
     if: github.event_name != 'issue_comment' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # Labelling a pull request needs pull-requests: write, not just issues.
     permissions:
-      pull-requests: read
+      pull-requests: write
       issues: write
     steps:
       - name: update label
