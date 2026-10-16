@@ -166,7 +166,11 @@ def _laplace_started(base):
         def gaussian(self, params):
             """The affine part (centre and Cholesky factor in z): the whole
             guide when there is no flow."""
-            start = onp.asarray(self._start())
+            start = (
+                onp.identity(self.latent_dim)
+                if self.start_tril is None
+                else onp.asarray(self.start_tril)
+            )
             shift = onp.asarray(params[f"{self.prefix}_shift"])
             tril = onp.asarray(params[f"{self.prefix}_scale_tril"])
             return onp.asarray(self._init_latent) + start @ shift, start @ tril
