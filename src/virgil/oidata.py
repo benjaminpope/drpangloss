@@ -33,72 +33,29 @@ __all__ = ["OIData", "closure_phases", "cp_indices"]
 
 
 class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
-    """
-    Store and transform optical-interferometry observables.
+    """Store and transform optical-interferometry observables.
 
     Parameters
     ----------
     data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
-        An OIFITS file (a path, or a file opened with ``astropy.io.fits`` or
-        ``pyoifits``), a list of such files (concatenated), or a dictionary
-        of arrays; see ``__init__``.
+        An OIFITS file (or a list of them, concatenated), or a dictionary of
+        arrays; see [`virgil.oidata`](../api/oidata.md#dictionary-input).
     target : str or int, optional
-        For OIFITS input, the target to keep (by name or ``TARGET_ID``).
-        Required when the file contains more than one target.
+        For OIFITS input, the target to keep (name or ``TARGET_ID``); required
+        when the file holds more than one.
 
     Notes
     -----
-    Every (baseline, wavelength) sample is one element of the flat ``u``,
-    ``v`` (metres) and ``wavel`` (metres) arrays; ``wavel`` has a single
-    element when all samples share one wavelength. Models are evaluated on
-    these samples. The observables are:
-
-    * ``vis``/``d_vis``: squared visibilities (``v2_flag=True``) or
-      amplitudes, or their projection through ``vis_mat``.
-    * ``phi``/``d_phi``: closure phases (``cp_flag=True``) built from the
-      samples ``i_cps1 + i_cps2 - i_cps3``, or absolute phases; always in
-      radians, optionally projected through ``phi_mat``.
-
-    Visibility-only data (no ``OI_T3`` or ``VISPHI``, no ``phi`` in a
-    dictionary, or every closure phase flagged) have an empty phase block:
-    ``has_phases`` is False and fits use the visibilities alone.
-
-    Flagged samples are left out of the observables. ``vis_index`` (and
-    ``phi_index`` for absolute phases) then lists the samples that are
-    observed; they are ``None`` when every sample is used.
-
-    ``uv_grid`` is a [`UVGrid`][virgil.oidata.UVGrid] for AMIGO DISCO
-    products, whose samples lie on a regular (possibly rotated) lattice,
-    and ``None`` for all other data, even if their samples happen to lie
-    on a lattice: virgil does not search ordinary data for one. Models
-    that can use the lattice, such as an [`Image`][virgil.models.Image]
-    with matching ``rotation_deg``, then evaluate faster; the results are
-    the same. To use it for other lattice-sampled data, set it with
-    [`find_uv_grid`][virgil.oidata.find_uv_grid], e.g.
-    ``eqx.tree_at(lambda d: d.uv_grid, data, find_uv_grid(data.u, data.v),
-    is_leaf=lambda x: x is None)``.
-
-    Data read from OIFITS also keep their time and exposure per sample:
-    ``frame`` numbers the exposures (frames), :attr:`mjd` gives each
-    sample's time, and :meth:`epochs` and :meth:`split_by_epoch` group the
-    frames into nights. The time is stored as ``dt``, days since the static
-    float64 ``t_ref``, so that models of time see small numbers that keep
-    their precision in float32 (about 5 s over 1000 days). ``stations``
-    holds each sample's station pair (``STA_INDEX``).
-
-    ``gains`` holds calibration gains correlated across channels
-    ([`GainModes`][virgil.gains.GainModes], set with
-    [`with_gains`][virgil.oidata.OIData.with_gains]), which the likelihood
-    marginalizes; ``None`` by default. ``phase_offsets`` likewise holds
-    closure-phase offsets per frame
-    ([`ClosureOffsets`][virgil.gains.ClosureOffsets], set with
-    [`with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
-
-    ``extras`` holds further observables, read with ``extras=`` (OI_FLUX,
-    T3AMP, VISAMP beside V², differential VISPHI beside closure phases):
-    a tuple of blocks from [`virgil.observables`][virgil.observables],
-    which follow the phases in the data vector, in the order of
-    ``observables.KINDS``. It is empty by default.
+    Every (baseline, wavelength) sample is one element of the flat ``u``, ``v``
+    (metres) and ``wavel`` (metres) arrays; models are evaluated on them. The
+    observables are ``vis``/``d_vis`` (squared visibilities or amplitudes) and
+    ``phi``/``d_phi`` (closure or absolute phases, radians), optionally
+    projected through ``vis_mat``/``phi_mat``. Flagged samples are left out;
+    ``vis_index`` and ``phi_index`` list those that remain (``None`` when all
+    are used). Visibility-only data have an empty phase block
+    (``has_phases`` is False). The other attributes (``uv_grid``, times,
+    ``gains``, ``phase_offsets``, ``extras``) are described in
+    [`virgil.oidata`](../api/oidata.md#attributes).
     """
 
     u: jax.Array
@@ -157,70 +114,16 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return self.vis_encoding
 
     def __init__(self, data, target=None, extras=(), bandwidth=False):
-        """
-        Initialize from an OIFITS file or explicit arrays.
+        """Initialize from an OIFITS file or explicit arrays.
 
         Parameters
         ----------
         data : dict, str, os.PathLike, astropy.io.fits.HDUList, or a list of files
             An OIFITS file or a list of them, read with
-            [`virgil.oifits.read_oifits`][virgil.oifits.read_oifits]
-            (several files, wavelength channels, tables and epochs, and
-            ``FLAG`` columns, are supported). Or a dictionary with keys:
-
-            * ``u``, ``v`` (metres) and ``wavel`` (metres): per sample, or
-              ``u``/``v`` per baseline with ``vis`` of shape
-              ``(n_baseline, n_wavel)`` for several channels.
-            * ``vis``, ``d_vis``: squared visibilities or amplitudes.
-            * ``phi``, ``d_phi``: closure or absolute phases, with
-              ``phi_unit`` (``"rad"``, the default, or ``"deg"``;
-              ``phase_unit`` is an alias). For several channels, shape
-              ``(n_triangle, n_wavel)`` or ``(n_baseline, n_wavel)``.
-            * ``i_cps1``, ``i_cps2``, ``i_cps3`` (optional): for each
-              closure phase, the baselines ``(a, b)``, ``(b, c)`` and
-              ``(a, c)`` of its triangle.
-            * ``v2_flag`` (default True): ``vis`` holds squared
-              visibilities; otherwise amplitudes.
-            * ``cp_flag`` (default: True when closure indices are given):
-              ``phi`` holds closure phases; otherwise absolute phases.
-            * ``vis_flag``, ``phi_flag`` (optional): boolean masks, True
-              for bad samples, shaped like ``vis`` and ``phi``. Samples with
-              non-finite values or errors are flagged automatically.
-            * ``vis_mode`` (``"auto"``, ``"v2"``, ``"amp"`` or ``"logamp"``):
-              the visibility channel that data and model are compared in.
-              ``"auto"`` keeps the channel of ``vis``. The key
-              ``observable_vis_mode`` is read as an old name for it. Neither
-              sets the ``vis_encoding`` attribute, which says how ``vis``
-              and ``phi`` are laid out (``"split"``, or
-              ``"mixed_log_complex"`` for an AMIGO mixed-DISCO product),
-              not what they measure.
-            * ``mjd``, ``frame`` (optional): the time (days) and an integer
-              exposure label of each sample (or of each baseline, for
-              several channels). Without ``frame``, samples with the same
-              ``mjd`` form one frame. (OIFITS input also compares each row's
-              ``TIME``: see [`read_oifits`][virgil.oifits.read_oifits].)
-            * ``stations`` (optional): the station pair ``(a, b)``
-              (``STA_INDEX``) of each sample, or of each baseline for
-              several channels, for telescope and baseline gains
-              ([`with_gains`][virgil.oidata.OIData.with_gains]).
-            * ``vis_mat``, ``phi_mat`` (optional): linear operators of shape
-              ``(n_out, n_in)`` projecting the channels into, e.g., kernel
-              or DISCO observables. The ``disco_vis_mat``/``disco_phi_mat``
-              spellings also check that the projected covariance is
-              diagonal. Only diagonal uncertainties are propagated.
-
-            A record with ``disco_coefficients`` is read as an AMIGO
-            mixed-DISCO product (see [`load_oi_data`][virgil.amigo.load_oi_data]); its ``u`` and
-            ``v`` are negated to match the virgil sign convention.
-            * ``flux``/``nflux``, ``visamp``, ``t3amp``, ``visphi``
-              (optional): extra observables, as dictionaries in the layout
-              [`read_oifits`][virgil.oifits.read_oifits] returns (see
-              ``extras``). ``visamp`` and ``visphi`` give per value the
-              ``sample`` it belongs to, with ``value``, ``error`` and
-              ``flag`` (``visamp`` also ``amptyp``); ``t3amp`` has one value
-              per closure phase; ``flux`` gives ``wavel``, ``value``,
-              ``error``, ``flag`` and optionally ``row``, ``mjd`` and
-              ``station``.
+            [`read_oifits`][virgil.oifits.read_oifits], or a dictionary of arrays
+            (keys in [Dictionary input](../api/oidata.md#dictionary-input)): at
+            least ``u``, ``v``, ``wavel``, ``vis`` and ``d_vis``, usually ``phi``,
+            ``d_phi`` and the closure indices ``i_cps1``, ``i_cps2``, ``i_cps3``.
         target : str or int, optional
             For OIFITS input, the target to keep.
         extras : sequence of str, optional
@@ -228,10 +131,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             [`read_oifits`][virgil.oifits.read_oifits]).
         bandwidth : bool, optional
             For OIFITS input, keep the channel widths (``EFF_BAND``) as
-            ``OIData.bandwidth`` so models are smeared over each channel
-            (see [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
-            Off by default, so the widths are ignored. For a dictionary,
-            give ``bandwidth`` as a key instead.
+            ``OIData.bandwidth`` so models are smeared over each channel (see
+            [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]). For a
+            dictionary, give a ``bandwidth`` key instead.
         """
         if not isinstance(data, dict):
             data = read_oifits(
@@ -610,37 +512,28 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Parameters
         ----------
         wavel_min, wavel_max : float, optional
-            Keep the samples with ``wavel_min <= wavel <= wavel_max``
-            (metres); either bound may be left open.
+            Keep ``wavel_min <= wavel <= wavel_max`` (metres); either may be open.
         ranges : sequence of (lo, hi), optional
-            Keep the samples in any of these wavelength ranges (metres,
-            inclusive), instead of ``wavel_min`` and ``wavel_max``.
+            Keep the samples in any of these ranges (metres, inclusive), instead
+            of ``wavel_min`` and ``wavel_max``.
         exclude : sequence of (lo, hi), optional
-            Then drop the samples in any of these ranges (metres,
-            inclusive), e.g. a line or a telluric band.
+            Then drop the samples in any of these ranges, e.g. a line.
         observables : str or sequence of str, optional
             The observables to keep: ``"vis"``, ``"phi"`` and the kinds of
-            ``extras`` (``observables.KINDS``); the others are dropped at
-            every wavelength. All are kept by default. Without the closure
-            phases, differential phases keep their closure part
-            (``closure_free=False``), which is then counted only once.
-            Calibration gains go with the visibilities.
+            ``extras``; all by default. Without the closure phases, differential
+            phases keep their closure part (``closure_free=False``).
 
         Returns
         -------
         OIData
-            The samples in range, with their observables and closure phases
-            (a closure triangle's legs share a wavelength, so triangles are
-            kept whole). Not available for projected (kernel, DISCO)
-            observables, or after closure-phase offsets are added.
+            The samples in range (closure triangles are kept whole). Not available
+            for projected (kernel, DISCO) observables, or after closure-phase
+            offsets are added.
 
         Examples
         --------
-        Keep the K-band continuum of a GRAVITY file but not the Brγ window:
-        ``data.select(2.05e-6, 2.16e-6)``, or the continuum on both sides
-        of the line: ``data.select(exclude=[(2.162e-6, 2.170e-6)])``.
-        Closure phases alone, between 2.05 and 2.18 µm:
-        ``data.select(2.05e-6, 2.18e-6, observables="phi")``.
+        ``data.select(2.05e-6, 2.16e-6)`` keeps a continuum window;
+        ``data.select(exclude=[(2.162e-6, 2.170e-6)])`` drops a line.
         """
         if ranges is not None and (
             wavel_min is not None or wavel_max is not None
@@ -1127,20 +1020,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     @property
     def unflagged(self):
-        """Which samples an observable uses, as a boolean array over the
-        samples (the shape of ``u``).
+        """Which samples an observable uses, as a boolean array shaped like ``u``.
 
-        Flagged samples (and those that are not finite or have no positive
-        error) keep their ``u``, ``v`` and ``wavel``, but no observable uses
-        them. A sample is unflagged if its visibility is used, or it is a
-        leg of a closure phase that is used, or its absolute phase is used.
-        The resolution and the field of an image (``beam``,
-        ``nyquist_pixel_scale``, ``field_of_view``) come from these samples
-        only: a sample that measures nothing sets no resolution.
-
-        Projected data (kernel and DISCO observables, whose operators mix
-        the samples) cannot be flagged sample by sample, so all of their
-        samples count; so do data with no used observable at all.
+        Flagged samples (and those not finite or without a positive error) keep
+        their ``u``, ``v`` and ``wavel`` but no observable uses them; the image
+        resolution and field come from the unflagged samples only. Projected data
+        (kernel, DISCO) cannot be flagged per sample, so all their samples count.
         """
         n = int(onp.size(self.u))
         if (
@@ -1387,31 +1272,21 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_error_scale(self, factor):
         """A copy of the data with its uncertainties multiplied by ``factor``.
 
-        Use it when the error bars are known to be too large or too small,
-        for example with a factor from
-        [`error_scale`][virgil.imaging.error_scale]. The uncertainties
-        are those of the observables as fitted (after any projection), so
-        the whitened residuals simply scale by ``1 / factor``.
-
-        A dictionary scales each kind of observable by its own factor, as
-        returned by ``error_scale(..., by_observable=True)``: ``"vis"``
-        (``d_vis``), ``"phi"`` (``d_phi``) and the kinds of ``extras``
-        (``"flux"``, ``"nflux"``, ``"corrflux"``, ``"visamp"``,
-        ``"t3amp"``, ``"visphi"``). Kinds missing from the dictionary are
-        left unchanged, and so are kinds these data lack, so one
-        dictionary can rescale several datasets.
-
         Parameters
         ----------
         factor : float or dict
-            Positive scale for every uncertainty, or a dictionary of
-            positive scales by kind of observable.
+            Positive scale for every uncertainty, or a dictionary of positive
+            scales by kind of observable (``"vis"``, ``"phi"`` and the kinds in
+            ``observables.KINDS``, as returned by
+            [`error_scale`][virgil.imaging.error_scale] with
+            ``by_observable=True``). Kinds missing from the dictionary, or absent
+            from the data, are left unchanged.
 
         Raises
         ------
         ValueError
-            For a factor that is not finite and positive, or a dictionary
-            key that is not a kind of observable.
+            For a factor that is not finite and positive, or a dictionary key that
+            is not a kind of observable.
 
         Examples
         --------
@@ -1453,21 +1328,15 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_error_floor(self, absolute=None, relative=None):
         """A copy of the data with a minimum uncertainty per observable.
 
-        Each uncertainty becomes ``max(σ, absolute, relative × |data|)``,
-        as PMOIRED's ``min error`` and ``min relative error`` do. This is a
-        fixed change to the data; the fitted counterpart, added in
-        quadrature and relative to the model, is the ``noise=`` terms
+        Each uncertainty becomes ``max(σ, absolute, relative × |data|)``. This is a
+        fixed change to the data; the fitted counterpart is the ``noise=`` terms
         (see [`inflated_errors`][virgil.likelihood.inflated_errors]).
-        Both use one rule, ``_utils.inflate_errors``.
 
         Parameters
         ----------
         absolute, relative : dict, optional
-            Floors per observable: ``"vis"`` (in the units of ``vis``,
-            e.g. V²), ``"phi"`` (radians), and any of ``extras`` by kind:
-            ``"flux"``, ``"nflux"``, ``"corrflux"``, ``"visamp"``,
-            ``"t3amp"`` and ``"visphi"`` (radians). Relative floors are
-            not defined for phases.
+            Floors per observable: ``"vis"``, ``"phi"`` (radians) and the kinds of
+            ``extras``. Relative floors are not defined for phases.
 
         Returns
         -------
@@ -1475,12 +1344,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
         Notes
         -----
-        Closure phases from four or more telescopes are floored before they
-        are whitened: the whitened rows use the floored errors, while their
-        periodic penalty rows keep their effective error 1/√(2π) (the
-        penalty itself is 2 sin²(Δ/2)/σ with the floored σ). The
-        differential phases are floored per channel, before their
-        covariance N D Nᵀ is formed.
+        Closure phases from four or more telescopes are floored before they are
+        whitened; the periodic penalty rows keep their effective error 1/√(2π).
 
         Examples
         --------
@@ -1559,29 +1424,26 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with the continuum and line windows of the extra spectra.
 
-        They set how differential phases (``"visphi"``) and normalized
-        spectra (``"nflux"``) are normalized: see
+        They set how differential phases (``"visphi"``) and normalized spectra
+        (``"nflux"``) are normalized; see
         [`DifferentialPhase`][virgil.observables.DifferentialPhase].
 
         Parameters
         ----------
         continuum, lines : sequence of (lo, hi), optional
-            Wavelength ranges (metres). Differential phases are fitted over
-            the continuum and kept in the lines (each defaults to the
-            complement of the other); normalized spectra use the continuum.
+            Wavelength ranges (metres); each defaults to the complement of the
+            other. Differential phases are fitted over the continuum and kept in
+            the lines; normalized spectra use the continuum.
         order : int, optional
-            The continuum polynomial in wavenumber: 1 (a mean and a slope)
-            by default for differential phases, 0 (a mean) for spectra.
+            The continuum polynomial in wavenumber: 1 by default for differential
+            phases, 0 for spectra.
         prior_width : float or (float, float), optional
-            For differential phases: marginalize each baseline and frame's
-            offset (and slope) under Gaussian priors of these widths
-            (radians), using the channels of both windows, instead of
-            projecting them out as the pipeline does (the default). See
-            [`DifferentialPhase`][virgil.observables.DifferentialPhase].
+            For differential phases: marginalize each baseline and frame's offset
+            (and slope) under Gaussian priors of these widths (radians), instead
+            of projecting them out (the default).
 
         Examples
         --------
-        Keep the differential phase across Brγ, normalized on either side:
         ``data.with_continuum([(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)],
         lines=[(2.163e-6, 2.169e-6)])``.
         """
@@ -1624,36 +1486,28 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy with new grey-scale nuisances for the extra spectra.
 
-        Each spectrum (OI_FLUX, or correlated fluxes) is known up to a
-        scale, marginalized analytically under a Gaussian prior that you
-        state (see [`FluxSpectrum`][virgil.observables.FluxSpectrum]). It
-        is never taken from the data, and it is a proposal for the scale's
-        Jeffreys prior 1/k (see [`virgil.observables`][virgil.observables]).
+        Each spectrum (OI_FLUX, or correlated fluxes) is known up to a scale,
+        marginalized analytically under a Gaussian prior that you state (see
+        [`FluxSpectrum`][virgil.observables.FluxSpectrum]).
 
         Parameters
         ----------
         scale : (float, float), optional
-            The prior ``(mean, sd)`` of the scale k, in the data's units
-            (e.g. a calibrated OI_FLUX in Jy: a broad prior about the
-            expected level). Required for ``"flux"`` and ``"corrflux"``
-            before fitting; ``(1, 0.1)`` by default for ``"nflux"``. It
-            applies to ``"flux"`` and ``"corrflux"`` unless ``kinds`` says
-            otherwise; blocks without it keep their own.
+            The prior ``(mean, sd)`` of the scale, in the data's units. Required
+            for ``"flux"`` and ``"corrflux"`` before fitting; ``(1, 0.1)`` by
+            default for ``"nflux"``.
         per : {"dataset", "row", "frame", "station"}, optional
-            One scale for the whole dataset (default), or one per spectrum
-            (row), per exposure, or per telescope (baseline, for
-            correlated fluxes). Fibre injection varies per telescope and
-            exposure, so per row is the safest for uncalibrated spectra.
+            One scale for the whole dataset (default), or one per spectrum (row),
+            exposure, or telescope.
         poly_order : int, optional
-            Also marginalize a polynomial in λ of this order times the
-            model spectrum (a chromatic calibration).
+            Also marginalize a polynomial in λ of this order times the model
+            spectrum.
         poly_width : float, optional
-            Prior width of each polynomial coefficient, relative to the
-            scale's prior mean.
+            Prior width of each polynomial coefficient, relative to the scale's
+            prior mean.
         kinds : sequence of str, optional
-            Which blocks to change: by default ``"flux"`` and
-            ``"corrflux"`` when ``scale`` is given, and every spectrum
-            (also ``"nflux"``) otherwise.
+            Which blocks to change: ``"flux"`` and ``"corrflux"`` when ``scale`` is
+            given, every spectrum otherwise.
         """
         if kinds is None:
             kinds = (
@@ -1676,19 +1530,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_wavelength_scale(self, scale=1.0, offset=0.0):
         """A copy of the data whose wavelengths are ``scale · λ + offset``.
 
-        A wavelength calibration error: models are evaluated at the
-        corrected wavelengths, which rescales the spatial frequencies
-        (``u`` and ``v`` are in metres) and moves the spectra together, as
-        a wrong wavelength scale does. Angular sizes scale with it, so with
-        a single dataset the scale is degenerate with every size, and its
-        prior *is* the systematic error. Its effect on the spatial
-        frequencies is that of magnifying the sky by ``1 / scale``, so it
-        is also the plate-scale term for interferometric data (see
-        [`with_north_angle`][virgil.oidata.OIData.with_north_angle]).
-        Fit it with the noise terms
-        ``wavel_scale`` and ``wavel_offset`` (e.g.
-        ``noise={"wavel_scale": dist.Normal(1.0, 2e-4)}``, about right for
-        GRAVITY), which call this.
+        A wavelength (or plate-scale) calibration error: models are evaluated at
+        the corrected wavelengths, which rescales the spatial frequencies. Fit it
+        with the noise terms ``wavel_scale`` and ``wavel_offset``, which call this;
+        see [calibration nuisances](../api/oidata.md#calibration-nuisances).
 
         Parameters
         ----------
@@ -1700,9 +1545,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Returns
         -------
         OIData
-            The data with ``wavel`` replaced. A ``uv_grid`` is kept: it is
-            in metres and divided by the wavelength where it is used, so
-            it still matches the samples.
+            The data with ``wavel`` replaced; a ``uv_grid`` is kept.
         """
         out = eqx.tree_at(lambda d: d.wavel, self, self.wavel * scale + offset)
         if self.bandwidth is None:
@@ -1713,19 +1556,15 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_bandwidth(self, dlambda):
         """A copy of the data with channel widths ``dlambda`` (bandwidth smearing).
 
-        Use it for simulated data, which have no ``EFF_BAND`` (or to override
-        one read with ``OIData(path, bandwidth=True)``). Models are then evaluated with each
-        component's offset phasor multiplied by the boxcar-channel envelope
-        ``sinc(π Δλ (u dra + v ddec) / λ²)``, so a wide companion loses
-        amplitude on long baselines. See
-        [`smeared_model`][virgil.models.smeared_model] for the model and its
-        limits.
+        For simulated data, which have no ``EFF_BAND``, or to override one. Models
+        are then smeared over each channel (see
+        [`smeared_model`][virgil.models.smeared_model]).
 
         Parameters
         ----------
         dlambda : float, array-like or None
-            Full channel width in metres: one value, or one per sample.
-            ``None`` switches smearing off.
+            Full channel width in metres: one value, or one per sample. ``None``
+            switches smearing off.
 
         Returns
         -------
@@ -1748,44 +1587,21 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_north_angle(self, angle):
         """A copy of the data that see the sky rotated by ``angle`` degrees.
 
-        An error in the instrument's North: every position angle these
-        data measure is the true one plus ``angle`` (North through East).
-        A source at ``(dra, ddec)`` appears at ``R(angle) (dra, ddec)``,
-        with ``R(δ) = [[cos δ, sin δ], [-sin δ, cos δ]]``, so a companion
-        at PA θ appears at PA θ + ``angle``. Because virgil's Fourier
-        kernel is ``u dra + v ddec``, rotating the sky rotates ``(u, v)``
-        the same way, and models are evaluated at ``R(-angle) (u, v)``, as
-        for [`Rotated`][virgil.models.Rotated]``(model, angle)``. Fit it
-        with the noise term ``north_angle``, which calls this.
-
-        Its prior must be stated, as for every noise term: there is no
-        default width. The invariant prior of a rotation is uniform on the
-        circle, under which, with one dataset, the angle is degenerate with
-        every position angle in the scene. A Gaussian prior (e.g.
-        ``noise=[{}, {"north_angle": dist.Normal(0.0, 0.5)}]``) is strong
-        information, and its width should come from the instrument's
-        astrometric calibration. Long-baseline interferometers know their
-        baselines' orientation geometrically, so leave the term out there;
-        it is for imaging, masking and kernel-phase data.
-
-        A plate scale needs no term of its own: a sky magnified by a factor
-        ``m`` is ``with_wavelength_scale(1 / m)`` (the noise term
-        ``wavel_scale``). Per-dataset North-angle and plate-scale
-        calibration terms follow Octofitter (Thompson et al. 2023, AJ 166,
-        164).
+        An error in the instrument's North: every position angle these data
+        measure is the true one plus ``angle`` (North through East). Fit it with
+        the noise term ``north_angle``, which calls this; its prior must be stated.
+        See [calibration nuisances](../api/oidata.md#calibration-nuisances).
 
         Parameters
         ----------
         angle : float
-            Rotation of the sky as these data see it, in degrees, North
-            through East.
+            Rotation of the sky as these data see it, in degrees.
 
         Returns
         -------
         OIData
-            The data with ``u`` and ``v`` rotated. A ``uv_grid`` is
-            dropped, since its rotation is static, so models are evaluated
-            by the direct transform, which gives the same visibilities.
+            The data with ``u`` and ``v`` rotated; a ``uv_grid`` is dropped, since
+            its rotation is static.
         """
         u, v = rotate(self.u, self.v, -angle)
         rotated = eqx.tree_at(lambda d: (d.u, d.v), self, (u, v))
@@ -1796,38 +1612,28 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def with_closure_offsets(self, baseline=None, triangle=None, modes=None):
         """A copy of the data with closure-phase offsets per frame.
 
-        Calibration can leave closure phases that do not close. The
-        likelihood then marginalizes offsets common to the channels of a
-        frame analytically (see
-        [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with these widths
-        unless they are fitted as the noise terms ``phi_offset_baseline``,
-        ``phi_offset_triangle`` or ``phi_offset_modes`` (scale parameters:
-        log-uniform priors on stated bounds). Use them only if
-        calibrators show such offsets: they are off by default. Needs
-        closure phases from four or more telescopes.
-
-        This is a small-offset approximation: an offset δ changes the
-        whitened sine sin Δ by about δ cos Δ, which is treated as linear in
-        δ. It holds while the offsets (and the residuals) are small, about
-        δ ≲ 0.3 rad (17°); larger widths are not marginalized exactly.
+        The likelihood marginalizes offsets common to the channels of a frame
+        analytically (see [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with
+        these widths unless fitted as the noise terms ``phi_offset_baseline``,
+        ``phi_offset_triangle`` or ``phi_offset_modes``. Off by default; use it only
+        if calibrators show such offsets. Needs closure phases from four or more
+        telescopes, and is a small-offset approximation (δ ≲ 0.3 rad).
 
         Parameters
         ----------
         baseline : float, optional
-            Width (radians) of a phase offset per (frame, baseline), which
-            reaches the closure phases through the triangles' signs.
+            Width (radians) of a phase offset per (frame, baseline).
         triangle : float, optional
             Width (radians) of an offset per (frame, triangle).
         modes : array-like, optional
-            Further modes, ``(n_mode, n_phase)``, radians per 1σ, one value
-            per closure phase, each within one frame (e.g. a calibrator
-            PCA's). Their width, 1 by default, scales them.
+            Further modes, ``(n_mode, n_phase)``, radians per 1σ, each within one
+            frame; their width, 1 by default, scales them.
 
         Returns
         -------
         OIData
-            The data with ``phase_offsets`` set. Split or select the data
-            first: data with offsets cannot be split.
+            The data with ``phase_offsets`` set. Split or select first: data with
+            offsets cannot be split.
         """
         offsets = closure_offsets(self, baseline, triangle, modes)
         return eqx.tree_at(
@@ -1842,25 +1648,21 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     ):
         """A copy of the data with calibration gains correlated across channels.
 
-        The likelihood then marginalizes gains on log |V| per frame
-        analytically (see [`virgil.gains`][virgil.gains]), with these widths
-        unless they are fitted as the noise terms ``vis_gain_telescope``,
-        ``vis_gain_baseline``, ``vis_gain_chromatic`` or ``vis_gain_modes``
-        (scale parameters: give them log-uniform priors on stated bounds,
-        e.g. ``dist.LogUniform(1e-4, 0.3)``).
-        The covariance then depends on the model, so fits use L-BFGS.
+        The likelihood marginalizes gains on log |V| per frame analytically (see
+        [`virgil.gains`][virgil.gains]), with these widths unless fitted as the
+        noise terms ``vis_gain_telescope``, ``vis_gain_baseline``,
+        ``vis_gain_chromatic`` or ``vis_gain_modes`` (log-uniform priors on stated
+        bounds). The covariance then depends on the model, so fits use L-BFGS.
 
         Parameters
         ----------
         telescope, baseline, chromatic : float, optional
-            Widths (1σ on log |V|; 0.01 is a 1% amplitude or 2% V² gain)
-            of gains per (frame, telescope), per (frame, baseline), and per
-            (frame, baseline) shaped (λ_ref/λ)², a coherence loss. ``None``
-            leaves a group out.
+            Widths (1σ on log |V|) of gains per (frame, telescope), per (frame,
+            baseline), and per (frame, baseline) shaped (λ_ref/λ)². ``None`` leaves
+            a group out.
         modes : array-like, optional
-            Further modes, ``(n_mode, n_sample)``: shapes on log |V| per 1σ,
-            one value per sample (the order of ``u``), e.g. a calibrator
-            PCA's. Their width, 1 by default, scales them.
+            Further modes, ``(n_mode, n_sample)``, shapes on log |V| per 1σ; their
+            width, 1 by default, scales them.
 
         Returns
         -------
@@ -2157,9 +1959,9 @@ def cp_indices(vis_sta_index, cp_sta_index):
     Returns
     -------
     tuple[np.ndarray, np.ndarray, np.ndarray]
-        Arrays ``(i_cps1, i_cps2, i_cps3)`` giving, for each triangle, the
-        baselines ``(a, b)``, ``(b, c)`` and ``(a, c)``, so that the closure
-        phase is ``φ[i_cps1] + φ[i_cps2] − φ[i_cps3]``.
+        ``(i_cps1, i_cps2, i_cps3)``: the baselines ``(a, b)``, ``(b, c)`` and
+        ``(a, c)`` of each triangle, so that the closure phase is
+        ``φ[i_cps1] + φ[i_cps2] − φ[i_cps3]``.
 
     Raises
     ------
@@ -2169,9 +1971,8 @@ def cp_indices(vis_sta_index, cp_sta_index):
 
     Notes
     -----
-    Baselines are matched on station indices alone. For data with several
-    epochs or wavelength channels use [`virgil.oifits.read_oifits`][virgil.oifits.read_oifits],
-    which also matches on instrument and MJD.
+    Baselines are matched on station indices alone; for several epochs or
+    channels use [`read_oifits`][virgil.oifits.read_oifits].
     """
     vis_sta_index = onp.asarray(vis_sta_index, dtype=int).reshape(-1, 2)
     cp_sta_index = onp.asarray(cp_sta_index, dtype=int).reshape(-1, 3)

@@ -78,36 +78,43 @@ def test_likelihood_grid():
     )
 
 
-def test_likelihood_grid_axis_order_tracks_key_order():
-    reduced_samples = {
-        "dra": samples_dict["dra"][::12],
-        "ddec": samples_dict["ddec"][::12],
-        "flux": samples_dict["flux"][::12],
-    }
-    ordered = likelihood_grid(
-        BinaryModelCartesian, data=oidata, grid=reduced_samples
+@pytest.mark.parametrize(
+    "function, data, kwargs, order",
+    [
+        (likelihood_grid, oidata, {}, ("flux", "dra", "ddec")),
+        (
+            optimized_likelihood_grid,
+            oidata,
+            {"flux_param": "flux"},
+            ("ddec", "flux", "dra"),
+        ),
+        (optimized_flux_grid, oidata_sim, {}, ("ddec", "flux", "dra")),
+        (
+            laplace_flux_uncertainty_grid,
+            oidata_sim,
+            {},
+            ("ddec", "flux", "dra"),
+        ),
+    ],
+    ids=["likelihood", "optimized_likelihood", "optimized_flux", "laplace"],
+)
+def test_grid_axis_order_tracks_key_order(function, data, kwargs, order):
+    reduced = {key: value[::12] for key, value in samples_dict.items()}
+    ordered = function(BinaryModelCartesian, data=data, grid=reduced, **kwargs)
+    permuted = function(
+        BinaryModelCartesian,
+        data=data,
+        grid={key: reduced[key] for key in order},
+        **kwargs,
     )
-
-    permuted_samples = {
-        "flux": reduced_samples["flux"],
-        "dra": reduced_samples["dra"],
-        "ddec": reduced_samples["ddec"],
-    }
-    permuted = likelihood_grid(
-        BinaryModelCartesian, data=oidata, grid=permuted_samples
+    # The flux axis is only there when the function keeps it.
+    axes = [key for key in reduced if ordered.ndim == 3 or key != "flux"]
+    assert ordered.shape == tuple(len(reduced[key]) for key in axes)
+    kept = [key for key in order if key in axes]
+    assert permuted.shape == tuple(len(reduced[key]) for key in kept)
+    assert np.allclose(
+        ordered, np.transpose(permuted, [kept.index(key) for key in axes])
     )
-
-    assert ordered.shape == (
-        reduced_samples["dra"].shape[0],
-        reduced_samples["ddec"].shape[0],
-        reduced_samples["flux"].shape[0],
-    )
-    assert permuted.shape == (
-        reduced_samples["flux"].shape[0],
-        reduced_samples["dra"].shape[0],
-        reduced_samples["ddec"].shape[0],
-    )
-    assert np.allclose(ordered, np.transpose(permuted, (1, 2, 0)))
 
 
 def test_optimized_likelihood_grid():
@@ -123,36 +130,6 @@ def test_optimized_likelihood_grid():
     _assert_sky_oriented(fig)
 
 
-def test_optimized_likelihood_grid_axis_order_tracks_key_order():
-    reduced_samples = {
-        "dra": samples_dict["dra"][::12],
-        "ddec": samples_dict["ddec"][::12],
-        "flux": samples_dict["flux"][::12],
-    }
-    ordered = optimized_likelihood_grid(
-        BinaryModelCartesian, oidata, reduced_samples, flux_param="flux"
-    )
-
-    permuted_samples = {
-        "ddec": reduced_samples["ddec"],
-        "flux": reduced_samples["flux"],
-        "dra": reduced_samples["dra"],
-    }
-    permuted = optimized_likelihood_grid(
-        BinaryModelCartesian, oidata, permuted_samples, flux_param="flux"
-    )
-
-    assert ordered.shape == (
-        reduced_samples["dra"].shape[0],
-        reduced_samples["ddec"].shape[0],
-    )
-    assert permuted.shape == (
-        reduced_samples["ddec"].shape[0],
-        reduced_samples["dra"].shape[0],
-    )
-    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
-
-
 def test_optimized():
     optimized = optimized_flux_grid(
         BinaryModelCartesian, oidata_sim, samples_dict
@@ -164,36 +141,6 @@ def test_optimized():
     assert np.all(np.isfinite(optimized))
     fig, _ = plot_grid_map(optimized, samples_dict, kind="flux")
     _assert_sky_oriented(fig)
-
-
-def test_optimized_flux_grid_axis_order_tracks_key_order():
-    reduced_samples = {
-        "dra": samples_dict["dra"][::12],
-        "ddec": samples_dict["ddec"][::12],
-        "flux": samples_dict["flux"][::12],
-    }
-    ordered = optimized_flux_grid(
-        BinaryModelCartesian, oidata_sim, reduced_samples
-    )
-
-    permuted_samples = {
-        "ddec": reduced_samples["ddec"],
-        "flux": reduced_samples["flux"],
-        "dra": reduced_samples["dra"],
-    }
-    permuted = optimized_flux_grid(
-        BinaryModelCartesian, oidata_sim, permuted_samples
-    )
-
-    assert ordered.shape == (
-        reduced_samples["dra"].shape[0],
-        reduced_samples["ddec"].shape[0],
-    )
-    assert permuted.shape == (
-        reduced_samples["ddec"].shape[0],
-        reduced_samples["dra"].shape[0],
-    )
-    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_laplace():
@@ -227,30 +174,6 @@ def test_laplace():
     )
     _assert_sky_oriented(fig)
     assert a.get_title() == "σ(flux)" and b.get_title() == "S/N"
-
-
-def test_laplace_grid_axis_order_tracks_key_order():
-    reduced_samples = {
-        "dra": samples_dict["dra"][::12],
-        "ddec": samples_dict["ddec"][::12],
-        "flux": samples_dict["flux"][::12],
-    }
-    ordered = laplace_flux_uncertainty_grid(
-        BinaryModelCartesian, oidata_sim, reduced_samples
-    )
-    permuted_samples = {
-        "ddec": reduced_samples["ddec"],
-        "flux": reduced_samples["flux"],
-        "dra": reduced_samples["dra"],
-    }
-    permuted = laplace_flux_uncertainty_grid(
-        BinaryModelCartesian, oidata_sim, permuted_samples
-    )
-    assert permuted.shape == (
-        reduced_samples["ddec"].shape[0],
-        reduced_samples["dra"].shape[0],
-    )
-    assert np.allclose(ordered, np.transpose(permuted, (1, 0)))
 
 
 def test_ruffio():

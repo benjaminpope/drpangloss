@@ -758,20 +758,17 @@ def numpyro_model(
         be ``()`` when ``likelihoods`` holds all the data.
     regularizers : sequence, optional
         Log-prior terms on the model, e.g. a [`Centroid`][virgil.imaging.Centroid]
-        prior. Penalties such as maximum entropy are for `fit`.
+        prior.
     noise : dict or list of dict, optional
         Priors on error and calibration terms, sampled as sites
-        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list); see
-        [common arguments](../common_arguments.md#noise).
+        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list).
     likelihoods : sequence, optional
         Extra data terms, such as ``PositionData.term(orbit_fn)``, added as sites
-        ``"likelihood_<i>"``; see
-        [common arguments](../common_arguments.md#likelihoods).
+        ``"likelihood_<i>"``.
     flat_coordinates : bool, optional
         Sample each prior that is uniform in some coordinate in that coordinate,
-        as `fit` optimizes it (default ``False``: numpyro's bijection). Pass the
-        same value to [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass]; see
-        [common arguments](../common_arguments.md#flat_coordinates).
+        as `fit` optimizes it (default ``False``). Pass the same value to
+        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
     **options
         Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].
@@ -783,29 +780,8 @@ def numpyro_model(
 
     Examples
     --------
-    Sample an orbit from measured positions alone, with no OIData:
-
-    >>> import numpy as onp
-    >>> import numpyro.distributions as dist
-    >>> from virgil.likelihood import numpyro_model
-    >>> from virgil.orbits import KeplerOrbit, PositionData
-    >>> mjd = 60500.0 + onp.array([0.0, 100.0, 200.0, 300.0])
-    >>> truth = KeplerOrbit(400.0, 30.0, 0.4, 60.0, 40.0, 110.0, 20.0, t_ref=60500.0)
-    >>> dra, ddec, _ = (onp.asarray(x) for x in truth.relative(mjd))
-    >>> cov = onp.broadcast_to(0.05**2 * onp.eye(2), (4, 2, 2))
-    >>> positions = PositionData(mjd, dra, ddec, cov)
-    >>> priors = {"a_mas": dist.LogUniform(5.0, 50.0), "ecc": dist.Uniform(0.0, 0.9)}
-    >>> def orbit_fn(v):
-    ...     return KeplerOrbit(
-    ...         400.0, 30.0, v["ecc"], 60.0, 40.0, 110.0, v["a_mas"], t_ref=60500.0
-    ...     )
-    >>> model = numpyro_model(
-    ...     lambda **kw: None, priors, (), likelihoods=[positions.term(orbit_fn)]
-    ... )
-    >>> from numpyro.infer.util import log_density
-    >>> values = {"a_mas": 20.0, "ecc": 0.4}
-    >>> bool(onp.isfinite(float(log_density(model, (), {}, values)[0])))
-    True
+    >>> posterior = numpyro_model(model, priors, data)  # doctest: +SKIP
+    >>> mcmc = MCMC(NUTS(posterior), num_warmup=500, num_samples=500)  # doctest: +SKIP
     """
     import numpyro
 

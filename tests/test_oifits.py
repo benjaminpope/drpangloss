@@ -56,6 +56,23 @@ def _tables(waves=(4.8e-6,), model=TRUTH, target="STAR"):
     }
 
 
+def _vis_table(amp=1.0, phase=0.0, **override):
+    """An ``OI_VIS`` table (amplitude and phase in degrees) on ``PAIRS``."""
+    u, v = _baselines()
+    amp = onp.broadcast_to(amp, u.shape)
+    phase = onp.broadcast_to(phase, u.shape)
+    return {
+        "VISAMP": amp,
+        "VISAMPERR": onp.full(u.shape, 1e-3),
+        "VISPHI": phase,
+        "VISPHIERR": onp.full(u.shape, 0.5),
+        "UCOORD": u,
+        "VCOORD": v,
+        "STA_INDEX": PAIRS,
+        **override,
+    }
+
+
 def test_roundtrip_single_channel(tmp_path):
     tables = _tables()
     path = write_oifits(tables, tmp_path / "one.oifits")
@@ -131,15 +148,13 @@ def test_absolute_phases_from_oi_vis_with_reversed_baseline(tmp_path):
     pairs[0] = pairs[0][::-1]  # stored as (2, 1) in OI_VIS
     phase = onp.rad2deg(onp.angle(cvis))
     phase[0] = -phase[0]
-    tables["OI_VIS"] = {
-        "VISAMP": onp.abs(cvis),
-        "VISAMPERR": onp.full(cvis.shape, 1e-3),
-        "VISPHI": phase,
-        "VISPHIERR": onp.full(cvis.shape, 0.5),
-        "UCOORD": onp.r_[-u[0], u[1:]],
-        "VCOORD": onp.r_[-v[0], v[1:]],
-        "STA_INDEX": pairs,
-    }
+    tables["OI_VIS"] = _vis_table(
+        onp.abs(cvis),
+        phase,
+        UCOORD=onp.r_[-u[0], u[1:]],
+        VCOORD=onp.r_[-v[0], v[1:]],
+        STA_INDEX=pairs,
+    )
     del tables["OI_T3"]
     data = OIData(write_oifits(tables, tmp_path / "vis.oifits"))
 
@@ -363,16 +378,7 @@ def test_differential_visphi_is_not_read_as_absolute(tmp_path):
     from virgil.oifits import build_hdulist
 
     tables = _tables()
-    u, v = _baselines()
-    tables["OI_VIS"] = {
-        "VISAMP": onp.ones(u.size),
-        "VISAMPERR": onp.full(u.size, 1e-3),
-        "VISPHI": onp.zeros(u.size),
-        "VISPHIERR": onp.full(u.size, 0.5),
-        "UCOORD": u,
-        "VCOORD": v,
-        "STA_INDEX": PAIRS,
-    }
+    tables["OI_VIS"] = _vis_table()
     del tables["OI_T3"]
     hdul = build_hdulist(tables)
     for hdu in hdul:
@@ -386,16 +392,7 @@ def _amplitude_file(amptyp):
     from virgil.oifits import build_hdulist
 
     tables = _tables()
-    u, v = _baselines()
-    tables["OI_VIS"] = {
-        "VISAMP": onp.full(u.size, 0.8),
-        "VISAMPERR": onp.full(u.size, 1e-3),
-        "VISPHI": onp.zeros(u.size),
-        "VISPHIERR": onp.full(u.size, 0.5),
-        "UCOORD": u,
-        "VCOORD": v,
-        "STA_INDEX": PAIRS,
-    }
+    tables["OI_VIS"] = _vis_table(0.8)
     del tables["OI_VIS2"]
     hdul = build_hdulist(tables)
     for hdu in hdul:
@@ -448,16 +445,7 @@ def test_phityp_is_checked_only_for_the_chosen_target():
     from virgil.oifits import build_hdulist
 
     tables = _tables()
-    u, v = _baselines()
-    tables["OI_VIS"] = {
-        "VISAMP": onp.ones(u.size),
-        "VISAMPERR": onp.full(u.size, 1e-3),
-        "VISPHI": onp.zeros(u.size),
-        "VISPHIERR": onp.full(u.size, 0.5),
-        "UCOORD": u,
-        "VCOORD": v,
-        "STA_INDEX": PAIRS,
-    }
+    tables["OI_VIS"] = _vis_table()
     del tables["OI_T3"]
     hdul = build_hdulist(tables)
     vis = next(
@@ -948,17 +936,8 @@ def test_lookup_takes_the_nearest_row_inside_both_windows():
 
 def test_absolute_phases_with_a_nonzero_constant_time(tmp_path):
     tables = _tables()
-    u, v = _baselines()
-    cvis = onp.asarray(TRUTH.model(u, v, 4.8e-6))
-    tables["OI_VIS"] = {
-        "VISAMP": onp.abs(cvis),
-        "VISAMPERR": onp.full(cvis.shape, 1e-3),
-        "VISPHI": onp.rad2deg(onp.angle(cvis)),
-        "VISPHIERR": onp.full(cvis.shape, 0.5),
-        "UCOORD": u,
-        "VCOORD": v,
-        "STA_INDEX": PAIRS,
-    }
+    cvis = onp.asarray(TRUTH.model(*_baselines(), 4.8e-6))
+    tables["OI_VIS"] = _vis_table(onp.abs(cvis), onp.rad2deg(onp.angle(cvis)))
     del tables["OI_T3"]
     with fits.open(write_oifits(tables, tmp_path / "vis.oifits")) as hdul:
         for name in ("OI_VIS2", "OI_VIS"):

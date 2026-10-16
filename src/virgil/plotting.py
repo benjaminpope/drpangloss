@@ -137,21 +137,13 @@ def _image_axes(grid, coord_keys):
     return x_key, y_key, image, is_sky
 
 
-def _range_aware_float_formatter(
-    vmin, vmax, min_sigfigs=3, max_sigfigs=6, scale=1.0
-):
-    """Tick formatter whose significant figures adapt to the axis span."""
+def _range_aware_float_formatter(vmin, vmax, scale=1.0):
+    """Tick formatter whose significant figures (3 to 6) adapt to the span."""
     span = abs(float(vmax) - float(vmin)) * abs(float(scale))
     if not onp.isfinite(span) or span <= 0:
-        sigfigs = min_sigfigs + 1
+        sigfigs = 4
     else:
-        sigfigs = int(
-            onp.clip(
-                onp.ceil(-onp.log10(span)) + 2,
-                min_sigfigs,
-                max_sigfigs,
-            )
-        )
+        sigfigs = int(onp.clip(onp.ceil(-onp.log10(span)) + 2, 3, 6))
     return FuncFormatter(lambda x, _: f"{(x * scale):.{sigfigs}g}")
 
 
@@ -328,10 +320,7 @@ def plot_model(
     beam=None,
     convolve=False,
 ):
-    """Show a source model's rendered image with sky axes.
-
-    East is to the left and North is up, matching the orientation of
-    [`render`][virgil.models.SourceModel.render].
+    """Show a source model's rendered image with sky axes (East left, North up).
 
     Parameters
     ----------
@@ -346,19 +335,15 @@ def plot_model(
     title : str, optional
         Axes title.
     saturate : float, optional
-        Quantile (e.g. ``0.99``) at which to saturate the colour scale, so
-        that faint structure next to a bright star is visible.
+        Quantile (e.g. ``0.99``) at which to saturate the colour scale.
     cmap : str, optional
         Matplotlib colour map.
     beam : Beam, optional
-        The data's resolution, from
-        [`imaging.beam`][virgil.imaging.beam], drawn as a shaded FWHM
-        ellipse in the lower-left corner, as is usual on reconstructed
-        images.
+        The data's resolution, from [`imaging.beam`][virgil.imaging.beam],
+        drawn as a shaded FWHM ellipse in the lower-left corner.
     convolve : bool, optional
-        If ``True``, show the image convolved with ``beam`` (see
-        [`imaging.convolve_beam`][virgil.imaging.convolve_beam]): what
-        the data resolve, rather than the super-resolved image.
+        Show the image convolved with ``beam`` (see
+        [`imaging.convolve_beam`][virgil.imaging.convolve_beam]).
 
     Returns
     -------
@@ -808,26 +793,22 @@ def plot_grid_map(
     Parameters
     ----------
     values : array-like
-        Grid result with one axis per coordinate key of ``grid`` (every key
-        except the flux), as returned by [`virgil.grid_fit`][virgil.grid_fit]
-        and [`virgil.limits`][virgil.limits]. A full
+        Grid result with one axis per coordinate key of ``grid`` (every key but
+        the flux), as returned by [`virgil.grid_fit`][virgil.grid_fit] and
+        [`virgil.limits`][virgil.limits]; a full
         [`likelihood_grid`][virgil.grid_fit.likelihood_grid] is reduced to its
         maximum over flux. One coordinate gives a line plot.
     grid : dict[str, array-like]
         The grid axes used to compute ``values``.
     kind : {"loglike", "flux", "sigma", "snr", "limit"}, optional
-        What ``values`` holds (log likelihood, best-fit flux, flux
-        uncertainty, signal-to-noise ratio, flux upper limit), which sets the
-        default colour map, scale and labels.
+        What ``values`` holds; sets the default colour map, scale and labels.
     units : {"flux", "contrast", "delta_mag"}, optional
-        For ``kind="flux"`` and ``"limit"``: flux ratios (companion/primary),
-        contrasts (primary/companion) or magnitude differences.
+        For ``kind="flux"`` and ``"limit"``: flux ratios, contrasts or
+        magnitude differences.
     sigma, percentile : float, optional
-        Confidence of a ``kind="limit"`` map, for its title (e.g.
-        ``sigma=5`` gives "5σ limit").
+        Confidence of a ``kind="limit"`` map, for its title.
     truth, best : dict or sequence, optional
-        Coordinates to mark with a cross (truth) or circle (best fit). A dict
-        is looked up by key; a sequence is read in coordinate-key order.
+        Coordinates to mark with a cross (truth) or circle (best fit).
     star : bool, optional
         Mark the primary at the origin of sky maps (default True).
     flux_param : str, optional
@@ -835,21 +816,15 @@ def plot_grid_map(
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     cmap, log, label, title : optional
-        Override the defaults for ``kind``: colour map, logarithmic colour
-        scale, colour-bar label and title.
+        Override the defaults for ``kind``.
     figsize : tuple, optional
         Size of a new figure.
 
     Returns
     -------
     tuple
-        ``(fig, ax)``.
-
-    Notes
-    -----
-    Coordinates ``dra`` and ``ddec`` (also as paths such as ``"comp.dra"``)
-    are drawn as x and y, East-left and North-up, whatever their order in
-    ``grid``.
+        ``(fig, ax)``. ``dra`` and ``ddec`` are drawn as x and y, East-left and
+        North-up, whatever their order in ``grid``.
 
     Examples
     --------
@@ -1010,28 +985,23 @@ def plot_contrast_curve(
     Parameters
     ----------
     values : array-like or dict
-        A limit map (companion/primary flux ratios, with one axis per
-        coordinate key of ``grid`` in key order, as from
-        [`absil_limits`][virgil.limits.absil_limits] or
+        A limit map (companion/primary flux ratios, one axis per coordinate key
+        of ``grid``, as from [`absil_limits`][virgil.limits.absil_limits] or
         [`ruffio_upperlimit`][virgil.limits.ruffio_upperlimit]), or a
         [`radial_profile`][virgil.limits.radial_profile] of one.
     grid : dict[str, array-like], optional
-        The grid axes of a limit map; it must contain ``dra`` and ``ddec``
-        axes (also as paths such as ``"comp.dra"``).
+        The grid axes of a limit map; must contain ``dra`` and ``ddec``.
     units : {"delta_mag", "contrast", "flux"}, optional
-        Show limits as magnitude differences (default), contrasts
-        (primary/companion) or flux ratios (companion/primary). Deeper
+        Magnitude differences (default), contrasts or flux ratios. Deeper
         limits are always drawn lower down.
     sigma, percentile, label : optional
-        Legend label; by default built from ``sigma`` or ``percentile``
-        (e.g. "5σ limit"), or "Median limit".
+        Legend label; by default built from ``sigma`` or ``percentile``.
     band : bool, optional
-        Shade the 16–84 percentile range of each annulus (default True).
+        Shade the 16-84 percentile range of each annulus (default True).
     truth : tuple, optional
         ``(dra, ddec, flux)`` of a detected companion to mark.
     center, r_max, bins : optional
-        Annuli, passed to
-        [`radial_profile`][virgil.limits.radial_profile].
+        Annuli, passed to [`radial_profile`][virgil.limits.radial_profile].
     ax : matplotlib.axes.Axes, optional
         Axes to draw on, e.g. to overlay several curves.
     color : optional
@@ -1211,8 +1181,7 @@ def plot_roc(
 ):
     """Plot ROC curves: completeness against false-alarm probability.
 
-    False-alarm probability (x) against completeness (y) as the threshold
-    falls; a useless statistic lies on the chance curve TPR = FPR. See
+    A useless statistic lies on the chance curve TPR = FPR. See
     [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
@@ -1221,24 +1190,22 @@ def plot_roc(
         Simulated searches, from
         [`injection_recovery`][virgil.detection.injection_recovery].
     stat : str or sequence of str
-        ``"delta_chi2"``, ``"log_bayes_factor"`` or ``"max_snr"``, or
-        several of them to compare.
+        ``"delta_chi2"``, ``"log_bayes_factor"`` or ``"max_snr"``, or several.
     flux : float, (float, float) or list, optional
-        Only the injections of this flux, or in this range ``(lo, hi)``, as
-        for [`DetectionMC.roc`][virgil.detection.DetectionMC.roc]. A list
-        gives one curve per entry. By default, every injection.
+        Only the injections of this flux, or in this range, as for
+        [`DetectionMC.roc`][virgil.detection.DetectionMC.roc]; a list gives one
+        curve per entry.
     sep_bin : (float, float) or list of them, optional
         Only the injections with separations in ``[lo, hi)`` (mas); a list
         gives one curve per bin.
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     log_fpr : bool, optional
-        Logarithmic false-positive axis (default), from ``0.5 / n_null`` to 1.
+        Logarithmic false-positive axis (default).
     mark_wilks : sequence of float, optional
         Local significances (default 3σ and 5σ) at which to mark the
-        single-position false-alarm probability (a line) and the matching
-        threshold on each ``delta_chi2`` or ``max_snr`` curve (a circle); the
-        gap is the look-elsewhere effect. None or ``()`` marks nothing.
+        single-position false-alarm probability and the matching threshold on
+        each curve; the gap is the look-elsewhere effect. ``()`` marks nothing.
     title : str, optional
         Title; by default it names what all the curves share.
     figsize : tuple, optional
@@ -1405,9 +1372,8 @@ def plot_completeness(
     Each cell is the fraction of injected companions detected at the
     false-alarm probability ``fap``
     ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]);
-    lines mark the levels in ``contours`` (the curves of
-    [`DetectionMC.contrast_curve`][virgil.detection.DetectionMC.contrast_curve]).
-    See [detection limits](../detection_limits.md#detection-plots).
+    lines mark the levels in ``contours``. See
+    [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
     ----------
@@ -1420,16 +1386,11 @@ def plot_completeness(
         False-alarm probability of the threshold, e.g. 1.35e-3 (3σ).
     units : {"delta_mag", "contrast", "flux"}, optional
         The y-axis, as in
-        [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve]:
-        magnitude difference (default, linear), contrast
-        (primary/companion, log) or flux ratio (companion/primary, log).
-        Fainter companions are always drawn lower down.
+        [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve].
     contours : sequence of float, optional
-        Completeness levels to draw as lines (default 50% and 90%); ``()``
-        draws none.
+        Completeness levels to draw as lines (default 50% and 90%).
     sep_bins, flux_bins : array-like, optional
-        Bin edges (mas, and flux), as for ``DetectionMC.completeness``. By
-        default every distinct injected separation and flux is a cell.
+        Bin edges (mas, and flux); by default every injected value is a cell.
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     cmap : str or Colormap, optional
@@ -1538,8 +1499,8 @@ def plot_null_distribution(
     """Plot how often companion-free searches exceed each threshold.
 
     The empirical exceedance function of the statistic over the null
-    simulations: at each threshold, its false-alarm probability, on a log
-    scale. See [detection limits](../detection_limits.md#detection-plots).
+    simulations, on a log scale. See
+    [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
     ----------
@@ -1547,21 +1508,16 @@ def plot_null_distribution(
         Simulated searches, from
         [`injection_recovery`][virgil.detection.injection_recovery].
     stat : str, optional
-        ``"delta_chi2"`` (default), ``"log_bayes_factor"`` or
-        ``"max_snr"``.
+        ``"delta_chi2"`` (default), ``"log_bayes_factor"`` or ``"max_snr"``.
     observed : float, optional
-        The statistic of the real data: a vertical line, with its empirical
-        false-alarm probability
-        ([`DetectionMC.false_alarm_probability`][virgil.detection.DetectionMC.false_alarm_probability])
-        and its 95% interval.
+        The statistic of the real data: a vertical line, with its false-alarm
+        probability and 95% interval.
     fap : float, optional
         A false-alarm probability to draw as a horizontal line, with the
-        empirical threshold that reaches it
-        ([`DetectionMC.threshold`][virgil.detection.DetectionMC.threshold]).
+        threshold that reaches it.
     reference : bool, optional
-        Draw the single-position reference curve (default True): Wilks's
-        theorem for ``delta_chi2``, the Gaussian tail for ``max_snr``; none
-        for ``log_bayes_factor``.
+        Draw the single-position reference curve (default True; none for
+        ``log_bayes_factor``).
     ax : matplotlib.axes.Axes, optional
         Axes to draw on; a new figure is made if omitted.
     title : str, optional
@@ -1576,8 +1532,7 @@ def plot_null_distribution(
 
     Examples
     --------
-    >>> plot_null_distribution(mc, "delta_chi2", observed=21.3,
-    ...                        fap=1.35e-3)  # doctest: +SKIP
+    >>> plot_null_distribution(mc, "delta_chi2", observed=21.3)  # doctest: +SKIP
     """
     from scipy.stats import norm
 
@@ -1711,21 +1666,19 @@ def plot_orbit_ensemble(
 ):
     """Draw orbits on the sky, e.g. draws from a posterior, with the data.
 
-    East is to the left and North up, and the primary sits at the origin.
-    Each orbit is drawn over one full period as a thin line; the measured
-    positions are coloured by time, with their error ellipses.
+    East is to the left and North up, the primary at the origin. Each orbit is
+    drawn over one period; measured positions are coloured by time, with error
+    ellipses.
 
     Parameters
     ----------
     orbits : KeplerOrbit
-        One orbit, or many as a single
-        [`KeplerOrbit`][virgil.orbits.KeplerOrbit] whose elements are 1-D
-        arrays of equal length (e.g. built from posterior samples).
+        One orbit, or many as one [`KeplerOrbit`][virgil.orbits.KeplerOrbit]
+        whose elements are 1-D arrays of equal length.
     positions : PositionData, optional
         Measured positions to overlay, with ``n_sigma`` error ellipses.
     truth : KeplerOrbit, optional
-        A reference orbit (e.g. the truth of a simulation), drawn as a
-        thicker contrasting line.
+        A reference orbit, drawn as a thicker contrasting line.
     n_points : int, optional
         Points along each orbit.
     n_sigma : float, optional
@@ -1733,8 +1686,7 @@ def plot_orbit_ensemble(
     color, truth_color : optional
         Colours of the ensemble and of the reference orbit.
     alpha : float, optional
-        Opacity of each ensemble line; by default it falls with the number
-        of orbits, so that the density of lines reads as probability.
+        Opacity of each line; by default it falls with the number of orbits.
     cmap : str, optional
         Colour map for the epochs' times.
     ax : matplotlib.axes.Axes, optional
