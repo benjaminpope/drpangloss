@@ -899,7 +899,8 @@ def starting_orbits(
         and its reflection (``omega`` + 180°) fits equally well.
     batch_size : int, optional
         Grid points solved together (default: from the number of positions);
-        bounds the memory, not the result.
+        bounds the memory, not the result. Capped at the grid size (rounded
+        up to a power of two), even when given explicitly.
 
     Returns
     -------
@@ -913,10 +914,15 @@ def starting_orbits(
     p, e, f = onp.meshgrid(periods, eccs, phases, indexing="ij")
     grid = onp.stack([p.ravel(), (f * p).ravel(), e.ravel()], axis=1)
     fitter = _thiele_innes_fit_sign_free if sign_free else _thiele_innes_fit
-    size = _position_batch(batch_size, positions)
-    # Fixed-size batches, the last padded, so that every grid shares one
-    # compile (per number of positions) and memory is bounded by ``size``.
     n_grid = len(grid)
+    # Never pad past the grid itself (a power of two, to share compiles):
+    # the memory bound is for grids too large to solve at once.
+    size = min(
+        _position_batch(batch_size, positions), 1 << (n_grid - 1).bit_length()
+    )
+    # Fixed-size batches, the last padded: grids share a compile per number
+    # of positions and power-of-two size (up to the batch), and memory is
+    # bounded by ``size``.
     padded = onp.concatenate(
         [grid, onp.repeat(grid[-1:], -n_grid % size, axis=0)]
     )

@@ -18,7 +18,6 @@ from virgil import (
 )
 from virgil.likelihood import model_loglike
 from virgil.oifits import build_hdulist, read_oifits
-from virgil.spectra import Tabulated
 from tests.test_oifits import TRUTH, _tables
 
 BRG = 2.1661e-6
@@ -179,16 +178,6 @@ def test_total_spectrum_sums_the_components():
     assert onp.allclose(
         single.total_spectrum(wavel), 0.3 * wavel / 2.2e-6, rtol=1e-6
     )
-
-
-def test_tabulated_is_deprecated_but_unchanged():
-    nodes = onp.array([2.0e-6, 2.1e-6, 2.2e-6])
-    with pytest.warns(FutureWarning, match="Nodes"):
-        old = Tabulated([0.2, 0.4, 0.1], nodes)
-    new = Nodes([0.2, 0.4, 0.1], nodes)
-    wavel = onp.linspace(1.9e-6, 2.3e-6, 11)
-    assert onp.allclose(old(wavel), new(wavel))
-    assert float(old()) == pytest.approx(onp.mean([0.2, 0.4, 0.1]))
 
 
 def test_invalid_spectra_are_rejected():
