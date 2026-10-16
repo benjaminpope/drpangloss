@@ -1143,7 +1143,9 @@ def _nuts(model, data, p, name, priors, start):
     entry = models()[name]
     noise = p._noise()
     posterior = numpyro_model(model, priors, data, noise=noise)
-    mcmc = _run_chains(posterior, s, start, dense_mass=True)
+    mcmc = _run_chains(
+        posterior, s, start, dense_mass=True, priors=priors
+    )
     samples = {
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
@@ -1355,6 +1357,11 @@ def _fit_checks(fit, registry):
     }
     if scales:
         checks.append(_checks.error_scale(scales))
+    at_bound = [
+        f"{k}.{site}" for k in fit["names"] for site in reports[k]["at_bound"]
+    ]
+    if at_bound:
+        checks.append(_checks.start_at_bound(at_bound))
     return checks
 
 

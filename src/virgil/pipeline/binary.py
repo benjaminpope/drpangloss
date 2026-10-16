@@ -807,7 +807,9 @@ def _run_nuts(p, priors, angular):
         if k in priors
     }
     posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
-    return _run_chains(posterior, s, start, dense_mass=False)
+    return _run_chains(
+        posterior, s, start, dense_mass=False, priors=priors
+    )
 
 
 def _write_samples(p, samples, sample_stats, reported, priors):
@@ -990,6 +992,8 @@ def _fit_checks(fit, companion, load):
     checks = []
     if fit["error_scales"]:
         checks.append(_checks.error_scale(fit["error_scales"]))
+    if fit["at_bound"]:
+        checks.append(_checks.start_at_bound(fit["at_bound"]))
     checks.append(
         _checks.residual_normality(
             fit["residual_skew"],

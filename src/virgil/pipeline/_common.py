@@ -320,16 +320,78 @@ def _mcmc(posterior, settings, *, dense_mass):
     )
 
 
-def _run_chains(posterior, settings, start, *, dense_mass):
-    """Run NUTS from ``start`` (one jittered start per chain); the finished MCMC."""
+# How far inside its prior a NUTS start is pulled, as a fraction of the
+# prior's width in its flat coordinate (log x for a LogUniform). The
+# sampler's unconstrained value is then about ``logit(1e-3)`` = -7 at the
+# worst, finite in float32 and float64; a start exactly on a bound is +-inf.
+_START_INSET = 1e-3
+
+
+def _interior_start(priors, start, inset=_START_INSET):
+    """``start`` with every value pulled at least ``inset`` of its prior's
+    width inside the prior's finite bounds, as ``fit`` measures them.
+
+    The fit's best values sit on a bound when the data cannot constrain a
+    parameter (a companion's flux in a non-detection, the diameter of an
+    unresolved star), and numpyro cannot start there: the unconstrained
+    value is infinite. Values already inside, and parameters without
+    finite bounds, are returned as they were.
+    """
+    from .._flat import _base, _flat_coordinate
+    from ..fitting import _bound_fraction
+
+    out = dict(start)
+    for name, value in start.items():
+        prior = priors.get(name)
+        fraction = None if prior is None else _bound_fraction(prior, value)
+        if fraction is None or not onp.any(
+            (fraction < inset) | (fraction > 1.0 - inset)
+        ):
+            continue
+        flat = _flat_coordinate(prior)
+        if flat is not None:
+            _, from_flat, low, high = flat
+        else:
+            support = _base(prior).support
+            low, high = support.lower_bound, support.upper_bound
+            from_flat = lambda x: x  # noqa: E731
+        low, high = onp.asarray(low, float), onp.asarray(high, float)
+        inside = onp.clip(fraction, inset, 1.0 - inset)
+        out[name] = onp.asarray(
+            from_flat(low + inside * (high - low)),
+            dtype=onp.asarray(value).dtype,
+        )
+    return out
+
+
+def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
+    """Run NUTS from ``start`` (one jittered start per chain); the finished MCMC.
+
+    With ``priors`` (by sample site), the start is first pulled just inside
+    any bound it sits on (``_interior_start``). If numpyro still finds no
+    finite log-density at the start, a ``ValueError`` says which values sit
+    on a bound, instead of numpyro's own message.
+    """
     import jax
 
     from ..likelihood import chain_init_params
 
+    if priors is not None:
+        start = _interior_start(priors, start)
     init_key, run_key = jax.random.split(jax.random.PRNGKey(settings["seed"]))
-    init = chain_init_params(
-        posterior, [start] * settings["num_chains"], key=init_key
-    )
+    try:
+        init = chain_init_params(
+            posterior, [start] * settings["num_chains"], key=init_key
+        )
+    except RuntimeError as error:
+        if "valid initial parameters" not in str(error):
+            raise
+        raise ValueError(
+            "NUTS cannot start from the best fit: the log-posterior is not "
+            "finite there. Start values: "
+            + ", ".join(f"{k}={onp.asarray(v).tolist()}" for k, v in start.items())
+            + ". Check that the fitted model and its priors agree."
+        ) from error
     mcmc = _mcmc(posterior, settings, dense_mass=dense_mass)
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     return mcmc
