@@ -19,8 +19,8 @@ each module lists its provisional names in `__provisional__`, which
 
 Provisional in 0.4:
 
-- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
-  `virgil.tempering` (the orbit fitting, aliases and search);
+- the modules `virgil.epochs`, `virgil.aliases` and `virgil.tempering` (the
+  orbit fitting and aliases);
 - the `PolarDisk` family in `virgil.models`: `PolarDisk`, `ThinRing`,
   `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
   `RadialLinear`, `RadialPower`, `RadialGP`, `PolarKernel`, `Harmonics`,

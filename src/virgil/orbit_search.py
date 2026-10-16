@@ -1,8 +1,5 @@
 """Scoring candidate orbits on multi-epoch data, with shared nuisances.
 
-!!! warning "Provisional"
-    May change in any 0.4.x release without a deprecation cycle.
-
 The first stage of an automatic orbit search scores many candidate orbits
 on all the data at once. [`score_orbits`][virgil.orbit_search.score_orbits]
 does this exactly, on the visibilities and closure phases, with the
@@ -63,8 +60,6 @@ __all__ = [
     "rank_scores",
     "score_orbits",
 ]
-
-__provisional__ = ("*",)
 
 
 # Default score quantum (nats) for breaking ties: scores closer than this

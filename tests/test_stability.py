@@ -35,7 +35,6 @@ NAMES = [
 EXPECTED = {
     "virgil.epochs": {"*"},
     "virgil.aliases": {"*"},
-    "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
     "virgil.metrics": {"*"},

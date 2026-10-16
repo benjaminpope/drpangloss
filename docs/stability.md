@@ -16,7 +16,7 @@ Nothing warns at runtime: the tier is in the documentation and in each provision
 
 | Area | Provisional names |
 | --- | --- |
-| Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md), [`virgil.orbit_search`](api/orbit_search.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
+| Orbit fitting | the modules [`virgil.epochs`](api/epochs.md), [`virgil.aliases`](api/aliases.md) and [`virgil.tempering`](api/tempering.md) (the whole of each) |
 | `PolarDisk` family ([`virgil.models`](api/models/classes/polar_disk.md)) | `PolarDisk`, `ThinRing`, `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`, `RadialLinear`, `RadialPower`, `RadialGP`, `PolarKernel`, `Harmonics`, `VonMises`, `Cone`, `PowerLawHeight`, `polar_disk_cvis`, `gp_priors` |
 | Polar fields ([`virgil.fields`](api/fields.md)) | `PolarField`, `polar_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
