@@ -1,35 +1,18 @@
 """Priors that are invariant measures but not plain numpyro priors.
 
-virgil's default priors are the Jeffreys priors under the groups that act on
-each parameter (see the design notes): uniform for locations, log-uniform
-(``numpyro.distributions.LogUniform``) for scales, and the Haar measure for
-orientations. The Haar measure on rotations is uniform in the direction of
-an axis on the sphere, which is *not* uniform in the angles virgil uses:
-
-* an orbit's inclination ``inc`` (degrees, 0 to 180) has density ∝ sin i, so
-  that cos i is uniform; use
-  [`IsotropicInclination`][virgil.priors.IsotropicInclination];
-* a position on a sphere, such as a spot's latitude (radians), has density
-  ∝ cos(lat), so that sin(lat) is uniform; use
-  [`IsotropicLatitude`][virgil.priors.IsotropicLatitude].
-
-The longitude of the node, argument of periastron and spot longitude are
-uniform in their angles, so ``numpyro.distributions.Uniform`` is right for
-them.
-
-[`hierarchical_scales`][virgil.priors.hierarchical_scales] gives a set of
-scale factors (say one error scale per epoch) drawn from a log-normal
-population whose median and spread are themselves sampled, with
-log-uniform hyperpriors.
-
-Both classes are numpyro distributions, so they work as entries of the
-``priors`` of [`fit`][virgil.fitting.fit] and
-[`numpyro_model`][virgil.likelihood.numpyro_model]. ``fit`` optimizes
-them in their flat coordinate (cos i or sin(lat), through
-``flat_coordinate()``), where the prior is constant, so
-Levenberg–Marquardt applies and is ``fit``'s automatic choice;
-``numpyro_model(..., flat_coordinates=True)`` samples them in the same
-coordinate.
+The Haar measure on rotations is uniform in the direction of an axis on the
+sphere, which is not uniform in the angles virgil uses:
+[`IsotropicInclination`][virgil.priors.IsotropicInclination] (density
+∝ sin i, so cos i is uniform) is the prior on an orbit's inclination in
+degrees, and [`IsotropicLatitude`][virgil.priors.IsotropicLatitude] (density
+∝ cos lat) that of a position on a sphere, in radians. Longitudes and nodes
+are uniform in their angles, so ``Uniform`` is right for them.
+[`hierarchical_scales`][virgil.priors.hierarchical_scales] gives a population
+of scale factors. All are numpyro distributions that work in the ``priors``
+of [`fit`][virgil.fitting.fit] and
+[`numpyro_model`][virgil.likelihood.numpyro_model]; the isotropic priors
+optimize in their flat coordinate (see
+[which priors](../conventions.md#which-priors)).
 """
 
 import dataclasses
@@ -52,9 +35,7 @@ __all__ = [
 def _check_range(name, low, high, limit, unit):
     """Validate concrete bounds (tracers pass unchecked).
 
-    ``limit`` is the pole angle (180 or pi/2) in the bounds' unit. It is
-    rounded to each bound's own dtype, so float32 full-range bounds, whose
-    pole rounds past the true value, are accepted.
+    ``limit`` is the pole angle in the bounds' unit, rounded to each bound's dtype.
     """
     try:
         low_v, high_v = onp.asarray(low, float), onp.asarray(high, float)
@@ -76,12 +57,7 @@ def _check_range(name, low, high, limit, unit):
 
 
 def _clip_through(x, low, high):
-    """``x`` clipped to ``[low, high]`` with the derivative of ``x``.
-
-    The clip only absorbs rounding at the bounds; a sampler that
-    differentiates the quantile function (``virgil._flat``) needs its true
-    slope there, not a clip's 0 or 1/2.
-    """
+    """``x`` clipped to ``[low, high]`` with the derivative of ``x``."""
     return x + jax.lax.stop_gradient(np.clip(x, low, high) - x)
 
 
@@ -108,13 +84,8 @@ class _InverseCDFPrior(Distribution):
     def flat_coordinate(self):
         """The coordinate in which the prior is uniform, for ``fit``.
 
-        Returns ``(cdf, icdf, 0, 1)``: the CDF is uniform on [0, 1] and
-        affine in cos i (inclination) or sin(lat) (latitude), so it is that
-        flat coordinate, rescaled. Using the CDF rather than cos i itself
-        keeps the cancellation-resistant formulas above, which matter for
-        narrow ranges and ranges at a pole. ``fit`` optimizes the angle in
-        this coordinate, where the prior adds nothing to the loss (see
-        "Priors and the MAP" in the conventions).
+        Returns ``(cdf, icdf, 0, 1)``: the CDF is affine in cos i or sin(lat). See
+        [priors and the MAP](../conventions.md#priors-and-the-map).
         """
         return self.cdf, self.icdf, 0.0, 1.0
 
@@ -122,28 +93,21 @@ class _InverseCDFPrior(Distribution):
 class IsotropicInclination(_InverseCDFPrior):
     """The inclination of an isotropically oriented axis: density ∝ sin i.
 
-    The Haar measure on rotations gives an orbit normal (or a spin axis)
-    that is uniform on the sphere, so its inclination ``i`` has density
-    ``sin(i) / (cos(low) - cos(high))`` on ``[low, high]``, that is, cos i
-    is uniform. This is the default prior on ``inc``; ``Uniform(0, 180)``
+    The density is ``sin(i) / (cos(low) - cos(high))`` on ``[low, high]``, so
+    cos i is uniform; this is the default prior on ``inc``. ``Uniform(0, 180)``
     is not isotropic (it favours face-on orbits).
 
     Parameters
     ----------
     low, high : float
-        Bounds in **degrees**, the unit of ``inc`` in virgil (0 to 180, see
-        the conventions page). Defaults: the full range.
+        Bounds in **degrees**, the unit of ``inc`` in virgil (0 to 180).
+        Defaults: the full range.
 
     Notes
     -----
-    Use ``IsotropicInclination()`` (0 to 180) whenever the data distinguish
-    ``i`` from ``180 - i``: astrometry or interferometric closure phases
-    give the sense of motion on the sky, so the orbit is prograde
-    (``i < 90``) or retrograde (``i > 90``). Use
-    ``IsotropicInclination(0, 90)`` when only ``|cos i|`` is identifiable,
-    for example with radial velocities alone, or with the sky-projected
-    image of a rotating star: the data cannot tell ``i`` from ``180 - i``,
-    and the density is the same shape on half the range.
+    Use the full range when the data distinguish ``i`` from ``180 - i``
+    (astrometry, closure phases). Use ``IsotropicInclination(0, 90)`` when only
+    ``|cos i|`` is identifiable, as with radial velocities alone.
 
     Examples
     --------
@@ -302,21 +266,14 @@ class IsotropicLatitude(_InverseCDFPrior):
 
 @dataclasses.dataclass(frozen=True)
 class PopulationScale:
-    """Member ``index`` of a log-normal population of scales (see
-    [`hierarchical_scales`][virgil.priors.hierarchical_scales]).
+    """Member ``index`` of a log-normal population of scales.
 
-    Called with the dict of sampled values, it returns the member's scale
-    s_k. With ``centred=True``, log s_k is sampled itself (at
-    ``"<name>_log"``, under a flat prior) and :meth:`log_prior` is its
-    population density, log N(log s_k | log median, spread), which
-    [`numpyro_model`][virgil.likelihood.numpyro_model] and
-    [`fit`][virgil.fitting.fit] add once for each member used as a
-    ``noise`` term. Otherwise s_k = median exp(spread z_k) with z_k ~ N(0,
-    1) sampled at ``"<name>_z"``, and the log prior is zero.
-
-    It is a frozen dataclass, so equal members compare (and hash) equal:
-    repeated fits do not recompile, and a member used for two terms adds
-    its density once.
+    Called with the dict of sampled values, it returns the member's scale s_k;
+    see [`hierarchical_scales`][virgil.priors.hierarchical_scales]. In the
+    centred form [`log_prior`][virgil.priors.PopulationScale.log_prior] is the
+    population density, which ``numpyro_model`` and ``fit`` add once per member
+    used as a ``noise`` term. It is a frozen dataclass, so equal members compare
+    (and hash) equal: repeated fits do not recompile.
     """
 
     name: str
@@ -346,29 +303,15 @@ class PopulationScale:
 def hierarchical_scales(name, n, median=None, spread=None, centred=True):
     """``n`` positive scales drawn from a log-normal population.
 
-    log s_k is normal about log ``median`` with standard deviation
-    ``spread``, and ``median`` and ``spread`` are sampled too. They are
-    scales, so their default (Jeffreys) priors are log-uniform.
-
-    Use it for calibration nuisances that differ from epoch to epoch but
-    come from one instrument, such as one closure-phase error scale per
-    night: the population pulls poorly constrained epochs towards the
-    typical value, and its median and spread say how well the stated
-    errors describe the instrument. Pass the scales as ``noise`` terms
-    tied to the parameters, for
-    [`numpyro_model`][virgil.likelihood.numpyro_model] or
-    [`fit`][virgil.fitting.fit]. Use every member: an unused member of
-    the centred form has a flat, improper prior.
-
-    **Centred or not.** The centred form (default) samples u_k = log s_k
-    and adds the population density N(u_k | log median, spread). It suits
-    members that the data measure well, such as error scales of epochs
-    with tens of closure phases or more: u_k is then nearly independent of
-    the hyperparameters. The non-centred form samples z_k ~ N(0, 1) with
-    s_k = median exp(spread z_k), and suits members the data barely
-    constrain; with well-measured members it makes a curved ridge,
-    z_k ∝ 1/spread, on which NUTS diverges (in a test with eight members
-    measured to 7%, 10 divergences in 4000 draws against none centred).
+    ``log s_k`` is normal about ``log(median)`` with standard deviation
+    ``spread``, and ``median`` and ``spread`` are sampled too, with log-uniform
+    (Jeffreys) priors. Use it for nuisances that differ between epochs but come
+    from one instrument, such as a closure-phase error scale per night; pass the
+    scales as ``noise`` terms of [`numpyro_model`][virgil.likelihood.numpyro_model]
+    or [`fit`][virgil.fitting.fit], and use every member (an unused member of the
+    centred form has a flat, improper prior). See
+    [hierarchical scales](../conventions.md#hierarchical-scales) for when to
+    choose the centred form.
 
     Parameters
     ----------
@@ -385,7 +328,8 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
         Prior on the standard deviation of log s (default
         ``LogUniform(0.01, 1)``: from 1% to a factor of e).
     centred : bool, optional
-        The parameterization (see above).
+        Sample ``log s_k`` (default; for well-measured members) or a standard
+        normal ``z_k`` with ``s_k = median exp(spread z_k)``.
 
     Returns
     -------

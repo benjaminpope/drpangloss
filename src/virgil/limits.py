@@ -1,21 +1,13 @@
 """Contrast limits, significance, and flux/contrast/Δmag conversions.
 
-virgil parameterizes a companion by its **flux** relative to the primary
-(companion/primary, so 0.01 for a companion 100 times fainter). Results are
-usually reported instead as a **contrast**, primary/companion (100 here), or
-as a magnitude difference ``Δmag = 2.5 log10(contrast)`` (5 mag here), which
-:func:`flux_to_contrast` and :func:`flux_to_delta_mag` compute.
+Fluxes are companion/primary; contrast is primary/companion and
+``Δmag = 2.5 log10(contrast)``. See
+[detection limits](../detection_limits.md) for the methods and which to use.
 
-* :func:`ruffio_upperlimit`: Bayesian upper limits with a positive-flux prior
-  (Ruffio et al. 2018, https://arxiv.org/abs/1809.08261).
-* `absil_limits`: frequentist limits from the chi-squared ratio to the
-  no-companion model (Absil et al. 2011, https://arxiv.org/abs/1110.1178),
-  using :func:`nsigma`.
-* `injection_limits`: limits by companion injection (Gallenne et al. 2015,
-  as in CANDID): the flux at which an injected companion would be detected
-  at ``sigma``.
-* :func:`radial_profile`: azimuthal statistics of a limit map, for contrast
-  curves.
+* :func:`ruffio_upperlimit`: Bayesian upper limits (Ruffio et al. 2018).
+* `absil_limits`: frequentist chi-squared limits (Absil et al. 2011).
+* `injection_limits`: limits by companion injection (CANDID).
+* :func:`radial_profile`: azimuthal statistics of a limit map.
 """
 
 import warnings
@@ -159,16 +151,11 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
 
 
 def chi2ppf(p, df):
-    """
-    Percentile function for chi-square.
+    """Percentile function (inverse CDF) of the chi-squared distribution.
 
-    It is ``2·gammaincinv(df/2, p)``, inverting
-    ``jax.scipy.special.gammainc`` by Halley's method from a
-    Wilson–Hilferty start, with the residual taken in the upper tail
-    (``gammaincc``) for ``p > 1/2``. It is accurate to about 1e-14
-    relative in float64 for every ``df`` and ``p`` in [1e-10, 1 - 1e-10],
-    needs no optional dependency, and is differentiable (by the implicit
-    function theorem) and ``jit``-able in both arguments.
+    Accurate to about 1e-14 relative in float64 for ``p`` in
+    [1e-10, 1 - 1e-10], differentiable and ``jit``-able in both arguments;
+    see [detection limits](../detection_limits.md#significance).
 
     Parameters
     ----------
@@ -184,10 +171,8 @@ def chi2ppf(p, df):
 
     Notes
     -----
-    ``p`` is clipped to ``[eps, 1 - eps]`` of its own floating-point type, so
-    the result stays finite. Near ``p = 1`` this loses precision; to convert
-    small tail probabilities, use [`nsigma`][virgil.limits.nsigma], which works with the upper
-    tail directly.
+    ``p`` is clipped to ``[eps, 1 - eps]``. Near ``p = 1`` precision is lost;
+    use [`nsigma`][virgil.limits.nsigma] for small tail probabilities.
     """
     p = np.asarray(p, dtype=float)
     eps = np.finfo(p.dtype).eps
@@ -199,9 +184,7 @@ def chi2ppf(p, df):
 
 
 def _gammaincinv_guess(a, p):
-    """Starting point for :func:`_gammaincinv` (Numerical Recipes, 3rd ed.,
-    §6.2.1): Wilson–Hilferty for ``a > 1``, a power law in the lower tail
-    and an exponential in the upper tail otherwise."""
+    """Starting point for `_gammaincinv` (Numerical Recipes 3rd ed. 6.2.1)."""
     tiny = np.finfo(p.dtype).tiny
     pp = np.where(p < 0.5, p, 1.0 - p)
     t = np.sqrt(-2.0 * np.log(pp))
@@ -221,13 +204,7 @@ def _gammaincinv_guess(a, p):
 
 @jax.custom_jvp
 def _gammaincinv(a, p):
-    """``x`` with ``gammainc(a, x) = p``, by Halley's method.
-
-    Residuals use the upper tail ``gammaincc(a, x) = 1 - p`` when
-    ``p > 1/2``, so the result keeps full relative precision at both ends.
-    The derivative is from the implicit function theorem, so this is
-    differentiable in ``a`` and ``p`` and does not unroll the iterations.
-    """
+    """``x`` with ``gammainc(a, x) = p``, by Halley's method (implicit JVP)."""
     a, p = np.broadcast_arrays(a, p)
     q = 1.0 - p
     upper_tail = p > 0.5
@@ -263,13 +240,10 @@ def _gammaincinv_jvp(primals, tangents):
 
 
 def nsigma(chi2r_test, chi2r_true, ndof):
-    """
-    Convert a reduced-chi-squared ratio to a Gaussian-equivalent significance.
+    """Gaussian-equivalent significance of a reduced-chi-squared ratio.
 
-    The statistic ``x = ndof * chi2r_test / chi2r_true`` is compared with a
-    chi-squared distribution of ``ndof`` degrees of freedom, and its
-    upper-tail probability is expressed as the equivalent two-sided Gaussian
-    significance (as in Absil et al. 2011).
+    ``ndof * chi2r_test / chi2r_true`` is compared with a chi-squared
+    distribution of ``ndof`` degrees of freedom (as in Absil et al. 2011).
 
     Parameters
     ----------
@@ -287,9 +261,8 @@ def nsigma(chi2r_test, chi2r_true, ndof):
 
     Notes
     -----
-    The upper tail is computed directly (with the regularized incomplete
-    gamma function) rather than as ``1 - cdf``, so significances stay finite
-    and accurate far beyond 8σ, including in float32 (up to about 13σ).
+    Accurate far beyond 8σ; it saturates at about 13σ in float32 and 37σ in
+    float64. See [detection limits](../detection_limits.md#significance).
     """
     x = ndof * chi2r_test / chi2r_true
     half_tail = 0.5 * jax.scipy.special.gammaincc(ndof / 2.0, x / 2.0)
@@ -303,24 +276,23 @@ def nsigma(chi2r_test, chi2r_true, ndof):
 
 
 def ruffio_upperlimit(mean, sigma, percentile):
-    """
-    Percentile of a flux posterior truncated to non-negative values.
+    """Percentile of a flux posterior truncated to non-negative values.
 
-    Following Ruffio et al. (2018, eqn 8), the flux posterior at each
-    position is the Laplace Gaussian ``N(mean, sigma)`` of the
-    unconstrained (possibly negative) best-fit flux, truncated to
-    ``flux >= 0`` by the positivity prior. This returns its ``percentile``
-    quantile, so ``percentile = norm.cdf(2)`` gives a 2-sigma-equivalent
-    upper limit and ``0.16, 0.5, 0.84`` give a median and credible interval.
+    The posterior is the Laplace Gaussian ``N(mean, sigma)`` truncated to
+    ``flux >= 0`` (Ruffio et al. 2018, eqn 8). ``percentile = norm.cdf(2)``
+    gives a 2-sigma-equivalent upper limit. See
+    [detection limits](../detection_limits.md#ruffio).
 
     Parameters
     ----------
     mean : float or array-like
-        Unconstrained best-fit flux, e.g. from [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid].
-        It may be negative.
+        Unconstrained best-fit flux, e.g. from
+        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]; may be
+        negative.
     sigma : float or array-like
         Laplace uncertainty of the flux, e.g. from
-        [`laplace_flux_uncertainty_grid`][virgil.grid_fit.laplace_flux_uncertainty_grid], broadcastable to ``mean``.
+        [`laplace_flux_uncertainty_grid`][virgil.grid_fit.laplace_flux_uncertainty_grid];
+        broadcastable to ``mean``.
     percentile : float or array-like
         Quantile(s) of the truncated posterior to return, between 0 and 1.
 
@@ -329,21 +301,6 @@ def ruffio_upperlimit(mean, sigma, percentile):
     array-like
         Non-negative flux at each percentile, with shape
         ``broadcast(mean, sigma).shape + percentile.shape``.
-
-    Notes
-    -----
-    The flat ``flux >= 0`` prior is the published convention (Ruffio et al.
-    2018) and is deliberately not the Jeffreys prior for a scale: a
-    log-uniform prior on the flux makes the posterior improper as
-    ``flux -> 0``, so there would be no finite upper limit to quote.
-
-    The quantile is computed from the upper tail,
-    ``mean + sigma * z`` with ``Q(z) = (1 - percentile) Q(-mean / sigma)``
-    and ``Q`` the standard normal survival function, evaluated in log space
-    so that it stays accurate when the best fit is many sigma below zero.
-    Where the tail underflows, the large-deviation limit
-    ``z = sqrt(a**2 - 2 log(1 - percentile))`` (``a = -mean / sigma``) is the
-    starting point, and two Newton steps on ``log Q(z)`` polish the result.
     """
     mean, sigma = np.broadcast_arrays(np.asarray(mean), np.asarray(sigma))
     percentile = np.asarray(percentile)
@@ -382,9 +339,8 @@ def absil_limits(
     Following Absil et al. (2011), at each grid position this finds the flux
     at which the model fits the data worse than the no-companion model by a
     chi-squared ratio corresponding to ``sigma`` (see
-    [nsigma][virgil.limits.nsigma]). Brighter companions at that
-    position are excluded at ``sigma``: with ``sigma=3`` the result is a
-    3-sigma upper limit on the flux.
+    [`nsigma`][virgil.limits.nsigma]). See
+    [detection limits](../detection_limits.md#absil-injection).
 
     Parameters
     ----------
@@ -395,29 +351,24 @@ def absil_limits(
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values
-        (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
-        used with ``flux_bounds=None``, where its smallest positive value
-        starts the search (a single value is enough).
+        Grid axes: parameter name or path to 1D values (e.g. ``dra``/``ddec``
+        in mas). The flux axis only matters with ``flux_bounds=None``, where
+        its smallest positive value starts the search.
     sigma : float
         Exclusion significance. It must exceed the significance of a
-        chi-squared ratio of 1 (about 0.67 for many degrees of freedom),
-        and be below the largest significance the floating-point type can
-        represent (about 12.9 in float32, 37 in float64).
+        chi-squared ratio of 1 (about 0.67) and stay below the float type's
+        ceiling (12.9 in float32, 37 in float64).
     flux_param : str, optional
-        The key of ``grid`` holding the flux solved for at each grid
-        position. By default, the one key whose last part is ``flux``.
+        Key of ``grid`` holding the flux solved for (default: the one key
+        whose last part is ``flux``).
     flux_bounds : tuple[float, float] or None, optional
         Search range of the flux (default ``(1e-6, 1.0)``), searched upward
-        from its lower end, as in
-        [`injection_limits`][virgil.limits.injection_limits]. Limits outside
-        it are returned at the nearer bound, and a ``RuntimeWarning`` reports
-        how many. Pass ``None`` to search without bounds, from the smallest
-        positive value of the flux axis, e.g. for
+        from its lower end. Limits
+        outside it are returned at the nearer bound, with a
+        ``RuntimeWarning``. ``None`` searches without bounds, e.g. for
         [`System`][virgil.models.System] weights that may exceed 1.
     batch_size : int, optional
-        Number of grid points evaluated at once, by default enough for
-        a fixed number of model visibilities; see
+        Grid points evaluated at once; see
         [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
 
     Returns
@@ -428,15 +379,9 @@ def absil_limits(
 
     Notes
     -----
-    The number of degrees of freedom is the number of data points; the
-    fitted parameters are not subtracted.
-
-    The limit is the first flux, going up from the start of the search, at
-    which the significance reaches ``sigma``: the flux is stepped by
-    decades until it does, and that decade is bisected in log flux. For a
-    normalized scene the significance falls again once the companion
-    outshines the primary (flux well above 1), so an unbounded search
-    should start below that.
+    The degrees of freedom are the number of data points; fitted parameters
+    are not subtracted. The limit is the first flux, going up from the start
+    of the search, at which the significance reaches ``sigma``.
     """
     return _limits(
         "absil_limits",
@@ -464,54 +409,21 @@ def injection_limits(
 ):
     """Flux at which an injected companion would be detected at ``sigma``.
 
-    This is the injection method of Gallenne et al. (2015, section 3.2),
-    as in CANDID's ``detectionLimit(methods=["injection"])``. At each grid
-    position a companion of flux ``f`` is added to the data (to every
-    observable, including the extras: the observables of the model with the
-    companion minus those of the no-companion model), and the no-companion
-    model is fitted to the result. The limit is the flux at which the null
-    model fits the injected data worse than the companion model does, by a
-    chi-squared ratio corresponding to ``sigma`` (see
-    [nsigma][virgil.limits.nsigma]). The companion model fits the injected
-    data exactly as the null model fits the original data, so the ratio is
-    ``chi2(data + signal(f)) / chi2(data)`` for the null model. (With gains
-    or OI_FLUX data, whose whitening depends on the model, the companion
-    model's chi-squared on the injected data is computed in full.)
-
-    Compare [`absil_limits`][virgil.limits.absil_limits], which uses
-    ``chi2(data - signal(f)) / chi2(data)``. The two differ by the sign of
-    the cross term between the data's residuals and the signal.
+    The injection method of Gallenne et al. (2015), as in CANDID: a companion
+    of flux ``f`` is added to every observable and the no-companion model is
+    fitted to the result; the limit is where it fits worse than the companion
+    model by a chi-squared ratio corresponding to ``sigma``. Compare
+    [`absil_limits`][virgil.limits.absil_limits]. See
+    [detection limits](../detection_limits.md#absil-injection).
 
     Parameters
     ----------
-    model : SourceModel or class
-        Template model or model class, as for
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
-        no-companion model sets every parameter in ``grid`` to zero.
-    data : OIData
-        Data to fit.
-    grid : dict[str, array-like]
-        Grid axes, as a mapping from parameter name or path to 1D values
-        (e.g. ``dra``/``ddec`` in milliarcseconds). The flux axis is only
-        used with ``flux_bounds=None``, where its smallest positive value
-        starts the search (a single value is enough).
+    model, data, grid, flux_param, flux_bounds, batch_size
+        As for [`absil_limits`][virgil.limits.absil_limits].
     sigma : float
-        Detection significance; see
-        [`absil_limits`][virgil.limits.absil_limits] for its range.
-    flux_param : str, optional
-        The key of ``grid`` holding the flux that is solved for.
-        By default, the one key whose last part is ``flux``.
-    flux_bounds : tuple[float, float] or None, optional
-        Search range of the flux (default ``(1e-6, 1.0)``), searched upward
-        from its lower end. Limits outside it are returned at the nearer
-        bound, and a ``RuntimeWarning`` reports how many. Pass ``None`` to
-        search without bounds, from the smallest positive value of the flux
-        axis, e.g. for [`System`][virgil.models.System] weights that may
-        exceed 1.
-    batch_size : int, optional
-        Number of grid points evaluated at once, by default enough for
-        a fixed number of model visibilities; see
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+        Detection significance; it must exceed the significance of a ratio
+        of 1 and stay below the float type's ceiling (12.9 in float32, 37 in
+        float64).
 
     Returns
     -------
@@ -521,21 +433,8 @@ def injection_limits(
 
     Notes
     -----
-    The limit is the first flux, going up from the start of the search, at
-    which the significance reaches ``sigma``, found as in ``absil_limits``.
-    The significance rises with flux once the signal exceeds the noise, but
-    the cross term can make it dip at very faint fluxes, and for a
-    normalized scene it falls again once the companion outshines the
-    primary (flux well above 1), so an unbounded search should start below
-    that.
-
-    Differences from CANDID: CANDID refits the primary's diameter to the
-    injected data before computing the null chi-squared (for V² and T3),
-    which virgil does not; the null model is exactly the one with every
-    grid parameter set to zero. CANDID also brackets the limit in steps of
-    1.4 in flux and interpolates linearly in significance, where virgil
-    solves the criterion by bisection. The chi-squared and the number of
-    degrees of freedom are virgil's, as for ``absil_limits``.
+    The search and the differences from CANDID are described in
+    [detection limits](../detection_limits.md#absil-injection).
 
     Examples
     --------

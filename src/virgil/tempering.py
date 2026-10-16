@@ -1,5 +1,8 @@
 """Tempering an evidence for correlated spectral channels.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 **The solved problem: untempered evidence (band p = 1.000 at χ²/N 12).**
 Spectral channels of one baseline (and of one closure triangle) are not
 independent measurements: the same atmosphere, the same calibrator and the
@@ -75,6 +78,8 @@ __all__ = [
     "out_of_range",
     "factor_from_correlation",
 ]
+
+__provisional__ = ("*",)
 
 # Outside this range of ``f`` the result is flagged: well below 1 means the
 # residuals are anticorrelated (differenced or over-fitted data), well above

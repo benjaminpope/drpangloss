@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -375,6 +376,29 @@ def test_starting_image_is_sized_from_the_data():
     # Without a star, the result is the Image alone.
     alone = starting_image(DATA.with_model(GaussianDisk(120.0)), star=False)
     assert isinstance(alone, Image)
+
+
+def test_starting_image_keeps_the_0_3_positional_call_with_a_warning():
+    data = DATA.with_model(GaussianDisk(120.0), key=jax.random.PRNGKey(5))
+    kwargs = dict(
+        star=False,
+        oversample=3.0,
+        largest_mas=300.0,
+        start="moments",
+        hole_mas=1.0,
+    )
+    new = starting_image(data, **kwargs)
+    with pytest.warns(FutureWarning, match="star, oversample, largest_mas"):
+        old = starting_image(data, False, 3.0, 300.0, "moments", 1.0)
+    # Every positional argument landed on the 0.3 parameter of its place.
+    assert jax.tree_util.tree_all(
+        jax.tree_util.tree_map(
+            lambda a, b: np.array_equal(a, b),
+            eqx.filter(old, eqx.is_array),
+            eqx.filter(new, eqx.is_array),
+        )
+    )
+    assert old.pixel_scale_mas == new.pixel_scale_mas
 
 
 def test_dirty_image_finds_a_companion_once_the_star_is_removed():

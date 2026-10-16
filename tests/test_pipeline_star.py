@@ -190,7 +190,8 @@ def test_api_snapshot():
     assert {k: _signature(k) for k in API} == API
     assert StarPipeline.STAGES == STAGES
     assert StarPipeline.defaults() == DEFAULTS
-    assert StarPipeline.STABILITY == "stable" and StarPipeline.NAME == "star"
+    assert StarPipeline.STABILITY == "provisional"
+    assert StarPipeline.NAME == "star"
     assert SCHEMA == "virgil-pipeline-run-v1"
     assert "StarPipeline" in virgil.pipeline.__all__
     assert sorted(star.models()) == ["limb_darkened", "uniform"]
@@ -249,7 +250,7 @@ def test_run_folder_layout(full_run):
     out = pipeline.output
     run = json.loads((out / "run.json").read_text())
     assert run["schema"] == SCHEMA and run["status"] == "complete"
-    assert run["stability"] == "stable" and run["error"] is None
+    assert run["stability"] == "provisional" and run["error"] is None
     assert list(run["stages"]) == list(STAGES)
     assert set(run["config"]) == set(DEFAULTS)
     assert run["model"]["models"] == ["uniform", "limb_darkened"]

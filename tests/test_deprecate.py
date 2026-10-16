@@ -12,7 +12,12 @@ import jax
 import jax.numpy as np
 import pytest
 
-from virgil._deprecate import old_order, renamed
+from virgil._deprecate import (
+    deprecated_name,
+    keyword_only,
+    old_order,
+    renamed,
+)
 from virgil.oidata import OIData
 
 ORDER = "now takes the model before the data"
@@ -323,3 +328,92 @@ def test_l_curve_accepts_the_old_regulariser_keyword():
         old = l_curve(*args, regulariser=TSV(1.0, path="env"), **kw)
     assert record[0].filename == __file__
     assert np.allclose(old.chi2, new.chi2)
+
+
+@old_order("data", "model", "grid", data="data", keywords=("data", "grid"))
+def keyword_grid(model, *, data, grid, batch_size=None):
+    return model, data, grid, batch_size
+
+
+def test_keyword_only_parameters_reject_any_other_positional_call():
+    data = _oidata()
+    for args in [(1, data, {}), (1, {}, data), ({}, 1, data), (1, data)]:
+        with pytest.raises(TypeError, match="by keyword") as err:
+            keyword_grid(*args)
+        assert "keyword_grid(model, data=..., grid=..., ...)" in str(err.value)
+    assert keyword_grid(1, data=data, grid={}) == (1, data, {}, None)
+    assert keyword_grid(model=1, grid={}, data=data)[0] == 1
+
+
+def test_keyword_only_parameters_keep_the_old_order_shim():
+    data = _oidata()
+    with pytest.warns(FutureWarning, match=ORDER):
+        assert keyword_grid(data, 1, {}) == (1, data, {}, None)
+    with pytest.warns(FutureWarning, match=ORDER):
+        assert keyword_grid(data, 1, grid={}) == (1, data, {}, None)
+
+
+def test_keywords_must_be_keyword_only_parameters_of_the_function():
+    with pytest.raises(ValueError, match="not keyword-only"):
+
+        @old_order("data", "model", data="data", keywords=("model",))
+        def bad(model, data):
+            return model, data
+
+    with pytest.raises(ValueError, match="no parameters"):
+
+        @old_order("data", "model", data="data", keywords=("grid",))
+        def worse(model, *, data):
+            return model, data
+
+
+@keyword_only("b", "c")
+def kw_only_like(a, *, b=1, c=2, d=3):
+    return a, b, c, d
+
+
+def test_keyword_only_warns_on_the_0_3_positional_use():
+    assert kw_only_like(0, b=5, d=6) == (0, 5, 2, 6)
+    with pytest.warns(FutureWarning, match="stops working in virgil 0.5"):
+        assert kw_only_like(0, 5) == (0, 5, 2, 3)
+    with pytest.warns(FutureWarning, match="pass b, c by keyword"):
+        assert kw_only_like(0, 5, 6, d=7) == (0, 5, 6, 7)
+
+
+def test_keyword_only_rejects_positionals_it_never_allowed():
+    # ``d`` is new since 0.3, so it was never positional.
+    with pytest.raises(TypeError, match="pass the rest by keyword"):
+        kw_only_like(0, 1, 2, 3)
+    with pytest.raises(TypeError, match="multiple values for b"):
+        kw_only_like(0, 1, b=2)
+
+
+def test_keyword_only_needs_keyword_only_parameters():
+    with pytest.raises(ValueError, match="not keyword-only"):
+
+        @keyword_only("b")
+        def bad(a, b):
+            return a, b
+
+
+def test_deprecated_name_forwards_and_warns():
+    def new(x, y=2):
+        """New."""
+        return x + y
+
+    old = deprecated_name("old", new)
+    assert old.__name__ == "old"
+    with pytest.warns(FutureWarning, match=r"old is now new; .*virgil 0.5"):
+        assert old(1, y=3) == 4
+
+
+def test_starting_image_options_are_keyword_only():
+    from virgil.imaging import starting_image
+
+    params = inspect.signature(starting_image).parameters
+    assert [
+        n for n, p in params.items() if p.kind is p.POSITIONAL_OR_KEYWORD
+    ] == ["data"]
+    # Parameters new in 0.4 were never positional, so they have no shim.
+    with pytest.raises(TypeError):
+        starting_image(_oidata(), True, 4.0, None, "moments", None, 6.0)

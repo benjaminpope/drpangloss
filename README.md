@@ -17,6 +17,10 @@ Contributors: [Dori Blakely](https://github.com/blakelyd), [Benjamin Pope](https
 
 virgil is a package for modelling optical interferometry data in JAX. It is a one-stop shop for fitting parametric models and for image reconstruction, accelerated on GPU and HPC.
 
+## Stability
+
+Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `PolarDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](https://benjaminpope.github.io/virgil/stability/).
+
 ## Installation
 
 virgil is hosted on PyPI; the easiest way to install it is:

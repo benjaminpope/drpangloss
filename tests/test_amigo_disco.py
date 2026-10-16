@@ -35,7 +35,7 @@ def test_load_oi_data_returns_mixed_disco_filters():
 
     assert tuple(observations) == ("F380M", "F430M", "F480M")
     assert all(
-        item.observable_kind == "mixed_log_complex"
+        item.vis_encoding == "mixed_log_complex"
         for item in observations.values()
     )
     assert observations["F430M"].vis.shape == (210,)
@@ -58,7 +58,7 @@ def test_load_oi_data_single_filter_matches_amigo_sign_convention():
     product = onp.load(PRODUCT, allow_pickle=True).item()
     oidata = load_oi_data(PRODUCT, "F430M")
 
-    assert oidata.observable_kind == "mixed_log_complex"
+    assert oidata.vis_encoding == "mixed_log_complex"
     assert np.allclose(oidata.u, -np.asarray(product["F430M"]["u"]))
     assert np.allclose(oidata.v, -np.asarray(product["F430M"]["v"]))
 

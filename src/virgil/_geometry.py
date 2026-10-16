@@ -29,10 +29,8 @@ def image_coordinates(npix, fov_mas):
 def pixel_offsets(npix, pixel_scale_mas):
     """Sky offsets (mas) of the pixel centres along one image axis.
 
-    Along columns this is ``dra``, decreasing to the right (East left); along
-    rows it is ``ddec``, decreasing downwards (North up). Both are
-    ``(centre - index) * pixel_scale_mas`` with the centre at index
-    ``(npix - 1) / 2``, as in :func:`image_coordinates`.
+    ``(centre - index) * pixel_scale_mas``, centre at ``(npix - 1) / 2``: ``dra``
+    along columns (East left), ``ddec`` along rows (North up).
     """
     return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
 
@@ -40,18 +38,16 @@ def pixel_offsets(npix, pixel_scale_mas):
 def image_visibilities(brightness, uu, vv, pixel_scale_mas):
     """Exact Fourier transform of a pixel image at arbitrary frequencies.
 
-    Each pixel is treated as a point at its centre, so
-    ``V(u, v) = sum_{row, col} I[row, col] exp(-2πi (u x_col + v y_row))``
-    with the sign convention of :func:`offset_phase`. The sum is separable
-    into two matrix products, done at ``Precision.HIGHEST`` (on A100/H100
-    GPUs the default is TF32, with ~1e-3 relative error). On a regular uv
-    grid, :func:`grid_visibilities` does the same sum faster.
+    Each pixel is a point at its centre: ``V = Σ I[row, col] exp(-2πi (u x_col
+    + v y_row))``, the sign convention of :func:`offset_phase`, done at
+    ``Precision.HIGHEST`` (the A100/H100 default, TF32, is ~1e-3 accurate).
+    On a regular uv grid :func:`grid_visibilities` is faster.
 
     Parameters
     ----------
     brightness : array-like, shape (nrow, ncol)
-        Pixel fluxes in the orientation of :func:`pixel_offsets` (East left,
-        North up). Not normalized here.
+        Pixel fluxes in the orientation of :func:`pixel_offsets`. Not
+        normalized here.
     uu, vv : array-like
         Spatial frequencies, baseline / wavelength (per radian), of
         broadcastable shapes.
@@ -87,18 +83,16 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
 def grid_visibilities(brightness, uu_axis, vv_axis, pixel_scale_mas):
     """Exact Fourier transform of a pixel image onto a regular uv grid.
 
-    The two-sided matrix Fourier transform (Soummer et al. 2007,
-    arXiv:0711.0368): ``V = A_v @ I @ A_u.T``, the same sum as
-    :func:`image_visibilities` but costing ``nv·N² + nv·nu·N`` rather than
-    ``nv·nu·N²`` for an N x N image. Done at ``Precision.HIGHEST``.
+    The two-sided matrix Fourier transform (Soummer et al. 2007),
+    ``V = A_v @ I @ A_u.T``: the sum of :func:`image_visibilities`, but
+    O(``nv·N² + nv·nu·N``) rather than O(``nv·nu·N²``).
 
     Parameters
     ----------
     brightness : array-like, shape (nrow, ncol)
         Pixel fluxes, oriented as in :func:`pixel_offsets`.
     uu_axis, vv_axis : array-like, shapes (nu,) and (nv,)
-        The grid's spatial frequencies along each image axis, baseline /
-        wavelength (per radian).
+        The grid's spatial frequencies along each image axis (per radian).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
 
@@ -117,15 +111,11 @@ def grid_visibilities(brightness, uu_axis, vv_axis, pixel_scale_mas):
 
 
 def rotate(x, y, rotation_deg):
-    """Rotate a frame by a position angle, North towards East.
+    """Sky coordinates of ``(x, y)`` in a frame whose "up" is at position angle ``rotation_deg``.
 
-    Returns the sky coordinates of the point ``(x, y)`` of a frame whose
-    "up" axis points at position angle ``rotation_deg``: the frame's
-    ``(0, 1)`` lands at ``(sin θ, cos θ)``. The same matrix maps
-    frequencies, and ``rotate(..., -rotation_deg)`` inverts it. NumPy
-    inputs (and Python numbers) are rotated in NumPy, at their own
-    precision (as are lists, tuples and other array-likes such as pandas
-    Series); JAX arrays and traced values are rotated in JAX.
+    The frame's ``(0, 1)`` lands at ``(sin θ, cos θ)``; ``-rotation_deg``
+    inverts it, and the same matrix maps frequencies. NumPy-like inputs are
+    rotated in NumPy at their own precision, JAX arrays and tracers in JAX.
     """
     xp = onp if _numpy_inputs(x, y, rotation_deg) else np
     if xp is onp:
@@ -156,13 +146,10 @@ def _numpy_inputs(*values):
 
 
 def position_angle(dra, ddec):
-    """Position angle in degrees of the offset ``(dra, ddec)``, in [0, 360).
+    """Position angle in degrees, in [0, 360), of the offset ``(dra, ddec)``.
 
-    ``dra`` is the offset East and ``ddec`` North (mas, or any common
-    unit), and the angle runs from North through East, so ``(0, 1)`` is 0°,
-    ``(1, 0)`` is 90° and ``(-1, 0)`` is 270°. This is the inverse of
-    ``(sep sin pa, sep cos pa)``. NumPy inputs (and lists or other
-    array-likes) are computed in NumPy, anything else in JAX.
+    ``dra`` is East and ``ddec`` North (any common unit); ``(0, 1)`` is 0°
+    and ``(1, 0)`` is 90°. NumPy-like inputs give NumPy, otherwise JAX.
     """
     xp = onp if _numpy_inputs(dra, ddec) else np
     pa = xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)
@@ -172,23 +159,17 @@ def position_angle(dra, ddec):
 
 
 def separation_pa(dra, ddec):
-    """``(sep, pa)`` of the offset ``(dra, ddec)``: its length, and its
-    position angle as for [`position_angle`][virgil._geometry.position_angle]
-    (degrees, in [0, 360))."""
+    """``(sep, pa)`` of the offset ``(dra, ddec)``; ``pa`` as in :func:`position_angle`."""
     xp = onp if _numpy_inputs(dra, ddec) else np
     return xp.hypot(dra, ddec), position_angle(dra, ddec)
 
 
 def _unflagged_samples(data):
-    """Baseline length, wavelength and channel width of the unflagged samples.
+    """Baseline, wavelength and channel width (flat arrays, metres) of the unflagged samples.
 
-    ``data`` is an ``OIData`` or a sequence of them. A sample counts if an
-    observable of the data uses it (``OIData.unflagged``): a flagged sample
-    keeps its u, v in the data, but it measures nothing, so it must not set
-    a resolution or a field. Samples with a zero baseline are dropped (a
-    zero baseline measures no fringe). Returns three flat arrays in metres:
-    the baseline, the wavelength and the channel width (NaN where the data
-    carry none).
+    ``data`` is an ``OIData`` or a sequence. Samples that no observable uses
+    (``OIData.unflagged``) and zero baselines are dropped; the width is NaN
+    where the data carry none. Raises if no sample remains.
     """
     observations = data if isinstance(data, (list, tuple)) else [data]
     baseline, wavel, width = [], [], []
@@ -227,18 +208,9 @@ def _unflagged_samples(data):
 def fringe_scales(data):
     """The finest and coarsest fringe spacings of ``data``, in mas.
 
-    ``data`` is an ``OIData`` or a sequence of them. Each sample ``k`` has
-    a spatial frequency ``B_k / λ_k`` (its own baseline over its own
-    wavelength), and the finest fringes are ``1 / max(B/λ)`` and the
-    coarsest ``1 / min(B/λ)``, over the unflagged samples with a non-zero
-    baseline. A flagged sample (see
-    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]) keeps its u, v in
-    the data but carries no signal, so it counts for nothing here: the
-    provider's flags often remove most of the long baselines of a resolved
-    source, and the resolution that remains is the coarser one. A zero
-    baseline measures no fringe, and would make the coarsest infinite. This
-    is not ``λ_max / B_min``, which pairs a baseline with a wavelength it
-    may not have been observed at.
+    ``data`` is an ``OIData`` or a sequence. With each sample's own
+    ``B/λ``, these are ``1 / max(B/λ)`` and ``1 / min(B/λ)`` over the
+    unflagged samples with a non-zero baseline.
 
     Returns
     -------
@@ -253,16 +225,10 @@ def fringe_scales(data):
 def smearing_scale(data):
     """The field (mas) beyond which bandwidth smearing washes out a source.
 
-    A channel of full width ``Δλ`` multiplies the visibility of a source at
-    offset ``s`` by ``sinc(π Δλ B s / λ²)``, which first vanishes at
-    ``s = λ² / (Δλ B) = R λ / B`` with the resolving power ``R = λ / Δλ``.
-    The scale is the smallest such offset over the unflagged samples with a
-    non-zero baseline, so ``R λ / B_max`` for one channel width: the
-    first null of the long baselines' visibility, an order-of-magnitude
-    limit rather than a field of negligible smearing (at half this offset,
-    the edge of a field this wide, the visibility is down by 36%). It is
-    infinite when the data carry no channel widths (see
-    [`OIData.with_bandwidth`][virgil.oidata.OIData.with_bandwidth]).
+    The smallest ``λ² / (Δλ B)`` (first null of the channel's sinc) over the
+    unflagged samples with a non-zero baseline: an order-of-magnitude limit
+    (the visibility is down 36% at half this offset). Infinite when the
+    data carry no channel widths (``OIData.with_bandwidth``).
     """
     baseline, wavel, width = _unflagged_samples(data)
     known = onp.isfinite(width) & (width > 0)
@@ -273,14 +239,10 @@ def smearing_scale(data):
 
 
 class UVGrid(eqx.Module):
-    """uv samples that lie on a regular lattice, possibly rotated on the sky.
+    """uv samples on a regular lattice, possibly rotated on the sky (see :func:`find_uv_grid`).
 
-    AMI data, for example, are sampled on the detector's Fourier grid,
-    which is rotated on the sky by the parallactic angle. The sample ``k``
-    is at grid-frame coordinates
-    ``(u_axis[index[k] % nu], v_axis[index[k] // nu])`` (metres), and on
-    the sky at ``rotate(u_g, v_g, rotation_deg)``. Found from the samples by
-    :func:`find_uv_grid`.
+    Sample ``k`` is at grid-frame ``(u_axis[index[k] % nu], v_axis[index[k] // nu])``
+    (metres), and on the sky at ``rotate(u_g, v_g, rotation_deg)``.
     """
 
     u_axis: jax.Array
@@ -292,9 +254,8 @@ class UVGrid(eqx.Module):
 def find_uv_grid(u, v, tolerance=1e-6):
     """Return the lattice that ``(u, v)`` samples lie on, or ``None``.
 
-    The lattice axes are found from the shortest separation between
-    samples, and every sample must lie within ``tolerance`` of a cell of a
-    lattice point (so that a Fourier transform onto the lattice is exact).
+    Axes come from the shortest sample separation; every sample must lie
+    within ``tolerance`` cells of a lattice point.
 
     Parameters
     ----------
@@ -345,30 +306,21 @@ def offset_phase(uu, vv, dra, ddec):
 
 
 def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
-    """When considering an ellipticaly rotated and stretched (along the apparent minor
-    axis) object, this function takes spatial frequency coordinates, and transforms
-    them to spatial frequencies in the frame of reference where an elliptical object
-    appears circular and is aligned with the major axis pointing North.
+    """Map ``(u, v)`` to the frame where the elliptical object is circular, major axis North.
 
     Parameters
     ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units.
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units.
+    u, v : array-like
+        Baseline coordinates in wavelength units.
     pa : float or array-like
-        Position angle of the ellipse's projected major axis in degrees, measured North
-        to East (i.e. counter-clockwise in conventional astronomical image orientation)
-        in the original image frame of reference.
+        Position angle of the projected major axis (degrees, North to East).
     stretch : float or array-like
-        Factor (typically $< 1.0$) by which the elliptical transform's minor axis is
-        stretched in the original image frame of reference.
+        Factor (typically < 1) applied to the minor axis.
 
     Returns
     -------
     tuple[array-like, array-like]
-        The $u$ and $v$ spatial frequencies, but in a frame of reference where the
-        rotation and stretch of the original elliptical transformation is undone.
+        ``(u, v)`` with the rotation and stretch undone.
     """
     pa_rad = pa * dtor
 
@@ -380,31 +332,11 @@ def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
 
 
 def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
-    """Inverse of [`undo_elliptical_transf_spat_freq`][virgil._geometry.undo_elliptical_transf_spat_freq]. Takes spatial frequency
-    coordinates in the frame of reference where an elliptical object appears circular
-    and aligned with its major axis pointing North, and transforms them into the
-    original (rotated and stretched) frame of reference.
+    """Inverse of :func:`undo_elliptical_transf_spat_freq`.
 
-    Parameters
-    ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units, in the de-rotated/unstretched
-        frame of reference.
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units, in the de-rotated/unstretched
-        frame of reference.
-    pa : float or array-like
-        Position angle of the ellipse's projected major axis in degrees, measured North
-        to East, in the original image frame of reference.
-    stretch : float or array-like
-        Factor (typically $< 1.0$) by which the elliptical transform's minor axis is
-        stretched in the original image frame of reference.
-
-    Returns
-    -------
-    tuple[array-like, array-like]
-        The $u$ and $v$ spatial frequencies in the original (rotated and stretched)
-        frame of reference.
+    Takes ``(u, v)`` (wavelength units) in the circular, North-aligned frame
+    to the original frame; ``pa`` and ``stretch`` as there. Returns
+    ``(u, v)`` there.
     """
     pa_rad = pa * dtor
 
@@ -418,30 +350,11 @@ def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
 
 
 def undo_elliptical_transf_coord(x, y, pa, stretch):
-    """When considering an ellipticaly rotated and stretched (along the apparent minor
-    axis) object, this function takes spatial coordinates, and transforms
-    them to coordinates in the frame of reference where the elliptical object
-    appears circular and is aligned with the major axis pointing North.
+    """Map ``(x, y)`` (mas, East and North) to the frame where the elliptical object is circular, major axis North.
 
-    Parameters
-    ----------
-    x : array-like
-        Spatial coordinates along the x-axis (East-positive) in milliarcseconds.
-    y : array-like
-        Spatial coordinates along the y-axis (North-positive) in milliarcseconds.
-    pa : float or array-like
-        Position angle of the ellipse's projected major axis in degrees, measured North
-        to East (i.e. counter-clockwise in conventional astronomical image orientation)
-        in the original image frame of reference.
-    stretch : float or array-like
-        Factor (typically $< 1.0$) by which the elliptical transform's minor axis is
-        stretched in the original image frame of reference.
-
-    Returns
-    -------
-    tuple[array-like, array-like]
-        The $x$ and $y$ spatial coordinates, but in a frame of reference where the
-        rotation and stretch of the original elliptical transformation is undone.
+    ``pa`` (degrees, North to East) and ``stretch`` (typically < 1, applied
+    to the minor axis) are as in :func:`undo_elliptical_transf_spat_freq`.
+    Returns ``(x, y)`` in mas with the rotation and stretch undone.
     """
     pa_rad = pa * dtor
 
@@ -452,32 +365,7 @@ def undo_elliptical_transf_coord(x, y, pa, stretch):
 
 
 def apply_elliptical_transf_coord(x, y, pa, stretch):
-    """Inverse of [`undo_elliptical_transf_coord`][virgil._geometry.undo_elliptical_transf_coord]. Takes spatial coordinates in
-    the frame of reference where an elliptical object appears circular and aligned
-    with its major axis pointing North, and transforms them into the original
-    (rotated and stretched) frame of reference.
-
-    Parameters
-    ----------
-    x : array-like
-        Spatial coordinates along the x-axis, in the de-rotated/unstretched frame
-        of reference, in milliarcseconds.
-    y : array-like
-        Spatial coordinates along the y-axis, in the de-rotated/unstretched frame
-        of reference, in milliarcseconds.
-    pa : float or array-like
-        Position angle of the ellipse's projected major axis in degrees, measured North
-        to East, in the original image frame of reference.
-    stretch : float or array-like
-        Factor (typically $< 1.0$) by which the elliptical transform's minor axis is
-        stretched in the original image frame of reference.
-
-    Returns
-    -------
-    tuple[array-like, array-like]
-        The $x$ and $y$ spatial coordinates in the original (rotated and stretched)
-        frame of reference, in milliarcseconds.
-    """
+    """Inverse of :func:`undo_elliptical_transf_coord`; ``(x, y)`` in mas."""
     pa_rad = pa * dtor
 
     x_scaled = x * stretch
@@ -492,14 +380,10 @@ def apply_elliptical_transf_coord(x, y, pa, stretch):
 def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
     r"""Check that an azimuthal brightness modulation stays non-negative.
 
-    The modulation is $1 + f(\theta)$ with
-    $f(\theta) = \sum_{m=1}^{n} A_m \cos(m(\theta - \mathrm{pa}_m))$. Its
-    minimum is found by evaluating $f$ on $64 n$ equally spaced angles and
-    polishing the lowest one with a few Newton steps on $f'$. Every value
-    used is a true value of $f$, so the minimum is never underestimated;
-    the grid alone overestimates it by at most
-    $\tfrac12 \sum_m m^2 |A_m| \, (\pi / 64 n)^2$, and the Newton steps
-    remove it at the minimum they polish. It is traceable (``jit``-safe).
+    The modulation is $1 + f(\theta)$, $f(\theta) = \sum_{m=1}^{n} A_m
+    \cos(m(\theta - \mathrm{pa}_m))$. Its minimum is the lowest of $64 n$
+    grid values polished by Newton steps, so it is never underestimated.
+    ``jit``-safe.
 
     Parameters
     ----------

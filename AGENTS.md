@@ -105,6 +105,12 @@ see that repository's `PLAN.md` for the boundary.
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
   `model_on_grid` must return exactly what `model` would, only faster.
 - New model code goes in `virgil.models`.
+- New public features start **provisional**: list the name in the module's
+  `__provisional__` tuple (`("*",)` for a whole new module), put the notice
+  from `virgil._stability.ADMONITION` in its docstring, and add it to
+  `docs/stability.md` and the CHANGELOG's Stability section;
+  `tests/test_stability.py` checks the first two. Promotion to stable is
+  Ben's decision at a release.
 - Bessel functions come from [jaxbessel](https://github.com/benjaminpope/jaxbessel),
   shared with harmonix; fix or extend them there, not in virgil.
 - Old exploratory notebooks live in `notebooks/archive/`, which is git-ignored
@@ -168,7 +174,7 @@ Ben is surprised how long some docstrings are. Keep them short.
 | `svi.py` | `variational`: numpyro SVI on `numpyro_model`'s posterior, guides (BNAF/IAF flows, Gaussian, Laplace) started at a fit and its `gauss_newton_mass` covariance, `VariationalResult` (draws keyed like NUTS's, losses, PSIS k̂); see `design/sampler_flat_coordinates.md` |
 | `imaging.py` | regularizers (`TSV`, `TV`, `MaxEntropy`, `Centroid`), `starting_image`, `image_priors`, `nyquist_pixel_scale`, `field_of_view`, `image_field` (the data-driven field: k FWHMs from `second_moment_fwhm`, between an inner working angle and the interferometric field), `dirty_image`, `beam`, `convolve_beam`, `l_curve`, `log_evidence`, `laplace_samples`, `error_scale`, `diagnose` |
 | `priors.py` | invariant priors that are not plain numpyro priors: `IsotropicInclination`, `IsotropicLatitude`, hierarchical (population) scales; imports nothing from virgil |
-| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `fisher` |
+| `inference.py` | Hessian/Laplace/Fisher tools, and the model-level `laplace_cov`, `laplace_parameter_uncertainty`, `observed_information` (and `expected_fisher` for a fixed-error prediction) |
 | `grid_fit.py` | grid searches: `likelihood_grid`, `optimized_*_grid`, `laplace_flux_uncertainty_grid`, `best_grid_point` |
 | `limits.py` | `ruffio_upperlimit`, `absil_limits`, `injection_limits`, `nsigma`, `radial_profile`, flux/contrast/Δmag conversions |
 | `detection.py` | `detection_statistics` (Δχ², grid-marginalized log Bayes factor, max SNR; traceable in the data for `lax.map` over simulations) and `local_nsigma`; null simulators (`gaussian_null`, `bootstrap_null`, `rescale_errors`), `injection_grid`, the Monte Carlo driver `injection_recovery` (one compiled kernel over draws) and its NumPy result `DetectionMC` (FAP, thresholds, ROC/AUC, completeness, contrast curves, save/load/concatenate); see `design/detection_roc.md` |
@@ -181,6 +187,7 @@ Ben is surprised how long some docstrings are. Keep them short.
 | `aliases.py` | `fit_orbit_aliases`: orbits whose epochs undersample the period; alias bands `N = round(T/P)` fitted to the observables of all epochs (error scales marginalized), Laplace and importance-sampling evidences per band, band probabilities and posterior samples; optional uniform-disk primary, per-epoch V² amplitude and flux-flip refits; flagged nights (`EpochPositions.flags`) seed nothing but still count (`skip_flagged`, `AliasResult.unseeded`); the result API (`AliasResult.save`/`load`, and `scene()`, `residuals(data)` and `chi2_per_night(data)` on bands and the result, which rebuild the fit's scene and raw per-night χ²/N); imports `_gauss_newton`, `detection`, `epochs`, `likelihood`, `models`, `orbits` and `tempering`; `temper=True` tempers every evidence by the effective-channel factor (`AliasResult.temper_f`); see `design/orbit_aliases.md` |
 | `tempering.py` | tempering the orbit evidence for correlated spectral channels: `adjacent_channels` (neighbouring-channel pairs of a dataset), `estimate_factors` (the effective-channel factors f = N/N_eff from residuals, per block and pooled, as `ChannelFactors`), `lag1_correlation`, `factor_from_correlation`; imports nothing from virgil; used by `aliases` |
 | `orbit_search.py` | `score_orbits`: candidate orbits scored exactly on all epochs with shared nuisances (one flux per band with an optional chromatic slope, integrated on a log-uniform grid and also profiled; scale-marginalized per dataset; gains and closure offsets profiled; extra `RVData`/`PositionData` terms), positions at sample times, a work-unit budget; `SharedFlux`, `OrbitScores`, `rank_scores` (quantized, index-broken ties) |
+| `_stability.py` | the stability policy and the provisional notice (`ADMONITION`); imports nothing; each module's `__provisional__` tuple lists its provisional names (private) |
 | `simulate.py` | `simulate` (a scene observed with a template's sampling, errors and times, optionally shifted in time) and `bias_test` (fits to many noise draws) |
 | `coverage.py` | synthetic coverage for simulations: `ami_grid_record` (AMIGO-style uv grid with a splodge-weighted mode basis), `nrm_oidata` (V² and closure phases), `vlti_oidata` (Earth-rotation tracks, channels), `mask_transfer` |
 | `metrics.py` | image-recovery scores against a known truth (`lawson_sigma_over_peak`, `rms_convolved`, `l1_score`, `ncc`), from the imaging contests' published definitions |
@@ -188,7 +195,7 @@ Ben is surprised how long some docstrings are. Keep them short.
 | `scenes.py` | synthetic truth images for imaging tests (`ring`, `spiral`, `gaussian_blob`); imports only `_geometry` and `_utils` |
 | `plotting.py` | figures, notably `plot_grid_map(kind=...)` and `plot_contrast_curve`; for a `DetectionMC`, `plot_null_distribution`, `plot_roc` and `plot_completeness` (duck-typed: `plotting` does not import `detection`) |
 | `_elr.py` | Espinosa Lara & Rieutord (2011) Roche shape and gravity darkening on a triangle mesh, ported from S. Dholakia's jax-interferometry (private; used by the gravity-darkened star model) |
-| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
+| `_deprecate.py` | the 0.4 argument-order shim: `old_order` (accepts the 0.3 model/data order with a `FutureWarning`; `removed=True` makes it a `TypeError` for 0.5; `keywords=` names the parameters a function declares keyword-only, e.g. `likelihood_grid`'s `data` and `grid`, and any other positional call raises a `TypeError` naming the keyword call) and `renamed` (old keyword names `data_obj`, `observations`, `model_object`, `model_fn`, `samples_dict`); imports `oidata` lazily; see `design/api_argument_order.md` (private) |
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them with `flat_coordinates=True` (opt-in; private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `_linear.py` | the shared algebra for parameters that enter linearly and are marginalized analytically (`LinearMarginal`), used by `gains`, `observables` and `orbits` (private) |
