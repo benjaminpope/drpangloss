@@ -263,6 +263,23 @@ Provisional in 0.4:
   so scanning a prior width does not recompile. Read them with `tuple(...)`
   where you compared them with a tuple.
 
+### Removed
+
+- **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
+  0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`:
+  the flux at every wavelength is the same (identical between the end nodes,
+  within an ulp beyond them). Two things change. The free values are
+  `flux.values`, not `flux.ratio` (fit and prior paths such as
+  `"comp.flux.ratio"` become `"comp.flux.values"`), and the reference flux
+  `spectrum()` (used by `render` and the zero-baseline normalization) is the
+  value at `wavel0`, the first node, not the mean over the nodes; pass
+  `wavel0=` to set it. Negative values now pass the constructor and are
+  checked on the total flux, as for every other spectrum. Priors on
+  `comp.flux.values` are therefore not checked for non-negative support (as
+  `comp.flux.ratio` was): keep a non-negative prior (e.g. a log-uniform
+  scale) if every channel must stay positive, and pass `flux_param=` where a
+  grid or plot auto-detected the old key.
+
 ### Migration from 0.3.0
 
 - **`GaussianArc` has a different shape.** Fits of long arcs made with 0.3.0
@@ -328,9 +345,8 @@ Provisional in 0.4:
 - **`DetectionMC.load` checks the file format.** `meta["format"]` (1) was
   written but never read; `load` now raises a `ValueError` for any other
   version and reads a file without it as version 1.
-- **Removals wait for 0.5.** The 0.2.0 and 0.3.0 entries said `Tabulated`
-  would go in 0.4.0. It stays through 0.4, with a `FutureWarning` that now
-  names 0.5, with every other deprecation.
+- **`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised (see
+  Removed above); the other deprecations wait for 0.5.
 - To find the remaining 0.3-order calls in your own code before 0.5, add
   `"error:.*stops working in virgil 0.5:FutureWarning"` to your pytest
   `filterwarnings` (as virgil's own test suite now does), or run
@@ -486,8 +502,18 @@ Provisional in 0.4:
   `AliasBandResult.n_starts_failed`), a band with no finite mode is a
   `no-valid-mode` row, and a `RuntimeError` is raised when every band
   fails. The likelihood compiles once per data shape, not once per mode.
-- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
-  model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
+- **Orbit API tidy-up before release.** `score_orbits(model, epochs,
+  orbits, ...)` takes the model before the data like the rest of the
+  package (the order `score_orbits(epochs, model, ...)` works with a
+  `FutureWarning` for one release); `score_orbits` takes `model(orbit,
+  flux)` and `rank_orbits` takes `model(orbit)`. `rank_orbits` and
+  `start_from_positions` default to `scales="marginal"`, without a
+  warning, and `EpochPositions.gap` is gone (`gap_marginal` is the gap).
+  `AliasResult.save` writes a `format` field (1); `load` reads files
+  without it and refuses a newer format; `UNRECORDED` is no longer in
+  `virgil.aliases.__all__`.
+- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(model,
+  epochs, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
   `lax.map`-batched kernel. The companion flux is shared: one flux per
   band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
@@ -617,9 +643,7 @@ Provisional in 0.4:
     local maxima of the grid, takes the best refined one, and measures
     `gap_marginal` against its best refined rival; `EpochPositions.peaks`
     holds each dataset's catalogue (`EpochPeaks`: positions, fluxes,
-    scores, Laplace-mass weights, `edge` and `laplace` flags). `gap` is
-    the grid quantity on the quoted errors and will switch to the
-    marginal value; `decisive`, `positions(min_gap=...)` and
+    scores, Laplace-mass weights, `edge` and `laplace` flags). `decisive`, `positions(min_gap=...)` and
     `start_from_positions(min_gap=...)` compare `gap_marginal`. Raw χ²/N
     and the profiled scales are recorded (`chi2_raw`, `scale`), with a
     `UserWarning` naming datasets with raw χ²/N > 4. Data with gains,
@@ -627,9 +651,8 @@ Provisional in 0.4:
     `NotImplementedError` on the marginalized surface.
   - `rank_orbits` and `start_from_positions` take `scales="quoted" |
     "marginal"`; `"marginal"` integrates each dataset's error scales out,
-    so the worst-calibrated nights do not dominate the ranking. The
-    default is `"quoted"` in 0.4, with a `FutureWarning` when `scales` is
-    not given; it will become `"marginal"`. Rankings use
+    so the worst-calibrated nights do not dominate the ranking, and is the
+    default (as in `score_orbits`). Rankings use
     `orbit_search.rank_scores` (ties within 1e-3 nat broken by index,
     non-finite scores last). `OrbitStart.seeded` and `.ambiguous` name the
     datasets that seeded the orbits and those left out (with a

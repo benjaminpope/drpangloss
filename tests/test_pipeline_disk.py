@@ -125,6 +125,7 @@ DEFAULTS = {
     "harmonic_degree": 1,
     "spectral_index": None,
     "spectral_index_min_channels": 3,
+    "ring_colour": "power_law",
     "wavel0_m": None,
     "star_temperature_k": None,
     "companion": False,
@@ -424,6 +425,25 @@ def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
     )
 
 
+def test_geometry_search_leaves_a_wrong_mode(gp_run):
+    pipeline, _ = gp_run
+    # A single ring can settle in a mode far from a lopsided multi-ring disk's
+    # geometry; the Gaussian process must not start there.
+    wrong = {**disk._gp_geometry(pipeline), "inc": 25.0, "pa": 117.0}
+    geo, fit, rows = disk._geometry_search(
+        pipeline, wrong, pipeline._ctx().ell_mid
+    )
+    assert rows[0]["inc_deg"] == 25.0 and rows[0]["pa_deg"] == 117.0
+    assert abs(geo["inc"] - 50.0) <= 20.0
+    assert min(abs(geo["pa"] - 30.0), 180.0 - abs(geo["pa"] - 30.0)) <= 25.0
+    assert (
+        fit.chi2 / int(pipeline.processed.n_independent)
+        < rows[0]["chi2_reduced"]
+    )
+    # The search is recorded with the profile stage.
+    assert pipeline._report("profile")["geometry_search"]
+
+
 def test_gp_round_trip(gp_run, data):
     pipeline, _ = gp_run
     res = load(pipeline.output)
@@ -521,6 +541,182 @@ def test_rings_posterior_is_folded(rings_run):
     params = res.summary["posterior"]["params"]
     assert {"inc", "pa", "r1"} <= set(params)
     assert "pa_vec" not in params
+
+
+def test_ring_colour_is_validated(data, tmp_path):
+    with pytest.raises(ValueError, match="ring_colour"):
+        DiskPipeline(data, "rings", ring_colour="grey")
+    with pytest.raises(ValueError, match="model=.rings."):
+        DiskPipeline(data, "gp", ring_colour="blackbody")
+    assert DiskPipeline.defaults()["ring_colour"] == "power_law"
+
+
+def test_blackbody_ring_colour_recovers_the_temperature(tmp_path):
+    from virgil.spectra import BlackBody
+
+    w0 = 3.0e-6
+    truth = System(
+        star=PointSource(flux=BlackBody(1.0, 6000.0, w0)),
+        ring=MultipoleDisk(
+            GaussianRing(5.0, 1.0),
+            inc=50.0,
+            pa=30.0,
+            flux=BlackBody(0.4, 600.0, w0),
+            n_r=48,
+        ),
+    )
+    broad = vlti_oidata(
+        wavelengths_m=onp.linspace(2.4e-6, 3.6e-6, 5),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.002,
+        sigma_cp_deg=0.5,
+    ).with_model(truth, key=jax.random.PRNGKey(5))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "max_rings": 1,
+        "harmonic_degree": 0,
+        "star_temperature_k": 6000.0,
+        "wavel0_m": w0,
+    }
+    chi2 = {}
+    for law in ("power_law", "blackbody"):
+        pipeline = DiskPipeline(
+            broad,
+            "rings",
+            output=tmp_path / law,
+            ring_colour=law,
+            **settings,
+        )
+        res = pipeline.run(through="profile")
+        row = res.summary["profile"]["candidates"][0]
+        chi2[law] = row["chi2_reduced"]
+        if law == "blackbody":
+            values = _io.load_model_values(
+                pipeline.output / "models" / "rings_1"
+            )
+            assert float(values["a1"]) == pytest.approx(600.0, rel=0.2)
+    # A power law cannot follow the blackbody over this band; the blackbody
+    # fits at the noise.
+    assert chi2["blackbody"] < 1.5
+    assert chi2["power_law"] > chi2["blackbody"]
+
+
+def test_without_ring_renumbers_the_later_rings():
+    values = {
+        "inc": 50.0,
+        "fp": 0.04,
+        **{
+            f"{k}{i}": 10.0 * i + j
+            for i in (1, 2, 3)
+            for j, k in enumerate("rsfa")
+        },
+        **{f"h{i}_{c}1": float(i) for i in (1, 2, 3) for c in ("re", "im")},
+    }
+    out = disk._without_ring(values, 2)
+    assert out["inc"] == 50.0 and out["fp"] == 0.04
+    assert out["r1"] == values["r1"] and out["r2"] == values["r3"]
+    assert out["a2"] == values["a3"] and out["h2_im1"] == 3.0
+    assert not any(k.endswith("3") or "3_" in k for k in out)
+    assert len(out) == len(values) - 6
+
+
+def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(11))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 2,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    shape = disk._Shape(2, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 6.0,
+        "s1": 1.0,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+    }
+    wrong = disk._fit_rings(pipeline, shape, start)
+    better, steps = disk._backfit(pipeline, shape, wrong)
+    assert better.chi2 <= wrong.chi2
+    assert any(s["accepted"] for s in steps)
+    radii = sorted(float(better.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+
+
+def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):
+    # The back-fit must lower the objective that is reported, planet included:
+    # on the planet-free scene a ring and the geometry can move to mimic the
+    # planet's signal and the refit with the planet starts from there.
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+        planet=PointSource(dra=-6.0, ddec=-3.0, flux=0.06),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(12))
+    settings = {
+        **SMALL,
+        "harmonic_degree": 0,
+        "max_rings": 2,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    shape = disk._Shape(2, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 6.0,
+        "s1": 1.0,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+    }
+    plain, _, _, _ = disk._fit_with_planet(pipeline, shape, start)
+    fit, found, search, steps = disk._fit_with_planet(
+        pipeline, shape, start, backfit=True
+    )
+    assert found.planet and search is not None
+    assert steps and {"ring", "scan_r", "delta_bic", "accepted"} <= set(
+        steps[0]
+    )
+    assert fit.chi2 <= plain.chi2
+    radii = sorted(float(fit.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+    assert float(fit.values["dra"]) == pytest.approx(-6.0, abs=0.3)
+    assert float(fit.values["ddec"]) == pytest.approx(-3.0, abs=0.3)
 
 
 def test_fold_pa_keeps_the_disk():
@@ -650,6 +846,7 @@ def _context():
         n_gp=24,
         wavel0=2e-6,
         colour=False,
+        law="power_law",
         degree=1,
         star_teff=None,
         companion=False,

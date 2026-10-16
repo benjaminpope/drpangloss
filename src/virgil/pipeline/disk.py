@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import math
+import re
 import warnings
 from typing import Callable
 
@@ -36,6 +37,8 @@ _WIDTH_FLOOR = 0.1
 _FLUX_RANGE = (1e-3, 10.0)
 _PLANET_FLUX_RANGE = (1e-4, 1.0)
 _INDEX_RANGE = (-10.0, 10.0)
+_TEMPERATURE_RANGE = (300.0, 3000.0)
+_TEMPERATURE_START = 1000.0
 # The rings' harmonics are fractions of the ring's light (|w| <= 1 keeps the
 # intensity positive); an isotropic Gaussian on re and im has a uniform phase,
 # where a box would favour the diagonals.
@@ -54,6 +57,12 @@ _ALPHA_NODES = 22
 _ELL_PER_EQUIVALENT = math.sqrt(3.0)
 # Δχ² within which another cell of the geometry grid is a rival minimum.
 _RIVAL_DELTA_CHI2 = _checks.RIVAL_DELTA_CHI2
+_BACKFIT_PASSES = 2
+_BACKFIT_MIN_GAIN = 2.0  # BIC units: below this a re-placement is noise
+# Coarse starts for the Gaussian process's geometry, beside the single ring's.
+_GEOMETRY_LATTICE_INC = (30.0, 50.0, 70.0)
+_GEOMETRY_LATTICE_PA = (0.0, 45.0, 90.0, 135.0)
+_SCREEN_STEPS = 25
 
 
 # === THE MODEL REGISTRY ===
@@ -245,6 +254,12 @@ class DiskPipeline(_Pipeline):
         - ``spectral_index`` (None): ``True`` or ``False`` to force the
           colour on or off; by default it is on with more than
           ``spectral_index_min_channels`` (3) channels.
+        - ``ring_colour`` (``"power_law"``): the colour of each ring and
+          of the planet when the colour is on (``"rings"`` only):
+          ``"power_law"`` fits a spectral index, ``"blackbody"`` a
+          temperature (300 to 3000 K, log-uniform) with the flux at the
+          reference wavelength, which represents blackbody-like spectra over
+          a broad band that a power law misses.
         - ``wavel0_m`` (None), ``star_temperature_k`` (None): the
           reference wavelength (default the mean wavelength) and the star's
           blackbody (default a grey reference).
@@ -296,6 +311,7 @@ class DiskPipeline(_Pipeline):
         "harmonic_degree": 1,
         "spectral_index": None,
         "spectral_index_min_channels": 3,
+        "ring_colour": "power_law",
         "wavel0_m": None,
         "star_temperature_k": None,
         "companion": False,
@@ -330,6 +346,11 @@ class DiskPipeline(_Pipeline):
             )
         self.name = name
         super().__init__(data, name, output=output, **settings)
+        if name == "gp" and self.settings["ring_colour"] != "power_law":
+            raise ValueError(
+                'ring_colour="blackbody" is for model="rings": the Gaussian '
+                "process's colour is its own spectral index."
+            )
         if name == "gp" and self.settings["error_scale"] == "fit":
             raise ValueError(
                 'error_scale="fit" is not available for model="gp": the '
@@ -372,6 +393,8 @@ class DiskPipeline(_Pipeline):
             raise ValueError("harmonic_degree must be an integer >= 0.")
         if s["spectral_index"] not in (None, True, False):
             raise ValueError("spectral_index must be None, True or False.")
+        if s["ring_colour"] not in ("power_law", "blackbody"):
+            raise ValueError('ring_colour must be "power_law" or "blackbody".')
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
         for name in ("num_samples", "num_chains"):
@@ -458,6 +481,7 @@ class _Context:
     n_gp: int
     wavel0: float
     colour: bool
+    law: str
     degree: int
     star_teff: float | None
     companion: bool
@@ -476,6 +500,7 @@ class _Context:
             n_gp=overview["n_r_gp"],
             wavel0=overview["wavel0_m"],
             colour=overview["colour"],
+            law=settings["ring_colour"],
             degree=int(settings["harmonic_degree"]),
             star_teff=settings["star_temperature_k"],
             companion=bool(settings["companion"]),
@@ -588,10 +613,29 @@ def _star(ctx):
     return PointSource(flux=BlackBody(1.0, ctx.star_teff, ctx.wavel0))
 
 
-def _flux(ctx, ratio, index, colour):
-    from ..spectra import PowerLaw
+def _flux(ctx, ratio, colour_value, colour):
+    """A source's flux: ``ratio``, or with colour a power law of index
+    ``colour_value`` or a blackbody of that temperature (``ring_colour``)."""
+    from ..spectra import BlackBody, PowerLaw
 
-    return PowerLaw(ratio, index, ctx.wavel0) if colour else ratio
+    if not colour:
+        return ratio
+    if ctx.law == "blackbody":
+        return BlackBody(ratio, colour_value, ctx.wavel0)
+    return PowerLaw(ratio, colour_value, ctx.wavel0)
+
+
+def _colour_start(ctx):
+    """The starting value of a colour parameter."""
+    return _TEMPERATURE_START if ctx.law == "blackbody" else 0.0
+
+
+def _colour_prior(ctx):
+    import numpyro.distributions as dist
+
+    if ctx.law == "blackbody":
+        return dist.LogUniform(*_TEMPERATURE_RANGE)
+    return dist.Uniform(*_INDEX_RANGE)
 
 
 def _planet(ctx, v, colour):
@@ -665,7 +709,7 @@ def _planet_priors(ctx, colour):
         "fp": dist.LogUniform(*_PLANET_FLUX_RANGE),
     }
     if colour:
-        priors["ap"] = dist.Uniform(*_INDEX_RANGE)
+        priors["ap"] = _colour_prior(ctx)
     return priors
 
 
@@ -680,7 +724,7 @@ def _ring_priors(ctx, shape):
         )
         priors[f"f{i}"] = dist.LogUniform(*_FLUX_RANGE)
         if shape.colour:
-            priors[f"a{i}"] = dist.Uniform(*_INDEX_RANGE)
+            priors[f"a{i}"] = _colour_prior(ctx)
         for j in range(1, shape.degree + 1):
             priors[f"h{i}_re{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
             priors[f"h{i}_im{j}"] = dist.Normal(0.0, _HARMONIC_SCALE)
@@ -1073,14 +1117,14 @@ def _geometry_values(p):
     return _scalars(_io.load_model_values(p.output / "models" / "geometry"))
 
 
-def _planet_start(search, colour):
+def _planet_start(search, ctx):
     start = {
         "dra": search["dra_mas"],
         "ddec": search["ddec_mas"],
         "fp": min(max(search["flux"], _PLANET_FLUX_RANGE[0] * 2), 0.5),
     }
-    if colour:
-        start["ap"] = 0.0
+    if ctx.colour:
+        start["ap"] = _colour_start(ctx)
     return start
 
 
@@ -1100,7 +1144,7 @@ def _ring_start(ctx, held, n, new, degree, colour):
         )
     for ring in range(1, n + 1):
         if colour:
-            start.setdefault(f"a{ring}", 0.0)
+            start.setdefault(f"a{ring}", _colour_start(ctx))
         for j in range(1, degree + 1):
             start.setdefault(f"h{ring}_re{j}", 0.0)
             start.setdefault(f"h{ring}_im{j}", 0.0)
@@ -1112,7 +1156,7 @@ def _scan_model(ctx, shape, base, *, rnew, fnew):
     i = shape.n
     v[f"r{i}"], v[f"s{i}"], v[f"f{i}"] = rnew, ctx.halffringe, fnew
     if shape.colour:
-        v[f"a{i}"] = 0.0
+        v[f"a{i}"] = _colour_start(ctx)
     for j in range(1, shape.degree + 1):
         v[f"h{i}_re{j}"] = 0.0
         v[f"h{i}_im{j}"] = 0.0
@@ -1120,13 +1164,16 @@ def _scan_model(ctx, shape, base, *, rnew, fnew):
 
 
 @in_float64
-def _scan_new_ring(p, ctx, shape, base):
-    """The radius and flux of one more ring, scanned with the rest held."""
+def _scan_new_ring(p, ctx, shape, base, step=None):
+    """The radius and flux of one more ring, scanned with the rest held.
+
+    The radii are ``step`` apart (default one half-fringe).
+    """
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
 
-    r_axis = onp.arange(ctx.r_in, ctx.r_out + 1e-9, ctx.halffringe)
+    r_axis = onp.arange(ctx.r_in, ctx.r_out + 1e-9, step or ctx.halffringe)
     ll = onp.asarray(
         likelihood_grid(
             functools.partial(_scan_model, ctx, shape, base),
@@ -1145,25 +1192,110 @@ def _bic(fit, n):
     return score + fit.n_free * math.log(n)
 
 
-def _fit_with_planet(p, shape, start):
+def _fit_with_planet(p, shape, start, backfit=False):
     """Fit ``shape`` (without a planet), search the residuals, refit with one.
 
-    Returns ``(fit, shape, search)``: the search result is None unless
-    ``companion`` is on, and the returned shape has the planet if the search
-    found one.
+    With ``backfit`` the rings are then re-placed (``_backfit``) in the scene
+    that is returned, planet included: the objective is the one reported, so
+    the back-fit can only lower it. Returns ``(fit, shape, search, steps)``:
+    the search result is None unless ``companion`` is on, the returned shape
+    has the planet if the search found one, and ``steps`` records each
+    back-fit step (empty without ``backfit``).
     """
     ctx = p._ctx()
     fit = _fit_rings(p, shape, start)
-    if not ctx.companion:
-        return fit, shape, None
-    search = _point_source_search(
-        fit.model, p.processed, ctx, p.settings["batch_size"]
-    )
-    if search["delta_chi2"] < p.settings["companion_min_delta_chi2"]:
-        return fit, shape, search
-    with_planet = dataclasses.replace(shape, planet=True)
-    values = {**_scalars(fit.values), **_planet_start(search, shape.colour)}
-    return _fit_rings(p, with_planet, values), with_planet, search
+    search = None
+    if ctx.companion:
+        search = _point_source_search(
+            fit.model, p.processed, ctx, p.settings["batch_size"]
+        )
+        if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
+            shape = dataclasses.replace(shape, planet=True)
+            values = {**_scalars(fit.values), **_planet_start(search, ctx)}
+            fit = _fit_rings(p, shape, values)
+    steps = []
+    if backfit:
+        fit, steps = _backfit(p, shape, fit)
+    return fit, shape, search, steps
+
+
+_RING_KEY = re.compile(r"^(?:[rsfa]|h)(\d+)(?:_(?:re|im)\d+)?$")
+
+
+def _without_ring(values, k):
+    """``values`` of a ring scene without ring ``k``, the later rings
+    renumbered down (geometry, planet and noise terms kept)."""
+    out = {}
+    for key, v in values.items():
+        m = _RING_KEY.match(key)
+        if m is None:
+            out[key] = v
+            continue
+        i = int(m.group(1))
+        if i == k:
+            continue
+        j = i - (i > k)
+        out[key[: m.start(1)] + str(j) + key[m.end(1) :]] = v
+    return out
+
+
+def _backfit(p, shape, fit):
+    """Re-place each ring in turn and keep what improves the fit.
+
+    Rings are added one at a time at the radius of a scan, so a ring can be
+    left away from where the others would put it once they are all there. For
+    each ring in turn this drops it, scans for the best radius of a ring added
+    to the rest on a grid twice as fine as the first scan's, refits every
+    parameter (geometry included) from there and keeps the result if the BIC
+    falls by more than ``_BACKFIT_MIN_GAIN``. A pass that changes nothing ends
+    it, as does ``_BACKFIT_PASSES``.
+
+    Returns ``(fit, steps)``; each step records the pass, the ring dropped and
+    its radius, the scan's best radius and flux, the refit's χ², geometry and
+    radii, the BIC change (negative is better) and whether it was kept.
+    """
+    ctx, n_data = p._ctx(), int(p.processed.n_independent)
+    steps = []
+    if shape.n < 2:
+        return fit, steps
+    for sweep in range(1, _BACKFIT_PASSES + 1):
+        improved = False
+        for k in range(1, shape.n + 1):
+            held = _without_ring(_scalars(fit.values), k)
+            base = _fill_new(ctx, held, shape.n)
+            new = _scan_new_ring(
+                p, ctx, shape, base, step=0.5 * ctx.halffringe
+            )
+            start = _ring_start(
+                ctx, held, shape.n, new, ctx.degree, ctx.colour
+            )
+            trial = _fit_rings(p, shape, start)
+            d_bic = _bic(trial, n_data) - _bic(fit, n_data)
+            accepted = d_bic < -_BACKFIT_MIN_GAIN
+            steps.append(
+                {
+                    "pass": sweep,
+                    "ring": k,
+                    "dropped_r": float(fit.values[f"r{k}"]),
+                    "scan_r": new["r"],
+                    "scan_f": new["f"],
+                    "chi2_reduced": trial.chi2 / n_data,
+                    "inc": float(trial.values["inc"]),
+                    "pa": float(trial.values["pa"]),
+                    "radii": [
+                        float(trial.values[f"r{i}"])
+                        for i in range(1, shape.n + 1)
+                    ],
+                    "delta_bic": d_bic,
+                    "converged": trial.info.get("converged"),
+                    "accepted": accepted,
+                }
+            )
+            if accepted:
+                fit, improved = trial, True
+        if not improved:
+            break
+    return fit, steps
 
 
 def _profile_rings(p):
@@ -1187,7 +1319,9 @@ def _profile_rings(p):
         else:
             new = _scan_new_ring(p, ctx, shape, _fill_new(ctx, held, n))
             start = _ring_start(ctx, held, n, new, ctx.degree, ctx.colour)
-        fit, shape, search = _fit_with_planet(p, shape, start)
+        fit, shape, search, steps = _fit_with_planet(
+            p, shape, start, backfit=True
+        )
         if search is not None:
             searches.append({"rings": n, **search})
         previous = _scalars(fit.values)
@@ -1205,6 +1339,7 @@ def _profile_rings(p):
                 "bic": _bic(fit, n_data),
                 "converged": fit.info.get("converged"),
                 "planet": shape.planet,
+                "backfit": steps,
             }
         )
         if n > 1 and candidates[-1]["bic"] >= candidates[-2]["bic"]:
@@ -1219,7 +1354,7 @@ def _fill_new(ctx, held, n):
     v[f"r{n}"], v[f"s{n}"], v[f"f{n}"] = ctx.r_in, ctx.halffringe, 0.01
     for ring in range(1, n + 1):
         if ctx.colour:
-            v.setdefault(f"a{ring}", 0.0)
+            v.setdefault(f"a{ring}", _colour_start(ctx))
         for j in range(1, ctx.degree + 1):
             v.setdefault(f"h{ring}_re{j}", 0.0)
             v.setdefault(f"h{ring}_im{j}", 0.0)
@@ -1361,7 +1496,9 @@ def _companion_report(p, planet):
     }
 
 
-def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
+def _gp_fit(
+    p, ell, planet, degree=None, geo=None, release=False, max_steps=None
+):
     """MAP fit of the Gaussian-process disk at one ℓ.
 
     The geometry is frozen at ``geo`` (the single-ring fit's by default),
@@ -1370,6 +1507,7 @@ def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
     few degrees off, and a frozen error is paid for by the profile and the
     companion. With ``release`` a second fit frees them, starting from the
     first fit's values, and the returned values and priors include them.
+    ``max_steps`` bounds the frozen fit (a screening fit).
     """
     import equinox as eqx
 
@@ -1383,7 +1521,7 @@ def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
         lambda m: m.parts[1], template, template.disk.freeze_geometry(data)
     )
     assert isinstance(frozen, System)
-    result = fit(frozen, priors, data)
+    result = fit(frozen, priors, data, max_steps=max_steps)
     values, info = result.values, result.info
     if release:
         priors = {
@@ -1423,21 +1561,70 @@ def _fold_gp_values(ctx, values, degree=None):
     return out
 
 
+def _geometry_starts(p, geo):
+    """Candidate ``(inc, pa)`` starts for the Gaussian process.
+
+    The single-ring fit's, the grid's rival minima and a coarse lattice: a
+    single ring is the wrong model for a multi-ring, lopsided disk and can
+    settle in a mode far from the disk's geometry, which the released fit
+    then cannot leave.
+    """
+    ctx = p._ctx()
+    starts = [(geo["inc"], geo["pa"])]
+    starts += [
+        (r["inc_deg"], r["pa_deg"])
+        for r in p._report("geometry")["grid"]["rivals"]
+    ]
+    starts += [
+        (inc, pa)
+        for inc in _GEOMETRY_LATTICE_INC
+        for pa in _GEOMETRY_LATTICE_PA
+        if inc <= ctx.inc_max
+    ]
+    return starts
+
+
+def _geometry_search(p, geo, ell):
+    """The start whose frozen-geometry Gaussian-process fit has the lowest χ².
+
+    Returns ``(geometry, fit, rows)``: the winning ``geo``, its converged fit
+    (with no planet) and every start's χ²/N after a short screening fit. The
+    geometry is frozen, and a wrong geometry costs far more χ² than a right
+    one, so a few steps rank the starts.
+    """
+    n_data = int(p.processed.n_independent)
+    best, rows = None, []
+    for inc, pa in _geometry_starts(p, geo):
+        trial = {**geo, "inc": float(inc), "pa": float(pa)}
+        screen, _ = _gp_fit(p, ell, None, geo=trial, max_steps=_SCREEN_STEPS)
+        rows.append(
+            {
+                "inc_deg": trial["inc"],
+                "pa_deg": trial["pa"],
+                "chi2_reduced": screen.chi2 / n_data,
+            }
+        )
+        if best is None or screen.chi2 < best[0]:
+            best = (screen.chi2, trial)
+    fit, _ = _gp_fit(p, ell, None, geo=best[1])
+    return best[1], fit, rows
+
+
 def _profile_gp(p):
     ctx, data = p._ctx(), p.processed
     n_data = int(data.n_independent)
     geo = _gp_geometry(p)
+    geo, fit, starts = _geometry_search(p, geo, ctx.ell_mid)
     planet, searches = None, []
     if ctx.companion:
-        # Fit the middle ℓ with no planet, search its residuals, and add any
+        # Search the residuals of the middle ℓ with no planet, and add any
         # detection to every fit.
-        fit, _ = _gp_fit(p, ctx.ell_mid, None, geo=geo)
         search = _point_source_search(
             fit.model, data, ctx, p.settings["batch_size"]
         )
         searches.append(search)
         if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
-            planet = _planet_start(search, ctx.colour)
+            planet = _planet_start(search, ctx)
     candidates = []
     for k, ell in enumerate(ctx.ells):
         fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)
@@ -1460,7 +1647,11 @@ def _profile_gp(p):
     for c in candidates:
         c["ell_index"] = candidates.index(c)
     _plot_profile_fits(p, candidates, "ell_mas", "ℓ (mas)")
-    return {"candidates": candidates, "searches": searches}
+    return {
+        "candidates": candidates,
+        "searches": searches,
+        "geometry_search": starts,
+    }
 
 
 # === STAGE: COMPARE ===

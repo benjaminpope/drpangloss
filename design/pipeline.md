@@ -278,7 +278,11 @@ work for each model.
      covariance. Each added ring starts at the radius of a one-ring scan
      over a grid in half-fringes (the other rings held at their fit), at
      a width of one half-fringe, with *N* capped by a setting. This
-     needs no GP run; `rings_from` replaces the scan.
+     needs no GP run; `rings_from` replaces the scan. After each fit
+     every ring is dropped in turn, rescanned (half-fringe/2 steps) with
+     the rest held and everything refitted; a lower BIC is kept (two
+     passes at most), since a greedy addition can leave a ring in a
+     local minimum.
    - `"gp"`: fit the `RadialGP` profile (and harmonics, and spectral
      index when on) at frozen geometry, so each refit is one
      matrix-vector product per call, at each ℓ of the grid (below).
@@ -415,7 +419,10 @@ Ben's, 2026-10-15.
 - **Companions.** One star by default; a companion search is opt-in, an
   expert workflow.
 - **Colour.** `spectral_index` turns on automatically with more than a
-  few channels.
+  few channels. The rings model's colour is a power-law index
+  per ring; `ring_colour="blackbody"` fits a temperature instead, since over a
+  1.5× band a power law misses a blackbody ring by several percent (job
+  18666218: rings χ²/N 1.32 against 1.01 for the parametric blackbody fit).
 - **Scope.** The colliding-wind cone geometry of the Apep analysis is out
   of v1; it may become a registry entry later, with no new stage.
 - **Timing.** Build only after the `MultipoleDisk` PR stack merges (its code
