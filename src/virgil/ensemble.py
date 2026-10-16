@@ -993,8 +993,8 @@ def combine(data, groups, *, spec=None, star=True):
     The selection follows MYTHRA (Drevon et al. 2026): keep the weights just
     before each L-curve's corner (Gaussian-process members skip this), drop
     diverged, badly fitting and outlying members, resample the survivors to a
-    common grid, and add them to a running mean in order of χ² while the mean
-    still fits every dataset as well as the best member, up to
+    common grid, and add each to a running mean, in order of χ², only if the
+    mean still fits every dataset as well as the best member, up to
     ``spec.mean_rtol``. See [Imaging, part 7](../imaging_ensemble.md#selection-and-the-mean).
     With a star, the mean is of the whole normalized sky, star included.
 

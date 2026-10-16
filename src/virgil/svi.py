@@ -334,8 +334,8 @@ def variational(
         for ``numpyro_model`` (default ``False``).
     dense_start, init_scale : optional
         Start the guide's width from the Gauss–Newton covariance at ``start``
-        (default ``True``; skipped with a warning when regularizers leave it
-        singular); the starting width of the coordinates it does not cover
+        (default ``True``; skipped, with a warning, whenever ``regularizers``
+        are given); the starting width of the coordinates it does not cover
         (default 0.1).
     window, psis, dtype : optional
         Steps per window of the convergence test (default ``steps // 10``);
