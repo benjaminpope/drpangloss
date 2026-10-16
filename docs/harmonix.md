@@ -238,7 +238,7 @@ plt.show()
 
 Then the spot. `fit` accepts a function of the parameters that returns one model per dataset, so the three nights share one star seen at three rotation phases. The priors are the invariant ones: log-uniform for the contrast, spot size and radius (scales), `IsotropicLatitude` for the latitude (a point uniform on the sphere has sin(lat) uniform, so it favours the equator) and uniform for the longitude. Every step differentiates through jaxoplanet's spot expansion and harmonix's analytic visibilities.
 
-The landscape in the spot's position is rugged: a spot that misses the visible hemisphere on a night leaves that night's closure phases unchanged, so a local optimizer started from a poor position stalls in a minimum far from the truth. So, as for the radius, we scan first: a coarse grid over the spot's latitude, longitude and size, at the best radius, and start the fit from the best grid point. (Latitude and longitude should not start at exactly zero, since jaxoplanet's rotation of the spot expansion has zero gradient there; the grid has no point there.)
+The landscape in the spot's position is rugged: a spot that misses the visible hemisphere on a night leaves that night's closure phases unchanged, so a local optimizer started from a poor position stalls in a minimum far from the truth. So, as for the radius, we scan first: a coarse grid over the spot's latitude, longitude and size, at the best radius, and start the fit from the best grid point. The grid only has to land within about one spot radius of the truth. (Latitude and longitude should not start at exactly zero, since jaxoplanet's rotation of the spot expansion has zero gradient there; the grid has no point there.)
 
 ```python
 priors = dict(
@@ -263,7 +263,7 @@ def chi2_spot(point):
 
 
 lats = np.linspace(-1.2, 1.2, 8) + 0.05  # no point at exactly zero
-lons = np.linspace(-np.pi, np.pi, 12, endpoint=False) + 0.05
+lons = np.linspace(-np.pi, np.pi, 12, endpoint=False) + 0.2
 sizes = np.array([0.15, 0.3, 0.5])
 grid = jnp.asarray(
     [(la, lo, s) for la in lats for lo in lons for s in sizes]
