@@ -188,7 +188,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
 
 **Each release** (a short list; every item must hold for the commit you tag):
 1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the CHANGELOG heading is dated (`## 0.4.0 (YYYY-MM-DD)`, not `Unreleased`). Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
-2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run is only the gate, and a newer push may have cancelled it):
+2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
    ```bash
    gh workflow run tests.yml --ref main
    ```

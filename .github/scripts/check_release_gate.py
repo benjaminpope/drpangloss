@@ -4,8 +4,8 @@
 
 Passes when tests.yml completed successfully on exactly SHA in the full
 tier: a dispatched or scheduled run, which adds macOS py3.11, py3.13 and
-the dependency floors to the gate (see ci_matrix.py). A push run is only the
-gate, so it does not count. Uses the ``gh`` CLI and the standard library only.
+the dependency floors to the gate (see ci_matrix.py). A push run lacks
+those jobs, so it does not count. Uses the ``gh`` CLI and the standard library only.
 """
 
 import json

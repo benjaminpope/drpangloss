@@ -200,11 +200,11 @@ jobs:
         run: python3 .github/scripts/nightly_report.py junit
 
   # A red push to main opens (or adds to) one issue labelled `red-main`
-  # naming the failing tests; the next green push closes it. A cancelled
-  # run (a newer push) reports nothing.
+  # naming the failing tests; the next green push closes it. A failure in
+  # any job counts; a cancelled run (a newer push) reports nothing.
   main-report:
     name: report the main run
-    needs: [build, package]
+    needs: [matrix, build, package, x64-evidence]
     if: ${{ !cancelled() && github.event_name == 'push' }}
     runs-on: ubuntu-latest
     permissions: {actions: read, contents: read, issues: write}
@@ -218,7 +218,7 @@ jobs:
           REPORT: main
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RESULT: ${{ (needs.build.result == 'failure' || needs.package.result == 'failure') && 'failure' || needs.build.result == 'success' && needs.package.result == 'success' && 'success' || 'skipped' }}
+          RESULT: ${{ contains(needs.*.result, 'failure') && 'failure' || needs.build.result == 'success' && needs.package.result == 'success' && 'success' || 'skipped' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ "$RESULT" = skipped ]; then echo "nothing to report"; exit 0; fi

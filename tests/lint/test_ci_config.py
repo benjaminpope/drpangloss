@@ -170,7 +170,7 @@ def test_release_gate_names_what_fails():
     assert gate.problems({"conclusion": "failure"}, FULL_JOBS) == [
         "concluded failure"
     ]
-    # A run without the full tier's jobs is only the gate.
+    # A run without the full tier's jobs does not count.
     partial = [j for j in FULL_JOBS if "macos" not in j["name"]]
     assert gate.problems({"conclusion": "success"}, partial) == [
         "missing job macos-latest py3.11"
@@ -181,18 +181,40 @@ def test_release_gate_names_what_fails():
     ]
 
 
-def test_release_gate_job_names_match_the_matrix():
-    """The substrings the gate requires are what tests.yml names the jobs."""
+def test_release_gate_job_names_match_tests_yml():
+    """The substrings the gate requires are what tests.yml names the jobs.
+
+    Read from the ``build`` job's ``name:`` template, so renaming a part of
+    it (or reordering it) fails here, not on release day.
+    """
     gate = _script("check_release_gate")
-    names = [
-        f"{j['os']} py{j['python-version']}"
-        f"{' lowest' if j.get('lowest') else ''}"
-        for j in _jobs("workflow_dispatch")
-    ]
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    name = re.search(r"^  build:\n    name: (.+)$", tests, re.M).group(1)
+
+    # Render the template for each job of the full tier, as GitHub would.
+    def render(job):
+        out = name
+        for key, value in {
+            "matrix.os": job["os"],
+            "matrix.python-version": job["python-version"],
+        }.items():
+            out = out.replace("${{ " + key + " }}", value)
+        # The remaining expressions append a suffix when a flag is set.
+        for flag, suffix in (("lowest", " lowest"), ("canary", " canary")):
+            expr = f"matrix.{flag} && '{suffix}'"
+            assert expr in out, f"build.name lost its {flag} suffix"
+            out = re.sub(
+                r"\$\{\{ [^}]*" + re.escape(expr) + r"[^}]*\}\}",
+                suffix if job.get(flag) else "",
+                out,
+            )
+        return re.sub(r"\$\{\{.*?\}\}", "", out)
+
+    names = [render(j) for j in _jobs("workflow_dispatch")]
     for needle in gate.FULL_JOBS:
-        assert any(needle in n for n in names), needle
+        assert any(needle in n for n in names), (needle, names)
     assert set(gate.FULL_EVENTS) == {"workflow_dispatch", "schedule"}
-    # A push run is the gate alone, so it must not satisfy the gate.
+    # A push run lacks the full tier's jobs, so it must not satisfy the gate.
     assert "push" not in gate.FULL_EVENTS
 
 
