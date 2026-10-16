@@ -660,8 +660,11 @@ def test_single_image_helpers_are_unchanged():
     s_vals, vt = _svd(jac)
     _, s_ref, vt_ref = onp.linalg.svd(jac, full_matrices=False)
     onp.testing.assert_allclose(s_vals, s_ref, rtol=1e-9, atol=1e-9)
+    # (Only the well-determined vectors: a numerically null direction of
+    # this rank-deficient Jacobian is arbitrary.)
+    sure = s_ref > 1e-6 * s_ref[0]
     onp.testing.assert_allclose(
-        onp.abs(onp.sum(vt * vt_ref, axis=1)), 1.0, atol=1e-6
+        onp.abs(onp.sum(vt * vt_ref, axis=1))[sure], 1.0, atol=1e-6
     )
     first, second = jax.random.split(key)
     e1 = onp.asarray(jax.random.normal(first, (3, s_vals.size)), float)
