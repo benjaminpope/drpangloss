@@ -50,10 +50,25 @@ from ._precision import cast_tree, in_float64, run_in
 from ._utils import clean_json
 from .detection import _fingerprint
 from ._geometry import fringe_scales
-from .epochs import EpochPositions, _Surface, estimate_primary_diameter
+from .epochs import (
+    _REFINE_WINDOW,
+    EpochPositions,
+    _amp_residuals,
+    _binary,
+    _refine_marginal,
+    _Surface,
+    estimate_primary_diameter,
+)
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
 from .orbits import KeplerOrbit, period_grid, starting_orbits
+from .tempering import (
+    FLAG_RANGE,
+    ChannelFactors,
+    adjacent_channels,
+    estimate_factors,
+    out_of_range,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -101,8 +116,14 @@ UNRECORDED = "unrecorded"
 # best mode's: the data cannot tell the stars apart. 3 nats is odds of 1 to 20
 # (Δχ² ≈ 6): a twin is degenerate to well within it (the two modes have equal
 # evidence up to the Laplace error), a pair with a real flux contrast is
-# separated by far more. The evidences are untempered until plan phase 1d,
-# which overstates differences, so this errs towards "not free".
+# separated by far more. The nats are on the *tempered* evidence (plan phase
+# 1d, ``virgil.tempering``): ``log_z`` is the log likelihood divided by the
+# effective-channel factor f, so 3 nats there are 3 f raw nats. Untempered, a
+# difference of 3 nats on N correlated channels was really about 3/f nats of
+# evidence and a twin looked "not free"; tempered, the threshold is the odds
+# statement it always claimed to be. The value is unchanged because f = 1
+# (white noise, a single channel, ``temper=False``) reproduces the old
+# evidence exactly: on those data the rule behaves as before.
 LABELS_FREE_NATS = 3.0
 # ...and the reflected track matches within this fraction of λ/B_max.
 _LABELS_FREE_RES_FRACTION = 0.25
@@ -491,12 +512,22 @@ def _epoch_chi2(surface, model, d, amp_range):
 # float per run, are static.
 
 
-def _loglike(surfaces, x, data, cfg):
-    """The scale-marginalized log likelihood of all epochs at ``x``."""
+def _loglike(surfaces, x, data, cfg, dof):
+    """The scale-marginalized, tempered log likelihood of all epochs at ``x``.
+
+    Each block's log likelihood is multiplied by its ``dof = 1/f_b``
+    (``dof``: one array of block values per epoch, from
+    ``_Problem.dof``; ``f_b`` from [`virgil.tempering`][virgil.tempering]):
+    the untempered evidence of correlated spectral channels is far too
+    sharp (band p = 1.000 at χ²/N 12). ``dof`` is traced, like the data: it
+    is an estimate that differs for every dataset, and one compiled kernel
+    serves every value (a static ``dof`` would recompile the engine for
+    each). All ones is the untempered fit.
+    """
     model = _model(x, cfg)
     return sum(
-        s.score(_epoch_chi2(s, model, d, cfg[3])[0], 1.0, d)
-        for s, d in zip(surfaces, data)
+        s.score(_epoch_chi2(s, model, d, cfg[3])[0], dof_s, d)
+        for s, d, dof_s in zip(surfaces, data, dof)
     )
 
 
@@ -516,18 +547,19 @@ class _KernelProblem(eqx.Module):
     data: tuple
     surfaces: tuple = eqx.field(static=True)
     cfg: tuple = eqx.field(static=True)
+    dof: tuple
 
     def loss(self, x):
-        return -_loglike(self.surfaces, x, self.data, self.cfg)
+        return -_loglike(self.surfaces, x, self.data, self.cfg, self.dof)
 
     def rows(self, x):
         model = _model(x, self.cfg)
         return np.concatenate(
             [
                 s.weighted_rows(
-                    _epoch_residuals(s, model, d, self.cfg[3])[0], 1.0, d
+                    _epoch_residuals(s, model, d, self.cfg[3])[0], dof_s, d
                 )
-                for s, d in zip(self.surfaces, self.data)
+                for s, d, dof_s in zip(self.surfaces, self.data, self.dof)
             ]
         )
 
@@ -544,10 +576,10 @@ _hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
 
 
 @functools.partial(jax.jit, static_argnums=(0, 3))
-def _batch(surfaces, xs, data, cfg):
+def _batch(surfaces, xs, data, cfg, dof):
     """``_loglike`` at each row of ``xs``, 64 rows at a time."""
     return jax.lax.map(
-        lambda x: _loglike(surfaces, x, data, cfg), xs, batch_size=64
+        lambda x: _loglike(surfaces, x, data, cfg, dof), xs, batch_size=64
     )
 
 
@@ -558,7 +590,18 @@ class _Problem:
         self.data, self.t_ref = list(data), settings.t_ref
         self.cfg = settings.cfg
         self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
-        self.kernel = _KernelProblem(tuple(self.data), self.surfaces, self.cfg)
+        # The tempering, one array of block dofs per epoch (traced).
+        self.dof = tuple(
+            np.asarray(
+                onp.broadcast_to(
+                    s.dof_vector(settings.dof), (len(s.names),)
+                ).astype(float)
+            )
+            for s in self.surfaces
+        )
+        self.kernel = _KernelProblem(
+            tuple(self.data), self.surfaces, self.cfg, self.dof
+        )
         # Proper priors: log P log-uniform over the whole p_range, tau
         # uniform over one cycle, e uniform, cos i uniform, omega and Omega
         # uniform with the (Omega + 180, omega + 180) mirror folded away
@@ -580,13 +623,13 @@ class _Problem:
         )
 
     def value_and_grad(self, x):
-        return _value_and_grad(self.surfaces, x, self.data, self.cfg)
+        return _value_and_grad(self.surfaces, x, self.data, self.cfg, self.dof)
 
     def hessian(self, x):
-        return _hessian(self.surfaces, x, self.data, self.cfg)
+        return _hessian(self.surfaces, x, self.data, self.cfg, self.dof)
 
     def batch(self, xs):
-        return _batch(self.surfaces, xs, self.data, self.cfg)
+        return _batch(self.surfaces, xs, self.data, self.cfg, self.dof)
 
     def per_epoch(self, x):
         """Raw χ²/ν per epoch and block, and the profile scales ŝ."""
@@ -638,6 +681,9 @@ class _Settings:
     init: tuple | None = (
         None  # period, dt_peri, ecc, inc, omega, Omega, a, flux
     )
+    # ((block name, 1/f_b), ...): the tempering; () is none. Not in ``cfg``:
+    # the kernels take it traced (``_Problem.dof``), so f never recompiles.
+    dof: tuple = ()
 
     @property
     def fit_diam(self):
@@ -1795,6 +1841,18 @@ class AliasResult:
         ``delta_nats``, ``resolved`` and ``at_grid_edge`` (see
         [`estimate_primary_diameter`][virgil.epochs.estimate_primary_diameter]);
         None otherwise.
+    temper_f : float or None
+        The pooled effective-channel factor ``f = N / N_eff`` the likelihood
+        was tempered by (``1/f``; see
+        [`virgil.tempering`][virgil.tempering]); 1 for white noise or a
+        single channel; None when no tempering was applied or estimated
+        (``temper=False``, or a file written before 1d).
+    temper_blocks : dict or None
+        ``{block name: f_b}`` actually used (``"vis"``, ``"phi"``, ...).
+    temper_f_raw : float or None
+        The pooled factor before the floor at 1 (tempering never
+        sharpens): below 1 for anticorrelated residuals, which set
+        ``tempering`` when below 0.5.
     unseeded : tuple of dict
         The nights that were flagged by
         [`epoch_positions`][virgil.epochs.epoch_positions] and so seeded
@@ -1829,6 +1887,9 @@ class AliasResult:
     primary_fit: dict | None = None
     period_at_lower_bound: bool = False
     window_capped: float | None = None
+    temper_f: float | None = None
+    temper_blocks: dict | None = None
+    temper_f_raw: float | None = None
 
     def __post_init__(self):
         for b in self.bands:
@@ -1838,6 +1899,17 @@ class AliasResult:
                 b.primary_diam = self.primary_diam
             if b.vis_amp is None:
                 b.vis_amp = self.vis_amp
+
+    @property
+    def tempering(self):
+        """Whether the effective-channel factor is outside [0.5, 2]
+        (``tempering.FLAG_RANGE``): ``temper_f`` above 2 (the channels are
+        far from independent) or ``temper_f_raw`` below 0.5 (anticorrelated
+        residuals, which are flagged but never used to sharpen). The
+        pipeline should say so. False when no factor was estimated."""
+        if self.temper_f is None:
+            return False
+        return out_of_range(self.temper_f, self.temper_f_raw)
 
     @property
     def best(self):
@@ -1912,6 +1984,9 @@ class AliasResult:
             period_at_lower_bound=self.period_at_lower_bound,
             window_capped=self.window_capped,
             primary_fit=self.primary_fit,
+            temper_f=self.temper_f,
+            temper_blocks=self.temper_blocks,
+            temper_f_raw=self.temper_f_raw,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -2026,6 +2101,9 @@ class AliasResult:
             primary_fit=p.get("primary_fit"),
             period_at_lower_bound=bool(p.get("period_at_lower_bound", False)),
             window_capped=p.get("window_capped"),
+            temper_f=p.get("temper_f"),
+            temper_blocks=p.get("temper_blocks"),
+            temper_f_raw=p.get("temper_f_raw"),
             **settings,
         )
 
@@ -2269,7 +2347,7 @@ def _default_vis_amp(data):
     return _VIS_AMP_DEFAULT
 
 
-def _auto_primary(data, positions, vis_amp=None):
+def _auto_primary(data, positions, vis_amp=None, dof=1.0):
     """``primary_diam="auto"``: ``(primary_diam, positions, estimate,
     record)``.
 
@@ -2284,7 +2362,9 @@ def _auto_primary(data, positions, vis_amp=None):
     nothing to estimate from: a point primary, with a warning. Seeds the
     user refined at a fixed diameter are kept, with a warning, when the
     data do not resolve it. ``record`` is the ``AliasResult.primary_fit``
-    dict.
+    dict. ``dof`` tempers the first pass (per block, ``1/f_b``): the
+    resolved-primary threshold ``RESOLVE_NATS`` is on the tempered score, so
+    correlated channels do not make a point primary look resolved.
     """
     if not isinstance(positions, EpochPositions):
         reason = (
@@ -2299,7 +2379,9 @@ def _auto_primary(data, positions, vis_amp=None):
             stacklevel=external_stacklevel(),
         )
         return None, positions, None, dict(resolved=None, reason=reason)
-    estimate = estimate_primary_diameter(data, positions, vis_amp=vis_amp)
+    estimate = estimate_primary_diameter(
+        data, positions, vis_amp=vis_amp, dof=dof
+    )
     _LOG.info(
         "primary_diam='auto': %s (diameter %.3g mas, +%.1f nats over a "
         "point primary).",
@@ -2325,6 +2407,93 @@ def _auto_primary(data, positions, vis_amp=None):
         estimate,
         _primary_fit_record(estimate),
     )
+
+
+def _dof_pairs(factors):
+    """The ``Settings.dof`` of ``factors``: ``(block name, 1/f_b)`` pairs,
+    empty (untempered, the fast path) when every ``f_b`` is 1."""
+    if factors is None or all(v == 1.0 for v in factors.blocks.values()):
+        return ()
+    return tuple((k, 1.0 / v) for k, v in sorted(factors.blocks.items()))
+
+
+def _pilot_diameter(positions, primary_diam):
+    """The primary diameter (mas) of the pilot residuals of
+    ``_temper_factors``: a fixed one, else the one the positions were
+    refined with, else None (a point)."""
+    if isinstance(primary_diam, (int, float)) and primary_diam:
+        return float(primary_diam)
+    return positions.primary_diam or None
+
+
+def _temper_factors(data, positions, diam, vis_amp, names):
+    """The effective-channel factors ``f`` from the residuals of each
+    night's best static binary (``positions``): see
+    [`virgil.tempering`][virgil.tempering].
+
+    The untempered evidence is overconfident when neighbouring channels
+    are correlated (band p = 1.000 at χ²/N 12), and ``f`` must come from
+    residuals of a model that fits. The per-night static fits are the best
+    available before the orbit is: each is refined from its position and
+    flux on the scale-marginalized score (flagged nights are left out
+    unless every night is flagged), with the primary's diameter ``diam``
+    and the V² amplitude ``vis_amp`` the orbit fit uses, so that a resolved
+    primary or a contrast loss, which are smooth in wavelength, are not
+    read as channel correlation. A companion that moves during a night is
+    a static misfit, also smooth in wavelength: it raises ``f``, which
+    errs towards the cautious side (the window of ``period_window`` keeps
+    that motion below half the resolution). Data without neighbouring
+    channels cost nothing and give ``f = 1``.
+    """
+    pairs = [adjacent_channels(d) for d in data]
+    if not any(len(p[k][0]) for p in pairs for k in p):
+        return estimate_factors([], [], names)
+    use = ~positions.flagged
+    if not use.any():
+        use = onp.ones(len(data), bool)
+    amp = None if vis_amp is None else tuple(map(float, vis_amp))
+    dm = None if not diam else np.asarray(float(diam))
+    residuals, used = [], []
+    with run_in("float64"):
+        for i in onp.flatnonzero(use):
+            d = cast_tree(data[i], "float64")
+            surface = _Surface(d)
+            x0 = onp.array(
+                [positions.dra[i], positions.ddec[i], positions.flux[i]]
+            )
+            x0[2] = onp.clip(x0[2], 1e-4, 1.0)
+            window = _REFINE_WINDOW * float(fringe_scales(d)[0])
+            bounds = [
+                (x0[0] - window, x0[0] + window),
+                (x0[1] - window, x0[1] + window),
+                (1e-4, 1.0),
+            ]
+            x, value = _refine_marginal(
+                x0, np.asarray(1.0), d, surface, bounds, dm, amp
+            )
+            if not onp.isfinite(value):  # no improvement: keep the position
+                x = x0
+            model = _binary(np.asarray(x), dm)
+            z = {}
+            n_vis = int(onp.size(d.vis))
+            n_phi = int(onp.size(d.phi))
+            if n_vis:
+                # whitened (and V² amplitude profiled, as in the fit)
+                z["vis"] = onp.asarray(
+                    _amp_residuals(model, d, surface, amp)[:n_vis], float
+                )
+            if n_phi and d.phase_offsets is None:
+                # the display residual: whitened closure phases lose the
+                # triangle layout the channel pairs index. With
+                # ``with_closure_offsets`` the likelihood marginalizes an
+                # offset that this residual would show as channel-shared:
+                # that block takes the pooled f instead.
+                err = onp.asarray(d.flatten_data()[1], float)
+                r = onp.asarray(d.residuals(d.model(model)), float)
+                z["phi"] = (r / err)[n_vis : n_vis + n_phi]
+            residuals.append(z)
+            used.append(pairs[i])
+    return estimate_factors(residuals, used, names)
 
 
 def _primary_fit_record(estimate):
@@ -2468,6 +2637,7 @@ def fit_orbit_aliases(
     init=None,
     skip_flagged=True,
     n_bands_max=_N_BANDS_MAX,
+    temper=True,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -2636,6 +2806,36 @@ def fit_orbit_aliases(
         fits) of the window: a window with more warns and has its lower end
         raised to fit (recorded in ``AliasResult.window_capped``). None
         sets no cap. Not used with an explicit ``p_range``.
+    temper : bool or float, optional
+        Temper the likelihood for correlated spectral channels (solved
+        problem 14: the untempered evidence put band p = 1.000 on data at
+        χ²/N 12 and gave posteriors far too narrow). ``True`` (default)
+        estimates, from the residuals of each night's best static fit, the
+        factor ``f = N / N_eff`` of every observable block and of all
+        blocks pooled
+        ([`virgil.tempering`][virgil.tempering]: the lag-1 correlation ρ of
+        neighbouring channels, turned into the factor of a chain of the
+        data's channels, ``1 + 2 Σ (1 - k/n) ρ^k``, which is 1 for white
+        noise and at most the number of channels ``n``) and multiplies each
+        block's log likelihood by ``1/f_b`` in every evidence, mode search
+        and posterior. Tempering never sharpens: ``f`` is at least 1. It
+        needs ``EpochPositions`` (the residuals come from their fits):
+        without them, data with several channels warn and stay untempered.
+        Data with one wavelength have no neighbouring channels, so ``f = 1``
+        and the fit is the untempered one. ``False`` is the old, untempered
+        behaviour. A float ``f >= 1`` is a fixed pooled factor for every
+        block (the way to temper single-channel data). The pooled ``f`` is
+        ``AliasResult.temper_f`` and the per-block values
+        ``AliasResult.temper_blocks``; ``AliasResult.tempering`` is True
+        when ``f`` is above 2 (or the raw ``f`` below 0.5), and then also
+        warns. With ``primary_diam="auto"`` the first pass is untempered and
+        a disc it resolves is rechecked on the score tempered with ``f``
+        estimated at the disc, so the primary is not tempered away by the
+        very deficit it explains. ``LABELS_FREE_NATS`` and ``RESOLVE_NATS``
+        are in tempered nats. Closure phases of data with
+        ``with_closure_offsets`` are left out of the estimate (the offsets
+        are marginalized, which the residuals here would count again), and
+        that block takes the pooled ``f``.
     init : (KeplerOrbit, float) or dict, optional
         A warm start: an orbit and flux ratio, or a dict with ``period``,
         ``dt_peri`` (relative to ``t_ref``), ``ecc``, ``inc``, ``omega``,
@@ -2791,12 +2991,61 @@ def fit_orbit_aliases(
     # and reseeds the per-night positions with it, so that the seeds and the
     # engine share one primary (a point primary biases a resolved star's
     # seeds, ι Peg 1.05 mas).
+    # Tempering (problem 14): the factors f of the effective channels come
+    # from the residuals of the per-night fits at the primary that is
+    # finally chosen (a resolved primary fitted as a point is a smooth
+    # residual the channels share, and must not be tempered away before the
+    # disc that explains it is allowed).
+    factors, names = None, sorted({n for d in data for n in _Surface(d).names})
+    estimate_f = False
+    if isinstance(temper, (bool, onp.bool_)):
+        estimate_f = bool(temper)
+    elif temper is not None and not float(temper) >= 1.0:
+        raise ValueError(
+            f"temper must be a bool or a fixed f >= 1 (tempering never "
+            f"sharpens), got {temper!r}."
+        )
+    elif temper is not None:
+        factors = ChannelFactors(
+            float(temper),
+            dict.fromkeys(names, float(temper)),
+            {},
+            {},
+            f_raw=float(temper),
+        )
+    can_estimate = estimate_f and isinstance(positions, EpochPositions)
+    piloted = False
     primary_fit = None
     diam_seed = 0.5
     if isinstance(primary_diam, str) and primary_diam == "auto":
+        positions_in = positions
+        # The first pass is untempered; a disc it resolves is rechecked on
+        # the tempered score with f estimated at the disc (a point model's
+        # f would be inflated by the very deficit the disc explains).
         primary_diam, positions, estimate, primary_fit = _auto_primary(
             data, positions, vis_amp
         )
+        if can_estimate:
+            piloted = True
+            factors = _temper_factors(
+                data,
+                positions,
+                _pilot_diameter(positions, None),
+                vis_amp,
+                names,
+            )
+            if estimate.resolved and factors.f > 1.0:
+                primary_diam, positions, estimate, primary_fit = _auto_primary(
+                    data, positions_in, vis_amp, dof=factors.dof()
+                )
+                if not estimate.resolved:  # tempered away: a point primary
+                    factors = _temper_factors(
+                        data,
+                        positions,
+                        _pilot_diameter(positions, None),
+                        vis_amp,
+                        names,
+                    )
         if primary_diam == "fit":
             if diam_range is None:
                 diam_range = (
@@ -2813,6 +3062,32 @@ def fit_orbit_aliases(
             )
     if diam_range is None:
         diam_range = (0.05, 5.0)
+    if can_estimate and not piloted:
+        factors = _temper_factors(
+            data,
+            positions,
+            _pilot_diameter(positions, primary_diam),
+            vis_amp,
+            names,
+        )
+    elif (
+        estimate_f
+        and not can_estimate
+        and any(
+            len(p[k][0])
+            for d in data
+            for p in [adjacent_channels(d)]
+            for k in p
+        )
+    ):
+        warnings.warn(
+            "fit_orbit_aliases(): the data have several channels but "
+            "temper=True needs EpochPositions to estimate the "
+            "effective-channel factor from: the evidence is untempered. "
+            "Pass EpochPositions, or a fixed temper=f.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
     # Single-night alias peaks: the true position is often not the best
     # peak (Gl 229 2024-02-27 and 2024-03-28), so a flagged night must not
     # seed the bands. Only its seed is dropped: ``data`` keeps the night,
@@ -2885,7 +3160,18 @@ def fit_orbit_aliases(
         flip_flux=bool(flip_flux),
         resolution_mas=float(fringe_scales(data)[0]),
         init=init_flat,
+        dof=_dof_pairs(factors),
     )
+    if factors is not None and out_of_range(factors.f, factors.f_raw):
+        warnings.warn(
+            f"fit_orbit_aliases(): the effective-channel factor is "
+            f"f = {factors.f:.3g} (raw {factors.f_raw:.3g}), outside "
+            f"{FLAG_RANGE[0]:g} to {FLAG_RANGE[1]:g}: the likelihood is "
+            "tempered by 1/f (AliasResult.tempering). Check the channels' "
+            "errors.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
     problem = _Problem(data, settings)
     _preflight(problem, settings, bands[0])
     key = (
@@ -2944,4 +3230,7 @@ def fit_orbit_aliases(
         primary_fit=primary_fit,
         period_at_lower_bound=period_at_lower,
         window_capped=window_capped,
+        temper_f=None if factors is None else factors.f,
+        temper_blocks=None if factors is None else dict(factors.blocks),
+        temper_f_raw=None if factors is None else factors.f_raw,
     )

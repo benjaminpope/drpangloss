@@ -20,6 +20,7 @@ The everyday names are importable from the top level, e.g.
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Orbits](orbits.md): Keplerian orbits in virgil's conventions, solved with jaxoplanet
 - [Orbit aliases](aliases.md): `fit_orbit_aliases`, evidences of the period alias bands of an undersampled orbit
+- [Tempering](tempering.md): the effective-channel factor that tempers an orbit evidence for correlated spectral channels
 - [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits
 - [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances
 - [Fields](fields.md): Gaussian-process log-brightness priors for pixel images
