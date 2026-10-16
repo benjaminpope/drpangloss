@@ -387,3 +387,23 @@ def test_a_nuts_chain_runs_with_the_diagonal_mass(monkeypatch):
     samples = mcmc.get_samples()
     assert set(samples) == set(priors)
     assert all(onp.all(onp.isfinite(onp.asarray(v))) for v in samples.values())
+
+
+def test_the_real_size_guard_returns_a_diagonal_above_the_limit():
+    # A 65 × 65 image has 4225 latents, more than _DENSE_MASS_MAX (4096),
+    # with two visibilities' rows: the diagonal, without an n × n matrix.
+    from virgil import fitting
+
+    npix = 65
+    assert npix * npix > fitting._DENSE_MASS_MAX
+    scene = _small_scene(npix)
+    data = vlti_oidata(
+        hour_angles_h=(0.0,), wavelengths_m=[3.5e-6]
+    ).with_model(scene)
+    priors = image_priors(scene)
+    values = {"env.log_brightness.latent": np.zeros((npix, npix))}
+    with pytest.warns(UserWarning, match="diagonal"):
+        mass = gauss_newton_mass(scene, priors, data, values)
+    ((_, diagonal),) = mass["inverse_mass_matrix"].items()
+    assert diagonal.shape == (npix * npix,) and onp.all(diagonal > 0)
+    assert mass["dense_mass"] == [] and mass.condition is None
