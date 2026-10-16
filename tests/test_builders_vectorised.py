@@ -389,3 +389,24 @@ def test_times_is_repeatable_and_keeps_its_links():
     second = lookup.times("first")
     for a, b in zip(first, second):
         _assert_same(a, b)
+
+
+@pytest.mark.parametrize("bad", [onp.nan, onp.inf])
+@pytest.mark.parametrize("column", ["mjd", "time"])
+def test_a_non_finite_time_is_a_frame_of_its_own(bad, column):
+    rows = _random_rows(5, 12, "random")
+    ins, mjd, time, nwave = rows[4]
+    broken = rows.copy()
+    broken[4] = (ins, bad if column == "mjd" else mjd, time, nwave)
+    if column == "time":
+        broken[4] = (ins, mjd, bad, nwave)
+    n = onp.repeat(onp.arange(len(rows)), [r[3] for r in rows])
+    frame = _lookup(broken, []).times("first")[1]
+    assert onp.sum(frame == frame[n == 4][0]) == nwave
+    # The other rows are framed as if it were absent (numbered afresh).
+    others = _lookup(rows[:4] + rows[5:], []).times("first")[1]
+    kept = frame[n != 4]
+    renumbered = onp.unique(kept, return_inverse=True)[1]
+    first = onp.unique(kept, return_index=True)[1]
+    renumbered = onp.argsort(onp.argsort(first))[renumbered]
+    _assert_same(renumbered, others)

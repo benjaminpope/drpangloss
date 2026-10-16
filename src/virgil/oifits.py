@@ -537,6 +537,10 @@ class _BaselineLookup:
             by_ins.setdefault(ins, []).append((i, mjd, time))
         for rows in by_ins.values():
             index, mjd, time = (onp.array(c) for c in zip(*rows))
+            # A non-finite time never links (every comparison is False), and
+            # the tree refuses it: it stays a frame of its own.
+            ok = onp.isfinite(mjd) & onp.isfinite(time)
+            index, mjd, time = index[ok], mjd[ok], time[ok]
             pairs = cKDTree(onp.column_stack([mjd, time])).query_pairs(
                 _MJD_TOLERANCE, p=onp.inf, output_type="ndarray"
             )
