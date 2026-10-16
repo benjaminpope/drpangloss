@@ -495,7 +495,8 @@ Provisional in 0.4:
   warning, and `EpochPositions.gap` is gone (`gap_marginal` is the gap).
   `AliasResult.save` writes a `format` field (1); `load` reads files
   without it and refuses a newer format; `UNRECORDED` is no longer in
-  `virgil.aliases.__all__`.
+  `virgil.aliases.__all__`. `aliases.spectral_window` is removed (unused;
+  `|mean exp(2πi f t)|²` is one line of numpy).
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(model,
   epochs, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
