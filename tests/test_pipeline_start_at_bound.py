@@ -107,13 +107,16 @@ def test_binary_pipeline_on_data_without_a_companion_completes(tmp_path):
     pytest.importorskip("h5py")
     pytest.importorskip("nbclient")
     base = OIData("data/NuHor_F480M.oifits")
-    # Flux far below the prior's lower bound: the best flux is the bound.
+    # No companion to speak of: some companion parameter runs to a prior bound.
     data = base.with_model(
         BinaryModelCartesian(120.0, 80.0, 1e-9), key=jax.random.PRNGKey(3)
     )
     result = BinaryPipeline(data, output=tmp_path / "run", **TINY).run()
     assert result.status == "complete"
     assert (tmp_path / "run" / "samples.h5").exists()
-    assert "flux" in result.summary["fit"]["at_bound"]
-    names = {c.name: c for c in result.checks}
-    assert names["start_at_bound"].status == "warn"
+    # The unconstrained companion runs to a bound of its prior (which one is
+    # data-dependent: here the sky position, not the flux).
+    at_bound = result.summary["fit"]["at_bound"]
+    assert at_bound
+    check = {c.name: c for c in result.checks}["start_at_bound"]
+    assert check.status == "warn" and check.value == at_bound
