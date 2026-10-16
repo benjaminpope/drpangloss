@@ -116,6 +116,10 @@ in `tests/test_durations.json`; refresh them occasionally with
 The lint workflow only checks: fix what it reports with
 `bash scripts/lint_local.sh --fix` and push again.
 
+**Keep it small**
+
+Prefer deleting to adding, build only what a test system or user needs now, and keep docstrings short (a summary, parameters, returns and at most one example), putting derivations and design history in the docs or `design/` notes instead. The full rules, including the docstring style, are in [AGENTS.md](AGENTS.md); each pull request also gets a comment showing its net change in `src/` and `tests/` lines.
+
 **Documentation**
 
 Any changes you make should also be appropriately documented! For small API changes this shouldn't require any changes, however if you are adding new functionality you will need to add some documentation. This can be done by modifying the appropriates files in the `docs` directory.
