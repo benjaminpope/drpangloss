@@ -1,6 +1,6 @@
-"""FlaredDisk* against a PolarDisk built to match (comparison only).
+"""FlaredDisk* against a MultipoleDisk built to match (comparison only).
 
-The findings are written up in ``design/flared_disk_vs_polar_disk.md``.
+The findings are written up in ``design/flared_disk_vs_multipole_disk.md``.
 FlaredDisk is unchanged; these tests pin what the two agree on, and the size
 of the difference where they do not.
 """
@@ -15,7 +15,7 @@ from virgil.models import (
     FlaredDiskPowerLaw,
     GaussianRing,
     Harmonics,
-    PolarDisk,
+    MultipoleDisk,
     PowerLawHeight,
 )
 
@@ -48,8 +48,8 @@ def _flared(inc, aspect=0.0, flaring=1.0, n=0.0, symmetric=1.0):
     )
 
 
-def _polar(inc, height=None, harmonics=None):
-    return PolarDisk(
+def _multipole(inc, height=None, harmonics=None):
+    return MultipoleDisk(
         GaussianRing(R0, SIGMA),
         harmonics=harmonics,
         height=height,
@@ -73,28 +73,28 @@ def _max_dv(a, b):
 
 @pytest.mark.parametrize("inc", [0.0, 50.0, 70.0])
 def test_a_flat_axisymmetric_disk_is_a_gaussian_ring(inc):
-    assert _max_dv(_flared(inc), _polar(inc)) < 1e-4
+    assert _max_dv(_flared(inc), _multipole(inc)) < 1e-4
 
 
 @pytest.mark.parametrize("symmetric", [0.5, 3.0])
 def test_the_cos_squared_phase_function_is_a_first_harmonic(symmetric):
     # f(theta) = cos^2(theta / 2) = (1 + cos theta) / 2, with theta from the
-    # near-side minor axis: sin of PolarDisk's azimuth from the major axis.
+    # near-side minor axis: sin of MultipoleDisk's azimuth from the major axis.
     amplitude = 0.5 / (0.5 + symmetric)
     harmonics = Harmonics(c=0.0, s=amplitude, form="linear")
     flared = _flared(50.0, n=2.0, symmetric=symmetric)
-    assert _max_dv(flared, _polar(50.0, harmonics=harmonics)) < 1e-4
+    assert _max_dv(flared, _multipole(50.0, harmonics=harmonics)) < 1e-4
 
 
-def test_flaring_agrees_with_a_polar_disk_height_to_a_few_percent():
+def test_flaring_agrees_with_a_multipole_disk_height_to_a_few_percent():
     inc, aspect = 50.0, 0.1
     z = aspect * R0
     flared = _flared(inc, aspect=aspect, flaring=1.0)
-    flat = _max_dv(flared, _polar(inc))
+    flat = _max_dv(flared, _multipole(inc))
     # The surface lifts the ring towards the far side by about z cos(inc)
     # (not z sin(inc) towards the near side): a height of -0.75 z at 50 deg.
-    matched = _polar(inc, PowerLawHeight(-0.75 * z, R0, 1.0))
-    naive = _polar(inc, PowerLawHeight(z, R0, 1.0))
+    matched = _multipole(inc, PowerLawHeight(-0.75 * z, R0, 1.0))
+    naive = _multipole(inc, PowerLawHeight(z, R0, 1.0))
     assert _max_dv(flared, matched) < 0.05
     assert _max_dv(flared, matched) < 0.5 * flat
     assert _max_dv(flared, naive) > 0.15
@@ -116,7 +116,7 @@ def _thin(
     z sin(i); z is evaluated at the radius of the surface point itself
     (fixed-point iteration) rather than the pixel's mid-plane radius; z^2
     is not added to the radius; and the brightness is divided by the
-    Jacobian dy/dy_mid so that each ring keeps its flux (PolarDisk's
+    Jacobian dy/dy_mid so that each ring keeps its flux (MultipoleDisk's
     rings are flux-conserving).
     """
 
@@ -168,17 +168,17 @@ def _thin(
 
 @pytest.mark.parametrize("flaring", [1.0, 1.25])
 @pytest.mark.parametrize("inc", [20.0, 50.0, 70.0])
-def test_the_exact_thin_surface_is_a_polar_disk_with_negative_height(
+def test_the_exact_thin_surface_is_a_multipole_disk_with_negative_height(
     inc, flaring
 ):
-    # Verified in design/flared_disk_vs_polar_disk.md: with tan(i), a
+    # Verified in design/flared_disk_vs_multipole_disk.md: with tan(i), a
     # self-consistent z, no z^2 and a flux-conserving Jacobian, FlaredDisk's
-    # construction is PowerLawHeight(h0 = -aspect r0) to the transform error
+    # construction is PowerLawHeight(h_ref = -aspect r_ref) to the transform error
     # (1.5e-9 at every inclination and aspect tried, float64).
     aspect = 0.1
-    polar = _polar(inc, PowerLawHeight(-aspect * R0, R0, flaring))
+    multipole = _multipole(inc, PowerLawHeight(-aspect * R0, R0, flaring))
     thin = _thin(inc, aspect, flaring, use_tan=True)
-    assert _max_dv(thin, polar) < 1e-5
+    assert _max_dv(thin, multipole) < 1e-5
 
 
 @pytest.mark.parametrize(
@@ -194,9 +194,9 @@ def test_each_ingredient_of_the_thin_surface_matters(flag, value):
     # Undoing any one of the four differences re-opens a gap well above the
     # transform error (2e-3 at least, at inclination 50, aspect 0.2).
     inc, aspect = 50.0, 0.2
-    polar = _polar(inc, PowerLawHeight(-aspect * R0, R0, 1.0))
+    multipole = _multipole(inc, PowerLawHeight(-aspect * R0, R0, 1.0))
     flags = {"use_tan": True, flag: value}
-    assert _max_dv(_thin(inc, aspect, 1.0, **flags), polar) > 2e-3
+    assert _max_dv(_thin(inc, aspect, 1.0, **flags), multipole) > 2e-3
 
 
 def test_flared_disk_as_written_has_the_far_side_sign():
@@ -207,6 +207,10 @@ def test_flared_disk_as_written_has_the_far_side_sign():
     inc, aspect = 50.0, 0.1
     flared = _flared(inc, aspect=aspect, flaring=1.0)
     z = aspect * R0
-    for_far = _max_dv(flared, _polar(inc, PowerLawHeight(-0.75 * z, R0, 1.0)))
-    for_near = _max_dv(flared, _polar(inc, PowerLawHeight(0.75 * z, R0, 1.0)))
-    assert for_far < _max_dv(flared, _polar(inc)) < for_near
+    for_far = _max_dv(
+        flared, _multipole(inc, PowerLawHeight(-0.75 * z, R0, 1.0))
+    )
+    for_near = _max_dv(
+        flared, _multipole(inc, PowerLawHeight(0.75 * z, R0, 1.0))
+    )
+    assert for_far < _max_dv(flared, _multipole(inc)) < for_near

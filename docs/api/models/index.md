@@ -10,7 +10,7 @@ companion it is the companion/primary flux ratio.
 - [BinaryModelCartesian](classes/binary_model_cartesian.md)
 - [System and building blocks](classes/composition.md)
 - [Image](classes/image.md)
-- [PolarDisk](classes/polar_disk.md)
+- [MultipoleDisk](classes/multipole_disk.md)
 - [HarmonixModel](classes/harmonix_model.md)
 
 ## Functions

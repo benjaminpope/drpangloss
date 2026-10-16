@@ -41,7 +41,7 @@ The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 Everything public is **stable** (a deprecation cycle before any change)
 except the **provisional** features that a module lists in its
 ``__provisional__`` tuple and flags in its docstring (new in 0.4: orbit
-search, ``PolarDisk``, pipelines, GP ensembles, SVI), which may change in
+search, ``MultipoleDisk``, pipelines, GP ensembles, SVI), which may change in
 any 0.4.x release. See ``virgil._stability`` and the Stability page of the
 documentation.
 """
@@ -87,7 +87,7 @@ from . import (  # noqa: E402
 from ._geometry import pixel_offsets  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
-from .fields import GaussianField, PolarField  # noqa: E402
+from .fields import GaussianField, MultipoleField  # noqa: E402
 from .fitting import fit  # noqa: E402
 from .grid_fit import (  # noqa: E402
     best_grid_point,
@@ -143,11 +143,12 @@ from .models import (  # noqa: E402
     ModulatedGaussianRim,
     OrbitalBinary,
     PointSource,
-    PolarDisk,
-    PolarKernel,
+    MultipoleDisk,
+    MultipoleKernel,
     PowerLawHeight,
     QuadraticLimbDarkenedDisk,
     RadialGP,
+    RadialGPFunction,
     RadialLinear,
     RadialPower,
     RadialPowerLaw,
@@ -162,7 +163,7 @@ from .models import (  # noqa: E402
     VonMises,
     circular_support,
     gp_priors,
-    polar_disk_cvis,
+    multipole_disk_cvis,
 )
 from .oidata import OIData  # noqa: E402
 from .oifits import read_oifits, write_oifits  # noqa: E402
@@ -215,7 +216,7 @@ __all__ = [
     "GaussianArc",
     "GaussianDisk",
     "GaussianField",
-    "PolarField",
+    "MultipoleField",
     "GaussianRing",
     "GaussianLine",
     "GravityDarkenedStar",
@@ -230,14 +231,15 @@ __all__ = [
     "OIData",
     "OrbitalBinary",
     "PointSource",
-    "PolarDisk",
-    "PolarKernel",
+    "MultipoleDisk",
+    "MultipoleKernel",
     "PowerLawHeight",
     "PositionData",
     "RVData",
     "PowerLaw",
     "QuadraticLimbDarkenedDisk",
     "RadialGP",
+    "RadialGPFunction",
     "RadialLinear",
     "RadialPower",
     "RadialPowerLaw",
@@ -279,7 +281,7 @@ __all__ = [
     "optimized_likelihood_grid",
     "pixel_offsets",
     "gp_priors",
-    "polar_disk_cvis",
+    "multipole_disk_cvis",
     "radial_profile",
     "rank_orbits",
     "read_oifits",

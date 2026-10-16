@@ -35,15 +35,15 @@ from .models import _check_nu, _gp_factor, _log_azimuthal_spectrum
 
 __all__ = [
     "GaussianField",
-    "PolarField",
+    "MultipoleField",
     "field_spectrum",
-    "polar_field_priors",
+    "multipole_field_priors",
     "polar_interpolate",
 ]
 
 __provisional__ = (
-    "PolarField",
-    "polar_field_priors",
+    "MultipoleField",
+    "multipole_field_priors",
 )
 
 
@@ -250,7 +250,7 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
 
 # ---------------------------------------------------------------------------
-# PolarField: a polar-kernel residual field aligned with a disk
+# MultipoleField: a multipole-kernel residual field aligned with a disk
 # ---------------------------------------------------------------------------
 
 _DEG = np.pi / 180.0
@@ -280,7 +280,7 @@ def _azimuthal_filter(latent, angle, nu):
     """Apply the azimuthal square root of the periodic kernel, along axis 1.
 
     The spectral density at the integer order ``m`` is the one that
-    [`PolarKernel`][virgil.models.PolarKernel] gives the harmonics,
+    [`MultipoleKernel`][virgil.models.MultipoleKernel] gives the harmonics,
     ``S(m) = [1 + (m angle)^2 / (2 nu)]^(-nu - 1/2)`` (``angle`` is its
     ``ell_theta / r``), the same function. The kernel is circulant on the
     ``n_theta`` azimuths, so the filter is two FFTs, scaled so that the
@@ -344,8 +344,8 @@ def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
     return low * (1.0 - wr) + high * wr
 
 
-class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
-    r"""A polar-kernel residual field for an [`Image`][virgil.models.Image].
+class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
+    r"""A multipole-kernel residual field for an [`Image`][virgil.models.Image].
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -362,14 +362,14 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     with a Matérn kernel in radius (that of
     [`RadialGP`][virgil.models.RadialGP]) and a periodic Matérn kernel in
     azimuth, given by the spectral density that
-    [`PolarKernel`][virgil.models.PolarKernel] gives the harmonics of a
-    [`PolarDisk`][virgil.models.PolarDisk],
+    [`MultipoleKernel`][virgil.models.MultipoleKernel] gives the harmonics of a
+    [`MultipoleDisk`][virgil.models.MultipoleDisk],
     $S(m) \propto [1 + (m\,\ell_\theta)^2 / 2\nu_\theta]^{-\nu_\theta - 1/2}$
     at the integer order $m$ ($\ell_\theta$ in radians, the angle
-    ``ell_theta / r`` of a ``PolarKernel``). A long ``length_theta`` favours rings
+    ``ell_theta / r`` of a ``MultipoleKernel``). A long ``length_theta`` favours rings
     and arcs without imposing them, and a short ``length_r`` allows radial
     structure such as gaps. Use it, in the frame of a
-    [`PolarDisk`][virgil.models.PolarDisk], for emission that the
+    [`MultipoleDisk`][virgil.models.MultipoleDisk], for emission that the
     parametric disk misses, as a residual field aligned with the disk,
     instead of a Cartesian [`GaussianField`][virgil.fields.GaussianField]
     that knows nothing about the geometry.
@@ -388,11 +388,11 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     grid's ellipse; a value of 0 would leave a flat background there that
     the latents cannot remove. Give ``σ`` and the two lengths
     bounded log-uniform priors with
-    [`polar_field_priors`][virgil.fields.polar_field_priors], so that the
+    [`multipole_field_priors`][virgil.fields.multipole_field_priors], so that the
     evidence is proper; their MAP values are biased (``fit`` warns).
 
     ```python
-    field = PolarField(np.zeros((24, 32)), sigma=1.0, length_r=4.0,
+    field = MultipoleField(np.zeros((24, 32)), sigma=1.0, length_r=4.0,
                        length_theta=1.0, inc=50.0, pa=30.0,
                        image_shape=(64, 64), r_max_mas=40.0)
     env = Image(field, pixel_scale_mas=1.5, flux=0.3)
@@ -431,7 +431,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Smoothness of the azimuthal kernel (default: ``nu``).
     geometry_from : str or None, optional
         Name of a sibling component of the [`System`][virgil.models.System]
-        (a [`PolarDisk`][virgil.models.PolarDisk], or anything with ``inc``,
+        (a [`MultipoleDisk`][virgil.models.MultipoleDisk], or anything with ``inc``,
         ``pa``, ``dra`` and ``ddec``) whose geometry the field follows when
         the System is evaluated (default ``None``: the field's own). See
         Notes.
@@ -447,7 +447,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     Notes
     -----
     By default the geometry parameters belong to the field: they are copies
-    of a ``PolarDisk``'s (see [`from_disk`][virgil.fields.PolarField.from_disk]),
+    of a ``MultipoleDisk``'s (see [`from_disk`][virgil.fields.MultipoleField.from_disk]),
     and if both are fitted the caller must sample the same values for both.
     With ``geometry_from="disk"`` they are tied instead. The field then has
     no ``inc``, ``pa``, ``dra`` or ``ddec`` parameters (they are ``None``:
@@ -465,7 +465,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     `System.resolved` returns the
     System with the ties baked in, for code that reads the pixels directly.
     The pixel scale comes from the Image. The azimuth is measured from the
-    projected major axis towards ``pa + 90``, as for ``PolarDisk``'s harmonics.
+    projected major axis towards ``pa + 90``, as for ``MultipoleDisk``'s harmonics.
 
     References
     ----------
@@ -534,9 +534,9 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
                 "need finite 0 <= r_min_mas < r_max_mas, not "
                 f"{r_min_mas} and {r_max_mas}."
             )
-        self.nu = _check_nu(nu, "PolarField")
+        self.nu = _check_nu(nu, "MultipoleField")
         self.nu_theta = _check_nu(
-            nu if nu_theta is None else nu_theta, "PolarField"
+            nu if nu_theta is None else nu_theta, "MultipoleField"
         )
         if length_r is None:
             length_r = 5.0 * self.spacing
@@ -608,7 +608,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         (``disk.profile.extent()``) plus 20 per cent. The values are copied
         unless ``geometry_from`` is the disk's name in the System the Image
         will join, which ties them: see the notes of
-        [`PolarField`][virgil.fields.PolarField].
+        [`MultipoleField`][virgil.fields.MultipoleField].
         """
         if r_max_mas is None:
             r_max_mas = 1.2 * float(disk.profile.extent()[1])
@@ -689,7 +689,7 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         xe, ye = undo_elliptical_transf_coord(x, y, pa, stretch)
         r = np.hypot(xe, ye)
         # The azimuth runs from the deprojected North towards East, as for
-        # PolarDisk's harmonics; the centre has none, so avoid arctan2(0, 0).
+        # MultipoleDisk's harmonics; the centre has none, so avoid arctan2(0, 0).
         origin = (xe == 0.0) & (ye == 0.0)
         theta = np.arctan2(xe, np.where(origin, 1.0, ye))
         eta = polar_interpolate(
@@ -706,13 +706,13 @@ class PolarField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return eta
 
 
-def polar_field_priors(
+def multipole_field_priors(
     path="env.log_brightness",
     sigma=(0.05, 5.0),
     length_r=(0.5, 50.0),
     length_theta=(0.1, 6.0),
 ):
-    """Bounded log-uniform priors on a [`PolarField`][virgil.fields.PolarField]'s scales.
+    """Bounded log-uniform priors on a [`MultipoleField`][virgil.fields.MultipoleField]'s scales.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -725,7 +725,7 @@ def polar_field_priors(
     ``(low, high)``: ``sigma`` in log-brightness, ``length_r`` in
     milliarcseconds and ``length_theta`` in radians. The variance of the
     azimuthal order ``m`` falls as the spectrum of
-    [`PolarKernel`][virgil.models.PolarKernel] in ``m * length_theta``, so a
+    [`MultipoleKernel`][virgil.models.MultipoleKernel] in ``m * length_theta``, so a
     length above about 2 leaves almost only the order 0, an axisymmetric
     field (for ``nu`` = 3/2 the first order, cos θ and sin θ together, has about
     1 per cent of the variance at a length of 6), and the default upper limit is effectively

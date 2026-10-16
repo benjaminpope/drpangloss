@@ -170,6 +170,4 @@ timeout = 300
 filterwarnings = [
     "error:.*now takes the model before the data:FutureWarning",
     "error:.*stops working in virgil 0.5:FutureWarning",
-    # GaussianArc's change of shape (tests that build one are not about it).
-    "ignore:GaussianArc now has a von Mises weight:FutureWarning",
 ]

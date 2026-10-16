@@ -19,7 +19,7 @@ from virgil._utils import dtor, mas2rad
 from virgil.models import (
     GaussianRing,
     Harmonics,
-    PolarDisk,
+    MultipoleDisk,
     RadialLinear,
     ThinRing,
     VonMises,
@@ -327,7 +327,7 @@ def test_positive_latents_can_be_functions_of_the_radius():
 @pytest.mark.parametrize(
     "disk",
     [
-        PolarDisk(
+        MultipoleDisk(
             GaussianRing(9.0, 1.5),
             harmonics=Harmonics(w=(0.5 + 0.2j, -0.3j, 0.1)),
             inc=45.0,
@@ -336,7 +336,7 @@ def test_positive_latents_can_be_functions_of_the_radius():
             ddec=-2.0,
             blur_fwhm=0.5,
         ),
-        PolarDisk(
+        MultipoleDisk(
             ThinRing(8.0),
             harmonics=Harmonics(w=(0.8, 0.4j)),
             inc=30.0,
@@ -365,7 +365,7 @@ def test_positive_harmonics_match_the_dft_of_the_rendered_image(disk):
 
 def test_positive_disk_visibility_is_one_at_the_origin_with_finite_gradients():
     harmonics = Harmonics(w=(0.4 + 0.1j, 0.2j, 0.0))
-    disk = PolarDisk(GaussianRing(6.0, 1.0), harmonics=harmonics, inc=30.0)
+    disk = MultipoleDisk(GaussianRing(6.0, 1.0), harmonics=harmonics, inc=30.0)
     u = np.array([0.0, 12.0, 25.0])
     vis = disk.model(u, 0.5 * u, WAVEL)
     assert onp.isclose(complex(vis[0]), 1.0, atol=1e-6)
@@ -418,9 +418,9 @@ def test_von_mises_peaks_at_its_azimuth_and_reports_truncation():
     assert H.to_image_harmonics(low).shape == (7,)
 
 
-def test_von_mises_is_a_polar_disk_arc_that_matches_a_dense_ring_sum():
+def test_von_mises_is_a_multipole_disk_arc_that_matches_a_dense_ring_sum():
     kappa, theta0, radius, width = 8.0, 40.0, 7.0, 1.2
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ThinRing(radius),
         harmonics=VonMises(kappa, theta0, degree=36),
         blur_fwhm=width,
@@ -437,7 +437,7 @@ def test_von_mises_is_a_polar_disk_arc_that_matches_a_dense_ring_sum():
     expected = ring @ weight / weight.sum() * blur
     assert onp.max(onp.abs(_cvis(disk, u, v) - expected)) < 3e-6
     # kappa = 0 is a uniform ring: no closure phase, real visibilities.
-    flat = PolarDisk(ThinRing(radius), harmonics=VonMises(0.0, degree=4))
+    flat = MultipoleDisk(ThinRing(radius), harmonics=VonMises(0.0, degree=4))
     assert onp.max(onp.abs(_cvis(flat, u, v).imag)) < 1e-6
     # Visibility 1 at the origin, and differentiable in kappa and theta0.
     assert onp.isclose(
@@ -478,7 +478,7 @@ def test_von_mises_degree_is_chosen_from_kappa_and_inputs_are_checked():
     linear = VonMises(3.0, 20.0, degree=10).convert("linear")
     assert linear.form == "linear" and linear.degree == 10
     with pytest.raises(TypeError, match="Harmonics or VonMises"):
-        PolarDisk(ThinRing(5.0), harmonics=0.3)
+        MultipoleDisk(ThinRing(5.0), harmonics=0.3)
 
 
 # --- legacy conversions ---------------------------------------------------------
@@ -581,7 +581,7 @@ def test_modulated_rim_on_the_engine_equals_the_old_code_to_rounding(kwargs):
         assert onp.max(onp.abs(_cvis(rim64, u, v) - old64)) < 1e-12
 
 
-def test_rim_legacy_conversion_round_trips_and_matches_a_polar_disk():
+def test_rim_legacy_conversion_round_trips_and_matches_a_multipole_disk():
     amps, pas, pa = (0.3, 0.2, 0.1), (40.0, 100.0, 250.0), 30.0
     harmonics = H.from_legacy(amps, pas, pa, kind="rim")
     # c_m = A cos(m (az_pa - pa)), s_m = A sin(m (az_pa - pa)).
@@ -599,7 +599,7 @@ def test_rim_legacy_conversion_round_trips_and_matches_a_polar_disk():
     rim = ModulatedGaussianRim(
         diam=12.0, fwhm=1.5, inc=50.0, pa=pa, az_amps=amps, az_pas=pas
     )
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ThinRing(6.0), harmonics=harmonics, inc=50.0, pa=pa, blur_fwhm=1.5
     )
     u, v = _uv(30, seed=9, qmax=0.2)
@@ -644,7 +644,7 @@ def test_cone_legacy_conversion_matches_the_engine_wrapper():
     from virgil.models import Cone, ExpTail
 
     sin_alpha = onp.sin(onp.radians(30.0))
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ExpTail(4.0 * sin_alpha, 8.0 * sin_alpha, cutoff=5.0),
         harmonics=harmonics,
         height=Cone(30.0, 5.0),
@@ -702,7 +702,7 @@ def test_gaussian_arc_keeps_the_old_shape_for_arcs_short_against_the_radius(
     width, pa, wavel = 0.6, 250.0, 1.6e-6
     rng = onp.random.default_rng(1)
     u, v = rng.uniform(-100.0, 100.0, (2, 60))
-    with jax.enable_x64(True), pytest.warns(FutureWarning, match="von Mises"):
+    with jax.enable_x64(True):
         arc = GaussianArc(radius, width, length, pa)
         new = onp.asarray(arc.model(u, v, wavel))
     old = _old_gaussian_arc_cvis(radius, width, length, pa, u, v, wavel)
@@ -713,7 +713,7 @@ def test_gaussian_arc_differs_from_the_old_shape_for_arcs_that_wrap():
     # length = 40 on a ring of radius 5 (6 sigma exceeds the circle): the old
     # weight was a Gaussian cut at the antipode, the new one a smooth wrap.
     u, v = onp.array([10.0, -25.0, 40.0]), onp.array([5.0, 30.0, -12.0])
-    with jax.enable_x64(True), pytest.warns(FutureWarning):
+    with jax.enable_x64(True):
         new = onp.asarray(
             GaussianArc(5.0, 1.0, 40.0, 30.0).model(u, v, 1.6e-6)
         )
@@ -721,12 +721,11 @@ def test_gaussian_arc_differs_from_the_old_shape_for_arcs_that_wrap():
     assert 1e-3 < onp.max(onp.abs(new - old)) < 0.2
 
 
-def test_gaussian_arc_is_a_thin_ring_polar_disk_with_a_von_mises_weight():
-    with pytest.warns(FutureWarning, match="von Mises"):
-        arc = GaussianArc(20.0, 2.0, 15.0, 70.0, dra=2.0, ddec=-1.0)
+def test_gaussian_arc_is_a_thin_ring_multipole_disk_with_a_von_mises_weight():
+    arc = GaussianArc(20.0, 2.0, 15.0, 70.0, dra=2.0, ddec=-1.0)
     kappa = (2.0 * onp.sqrt(2.0 * onp.log(2.0)) * 20.0 / 15.0) ** 2
     assert onp.isclose(float(arc.kappa()), kappa, rtol=1e-5)
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         ThinRing(20.0),
         harmonics=VonMises(kappa, 70.0, degree=arc.degree),
         blur_fwhm=2.0,
@@ -753,9 +752,9 @@ def test_gaussian_arc_is_a_thin_ring_polar_disk_with_a_von_mises_weight():
     assert narrow.set("radius", np.array(31.0)).degree == narrow.degree
 
 
-def test_gaussian_arc_degree_and_warning_are_controlled():
+def test_gaussian_arc_degree_is_controlled_and_builds_without_a_warning():
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore", FutureWarning)
+        warnings.simplefilter("error")
         assert GaussianArc(20.0, 2.0, 15.0, degree=12).degree == 12
         with pytest.raises(ValueError, match="degree"):
             GaussianArc(20.0, 2.0, 15.0, degree=0)
@@ -776,20 +775,17 @@ def test_linear_positivity_guarantee_is_the_sum_of_amplitudes_not_their_rms():
 
 
 def test_narrow_arc_on_a_large_circle_uses_quadrature_without_warning():
-    with pytest.warns(FutureWarning):
-        arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
+    arc = GaussianArc(1e3, 3.0, 10.0, 30.0)
     assert arc.quadrature and bool(arc.is_physical())
     # Forcing the series (a degree too low for kappa) is flagged.
-    with pytest.warns(FutureWarning):
-        forced = GaussianArc(150.0, 3.0, 6.0, 30.0, degree=20)
+    forced = GaussianArc(150.0, 3.0, 6.0, 30.0, degree=20)
     assert not forced.quadrature and not bool(forced.is_physical())
 
 
 def test_wide_arc_image_gradients_are_finite():
     import jax
 
-    with pytest.warns(FutureWarning):
-        arc = GaussianArc(5.0, 1.0, 40.0, 30.0)
+    arc = GaussianArc(5.0, 1.0, 40.0, 30.0)
     xx, yy = onp.meshgrid(onp.linspace(-8, 8, 9), onp.linspace(-8, 8, 9))
 
     def total(a):
@@ -806,3 +802,11 @@ def test_harmonics_w_must_be_concrete():
 
     with pytest.raises(TypeError, match="re= and im="):
         jax.jit(lambda w: Harmonics(w=w).re)(onp.array([0.1 + 0.2j]))
+
+
+def test_harmonics_keyword_only_after_c_and_s():
+    assert Harmonics(0.3, 0.1).degree == 1
+    with pytest.raises(TypeError):
+        Harmonics(0.3, 0.1, 2)  # degree must be named
+    with pytest.raises(TypeError):
+        Harmonics((), (), None, "positive")

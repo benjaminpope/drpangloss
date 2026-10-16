@@ -20,7 +20,7 @@ virgil is a package for modelling optical interferometry data in JAX. It is a on
 
 ## Stability
 
-Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `PolarDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](stability.md).
+Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](stability.md).
 
 ## Installation
 

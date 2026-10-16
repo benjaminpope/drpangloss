@@ -41,7 +41,7 @@ EXPECTED = {
     "virgil.metrics": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
-        "PolarDisk",
+        "MultipoleDisk",
         "ThinRing",
         "GaussianRing",
         "RadialPowerLaw",
@@ -51,15 +51,16 @@ EXPECTED = {
         "RadialLinear",
         "RadialPower",
         "RadialGP",
-        "PolarKernel",
+        "RadialGPFunction",
+        "MultipoleKernel",
         "Harmonics",
         "VonMises",
         "Cone",
         "PowerLawHeight",
-        "polar_disk_cvis",
+        "multipole_disk_cvis",
         "gp_priors",
     },
-    "virgil.fields": {"PolarField", "polar_field_priors"},
+    "virgil.fields": {"MultipoleField", "multipole_field_priors"},
     "virgil.ensemble": {
         "evidence_grid",
         "gp_members",
@@ -129,13 +130,13 @@ def test_stability_module_imports_nothing():
 
 PAGES = [
     "docs/orbit_fitting.md",
-    "docs/polar_disk_rings.md",
+    "docs/multipole_disk_rings.md",
     "docs/imaging_clean.md",
     "docs/imaging_ensemble.md",
     "docs/variational_inference.md",
     "docs/pipeline.md",
     "docs/api/pipeline.md",
-    "docs/api/models/classes/polar_disk.md",
+    "docs/api/models/classes/multipole_disk.md",
     "docs/stability.md",
 ]
 
