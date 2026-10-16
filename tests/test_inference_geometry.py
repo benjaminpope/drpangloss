@@ -155,6 +155,27 @@ def test_laplace_cov_and_fisher_run_in_float64_by_default():
     assert close(cov, cov64) and close(info, info64)
     sigma = laplace_parameter_uncertainty(values, params, truth, data, "flux")
     assert sigma.dtype == ambient and close(sigma, sigma64)
+    # A single diagonal curvature is robust to float32 (to ~1e-7, within
+    # ``close``), so the control is exact: with 64-bit ambient precision,
+    # dtype="float32" must give a measurably different number from the
+    # float64 default, and a bad dtype must be refused.
+    with jax.enable_x64(True):
+        sigma32 = float(
+            laplace_parameter_uncertainty(
+                values, params, truth, data, "flux", dtype="float32"
+            )
+        )
+        sigma_default = float(
+            laplace_parameter_uncertainty(values, params, truth, data, "flux")
+        )
+    assert abs(sigma32 - sigma_default) > 1e-10 * sigma_default
+    assert onp.isclose(sigma32, sigma_default, rtol=1e-4)
+    import pytest
+
+    with pytest.raises(ValueError, match="dtype"):
+        laplace_parameter_uncertainty(
+            values, params, truth, data, "flux", dtype="float16"
+        )
     # dtype="float32" is the ambient calculation, which is measurably off.
     assert not close(
         laplace_cov(values, params, truth, data, dtype="float32"), cov64

@@ -93,7 +93,7 @@ def objective_laplace_covariance(objective, x, ridge=1e-10):
     """Return the Laplace covariance, the inverse Hessian of ``objective``.
 
     For a model and data use [`laplace_cov`][virgil.inference.laplace_cov].
-        ``objective`` is a negative log likelihood of the flat vector ``x``,
+    ``objective`` is a negative log likelihood of the flat vector ``x``,
     which should be at (or near) its minimum. A small ``ridge`` (default
     1e-10) is added to the diagonal before inverting.
     """
