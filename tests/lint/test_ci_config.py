@@ -135,3 +135,101 @@ def test_main_reads_the_environment(monkeypatch, capsys):
     monkeypatch.setenv("NIGHTLY", "false")
     ci.main()
     assert "canary" not in capsys.readouterr().out
+
+
+def _script(name):
+    spec = importlib.util.spec_from_file_location(
+        name, ROOT / ".github" / "scripts" / f"{name}.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _job(name, conclusion="success"):
+    return {"name": name, "conclusion": conclusion}
+
+
+FULL_JOBS = [
+    _job("ubuntu-latest py3.12 shard 1/3"),
+    _job("macos-latest py3.11"),
+    _job("ubuntu-latest py3.13"),
+    _job("ubuntu-latest py3.11 lowest"),
+    _job("build and install the wheel"),
+    _job("join the x64 evidence", "skipped"),
+]
+
+
+def test_release_gate_accepts_a_green_full_run():
+    gate = _script("check_release_gate")
+    assert gate.problems({"conclusion": "success"}, FULL_JOBS) == []
+
+
+def test_release_gate_names_what_fails():
+    gate = _script("check_release_gate")
+    assert gate.problems({"conclusion": "failure"}, FULL_JOBS) == [
+        "concluded failure"
+    ]
+    # A run without the full tier's jobs does not count.
+    partial = [j for j in FULL_JOBS if "macos" not in j["name"]]
+    assert gate.problems({"conclusion": "success"}, partial) == [
+        "missing job macos-latest py3.11"
+    ]
+    red = FULL_JOBS + [_job("ubuntu-latest py3.13 x", "cancelled")]
+    assert gate.problems({"conclusion": "success"}, red) == [
+        "ubuntu-latest py3.13 x failed"
+    ]
+
+
+def test_release_gate_job_names_match_tests_yml():
+    """The substrings the gate requires are what tests.yml names the jobs.
+
+    Read from the ``build`` job's ``name:`` template, so renaming a part of
+    it (or reordering it) fails here, not on release day.
+    """
+    gate = _script("check_release_gate")
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    name = re.search(r"^  build:\n    name: (.+)$", tests, re.M).group(1)
+
+    # Render the template for each job of the full tier, as GitHub would.
+    def render(job):
+        out = name
+        for key, value in {
+            "matrix.os": job["os"],
+            "matrix.python-version": job["python-version"],
+        }.items():
+            out = out.replace("${{ " + key + " }}", value)
+        # The remaining expressions append a suffix when a flag is set.
+        for flag, suffix in (("lowest", " lowest"), ("canary", " canary")):
+            expr = f"matrix.{flag} && '{suffix}'"
+            assert expr in out, f"build.name lost its {flag} suffix"
+            out = re.sub(
+                r"\$\{\{ [^}]*" + re.escape(expr) + r"[^}]*\}\}",
+                suffix if job.get(flag) else "",
+                out,
+            )
+        return re.sub(r"\$\{\{.*?\}\}", "", out)
+
+    names = [render(j) for j in _jobs("workflow_dispatch")]
+    for needle in gate.FULL_JOBS:
+        assert any(needle in n for n in names), (needle, names)
+    assert set(gate.FULL_EVENTS) == {"workflow_dispatch", "schedule"}
+    # A push run lacks the full tier's jobs, so it must not satisfy the gate.
+    assert "push" not in gate.FULL_EVENTS
+
+
+def test_publish_waits_for_the_gate_and_floors_install_orbits():
+    publish = (ROOT / ".github/workflows/publish.yml").read_text()
+    assert "check_release_gate.py" in publish
+    assert re.search(r"\bbuild:\n    needs: gate\b", publish)
+    tests = (ROOT / ".github/workflows/tests.yml").read_text()
+    assert '--resolution lowest-direct -e ".[test,orbits]"' in tests
+
+
+def test_label_job_can_label_pull_requests():
+    """GITHUB_TOKEN labels a PR only with pull-requests: write (a 403 else)."""
+    review = (ROOT / ".github/workflows/claude-review.yml").read_text()
+    job = review[review.index("\n  label:\n") :]
+    perms = job[job.index("permissions:") :].split("steps:")[0]
+    assert "pull-requests: write" in perms
+    assert "issues: write" in perms

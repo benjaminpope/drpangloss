@@ -106,7 +106,8 @@ edits `aliases`, `epochs` or `orbit*` (or their test files) also runs the slow t
 the same jobs with all the slow tests. Pull requests labelled `full-ci` (always the release
 pull request) and manual dispatches add macOS with Python 3.11, Python 3.13 and the
 dependency floors. A daily run does all of that, plus a canary with dependencies newer than
-the lock, and opens an issue labelled `nightly-failure` when it fails. Each pull request also
+the lock, and opens an issue labelled `nightly-failure` when it fails. A failing push to main opens one
+issue labelled `red-main`, which the next green push closes. Each pull request also
 builds the wheel and sdist, checks them with `twine check --strict`, and imports the wheel in
 a clean environment.
 
@@ -185,10 +186,21 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    - environment `pypi`.
 2. On GitHub, under *Settings → Environments*, create the environment `pypi`. Adding yourself as a required reviewer makes every upload wait for your approval.
 
-**Each release:**
-1. Bump `version` in `pyproject.toml`, run `uv lock`, and merge to `main` with CI green.
-2. Check the build locally:
+**Each release** (a short list; every item must hold for the commit you tag):
+1. **Versions.** `version` in `pyproject.toml` and `CITATION.cff` agree, `uv lock` is run, and the CHANGELOG heading is dated (`## 0.4.0 (YYYY-MM-DD)`, not `Unreleased`). Review the stability-tier list (`docs/stability.md` and the CHANGELOG's Stability section): promotion to stable is a decision for the maintainer.
+2. **Main is green on the tagged commit, in the full tier.** Label the release PR `full-ci`, merge it, then dispatch the full tier on the merge commit and wait for it to pass (a push run lacks macOS, py3.13 and the floors, and a newer push may have cancelled it):
+   ```bash
+   gh workflow run tests.yml --ref main
+   ```
+   `publish.yml` refuses to build unless `tests.yml` succeeded in the full tier (macOS, py3.13 and the dependency floors) on exactly the tagged commit, so a release can never ship untested code. A red `main` opens an issue labelled `red-main`; close it first.
+3. **Evidence gate** ([virgil-validation](https://github.com/benjaminpope/virgil-validation), its method page "Release gate"). All four must hold for the release commit:
+   - virgil-validation's tier A passes against that commit (`pytest -m "not slow"` there, with virgil installed from the commit);
+   - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
+   - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes);
+   - the mutation kill rate of its suite (`scripts/mutation.py`) is reported in the release notes.
+4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`), and the unattended Gl 229 orbit run finishes with the expected orbit.
+5. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
    ```
-3. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on `main`, write the notes, and publish it. The workflow checks that the tag matches the version, builds and checks the distributions, and uploads them.
+6. On GitHub, draft a release with a new tag `v<version>` (e.g. `v0.2.0`) on that commit, write the notes (with the mutation kill rate), and publish it. The workflow first checks the gate in item 2, then that the tag matches the version, builds and checks the distributions, and uploads them.
