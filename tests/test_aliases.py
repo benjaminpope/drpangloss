@@ -1306,10 +1306,41 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-def _draw_alias_night_data():
-    """Six single-frame nights of the true orbit, drawn so that the last
-    one's best static-binary peak is a single-night alias (8 mas from the
-    truth: the Gl 229 2024-02-27 situation), found by scanning seeds.
+SEED_ALIAS_NIGHT = 79
+ALIAS_NIGHT = 3  # the night whose best peak is the alias
+SOUND_NIGHTS = [k for k in range(6) if k != ALIAS_NIGHT]
+FLAGGED_ALIAS = [k == ALIAS_NIGHT for k in range(6)]
+
+
+def _numpy_noise(night, rng):
+    """Gaussian noise for ``night`` drawn with numpy: iid V² noise, and
+    closure phases correlated as ``ClosureNoise.sample`` does (equal noise
+    on every baseline, mapped through the triangle incidence), so the
+    fixture has the noise model the likelihood and ``epoch_positions``
+    assume."""
+    d_vis = onp.asarray(night.d_vis)
+    d_phi = onp.asarray(night.d_phi)
+    cp = night.cp_noise
+    e = rng.standard_normal(cp.incidence.shape[::2])
+    phi = onp.zeros(d_phi.size)
+    onp.add.at(
+        phi,
+        cp.groups,
+        onp.where(
+            cp.mask,
+            onp.einsum("gmb,gb->gm", cp.incidence, e) * d_phi[cp.groups],
+            0.0,
+        ),
+    )
+    return d_vis * rng.standard_normal(d_vis.shape), phi
+
+
+def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
+    """Six single-frame nights of the true orbit, drawn so that night
+    ``ALIAS_NIGHT``'s best static-binary peak is a single-night alias (19 mas
+    from the truth: the Gl 229 2024-02-27 situation) and every other night is
+    right and unflagged, found by scanning seeds. Each night has its own
+    numpy generator, so the nights are independent of one another.
 
     The noise is drawn with numpy, not ``jax.random``: a JAX key gives
     different bits in float32 and float64, so a seed scanned under one
@@ -1319,20 +1350,17 @@ def _draw_alias_night_data():
     checks that the two agree."""
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
     scene = OrbitalBinary(orbit, FLUX)
-    rng = onp.random.default_rng(33)
     data = []
     for k, m in enumerate(EPOCHS):
+        rng = onp.random.default_rng((seed, k))
         night = simulate(scene, _night(m, frames=1, rotation=7.0 * k))
+        d_vis, d_phi = _numpy_noise(night, rng)
         data.append(
             night.set(
                 ["vis", "phi"],
                 [
-                    onp.asarray(night.vis)
-                    + onp.asarray(night.d_vis)
-                    * rng.standard_normal(night.vis.shape),
-                    onp.asarray(night.phi)
-                    + onp.asarray(night.d_phi)
-                    * rng.standard_normal(night.phi.shape),
+                    onp.asarray(night.vis) + d_vis,
+                    onp.asarray(night.phi) + d_phi,
                 ],
             )
         )
@@ -1363,19 +1391,28 @@ def _alias_night_positions():
 def test_the_alias_night_fixture_is_the_same_in_float32_and_float64():
     # jaxoplanet turns x64 on, so orbit users run float64 while the default
     # JAX is float32: the night-flag fixtures must mean the same in both.
+    # The noise is numpy float64 in both modes, so this guards the fixture
+    # against going back to jax.random (whose bits differ with precision).
+    # epoch_positions works in float64 internally; what still varies with
+    # the precision is the simulated prediction, so the raw chi2 is compared.
     found = {}
     for x64 in (False, True):
         with jax.enable_x64(x64):
             data, dra, ddec = _draw_alias_night_data()
             found[x64] = _locate_alias_nights(data)
     f32, f64 = found[False], found[True]
-    assert f32.flagged.tolist() == f64.flagged.tolist() == [False] * 5 + [True]
+    assert f32.flagged.tolist() == f64.flagged.tolist() == FLAGGED_ALIAS
     assert f32.flag_codes() == f64.flag_codes()
     # Every night, the alias included, lands on the same grid peak.
     assert onp.allclose(f32.dra, f64.dra, atol=0.1)
     assert onp.allclose(f32.ddec, f64.ddec, atol=0.1)
+    assert onp.allclose(
+        [c["all"] for c in f32.chi2_raw],
+        [c["all"] for c in f64.chi2_raw],
+        rtol=1e-2,
+    )
     miss = onp.hypot(f64.dra - dra, f64.ddec - ddec)
-    assert miss[5] > 3.0 and onp.all(miss[:5] < 0.5)
+    assert miss[ALIAS_NIGHT] > 3.0 and onp.all(miss[SOUND_NIGHTS] < 0.5)
 
 
 @pytest.mark.slow
@@ -1385,11 +1422,11 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     data, dra, ddec = _alias_night_data()
     found = _alias_night_positions()
     miss = onp.hypot(found.dra - dra, found.ddec - ddec)
-    # The last night's best peak is an alias, 3 mas or more from the truth,
+    # The alias night's best peak is 3 mas or more from the truth,
     # and it is flagged; every other night is right and unflagged.
-    assert miss[5] > 3.0 and onp.all(miss[:5] < 0.5)
-    assert found.flagged.tolist() == [False] * 5 + [True]
-    assert "alias-peaks" in found.flag_codes()["n5"]
+    assert miss[ALIAS_NIGHT] > 3.0 and onp.all(miss[SOUND_NIGHTS] < 0.5)
+    assert found.flagged.tolist() == FLAGGED_ALIAS
+    assert "alias-peaks" in found.flag_codes()[f"n{ALIAS_NIGHT}"]
     seeded = []
     real = aliases.position_profile
 
@@ -1413,7 +1450,7 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     assert abs(result.best.best["period"] - TRUTH["period"]) < 0.05
     # The flagged night seeded nothing ...
     assert len(seeded) == 1 and seeded[0].dra.shape == (5,)
-    assert [u["name"] for u in result.unseeded] == ["n5"]
+    assert [u["name"] for u in result.unseeded] == [f"n{ALIAS_NIGHT}"]
     assert "alias-peaks" in [f["code"] for f in result.unseeded[0]["flags"]]
     # ... but its data are in the likelihood: the best orbit predicts the
     # true position on that night (within 0.5 mas), not the alias peak
@@ -1422,9 +1459,10 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     best = result.best.best
     orbit = KeplerOrbit(**{k: best[k] for k in TRUTH}, t_ref=result.t_ref)
     pred_dra, pred_ddec, _ = orbit.relative(EPOCHS)
-    assert onp.hypot(pred_dra[5] - dra[5], pred_ddec[5] - ddec[5]) < 0.5
+    a = ALIAS_NIGHT
+    assert onp.hypot(pred_dra[a] - dra[a], pred_ddec[a] - ddec[a]) < 0.5
     assert (
-        onp.hypot(pred_dra[5] - found.dra[5], pred_ddec[5] - found.ddec[5])
+        onp.hypot(pred_dra[a] - found.dra[a], pred_ddec[a] - found.ddec[a])
         > 3.0
     )
     # Negative control: seeding with the flagged night's alias peak

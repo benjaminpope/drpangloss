@@ -96,8 +96,10 @@ Note that passing locally does not guarantee cross-platform compatibility. GitHu
 (`.github/workflows/tests.yml`) runs the suite in tiers. Every pull request runs the tests
 not marked `slow` on Linux with Python 3.12, in float32 (split across three jobs) and in
 float64, with the versions in `uv.lock`; a pull request that edits `pyproject.toml` also
-runs once with every dependency at the oldest version it allows. Pushes to main, and pull
-requests labelled `full-ci`, add the slow tests, macOS with Python 3.11 and Python 3.13.
+runs once with every dependency at the oldest version it allows. A pull request that edits
+`aliases`, `epochs` or `orbit*` (or their test files) also runs the slow tests of
+`test_aliases.py`, `test_epochs.py` and `test_orbit*.py` in those float32 and float64 jobs. Pushes to main, and pull requests labelled `full-ci`, add
+the slow tests everywhere, macOS with Python 3.11 and Python 3.13.
 A daily run does all of that, plus a canary with dependencies newer than the lock, and
 opens an issue labelled `nightly-failure` when it fails. Each pull request also builds the
 wheel and sdist, checks them with `twine check --strict`, and imports the wheel in a clean

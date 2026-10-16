@@ -28,8 +28,8 @@ permissions:
 jobs:
   # | tier    | trigger                         | jobs                                       |
   # | PR gate | pull request                    | py3.12 f32 and x64, 3 shards each; no slow |
-  # |         |   ... changing aliases, epochs, | + slow tests in those shards               |
-  # |         |       orbit_search or orbits    |                                            |
+  # |         |   ... changing aliases, epochs, | + the orbit test files' slow tests         |
+  # |         |       or orbit* (or their tests)|                                            |
   # Job names do not change between tiers, so the same required checks
   # report on every pull request, labelled full-ci or not.
   # |         |   ... changing pyproject.toml   | + py3.11 at the dependency floors          |
@@ -44,7 +44,8 @@ jobs:
       matrix: ${{ steps.choose.outputs.matrix }}
     steps:
       # The dependency floors only move when pyproject.toml does. The orbit
-      # modules' slow tests run on a pull request only when it touches them:
+      # modules' slow tests run on a pull request only when it touches them
+      # or their test files:
       # the gate skipped them, so a float64-only failure reached main.
       - id: changed
         if: github.event_name == 'pull_request'
@@ -55,7 +56,7 @@ jobs:
           if grep -qx pyproject.toml <<< "$files"; then
             echo "pyproject=true" >> "$GITHUB_OUTPUT"
           fi
-          if grep -qE '^src/virgil/(aliases|epochs|orbit_search|orbits)\.py$' <<< "$files"; then
+          if grep -qE '^(src/virgil/(aliases|epochs|orbit[a-z_]*)|tests/test_(aliases|epochs|orbit[a-z_]*))\.py$' <<< "$files"; then
             echo "orbit_slow=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -73,9 +74,12 @@ jobs:
           event = os.environ["EVENT"]
           nightly = event == "schedule"
           full = event != "pull_request" or os.environ["FULL_CI"] == "true"
-          # The f32 and x64 gate shards also run the slow tests when the
-          # orbit modules changed; the other jobs stay as in `full`.
-          gate_slow = full or os.environ["ORBIT_SLOW"] == "true"
+          # When the orbit modules changed, the f32 and x64 gate shards also
+          # run the slow tests of the orbit test files (tests/conftest.py).
+          orbit_slow = (
+              "test_aliases.py test_epochs.py test_orbit*.py"
+              if os.environ["ORBIT_SLOW"] == "true" and not full else ""
+          )
           linux = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
 
           # The per-test budget (tests/conftest.py) is enforced on the
@@ -83,15 +87,16 @@ jobs:
           include = [
               # Whole files packed by tests/test_durations.json, so the
               # sampler-heavy modules no longer queue behind each other.
-              {**linux, "shard": f"{k}/3", "slow": gate_slow, "budget": True}
+              {**linux, "shard": f"{k}/3", "slow": full, "orbit_slow": orbit_slow,
+               "budget": True}
               for k in (1, 2, 3)
           ]
           # x64 exercises the float64 paths, and finds tests silently
           # written for float32. The x64-evidence job joins its shards'
           # reports for virgil-validation.
           include += [
-              {**linux, "x64": "1", "shard": f"{k}/3", "slow": gate_slow,
-               "budget": True}
+              {**linux, "x64": "1", "shard": f"{k}/3", "slow": full,
+               "orbit_slow": orbit_slow, "budget": True}
               for k in (1, 2, 3)
           ]
           if full:
@@ -131,7 +136,7 @@ jobs:
     needs: matrix
     runs-on: ${{ matrix.os }}
     # Fail a hung job instead of holding a runner for GitHub's 6 hours.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || github.event_name == 'pull_request' && !matrix.slow && 30 || 45 }}
+    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || github.event_name == 'pull_request' && !matrix.slow && !matrix.orbit_slow && 30 || 45 }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
@@ -226,6 +231,7 @@ jobs:
           # 2.6x between runs: the first test on a worker to reach a shared
           # jit pays its tracing, and xdist's order changes. Fast tests peak
           # near 25 s, so 30 s leaves room and still catches heavy new ones.
+          VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
           VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '30' || '' }}
         # The JUnit report carries the validates markers (tests/conftest.py)
         # as evidence for virgil-validation; xunit1 keeps test properties.
@@ -238,7 +244,7 @@ jobs:
           echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
             --ignore=tests/lint \
-            ${{ !matrix.slow && '-m "not slow"' || '' }} \
+            ${{ !matrix.slow && !matrix.orbit_slow && '-m "not slow"' || '' }} \
             ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
