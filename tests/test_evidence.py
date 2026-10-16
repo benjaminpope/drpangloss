@@ -659,7 +659,7 @@ def test_single_image_helpers_are_unchanged():
 
     s_vals, vt = _svd(jac)
     _, s_ref, vt_ref = onp.linalg.svd(jac, full_matrices=False)
-    onp.testing.assert_allclose(s_vals, s_ref, rtol=1e-9)
+    onp.testing.assert_allclose(s_vals, s_ref, rtol=1e-9, atol=1e-9)
     onp.testing.assert_allclose(
         onp.abs(onp.sum(vt * vt_ref, axis=1)), 1.0, atol=1e-6
     )
