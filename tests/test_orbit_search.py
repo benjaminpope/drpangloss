@@ -636,5 +636,5 @@ def test_the_old_data_first_order_still_works_with_a_warning():
     epochs = _epochs()
     new = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
     with pytest.warns(FutureWarning, match="model before the data"):
-        old = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
+        old = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
     assert old.score[0] == new.score[0]
