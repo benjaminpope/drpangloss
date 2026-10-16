@@ -104,8 +104,8 @@ OrbitPipeline(epochs, output="run", **settings)
 
 **Settings and defaults.** Each default exists because a problem was solved (problem number from the catalogue):
 - `period_range=None`: computed from the data by `period_window(times, field, night_length)`. The lower end is where a static snapshot within a night stays valid; the upper end is 4× the span. Problem 5.
-- `ecc_max=0.95` and `sqrt_e=True`: eccentric orbits.
-- `flux_range=(1e-3, 2)` and `flip_flux=True`: problem 9.
+- `ecc_max=0.9`: eccentric orbits. Like every default below, it equals the engine's (`fit_orbit_aliases`), so the pipeline and the engine never carry different priors; a change to one is a change to both, with a CHANGELOG line. A √e coordinate is only an option if a test system needs it, and then as a named engine argument.
+- `flux_range=(0.01, 1.0)` and `flip_flux=True`: problem 9. The flux ratio stays at most 1: the flip keeps the brighter star the primary, so a range above 1 would count the label-swapped mode twice and bias the mode weights and the `labels_free` and `alias_ambiguity` odds.
 - `sign_free=True` (the label swap is always explored): problem 8.
 - `primary_diam="auto"`: fitted when the data resolve it, lower bound 0. Problem 10.
 - `vis_amp=True`: problem 13.
@@ -157,7 +157,7 @@ Status: 1a to 1d merged (see the top of this note); 1e and 1f next; 1g only if a
 | 1c | Engine defaults: `sign_free`, `flip_flux`, `vis_amp`, `primary_diam="auto"`; `labels-free` flag; `period_window` when `p_range=None` | twin, flip, UD and short-arc cases pass with no per-system arguments |
 | 1d | Tempering: per-block dof plus a pooled effective-channel f at runtime; remove `dof=1.0` from `_loglike` | white noise gives f within 5% of 1; p < 1 at χ²/N ≈ 12 |
 | 1e | **`OrbitPipeline`**:<ul><li>`pipeline/orbit.py`</li><li>registration in `__init__._LAZY`, `__all__`, `cli._PIPELINES` and `_quicklook._SECTIONS`</li><li>the base-class change for multi-night inputs</li><li>`no-orbit` and modes, per-mode NUTS with `gauss_newton_mass`</li></ul> | `tests/test_pipeline_orbit.py`, modelled on `test_pipeline_binary.py`: API snapshot (signatures, `STAGES`, `DEFAULTS`), summary keys and check order, settings validation, folder layout and round trip, resume/fresh, CLI, quicklook; golden synthetic cases: gap alias, twin, UD, null → `no-orbit`, e = 0.8 |
-| 1f | Docs:<ul><li>rewrite `docs/orbit_fitting.md` to lead with `OrbitPipeline.from_oifits(paths)` and show the engine underneath, in the same style as `binary_search.md`'s "Everything above can be run in one call" section</li><li>add the orbit row and its stage table to `docs/pipeline.md`</li><li>add `docs/api/pipeline.md` entries</li><li>mark `start_from_positions` superseded</li><li>move the v2 design to virgil `design/orbit_solver.md` as the single solver design, superseding `automatic_orbits.md` and `orbit_aliases.md`</li><li>correct the stale header of `gauss_newton_plan.md`</li></ul> | docs build with `--strict`; doctest-skip examples run in the notebook |
+| 1f | Docs:<ul><li>rewrite `docs/orbit_fitting.md` to lead with `OrbitPipeline.from_oifits(paths)` and show the engine underneath, in the same style as `binary_search.md`'s "Everything above can be run in one call" section</li><li>add the orbit row and its stage table to `docs/pipeline.md`</li><li>add `docs/api/pipeline.md` entries</li><li>mark `start_from_positions` superseded</li><li>if the v2 solver internals are worth keeping, put them in virgil `design/orbit_solver.md` under this plan (this note stays the single orbit plan; `automatic_orbits.md` and `orbit_aliases.md` are already marked superseded by it)</li></ul> | docs build with `--strict`; doctest-skip examples run in the notebook |
 | 1g | *Only if Phase 3 fails a golden case:* the v2 screen (P4) and hierarchical gains (P1), inside the engine | the failing case passes |
 
 Every PR must have short NumPy docstrings (about 40 lines at most) on every function it touches, and follow Principle 5: a named test, one table row, a one-line pointer comment. `OrbitPipeline` stays thin (about 500 lines): it subclasses `_core`, reuses `_common` and shares one NUTS wrapper.
@@ -216,7 +216,7 @@ A failure goes to 1g or a virgil fix, never to a per-system knob.
 | Poor fit / no convergence | `chi2`, `poor-fit`, `not-converged`, `laplace-is-differ`, `r_hat` |
 | No orbit / noise | `no_orbit`, against free positions and a single star; thresholds from null injections |
 | Short arc | window reaches 4× span → `period_bound` read as "P unconstrained" |
-| High eccentricity | `ecc_max=0.95`, √e coordinates; dense-mass fallback on `divergences` |
+| High eccentricity | `ecc_max=0.9`; dense-mass fallback on `divergences` |
 | Triple / extra light | f ≫ 1 on specific nights in `night_flags`; optional third-light term |
 | Wrong reference (vv) | `REFERENCE-DISAGREES`; `omega_of` schema; reference positions checked against the reference's own orbit |
 | Stale result (vv) | renderer badge from commit, rule version and config |
