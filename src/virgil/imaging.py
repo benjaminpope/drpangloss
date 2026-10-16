@@ -1702,6 +1702,12 @@ def clean(
         raise ValueError("The base scene must not change with time.")
     if spectrum is not None and base is None:
         raise ValueError("A spectrum for the components needs a base scene.")
+    if spectrum is not None and not hasattr(spectrum, "ratio"):
+        raise ValueError(
+            "The components' spectrum needs a single amplitude (`ratio`): "
+            "PowerLaw, BlackBody, or Scaled(template, ratio) around a "
+            "Nodes or Sum shape."
+        )
     base_priors = dict(base_priors or {})
     if base_priors and (base is None or not refit_every):
         raise ValueError(

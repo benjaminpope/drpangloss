@@ -6,6 +6,8 @@ import pytest
 from numpyro.infer import MCMC, NUTS, init_to_value
 from numpyro.infer.util import log_density
 
+from virgil._grid import check_flux_axes
+from virgil._utils import is_flux_param, resolve_flux_param
 from virgil.grid_fit import (
     best_grid_point,
     laplace_flux_uncertainty_grid,
@@ -21,6 +23,7 @@ from virgil.likelihood import (
     numpyro_model,
 )
 from virgil.limits import absil_limits, nsigma
+from virgil.spectra import Nodes
 from virgil.models import (
     BinaryModelAngular,
     BinaryModelCartesian,
@@ -209,6 +212,31 @@ def test_flux_prior_with_negative_support_is_rejected():
     numpyro_model(
         _composed_binary(), {"comp.flux": dist.LogUniform(1e-5, 1e-1)}, oidata
     )
+
+
+def test_node_flux_values_are_a_flux_path_with_a_positive_prior():
+    nodes = [1.5e-6, 2.5e-6]
+    scene = System(
+        star=PointSource(),
+        comp=PointSource(
+            dra=120.0, ddec=-80.0, flux=Nodes([4e-3, 3e-3], nodes)
+        ),
+    )
+    assert is_flux_param("comp.flux.values")
+    assert not is_flux_param("comp.flux.wavel")
+    with pytest.raises(ValueError, match="allows negative values"):
+        numpyro_model(
+            scene, {"comp.flux.values": dist.Normal(0.0, 1e-3)}, oidata
+        )
+    numpyro_model(
+        scene, {"comp.flux.values": dist.LogUniform(1e-5, 1e-1)}, oidata
+    )
+    assert (
+        resolve_flux_param(["comp.dra", "comp.flux.values"])
+        == "comp.flux.values"
+    )
+    with pytest.raises(ValueError, match="negative"):
+        check_flux_axes({"comp.flux.values": onp.array([-1e-3, 1e-3])})
 
 
 def test_binary_inside_a_system_renders():

@@ -374,6 +374,20 @@ def test_clean_with_a_spectrum_is_sparco():
         clean(data, NPIX, scale, spectrum=shape)
 
 
+def test_clean_spectrum_needs_a_single_amplitude():
+    from virgil.spectra import Nodes
+
+    base = System(star=PointSource(), comp=PointSource(dra=1.5, ddec=-1.0))
+    with pytest.raises(ValueError, match="single amplitude"):
+        clean(
+            _companion_data(),
+            NPIX,
+            0.6,
+            base=base,
+            spectrum=Nodes([1.0, 2.0], [1e-6, 2e-6]),
+        )
+
+
 def test_clean_ends_with_a_major_cycle():
     # Major cycles too far apart to run in the loop: CLEAN still refits the
     # fluxes once before it returns, so they are closer to the companion's.

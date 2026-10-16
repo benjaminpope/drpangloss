@@ -164,15 +164,19 @@ def _per_dataset(model, n_data):
 #
 # A parameter is a flux when the last part of its name (or zodiax path) is
 # ``flux`` (``flux``, ``comp.flux``, ``comp.disk.flux``), or when it is a flux
-# spectrum's reference ratio (``comp.flux.ratio``). Fluxes are relative
+# spectrum's reference ratio (``comp.flux.ratio``) or a node spectrum's free
+# values (``comp.flux.values``). Fluxes are relative
 # to a reference component (usually the primary star at flux 1), so for a
 # companion ``flux`` is its companion/primary flux ratio.
 
 
 def is_flux_param(name):
-    """Whether ``name`` ends in ``flux`` or is a flux spectrum's ``flux.ratio``."""
+    """Whether ``name`` ends in ``flux``, ``flux.ratio`` or ``flux.values``."""
     parts = str(name).split(".")
-    return parts[-1] == "flux" or parts[-2:] == ["flux", "ratio"]
+    return parts[-1] == "flux" or parts[-2:] in (
+        ["flux", "ratio"],
+        ["flux", "values"],
+    )
 
 
 def resolve_flux_param(keys, flux_param=None):
