@@ -1,7 +1,9 @@
 # Gauss–Newton and Levenberg–Marquardt across virgil: implementation plan
 
-Status: **plan, adversarially reviewed, decisions taken, not built**
-(2026-10-14). Ben
+Status (2026-10-16): **GN1 (the kernel, `_gauss_newton.py`) and GN4
+(aliases and epochs on it) are built; GN2 (curvature rows, `gauss_newton_mass(noise=)`)
+is built; GN3 (`fit` on the kernel), GN5 (pipelines) and GN6 (residual MEM) are
+not.** Plan, adversarially reviewed, decisions taken (2026-10-14). Ben
 accepted the six recommendations of the Gauss–Newton audit (coordinating
 session, 2026-10-14; experiments `e1`–`e9`). This note turns them into
 PR-sized pieces that Sonnet sessions can build without further design

@@ -1,6 +1,8 @@
 # Automatic binary orbits from multi-epoch interferometry
 
-Status: **design**, 2026-10-07. Nothing here is implemented. It extends
+> **Superseded by [orbit_pipeline.md](orbit_pipeline.md) (2026-10-16): the live plan is `OrbitPipeline` on the `aliases` engine.** Still valid: the failure-mode analysis, the peak catalogue and `gap_marginal` (built), `score_orbits` (D1, built, provisional) and the benchmark harness; the D2 to G route (generators, `orbit_modes`, `fit_modes`, `sample_modes`, `automatic_orbit`) is built only if a test system fails.
+
+Status: **design**, 2026-10-07. Mostly not implemented (see the header above for what is built). It extends
 `design/visibility_orbits.md` ("V" below; requirements V13–V17 and the
 stage-2 start tools), `design/thiele_innes_marginalisation.md` ("TI";
 decisions D1–D6) and `design/detection_roc.md` (null simulators and
