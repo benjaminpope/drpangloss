@@ -458,9 +458,85 @@ print()
 print(gp_res.describe())
 ```
 
+```text
+DiskPipeline run in /tmp/tmp81gjntus/rings_run: complete
+  data.n_vis = 378
+  data.n_phi = 252
+  data.n_independent = 567
+  data.wavel_min_m = 2.4e-06
+  data.wavel_max_m = 3.6e-06
+  data.baseline_min_m = 34.1699
+  data.baseline_max_m = 130.068
+  data.resolution_mas = 1.90299
+  data.fov_mas = 21.7312
+  model.resolution_mas = 1.90299
+  model.r_in_mas = 1.90299
+  model.r_out_mas = 30
+  model.n_r_rings = 32
+  model.n_r_gp = 88
+  model.n_channels = 9
+  model.wavel0_m = 3e-06
+  geometry.inc_deg = 59.8073
+  geometry.pa_deg = 107.725
+  geometry.r_mas = 19.0666
+  geometry.sigma_mas = 4.26434
+  geometry.flux = 0.880331
+  geometry.chi2_reduced = 55.6727
+  geometry.gp_sigma = 0.788052
+  chi2.n_independent = 567
+  disk.n_rings = 4
+  disk.inc_deg = 50.2439
+  disk.pa_deg = 29.7421
+  [pass] chi2_reduced: χ²/N = 0.988 for the Gaussian rings fit on quoted errors: consistent with the quoted errors.
+  [warn] ring_count: With 4 rings: ring 1, 2, 3 is narrower than the half-fringe, so its width is not resolved.
+  [pass] outer_edge: 0.17 per cent of the light is within one half-fringe of the outer edge.
+  [pass] inclination: Inclination 50.2° with a single minimum of the geometry grid.
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.99).
+
+DiskPipeline run in /tmp/tmpek24rt8_/gp_run: complete
+  data.n_vis = 378
+  data.n_phi = 252
+  data.n_independent = 567
+  data.wavel_min_m = 2.4e-06
+  data.wavel_max_m = 3.6e-06
+  data.baseline_min_m = 34.1699
+  data.baseline_max_m = 130.068
+  data.resolution_mas = 1.90299
+  data.fov_mas = 21.7312
+  model.resolution_mas = 1.90299
+  model.r_in_mas = 1.90299
+  model.r_out_mas = 30
+  model.n_r_rings = 32
+  model.n_r_gp = 88
+  model.n_channels = 9
+  model.wavel0_m = 3e-06
+  geometry.inc_deg = 59.8073
+  geometry.pa_deg = 107.725
+  geometry.r_mas = 19.0666
+  geometry.sigma_mas = 4.26434
+  geometry.flux = 0.880331
+  geometry.chi2_reduced = 55.6727
+  geometry.gp_sigma = 0.788052
+  chi2.n_independent = 567
+  disk.ell_mas = 1.31843
+  disk.flux = 0.890231
+  disk.inc_deg = 49.7939
+  disk.pa_deg = 30.6799
+  [pass] chi2_reduced: χ²/N = 1.16 for the Gaussian-process disk fit on quoted errors: consistent with the quoted errors.
+  [pass] length_scale: The evidence prefers one length scale by 24 nats (best ℓ = 1.32 mas, a squared-exponential length of 0.761 mas, 0.4× the half-fringe).
+  [pass] inner_edge: 2.1 per cent of the light is within one half-fringe of the inner edge (correlation with the flux 0.44).
+  [warn] outer_edge: 1.8 per cent of the model's light lies within one half-fringe (1.9 mas) of its outer edge: light beyond it cannot be placed. Refit with a larger r_out_mas.
+  [pass] inclination: Inclination 49.8° with a single minimum of the geometry grid.
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.6).
+  [warn] stage_warnings: 1 warning(s) were raised inside the stages: fit(method='lm') did not converge in 25 steps, the step limit; raise max_steps.. See the 'warnings' list of summary.json.
+  1 warning(s) recorded in the profile stage(s) (see the checks, or Result.summary['warnings'])
+```
+
 ```python
 from virgil.pipeline.disk import plot_summary
 
 plot_summary(gp_res.model(), data, r_out_mas=30.0, r_in_mas=gp_res.summary["model"]["r_in_mas"])
 plt.show()
 ```
+
+![multipole_disk_rings output 17.1](generated/multipole_disk_rings_cell017_out01.png)
