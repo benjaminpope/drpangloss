@@ -12,6 +12,7 @@ references. Kepler's equation is solved by jaxoplanet, an optional
 dependency (``pip install "virgil-astro[orbits]"``).
 """
 
+import functools
 import math
 import warnings
 
@@ -27,6 +28,7 @@ from numpyro.distributions import constraints
 from ._deprecate import renamed
 from ._linear import LinearMarginal
 from ._geometry import position_angle, separation_pa
+from ._grid import MIN_BATCH_SIZE, batch_size_or_default, batch_visibilities
 from ._utils import concrete
 from .angles import AngleVector
 from .priors import IsotropicInclination
@@ -842,8 +844,31 @@ def _phase_drift(periods, baseline):
     return float(baseline * onp.max(onp.diff(frequencies)))
 
 
+@functools.partial(jax.jit, static_argnums=0)
+def _fit_batch(fitter, dt, dra, ddec, whitener, period, dt_peri, ecc):
+    """``fitter`` at a batch of grid points (positions traced)."""
+    return jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))(
+        dt, dra, ddec, whitener, period, dt_peri, ecc
+    )
+
+
+def _position_batch(batch_size, positions):
+    """Grid points per ``lax.map`` batch: about ``batch_visibilities()``
+    position-epochs in all, and at least ``MIN_BATCH_SIZE`` points."""
+    if batch_size is not None:
+        return batch_size_or_default(batch_size, None)
+    n = max(int(onp.size(positions.dt)), 1)
+    return max(MIN_BATCH_SIZE, batch_visibilities() // n)
+
+
 def starting_orbits(
-    positions, periods, eccs=None, n_phase=36, n_best=5, sign_free=False
+    positions,
+    periods,
+    eccs=None,
+    n_phase=36,
+    n_best=5,
+    sign_free=False,
+    batch_size=None,
 ):
     """Good starting orbits for a set of positions, from a grid search.
 
@@ -872,6 +897,9 @@ def starting_orbits(
         nearly equal fluxes (the signs are chosen per grid point; see the
         page above). The orbit returned has the global sign of its best fit,
         and its reflection (``omega`` + 180°) fits equally well.
+    batch_size : int, optional
+        Grid points solved together (default: from the number of positions);
+        bounds the memory, not the result.
 
     Returns
     -------
@@ -881,23 +909,30 @@ def starting_orbits(
     """
     eccs = onp.arange(0.0, 0.91, 0.05) if eccs is None else onp.asarray(eccs)
     phases = onp.arange(n_phase) / n_phase
-    grid = onp.array(
-        [
-            (p, f * p, e)
-            for p in onp.asarray(periods)
-            for e in eccs
-            for f in phases
-        ]
-    )
+    periods = onp.asarray(periods)
+    p, e, f = onp.meshgrid(periods, eccs, phases, indexing="ij")
+    grid = onp.stack([p.ravel(), (f * p).ravel(), e.ravel()], axis=1)
     fitter = _thiele_innes_fit_sign_free if sign_free else _thiele_innes_fit
-    fit_all = jax.vmap(fitter, in_axes=(None,) * 4 + (0, 0, 0))
-    params, chi2 = fit_all(
-        positions.dt,
-        positions.dra,
-        positions.ddec,
-        positions.whitener,
-        *(np.asarray(grid[:, k]) for k in range(3)),
+    size = _position_batch(batch_size, positions)
+    # Fixed-size batches, the last padded, so that every grid shares one
+    # compile (per number of positions) and memory is bounded by ``size``.
+    n_grid = len(grid)
+    padded = onp.concatenate(
+        [grid, onp.repeat(grid[-1:], -n_grid % size, axis=0)]
     )
+    out = [
+        _fit_batch(
+            fitter,
+            positions.dt,
+            positions.dra,
+            positions.ddec,
+            positions.whitener,
+            *(np.asarray(padded[i : i + size, k]) for k in range(3)),
+        )
+        for i in range(0, len(padded), size)
+    ]
+    params = onp.concatenate([onp.asarray(x[0]) for x in out])[:n_grid]
+    chi2 = onp.concatenate([onp.asarray(x[1]) for x in out])[:n_grid]
     best = onp.argsort(onp.asarray(chi2))[:n_best]
     return [
         (
