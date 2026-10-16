@@ -267,6 +267,23 @@ Provisional in 0.4:
   so scanning a prior width does not recompile. Read them with `tuple(...)`
   where you compared them with a tuple.
 
+### Removed
+
+- **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
+  0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`:
+  the flux at every wavelength is the same (identical between the end nodes,
+  within an ulp beyond them). Two things change. The free values are
+  `flux.values`, not `flux.ratio` (fit and prior paths such as
+  `"comp.flux.ratio"` become `"comp.flux.values"`), and the reference flux
+  `spectrum()` (used by `render` and the zero-baseline normalization) is the
+  value at `wavel0`, the first node, not the mean over the nodes; pass
+  `wavel0=` to set it. Negative values now pass the constructor and are
+  checked on the total flux, as for every other spectrum. Priors on
+  `comp.flux.values` are therefore not checked for non-negative support (as
+  `comp.flux.ratio` was): keep a non-negative prior (e.g. a log-uniform
+  scale) if every channel must stay positive, and pass `flux_param=` where a
+  grid or plot auto-detected the old key.
+
 ### Migration from 0.3.0
 
 - **`GaussianArc` has a different shape.** Fits of long arcs made with 0.3.0
@@ -332,9 +349,8 @@ Provisional in 0.4:
 - **`DetectionMC.load` checks the file format.** `meta["format"]` (1) was
   written but never read; `load` now raises a `ValueError` for any other
   version and reads a file without it as version 1.
-- **Removals wait for 0.5.** The 0.2.0 and 0.3.0 entries said `Tabulated`
-  would go in 0.4.0. It stays through 0.4, with a `FutureWarning` that now
-  names 0.5, with every other deprecation.
+- **`Tabulated` is removed in 0.4.0**, as the 0.3.0 entry promised (see
+  Removed above); the other deprecations wait for 0.5.
 - To find the remaining 0.3-order calls in your own code before 0.5, add
   `"error:.*stops working in virgil 0.5:FutureWarning"` to your pytest
   `filterwarnings` (as virgil's own test suite now does), or run
