@@ -86,7 +86,8 @@ anything before 1.0 may change between minor versions.
   `ThinRing(r0)` is `ThinRing(radius)`; `GaussianRing(r0, sigma, weight)`
   is `GaussianRing(radius, sigma)`; `RadialPowerLaw(edge=)` is
   `edge_sigma=`; `ExpTail(r0, scale, weight, cutoff)` is `ExpTail(r_in,
-  scale_length, cutoff)`; `Gap(base, r0, width, depth, weight)` is
+  scale_length, *, cutoff)` (`cutoff` is keyword-only, so an old
+  `ExpTail(r0, L, w)` raises instead of cutting the tail); `Gap(base, r0, width, depth, weight)` is
   `Gap(base, radius, sigma, depth)`; `RadialLinear`, `RadialPower`,
   `PowerLawHeight` and `MultipoleKernel` take the reference radius `r_ref`
   (was `r0`), and `PowerLawHeight` its height `h_ref` (was `h0`). The
@@ -181,6 +182,10 @@ anything before 1.0 may change between minor versions.
 
 ### Migration from 0.3.0
 
+- **`GaussianArc` has a different shape.** Fits of long arcs made with 0.3.0
+  change when refitted: the weight is now a von Mises arc, not a Gaussian
+  in arc length (about 1e-2 in V at a fifth of the semicircle, more for
+  longer arcs; no warning is given). See Changed.
 - **Model before data in the grid, limit and detection tools.**
   `likelihood_grid`, `optimized_likelihood_grid`, `optimized_flux_grid`,
   `linear_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`,
@@ -537,8 +542,9 @@ anything before 1.0 may change between minor versions.
   allow (`length / radius` below about 0.05) are integrated along the arc
   with the von Mises weight, at `nodes` points, as before (`quadrature=True`),
   so their cost does not grow; `is_physical` is false when the series drops
-  more than 1e-4 of its power. The change is new since 0.3.0 and builds
-  with no warning.
+  more than 1e-4 of its power. The shape differs from the one released
+  in 0.3.0, and building a `GaussianArc` gives no warning (see Migration
+  from 0.3.0).
 - **`ModulatedGaussianRim` runs on the `MultipoleDisk` engine** (a `ThinRing`,
   linear harmonics converted from `az_amps`/`az_pas`, and the blur), with the
   same name and parameters; it agrees with the old code to rounding.

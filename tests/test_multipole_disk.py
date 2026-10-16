@@ -175,7 +175,7 @@ def _profiles():
         "power_soft": RadialPowerLaw(1.0, 8.0, 0.5, edge_sigma=0.4),
         "exp": ExpTail(1.0, 2.0),
         "gap": Gap(GaussianRing(6.0, 2.0), radius=6.0, sigma=0.6, depth=0.7),
-        "sum": RadialSum(a=GaussianRing(3.0, 0.5), b=ExpTail(4.0, 1.0, 0.3)),
+        "sum": RadialSum(a=GaussianRing(3.0, 0.5), b=(ExpTail(4.0, 1.0), 0.3)),
     }
 
 

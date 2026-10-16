@@ -578,6 +578,33 @@ def test_a_frozen_disk_equals_the_unfrozen_model_exactly():
         assert onp.max(onp.abs(onp.asarray(diff))) < 1e-12
 
 
+def test_a_matching_cache_skips_the_unfrozen_branch_under_vmap(monkeypatch):
+    # With the geometry and nodes concrete, the cache is checked at trace
+    # time: a lax.cond would become a select under vmap and run both
+    # branches (the Bessel functions the cache exists to avoid).
+    import virgil.models as models
+
+    calls = []
+    original = models.multipole_disk_cvis
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    disk, frozen = _frozen_pair()
+    zs = onp.random.default_rng(12).standard_normal((3, 24))
+    args = (DATA.u, DATA.v, DATA.wavel)
+    expected = jax.vmap(lambda z: disk.set("profile.z", z).model(*args))(zs)
+    monkeypatch.setattr(models, "multipole_disk_cvis", counting)
+    got = jax.vmap(lambda z: frozen.set("profile.z", z).model(*args))(zs)
+    assert calls == []
+    assert onp.max(onp.abs(onp.asarray(got - expected))) < 1e-4
+    # A cache for other geometry falls back to the full computation.
+    moved = frozen.set("inc", 20.0)
+    jax.vmap(lambda z: moved.set("profile.z", z).model(*args))(zs)
+    assert calls != []
+
+
 def test_a_frozen_disk_with_no_harmonics_is_a_matrix_vector_product():
     disk = MultipoleDisk(
         RadialGP(0.5, 9.0, z=np.linspace(-1.0, 1.0, 24)), inc=30.0, n_r=24

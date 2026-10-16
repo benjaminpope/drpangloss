@@ -2969,7 +2969,7 @@ class ExpTail(_RadialProfile):
     scale_length: jax.Array
     cutoff: float | None = eqx.field(static=True)
 
-    def __init__(self, r_in, scale_length, cutoff=None):
+    def __init__(self, r_in, scale_length, *, cutoff=None):
         if cutoff is not None and not float(cutoff) > 0.0:
             raise ValueError(f"cutoff must be positive or None: {cutoff!r}")
         self.r_in = np.asarray(r_in, dtype=float)
@@ -5208,6 +5208,16 @@ class MultipoleDisk(Component):
             or np.shape(uu) != cache.uu.shape
         ):
             return full()
+        # Decide at trace time when every checked quantity is concrete (the
+        # usual refit: geometry and nodes fixed, only profile parameters
+        # traced). A lax.cond under vmap becomes a select that runs both
+        # branches, and the Bessel matrices are what freezing avoids.
+        with jax.ensure_compile_time_eval():
+            r_c, _ = self.profile.quadrature()
+            height_c = None if self.height is None else self.height(r_c)
+            ok = cache.matches(uu, vv, r_c, self.inc, self.pa, height_c)
+        if not isinstance(ok, jax.core.Tracer):
+            return cache.cvis(w, c, s, self.blur_fwhm) if ok else full()
         return jax.lax.cond(
             cache.matches(uu, vv, r, self.inc, self.pa, height),
             lambda: cache.cvis(w, c, s, self.blur_fwhm),

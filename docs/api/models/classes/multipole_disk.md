@@ -19,7 +19,7 @@ hundreds of a midpoint stack.
 | `ThinRing(radius)` | $\delta(r - r_0)$ | exact: $J_0(2\pi q r_0)$ |
 | `GaussianRing(radius, sigma)` | Gaussian in $r$ | Gauss–Legendre over $r_0 \pm 6\sigma$ |
 | `RadialPowerLaw(r_in, r_out, index, edge_sigma)` | $r^{\rm index}$ between the radii, sharp or soft edges | Gauss–Legendre |
-| `ExpTail(r_in, scale_length, cutoff)` | $\exp[-(r - r_{\rm in})/L]$ for $r \ge r_{\rm in}$ | Gauss–Laguerre, to infinity |
+| `ExpTail(r_in, scale_length, *, cutoff)` | $\exp[-(r - r_{\rm in})/L]$ for $r \ge r_{\rm in}$ | Gauss–Laguerre, to infinity |
 | `Gap(base, radius, sigma, depth)` | a Gaussian gap cut in `base` | that of `base` |
 | `RadialSum(a=..., b=(profile, weight))` | named profiles, each normalized and mixed by its weight | each part's |
 | `RadialGP(r_in, r_out, sigma, ell, nu)` | $\exp g(r)$, $g$ a Gaussian process | its own: Gauss–Legendre on $[r_{\rm in}, r_{\rm out}]$ |
