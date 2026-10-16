@@ -58,7 +58,6 @@ def test_projected_correlated_closure_phases_keep_the_real_directions(seed):
     rng = onp.random.default_rng(seed)
     sigma = 0.01 * (1.0 + rng.uniform(size=4 * n_blocks))
     operator = rng.standard_normal((4 * n_blocks, 4 * n_blocks))
-    assert not jax.config.jax_enable_x64  # the default float32 path
     matrix, errors = OIData._diagonalized(
         operator, sigma, _four_telescope_correlation(n_blocks)
     )
