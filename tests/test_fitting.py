@@ -1111,3 +1111,25 @@ def test_a_prior_without_a_diagonal_curvature_raises():
     problem = _Objective(START, priors, NOISY, flat=False)
     with pytest.raises(NoLeastSquaresForm, match="not diagonal"):
         problem._no_prior_curvature(priors["flux"], True)
+
+
+def test_lm_compiles_one_kernel_whatever_the_step_bound(monkeypatch):
+    # The step bound is traced, so the shorter last chunk of a chunked fit
+    # (5 steps in chunks of 2), a different chunk size and a different
+    # max_steps take no compile of their own.
+    import virgil.fitting
+
+    far = BinaryModelCartesian(100.0, -20.0, 0.05)
+    options = {"method": "lm", "time_limit": 1e6}
+    monkeypatch.setattr(virgil.fitting, "_LM_CHUNK", 2)
+    with pytest.warns(RuntimeWarning, match="step limit"):
+        five = fit(far, PRIORS, DATA, max_steps=5, **options)
+    assert five.info["steps"] == 5 and five.info["stop"] == "limit"
+    monkeypatch.setattr(virgil.fitting, "_LM_CHUNK", 3)
+    with count_compiles() as compiles:
+        with pytest.warns(RuntimeWarning, match="step limit"):
+            four = fit(far, PRIORS, DATA, max_steps=4, **options)
+        with pytest.warns(RuntimeWarning, match="step limit"):
+            three = fit(far, PRIORS, DATA, max_steps=3, method="lm")
+    assert (four.info["steps"], three.info["steps"]) == (4, 3)
+    assert compiles == []

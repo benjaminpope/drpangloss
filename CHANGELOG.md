@@ -89,7 +89,7 @@ Provisional in 0.4:
   visibility and phase error. It now also accepts data with gains, any
   elementwise prior (HalfNormal, Beta, Uniform and so on, each with the
   curvature of the sampler's transform) and likelihood terms with a
-  `log_norm`. With more than 8192 coordinates it returns the diagonal of
+  `log_norm`. With more than 4096 coordinates it returns the diagonal of
   the covariance, with a `UserWarning`, instead of an n² matrix.
   `SingularCurvature` now means a direction that neither the data nor a
   proper prior constrains (an `ImproperUniform` or flat-in-coordinate
@@ -134,6 +134,18 @@ Provisional in 0.4:
   the `MultipoleDisk` inside an `Attached` component. The profile
   parametrization is unchanged.
 
+- The dense-matrix limit `fitting._DENSE_MASS_MAX` is 4096 coordinates
+  (was 8192; a dense 8192 × 8192 matrix is 537 MB in float64, and its
+  eigendecomposition for `GaussNewtonMass.condition` is slower still). For
+  4096 < n ≤ 8192 (images of 65² to 90²) `gauss_newton_mass` now returns
+  the diagonal, with `condition=None` and a `UserWarning`, where it gave a
+  dense mass: NUTS started from it has no dense mass. `variational` with
+  `"bnaf"`, `"iaf"`, `"mvn"` (an n × n Cholesky factor) or `"laplace"` (an
+  n × n Hessian) raises `ValueError` above the limit, before allocating:
+  use `laplace_samples` or a diagonal guide such as `autoguide.AutoNormal`.
+- `fit(method="lm")` compiles its step kernel once for every chunk and
+  every `max_steps`: the step bound is traced, so the short last chunk no
+  longer recompiles. Results are unchanged.
 - `fit_orbit_aliases` now tempers by default, so its evidences, band
   probabilities and posteriors are not comparable with those of earlier
   untempered runs on data with correlated channels (pass `temper=False` to
