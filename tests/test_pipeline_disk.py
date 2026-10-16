@@ -424,6 +424,25 @@ def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
     )
 
 
+def test_geometry_search_leaves_a_wrong_mode(gp_run):
+    pipeline, _ = gp_run
+    # A single ring can settle in a mode far from a lopsided multi-ring disk's
+    # geometry; the Gaussian process must not start there.
+    wrong = {**disk._gp_geometry(pipeline), "inc": 25.0, "pa": 117.0}
+    geo, fit, rows = disk._geometry_search(
+        pipeline, wrong, pipeline._ctx().ell_mid
+    )
+    assert rows[0]["inc_deg"] == 25.0 and rows[0]["pa_deg"] == 117.0
+    assert abs(geo["inc"] - 50.0) <= 20.0
+    assert min(abs(geo["pa"] - 30.0), 180.0 - abs(geo["pa"] - 30.0)) <= 25.0
+    assert (
+        fit.chi2 / int(pipeline.processed.n_independent)
+        < rows[0]["chi2_reduced"]
+    )
+    # The search is recorded with the profile stage.
+    assert pipeline._report("profile")["geometry_search"]
+
+
 def test_gp_round_trip(gp_run, data):
     pipeline, _ = gp_run
     res = load(pipeline.output)

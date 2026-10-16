@@ -54,6 +54,10 @@ _ALPHA_NODES = 22
 _ELL_PER_EQUIVALENT = math.sqrt(3.0)
 # Δχ² within which another cell of the geometry grid is a rival minimum.
 _RIVAL_DELTA_CHI2 = _checks.RIVAL_DELTA_CHI2
+# Coarse starts for the Gaussian process's geometry, beside the single ring's.
+_GEOMETRY_LATTICE_INC = (30.0, 50.0, 70.0)
+_GEOMETRY_LATTICE_PA = (0.0, 45.0, 90.0, 135.0)
+_SCREEN_STEPS = 25
 
 
 # === THE MODEL REGISTRY ===
@@ -1361,7 +1365,9 @@ def _companion_report(p, planet):
     }
 
 
-def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
+def _gp_fit(
+    p, ell, planet, degree=None, geo=None, release=False, max_steps=None
+):
     """MAP fit of the Gaussian-process disk at one ℓ.
 
     The geometry is frozen at ``geo`` (the single-ring fit's by default),
@@ -1370,6 +1376,7 @@ def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
     few degrees off, and a frozen error is paid for by the profile and the
     companion. With ``release`` a second fit frees them, starting from the
     first fit's values, and the returned values and priors include them.
+    ``max_steps`` bounds the frozen fit (a screening fit).
     """
     import equinox as eqx
 
@@ -1383,7 +1390,7 @@ def _gp_fit(p, ell, planet, degree=None, geo=None, release=False):
         lambda m: m.parts[1], template, template.disk.freeze_geometry(data)
     )
     assert isinstance(frozen, System)
-    result = fit(frozen, priors, data)
+    result = fit(frozen, priors, data, max_steps=max_steps)
     values, info = result.values, result.info
     if release:
         priors = {
@@ -1423,15 +1430,64 @@ def _fold_gp_values(ctx, values, degree=None):
     return out
 
 
+def _geometry_starts(p, geo):
+    """Candidate ``(inc, pa)`` starts for the Gaussian process.
+
+    The single-ring fit's, the grid's rival minima and a coarse lattice: a
+    single ring is the wrong model for a multi-ring, lopsided disk and can
+    settle in a mode far from the disk's geometry, which the released fit
+    then cannot leave.
+    """
+    ctx = p._ctx()
+    starts = [(geo["inc"], geo["pa"])]
+    starts += [
+        (r["inc_deg"], r["pa_deg"])
+        for r in p._report("geometry")["grid"]["rivals"]
+    ]
+    starts += [
+        (inc, pa)
+        for inc in _GEOMETRY_LATTICE_INC
+        for pa in _GEOMETRY_LATTICE_PA
+        if inc <= ctx.inc_max
+    ]
+    return starts
+
+
+def _geometry_search(p, geo, ell):
+    """The start whose frozen-geometry Gaussian-process fit has the lowest χ².
+
+    Returns ``(geometry, fit, rows)``: the winning ``geo``, its converged fit
+    (with no planet) and every start's χ²/N after a short screening fit. The
+    geometry is frozen, and a wrong geometry costs far more χ² than a right
+    one, so a few steps rank the starts.
+    """
+    n_data = int(p.processed.n_independent)
+    best, rows = None, []
+    for inc, pa in _geometry_starts(p, geo):
+        trial = {**geo, "inc": float(inc), "pa": float(pa)}
+        screen, _ = _gp_fit(p, ell, None, geo=trial, max_steps=_SCREEN_STEPS)
+        rows.append(
+            {
+                "inc_deg": trial["inc"],
+                "pa_deg": trial["pa"],
+                "chi2_reduced": screen.chi2 / n_data,
+            }
+        )
+        if best is None or screen.chi2 < best[0]:
+            best = (screen.chi2, trial)
+    fit, _ = _gp_fit(p, ell, None, geo=best[1])
+    return best[1], fit, rows
+
+
 def _profile_gp(p):
     ctx, data = p._ctx(), p.processed
     n_data = int(data.n_independent)
     geo = _gp_geometry(p)
+    geo, fit, starts = _geometry_search(p, geo, ctx.ell_mid)
     planet, searches = None, []
     if ctx.companion:
-        # Fit the middle ℓ with no planet, search its residuals, and add any
+        # Search the residuals of the middle ℓ with no planet, and add any
         # detection to every fit.
-        fit, _ = _gp_fit(p, ctx.ell_mid, None, geo=geo)
         search = _point_source_search(
             fit.model, data, ctx, p.settings["batch_size"]
         )
@@ -1460,7 +1516,11 @@ def _profile_gp(p):
     for c in candidates:
         c["ell_index"] = candidates.index(c)
     _plot_profile_fits(p, candidates, "ell_mas", "ℓ (mas)")
-    return {"candidates": candidates, "searches": searches}
+    return {
+        "candidates": candidates,
+        "searches": searches,
+        "geometry_search": starts,
+    }
 
 
 # === STAGE: COMPARE ===
