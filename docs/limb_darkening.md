@@ -1,6 +1,8 @@
 <!-- AUTO-GENERATED FROM notebooks/limb_darkening.ipynb by scripts/sync_tutorial_docs.py. -->
 # Limb-darkened stars
 
+> **Install:** the "As a pipeline" section needs the `pipeline` extra: `pip install "virgil-astro[pipeline]"`.
+
 A star's disk is not uniformly bright. Near the limb we look obliquely into the photosphere and see higher, cooler layers, so the specific intensity falls from the centre of the disk towards its edge. Interferometers resolve this directly: limb darkening barely changes the first lobe of the visibility, where it mimics a slightly smaller uniform disk, but it changes the depth of the nulls and the height of the second lobe. This notebook introduces virgil's limb-darkened disks, shows what they look like in the image and in the visibilities, explains the parametrization we recommend for fitting them, and fits simulated VLTI data.
 
 The brightness is written as a function of $\mu = \sqrt{1 - (r/R)^2}$, the cosine of the angle between the line of sight and the surface normal. [Quirrenbach et al. (1996)](https://ui.adsabs.harvard.edu/abs/1996A%26A...312..160Q) showed (their eqs. 1–4) that a profile $I(\mu) = \sum_\nu a_\nu \mu^\nu$ has the visibility
