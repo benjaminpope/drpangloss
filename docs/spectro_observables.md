@@ -12,18 +12,25 @@ The API is [`virgil.observables`](api/observables.md).
 ## Reading them
 
 Nothing changes unless you ask: `read_oifits` and `OIData` read V² (or |V|)
-and closure phases as before. Name the extras you want:
+and closure phases as before. Name the extras you want. A GRAVITY file holds
+fringe-tracker tables (`GRAVITY_FT`) beside the science channel
+(`GRAVITY_SC`), which measure the same baselines and must not be merged, so
+choose one with `insname=` (`OIData` takes an OIFITS record, which
+[`read_oifits`][virgil.oifits.read_oifits] returns, as well as a path):
 
 ```python
 from virgil.oidata import OIData
+from virgil.oifits import read_oifits
 
-data = OIData("gravity.fits", extras=("flux", "visphi"))
+record = read_oifits(
+    "gravity.fits",
+    insname="GRAVITY_SC",
+    extras=("flux", "t3amp", "visamp", "visphi"),
+)
+data = OIData(record)
 # State the grey scale's prior, in the data's units (here Jy): required for
 # "flux" and correlated fluxes, never taken from the data.
 data = data.with_flux_scale(scale=(2.0, 2.0))
-data = OIData(
-    "gravity.fits", extras=("nflux", "t3amp", "visamp", "visphi")
-)
 [block.kind for block in data.extras]
 ```
 
@@ -70,12 +77,37 @@ Here a line window is left out of the V², for example, while the closure
 phases are used everywhere:
 
 ```python
+import numpyro.distributions as dist
+
+from virgil.fitting import fit
+from virgil.models import PointSource, System
+from virgil.spectra import GaussianLine, PowerLaw, Sum
+
+# A star and a fainter companion with a Brγ emission line.
+model = System(
+    star=PointSource(),
+    blob=PointSource(
+        dra=0.5,
+        ddec=0.2,
+        flux=Sum(
+            cont=PowerLaw(0.1, 0.0, wavel0=2.166e-6),
+            brg=GaussianLine(0.5, line_wavel=2.166e-6, fwhm=3e-9),
+        ),
+    ),
+)
+priors = {
+    "blob.dra": dist.Uniform(-5.0, 5.0),
+    "blob.ddec": dist.Uniform(-5.0, 5.0),
+    "blob.flux.cont.ratio": dist.LogUniform(1e-3, 1.0),
+}
+
 line = [(2.162e-6, 2.170e-6)]
 datasets = [
     data.select(exclude=line, observables="vis"),
     data.select(observables="phi"),
 ]
 result = fit(model, priors, datasets)
+best_model = result.model
 ```
 
 ## Spectra and the grey scale
@@ -145,9 +177,11 @@ along wavelength. Its covariance is N D Nᵀ. If our basis contains the
 pipeline's, then N N_pipe = N, so re-normalizing the data does no harm.
 
 ```python
+continuum = [(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)]
+line = [(2.163e-6, 2.169e-6)]
 data = data.with_continuum(
-    continuum=[(2.150e-6, 2.162e-6), (2.170e-6, 2.180e-6)],
-    lines=[(2.163e-6, 2.169e-6)],
+    continuum=continuum,
+    lines=line,
     order=1,  # offset and delay; 0 removes the mean only
 )
 ```

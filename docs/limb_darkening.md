@@ -36,6 +36,7 @@ import jax
 import matplotlib.pyplot as plt
 import numpy as onp
 import numpyro.distributions as dist
+from numpyro.diagnostics import gelman_rubin
 from numpyro.infer import MCMC, NUTS, init_to_value
 
 from virgil.coverage import vlti_oidata
@@ -197,9 +198,21 @@ kernel = NUTS(
     init_strategy=init_to_value(values={p: ld.values[p] for p in priors}),
     dense_mass=True,
 )
-mcmc = MCMC(kernel, num_warmup=1000, num_samples=2000, progress_bar=False)
+mcmc = MCMC(
+    kernel,
+    num_warmup=1000,
+    num_samples=1000,
+    num_chains=4,
+    chain_method="vectorized",
+    progress_bar=False,
+)
 mcmc.run(jax.random.PRNGKey(4))
-posterior = mcmc.get_samples()
+posterior = mcmc.get_samples()  # the four chains together
+r_hat = max(
+    float(gelman_rubin(v))
+    for v in mcmc.get_samples(group_by_chain=True).values()
+)
+print(f"largest r_hat over the four chains: {r_hat:.2f}")
 samples = QuadraticLimbDarkenedDisk(
     posterior["diam"], q1=posterior["q1"], q2=posterior["q2"]
 )

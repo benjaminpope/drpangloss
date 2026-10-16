@@ -97,6 +97,30 @@ The approximation is exact for a linear model with Gaussian noise. Choosing the 
 **Several field images.** A compact and an extended component can each be a GP image in one `System`, so that their brightnesses add (a bright knot on a faint, smooth envelope), with the two fields' hyperparameters chosen by the evidence:
 
 ```python
+import jax
+import jax.numpy as np
+import numpy as onp
+import numpyro.distributions as dist
+
+from virgil import OIData, fit
+from virgil.fields import GaussianField
+from virgil.imaging import image_priors, log_evidence
+from virgil.models import Image, PointSource, System
+
+# Synthetic data: 80 random baselines (m) at 2.2 µm, which resolve a few mas,
+# of a star beside a Gaussian knot of 2 mas width, with 1% errors on V².
+rng = onp.random.default_rng(0)
+u, v = rng.uniform(-90.0, 90.0, (2, 80))
+template = OIData(dict(u=u, v=v, wavel=2.2e-6, vis=onp.ones(80), d_vis=onp.full(80, 0.01)))
+x = (onp.arange(32) - 15.5) * 0.4
+knot = onp.exp(-0.5 * (x[:, None] ** 2 + x[None, :] ** 2) / 2.0**2)
+truth = System(star=PointSource(), knot=Image.from_brightness(knot, 0.4, flux=0.1))
+data = template.with_model(truth, key=jax.random.PRNGKey(0))
+flux_priors = {
+    "compact.flux": dist.LogUniform(1e-3, 2.0),
+    "extended.flux": dist.LogUniform(1e-3, 2.0),
+}
+
 scene = System(
     star=PointSource(),
     compact=Image(GaussianField(np.zeros((32, 32)), 1.0, 0.7), 0.4, flux=0.1),

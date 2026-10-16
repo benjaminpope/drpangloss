@@ -1,8 +1,6 @@
 <!-- AUTO-GENERATED FROM notebooks/wr_chromatic_search.ipynb by scripts/sync_tutorial_docs.py. -->
 # Chromatic companion search: a Wolf-Rayet star and an OB companion
 
-> **Install:** this tutorial shows progress bars with tqdm, which comes with the `notebooks` extra: `pip install "virgil-astro[notebooks]"`.
-
 A Wolf-Rayet (WR) star has strong emission lines, and its OB companion has none. Across a line the WR star brightens while the companion stays put, so the companion-to-primary flux ratio drops through the line and the differential phase moves with it. This is the information that a grey (wavelength-independent) flux ratio throws away, and it reaches separations far below the resolution of the baselines, where V² and closure phases are nearly blind.
 
 This notebook shows the pieces for a chromatic search in virgil: a primary with a continuum plus a Gaussian emission line, a companion whose spectrum is a fixed shape times one free amplitude (`Scaled`), simulated GRAVITY-like data with V², closure phases, differential phases and a flux spectrum, and the standard grid, limit and detection tools run on `comp.flux.ratio`. You should come away knowing how to set up the scene and which flux key to search over.
@@ -17,7 +15,6 @@ warnings.filterwarnings("ignore")  # coarse demo grids trip the peak-resolution 
 import jax
 import numpy as onp
 import matplotlib.pyplot as plt
-from tqdm.auto import tqdm
 
 from virgil import GaussianLine, OIData, PointSource, PowerLaw, Scaled, Sum, System
 from virgil.coverage import vlti_oidata
@@ -116,7 +113,7 @@ A search is only useful if we also know what it could have seen. `injection_limi
 ```python
 seps = onp.array([-10.0, -6.0, 0.0, 4.0])
 limits = []
-for dra in tqdm(seps):
+for dra in seps:
     point = {"comp.dra": onp.array([dra]), "comp.ddec": onp.array([-5.0]), "comp.flux.ratio": onp.array([0.01])}
     limits.append(float(injection_limits(wr_system(0.05), data, point, 3.0)[0, 0]))
 for dra, limit in zip(seps, limits):

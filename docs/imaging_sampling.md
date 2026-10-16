@@ -1,8 +1,6 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_sampling.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 5: sampling the posterior
 
-> **Install:** this tutorial shows progress bars with tqdm, which comes with the `notebooks` extra: `pip install "virgil-astro[notebooks]"`.
-
 Parts 2–4 found one image, the maximum a posteriori (MAP). It doesn't say how sure we should be of any feature in it: is that knot real, or is the gap in the ring significant? Answering that needs the **posterior**, the distribution of images consistent with the data and the prior. This part draws images from it with numpyro's No-U-Turn Sampler (NUTS) and maps their **mean** and **standard deviation**, pixel by pixel.
 
 The Gaussian-process prior of part 3 is what makes this practical. Its latents have standard-normal priors, so the posterior is smooth and close to Gaussian near the MAP. Sampling an image of thousands of pixels is still slow if done naively, because the data pin down some directions in image space far more tightly than others. The fix is to give NUTS the shape of the posterior in advance, through `gauss_newton_mass`, and that is the main idea of this part.
@@ -11,7 +9,6 @@ Sampling needs float64, so the first cell switches it on.
 
 ```python
 import sys
-import time
 from pathlib import Path
 
 import jax
@@ -23,7 +20,6 @@ import numpy as onp
 import numpyro.distributions as dist
 from numpyro.diagnostics import effective_sample_size
 from numpyro.infer import MCMC, NUTS, init_to_value
-from tqdm.auto import tqdm
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -84,7 +80,6 @@ The **mass matrix** fixes this by rescaling the space before the particle moves.
 This is why σ and ℓ are fixed here: JᵀJ depends on them, so a matrix computed at one σ and ℓ fits badly when they move.
 
 ```python
-t0 = time.time()
 mcmc = MCMC(
     NUTS(numpyro_model(result.model, priors, data, flat_coordinates=True), init_strategy=init_to_value(values=result.values), **gauss_newton_mass(scene, priors, data, result.values, flat_coordinates=True)),
     num_warmup=300,
@@ -94,7 +89,7 @@ mcmc = MCMC(
 mcmc.run(jax.random.PRNGKey(0), extra_fields=("num_steps", "diverging"))
 samples = mcmc.get_samples()
 steps = onp.asarray(mcmc.get_extra_fields()["num_steps"])
-print(f"300 warmup + 300 draws in {time.time() - t0:.0f} s; median {onp.median(steps):.0f} leapfrog steps per draw (at most 1023); {int(mcmc.get_extra_fields()['diverging'].sum())} divergences")
+print(f"300 warmup + 300 draws; median {onp.median(steps):.0f} leapfrog steps per draw (at most 1023); {int(mcmc.get_extra_fields()['diverging'].sum())} divergences")
 ```
 
 ```text
@@ -127,7 +122,7 @@ The standard-deviation map looks like the mean because the field is in log-brigh
 
 ```python
 # render() gives a unit-sum image, so scale each draw by its sampled flux.
-images = onp.stack([float(f) * onp.asarray(result.model.set("env.log_brightness.latent", z).env.render(npix, fov)) for z, f in zip(tqdm(samples["env.log_brightness.latent"], desc="rendering draws"), samples["env.flux"])])
+images = onp.stack([float(f) * onp.asarray(result.model.set("env.log_brightness.latent", z).env.render(npix, fov)) for z, f in zip(samples["env.log_brightness.latent"], samples["env.flux"])])
 mean, std = images.mean(0), images.std(0)
 fig, axes = plt.subplots(1, 3, figsize=(16, 4.4))
 plot_model(Image.from_brightness(mean, pixel_scale, flux=float(mean.sum())), fov_mas=fov, npix=npix, ax=axes[0], title="posterior mean", beam=resolution)
