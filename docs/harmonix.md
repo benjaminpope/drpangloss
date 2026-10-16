@@ -236,7 +236,9 @@ plt.show()
 
 ![harmonix output 12.1](generated/harmonix_cell012_out01.png)
 
-Then the spot. `fit` accepts a function of the parameters that returns one model per dataset, so the three nights share one star seen at three rotation phases. The priors are the invariant ones: log-uniform for the contrast, spot size and radius (scales), `IsotropicLatitude` for the latitude (a point uniform on the sphere has sin(lat) uniform, so it favours the equator) and uniform for the longitude. We start the spot far from its true position. (Its latitude and longitude should not start at exactly zero: jaxoplanet's rotation of the spot expansion has zero gradient there.) Every step differentiates through jaxoplanet's spot expansion and harmonix's analytic visibilities.
+Then the spot. `fit` accepts a function of the parameters that returns one model per dataset, so the three nights share one star seen at three rotation phases. The priors are the invariant ones: log-uniform for the contrast, spot size and radius (scales), `IsotropicLatitude` for the latitude (a point uniform on the sphere has sin(lat) uniform, so it favours the equator) and uniform for the longitude. Every step differentiates through jaxoplanet's spot expansion and harmonix's analytic visibilities.
+
+The landscape in the spot's position is rugged: a spot that misses the visible hemisphere on a night leaves that night's closure phases unchanged, so a local optimizer started from a poor position stalls in a minimum far from the truth. So, as for the radius, we scan first: a coarse grid over the spot's latitude, longitude and size, at the best radius, and start the fit from the best grid point. (Latitude and longitude should not start at exactly zero, since jaxoplanet's rotation of the spot expansion has zero gradient there; the grid has no point there.)
 
 ```python
 priors = dict(
@@ -246,16 +248,33 @@ priors = dict(
     lon=dist.Uniform(-np.pi, np.pi),
     radius=dist.LogUniform(0.8, 2.0),
 )
-init = dict(contrast=0.5, size=0.2, lat=0.2, lon=0.1, radius=radius_guess)
 
 
 def scene(**params):
     return observe(spotted_star(**params))
 
 
-result = fit(scene, priors, data, init=init, method="lbfgs")
-print(f"reduced chi2 = {result.info['chi2_red']:.2f} "
-      f"after {result.info['steps']} steps")
+def chi2_spot(point):
+    lat, lon, size = point
+    models = scene(contrast=0.5, size=size, lat=lat, lon=lon, radius=radius_guess)
+    return sum(
+        jnp.sum(whitened_residuals(m, d) ** 2) for m, d in zip(models, data)
+    )
+
+
+lats = np.linspace(-1.2, 1.2, 8) + 0.05  # no point at exactly zero
+lons = np.linspace(-np.pi, np.pi, 12, endpoint=False) + 0.05
+sizes = np.array([0.15, 0.3, 0.5])
+grid = jnp.asarray(
+    [(la, lo, s) for la in lats for lo in lons for s in sizes]
+)
+grid_chi2 = jax.jit(lambda g: jax.lax.map(chi2_spot, g, batch_size=24))(grid)
+best = np.asarray(grid[jnp.argmin(grid_chi2)])
+init = dict(contrast=0.5, size=float(best[2]), lat=float(best[0]),
+            lon=float(best[1]), radius=radius_guess)
+
+result = fit(scene, priors, data, init=init, method="lbfgs", gtol=1e-3)
+print(f"reduced chi2 = {result.info['chi2_red']:.3g}")
 for name in priors:
     print(f"{name:>8}: start {init[name]:6.3f}   fit {float(result.values[name]):6.3f}"
           f"   truth {truth[name]:6.3f}")
