@@ -1,10 +1,10 @@
-<!-- AUTO-GENERATED FROM notebooks/polar_disk_rings.ipynb by scripts/sync_tutorial_docs.py. -->
+<!-- AUTO-GENERATED FROM notebooks/multipole_disk_rings.ipynb by scripts/sync_tutorial_docs.py. -->
 # A planet in a gap between inclined rings
 
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-A [`PolarDisk`](api/models/classes/polar_disk.md) describes a disk, ring or halo by a radial brightness profile $I_0(r)$ in the plane of the disk, tilted by `inc` and rotated by `pa`. Its visibility is the Hankel transform of the profile, normalized to one at zero baseline,
+A [`MultipoleDisk`](api/models/classes/multipole_disk.md) describes a disk, ring or halo by a radial brightness profile $I_0(r)$ in the plane of the disk, tilted by `inc` and rotated by `pa`. Its visibility is the Hankel transform of the profile, normalized to one at zero baseline,
 
 $$
 V(q) = \frac{\int I_0(r)\, J_0(2\pi q' r)\, r\,\mathrm{d}r}{\int I_0(r)\, r\,\mathrm{d}r},
@@ -12,11 +12,11 @@ $$
 
 with $q'$ the baseline's spatial frequency in the disk plane. The profile can be a parametric ring or a free function: a Gaussian process, whose log-intensity at $n$ radial nodes is $\sigma L z$, with $LL^\top$ a Matérn correlation matrix of length $\ell$ and $z \sim \mathcal N(0, I)$ the free parameters, so the intensity is positive for any $z$. A disk can also be lopsided (azimuthal harmonics) and chromatic (a spectral index, $I(r,\lambda) = I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$).
 
-Here we simulate a star with three inclined rings and a planet in a gap, observed with VLTI-like closure phases and squared visibilities. We fit the data twice, with the family that made them and with one Gaussian-process `PolarDisk`, and compare the two. You will see how to build a `PolarDisk` scene, how to fit a non-parametric profile, and what the data can and cannot tell the Gaussian process. Both fits are maximum a posteriori (MAP) with a Laplace approximation, with no sampling. On this page the long plotting code is folded; the notebook has it all.
+Here we simulate a star with three inclined rings and a planet in a gap, observed with VLTI-like closure phases and squared visibilities. We fit the data twice, with the family that made them and with one Gaussian-process `MultipoleDisk`, and compare the two. You will see how to build a `MultipoleDisk` scene, how to fit a non-parametric profile, and what the data can and cannot tell the Gaussian process. Both fits are maximum a posteriori (MAP) with a Laplace approximation, with no sampling. On this page the long plotting code is folded; the notebook has it all.
 
 ## The scene and the data
 
-The star is a 6000 K blackbody point source, and every other flux is relative to it at 3 microns. The three rings are coplanar `PolarDisk`s with `GaussianRing` profiles at 4.5, 10 and 21.5 mas (widths $\sigma$ of 1.3, 1.5 and 2.4 mas) and blackbody colours of 1500, 900 and 600 K; the outermost has a first-order harmonic, which makes it lopsided. A 1000 K planet sits in the gap between the second and third rings. Ring radii are measured in the disk plane, so we put the planet on the projected major axis, where sky and plane distances agree, at 14.4 mas from the star: $(\Delta\alpha, \Delta\delta) = (-7.2, -12.47)$ mas. The cell prints a deprojection check of this. The `scene` function gives one `inc` and `pa` to all the rings, and the fits below reuse it.
+The star is a 6000 K blackbody point source, and every other flux is relative to it at 3 microns. The three rings are coplanar `MultipoleDisk`s with `GaussianRing` profiles at 4.5, 10 and 21.5 mas (widths $\sigma$ of 1.3, 1.5 and 2.4 mas) and blackbody colours of 1500, 900 and 600 K; the outermost has a first-order harmonic, which makes it lopsided. A 1000 K planet sits in the gap between the second and third rings. Ring radii are measured in the disk plane, so we put the planet on the projected major axis, where sky and plane distances agree, at 14.4 mas from the star: $(\Delta\alpha, \Delta\delta) = (-7.2, -12.47)$ mas. The cell prints a deprojection check of this. The `scene` function gives one `inc` and `pa` to all the rings, and the fits below reuse it.
 
 The data mimic a low-resolution L-band run with the four unit telescopes: nine channels from 2.4 to 3.6 microns and seven hour angles, giving 378 squared visibilities (error 0.01) and 252 closure phases (error 0.5°), or 567 independent data once the closure phases' correlations are counted. The longest baseline gives a half-fringe $\lambda/2B$ of 2 to 3 mas, so the rings' widths (FWHM 3.1, 3.5 and 5.7 mas) are at or above the resolution, and structure much finer than that is not measured. The image shows the truth at 3 microns, East to the left, with the star saturated to show the outer ring and the beam in the corner.
 
@@ -36,8 +36,8 @@ import numpy as np
 import numpyro.distributions as dist
 
 from virgil import (
-    BlackBody, GaussianRing, Harmonics, PointSource, PolarDisk,
-    PolarKernel, RadialGP, System, fit, gp_priors,
+    BlackBody, GaussianRing, Harmonics, PointSource, MultipoleDisk,
+    MultipoleKernel, RadialGP, RadialGPFunction, System, fit, gp_priors,
 )
 from virgil.coverage import vlti_oidata
 from virgil.imaging import beam, log_evidence
@@ -52,8 +52,8 @@ W0 = 3.0e-6  # reference wavelength, m
 def scene(inc, pa, r1, s1, f1, t1, r2, s2, f2, t2, r3, s3, f3, t3,
           h_re, h_im, dra, ddec, fp, tp):
     """Star, three coplanar rings and a planet; one inc and pa for the rings."""
-    def ring(r0, sigma, flux, temp, **kw):
-        return PolarDisk(GaussianRing(r0, sigma), inc=inc, pa=pa, n_r=48,
+    def ring(radius, sigma, flux, temp, **kw):
+        return MultipoleDisk(GaussianRing(radius, sigma), inc=inc, pa=pa, n_r=48,
                          flux=BlackBody(flux, temp, W0), **kw)
     return System(
         star=PointSource(flux=BlackBody(1.0, 6000.0, W0)),
@@ -100,7 +100,7 @@ plt.show()
 planet: sky separation 14.40 mas, disk-plane radius 14.40 mas (rings at 4.5, 10.0, 21.5 mas)
 ```
 
-![polar_disk_rings output 3.2](generated/polar_disk_rings_cell003_out02.png)
+![multipole_disk_rings output 3.2](generated/multipole_disk_rings_cell003_out02.png)
 
 ## The parametric fit
 
@@ -144,11 +144,11 @@ chi2 = 572 for N = 567 independent data (chi2/N = 1.01), converged: True
     r1    4.500    4.465       0.072
     s1    1.300    1.296       0.169
     f1    0.150    0.165       0.015
-    t1 1500.000 1285.476      71.295
+    t1 1500.000 1285.479      71.296
     r2   10.000    9.940       0.122
     s2    1.500    1.519       0.130
     f2    0.250    0.277       0.015
-    t2  900.000  940.208      29.298
+    t2  900.000  940.209      29.298
     r3   21.500   21.488       0.029
     s3    2.400    2.403       0.042
     f3    0.500    0.454       0.019
@@ -157,7 +157,7 @@ chi2 = 572 for N = 567 independent data (chi2/N = 1.01), converged: True
 
 ## The non-parametric fit
 
-Now the model that does not know about rings. One `PolarDisk` has a `RadialGP` profile on 48 nodes between 2 and 30 mas, with a Matérn-3/2 length $\ell = 5$ mas and $\sigma = 2$ on $\ln I_0$. Its `Harmonics(degree=1, prior=PolarKernel(...))` has a first-order amplitude and phase that are Gaussian processes in radius, and its `spectral_index` is another `RadialGP`. Limiting the harmonics to first order stops the disk absorbing the planet, a compact, strongly asymmetric source, so the planet keeps its parametric form with the star. `gp_priors` writes the standard-normal prior of every latent, and the geometry, total disk flux and planet start at the parametric MAP, with the geometry held there.
+Now the model that does not know about rings. One `MultipoleDisk` has a `RadialGP` profile on 48 nodes between 2 and 30 mas, with a Matérn-3/2 length $\ell = 5$ mas and $\sigma = 2$ on $\ln I_0$. Its `Harmonics(degree=1, prior=MultipoleKernel(...))` has a first-order amplitude and phase that are Gaussian processes in radius, and its `spectral_index` is a `RadialGPFunction`. Limiting the harmonics to first order stops the disk absorbing the planet, a compact, strongly asymmetric source, so the planet keeps its parametric form with the star. `gp_priors` writes the standard-normal prior of every latent, and the geometry, total disk flux and planet start at the parametric MAP, with the geometry held there.
 
 The hyperparameters are fixed by hand, not fitted. We set them from the scale of this scene, which a real analysis would not know: it would sample them, or compare evidences as in the next section. Here $\sigma = 2$ is of the order of the true profile's spread in $\ln I_0$ (about 1.6 between 2 and 30 mas), and the spectral index's $\sigma = 2.5$ covers the three blackbodies' slopes ($-1.7$, $0.35$ and $3.0$ at 3 microns). A Matérn length is not a feature width: a squared-exponential bump of the same curvature has width $\ell/\sqrt3$, so $\ell = 5$ mas is 2.9 mas, which smooths the inner rings (1.3 and 1.5 mas) rather than matching them. The inner edge is at 2 mas, the half-fringe, so the profile cannot hide light in an unresolved core that trades off against the star. The cell prints $\chi^2/N$ on the quoted errors, the planet's position and flux against the parametric fit and the truth, and the disk flux.
 
@@ -165,11 +165,11 @@ The hyperparameters are fixed by hand, not fitted. We set them from the scale of
 v = par.values
 r_in, r_out = 2.0, 30.0
 ell_gp = 5.0  # profile correlation length (mas); see the text
-disk = PolarDisk(
-    RadialGP(r_in, r_out, sigma=2.0, ell=ell_gp, n=48),
-    harmonics=Harmonics(degree=1, prior=PolarKernel(
+disk = MultipoleDisk(
+    RadialGP(r_in, r_out, sigma=2.0, ell=ell_gp),
+    harmonics=Harmonics(degree=1, prior=MultipoleKernel(
         ell_r=5.0, ell_theta=8.0, sigma=0.5, n=10, r_in=r_in, r_out=r_out)),
-    spectral_index=RadialGP(r_in, r_out, sigma=2.5, ell=4.0, n=22),
+    spectral_index=RadialGPFunction(r_in, r_out, sigma=2.5, ell=4.0, n=22),
     wavel0=W0, inc=v["inc"], pa=v["pa"], n_r=48,
     flux=v["f1"] + v["f2"] + v["f3"],
 )
@@ -310,7 +310,7 @@ The panels compare the prior of the profile and of the spectral index (16 to 84 
     plt.show()
     ```
 
-![polar_disk_rings output 11.1](generated/polar_disk_rings_cell011_out01.png)
+![multipole_disk_rings output 11.1](generated/multipole_disk_rings_cell011_out01.png)
 
 ## Truth, parametric fit and deconvolution side by side
 
@@ -411,7 +411,7 @@ Look for a bump at each true ring radius and a minimum in the gap where the plan
           f"(truth within e^-6 of its peak): GP {rms_ln(i_map):.2f}, parametric {rms_ln(i_p):.2f}")
     ```
 
-![polar_disk_rings output 13.1](generated/polar_disk_rings_cell013_out01.png)
+![multipole_disk_rings output 13.1](generated/multipole_disk_rings_cell013_out01.png)
 
 ```text
 rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, parametric 0.10
@@ -419,7 +419,7 @@ rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, p
 
 ## Summary
 
-A non-parametric `PolarDisk` fits the same data as the parametric family without being told there are three rings: its profile, colour and lopsidedness are Gaussian processes, and only the planet keeps its parametric form. It reaches a $\chi^2/N$ close to that of the family that made the data, recovers the planet's position and flux, and pays for its freedom with a less accurate profile (a larger rms error of $\ln I_0$ against the truth; both are printed above). The profile's length scale is a prior choice, since the two evidences differ by only a couple of nat; structure finer than the 2 to 3 mas half-fringe is not constrained in either fit; and the Laplace $\log Z$ comparison with the parametric model is only indicative.
+A non-parametric `MultipoleDisk` fits the same data as the parametric family without being told there are three rings: its profile, colour and lopsidedness are Gaussian processes, and only the planet keeps its parametric form. It reaches a $\chi^2/N$ close to that of the family that made the data, recovers the planet's position and flux, and pays for its freedom with a less accurate profile (a larger rms error of $\ln I_0$ against the truth; both are printed above). The profile's length scale is a prior choice, since the two evidences differ by only a couple of nat; structure finer than the 2 to 3 mas half-fringe is not constrained in either fit; and the Laplace $\log Z$ comparison with the parametric model is only indicative.
 
 For real data, use the two together: the Gaussian process to find structure and propose a parametric family, and the parametric fit and its evidence to confirm and measure it. Sampling the hyperparameters with NUTS is the natural next step and is not done here.
 

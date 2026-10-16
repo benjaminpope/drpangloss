@@ -1,6 +1,8 @@
 <!-- AUTO-GENERATED FROM notebooks/gravity_darkened_star.ipynb by scripts/sync_tutorial_docs.py. -->
 # Gravity-darkened stars: `GravityDarkenedStar`
 
+> **Install:** this tutorial shows progress bars with tqdm, which comes with the `notebooks` extra: `pip install "virgil-astro[notebooks]"`.
+
 A star spinning close to its break-up rate is flattened at the poles and darkened at the equator, because the surface gravity, and with it the emergent flux, falls towards the equator. Long-baseline interferometers resolve exactly this: an oblate disk whose brighter pole leans in a particular direction on the sky. `virgil.models.GravityDarkenedStar` models it with the Espinosa Lara and Rieutord (2011, ELR11) Roche shape and gravity darkening, which has no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX, from his `jax-interferometry` code, brought into virgil with his `ELR_Model` as its grey mode and extended with a chromatic mode, in which every patch of the surface radiates as a black body at its own temperature.
 
 This notebook builds such a star, compares it with a uniform disk of the same size, shows how the chromatic mode changes the picture with wavelength, and then simulates VLTI-like multi-channel data from a chromatic star and fits the rotation rate, inclination, pole position angle and size back from a perturbed start. You should come away knowing how to construct the model, what its parameters mean, and how to fit it with the same `fit` call as any other virgil model.

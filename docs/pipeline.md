@@ -83,7 +83,7 @@ res = DiskPipeline(data, "rings", output="runs/rings", companion=True).run()
 res.summary["disk"], res.model(), res.model("geometry")
 ```
 
-`DiskPipeline` fits a [`PolarDisk`][virgil.models.PolarDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
+`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
 
 - `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept.
 - `"rings"`: *N* [`GaussianRing`][virgil.models.GaussianRing] profiles that share the inclination and position angle, added one at a time (each starting at the radius of a one-ring scan) until the BIC stops improving or `max_rings` is reached. The Laplace evidence and the BIC of every count are reported and the count of least BIC is kept.
@@ -94,7 +94,7 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 | --- | --- | --- |
 | `load`, `overview` | As for `BinaryPipeline`, and the resolution scale and radial range | |
 | `geometry` | χ² of a single ring over a grid of inclination (uniform in cos *i*) and position angle on [0°, 180°), then a fit of that ring from the best cell: the geometry is multimodal and is never left to a local optimizer from one start. Its dynamic range sets the Gaussian process's σ | `likelihood_grid`, `fit`, `laplace_cov` |
-| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search | `fit`, `likelihood_grid`, `gp_priors`, `PolarDisk.freeze_geometry` |
+| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry` |
 | `compare` | The Laplace evidence (and BIC) of each candidate; the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
 | `posterior` (`posterior=True`) | NUTS with the geometry released; the position angle is folded into [0°, 180°) with the harmonics rotated to match | `numpyro_model`, `chain_init_params` |
 | `quicklook` | The geometry grid and a six-panel summary of the disk | |

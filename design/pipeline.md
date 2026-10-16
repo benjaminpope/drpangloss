@@ -1,8 +1,10 @@
 # Pipelines: a stable contract over virgil's analyses
 
-Status: **BinaryPipeline and StarPipeline built** (2026-10-08);
-**DiskPipeline built, provisional** (2026-10-15). `OrbitPipeline` and
-`ImagingPipeline` (both provisional) follow as stacked PRs.
+Status (2026-10-16): **BinaryPipeline and StarPipeline built** (2026-10-08);
+the pipelines are provisional in 0.4.0 (`docs/stability.md`). `DiskPipeline`
+is in review (virgil#369). `OrbitPipeline` is next, planned in
+[`orbit_pipeline.md`](orbit_pipeline.md) (phase 1e); `ImagingPipeline` is not
+started.
 
 ## Goal
 
@@ -183,12 +185,12 @@ Decisions:
 ## DiskPipeline (provisional)
 
 Status: **built** (2026-10-15), in `src/virgil/pipeline/disk.py`. The
-`PolarDisk` code it needs (radial profiles, Hankel transform, `Harmonics`,
+`MultipoleDisk` code it needs (radial profiles, Hankel transform, `Harmonics`,
 `RadialGP` priors, `spectral_index`, `freeze_geometry`; see
-`design/radial_profiles.md`) is on `main`. The tutorial `polar_disk_rings`
+`design/radial_profiles.md`) is on `main`. The tutorial `multipole_disk_rings`
 ends with an "As a pipeline" section that runs both models on its data and
 asserts against the truth. The pipeline is provisional from the start and
-stays so until the `PolarDisk` API has been unchanged for a release.
+stays so until the `MultipoleDisk` API has been unchanged for a release.
 
 As built, where the text below left a choice open or the build differed:
 
@@ -205,14 +207,14 @@ As built, where the text below left a choice open or the build differed:
   released: with harmonics and a companion the single ring's position angle
   is a few degrees off the truth, and a frozen error is paid for by the
   profile and the companion.
-- The harmonic fold is checked against `PolarDisk` in
+- The harmonic fold is checked against `MultipoleDisk` in
   `tests/test_pipeline_disk.py`: `pa + 180°` with the order-*m* harmonic
   times `(-1)^m` is the same disk.
 - The summary adds `disk.companion` (`dra_mas`, `ddec_mas`, `flux`,
   `spectral_index`, `detection_delta_chi2`; `None` without one).
 
 `DiskPipeline(data, model=None, *, output="run", **settings)`, CLI `disk`,
-`STABILITY = "provisional"`. The disk is always a `PolarDisk` and the star
+`STABILITY = "provisional"`. The disk is always a `MultipoleDisk` and the star
 is a single point source. A companion search is an opt-in expert setting,
 never a default stage. The run folder, resume rules, `Result` and
 stability policy are those above; only the stages, settings and checks are
@@ -230,8 +232,8 @@ with their own settings and checks, and a run fits one of them.
 
 | Name | Disk | Role |
 | --- | --- | --- |
-| `"rings"` | `PolarDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | the analytic option: measures structure of an assumed family |
-| `"gp"` | `PolarDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and `spectral_index` | the non-parametric option: finds structure with no assumed family |
+| `"rings"` | `MultipoleDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | the analytic option: measures structure of an assumed family |
+| `"gp"` | `MultipoleDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and `spectral_index` | the non-parametric option: finds structure with no assumed family |
 
 `model=None` means `"gp"`, the option that assumes least about the disk
 (Ben's decision, 2026-10-15; it is not an error). The tutorial's workflow (a GP run to
@@ -258,7 +260,7 @@ work for each model.
    default is stated in half-fringes, not in mas.
 3. `geometry`: a grid over `inc` and `pa` with a single-ring profile at
    each point, then a single-ring fit from the best cell, then (for the
-   GP) `PolarDisk.freeze_geometry(data)`. Inclination and position angle
+   GP) `MultipoleDisk.freeze_geometry(data)`. Inclination and position angle
    are multimodal (and `pa` is undefined as `inc` tends to 0), so they
    are never left to a local optimizer from one start. The grid is
    uniform in cos `inc` (as `IsotropicInclination`) and `pa` is on
@@ -302,7 +304,7 @@ contain the truth) stay in the tutorial.
 In this order. The first is χ²/N of the model on the quoted errors, never
 rescaled; the same rule as above (a fitted error scale makes χ² ≈ 1 by
 construction, so `error_scale="fit"` adds the check for a scale well above
-1). Most of the rest are the caveats of the `polar_disk_rings` tutorial,
+1). Most of the rest are the caveats of the `multipole_disk_rings` tutorial,
 turned into pure functions of plain numbers. The model-specific ones apply
 to the entries named.
 
@@ -360,7 +362,7 @@ wrap, and NUTS chains pile up against it. With `Harmonics` on, `pa` and
 `pa` + 180° with the first-harmonic phase turned by 180° are the same
 disk, so a sampler can move between them; the pipeline reports `pa` folded
 into [0°, 180°) with the harmonic phase rotated to match, per sample, so
-the summary is unimodal. (To be checked against `PolarDisk`'s harmonic
+the summary is unimodal. (To be checked against `MultipoleDisk`'s harmonic
 convention when the build starts.)
 
 Radial bounds are settings, defaulting to an inner edge at one
@@ -384,7 +386,7 @@ detection jointly, as in the tutorial.
 
 ### Relation to the tutorial
 
-`polar_disk_rings` gets a closing "As a pipeline" section running
+`multipole_disk_rings` gets a closing "As a pipeline" section running
 `DiskPipeline(data, "rings", ...)` and `DiskPipeline(data, "gp", ...)` on
 the same simulated data. The tutorial's scene has a planet, so the section
 runs with the opt-in companion setting on; without it the pipeline has no
@@ -416,9 +418,9 @@ Ben's, 2026-10-15.
   few channels.
 - **Scope.** The colliding-wind cone geometry of the Apep analysis is out
   of v1; it may become a registry entry later, with no new stage.
-- **Timing.** Build only after the `PolarDisk` PR stack merges (its code
+- **Timing.** Build only after the `MultipoleDisk` PR stack merges (its code
   is on `main`; virgil#356 is the last piece); stay provisional until the
-  `PolarDisk` API is unchanged for a release.
+  `MultipoleDisk` API is unchanged for a release.
 
 ### Decisions
 

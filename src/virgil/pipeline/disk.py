@@ -1,4 +1,4 @@
-"""`DiskPipeline`: rings and haloes fitted with `PolarDisk` (provisional)."""
+"""`DiskPipeline`: rings and haloes fitted with `MultipoleDisk` (provisional)."""
 
 from __future__ import annotations
 
@@ -158,12 +158,12 @@ def models():
 
 
 class DiskPipeline(_Pipeline):
-    """Fit a disk, ring or halo with a [`PolarDisk`][virgil.models.PolarDisk].
+    """Fit a disk, ring or halo with a [`MultipoleDisk`][virgil.models.MultipoleDisk].
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The disk is always a ``PolarDisk`` and the star a single point
+    The disk is always a ``MultipoleDisk`` and the star a single point
     source; a companion search is an opt-in expert setting.
 
     Stages: ``load → overview → geometry → profile → compare → posterior →
@@ -235,7 +235,7 @@ class DiskPipeline(_Pipeline):
           default one half-fringe and half of
           [`image_field`][virgil.imaging.image_field].
         - ``n_r`` (None): quadrature nodes of a profile; by default
-          [`suggest_n_r`][virgil.models.PolarDisk.suggest_n_r] (for the
+          [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r] (for the
           Gaussian process, at least enough to resolve the shortest ℓ).
         - ``n_inc`` (10), ``n_pa`` (12), ``inc_max_deg`` (85): the geometry
           grid.
@@ -392,7 +392,11 @@ class DiskPipeline(_Pipeline):
             raise ValueError("error_floor must be a dict of absolute floors.")
 
     def _model_digest(self):
-        return {"class": "PolarDisk", "digest": None, "models": [self.name]}
+        return {
+            "class": "MultipoleDisk",
+            "digest": None,
+            "models": [self.name],
+        }
 
     def _ctx(self):
         """The resolution scale and the defaults derived from it."""
@@ -500,14 +504,14 @@ def _wavel0(data, settings):
 
 def _n_nodes(settings, data, r_in, r_out, halffringe, ell_min):
     """Quadrature nodes for the ring family and for the Gaussian process."""
-    from ..models import GaussianRing, PolarDisk, RadialGP
+    from ..models import GaussianRing, MultipoleDisk, RadialGP
 
     if settings["n_r"] is not None:
         return int(settings["n_r"]), int(settings["n_r"])
-    ring = PolarDisk(
+    ring = MultipoleDisk(
         GaussianRing(0.5 * r_out, halffringe), inc=40.0, pa=0.0
     ).suggest_n_r(data)
-    gp = PolarDisk(RadialGP(r_in, r_out, n=16), n_r=16).suggest_n_r(data)
+    gp = MultipoleDisk(RadialGP(r_in, r_out), n_r=16).suggest_n_r(data)
     # Four nodes per length scale resolve the shortest ℓ.
     per_ell = int(8 * math.ceil(4.0 * (r_out - r_in) / ell_min / 8.0))
     return int(ring), int(min(max(gp, per_ell, 16), 96))
@@ -606,7 +610,7 @@ def _ring_scene(ctx, shape, v):
 
     One ``inc`` and ``pa`` go to every ring.
     """
-    from ..models import GaussianRing, Harmonics, PolarDisk, System
+    from ..models import GaussianRing, Harmonics, MultipoleDisk, System
 
     parts = {"star": _star(ctx)}
     for i in range(1, shape.n + 1):
@@ -616,7 +620,7 @@ def _ring_scene(ctx, shape, v):
                 re=tuple(v[f"h{i}_re{j}"] for j in range(1, shape.degree + 1)),
                 im=tuple(v[f"h{i}_im{j}"] for j in range(1, shape.degree + 1)),
             )
-        parts[f"ring{i}"] = PolarDisk(
+        parts[f"ring{i}"] = MultipoleDisk(
             GaussianRing(v[f"r{i}"], v[f"s{i}"]),
             inc=v["inc"],
             pa=v["pa"],
@@ -1243,9 +1247,10 @@ def _gp_template(ctx, geo, ell, planet, degree=None):
 
     from ..models import (
         Harmonics,
-        PolarDisk,
-        PolarKernel,
+        MultipoleDisk,
+        MultipoleKernel,
         RadialGP,
+        RadialGPFunction,
         System,
         gp_priors,
     )
@@ -1256,7 +1261,7 @@ def _gp_template(ctx, geo, ell, planet, degree=None):
     if degree:
         harmonics = Harmonics(
             degree=degree,
-            prior=PolarKernel(
+            prior=MultipoleKernel(
                 ell_r=ell,
                 ell_theta=0.5 * (r_in + r_out),
                 sigma=_HARMONIC_SIGMA,
@@ -1266,12 +1271,14 @@ def _gp_template(ctx, geo, ell, planet, degree=None):
             ),
         )
     index = (
-        RadialGP(r_in, r_out, sigma=_ALPHA_SIGMA, ell=ell, n=_ALPHA_NODES)
+        RadialGPFunction(
+            r_in, r_out, sigma=_ALPHA_SIGMA, ell=ell, n=_ALPHA_NODES
+        )
         if ctx.colour
         else None
     )
-    disk = PolarDisk(
-        RadialGP(r_in, r_out, sigma=geo["gp_sigma"], ell=ell, n=ctx.n_gp),
+    disk = MultipoleDisk(
+        RadialGP(r_in, r_out, sigma=geo["gp_sigma"], ell=ell),
         harmonics=harmonics,
         spectral_index=index,
         wavel0=ctx.wavel0,
@@ -1397,7 +1404,7 @@ def _fold_gp_values(ctx, values, degree=None):
     """``values`` with the disk's ``pa`` in [0°, 180°), the harmonics turned.
 
     The Gaussian process's version of ``_fold_fit``: the harmonics are a
-    ``PolarKernel``'s latents, of shape ``(2, order, node)``, and the order-*m*
+    ``MultipoleKernel``'s latents, of shape ``(2, order, node)``, and the order-*m*
     latents are multiplied by ``(-1)^m`` when ``pa`` is moved by 180°.
     """
     pa = float(onp.asarray(values["disk.pa"]))
@@ -1410,7 +1417,7 @@ def _fold_gp_values(ctx, values, degree=None):
         angle = math.radians(folded)
         out["disk.pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
     degree = ctx.degree if degree is None else degree
-    site = "disk.harmonics.prior.z"
+    site = "disk.harmonics.z"
     if degree and (pa % 360.0) >= 180.0 and site in out:
         orders = onp.arange(1, degree + 1, dtype=float)
         out[site] = onp.asarray(out[site]) * ((-1.0) ** orders)[None, :, None]
@@ -1476,11 +1483,11 @@ def _log_prior(priors, values):
 
 def _light_fraction(model, lo, hi):
     """Fraction of the disks' light (at the reference wavelength) in [lo, hi]."""
-    from ..models import PolarDisk
+    from ..models import MultipoleDisk
 
     num = den = 0.0
     for part in model.components.values():
-        if not isinstance(part, PolarDisk):
+        if not isinstance(part, MultipoleDisk):
             continue
         r, w = (onp.asarray(x, dtype=float) for x in part.profile.quadrature())
         flux = float(onp.asarray(part._weight()))
@@ -1743,14 +1750,14 @@ def _profile_curves(model, r):
     Each is evaluated at the radii ``r`` and combined over the disks by
     their share of the light at that radius.
     """
-    from ..models import PolarDisk
+    from ..models import MultipoleDisk
 
     total = onp.zeros_like(r)
     alpha = onp.zeros_like(r)
     lop = onp.zeros_like(r)
     has_alpha = has_lop = False
     for part in model.components.values():
-        if not isinstance(part, PolarDisk):
+        if not isinstance(part, MultipoleDisk):
             continue
         i0 = onp.asarray(part.profile.intensity(r, 0.0), dtype=float)
         norm = onp.trapezoid(i0 * r, r)
@@ -1805,7 +1812,7 @@ def plot_summary(model, data, *, r_out_mas, r_in_mas=0.0, npix=200):
     """
     import matplotlib.pyplot as plt
 
-    from ..models import PolarDisk, System
+    from ..models import MultipoleDisk, System
     from ..plotting import plot_model
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
@@ -1814,7 +1821,9 @@ def plot_summary(model, data, *, r_out_mas, r_in_mas=0.0, npix=200):
         model, fov, npix=npix, ax=axes[0, 0], saturate=0.99, title="Model"
     )
     disks = {
-        k: v for k, v in model.components.items() if isinstance(v, PolarDisk)
+        k: v
+        for k, v in model.components.items()
+        if isinstance(v, MultipoleDisk)
     }
     plot_model(
         System(disks),
@@ -1956,7 +1965,7 @@ def _posterior_setup(p):
     start["disk.pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
     orders = onp.arange(1, ctx.degree + 1, dtype=float)
     parity = (
-        {"disk.harmonics.prior.z": ((-1.0) ** orders)[None, :, None]}
+        {"disk.harmonics.z": ((-1.0) ** orders)[None, :, None]}
         if ctx.degree
         else {}
     )

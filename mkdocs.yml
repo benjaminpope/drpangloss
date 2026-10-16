@@ -53,6 +53,7 @@ plugins:
 # ===== Navigation =====
 nav:
   - Home: index.md
+  - Quickstart: quickstart.md
   - Background:
       - Contributions: contributors.md
       - "Comparison with other packages": comparison.md
@@ -75,13 +76,14 @@ nav:
       - "Detection ROC curves": detection_roc.md
       - "Chromatic companion search": wr_chromatic_search.md
       - "Hierarchical inference across filters": hierarchical_inference.md
+      - "Which orbit tool?": which_orbit_tool.md
       - "Orbits from interferometric data": orbit_fitting.md
       - "Orbit methods": orbit_methods.md
   - Sources:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
-      - "A planet in a gap between rings": polar_disk_rings.md
+      - "A planet in a gap between rings": multipole_disk_rings.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
@@ -108,7 +110,7 @@ nav:
               - BinaryModelCartesian: api/models/classes/binary_model_cartesian.md
               - System and building blocks: api/models/classes/composition.md
               - Image: api/models/classes/image.md
-              - PolarDisk: api/models/classes/polar_disk.md
+              - MultipoleDisk: api/models/classes/multipole_disk.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
       - Harmonics: api/harmonics.md

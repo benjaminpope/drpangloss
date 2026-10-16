@@ -1,9 +1,8 @@
 # Design note: image reconstruction
 
-Status: **planned.** Stage 0 (this note and the likelihood unification) is
-under way. The staged plan is in `design/imaging_plan.md`; this note records
-the decisions and the evidence behind them, and is updated at the end of every
-stage.
+Status (2026-10-16): **built.** The staged plan and its status table are in
+`design/imaging_plan.md`; this note records the decisions and the evidence
+behind them, and the Stage log at its end is a history, not a to-do list.
 
 ## Purpose and scope
 

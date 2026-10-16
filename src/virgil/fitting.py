@@ -34,7 +34,7 @@ from ._flat import _base, _flat_coordinate, _FlatBijection
 from ._precision import cast_tree, run_in
 from ._utils import _per_dataset, _reference, is_flux_param
 from .angles import is_angle_vector, vector_angle, vector_site
-from .fields import GaussianField, PolarField
+from .fields import GaussianField, MultipoleField
 from .likelihood import (
     _check_positive_flux_prior,
     _curvature_rows,
@@ -45,7 +45,7 @@ from .likelihood import (
     noise_sites,
     tied_log_prior,
 )
-from .models import PolarKernel, RadialGP, SourceModel
+from .models import MultipoleKernel, RadialGP, RadialGPFunction, SourceModel
 from ._deprecate import external_stacklevel
 
 
@@ -144,7 +144,13 @@ def _warn_if_field_hyperparameter(model, path):
     if name in hyper and parent:
         if isinstance(
             model.get(parent),
-            (GaussianField, RadialGP, PolarKernel, PolarField),
+            (
+                GaussianField,
+                RadialGP,
+                RadialGPFunction,
+                MultipoleKernel,
+                MultipoleField,
+            ),
         ):
             warnings.warn(
                 f"Fitting {path!r} by MAP: the hyperparameters of a Gaussian "
@@ -883,9 +889,23 @@ def _at_bound(problem, values):
     return tuple(found)
 
 
-# Above this many coordinates ``gauss_newton_mass`` returns a diagonal mass:
-# the dense covariance is n² (a 128² image is 2 GB in float64, 256² is 34 GB).
-_DENSE_MASS_MAX = 8192
+# The one size limit for dense n × n matrices. Above this many coordinates
+# ``gauss_newton_mass`` returns a diagonal mass (and no condition number), and
+# ``svi.variational`` refuses the dense guides: n² entries are 134 MB in
+# float64 here, and a 128² image (n = 16384) would be 2 GB, 256² 34 GB.
+_DENSE_MASS_MAX = 4096
+
+
+def _check_dense_size(n, what, hint=""):
+    """Raise ``ValueError`` if ``what`` would need a dense n × n matrix."""
+    if n > _DENSE_MASS_MAX:
+        raise ValueError(
+            f"{what} needs a dense {n} × {n} matrix ({n * n:.1e} entries), "
+            f"more than the {_DENSE_MASS_MAX} coordinates virgil allows."
+            + (f" {hint}" if hint else "")
+        )
+
+
 # P is floored at this fraction of its largest entry in the Woodbury branch,
 # so that W = P^-½ is finite.
 _P_FLOOR = 1e-12
@@ -913,8 +933,8 @@ def gauss_newton_mass(
     [when not to use it](../gauss_newton_mass.md#when-not-to-use-it). Use it at
     fixed field hyperparameters, with every sampled parameter in ``priors``.
 
-    With more than 8192 coordinates the result is a diagonal mass, with a
-    ``UserWarning``.
+    With more than 4096 coordinates (images larger than 64²) the result is a
+    diagonal mass, with a ``UserWarning``.
 
     Parameters
     ----------
@@ -1187,18 +1207,30 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
     """Levenberg-Marquardt that stops when the gradient of the loss is small, like the
     L-BFGS path (optimistix's own tests pass at once from a warm start, or never for
     pixels drifting to -inf).
+
+    ``limit`` is the step bound, traced rather than optimistix's static
+    ``max_steps``, so that a shorter last chunk reuses the compiled kernel.
     """
 
     tolerance: jax.Array
+    limit: jax.Array
 
-    def __init__(self, tolerance, linear_solver):
+    def __init__(self, tolerance, limit, linear_solver):
         super().__init__(rtol=0.0, atol=0.0, linear_solver=linear_solver)
         self.tolerance = tolerance
+        self.limit = limit
 
     def terminate(self, fn, y, args, options, state, tags):
         problem, scale = args
         gradient = jax.grad(_scaled_loss(problem, scale))(y)
-        return _largest(gradient) <= self.tolerance, optx.RESULTS.successful
+        converged = _largest(gradient) <= self.tolerance
+        spent = state.num_steps >= self.limit
+        result = optx.RESULTS.where(
+            spent & ~converged,
+            optx.RESULTS.nonlinear_max_steps_reached,
+            optx.RESULTS.successful,
+        )
+        return converged | spent, result
 
 
 def _lm_residuals(z, args):
@@ -1245,16 +1277,17 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
     damping reset, so the path can differ slightly from an unchunked run.
     """
     tolerance = _lm_tolerance(problem, z0, scale, gtol)
-    solver = _GradientStoppedLM(tolerance, _lm_linear_solver(z0, cg_steps))
+    linear_solver = _lm_linear_solver(z0, cg_steps)
     chunk = min(_LM_CHUNK, max_steps) if budget.chunked else max_steps
     z, steps = z0, 0
     while True:
+        limit = np.asarray(min(chunk, max_steps - steps))
         solution = optx.least_squares(
             _lm_residuals,
-            solver,
+            _GradientStoppedLM(tolerance, limit, linear_solver),
             z,
             args=(problem, scale),
-            max_steps=min(chunk, max_steps - steps),
+            max_steps=None,
             throw=False,
         )
         z = solution.value

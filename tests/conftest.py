@@ -47,7 +47,7 @@ def pytest_configure(config):
     # `-m "not slow"`, except that a pull request touching the orbit modules
     # also runs the slow tests of their own test files (VIRGIL_SLOW_FILES
     # below); pushes to main, the `full-ci` label and the nightly run
-    # everything (.github/workflows/tests.yml).
+    # them (.github/scripts/ci_matrix.py).
     config.addinivalue_line(
         "markers",
         "slow: heaviest, compile-dominated tests; skipped on pull requests "
@@ -66,6 +66,28 @@ def pytest_addoption(parser):
     )
 
 
+# Test files whose results cannot depend on JAX's float width: file formats,
+# plotting, pipeline orchestration, the shims and the benchmark harness. The
+# float64 CI jobs (VIRGIL_SKIP_DTYPE_INDEPENDENT=1) skip them, since the
+# float32 jobs already run them. Every other file, including each one that
+# carries a `validates` marker (the evidence virgil-validation reads from the
+# float64 run), stays in both. tests/lint/test_ci_config.py checks the list.
+DTYPE_INDEPENDENT = (
+    "test_argument_order.py",
+    "test_benchmark_harness.py",
+    "test_deprecate.py",
+    "test_docs_synthetic_recovery.py",
+    "test_fetch_references.py",
+    "test_oifits.py",
+    "test_pipeline_binary.py",
+    "test_pipeline_checks.py",
+    "test_pipeline_io.py",
+    "test_pipeline_star.py",
+    "test_plotting_detection.py",
+    "test_stability.py",
+)
+
+
 # trylast: after -m has deselected, so --shard packs only what will run.
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
@@ -80,6 +102,10 @@ def pytest_collection_modifyitems(config, items):
             and not any(item.path.match(g) for g in globs)
         ]
         items[:] = [item for item in items if item not in drop]
+        config.hook.pytest_deselected(items=drop)
+    if os.environ.get("VIRGIL_SKIP_DTYPE_INDEPENDENT") == "1":
+        drop = [i for i in items if i.path.name in DTYPE_INDEPENDENT]
+        items[:] = [i for i in items if i not in drop]
         config.hook.pytest_deselected(items=drop)
     for item in items:
         for mark in item.iter_markers("validates"):

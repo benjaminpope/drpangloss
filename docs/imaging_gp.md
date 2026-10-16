@@ -1,6 +1,8 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_gp.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 3: a Gaussian-process prior
 
+> **Install:** this tutorial shows progress bars with tqdm, which comes with the `notebooks` extra: `pip install "virgil-astro[notebooks]"`.
+
 Part 2 reconstructed the ring with maximum entropy, a penalty whose weight had to be swept and chosen. This part uses a **Gaussian-process (GP) prior** instead. The log-brightness of the image is modelled as a smooth random field about a template image, with two physical hyperparameters:
 - **σ**, how far the log-brightness may wander from the template;
 - **ℓ**, the correlation length: how far apart two pixels must be before they vary independently.

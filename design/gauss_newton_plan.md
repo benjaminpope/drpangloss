@@ -1,7 +1,9 @@
 # Gauss–Newton and Levenberg–Marquardt across virgil: implementation plan
 
-Status: **plan, adversarially reviewed, decisions taken, not built**
-(2026-10-14). Ben
+Status (2026-10-16): **GN1 (the kernel, `_gauss_newton.py`) and GN4
+(aliases and epochs on it) are built; GN2 (curvature rows, `gauss_newton_mass(noise=)`)
+is built; GN3 (`fit` on the kernel), GN5 (pipelines) and GN6 (residual MEM) are
+not.** Plan, adversarially reviewed, decisions taken (2026-10-14). Ben
 accepted the six recommendations of the Gauss–Newton audit (coordinating
 session, 2026-10-14; experiments `e1`–`e9`). This note turns them into
 PR-sized pieces that Sonnet sessions can build without further design
@@ -121,7 +123,7 @@ with it on every prior it accepted).
 - `gauss_newton_mass(model, priors, data, values, *, likelihoods=(),
   noise=None, flat_coordinates=False)`: new `noise=`, as `fit` and
   `numpyro_model` take it. It also accepts data with gains and any
-  elementwise prior, and returns a diagonal mass above 8192 coordinates.
+  elementwise prior, and returns a diagonal mass above `_DENSE_MASS_MAX` coordinates (4096 since 0.4.0, 8192 before).
   `SingularCurvature` now means a direction constrained by neither the
   data nor a proper prior (an `ImproperUniform` or flat-in-coordinate
   parameter the data do not fix); a parameter under a bounded prior gets
@@ -472,7 +474,7 @@ flag; new `_curvature_rows`), `fitting.py` (`_Objective.curvature_rows`,
      `_Objective`, flat or not as told);
    - accepts data with gains, any elementwise prior, and likelihood terms
      with a `log_norm`;
-   - **size guard**: with n > `_DENSE_MASS_MAX` = 8192 coordinates it
+   - **size guard**: with n > `_DENSE_MASS_MAX` = 4096 coordinates (8192 before 0.4.0) it
      returns `dense_mass=False` with the diagonal of the GN covariance
      (Woodbury branch: `w_i²·(1 − Σ_j (L⁻¹K)_{ji}²)` plus the zero-P
      correction, never forming n×n; Cholesky branch: 1/diag(F)), and a

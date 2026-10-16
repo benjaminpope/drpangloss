@@ -1,6 +1,8 @@
 <!-- AUTO-GENERATED FROM notebooks/binary_search.ipynb by scripts/sync_tutorial_docs.py. -->
 # Binary recovery with grid search and HMC
 
+> **Install:** this tutorial needs the `plots` extra (ChainConsumer) and, for its "As a pipeline" section, the `pipeline` extra: `pip install "virgil-astro[plots,pipeline]"`.
+
 The first and simplest thing you will want to do in a lot of interferometric datasets is to look for faint companions at high resolution: this is often why we're in the game in the first place!
 
 This tutorial walks through end-to-end binary recovery on synthetic interferometric observables, starting from a coarse likelihood grid and continuing through vanilla HMC and Fisher-reparameterized HMC.
@@ -210,7 +212,7 @@ HMC estimate from diagnostics table: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ## Fisher Reparametrization
 If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `virgil`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
 
-See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/optimisation_tools.ipynb) for more information!
+See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/tutorials/optimisation_tools.ipynb) for more information!
 
 ```python
 x0_dict = {

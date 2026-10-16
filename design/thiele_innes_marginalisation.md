@@ -1,5 +1,7 @@
 # Analytic marginalisation of the Thiele–Innes constants in orbit fits
 
+> **Superseded by [orbit_pipeline.md](orbit_pipeline.md) (2026-10-16): TI-EM is demoted to a diagnostic and is not on the path to `OrbitPipeline`.** Still valid: the algebra (§1), the prior analysis (§2) and the numerical checks; nothing here is implemented, and it is built only if a test system needs it.
+
 Status: **design**, 2026-10-05 (approved by Ben; decisions D1–D6 recorded in §6). Nothing here is implemented yet. It builds on Stage 6a.1 ([`imaging_plan.md`](imaging_plan.md)) and on the orbit note ([`orbit_scene_joint_fitting.md`](orbit_scene_joint_fitting.md), "O" below), whose conventions (O §2.1) and Thiele–Innes definitions (O §2.4) it uses unchanged. The algebra below is checked numerically by [`sketches/thiele_innes_marginal_check.py`](sketches/thiele_innes_marginal_check.py), which uses NumPy only and runs in a few seconds; its checks are cited as [S1]–[S7].
 
 ## 0. Summary

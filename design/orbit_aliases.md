@@ -1,5 +1,7 @@
 # Period aliases of undersampled orbits
 
+> **Superseded by [orbit_pipeline.md](orbit_pipeline.md) (2026-10-16).** `fit_orbit_aliases` stays as the engine under `OrbitPipeline`, so the problem statement and method below are still valid; the defaults it lists as options (`sign_free`, `flip_flux`, `vis_amp`, `primary_diam="auto"`, a data-driven `p_range`, night flags, tempering) are now on by default.
+
 Status: implemented in `virgil.aliases` (`fit_orbit_aliases`).
 
 ## Problem

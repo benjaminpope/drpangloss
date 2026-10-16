@@ -1,6 +1,6 @@
 # Orbits fitted directly to visibilities across epochs
 
-Status: plan for 0.4. Stages 1 and 2 are implemented.
+Status (2026-10-16): **stages 1 and 2 are implemented** (`Epochs`, `OrbitalBinary`, `rank_orbits`, `start_from_positions`, `chain_starts`; V1–V3, V5, V8, V10, V13–V16). Stage 3 is partly built (`gauss_newton_mass(noise=)`, V19; `laplace_cov` exists but not `FitResult.covariance()`, V18, nor the two-stage Laplace to NUTS workflow); stages 4 (forecasts, V20), 5 (conversions table, PA unwrapping) and 6 (plate-scale helper, `epoch_offsets`) are not started. The orbit search that builds on stages 1 and 2 is planned in [`orbit_pipeline.md`](orbit_pipeline.md).
 
 This note extends `design/orbit_scene_joint_fitting.md` (requirements
 R0–R9, conventions §2), which built the pieces: `KeplerOrbit` and its

@@ -2,34 +2,56 @@ name: claude review
 
 # Claude reviews each pull request when it is opened or marked ready for
 # review, and answers any comment that mentions @claude (for example
-# "@claude review again" after new commits). It needs the Claude GitHub App
-# installed on the repository and a CLAUDE_CODE_OAUTH_TOKEN secret (from
-# `claude setup-token`). Pull requests from forks get no secrets, so they
-# are not reviewed.
+# "@claude review again" after new commits). The `label` job marks a pull
+# request with a yellow "review-response" label while a Claude review has
+# inline comments that nobody has answered, so it is clear the pull request
+# is not ready to merge. A Claude comment thread counts as answered when it
+# is resolved or when a human (not Claude, not another bot) has replied in
+# it; the label comes off once every such thread is answered. GitHub Actions
+# cannot be triggered by resolving a thread, so resolving alone does not
+# clear the label until the next push, review or comment.
+#
+# The review needs the Claude GitHub App installed on the repository and a
+# CLAUDE_CODE_OAUTH_TOKEN secret (from `claude setup-token`). Pull requests
+# from forks get no secrets, so they are neither reviewed nor labelled.
+#
+# GitHub cannot filter comment events by their text, so a comment without
+# @claude starts a run whose jobs are skipped (no runner time). Comments by
+# bots, Claude's own included, are skipped at the job level.
 
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
 
-concurrency:
-  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
   review:
     if: |
-      (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+      (github.event_name == 'pull_request' && github.event.action != 'synchronize' &&
+       !github.event.pull_request.draft &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       github.event.comment.user.type != 'Bot' &&
        contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' &&
+       github.event.comment.user.type != 'Bot' &&
        contains(github.event.comment.body, '@claude'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # One review per pull request at a time; a newer pending request
+    # replaces an older pending one. The group is on this job only, so the
+    # label job's overlapping runs are not cancelled.
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     permissions:
       contents: read
       pull-requests: write
@@ -43,7 +65,7 @@ jobs:
           fetch-depth: 1
 
       - name: review
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@374f254f5efaf968abfe15d399fd90972e8138b9 # v1.0.251
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: ${{ github.event_name == 'pull_request' }}
@@ -55,3 +77,79 @@ jobs:
             --model claude-opus-5-5
             --max-turns 40
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+
+  # The job is idempotent (it recomputes the label from the thread state), so
+  # overlapping runs are harmless; a review with inline comments fires several
+  # events at once, and a concurrency group would cancel all but one of them.
+  # A cancelled run is reported as a failed `label` check on the pull request.
+  label:
+    if: github.event_name != 'issue_comment' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: write
+    steps:
+      - name: update label
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const LABEL = 'review-response';
+            const isClaude = (login) => !!login && /^claude(\[bot\])?$/i.test(login);
+            const { owner, repo } = context.repo;
+
+            const number = context.payload.pull_request.number;
+            {
+              // GraphQL: every review thread with its comments' authors.
+              let cursor = null;
+              let unanswered = 0;
+              for (;;) {
+                const res = await github.graphql(
+                  `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+                    repository(owner:$owner,name:$repo){
+                      pullRequest(number:$number){
+                        reviewThreads(first:50,after:$cursor){
+                          pageInfo{hasNextPage endCursor}
+                          nodes{
+                            isResolved
+                            comments(first:50){nodes{author{login __typename}}}
+                          }
+                        }
+                      }
+                    }
+                  }`,
+                  { owner, repo, number, cursor },
+                );
+                const page = res.repository.pullRequest.reviewThreads;
+                for (const t of page.nodes) {
+                  const authors = t.comments.nodes.map((c) => c.author);
+                  if (!authors[0] || !isClaude(authors[0].login) || t.isResolved) continue;
+                  // A human reply answers; replies from Claude or other bots do not.
+                  if (!authors.slice(1).some((a) => a && a.__typename !== 'Bot' && !isClaude(a.login))) unanswered += 1;
+                }
+                if (!page.pageInfo.hasNextPage) break;
+                cursor = page.pageInfo.endCursor;
+              }
+
+              core.info(`#${number}: ${unanswered} unanswered Claude thread(s)`);
+              const labels = await github.paginate(github.rest.issues.listLabelsOnIssue,
+                { owner, repo, issue_number: number });
+              const has = labels.some((l) => l.name === LABEL);
+
+              if (unanswered > 0 && !has) {
+                try {
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: LABEL, color: 'FBCA04',
+                    description: 'Claude review points not yet answered; not ready to merge',
+                  });
+                } catch (e) {
+                  if (e.status !== 422) throw e;  // already exists
+                }
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [LABEL] });
+              } else if (unanswered === 0 && has) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: LABEL });
+                } catch (e) {
+                  if (e.status !== 404) throw e;  // removed by hand meanwhile
+                }
+              }
+            }

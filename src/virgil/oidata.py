@@ -131,6 +131,8 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     vis_mode: str = eqx.field(static=True)
     v2_flag: bool = eqx.field(static=True)
     cp_flag: bool = eqx.field(static=True)
+    # Static on purpose: a traced t_ref would be float32, which cannot hold an
+    # MJD to better than ~0.004 d, and orbits subtract it in host float64.
     t_ref: float | None = eqx.field(static=True)
 
     @property

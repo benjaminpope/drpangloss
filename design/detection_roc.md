@@ -1,9 +1,10 @@
 # Detection statistics, false-alarm rates and ROC curves
 
-Status: **Stages 1 to 3 built**, 2026-10-05 (the Stage 3 tutorial's
-outputs await a cluster run). Tracks the last open item of
-[virgil#2](https://github.com/benjaminpope/virgil/issues/2), "ROC curves from
-evidence / injection recovery".
+Status: **Stages 1 to 3 built**, with the tutorial (`notebooks/detection_roc.ipynb`)
+executed and in the docs; [virgil#2](https://github.com/benjaminpope/virgil/issues/2)
+("ROC curves from evidence / injection recovery") is closed. Stage 4 (the
+cluster campaign and the independent check in virgil-validation) and Stage 5
+are not in this repository.
 
 ## Goal
 

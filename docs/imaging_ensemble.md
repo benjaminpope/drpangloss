@@ -5,7 +5,7 @@
 
 Every reconstruction in parts 2–6 rests on choices the data do not make: the regularizer, its weight, the pixel size, the field and the starting image. Part 2 chose them carefully, with L-curves and the discrepancy principle, but a different careful choice would give a somewhat different image. Which features survive any reasonable choice, and which belong to one choice alone?
 
-Drevon et al. (2025, [arXiv:2609.15365](https://arxiv.org/abs/2609.15365)) won the 2024 interferometric imaging contest by not choosing. Their PYRA runs thousands of reconstructions with these settings drawn at random, and their MYTHRA keeps the ones that fit the data and averages them, adding members only while the average still fits. The mean is less sensitive to any one choice than a single reconstruction is, and the spread of the members shows where the image depends on the choices. [`virgil.ensemble`](api/ensemble.md) does the same with virgil's own fits. It is written from the paper's description, not from their code.
+Drevon et al. (2026, [arXiv:2609.15365](https://arxiv.org/abs/2609.15365)) won the 2024 interferometric imaging contest by not choosing. Their PYRA runs thousands of reconstructions with these settings drawn at random, and their MYTHRA keeps the ones that fit the data and averages them, adding members only while the average still fits. The mean is less sensitive to any one choice than a single reconstruction is, and the spread of the members shows where the image depends on the choices. [`virgil.ensemble`](api/ensemble.md) does the same with virgil's own fits. It is written from the paper's description, not from their code.
 
 !!! note "This page is not executed"
     Unlike parts 1–6, which are generated from executed notebooks, the code here is not run when the documentation is built: a useful ensemble is tens to hundreds of fits. Run it on a GPU, or on a cluster one group per task (below).
@@ -121,7 +121,7 @@ Group tasks that share a geometry each compile it once. JAX's persistent compila
 
 ## Summary
 
-- **`ensemble`** draws regularizer families, weights, pixel sizes, fields and starts, fits each group as an L-curve, and selects and averages the members (PYRA and MYTHRA, Drevon et al. 2025).
+- **`ensemble`** draws regularizer families, weights, pixel sizes, fields and starts, fits each group as an L-curve, and selects and averages the members (PYRA and MYTHRA, Drevon et al. 2026).
 - **Selection** keeps each group's L-curve window, drops members that fit any dataset badly and χ² outliers, and adds members to the mean only while no dataset's χ² rises.
 - **The result** is a mean image, a per-pixel standard deviation across the kept members, and the raw χ² per data point of the mean on each dataset.
 - **Compilation** is per geometry and family, not per fit; on a cluster, use `draw_groups`, `run_group` and `combine`.

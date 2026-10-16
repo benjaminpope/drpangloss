@@ -10,7 +10,11 @@ import pytest
 from virgil._geometry import pixel_offsets
 from virgil._utils import mas2rad
 from virgil.coverage import vlti_oidata
-from virgil.fields import PolarField, polar_field_priors, polar_interpolate
+from virgil.fields import (
+    MultipoleField,
+    multipole_field_priors,
+    polar_interpolate,
+)
 from virgil.fitting import fit
 from virgil.imaging import image_priors, log_evidence
 from virgil.models import (
@@ -19,7 +23,7 @@ from virgil.models import (
     Harmonics,
     Image,
     PointSource,
-    PolarDisk,
+    MultipoleDisk,
     System,
 )
 
@@ -34,7 +38,7 @@ def _field(seed=0, shape=SHAPE, **kwargs):
         dict(sigma=1.0, length_r=3.0, length_theta=1.0, inc=40.0, pa=25.0)
         | kwargs
     )
-    return PolarField(latent, shape, R_MAX, **options)
+    return MultipoleField(latent, shape, R_MAX, **options)
 
 
 def _matern(d, ell, nu):
@@ -48,7 +52,7 @@ def _matern(d, ell, nu):
 
 
 def _azimuthal_covariance(n, angle, nu):
-    """The circulant covariance whose order-m variance is PolarKernel's
+    """The circulant covariance whose order-m variance is MultipoleKernel's
     S(m) = [1 + (m angle)^2 / 2 nu]^(-nu - 1/2), written out independently
     and scaled to a unit diagonal."""
     m = onp.arange(n)
@@ -62,7 +66,9 @@ def _azimuthal_covariance(n, angle, nu):
 
 
 @pytest.mark.parametrize("nu", [0.5, 1.5, 2.5, onp.inf])
-def test_covariance_is_the_radial_matern_times_the_polarkernel_spectrum(nu):
+def test_covariance_is_the_radial_matern_times_the_multipolekernel_spectrum(
+    nu,
+):
     sigma, ell_r, ell_t = 1.7, 3.0, 0.8
     field = _field(sigma=sigma, length_r=ell_r, length_theta=ell_t, nu=nu)
     jac = jax.jacfwd(lambda z: field.set("latent", z).polar_values().ravel())(
@@ -79,17 +85,17 @@ def test_covariance_is_the_radial_matern_times_the_polarkernel_spectrum(nu):
 
 
 @pytest.mark.parametrize("nu_theta", [0.5, 1.5, onp.inf])
-def test_the_azimuthal_spectrum_is_polarkernels(nu_theta):
+def test_the_azimuthal_spectrum_is_multipolekernels(nu_theta):
     # One definition: the order-m variance of the field relative to order 1
-    # is PolarKernel.spectrum with ell_theta = length_theta * r_ref.
+    # is MultipoleKernel.spectrum with ell_theta = length_theta * r_ref.
     from virgil.fields import _azimuthal_filter
-    from virgil.models import PolarKernel
+    from virgil.models import MultipoleKernel
 
     n, angle = 32, 0.7
     filt = _azimuthal_filter(np.eye(n), np.asarray(angle), nu_theta)
     cov = onp.asarray(filt @ filt.T, dtype=float)
     eigen = onp.real(onp.fft.fft(cov[0]))
-    prior = PolarKernel(
+    prior = MultipoleKernel(
         ell_r=1.0,
         ell_theta=angle * 5.0,
         r_in=4.0,
@@ -293,17 +299,21 @@ def test_changing_values_does_not_recompile():
 
 
 def test_from_disk_copies_the_geometry():
-    disk = PolarDisk(
-        GaussianRing(r0=6.0, sigma=1.0), inc=35.0, pa=70.0, dra=0.5, ddec=-0.25
+    disk = MultipoleDisk(
+        GaussianRing(radius=6.0, sigma=1.0),
+        inc=35.0,
+        pa=70.0,
+        dra=0.5,
+        ddec=-0.25,
     )
-    field = PolarField.from_disk(disk, onp.zeros((6, 8)), SHAPE)
+    field = MultipoleField.from_disk(disk, onp.zeros((6, 8)), SHAPE)
     assert float(field.inc) == 35.0 and float(field.pa) == 70.0
     assert float(field.dra) == 0.5 and float(field.ddec) == -0.25
     assert field.r_max_mas == pytest.approx(1.2 * disk.profile.extent()[1])
 
 
 def test_hyperpriors_are_bounded_log_uniform():
-    priors = polar_field_priors("env.log_brightness", sigma=(0.1, 2.0))
+    priors = multipole_field_priors("env.log_brightness", sigma=(0.1, 2.0))
     assert set(priors) == {
         "env.log_brightness.sigma",
         "env.log_brightness.length_r",
@@ -312,11 +322,11 @@ def test_hyperpriors_are_bounded_log_uniform():
     assert all(isinstance(p, dist.LogUniform) for p in priors.values())
     assert float(priors["env.log_brightness.sigma"].high) == 2.0
     with pytest.raises(ValueError):
-        polar_field_priors(sigma=(2.0, 1.0))
+        multipole_field_priors(sigma=(2.0, 1.0))
 
 
 @pytest.mark.slow
-def test_a_polar_field_image_fits_and_has_a_finite_evidence():
+def test_a_multipole_field_image_fits_and_has_a_finite_evidence():
     data = vlti_oidata(hour_angles_h=(-2.0, 0.0, 2.0), wavelengths_m=[3.5e-6])
     truth = System(
         star=PointSource(), env=GaussianDisk(3.0, dra=2.0, flux=0.4)
@@ -334,10 +344,10 @@ def test_a_polar_field_image_fits_and_has_a_finite_evidence():
     assert onp.isfinite(log_evidence(result, data))
 
 
-def test_fitting_polar_field_scales_by_map_warns():
+def test_fitting_multipole_field_scales_by_map_warns():
     start = System(star=PointSource(), env=Image(_field(), 1.0, flux=0.4))
     data = vlti_oidata(hour_angles_h=(0.0,), wavelengths_m=[3.5e-6])
-    priors = image_priors(start) | polar_field_priors()
+    priors = image_priors(start) | multipole_field_priors()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         fit(start, priors, data, max_steps=1)
@@ -362,12 +372,12 @@ def test_fitting_polar_field_scales_by_map_warns():
         {"image_shape": (24,)},
     ],
 )
-def test_bad_polar_field_parameters_are_rejected(bad):
+def test_bad_multipole_field_parameters_are_rejected(bad):
     kwargs = dict(
         latent=onp.zeros((N_R, N_T)), image_shape=SHAPE, r_max_mas=R_MAX
     )
     with pytest.raises(ValueError):
-        PolarField(**(kwargs | bad))
+        MultipoleField(**(kwargs | bad))
 
 
 def _independent_polar_coordinates(shape, ps, inc, pa):
@@ -395,10 +405,10 @@ def test_orientation_at_a_general_position_angle(pa):
     assert onp.allclose(field.evaluate(1.0), expected, atol=2e-4)
 
 
-def test_the_azimuth_agrees_with_polar_disks_harmonics():
-    # A field that is cos(azimuth) times a ring peaks where PolarDisk's
+def test_the_azimuth_agrees_with_multipole_disks_harmonics():
+    # A field that is cos(azimuth) times a ring peaks where MultipoleDisk's
     # first linear harmonic (c = 1, s = 0) peaks, at the same inc and pa.
-    class CosineField(PolarField):
+    class CosineField(MultipoleField):
         def polar_values(self):
             r = onp.arange(N_R) * self.spacing
             th = 2 * onp.pi * onp.arange(N_T) / N_T
@@ -409,7 +419,7 @@ def test_the_azimuth_agrees_with_polar_disks_harmonics():
     field = CosineField(
         onp.zeros((N_R, N_T)), shape, R_MAX + 4.0, inc=inc, pa=pa
     )
-    disk = PolarDisk(
+    disk = MultipoleDisk(
         GaussianRing(8.0, 2.0),
         harmonics=Harmonics(c=0.9, s=0.0, form="linear"),
         inc=inc,
@@ -455,7 +465,7 @@ def test_the_radial_factor_is_finite_in_float32():
     assert factor.dtype == nodes.dtype
     assert onp.all(onp.isfinite(onp.asarray(factor)))
     latent = onp.random.default_rng(0).normal(size=(128, 16))
-    field = PolarField(
+    field = MultipoleField(
         latent,
         (32, 32),
         38.0,
@@ -475,7 +485,7 @@ GEOMETRY = dict(inc=45.0, pa=30.0, dra=1.5, ddec=-1.0)
 
 def _disk(**options):
     options = GEOMETRY | {"flux": 0.0} | options
-    return PolarDisk(GaussianRing(r0=6.0, sigma=1.5), **options)
+    return MultipoleDisk(GaussianRing(radius=6.0, sigma=1.5), **options)
 
 
 def _tied_scene(
@@ -483,7 +493,7 @@ def _tied_scene(
 ):
     disk = _disk()
     latent = onp.random.default_rng(seed).normal(size=(N_R, N_T))
-    field = PolarField.from_disk(
+    field = MultipoleField.from_disk(
         disk,
         latent,
         shape,
@@ -525,7 +535,7 @@ def test_a_tied_field_has_no_geometry_parameters():
 
 
 def test_the_default_is_untied_with_own_geometry():
-    field = PolarField.from_disk(_disk(), onp.zeros((6, 8)), SHAPE)
+    field = MultipoleField.from_disk(_disk(), onp.zeros((6, 8)), SHAPE)
     assert field.geometry_from is None and field.fallback == ()
     assert float(field.inc) == 45.0
 
@@ -665,7 +675,7 @@ def test_a_tie_must_name_a_sibling_with_geometry():
         wrong.render(16, 16.0)
     with pytest.raises(ValueError, match="concrete"):
         jax.jit(
-            lambda inc: PolarField(
+            lambda inc: MultipoleField(
                 onp.zeros((N_R, N_T)), SHAPE, R_MAX, inc=inc, geometry_from="d"
             ).latent
         )(1.0)
@@ -731,11 +741,11 @@ def test_the_gradient_in_the_azimuthal_length_is_finite_at_high_orders(nu):
     assert onp.isfinite(float(jax.grad(power)(np.asarray(6.0))))
 
 
-def test_the_polar_kernel_spectrum_is_finite_for_a_long_angle():
-    from virgil.models import PolarKernel
+def test_the_multipole_kernel_spectrum_is_finite_for_a_long_angle():
+    from virgil.models import MultipoleKernel
 
     for nu in (1.5, onp.inf):
-        kernel = PolarKernel(
+        kernel = MultipoleKernel(
             1.0, 90.0, r_in=4.0, r_out=8.0, r_ref=6.0, nu_theta=nu
         )
         spectrum = onp.asarray(kernel.spectrum(4))

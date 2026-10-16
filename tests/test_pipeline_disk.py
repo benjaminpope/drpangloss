@@ -24,7 +24,7 @@ from virgil.models import (  # noqa: E402
     GaussianRing,
     Harmonics,
     PointSource,
-    PolarDisk,
+    MultipoleDisk,
     System,
 )
 from virgil.pipeline import (  # noqa: E402
@@ -41,7 +41,7 @@ pytestmark = pytest.mark.xdist_group("pipeline_disk")
 
 TRUTH = System(
     star=PointSource(flux=1.0),
-    ring=PolarDisk(
+    ring=MultipoleDisk(
         GaussianRing(5.0, 1.0),
         inc=50.0,
         pa=30.0,
@@ -433,7 +433,7 @@ def test_gp_round_trip(gp_run, data):
     model = res.model()
     assert isinstance(model, System)
     assert set(model.components) == {"star", "disk", "planet"}
-    assert type(model.disk) is PolarDisk
+    assert type(model.disk) is MultipoleDisk
     # The rebuilt model is a live virgil object: it predicts the data.
     pred = res.data().model(model)
     assert onp.all(onp.isfinite(onp.asarray(pred)))
@@ -525,7 +525,7 @@ def test_rings_posterior_is_folded(rings_run):
 
 def test_fold_pa_keeps_the_disk():
     # The fold's parity rule: pa → pa + 180° with the order-m harmonic times
-    # (-1)^m is the same disk. Check it against PolarDisk itself.
+    # (-1)^m is the same disk. Check it against MultipoleDisk itself.
     data = vlti_oidata(
         wavelengths_m=onp.array([2.0e-6]),
         hour_angles_h=(-1.0, 1.0),
@@ -536,7 +536,7 @@ def test_fold_pa_keeps_the_disk():
     def disk_with(pa, re, im):
         return System(
             star=PointSource(flux=1.0),
-            ring=PolarDisk(
+            ring=MultipoleDisk(
                 GaussianRing(5.0, 1.0),
                 inc=55.0,
                 pa=pa,
@@ -679,7 +679,7 @@ def test_fold_gp_values_turns_the_harmonics():
     values = {
         "disk.pa": onp.asarray(210.0),
         "disk.pa_vec": onp.array([-0.8, -0.5]),
-        "disk.harmonics.prior.z": z,
+        "disk.harmonics.z": z,
     }
     out = disk._fold_gp_values(ctx, values, degree=2)
     assert float(out["disk.pa"]) == pytest.approx(30.0)
@@ -688,8 +688,8 @@ def test_fold_gp_values_turns_the_harmonics():
         [onp.cos(onp.radians(30.0)), onp.sin(onp.radians(30.0))],
     )
     # Order 1 flips, order 2 does not.
-    assert onp.all(out["disk.harmonics.prior.z"][:, 0] == -1.0)
-    assert onp.all(out["disk.harmonics.prior.z"][:, 1] == 1.0)
+    assert onp.all(out["disk.harmonics.z"][:, 0] == -1.0)
+    assert onp.all(out["disk.harmonics.z"][:, 1] == 1.0)
     # A position angle already in [0, 180) is left alone.
     same = {**values, "disk.pa": onp.asarray(30.0)}
     assert disk._fold_gp_values(ctx, same, degree=2) is same

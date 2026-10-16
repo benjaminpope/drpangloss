@@ -35,7 +35,7 @@ import numpy as onp
 
 from ._deprecate import renamed
 from ._linear import posterior, whiten_blocks
-from ._utils import wrap_phase
+from ._utils import group_indices, wrap_phase
 
 __all__ = [
     "DifferentialPhase",
@@ -125,11 +125,11 @@ def _padded_groups(labels, fill):
     """``(n_group, m)`` member indices of each label, padded with ``fill``."""
     labels = onp.asarray(labels)
     n_group = int(labels.max()) + 1 if labels.size else 0
-    members = [onp.flatnonzero(labels == g) for g in range(n_group)]
-    m = max((len(x) for x in members), default=0)
-    out = onp.full((n_group, m), fill, dtype=onp.int32)
-    for g, x in enumerate(members):
-        out[g, : len(x)] = x
+    counts = onp.bincount(labels, minlength=n_group)
+    order = onp.argsort(labels, kind="stable")
+    first = onp.cumsum(counts) - counts
+    out = onp.full((n_group, counts.max(initial=0)), fill, dtype=onp.int32)
+    out[labels[order], onp.arange(labels.size) - first[labels[order]]] = order
     return out
 
 
@@ -258,9 +258,9 @@ class FluxSpectrum(_Block):
     cont_basis: onp.ndarray | None
     cont_fit: onp.ndarray | None
     kind: str = eqx.field(static=True)
-    widths: tuple | None = eqx.field(static=True)
-    scale: tuple | None = eqx.field(static=True)
-    poly_width: float = eqx.field(static=True)
+    widths: onp.ndarray | None  # prior widths of the weights, relative to mu
+    scale: onp.ndarray | None  # the stated (mean, sd) of the grey scale
+    poly_width: onp.ndarray  # scalar, kept to rebuild the block
     per: str = eqx.field(static=True)
     continuum: tuple | None = eqx.field(static=True)
     continuum_order: int = eqx.field(static=True)
@@ -371,7 +371,7 @@ class FluxSpectrum(_Block):
             mu = onp.full(n_group, mean)
             # Widths relative to the mean: the scale's own, then the
             # polynomial's.
-            widths = (sd / mean,) + (float(poly_width),) * poly_order
+            widths = onp.array([sd / mean] + [float(poly_width)] * poly_order)
 
         continuum = _ranges(continuum)
         cont_rows = cont_basis = cont_fit = None
@@ -398,8 +398,8 @@ class FluxSpectrum(_Block):
             cont_fit=cont_fit,
             kind=kind,
             widths=widths,
-            scale=None if scale is None else (mean, sd),
-            poly_width=float(poly_width),
+            scale=None if scale is None else onp.array([mean, sd]),
+            poly_width=onp.array(float(poly_width)),
             per=per,
             continuum=continuum,
             continuum_order=int(continuum_order),
@@ -595,7 +595,7 @@ class DifferentialPhase(_Block):
     lines: tuple | None = eqx.field(static=True)
     order: int = eqx.field(static=True)
     closure_free: bool = eqx.field(static=True)
-    prior_width: tuple | None = eqx.field(static=True, default=None)
+    prior_width: onp.ndarray | None = None
     kind: str = eqx.field(static=True, default="visphi")
     # Per frame, the Cholesky factor of the covariance (projection only):
     # it depends only on the errors, so it is computed once, where they are
@@ -667,15 +667,17 @@ class DifferentialPhase(_Block):
             )
             if not onp.all(widths > 0):
                 raise ValueError("prior_width must be positive.")
-            prior_width = tuple(float(x) for x in widths)
+            prior_width = onp.array(widths, float)
 
+        # The samples of each row, ascending (one stable sort, not a pass
+        # over all samples per row and frame).
+        by_row = dict(zip(onp.unique(row), group_indices(row)))
         frames = []
-        for f in onp.unique(frame):
-            in_frame = onp.flatnonzero(frame == f)
+        for in_frame in group_indices(frame):
             rows = onp.unique(row[in_frame])
             channels = None
             for r in rows:
-                w_r = wavel[row == r]
+                w_r = wavel[by_row[r]]
                 if onp.unique(w_r).size != w_r.size:
                     raise ValueError(
                         "A differential-phase spectrum has two values at one "
@@ -706,7 +708,7 @@ class DifferentialPhase(_Block):
             grid = onp.empty((rows.size, channels.size), dtype=int)
             pairs = onp.empty((rows.size, 2), dtype=int)
             for b, r in enumerate(rows):
-                idx = onp.flatnonzero(row == r)
+                idx = by_row[r]
                 order_in_row = onp.argsort(wavel[idx])
                 idx = idx[order_in_row]
                 pos = onp.searchsorted(wavel[idx], channels)
