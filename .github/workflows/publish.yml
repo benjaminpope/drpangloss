@@ -13,7 +13,26 @@ on:
     types: [published]
 
 jobs:
+  # Refuses to build or upload a commit that tests.yml has not passed in
+  # the full tier (macOS, py3.13, dependency floors); see CONTRIBUTING.md,
+  # "Releasing".
+  gate:
+    name: the tagged commit passed the full tests
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read  # list the workflow runs of the tagged commit
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with: {sparse-checkout: .github/scripts}
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: python3 .github/scripts/check_release_gate.py
+
   build:
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read  # building needs no write access
