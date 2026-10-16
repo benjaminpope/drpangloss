@@ -486,8 +486,18 @@ Provisional in 0.4:
   `AliasBandResult.n_starts_failed`), a band with no finite mode is a
   `no-valid-mode` row, and a `RuntimeError` is raised when every band
   fails. The likelihood compiles once per data shape, not once per mode.
-- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(epochs,
-  model, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
+- **Orbit API tidy-up before release.** `score_orbits(model, epochs,
+  orbits, ...)` takes the model before the data like the rest of the
+  package (the order `score_orbits(epochs, model, ...)` works with a
+  `FutureWarning` for one release); `score_orbits` takes `model(orbit,
+  flux)` and `rank_orbits` takes `model(orbit)`. `rank_orbits` and
+  `start_from_positions` default to `scales="marginal"`, without a
+  warning, and `EpochPositions.gap` is gone (`gap_marginal` is the gap).
+  `AliasResult.save` writes a `format` field (1); `load` reads files
+  without it and refuses a newer format; `UNRECORDED` is no longer in
+  `virgil.aliases.__all__`.
+- **Orbit-search scorer.** `virgil.orbit_search.score_orbits(model,
+  epochs, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
   `lax.map`-batched kernel. The companion flux is shared: one flux per
   band (optionally f₀(λ/λ₀)^β), at most 1 in a reference band, integrated
@@ -617,9 +627,7 @@ Provisional in 0.4:
     local maxima of the grid, takes the best refined one, and measures
     `gap_marginal` against its best refined rival; `EpochPositions.peaks`
     holds each dataset's catalogue (`EpochPeaks`: positions, fluxes,
-    scores, Laplace-mass weights, `edge` and `laplace` flags). `gap` is
-    the grid quantity on the quoted errors and will switch to the
-    marginal value; `decisive`, `positions(min_gap=...)` and
+    scores, Laplace-mass weights, `edge` and `laplace` flags). `decisive`, `positions(min_gap=...)` and
     `start_from_positions(min_gap=...)` compare `gap_marginal`. Raw χ²/N
     and the profiled scales are recorded (`chi2_raw`, `scale`), with a
     `UserWarning` naming datasets with raw χ²/N > 4. Data with gains,
@@ -627,9 +635,8 @@ Provisional in 0.4:
     `NotImplementedError` on the marginalized surface.
   - `rank_orbits` and `start_from_positions` take `scales="quoted" |
     "marginal"`; `"marginal"` integrates each dataset's error scales out,
-    so the worst-calibrated nights do not dominate the ranking. The
-    default is `"quoted"` in 0.4, with a `FutureWarning` when `scales` is
-    not given; it will become `"marginal"`. Rankings use
+    so the worst-calibrated nights do not dominate the ranking, and is the
+    default (as in `score_orbits`). Rankings use
     `orbit_search.rank_scores` (ties within 1e-3 nat broken by index,
     non-finite scores last). `OrbitStart.seeded` and `.ambiguous` name the
     datasets that seeded the orbits and those left out (with a

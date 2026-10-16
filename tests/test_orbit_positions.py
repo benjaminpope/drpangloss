@@ -125,10 +125,10 @@ def test_rescaling_one_dataset_or_only_its_closure_phases_changes_nothing(
             base.scale[0]["phi_scale"],
             rtol=1e-6,
         )
-    # With every block scaled, the quoted-error gap (same best point and
-    # rival) is divided by 9, while the marginal one is unchanged.
+    # With every block scaled, the marginal gap is unchanged.
     every = _positions(_scaled(data, 3.0, 3.0), refine=False)
-    onp.testing.assert_allclose(every.gap, base.gap / 9.0, rtol=1e-6)
+    grid_gap = _positions(data, refine=False).gap_marginal
+    onp.testing.assert_allclose(every.gap_marginal, grid_gap, rtol=1e-6)
 
 
 def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
@@ -369,7 +369,6 @@ def test_bounded_von_mises_marginal_matches_quad(s_max):
 def test_an_ambiguous_night_with_underestimated_errors_is_not_decisive(array):
     data = _night(ARRAYS[array], **AMBIGUOUS[array])
     found = _positions(data, refine=False)
-    assert found.gap[0] > 5.0  # decisive on the quoted errors (main)
     assert 0.6 < found.gap_marginal[0] < 1.0
     assert not found.decisive(5.0)[0]
     # So start_from_positions would not seed from it.
@@ -457,8 +456,12 @@ def test_rescaling_one_dataset_leaves_the_marginal_ranking_unchanged():
     )
     quoted = ranked(nights[0], "quoted")
     assert not onp.array_equal(ranked(rescaled, "quoted").order, quoted.order)
-    with pytest.warns(FutureWarning, match="scales='marginal'"):
-        rank_orbits(model, Epochs({"a": nights[0]}), orbits[:2])
+    # The default is the marginal ranking: on the rescaled night the quoted
+    # ranking moves (above) and the default does not.
+    both = Epochs({"a": rescaled, "b": nights[1]})
+    default = rank_orbits(model, both, orbits)
+    onp.testing.assert_array_equal(default.order, marginal.order)
+    assert not onp.array_equal(ranked(rescaled, "quoted").order, default.order)
 
 
 # ---------------------------------------------------------------------------
@@ -631,8 +634,6 @@ def test_the_per_night_ranking_agrees_with_an_independent_fit(case):
         found.gap_marginal[0],
         gap,
     )
-    if gap < 1.0:
-        assert found.gap[0] > 5.0  # main called it decisive
     if options.get("scene") is not None:
         # A static fit of a night with 0.2 λ/B of motion agrees; the motion
         # is visible in the night's spread of times.

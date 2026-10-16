@@ -1246,6 +1246,23 @@ def test_a_loaded_result_scores_like_the_original(tmp_path):
     )
 
 
+def test_a_saved_result_records_its_format_and_refuses_a_newer_one(tmp_path):
+    _, result = _tiny_fit()
+    path = tmp_path / "fit.json"
+    result.save(path)
+    saved = json.loads(path.read_text())
+    assert saved["format"] == aliases._RESULT_FORMAT == 1
+    again = AliasResult.load(path)  # the round trip
+    assert again.best.n == result.best.n
+    del saved["format"]  # a legacy file has no field and still loads
+    path.write_text(json.dumps(saved))
+    assert AliasResult.load(path).best.n == result.best.n
+    saved["format"] = aliases._RESULT_FORMAT + 1
+    path.write_text(json.dumps(saved))
+    with pytest.raises(ValueError, match="format 2.*upgrade virgil"):
+        AliasResult.load(path)
+
+
 def test_a_file_that_lacks_the_settings_is_not_read_as_a_point_primary(
     tmp_path,
 ):
@@ -1529,7 +1546,6 @@ def _stub_positions(flagged=(), primary_diam=None):
         ddec=onp.zeros(n),
         cov=onp.tile(onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, 0.3),
-        gap=onp.ones(n),
         gap_marginal=onp.full(n, 20.0),
         chi2_raw=({},) * n,
         scale=({},) * n,
@@ -1772,7 +1788,6 @@ def _epoch_positions_at(separations, flagged=()):
         ddec=onp.zeros(n),
         cov=stub.cov[:n],
         flux=stub.flux[:n],
-        gap=stub.gap[:n],
         gap_marginal=stub.gap_marginal[:n],
         chi2_raw=stub.chi2_raw[:n],
         scale=stub.scale[:n],
@@ -2131,7 +2146,6 @@ def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
         ddec=sign * onp.asarray(ddec) + offset[1],
         cov=onp.tile(0.05 * onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, min(flux, 0.9)),
-        gap=onp.ones(n),
         gap_marginal=onp.full(n, 20.0),
         chi2_raw=({},) * n,
         scale=({},) * n,
