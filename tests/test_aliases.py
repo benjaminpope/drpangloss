@@ -21,13 +21,12 @@ from virgil.aliases import (  # noqa: E402
     alias_bands,
     fit_orbit_aliases,
     position_profile,
-    spectral_window,
 )
 from virgil._precision import in_float64, cast_tree  # noqa: E402
 from virgil.models import OrbitalBinary  # noqa: E402
-from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit, PositionData  # noqa: E402
 from virgil.simulate import simulate  # noqa: E402
+from tests._shared import vlti_night  # noqa: E402
 from scipy.special import logsumexp  # noqa: E402
 
 T_REF = 60000.0
@@ -42,38 +41,10 @@ TRUTH = dict(
 )
 FLUX = 0.3
 EPOCHS = T_REF + onp.array([0.0, 2.4, 5.1, 238.0, 240.6, 247.4])
-STATIONS = onp.array([[0.0, 0.0], [60.0, 5.0], [25.0, 70.0], [-40.0, 45.0]])
-PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
-TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
 
 
 def _night(mjd, frames=3, rotation=0.0, d_phi=0.02):
-    delta = STATIONS[PAIRS[:, 1] - 1] - STATIONS[PAIRS[:, 0] - 1]
-    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
-    n = len(PAIRS)
-    angles = onp.deg2rad(rotation + 15.0 * onp.arange(frames))
-    u = onp.concatenate(
-        [delta[:, 0] * onp.cos(a) - delta[:, 1] * onp.sin(a) for a in angles]
-    )
-    v = onp.concatenate(
-        [delta[:, 0] * onp.sin(a) + delta[:, 1] * onp.cos(a) for a in angles]
-    )
-    shift = lambda i: onp.concatenate([i + k * n for k in range(frames)])  # noqa: E731
-    return OIData(
-        {
-            "u": u,
-            "v": v,
-            "wavel": 2.2e-6,
-            "vis": onp.ones(u.size),
-            "d_vis": onp.full(u.size, 0.01),
-            "phi": onp.zeros(len(i1) * frames),
-            "d_phi": onp.full(len(i1) * frames, d_phi),
-            "i_cps1": shift(i1),
-            "i_cps2": shift(i2),
-            "i_cps3": shift(i3),
-            "mjd": onp.repeat(mjd + onp.arange(frames) / 24.0, n),
-        }
-    )
+    return vlti_night(mjd, frames, rotation, d_phi=d_phi)
 
 
 def test_alias_bands_tile_the_period_range():
@@ -84,12 +55,6 @@ def test_alias_bands_tile_the_period_range():
     assert n34.p_lo < 12.137 < n34.p_hi
     for lo, hi in zip(bands[1:], bands[:-1]):  # contiguous in period
         assert onp.isclose(lo.p_hi, hi.p_lo)
-
-
-def test_spectral_window_is_one_at_zero_and_returns_at_aliases():
-    t = onp.array([0.0, 1.0, 2.0, 3.0])  # a unit grid: aliases at integers
-    w = spectral_window(t, [0.0, 0.5, 1.0])
-    assert onp.allclose(w[[0, 2]], 1.0) and w[1] < 0.2
 
 
 def test_position_profile_has_a_chi2_per_band():
@@ -964,7 +929,7 @@ def _tiny_fit(primary_diam=DIAM):
         band.p = 1.0
     result = AliasResult(
         T_REF, onp.asarray(EPOCHS), float(onp.ptp(EPOCHS)), [band],
-        {20: aliases._physical(onp.asarray(x), T_REF)},
+        {20: aliases._physical(onp.asarray(x))},
         primary_diam=primary_diam, vis_amp=VIS_AMP,
     )  # fmt: skip
     return data, result
@@ -1111,7 +1076,7 @@ def test_params_reprofile_the_amplitude_and_match_the_fit_objective():
     data, result = _tiny_fit()
     x = _best_x(result.best).copy()
     x[6] += 0.1  # a 10% larger semimajor axis
-    params = {k: float(v[0]) for k, v in aliases._physical(x, T_REF).items()}
+    params = {k: float(v[0]) for k, v in aliases._physical(x).items()}
     nights = result.best.chi2_per_night(data, params=params)
     assert _score(data, nights) == pytest.approx(
         _objective(data, x), rel=1e-4, abs=1e-3
