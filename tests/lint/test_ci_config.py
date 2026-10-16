@@ -123,3 +123,15 @@ def test_dtype_independent_list_is_safe():
     # The numerical files the float64 jobs exist for stay in.
     for name in ("test_aliases.py", "test_fitting.py", "test_likelihood.py"):
         assert name not in DTYPE_INDEPENDENT
+
+
+def test_main_reads_the_environment(monkeypatch, capsys):
+    monkeypatch.setenv("EVENT", "workflow_dispatch")
+    monkeypatch.setenv("NIGHTLY", "true")
+    ci.main()
+    out = capsys.readouterr().out
+    assert out.startswith("matrix=")
+    assert "canary" in out
+    monkeypatch.setenv("NIGHTLY", "false")
+    ci.main()
+    assert "canary" not in capsys.readouterr().out

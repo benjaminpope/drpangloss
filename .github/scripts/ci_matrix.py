@@ -2,6 +2,9 @@
 
     EVENT=pull_request FULL_CI=true PR=123 python3 .github/scripts/ci_matrix.py
 
+(``NIGHTLY=true`` makes any event the nightly tier: a hand-dispatched
+nightly.)
+
 prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 
 | tier    | trigger                      | jobs                                    |
@@ -70,15 +73,24 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
         # x64 dtype mix-ups have surfaced on macOS and Python 3.11 but not
         # in Linux CI.
         include.append(
-            {"os": "macos-latest", "python-version": "3.11", "x64": "0",
-             "slow": nightly}
+            {
+                "os": "macos-latest",
+                "python-version": "3.11",
+                "x64": "0",
+                "slow": nightly,
+            }
         )
         include.append({**LINUX, "python-version": "3.13", "slow": nightly})
     if full or pyproject:
         # Every direct dependency at the oldest version pyproject.toml
         # allows.
         include.append(
-            {**LINUX, "python-version": "3.11", "lowest": True, "slow": nightly}
+            {
+                **LINUX,
+                "python-version": "3.11",
+                "lowest": True,
+                "slow": nightly,
+            }
         )
     if nightly:
         # Newer than uv.lock: catches a break from a new release before
@@ -88,8 +100,11 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
     for job in include:
         shard = job.get("shard", "").replace("/", "of")
         variant = (
-            "-lowest" if job.get("lowest")
-            else "-canary" if job.get("canary") else ""
+            "-lowest"
+            if job.get("lowest")
+            else "-canary"
+            if job.get("canary")
+            else ""
         )
         job["id"] = (
             f"{job['os']}-py{job['python-version']}-x64{job['x64']}"
@@ -100,15 +115,21 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
 
 def main():
     event = os.environ["EVENT"]
+    nightly = os.environ.get("NIGHTLY") == "true"
     pyproject = orbit_slow = False
     if event == "pull_request":
         files = subprocess.run(
             ["gh", "pr", "diff", os.environ["PR"], "--name-only"],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.split()
         pyproject, orbit_slow = changed_flags(files)
     matrix = choose(
-        event, os.environ.get("FULL_CI") == "true", pyproject, orbit_slow
+        "schedule" if nightly else event,
+        os.environ.get("FULL_CI") == "true",
+        pyproject,
+        orbit_slow,
     )
     print("matrix=" + json.dumps(matrix))
 

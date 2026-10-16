@@ -12,8 +12,8 @@ on:
     types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "0 3 * * *"
-  # Also dispatched by lock-upgrade.yml.
-  workflow_dispatch:
+  # Also dispatched by lock-upgrade.yml; `nightly` runs the nightly tier by hand.
+  workflow_dispatch: {inputs: {nightly: {description: Run the nightly tier, type: boolean, default: false}}}
 
 concurrency:
   # A label other than full-ci gets its own group: it must not cancel the PR's run.
@@ -34,6 +34,7 @@ jobs:
       - id: choose
         env:
           EVENT: ${{ github.event_name }}
+          NIGHTLY: ${{ github.event_name == 'schedule' || inputs.nightly }}
           FULL_CI: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
           PR: ${{ github.event.pull_request.number }}
           GH_REPO: ${{ github.repository }}
@@ -45,7 +46,7 @@ jobs:
     needs: matrix
     runs-on: ${{ matrix.os }}
     # Fail a hung job instead of holding a runner for GitHub's 6 hours.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 90 || github.event_name == 'pull_request' && !matrix.slow && !matrix.orbit_slow && 30 || 45 }}
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.nightly) && 90 || github.event_name == 'pull_request' && !matrix.slow && !matrix.orbit_slow && 30 || 45 }}
     strategy: {fail-fast: false, matrix: "${{ fromJSON(needs.matrix.outputs.matrix) }}"}
     env: {JAX_ENABLE_X64: "${{ matrix.x64 }}", UV_PYTHON: "${{ matrix.python-version }}"}
     steps:
@@ -182,7 +183,7 @@ jobs:
   nightly-report:
     name: report the nightly run
     needs: [build, package]
-    if: always() && github.event_name == 'schedule'
+    if: always() && (github.event_name == 'schedule' || inputs.nightly)
     runs-on: ubuntu-latest
     permissions: {actions: write, contents: read, issues: write}
     steps:
