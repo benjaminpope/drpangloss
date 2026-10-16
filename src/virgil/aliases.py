@@ -1937,9 +1937,10 @@ class AliasResult:
         if self.temper_f is None:
             return False
         f_max = max([self.temper_f, *(self.temper_blocks or {}).values()])
-        flat = any(
-            flat_signature(*r) for r in (self.temper_rho or {}).values()
-        )
+        rho = dict(self.temper_rho or {})
+        if len(rho) > 1:  # as estimate_factors: blocks of their own count
+            rho.pop("pooled", None)
+        flat = any(flat_signature(*r) for r in rho.values())
         return out_of_range(f_max, self.temper_f_raw) or flat
 
     def block_dof(self):

@@ -416,7 +416,7 @@ def estimate_factors(residuals, chains, names=()):
     -------
     ChannelFactors
         ``f_b = Σ (Σ_chain z)² / Σ z²`` pooled over the chains of block
-        ``b`` (the module docstring); the pooled ``f`` sums all blocks. ρ1
+        ``b`` (see `docs/api/tempering.md`); the pooled ``f`` sums all blocks. ρ1
         and ρ2 are kept as diagnostics.
 
     Examples

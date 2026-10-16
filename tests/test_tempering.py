@@ -606,7 +606,7 @@ def _median_offsets(common, rho, n_seeds=20):
             EPOCHS[0]
         )[:2]
     ).ravel()
-    out = {True: [], False: []}
+    out, fs = {True: [], False: []}, []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for seed in range(n_seeds):
@@ -620,7 +620,11 @@ def _median_offsets(common, rho, n_seeds=20):
                     primary_diam=None, temper=temper,
                 )  # fmt: skip
                 out[temper].append(_offset(result, truth, EPOCHS[0]))
-    return {k: float(onp.median(v)) for k, v in out.items()}
+                if temper:
+                    fs.append(result.temper_f)
+    med = {k: float(onp.median(v)) for k, v in out.items()}
+    med["f"] = float(onp.median(fs))
+    return med
 
 
 @pytest.mark.slow
@@ -638,7 +642,12 @@ def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
     med = _median_offsets(common, rho)
     print(f"median offset/spread: tempered {med[True]:.2f}, "
           f"untempered {med[False]:.2f}")  # fmt: skip
-    assert med[True] < 2.0
+    # the estimated f must be the true one (a lag-1 AR(1) estimate gives
+    # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
+    truth_f = 1 + 7 * rho if common else tempering.chain_factor(rho, 8)
+    print(f"median f {med['f']:.2f}, truth {truth_f:.2f}")
+    assert med["f"] == pytest.approx(truth_f, rel=0.25)
+    assert med[True] < 1.45
     assert med[False] > 2.0
 
 
@@ -816,6 +825,14 @@ def test_the_flag_follows_the_largest_block_and_the_flat_signature():
     assert not flagged(
         temper_f=1.5, temper_blocks={"vis": 1.4},
         temper_rho={"vis": [0.6, 0.36, 500]},
+    )  # fmt: skip
+    # AR(1) blocks of different rho: the pooled values alone would look flat
+    assert not flagged(
+        temper_f=1.5, temper_blocks={"vis": 1.4, "phi": 1.0},
+        temper_rho={
+            "vis": [0.85, 0.7225, 500], "phi": [0.0, 0.0, 500],
+            "pooled": [0.425, 0.36, 1000],
+        },
     )  # fmt: skip
 
 
