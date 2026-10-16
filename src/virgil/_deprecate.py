@@ -69,10 +69,12 @@ def external_stacklevel():
 
 
 def _is_data(x):
-    """Whether ``x`` is an ``OIData`` or a non-empty sequence of them."""
-    from .oidata import OIData  # lazy: keeps this module import-free
+    """Whether ``x`` is an ``OIData``, an ``Epochs`` or a non-empty sequence
+    of ``OIData``."""
+    from .epochs import Epochs  # lazy: keeps this module import-free
+    from .oidata import OIData
 
-    if isinstance(x, OIData):
+    if isinstance(x, (OIData, Epochs)):
         return True
     return (
         isinstance(x, (list, tuple))

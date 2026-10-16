@@ -602,7 +602,6 @@ def test_a_positions_fit_starts_where_a_default_start_fails():
         start.positions.ddec - onp.asarray(true_ddec),
     )
     assert onp.all(found < 0.5), found
-    assert onp.all(start.positions.gap > 5.0)
     # On this coarse (2 mas) grid one night's marginal gap is about 3,
     # so it does not seed orbits; the others do.
     assert start.positions.decisive(5.0).sum() >= 4
@@ -895,7 +894,6 @@ def _start_positions(n, dra, ddec, flux):
         ddec=onp.full(n, ddec),
         cov=onp.tile(onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, flux),
-        gap=onp.ones(n),
         gap_marginal=onp.full(n, 20.0),
         chi2_raw=({},) * n,
         scale=({},) * n,

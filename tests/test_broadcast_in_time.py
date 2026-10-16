@@ -165,8 +165,8 @@ def test_orbit_batches_are_vectorized_by_default_and_change_nothing():
         assert onp.array_equal(default.order, single.order)
         assert onp.allclose(default.loglike, single.loglike, rtol=1e-10)
     kwargs = dict(shared=SharedFlux([0.1]), s_max=5.0)
-    default = score_orbits(epochs, OrbitalBinary, orbits, **kwargs)
+    default = score_orbits(OrbitalBinary, epochs, orbits, **kwargs)
     single = score_orbits(
-        epochs, OrbitalBinary, orbits, batch_size=2, **kwargs
+        OrbitalBinary, epochs, orbits, batch_size=2, **kwargs
     )
     assert onp.allclose(default.score, single.score, rtol=1e-10)

@@ -105,8 +105,8 @@ def _summed_marginal(epochs, orbit, flux):
 def test_equals_summed_marginal_loglike_at_fixed_flux():
     epochs = _epochs()
     scores = score_orbits(
-        epochs,
         OrbitalBinary,
+        epochs,
         [TRUTH, OTHER],
         shared=SharedFlux([0.4]),
         s_max=None,
@@ -130,7 +130,7 @@ def test_several_times_per_epoch_equal_the_split_with_a_tied_scale():
     night = _night(fast, 0.4, T_REF, seed=7, hours=(-2.0, 0.0, 2.0))
     epochs = Epochs({"night": night})
     got = score_orbits(
-        epochs, OrbitalBinary, [fast], shared=SharedFlux([0.4]), s_max=None
+        OrbitalBinary, epochs, [fast], shared=SharedFlux([0.4]), s_max=None
     )
     parts = night.split_by_epoch(gap_days=0.01)
     assert len(parts) == 3
@@ -198,7 +198,7 @@ def _log_mean_exp(values, x, axis=-1):
 def test_flux_marginal_matches_quadrature_wherever_the_peak_falls(flux, dtype):
     epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
     scores = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], dtype=dtype, s_max=None
+        OrbitalBinary, epochs, [TRUTH], dtype=dtype, s_max=None
     )
     log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
     values = _brute(epochs, TRUTH, log_f)[:, 0]
@@ -219,7 +219,7 @@ def test_flux_marginal_near_the_reference_bound(flux):
     # f <= 1 in the reference band: a peak just inside the bound, and one
     # beyond it (the profile then sits on the bound with a slope).
     epochs = _epochs(flux=flux, sigma_v2=0.1, sigma_cp_deg=10.0)
-    scores = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
+    scores = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
     log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
     values = _brute(epochs, TRUTH, log_f)[:, 0]
     assert scores.score[0] == pytest.approx(
@@ -235,7 +235,7 @@ def test_flux_marginal_when_the_prior_dominates():
     epochs = _epochs(flux=0.003, sigma_v2=0.3, sigma_cp_deg=30.0)
     for dtype in ("float64", "float32"):
         scores = score_orbits(
-            epochs, OrbitalBinary, [TRUTH], dtype=dtype, s_max=None
+            OrbitalBinary, epochs, [TRUTH], dtype=dtype, s_max=None
         )
         log_f = onp.linspace(onp.log(1e-3), 0.0, 20001)
         values = _brute(epochs, TRUTH, log_f)[:, 0]
@@ -250,7 +250,7 @@ def test_flux_and_slope_marginal_matches_quadrature():
     wavel0 = 2.2e-6
     shared = SharedFlux(slope=(-3.0, 3.0, 7), wavel0=wavel0)
     scores = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=None
+        OrbitalBinary, epochs, [TRUTH], shared=shared, s_max=None
     )
     # Brute force about the peak; the rest of the prior is negligible.
     lf0 = onp.log(scores.flux[0, 0])
@@ -280,7 +280,7 @@ def scored():
     """``(epochs, scores)``: CANDIDATES scored in float64, all at once."""
     epochs = _epochs()
     return epochs, score_orbits(
-        epochs, OrbitalBinary, CANDIDATES, shared=SHARED
+        OrbitalBinary, epochs, CANDIDATES, shared=SHARED
     )
 
 
@@ -290,8 +290,8 @@ def test_rv_term_adds_its_loglike(scored):
     rv = RVData(mjd, [1.0, -2.0, 0.5], 0.5, t_ref=T_REF)
     term = rv.term(lambda v: (v["orbit"], 0.5, 0.0, 50.0))
     with_rv = score_orbits(
-        epochs,
         OrbitalBinary,
+        epochs,
         CANDIDATES,
         shared=SHARED,
         terms=[term, lambda o: rv.loglike(o, 0.5, 0.0, 50.0, jitter=1.0)],
@@ -313,7 +313,7 @@ def test_rv_term_adds_its_loglike(scored):
 def test_independent_of_batch_size(scored):
     epochs, every = scored
     batched = score_orbits(
-        epochs, OrbitalBinary, CANDIDATES, shared=SHARED, batch_size=2
+        OrbitalBinary, epochs, CANDIDATES, shared=SHARED, batch_size=2
     )
     # Batching changes how XLA fuses the Newton steps: equal to rounding.
     onp.testing.assert_allclose(batched.score, every.score, rtol=1e-10)
@@ -331,16 +331,16 @@ def test_compiles_once_per_layout(scored):
     # and the reused trace answers for them.
     other = _epochs(sigma_v2=0.03)
     moved = [TRUTH, OTHER, OTHER]
-    full = score_orbits(other, OrbitalBinary, moved, shared=SHARED)
-    half = score_orbits(other, OrbitalBinary, moved, shared=SHARED, dof=0.5)
+    full = score_orbits(OrbitalBinary, other, moved, shared=SHARED)
+    half = score_orbits(OrbitalBinary, other, moved, shared=SHARED, dof=0.5)
     blocks = score_orbits(
-        other,
         OrbitalBinary,
+        other,
         moved,
         shared=SHARED,
         dof={"vis": 0.5, "phi": 0.8},
     )
-    again = score_orbits(epochs, OrbitalBinary, CANDIDATES, shared=SHARED)
+    again = score_orbits(OrbitalBinary, epochs, CANDIDATES, shared=SHARED)
     assert kernel._cache_size() == size
     assert not onp.allclose(full.score, base.score)
     assert not onp.allclose(half.score, full.score)
@@ -348,7 +348,7 @@ def test_compiles_once_per_layout(scored):
     onp.testing.assert_array_equal(again.score, base.score)
     # A different flux grid of the same shape is a different layout.
     grid = score_orbits(
-        epochs, OrbitalBinary, CANDIDATES, shared=SharedFlux((0.05, 1.0, 8))
+        OrbitalBinary, epochs, CANDIDATES, shared=SharedFlux((0.05, 1.0, 8))
     )
     assert kernel._cache_size() == size + 1
     assert not onp.allclose(grid.score, base.score)
@@ -357,7 +357,7 @@ def test_compiles_once_per_layout(scored):
 def test_float32_agrees_with_float64_and_ties_rank_by_index(scored):
     epochs, f64 = scored
     f32 = score_orbits(
-        epochs, OrbitalBinary, CANDIDATES, shared=SHARED, dtype="float32"
+        OrbitalBinary, epochs, CANDIDATES, shared=SHARED, dtype="float32"
     )
     onp.testing.assert_allclose(f32.score, f64.score, rtol=1e-4)
     onp.testing.assert_allclose(f32.flux, f64.flux, rtol=1e-3)
@@ -416,13 +416,13 @@ def test_per_epoch_flux_decoy_loses_under_shared_flux():
         bands={"n0": "a", "n1": "b"},
     )
     loose = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, decoy], shared=per_night
+        OrbitalBinary, epochs, [TRUTH, decoy], shared=per_night
     )
     assert loose.score[1] == pytest.approx(loose.score[0], abs=1e-3)
     assert loose.flux[1, 1] == pytest.approx(1.0 / loose.flux[0, 1], rel=1e-6)
     shared = score_orbits(
-        epochs,
         OrbitalBinary,
+        epochs,
         [TRUTH, decoy],
         shared=SharedFlux((0.1, 1.0, 11)),
     )
@@ -435,19 +435,19 @@ def test_budget_refuses_before_scoring(scored):
     cost = base.cost
     with pytest.raises(ValueError, match=f"max_evaluations={cost - 1}"):
         score_orbits(
-            epochs,
             OrbitalBinary,
+            epochs,
             CANDIDATES,
             shared=SHARED,
             max_evaluations=cost - 1,
         )
     within = score_orbits(
-        epochs, OrbitalBinary, CANDIDATES, shared=SHARED,
+        OrbitalBinary, epochs, CANDIDATES, shared=SHARED,
         max_evaluations=cost,
     )  # fmt: skip
     assert within.cost == cost
     fixed = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=SharedFlux([0.4])
+        OrbitalBinary, epochs, [TRUTH, OTHER], shared=SharedFlux([0.4])
     )
     assert fixed.cost == 2 * 3
 
@@ -455,7 +455,7 @@ def test_budget_refuses_before_scoring(scored):
 def test_reference_band_flux_is_bounded_by_one():
     with pytest.raises(ValueError, match="at most 1"):
         score_orbits(
-            _epochs(), OrbitalBinary, [TRUTH], shared=SharedFlux((0.1, 2.0, 4))
+            OrbitalBinary, _epochs(), [TRUTH], shared=SharedFlux((0.1, 2.0, 4))
         )
 
 
@@ -486,11 +486,11 @@ def test_s_max_bounds_a_small_dof_block_driven_to_zero_chi2():
     epochs = Epochs({"n0": exact, "n1": _night(TRUTH, 0.4, NIGHTS[1], 1)})
     shared = SharedFlux([0.4])
     free = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=None
+        OrbitalBinary, epochs, [TRUTH], shared=shared, s_max=None
     )
     s_max = 10.0
     bounded = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=s_max
+        OrbitalBinary, epochs, [TRUTH], shared=shared, s_max=s_max
     )
     expect = _summed_bounded(epochs, TRUTH, 0.4, s_max)
     assert bounded.score[0] == pytest.approx(expect, rel=1e-6, abs=1e-5)
@@ -513,7 +513,7 @@ def test_bounded_flux_and_slope_marginal_matches_quadrature():
         (0.01, 1.0, 5), slope=(-2.0, 2.0, 3), wavel0=wavel0, order=8, newton=4
     )
     scores = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=shared, s_max=s_max
+        OrbitalBinary, epochs, [TRUTH], shared=shared, s_max=s_max
     )
     assert not scores.fallback[0, 0]
     # The whole prior: bounded scales leave the tails (a faint companion
@@ -539,7 +539,7 @@ def test_profiled_gain_matches_a_fitted_v2_scale():
     with pytest.raises(NotImplementedError):
         marginal_loglike(BinaryModelCartesian(1.0, 1.0, 0.4), gained.data[0])
     got = score_orbits(
-        gained, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4]), s_max=None
+        OrbitalBinary, gained, [TRUTH], shared=SharedFlux([0.4]), s_max=None
     )
     expect = 0.0
     with jax.enable_x64(True):
@@ -560,7 +560,7 @@ def test_profiled_gain_matches_a_fitted_v2_scale():
             expect += -0.5 * (r.size - n_vis) * onp.log(chi2_phi)
     assert got.score[0] == pytest.approx(expect, rel=1e-8)
     plain = score_orbits(
-        epochs, OrbitalBinary, [TRUTH], shared=SharedFlux([0.4]), s_max=None
+        OrbitalBinary, epochs, [TRUTH], shared=SharedFlux([0.4]), s_max=None
     )
     assert got.score[0] > plain.score[0]
 
@@ -588,7 +588,7 @@ def test_profiled_closure_offsets_absorb_offsets_in_the_data():
         if with_offsets:
             data = data.with_closure_offsets(triangle=1.0)
         epochs = Epochs({"n0": data})
-        return score_orbits(epochs, OrbitalBinary, [TRUTH], shared=shared)
+        return score_orbits(OrbitalBinary, epochs, [TRUTH], shared=shared)
 
     profiled = (
         scored(night(shift), True).score[0] - scored(clean, True).score[0]
@@ -607,7 +607,7 @@ def test_refuses_a_model_whose_companion_free_scene_moves():
         return OrbitalBinary(orbit, 0.2 + flux)  # flux 0 still has a companion
 
     with pytest.raises(ValueError, match="must not depend on the orbit"):
-        score_orbits(epochs, moving, [TRUTH, OTHER])
+        score_orbits(moving, epochs, [TRUTH, OTHER])
 
 
 def test_scale_at_bound_flags_a_candidate_that_needs_inflated_errors():
@@ -617,7 +617,7 @@ def test_scale_at_bound_flags_a_candidate_that_needs_inflated_errors():
     epochs = _epochs()
     shared = SharedFlux([0.4])
     free = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared, s_max=None
+        OrbitalBinary, epochs, [TRUTH, OTHER], shared=shared, s_max=None
     )
     assert not free.scale_at_bound.any()
     truth, wrong = free.scale.max(axis=1)
@@ -625,8 +625,16 @@ def test_scale_at_bound_flags_a_candidate_that_needs_inflated_errors():
     assert wrong > 2.0 * truth
     s_max = onp.sqrt(truth * wrong)
     bounded = score_orbits(
-        epochs, OrbitalBinary, [TRUTH, OTHER], shared=shared, s_max=s_max
+        OrbitalBinary, epochs, [TRUTH, OTHER], shared=shared, s_max=s_max
     )
     assert bounded.scale == pytest.approx(free.scale)
     assert not bounded.scale_at_bound[0].any()
     assert bounded.scale_at_bound[1].any()
+
+
+def test_the_old_data_first_order_still_works_with_a_warning():
+    epochs = _epochs()
+    new = score_orbits(OrbitalBinary, epochs, [TRUTH], s_max=None)
+    with pytest.warns(FutureWarning, match="model before the data"):
+        old = score_orbits(epochs, OrbitalBinary, [TRUTH], s_max=None)
+    assert old.score[0] == new.score[0]
