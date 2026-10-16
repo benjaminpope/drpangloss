@@ -152,6 +152,16 @@ anything before 1.0 may change between minor versions.
 
 ### Migration from 0.3.0
 
+- **`likelihood_grid` takes `data` and `grid` by keyword.** It is
+  `likelihood_grid(model, data=..., grid=...)`: only the model is
+  positional, so no positional call can swap the model, the data and the
+  grid axes. A 0.3-order call, `likelihood_grid(data, model, grid)`, still
+  works with a `FutureWarning` until 0.5; any other positional call (such
+  as `likelihood_grid(model, data, grid)`) raises a `TypeError` naming the
+  keyword call. The 0.4 order change was never silent: the shim recognizes
+  data by type and rebinds the arguments, and any other permutation failed
+  with an `AttributeError`; the keyword form makes the failure a clear one
+  (`virgil-validation` finding F21).
 - **Model before data in the grid, limit and detection tools.**
   `likelihood_grid`, `optimized_likelihood_grid`, `optimized_flux_grid`,
   `linear_flux_grid`, `laplace_flux_uncertainty_grid`, `absil_limits`,

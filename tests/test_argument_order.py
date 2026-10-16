@@ -71,7 +71,6 @@ GRID = {
 }
 
 GRID_TOOLS = [
-    likelihood_grid,
     optimized_likelihood_grid,
     optimized_flux_grid,
     linear_flux_grid,
@@ -126,6 +125,50 @@ def test_grid_tools_accept_the_old_order_with_a_warning(fn):
     _assert_same(old, new)
 
 
+def test_likelihood_grid_accepts_the_old_order_with_a_warning():
+    new = _new_order(likelihood_grid, MODEL, data=DATA, grid=GRID)
+    _assert_same(
+        _new_order(likelihood_grid, model=MODEL, data=DATA, grid=GRID), new
+    )
+    _assert_same(_old_order(likelihood_grid, DATA, MODEL, GRID), new)
+
+
+def test_likelihood_grid_takes_data_and_grid_by_keyword():
+    """Every positional spelling but the old order is a clear TypeError.
+
+    Only the model may be positional, so the model, data and grid cannot
+    be swapped by position: the 0.4 order spelled positionally and every
+    permutation of the three that does not start with the data raise
+    (rather than failing later with an AttributeError on the wrong object,
+    or binding the wrong arguments). One that starts with the data is the
+    0.3 order and is rebound, with a FutureWarning.
+    """
+    spellings = [
+        (MODEL, DATA, GRID),
+        (MODEL, DATA),
+        (MODEL, GRID, DATA),
+        (GRID, MODEL, DATA),
+        (GRID, DATA, MODEL),
+    ]
+    for args in spellings:
+        kwargs = {"grid": GRID} if len(args) == 2 else {}
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            with pytest.raises(TypeError, match="by keyword") as err:
+                likelihood_grid(*args, **kwargs)
+        assert "likelihood_grid(model, data=..., grid=...," in str(err.value)
+    # A model alone is fine, so are keywords in any order.
+    _new_order(likelihood_grid, MODEL, grid=GRID, data=DATA)
+    _new_order(likelihood_grid, data=DATA, grid=GRID, model=MODEL)
+
+
+def test_likelihood_grid_old_order_message_names_the_keyword_call():
+    with pytest.warns(FutureWarning) as record:
+        likelihood_grid(DATA, MODEL, GRID)
+    message = str(_future(record)[0].message)
+    assert "likelihood_grid(model, data=..., grid=..., ...)" in message
+
+
 @pytest.mark.parametrize("fn", LIMITS, ids=lambda f: f.__name__)
 def test_limits_accept_the_old_order_with_a_warning(fn):
     new = _new_order(fn, MODEL, DATA, GRID, 3.0)
@@ -133,9 +176,11 @@ def test_limits_accept_the_old_order_with_a_warning(fn):
     _assert_same(_old_order(fn, DATA, MODEL, GRID, 3.0), new)
 
 
-@pytest.mark.parametrize("fn", GRID_TOOLS[:3], ids=lambda f: f.__name__)
+@pytest.mark.parametrize(
+    "fn", [likelihood_grid, *GRID_TOOLS[:2]], ids=lambda f: f.__name__
+)
 def test_old_keyword_names_warn_and_still_work(fn):
-    new = _new_order(fn, MODEL, DATA, GRID)
+    new = _new_order(fn, model=MODEL, data=DATA, grid=GRID)
     for old_name, new_name in (("samples_dict", "grid"), ("data_obj", "data")):
         kwargs = {"model": MODEL, "data": DATA, "grid": GRID}
         kwargs[old_name] = kwargs.pop(new_name)
@@ -144,11 +189,11 @@ def test_old_keyword_names_warn_and_still_work(fn):
         assert len(_future(record)) == 1
         _assert_same(out, new)
     with pytest.raises(TypeError, match="both grid= and samples_dict="):
-        fn(MODEL, DATA, grid=GRID, samples_dict=GRID)
+        fn(MODEL, data=DATA, grid=GRID, samples_dict=GRID)
 
 
 def test_old_order_with_keyword_grid_still_warns():
-    new = _new_order(likelihood_grid, MODEL, DATA, GRID)
+    new = _new_order(likelihood_grid, MODEL, data=DATA, grid=GRID)
     _assert_same(_old_order(likelihood_grid, DATA, MODEL, grid=GRID), new)
     with pytest.warns(FutureWarning) as record:
         out = likelihood_grid(DATA, MODEL, samples_dict=GRID)
@@ -205,7 +250,7 @@ def test_ambiguous_calls_pass_through_without_warning():
 
 
 def test_grid_rename_in_best_point_and_plots():
-    values = _new_order(likelihood_grid, MODEL, DATA, GRID)
+    values = _new_order(likelihood_grid, MODEL, data=DATA, grid=GRID)
     best = _new_order(best_grid_point, values, GRID)
     with pytest.warns(FutureWarning, match="samples_dict="):
         assert best_grid_point(values, samples_dict=GRID) == best

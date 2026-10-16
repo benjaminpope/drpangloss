@@ -323,3 +323,40 @@ def test_l_curve_accepts_the_old_regulariser_keyword():
         old = l_curve(*args, regulariser=TSV(1.0, path="env"), **kw)
     assert record[0].filename == __file__
     assert np.allclose(old.chi2, new.chi2)
+
+
+@old_order("data", "model", "grid", data="data", keywords=("data", "grid"))
+def keyword_grid(model, *, data, grid, batch_size=None):
+    return model, data, grid, batch_size
+
+
+def test_keyword_only_parameters_reject_any_other_positional_call():
+    data = _oidata()
+    for args in [(1, data, {}), (1, {}, data), ({}, 1, data), (1, data)]:
+        with pytest.raises(TypeError, match="by keyword") as err:
+            keyword_grid(*args)
+        assert "keyword_grid(model, data=..., grid=..., ...)" in str(err.value)
+    assert keyword_grid(1, data=data, grid={}) == (1, data, {}, None)
+    assert keyword_grid(model=1, grid={}, data=data)[0] == 1
+
+
+def test_keyword_only_parameters_keep_the_old_order_shim():
+    data = _oidata()
+    with pytest.warns(FutureWarning, match=ORDER):
+        assert keyword_grid(data, 1, {}) == (1, data, {}, None)
+    with pytest.warns(FutureWarning, match=ORDER):
+        assert keyword_grid(data, 1, grid={}) == (1, data, {}, None)
+
+
+def test_keywords_must_be_keyword_only_parameters_of_the_function():
+    with pytest.raises(ValueError, match="not keyword-only"):
+
+        @old_order("data", "model", data="data", keywords=("model",))
+        def bad(model, data):
+            return model, data
+
+    with pytest.raises(ValueError, match="no parameters"):
+
+        @old_order("data", "model", data="data", keywords=("grid",))
+        def worse(model, *, data):
+            return model, data
