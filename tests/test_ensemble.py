@@ -504,6 +504,24 @@ def test_gp_draw_has_no_regulariser_weights():
     assert draw.family == "gp" and draw.weights == ()
 
 
+def test_tiny_evidence_grid_and_gp_members():
+    # The smallest grid (one point) and three steps: structure and ordering
+    # only. The full-size test below is slow.
+    tiny = dataclasses.replace(GP_SPEC, gp_sigmas=(1.0,))
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), tiny)[0]
+    options = {"method": "lm", "max_steps": 3}
+    grid = evidence_grid(data, draw, spec=tiny, **options)
+    assert set(grid.log_evidence) == {"iso"}
+    assert grid.log_evidence["iso"].shape == (1, 1)
+    assert onp.all(onp.isfinite(grid.log_evidence["iso"]))
+    assert grid.best.log_evidence == grid.log_evidence["iso"][0, 0]
+    group = gp_members(data, draw, spec=tiny, **options)
+    assert group.curve is None and len(group.gp) == 1
+    assert isinstance(group.gp[0], GPFit)
+    assert group.gp[0].log_evidence == grid.best.log_evidence
+
+
 @pytest.mark.slow
 def test_evidence_grid_and_gp_members():
     data = DATASETS[0]
