@@ -536,10 +536,12 @@ def test_rings_run_contract_and_recovery(rings_run):
         abs(planet["dra_mas"] + 6.0) < 0.5
         and abs(planet["ddec_mas"] + 3.0) < 0.5
     )
-    # The profile stage reports one row per ring count tried, BIC and the
-    # Laplace evidence included.
+    # The profile stage reports a row per ring count kept, BIC and the
+    # Laplace evidence included. The truth has one ring: a second ring is
+    # either pruned away or split from the first (and left out), so only the
+    # one-ring row is kept.
     rows = s["compare"]["rows"]
-    assert [r["n"] for r in rows] == [1, 2]
+    assert [r["n"] for r in rows] == [1]
     assert all("bic" in r and "log_evidence" in r for r in rows)
 
 
@@ -769,6 +771,137 @@ def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
     assert better.chi2 <= wrong.chi2
     assert any(s["accepted"] for s in steps)
     radii = sorted(float(better.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+
+
+class _Scales:
+    halffringe = 2.0
+
+
+def test_unresolved_pairs_are_rings_closer_than_their_widths_or_a_halffringe():
+    values = {
+        "r1": 10.05, "s1": 0.3, "r2": 9.97, "s2": 0.3,
+        "r3": 21.5, "s3": 1.0, "r4": 14.0, "s4": 0.5,
+    }  # fmt: skip
+    pairs = disk._unresolved_pairs(_Scales, values, 4)
+    # 10.05 and 9.97 are 0.08 apart; 14.0 is 4 mas from them, more than the
+    # half-fringe and more than twice the widths.
+    assert [(i, j) for i, j, _, _ in pairs] == [(1, 2)]
+    # Wide rings 3 mas apart overlap even though the half-fringe is 2 mas.
+    wide = {"r1": 8.0, "s1": 2.0, "r2": 11.0, "s2": 2.0}
+    assert len(disk._unresolved_pairs(_Scales, wide, 2)) == 1
+    # Scaling every length leaves the verdict unchanged.
+    scaled = {k: 2.0 * v for k, v in wide.items()}
+    scaled_ctx = type("C", (), {"halffringe": 4.0})
+    assert len(disk._unresolved_pairs(scaled_ctx, scaled, 2)) == 1
+    # A narrow ring on a broad one is a second feature: the broad ring's
+    # width does not hide it.
+    halo = {"r1": 10.0, "s1": 4.0, "r2": 13.0, "s2": 0.3}
+    assert disk._unresolved_pairs(_Scales, halo, 2) == []
+
+
+@pytest.mark.slow
+def test_rings_leave_out_an_unresolved_count_and_go_on(tmp_path, monkeypatch):
+    # Two rings, fitted with up to three. The rule is forced to flag the
+    # two-ring count, as a split ring would be: that count is recorded,
+    # does not compete in `compare`, and does not stop the search.
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(13))
+
+    def flag_two(ctx, values, n):
+        return [(1, 2, 0.0, 1.0)] if n == 2 else []
+
+    monkeypatch.setattr(disk, "_unresolved_pairs", flag_two)
+    tried = []
+    fit_with_planet = disk._fit_with_planet
+
+    def record(p, shape, *args, **kwargs):
+        tried.append(shape.n)
+        return fit_with_planet(p, shape, *args, **kwargs)
+
+    monkeypatch.setattr(disk, "_fit_with_planet", record)
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 3,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    res = pipeline.run()
+    rows = res.summary["profile"]["candidates"]
+    # The flagged count did not stop the search: three rings were tried (the
+    # third is pruned back to two, whose fit the first already holds).
+    assert tried == [1, 2, 3]
+    flagged = [r["n"] for r in rows if r["unresolved"]]
+    assert flagged == [2]
+    kept = {r["n"] for r in res.summary["compare"]["rows"]}
+    assert 1 in kept and 2 not in kept
+    assert res.summary["disk"]["n_rings"] in kept
+
+
+@pytest.mark.slow
+def test_prune_drops_a_ring_that_carries_no_light(tmp_path):
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(14))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 3,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    ctx = pipeline._ctx()
+    shape = disk._Shape(3, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 3.0,
+        "s1": 0.8,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+        # The null ring: at the inner radius, the width floor, the flux floor.
+        "r3": ctx.r_in,
+        "s3": 0.1 * ctx.halffringe,
+        "f3": 1e-3,
+    }
+    padded = disk._fit_rings(pipeline, shape, start)
+    fit, pruned, dropped = disk._prune(pipeline, shape, padded)
+    assert pruned.n == 2 and len(dropped) == 1
+    assert dropped[0]["delta_bic"] < 0
+    n_data = int(pipeline.processed.n_independent)
+    assert disk._bic(fit, n_data) < disk._bic(padded, n_data)
+    radii = sorted(float(fit.values[f"r{i}"]) for i in (1, 2))
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
 

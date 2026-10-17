@@ -255,6 +255,13 @@ def test_ring_count_margin_is_the_smaller_of_bic_and_evidence():
     assert _status(checks.ring_count(1, rows, 1.0)) == "warn"
 
 
+def test_ring_count_warns_when_a_better_count_was_left_out_as_split():
+    rows = _ring_rows([120.0, 100.0], [-70.0, -59.0])
+    assert _status(checks.ring_count(2, rows, 1.0)) == "pass"
+    found = checks.ring_count(2, rows, 1.0, split=[3])
+    assert _status(found) == "warn" and "3 rings fit better" in found.message
+
+
 def test_ring_count_flags_rings_narrower_than_the_half_fringe():
     rows = _ring_rows([120.0, 100.0], [-70.0, -59.0], widths=(0.4,))
     found = checks.ring_count(2, rows, 1.0)
