@@ -2223,7 +2223,9 @@ def _nuts(p, model, priors, start):
     posterior = numpyro_model(
         model, priors, p.processed, noise=p._noise(), flat_coordinates=True
     )
-    mcmc = _run_chains(posterior, p.settings, start, dense_mass=True)
+    mcmc = _run_chains(
+        posterior, p.settings, start, dense_mass=True, priors=priors
+    )
     samples = {
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()

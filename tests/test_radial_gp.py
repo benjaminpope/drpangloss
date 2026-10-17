@@ -4,7 +4,6 @@ Everything is tiny: a few dozen visibilities, at most 48 nodes, and NUTS
 runs of a couple of hundred draws.
 """
 
-import time
 import warnings
 
 import equinox as eqx
@@ -699,7 +698,7 @@ def test_a_frozen_disk_falls_back_when_the_geometry_changes():
         )
 
 
-def test_a_frozen_profile_refit_is_faster_and_does_not_recompile():
+def test_a_frozen_profile_refit_is_cheaper_and_does_not_recompile():
     n_r = 64
     big = vlti_oidata(
         hour_angles_h=tuple(onp.linspace(-4, 4, 20)),
@@ -714,25 +713,53 @@ def test_a_frozen_profile_refit_is_faster_and_does_not_recompile():
     def evaluate(model, data):
         return model.model(data.u, data.v, data.wavel)
 
-    def best(model, repeats=15):
-        evaluate(model, big).block_until_ready()
-        times = []
-        for i in range(repeats):
-            m = model.set("profile.z", 0.01 * (i + 1) * np.ones(n_r))
-            start = time.perf_counter()
-            evaluate(m, big).block_until_ready()
-            times.append(time.perf_counter() - start)
-        return min(times)
+    def cost(model):
+        # With the geometry closed over (concrete), freezing is decided at
+        # trace time, so the compiled program holds only the cached path. XLA's
+        # cost analysis counts it deterministically: a wall-clock comparison
+        # of ~1 ms calls is dominated by runner noise (a macOS CI run measured
+        # the frozen refit at 2.2 ms against 1.0 ms, locally it is 5x faster).
+        def refit(z):
+            return model.set("profile.z", z).model(big.u, big.v, big.wavel)
 
-    assert best(frozen) < best(disk)
+        compiled = jax.jit(refit).lower(np.ones(n_r)).compile()
+        return compiled.cost_analysis()
+
+    # A real fit passes the model and data as traced arguments, so the cache
+    # is chosen by a lax.cond on a traced predicate. Check that predicate
+    # holds there (a false one would silently run the full computation).
+    @eqx.filter_jit
+    def cache_hit(model, data):
+        r, _ = model.profile.quadrature()
+        return model.frozen.matches(
+            data.u / data.wavel,
+            data.v / data.wavel,
+            r,
+            model.inc,
+            model.pa,
+            None,
+        )
+
+    assert bool(cache_hit(frozen, big))
+    assert not bool(cache_hit(frozen.set("inc", np.asarray(41.0)), big))
+
+    cost_disk, cost_frozen = cost(disk), cost(frozen)
+    assert cost_frozen["flops"] < 0.2 * cost_disk["flops"]
+    assert cost_frozen["transcendentals"] < 0.1 * cost_disk["transcendentals"]
     # Changing values never recompiles, frozen or not.
     for model in (disk, frozen):
+
+        def perturbed(i):
+            m = model.set("profile.z", 0.1 * i * np.ones(n_r))
+            m = m.set("profile.sigma", np.asarray(1.0 + i, dtype=float))
+            return m.set("profile.ell", np.asarray(1.0 + i, dtype=float))
+
+        # Build the inputs first, so the eager array operations compile
+        # outside the count and only a genuine recompile is counted.
+        refits = [perturbed(i) for i in range(1, 4)]
         evaluate(model, big).block_until_ready()
         with count_compiles() as compiles:
-            for i in range(3):
-                m = model.set("profile.z", 0.1 * i * np.ones(n_r))
-                m = m.set("profile.sigma", np.asarray(1.0 + i, dtype=float))
-                m = m.set("profile.ell", np.asarray(1.0 + i, dtype=float))
+            for m in refits:
                 evaluate(m, big).block_until_ready()
         assert not compiles
 

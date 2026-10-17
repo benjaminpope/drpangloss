@@ -144,6 +144,7 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `error_scale` (with `error_scale="fit"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
 | `detection` (approximate look-elsewhere-corrected significance against `detection_sigma`; use `injection_recovery` or `gaussian_null` for a calibrated threshold) | below the threshold | |
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
+| `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
 | `prior_bound` (posterior mass within 1% of a prior bound) | above 5% | |
 | `r_hat` | above 1.01 | above 1.05 |
 | `ess` (smallest bulk effective sample size) | below 400 | below 100 |
