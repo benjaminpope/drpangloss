@@ -3,16 +3,14 @@
 
 > **Install:** the "As a pipeline" section needs the `pipeline` extra: `pip install "virgil-astro[pipeline]"`.
 
-Suppose you have a non-detection; or suppose you have a detection of a point source very accurately, and you can subtract that signal off the visibilities and you want to know if there is anything *else* in the data. How can you quantify what your detection limits would have been?
+You have a non-detection, or you have subtracted a well-measured companion and want to know whether anything *else* is in the data. What could you have detected?
 
-There are two methods widely in use in interferometry and this tutorial covers both of them:
+This tutorial applies the two methods common in interferometry to a non-detection:
 
-- the [Ruffio method](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract), which is Bayesian. This calculates the posterior distribution for flux of a point source companion everywhere in a grid using the Laplace approximation, and uses this to put a posterior Nσ upper limit on any flux.
-- the [Absil method](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), which is frequentist, and relies on $\chi^2$ statistics to put a confidence interval on the data and report an upper limit.
+- the Bayesian [Ruffio method](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract), which finds the Laplace-approximation posterior for a point-source companion's flux at every grid position and quotes a posterior Nσ upper limit;
+- the frequentist [Absil method](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), which uses $\chi^2$ statistics to set an upper limit at a chosen confidence.
 
-In this tutorial we'll work through applying both methods to a nondetection.
-
-First, let's import everything we need.
+First, the imports.
 
 ```python
 import sys
@@ -41,7 +39,7 @@ set_style()  # the figure style used throughout the docs
 
 ## Simulate Data
 
-Now we will generate some synthetic data from pure noise, using a Fourier sampling similar to the JWST AMI mask.
+We generate pure-noise data with Fourier sampling similar to the JWST AMI mask.
 
 ```python
 rng = onp.random.default_rng(7)
@@ -86,7 +84,7 @@ Noise amplitude: 1, Vis std: 0.00033, Phi std: 0.00028
 
 ## Declare a search grid
 
-Next we declare the grid over which we're going to search for companions, and we will use this to initialize the flux level in each grid pixel around which we are going to expand the posterior / come up with confidence intervals.
+Next, declare the search grid. It sets the flux level in each pixel about which we expand the posterior or build confidence intervals.
 
 ```python
 samples = {
@@ -106,7 +104,7 @@ virgil/_deprecate.py:150: RuntimeWarning: optimized_flux_grid(): the optimizer d
 
 ## Ruffio Contrast Limits
 
-The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method for contrast limits is Bayesian - you infer the Gaussian posterior on flux of a companion, and impose a prior that the flux is positive. Then you report a chosen percentile of this as the flux upper limit for a nondetection, *conditioned on this being the correct astrometry and there being a real source there*.
+The [Ruffio et al 2018](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract) method is Bayesian: infer the Gaussian posterior on a companion's flux, impose a positive-flux prior, and report a chosen percentile as the upper limit, *conditioned on the astrometry being right and a source being there*.
 
 ```python
 sigma_flux = laplace_flux_uncertainty_grid(
@@ -126,7 +124,7 @@ plot_grid_map(
 
 ## Absil Contrast Limits
 
-In [Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract), a frequentist p-value is used to infer an upper limit from data. This is done by a chi-squared hypothesis test, inferring what the highest contrast would be such that it would have been detected at n-σ.
+[Absil et al 2011](https://ui.adsabs.harvard.edu/abs/2011A%26A...535A..68A/abstract) use a frequentist chi-squared test: the limit is the faintest companion that would have been detected at n-σ.
 
 ```python
 # Absil method at 2σ
@@ -152,11 +150,11 @@ virgil/_deprecate.py:150: RuntimeWarning: absil_limits(): 1 limits fell outside 
 ![contrast_limits output 11.2](generated/contrast_limits_cell011_out02.png)
 
 ## Contrast Curves
-We can visualize these as contrast curves, and plot these on the same axis. They come out to be pretty similar but not quite identical.
+Plotted as contrast curves on one axis, the two methods give similar but not identical limits.
 
-The limits are companion/primary flux ratios, but by astronomical convention they are reported as a contrast (primary/companion) or in magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers themselves.
+The limits are companion/primary flux ratios, but astronomers report a contrast (primary/companion) or magnitudes: a companion 100 times fainter than the star has a contrast of 100, or 5 mag. `units="delta_mag"` (the default for curves) or `units="contrast"` converts for display, and `flux_to_delta_mag` / `flux_to_contrast` convert the numbers.
 
-Contrast limits say which companions a non-detection rules out at each position. To calibrate a detection threshold against simulated noise, including the look-elsewhere effect of searching a grid, and to measure a search's completeness at a fixed false-alarm probability, see [Detection ROC curves](detection_roc.md).
+Contrast limits say which companions a non-detection rules out at each position. To calibrate a detection threshold against simulated noise, including the look-elsewhere effect of a grid search, and to measure completeness at a fixed false-alarm probability, see [Detection ROC curves](detection_roc.md).
 
 ```python
 # Overplot Ruffio and Absil radial contrast curves on one axis
@@ -170,7 +168,7 @@ ax.set_title("Radial contrast limits: Ruffio vs Absil");
 
 ## As a pipeline
 
-The search grid, the Absil limits and their contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running the pipeline `through="limits"` stops before the fit and the sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks the grid points inside the resolution limit, where separation and flux are degenerate, so its limit map is compared with the hand-computed Absil map where it is defined. Its contrast curve is one of the pipeline's plots.
+The search grid, Absil limits and contrast curve are the `search` and `limits` stages of [`BinaryPipeline`](pipeline.md), so running it `through="limits"` stops before the fit and sampler, which a non-detection does not need. The cell below uses the same $\pm 250$ mas grid of 61 points per axis, the same flux axis and $\sigma = 2$. The pipeline blanks grid points inside the resolution limit, where separation and flux are degenerate, so compare its limit map with the hand-computed Absil map where both are defined. The contrast curve is one of the pipeline's plots.
 
 ```python
 from tempfile import mkdtemp
