@@ -331,24 +331,6 @@ def undo_elliptical_transf_spat_freq(u, v, pa, stretch):
     return ut, vt
 
 
-def apply_elliptical_transf_spat_freq(u, v, pa, stretch):
-    """Inverse of :func:`undo_elliptical_transf_spat_freq`.
-
-    Takes ``(u, v)`` (wavelength units) in the circular, North-aligned frame
-    to the original frame; ``pa`` and ``stretch`` as there. Returns
-    ``(u, v)`` there.
-    """
-    pa_rad = pa * dtor
-
-    u_scaled = u / stretch
-    v_scaled = v
-
-    ut = u_scaled * np.cos(pa_rad) + v_scaled * np.sin(pa_rad)
-    vt = -u_scaled * np.sin(pa_rad) + v_scaled * np.cos(pa_rad)
-
-    return ut, vt
-
-
 def undo_elliptical_transf_coord(x, y, pa, stretch):
     """Map ``(x, y)`` (mas, East and North) to the frame where the elliptical object is circular, major axis North.
 

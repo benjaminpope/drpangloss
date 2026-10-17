@@ -115,6 +115,7 @@ nav:
               - MultipoleDisk: api/models/classes/multipole_disk.md
               - HarmonixModel: api/models/classes/harmonix_model.md
           - Functions: api/models/functions.md
+          - Model notes: api/models/notes.md
       - Harmonics: api/harmonics.md
       - Likelihood: api/likelihood.md
       - Gains: api/gains.md
