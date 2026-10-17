@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FROM notebooks/data_io.ipynb by scripts/sync_tutorial_docs.py. -->
 # Data I/O
 
-`virgil` reads and writes `.oifits` files, the data standard in interferometry, with `astropy.io.fits` (see `virgil.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `virgil.legacy.oifits_implaneia`, are still available for existing scripts.
+`virgil` reads and writes `.oifits` files, the interferometry data standard, with `astropy.io.fits` (see `virgil.oifits`). The older writers derived from [`ImPlaneIA`](https://github.com/anand0xff/ImPlaneIA), in `virgil.legacy.oifits_implaneia`, remain for existing scripts. This page shows how to write a file, read it back into an `OIData`, and check what you got.
 
 ```python
 import copy
@@ -28,7 +28,7 @@ module = load_synthetic_workflow_module(repo_root)
 ```
 
 ## Simulate Data
-Let's simulate some synthetic data and save it to an `.oifits` file. The synthetic data are a dictionary of OIFITS tables (`OI_WAVELENGTH`, `OI_VIS`, `OI_VIS2`, `OI_T3`, plus an `info` dictionary for the header), with phases in degrees as in OIFITS:
+First, simulate some data and save it to an `.oifits` file. The data are a dictionary of OIFITS tables (`OI_WAVELENGTH`, `OI_VIS`, `OI_VIS2`, `OI_T3`, plus an `info` dictionary for the header), with phases in degrees as OIFITS stores them:
 
 ```python
 out = (
@@ -41,7 +41,7 @@ _ = write_oifits(synth_dict, out)
 
 # Reading Data
 
-Let's read the data - this is easy!
+Reading the file back takes one line.
 
 ```python
 # A path works, as does a file opened with astropy.io.fits or pyoifits.
@@ -50,15 +50,11 @@ oidata = OIData(out)
 
 ## OIData Object
 
-OIData knows automatically whether you're using visibilities or squared visibilities, which are just saved as `oidata.vis` with uncertainty `oidata.d_vis` and toggled with `oidata.v2_flag`. 
+`OIData` works out whether the file holds visibilities or squared visibilities, stored as `oidata.vis` with uncertainty `oidata.d_vis` and marked by `oidata.v2_flag`. Likewise, closure or absolute phases are stored as `oidata.phi` with uncertainty `oidata.d_phi` and marked by `oidata.cp_flag`.
 
-Likewise OIData can tell if you're using closure phases or absolute phases, which are saved just as `oidata.phi` with uncertainty `oidata.d_phi` and toggled with `oidata.cp_flag`.
+The baselines are in `oidata.u` and `oidata.v`, and the closure-phase indices in `oidata.i_cps1`, `oidata.i_cps2` and `oidata.i_cps3`. You pass a model to the `OIData`, and it evaluates the model at these points.
 
-$u,v$ information is saved in `oidata.u` and `oidata.v`, with closure phase indices in `oidata.i_cps1`, `oidata.i_cps2`, `oidata.i_cps3`.
-
-When you're using this, you will pass it a model object, which will automatically evaluate it at the appropriate arguments.
-
-Phases are always stored in radians, whatever the unit in the file. Flagged points (the OIFITS `FLAG` column, or non-finite values) are left out of the observables.
+Phases are always stored in radians, whatever the file's unit. Flagged points (the OIFITS `FLAG` column, or non-finite values) are left out of the observables.
 
 ```python
 # let's have a tour of the oidata object
@@ -106,7 +102,7 @@ OIData(
 ```
 
 ## Verification
-And just to verify, let's make sure all the keys are saved and loaded correctly:
+Check that every key survives the round trip:
 
 ```python
 # Compare arrays written to OIFITS with arrays reloaded via OIData.
@@ -157,7 +153,7 @@ wavel: equal
 
 ## Several Wavelengths, Flags and Targets
 
-Files with several wavelength channels work the same way: every (baseline, wavelength) sample becomes one entry of `oidata.u`, `oidata.v` and `oidata.wavel`, and closure phases are built from visibilities at their own wavelength. Here we copy the synthetic data into three channels (repeating the same values, just for illustration) and flag one squared visibility:
+Files with several wavelength channels work the same way: each (baseline, wavelength) sample is one entry of `oidata.u`, `oidata.v` and `oidata.wavel`, and closure phases are built from visibilities at their own wavelength. Here we copy the data into three channels (repeating the values, for illustration) and flag one squared visibility:
 
 ```python
 multi = copy.deepcopy(synth_dict)
@@ -195,4 +191,4 @@ V2 observables: 17 (one flagged)
 closure phases: 12
 ```
 
-If a file holds data on several targets (e.g. a science target and its calibrator), pick one with `OIData(path, target="name")` or by `TARGET_ID`; `OIData` refuses to mix them silently.
+If a file holds several targets (a science target and its calibrator, say), pick one with `OIData(path, target="name")` or by `TARGET_ID`; `OIData` refuses to mix them silently.
