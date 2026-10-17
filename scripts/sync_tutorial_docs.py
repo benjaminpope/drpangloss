@@ -182,7 +182,11 @@ def render_notebook_markdown(
         elif cell_type == "code":
             fenced = ["```python", *source.split("\n"), "```"]
             summary = next(
-                (HIDE_INPUT_SUMMARIES[tag] for tag in tags if tag in HIDE_INPUT_SUMMARIES),
+                (
+                    HIDE_INPUT_SUMMARIES[tag]
+                    for tag in tags
+                    if tag in HIDE_INPUT_SUMMARIES
+                ),
                 None,
             )
             if summary:
