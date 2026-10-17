@@ -103,6 +103,7 @@ TINY = {
 }
 
 
+@pytest.mark.slow
 def test_binary_pipeline_on_data_without_a_companion_completes(tmp_path):
     pytest.importorskip("h5py")
     pytest.importorskip("nbclient")

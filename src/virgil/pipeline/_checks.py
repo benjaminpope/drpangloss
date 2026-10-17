@@ -718,7 +718,7 @@ def length_scale(evidences, ells, halffringe, *, nats=3.0):
     )
 
 
-def ring_count(n_best, rows, halffringe, *, nats=3.0):
+def ring_count(n_best, rows, halffringe, *, nats=3.0, split=()):
     """Whether the data clearly prefer the chosen number of rings.
 
     Parameters
@@ -733,6 +733,10 @@ def ring_count(n_best, rows, halffringe, *, nats=3.0):
     nats : float, optional
         A neighbouring count is clearly worse when it loses by at least
         this many nats of log evidence and 2 × this many of BIC.
+    split : sequence of int, optional
+        Ring counts left out of ``rows`` because two of their rings are too
+        close to tell apart, although their BIC is lower than that of
+        ``n_best``.
 
     Notes
     -----
@@ -767,6 +771,12 @@ def ring_count(n_best, rows, halffringe, *, nats=3.0):
             f"ring{'s' if unclear[-1] != 1 else ''} "
             f"(margin {', '.join(f'{margins[n]:.2g}' for n in unclear)} "
             "nats)"
+        )
+    if split:
+        problems.append(
+            f"{' and '.join(str(n) for n in split)} rings fit better by BIC "
+            "but with two rings too close to tell apart: a Gaussian ring "
+            "is too simple a profile here"
         )
     if narrow:
         problems.append(
