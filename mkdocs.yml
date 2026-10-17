@@ -98,6 +98,7 @@ nav:
       - "6. Sparse images and CLEAN": imaging_clean.md
       - "7. Ensembles": imaging_ensemble.md
   - Pipelines:
+      - "Pipeline tutorial": pipelines.md
       - "Pipelines and their stability": pipeline.md
   - API Reference:
       - Overview: api/index.md
