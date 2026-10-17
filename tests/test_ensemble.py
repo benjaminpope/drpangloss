@@ -313,7 +313,16 @@ def test_fields_are_capped_at_one_on_a_uv_lattice():
         assert d.npix * d.pixel_scale_mas <= 100.0 + d.pixel_scale_mas
 
 
-@pytest.mark.parametrize("family", ["tsv", "tv", "maxent", "starlet"])
+# The tsv fit is the one that compiles the LM solver (about 50 s on CI).
+@pytest.mark.parametrize(
+    "family",
+    [
+        pytest.param("tsv", marks=pytest.mark.slow),
+        "tv",
+        "maxent",
+        "starlet",
+    ],
+)
 def test_default_weight_ranges_hold_the_corner_with_room_below(family):
     data = DATASETS[0]
     spec = EnsembleSpec()
@@ -497,6 +506,32 @@ def test_rotated_member_is_rendered_onto_the_common_grid_without_cropping():
     onp.testing.assert_allclose(pixels / pixels.sum(), sky / sky.sum())
 
 
+def test_gp_draw_has_no_regulariser_weights():
+    # The cheap part of the GP-member test below, whose fits are slow (their
+    # JIT compiles take about 30 s on a CI runner).
+    draw = draw_groups(DATASETS[0], 1, jax.random.PRNGKey(0), GP_SPEC)[0]
+    assert draw.family == "gp" and draw.weights == ()
+
+
+def test_tiny_evidence_grid_and_gp_members():
+    # The smallest grid (one point) and three steps: structure and ordering
+    # only. The full-size test below is slow.
+    tiny = dataclasses.replace(GP_SPEC, gp_sigmas=(1.0,))
+    data = DATASETS[0]
+    draw = draw_groups(data, 1, jax.random.PRNGKey(0), tiny)[0]
+    options = {"method": "lm", "max_steps": 3}
+    grid = evidence_grid(data, draw, spec=tiny, **options)
+    assert set(grid.log_evidence) == {"iso"}
+    assert grid.log_evidence["iso"].shape == (1, 1)
+    assert onp.all(onp.isfinite(grid.log_evidence["iso"]))
+    assert grid.best.log_evidence == grid.log_evidence["iso"][0, 0]
+    group = gp_members(data, draw, spec=tiny, **options)
+    assert group.curve is None and len(group.gp) == 1
+    assert isinstance(group.gp[0], GPFit)
+    assert group.gp[0].log_evidence == grid.best.log_evidence
+
+
+@pytest.mark.slow
 def test_evidence_grid_and_gp_members():
     data = DATASETS[0]
     draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
@@ -520,6 +555,7 @@ def test_evidence_grid_and_gp_members():
     assert len(gp_members(data, draw, spec=tight, **GP_OPTIONS).gp) == 1
 
 
+@pytest.mark.slow
 def test_gp_group_without_a_star():
     data = DATASETS[0]
     draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
@@ -547,6 +583,7 @@ def test_evidence_grid_adds_an_anisotropic_variant_for_elongated_data():
     assert onp.all(onp.isfinite(grid.log_evidence["aniso"]))
 
 
+@pytest.mark.slow
 def test_combine_handles_gp_and_regulariser_members_together():
     data = DATASETS[0]
     spec = dataclasses.replace(

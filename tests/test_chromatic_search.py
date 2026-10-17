@@ -227,6 +227,7 @@ def test_limits_are_finite_and_sensible_for_the_chromatic_companion(wr_data):
     assert limits["power", "injection"][1, 0] < 0.05
 
 
+@pytest.mark.slow
 def test_detection_statistics_and_mc_detect_the_chromatic_companion(wr_data):
     grid = _grid(onp.geomspace(0.02, 0.3, 6))
     template = _scene(_scaled(0.05))
