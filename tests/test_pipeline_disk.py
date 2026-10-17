@@ -8,8 +8,11 @@ length scales and a few NUTS steps: these tests check the plumbing and the
 contract, not the sampler.
 
 The full runs and the fits that take a minute or more are marked slow (they
-run on pushes to main and nightly); the ``test_smoke_*`` tests run a tiny
-problem through each stage that PR CI covers.
+run on pushes to main, nightly, and on a pull request that changes the disk
+pipeline or this file). On other pull requests the ``test_smoke_*`` tests run
+a tiny problem: the rings model through every stage (a few-draw posterior and a
+reload), the rings model with harmonics and a companion search, the GP
+through the profile stage, and the ring back-fit.
 """
 
 import inspect
@@ -636,13 +639,37 @@ def tiny():
     return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
 
 
-def test_smoke_rings_runs_through_compare(tiny, tmp_path):
-    res = DiskPipeline(tiny, "rings", output=tmp_path / "run", **_TINY).run(
-        through="compare"
-    )
+def test_smoke_rings_runs_every_stage_and_loads(tiny, tmp_path):
+    # Every stage on a tiny problem, with a few-draw posterior; the quicklook
+    # notebook is written, not executed.
+    settings = {
+        **_TINY,
+        "posterior": True,
+        "num_warmup": 5,
+        "num_samples": 5,
+        "num_chains": 1,
+    }
+    pipeline = DiskPipeline(tiny, "rings", output=tmp_path / "run", **settings)
+    res = pipeline.run()
+    assert res.status == "complete"
     row = res.summary["profile"]["candidates"][0]
     assert row["n"] == 1 and onp.isfinite(row["chi2_reduced"])
     assert res.summary["compare"]["rows"][0]["n"] == 1
+    loaded = load(pipeline.output)
+    assert loaded.status == "complete"
+    assert isinstance(loaded.model(), System)
+    assert loaded.sample_stats()["diverging"].shape == (1, 5)
+
+
+def test_smoke_rings_with_harmonics_and_a_companion(tiny, tmp_path):
+    res = DiskPipeline(
+        tiny,
+        "rings",
+        output=tmp_path / "run",
+        **{**_TINY, "harmonic_degree": 1, "companion": True},
+    ).run(through="profile")
+    row = res.summary["profile"]["candidates"][0]
+    assert row["planet"] and onp.isfinite(row["chi2_reduced"])
 
 
 def test_smoke_gp_runs_through_profile(tiny, tmp_path, monkeypatch):
