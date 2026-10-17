@@ -10,10 +10,10 @@ contract, not the sampler.
 The full runs and the fits that take a minute or more are marked slow (they
 run on pushes to main, nightly, and on a pull request that changes the disk
 pipeline or this file). On other pull requests the ``test_smoke_*`` tests run
-a tiny problem: the rings model through the compare stage and a reload, the GP
-through the profile stage, and the ring back-fit. The posterior, quicklook,
-harmonics and companion search run in the slow tier: each stage's JIT
-compile alone takes several seconds on a CI runner.
+a tiny problem: the rings model through the profile stage and a reload, the GP
+through the profile stage, and the ring back-fit. The compare and posterior
+stages, the quicklook, harmonics and the companion search run in the slow
+tier: each stage's JIT compile alone takes several seconds on a CI runner.
 """
 
 import inspect
@@ -640,12 +640,11 @@ def tiny():
     return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
 
 
-def test_smoke_rings_runs_through_compare_and_loads(tiny, tmp_path):
+def test_smoke_rings_runs_through_profile_and_loads(tiny, tmp_path):
     pipeline = DiskPipeline(tiny, "rings", output=tmp_path / "run", **_TINY)
-    res = pipeline.run(through="compare")
+    res = pipeline.run(through="profile")
     row = res.summary["profile"]["candidates"][0]
     assert row["n"] == 1 and onp.isfinite(row["chi2_reduced"])
-    assert res.summary["compare"]["rows"][0]["n"] == 1
     loaded = load(pipeline.output)
     assert loaded.status == "partial"
     assert isinstance(loaded.model("rings_1"), System)
