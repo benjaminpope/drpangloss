@@ -5,10 +5,8 @@ import jax.numpy as np
 
 from virgil._geometry import (
     apply_elliptical_transf_coord,
-    apply_elliptical_transf_spat_freq,
     check_az_prof_nonnegative,
     undo_elliptical_transf_coord,
-    undo_elliptical_transf_spat_freq,
 )
 
 
@@ -62,18 +60,6 @@ def test_apply_undoes_elliptical_transf_coord_round_trip(pa, stretch):
     x_rt, y_rt = apply_elliptical_transf_coord(xt, yt, pa=pa, stretch=stretch)
     assert np.allclose(x_rt, x, atol=1e-8)
     assert np.allclose(y_rt, y, atol=1e-8)
-
-
-@pytest.mark.parametrize("pa", [0.0, 37.0, 90.0, 143.0, -25.0])
-@pytest.mark.parametrize("stretch", [1.0, 0.6, 0.15])
-def test_apply_undoes_elliptical_transf_spat_freq_round_trip(pa, stretch):
-    u, v = np.array([12.0, -30.0, 5.0]), np.array([-8.0, 20.0, 0.0])
-    ut, vt = undo_elliptical_transf_spat_freq(u, v, pa=pa, stretch=stretch)
-    u_rt, v_rt = apply_elliptical_transf_spat_freq(
-        ut, vt, pa=pa, stretch=stretch
-    )
-    assert np.allclose(u_rt, u, atol=1e-8)
-    assert np.allclose(v_rt, v, atol=1e-8)
 
 
 def test_check_az_prof_nonnegative_detects_valid_and_invalid_profiles():

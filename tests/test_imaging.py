@@ -320,23 +320,19 @@ def test_convolve_beam_promotes_integer_images():
 
 
 @pytest.mark.parametrize(
-    "scale, b, match",
+    "image, scale, b, match",
     [
-        (1.0, Beam(2.0, 0.0, 0.0), "FWHMs"),
-        (1.0, Beam(np.inf, 1.0, 0.0), "FWHMs"),
-        (1.0, Beam(2.0, 1.0, np.nan), "PA"),
-        (0.0, Beam(2.0, 1.0, 0.0), "pixel_scale"),
-        (np.nan, Beam(2.0, 1.0, 0.0), "pixel_scale"),
+        (np.ones((5, 5)), 1.0, Beam(2.0, 0.0, 0.0), "FWHMs"),
+        (np.ones((5, 5)), 1.0, Beam(np.inf, 1.0, 0.0), "FWHMs"),
+        (np.ones((5, 5)), 1.0, Beam(2.0, 1.0, np.nan), "PA"),
+        (np.ones((5, 5)), 0.0, Beam(2.0, 1.0, 0.0), "pixel_scale"),
+        (np.ones((5, 5)), np.nan, Beam(2.0, 1.0, 0.0), "pixel_scale"),
+        (np.ones(5), 1.0, Beam(2.0, 1.0, 0.0), "2D"),
     ],
 )
-def test_convolve_beam_rejects_bad_geometry(scale, b, match):
+def test_convolve_beam_rejects_bad_geometry_and_images(image, scale, b, match):
     with pytest.raises(ValueError, match=match):
-        convolve_beam(np.ones((5, 5)), scale, b)
-
-
-def test_convolve_beam_rejects_images_that_are_not_2d():
-    with pytest.raises(ValueError, match="2D"):
-        convolve_beam(np.ones(5), 1.0, Beam(2.0, 1.0, 0.0))
+        convolve_beam(image, scale, b)
 
 
 def test_plot_model_convolve_shows_the_convolved_image():

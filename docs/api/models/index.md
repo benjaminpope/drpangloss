@@ -16,3 +16,7 @@ companion it is the companion/primary flux ratio.
 ## Functions
 
 - [Module functions](functions.md)
+
+## Notes
+
+- [Model notes](notes.md): derivations, conventions and accuracy checks.

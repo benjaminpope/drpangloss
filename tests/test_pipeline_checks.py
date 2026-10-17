@@ -210,3 +210,121 @@ def test_flux_axis_resolution_reads_exponent_notation():
         ]
     )
     assert found.value == pytest.approx(3e-5)
+
+
+# --- the checks of DiskPipeline ---------------------------------------------
+
+NAN = float("nan")
+
+
+def test_length_scale_needs_the_evidence_to_separate_the_grid():
+    ells = [1.7, 3.5, 6.9]
+    found = checks.length_scale([-10.0, -8.0, -9.5], ells, 1.5, nats=3.0)
+    assert _status(found) == "warn" and found.value == pytest.approx(2.0)
+    assert "do not measure ℓ" in found.message
+    found = checks.length_scale([-20.0, -8.0, -9.5], ells, 1.5)
+    assert _status(found) == "pass"
+    # The message quotes the squared-exponential equivalent of the best ℓ.
+    assert (
+        "3.5 mas, a squared-exponential length of 2.02 mas, 1.3×"
+        in found.message
+    )
+    assert _status(checks.length_scale([-1.0, NAN], ells[:2], 1.5)) == "warn"
+    assert _status(checks.length_scale([-1.0], ells[:1], 1.5)) == "warn"
+
+
+def _ring_rows(bics, evidences, widths=(2.0,)):
+    return [
+        {"n": n, "bic": b, "log_evidence": z, "widths": list(widths) * n}
+        for n, (b, z) in enumerate(zip(bics, evidences), start=1)
+    ]
+
+
+def test_ring_count_margin_is_the_smaller_of_bic_and_evidence():
+    # Two rings win by 10 nats of BIC/2 but only 1 nat of evidence: unclear.
+    rows = _ring_rows([120.0, 100.0], [-60.0, -59.0])
+    found = checks.ring_count(2, rows, 1.0, nats=3.0)
+    assert _status(found) == "warn" and found.value == pytest.approx(1.0)
+    rows = _ring_rows([120.0, 100.0], [-70.0, -59.0])
+    assert _status(checks.ring_count(2, rows, 1.0)) == "pass"
+    # Without an evidence the BIC alone decides.
+    rows = _ring_rows([120.0, 100.0], [None, None])
+    assert _status(checks.ring_count(2, rows, 1.0)) == "pass"
+    # The last count tried has one neighbour.
+    rows = _ring_rows([100.0, 101.0, 100.5], [None] * 3)
+    assert _status(checks.ring_count(1, rows, 1.0)) == "warn"
+
+
+def test_ring_count_flags_rings_narrower_than_the_half_fringe():
+    rows = _ring_rows([120.0, 100.0], [-70.0, -59.0], widths=(0.4,))
+    found = checks.ring_count(2, rows, 1.0)
+    assert _status(found) == "warn"
+    assert "ring 1, 2 is narrower than the half-fringe" in found.message
+    single = _ring_rows([100.0], [-59.0], widths=(2.0,))
+    assert _status(checks.ring_count(1, single, 1.0)) == "pass"
+
+
+@pytest.mark.parametrize(
+    "fraction, correlation, status",
+    [
+        (0.01, 0.2, "pass"),
+        (0.30, 0.2, "warn"),
+        (0.01, -0.95, "warn"),
+        (0.01, None, "pass"),
+        (NAN, 0.0, "warn"),
+    ],
+)
+def test_inner_edge(fraction, correlation, status):
+    found = checks.inner_edge(fraction, correlation, 1.0)
+    assert _status(found) == status
+
+
+def test_inner_edge_message_keeps_its_case():
+    found = checks.inner_edge(0.5, 0.95, 1.0)
+    assert found.message.startswith("50 per cent of the disk's light")
+    assert "(|ρ| = 0.95)" in found.message
+
+
+@pytest.mark.parametrize(
+    "fraction, status", [(1e-6, "pass"), (0.2, "warn"), (NAN, "warn")]
+)
+def test_outer_edge(fraction, status):
+    found = checks.outer_edge(fraction, 1.0)
+    assert _status(found) == status
+    if status == "warn" and fraction == fraction:
+        assert "r_out_mas" in found.message
+
+
+@pytest.mark.parametrize(
+    "inc, pa_sd, minima, status",
+    [
+        (50.0, 2.0, 1, "pass"),
+        (8.0, 2.0, 1, "warn"),
+        (50.0, 80.0, 1, "warn"),
+        (50.0, None, 1, "pass"),
+        (50.0, 2.0, 2, "warn"),
+    ],
+)
+def test_inclination(inc, pa_sd, minima, status):
+    assert _status(checks.inclination(inc, pa_sd, minima)) == status
+
+
+def test_inclination_message_names_the_problems():
+    found = checks.inclination(8.0, 2.0, 3)
+    assert "position angle is unconstrained" in found.message
+    assert "3 comparable minima" in found.message
+    assert found.message[0].isupper()
+
+
+def test_absorbed_companion():
+    assert _status(checks.absorbed_companion(5.0, None, 1)) == "pass"
+    assert _status(checks.absorbed_companion(None, None, 1)) == "pass"
+    found = checks.absorbed_companion(60.0, None, 1)
+    assert _status(found) == "warn" and "remains" in found.message
+    found = checks.absorbed_companion(60.0, 6.0, 1)
+    assert _status(found) == "warn"
+    assert "from 1 to 2 removes it" in found.message
+    assert "asymmetry of the disk rather than a companion" in found.message
+    assert "degree 2 can absorb a compact source" in found.message
+    found = checks.absorbed_companion(60.0, 55.0, 1)
+    assert "removes" not in found.message

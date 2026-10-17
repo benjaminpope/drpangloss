@@ -73,6 +73,34 @@ res.summary["star"]["diam_mas"], res.model(), res.model("uniform")
 
 Priors are group-invariant: log-uniform in the diameter over `diam_range_mas` (by default from a tenth of the resolution limit to four times the field of view) and uniform on [0, 1] in `q1` and `q2`, which cover exactly the physical quadratic laws. The fit is on the quoted errors, and chi-squared per independent datum is reported on them for each model.
 
+## `DiskPipeline`: rings and haloes (provisional)
+
+```python
+from virgil.pipeline import DiskPipeline
+
+res = DiskPipeline(data, output="runs/disk").run()                 # a Gaussian-process disk
+res = DiskPipeline(data, "rings", output="runs/rings", companion=True).run()
+res.summary["disk"], res.model(), res.model("geometry")
+```
+
+`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
+
+- `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept.
+- `"rings"`: *N* [`GaussianRing`][virgil.models.GaussianRing] profiles that share the inclination and position angle, added one at a time (each starting at the radius of a one-ring scan) until the BIC stops improving or `max_rings` is reached; after each fit every ring is re-placed in turn (dropped, rescanned on a finer radius grid, everything refitted) and the result kept if the BIC falls. The Laplace evidence and the BIC of every count are reported and the count of least BIC is kept.
+
+The resolution scale is the half-fringe λ/2B of the longest baseline. The inner radius, the ring-width floor and the length-scale grid are stated in half-fringes, and the outer radius defaults to half the [`image_field`][virgil.imaging.image_field]: set `r_out_mas` if the disk is larger. A companion search is opt-in (`companion=True`): the residuals are searched for a point source on a grid, and a detection above `companion_min_delta_chi2` is fitted jointly with the disk. A search of the best model's residuals always runs, to check that the disk has not absorbed a compact source.
+
+| Stage | What it does | Reuses |
+| --- | --- | --- |
+| `load`, `overview` | As for `BinaryPipeline`, and the resolution scale and radial range | |
+| `geometry` | χ² of a single ring over a grid of inclination (uniform in cos *i*) and position angle on [0°, 180°), then a fit of that ring from the best cell: the geometry is multimodal and is never left to a local optimizer from one start. Its dynamic range sets the Gaussian process's σ | `likelihood_grid`, `fit`, `laplace_cov` |
+| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry` |
+| `compare` | The Laplace evidence (and BIC) of each candidate; the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
+| `posterior` (`posterior=True`) | NUTS with the geometry released; the position angle is folded into [0°, 180°) with the harmonics rotated to match | `numpyro_model`, `chain_init_params` |
+| `quicklook` | The geometry grid and a six-panel summary of the disk | |
+
+Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The fit is on the quoted errors, and `error_scale="fit"` is available for the rings only (the Gaussian process's evidence needs the quoted errors). The spectral index is relative to the star, a grey reference source unless `star_temperature_k` is given. The rings' colour is a power-law index per ring by default; `ring_colour="blackbody"` (rings only) fits a temperature per ring and for the planet instead, which follows blackbody-like spectra across a broad band that a power law misses. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
+
 ## The run folder
 
 | Path | Contents |
@@ -104,7 +132,7 @@ Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pic
 | `model()`, `model_values()` | The best-fit model (`name=` picks one of several) with its values set, or the values as arrays |
 | `fit_result()` | The MAP fit as a `FitResult`, to continue with `fit` |
 | `samples()`, `sample_stats()` | Posterior samples and NUTS diagnostics, shaped `(chain, draw)` |
-| `grid()` | (`StarPipeline`: the uniform-disk delta chi-squared scan over `diam`.) The grid axes (usable as `grid=`) and each map, such as `delta_chi2`, `snr` and `limit_flux` |
+| `grid()` | (`StarPipeline`: the uniform-disk delta chi-squared scan over `diam`; `DiskPipeline`: the single-ring `delta_chi2` over `cos_inc` and `pa`.) The grid axes (usable as `grid=`) and each map, such as `delta_chi2`, `snr` and `limit_flux` |
 
 ## Checks
 
@@ -127,6 +155,12 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `resolution` (the longest B/λ against the first null of the fitted model's visibility, θB/λ = 1.22 for a uniform disk) | below the first null (limb darkening is degenerate with the diameter) | below 0.15 of it (unresolved: an upper limit) |
 | `multimodal` (the per-lobe table of the preferred model, `fit.models.<name>.lobes`: the next-best diameter lobe against a Δχ² of 25) | the next-best lobe is within Δχ² of 25; the message gives its diameter | |
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
+| `length_scale` (`DiskPipeline`, `"gp"`: the spread of the Laplace evidences across the length-scale grid) | under `length_scale_nats` (3): the data do not measure ℓ, which is then a prior choice | |
+| `ring_count` (`DiskPipeline`, `"rings"`: the margin of the chosen count over its neighbours, the smaller of ΔBIC/2 and the log-evidence difference, and every ring's width against the half-fringe) | a margin under `ring_count_nats` (3), or a ring narrower than the half-fringe | |
+| `inner_edge` (`DiskPipeline`, `"gp"`: the disk's light within a half-fringe of the inner radius, and its Laplace correlation with the disk flux) | above `inner_edge_fraction` (0.1) or a correlation above `inner_edge_correlation` (0.9): an unresolved core trades against the star's flux | |
+| `outer_edge` (`DiskPipeline`: the light within a half-fringe of `r_out_mas`) | above `outer_edge_fraction` (0.01): refit with a larger `r_out_mas` | |
+| `inclination` (`DiskPipeline`) | an inclination under `inclination_min_deg` (15°, the position angle is then unconstrained), a position-angle standard deviation above 45°, or several comparable minima of the geometry grid | |
+| `absorbed_companion` (`DiskPipeline`: Δχ² of a point source added to the best model's residuals) | at least `companion_min_delta_chi2` (25); the message says whether a harmonic of one degree higher removes it | |
 
 ### Warnings raised inside stages
 
@@ -165,8 +199,9 @@ Open before promotion: `global_nsigma` is a Šidák estimate with a nominal numb
 | --- | --- | --- |
 | `BinaryPipeline` | `binary` | provisional |
 | `StarPipeline` | `star` | provisional |
+| `DiskPipeline` | `disk` | provisional |
 
-Further pipelines (orbit, disk and imaging) will be added to this table as they land, all provisional.
+Further pipelines (orbit and imaging) will be added to this table as they land, all provisional.
 
 ## Command line
 
@@ -176,6 +211,7 @@ Further pipelines (orbit, disk and imaging) will be added to this table as they 
 virgil-pipeline binary hd1234.oifits -o runs/hd1234 --set sigma=3 --set num_chains=2
 virgil-pipeline binary hd1234.oifits -o runs/hd1234 --through limits --fresh
 virgil-pipeline star star.oifits -o runs/star --model limb_darkened
+virgil-pipeline disk disk.oifits -o runs/disk --model rings --set companion=true --set r_out_mas=25
 virgil-pipeline info runs/hd1234        # status and checks
 virgil-pipeline validate runs/hd1234    # complete, and every file matches its hash
 virgil-pipeline quicklook runs/hd1234   # rebuild the quicklook notebook

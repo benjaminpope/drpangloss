@@ -320,7 +320,85 @@ def _star_cells(run, summary, path):
     return cells
 
 
-_SECTIONS = {"binary": _binary_cells, "star": _star_cells}
+def _disk_geometry_cell(summary):
+    geo = summary["geometry"]
+    return (
+        "## Geometry\n\n"
+        "The Δχ² of a single ring over the inclination and position angle "
+        "(clipped), with the inclination uniform in cos *i*. The geometry "
+        "grid has "
+        f"{geo['grid']['n_minima']} local minimum"
+        f"{'' if geo['grid']['n_minima'] == 1 else 's'}; the single-ring fit "
+        f"from the best cell has *i* = {geo['inc_deg']:.4g}° and "
+        f"PA = {geo['pa_deg']:.4g}°.",
+        'display(Image("plots/geometry_grid.png"))',
+    )
+
+
+def _disk_result_cell(summary, has_data):
+    disk, model = summary["disk"], summary["model"]
+    chi2 = ", ".join(f"{v:.3g}" for v in summary["chi2"]["reduced"].values())
+    what = (
+        f"{disk['n_rings']} ring{'' if disk['n_rings'] == 1 else 's'}"
+        if disk["model"] == "rings"
+        else f"a Gaussian-process profile of ℓ = {disk['ell_mas']:.3g} mas"
+    )
+    return (
+        "## Result\n\n"
+        f"The preferred model is {what} (`{disk['best']}`), with χ²/N = "
+        f"{chi2} on the quoted errors over N = "
+        f"{summary['chi2']['n_independent']} independent observables. "
+        "The panels are the model, the disk alone, its radial profile, "
+        "the spectral index, the lopsidedness and the normalized residuals.",
+        "import virgil.pipeline.disk as disk\n\n"
+        "data = res.data()\n"
+        "fig = disk.plot_summary(\n"
+        f"    res.model(), data, r_out_mas={model['r_out_mas']!r},\n"
+        f"    r_in_mas={model['r_in_mas']!r},\n"
+        ")"
+        if has_data
+        else 'display(Image("plots/disk_summary.png"))',
+    )
+
+
+def _disk_posterior_cell(summary):
+    post = summary["posterior"]
+    return (
+        "## Posterior\n\n"
+        f"NUTS drew {post['num_samples']} samples in each of "
+        f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
+        "steps, with the geometry released. The scalar sites: median with "
+        "its 16th and 84th percentiles, split R-hat and bulk effective "
+        "sample size.",
+        'for name, row in res.summary["posterior"]["params"].items():\n'
+        "    print(\n"
+        "        f\"{name:>12}: {row['median']:.5g} \"\n"
+        "        f\"[{row['q16']:.5g}, {row['q84']:.5g}]  \"\n"
+        "        f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
+        "    )",
+    )
+
+
+def _disk_cells(run, summary, path):
+    done = _completed(run)
+    has_data = (path / "data" / "processed.oifits").exists()
+    cells = []
+    if "overview" in done:
+        cells.append(_data_cell(has_data))
+    if "geometry" in done:
+        cells.append(_disk_geometry_cell(summary))
+    if "compare" in done:
+        cells.append(_disk_result_cell(summary, has_data))
+    if "posterior" in done and "posterior" in summary:
+        cells.append(_disk_posterior_cell(summary))
+    return cells
+
+
+_SECTIONS = {
+    "binary": _binary_cells,
+    "disk": _disk_cells,
+    "star": _star_cells,
+}
 
 
 def build_notebook(path):

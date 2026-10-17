@@ -422,3 +422,121 @@ rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, p
 A non-parametric `MultipoleDisk` fits the same data as the parametric family without being told there are three rings: its profile, colour and lopsidedness are Gaussian processes, and only the planet keeps its parametric form. It reaches a $\chi^2/N$ close to that of the family that made the data, recovers the planet's position and flux, and pays for its freedom with a less accurate profile (a larger rms error of $\ln I_0$ against the truth; both are printed above). The profile's length scale is a prior choice, since the two evidences differ by only a couple of nat; structure finer than the 2 to 3 mas half-fringe is not constrained in either fit; and the Laplace $\log Z$ comparison with the parametric model is only indicative.
 
 For real data, use the two together: the Gaussian process to find structure and propose a parametric family, and the parametric fit and its evidence to confirm and measure it. Sampling the hyperparameters with NUTS is the natural next step and is not done here.
+
+## As a pipeline
+
+Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving, and keeps the count of least BIC; `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only the choices made in this notebook: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 30 mas (the default is half the field of view, which cuts through the outer ring at 21.5 mas), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.4, 1 and 2 half-fringes of the longest baseline, about 1.4 to 2.1, 3.5 to 5.2 and 6.9 to 10.4 mas for a half-fringe of 2 to 3 mas, which brackets the 2 and 5 mas used above. Neither run samples: `posterior=True` would run NUTS with the geometry released.
+
+The pipelines find the rings and the planet without being told how many there are or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. They report $\chi^2/N$ on the quoted errors as the first check of each run.
+
+```python
+from tempfile import mkdtemp
+
+from virgil.pipeline import DiskPipeline
+
+settings = dict(
+    r_out_mas=30.0,
+    star_temperature_k=6000.0,
+    wavel0_m=W0,
+    companion=True,
+    max_rings=4,
+    ell_halffringes=[0.4, 1.0, 2.0],
+    quicklook_execute=False,
+)
+# The rings are blackbodies here, so give the rings model that colour law (the
+# default, a power-law index per ring, cannot follow a blackbody across the band).
+rings_res = DiskPipeline(
+    data, "rings", output=f"{mkdtemp()}/rings_run", ring_colour="blackbody",
+    **settings
+).run()
+gp_res = DiskPipeline(
+    data, "gp", output=f"{mkdtemp()}/gp_run", **settings
+).run()
+
+print(rings_res.describe())
+print()
+print(gp_res.describe())
+```
+
+```text
+DiskPipeline run in /tmp/tmp81gjntus/rings_run: complete
+  data.n_vis = 378
+  data.n_phi = 252
+  data.n_independent = 567
+  data.wavel_min_m = 2.4e-06
+  data.wavel_max_m = 3.6e-06
+  data.baseline_min_m = 34.1699
+  data.baseline_max_m = 130.068
+  data.resolution_mas = 1.90299
+  data.fov_mas = 21.7312
+  model.resolution_mas = 1.90299
+  model.r_in_mas = 1.90299
+  model.r_out_mas = 30
+  model.n_r_rings = 32
+  model.n_r_gp = 88
+  model.n_channels = 9
+  model.wavel0_m = 3e-06
+  geometry.inc_deg = 59.8073
+  geometry.pa_deg = 107.725
+  geometry.r_mas = 19.0666
+  geometry.sigma_mas = 4.26434
+  geometry.flux = 0.880331
+  geometry.chi2_reduced = 55.6727
+  geometry.gp_sigma = 0.788052
+  chi2.n_independent = 567
+  disk.n_rings = 4
+  disk.inc_deg = 50.2439
+  disk.pa_deg = 29.7421
+  [pass] chi2_reduced: χ²/N = 0.988 for the Gaussian rings fit on quoted errors: consistent with the quoted errors.
+  [warn] ring_count: With 4 rings: ring 1, 2, 3 is narrower than the half-fringe, so its width is not resolved.
+  [pass] outer_edge: 0.17 per cent of the light is within one half-fringe of the outer edge.
+  [pass] inclination: Inclination 50.2° with a single minimum of the geometry grid.
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.99).
+
+DiskPipeline run in /tmp/tmpek24rt8_/gp_run: complete
+  data.n_vis = 378
+  data.n_phi = 252
+  data.n_independent = 567
+  data.wavel_min_m = 2.4e-06
+  data.wavel_max_m = 3.6e-06
+  data.baseline_min_m = 34.1699
+  data.baseline_max_m = 130.068
+  data.resolution_mas = 1.90299
+  data.fov_mas = 21.7312
+  model.resolution_mas = 1.90299
+  model.r_in_mas = 1.90299
+  model.r_out_mas = 30
+  model.n_r_rings = 32
+  model.n_r_gp = 88
+  model.n_channels = 9
+  model.wavel0_m = 3e-06
+  geometry.inc_deg = 59.8073
+  geometry.pa_deg = 107.725
+  geometry.r_mas = 19.0666
+  geometry.sigma_mas = 4.26434
+  geometry.flux = 0.880331
+  geometry.chi2_reduced = 55.6727
+  geometry.gp_sigma = 0.788052
+  chi2.n_independent = 567
+  disk.ell_mas = 1.31843
+  disk.flux = 0.890231
+  disk.inc_deg = 49.7939
+  disk.pa_deg = 30.6799
+  [pass] chi2_reduced: χ²/N = 1.16 for the Gaussian-process disk fit on quoted errors: consistent with the quoted errors.
+  [pass] length_scale: The evidence prefers one length scale by 24 nats (best ℓ = 1.32 mas, a squared-exponential length of 0.761 mas, 0.4× the half-fringe).
+  [pass] inner_edge: 2.1 per cent of the light is within one half-fringe of the inner edge (correlation with the flux 0.44).
+  [warn] outer_edge: 1.8 per cent of the model's light lies within one half-fringe (1.9 mas) of its outer edge: light beyond it cannot be placed. Refit with a larger r_out_mas.
+  [pass] inclination: Inclination 49.8° with a single minimum of the geometry grid.
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.6).
+  [warn] stage_warnings: 1 warning(s) were raised inside the stages: fit(method='lm') did not converge in 25 steps, the step limit; raise max_steps.. See the 'warnings' list of summary.json.
+  1 warning(s) recorded in the profile stage(s) (see the checks, or Result.summary['warnings'])
+```
+
+```python
+from virgil.pipeline.disk import plot_summary
+
+plot_summary(gp_res.model(), data, r_out_mas=30.0, r_in_mas=gp_res.summary["model"]["r_in_mas"])
+plt.show()
+```
+
+![multipole_disk_rings output 17.1](generated/multipole_disk_rings_cell017_out01.png)

@@ -34,6 +34,7 @@ from ._grid import (
     warn_unconverged,
 )
 from ._deprecate import old_order, renamed
+from ._marginal import gauss_legendre
 from .inference import _ambient_dtype, laplace_parameter_uncertainty
 from .likelihood import build_model, loglike, whitened_residuals
 
@@ -370,9 +371,9 @@ def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
         np.where(above, -np.log1p(-tail / f_max), np.log1p(tail / f_min)),
         np.log(hi) - np.log(lo),
     )
-    x, w = onp.polynomial.legendre.leggauss(_N_NODES)
-    delta = 0.5 * span * (np.asarray(x) + 1.0)
-    wd = 0.5 * span * np.asarray(w)
+    x, w = gauss_legendre(_N_NODES)
+    delta = 0.5 * span * (x + 1.0)
+    wd = 0.5 * span * w
     offset = f0 * np.expm1(sgn * delta)  # f - f0
     # (f - f_hat)^2 - f_hat^2 with f = f0 + offset, expanded so that nothing
     # large cancels: f0 (f0 - 2 f_hat) + 2 (f0 - f_hat) offset + offset^2.

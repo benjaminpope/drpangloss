@@ -16,34 +16,21 @@ on the pixel fluxes ``b`` to the loss:
 | [`Centroid`][virgil.imaging.Centroid] | ``½ |centroid / σ|²`` | yes | yes |
 
 Differences ``Δ`` are between neighbouring pixels, with zeros beyond the
-edges, so edge pixels are penalized too. TSV (total squared variation) and
-the Laplacian favour smooth images, TV (total variation) piecewise-flat ones,
-and maximum entropy images close to a default ``q``. The weight ``w``
-depends on the scene and the data; :func:`l_curve` sweeps it.
-
-Sparse images, made of a few compact features, need a different penalty. An
-L1 norm of the pixels does not work: they are positive and sum to one, so
-``Σ |b| = 1`` for every image. ``StarletL1`` is an L1 norm of the image's
-wavelet (starlet) coefficients instead, which favours images built from few
-compact structures at any scale. ``LogSum`` is a smooth surrogate for the
-number of bright pixels (the L0 "norm" of SQUEEZE). It is not convex, so the
-fit can stop in a local minimum: start it from a good image, such as a
-[`clean`][virgil.imaging.clean] model.
-
-[`clean`][virgil.imaging.clean] builds a sparse image directly, from point
-components added one at a time where the gradient of χ² is steepest: CLEAN
-for any data, including closure and DISCO phases. With ``scales_mas`` the
-components can also be Gaussians of several widths (multi-scale CLEAN).
+edges. TSV and the Laplacian favour smooth images, TV piecewise-flat ones,
+maximum entropy images close to a default ``q``; ``StarletL1`` (an L1 norm
+of the starlet coefficients; an L1 norm of the pixels is constant, since
+they sum to one) and ``LogSum`` favour sparse ones, and ``LogSum`` is not
+convex, so start it from a [`clean`][virgil.imaging.clean] model.
+[`l_curve`][virgil.imaging.l_curve] sweeps the weight ``w``.
 
 When [`fit`][virgil.fitting.fit]'s model function returns one model per
-dataset, every regularizer acts on the **first model only**. That is right
-when the later models are transformed copies of the same scene (e.g. a
-[`Rotated`][virgil.models.Rotated] epoch), but an Image that appears only in
-a later model is not regularized at all.
+dataset, every regularizer acts on the **first model only**: right for
+transformed copies of one scene (e.g. a [`Rotated`][virgil.models.Rotated]
+epoch), but an Image that appears only in a later model is not regularized.
 
-Closure, kernel and DISCO phases do not fix an image's position. Something
-must: an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]
-prior, or a centred prior mean. [`diagnose`][virgil.imaging.diagnose]
+Closure, kernel and DISCO phases do not fix an image's position: something
+must (an analytic star at the origin, a [`Centroid`][virgil.imaging.Centroid]
+prior, or a centred prior mean). [`diagnose`][virgil.imaging.diagnose]
 checks a fit for this and other common pitfalls.
 """
 
@@ -83,6 +70,10 @@ __provisional__ = (
 _HIGHEST = jax.lax.Precision.HIGHEST
 
 
+def _as_list(data):
+    return list(data) if isinstance(data, (list, tuple)) else [data]
+
+
 class _ImageRegulariser(eqx.Module):
     """A penalty on the pixels of one Image, found at ``path`` in the model."""
 
@@ -119,19 +110,16 @@ def _differences(b):
 class TSV(_ImageRegulariser):
     """Total squared variation: ``weight * Σ (Δx b)² + (Δy b)²``.
 
-    A quadratic smoothness penalty, so it can be fitted by
-    Levenberg–Marquardt. Total squared variation is the regularizer of
-    Kuramochi et al. (2018, ApJ 858, 56, https://arxiv.org/abs/1802.05783),
-    used with the sparse modelling of Akiyama et al. (2017,
-    https://arxiv.org/abs/1702.07361).
+    A quadratic smoothness penalty, so it can be fitted by Levenberg–Marquardt
+    (Kuramochi et al. 2018, ApJ 858, 56).
 
     Parameters
     ----------
     weight : float
         Strength of the penalty.
     path : str, optional
-        Path of the Image in the model (e.g. ``"env"``); ``None`` if the
-        model is the Image itself.
+        Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
+        is the Image itself.
     """
 
     def __init__(self, weight, path=None):
@@ -151,17 +139,11 @@ class TSV(_ImageRegulariser):
 class TV(_ImageRegulariser):
     """Total variation: ``weight * Σ √((Δx b)² + (Δy b)² + ε²)``.
 
-    Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi
-    1992, Physica D 60, 259, https://doi.org/10.1016/0167-2789(92)90242-F;
-    for radio imaging see Akiyama et al. 2017,
-    https://arxiv.org/abs/1702.07361, and Chael et al. 2018,
-    https://arxiv.org/abs/1803.07088). ``ε`` smooths the
-    penalty where the image is flat, so that it is differentiable. The
-    penalty is averaged over the four flips of the image, so it does not
-    depend on which neighbour each forward difference pairs a pixel with,
-    and is the same for an image and its mirror images. It is not
-    isotropic: as for any total variation built from pixel differences,
-    a sharp edge along a diagonal costs about a fifth more per unit
+    Favours piecewise-flat images with sharp edges (Rudin, Osher & Fatemi 1992,
+    Physica D 60, 259). ``ε`` makes it differentiable where the image is flat.
+    It is averaged over the four flips of the image, so it does not depend on
+    which neighbour each forward difference pairs a pixel with. It is not
+    isotropic: a sharp edge along a diagonal costs about a fifth more per unit
     length than one along a pixel axis.
 
     Parameters
@@ -169,8 +151,7 @@ class TV(_ImageRegulariser):
     weight : float
         Strength of the penalty.
     epsilon : float, optional
-        Smoothing scale, as a fraction of the mean pixel flux (default
-        1e-2).
+        Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
         Path of the Image in the model.
     """
@@ -199,20 +180,16 @@ class TV(_ImageRegulariser):
 class MaxEntropy(_ImageRegulariser):
     """Maximum entropy: ``weight * Σ b log(b / q)``, with ``b`` and ``q`` unit-sum.
 
-    The relative entropy of the image with respect to a default image ``q``.
-    It is zero for ``b = q`` and positive otherwise. Maximum-entropy
-    reconstruction is that of Skilling & Bryan (1984, MNRAS 211, 111); for
-    its use in optical interferometry see BSMEM (Baron & Young 2008,
-    https://doi.org/10.1117/12.789115).
+    The relative entropy of the image with respect to a default image ``q``
+    (Skilling & Bryan 1984, MNRAS 211, 111; BSMEM, Baron & Young 2008).
 
     Parameters
     ----------
     weight : float
         Strength of the penalty.
     prior : array-like, optional
-        The default image ``q``, with the image's shape and positive where
-        the image's support is; normalized here. Default: flat over the
-        support.
+        The default image ``q``, with the image's shape and positive where the
+        image's support is; normalized here. Default: flat over the support.
     path : str, optional
         Path of the Image in the model.
     """
@@ -243,11 +220,9 @@ class MaxEntropy(_ImageRegulariser):
 class Laplacian(_ImageRegulariser):
     """Squared Laplacian: ``weight * Σ (∇²b)²``.
 
-    ``∇²b`` is the five-point Laplacian, with zeros beyond the edges (so it
-    is evaluated on a ring of pixels around the image too). A quadratic
-    penalty on curvature, smoother than TSV, so it can be fitted by
-    Levenberg–Marquardt. Quadratic regularizers are Gaussian priors on the
-    image (Thiébaut & Young 2017, https://arxiv.org/abs/1708.08390).
+    ``∇²b`` is the five-point Laplacian, with zeros beyond the edges. A
+    quadratic penalty on curvature, smoother than TSV, so it can be fitted by
+    Levenberg–Marquardt (Thiébaut & Young 2017).
 
     Parameters
     ----------
@@ -297,10 +272,10 @@ def starlet(image, scales=4):
     """The starlet (isotropic undecimated wavelet) transform of an image.
 
     The à-trous algorithm with a B3-spline kernel (Starck, Murtagh & Fadili
-    2010, *Sparse Image and Signal Processing*, CUP): the image is smoothed ``scales`` times, the kernel's taps twice
+    2010): the image is smoothed ``scales`` times with the kernel's taps twice
     as far apart each time, and each detail plane is the difference between
-    successive smoothings. Detail plane ``j`` holds structure about
-    ``2**j`` pixels across. Beyond the edges the image is zero.
+    successive smoothings. Plane ``j`` holds structure about ``2**j`` pixels
+    across. Beyond the edges the image is zero.
 
     Parameters
     ----------
@@ -314,8 +289,8 @@ def starlet(image, scales=4):
     details : jax.Array, shape (scales, ny, nx)
         The detail planes, finest first.
     coarse : jax.Array, shape (ny, nx)
-        What is left after the last smoothing. ``details.sum(0) + coarse``
-        is the image.
+        What is left after the last smoothing; ``details.sum(0) + coarse`` is
+        the image.
     """
     if int(scales) != scales or scales < 1:
         raise ValueError(f"scales must be a positive integer, not {scales}.")
@@ -331,25 +306,20 @@ def starlet(image, scales=4):
 class StarletL1(_ImageRegulariser):
     """L1 norm of the starlet details: ``weight * Σ √(s² + ε²)``.
 
-    ``s`` are the detail coefficients of :func:`starlet`, at every scale.
-    An L1 norm favours few non-zero coefficients, so the image is built
-    from few compact structures, of any size: a sparse image in the
-    wavelet sense (L1 sparse modelling for interferometric imaging: Honma
-    et al. 2014, PASJ 66, 95, https://arxiv.org/abs/1407.2422; Akiyama et
-    al. 2017, https://arxiv.org/abs/1702.07361). The coarse plane, which
-    carries the flux, is not penalized. ``ε`` smooths the penalty near zero, so that it is
-    differentiable.
+    ``s`` are the detail coefficients of [`starlet`][virgil.imaging.starlet] at
+    every scale. An L1 norm favours few non-zero coefficients, so the image is
+    built from few compact structures of any size (Honma et al. 2014, PASJ 66,
+    95). The coarse plane, which carries the flux, is not penalized.
 
     Parameters
     ----------
     weight : float
         Strength of the penalty.
     scales : int, optional
-        Number of detail planes (default 4); the largest holds structure
-        about ``2**(scales - 1)`` pixels across.
+        Number of detail planes (default 4); the largest holds structure about
+        ``2**(scales - 1)`` pixels across.
     epsilon : float, optional
-        Smoothing scale, as a fraction of the mean pixel flux (default
-        1e-2).
+        Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
         Path of the Image in the model.
     """
@@ -377,27 +347,20 @@ class StarletL1(_ImageRegulariser):
 class LogSum(_ImageRegulariser):
     """Log-sum sparsity: ``weight * Σ log(1 + b / (ε b̄))``.
 
-    ``b̄`` is the mean pixel flux over the support. A pixel costs about
-    ``log(b / (ε b̄))`` once it is brighter than ``ε b̄``, and almost
-    nothing when fainter, so as ``ε → 0`` the penalty counts the bright
-    pixels: a smooth surrogate for the L0 "norm" of SQUEEZE (Candès, Wakin
-    & Boyd 2008, https://arxiv.org/abs/0711.1612; SQUEEZE: Baron, Monnier
-    & Kloppenburg 2010, https://doi.org/10.1117/12.857364). It favours images with few bright pixels. It is not
-    convex, so start the fit from a good image.
-
-    Sweep its weight with ``l_curve(..., warm_start=False)``. By default
-    :func:`l_curve` starts each fit from the previous, stronger one; a
-    strong weight switches most pixels off, and pixels driven that dark (in
-    log-brightness) cannot recover, so every weaker fit would inherit the
-    collapse.
+    ``b̄`` is the mean pixel flux over the support. As ``ε → 0`` the penalty
+    counts the bright pixels: a smooth surrogate for the L0 "norm" of SQUEEZE
+    (Candès, Wakin & Boyd 2008; Baron, Monnier & Kloppenburg 2010). It is not
+    convex, so start the fit from a good image, and sweep its weight with
+    ``l_curve(..., warm_start=False)``: pixels a strong weight has driven dark
+    cannot recover in the weaker fits that follow.
 
     Parameters
     ----------
     weight : float
         Strength of the penalty.
     epsilon : float, optional
-        The flux, as a fraction of the mean pixel flux, at which a pixel
-        starts to count (default 1e-2).
+        The flux, as a fraction of the mean pixel flux, at which a pixel starts
+        to count (default 1e-2).
     path : str, optional
         Path of the Image in the model.
     """
@@ -444,16 +407,15 @@ class Centroid(_ImageRegulariser):
         image = self.image(model)
         b = image.brightness
         nrow, ncol = b.shape
-        highest = jax.lax.Precision.HIGHEST
         x = np.matmul(
             np.sum(b, axis=0),
             pixel_offsets(ncol, image.pixel_scale_mas),
-            precision=highest,
+            precision=_HIGHEST,
         )
         y = np.matmul(
             np.sum(b, axis=1),
             pixel_offsets(nrow, image.pixel_scale_mas),
-            precision=highest,
+            precision=_HIGHEST,
         )
         x, y = rotate(x, y, image.rotation_deg)
         return np.stack([x + image.dra, y + image.ddec])
@@ -521,29 +483,16 @@ def nyquist_pixel_scale(data):
 def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
     """The largest field of view (mas) that the data measure.
 
-    The smallest of these, as the width of a field:
-
-    * ``largest_mas`` (500 by default), a cap you choose;
-    * the interferometric field of view, the largest λ / B over the
-      unflagged samples with a non-zero baseline B (the shortest baseline
-      at the longest wavelength, where they are observed together):
-      structure larger than that is not measured, and on a uv lattice a
-      larger field would alias;
-    * the bandwidth-smearing field R λ / B_max, when the data carry
-      channel widths (``bandwidth``, from ``EFF_BAND`` or
-      [`with_bandwidth`][virgil.oidata.OIData.with_bandwidth]): beyond it
-      a source is washed out on the long baselines of a channel of
-      resolving power R (see
-      [`smeared_model`][virgil.models.smeared_model]);
-    * ``aperture_mas``, if given: the field of a single telescope, about
-      λ / D, which is all that the telescopes see of the sky.
-
-    Samples that are flagged are left out (see
-    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]). This is a
-    ceiling, not a recommended size: [`image_field`][virgil.imaging.image_field]
-    sizes an image from the data and uses it as the limit. Use it with
-    [`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale] to
-    choose the image's size and pixels.
+    The smallest of ``largest_mas`` (a cap you choose, 500 by default); the
+    interferometric field, the largest λ / B over the unflagged samples with a
+    non-zero baseline B (structure larger than that is not measured, and on a
+    uv lattice a larger field would alias); the bandwidth-smearing field
+    R λ / B_max, when the data carry channel widths (see
+    [`smeared_model`][virgil.models.smeared_model]); and ``aperture_mas``, if
+    given, the field of a single telescope, about λ / D. A ceiling, not a
+    recommended size: [`image_field`][virgil.imaging.image_field] sizes an
+    image from the data and uses it as the limit. Flagged samples are left out
+    (see [`OIData.unflagged`][virgil.oidata.OIData.unflagged]).
     """
     ceiling = min(float(largest_mas), fringe_scales(data)[1])
     ceiling = min(ceiling, smearing_scale(data))
@@ -553,11 +502,8 @@ def field_of_view(data, largest_mas=500.0, *, aperture_mas=None):
 
 
 def _squared_visibilities(d):
-    """Spatial frequency (cycles per radian), V² and its error, of the
-    unflagged visibility samples of a dataset, as three flat arrays.
-
-    Empty for data without visibility amplitudes of their own: projected
-    (kernel, DISCO) observables, and data with only phases.
+    """Spatial frequency (cycles per radian), V² and error of the unflagged
+    visibilities, as flat arrays; empty for data without amplitudes of their own.
     """
     empty = onp.zeros(0)
     if (
@@ -588,22 +534,14 @@ def _squared_visibilities(d):
 def second_moment_fwhm(data, v2_min=0.3):
     """The FWHM (mas) of the Gaussian that the short baselines see.
 
-    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)``,
-    with ρ = B / λ in cycles per radian, and any normalized source has
-    the same form to second order in ρ (a second moment of its brightness,
-    ``-ln V² ≈ 4 π² σ² ρ²`` for a circularly symmetric source of rms
-    radius σ per axis). This is a straight line through the origin, fitted
-    by least squares to ``-ln V²`` against ρ² (weighted by the errors) on
-    the unflagged samples whose squared visibility is at least ``v2_min``:
-    the short baselines, where the source is resolved only a little and the
-    approximation holds. It needs no image and no fit. It is the rms width
-    of the whole source, a star included, so a faint extended envelope
-    around a bright star gives a smaller value than its own FWHM. When a
-    bright unresolved component (a star with flux fraction above about
-    0.55) keeps V² above ``v2_min`` on every baseline, the fit is set by
-    the long baselines' constant offset, not by a curvature, and the
-    value is meaningless (an order of magnitude too small, unrelated to
-    the envelope); use
+    A circular Gaussian of FWHM θ has ``-ln V² = π² θ² ρ² / (2 ln 2)``, with
+    ρ = B / λ in cycles per radian, and any normalized source has this form to
+    second order in ρ. A straight line through the origin is fitted by weighted
+    least squares to ``-ln V²`` against ρ² on the unflagged samples with
+    ``V² ≥ v2_min``, where the source is resolved only a little. It needs no
+    image and no fit. It is the rms width of the whole source, a star included,
+    so it is meaningless when a bright unresolved component (flux fraction above
+    about 0.55) keeps V² above ``v2_min`` on every baseline: use
     [`envelope_fwhm`][virgil.imaging.envelope_fwhm] there.
 
     Parameters
@@ -618,11 +556,10 @@ def second_moment_fwhm(data, v2_min=0.3):
     -------
     float or None
         The FWHM in mas: zero if V² does not fall with ρ (an unresolved
-        source), and ``None`` if fewer than two unflagged samples have a
-        V² of at least ``v2_min`` (no visibilities, or a source resolved on
-        every baseline).
+        source), and ``None`` if fewer than two unflagged samples have
+        ``V² ≥ v2_min``.
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
+    observations = _as_list(data)
     parts = [_squared_visibilities(d) for d in observations]
     rho, v2, sigma = (onp.concatenate(x) for x in zip(*parts))
     use = onp.isfinite(v2) & onp.isfinite(sigma) & (v2 >= v2_min) & (rho > 0)
@@ -649,32 +586,19 @@ def image_field(
 ):
     """The width (mas) of an image field that the data size.
 
-    The field is ``field_fwhms`` times the source's FWHM, kept between a
-    floor and a ceiling that come from the data:
+    The field is ``field_fwhms`` times the source's FWHM, between a floor and a
+    ceiling that come from the data (unflagged baselines only, see
+    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]):
 
-    * **Moments of the visibilities.** The wanted field is
-      ``field_fwhms × fwhm_mas``. Without ``fwhm_mas`` it is the FWHM that
-      the short baselines see
-      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]);
-      [`starting_image`][virgil.imaging.starting_image] passes the FWHM of
-      its envelope fit. With no visibility amplitudes to measure it, the
-      wanted field is the ceiling.
-    * **Inner working angle (the floor).** The field is at least
-      ``inner_elements × λ / (2 B_max)``, that many resolution elements
-      across, so an unresolved source still gets a field with room around
-      it.
-    * **Interferometric field of view (the ceiling).** It is at most
-      [`field_of_view`][virgil.imaging.field_of_view] (with ``largest_mas``
-      and ``aperture_mas``): λ / B_min, the bandwidth-smearing field
-      R λ / B_max if the data carry channel widths, and the single-aperture
-      field. The ceiling wins over the floor if they cross.
-
-    The baselines are the unflagged ones throughout (see
-    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]), so a long
-    baseline that the provider flagged moves neither the floor nor the
-    ceiling. There is no fixed size: a source of 3 mas gets a field of
-    about 18 mas, where earlier versions of ``starting_image`` took at
-    least 500 mas, which in practice meant the interferometric field.
+    * **Wanted field:** ``field_fwhms × fwhm_mas``. Without ``fwhm_mas`` it is
+      the FWHM the short baselines see
+      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]); with no
+      visibility amplitudes to measure it, the wanted field is the ceiling.
+    * **Floor:** ``inner_elements × λ / (2 B_max)``, so an unresolved source
+      still gets room around it.
+    * **Ceiling:** [`field_of_view`][virgil.imaging.field_of_view] (with
+      ``largest_mas`` and ``aperture_mas``). It wins over the floor if they
+      cross.
 
     Parameters
     ----------
@@ -684,9 +608,9 @@ def image_field(
         The FWHM of the source in mas, to override the one from the
         visibilities.
     field_fwhms : float, optional
-        The field in FWHMs of the source (6 by default; 3 to 8 are
-        reasonable). A larger field spends pixels on empty sky, where an
-        image that is free to place flux can scatter it in islands.
+        The field in FWHMs of the source (6 by default; 3 to 8 are reasonable).
+        A larger field spends pixels on empty sky, where an image free to place
+        flux can scatter it in islands.
     inner_elements : float, optional
         The floor, in resolution elements λ / (2 B_max) (4 by default).
     aperture_mas : float, optional
@@ -710,12 +634,9 @@ def image_field(
 
 
 def _complex_visibilities(d):
-    """Visibility estimates at a dataset's uv samples, and their weights.
-
-    AMIGO DISCO data give the least-squares (minimum-norm) estimate of the
-    log visibilities from the modes; data with absolute phases give the
-    visibilities directly. The weights are 1 on samples that the data
-    inform and 0 elsewhere (uniform weighting, as in :func:`beam`).
+    """Visibility estimates at a dataset's uv samples and their 0/1 weights: the
+    least-squares estimate from the modes for DISCO data, the visibilities
+    themselves for amplitudes with absolute phases.
     """
     if d.vis_encoding == "mixed_log_complex":
         sigma = onp.asarray(d.d_vis)[:, None]
@@ -767,31 +688,27 @@ _DIRTY_BATCH = 4096
 def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
     """The dirty image: direct synthesis of the visibilities, unregularized.
 
-    ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, summing over the
-    samples (each standing for itself and its conjugate) with uniform
-    weights on the informed ones: the image convolved with the dirty beam,
-    plus noise. It peaks at one for a lone point source. For AMIGO DISCO
-    data the visibilities are the least-squares estimate from the modes;
-    since the modes are blind to the total flux, the estimate is
-    normalized to |V| = 1 on average on the shortest baselines.
+    ``I(x) = Σ_k w_k Re[V_k exp(+2πi u_k · x)] / Σ_k w_k``, with uniform weights
+    on the informed samples: the image convolved with the dirty beam, plus
+    noise. It peaks at one for a lone point source. For AMIGO DISCO data the
+    visibilities are the least-squares estimate from the modes, normalized to
+    |V| = 1 on average on the shortest baselines (the modes are blind to the
+    total flux).
 
     Parameters
     ----------
     data : OIData or sequence of OIData
-        The data; see the error raised for data without phases.
+        The data; closure phases alone cannot make a dirty image.
     npix : int
         Number of pixels on a side.
     pixel_scale_mas : float
         Pixel size in mas.
     flux_ratio : float, optional
-        If the scene is a star at the origin plus extended emission with
-        this flux relative to the star, the star is removed first, so the
-        map shows the extended emission alone. The star is removed by
-        subtracting the best-fitting point source at the origin (the
-        weighted mean of the visibilities), then scaling by
-        ``(1 + flux_ratio) / flux_ratio``. That is robust to the
-        normalization of the visibilities, which matters because subtracting
-        a bright star amplifies any error in it by ``1 / flux_ratio``.
+        If the scene is a star at the origin plus extended emission with this
+        flux relative to the star, the star is removed first (the best-fitting
+        point source at the origin is subtracted, then the image is scaled by
+        ``(1 + flux_ratio) / flux_ratio``), so the map shows the extended
+        emission alone.
 
     Returns
     -------
@@ -799,7 +716,7 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
         In the orientation of [`render`][virgil.models.SourceModel.render]
         (East left, North up). It has negative sidelobes.
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
+    observations = _as_list(data)
     offsets = onp.asarray(pixel_offsets(int(npix), float(pixel_scale_mas)))
     image, total = onp.zeros((int(npix), int(npix))), 0.0
     for d in observations:
@@ -809,10 +726,8 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
             vis = (vis - star) * (1.0 + flux_ratio) / flux_ratio
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
         fv = onp.ravel(onp.asarray(d.v / d.wavel) * mas2rad)
-        # In chunks of samples: the (k, npix) phase matrices for all k at
-        # once are hundreds of GB for DISCO-sized data (k ~ 1e5, npix ~ 256).
-        # Each chunk's contribution is one matrix product, so the memory is
-        # O(batch x npix) and the work O(k npix²), as before.
+        # In chunks of samples: all k at once is hundreds of GB for DISCO
+        # data (k ~ 1e5, npix ~ 256).
         wv = weight * vis
         for lo in range(0, fu.size, _DIRTY_BATCH):
             sl = slice(lo, lo + _DIRTY_BATCH)
@@ -824,11 +739,9 @@ def dirty_image(data, npix, pixel_scale_mas, flux_ratio=None):
 
 
 def _envelope_fit(data, star, aperture_mas):
-    """The fitted envelope and the FWHM (mas) that sizes the image field.
-
-    The FWHM is the envelope's or, if larger, the one that the short
-    baselines see ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]),
-    which guards against an envelope fit that collapsed onto the star.
+    """The fitted envelope and the FWHM (mas) that sizes the image field: the
+    envelope's or, if larger, the second-moment FWHM, which guards against a
+    fit that collapsed onto the star.
     """
     import numpyro.distributions as dist
 
@@ -857,8 +770,6 @@ def _envelope_fit(data, star, aperture_mas):
             best = result
     envelope = best.model.env if star else best.model
     fwhm = FWHM_PER_SIGMA * float(envelope.sigma)
-    # The envelope can collapse onto the star when the structure is not
-    # Gaussian; the short baselines' own second moment then sets the size.
     moment = second_moment_fwhm(data)
     return envelope, fwhm if moment is None else max(fwhm, moment)
 
@@ -893,35 +804,17 @@ def starting_image(
     """A starting model for an image fit, sized from the data.
 
     It fits a quick parametric model, an analytic star (if ``star``) plus a
-    circular Gaussian envelope with free flux and width, a low-order
-    description of the visibilities, from a few starting widths. Then it
-    chooses the image:
-
-    * a field of ``field_fwhms`` (6) FWHMs of the envelope, which is as
-      large as the source needs and no larger. It is at least
-      ``inner_elements`` (4) resolution elements λ / (2 B_max) across, and
-      never larger than the interferometric field of view (λ / B_min, the
-      bandwidth-smearing field and ``aperture_mas``; see
-      [`field_of_view`][virgil.imaging.field_of_view]) or ``largest_mas``.
-      The baselines are the unflagged ones. There is no fixed minimum:
-      earlier versions took at least 500 mas, which always gave λ / B_min,
-      so the size of the source made no difference. The FWHM is the
-      envelope's or, if larger, the one that the short baselines see
-      ([`second_moment_fwhm`][virgil.imaging.second_moment_fwhm]), which
-      guards against an envelope fit that collapsed onto the star (the rule
-      is [`image_field`][virgil.imaging.image_field]);
-    * pixels ``oversample`` times finer than the Nyquist scale;
-    * an [`Image`][virgil.models.Image] with the fitted flux, whose
-      pixels are the fitted Gaussian (``start="moments"``) or the positive
-      part of the :func:`dirty_image` (``start="dirty"``, with the star
-      removed). A dirty start is better when the Fourier coverage is dense
-      (it already has the right shape) and worse when it is sparse (its
-      sidelobes dominate).
-
-    Fit it with ``fit(start, image_priors(start), data, regularizers)``,
-    adding a prior on the image's flux, ``"env.flux"`` (or ``"flux"`` with
-    ``star=False``), to fit it too: with a star, this stops the fit from
-    parking excess flux next to it.
+    circular Gaussian envelope with free flux and width, from a few starting
+    widths, then builds the image: a field of ``field_fwhms`` envelope FWHMs
+    (the rule of [`image_field`][virgil.imaging.image_field], never above
+    ``largest_mas``), pixels ``oversample`` times finer than the Nyquist scale,
+    and the fitted flux. The pixels are the fitted Gaussian
+    (``start="moments"``) or the positive part of the
+    [`dirty_image`][virgil.imaging.dirty_image] with the star removed
+    (``start="dirty"``; better when the Fourier coverage is dense, worse when
+    sparse). Fit it with ``fit(start, image_priors(start), data,
+    regularizers)``; add a prior on ``"env.flux"`` (``"flux"`` with
+    ``star=False``) to fit the flux too.
 
     Parameters
     ----------
@@ -930,8 +823,8 @@ def starting_image(
     star : bool, optional
         Whether the scene has an unresolved star at the origin (which also
         fixes the image's position). Without one, the result is the Image
-        alone, and a [`Centroid`][virgil.imaging.Centroid] prior
-        should fix its position.
+        alone, and a [`Centroid`][virgil.imaging.Centroid] prior should fix its
+        position.
     oversample : float, optional
         Pixels per Nyquist pixel.
     largest_mas : float, optional
@@ -939,16 +832,14 @@ def starting_image(
     start : {"moments", "dirty"}, optional
         The starting pixels, as above.
     hole_mas : float, optional
-        Radius of a hole in the image's support under the star. Extended
-        flux within a fraction of a beam of the star is nearly
-        indistinguishable from the star's own, so without a hole the fit can
-        trade the two and bias the flux ratio; half the beam's minor axis
-        (``0.5 * beam(data).minor_mas``) is a good choice.
+        Radius of a hole in the image's support under the star. Extended flux
+        within a fraction of a beam of the star is nearly indistinguishable
+        from the star's, so without a hole the fit can trade the two; half the
+        beam's minor axis (``0.5 * beam(data).minor_mas``) is a good choice.
     field_fwhms : float, optional
         The field in FWHMs of the envelope (6 by default).
     inner_elements : float, optional
-        The least field, in resolution elements λ / (2 B_max) (4 by
-        default).
+        The least field, in resolution elements λ / (2 B_max) (4 by default).
     aperture_mas : float, optional
         A telescope's field of view, as a ceiling on the field and on the
         envelope's width.
@@ -976,9 +867,8 @@ def starting_image(
         support = circular_support(npix, scale, npix * scale, hole_mas)
     options = dict(flux=envelope.flux, support=support)
     if start == "moments":
-        # With a log-uniform prior, data with no resolved envelope drive
-        # sigma to its (tiny) lower bound; a Gaussian narrower than a pixel
-        # sampled on the grid is all zeros, so start at least one pixel wide.
+        # An unresolved envelope drives sigma to its lower bound, and a
+        # Gaussian narrower than a pixel samples to zeros: start one pixel wide.
         model = GaussianDisk(max(float(envelope.sigma), scale))
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
@@ -1011,26 +901,15 @@ class Beam:
 def beam(data):
     """The resolution of a dataset: the FWHM ellipse of its beam's core.
 
-    The dirty beam is the image of a point source made by the data's uv
-    sampling. Near its peak it falls off as ``1 - 2π² xᵀ M x``, where ``M``
-    is the weighted mean of ``u uᵀ`` over the samples, which matches a
-    Gaussian of covariance ``M⁻¹ / 4π²``. Its FWHM ellipse is the standard
-    "beam" drawn on interferometric images: roughly λ/B, and elongated where
-    the coverage is. For complicated coverage the real beam can look quite
-    different, but the ellipse still shows the size and shape of a
-    resolution element.
-
-    Every sample that carries information is weighted equally ("uniform
-    weighting"); in AMIGO DISCO data those are the uv points on which the
-    modes have weight (at least 1e-3 of the largest), i.e. the splodges.
-    Weighting by information instead would let the low-frequency central
-    splodge dominate, and give a broader beam. In other data they are the
-    unflagged samples (see
-    [`OIData.unflagged`][virgil.oidata.OIData.unflagged]): a flagged
-    sample keeps its u, v but measures nothing, and counting it would
-    shrink the beam to a resolution that the data do not have. When a
-    provider flags most of the long baselines of a resolved source, the
-    beam is two or three times coarser than that of all the samples.
+    The dirty beam falls off near its peak as ``1 - 2π² xᵀ M x``, with ``M`` the
+    weighted mean of ``u uᵀ`` over the samples; this matches a Gaussian of
+    covariance ``M⁻¹ / 4π²``, whose FWHM ellipse is the usual "beam", roughly
+    λ/B and elongated where the coverage is. Every informative sample has equal
+    weight ("uniform weighting"): in AMIGO DISCO data, the uv points where the
+    modes have weight (at least 1e-3 of the largest); otherwise the unflagged
+    samples (see [`OIData.unflagged`][virgil.oidata.OIData.unflagged]), since a
+    flagged sample measures nothing and counting it would claim a resolution
+    the data do not have.
 
     Parameters
     ----------
@@ -1041,7 +920,7 @@ def beam(data):
     -------
     Beam
     """
-    observations = data if isinstance(data, (list, tuple)) else [data]
+    observations = _as_list(data)
     u, v, w = [], [], []
     for d in observations:
         fu = onp.ravel(onp.asarray(d.u / d.wavel) * mas2rad)
@@ -1069,27 +948,20 @@ def beam(data):
 def convolve_beam(image, pixel_scale_mas, beam):
     """An image convolved with a Gaussian beam: the image at the data's resolution.
 
-    Reconstructed images are super-resolved. A regularized image can put
-    structure on scales finer than the beam, where the data constrain it
-    only weakly, so it often looks clumpy or streaky. Convolved with the
-    beam (the "restored" image of radio astronomy), it shows only what the
-    data resolve. That is the fair way to compare two reconstructions, or a
-    reconstruction with a model: convolve both.
-
-    The kernel is an elliptical Gaussian with the beam's FWHMs and position
-    angle (North to East), normalized to unit sum. It is sampled on an odd
-    grid centred on a pixel, so the convolution does not shift the image.
-    Flux beyond the edge of the image is taken to be zero, and the result
-    is cropped to the image, so the total flux is kept only for structure
-    more than about a beam from the edge; structure nearer the edge is
-    dimmed.
+    A regularized image can put structure on scales finer than the beam, where
+    the data constrain it only weakly. Convolved with the beam (the "restored"
+    image of radio astronomy), it shows only what the data resolve, which is
+    the fair way to compare two reconstructions: convolve both. The kernel is
+    an elliptical Gaussian with the beam's FWHMs and position angle (North to
+    East), normalized to unit sum on an odd grid centred on a pixel. Flux
+    beyond the edge is taken to be zero, so structure within about a beam of
+    the edge is dimmed.
 
     Parameters
     ----------
     image : array-like, shape (ny, nx)
         The image, in the orientation of
-        [`render`][virgil.models.SourceModel.render] (East left, North
-        up).
+        [`render`][virgil.models.SourceModel.render] (East left, North up).
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     beam : Beam
@@ -1148,14 +1020,10 @@ def _spectral_shape(spectrum, wavel):
 
 
 class _CleanScene(SourceModel):
-    """A fixed base scene plus point components on a pixel grid.
-
-    ``V = (w V_base + s Σ c_p e_p) / (w + s Σ c_p)``, where ``w`` is the
-    base's weight (a System's total flux), ``c`` the components' fluxes,
-    ``s`` the shape of their spectrum (1 if grey) and ``e_p`` the
-    visibility of a point at pixel ``p``. It is smooth in ``c``, even at
-    ``c = 0``, and equals the model ``clean`` returns. Without a base,
-    ``V = Σ c_p e_p / Σ c_p``.
+    """A fixed base scene plus point components on a pixel grid, with
+    ``V = (w V_base + s Σ c_p e_p) / (w + s Σ c_p)``: ``w`` the base's weight, ``c``
+    the fluxes, ``s`` the spectrum's shape and ``e_p`` a point's visibility. Without
+    a base, ``V = Σ c_p e_p / Σ c_p``.
     """
 
     base: object
@@ -1190,14 +1058,10 @@ class _CleanScene(SourceModel):
 
 
 def _scale_shapes(scales_mas, support, pixel_scale_mas):
-    """The component shapes of multi-scale CLEAN, one per scale.
-
-    ``None`` for a point (scale 0), and otherwise ``(kernel, weight,
-    mask)``: ``kernel`` the 1-D Gaussian of FWHM ``s`` on the pixel grid
-    (the 2-D shape is separable, ``K F K``), ``mask`` the support, and
-    ``weight`` the inverse of the part of each pixel's shape inside the
-    support (zero outside it), so that the image of a component is
-    confined to the support and its flux is the component's.
+    """The component shapes of multi-scale CLEAN, one per scale: ``None`` for a
+    point, else ``(kernel, weight, mask)``, the 1-D Gaussian of the scale on the
+    pixel grid (the 2-D shape is separable) and the weight that confines each
+    component to ``support`` with unit flux.
     """
     mask = onp.asarray(support, float)
     offsets = onp.arange(mask.shape[0], dtype=float)
@@ -1237,10 +1101,8 @@ def _sky(fluxes, shapes):
 
 
 def _clean_residuals(parts, observations, scale, rotation):
-    """Whitened residuals of all the data, as a function of the fluxes.
-
-    ``parts`` is ``(base, spectrum, shapes)``, with ``shapes`` from
-    :func:`_scale_shapes`; the fluxes have shape (n_scales, npix, npix).
+    """Whitened residuals of all the data as a function of the fluxes;
+    ``parts`` is ``(base, spectrum, shapes)``.
     """
     base, spectrum, shapes = parts
 
@@ -1256,10 +1118,8 @@ def _clean_residuals(parts, observations, scale, rotation):
 
 @eqx.filter_jit
 def _atom_norms(parts, observations, fluxes, scale, rotation):
-    """``|J e_p|²`` for every component ``p``: the χ² response to its flux.
-
-    One Jacobian–vector product per (scale, pixel), a row of pixels at a
-    time, so the Jacobian is never held whole.
+    """``|J e_p|²`` for every component ``p``, one Jacobian–vector product at a
+    time (a row of pixels per step), so the Jacobian is never held whole.
     """
     residuals = _clean_residuals(parts, observations, scale, rotation)
     ncol = fluxes.shape[-1]
@@ -1278,11 +1138,9 @@ def _atom_norms(parts, observations, fluxes, scale, rotation):
 
 @eqx.filter_jit
 def _clean_step(parts, observations, fluxes, scores, scale, rotation):
-    """χ², and the best pixel and Gauss–Newton step for one CLEAN iteration.
-
-    The best pixel lowers χ² most: the largest ``g_p² / |J e_p|²`` with
-    ``g_p < 0``, where ``g`` is the gradient of χ² and ``scores`` holds
-    ``1 / |J e_p|²`` (zero outside the support).
+    """χ², and the best pixel and Gauss–Newton step of one CLEAN iteration: the
+    largest ``g_p² / |J e_p|²`` with ``g_p < 0`` (``scores`` is ``1 / |J e_p|²``,
+    zero outside the support).
     """
     residuals = _clean_residuals(parts, observations, scale, rotation)
     r, vjp = jax.vjp(residuals, fluxes)
@@ -1317,13 +1175,9 @@ def _clean_columns(parts, observations, fluxes, indices, scale, rotation):
 
 
 def _refit(fixed, fluxes, chi2, scale, rotation):
-    """A major cycle: refit the fluxes of the components, keeping them >= 0.
-
-    Linearizes the residuals about the current fluxes over the components
-    (one Jacobian–vector product each), solves the non-negative least
-    squares problem for their fluxes, and backtracks along the step until
-    χ² falls. Components it sets to zero are removed. Returns the new
-    fluxes, or the old ones if no step lowers χ².
+    """A major cycle: refit the component fluxes by non-negative least squares on
+    the linearized residuals, backtracking until χ² falls. Zeroed components are
+    removed; the old fluxes if no step lowers χ².
     """
     from scipy.optimize import lsq_linear, nnls
 
@@ -1343,12 +1197,9 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
     try:
         solution, _ = nnls(jacobian, rhs, maxiter=50 * active.size)
     except RuntimeError:
-        # nnls gives up ("Maximum number of iterations reached") on the
-        # ill-conditioned columns of high signal-to-noise data. The bounded
-        # least-squares solver returns its best point instead of raising,
-        # and the backtracking below keeps the step only if χ² falls.
-        # BVLS, not the default TRF: TRF's line search loops forever once
-        # its step underflows to zero, which hung CI on scipy 1.13.
+        # nnls gives up on ill-conditioned columns (high signal-to-noise);
+        # BVLS returns its best point, and the backtracking keeps it only if
+        # χ² falls. Not TRF: its line search can loop forever.
         solution = lsq_linear(
             jacobian, rhs, bounds=(0.0, onp.inf), method="bvls"
         ).x
@@ -1362,10 +1213,8 @@ def _refit(fixed, fluxes, chi2, scale, rotation):
 
 
 def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
-    """The base with the components as an Image: the model ``clean`` returns.
-
-    ``components`` are the fluxes on the grid (unnormalized without a
-    base). With no flux in them, the base alone.
+    """The base with the components as an Image (the model ``clean`` returns);
+    the base alone when they have no flux.
     """
     components = onp.asarray(components, float)
     total = float(components.sum())
@@ -1396,13 +1245,9 @@ def _clean_model(base, components, pixel_scale_mas, rotation_deg, spectrum):
 def _joint_refit(
     base, components, observations, priors, geometry, spectrum, dtype
 ):
-    """Fit the base's free parameters and the components' fluxes together.
-
-    ``priors`` are keyed by paths in the base. The components keep their
-    support (their fluxes stay positive). Returns ``(base, components)``.
-    Fitting the two together, rather than in turn, keeps the components from
-    absorbing an error in the base, and the base from absorbing flux it does
-    not model.
+    """Fit the base's free parameters (``priors``, keyed by paths in the base) and
+    the components' fluxes together, so neither absorbs the other's error.
+    Returns ``(base, components)``.
     """
     import numpyro.distributions as dist
 
@@ -1516,81 +1361,15 @@ def clean(
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Högbom's CLEAN (Högbom 1974, A&AS 15, 417) repeatedly finds the peak of the residual dirty image
-    and adds a fraction (the loop ``gain``) of a point source there. For
-    data that are linear in the image, the residual dirty image is
-    proportional to ``-∂χ²/∂c``, the gradient of χ² with respect to the
-    flux ``c_p`` of a point at each pixel. This function uses that gradient
-    directly, so it works for any data virgil can fit: closure phases,
-    kernel or DISCO phases, squared visibilities, or a mix. ``J e_p`` is
-    the change in the whitened residuals per unit flux at pixel ``p``. Each
-    iteration picks the pixel whose Gauss–Newton step would lower χ² most,
-    the largest ``g_p² / |J e_p|²`` with ``g_p < 0``, and adds ``gain``
-    times that step, ``-g_p / (2 |J e_p|²)``. This is matching pursuit; for
-    linear data, where ``|J e_p|`` is the same everywhere, it is exactly
-    Högbom's CLEAN. The norms ``|J e_p|`` are computed once, at the start,
-    with one Jacobian–vector product per pixel. Normalizing by them matters
-    next to an analytic star, where flux in a pixel is nearly the same as
-    the star's: the gradient there is small, but so is ``|J e_p|``, and an
-    unnormalized search would pile flux beside the star.
-
-    Components are added to a fixed ``base`` scene, usually an analytic
-    star at flux 1; fit its parameters first. Their fluxes are relative to
-    the base's, like a companion's in a System; for a
-    [`System`][virgil.models.System] base they are siblings of its
-    components, relative to its total. By default the components are grey,
-    the same fraction of the base's flux at every wavelength; give a
-    ``spectrum`` to make them follow one, as the image does in SPARCO
-    (e.g. a star with its own spectral index and an environment with
-    another). Without a base, the components alone make the image, starting from one at the centre of the
-    grid (closure phases do not fix the position, so this is also the
-    anchor).
-
-    Each iteration only adds flux, so an early step that overshoots cannot
-    be undone by later ones. Every ``refit_every`` iterations a **major
-    cycle** (as in Clark 1980, A&A 89, 377 and Cotton–Schwab CLEAN,
-    Schwab 1984, AJ 89, 1076) refits the fluxes of all
-    the components at once, by non-negative least squares on the
-    linearized residuals: flux can move between components, and components
-    whose flux falls to zero are removed. The fluxes stay non-negative.
-    A last major cycle runs when CLEAN stops at the target or at
-    ``max_iterations``, so that the fluxes it returns are refitted even when
-    it stops early (when the data start close to the target, a major cycle
-    may otherwise never run).
-
-    The base is fixed unless ``base_priors`` names some of its parameters,
-    e.g. a companion's position or a star's diameter. Each major cycle then
-    fits those together with the components' fluxes, with
-    [`fit`][virgil.fitting.fit]: fitting them in turn instead would let the
-    components absorb an error in the base, or let the base absorb flux it
-    does not model. A companion much closer to the star than λ/B has its
-    flux and separation nearly degenerate, whatever fits it.
-
-    **Multi-scale CLEAN** (Cornwell 2008, IEEE JSTSP 2, 793,
-    https://arxiv.org/abs/0806.2228; Rau & Cornwell 2011,
-    https://arxiv.org/abs/1106.2745): with several
-    ``scales_mas``, each component is a pixel convolved with a circular
-    Gaussian of FWHM ``s`` (``s = 0`` is a point), and the image is
-    ``Σ_s G_s * F_s``. The search runs over every (scale, pixel), with the
-    same score ``g² / |J e|²``, and the major cycles refit the components
-    at all scales together. An extended source then takes a few broad
-    components instead of many points. Each shape is cut to the
-    ``support`` and renormalized there, so a component's flux is the flux
-    it puts in the image. Cornwell multiplies the peak residual at each
-    scale by a bias ``1 - 0.6 s / s_max`` that favours small scales,
-    because the peak of a smoothed residual grows with the scale's area.
-    The score here is instead the χ² decrease of each component's
-    Gauss–Newton step, which does not depend on its size, so no bias is
-    needed; ``scale_bias`` applies one, ``1 - scale_bias s / s_max``, if
-    the broad components grab flux that belongs to points.
-
-    Iteration stops when χ² per data point reaches ``target_chi2_red`` (the
-    discrepancy principle; it relies on correct error bars), or after
-    ``max_iterations``. It also stops when χ² has **stalled**: when no
-    pixel lowers it, or when it has fallen by less than a fraction
-    ``stall_tolerance`` over the last ``stall_window`` iterations, and a
-    major cycle does not help. That happens when noise puts the truth's own
-    χ² per point above the target; ``chi2_red`` shows how close it came.
+    Each iteration adds ``gain`` times the Gauss–Newton step at the pixel that
+    lowers χ² most. For data linear in the image this is Högbom's CLEAN; for
+    any other data virgil can fit (closure, kernel and DISCO phases, V²) it is
+    matching pursuit on the gradient of χ². Components are point sources or
+    Gaussians of several widths (``scales_mas``), added to a fixed ``base``
+    scene, usually an analytic star; every ``refit_every`` iterations a major
+    cycle refits all their fluxes by non-negative least squares. It stops at
+    ``target_chi2_red``, when χ² has stalled, or at ``max_iterations``. See
+    [CLEAN](imaging.md#clean) for the algorithm.
 
     Parameters
     ----------
@@ -1604,8 +1383,7 @@ def clean(
         A fixed scene the components are added to (default: none). A
         System base must not be offset (put any offset on its components).
     gain : float, optional
-        Loop gain, the fraction of each step taken (default 0.1). Smaller
-        is slower but less likely to put flux in the wrong place.
+        Loop gain, the fraction of each step taken (default 0.1).
     max_iterations : int, optional
         Iteration limit (default 1000).
     target_chi2_red : float, optional
@@ -1613,21 +1391,17 @@ def clean(
     refit_every : int, optional
         Iterations between major cycles (default 50); 0 for none.
     stall_window, stall_tolerance : int and float, optional
-        Stop when χ² has fallen by less than a fraction
-        ``stall_tolerance`` (default 1e-3) over the last ``stall_window``
-        (default 50) iterations, even after a major cycle.
+        Stop when χ² has fallen by less than a fraction ``stall_tolerance``
+        (default 1e-3) over the last ``stall_window`` (default 50) iterations,
+        even after a major cycle.
     base_priors : dict, optional
-        Priors (numpyro distributions) on parameters of the base to fit at
-        every major cycle, keyed by their paths in the base (e.g.
-        ``{"comp.dra": dist.Normal(30.0, 5.0)}`` for a System base, whose
-        paths must start with a component's name, or ``{"diameter": ...}``
-        for a single component). Needs a base and major cycles
-        (``refit_every`` > 0). The fits run in ``dtype``.
+        Priors on parameters of the base to fit at every major cycle, keyed by
+        their paths in the base (e.g. ``{"comp.dra": dist.Normal(30.0, 5.0)}``
+        for a System base, whose paths must start with a component's name).
+        Needs a base and ``refit_every`` > 0. The fits run in ``dtype``.
     refresh_norms : bool, optional
         Recompute the norms ``|J e_p|`` at every major cycle (default
-        ``False``). For non-linear data they change as the image does, but
-        each refresh costs one Jacobian–vector product per pixel, computed a
-        row of pixels at a time.
+        ``False``): one Jacobian–vector product per pixel each time.
     spectrum : Spectrum, optional
         The spectrum all the components share, e.g.
         ``PowerLaw(1.0, index, wavel0)``; only its shape matters, and the
@@ -1638,11 +1412,10 @@ def clean(
         [`circular_support`][virgil.models.circular_support] with a hole
         under the star.
     init : array-like, shape (npix, npix) or (n_scales, npix, npix), optional
-        Starting component fluxes, non-negative and zero outside
-        ``support`` (default: none with a base, and without one a single
-        component of the smallest scale on the supported pixel nearest the
-        centre). An (npix, npix) array is point components, and needs 0
-        among the ``scales_mas``.
+        Starting component fluxes, non-negative and zero outside ``support``
+        (default: none with a base; without one, a component of the smallest
+        scale on the supported pixel nearest the centre). An (npix, npix)
+        array is point components, and needs 0 among the ``scales_mas``.
     rotation_deg : float, optional
         Position angle of the grid's "up" axis, as for
         [`Image`][virgil.models.Image]; match the data's uv lattice
@@ -1651,8 +1424,8 @@ def clean(
         Precision of the iterations, as for [`fit`][virgil.fitting.fit].
     scales_mas : sequence of float, optional
         FWHM in mas of the components' Gaussian shapes, distinct and
-        non-negative (default ``(0.0,)``: points only, Högbom-like CLEAN).
-        E.g. ``(0.0, 2 * beam_fwhm)`` for points and broad emission.
+        non-negative (default ``(0.0,)``: points only), e.g.
+        ``(0.0, 2 * beam_fwhm)``.
     scale_bias : float, optional
         In [0, 1): scales the scores of scale ``s`` by
         ``1 - scale_bias s / max(scales_mas)`` (default 0, no bias).
@@ -1660,23 +1433,17 @@ def clean(
     Returns
     -------
     CleanResult
-        The model, components and χ² history. The model can be polished
-        with [`fit`][virgil.fitting.fit] on the components' support, used
-        as a starting image for a regularized fit, or restored with the
-        beam.
+        The model, components and χ² history. Polish the model with
+        [`fit`][virgil.fitting.fit], use it as a starting image for a
+        regularized fit, or restore it with the beam.
     """
-    observations = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    observations = tuple(_as_list(data))
     npix, pixel_scale_mas = int(npix), float(pixel_scale_mas)
     rotation_deg = float(rotation_deg)
     if not 0.0 < gain <= 1.0:
         raise ValueError(f"gain must be in (0, 1], not {gain}.")
-    if int(max_iterations) != max_iterations or max_iterations < 0:
-        raise ValueError(
-            f"max_iterations must be a non-negative integer, not "
-            f"{max_iterations}."
-        )
-    max_iterations = int(max_iterations)
     for name, value in (
+        ("max_iterations", max_iterations),
         ("refit_every", refit_every),
         ("stall_window", stall_window),
     ):
@@ -1684,7 +1451,11 @@ def clean(
             raise ValueError(
                 f"{name} must be a non-negative integer, not {value}."
             )
-    refit_every, stall_window = int(refit_every), int(stall_window)
+    max_iterations, refit_every, stall_window = (
+        int(max_iterations),
+        int(refit_every),
+        int(stall_window),
+    )
     scales_mas = tuple(float(s) for s in onp.atleast_1d(scales_mas))
     if (
         not scales_mas
@@ -1777,14 +1548,10 @@ def clean(
 
         def scores_for(fluxes):
             norms = _atom_norms(*fixed, fluxes, *geometry)
-            # A pixel whose flux cannot change the model has |J e_p| = 0
-            # exactly, but rounding leaves ~eps |J e|max there: without a
-            # base scene the seed pixel is such a pixel (flux added to the
-            # only component leaves the normalized image unchanged), and
-            # on an even grid its phase factors are not exactly 1. Its
-            # score 1/|J e_p|² would be ~1e24 and, on any noise in the
-            # gradient, win the search and take an infinite step. Pixels
-            # with |J e_p| below 100 eps of the largest are dead.
+            # Pixels whose flux cannot change the model (the seed pixel with
+            # no base) have |J e_p| ~ eps, so 1/|J e_p|² would win the search
+            # and take an infinite step: those below 100 eps of the largest
+            # are dead.
             eps = float(np.finfo(norms.dtype).eps)
             live = norms > (100.0 * eps) ** 2 * np.max(norms)
             scores = np.where(
@@ -1793,14 +1560,10 @@ def clean(
             return scores if not scale_bias else scores * bias
 
         def major_cycle(fluxes, chi2):
-            # With free base parameters, first fit those and the components'
-            # fluxes together; then refit the fluxes by non-negative least
-            # squares, which can remove components. Pruning against the
-            # corrected base, not the old one, keeps a component the old
-            # base was hiding.
-            # With several scales the joint fit is of the image, which
-            # has no unique split into scales: it gives the base, and the
-            # non-negative refit the components at every scale.
+            # Fit the free base parameters and the fluxes together, then
+            # refit the fluxes (which can remove components) against the
+            # corrected base. With several scales the joint fit gives the
+            # base only: the image has no unique split into scales.
             nonlocal base, fixed
             if base_priors:
                 base, components = _joint_refit(
@@ -1855,8 +1618,7 @@ def clean(
             )
             since_refit += 1
         if refit_every and since_refit > 0:
-            # A last major cycle, so the returned fluxes are refitted even
-            # if CLEAN reached the target before any major cycle ran.
+            # A last major cycle, so the returned fluxes are always refitted.
             fluxes = major_cycle(fluxes, float(chi2))
             chi2 = _clean_chi2(*fixed, fluxes, *geometry)
             history.append(float(chi2) / ndata)
@@ -1906,12 +1668,10 @@ class LCurve:
     def corner(self):
         """The weight at the L-curve's corner, where it bends most sharply.
 
-        The curve is ``(log χ², log penalty)`` parametrized by ``log w``;
-        the corner is the interior point of largest curvature (Hansen &
-        O'Leary 1993, https://doi.org/10.1137/0914086). Check it by eye: the curvature of a sparse or noisy
-        sweep is itself noisy, and a smooth curve has no clear corner.
-        A fit that diverged (a non-finite χ² or penalty) is left out, so
-        that its NaN cannot spread to the curvature of its neighbours.
+        The curve is ``(log χ², log penalty)`` parametrized by ``log w``; the corner
+        is the interior point of largest curvature (Hansen & O'Leary 1993). Check
+        it by eye: a sparse or noisy sweep has a noisy curvature. A fit with a
+        non-finite χ² or penalty is left out.
         """
         weights = onp.asarray(self.weights)
         chi2, penalty = onp.asarray(self.chi2), onp.asarray(self.penalty)
@@ -1930,14 +1690,12 @@ class LCurve:
     def discrepancy(self, target=1.0):
         """The weight at which χ² per data point reaches ``target``.
 
-        This is Morozov's discrepancy principle: regularize as strongly as
-        the data allow. With several datasets, the binding one (the largest
-        χ² per point) must reach the target, so that a well-fitted dataset
-        cannot hide a badly fitted one. It interpolates linearly in ``log w`` between the
-        fitted weights, and returns ``None`` if the sweep never crosses the
-        target. The truth itself has χ² per point of 1 ± √(2/N), so the
-        default target of 1 is the natural one. It relies on correct error
-        bars; with underestimated errors it over-regularizes.
+        Morozov's discrepancy principle: regularize as strongly as the data allow.
+        With several datasets the binding one (the largest χ² per point) must reach
+        the target. It interpolates linearly in ``log w`` and returns ``None`` if the
+        sweep never crosses the target. The truth has χ² per point 1 ± √(2/N), so 1
+        is the natural target; it relies on correct error bars and over-regularizes
+        if they are underestimated.
         """
         binding = np.max(
             np.reshape(self.chi2_red, (len(self.weights), -1)), axis=1
@@ -1955,23 +1713,18 @@ class LCurve:
     def classic_maxent(self, data, path="env"):
         """The maximum-entropy weight of Gull and Skilling's "classic MaxEnt".
 
-        For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits,
-        this is the weight ``w`` at which ``-2 w S`` equals the number of
-        well-measured directions in the image, ``N = Σ λ / (λ + w)``
-        (Gull 1989, https://doi.org/10.1007/978-94-015-7860-8_4; Skilling
-        1989, https://doi.org/10.1007/978-94-015-7860-8_3). Here ``S`` is the entropy (minus
-        the sweep's ``penalty``), and the ``λ`` are the eigenvalues of the
-        data's Gauss–Newton curvature in the entropy metric,
-        ``diag(√b) JᵀJ diag(√b)``, with ``J`` the Jacobian of the whitened
-        residuals with respect to the brightness ``b``. It is the stationary
-        point of the Laplace-approximated evidence in ``w``, and so assumes
-        correct error bars, like the discrepancy principle.
-
-        Both sides are evaluated at each fit in the sweep, and the crossing
-        is interpolated linearly in ``log w``. Returns ``None`` if the sweep
-        does not bracket it. Like :func:`log_evidence`, it uses the data's
-        quoted errors, so it rejects a sweep fitted with ``noise=`` terms
-        or with one model per dataset.
+        For a sweep of [`MaxEntropy`][virgil.imaging.MaxEntropy] fits, the weight
+        ``w`` at which ``-2 w S`` equals the number of well-measured directions in
+        the image, ``N = Σ λ / (λ + w)`` (Gull 1989, Skilling 1989, both in
+        *Maximum Entropy and Bayesian Methods*, Kluwer). ``S`` is the entropy
+        (minus the sweep's ``penalty``) and the ``λ`` are the eigenvalues of the
+        data's Gauss–Newton curvature in the entropy metric ``diag(√b) JᵀJ
+        diag(√b)``. It is the stationary point of the Laplace evidence in ``w``, so
+        it assumes correct error bars. Both sides are evaluated at each fit in the
+        sweep and the crossing is interpolated linearly in ``log w``; ``None`` if
+        the sweep does not bracket it. Like [`log_evidence`][virgil.imaging.log_evidence]
+        it uses the quoted errors, and rejects a sweep fitted with ``noise=`` terms
+        or one model per dataset.
 
         Parameters
         ----------
@@ -1979,15 +1732,6 @@ class LCurve:
             The data the sweep was fitted to.
         path : str, optional
             Path of the regularized Image in the model (default ``"env"``).
-
-        References
-        ----------
-        - S. F. Gull (1989), "Developments in maximum entropy data
-          analysis", in *Maximum Entropy and Bayesian Methods*, Kluwer,
-          53–71.
-        - J. Skilling (1989), "Classic maximum entropy", in *Maximum
-          Entropy and Bayesian Methods*, Kluwer, 45–52. (Skilling & Bryan
-          1984 is the earlier "historic" MaxEnt, which stops at χ² = N.)
         """
         gap = []
         for weight, penalty, result in zip(
@@ -2007,13 +1751,9 @@ class LCurve:
                         cast_tree(image, "float64").brightness, dtype=float
                     )
                 )
-            with run_in("float64"):
                 scaled = jac[:, np.asarray(b > 0)] / np.asarray(
                     onp.sqrt(b[b > 0])
                 )
-            # Eigenvalues of the Gram matrix, as squared singular values:
-            # forming the Gram matrix loses them to rounding (see
-            # log_evidence).
             curvature = _singular_values(scaled) ** 2
             n_good = onp.sum(curvature / (curvature + weight))
             gap.append(2.0 * weight * penalty - n_good)
@@ -2043,13 +1783,9 @@ _JACOBIAN_BATCH = 64
 
 @eqx.filter_jit
 def _jitted_residual_jacobian(model, datasets, path):
-    """Jitted body of :func:`_residual_jacobian`.
-
-    Jitted once at module level, with the model and data as arguments, so
-    that a new fit of the same shape reuses the compilation; run eagerly,
-    the Jacobian compiles hundreds of small operations one at a time.
-    ``path`` is one leaf's path, or a tuple of paths: the Jacobian is then
-    taken with respect to their concatenated, raveled leaves.
+    """Jitted body of ``_residual_jacobian``; ``path`` is one leaf's path or a tuple
+    of paths, whose concatenated raveled leaves the Jacobian is taken with
+    respect to.
     """
     paths = (path,) if isinstance(path, str) else tuple(path)
     if len(paths) == 1:
@@ -2082,11 +1818,9 @@ def _jitted_residual_jacobian(model, datasets, path):
 
     n_data = sum(d.n_residuals for d in datasets)
     n_leaf = np.size(leaf)
-    # Row by row (reverse mode) or column by column (forward mode), whichever
-    # is shorter, in batches: jax.jacrev/jacfwd push every basis vector
-    # through at once, and each carries the image transform's intermediates
-    # (data x pixels), so their memory grows as data x data x pixels. A
-    # MATISSE contest file needed 432 GB that way on an 80 GB GPU.
+    # Rows (reverse mode) or columns (forward mode), whichever are fewer, in
+    # batches: jacrev/jacfwd push every basis vector through at once, and the
+    # memory then grows as data x data x pixels.
     if n_data < n_leaf:
         r, pullback = jax.vjp(residuals, leaf)
 
@@ -2117,7 +1851,7 @@ def _residual_jacobian(model, data, path, on_device=False):
     ``(residuals, jacobian)``, float64; ``on_device=True`` leaves the
     Jacobian a JAX array.
     """
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    datasets = tuple(_as_list(data))
     if not isinstance(path, str):
         path = tuple(path)
     with run_in("float64"):
@@ -2128,12 +1862,11 @@ def _residual_jacobian(model, data, path, on_device=False):
 
 
 def _singular_values(jac):
-    """Singular values of ``jac`` (descending, NumPy), on the device in
-    float64; QR-reduced first when far from square."""
+    """Singular values of ``jac`` (descending, NumPy), float64 on the device;
+    QR-reduced first when far from square (the Gram matrix would lose the
+    small ones)."""
     with run_in("float64"):
         a = np.asarray(jac, dtype=np.float64)
-        # QR then SVD of the small factor is backward stable; the Gram
-        # matrix JᵀJ would lose the small singular values (see log_evidence).
         if a.shape[0] > 2 * a.shape[1]:
             a = np.linalg.qr(a, mode="r")
         elif a.shape[1] > 2 * a.shape[0]:
@@ -2153,12 +1886,9 @@ def _svd(jac):
 
 
 def _single_model(model, caller):
-    """The one model of a fit, for the evidence helpers.
-
-    ``model`` is a model or a [`FitResult`][virgil.fitting.FitResult].
-    The helpers use the data's quoted errors and set the Image in one
-    model, so fitted ``noise=`` terms (found only in a FitResult) and
-    per-dataset model lists are rejected rather than silently mishandled.
+    """The one model of a fit, for the evidence helpers. Fitted ``noise=`` terms
+    (in a ``FitResult``) and per-dataset model lists are rejected: the helpers use
+    the data's quoted errors.
     """
     if isinstance(model, FitResult):
         noise = [
@@ -2189,7 +1919,7 @@ def _jitted_log_norm(model, datasets):
 
 def _log_norm(model, data):
     """``_whitened_and_log_norm``'s log-normalizer at ``model``, in float64."""
-    datasets = tuple(data) if isinstance(data, (list, tuple)) else (data,)
+    datasets = tuple(_as_list(data))
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
         return float(_jitted_log_norm(model, datasets))
@@ -2200,20 +1930,29 @@ def _whitened_field(obj):
     return callable(getattr(obj, "evaluate", None)) and hasattr(obj, "latent")
 
 
-def _field_images(model, path, caller):
-    """The paths of the Images with whitened fields that ``path`` selects.
+def _field_paths(model):
+    """The paths of every Image in ``model`` with a whitened field."""
+    return tuple(
+        p
+        for p, part in _parts(model)
+        if isinstance(part, Image) and _whitened_field(part.log_brightness)
+    )
 
-    ``path`` is the path of one Image (the Image must have a whitened
-    field, else a ``TypeError``), a tuple of such paths, or ``None`` for
-    every Image in ``model`` with a whitened field (a ``TypeError`` if
-    there is none).
+
+def _latent_path(image_path):
+    return (
+        "log_brightness.latent"
+        if image_path is None
+        else image_path + ".log_brightness.latent"
+    )
+
+
+def _field_images(model, path, caller):
+    """The paths of the Images with whitened fields that ``path`` selects: one
+    path, a tuple, or ``None`` for all of them (a ``TypeError`` if there is none).
     """
     if path is None:
-        found = tuple(
-            p
-            for p, part in _parts(model)
-            if isinstance(part, Image) and _whitened_field(part.log_brightness)
-        )
+        found = _field_paths(model)
         if not found:
             raise TypeError(
                 f"{caller} found no Image with a GaussianField in the model; "
@@ -2237,43 +1976,21 @@ def _field_images(model, path, caller):
 
 
 def _field_latents(model, path, caller):
-    """The paths of the latents of the fields ``path`` selects, checked.
-
-    See [`_field_images`][virgil.imaging._field_images] for ``path``.
-    Returns a tuple of ``(image_path, latent_path)``.
-    """
+    """Tuple of ``(image_path, latent_path)`` for the fields ``path`` selects."""
     return tuple(
-        (
-            p,
-            "log_brightness.latent"
-            if p is None
-            else p + ".log_brightness.latent",
-        )
-        for p in _field_images(model, path, caller)
+        (p, _latent_path(p)) for p in _field_images(model, path, caller)
     )
 
 
 def _evidence_latents(model, path, caller):
-    """The paths of every whitened latent that ``path`` selects, for the
-    Laplace evidence: the fields of Images with a GaussianField, and the
-    Gaussian-process latents of MultipoleDisks (``RadialGP`` profiles,
-    ``RadialGPFunction`` coefficients and spectral indices, and
-    ``MultipoleKernel`` harmonics).
-
-    ``path`` is a path or a tuple of paths of such Images or disks, or
-    ``None`` for all of them in ``model`` (a ``TypeError`` if there are none).
+    """The paths of every whitened latent that ``path`` selects: those of Images
+    with a GaussianField and the Gaussian-process latents of MultipoleDisks.
+    ``path`` is a path or tuple of paths, or ``None`` for all in ``model``.
     """
     from .models import MultipoleDisk, _multipole_disks
 
-    def disk_latents(prefix, disk):
-        return tuple(f"{prefix}{rel}.z" for rel in disk.gp_sites())
-
     if path is None:
-        images = tuple(
-            p
-            for p, part in _parts(model)
-            if isinstance(part, Image) and _whitened_field(part.log_brightness)
-        )
+        images = _field_paths(model)
         disks = [
             (pre, d) for pre, d in _multipole_disks(model) if d.gp_sites()
         ]
@@ -2302,15 +2019,9 @@ def _evidence_latents(model, path, caller):
             images = _field_images(model, tuple(images), caller)
         if len(set(paths)) != len(paths):
             raise ValueError(f"{caller} was given repeated paths {paths}.")
-    latents = []
-    for p in images:
-        latents.append(
-            "log_brightness.latent"
-            if p is None
-            else p + ".log_brightness.latent"
-        )
+    latents = [_latent_path(p) for p in images]
     for prefix, disk in disks:
-        latents.extend(disk_latents(prefix, disk))
+        latents.extend(f"{prefix}{rel}.z" for rel in disk.gp_sites())
     return tuple(latents)
 
 
@@ -2320,47 +2031,23 @@ def log_evidence(model, data, path="env"):
     For a model whose Image log-brightness is a
     [`GaussianField`][virgil.fields.GaussianField], or whose
     [`MultipoleDisk`][virgil.models.MultipoleDisk] has Gaussian-process parts
-    ([`RadialGP`][virgil.models.RadialGP] profiles,
-    [`RadialGPFunction`][virgil.models.RadialGPFunction] harmonics and spectral
-    indices, and the [`MultipoleKernel`][virgil.models.MultipoleKernel] prior of
-    its harmonics), with standard-normal whitened latents ``z``, at the MAP
-    ``model`` from [`fit`][virgil.fitting.fit],
+    ([`RadialGP`][virgil.models.RadialGP],
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] and
+    [`MultipoleKernel`][virgil.models.MultipoleKernel]), with standard-normal
+    whitened latents ``z``, at the MAP ``model`` from
+    [`fit`][virgil.fitting.fit]:
 
     ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``,
 
-    up to a constant that depends only on the data (see below). ``J`` is
-    the Jacobian of the whitened residuals with respect to ``z``, so
-    ``JᵀJ`` is the Gauss–Newton curvature of the likelihood. With several
-    field Images (``path=None`` or a tuple), ``z`` is all their latents
-    together and ``J`` is taken with respect to all of them at once, so
-    the log determinant carries the correlations between the Images' fields
-    (a compact and an extended component can trade flux). Other fitted
-    parameters (fluxes, spectra) are held at their MAP values. Compare it
-    across fits with different hyperparameters and choose the largest, as
-    MacKay's evidence framework does; it is exact for a linear model, and
-    assumes correct error bars. It uses the data's quoted errors, so it
-    does not support fits with ``noise=`` terms, nor fits with one model
-    per dataset.
-
-    **Normalization.** ``-½ χ² - L`` is
-    [`model_loglike`][virgil.likelihood.model_loglike] at the MAP less
-    its data-only normalization, ``-Σ log σ - ½ n log 2π`` (in its von
-    Mises form for unprojected phases, and with the correlated closure
-    phases' determinant), which is the same for every model and
-    hyperparameter on a given dataset and so cancels in differences of
-    ``log Z``, the only meaningful quantity. For plain data ``L = 0``.
-    ``L`` is the rest of the likelihood's normalizer, which can depend on
-    the model and on nuisance widths: for data with calibration gains
-    ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]) or closure
-    offsets
-    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]),
-    which the likelihood marginalizes, it is ½ log det of their covariance
-    factor, and for extra observables (``OIData.extras``) the log ratio of
-    their effective to quoted errors. It is evaluated at the MAP exactly
-    as the likelihood evaluates it, so that evidences for data with
-    different gain or offset widths can be compared; its curvature with
-    respect to ``z`` is left out of ``J``, as Gauss–Newton leaves out the
-    residuals' own second derivatives.
+    up to a constant that depends only on the data, so differences between fits
+    are what matter: compare it across hyperparameters and choose the largest
+    (MacKay's evidence framework). ``J`` is the Jacobian of the whitened
+    residuals with respect to all the selected latents together; other fitted
+    parameters are held at their MAP values. ``L`` is the likelihood's
+    model-dependent normalizer (zero for plain data; see
+    [Evidence](imaging.md#evidence)). It is exact for a linear model, assumes
+    correct error bars, and uses the data's quoted errors, so it does not
+    support fits with ``noise=`` terms, nor one model per dataset.
 
     Parameters
     ----------
@@ -2371,15 +2058,12 @@ def log_evidence(model, data, path="env"):
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of
-        paths of Images with GaussianFields and MultipoleDisks with
-        Gaussian-process parts (all their latents together), or ``None``
-        for every such Image and disk in the model (a ``TypeError`` if there
-        is none). The evidence is conditional on the hyperparameters (the
-        processes' ``sigma`` and ``ell``, the kernel's lengths), held at
-        their values in ``model``: compare it across fits with different
-        ones, or give them log-uniform priors
-        ([`gp_priors`][virgil.models.gp_priors]) and sample them.
+        Path of the Image in the model (default ``"env"``), a tuple of paths
+        of Images with GaussianFields and MultipoleDisks with Gaussian-process
+        parts, or ``None`` for every such Image and disk (a ``TypeError`` if
+        there is none). The evidence is conditional on the hyperparameters held
+        in ``model``: compare it across fits with different ones, or give them
+        log-uniform priors ([`gp_priors`][virgil.models.gp_priors]) and sample.
 
     Returns
     -------
@@ -2394,11 +2078,8 @@ def log_evidence(model, data, path="env"):
         onp.sum(onp.asarray(model.get(latent), dtype=float) ** 2)
         for latent in latent_paths
     )
-    # log det(I + JᵀJ) = Σ log(1 + s²) over the singular values s of J. A
-    # Cholesky factor of I + JJᵀ fails on high signal-to-noise data: the
-    # Gram matrix is low rank with a huge norm, and its rounding error
-    # (~ε‖JJᵀ‖) can exceed the identity, leaving I + JJᵀ numerically
-    # indefinite. The singular values avoid forming it.
+    # log det(I + JᵀJ) = Σ log(1 + s²); the singular values avoid forming
+    # the Gram matrix (see "Evidence" in docs/api/imaging.md).
     singular = _singular_values(jac)
     logdet = float(onp.sum(onp.log1p(singular**2)))
     return float(-0.5 * chi2 - log_norm - 0.5 * z2 - 0.5 * logdet)
@@ -2428,32 +2109,22 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     """Draws from the Laplace posterior of a Gaussian-field image.
 
     For an Image whose log-brightness is a
-    [`GaussianField`][virgil.fields.GaussianField], the prior on its
-    whitened latents ``z`` is N(0, I), so about the MAP ``z₀`` the
-    Gauss–Newton (Laplace) posterior is
-
-    ``z ~ N(z₀, (I + JᵀJ)⁻¹)``,
-
-    with ``J`` the Jacobian of the whitened residuals with respect to
-    ``z`` (all the latents of every selected Image together, so the draws
-    keep the correlations between the Images' fields): the same
-    approximation as
-    [`log_evidence`][virgil.imaging.log_evidence]. With the thin SVD
-    ``J = U S Vᵀ``, a draw is
-    ``z₀ + V diag((1 + s²)^-½) ε₁ + (I - V Vᵀ) ε₂`` with standard-normal
-    ``ε₁`` and ``ε₂``, so directions the data do not constrain keep the
-    prior's unit width. The draws show which features of the image the
-    data support. Only the latents vary: every other fitted parameter
-    (fluxes, the star, spectra) is held at its MAP value, so the spread
-    is narrower than the full posterior's where they are correlated with
-    the image. Like ``log_evidence``, it uses the data's quoted errors.
+    [`GaussianField`][virgil.fields.GaussianField], the whitened latents ``z``
+    have the Gauss–Newton (Laplace) posterior ``N(z₀, (I + JᵀJ)⁻¹)`` about the
+    MAP ``z₀``, the approximation of
+    [`log_evidence`][virgil.imaging.log_evidence]; directions the data do not
+    constrain keep the prior's unit width. ``J`` covers the latents of every
+    selected Image together, so the draws keep the correlations between their
+    fields. Only the latents vary: every other fitted parameter is held at its
+    MAP value, so the spread is narrower than the full posterior's where they
+    correlate with the image. It uses the data's quoted errors.
 
     Parameters
     ----------
     model : SourceModel or FitResult
-        The MAP model, or the [`FitResult`][virgil.fitting.FitResult]
-        itself (fits with fitted ``noise=`` terms raise a ``ValueError``,
-        lists of models a ``TypeError``).
+        The MAP model, or the [`FitResult`][virgil.fitting.FitResult] itself
+        (fitted ``noise=`` terms raise a ``ValueError``, lists of models a
+        ``TypeError``).
     data : OIData or sequence of OIData
         The data it was fitted to.
     n : int
@@ -2461,25 +2132,22 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     key : jax.Array
         A JAX random key.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of
-        paths of Images with GaussianFields, or ``None`` for every such
-        Image in the model (a ``TypeError`` if there is none).
-    npix : int, optional
-        With ``fov_mas``, also render the whole model for each draw (see
-        [`SourceModel.render`][virgil.models.SourceModel.render]).
-    fov_mas : float, optional
-        The rendered field of view, in milliarcseconds. Give both or
-        neither of ``npix`` and ``fov_mas`` (one alone raises a
-        ``ValueError``).
+        Path of the Image in the model (default ``"env"``), a tuple of paths
+        of Images with GaussianFields, or ``None`` for every such Image (a
+        ``TypeError`` if there is none).
+    npix, fov_mas : int and float, optional
+        Together, also render the whole model for each draw (see
+        [`SourceModel.render`][virgil.models.SourceModel.render]); one alone
+        raises a ``ValueError``.
 
     Returns
     -------
     dict
         ``"latents"``, a NumPy array ``(n, *latent.shape)``, and, given
-        ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``:
-        unit-sum images of the whole model. With more than one Image
-        selected, ``"latents"`` is a dict from each Image's path to its
-        array (``None`` for the model's own Image is written ``""``).
+        ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``: unit-sum
+        images of the whole model. With more than one Image selected,
+        ``"latents"`` is a dict from each Image's path (``""`` for the model's
+        own Image) to its array.
     """
     if (npix is None) != (fov_mas is None):
         raise ValueError(
@@ -2534,19 +2202,12 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
 
 
 def _observable_blocks(datasets):
-    """The rows of the residual vector that belong to each observable.
-
-    Returns ``(rows, counts)``: dictionaries from each kind of observable
-    (``"vis"``, ``"phi"``, then the kinds of ``extras``, in order of first
-    appearance) to the indices of its rows in the residuals of
-    [`whitened_residuals`][virgil.likelihood.whitened_residuals],
-    concatenated over ``datasets``, and to its number of independent data.
-    Per dataset the rows are the visibilities, then the phases, then each
-    extra block. Correlated closure phases (``cp_noise``, four or more
-    telescopes) have ``cp_noise.size`` whitened combinations, the
-    independent data, followed by one periodic penalty row per closure
-    phase; all of them are phase rows, but only the combinations are
-    counted as data. Kinds with no rows are left out.
+    """The rows of the residual vector of each observable: ``(rows, counts)``,
+    dicts from ``"vis"``, ``"phi"`` and the kinds of ``extras`` to the row indices
+    in [`whitened_residuals`][virgil.likelihood.whitened_residuals] (over
+    ``datasets``) and to the number of independent data. Correlated closure
+    phases have ``cp_noise.size`` combinations (the data) followed by one penalty
+    row per phase, which is not counted.
     """
     rows, counts = {}, {}
     start = 0
@@ -2578,18 +2239,10 @@ def _observable_blocks(datasets):
 
 
 def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
-    """MacKay's noise precision β_b of each block of residual rows.
-
-    Iterates ``β_b ← N_b / (χ²_b + t_b)``, with ``t_b = γ_b / β_b =
-    tr(A⁻¹ G_b)``, ``A = I + Σ_b β_b G_b`` and ``G_b = J_bᵀ J_b``, from
-    ``β_b = N_b / χ²_b``. Its fixed point is MacKay's
-    ``1/β_b = χ²_b / (N_b − γ_b)``; written this way the update is
-    monotone (raising any β lowers every t), so from that start, which is
-    above the fixed point, the iterates decrease to it without
-    oscillating. ``A``'s Cholesky factor comes from a QR decomposition of
-    the stacked, row-scaled Jacobian and the identity, never forming the
-    Gram matrix, whose rounding fails on high signal-to-noise data (see
-    ``log_evidence``), in the smaller of the data and latent dimensions.
+    """MacKay's noise precision β_b of each block of residual rows, by iterating
+    ``β_b ← N_b / (χ²_b + γ_b / β_b)`` (monotone, so it does not oscillate) from
+    ``N_b / χ²_b``; see [Error scale](imaging.md#error-scale). ``A``'s factor
+    comes from a QR of the stacked, row-scaled Jacobian, never the Gram matrix.
     """
     from scipy.linalg import solve_triangular
 
@@ -2654,15 +2307,9 @@ def _block_precisions(r, jac, rows, counts, max_iter=1000, rtol=1e-10):
 
 
 def _check_scalable_blocks(datasets):
-    """Refuse data whose covariance is not ``s_b² D`` per block.
-
-    The block fixed point assumes that scaling a block's quoted errors by
-    ``s_b`` divides its whitened residuals and Jacobian rows by ``s_b``.
-    That fails where the likelihood marginalizes a nuisance with its own
-    width, ``s_b² D + U Λ Uᵀ``: calibration gains, closure-phase offsets,
-    flux spectra's marginalized scales, and differential phases with a
-    finite ``prior_width``. ``with_error_scale`` scales only ``D``, so the
-    returned scales would not be the evidence optimum for the rescaled data.
+    """Refuse data whose covariance is not ``s_b² D`` per block (gains, closure
+    offsets, marginalized or finite-``prior_width`` extras): their nuisance widths
+    do not scale with the quoted errors.
     """
     for i, d in enumerate(datasets):
         reasons = []
@@ -2687,154 +2334,55 @@ def _check_scalable_blocks(datasets):
 def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
-    **What it does.** It estimates the factor ``s`` by which every error
-    bar should be multiplied for the data to be consistent with the fit.
-    ``s < 1`` means the error bars are too large; ``s > 1`` that they are
-    too small, or that the model is missing something.
-
-    **The idea.** In MacKay's evidence framework, the level of the noise is
-    a hyperparameter, like the prior's ``sigma`` and ``length_mas``. Write
-    the noise precision as β = 1/s², so that the likelihood is
-    ``exp(-β χ²/2)``, with χ² computed with the quoted errors. The
-    Laplace-approximated evidence, as a function of β, is maximized when
-
-    $$\frac{1}{\beta} = s^2 = \frac{\chi^2}{N - \gamma},
-    \qquad \gamma = \sum_i \frac{\beta\lambda_i}{1 + \beta\lambda_i}.$$
-
-    ``N`` is the number of data. ``γ`` is the **effective number of
-    parameters** the data measure: the ``λ_i`` are the eigenvalues of the
-    Gauss–Newton curvature ``JᵀJ`` of the likelihood (with the quoted
-    errors) in the field's whitened latents, in which the prior's curvature
-    is the identity, so that ``βλ_i`` are those of the rescaled likelihood.
-    A direction with ``βλ ≫ 1`` is fixed by the data and counts as one
-    parameter; one with ``βλ ≪ 1`` is fixed by the prior and counts as none.
-    Since ``γ`` depends on ``β``, the equation is solved for ``β`` at the
-    fitted model (by Newton's method, which converges monotonically from
-    ``β = 0`` because ``γ`` is concave in ``β``).
-
-    Each measured parameter uses up one datum's worth of scatter. So of the
-    ``N`` residuals, only ``N − γ`` are free to scatter, and an honest error
-    bar gives χ² ≈ N − γ, not N. The ordinary "χ² per point" estimate,
-    ``s² = χ²/N``, is biased low for the same reason as the 1/N estimate of
-    a sample variance; this is its Bayesian, nonlinear generalization. It is
-    MacKay's re-estimation formula for β (MacKay 1992, eq. 4.10, with γ
-    from eq. 4.9; Bishop 2006, eqs. 3.91–3.95).
-
-    **How to use it.** Fit at your chosen hyperparameters, call this, rescale
-    the data with
-    [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale],
-    and refit. The fit itself depends on the errors, so in principle
-    fitting and rescaling is a fixed-point iteration; in practice one
-    rescaling usually suffices. Error bars that are too large make the
-    discrepancy principle, classic MaxEnt and the evidence all
-    over-regularize, so rescale before choosing hyperparameters with any of
-    them. The estimate assumes the model is adequate: if the data contain
-    structure the model cannot fit, ``s`` absorbs it.
-
-    Only the field's latents are counted in ``γ``. Each other fitted
-    parameter (the image's flux, a star's position, a spectral index) that
-    the data measure lowers ``N − γ`` by about one more, and so raises
-    ``s`` by a fraction of about 1/(2N). That is negligible while such
-    parameters are few compared with the data, as in every SPARCO fit.
-
-    **One scale per observable.** A single ``s`` assumes every error bar is
-    off by the same factor. Often it is not: the V² and closure phases of
-    one instrument are calibrated differently, and in a MATISSE N-band
-    contest file the V² gave χ² per point 0.005 while the closure phases
-    gave 0.49. One scale between the two leaves the V² overweighted and the
-    phases underweighted. With ``by_observable=True`` each kind of
-    observable ``b`` (``"vis"``, ``"phi"`` and each kind in ``extras``,
-    pooled over the datasets) gets its own precision β_b on its own rows
-    of the residual vector. The evidence is then maximized where, for
-    every block,
-
-    $$\frac{1}{\beta_b} = s_b^2 = \frac{\chi^2_b}{N_b - \gamma_b},
-    \qquad \gamma_b = \beta_b \operatorname{tr}(A^{-1} G_b),
-    \qquad A = I + \sum_b \beta_b G_b,$$
-
-    with ``G_b = J_bᵀJ_b`` the curvature from block ``b``'s rows of the
-    Jacobian: MacKay's re-estimation of β applied to each block (MacKay
-    1992, eqs. 4.9–4.10; Bishop 2006, §§3.5.2–3.5.3). Equivalently,
-    ``γ_b`` is the sum over the block's rows of the diagonal of the hat
-    matrix ``B½ J A⁻¹ Jᵀ B½`` (``B`` the diagonal matrix of each row's
-    β_b): the share of the measured parameters that block ``b`` pays for.
-    The ``γ_b`` add up to the total ``γ = tr(A⁻¹(A − I))``. They are
-    coupled, so the equations are solved
-    together by iterating ``β_b ← N_b / (χ²_b + γ_b/β_b)`` (the same fixed
-    point as MacKay's ``β_b ← (N_b − γ_b)/χ²_b``, but monotone, so it
-    cannot oscillate) from ``β_b = N_b/χ²_b`` to a relative change of
-    1e-10. With one block it reproduces the single scale. The blocks'
-    covariances must be ``s_b² D``: data with calibration gains,
-    closure-phase offsets, marginalized flux scales or differential phases
-    with a finite ``prior_width`` add nuisance covariance that does not
-    scale with the quoted errors, and raise a ``ValueError`` (the single
-    scale makes the same assumption, so treat it with care for such data).
-    ``N_b`` counts
-    independent data: closure phases from four or more telescopes count
-    their independent combinations, while their periodic penalty residuals
-    (see [`whitened_residuals`][virgil.likelihood.whitened_residuals])
-    belong to the block's χ² and ``γ_b`` but are not counted as data.
-
-    Use it when the blocks' χ² per point differ markedly, e.g. V² and
-    closure phases from different calibrations, or OI_FLUX spectra beside
-    interferometry. Rescale with the dictionary it returns,
-    ``data.with_error_scale(scales)``, and refit. Prefer the single scale
-    when a block has few data: its ``s_b`` scatters by about
-    ``1/√(2(N_b − γ_b))``. Like the single scale, it absorbs into ``s_b``
-    any structure in block ``b`` the model cannot fit.
+    Returns the factor ``s`` by which every error bar should be multiplied for
+    the data to be consistent with the fit: ``s < 1`` means the error bars are
+    too large, ``s > 1`` too small or the model is missing something. It is
+    MacKay's evidence re-estimation of the noise level, ``s² = χ² / (N − γ)``
+    with ``γ`` the effective number of parameters the data measure, solved at
+    the fitted model (see [Error scale](imaging.md#error-scale)). Fit, call
+    this, rescale with
+    [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale], refit.
+    Rescale before choosing hyperparameters: error bars that are too large make
+    the discrepancy principle, classic MaxEnt and the evidence over-regularize.
 
     It uses the data's quoted errors, so it does not support fits with
-    ``noise=`` terms (which estimate the errors another way), nor fits with
-    one model per dataset.
+    ``noise=`` terms, nor fits with one model per dataset. It assumes the model
+    is adequate: structure it cannot fit is absorbed into ``s``.
 
     Parameters
     ----------
     model : SourceModel or FitResult
         The MAP model, whose Image at ``path`` has a GaussianField
-        log-brightness (see ``path``), or better the
-        [`FitResult`][virgil.fitting.FitResult] itself, so that fitted
-        ``noise=`` terms are caught (a ``ValueError``). A list of models
-        raises a ``TypeError``.
+        log-brightness, or better the [`FitResult`][virgil.fitting.FitResult]
+        itself, so that fitted ``noise=`` terms are caught (a ``ValueError``).
+        A list of models raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of
-        paths of Images with GaussianFields, or ``None`` for every such
-        Image in the model (a ``TypeError`` if there is none). γ then
-        counts the latents of all of them.
+        Path of the Image in the model (default ``"env"``), a tuple of paths of
+        Images with GaussianFields (γ counts all their latents), or ``None``
+        for every such Image in the model (a ``TypeError`` if there is none).
     by_observable : bool, optional
-        Estimate one scale per kind of observable (default False: one
-        scale for all the data).
+        One scale per kind of observable (default False: one scale for all the
+        data), for when the V² and the closure phases are off by different
+        factors. Data with calibration gains, closure-phase offsets or other
+        nuisance covariance that does not scale with the errors raise a
+        ``ValueError``.
 
     Returns
     -------
     float or dict
-        The scale ``s``, or with ``by_observable=True`` a dictionary from
-        each kind of observable present (``"vis"``, ``"phi"``, and e.g.
-        ``"flux"`` or ``"visphi"``) to its scale ``s_b``, ready for
-        [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale].
-        A warning is issued if the block scales do not converge.
-
-    References
-    ----------
-    - D. J. C. MacKay (1992), "Bayesian interpolation", Neural Computation
-      4, 415–447, [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415).
-      It introduces the evidence framework, γ, and the re-estimation of
-      α and β.
-    - C. M. Bishop (2006), *Pattern Recognition and Machine Learning*,
-      §3.5, "The evidence approximation" ([free PDF](https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/)):
-      the same results for linear models, eqs. 3.91–3.95.
-    - S. F. Gull (1989), "Developments in maximum entropy data analysis",
-      in *Maximum Entropy and Bayesian Methods*, Kluwer, 53–71: the same
-      ``N − γ`` argument for maximum entropy, the basis of
-      [`LCurve.classic_maxent`][virgil.imaging.LCurve.classic_maxent].
+        The scale ``s``, or with ``by_observable=True`` a dictionary from each
+        kind of observable present (``"vis"``, ``"phi"``, and e.g. ``"flux"``)
+        to its scale ``s_b``, ready for ``OIData.with_error_scale``. A warning
+        is issued if the block scales do not converge.
     """
     model = _single_model(model, "error_scale")
     latent_paths = tuple(
         latent for _, latent in _field_latents(model, path, "error_scale")
     )
     r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
-    datasets = data if isinstance(data, (list, tuple)) else [data]
+    datasets = _as_list(data)
     if by_observable:
         _check_scalable_blocks(datasets)
         rows, counts = _observable_blocks(datasets)
@@ -2842,15 +2390,10 @@ def error_scale(model, data, path="env", *, by_observable=False):
         beta = _block_precisions(r, onp.asarray(jac), rows, counts)
         return {k: float(1.0 / onp.sqrt(b)) for k, b in beta.items()}
     chi2 = float(r @ r)
-    # N counts independent data, not residuals: correlated closure phases
-    # add penalty residuals (OIData.n_residuals) that are not observations.
+    # Independent data, not residuals: penalty rows are not observations.
     n_data = sum(d.n_independent for d in datasets)
-    # The Gram matrix's eigenvalues, as squared singular values (see
-    # log_evidence): never negative, unlike eigvalsh of a rounded JJᵀ.
     lam = _singular_values(jac) ** 2
-    # Solve g(β) = β χ² + γ(β) − N = 0. g is increasing and concave, so
-    # Newton's method from β = 0 (where g = −N) rises monotonically to the
-    # root.
+    # Newton on g(β) = β χ² + γ(β) − N, increasing and concave: monotone from 0.
     beta = 0.0
     for _ in range(100):
         g = beta * chi2 + onp.sum(beta * lam / (1.0 + beta * lam))
@@ -2945,10 +2488,6 @@ def l_curve(
 @eqx.filter_jit
 def _jitted_residuals(model, observations):
     return tuple(whitened_residuals(model, d) for d in observations)
-
-
-def _as_list(data):
-    return list(data) if isinstance(data, (list, tuple)) else [data]
 
 
 def _residual_vector(model, observations):
@@ -3258,7 +2797,7 @@ def diagnose(model, data, regularizers=()):
         kernel-phase and DISCO data, calibration gains; see
         [`short_baseline_residual`][virgil.imaging.short_baseline_residual]).
     """
-    observations = list(data) if isinstance(data, (list, tuple)) else [data]
+    observations = _as_list(data)
     parts = _parts(model)
     images = [(path, part) for path, part in parts if isinstance(part, Image)]
     checks, warns = {}, []

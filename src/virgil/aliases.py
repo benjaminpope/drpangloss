@@ -87,7 +87,6 @@ __all__ = [
     "fit_orbit_aliases",
     "period_window",
     "position_profile",
-    "spectral_window",
 ]
 
 __provisional__ = ("*",)
@@ -95,18 +94,8 @@ __provisional__ = ("*",)
 # Sampled coordinates (flat under the Jeffreys prior): log P, the time of
 # periastron as a fraction of the period, e, cos i, omega, Omega (degrees),
 # log a, log flux, and, with ``primary_diam="fit"``, log of the primary's
-# uniform-disk diameter (mas).
-_NAMES = (
-    "log_period",
-    "tau",
-    "ecc",
-    "cos_inc",
-    "omega",
-    "Omega",
-    "log_a_mas",
-    "log_flux",
-    "log_diam",
-)
+# uniform-disk diameter (mas). _PERIODIC maps each periodic one's index to its
+# period.
 _PERIODIC = {
     1: 1.0,
     4: 360.0,
@@ -160,21 +149,6 @@ _ELEMENTS = ("period", "dt_peri", "ecc", "inc", "omega", "Omega", "a_mas")
 # ---------------------------------------------------------------------------
 # Bands and diagnostics
 # ---------------------------------------------------------------------------
-
-
-def spectral_window(times, frequencies):
-    """The spectral window ``|mean exp(2πi f t)|²`` of the epochs' times.
-
-    It is 1 at ``f = 0`` and returns to near 1 at the aliases of the
-    sampling: a frequency offset at which the window is high cannot be told
-    from zero offset by the timing alone. See VanderPlas (2018,
-    https://arxiv.org/abs/1703.09824) for the spectral window of a
-    periodogram.
-    """
-    t = onp.asarray(times, float)
-    f = onp.atleast_1d(onp.asarray(frequencies, float))
-    phase = onp.exp(2j * onp.pi * f[:, None] * (t - t.mean())[None, :])
-    return onp.abs(phase.mean(axis=1)) ** 2
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1180,9 +1154,7 @@ def _band_result(problem, settings, band, modes, z_lap, z_is, n_failed):
     if best_mode is not None:
         best = {
             k: float(v[0])
-            for k, v in _physical(
-                onp.array(best_mode["x"]), settings.t_ref
-            ).items()
+            for k, v in _physical(onp.array(best_mode["x"])).items()
         }
         epochs = problem.per_epoch(best_mode["x"])
         nu = onp.concatenate([s.nu for s in problem.surfaces])
@@ -2146,7 +2118,7 @@ def _band_from_dict(d):
     return AliasBandResult(**d)
 
 
-def _physical(x, t_ref):
+def _physical(x):
     x = onp.stack([_fold(row) for row in onp.atleast_2d(x)])
     period = onp.exp(x[:, 0])
     return dict(
@@ -2637,7 +2609,7 @@ def _period_flags(results, p_range):
     )
 
 
-def _resample(results, store, t_ref, n_samples, p_min, seed):
+def _resample(results, store, n_samples, p_min, seed):
     """Posterior draws by importance resampling, for the best band and every
     band with ``p > p_min``."""
     samples = {}
@@ -2651,7 +2623,7 @@ def _resample(results, store, t_ref, n_samples, p_min, seed):
         pick = onp.random.default_rng([seed, 2**31, b.n]).choice(
             len(xs), size=n_samples, p=w / w.sum()
         )
-        samples[b.n] = _physical(xs[pick], t_ref)
+        samples[b.n] = _physical(xs[pick])
     return samples
 
 
@@ -3058,7 +3030,7 @@ def fit_orbit_aliases(
 
     results = _band_probabilities(results)
     _check_fit_quality(results, k)
-    samples = _resample(results, store, t_ref, n_samples, p_min_samples, seed)
+    samples = _resample(results, store, n_samples, p_min_samples, seed)
     # AGENTS.md, "Period window from the data" row: a short arc is flat
     # towards long periods, so P is unconstrained (``period_bound``).
     period_bound, period_at_lower = _period_flags(results, p_range)

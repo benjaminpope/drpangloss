@@ -5,8 +5,12 @@ from pathlib import Path
 import jax
 import numpy as onp
 
+from virgil.oidata import OIData, cp_indices
+
 PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
 TRIANGLES = onp.array([[1, 2, 3], [1, 2, 4], [1, 3, 4], [2, 3, 4]])
+
+STATIONS = onp.array([[0.0, 0.0], [60.0, 5.0], [25.0, 70.0], [-40.0, 45.0]])
 
 CALIBRATED_VISIBILITY = (
     Path(__file__).resolve().parents[1] / "data" / "calibrated_visibility.npy"
@@ -27,3 +31,33 @@ def float_leaves(grads):
         for leaf in jax.tree_util.tree_leaves(grads)
         if hasattr(leaf, "dtype") and onp.issubdtype(leaf.dtype, onp.floating)
     ]
+
+
+def vlti_night(mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5):
+    """VLTI-like data: ``frames`` four-telescope snapshots 1 h apart."""
+    delta = STATIONS[PAIRS[:, 1] - 1] - STATIONS[PAIRS[:, 0] - 1]
+    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
+    n = len(PAIRS)
+    angles = onp.deg2rad(rotation + 15.0 * onp.arange(frames))
+    u = onp.concatenate(
+        [delta[:, 0] * onp.cos(a) - delta[:, 1] * onp.sin(a) for a in angles]
+    )
+    v = onp.concatenate(
+        [delta[:, 0] * onp.sin(a) + delta[:, 1] * onp.cos(a) for a in angles]
+    )
+    shift = lambda i: onp.concatenate([i + k * n for k in range(frames)])  # noqa: E731
+    return OIData(
+        {
+            "u": u,
+            "v": v,
+            "wavel": 2.2e-6,
+            "vis": onp.ones(u.size),
+            "d_vis": onp.full(u.size, d_vis),
+            "phi": onp.zeros(len(i1) * frames),
+            "d_phi": onp.full(len(i1) * frames, d_phi),
+            "i_cps1": shift(i1),
+            "i_cps2": shift(i2),
+            "i_cps3": shift(i3),
+            "mjd": onp.repeat(mjd + onp.arange(frames) / 24.0, n),
+        }
+    )

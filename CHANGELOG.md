@@ -360,7 +360,20 @@ contributors page; no code was copied)
   lists all), and keeps the uniform disk's diameter scan with its scales
   profiled. The look-elsewhere significance is computed in log space, so it
   stays finite for large searches.
-- `DiskPipeline` (see the Pipelines page).
+- **`DiskPipeline`** fits a `MultipoleDisk` around one star. `model="gp"`
+  (the default) fits one `RadialGP` profile with low-degree harmonics and,
+  with enough channels, a Gaussian-process spectral index, keeping the
+  length scale of largest Laplace evidence from `ell_halffringes`;
+  `model="rings"` adds `GaussianRing` profiles that share the inclination
+  and position angle one at a time until the BIC stops improving, re-placing
+  each ring after every fit. The geometry is found from a single-ring grid
+  over inclination (uniform in cos *i*) and position angle, never from one
+  local start; `companion=True` searches the residuals for a point source
+  and fits a detection jointly with the disk (the residuals are always
+  searched, to check that the disk has not absorbed one). Priors are
+  group-invariant. Stages are `geometry`, `profile`, `compare`, an opt-in
+  `posterior` (NUTS with the geometry released) and `quicklook`. See the
+  Pipelines page.
 
 **Imaging, inference and data**
 
@@ -453,6 +466,9 @@ contributors page; no code was copied)
   tests run every grid, limit and detection tool on a WR + OB system, and
   show a differential-phase-only detection of a 0.1 mas companion that a grey
   V²/T3 fit misses. Tutorial: *Chromatic companion search*.
+- `OIData(..., insname=)` selects the instrument table(s) when reading an
+  OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
+  error message already told users to pass it.
 - `OIData.select` takes `ranges=` (a union of wavelength windows), `exclude=`
   (windows to drop, such as a line) and `observables=` (`"vis"`, `"phi"` and
   the extra observables' kinds), so closure-phase-only or line-free subsets
@@ -570,6 +586,13 @@ contributors page; no code was copied)
     samples per group (quadratic before); the numeric prior fields of
     `FluxSpectrum` and `DifferentialPhase.prior_width` are NumPy arrays that
     jit traces, so scanning a prior width does not recompile.
+- **Models simplification (no numerical change).** The long derivations and
+  accuracy notes in the docstrings of `virgil.models` and
+  `virgil.fields.MultipoleField` moved to the new
+  [model notes page](docs/api/models/notes.md); the docstrings keep the
+  summary, parameters and an example. The class shape checks and the ring
+  splatting and in-plane blur of the disk models each share one definition.
+  Results are unchanged to rounding.
 - **`fit` falls back to L-BFGS only when the objective has no least-squares
   form** (`fitting.NoLeastSquaresForm`), and `variational` starts at
   `init_scale` only for that, a singular curvature
@@ -607,8 +630,9 @@ contributors page; no code was copied)
 - The orbit API settled before release: `score_orbits(model, epochs, orbits,
   ...)` is model first (the order `score_orbits(epochs, model, ...)` works
   with a `FutureWarning` for one release), `EpochPositions.gap` is gone
-  (`gap_marginal` is the gap), and `UNRECORDED` is no longer in
-  `virgil.aliases.__all__`.
+  (`gap_marginal` is the gap), `UNRECORDED` is no longer in
+  `virgil.aliases.__all__`, and `aliases.spectral_window` is removed (unused;
+  `|mean exp(2πi f t)|²` is one line of numpy).
 - A private `virgil._deprecate` module implements the 0.4 change to a single
   argument order and the renamed keywords: `old_order` accepts calls in the
   0.3 positional order, recognized by which argument is the `OIData`, with a

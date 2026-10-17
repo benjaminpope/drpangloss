@@ -61,27 +61,41 @@ def x64():
         yield
 
 
-@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
-def test_golden_solver_float64(x64):
-    omegas, thetas = _GOLD["omegas"], _GOLD["thetas"]
-    for i, om in enumerate(omegas):
-        rtw, teff, flux = _elr.solve_ELR_vec(
-            np.float64(om), np.asarray(thetas)
-        )
-        assert rtw.dtype == np.float64
-        onp.testing.assert_allclose(rtw, _GOLD["solver_rtw"][i], rtol=1e-8)
-        onp.testing.assert_allclose(
-            teff, _GOLD["solver_teff_ratio"][i], rtol=1e-8
-        )
-        onp.testing.assert_allclose(
-            flux, _GOLD["solver_flux_ratio"][i], rtol=1e-8
-        )
+# dtype -> (x64 enabled, rtol of rtw / teff / flux, rtol of eq32)
+_PRECISIONS = {
+    np.float64: (True, (1e-8, 1e-8, 1e-8), 1e-12),
+    np.float32: (False, (1e-4, 2e-5, 1e-4), 1e-5),
+}
+
+
+@pytest.fixture(params=list(_PRECISIONS), ids=["float64", "float32"])
+def precision(request):
+    dtype = request.param
+    x64_on, solver_rtol, eq32_rtol = _PRECISIONS[dtype]
+    with jax.enable_x64(x64_on):
+        yield dtype, solver_rtol, eq32_rtol
 
 
 @pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
-def test_golden_eq32_float64(x64):
-    got = onp.array([_elr.eq32(np.float64(o)) for o in _GOLD["omegas"]])
-    onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-12)
+def test_golden_solver(precision):
+    dtype, rtols, _ = precision
+    thetas = np.asarray(_GOLD["thetas"], dtype)
+    for i, om in enumerate(_GOLD["omegas"]):
+        got = _elr.solve_ELR_vec(dtype(om), thetas)
+        assert all(g.dtype == dtype for g in got)
+        for g, key, rtol in zip(
+            got,
+            ("solver_rtw", "solver_teff_ratio", "solver_flux_ratio"),
+            rtols,
+        ):
+            onp.testing.assert_allclose(g, _GOLD[key][i], rtol=rtol)
+
+
+@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
+def test_golden_eq32(precision):
+    dtype, _, rtol = precision
+    got = onp.array([_elr.eq32(dtype(o)) for o in _GOLD["omegas"]])
+    onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=rtol)
 
 
 @pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
@@ -136,28 +150,6 @@ def test_golden_surface_and_visibilities_float64(x64, k):
 
 
 # ---------------------------------------------------- 2. golden in float32
-
-
-@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
-def test_golden_solver_float32():
-    for i, om in enumerate(_GOLD["omegas"]):
-        rtw, teff, flux = _elr.solve_ELR_vec(
-            np.float32(om), np.asarray(_GOLD["thetas"], np.float32)
-        )
-        assert rtw.dtype == flux.dtype == np.float32
-        onp.testing.assert_allclose(rtw, _GOLD["solver_rtw"][i], rtol=1e-4)
-        onp.testing.assert_allclose(
-            teff, _GOLD["solver_teff_ratio"][i], rtol=2e-5
-        )
-        onp.testing.assert_allclose(
-            flux, _GOLD["solver_flux_ratio"][i], rtol=1e-4
-        )
-
-
-@pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])
-def test_golden_eq32_float32():
-    got = onp.array([_elr.eq32(np.float32(o)) for o in _GOLD["omegas"]])
-    onp.testing.assert_allclose(got, _GOLD["eq32"], rtol=1e-5)
 
 
 @pytest.mark.validates("virgil._elr", roots=["golden:dholakia"])

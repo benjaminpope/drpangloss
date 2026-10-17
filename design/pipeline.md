@@ -130,7 +130,7 @@ after promotion, and the snapshot tests already pin it.
 | `BinaryPipeline` | `binary` | provisional (stable after one release of use) | load, overview, search, limits, fit, posterior, quicklook |
 | `StarPipeline` | `star` | provisional (stable after one release of use) | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
 | `OrbitPipeline` | `orbit` | provisional (planned) | multi-epoch positions, orbit search, fit, posterior |
-| `DiskPipeline` | `disk` | provisional (planned) | load, overview, geometry, profile, compare, posterior, quicklook; `model=` takes `"rings"` or `"gp"` |
+| `DiskPipeline` | `disk` | provisional | load, overview, geometry, profile, compare, posterior, quicklook; `model=` takes `"rings"` or `"gp"` |
 | `ImagingPipeline` | `imaging` | provisional (planned) | regularised images, weight selection, uncertainty |
 
 ## StarPipeline and its model registry
@@ -182,17 +182,36 @@ Decisions:
 - `processed`, `_noise` and `_report` moved from `BinaryPipeline` into the
   base class, since every pipeline needs them.
 
-## DiskPipeline (provisional, planned)
+## DiskPipeline (provisional)
 
-Status: **design only.** Nothing is built. The `MultipoleDisk` code the
-pipeline needs (radial profiles, Hankel transform, `Harmonics`, `RadialGP`
-priors, `spectral_index`, `freeze_geometry`; see
-`design/radial_profiles.md`) is on `main` as of 2026-10-15; what is still
-unmerged is the stack's last PR (virgil#356: the reference page and the
-tutorial `multipole_disk_rings`, which the pipeline is checked against). The
-build waits for that PR to merge. The pipeline is provisional from the
-start and stays so until the `MultipoleDisk` API has been unchanged for a
-release.
+Status: **built** (2026-10-15), in `src/virgil/pipeline/disk.py`. The
+`MultipoleDisk` code it needs (radial profiles, Hankel transform, `Harmonics`,
+`RadialGP` priors, `spectral_index`, `freeze_geometry`; see
+`design/radial_profiles.md`) is on `main`. The tutorial `multipole_disk_rings`
+ends with an "As a pipeline" section that runs both models on its data and
+asserts against the truth. The pipeline is provisional from the start and
+stays so until the `MultipoleDisk` API has been unchanged for a release.
+
+As built, where the text below left a choice open or the build differed:
+
+- `model=None` is `"gp"`, the option that assumes least about the disk
+  (Ben's decision). `self.model` is the name, and `_model_digest` and
+  `__repr__` are overridden for it.
+- `posterior` is a setting that defaults to `False` (the Gaussian process's
+  latents make NUTS heavy); the stage then records `skipped` and writes no
+  `samples.h5`.
+- `error_scale="fit"` is for `"rings"` only: `log_evidence` needs the quoted
+  errors. Constructing `"gp"` with it raises `ValueError`.
+- Each GP fit starts with the geometry of the single-ring `geometry` fit
+  held (fast, cached Bessel matrices), then is refitted with `inc` and `pa`
+  released: with harmonics and a companion the single ring's position angle
+  is a few degrees off the truth, and a frozen error is paid for by the
+  profile and the companion.
+- The harmonic fold is checked against `MultipoleDisk` in
+  `tests/test_pipeline_disk.py`: `pa + 180°` with the order-*m* harmonic
+  times `(-1)^m` is the same disk.
+- The summary adds `disk.companion` (`dra_mas`, `ddec_mas`, `flux`,
+  `spectral_index`, `detection_delta_chi2`; `None` without one).
 
 `DiskPipeline(data, model=None, *, output="run", **settings)`, CLI `disk`,
 `STABILITY = "provisional"`. The disk is always a `MultipoleDisk` and the star
@@ -216,8 +235,8 @@ with their own settings and checks, and a run fits one of them.
 | `"rings"` | `MultipoleDisk` with *N* `GaussianRing` profiles sharing `inc` and `pa`; *N* chosen by evidence (Laplace) and BIC | the analytic option: measures structure of an assumed family |
 | `"gp"` | `MultipoleDisk` with a `RadialGP` profile, optional `Harmonics` (low degree) and `spectral_index` | the non-parametric option: finds structure with no assumed family |
 
-Whether `model=None` means one of these, or is an error that asks for a
-choice, is the open question below. The tutorial's workflow (a GP run to
+`model=None` means `"gp"`, the option that assumes least about the disk
+(Ben's decision, 2026-10-15; it is not an error). The tutorial's workflow (a GP run to
 find structure, then a ring run to confirm and measure it) is two runs of
 the pipeline, and a ring count and radii proposed from a finished GP
 run's profile could be a setting of the second
@@ -259,7 +278,11 @@ work for each model.
      covariance. Each added ring starts at the radius of a one-ring scan
      over a grid in half-fringes (the other rings held at their fit), at
      a width of one half-fringe, with *N* capped by a setting. This
-     needs no GP run; `rings_from` replaces the scan.
+     needs no GP run; `rings_from` replaces the scan. After each fit
+     every ring is dropped in turn, rescanned (half-fringe/2 steps) with
+     the rest held and everything refitted; a lower BIC is kept (two
+     passes at most), since a greedy addition can leave a ring in a
+     local minimum.
    - `"gp"`: fit the `RadialGP` profile (and harmonics, and spectral
      index when on) at frozen geometry, so each refit is one
      matrix-vector product per call, at each ℓ of the grid (below).
@@ -335,7 +358,8 @@ and so on) become checks appended after these, only when they occurred.
 ### Priors and defaults
 
 Group-invariant priors throughout: `IsotropicInclination` for `inc`,
-uniform for harmonic components and companion offsets, log-uniform for
+an isotropic Gaussian for harmonic components (a uniform box would favour
+the diagonals of the complex plane), uniform for companion offsets, log-uniform for
 scales (ring radii and widths, fluxes, temperatures, GP `sigma`). Position
 angles are `AngleVector`s: a bounded uniform prior puts a hard wall at the
 wrap, and NUTS chains pile up against it. With `Harmonics` on, `pa` and
@@ -395,21 +419,21 @@ Ben's, 2026-10-15.
 - **Companions.** One star by default; a companion search is opt-in, an
   expert workflow.
 - **Colour.** `spectral_index` turns on automatically with more than a
-  few channels.
+  few channels. The rings model's colour is a power-law index
+  per ring; `ring_colour="blackbody"` fits a temperature instead, since over a
+  1.5× band a power law misses a blackbody ring by several percent (job
+  18666218: rings χ²/N 1.32 against 1.01 for the parametric blackbody fit).
 - **Scope.** The colliding-wind cone geometry of the Apep analysis is out
   of v1; it may become a registry entry later, with no new stage.
 - **Timing.** Build only after the `MultipoleDisk` PR stack merges (its code
   is on `main`; virgil#356 is the last piece); stay provisional until the
   `MultipoleDisk` API is unchanged for a release.
 
-### Open questions
+### Decisions
 
-1. **Default model.** Whether `model=None` should be `"rings"`, `"gp"`, or
-   an error that asks for a choice. *Proposed default:* an error that asks
-   for a choice, since neither option is the safe general case (the rings
-   need a family the data may not support; the GP's length scale is a
-   prior choice). *Alternative:* `"gp"`, the option that assumes least
-   about the disk.
+1. **Default model.** `model=None` is `"gp"` (Ben, 2026-10-15), over an error
+   that asks for a choice or `"rings"`. The snapshot test of the defaults
+   pins it.
 
 ## Dependencies
 

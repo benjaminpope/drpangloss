@@ -13,11 +13,10 @@ from .._precision import in_float64
 from .._utils import rad2mas
 from . import _checks, _io
 from ._common import (
-    _NUTS_FIELDS,
     _SAMPLER_SETTINGS,
     _diagnostics,
     _load_report,
-    _mcmc,
+    _run_chains,
     _noise_quantiles,
     _sample_stats,
     _bound_samples,
@@ -1138,20 +1137,13 @@ def _wall_probe(
 @in_float64
 def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
-    import jax
-
-    from ..likelihood import chain_init_params, numpyro_model
+    from ..likelihood import numpyro_model
 
     s = p.settings
     entry = models()[name]
     noise = p._noise()
     posterior = numpyro_model(model, priors, data, noise=noise)
-    init_key, run_key = jax.random.split(jax.random.PRNGKey(s["seed"]))
-    init = chain_init_params(
-        posterior, [start] * s["num_chains"], key=init_key
-    )
-    mcmc = _mcmc(posterior, s, dense_mass=True)
-    mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
+    mcmc = _run_chains(posterior, s, start, dense_mass=True)
     samples = {
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()

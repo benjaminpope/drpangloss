@@ -38,14 +38,13 @@ from virgil.models import (  # noqa: E402
     TruncatedCone,
     UniformDisk,
 )
-from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import (  # noqa: E402
     KeplerOrbit,
     PositionData,
     starting_orbits,
 )
 from virgil.simulate import simulate  # noqa: E402
-from tests._shared import PAIRS, TRIANGLES  # noqa: E402
+from tests._shared import vlti_night  # noqa: E402
 
 T_REF = 60500.0
 TRUTH = dict(
@@ -58,37 +57,8 @@ TRUTH = dict(
     a_mas=20.0,
 )
 FLUX = 0.1
-STATIONS = onp.array([[0.0, 0.0], [60.0, 5.0], [25.0, 70.0], [-40.0, 45.0]])
 
-
-def _night(mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5):
-    """VLTI-like data: ``frames`` four-telescope snapshots 1 h apart."""
-    delta = STATIONS[PAIRS[:, 1] - 1] - STATIONS[PAIRS[:, 0] - 1]
-    i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
-    n = len(PAIRS)
-    angles = onp.deg2rad(rotation + 15.0 * onp.arange(frames))
-    u = onp.concatenate(
-        [delta[:, 0] * onp.cos(a) - delta[:, 1] * onp.sin(a) for a in angles]
-    )
-    v = onp.concatenate(
-        [delta[:, 0] * onp.sin(a) + delta[:, 1] * onp.cos(a) for a in angles]
-    )
-    shift = lambda i: onp.concatenate([i + k * n for k in range(frames)])  # noqa: E731
-    return OIData(
-        {
-            "u": u,
-            "v": v,
-            "wavel": 2.2e-6,
-            "vis": onp.ones(u.size),
-            "d_vis": onp.full(u.size, d_vis),
-            "phi": onp.zeros(len(i1) * frames),
-            "d_phi": onp.full(len(i1) * frames, d_phi),
-            "i_cps1": shift(i1),
-            "i_cps2": shift(i2),
-            "i_cps3": shift(i3),
-            "mjd": onp.repeat(mjd + onp.arange(frames) / 24.0, n),
-        }
-    )
+_night = vlti_night
 
 
 def _orbit(**changes):

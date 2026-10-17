@@ -4,6 +4,8 @@
                                    [--set key=value ...]
     virgil-pipeline star DATA... --output DIR [--model uniform|limb_darkened]
                                  [--through S] [--fresh] [--set key=value ...]
+    virgil-pipeline disk DATA... --output DIR [--model rings|gp]
+                                 [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline info DIR
     virgil-pipeline quicklook DIR [--no-execute]
     virgil-pipeline validate DIR
@@ -23,6 +25,7 @@ from ._io import SCHEMA, read_json, sha256_file
 
 _PIPELINES = {
     "binary": ("virgil.pipeline.binary", "BinaryPipeline"),
+    "disk": ("virgil.pipeline.disk", "DiskPipeline"),
     "star": ("virgil.pipeline.star", "StarPipeline"),
 }
 
@@ -210,6 +213,12 @@ def build_parser():
                 "--model",
                 help='fit one model, e.g. "uniform" or "limb_darkened" '
                 "(default: both, compared)",
+            )
+        if name == "disk":
+            p.add_argument(
+                "--model",
+                choices=("rings", "gp"),
+                help='what to fit: "rings" or "gp" (default: gp)',
             )
         p.set_defaults(func=_run)
     p = sub.add_parser("info", help="print a run's status and checks")

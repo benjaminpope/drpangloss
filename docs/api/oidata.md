@@ -31,19 +31,109 @@ from independent noise on the baseline phases. `n_independent` counts the
 observables that remain (the degrees of freedom); `n_residuals` is the
 length of `whitened_residuals`, which adds the penalty residuals.
 
-**Calibration nuisances per dataset.** `with_wavelength_scale` and
-`with_north_angle` are what the `noise=` terms `wavel_scale` and
-`north_angle` of [`fit`][virgil.fitting.fit] and
+## Calibration nuisances
+
+`with_wavelength_scale` and `with_north_angle` are what the `noise=` terms
+`wavel_scale` and `north_angle` of [`fit`][virgil.fitting.fit] and
 [`numpyro_model`][virgil.likelihood.numpyro_model] apply. A North angle δ
-means the data see every position angle as the true one plus δ, which is
-a rotation of `(u, v)` by −δ. A plate scale needs no term of its own: a sky
-magnified by m is `wavel_scale = 1/m`. Neither has a default prior. Their
-invariant priors (uniform on the circle for δ) leave them degenerate with
-the scene's orientation and size for a single dataset, so a Gaussian prior
-is strong information and its width should come from the instrument's
-astrometric calibration. The same terms for published positions are in
+means the data see every position angle as the true one plus δ: a source at
+`(dra, ddec)` appears at `R(δ) (dra, ddec)` with
+`R(δ) = [[cos δ, sin δ], [-sin δ, cos δ]]`. Because the Fourier kernel is
+`u dra + v ddec`, models are evaluated at `R(-δ) (u, v)`, as for
+[`Rotated`][virgil.models.Rotated]`(model, δ)`.
+
+A wavelength scale rescales the spatial frequencies (`u` and `v` are in
+metres), so it magnifies the sky by `1 / scale`: it is also the plate-scale
+term, and a sky magnified by m is `wavel_scale = 1/m`. With a single dataset
+it is degenerate with every angular size, so its prior *is* the systematic
+error (`dist.Normal(1.0, 2e-4)` is about right for GRAVITY).
+
+Neither has a default prior. Their invariant priors (uniform on the circle
+for δ) leave them degenerate with the scene's orientation and size for a
+single dataset, so a Gaussian prior is strong information and its width
+should come from the instrument's astrometric calibration. Long-baseline
+interferometers know their baselines' orientation, so leave `north_angle`
+out there. The same terms for published positions are in
 [`PositionData.term`][virgil.orbits.PositionData.term]; they follow
 Octofitter (Thompson et al. 2023, AJ 166, 164).
+
+`with_closure_offsets` marginalizes closure-phase offsets as a linear
+perturbation: an offset δ changes the whitened sine sin Δ by about
+δ cos Δ, which holds while the offsets and residuals are small
+(δ ≲ 0.3 rad, 17°); larger widths are not marginalized exactly.
+
+## Attributes
+
+- `uv_grid`: a [`UVGrid`][virgil.oidata.UVGrid] for AMIGO DISCO products,
+  whose samples lie on a regular (possibly rotated) lattice, and `None` for
+  all other data, even on a lattice: virgil does not search ordinary data
+  for one. Matching models, such as an [`Image`][virgil.models.Image] with
+  the same `rotation_deg`, then evaluate faster with the same results. For
+  other lattice-sampled data set it with
+  [`find_uv_grid`][virgil.oidata.find_uv_grid], e.g.
+  `eqx.tree_at(lambda d: d.uv_grid, data, find_uv_grid(data.u, data.v),
+  is_leaf=lambda x: x is None)`.
+- `dt`, `t_ref`, `frame`, `mjd`: data read from OIFITS keep each sample's
+  time and exposure. `frame` numbers the exposures, `mjd` gives each time,
+  and `epochs` and `split_by_epoch` group the frames into nights. The time
+  is stored as `dt`, days since the static float64 `t_ref`, so that models
+  of time see small numbers that keep their precision in float32 (about 5 s
+  over 1000 days). `stations` holds each sample's station pair
+  (`STA_INDEX`).
+- `gains` and `phase_offsets`: calibration gains
+  ([`GainModes`][virgil.gains.GainModes], from `with_gains`) and
+  closure-phase offsets ([`ClosureOffsets`][virgil.gains.ClosureOffsets],
+  from `with_closure_offsets`) that the likelihood marginalizes; `None` by
+  default.
+- `extras`: further observables, read with `extras=` (OI_FLUX, T3AMP,
+  VISAMP beside V², differential VISPHI beside closure phases): a tuple of
+  blocks from [`virgil.observables`][virgil.observables], which follow the
+  phases in the data vector in the order of `observables.KINDS`. Empty by
+  default.
+
+## Dictionary input
+
+`OIData(dict)` takes these keys:
+
+- `u`, `v` (metres) and `wavel` (metres): per sample, or `u`/`v` per
+  baseline with `vis` of shape `(n_baseline, n_wavel)` for several channels.
+- `vis`, `d_vis`: squared visibilities or amplitudes.
+- `phi`, `d_phi`: closure or absolute phases, with `phi_unit` (`"rad"`, the
+  default, or `"deg"`; `phase_unit` is an alias). For several channels,
+  shape `(n_triangle, n_wavel)` or `(n_baseline, n_wavel)`.
+- `i_cps1`, `i_cps2`, `i_cps3` (optional): for each closure phase, the
+  baselines `(a, b)`, `(b, c)` and `(a, c)` of its triangle.
+- `v2_flag` (default True): `vis` holds squared visibilities; otherwise
+  amplitudes. `cp_flag` (default: True when closure indices are given):
+  `phi` holds closure phases; otherwise absolute phases.
+- `vis_flag`, `phi_flag` (optional): boolean masks, True for bad samples.
+  Samples with non-finite values or errors are flagged automatically.
+- `vis_mode` (`"auto"`, `"v2"`, `"amp"` or `"logamp"`): the visibility
+  channel that data and model are compared in; `"auto"` keeps the channel
+  of `vis`. The key `observable_vis_mode` is read as an old name for it.
+  Neither sets the `vis_encoding` attribute, which says how `vis` and `phi`
+  are laid out (`"split"`, or `"mixed_log_complex"` for an AMIGO mixed-DISCO
+  product), not what they measure.
+- `mjd`, `frame` (optional): the time (days) and an integer exposure label
+  of each sample (or of each baseline, for several channels). Without
+  `frame`, samples with the same `mjd` form one frame.
+- `stations` (optional): the station pair `(a, b)` of each sample, or of
+  each baseline, for [`with_gains`][virgil.oidata.OIData.with_gains].
+- `vis_mat`, `phi_mat` (optional): linear operators of shape
+  `(n_out, n_in)` projecting the channels into, e.g., kernel or DISCO
+  observables. The `disco_vis_mat`/`disco_phi_mat` spellings also check
+  that the projected covariance is diagonal. Only diagonal uncertainties
+  are propagated.
+- `flux`/`nflux`, `visamp`, `t3amp`, `visphi` (optional): extra observables
+  as dictionaries in the layout [`read_oifits`][virgil.oifits.read_oifits]
+  returns. `visamp` and `visphi` give per value the `sample` it belongs to,
+  with `value`, `error` and `flag` (`visamp` also `amptyp`); `t3amp` has one
+  value per closure phase; `flux` gives `wavel`, `value`, `error`, `flag`
+  and optionally `row`, `mjd` and `station`.
+
+A record with `disco_coefficients` is read as an AMIGO mixed-DISCO product
+(see [`load_oi_data`][virgil.amigo.load_oi_data]); its `u` and `v` are
+negated to match the virgil sign convention.
 
 The bundled `data/calibrated_visibility.npy` fixture is synthetic; see the
 AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
