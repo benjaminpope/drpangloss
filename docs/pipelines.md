@@ -38,7 +38,7 @@ print(data.vis.size, "squared visibilities and", data.phi.size, "closure phases"
 
 ## Run it
 
-A pipeline takes the data, a model template (the starting point of the fit, and the parameterization of the answer), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so; every other setting is the default.
+A pipeline takes the data, a model template (its class sets the parameterization of the answer; the fit starts from the grid search's best point, so the template's values need no tuning), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so; every other setting is the default.
 
 ```python
 work = Path(mkdtemp())
@@ -194,6 +194,8 @@ def cli(*args):
         capture_output=True, text=True,
     )
     print(out.stdout + out.stderr)
+    if out.returncode:
+        raise RuntimeError(f"virgil-pipeline exited with {out.returncode}")
 
 cli("info", res.path)
 cli("validate", res.path)
