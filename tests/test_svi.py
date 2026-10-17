@@ -244,7 +244,9 @@ def _nuts(model, priors, data, values, flat, dtype):
 @pytest.mark.parametrize(
     "dtype, flat",
     [
-        pytest.param("float32", True, marks=pytest.mark.slow, id="float32-True"),
+        pytest.param(
+            "float32", True, marks=pytest.mark.slow, id="float32-True"
+        ),
         pytest.param("float32", False, id="float32-False"),
         pytest.param("float64", True, id="float64-True"),
         pytest.param("float64", False, id="float64-False"),
