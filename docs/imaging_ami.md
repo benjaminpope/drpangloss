@@ -145,7 +145,7 @@ The two agree to float32 rounding, so the image and the analytic model are inter
 
 ## Pixels that follow the detector
 
-The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice, and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). That is much faster and gives the same answer. For AMI this means pixels aligned with the detector rather than with North; `render` and `plot_model` still show the image North up.
+The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice, and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). That gives the same answer, and on a CPU it is much faster. The timings below were measured on the machine that built this page (a GPU runs both forms in about the same time, limited by kernel launches), so they vary. For AMI this means pixels aligned with the detector rather than with North; `render` and `plot_model` still show the image North up.
 
 ```python
 rotation = template.uv_grid.rotation_deg
@@ -163,22 +163,22 @@ for name, data_object in [("lattice (MFT)", template), ("per point", per_point)]
     start = time.perf_counter()
     for _ in range(100):
         evaluate(data_object, detector_scene).block_until_ready()
-    print(f"{name}: {10 * (time.perf_counter() - start):.2f} ms per evaluation")
+    print(f"{name}: {10 * (time.perf_counter() - start):.1f} ms per evaluation on this machine")
 
 difference = jnp.abs(template.model(detector_scene) - per_point.model(detector_scene))
-print(f"largest difference: {difference.max():.1e}")
+print(f"agree to float32 rounding: {bool(difference.max() < 1e-6)}")
 ```
 
 ```text
-lattice (MFT): 0.20 ms per evaluation
+lattice (MFT): 0.3 ms per evaluation on this machine
 ```
 
 ```text
-per point: 0.43 ms per evaluation
+per point: 0.2 ms per evaluation on this machine
 ```
 
 ```text
-largest difference: 4.1e-08
+agree to float32 rounding: True
 ```
 
 ## Another scene: a lopsided ring

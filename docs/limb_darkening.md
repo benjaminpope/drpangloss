@@ -36,6 +36,7 @@ import jax
 import matplotlib.pyplot as plt
 import numpy as onp
 import numpyro.distributions as dist
+from numpyro.diagnostics import split_gelman_rubin
 from numpyro.infer import MCMC, NUTS, init_to_value
 
 from virgil.coverage import vlti_oidata
@@ -189,7 +190,7 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 limb-darkened: diam = 6.022 mas, chi2 per point 0.79 (234 points)
 ```
 
-A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS: `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
+A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS, four chains that all start at the best fit (so the split R-hat printed below checks that they mix within and between chains from a common start, not that they converge from dispersed ones): `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
 
 ```python
 kernel = NUTS(
@@ -197,9 +198,21 @@ kernel = NUTS(
     init_strategy=init_to_value(values={p: ld.values[p] for p in priors}),
     dense_mass=True,
 )
-mcmc = MCMC(kernel, num_warmup=1000, num_samples=2000, progress_bar=False)
+mcmc = MCMC(
+    kernel,
+    num_warmup=1000,
+    num_samples=1000,
+    num_chains=4,
+    chain_method="vectorized",
+    progress_bar=False,
+)
 mcmc.run(jax.random.PRNGKey(4))
-posterior = mcmc.get_samples()
+posterior = mcmc.get_samples()  # the four chains together
+r_hat = max(
+    float(split_gelman_rubin(v))
+    for v in mcmc.get_samples(group_by_chain=True).values()
+)
+print(f"largest split r_hat over the four chains: {r_hat:.2f}")
 samples = QuadraticLimbDarkenedDisk(
     posterior["diam"], q1=posterior["q1"], q2=posterior["q2"]
 )
@@ -236,12 +249,13 @@ plt.show()
 ```
 
 ```text
+largest split r_hat over the four chains: 1.02
          truth         posterior
-  diam   6.000      6.025 ± 0.052
-    q1   0.360      0.488 ± 0.199
-    q2   0.292      0.174 ± 0.116
-    u1   0.350      0.241 ± 0.104
-    u2   0.250      0.458 ± 0.235
+  diam   6.000      6.046 ± 0.058
+    q1   0.360      0.573 ± 0.224
+    q2   0.292      0.131 ± 0.108
+    u1   0.350      0.202 ± 0.104
+    u2   0.250      0.559 ± 0.243
 ```
 
 ![limb_darkening output 11.2](generated/limb_darkening_cell011_out02.png)
@@ -291,7 +305,7 @@ print(res.describe())
 ```
 
 ```text
-StarPipeline run in /tmp/tmpcjftioud/star_run: complete
+StarPipeline run in /tmp/tmpugbv9uvd/star_run: complete
   data.n_vis = 108
   data.n_phi = 72
   data.n_independent = 162
@@ -304,31 +318,32 @@ StarPipeline run in /tmp/tmpcjftioud/star_run: complete
   data.freq_max_per_rad = 8.09765e+07
   chi2.n_independent = 162
   fit.scan_diam_mas = 5.68753
+  comparison.delta_m2loglike = 105401
   comparison.delta_chi2 = 105401
   comparison.n_extra_params = 2
   comparison.bic_penalty = 10.1752
-  star.diam_mas = 6.03562
-  star.diam_err_mas = 0.0614547
-  resolution.diam_mas = 6.03562
+  star.diam_mas = 6.0334
+  star.diam_err_mas = 0.0601054
+  resolution.diam_mas = 6.0334
   resolution.freq_max_per_rad = 8.09765e+07
   resolution.first_null = 1.30315
-  resolution.first_null_fraction = 1.81827
+  resolution.first_null_fraction = 1.81761
   posterior.num_chains = 4
   posterior.num_samples = 1000
   posterior.num_warmup = 1000
-  posterior.r_hat_max = 1.0474
-  posterior.ess_bulk_min = 112.585
+  posterior.r_hat_max = 1.00907
+  posterior.ess_bulk_min = 253.337
   posterior.divergence_fraction = 0.50775
   lobes: 6.022 mas (best); 7.028 mas (Δχ² 6.31e+05); 9.108 mas (Δχ² 2.43e+06)
   [fail] chi2_uniform: χ²/N = 652 for the uniform disk on quoted errors: the model does not describe the data, or the errors are much too small.
   [pass] chi2_limb_darkened: χ²/N = 1.14 for the limb-darkened disk on quoted errors: consistent with the quoted errors.
-  [pass] limb_darkening_gain: Δχ² = 1.05e+05 for 2 extra parameters exceeds the BIC penalty 10.2: the limb-darkened disk model is preferred.
+  [pass] limb_darkening_gain: Δ(−2 log L) = 1.05e+05 for 2 extra parameters exceeds the BIC penalty 10.2: the limb-darkened disk model is preferred.
   [pass] resolution: The longest baseline reaches 1.82 of the first null: the baselines reach the first null, so the diameter is well measured and limb darkening can be constrained.
   [pass] multimodal: The best lobe (6.022 mas) beats the next (7.028 mas) by Δχ² = 6.31e+05.
-  [pass] limb_darkening_constrained: The data constrain every parameter (σ_posterior/σ_prior: q1 0.74, q2 0.40).
+  [pass] limb_darkening_constrained: The data constrain every parameter (σ_posterior/σ_prior: q1 0.71, q2 0.38).
   [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [warn] r_hat: Largest R-hat 1.0474: run longer chains to be sure.
-  [warn] ess: Smallest bulk ESS 113: quantiles in the tails are noisy.
+  [pass] r_hat: Largest R-hat 1.0091: the chains agree.
+  [warn] ess: Smallest bulk ESS 253: quantiles in the tails are noisy.
   [warn] divergences: Divergent transitions: 51 per cent: 48 per cent of steps of 2 posterior standard deviations hit a hard wall of the likelihood (a closure-phase sign flip), so NUTS rejects the trajectories that cross it; the draws are expected to follow the truncated posterior, with reduced efficiency (see the ESS). A bispectrum likelihood would remove the walls (virgil#309).
 ```
 
