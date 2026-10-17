@@ -1,11 +1,11 @@
 <!-- AUTO-GENERATED FROM notebooks/composition.ipynb by scripts/sync_tutorial_docs.py. -->
 # Composing source models
 
-Stars rarely come alone. A young star may be ringed by the hot inner rim of its disk; a companion may carry its own envelope of accreting material; a close binary may sit inside a circumbinary ring. None of these is "a binary" or "a disk", and writing a bespoke model class for every new combination is tedious and easy to get wrong.
+Stars rarely come alone. A young star may be ringed by the hot inner rim of its disk; a companion may carry its own envelope of accreting material; a close binary may sit inside a circumbinary ring. None of these is "a binary" or "a disk", and a bespoke model class for every combination is tedious and error-prone.
 
-This tutorial shows how to build scenes like these out of simple shapes. Our running example is a young star with a bright, lopsided inner rim, observed with aperture masking. We want to know whether a faint protoplanet is hiding next to it.
+This tutorial builds scenes like these out of simple shapes. Our running example is a young star with a bright, lopsided inner rim, observed with aperture masking. We want to know whether a faint protoplanet is hiding next to it.
 
-This is a real problem, not a toy one. In LkCa 15, for example, candidate protoplanets found with sparse aperture masking (Kraus & Ireland 2012; Sallum et al. 2015) were later argued to be consistent with light from the disk itself (Currie et al. 2019). If the disk and the planet can be fitted *together*, that kind of question can be answered with the data rather than argued about afterwards.
+This is a real problem. In LkCa 15, candidate protoplanets found with sparse aperture masking (Kraus & Ireland 2012; Sallum et al. 2015) were later argued to be consistent with light from the disk itself (Currie et al. 2019). If the disk and the planet are fitted *together*, the data can answer that kind of question directly.
 
 ```python
 import sys
@@ -49,7 +49,7 @@ set_style()  # the figure style used throughout the docs
 
 ## Shapes
 
-`virgil` offers several shapes, among them an unresolved `PointSource`, a `GaussianDisk`, an `EllipticalGaussian`, a `UniformDisk`, a `GaussianArc` (a Gaussian ridge bent along a circular arc), and a `ModulatedGaussianRim`, which is a thin ring that can be blurred, inclined and made brighter on one side. Four of them are drawn below.
+`virgil` offers several shapes, among them an unresolved `PointSource`, a `GaussianDisk`, an `EllipticalGaussian`, a `UniformDisk`, a `GaussianArc` (a Gaussian ridge bent along a circular arc), and a `ModulatedGaussianRim`, a thin ring that can be blurred, inclined and made brighter on one side. Four of them are drawn below.
 
 Every shape has three placement parameters. `dra` and `ddec` are offsets in milliarcseconds, positive to the East and North. `flux` says how bright the shape is *relative to the other parts of a scene*. On its own, every shape is normalized to unit flux, so a lone shape's `flux` has no effect.
 
@@ -76,7 +76,7 @@ The rim is inclined by 50°, with its major axis at a position angle of 30° Eas
 
 ## A simulated observation
 
-We'll simulate a nine-hole aperture mask observing at 1.65 µm, with 1% errors on the squared visibilities and 0.3° errors on the closure phases. This is just a random mask; with real data, you would load an OIFITS file into `OIData` instead.
+We simulate a nine-hole aperture mask observing at 1.65 µm, with 1% errors on the squared visibilities and 0.3° errors on the closure phases. This is just a random mask; with real data you would load an OIFITS file into `OIData`.
 
 ```python
 rng = np.random.default_rng(3)
@@ -116,7 +116,7 @@ A `System` is a scene made of named parts. Its visibility is the flux-weighted a
 
 $$V = \frac{\sum_i f_i V_i}{\sum_i f_i}.$$
 
-Dividing by the total flux reflects how interferometric data work: visibilities are normalized to one at zero baseline, so we can only ever measure how bright the parts are *compared to each other*, never in absolute terms. The convention is therefore to keep one reference part (usually the star) at `flux=1`. Every other `flux` is then a flux ratio relative to the star.
+We divide by the total flux because visibilities are normalized to one at zero baseline: we can only measure how bright the parts are *compared to each other*, never in absolute terms. So keep one reference part (usually the star) at `flux=1`; every other `flux` is then a flux ratio relative to the star.
 
 The simplest scene is a binary: a star and a fainter point source. `virgil` has always had a dedicated `BinaryModelCartesian` for this, and a `System` gives the same answer:
 
@@ -145,11 +145,11 @@ System(
 largest difference in observables: 1.2e-07
 ```
 
-The difference is at the level of float32 rounding. For a plain binary, keep using `BinaryModelCartesian` or `BinaryModelAngular`. They are the fastest option, and the binary tutorials all still apply. If you start from a binary and later need more, `binary.to_system()` returns this `System` form for you to extend.
+The difference is at the level of float32 rounding. For a plain binary, keep using `BinaryModelCartesian` or `BinaryModelAngular`: they are the fastest option, and the binary tutorials still apply. If you start from a binary and later need more, `binary.to_system()` returns the `System` form for you to extend.
 
 ## Our young star
 
-Now the star from the introduction. The rim is the same one as above; we give it half the star's flux, so `flux=0.5`:
+Now the star from the introduction. The rim is the same as above, with half the star's flux, so `flux=0.5`:
 
 ```python
 rim = ModulatedGaussianRim(
@@ -199,7 +199,7 @@ plt.show()
 
 ## Naming parameters
 
-The names you give the parts are more than labels: they are how you refer to parameters from now on. Every parameter has a **path** made of names joined by dots, such as `"comp.flux"` or `"comp.disk.sigma"`. You can read a parameter as an attribute or with `get`. To change one, use `set`, which returns a new model and leaves the original untouched.
+The names you give the parts are how you refer to parameters from now on. Every parameter has a **path** made of names joined by dots, such as `"comp.flux"` or `"comp.disk.sigma"`. You can read a parameter as an attribute or with `get`. To change one, use `set`, which returns a new model and leaves the original untouched.
 
 ```python
 print(f"scene.comp.disk.sigma  = {float(scene.comp.disk.sigma):g}")
@@ -217,15 +217,15 @@ original comp.flux     = 0.3
 brighter comp.flux     = 0.6
 ```
 
-Because these paths are what the fitting tools take as input, it's worth choosing names that will still make sense when you read a corner plot six months from now.
+These paths are what the fitting tools take as input, so choose names that will still make sense when you read a corner plot six months from now.
 
 ## Is there a planet?
 
-Now for the real question. We simulate data from a star, the rim, and a faint point-like companion with 1% of the star's flux, and then pretend we don't know about the companion.
+Now the real question. We simulate data from a star, the rim, and a faint point-like companion with 1% of the star's flux, then pretend we don't know about the companion.
 
-To search for it, we give the grid tools a **template**: a model that describes the scene we're testing, with a companion whose position and brightness will be varied. The grid is a dictionary keyed by the paths of the parameters to vary. These are the same functions used in the binary tutorials; only the template and the parameter names are new.
+To search for it, we give the grid tools a **template**: a model of the scene we're testing, with a companion whose position and brightness will be varied. The grid is a dictionary keyed by the paths of the parameters to vary. These are the same functions used in the binary tutorials; only the template and the parameter names are new.
 
-For now we hold the rim fixed at its true shape. That's optimistic, and we'll let it vary in the next-but-one section.
+For now we hold the rim fixed at its true shape. That is optimistic, and we relax it two sections on.
 
 ```python
 truth = System(
@@ -262,13 +262,13 @@ best grid point: {'comp.dra': 46.6667, 'comp.ddec': 30.0, 'comp.flux': 0.01}
 
 ![composition output 16.2](generated/composition_cell016_out02.png)
 
-The brightest peak sits on the true position. The fainter peaks are aliases: with only 36 baselines, the mask can't tell some positions apart very well.
+The brightest peak sits on the true position. The fainter peaks are aliases: with only 36 baselines, the mask can't tell some positions apart.
 
 ## How significant is it?
 
 A likelihood peak is not yet a detection. `optimized_flux_grid` finds the best-fitting companion flux at every position, and `laplace_flux_uncertainty_grid` estimates the uncertainty on that flux. Their ratio is a map of detection significance.
 
-Both functions need to know which parameter is the flux to optimize and which are the coordinates of the map. They use the one key ending in `flux` (here `comp.flux`); if a grid has several, say which with `flux_param=`.
+Both functions need to know which parameter is the flux to optimize and which are the map coordinates. They use the one key ending in `flux` (here `comp.flux`); if a grid has several, say which with `flux_param=`.
 
 ```python
 best_flux = optimized_flux_grid(search, data, grid)
@@ -288,11 +288,11 @@ plt.show()
 
 ![composition output 18.1](generated/composition_cell018_out01.png)
 
-The companion stands out clearly above the aliases. The dark patch at the mirror-image position is worth understanding. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `virgil` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because that is what the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
+The companion stands out clearly above the aliases. The dark patch at the mirror-image position deserves a word. A companion on the opposite side of the star would produce closure phases of the opposite sign, so there the data are best matched by *less* light than the star alone, and the best-fit flux is negative. Real fluxes can't be negative, and `virgil` won't let you build a model with one. The optimizer reports the unconstrained estimate anyway, because the Ruffio et al. (2018) upper limits in the contrast-limits tutorial are built from it; they apply the positivity prior at that stage. So read a significance map for its positive peaks.
 
 ## Letting the rim vary: Laplace and HMC
 
-So far we've assumed we know the rim exactly, which is never true. A companion search is only trustworthy if a slightly different rim couldn't explain the same signal. With a composed model this costs almost nothing extra: we just add the rim's parameters to the list of things to fit.
+So far we've assumed we know the rim exactly, which is never true. A companion search is only trustworthy if a slightly different rim couldn't explain the same signal. With a composed model this costs almost nothing: we add the rim's parameters to the list of things to fit.
 
 `laplace_cov` gives a quick Gaussian estimate of the uncertainties from the curvature of the likelihood at the best fit. For a full posterior, `numpyro_model` turns the template and a dictionary of `{path: prior}` into a numpyro model, using each path as the name of a sample site. Neither needs a hand-written model function.
 
@@ -344,11 +344,11 @@ rim.flux     0.5000    0.5041 ± 0.0365     0.0421             -
 rim.diam    40.0000   39.8353 ± 1.2293     1.4678             -
 ```
 
-The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. That is exactly the check you would want to make before believing a detection.
+The rim and the companion are recovered together, all within about two standard deviations of the truth, and the Laplace and HMC uncertainties broadly agree. Freeing the rim costs something: the Laplace uncertainty on the companion's flux grows by about a third (from 0.0006 to 0.0008), and its declination also becomes less certain, most likely because the lopsided rim also produces closure phases, and some of its signal can be traded against the companion's. But the companion is still detected at more than ten sigma, so here no plausible rim can masquerade as the planet. This is the check to make before believing a detection.
 
 ## Fitting the parameters you care about
 
-Paths reach every number stored in a model, but those aren't always the numbers you want to fit. Astronomers usually quote a companion's separation and position angle rather than its offsets in RA and Dec. To fit parameters like these, write a small function that builds the model from them, and pass the function to the tools in place of a template. Its argument names play the role of the paths.
+Paths reach every number stored in a model, but those aren't always the numbers you want to fit. Astronomers usually quote a companion's separation and position angle rather than its offsets in RA and Dec. To fit parameters like these, write a small function that builds the model from them, and pass it to the tools in place of a template. Its argument names play the role of the paths.
 
 ```python
 def star_rim_planet(sep, pa, flux, rim_flux, rim_diam):
@@ -414,7 +414,7 @@ plt.show()
 
 ![composition output 24.1](generated/composition_cell024_out01.png)
 
-Positions don't need a function at all, because nesting already ties them. Parts that should move together belong in their own `System`, as the companion and its disk did earlier: `comp.dra` and `comp.ddec` move the core and the disk as one, and there is no way for them to drift apart during a fit.
+Positions don't need a function, because nesting already ties them. Parts that should move together belong in their own `System`, as the companion and its disk did earlier: `comp.dra` and `comp.ddec` move the core and the disk as one, so they cannot drift apart during a fit.
 
 
 ## Things to keep in mind
@@ -422,5 +422,5 @@ Positions don't need a function at all, because nesting already ties them. Parts
 * **Keep one flux fixed.** Only flux ratios are measurable, so leave the reference part (usually the star) at `flux=1`. If every flux is free, the overall scale is unconstrained and samplers will wander.
 * **Names become parameter names.** Component names must be valid Python identifiers, and can't clash with `System` attributes such as `flux`, `model` or `set`.
 * **Fluxes are positive.** Models refuse negative fluxes, `numpyro_model` refuses flux priors that allow them, and the grid tools refuse negative flux axes. Only the unconstrained optimizer inside `optimized_flux_grid` may report a negative best fit, for the reason given above.
-* **Say which parameter is the flux, if it's ambiguous.** `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `optimized_likelihood_grid` and `absil_limits` use the one grid key ending in `flux` (such as `comp.flux`). If there is none, or more than one, pass `flux_param=`; otherwise you get an error rather than a guess.
-* **Images are for looking, not fitting.** `render` and `plot_model` are there to check what a model looks like. Fits always use the exact analytic visibilities.
+* **Say which parameter is the flux if it's ambiguous.** `optimized_flux_grid`, `laplace_flux_uncertainty_grid`, `optimized_likelihood_grid` and `absil_limits` use the one grid key ending in `flux` (such as `comp.flux`). If there is none, or more than one, pass `flux_param=`; otherwise you get an error rather than a guess.
+* **Images are for looking, not fitting.** `render` and `plot_model` show what a model looks like. Fits always use the exact analytic visibilities.

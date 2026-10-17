@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/source_models.ipynb by scripts/sync_tutorial_docs.py. -->
 # Extended source models
 
-This tutorial mirrors the binary-model walkthrough style, but focuses on the non-binary source models in `virgil`: a star plus a `GaussianDisk`, the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
+This tutorial covers the non-binary source models in `virgil`: a star plus a `GaussianDisk`, the `UniformDisk` and `ModulatedGaussianRim` building blocks, and `GravityDarkenedStar` (a rapidly rotating star). Spotted stars from harmonix, wrapped in `HarmonixModel`, have [their own tutorial](harmonix.md).
 
-We'll build synthetic interferometric observables from a resolved Gaussian disk, pass them through `OIData`, then do the same for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. See the composition tutorial for how to combine these building blocks into more complex scenes.
+We build synthetic observables from a resolved Gaussian disk, pass them through `OIData`, repeat for a uniform disk and an azimuthally modulated rim, and finally draw a gravity-darkened rapid rotator. The composition tutorial shows how to combine these building blocks into more complex scenes.
 
 ```python
 import sys
@@ -36,7 +36,7 @@ set_style()  # the figure style used throughout the docs
 
 ## Simulate resolved-disk observables
 
-As with the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines.
+As in the binary examples, we start from a simple baseline geometry, instantiate a source model, and evaluate complex visibilities on those baselines.
 
 ```python
 rng = np.random.default_rng(7)
@@ -94,7 +94,7 @@ data = OIData({
 
 ## Use `OIData` to flatten observables
 
-`OIData.model(...)` evaluates the source model, converts complex visibilities to the configured observables, and flattens the result into a vector that can be compared directly to the measured data.
+`OIData.model(...)` evaluates the source model, converts complex visibilities to the configured observables, and flattens the result into a vector that can be compared directly with the measured data.
 
 ```python
 model_vec = data.model(disk)
@@ -116,7 +116,7 @@ data_vec, err_vec = data.flatten_data()
 
 ## Visualize the Gaussian disk in Fourier and image space
 
-A resolved Gaussian disk has visibility amplitudes that fall smoothly with baseline length. The new `render(...)` method gives a matching image-plane representation for plotting and sanity checks.
+A resolved Gaussian disk has visibility amplitudes that fall smoothly with baseline length. The `render(...)` method gives a matching image-plane view for plotting and sanity checks.
 
 ```python
 baseline = np.sqrt(np.asarray(u) ** 2 + np.asarray(v) ** 2)
@@ -156,11 +156,11 @@ plt.show()
 
 ## Spotted stars with harmonix
 
-`HarmonixModel` wraps a star from [harmonix](https://github.com/shashankdholakia/harmonix), which computes the visibilities of a spherical-harmonic surface map analytically, so that it simulates, draws and fits like any other virgil model. See [Spotted stars with harmonix](harmonix.md) for a worked example.
+`HarmonixModel` wraps a star from [harmonix](https://github.com/shashankdholakia/harmonix), which computes the visibilities of a spherical-harmonic surface map analytically, so it simulates, draws and fits like any other virgil model. See [Spotted stars with harmonix](harmonix.md) for a worked example.
 
 ## Simulate a uniform disk
 
-`UniformDisk` represents a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; put it in a `System` with a `PointSource` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
+`UniformDisk` is a resolved tophat (uniform-brightness) disk. Like every building block it is a pure shape normalized to unit flux; put it in a `System` with a `PointSource` if you also want an unresolved star. Its visibility amplitude follows the classic Airy pattern `2*J1(x)/x`.
 
 ```python
 udisk = UniformDisk(diam=25.0, dra=-9.0, ddec=6.0)
@@ -217,7 +217,7 @@ plt.show()
 
 ## Simulate an azimuthally modulated rim
 
-`ModulatedGaussianRim` is an inclined, Gaussian-blurred ring, optionally modulated azimuthally with a sum of cosine terms (`az_amps`/`az_pas`). Adding a `PointSource` puts an unresolved star at the centre; the rim's `flux` is then its flux relative to the star. We compare a symmetric rim against one with first- and second-order modulations.
+`ModulatedGaussianRim` is an inclined, Gaussian-blurred ring, optionally modulated azimuthally by a sum of cosine terms (`az_amps`/`az_pas`). Adding a `PointSource` puts an unresolved star at the centre; the rim's `flux` is then its flux relative to the star. We compare a symmetric rim with one that has first- and second-order modulations.
 
 ```python
 rim_geometry = dict(diam=14.15, fwhm=3.233, inc=19.0, pa=6.0, flux=0.67504187604)
@@ -253,8 +253,8 @@ model_vec_rim = data.model(rim_modulated)
 
 ## Visualize the rim: azimuthal modulation and Fourier response
 
-Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response. The parameters are chosen here so the modulated rim model and its image
-match the final geometric model shown for the post-AGB IRAS 08544-4431 in [Hillen et al. 2016](http://dx.doi.org/10.1051/0004-6361/201628125).
+Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response. The parameters are chosen so that the modulated rim and its image
+match the final geometric model of the post-AGB star IRAS 08544-4431 in [Hillen et al. 2016](http://dx.doi.org/10.1051/0004-6361/201628125).
 
 ```python
 image_rim_symmetric = np.asarray(rim_symmetric.render(npix=256, fov_mas=30.0))
@@ -299,7 +299,7 @@ plt.show()
 
 `GravityDarkenedStar` models a star spinning close to break-up, using the Roche shape and gravity darkening of [Espinosa Lara & Rieutord (2011)](https://doi.org/10.1051/0004-6361/201117252), which needs no free gravity-darkening exponent. The model is Shashank Dholakia's port of ELR11 into JAX (from his `jax-interferometry` code), brought into `virgil` with his `ELR_Model` as its grey mode. Its parameters are the equatorial angular diameter `diam_eq` in mas, the rotation rate `omega` as a fraction of the critical rate (0 is a sphere), the inclination `inc` in degrees (0 is pole-on, 90 equator-on), and `pa`, the position angle of the visible rotation pole, North through East. The mesh resolution is set by `n_lat`.
 
-By default the star is grey: its brightness pattern is the same at every wavelength. Passing `t_pole`, the pole's effective temperature in kelvin, switches on a chromatic mode in which each patch of the surface radiates as a black body, so the contrast between the hot pole and the cool equator grows towards short wavelengths; `wavel0` is the wavelength at which `render` draws it. Like the other components it can be placed in a `System`, for example with a companion. See the [MWE notebook](gravity_darkened_star.md) for a fit to simulated multi-channel VLTI data.
+By default the star is grey: its brightness pattern is the same at every wavelength. Passing `t_pole`, the pole's effective temperature in kelvin, switches on a chromatic mode in which each patch of the surface radiates as a black body, so the contrast between the hot pole and the cool equator grows towards short wavelengths; `wavel0` is the wavelength at which `render` draws it. Like the other components it can go in a `System`, for example with a companion. See the [MWE notebook](gravity_darkened_star.md) for a fit to simulated multi-channel VLTI data.
 
 ```python
 from virgil.models import GravityDarkenedStar
@@ -328,7 +328,7 @@ cvis_star = star.model(u, v, wavel)
  'vis_range': (0.9856705069541931, 0.9998699426651001)}
 ```
 
-The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, is the same shape with the equator much dimmer than the pole.
+The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, has the same shape with the equator much dimmer than the pole.
 
 ```python
 from virgil.plotting import plot_model
