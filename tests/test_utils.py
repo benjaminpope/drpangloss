@@ -134,6 +134,26 @@ def test_wrap_phase_maps_to_minus_pi_inclusive_pi_exclusive():
     assert onp.all((got >= -pi - 1e-6) & (got < pi))
 
 
+def test_position_angle_and_separation_have_finite_gradients_at_the_origin():
+    """The angle is undefined at the origin, and arctan2's gradient there is NaN.
+
+    A sampler or optimizer that starts on the origin (a non-detection's best
+    fit sits within rounding of it) must see finite derivatives, with the
+    values unchanged.
+    """
+    from virgil._geometry import position_angle, separation_pa
+
+    def parts(offset):
+        sep, pa = separation_pa(offset[0], offset[1])
+        return np.stack([sep, pa])
+
+    for point in ([0.0, 0.0], [1e-9, -2e-9], [3.0, 4.0]):
+        jac = jax.jacobian(parts)(np.asarray(point))
+        assert onp.all(onp.isfinite(jac)), point
+    assert float(position_angle(np.asarray(0.0), np.asarray(0.0))) == 0.0
+    assert float(jax.grad(position_angle)(0.0, 0.0)) == 0.0
+
+
 def test_position_angle_is_north_through_east_in_zero_to_360():
     from virgil._geometry import position_angle, separation_pa
 
