@@ -62,7 +62,7 @@ Everything the run produced is in `output`, as JSON, HDF5, NumPy, PNG and OIFITS
 ```python
 for p in sorted(res.path.rglob("*")):
     rel = p.relative_to(res.path)
-    if len(rel.parts) <= 2 and not (rel.parts[0] == "stages" and len(rel.parts) == 2):
+    if len(rel.parts) <= 2:
         print(f"{'  ' * (len(rel.parts) - 1)}{rel.name}{'/' if p.is_dir() else ''}")
 ```
 
@@ -169,6 +169,8 @@ config.write_text(json.dumps({
 
 p = BinaryPipeline.from_config(config, template, sigma=4.0)  # keywords win
 print(p.settings["sigma"], p.settings["num_chains"])
+p.run(through="load")  # cheap: writes run.json with the resolved settings
+print(load(p.output).run["config"]["sigma"])
 ```
 
 The config file says `sigma` is 2, the keyword says 4, and the keyword wins; `num_chains` comes from the file; everything else is a default. The resolved settings are written to `run.json`, so the folder records what was actually used.
