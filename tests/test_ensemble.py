@@ -497,6 +497,14 @@ def test_rotated_member_is_rendered_onto_the_common_grid_without_cropping():
     onp.testing.assert_allclose(pixels / pixels.sum(), sky / sky.sum())
 
 
+def test_gp_draw_has_no_regulariser_weights():
+    # The cheap part of the GP-member test below, whose fits are slow (their
+    # JIT compiles take about 30 s on a CI runner).
+    draw = draw_groups(DATASETS[0], 1, jax.random.PRNGKey(0), GP_SPEC)[0]
+    assert draw.family == "gp" and draw.weights == ()
+
+
+@pytest.mark.slow
 def test_evidence_grid_and_gp_members():
     data = DATASETS[0]
     draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
@@ -520,6 +528,7 @@ def test_evidence_grid_and_gp_members():
     assert len(gp_members(data, draw, spec=tight, **GP_OPTIONS).gp) == 1
 
 
+@pytest.mark.slow
 def test_gp_group_without_a_star():
     data = DATASETS[0]
     draw = draw_groups(data, 1, jax.random.PRNGKey(0), GP_SPEC)[0]
@@ -547,6 +556,7 @@ def test_evidence_grid_adds_an_anisotropic_variant_for_elongated_data():
     assert onp.all(onp.isfinite(grid.log_evidence["aniso"]))
 
 
+@pytest.mark.slow
 def test_combine_handles_gp_and_regulariser_members_together():
     data = DATASETS[0]
     spec = dataclasses.replace(
