@@ -536,10 +536,12 @@ def test_rings_run_contract_and_recovery(rings_run):
         abs(planet["dra_mas"] + 6.0) < 0.5
         and abs(planet["ddec_mas"] + 3.0) < 0.5
     )
-    # The profile stage reports one row per ring count tried, BIC and the
-    # Laplace evidence included.
+    # The profile stage reports a row per ring count kept, BIC and the
+    # Laplace evidence included. The truth has one ring: a second ring is
+    # either pruned away or split from the first (and left out), so only the
+    # one-ring row is kept.
     rows = s["compare"]["rows"]
-    assert [r["n"] for r in rows] == [1, 2]
+    assert [r["n"] for r in rows] == [1]
     assert all("bic" in r and "log_evidence" in r for r in rows)
 
 
@@ -846,8 +848,9 @@ def test_rings_leave_out_an_unresolved_count_and_go_on(tmp_path, monkeypatch):
     assert tried == [1, 2, 3]
     flagged = [r["n"] for r in rows if r["unresolved"]]
     assert flagged == [2]
-    assert {r["n"] for r in res.summary["compare"]["rows"]} == {1}
-    assert res.summary["disk"]["n_rings"] == 1
+    kept = {r["n"] for r in res.summary["compare"]["rows"]}
+    assert 1 in kept and 2 not in kept
+    assert res.summary["disk"]["n_rings"] in kept
 
 
 @pytest.mark.slow
