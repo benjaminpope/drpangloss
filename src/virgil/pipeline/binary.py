@@ -10,11 +10,10 @@ import numpy as onp
 
 from . import _checks, _io
 from ._common import (
-    _NUTS_FIELDS,
     _SAMPLER_SETTINGS,
     _diagnostics,
     _load_report,
-    _mcmc,
+    _run_chains,
     _noise_quantiles,
     _sample_stats,
     _bound_samples,
@@ -797,8 +796,7 @@ def _posterior(p):
 
 def _run_nuts(p, priors, angular):
     """NUTS from the fit, one start per chain; returns the finished MCMC."""
-    import jax
-    from ..likelihood import chain_init_params, numpyro_model
+    from ..likelihood import numpyro_model
 
     s = p.settings
     best = p.output / "models" / "best"
@@ -809,13 +807,7 @@ def _run_nuts(p, priors, angular):
         if k in priors
     }
     posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
-    init_key, run_key = jax.random.split(jax.random.PRNGKey(s["seed"]))
-    init = chain_init_params(
-        posterior, [start] * s["num_chains"], key=init_key
-    )
-    mcmc = _mcmc(posterior, s, dense_mass=False)
-    mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
-    return mcmc
+    return _run_chains(posterior, s, start, dense_mass=False)
 
 
 def _write_samples(p, samples, sample_stats, reported, priors):

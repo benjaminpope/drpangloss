@@ -624,6 +624,353 @@ def prior_constrained(name, ratios, *, warn=0.8):
     )
 
 
+# --- checks of DiskPipeline ---------------------------------------------------
+
+
+def _upper_first(text):
+    """``text`` with its first letter capitalized (``str.capitalize`` would
+    lowercase the rest)."""
+    return text[:1].upper() + text[1:]
+
+
+def length_scale(evidences, ells, halffringe, *, nats=3.0):
+    """Whether the data measure the Gaussian-process length scale ℓ.
+
+    The Laplace evidences of the profile fitted at each ℓ of a grid differ
+    by little when the data are silent about ℓ: it is then a prior choice
+    and not a result, and the profile's fine structure is the prior
+    wherever the data say nothing.
+
+    Parameters
+    ----------
+    evidences : sequence of float
+        Laplace log evidence at each ℓ.
+    ells : sequence of float
+        The Matérn ℓ (mas) of each, in the same order.
+    halffringe : float
+        λ/2B of the longest baseline (mas).
+    nats : float, optional
+        Spread of the evidences (max − min) below which ℓ is not measured.
+
+    Notes
+    -----
+    A Matérn length is not a feature width. The message quotes the
+    squared-exponential equivalent of the best ℓ, which matches the
+    curvature at zero lag: ℓ·√((ν − 1)/ν) = ℓ/√3 for the pipeline's ν = 3/2.
+    """
+    z = [float(v) for v in evidences]
+    if len(z) < 2 or not all(_finite(v) for v in z):
+        return Check(
+            "length_scale",
+            "warn",
+            None,
+            nats,
+            "The evidence of the length scale could not be computed at "
+            "every ℓ of the grid.",
+        )
+    spread = max(z) - min(z)
+    best = max(range(len(z)), key=z.__getitem__)
+    equivalent = float(ells[best]) / math.sqrt(3.0)
+    where = (
+        f"best ℓ = {float(ells[best]):.3g} mas, a squared-exponential "
+        f"length of {equivalent:.3g} mas, {equivalent / halffringe:.2g}× "
+        "the half-fringe"
+    )
+    if spread < nats:
+        return Check(
+            "length_scale",
+            "warn",
+            spread,
+            nats,
+            f"The evidences across ℓ differ by only {spread:.2g} nats "
+            f"({where}): the data do not measure ℓ, so it is a prior "
+            "choice, and the profile's fine structure is the prior wherever "
+            "the data are silent.",
+        )
+    return Check(
+        "length_scale",
+        "pass",
+        spread,
+        nats,
+        f"The evidence prefers one length scale by {spread:.2g} nats "
+        f"({where}).",
+    )
+
+
+def ring_count(n_best, rows, halffringe, *, nats=3.0):
+    """Whether the data clearly prefer the chosen number of rings.
+
+    Parameters
+    ----------
+    n_best : int
+        The chosen number of rings.
+    rows : sequence of dict
+        One per fitted ring count: ``n``, ``bic``, ``log_evidence`` (None if
+        not available) and ``widths`` (the rings' Gaussian σ, mas).
+    halffringe : float
+        λ/2B of the longest baseline (mas).
+    nats : float, optional
+        A neighbouring count is clearly worse when it loses by at least
+        this many nats of log evidence and 2 × this many of BIC.
+
+    Notes
+    -----
+    A ring narrower than the half-fringe leaves almost no signature in the
+    visibilities, so its width is not measured.
+    """
+    by_n = {r["n"]: r for r in rows}
+    best = by_n[n_best]
+    margins = {}
+    for n in (n_best - 1, n_best + 1):
+        if n not in by_n:
+            continue
+        other = by_n[n]
+        gaps = [0.5 * (other["bic"] - best["bic"])]
+        if _finite(best.get("log_evidence")) and _finite(
+            other.get("log_evidence")
+        ):
+            gaps.append(best["log_evidence"] - other["log_evidence"])
+        margins[n] = min(gaps)
+    narrow = [
+        i + 1
+        for i, w in enumerate(best["widths"])
+        if not _finite(w) or w < halffringe
+    ]
+    worst = min(margins.values(), default=None)
+    problems = []
+    unclear = [n for n, m in margins.items() if m < nats]
+    if unclear:
+        problems.append(
+            "the data do not clearly prefer "
+            f"{n_best} to {' or '.join(str(n) for n in unclear)} "
+            f"ring{'s' if unclear[-1] != 1 else ''} "
+            f"(margin {', '.join(f'{margins[n]:.2g}' for n in unclear)} "
+            "nats)"
+        )
+    if narrow:
+        problems.append(
+            f"ring {', '.join(str(i) for i in narrow)} is narrower than "
+            "the half-fringe, so its width is not resolved"
+        )
+    if problems:
+        return Check(
+            "ring_count",
+            "warn",
+            worst,
+            nats,
+            f"With {n_best} ring{'s' if n_best != 1 else ''}: "
+            + "; ".join(problems)
+            + ".",
+        )
+    return Check(
+        "ring_count",
+        "pass",
+        worst,
+        nats,
+        f"{n_best} ring{'s' if n_best != 1 else ''} preferred over its "
+        f"neighbours by at least {worst if worst is not None else 0:.2g} "
+        "nats, and every ring is resolved in width.",
+    )
+
+
+def inner_edge(
+    fraction, correlation, halffringe, *, max_fraction=0.1, max_correlation=0.9
+):
+    """Light that the profile puts in an unresolved core at its inner edge.
+
+    Such light trades against the star's flux, which the data cannot tell
+    apart. ``fraction`` is the fraction of the disk's light within one
+    half-fringe of the inner edge; ``correlation`` is the Laplace
+    correlation between the disk's flux and the light in the innermost
+    nodes.
+    """
+    if not _finite(fraction):
+        return Check(
+            "inner_edge",
+            "warn",
+            fraction,
+            max_fraction,
+            "The light near the inner edge could not be computed.",
+        )
+    corr = float(correlation) if _finite(correlation) else None
+    reasons = []
+    if fraction > max_fraction:
+        reasons.append(
+            f"{100 * fraction:.2g} per cent of the disk's light lies within "
+            f"one half-fringe ({halffringe:.3g} mas) of the inner edge"
+        )
+    if corr is not None and abs(corr) > max_correlation:
+        reasons.append(
+            f"the light there is correlated with the disk flux "
+            f"(|ρ| = {abs(corr):.2f})"
+        )
+    shown = "n/a" if corr is None else f"{corr:.2f}"
+    if reasons:
+        return Check(
+            "inner_edge",
+            "warn",
+            fraction,
+            [max_fraction, max_correlation],
+            _upper_first("; ".join(reasons))
+            + ": an unresolved core trades against the star's flux; "
+            "refit with a larger inner radius to test it.",
+        )
+    return Check(
+        "inner_edge",
+        "pass",
+        fraction,
+        [max_fraction, max_correlation],
+        f"{100 * fraction:.2g} per cent of the light is within one "
+        f"half-fringe of the inner edge (correlation with the flux {shown}).",
+    )
+
+
+def outer_edge(fraction, halffringe, *, warn=0.01):
+    """Light within one half-fringe of the outer edge of the model.
+
+    A proxy for light beyond the edge that the model cannot place; the
+    remedy is a larger outer radius.
+    """
+    if not _finite(fraction):
+        return Check(
+            "outer_edge",
+            "warn",
+            fraction,
+            warn,
+            "The light near the outer edge could not be computed.",
+        )
+    if fraction > warn:
+        return Check(
+            "outer_edge",
+            "warn",
+            fraction,
+            warn,
+            f"{100 * fraction:.2g} per cent of the model's light lies "
+            f"within one half-fringe ({halffringe:.3g} mas) of its outer "
+            "edge: light beyond it cannot be placed. Refit with a larger "
+            "r_out_mas.",
+        )
+    return Check(
+        "outer_edge",
+        "pass",
+        fraction,
+        warn,
+        f"{100 * fraction:.2g} per cent of the light is within one "
+        "half-fringe of the outer edge.",
+    )
+
+
+def inclination(inc, pa_sd, n_minima, *, minimum=15.0, max_pa_sd=45.0):
+    """Whether inclination and position angle are well determined.
+
+    Near face-on the position angle is undefined; it is then not quoted
+    with an uncertainty. A geometry grid with another comparable minimum
+    means the geometry is multimodal.
+
+    Parameters
+    ----------
+    inc : float
+        Inclination (degrees).
+    pa_sd : float or None
+        Laplace standard deviation of the position angle (degrees).
+    n_minima : int
+        Comparable minima of the geometry grid, the best included.
+    minimum : float, optional
+        Inclination (degrees) below which the position angle is
+        unconstrained.
+    max_pa_sd : float, optional
+        Standard deviation (degrees) of the position angle above which it
+        is unconstrained.
+    """
+    reasons = []
+    if not _finite(inc) or inc < minimum:
+        reasons.append(
+            f"the inclination is {float(inc):.3g}°, below {minimum:g}°, so "
+            "the position angle is unconstrained and is reported without an "
+            "uncertainty"
+        )
+    elif pa_sd is not None and (not _finite(pa_sd) or pa_sd > max_pa_sd):
+        reasons.append(
+            "the position angle's Laplace standard deviation is "
+            f"{float(pa_sd):.3g}°, so it is unconstrained"
+        )
+    if n_minima > 1:
+        reasons.append(
+            f"the geometry grid has {n_minima} comparable minima, so the "
+            "inclination and position angle are multimodal"
+        )
+    if reasons:
+        return Check(
+            "inclination",
+            "warn",
+            inc,
+            minimum,
+            _upper_first("; ".join(reasons)) + ".",
+        )
+    return Check(
+        "inclination",
+        "pass",
+        inc,
+        minimum,
+        f"Inclination {float(inc):.3g}° with a single minimum of the "
+        "geometry grid.",
+    )
+
+
+def absorbed_companion(
+    delta_chi2, delta_chi2_raised, degree, *, threshold=25.0
+):
+    """A compact companion that the disk may have absorbed.
+
+    ``delta_chi2`` is the improvement in χ² from adding a point source to
+    the best model, at the best position of a grid search on the residuals.
+    A significant point source remaining means the model does not hold it.
+    If a refit at harmonic ``degree`` + 1 removes it (``delta_chi2_raised``)
+    the source is ambiguous: it may be disk asymmetry that the current degree
+    cannot represent, or a disk of the higher degree may be flexible enough
+    to absorb a real compact source. Either is ``None`` when it was not
+    computed.
+    """
+    if delta_chi2 is None or not _finite(delta_chi2):
+        return Check(
+            "absorbed_companion",
+            "pass",
+            None,
+            threshold,
+            "The residuals were not searched for a point source.",
+        )
+    if delta_chi2 < threshold:
+        return Check(
+            "absorbed_companion",
+            "pass",
+            delta_chi2,
+            threshold,
+            f"No significant point source remains in the residuals "
+            f"(Δχ² = {delta_chi2:.3g}).",
+        )
+    removed = (
+        delta_chi2_raised is not None
+        and _finite(delta_chi2_raised)
+        and delta_chi2_raised < threshold
+    )
+    detail = (
+        f" Raising the harmonic degree from {degree} to {degree + 1} removes "
+        f"it (Δχ² = {delta_chi2_raised:.3g}): it may be asymmetry of the "
+        f"disk rather than a companion, or a disk of degree {degree + 1} can "
+        "absorb a compact source."
+        if removed
+        else ""
+    )
+    return Check(
+        "absorbed_companion",
+        "warn",
+        delta_chi2,
+        threshold,
+        f"A point source remains in the residuals (Δχ² = {delta_chi2:.3g})"
+        f".{detail}",
+    )
+
+
 def worst_status(checks):
     """The worst status among ``checks`` (``"pass"`` if there are none)."""
     rank = {status: i for i, status in enumerate(STATUSES)}

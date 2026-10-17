@@ -345,70 +345,45 @@ def polar_interpolate(values, r_min, spacing, r, theta, fill=0.0):
 
 
 class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
-    r"""A multipole-kernel residual field for an [`Image`][virgil.models.Image].
+    """A multipole-kernel residual field for an [`Image`][virgil.models.Image].
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The log-brightness of an Image is a Gaussian process on a polar grid
-    in the frame of a disk: ``n_r`` radii ``r_k`` from ``r_min_mas`` to
-    ``r_max_mas`` and ``n_theta`` azimuths, in the disk plane (deprojected
-    by ``inc``, rotated by ``pa`` and centred on ``(dra, ddec)``), then
-    interpolated onto the pixels. The prior is separable,
+    The log-brightness of an Image is a Gaussian process on a polar grid in the
+    frame of a disk: ``n_r`` radii from ``r_min_mas`` to ``r_max_mas`` and
+    ``n_theta`` azimuths in the disk plane (deprojected by ``inc``, rotated by
+    ``pa``, centred on ``(dra, ddec)``), interpolated onto the pixels. The prior is
+    separable, with a Matérn kernel in radius (that of
+    [`RadialGP`][virgil.models.RadialGP]) and a periodic Matérn kernel in azimuth
+    (that of [`MultipoleKernel`][virgil.models.MultipoleKernel]). A long
+    ``length_theta`` favours rings and arcs without imposing them, and a short
+    ``length_r`` allows radial structure such as gaps. Use it for emission that
+    the parametric [`MultipoleDisk`][virgil.models.MultipoleDisk] misses, instead
+    of a Cartesian [`GaussianField`][virgil.fields.GaussianField] that knows
+    nothing about the geometry.
 
-    $$\mathrm{Cov}[\eta(r, \theta), \eta(r', \theta')] =
-    \sigma^2\, k_r(|r - r'|;\, \ell_r)\, k_\theta(\Delta\theta;\, \ell_\theta),$$
-
-    with a Matérn kernel in radius (that of
-    [`RadialGP`][virgil.models.RadialGP]) and a periodic Matérn kernel in
-    azimuth, given by the spectral density that
-    [`MultipoleKernel`][virgil.models.MultipoleKernel] gives the harmonics of a
-    [`MultipoleDisk`][virgil.models.MultipoleDisk],
-    $S(m) \propto [1 + (m\,\ell_\theta)^2 / 2\nu_\theta]^{-\nu_\theta - 1/2}$
-    at the integer order $m$ ($\ell_\theta$ in radians, the angle
-    ``ell_theta / r`` of a ``MultipoleKernel``). A long ``length_theta`` favours rings
-    and arcs without imposing them, and a short ``length_r`` allows radial
-    structure such as gaps. Use it, in the frame of a
-    [`MultipoleDisk`][virgil.models.MultipoleDisk], for emission that the
-    parametric disk misses, as a residual field aligned with the disk,
-    instead of a Cartesian [`GaussianField`][virgil.fields.GaussianField]
-    that knows nothing about the geometry.
-
-    The parameters are whitened: independent standard-normal ``latent``
-    values, ``η = σ L_r Z F_θ`` with ``L_r`` the Cholesky factor of the radial
-    correlation and ``F_θ`` the (circulant) square root of the azimuthal one,
-    scaled so that ``σ`` is the standard deviation of the field on the grid.
-    Fitting the latents under a standard-normal prior
-    ([`image_priors`][virgil.imaging.image_priors]) is MAP estimation, and
-    [`log_evidence`][virgil.imaging.log_evidence] and the numpyro model work
-    as for a ``GaussianField``. Positivity is that of the Image: its
-    brightness is the softmax of ``η``. Beyond the polar grid (outside
-    ``r_max_mas``, or inside ``r_min_mas``) ``η`` falls to ``outside``
-    (default -20), so those pixels are dark and the Image's flux goes to the
-    grid's ellipse; a value of 0 would leave a flat background there that
-    the latents cannot remove. Give ``σ`` and the two lengths
+    The parameters are whitened, independent standard-normal ``latent`` values
+    (standard-normal priors from [`image_priors`][virgil.imaging.image_priors]),
+    scaled so that ``sigma`` is the standard deviation of the field on the grid.
+    [`log_evidence`][virgil.imaging.log_evidence] and the numpyro model work as for
+    a ``GaussianField``. The Image's brightness is the softmax of the field, which
+    falls to ``outside`` beyond the polar grid. Give ``sigma`` and the two lengths
     bounded log-uniform priors with
-    [`multipole_field_priors`][virgil.fields.multipole_field_priors], so that the
-    evidence is proper; their MAP values are biased (``fit`` warns).
-
-    ```python
-    field = MultipoleField(np.zeros((24, 32)), sigma=1.0, length_r=4.0,
-                       length_theta=1.0, inc=50.0, pa=30.0,
-                       image_shape=(64, 64), r_max_mas=40.0)
-    env = Image(field, pixel_scale_mas=1.5, flux=0.3)
-    ```
+    [`multipole_field_priors`][virgil.fields.multipole_field_priors]; their MAP
+    values are biased (``fit`` warns). The kernel, the tied geometry and the
+    fallback are in [Model notes](models/notes.md#multipolefield).
 
     Parameters
     ----------
     latent : array-like, shape (n_r, n_theta)
-        Whitened coefficients. ``n_r`` and ``n_theta`` set the resolution of
-        the polar grid (``n_theta`` should be about ``2π r_max_mas`` over
-        the pixel scale at most).
+        Whitened coefficients; their shape sets the polar grid (``n_theta`` need
+        be at most about ``2π r_max_mas`` over the pixel scale).
     image_shape : tuple of int
         ``(nrow, ncol)`` of the Image's pixel grid.
     r_max_mas : float
         Outermost radius of the polar grid in milliarcseconds, in the disk
-        plane. The field fades to zero over one node spacing beyond it.
+        plane; the field fades to zero over one node spacing beyond it.
     r_min_mas : float, optional
         Innermost radius (default 0).
     sigma : float or array-like, optional
@@ -419,62 +394,35 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     length_theta : float or array-like, optional
         Azimuthal correlation length in radians (default 1).
     inc, pa : float or array-like, optional
-        Inclination and position angle of the disk's projected major axis,
-        in degrees (North to East), in the Image's grid frame.
+        Inclination and position angle of the disk's projected major axis, in
+        degrees (North to East), in the Image's grid frame.
     dra, ddec : float or array-like, optional
-        Centre of the disk relative to the Image's centre, in
-        milliarcseconds (East and North positive).
-    nu : {0.5, 1.5, 2.5, inf}, optional
-        Smoothness of the radial Matérn kernel (default 1.5), and of the
-        azimuthal one unless ``nu_theta`` is given.
-    nu_theta : {0.5, 1.5, 2.5, inf} or None, optional
-        Smoothness of the azimuthal kernel (default: ``nu``).
+        Centre of the disk relative to the Image's centre, in milliarcseconds.
+    nu, nu_theta : {0.5, 1.5, 2.5, inf}, optional
+        Smoothness of the radial and azimuthal kernels (default 1.5;
+        ``nu_theta`` defaults to ``nu``).
     geometry_from : str or None, optional
-        Name of a sibling component of the [`System`][virgil.models.System]
-        (a [`MultipoleDisk`][virgil.models.MultipoleDisk], or anything with ``inc``,
-        ``pa``, ``dra`` and ``ddec``) whose geometry the field follows when
-        the System is evaluated (default ``None``: the field's own). See
-        Notes.
+        Name of a sibling component of the [`System`][virgil.models.System] (a
+        ``MultipoleDisk``, or anything with ``inc``, ``pa``, ``dra`` and ``ddec``)
+        whose geometry the field follows when the System is evaluated (default
+        ``None``: the field's own).
     mean : array-like, optional
         Positive template image of shape ``image_shape``, as for
         [`GaussianField`][virgil.fields.GaussianField] (default: flat).
     mean_floor : float, optional
         Floor on the template, as a fraction of its peak (default 1e-3).
     outside : float, optional
-        Log-brightness beyond the polar grid (default -20, effectively
-        dark).
+        Log-brightness beyond the polar grid (default -20, effectively dark; 0
+        would leave a flat background the latents cannot remove).
 
-    Notes
-    -----
-    By default the geometry parameters belong to the field: they are copies
-    of a ``MultipoleDisk``'s (see [`from_disk`][virgil.fields.MultipoleField.from_disk]),
-    and if both are fitted the caller must sample the same values for both.
-    With ``geometry_from="disk"`` they are tied instead. The field then has
-    no ``inc``, ``pa``, ``dra`` or ``ddec`` parameters (they are ``None``:
-    nothing to fit, no path to set), and when the enclosing ``System`` is
-    evaluated (``model``, ``render``, the likelihood, ``fit``,
-    ``log_evidence``) it takes the geometry of its sibling ``disk``, in the
-    Image's grid frame: ``inc`` and ``pa - rotation_deg`` of the disk, and the
-    disk's centre relative to the Image's, along the Image's rotated axes. The
-    gradient therefore flows into the disk's parameters. The ties are
-    resolved by [`System`][virgil.models.System], so they hold for siblings
-    of one System (not for a disk in another nested System), and the Image
-    is tied only inside a System: evaluated alone (``Image.brightness``,
-    or a regularizer given the bare Image) the field uses the fallback
-    geometry it was built with, which is also what ``from_disk`` stores.
-    `System.resolved` returns the
-    System with the ties baked in, for code that reads the pixels directly.
-    The pixel scale comes from the Image. The azimuth is measured from the
-    projected major axis towards ``pa + 90``, as for ``MultipoleDisk``'s harmonics.
-
-    References
-    ----------
-    The whitened Gaussian-process latents of a radial profile follow FRAP
-    (Yoshida et al. 2026, arXiv:2607.12618; https://github.com/tomyoshida/frap),
-    and the polar-grid representation of a disk's brightness follows frank
-    (Jennings et al. 2020, MNRAS 495, 3209;
-    https://github.com/discsim/frank). The code is a new implementation;
-    none was copied.
+    Examples
+    --------
+    ```python
+    field = MultipoleField(np.zeros((24, 32)), sigma=1.0, length_r=4.0,
+                           length_theta=1.0, inc=50.0, pa=30.0,
+                           image_shape=(64, 64), r_max_mas=40.0)
+    env = Image(field, pixel_scale_mas=1.5, flux=0.3)
+    ```
     """
 
     latent: jax.Array

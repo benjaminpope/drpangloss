@@ -64,15 +64,12 @@ def _check_same_shape(a, b):
 def resample(image, pixel_scale_mas, npix, new_pixel_scale_mas):
     """Resample an image onto a new grid, conserving flux.
 
-    The pixel fluxes are integrated exactly over the new pixels, treating
-    each old pixel as uniform, by linearly interpolating the cumulative flux
-    at the new pixel edges with
-    ``jax.scipy.ndimage.map_coordinates`` and differencing.
-    That is flux-conserving, and area-averages rather than aliases when the
-    new pixels are coarser. Both grids are centred on the same sky position
-    (the middle of the array, as in
-    [`pixel_offsets`][virgil._geometry.pixel_offsets]); flux outside the old
-    field is zero, and old flux outside the new field is dropped.
+    Each old pixel is treated as uniform and its flux integrated over the new
+    pixels (the cumulative flux interpolated at the new pixel edges, then
+    differenced), so coarser pixels area-average rather than alias. Both
+    grids are centred on the same sky position (the middle of the array);
+    flux outside the old field is zero, and old flux outside the new field
+    is dropped.
 
     Parameters
     ----------
@@ -232,17 +229,12 @@ def rms_convolved(
 def lawson_sigma_over_peak(image, truth):
     """The 2004 Beauty Contest figure of merit, σ over the peak.
 
-    Lawson et al. (2004), Eq. 2: with both images normalized to unit flux,
-    σ is the root of the mean squared difference weighted by the true flux,
-    ``σ² = Σ r (e - r)² / Σ r``, and the score is σ divided by the peak of
-    the truth. Smaller is better; 0 is a perfect reconstruction.
-
-    Both images are normalized to unit sum over the whole array, and only
-    then is the rms weighted by the truth. The weighting means pixels where
-    the truth is zero are not scored directly, but flux the reconstruction
-    puts in empty sky changes its flux on the source (the sum is fixed), so
-    it still affects σ indirectly. It can raise or lower σ: taking flux off
-    a source pixel that was too bright lowers it.
+    Lawson et al. (2004), Eq. 2: with both images normalized to unit sum,
+    ``σ² = Σ r (e - r)² / Σ r`` for the image ``e`` and truth ``r``, and the
+    score is σ divided by the peak of the truth. Smaller is better; 0 is a
+    perfect reconstruction. Pixels where the truth is zero are not scored
+    directly, but flux put there lowers the flux on the source (the sum is
+    fixed), so it still changes σ.
 
     Parameters
     ----------
@@ -314,8 +306,7 @@ def align(image, truth, max_shift_mas, pixel_scale_mas=None):
     if n < 1:
         return e, (0.0, 0.0)
     steps = onp.arange(-n, n + 1)
-    # Row i of the NCC table is the shift in rows, column j in columns. One
-    # compiled sweep over the shift table, in batches, not a call per shift.
+    # table[i, j]: NCC at a shift of i - n rows and j - n columns.
     pairs = onp.stack(onp.meshgrid(steps, steps, indexing="ij"), axis=-1)
     table = onp.asarray(
         _ncc_table(

@@ -747,9 +747,10 @@ def fit(
                     "'lbfgs')."
                 )
             steps = limit = max_steps or 2000
-            z, converged = _adam(
+            z = _adam(
                 problem, z0, traced_scale, np.asarray(learning_rate), steps
             )
+            converged = None
         else:
             raise ValueError(
                 f"method must be 'lm', 'lbfgs' or 'adam', not {method!r}."
@@ -1334,6 +1335,7 @@ def _capped_lbfgs(max_step_size, memory):
     )
 
 
+@eqx.filter_jit
 def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
     """L-BFGS steps from ``carry`` until step ``stop_at`` or a stop.
 
@@ -1398,16 +1400,6 @@ def _lbfgs_run(
     return carry, tolerance
 
 
-@eqx.filter_jit
-def _lbfgs_resume(
-    problem, carry, scale, stop_at, tolerance, step_size, memory
-):
-    """Continue ``_lbfgs_run`` from its carry, up to ``stop_at`` steps."""
-    return _lbfgs_loop(
-        problem, carry, scale, stop_at, tolerance, step_size, memory
-    )
-
-
 def _not_converged(method, stop, steps, limit, dtype, time_limit):
     """The warning for an unconverged fit, saying why it stopped."""
     if stop == "time":
@@ -1462,13 +1454,14 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     ``_RESTART_GAIN`` in the loss per data point.
     """
     limit, total, z, tolerance = int(max_steps), 0, z0, None
+    size = _LBFGS_ROUND
     while True:
         before = float(_loss_and_gradient(problem, z, scale)[0])
         z, steps, converged, stop, tolerance = _lbfgs_round(
             problem,
             z,
             scale,
-            min(_LBFGS_ROUND, limit - total),
+            min(size, limit - total),
             gtol,
             max_step_size,
             memory,
@@ -1479,28 +1472,12 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         total += steps
         # Only a round that used all its steps restarts: a stalled one
         # (the line search out of precision) or a timed-out or non-finite
-        # one ends the fit as it always did.
+        # one ends the fit.
         if converged or stop != "limit" or total >= limit:
-            break
+            return z, total, converged, stop
         gain = before - float(_loss_and_gradient(problem, z, scale)[0])
         if not gain > _RESTART_GAIN:  # also true of a NaN
-            # Little progress: no more restarts, but the rest of max_steps
-            # as one round, as before restarts were made.
-            z, steps, converged, stop, _ = _lbfgs_round(
-                problem,
-                z,
-                scale,
-                limit - total,
-                gtol,
-                max_step_size,
-                memory,
-                budget,
-                total,
-                tolerance,
-            )
-            total += steps
-            break
-    return z, total, converged, stop
+            size = limit  # little progress: the rest as one last round
 
 
 def _lbfgs_round(
@@ -1548,7 +1525,7 @@ def _lbfgs_round(
         ):
             stop = "time"
             break
-        carry = _lbfgs_resume(
+        carry = _lbfgs_loop(
             problem,
             carry,
             scale,
@@ -1577,7 +1554,7 @@ def _lbfgs_round(
 
 
 @eqx.filter_jit
-def _adam_run(problem, z0, scale, learning_rate, steps):
+def _adam(problem, z0, scale, learning_rate, steps):
     optimizer = optax.adam(learning_rate)
     grad = jax.grad(_scaled_loss(problem, scale))
 
@@ -1590,7 +1567,3 @@ def _adam_run(problem, z0, scale, learning_rate, steps):
         step, (z0, optimizer.init(z0)), None, length=steps
     )
     return z
-
-
-def _adam(problem, z0, scale, learning_rate, steps):
-    return _adam_run(problem, z0, scale, learning_rate, steps), None

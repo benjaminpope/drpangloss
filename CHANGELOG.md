@@ -39,6 +39,10 @@ Provisional in 0.4:
 
 ### Added
 
+- `OIData(..., insname=)` selects the instrument table(s) when reading an
+  OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
+  error message already told users to pass it.
+
 - `starting_orbits(batch_size=)` bounds the memory of the grid solve (the
   grid is solved in fixed-size batches).
 
@@ -262,6 +266,15 @@ Provisional in 0.4:
   and `DifferentialPhase.prior_width` are now NumPy arrays that jit traces,
   so scanning a prior width does not recompile. Read them with `tuple(...)`
   where you compared them with a tuple.
+- **Models simplification (no numerical change).** The long derivations and
+  accuracy notes in the docstrings of `virgil.models` and
+  `virgil.fields.MultipoleField` moved to the new
+  [model notes page](docs/api/models/notes.md); the docstrings keep the
+  summary, parameters and an example. The class shape checks
+  (`__check_init__` and `is_physical`) share one definition, and the ring
+  splatting of `TruncatedCone` and `MultipoleDisk` and the in-plane blur of
+  `ModulatedGaussianRim` and `MultipoleDisk` each share one helper. Results
+  are unchanged to rounding.
 
 ### Removed
 
@@ -511,7 +524,8 @@ Provisional in 0.4:
   warning, and `EpochPositions.gap` is gone (`gap_marginal` is the gap).
   `AliasResult.save` writes a `format` field (1); `load` reads files
   without it and refuses a newer format; `UNRECORDED` is no longer in
-  `virgil.aliases.__all__`.
+  `virgil.aliases.__all__`. `aliases.spectral_window` is removed (unused;
+  `|mean exp(2πi f t)|²` is one line of numpy).
 - **Orbit-search scorer.** `virgil.orbit_search.score_orbits(model,
   epochs, orbits, shared=SharedFlux(...), terms=(...), scales="marginal")`
   scores a stack of candidate orbits on all epochs in one compiled,
