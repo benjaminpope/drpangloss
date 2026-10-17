@@ -3,11 +3,11 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without running the code again. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
+A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without rerunning the code. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
 
-A pipeline adds no science. Every number it reports comes from a public virgil function that a tutorial also calls, so any result can be reproduced by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
+A pipeline adds no science: every number it reports comes from a public virgil function that a tutorial also calls, so you can reproduce any result by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
 
-Install the extra (it pulls in the plotting extra, `h5py`, `nbformat`, `nbclient` and `ipykernel`):
+Install the extra (it brings in the plotting extra, `h5py`, `nbformat`, `nbclient` and `ipykernel`):
 
 ```bash
 pip install 'virgil-astro[pipeline]'
@@ -34,7 +34,7 @@ model = res.model()         # the best-fit model, a real virgil object
 
 A pipeline takes the data, a model template, a run folder and keyword settings. Settings resolve as the class defaults (`BinaryPipeline.defaults()`), then a JSON config file (`BinaryPipeline.from_config(path)`), then keyword arguments. `run(through="limits")` stops after a stage, which is how a non-detection skips the fit and the sampler.
 
-A run resumes by default: a completed stage whose outputs exist is skipped, and once a stage reruns every later stage reruns. A resumed run refuses, with `ConfigMismatchError`, when the settings, the data hash or the model template differ from those stored in the folder. `run(resume=False)` starts again.
+A run resumes by default: a completed stage whose outputs exist is skipped, and once a stage reruns every later stage reruns. A resumed run raises `ConfigMismatchError` if the settings, the data hash or the model template differ from those stored in the folder. `run(resume=False)` starts again.
 
 ## The stages of `BinaryPipeline`
 
@@ -50,7 +50,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 
 The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position (`dra` and `ddec` on a box of half-width `max_sep_mas`) and log-uniform in flux and in error scales. Both templates sample the same `dra`, `ddec` and `flux`, so they give the same prior on the sky; a `BinaryModelAngular` template reports `sep` and `pa` derived from them, with no wrap at 0 or 360 degrees in the fit. The flux range is a setting (`flux_range`).
 
-The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets the parameters of the fit and the posterior.
+The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
 
 ## `StarPipeline`: stellar diameters
 
@@ -83,7 +83,7 @@ res = DiskPipeline(data, "rings", output="runs/rings", companion=True).run()
 res.summary["disk"], res.model(), res.model("geometry")
 ```
 
-`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
+`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is provisional: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
 
 - `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept.
 - `"rings"`: *N* [`GaussianRing`][virgil.models.GaussianRing] profiles that share the inclination and position angle, added one at a time (each starting at the radius of a one-ring scan) until the BIC stops improving or `max_rings` is reached; after each fit every ring is re-placed in turn (dropped, rescanned on a finer radius grid, everything refitted) and the result kept if the BIC falls (not if it leaves two rings closer than twice the narrower one's width or a half-fringe). A count with such a pair is one ring fitted as two, or a ring still to be found: it is left out of the comparison and the search goes on; a ring whose removal lowers the BIC (one parked at the inner radius with no light, say) is dropped after the fit, which ends the search, the pruned fit standing as the candidate of its own count; `ring_count` warns when such a count had the lower BIC. The Laplace evidence and the BIC of every count are reported and the count of least BIC is kept.
@@ -115,7 +115,7 @@ Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the positio
 | `quicklook.ipynb` | An executed notebook that reloads the folder and shows the figures and checks |
 | `quicklook.log` | The stderr of the quicklook's kernel, kept out of the terminal |
 
-Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pickles. Each file is written atomically, so a crash never leaves a half-written file under its final name, and nothing is written outside the run folder.
+Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pickles. Files are written atomically, so a crash never leaves a half-written file under its final name, and nothing is written outside the run folder.
 
 ## Reading a run: `load` and `Result`
 
@@ -136,7 +136,7 @@ Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pic
 
 ## Checks
 
-Checks are pure functions of plain numbers. The same run always gives the same checks, in a fixed order, each with a status of `pass`, `warn` or `fail`. The first is always the chi-squared per independent datum of the model on the quoted errors: a fitted error scale makes chi-squared close to one by construction, so it is never the headline number.
+Checks are pure functions of plain numbers, so the same run always gives the same checks in a fixed order, each with a status of `pass`, `warn` or `fail`. The first is always the chi-squared per independent datum of the model on the quoted errors: a fitted error scale makes chi-squared close to one by construction, so it is never the headline number.
 
 | Check | Warns | Fails |
 | --- | --- | --- |
@@ -165,7 +165,7 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised by a virgil function inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |
@@ -178,7 +178,7 @@ Deprecation notices are recorded in `warnings` but raise no check. The quicklook
 
 ## Stability
 
-The pipelines are **provisional in 0.4**: their constructor keywords, settings and defaults, stage names, `summary.json` keys, check names, thresholds and order, and file names may change in any 0.4.x release, without a deprecation. They are promoted to stable after a release of use. The tier is the class attribute `STABILITY` (`"provisional"`), written to `run.json` and `summary.json`; nothing warns at runtime. See [Stability](stability.md) for the tiers.
+The pipelines are provisional in 0.4: their constructor keywords, settings and defaults, stage names, `summary.json` keys, check names, thresholds and order, and file names may change in any 0.4.x release, without a deprecation. They are promoted to stable after a release of use. The tier is the class attribute `STABILITY` (`"provisional"`), written to `run.json` and `summary.json`; nothing warns at runtime. See [Stability](stability.md) for the tiers.
 
 What does not change under the provisional tier:
 
@@ -192,7 +192,7 @@ When a pipeline is promoted to stable, it keeps the following within a schema ve
 - the check names, their order and their thresholds;
 - the file names in the run folder.
 
-Changes to a stable pipeline are then additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
+After that, changes are additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
 
 Open before promotion: `global_nsigma` is a Šidák estimate with a nominal number of resolution elements, not a simulated false-alarm probability (the grid maxima are correlated, and the resolution element is anisotropic). It must be calibrated by simulation, or dropped from the summary keys and the `detection` check, before the pipelines become stable. Until then it is labelled an approximation in `summary.json` (`global_nsigma_method`).
 
@@ -218,7 +218,7 @@ virgil-pipeline validate runs/hd1234    # complete, and every file matches its h
 virgil-pipeline quicklook runs/hd1234   # rebuild the quicklook notebook
 ```
 
-`--set KEY=VALUE` overrides a setting (the value is parsed as JSON where it can be). `info` and `validate` read only JSON and hashes and do no JAX work, although `import virgil` still imports JAX.
+`--set KEY=VALUE` overrides a setting (the value is parsed as JSON where possible). `info` and `validate` read only JSON and hashes and do no JAX work, although `import virgil` still imports JAX.
 
 ## API reference
 
