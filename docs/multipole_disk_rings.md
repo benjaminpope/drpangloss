@@ -97,10 +97,22 @@ plt.show()
 ```
 
 ```text
+auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+  from .autonotebook import tqdm as notebook_tqdm
+```
+
+```text
+stats.py:24: SyntaxWarning: invalid escape sequence '\m'
+  Calculates the z-score $(\mu - x) / \sigma$ of a value given a mean and standard
+stats.py:46: SyntaxWarning: invalid escape sequence '\m'
+  Calculates the squared Mahalanobis distance $(\mu - x)^\top\Sigma^{-1}(\mu - x)$
+```
+
+```text
 planet: sky separation 14.40 mas, disk-plane radius 14.40 mas (rings at 4.5, 10.0, 21.5 mas)
 ```
 
-![multipole_disk_rings output 3.2](generated/multipole_disk_rings_cell003_out02.png)
+![multipole_disk_rings output 3.4](generated/multipole_disk_rings_cell003_out04.png)
 
 ## The parametric fit
 
@@ -144,11 +156,11 @@ chi2 = 572 for N = 567 independent data (chi2/N = 1.01), converged: True
     r1    4.500    4.465       0.072
     s1    1.300    1.296       0.169
     f1    0.150    0.165       0.015
-    t1 1500.000 1285.479      71.296
+    t1 1500.000 1285.476      71.295
     r2   10.000    9.940       0.122
     s2    1.500    1.519       0.130
     f2    0.250    0.277       0.015
-    t2  900.000  940.209      29.298
+    t2  900.000  940.208      29.298
     r3   21.500   21.488       0.029
     s3    2.400    2.403       0.042
     f3    0.500    0.454       0.019
@@ -425,7 +437,7 @@ For real data, use the two together: the Gaussian process to find structure and 
 
 ## As a pipeline
 
-Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving, and keeps the count of least BIC; `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only the choices made in this notebook: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 30 mas (the default is half the field of view, which cuts through the outer ring at 21.5 mas), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.4, 1 and 2 half-fringes of the longest baseline, about 1.4 to 2.1, 3.5 to 5.2 and 6.9 to 10.4 mas for a half-fringe of 2 to 3 mas, which brackets the 2 and 5 mas used above. Neither run samples: `posterior=True` would run NUTS with the geometry released.
+Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving (a count with two rings closer than twice the narrower one's width, or a half-fringe, is left out, and a ring whose removal lowers the BIC is dropped), and keeps the count of least BIC; `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only the choices made in this notebook: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 30 mas (the default is half the field of view, which cuts through the outer ring at 21.5 mas), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.4, 1 and 2 half-fringes of the longest baseline, about 1.4 to 2.1, 3.5 to 5.2 and 6.9 to 10.4 mas for a half-fringe of 2 to 3 mas, which brackets the 2 and 5 mas used above. Neither run samples: `posterior=True` would run NUTS with the geometry released.
 
 The pipelines find the rings and the planet without being told how many there are or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. They report $\chi^2/N$ on the quoted errors as the first check of each run.
 
@@ -459,7 +471,7 @@ print(gp_res.describe())
 ```
 
 ```text
-DiskPipeline run in /tmp/tmp81gjntus/rings_run: complete
+DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpf0pso3gu/rings_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -476,24 +488,26 @@ DiskPipeline run in /tmp/tmp81gjntus/rings_run: complete
   model.n_r_gp = 88
   model.n_channels = 9
   model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8073
+  geometry.inc_deg = 59.8072
   geometry.pa_deg = 107.725
   geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26434
+  geometry.sigma_mas = 4.26433
   geometry.flux = 0.880331
   geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788052
+  geometry.gp_sigma = 0.788053
   chi2.n_independent = 567
-  disk.n_rings = 4
-  disk.inc_deg = 50.2439
-  disk.pa_deg = 29.7421
-  [pass] chi2_reduced: χ²/N = 0.988 for the Gaussian rings fit on quoted errors: consistent with the quoted errors.
-  [warn] ring_count: With 4 rings: ring 1, 2, 3 is narrower than the half-fringe, so its width is not resolved.
+  disk.n_rings = 3
+  disk.inc_deg = 50.1075
+  disk.pa_deg = 29.9613
+  [pass] chi2_reduced: χ²/N = 1.01 for the Gaussian rings fit on quoted errors: consistent with the quoted errors.
+  [warn] ring_count: With 3 rings: ring 1, 3 is narrower than the half-fringe, so its width is not resolved.
   [pass] outer_edge: 0.17 per cent of the light is within one half-fringe of the outer edge.
-  [pass] inclination: Inclination 50.2° with a single minimum of the geometry grid.
-  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.99).
+  [pass] inclination: Inclination 50.1° with a single minimum of the geometry grid.
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 12.2).
+  [warn] stage_warnings: 1 warning(s) were raised inside the stages: The matrix to invert is not positive definite (the point is not a likelihood maximum, or a parameter is unconstrained); the result has negative or infinite variances.. See the 'warnings' list of summary.json.
+  1 warning(s) recorded in the compare stage(s) (see the checks, or Result.summary['warnings'])
 
-DiskPipeline run in /tmp/tmpek24rt8_/gp_run: complete
+DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmppamw7lw1/gp_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -510,13 +524,13 @@ DiskPipeline run in /tmp/tmpek24rt8_/gp_run: complete
   model.n_r_gp = 88
   model.n_channels = 9
   model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8073
+  geometry.inc_deg = 59.8072
   geometry.pa_deg = 107.725
   geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26434
+  geometry.sigma_mas = 4.26433
   geometry.flux = 0.880331
   geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788052
+  geometry.gp_sigma = 0.788053
   chi2.n_independent = 567
   disk.ell_mas = 1.31843
   disk.flux = 0.890231

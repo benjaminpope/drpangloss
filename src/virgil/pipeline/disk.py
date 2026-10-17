@@ -1239,6 +1239,31 @@ def _without_ring(values, k):
     return out
 
 
+def _unresolved_pairs(ctx, values, n):
+    """Pairs of the ``n`` rings closer than the data can tell apart.
+
+    Two rings are one feature, fitted as two, when their radii differ by
+    less than twice the narrower one's width (two equal Gaussians are
+    unimodal within 2σ; a narrow ring on a broad one is a second feature
+    however broad the other) or by less than a half-fringe (the
+    visibilities hold nothing finer). Both limits are lengths in the same
+    units as the radii, so the rule has no preferred scale beyond the data's
+    own. Returns ``(i, j, separation, limit)`` for each such pair, ``i < j``,
+    in mas.
+    """
+    pairs = []
+    for i in range(1, n + 1):
+        for j in range(i + 1, n + 1):
+            sep = abs(float(values[f"r{i}"]) - float(values[f"r{j}"]))
+            limit = max(
+                2.0 * min(float(values[f"s{i}"]), float(values[f"s{j}"])),
+                ctx.halffringe,
+            )
+            if sep < limit:
+                pairs.append((i, j, sep, limit))
+    return pairs
+
+
 def _backfit(p, shape, fit):
     """Re-place each ring in turn and keep what improves the fit.
 
@@ -1247,12 +1272,14 @@ def _backfit(p, shape, fit):
     each ring in turn this drops it, scans for the best radius of a ring added
     to the rest on a grid twice as fine as the first scan's, refits every
     parameter (geometry included) from there and keeps the result if the BIC
-    falls by more than ``_BACKFIT_MIN_GAIN``. A pass that changes nothing ends
-    it, as does ``_BACKFIT_PASSES``.
+    falls by more than ``_BACKFIT_MIN_GAIN`` and it leaves no more rings
+    unresolved from each other (``_unresolved_pairs``) than before. A pass
+    that changes nothing ends it, as does ``_BACKFIT_PASSES``.
 
     Returns ``(fit, steps)``; each step records the pass, the ring dropped and
     its radius, the scan's best radius and flux, the refit's χ², geometry and
-    radii, the BIC change (negative is better) and whether it was kept.
+    radii, the BIC change (negative is better), the number of unresolved pairs
+    of rings and whether it was kept.
     """
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     steps = []
@@ -1271,7 +1298,10 @@ def _backfit(p, shape, fit):
             )
             trial = _fit_rings(p, shape, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
-            accepted = d_bic < -_BACKFIT_MIN_GAIN
+            pairs = _unresolved_pairs(ctx, trial.values, shape.n)
+            accepted = d_bic < -_BACKFIT_MIN_GAIN and len(pairs) <= len(
+                _unresolved_pairs(ctx, fit.values, shape.n)
+            )
             steps.append(
                 {
                     "pass": sweep,
@@ -1287,6 +1317,7 @@ def _backfit(p, shape, fit):
                         for i in range(1, shape.n + 1)
                     ],
                     "delta_bic": d_bic,
+                    "n_unresolved": len(pairs),
                     "converged": trial.info.get("converged"),
                     "accepted": accepted,
                 }
@@ -1296,6 +1327,47 @@ def _backfit(p, shape, fit):
         if not improved:
             break
     return fit, steps
+
+
+def _prune(p, shape, fit):
+    """Drop every ring whose removal lowers the BIC, one at a time.
+
+    A greedy fit can end with a ring that carries no light (parked at the
+    inner radius, at the width floor and the flux floor): the data do not
+    want it, and a fit without it has the same χ² and fewer parameters. Each
+    ring in turn is dropped and the rest refitted from where they are; the
+    drop that lowers the BIC most is kept, and this repeats until none does.
+
+    Returns ``(fit, shape, dropped)``; each dropped ring is recorded with its
+    radius, width and flux and the BIC change (negative is better).
+    """
+    ctx, n_data = p._ctx(), int(p.processed.n_independent)
+    dropped = []
+    while shape.n > 1:
+        smaller = dataclasses.replace(shape, n=shape.n - 1)
+        best = None
+        for k in range(1, shape.n + 1):
+            held = _without_ring(_scalars(fit.values), k)
+            start = _ring_start(
+                ctx, held, smaller.n, None, ctx.degree, ctx.colour
+            )
+            trial = _fit_rings(p, smaller, start)
+            d_bic = _bic(trial, n_data) - _bic(fit, n_data)
+            if d_bic < 0 and (best is None or d_bic < best[2]):
+                best = (k, trial, d_bic)
+        if best is None:
+            break
+        k, trial, d_bic = best
+        dropped.append(
+            {
+                "r": float(fit.values[f"r{k}"]),
+                "s": float(fit.values[f"s{k}"]),
+                "f": float(fit.values[f"f{k}"]),
+                "delta_bic": d_bic,
+            }
+        )
+        fit, shape = trial, smaller
+    return fit, shape, dropped
 
 
 def _profile_rings(p):
@@ -1324,14 +1396,24 @@ def _profile_rings(p):
         )
         if search is not None:
             searches.append({"rings": n, **search})
+        fit, shape, dropped = _prune(p, shape, fit)
         previous = _scalars(fit.values)
-        name = f"rings_{n}"
+        # A ring that had to be dropped was one too many: the rings are used
+        # up. The pruned fit is the candidate for its own count (and replaces
+        # that count's earlier fit if it beats it).
+        count = shape.n
+        name = f"rings_{count}"
+        unresolved = _unresolved_pairs(ctx, fit.values, count)
+        earlier = next((c for c in candidates if c["n"] == count), None)
+        if earlier is not None and earlier["bic"] <= _bic(fit, n_data):
+            break
+        candidates = [c for c in candidates if c["n"] != count]
         _save_fit(
             p.output / "models" / name, fit, list(_ring_priors(ctx, shape))
         )
         candidates.append(
             {
-                "n": n,
+                "n": count,
                 "name": name,
                 "chi2": fit.chi2,
                 "chi2_reduced": fit.chi2 / n_data,
@@ -1339,10 +1421,24 @@ def _profile_rings(p):
                 "bic": _bic(fit, n_data),
                 "converged": fit.info.get("converged"),
                 "planet": shape.planet,
+                "unresolved": [list(pair) for pair in unresolved],
+                "pruned": dropped,
                 "backfit": steps,
             }
         )
-        if n > 1 and candidates[-1]["bic"] >= candidates[-2]["bic"]:
+        candidates.sort(key=lambda c: c["n"])
+        if dropped:
+            break
+        # A count with two rings too close to tell apart is one ring split
+        # in two (a profile that is not Gaussian) or a ring still to be
+        # found; `compare` leaves it out, and the search goes on from it. It
+        # stops when a count does not beat the last resolved one.
+        resolved = [c for c in candidates[:-1] if not c["unresolved"]]
+        if (
+            not unresolved
+            and resolved
+            and candidates[-1]["bic"] >= resolved[-1]["bic"]
+        ):
             break
     _plot_profile_fits(p, candidates, "n", "rings")
     return {"candidates": candidates, "searches": searches}
@@ -1773,7 +1869,18 @@ def _compare_rings(p):
                 "params": {k: flat[k] for k in names},
             }
         )
+    # A count with two rings too close to tell apart is one ring fitted as
+    # two (see ``_unresolved_pairs``): it does not compete. The first count
+    # is one ring and never has such a pair. Those with a lower BIC than the
+    # winner are reported: the data want a profile the rings cannot give.
+    split = [r for r in rows if r.get("unresolved")]
+    rows = [r for r in rows if not r.get("unresolved")]
     n_best = min(rows, key=lambda r: r["bic"])["n"]
+    split = [
+        r["n"]
+        for r in split
+        if r["bic"] < next(q for q in rows if q["n"] == n_best)["bic"]
+    ]
     evidences = {
         r["n"]: r["log_evidence"]
         for r in rows
@@ -1795,6 +1902,7 @@ def _compare_rings(p):
             "n_best": n_best,
             "preferred_by_bic": n_best,
             "preferred_by_evidence": by_evidence,
+            "split_counts": split,
             "rows": rows,
             "params": best["params"],
             "inc_deg": best["params"]["inc"],
@@ -2358,7 +2466,11 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         )
     else:
         by["ring_count"] = _checks.ring_count(
-            compare["n_best"], rows, hf, nats=settings["ring_count_nats"]
+            compare["n_best"],
+            rows,
+            hf,
+            nats=settings["ring_count_nats"],
+            split=compare["split_counts"],
         )
     by["outer_edge"] = _checks.outer_edge(
         compare["outer_fraction"], hf, warn=settings["outer_edge_fraction"]
