@@ -97,6 +97,8 @@ def test_changed_flags():
         "src/virgil/orbits.py",
         "tests/test_epochs.py",
         "tests/test_orbit_positions.py",
+        "src/virgil/pipeline/disk.py",
+        "tests/test_pipeline_disk.py",
     ):
         assert ci.changed_flags([path]) == (False, True), path
     # Subpackages, and tests that merely mention an orbit, do not count.
