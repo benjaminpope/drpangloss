@@ -1,6 +1,6 @@
 # Comparison with other packages
 
-This table records which features each package supports natively, as checked on 12 October 2026 against the code and documentation of virgil (commit `0771bcc`), PMOIRED (commit `b5a762e`, version 26.10.5), CANDID (commit `c255e90`, version 1.1.0), eht-imaging (commit `7acf089`, version 1.3.2), MPoL (commit `8850b48`, version 0.3.1) and fouriever (commit `0aaffe0`, version 0.4.15). It is a snapshot, and the packages differ in aim: virgil shares much of its scope with some and little with others. Corrections are welcome; please open an issue.
+Which features each package supports natively, checked on 12 October 2026 against the code and documentation of virgil (commit `0771bcc`), PMOIRED (commit `b5a762e`, version 26.10.5), CANDID (commit `c255e90`, version 1.1.0), eht-imaging (commit `7acf089`, version 1.3.2), MPoL (commit `8850b48`, version 0.3.1) and fouriever (commit `0aaffe0`, version 0.4.15). It is a snapshot, and the packages have different aims: virgil overlaps a lot with some and little with others. If you spot an error, please open an issue.
 
 | Feature | virgil | [PMOIRED](https://github.com/amerand/PMOIRED) | [CANDID](https://github.com/amerand/CANDID) | [eht-imaging](https://github.com/achael/eht-imaging) | [MPoL](https://github.com/MPoL-dev/MPoL) | [fouriever](https://github.com/kammerje/fouriever) |
 |:--|:-:|:-:|:-:|:-:|:-:|:-:|

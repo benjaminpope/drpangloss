@@ -1,8 +1,6 @@
 # Gaussian-process priors and information field theory
 
-virgil's Gaussian-process (GP) image prior, [`GaussianField`][virgil.fields.GaussianField], takes its main ideas from information field theory (IFT). IFT was developed by Torsten Enßlin's group, who implement it in the package NIFTy. IFT formulates Bayesian inference on fields in the language of statistical field theory, with terms such as Hamiltonian, propagator, source and free energy. That framing connects inference to methods from physics, such as perturbation theory, and it extends naturally to non-Gaussian and nonlinear problems. For Gaussian priors, though, many of its objects are the same as those of Gaussian-process regression, which statistics and machine learning describe in different terms (e.g. Rasmussen & Williams 2006). A reader who knows one vocabulary can therefore find it difficult to recognise the same ideas in the other, and to see how virgil relates to both. This page translates between them.
-
-This page is for two kinds of reader: those who know GPs and want to follow the IFT papers, and those who met IFT first and want to see what virgil does in GP terminology. It covers:
+virgil's Gaussian-process (GP) image prior, [`GaussianField`][virgil.fields.GaussianField], takes its main ideas from information field theory (IFT), developed by Torsten Enßlin's group and implemented in their package NIFTy. IFT casts Bayesian inference on fields in the language of statistical field theory (Hamiltonian, propagator, source, free energy), which connects it to physics methods such as perturbation theory and extends naturally to non-Gaussian, nonlinear problems. For Gaussian priors, though, many of its objects are those of Gaussian-process regression under other names (e.g. Rasmussen & Williams 2006), and a reader fluent in one vocabulary can struggle to recognize the same ideas in the other. This page translates between them, for readers who know GPs and want to follow the IFT papers, and for those who met IFT first. It covers:
 
 1. what virgil does, in GP terminology;
 2. a dictionary from IFT terms to GP terminology, with the corresponding virgil code;
@@ -11,7 +9,7 @@ This page is for two kinds of reader: those who know GPs and want to follow the 
 
 For a worked example, see [Imaging, part 3](imaging_gp.md).
 
-**In brief.** virgil puts a Gaussian-process prior on the logarithm of the image's brightness. The prior's covariance is a Matérn-like kernel in the image, with an amplitude σ and a correlation length ℓ in milliarcseconds. To make the computation cheap, the covariance is applied in the image's cosine (DCT) basis, where it is diagonal. The fitted parameters are standard-normal latent variables that this covariance maps to the image. σ and ℓ are chosen by maximizing the Bayesian evidence. In IFT's vocabulary, these are a "signal field" with a "power spectrum", written in "standardized coordinates", with hyperparameters chosen from the "partition function".
+**In brief.** virgil puts a Gaussian-process prior on the logarithm of the image's brightness. Its covariance is a Matérn-like kernel with an amplitude σ and a correlation length ℓ in milliarcseconds, applied cheaply in the image's cosine (DCT) basis, where it is diagonal. The fitted parameters are standard-normal latents that this covariance maps to the image, and σ and ℓ are chosen by maximizing the Bayesian evidence. In IFT's words: a "signal field" with a "power spectrum", in "standardized coordinates", with hyperparameters from the "partition function".
 
 ## What virgil does
 
@@ -21,10 +19,7 @@ An [`Image`][virgil.models.Image] has a log-brightness $\eta_i$ in each pixel $i
 
 $$b_i = F \, \frac{e^{\eta_i}}{\sum_j e^{\eta_j}},$$
 
-the softmax of η, with the sum taken over the pixels in the image's support. F is the image's total flux (the `flux` parameter). Two consequences follow:
-
-- every pixel is positive, whatever the value of η;
-- adding the same constant to every $\eta_i$ leaves the image unchanged.
+the softmax of η over the pixels in the image's support, where F is the total flux (the `flux` parameter). So every pixel is positive whatever η is, and adding the same constant to every $\eta_i$ leaves the image unchanged.
 
 ### The prior
 
@@ -32,69 +27,69 @@ the softmax of η, with the sum taken over the pixels in the image's support. F 
 
 $$\eta \sim \mathcal{N}\left(\log\left(\frac{\mu}{\max\mu} + \epsilon\right),\ \Sigma\right).$$
 
-The template μ is any positive image you supply (`mean`), such as a Gaussian of roughly the right size. ε (`mean_floor`, default $10^{-3}$) keeps the logarithm finite where the template is zero. With no template, the prior mean is zero, which is a flat image.
+The template μ is any positive image you supply (`mean`), such as a Gaussian of roughly the right size; ε (`mean_floor`, default $10^{-3}$) keeps the logarithm finite where it is zero. With no template the prior mean is zero, a flat image.
 
-The covariance Σ is **approximately stationary**: away from the image's edges, the covariance of the log-brightness in two pixels depends only on the separation between them, not on where they are. Near the edges it departs from this, because the edges are reflecting (see below). It has two hyperparameters, and both are defined in the image:
+The covariance Σ is **approximately stationary**: away from the edges, the covariance of two pixels' log-brightness depends only on their separation. Near the edges it departs from this, because the edges reflect (see below). Its two hyperparameters are both defined in the image:
 
-- **σ** (`sigma`) is the typical size of the departures of η from the template, in units of log-brightness. Precisely, σ² is the variance of η averaged over all pixels. A departure of 1 in η changes a pixel's brightness, relative to the rest of the image, by a factor of e ≈ 2.7.
-- **ℓ** (`length_mas`) is the correlation length in milliarcseconds. Pixels much closer together than ℓ brighten and fade together. Pixels much farther apart than ℓ vary independently.
+- **σ** (`sigma`) is the typical departure of η from the template, in log-brightness: σ² is the variance of η averaged over pixels. A departure of 1 changes a pixel's relative brightness by a factor of e ≈ 2.7.
+- **ℓ** (`length_mas`) is the correlation length in milliarcseconds. Pixels much closer than ℓ brighten and fade together; pixels much farther apart vary independently.
 
-The kernel is close to a Matérn kernel; the next section explains the difference. ℓ is the Matérn length scale 1/κ, which is not the separation at which the correlation falls to 1/e. For the default `order=2`, the continuum kernel's correlation is about 0.6 at a separation of ℓ, about 0.3 at 2ℓ and about 0.1 at 3ℓ. A prior with ℓ smaller than the interferometer's resolution allows structure the data cannot constrain; the evidence (below) is what decides.
+The kernel is close to Matérn (the next section explains the difference). ℓ is the Matérn length scale 1/κ, not the separation at which the correlation falls to 1/e: for the default `order=2`, the continuum correlation is about 0.6 at ℓ, 0.3 at 2ℓ and 0.1 at 3ℓ. A prior with ℓ below the interferometer's resolution allows structure the data cannot constrain; the evidence (below) decides.
 
 ### Computing with it
 
-An n × m image has nm pixels, so Σ is an nm × nm matrix. Storing it, let alone inverting it, is expensive. A stationary covariance avoids this, because it is diagonal in a Fourier basis, and virgil's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal in that basis is the **power spectrum**, which is the Fourier transform of the kernel.
+An n × m image has nm pixels, so Σ is an nm × nm matrix, expensive to store and more so to invert. A stationary covariance is diagonal in a Fourier basis, and virgil's nearly stationary one is exactly diagonal in a cosine basis. Its diagonal there is the **power spectrum**, the Fourier transform of the kernel.
 
-virgil uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge is adjacent to the right edge and strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so the image does not wrap around: opposite edges are no longer adjacent, and are only as correlated as their distance apart allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries. It is translation-invariant only far from the edges: near an edge, a pixel is correlated with its own mirror image across it, so its variance and correlations differ slightly from those in the interior. Writing C for the orthonormal DCT matrix, the covariance is
+virgil uses the cosine transform (DCT-II) rather than the FFT. The FFT treats the image as periodic, so the left edge sits next to the right edge and is strongly correlated with it. The DCT is the Fourier series of the image reflected at its edges, so opposite edges are only as correlated as their distance allows. The price is that this is the covariance of a Laplacian with reflecting (Neumann) boundaries, translation-invariant only far from the edges: near an edge a pixel is correlated with its own mirror image, so its variance and correlations differ slightly from the interior's. With C the orthonormal DCT matrix, the covariance is
 
 $$\Sigma = C^\top \mathrm{diag}(S)\, C, \qquad S_{jk} \propto \left(\frac{1}{\ell^2} + \lambda_{jk}\right)^{-\mathrm{order}}.$$
 
-Here (j, k) labels a cosine mode, and $\lambda_{jk}$ is the corresponding eigenvalue of the grid's Laplacian (the discrete second derivative). For an n × m grid of pixels h mas across,
+Here (j, k) labels a cosine mode and $\lambda_{jk}$ is its eigenvalue of the grid's Laplacian (the discrete second derivative). For an n × m grid of pixels h mas across,
 
 $$\lambda_{jk} = \left(\frac{2}{h}\right)^2 \left[\sin^2\frac{\pi j}{2n} + \sin^2\frac{\pi k}{2m}\right].$$
 
-For modes much coarser than a pixel, $\lambda_{jk} \approx q^2$, where q is the mode's angular wavenumber (in radians per mas). S is then the continuum Matérn spectrum, $(1/\ell^2 + q^2)^{-\mathrm{order}}$. At the finest scales the sines make S differ slightly from the continuum spectrum, which is why the kernel is "Matérn-like" rather than exactly Matérn.
+For modes much coarser than a pixel, $\lambda_{jk} \approx q^2$ with q the mode's angular wavenumber (radians per mas), and S is the continuum Matérn spectrum, $(1/\ell^2 + q^2)^{-\mathrm{order}}$. At the finest scales the sines make it differ slightly, which is why the kernel is "Matérn-like".
 
-Two adjustments complete S. Both are made in [`field_spectrum`][virgil.fields.field_spectrum]:
+[`field_spectrum`][virgil.fields.field_spectrum] makes two adjustments to S:
 
-- **Normalization.** S is rescaled so that the variance of η, averaged over pixels, is σ². This uses the fact that the DCT is orthonormal, so that the sum of the per-pixel variances equals the sum of the $S_{jk}$.
-- **The constant mode.** $S_{00}$, the variance of the mode that raises every pixel equally, is set to zero, because the softmax ignores it.
+- **Normalization.** S is rescaled so that the pixel-averaged variance of η is σ². Because the DCT is orthonormal, the per-pixel variances sum to the sum of the $S_{jk}$.
+- **The constant mode.** $S_{00}$, the variance of the mode that raises every pixel equally, is zero, because the softmax ignores it.
 
-Read in this way, S is not a second prior that acts "in frequency space". It is the same image-space kernel, written in the basis where its covariance matrix is diagonal. σ sets the overall height of S. ℓ sets its knee: S is flat for wavenumbers q ≲ 1/ℓ and falls as $q^{-2\,\mathrm{order}}$ above it, so structure finer than about ℓ is suppressed.
+So S is not a second prior acting "in frequency space". It is the same image-space kernel, written in the basis where its covariance is diagonal. σ sets the height of S and ℓ its knee: S is flat for q ≲ 1/ℓ and falls as $q^{-2\,\mathrm{order}}$ above it, suppressing structure finer than about ℓ.
 
-This Fourier space belongs to the image. It is not the interferometer's (u, v) plane, and the prior does not depend on which baselines were observed.
+This Fourier space belongs to the image, not to the interferometer's (u, v) plane, and the prior does not depend on which baselines were observed.
 
 ### Whitening
 
-The parameters that virgil fits are not the log-brightnesses η. They are **latent variables** z, one per cosine mode, each with an independent standard-normal prior. The field maps them to η by scaling each mode by its prior standard deviation $\sqrt{S_{jk}}$ and transforming back to pixels:
+virgil does not fit the log-brightnesses η but **latent variables** z, one per cosine mode, each with an independent standard-normal prior. The field scales each mode by its prior standard deviation $\sqrt{S_{jk}}$ and transforms back to pixels:
 
 $$\eta = \log\left(\frac{\mu}{\max\mu} + \epsilon\right) + C^\top\left(\sqrt{S} \odot z\right),$$
 
-where ⊙ is elementwise multiplication. If z ~ N(0, I), then η has exactly the prior above. Statisticians call this the **non-centred parameterization**; the machine-learning literature calls it **whitening**. It has three practical benefits:
+where ⊙ is elementwise multiplication. If z ~ N(0, I), η has exactly the prior above. Statisticians call this the **non-centred parameterization**; machine learning calls it **whitening**. It buys three things:
 
-- **The MAP fit is least squares.** The prior's negative log density is $\tfrac{1}{2}\lVert z\rVert^2$, a sum of squares, just like the data's $\tfrac{1}{2}\chi^2$. The whole objective is therefore a nonlinear least-squares problem, and [`fit`][virgil.fitting.fit] solves it with the Levenberg–Marquardt (LM) algorithm, which converges in a few dozen steps.
-- **The hyperparameters do not change the prior on the fitted parameters.** σ and ℓ appear only in the map from z to η, not in the prior on z. This is what makes it practical to sample σ and ℓ together with z. In the alternative "centred" form, the prior on η itself depends on σ and ℓ, and that coupling creates the funnel-shaped posteriors that defeat samplers.
-- **Directions the data do not constrain are already well scaled.** In those directions the posterior of z equals its prior, N(0, 1), so it has unit width in every such direction. This helps samplers such as NUTS (`likelihood.numpyro_model`), which work best when the posterior has a similar width in every direction.
+- **The MAP fit is least squares.** The prior's negative log density, $\tfrac{1}{2}\lVert z\rVert^2$, is a sum of squares like the data's $\tfrac{1}{2}\chi^2$, so [`fit`][virgil.fitting.fit] can solve the whole problem with Levenberg–Marquardt (LM) in a few dozen steps.
+- **The hyperparameters leave the prior on the fitted parameters alone.** σ and ℓ appear only in the map from z to η, so sampling them together with z is practical. In the "centred" form the prior on η depends on σ and ℓ, and that coupling creates the funnels that defeat samplers.
+- **Directions the data do not constrain are already well scaled.** There the posterior of z is its prior, N(0, 1), of unit width, which suits samplers such as NUTS (`likelihood.numpyro_model`).
 
 ### Choosing σ and ℓ
 
-The **evidence**, or marginal likelihood, is the probability of the data given σ and ℓ, with the image integrated over:
+The **evidence**, or marginal likelihood, is the probability of the data given σ and ℓ, with the image integrated out:
 
 $$Z(\sigma, \ell) = p(\mathrm{data} \mid \sigma, \ell) = \int p(\mathrm{data} \mid z)\, p(z)\, dz.$$
 
-It rewards hyperparameters under which the observed data are probable. A prior too tight to fit the data scores badly, and so does a prior so loose that it spreads its probability over many images the data rule out. [`log_evidence`][virgil.imaging.log_evidence] evaluates it with the Laplace approximation, which approximates the posterior by a Gaussian at the MAP:
+A prior too tight to fit the data scores badly, and so does one so loose that it spreads its probability over many images the data rule out. [`log_evidence`][virgil.imaging.log_evidence] evaluates it in the Laplace approximation, a Gaussian at the MAP:
 
 $$\log Z \approx -\tfrac{1}{2}\chi^2 - \tfrac{1}{2}\lVert z\rVert^2 - \tfrac{1}{2}\log\det\left(I + J^\top J\right),$$
 
-up to a constant that is the same for every σ and ℓ. Each quantity is evaluated at the MAP:
+up to a constant shared by every σ and ℓ. At the MAP:
 
 - χ² is the sum of the squared whitened residuals, (model − data)/error;
 - $\lVert z\rVert^2$ is the prior penalty;
-- J is the Jacobian of the whitened residuals with respect to z, so $J^\top J$ measures how strongly the data constrain each direction of z. The log-determinant is the Occam factor, which penalizes a prior that leaves many directions for the data to fix.
+- J is the Jacobian of the whitened residuals with respect to z, so $J^\top J$ measures how strongly the data constrain each direction. The log-determinant is the Occam factor, penalizing a prior that leaves many directions for the data to fix.
 
-The approximation is exact for a linear model with Gaussian noise. Choosing the σ and ℓ that maximize Z is called type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small; with `by_observable=True` it gives one scale per kind of observable (V², closure phases, fluxes), for data whose blocks are mis-calibrated by different factors. Alternatively, σ and ℓ can be given priors and sampled together with z.
+The approximation is exact for a linear model with Gaussian noise. Maximizing Z over σ and ℓ is type-II maximum likelihood, empirical Bayes, or MacKay's evidence framework. [`error_scale`][virgil.imaging.error_scale] applies the same framework to the noise level, to check whether the error bars are too large or too small; with `by_observable=True` it gives one scale per kind of observable (V², closure phases, fluxes), for blocks mis-calibrated by different factors. You can instead give σ and ℓ priors and sample them with z.
 
-**Several field images.** A compact and an extended component can each be a GP image in one `System`, so that their brightnesses add (a bright knot on a faint, smooth envelope), with the two fields' hyperparameters chosen by the evidence:
+**Several field images.** A compact and an extended component can each be a GP image in one `System`, so their brightnesses add (a bright knot on a faint, smooth envelope), with both fields' hyperparameters chosen by the evidence:
 
 ```python
 import jax
@@ -130,37 +125,37 @@ result = fit(scene, image_priors(scene) | flux_priors, data)
 log_evidence(result, data, path=None)
 ```
 
-`image_priors` gives each field Image its own standard-normal latents, and `log_evidence`, `error_scale` and `laplace_samples` take `path=None` for every field Image in the model, or a tuple of paths such as `("compact", "extended")`. J is then the Jacobian with respect to all the latents together, so the Occam factor includes the correlations between the two images (they can trade flux). The default `path="env"` is unchanged. `laplace_samples` returns `"latents"` as a dict keyed by image path when it draws more than one. Fluxes and the star stay at their MAP values in the evidence, so the evidence of a one-image and a two-image model differ in a term that is not counted: compare them with that in mind. The data constrain only the total brightness, so the split between the two images comes from their priors.
+`image_priors` gives each field Image its own standard-normal latents, and `log_evidence`, `error_scale` and `laplace_samples` take `path=None` for every field Image in the model, or a tuple of paths such as `("compact", "extended")`. J is then the Jacobian with respect to all the latents, so the Occam factor includes the correlations between the images (they can trade flux). The default `path="env"` is unchanged. `laplace_samples` returns `"latents"` as a dict keyed by image path when it draws more than one. Fluxes and the star stay at their MAP values in the evidence, so a one-image and a two-image model differ by an uncounted term: bear that in mind when comparing them. The data constrain only the total brightness, so the priors decide how it is split between the images.
 
 ### Relation to TSV and Gaussian Markov random fields
 
-Some imaging codes (e.g. Tiede et al. 2026, HIBI) use Gaussian Markov random field (GMRF) priors. These are usually described by "neighbouring pixels are correlated", which can make them look different from a kernel with a correlation length. They are not different. A GMRF is specified by its **precision matrix** Q = Σ⁻¹, the inverse of the covariance. Q is sparse: each pixel is coupled to its neighbours only. Its inverse Σ is dense: every pair of pixels is correlated, by an amount that decays with separation over a correlation length. "Only neighbours are coupled" describes Q, not Σ.
+Some imaging codes (e.g. Tiede et al. 2026, HIBI) use Gaussian Markov random field (GMRF) priors, usually described as "neighbouring pixels are correlated", which can make them sound different from a kernel with a correlation length. They are not. A GMRF is specified by its **precision matrix** Q = Σ⁻¹, which is sparse: each pixel is coupled only to its neighbours. Its inverse Σ is dense, with every pair of pixels correlated by an amount that decays over a correlation length. "Only neighbours are coupled" describes Q, not Σ.
 
-virgil's prior is a GMRF of this kind. Write κ = 1/ℓ, and let L be the grid's Laplacian matrix, defined by
+virgil's prior is such a GMRF. Write κ = 1/ℓ, and let L be the grid's Laplacian matrix, defined by
 
 $$\eta^\top L\, \eta = \frac{1}{h^2}\sum_{\text{neighbouring pairs } (i, j)} (\eta_i - \eta_j)^2,$$
 
-where the sum runs over horizontally and vertically adjacent pixels inside the image. This sum is the **total squared variation** (TSV) of η. Then:
+summed over horizontally and vertically adjacent pixels in the image: the **total squared variation** (TSV) of η. Then:
 
-- **With `order=1`,** Q is proportional to κ²I + L. With the prior mean $\bar\eta = \log(\mu/\max\mu + \epsilon)$ from the template, the negative log prior, $\tfrac{1}{2}(\eta - \bar\eta)^\top Q\, (\eta - \bar\eta)$, is therefore a weighted sum of an L2 penalty, $\kappa^2 \sum_i (\eta_i - \bar\eta_i)^2$, and the TSV of the departure η − η̄. The penalty acts on departures from the template, not on η itself; with no template, η̄ = 0. The DCT diagonalizes L exactly, with eigenvalues $\lambda_{jk}$, because both treat the image edges as reflecting. The equivalence is therefore exact, apart from the removed constant mode and the overall σ normalization.
-- **With `order=2`** (the default), Q is proportional to (κ²I + L)², which couples each pixel to its neighbours' neighbours. It is still sparse.
+- **With `order=1`,** Q is proportional to κ²I + L. With the template's prior mean $\bar\eta = \log(\mu/\max\mu + \epsilon)$, the negative log prior $\tfrac{1}{2}(\eta - \bar\eta)^\top Q\, (\eta - \bar\eta)$ is a weighted sum of an L2 penalty, $\kappa^2 \sum_i (\eta_i - \bar\eta_i)^2$, and the TSV of the departure η − η̄ (η̄ = 0 with no template). The DCT diagonalizes L exactly, with eigenvalues $\lambda_{jk}$, because both treat the edges as reflecting, so the equivalence is exact apart from the removed constant mode and the σ normalization.
+- **With `order=2`** (the default), Q is proportional to (κ²I + L)², which couples each pixel to its neighbours' neighbours and is still sparse.
 
-This is the link between Matérn kernels and GMRFs found by Lindgren, Rue & Lindström (2011). They showed that a Matérn field is the solution of a stochastic partial differential equation (SPDE),
+This is the link between Matérn kernels and GMRFs found by Lindgren, Rue & Lindström (2011): a Matérn field solves the stochastic partial differential equation (SPDE)
 
 $$(\kappa^2 - \nabla^2)^{\mathrm{order}/2}\, \eta = \text{white noise},$$
 
-and that discretizing the SPDE on a grid gives a sparse GMRF. The kernel's smoothness parameter is ν = order − d/2, where d = 2 is the dimension of the image. The default `order=2` therefore gives ν = 1. `order=1` gives ν = 0, an edge case. In the continuum, a ν = 0 field in two dimensions has infinite variance at every point: the variance grows logarithmically as the pixels shrink. virgil's σ normalization hides this, but the price is that the prior's correlation at a fixed separation then depends on the pixel size as well as on ℓ.
+and discretizing it on a grid gives a sparse GMRF. The smoothness parameter is ν = order − d/2 with d = 2, so the default `order=2` gives ν = 1. `order=1` gives ν = 0, an edge case: in the continuum such a field has infinite variance at every point, growing logarithmically as the pixels shrink. virgil's σ normalization hides this, at the price that the correlation at a fixed separation then depends on the pixel size as well as on ℓ.
 
 ## A dictionary of IFT terms
 
-The IFT papers write s for the signal (the unknown field), d for the data, R for the response (the forward model) and N for the noise covariance. For a linear model they write d = Rs + n, with prior s ~ N(0, S) and noise n ~ N(0, N). Two symbols mean different things on this page:
+The IFT papers write s for the signal (the unknown field), d for the data, R for the response (the forward model) and N for the noise covariance; for a linear model, d = Rs + n with prior s ~ N(0, S) and noise n ~ N(0, N). Two symbols clash with this page:
 
-- IFT's **S** is the prior covariance matrix, which this page calls **Σ**. This page's S is the diagonal of Σ in the DCT basis.
-- IFT's **D** is the posterior covariance. This page uses C, not D, for the DCT.
+- IFT's **S** is the prior covariance matrix, which this page calls **Σ**; here S is the diagonal of Σ in the DCT basis.
+- IFT's **D** is the posterior covariance; this page uses C for the DCT.
 
-IFT writes † for the adjoint, which for real matrices is the transpose ᵀ.
+IFT's † is the adjoint, for real matrices the transpose ᵀ.
 
-The "GP terminology" column follows Rasmussen & Williams (2006) where that book covers the concept, and the wider statistics and machine-learning literature otherwise (for example for variational inference). The "In virgil" column names the code that implements or corresponds to each object. In it, `env` stands for the name of an `Image` component in a `System`, and `field` for its `GaussianField`, so that `env.log_brightness` is `field`.
+The "GP terminology" column follows Rasmussen & Williams (2006) where it covers the concept, and the wider literature otherwise (for example for variational inference). In the "In virgil" column, `env` is the name of an `Image` component in a `System` and `field` its `GaussianField`, so `env.log_brightness` is `field`.
 
 | IFT / NIFTy term | GP terminology | In virgil |
 |---|---|---|
@@ -189,12 +184,12 @@ The "GP terminology" column follows Rasmussen & Williams (2006) where that book 
 
 Two terms are easy to misread:
 
-- **Field.** A field is a function on a continuous domain, such as the sky. In practice it is discretized on a grid. A Gaussian random field and a Gaussian process are the same mathematical object, a probability distribution over functions. "Random field" is the name used in spatial statistics and physics, "Gaussian process" the one used in machine learning.
-- **Free energy.** In statistical mechanics the free energy is −ln Z, minus the log of the partition function. IFT borrows the term. Variational inference approximates the posterior p(s | d) by a simpler distribution q, by minimizing $\mathrm{KL}(q \,\Vert\, p(s \mid d)) - \ln Z$, which is the negative ELBO. That quantity is also called the variational free energy. Since the KL divergence is never negative, it is at least −ln Z, and equal to it when q is the exact posterior.
+- **Field.** A function on a continuous domain such as the sky, in practice discretized on a grid. A Gaussian random field and a Gaussian process are the same object, a distribution over functions: "random field" is the name in spatial statistics and physics, "Gaussian process" in machine learning.
+- **Free energy.** In statistical mechanics, −ln Z. Variational inference approximates the posterior p(s | d) by a simpler q, minimizing $\mathrm{KL}(q \,\Vert\, p(s \mid d)) - \ln Z$, the negative ELBO, also called the variational free energy. Since the KL divergence is never negative, it is at least −ln Z, with equality when q is the exact posterior.
 
 ## Where virgil differs from NIFTy
 
-virgil takes two ideas from IFT: whitened latents, and a stationary field computed in a Fourier basis. It does not use the NIFTy package. Compared with NIFTy's standard prior for images, the "correlated field model", it differs in four ways:
+virgil takes two ideas from IFT, whitened latents and a stationary field computed in a Fourier basis, but does not use NIFTy. It differs from NIFTy's standard image prior, the "correlated field model", in four ways:
 
 | | virgil | NIFTy's correlated field |
 |---|---|---|
@@ -203,47 +198,47 @@ virgil takes two ideas from IFT: whitened latents, and a stationary field comput
 | Hyperparameters | chosen by the evidence on a grid (`log_evidence`), or sampled with NUTS (`numpyro_model`) | inferred together with the field, usually by MGVI or geoVI |
 | Posterior | the MAP (`fit`) with a Laplace approximation (a Gaussian centred on the MAP), or NUTS samples (`numpyro_model`) | samples from MGVI or geoVI |
 
-A fixed spectral shape has fewer hyperparameters, so it is quicker to fit and easier to interpret. A learned spectrum can adapt to structure on several scales at once, such as a compact core within a diffuse halo.
+A fixed spectral shape has fewer hyperparameters, so it is quicker to fit and easier to interpret. A learned spectrum adapts to structure on several scales at once, such as a compact core in a diffuse halo.
 
-The linear algebra is the same in both. In whitened coordinates the prior's curvature is the identity, so both codes build the matrix $J^\top J + I$. Each Levenberg–Marquardt step solves a system in this matrix to move towards the MAP, and `log_evidence` takes its log-determinant. MGVI uses its inverse as the covariance of a Gaussian approximation to the posterior, and draws samples from it.
+The linear algebra is shared. In whitened coordinates the prior's curvature is the identity, so both codes build $J^\top J + I$: each Levenberg–Marquardt step solves a system in it, `log_evidence` takes its log-determinant, and MGVI uses its inverse as the covariance of a Gaussian approximation to the posterior and samples from it.
 
 ## Further reading
 
-The GP references come first because they use the terminology of the rest of this page. Reading them first makes it easier to map the IFT papers onto it.
+The GP references come first, since they use this page's terminology and make the IFT papers easier to map onto it.
 
 **Gaussian processes**
 
-- Rasmussen & Williams 2006, *Gaussian Processes for Machine Learning*, MIT Press, [free online](https://gaussianprocess.org/gpml/). Chapter 2 covers GP regression, which IFT calls the Wiener filter. §4.2 covers the Matérn kernels, and chapter 5 the marginal likelihood and the choice of hyperparameters.
+- Rasmussen & Williams 2006, *Gaussian Processes for Machine Learning*, MIT Press, [free online](https://gaussianprocess.org/gpml/). Chapter 2 covers GP regression (IFT's Wiener filter), §4.2 the Matérn kernels, and chapter 5 the marginal likelihood and hyperparameters.
 
 **GMRFs and the SPDE link**
 
-- Lindgren, Rue & Lindström 2011, JRSS B 73, 423. This paper shows that Matérn fields are solutions of an SPDE, and that discretizing the SPDE gives a sparse GMRF. It connects the "neighbouring pixels" and "power spectrum" descriptions of the same prior.
-- Rue & Held 2005, *Gaussian Markov Random Fields: Theory and Applications*, Chapman & Hall/CRC. The standard textbook on GMRFs.
+- Lindgren, Rue & Lindström 2011, JRSS B 73, 423. Matérn fields as solutions of an SPDE whose discretization is a sparse GMRF, linking the "neighbouring pixels" and "power spectrum" descriptions of one prior.
+- Rue & Held 2005, *Gaussian Markov Random Fields: Theory and Applications*, Chapman & Hall/CRC. The standard textbook.
 
 **Evidence and hyperparameters**
 
-- MacKay 1992, Neural Computation 4, 415, "Bayesian interpolation". The evidence framework used by `log_evidence` and `error_scale`.
-- Bishop 2006, *Pattern Recognition and Machine Learning*, §3.5. A textbook account of the same framework.
+- MacKay 1992, Neural Computation 4, 415, "Bayesian interpolation". The evidence framework behind `log_evidence` and `error_scale`.
+- Bishop 2006, *Pattern Recognition and Machine Learning*, §3.5. A textbook account.
 
 **Whitening and the non-centred parameterization**
 
 - Papaspiliopoulos, Roberts & Sköld 2007, Statistical Science 22, 59. Centred and non-centred parameterizations of hierarchical models, and when each works better.
-- Betancourt & Girolami, [arXiv:1312.0906](https://arxiv.org/abs/1312.0906), "Hamiltonian Monte Carlo for hierarchical models". Why the centred form produces funnels that defeat samplers, and how the non-centred form avoids them.
+- Betancourt & Girolami, [arXiv:1312.0906](https://arxiv.org/abs/1312.0906), "Hamiltonian Monte Carlo for hierarchical models". Why the centred form makes funnels and how the non-centred form avoids them.
 
 **Information field theory**
 
 Read these with the dictionary above to hand.
 
-- Enßlin, Frommert & Kitaura 2009, PRD 80, 105005, [arXiv:0806.3474](https://arxiv.org/abs/0806.3474). The founding paper. It introduces the Hamiltonian, information source, propagator and Wiener filter.
-- Enßlin 2019, Annalen der Physik 531, 1800127, [arXiv:1804.03350](https://arxiv.org/abs/1804.03350), "Information theory for fields". A review of IFT.
+- Enßlin, Frommert & Kitaura 2009, PRD 80, 105005, [arXiv:0806.3474](https://arxiv.org/abs/0806.3474). The founding paper: Hamiltonian, information source, propagator and Wiener filter.
+- Enßlin 2019, Annalen der Physik 531, 1800127, [arXiv:1804.03350](https://arxiv.org/abs/1804.03350), "Information theory for fields". A review.
 - Knollmüller & Enßlin 2019, [arXiv:1901.11033](https://arxiv.org/abs/1901.11033). MGVI.
 - Frank, Leike & Enßlin 2021, Entropy 23, 853, [arXiv:2105.10470](https://arxiv.org/abs/2105.10470). geoVI.
-- Edenhofer et al. 2024, JOSS 9, 6593, [arXiv:2402.16683](https://arxiv.org/abs/2402.16683). NIFTy.re, the JAX version of NIFTy, subtitled "a library for Gaussian processes and variational inference".
+- Edenhofer et al. 2024, JOSS 9, 6593, [arXiv:2402.16683](https://arxiv.org/abs/2402.16683). NIFTy.re, the JAX version of NIFTy, "a library for Gaussian processes and variational inference".
 - The [NIFTy documentation](https://ift.pages.mpcdf.de/nifty/user/index.html), including its guide to the correlated field model.
 
 **Imaging applications**
 
 - Junklewitz et al. 2016, A&A 586, A76, [arXiv:1311.5282](https://arxiv.org/abs/1311.5282). RESOLVE, an IFT imaging algorithm for radio interferometry.
-- Arras et al. 2022, Nature Astronomy 6, 259, [arXiv:2002.05218](https://arxiv.org/abs/2002.05218). Imaging M87* with resolve. The Methods section describes the correlated field model.
-- Tiede et al. 2026, ApJ 997, 262, [arXiv:2511.17706](https://arxiv.org/abs/2511.17706). HIBI: GMRF priors for VLBI imaging, implemented in Comrade.jl.
-- Thiébaut & Young 2017, JOSA A 34, 904, [arXiv:1708.08390](https://arxiv.org/abs/1708.08390). A tutorial on image reconstruction in optical interferometry, which treats quadratic regularizers as Gaussian priors.
+- Arras et al. 2022, Nature Astronomy 6, 259, [arXiv:2002.05218](https://arxiv.org/abs/2002.05218). Imaging M87* with resolve; the Methods describe the correlated field model.
+- Tiede et al. 2026, ApJ 997, 262, [arXiv:2511.17706](https://arxiv.org/abs/2511.17706). HIBI: GMRF priors for VLBI imaging, in Comrade.jl.
+- Thiébaut & Young 2017, JOSA A 34, 904, [arXiv:1708.08390](https://arxiv.org/abs/1708.08390). A tutorial on image reconstruction in optical interferometry, treating quadratic regularizers as Gaussian priors.

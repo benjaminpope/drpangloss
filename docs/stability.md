@@ -3,14 +3,14 @@
 virgil has two tiers.
 
 - **Stable**: a change needs a deprecation cycle. A release keeps accepting the old form and warns before the new one replaces it.
-- **Provisional**: the name, signature, defaults and output may change in any 0.4.x release without a deprecation. Provisional features are new, and are still settling.
+- **Provisional**: new features still settling. The name, signature, defaults and output may change in any 0.4.x release without a deprecation.
 
-Everything public that is not listed below is stable. A provisional page or API entry carries this notice:
+Everything public not listed below is stable. Provisional pages and API entries carry this notice:
 
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-Nothing warns at runtime: the tier is in the documentation and in each provisional module's `__provisional__` tuple, which a test checks. A new public feature starts provisional; promotion to stable is decided at a release.
+Nothing warns at runtime. The tier lives in the documentation and in each module's `__provisional__` tuple, which a test checks. New public features start provisional and are promoted at a release.
 
 ## Provisional in 0.4
 
@@ -27,4 +27,4 @@ Nothing warns at runtime: the tier is in the documentation and in each provision
 
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md).
 
-The authoritative list is the `__provisional__` tuple in each module (`("*",)` means the whole module). It is checked by `tests/test_stability.py`.
+The authoritative list is each module's `__provisional__` tuple (`("*",)` means the whole module), checked by `tests/test_stability.py`.
