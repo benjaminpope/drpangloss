@@ -366,7 +366,10 @@ contributors page; no code was copied)
   length scale of largest Laplace evidence from `ell_halffringes`;
   `model="rings"` adds `GaussianRing` profiles that share the inclination
   and position angle one at a time until the BIC stops improving, re-placing
-  each ring after every fit. The geometry is found from a single-ring grid
+  each ring after every fit (a count with two rings too close to tell apart
+  is one ring fitted as two and is left out of the comparison, a ring whose
+  removal lowers the BIC is pruned, and the `ring_count` check warns when
+  such a count had the lower BIC). The geometry is found from a single-ring grid
   over inclination (uniform in cos *i*) and position angle, never from one
   local start; `companion=True` searches the residuals for a point source
   and fits a detection jointly with the disk (the residuals are always
