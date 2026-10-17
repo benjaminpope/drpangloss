@@ -616,6 +616,8 @@ contributors page; no code was copied)
   in 0.5); `old_order` and `renamed` accept the old keyword names with a
   `FutureWarning`, and passing an old name with its new one is a
   `TypeError`.
+- **The `optimistix` floor is 0.1.0** (was 0.0.11): `fit(method="lm")` needs a
+  loop that stops on an unsuccessful result, which 0.0.11 did not.
 - Tests and tooling: `import jax.numpy as np` and `import numpy as onp`
   everywhere in `src`, `tests`, `examples` and `scripts`, enforced by Ruff's
   `ICN001` (six `src` modules had the two swapped, so code moved between
