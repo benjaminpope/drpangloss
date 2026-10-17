@@ -7,7 +7,7 @@ Images rarely stand alone. The scenes interferometers observe often mix unresolv
 
 **The rule of thumb is that unresolved things are analytic, and resolved emission goes in the pixels.**
 
-This tutorial shows why that rule matters. The scene is a post-AGB-like system: a binary star inside an inclined, lopsided ring of dust. It is observed at the VLTI in H band, like PIONIER. The image is a Gaussian-process field as in part 3. The steps are:
+This tutorial shows why. The scene is a post-AGB-like system: a binary star inside an inclined, lopsided ring of dust, observed at the VLTI in H band, like PIONIER. The image is a Gaussian-process field as in part 3. The steps are:
 1. Fit with one star. The companion is not in the model, so the image has to fake it with a knot of bright pixels.
 2. Use that knot to locate the companion, then fit the binary and the image together.
 3. Compare the two fits, which match the data almost equally well, and see how the evidence tells them apart.
@@ -75,7 +75,7 @@ The first model is the usual star-plus-image `System`:
 - an `Image` whose log-brightness is a `GaussianField` about a broad ring template;
 - a hole of half a beam under the star.
 
-σ and ℓ are fixed here at values chosen from the evidence; part 3 shows how. The image's flux is fitted along with its pixels.
+σ and ℓ are fixed at values chosen from the evidence, as in part 3. The image's flux is fitted along with its pixels.
 
 ```python
 hole = circular_support(npix, scale, fov, 0.5 * resolution.minor_mas)
@@ -98,7 +98,7 @@ one star: converged True, chi2 per point 0.938, image flux 0.443 (ring truth 0.3
 
 ## Finding the companion
 
-The companion is unresolved but not at the origin, so its signature is real closure phase. With no companion in the model, the image reproduces that signal with a compact knot of bright pixels. The knot also says where the companion is: its brightest pixel gives a starting position. The binary model then adds a second `PointSource`, with its flux and offset free, and fits it together with the image.
+The companion is unresolved but not at the origin, so its signature is real closure phase. With no companion in the model, the image reproduces that signal with a compact knot of bright pixels, and the brightest pixel gives a starting position for the companion. The binary model then adds a second `PointSource` with its flux and offset free, and fits it together with the image.
 
 ```python
 image = onp.asarray(single_fit.model.env.render(npix, fov))
@@ -159,9 +159,9 @@ plt.show()
 
 ## Which model do the data prefer?
 
-χ² cannot tell the two models apart: an image is flexible enough to absorb an unresolved companion, so both fit the data about equally well. The prior can. A knot of bright pixels is improbable under a smooth GP prior, because it needs large latents, whereas a point source costs only three parameters.
+χ² cannot tell the two models apart: an image is flexible enough to absorb an unresolved companion, so both fit the data about equally well. The prior can. A knot of bright pixels is improbable under a smooth GP prior because it needs large latents, whereas a point source costs only three parameters.
 
-The evidence weighs both effects. `log_evidence` computes it for the image, with the other parameters, here the stars, held at their best-fit values. That leaves out the Occam penalty for the companion's three extra parameters, a few units of log evidence. Differences much larger than that are decisive.
+The evidence weighs both effects. `log_evidence` computes it for the image, with the other parameters (here the stars) held at their best-fit values. That leaves out the Occam penalty for the companion's three extra parameters, a few units of log evidence, so differences much larger than that are decisive.
 
 ```python
 for name, r in (("one star", single_fit), ("binary", binary_fit)):
@@ -180,9 +180,9 @@ binary   : chi2    501.9, |z|²    19.4, log evidence   -388.9
 
 When an image sits next to analytic sources, what is analytic and what is in the pixels matters:
 - **What goes wrong.** An unresolved companion left out of the model is absorbed by the image as a knot, which distorts the extended emission around it.
-- **The fix.** Composing the scene as a `System` of `PointSource`s and an `Image` puts the companion where it belongs. The knot itself gives its starting position, and the fit measures its flux and offset alongside the ring.
-- **Choosing between models.** χ² barely changes between the two, so the image's prior, through the evidence, is what prefers the right model.
+- **The fix.** Composing the scene as a `System` of `PointSource`s and an `Image` puts the companion where it belongs. The knot gives its starting position, and the fit measures its flux and offset alongside the ring.
+- **Choosing between models.** χ² barely changes between the two, so the image's prior, through the evidence, prefers the right model.
 
-The same composition works with any analytic component: disks, rims, resolved backgrounds and spectra (`virgil.spectra`). It works for real data too: the SPARCO-style analyses of PIONIER data in the companion notebooks follow this pattern.
+The same composition works with any analytic component: disks, rims, resolved backgrounds and spectra (`virgil.spectra`). It works for real data too; the SPARCO-style analyses of PIONIER data in the companion notebooks follow this pattern.
 
-Part 5 goes beyond the single MAP image, and samples the posterior to map each pixel's uncertainty.
+Part 5 goes beyond the single MAP image and samples the posterior to map each pixel's uncertainty.

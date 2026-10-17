@@ -1,13 +1,13 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_rml.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 2: regularised maximum likelihood
 
-Part 1 simulated AMI data of a lopsided ring of dust next to a star. This part reconstructs the ring from those data, step by step, using **regularised maximum likelihood** (RML).
+Part 1 simulated AMI data of a lopsided ring of dust next to a star. This part reconstructs the ring from those data using **regularized maximum likelihood** (RML).
 
-An image has far more pixels than an interferometer has independent measurements, so many images fit the data equally well. RML picks one by minimising
+An image has far more pixels than an interferometer has independent measurements, so many images fit the data equally well. RML picks one by minimizing
 
 $$\mathcal{L}(\text{image}) = \tfrac{1}{2}\chi^2(\text{image}) + w\,R(\text{image}),$$
 
-where χ² measures the misfit to the data and R is a **regulariser**: a penalty that prefers some images over others. This tutorial uses maximum entropy, which prefers smooth, positive images close to a flat default. The weight w sets the balance between the two terms. Too small a weight and the image fits the noise. Too large and it is smoothed into whatever the regulariser prefers.
+where χ² measures the misfit to the data and R is a **regularizer**, a penalty that prefers some images over others. We use maximum entropy, which prefers smooth, positive images close to a flat default. The weight w sets the balance: too small and the image fits the noise, too large and it is smoothed into whatever the regularizer prefers.
 
 The steps are:
 1. look at the dirty image and the beam, to see what the data can resolve;
@@ -69,9 +69,9 @@ beam 154 × 131 mas; Nyquist pixel 84 mas; interferometric field of view 3300 ma
 
 ## The dirty image and the beam
 
-The simplest image is the **dirty image**, the inverse Fourier transform of the data with every unmeasured frequency set to zero. virgil's `dirty_image` computes it by least squares from the data's uv samples. Passing the star's flux ratio (`flux_ratio`) removes the star, so that only the extended emission is left.
+The simplest image is the **dirty image**, the inverse Fourier transform of the data with every unmeasured frequency set to zero. virgil's `dirty_image` computes it by least squares from the data's uv samples. Passing the star's flux ratio (`flux_ratio`) removes the star, leaving only the extended emission.
 
-The dirty image is the truth convolved with the **dirty beam**, the response to a point source. The beam's core sets the resolution. `beam(data)` approximates that core by an ellipse; its FWHM is shaded in the lower-left corner of every reconstructed image. The dirty image shows the ring, but it is not the answer: it is blurred by the beam, and its sidelobes add negative and spurious structure. Subtracting a star that is 20 times brighter than the ring also amplifies any small error in the data's normalisation. So `dirty_image` removes the star by subtracting the best-fitting point source rather than a fixed one.
+The dirty image is the truth convolved with the **dirty beam**, the response to a point source. The beam's core sets the resolution; `beam(data)` approximates it by an ellipse, and its FWHM is shaded in the lower-left corner of every reconstructed image. The dirty image shows the ring but is not the answer: it is blurred by the beam, and its sidelobes add negative and spurious structure. A star 20 times brighter than the ring also amplifies any small error in the data's normalization, so `dirty_image` subtracts the best-fitting point source rather than a fixed one.
 
 ```python
 dirty = dirty_image(data, npix, pixel_scale, flux_ratio=0.05)
@@ -90,7 +90,7 @@ The fit needs a starting image, and `starting_image` builds one from the data:
 - **A parametric fit.** It fits a star plus a circular Gaussian envelope, and uses the envelope's flux and width.
 - **A pixel grid.** The pixel scale is a quarter of the Nyquist pixel, and the field of view spans six envelope widths (and at least four resolution elements), but no more than the interferometric field of view (here capped at the truth's field).
 - **A hole under the star.** `hole_mas` cuts a hole of half a beam in the image's support there. Extended flux that close to the star is nearly indistinguishable from the star's own light, so without a hole the fit can trade one against the other.
-- **The starting pixels.** `start="moments"` takes them from the fitted Gaussian. `start="dirty"` takes the positive part of the dirty image instead, which already has the right shape when the coverage is good, as it is here.
+- **The starting pixels.** `start="moments"` takes them from the fitted Gaussian. `start="dirty"` takes the positive part of the dirty image, which already has the right shape when the coverage is good, as it is here.
 
 A star and an `Image` together make a `System`. The analytic star also fixes the image's position, which the closure phases alone cannot.
 
@@ -107,9 +107,9 @@ plt.show()
 
 ## One regularised fit
 
-`fit` minimises the loss above:
-- Its free parameters are the keys of the priors dict. `image_priors` gives flat priors on the image's log-brightness, so only the data and the regulariser constrain the pixels.
-- The brightness is the softmax of the log-brightness, so it stays positive and sums to one. The image's flux is a separate parameter, and is fitted too.
+`fit` minimizes the loss above:
+- Its free parameters are the keys of the priors dict. `image_priors` gives flat priors on the image's log-brightness, so only the data and the regularizer constrain the pixels.
+- The brightness is the softmax of the log-brightness, so it stays positive and sums to one. The image's flux is a separate parameter and is fitted too.
 - Maximum entropy has no least-squares form, so `fit` uses L-BFGS. It reports whether it converged, and runs in float64 by default.
 
 Here is one fit, at w = 100.
@@ -127,8 +127,8 @@ converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 
 
 ## Choosing the weight: the L-curve and the discrepancy principle
 
-`l_curve` fits the image at a sequence of weights, from strong to weak, each fit starting from the previous one. It records χ² and the unweighted penalty R of each fit. Two criteria read a weight off the sweep:
-- **The discrepancy principle** (`LCurve.discrepancy`) chooses the weight at which χ² per data point reaches one. That is how well the truth itself fits noisy data, so it regularises as strongly as the data allow. It relies on correct error bars.
+`l_curve` fits the image at a sequence of weights, from strong to weak, each fit starting from the previous one, and records χ² and the unweighted penalty R of each. Two criteria read a weight off the sweep:
+- **The discrepancy principle** (`LCurve.discrepancy`) chooses the weight at which χ² per data point reaches one. That is how well the truth itself fits noisy data, so it regularizes as strongly as the data allow. It relies on correct error bars.
 - **The corner** (`LCurve.corner`) is where the curve of log χ² against log R bends most sharply. It needs no error bars, but the corner of a coarse or noisy sweep is itself noisy.
 
 Here both starting images are swept, and the two criteria are marked on each curve.
@@ -160,7 +160,7 @@ start="dirty" converged at each weight: 3.16e+03: True, 1.78e+03: True, 1e+03: T
 
 ## Too much, about right, too little
 
-A good weight sits in a range, not at a point. Here are three fits from the moments sweep: a decade more regularised than the discrepancy weight, at it, and a decade less. Too much regularisation blurs the ring into a smooth halo. Too little lets the image fit the noise, and it breaks into speckles.
+A good weight sits in a range, not at a point. Here are three fits from the moments sweep: a decade more regularized than the discrepancy weight, at it, and a decade less. Too much regularization blurs the ring into a smooth halo; too little lets the image fit the noise, and it breaks into speckles.
 
 ```python
 curve = curves["moments"]
@@ -178,7 +178,7 @@ plt.show()
 
 ## The result, and the two starting images
 
-Each sweep's fit nearest its discrepancy weight is shown with the beam shaded, and below it the signed difference from the truth. These are maximum a posteriori images with no uncertainties, so the residuals are not z-scores. The two starting images converge to nearly the same reconstruction, which is a good sign that the fit has found the optimum rather than stopping near its start.
+Each sweep's fit nearest its discrepancy weight is shown with the beam shaded, and below it the signed difference from the truth. These are maximum a posteriori images with no uncertainties, so the residuals are not z-scores. The two starting images converge to nearly the same reconstruction, a good sign that the fit has found the optimum rather than stopping near its start.
 
 ```python
 def ncc(a, b):
@@ -204,15 +204,13 @@ plt.show()
 
 ## Checking the result
 
-`diagnose` checks a reconstruction for common problems:
+`diagnose` checks a reconstruction for common problems and warns when a check fails:
 - χ² per point for each dataset;
 - whether something anchors the image's position, here the star;
 - the pixel scale against the Nyquist pixel;
 - flux at the edge of the field, a sign that the field is too small;
 - the image's centroid;
 - how much worse χ² gets when the image is turned by 180°. A large value means the closure phases fix the orientation.
-
-It warns when a check fails.
 
 ```python
 print(diagnose(final["moments"], data))
@@ -234,7 +232,7 @@ No warnings.
 
 ## Summary
 
-RML turns the reconstruction into an optimisation of ½χ² + wR:
+RML turns the reconstruction into an optimization of ½χ² + wR:
 - **A starting image.** `starting_image` builds one from a parametric fit (moments) or from the dirty image, with a sensible grid and a hole under the star. With coverage this good, both starts lead to the same image.
 - **The weight.** `l_curve` sweeps it with warm starts. The discrepancy principle chooses the weight at which χ² per point reaches one; the corner is a check that needs no error bars.
 - **Checks.** Look at the images either side of the chosen weight, and run `diagnose`.
