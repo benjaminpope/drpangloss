@@ -313,7 +313,16 @@ def test_fields_are_capped_at_one_on_a_uv_lattice():
         assert d.npix * d.pixel_scale_mas <= 100.0 + d.pixel_scale_mas
 
 
-@pytest.mark.parametrize("family", ["tsv", "tv", "maxent", "starlet"])
+# The tsv fit is the one that compiles the LM solver (about 50 s on CI).
+@pytest.mark.parametrize(
+    "family",
+    [
+        pytest.param("tsv", marks=pytest.mark.slow),
+        "tv",
+        "maxent",
+        "starlet",
+    ],
+)
 def test_default_weight_ranges_hold_the_corner_with_room_below(family):
     data = DATASETS[0]
     spec = EnsembleSpec()

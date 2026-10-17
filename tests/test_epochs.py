@@ -548,6 +548,7 @@ def _start_values(orbit, flux):
     }
 
 
+@pytest.mark.slow
 def test_a_positions_fit_starts_where_a_default_start_fails():
     epochs = _simulated_epochs(STAGE2_TIMES[:5], seed=5, frames=4)
     axis = onp.arange(-30.0, 30.5, 2.0)

@@ -1016,6 +1016,7 @@ def test_unconverged_lm_message_says_why():
     assert "step limit" in limit
 
 
+@pytest.mark.slow
 def test_unresolved_star_starts_inside_the_diameter_prior(tmp_path):
     # An unresolved star's diameter runs to the lower edge of its range; NUTS
     # must start just inside it (numpyro's init fails on the bound itself).

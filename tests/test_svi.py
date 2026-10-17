@@ -240,8 +240,16 @@ def _nuts(model, priors, data, values, flat, dtype):
         return {k: onp.asarray(v) for k, v in mcmc.get_samples().items()}
 
 
-@pytest.mark.parametrize("flat", [True, False])
-@pytest.mark.parametrize("dtype", ["float32", "float64"])
+# float32 with flat coordinates takes about 40 s on a CI runner.
+@pytest.mark.parametrize(
+    "dtype, flat",
+    [
+        pytest.param("float32", True, marks=pytest.mark.slow, id="float32-True"),
+        pytest.param("float32", False, id="float32-False"),
+        pytest.param("float64", True, id="float64-True"),
+        pytest.param("float64", False, id="float64-False"),
+    ],
+)
 def test_default_guide_agrees_with_nuts_on_a_binary(dtype, flat):
     data = _binary_data()
     result = fit(BINARY, BINARY_PRIORS, data, dtype=dtype)
