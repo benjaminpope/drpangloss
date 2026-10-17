@@ -3,47 +3,49 @@
 
 > **Install:** this tutorial needs the `plots` extra (ChainConsumer) and, for its "As a pipeline" section, the `pipeline` extra: `pip install "virgil-astro[plots,pipeline]"`.
 
-The first and simplest thing you will want to do in a lot of interferometric datasets is to look for faint companions at high resolution: this is often why we're in the game in the first place!
+Looking for faint companions at high resolution is often the first thing you do with an interferometric dataset, and often why you took it.
 
-This tutorial walks through end-to-end binary recovery on synthetic interferometric observables, starting from a coarse likelihood grid and continuing through vanilla HMC and Fisher-reparameterized HMC.
+This tutorial recovers a binary from synthetic observables: a coarse likelihood grid first, then Hamiltonian Monte Carlo (HMC), plain and Fisher-reparametrized.
 
-First, let's import everything we will need.
+First, the imports.
 
-```python
-import warnings
-import jax
-import jax.numpy as jnp
-import numpy as onp
-import matplotlib.pyplot as plt
-from jax.flatten_util import ravel_pytree
+??? note "Imports and setup"
 
-warnings.filterwarnings("ignore", message="IProgress not found.*")
+    ```python
+    import warnings
+    import jax
+    import jax.numpy as jnp
+    import numpy as onp
+    import matplotlib.pyplot as plt
+    from jax.flatten_util import ravel_pytree
 
-import numpyro
-import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_value
+    warnings.filterwarnings("ignore", message="IProgress not found.*")
 
-from virgil.grid_fit import likelihood_grid
-from virgil.inference import fisher_projection, hessian_matrix
-from virgil.likelihood import loglike, posterior_predictive_summary
-from virgil.models import BinaryModelCartesian
-from virgil.oidata import OIData
-from virgil.plotting import (
-    set_style,
-    plot_data_model_correlation,
-    plot_grid_map,
-    plot_chainconsumer_diagnostics,
-    diagnostics_table_from_samples,
-    truth_cartesian_and_polar,
-)
+    import numpyro
+    import numpyro.distributions as dist
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.initialization import init_to_value
 
-set_style()  # the figure style used throughout the docs
-```
+    from virgil.grid_fit import likelihood_grid
+    from virgil.inference import fisher_projection, hessian_matrix
+    from virgil.likelihood import loglike, posterior_predictive_summary
+    from virgil.models import BinaryModelCartesian
+    from virgil.oidata import OIData
+    from virgil.plotting import (
+        set_style,
+        plot_data_model_correlation,
+        plot_grid_map,
+        plot_chainconsumer_diagnostics,
+        diagnostics_table_from_samples,
+        truth_cartesian_and_polar,
+    )
+
+    set_style()  # the figure style used throughout the docs
+    ```
 
 ## Simulate Data
 
-We're going simulate $V^2$ and phase observables from a known binary model, add realistic noise, and wrap this into the `OIData` object that `virgil` uses to handle data.
+We simulate $V^2$ and phases from a known binary, add realistic noise, and wrap the result in the `OIData` object that `virgil` uses for data.
 
 ```python
 rng = onp.random.default_rng(42)
@@ -89,9 +91,9 @@ data = OIData(
 
 ## Grid Search for Companions
 
-Because Jax is so fast and parallelizes so well, we can run very efficient grid searches compared to previous implementations. This is often the first place you will want to start in searching for a companion.
+JAX makes grid searches fast and easy to parallelize, so start any companion search here.
 
-First we have to define our grid dictionary `samples` in our chosen coordinates - we will use Cartesian $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$ but you can just as well use polar coordinates in separation, position angle, and flux if you use `BinaryModelAngular` instead.
+Define the grid dictionary `samples` in your chosen coordinates. We use Cartesian $(\Delta\mathrm{RA}, \Delta\mathrm{Dec}, \mathrm{flux})$; for separation, position angle and flux, use `BinaryModelAngular` instead.
 
 ```python
 samples = {
@@ -120,9 +122,9 @@ Grid estimate: dra=119 mas, ddec=-81.2 mas, flux=0.0038
 ```
 
 ## Visualize the Grid
-We have plotting helpers to achieve a consistent style and handle metadata: we'll see that the binary is very accurately recovered just from this grid search!
+The plotting helpers give a consistent style and handle the metadata. The grid search alone recovers the binary accurately.
 
-How significant is the best grid point? Answering that needs the distribution of the search's best statistic under noise alone, which [Detection ROC curves](detection_roc.md) simulates.
+How significant is the best grid point? That needs the distribution of the search's best statistic under noise alone, which [Detection ROC curves](detection_roc.md) simulates.
 
 ```python
 # The full grid is reduced to the maximum log likelihood over flux at each
@@ -140,7 +142,7 @@ plot_grid_map(
 
 ## Uncertainty quantification with Hamiltonian Monte Carlo
 
-You may have used MCMC before, for example with [Metropolis-Hastings](https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm) or [`emcee`](http://emcee.readthedocs.io/), but these will often perform poorly in high dimensions. Because we're using Jax and have gradients, we can use [Hamiltonian Monte Carlo](https://arxiv.org/abs/1701.02434), which can work in arbitrarily high dimensions. We will use [`numpyro`](https://num.pyro.ai/en/stable/) to handle this:
+Samplers such as [Metropolis-Hastings](https://en.wikipedia.org/wiki/Metropolis%E2%80%93Hastings_algorithm) or [`emcee`](http://emcee.readthedocs.io/) often struggle in high dimensions. With JAX gradients we can use [Hamiltonian Monte Carlo](https://arxiv.org/abs/1701.02434), which scales to many parameters, through [`numpyro`](https://num.pyro.ai/en/stable/):
 
 ```python
 params = ["dra", "ddec", "flux"]
@@ -186,7 +188,7 @@ HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
 ## Diagnostic Tables
-We have helper functions to reformat the posterior draws into a dataframe.
+Helper functions turn the posterior draws into a dataframe.
 
 ```python
 # Convert vanilla posterior samples into diagnostics table for later comparison plots.
@@ -210,9 +212,9 @@ HMC estimate from diagnostics table: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 ```
 
 ## Fisher Reparametrization
-If you are finding that HMC is failing to converge quickly on high-SNR data, it can be because the posteriors are often highly correlated between parameters. The good thing is that [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `virgil`, has helper functions to reparametrize problems into their natural scales, parametrized by a fiducial value for all parameters `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
+If HMC converges slowly on high-SNR data, the cause is often strong correlations between parameters. [`zodiax`](https://github.com/LouisDesdoigts/zodiax), the backend of `virgil`, can reparametrize a problem into its natural scales, from fiducial values `x0` and the [Fisher Information Matrix](https://en.wikipedia.org/wiki/Fisher_information).
 
-See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/tutorials/optimisation_tools.ipynb) for more information!
+See [this `zodiax` tutorial](https://github.com/LouisDesdoigts/zodiax_tutorials/blob/main/tutorials/optimisation_tools.ipynb) for more.
 
 ```python
 x0_dict = {
@@ -291,7 +293,7 @@ Fisher HMC estimate: dra=120 mas, ddec=-80.1 mas, flux=0.0039
 
 ## Converting coordinate systems
 
-Our sample reformatter gives you coordinate conversions:
+The sample reformatter also converts coordinates:
 
 ```python
 # Convert Fisher-HMC posterior samples and prepare shared diagnostic tables.
@@ -310,9 +312,9 @@ print(
 Fisher HMC estimate: sep=144 mas, pa=124 deg
 ```
 
-We can visualize the outputs with a corner plot. You can use anything you like, eg [corner.py](https://corner.readthedocs.io/en/latest/) or [pairplots](https://sefffal.github.io/PairPlots.jl/dev/), but we have default helpers for chainconsumer.
+Corner plots can come from anything you like, e.g. [corner.py](https://corner.readthedocs.io/en/latest/) or [pairplots](https://sefffal.github.io/PairPlots.jl/dev/); virgil has default helpers for chainconsumer.
 
-We will see that the Fisher and default parametrizations work similarly well, and closely recover the true parameter values to about a 1σ precision. The first plot is a corner plot; the second is a trace, where ideally the chains look like they are stationary. `chainconsumer` and the packages like it contain functions for convergence diagnostics on posterior chains like these.
+The Fisher and default parametrizations work equally well, recovering the true values to about 1σ. The first plot is a corner plot. The second is a trace: check that the chains look stationary. `chainconsumer` and similar packages also give convergence diagnostics.
 
 ```python
 # Cartesian comparison plot
@@ -360,7 +362,7 @@ plot_chainconsumer_diagnostics(
 
 ## Posterior Predictive Checks with Correlation Plots
 
-It is a general rule that you *always* want to check the posterior predictions vs the data when doing Bayesian inference. If the data are time series or curves or images this can be reasonably straightforward; but interferometric data can be hard to visualize. It is common in this field to plot 1:1 correlation plots with data on one axis and the model on the other.
+*Always* compare the posterior predictions with the data. Interferometric data are hard to visualize, so the usual check is a 1:1 correlation plot of data against model.
 
 ```python
 # Posterior predictive correlation: data vs model (HMC and Fisher-HMC)
@@ -388,7 +390,7 @@ plt.show()
 
 ## As a pipeline
 
-Everything above can be run in one call with [`BinaryPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The grid search and the maps of the previous sections are its `search` stage, the maximum-likelihood point is the start of its `fit` stage, and the HMC chains are its `posterior` stage. The cell below sets only the choices made in this notebook: the same $\pm 250$ mas grid of 81 points per axis, the same flux range over 60 points and the same sampler length. Its priors are the pipeline's group-invariant defaults (uniform in position, log-uniform in flux), so the posterior agrees with the hand-written one to within the sampling noise, not exactly.
+[`BinaryPipeline`](pipeline.md) runs everything above in one call, fixes the order of the steps and writes a run folder that reloads without recomputing. The grid search and maps are its `search` stage, the maximum-likelihood point starts its `fit` stage, and the HMC chains are its `posterior` stage. The cell below sets only this notebook's choices: the same $\pm 250$ mas grid of 81 points per axis, the same flux range over 60 points and the same sampler length. Its priors are the pipeline's group-invariant defaults (uniform in position, log-uniform in flux), so the posterior matches the hand-written one to within sampling noise, not exactly.
 
 ```python
 from tempfile import mkdtemp

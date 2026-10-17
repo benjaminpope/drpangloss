@@ -5,7 +5,7 @@ Part 2 reconstructed the ring with maximum entropy, a penalty whose weight had t
 - **σ**, how far the log-brightness may wander from the template;
 - **ℓ**, the correlation length: how far apart two pixels must be before they vary independently.
 
-Three things make this attractive:
+This has three advantages:
 1. **The MAP is a least-squares fit.** virgil writes the field in whitened form, so the prior on its coefficients is a standard normal and becomes ordinary residuals. `fit` then uses Levenberg–Marquardt, which converges in a few dozen steps.
 2. **The hyperparameters come from the data.** The **Bayesian evidence**, the probability of the data with the image integrated over, ranks pairs of σ and ℓ. There is no L-curve to read.
 3. **The error bars can be checked.** The same machinery re-estimates whether they are too large or too small.
@@ -63,11 +63,11 @@ print(f"{n}² pixels of {h:.1f} mas; beam {resolution.major_mas:.0f} × {resolut
 $$\eta = \log\left(\frac{\mu}{\max\mu} + \epsilon\right) + \mathrm{IDCT}\left[\sqrt{S}\odot z\right].$$
 
 - **μ** is the template: here `starting_image`'s Gaussian.
-- **IDCT** is the inverse cosine transform, which diagonalises the Laplacian with reflecting edges.
+- **IDCT** is the inverse cosine transform, which diagonalizes the Laplacian with reflecting edges.
 - **S** is a Matérn-like spectrum, S ∝ (1/ℓ² + k²)⁻², scaled so that the field's variance is σ².
 - **z** are the latents, with standard-normal priors.
 
-Setting z = 0 gives the template, and z drawn from the prior gives an image from the prior. Here are prior draws with the same latents at three correlation lengths: short ℓ gives speckle, long ℓ gives broad clumps. Exponentiating the field makes the bright parts dominate.
+Setting z = 0 gives the template, and z drawn from the prior gives an image from the prior. Below are prior draws with the same latents at three correlation lengths: short ℓ gives speckle, long ℓ gives broad clumps. Exponentiating the field makes the bright parts dominate.
 
 ```python
 latent = jax.random.normal(jax.random.PRNGKey(0), (n, n))
@@ -84,7 +84,7 @@ plt.show()
 
 ## One MAP fit
 
-The GP image replaces the pixel image of part 2. `image_priors` now gives the field's latents standard-normal priors, and needs no regulariser: the prior is the regulariser. Every term of the loss is then a least-squares residual, so `fit` uses Levenberg–Marquardt (LM). The image's flux is fitted too.
+The GP image replaces the pixel image of part 2. `image_priors` now gives the field's latents standard-normal priors and needs no regularizer, because the prior is the regularizer. Every term of the loss is then a least-squares residual, so `fit` uses Levenberg–Marquardt (LM). The image's flux is fitted too.
 
 Here is one fit, at σ = 2 and ℓ = half the beam's minor axis.
 
@@ -111,10 +111,10 @@ lm: converged True in 36 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
 $$\log Z \approx -\tfrac{1}{2}\chi^2 - \tfrac{1}{2}|z|^2 - \tfrac{1}{2}\log\det\left(I + J^\top J\right).$$
 
 - The first term rewards fitting the data.
-- The second penalises latents that wander from the prior.
-- The third is the Occam factor, which penalises a prior so loose that the data must pin down many parameters. Here J is the Jacobian of the whitened residuals with respect to the latents.
+- The second penalizes latents that wander from the prior.
+- The third is the Occam factor, which penalizes a prior so loose that the data must pin down many parameters. Here J is the Jacobian of the whitened residuals with respect to the latents.
 
-The pair with the largest evidence wins. ℓ is gridded in units of the beam, so the same grid suits any data. Each fit starts from the previous one. The grid is wide enough that the maximum lies inside it; if it falls on an edge, extend the grid in that direction. Expect a ridge rather than a sharp peak: a larger σ trades against a longer ℓ, because both let the field carry more structure.
+The pair with the largest evidence wins. ℓ is gridded in units of the beam, so the same grid suits any data, and each fit starts from the previous one. The grid is wide enough that the maximum lies inside it; if it falls on an edge, extend the grid in that direction. Expect a ridge rather than a sharp peak: a larger σ trades against a longer ℓ, because both let the field carry more structure.
 
 ```python
 lengths = [f * resolution.minor_mas for f in (0.25, 0.5, 1.0, 2.0)]
@@ -147,13 +147,13 @@ best: σ = 4.0, ℓ = 131 mas; all fits converged: True
 
 ## Are the error bars right?
 
-The evidence, like the discrepancy principle, trusts the error bars. `error_scale(model, data)` checks them by treating the noise level as one more hyperparameter. Maximising the evidence over it gives MacKay's re-estimate:
+The evidence, like the discrepancy principle, trusts the error bars. `error_scale(model, data)` checks them by treating the noise level as one more hyperparameter. Maximizing the evidence over it gives MacKay's re-estimate:
 
 $$s^2 = \frac{\chi^2}{N - \gamma}, \qquad \gamma = \sum_i \frac{\lambda_i / s^2}{1 + \lambda_i / s^2}.$$
 
 Here λᵢ are the eigenvalues of JᵀJ with the quoted errors, so λᵢ/s² are those with the rescaled ones, and γ is the effective number of parameters the data measure. Each one absorbs a datum's worth of scatter, so honest error bars give χ² ≈ N − γ rather than N, and s ≈ 1. Since γ depends on s, `error_scale` solves the equation for s.
 
-These simulated data have honest errors. For contrast, the same truth is also simulated with only half as much noise as the error bars claim, which is like overestimated errors on real data. Rescaling those data by s (`OIData.with_error_scale`) and refitting brings the estimate back to about one. The `error_scale` docstring gives the derivation and references.
+These simulated data have honest errors. For contrast, the same truth is also simulated with only half as much noise as the error bars claim, like overestimated errors on real data. Rescaling those data by s (`OIData.with_error_scale`) and refitting brings the estimate back to about one. The `error_scale` docstring gives the derivation and references.
 
 ```python
 best_scene = gp_scene(sigmas[best[1]], lengths[best[0]])
@@ -178,7 +178,7 @@ errors overstated twofold: chi2 per point 0.26, s = 0.53; after rescaling, s = 0
 
 ## The GP image against maximum entropy
 
-Here are the GP image at the evidence's σ and ℓ, and the maximum-entropy image of part 2 at its discrepancy weight, each with the beam shaded, and below them their signed differences from the truth. They are MAP images, so the differences are not z-scores. On this well-sampled AMI scene the two are about equally good. The GP prior's advantages are speed and the principled choice of its hyperparameters; on sparser long-baseline data it also gives higher fidelity (see `notebooks/mwe/mwe_gaussian_field.ipynb`).
+Here are the GP image at the evidence's σ and ℓ and the maximum-entropy image of part 2 at its discrepancy weight, each with the beam shaded, and below them their signed differences from the truth. They are MAP images, so the differences are not z-scores. On this well-sampled AMI scene the two are about equally good. The GP prior's advantages are speed and the principled choice of its hyperparameters; on sparser long-baseline data it also gives higher fidelity (see `notebooks/mwe/mwe_gaussian_field.ipynb`).
 
 ```python
 def ncc(a, b):
@@ -205,9 +205,9 @@ plt.show()
 
 ## Summary
 
-A Gaussian-process prior turns image reconstruction into a well-posed Bayesian problem:
+A Gaussian-process prior makes image reconstruction a well-posed Bayesian problem:
 - **A field object.** `GaussianField` makes the log-brightness a smooth random field about a template. With `image_priors`' standard-normal latents, the MAP is a fast Levenberg–Marquardt fit.
 - **Hyperparameters from the data.** `log_evidence` ranks σ and ℓ, and gridding ℓ in units of the beam keeps the grid sensible for any data.
 - **A check on the error bars.** `error_scale` estimates how wrong they are, and `OIData.with_error_scale` corrects them before the hyperparameters are chosen.
 
-The same parameterisation suits sampling the posterior with numpyro's NUTS (`likelihood.numpyro_model`), which gives uncertainty maps and z-score residuals. Part 4 puts a GP image next to other analytic components, a ring around a binary star.
+The same parameterization suits sampling the posterior with numpyro's NUTS (`likelihood.numpyro_model`), which gives uncertainty maps and z-score residuals. Part 4 puts a GP image next to other analytic components, a ring around a binary star.

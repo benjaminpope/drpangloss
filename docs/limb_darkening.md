@@ -11,7 +11,7 @@ $$
 V(x) = \frac{1}{C} \sum_\nu a_\nu\, 2^{\nu/2}\, \Gamma\!\left(\frac{\nu}{2} + 1\right) \frac{J_{\nu/2+1}(x)}{x^{\nu/2+1}}, \qquad C = \sum_\nu \frac{a_\nu}{\nu + 2},
 $$
 
-with $x = \pi \theta B / \lambda$ for a limb-darkened diameter $\theta$ and baseline $B$. A uniform disk ($a_0 = 1$) recovers the familiar $2 J_1(x)/x$. [harmonix](https://github.com/shashankdholakia/harmonix) ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalises this result to limb-darkened spherical-harmonic maps of spotted stars; for an unspotted star the two agree to machine precision. virgil evaluates the sum analytically and differentiably, with Bessel functions from [jaxbessel](https://github.com/benjaminpope/jaxbessel), and the powers $\nu$ need not be integers.
+with $x = \pi \theta B / \lambda$ for a limb-darkened diameter $\theta$ and baseline $B$. A uniform disk ($a_0 = 1$) recovers the familiar $2 J_1(x)/x$. [harmonix](https://github.com/shashankdholakia/harmonix) ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalizes this result to limb-darkened spherical-harmonic maps of spotted stars; for an unspotted star the two agree to machine precision. virgil evaluates the sum analytically and differentiably, with Bessel functions from [jaxbessel](https://github.com/benjaminpope/jaxbessel), and the powers $\nu$ need not be integers.
 
 Three classes cover the common cases:
 
@@ -21,7 +21,7 @@ Three classes cover the common cases:
 
 ## Profiles and visibilities
 
-We set up the imports and compare four stars of the same 6 mas limb-darkened diameter: a uniform disk, a linear law, and quadratic and square-root laws with coefficients typical of a cool giant in the near-infrared. On the left are the brightness profiles across the disk, normalised to the centre; on the right are the squared visibilities against $x$, on a logarithmic scale so that the nulls and the second lobe are visible. The darker the limb, the more the light is concentrated towards the centre, so the star looks smaller to an interferometer: the first null moves to longer baselines and the second lobe rises.
+We compare four stars of the same 6 mas limb-darkened diameter: a uniform disk, a linear law, and quadratic and square-root laws with coefficients typical of a cool giant in the near-infrared. On the left are the brightness profiles across the disk, normalized to the centre; on the right are the squared visibilities against $x$, on a logarithmic scale so the nulls and the second lobe are visible. The darker the limb, the more the light is concentrated towards the centre, so the star looks smaller to an interferometer: the first null moves to longer baselines and the second lobe rises.
 
 ```python
 import sys
@@ -98,19 +98,21 @@ plt.show()
 
 Like every virgil component, the disks render on the sky. `plot_model` draws the quadratic star next to the uniform disk; the limb-darkened star has the same outline but a brighter centre.
 
-```python
-fig, axes = plt.subplots(1, 2, figsize=(9, 4))
-plot_model(UniformDisk(diam), fov_mas=7.0, npix=128, ax=axes[0], title="Uniform disk")
-plot_model(
-    stars["quadratic, u = (0.35, 0.25)"],
-    fov_mas=7.0,
-    npix=128,
-    ax=axes[1],
-    title="Quadratic limb darkening",
-)
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+    plot_model(UniformDisk(diam), fov_mas=7.0, npix=128, ax=axes[0], title="Uniform disk")
+    plot_model(
+        stars["quadratic, u = (0.35, 0.25)"],
+        fov_mas=7.0,
+        npix=128,
+        ax=axes[1],
+        title="Quadratic limb darkening",
+    )
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![limb_darkening output 5.1](generated/limb_darkening_cell005_out01.png)
 
@@ -122,7 +124,7 @@ $$
 u_1 = 2\sqrt{q_1}\, q_2, \qquad u_2 = \sqrt{q_1}\,(1 - 2 q_2), \qquad 0 \le q_1, q_2 \le 1,
 $$
 
-so that uniform priors on $q_1$ and $q_2$ sample every physical quadratic law, and only those, uniformly. The same construction works for the square-root law, with $c = \sqrt{q_1}(1 - 2q_2)$ and $d = 2\sqrt{q_1}\, q_2$. `QuadraticLimbDarkenedDisk` and `SquareRootLimbDarkenedDisk` take $q_1, q_2$ as their parameters, so `Uniform(0, 1)` priors on both are uninformative over the physical laws; `from_u` and `from_cd` convert tabulated coefficients, and the `u1`, `u2` (or `c`, `d`) properties convert back.
+so uniform priors on $q_1$ and $q_2$ sample every physical quadratic law, and only those, uniformly. The same construction works for the square-root law, with $c = \sqrt{q_1}(1 - 2q_2)$ and $d = 2\sqrt{q_1}\, q_2$. `QuadraticLimbDarkenedDisk` and `SquareRootLimbDarkenedDisk` take $q_1, q_2$ as their parameters, so `Uniform(0, 1)` priors on both are uninformative over the physical laws. `from_u` and `from_cd` convert tabulated coefficients, and the `u1`, `u2` (or `c`, `d`) properties convert back.
 
 Below, uniform draws in $(q_1, q_2)$ fill exactly the physical triangle in $(u_1, u_2)$ (left), and every one of the corresponding profiles is positive and falls towards the limb (right, a random subset).
 
@@ -190,7 +192,7 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 limb-darkened: diam = 6.022 mas, chi2 per point 0.79 (234 points)
 ```
 
-A point estimate hides how well the limb darkening is actually measured. Because the priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, a Gaussian (Laplace) approximation is a poor description here, so we sample the posterior with NUTS, four chains that all start at the best fit (so the split R-hat printed below checks that they mix within and between chains from a common start, not that they converge from dispersed ones): `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
+A point estimate hides how well the limb darkening is measured. The priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, so a Gaussian (Laplace) approximation is a poor description here. We sample the posterior with NUTS instead, with four chains that all start at the best fit (so the split R-hat printed below checks that they mix within and between chains from a common start, not that they converge from dispersed ones). `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
 
 ```python
 kernel = NUTS(
@@ -282,11 +284,11 @@ plt.show()
 
 ## Summary
 
-virgil's limb-darkened disks give analytic, differentiable visibilities for any law that is a sum of powers of $\mu$, through Quirrenbach et al.'s (1996) result, which harmonix generalises to spotted stars. Use `LimbDarkenedDisk` with a jaxoplanet-style `u` for polynomial laws of any order, and `QuadraticLimbDarkenedDisk` or `SquareRootLimbDarkenedDisk` to fit two-parameter laws with Kipping's (2013) $q_1, q_2$, whose Uniform(0, 1) priors cover exactly the physical profiles. Limb darkening is only measurable with baselines that reach the first null or beyond; at shorter baselines it is degenerate with the diameter. Laws that are not sums of powers of $\mu$, such as the logarithmic and exponential laws, are not included.
+virgil's limb-darkened disks give analytic, differentiable visibilities for any law that is a sum of powers of $\mu$, through Quirrenbach et al.'s (1996) result, which harmonix generalizes to spotted stars. Use `LimbDarkenedDisk` with a jaxoplanet-style `u` for polynomial laws of any order, and `QuadraticLimbDarkenedDisk` or `SquareRootLimbDarkenedDisk` to fit two-parameter laws with Kipping's (2013) $q_1, q_2$, whose Uniform(0, 1) priors cover exactly the physical profiles. Limb darkening is only measurable with baselines that reach the first null or beyond; at shorter baselines it is degenerate with the diameter. Laws that are not sums of powers of $\mu$, such as the logarithmic and exponential laws, are not included.
 
 ## As a pipeline
 
-Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too. The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check reports a warning that names the walls rather than a failure; the draws agree with a brute-force grid posterior, but with a reduced effective sample size.
+Everything in the fit above can be run in one call with [`StarPipeline`](pipeline.md), which fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its input and the `load` stage; the uniform-disk scan and the `fit` of `QuadraticLimbDarkenedDisk` are its `fit` stage, which also compares the two fits; the NUTS chains are its `posterior` stage; and the $V^2$ plot is the main cell of its quicklook notebook. The cell below sets only the choices made in this notebook: the same $(2, 10)$ mas diameter prior and the same warmup, with the default four chains of 1000 draws. Its priors are the pipeline's group-invariant defaults (log-uniform diameter, uniform $q_1$ and $q_2$), so the posterior agrees with the hand-written one to within the sampling noise, not exactly. The pipeline reports $\chi^2/N$ on the quoted errors for both models, so the uniform disk's failure is visible there too. The data's closure-phase errors are 0.5 degrees, so a closure phase that flips at a visibility null costs about $10^5$ in $\chi^2$: the posterior sits in a cell with hard walls, in the diameter and in $q_1, q_2$ (a limb-darkened null moves with $q$). NUTS rejects the trajectories that cross a wall and flags them as divergent, so the `divergences` check reports a warning that names the walls rather than a failure. The draws agree with a brute-force grid posterior, but with a reduced effective sample size.
 
 ```python
 from tempfile import mkdtemp

@@ -1,11 +1,11 @@
 # Contributions
 
-`virgil` is a synthesis of many projects from a research team, and of ideas we liked in other packages. We used Claude Code (Opus 5.5) to connect existing ideas in one framework, not to write everything from scratch. GitHub Copilot's coding agent wrote much of the code in 2026, especially tests, review fixes, the Laplace uncertainties for grid searches, and some tutorials. The commit history therefore does not show who deserves credit for which ideas. The [Development carbon](dev_carbon.md) page estimates the energy and carbon cost of this AI-assisted work.
+`virgil` brings together many projects from one research team and ideas we liked in other packages. We used Claude Code (Opus 5.5) to join existing ideas in one framework, not to write everything from scratch, and GitHub Copilot's coding agent wrote much of the 2026 code: tests, review fixes, the Laplace uncertainties for grid searches and some tutorials. So the commit history does not show who deserves credit for which ideas. The [Development carbon](dev_carbon.md) page estimates the energy and carbon cost of this AI-assisted work.
 
 ## History
 
 - **drpangloss.** Dori Blakely began the project as a set of functions for the [PDS 70 paper](https://arxiv.org/abs/2404.13032) (Blakely et al. 2025, AJ 169, 137). Benjamin Pope and Louis Desdoigts then rewrote it by hand as `drpangloss`. Louis wrote the fast JAX grid searches (the basis of `grid_fit`) and the first kernel-phase support. Dori wrote the first notebook of Bayesian upper limits. The name was a joke on Voltaire's *Candide* and Antoine Mérand's [CANDID](https://github.com/amerand/CANDID): Doctor Pangloss believes we live in the best of all possible worlds, much as CANDID with better optimizers would.
-- **virgil.** By 2026 the joke no longer fitted, and the team adopted Benjamin Pope's suggestion of `virgil`. Jonah Goldfine came up with the acronym: the Versatile Interferometric Reconstruction and Gradient-based Inference Library. In Dante's *Divine Comedy*, Virgil guides the poet through the underworld; the README explains why that suits image reconstruction.
+- **virgil.** By 2026 the joke no longer fitted, and the team took up Benjamin Pope's suggestion of `virgil`, with Jonah Goldfine's acronym: the Versatile Interferometric Reconstruction and Gradient-based Inference Library. In Dante's *Divine Comedy*, Virgil guides the poet through the underworld; the README explains why that suits image reconstruction.
 
 ## People and their projects
 
@@ -30,7 +30,7 @@ Claude Code made the harmonix, ELR, dorito, scenes and Gaussian-process inclusio
 
 ## Methods
 
-The docstrings cite these where they are used. A full list with BibTeX is in `references/` in the repository.
+Docstrings cite these where they are used; `references/` in the repository has the full list with BibTeX.
 
 **Data and observables**
 
@@ -38,7 +38,7 @@ The docstrings cite these where they are used. A full list with BibTeX is in `re
 - Legacy OIFITS tools (`virgil.legacy`): from [ImPlaneIA](https://github.com/anand0xff/ImPlaneIA) by Anand Sivaramakrishnan and collaborators.
 - NIRISS mask geometry: [Sivaramakrishnan et al. (2023)](https://arxiv.org/abs/2210.17434).
 - Kernel phase: [Martinache (2010)](https://arxiv.org/abs/1009.3933).
-- Correlated closure phases: [Kammerer et al. (2020)](https://arxiv.org/abs/2011.01209). They showed that closure phases sharing a baseline are correlated (±1/3 for equal noise). virgil keeps only the independent combinations and uses their covariance in the likelihood.
+- Correlated closure phases: [Kammerer et al. (2020)](https://arxiv.org/abs/2011.01209). Closure phases that share a baseline are correlated (±1/3 for equal noise), so virgil keeps only the independent combinations and uses their covariance in the likelihood.
 - Telescope gains, with the covariance taken from the model: [Lachaume (2021)](https://arxiv.org/abs/2104.07082).
 - Error floors: as in PMOIRED ([Mérand 2022](https://arxiv.org/abs/2207.11047)).
 - Matrix Fourier transform: [Soummer et al. (2007)](https://arxiv.org/abs/0711.0368).

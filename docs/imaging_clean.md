@@ -4,17 +4,17 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-The regularisers of parts 2 and 3 prefer smooth images. Some scenes are not smooth: a companion or two and a few compact knots next to a bright star. **CLEAN** (Högbom 1974), the oldest image reconstruction algorithm in radio astronomy, builds an image for such scenes from point sources, one at a time.
+The regularizers of parts 2 and 3 prefer smooth images. Some scenes are not smooth: a companion or two and a few compact knots next to a bright star. **CLEAN** (Högbom 1974), the oldest image reconstruction algorithm in radio astronomy, builds an image for such scenes from point sources, one at a time.
 
 Högbom's CLEAN works on the *dirty image*: it finds the brightest point in the residual dirty image, adds a small fraction (the **loop gain**) of a point source there to the model, subtracts its dirty beam from the residuals, and repeats. That needs data that are linear in the image, such as calibrated complex visibilities. Closure phases, kernel phases, DISCOs and squared visibilities are not linear, so classic CLEAN cannot use them directly.
 
-virgil's `clean` uses the same idea in a form that works for any data. For linear data, the residual dirty image is, up to a constant, minus the gradient of χ² with respect to the flux of a point source at each pixel. JAX computes that gradient for any likelihood. So each iteration of `clean`:
+virgil's `clean` uses the same idea in a form that works for any data. For linear data, the residual dirty image is, up to a constant, minus the gradient of χ² with respect to the flux of a point source at each pixel, and JAX computes that gradient for any likelihood. So each iteration of `clean`:
 1. computes the gradient of χ² with respect to the flux at every pixel;
 2. picks the pixel where a step would lower χ² the most;
 3. adds the loop gain times that (Gauss–Newton) step there;
 4. stops when χ² per data point reaches one, the discrepancy principle of part 2.
 
-For linear data this is exactly Högbom's CLEAN. Mathematically it is *matching pursuit*. Step 2 normalises the gradient by how strongly each pixel affects the data. Without that, CLEAN would pile flux into pixels right next to the star, whose light is nearly indistinguishable from the star's own.
+For linear data this is exactly Högbom's CLEAN; mathematically it is *matching pursuit*. Step 2 normalizes the gradient by how strongly each pixel affects the data. Without that, CLEAN would pile flux into pixels right next to the star, whose light is nearly indistinguishable from the star's own.
 
 This part reconstructs a companion and a knot from AMI DISCOs, refines the result, looks at the loop gain, and then uses closure phases and V² from a long-baseline interferometer.
 
@@ -142,23 +142,25 @@ brightest components (dra, ddec in mas: flux):
   (  -110,     70): 0.0002
 ```
 
-χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. Then the first major cycle refits the components' fluxes, and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), with only faint components on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
+χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. The first major cycle then refits the components' fluxes and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), with only faint components on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
 
-```python
-fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
-axes[0].semilogy(result.chi2_red)
-axes[0].axhline(1.0, color="k", ls=":", lw=1)
-axes[0].set(xlabel="iteration", ylabel="χ² per point", title="CLEAN's progress")
-plot_model(result.model.clean, fov, npix, ax=axes[1], title="CLEAN components")
-plot_model(
-    result.model.clean, fov, npix, ax=axes[2], beam=resolution, convolve=True,
-    title="restored (components ⊛ beam)",
-)
-for ax in axes[1:]:
-    ax.plot([-90, 130], [70, -110], "o", mfc="none", mec="cyan", ms=14)
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+    axes[0].semilogy(result.chi2_red)
+    axes[0].axhline(1.0, color="k", ls=":", lw=1)
+    axes[0].set(xlabel="iteration", ylabel="χ² per point", title="CLEAN's progress")
+    plot_model(result.model.clean, fov, npix, ax=axes[1], title="CLEAN components")
+    plot_model(
+        result.model.clean, fov, npix, ax=axes[2], beam=resolution, convolve=True,
+        title="restored (components ⊛ beam)",
+    )
+    for ax in axes[1:]:
+        ax.plot([-90, 130], [70, -110], "o", mfc="none", mec="cyan", ms=14)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![imaging_clean output 8.1](generated/imaging_clean_cell008_out01.png)
 
@@ -183,7 +185,7 @@ plt.show()
 
 ![imaging_clean output 10.1](generated/imaging_clean_cell010_out01.png)
 
-An image that looks right should also fit the data. The correlation plot compares the CLEAN model's predictions with the data, with the data's error bars and a one-to-one line. AMI DISCO observables are projections that mix amplitude and phase information, so they appear in a single panel. The points scatter evenly about the line across the full range: the components explain the data.
+An image that looks right should also fit the data. The correlation plot compares the CLEAN model's predictions with the data, with the data's error bars and a one-to-one line. AMI DISCO observables are projections that mix amplitude and phase information, so they appear in a single panel. The points scatter evenly about the line across the full range, so the components explain the data.
 
 ```python
 n_vis = data.vis.size
@@ -205,7 +207,7 @@ plt.show()
 
 ## Refining the fluxes
 
-The major cycles already refit the components' fluxes inside CLEAN, but only every 50 iterations, and only those fluxes. Because the model is a `System` with an `Image`, `fit` can do the same job on the components' support, and free other parameters alongside them, such as the components' spectrum or the base's fluxes. It is a small, well-posed problem: a few pixels, not the whole grid, so it needs no regulariser. Here, with the fluxes already refitted by the major cycle, it changes nothing.
+The major cycles already refit the components' fluxes inside CLEAN, but only every 50 iterations, and only those fluxes. Because the model is a `System` with an `Image`, `fit` can do the same job on the components' support, and free other parameters alongside them, such as the components' spectrum or the base's fluxes. It is a small, well-posed problem (a few pixels, not the whole grid), so it needs no regularizer. Here, with the fluxes already refitted by the major cycle, it changes nothing.
 
 ```python
 priors = image_priors(result.model) | {"clean.flux": dist.LogUniform(1e-3, 1.0)}
@@ -223,7 +225,7 @@ flux 0.0297 after CLEAN, 0.0297 refitted (truth 0.030); χ²/N 0.975
 
 ## The loop gain
 
-The loop gain trades speed against care. A small gain takes many small steps, and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). The major cycles remove that limitation. Here a gain of 0.5 gets χ² per point to about 1.1 within ten iterations and then stalls, because its early steps put flux in the wrong places. The first major cycle, at iteration 50, moves that flux and reaches the target; without major cycles (`refit_every=0`) CLEAN would stop there, stalled. A gain of 0.03 is still at χ² per point of about 20 after 50 iterations, but by then it has found the right three pixels, and the major cycle solves for their fluxes. All three gains end at the target after the same major cycle, with 3, 6 and 13 components: the larger the gain, the more stray components it leaves. Values of 0.05–0.2 are still the usual choice.
+The loop gain trades speed against care. A small gain takes many small steps and can correct an early step with later ones. A large gain moves quickly, but a step that overshoots cannot be undone, because `clean` only ever adds flux (so the image stays positive). The major cycles remove that limitation. Here a gain of 0.5 gets χ² per point to about 1.1 within ten iterations and then stalls, because its early steps put flux in the wrong places. The first major cycle, at iteration 50, moves that flux and reaches the target; without major cycles (`refit_every=0`) CLEAN would stop there, stalled. A gain of 0.03 is still at χ² per point of about 20 after 50 iterations, but by then it has found the right three pixels, and the major cycle solves for their fluxes. All three gains end at the target after the same major cycle, with 3, 6 and 13 components: the larger the gain, the more stray components it leaves. Values of 0.05–0.2 are still the usual choice.
 
 ```python
 fig, ax = plt.subplots(figsize=(6, 4))
@@ -257,7 +259,7 @@ gain 0.5: 51 iterations, 13 components, flux 0.0302, stopped (target)
 
 ## Closure phases and V² from a long-baseline interferometer
 
-Classic CLEAN needs Fourier phases; with closure phases it has to be wrapped in self-calibration loops. Gradient CLEAN does not: it fits closure phases and squared visibilities directly, through the same likelihood as `fit`.
+Classic CLEAN needs Fourier phases; with closure phases it has to be wrapped in self-calibration loops. Gradient CLEAN fits closure phases and squared visibilities directly, through the same likelihood as `fit`.
 
 Here are four VLTI unit telescopes in the L band, at five hour angles, with a star, a 3% companion and a 4% extended blob. The blob is larger than the beam, so CLEAN builds it from a cluster of components. CLEAN stops after the first major cycle, at χ² per point of 0.92, with 97% of the true flux; the restored image matches the truth convolved with the beam, including the beam's elongation.
 
@@ -315,7 +317,7 @@ stopped (target) after 51 iterations at χ²/N = 0.921: 17 components with flux 
 ## Summary
 
 - `clean` builds an image from point components where they lower χ² most. It works for any data virgil fits: DISCOs, kernel and closure phases, V², or a mix.
-- Give it a fixed `base` (usually the star), a `support` with a hole under the star, and trust its stopping rule only as far as you trust the error bars.
-- The result is an ordinary model. Refit its fluxes with `fit` on the components' support, show it restored with the beam, or use it as the starting image of a regularised fit.
+- Give it a fixed `base` (usually the star) and a `support` with a hole under the star, and trust its stopping rule only as far as you trust the error bars.
+- The result is an ordinary model. Refit its fluxes with `fit` on the components' support, show it restored with the beam, or use it as the starting image of a regularized fit.
 - Each iteration only adds flux; the major cycles move it between components and remove those left with none, so an early mistake no longer stays. CLEAN stops by itself when χ² stalls. The base scene is fixed, and the components share one spectrum: grey by default, or `spectrum=` for SPARCO-style imaging.
-- For extended emission, a regularised fit started from the CLEAN image usually does better. `notebooks/mwe/mwe_sparse_imaging.ipynb` compares CLEAN with the sparsity regularisers `StarletL1` and `LogSum` and with maximum entropy, each started from CLEAN.
+- For extended emission, a regularized fit started from the CLEAN image usually does better. `notebooks/mwe/mwe_sparse_imaging.ipynb` compares CLEAN with the sparsity regularizers `StarletL1` and `LogSum` and with maximum entropy, each started from CLEAN.
