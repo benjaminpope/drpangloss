@@ -665,6 +665,67 @@ def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
 
+class _Scales:
+    halffringe = 2.0
+
+
+def test_unresolved_pairs_are_rings_closer_than_their_widths_or_a_halffringe():
+    values = {
+        "r1": 10.05, "s1": 0.3, "r2": 9.97, "s2": 0.3,
+        "r3": 21.5, "s3": 1.0, "r4": 14.0, "s4": 0.5,
+    }  # fmt: skip
+    pairs = disk._unresolved_pairs(_Scales, values, 4)
+    # 10.05 and 9.97 are 0.08 apart; 14.0 is 4 mas from them, more than the
+    # half-fringe and more than the sum of the widths.
+    assert [(i, j) for i, j, _, _ in pairs] == [(1, 2)]
+    # Wide rings 3 mas apart overlap even though the half-fringe is 2 mas.
+    wide = {"r1": 8.0, "s1": 2.0, "r2": 11.0, "s2": 2.0}
+    assert len(disk._unresolved_pairs(_Scales, wide, 2)) == 1
+    # Scaling every length leaves the verdict unchanged.
+    scaled = {k: 2.0 * v for k, v in wide.items()}
+    scaled_ctx = type("C", (), {"halffringe": 4.0})
+    assert len(disk._unresolved_pairs(scaled_ctx, scaled, 2)) == 1
+
+
+def test_rings_do_not_count_a_split_ring(tmp_path):
+    # Two rings, fitted with up to three: a third ring that comes out on top
+    # of one of the two (the split of a ring into two Gaussians) is not a
+    # third ring, so the count chosen is two whatever the BIC says of it.
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(13))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 3,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    res = pipeline.run()
+    rows = res.summary["profile"]["candidates"]
+    kept = {r["n"] for r in res.summary["compare"]["rows"]}
+    # A candidate with an unresolved pair is recorded, ends the search and
+    # does not compete.
+    for row in rows:
+        assert (row["n"] in kept) == (not row["unresolved"])
+        if row["unresolved"]:
+            assert row is rows[-1]
+    assert res.summary["disk"]["n_rings"] == 2
+
+
 def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):
     # The back-fit must lower the objective that is reported, planet included:
     # on the planet-free scene a ring and the geometry can move to mimic the

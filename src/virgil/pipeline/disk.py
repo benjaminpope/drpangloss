@@ -1239,6 +1239,28 @@ def _without_ring(values, k):
     return out
 
 
+def _unresolved_pairs(ctx, values, n):
+    """Pairs of the ``n`` rings closer than the data can tell apart.
+
+    Two rings are one feature, fitted as two, when their radii differ by
+    less than the sum of their widths (two equal Gaussians are unimodal
+    within 2σ) or by less than a half-fringe (the visibilities hold nothing
+    finer). The limit depends only on the rings' own scales, so it is the
+    same whatever the units of the radius. Returns ``(i, j, separation,
+    limit)`` for each such pair, ``i < j``, in mas.
+    """
+    pairs = []
+    for i in range(1, n + 1):
+        for j in range(i + 1, n + 1):
+            sep = abs(float(values[f"r{i}"]) - float(values[f"r{j}"]))
+            limit = max(
+                float(values[f"s{i}"]) + float(values[f"s{j}"]), ctx.halffringe
+            )
+            if sep < limit:
+                pairs.append((i, j, sep, limit))
+    return pairs
+
+
 def _backfit(p, shape, fit):
     """Re-place each ring in turn and keep what improves the fit.
 
@@ -1247,12 +1269,14 @@ def _backfit(p, shape, fit):
     each ring in turn this drops it, scans for the best radius of a ring added
     to the rest on a grid twice as fine as the first scan's, refits every
     parameter (geometry included) from there and keeps the result if the BIC
-    falls by more than ``_BACKFIT_MIN_GAIN``. A pass that changes nothing ends
-    it, as does ``_BACKFIT_PASSES``.
+    falls by more than ``_BACKFIT_MIN_GAIN`` and it leaves no more rings
+    unresolved from each other (``_unresolved_pairs``) than before. A pass
+    that changes nothing ends it, as does ``_BACKFIT_PASSES``.
 
     Returns ``(fit, steps)``; each step records the pass, the ring dropped and
     its radius, the scan's best radius and flux, the refit's χ², geometry and
-    radii, the BIC change (negative is better) and whether it was kept.
+    radii, the BIC change (negative is better), the number of unresolved pairs
+    of rings and whether it was kept.
     """
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     steps = []
@@ -1271,7 +1295,10 @@ def _backfit(p, shape, fit):
             )
             trial = _fit_rings(p, shape, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
-            accepted = d_bic < -_BACKFIT_MIN_GAIN
+            pairs = _unresolved_pairs(ctx, trial.values, shape.n)
+            accepted = d_bic < -_BACKFIT_MIN_GAIN and len(pairs) <= len(
+                _unresolved_pairs(ctx, fit.values, shape.n)
+            )
             steps.append(
                 {
                     "pass": sweep,
@@ -1287,6 +1314,7 @@ def _backfit(p, shape, fit):
                         for i in range(1, shape.n + 1)
                     ],
                     "delta_bic": d_bic,
+                    "n_unresolved": len(pairs),
                     "converged": trial.info.get("converged"),
                     "accepted": accepted,
                 }
@@ -1326,6 +1354,7 @@ def _profile_rings(p):
             searches.append({"rings": n, **search})
         previous = _scalars(fit.values)
         name = f"rings_{n}"
+        unresolved = _unresolved_pairs(ctx, fit.values, n)
         _save_fit(
             p.output / "models" / name, fit, list(_ring_priors(ctx, shape))
         )
@@ -1339,9 +1368,15 @@ def _profile_rings(p):
                 "bic": _bic(fit, n_data),
                 "converged": fit.info.get("converged"),
                 "planet": shape.planet,
+                "unresolved": [list(pair) for pair in unresolved],
                 "backfit": steps,
             }
         )
+        # A ring split in two lowers the BIC with a profile that is not
+        # Gaussian, not with another ring: stop, and `compare` leaves this
+        # count out.
+        if unresolved:
+            break
         if n > 1 and candidates[-1]["bic"] >= candidates[-2]["bic"]:
             break
     _plot_profile_fits(p, candidates, "n", "rings")
@@ -1773,6 +1808,10 @@ def _compare_rings(p):
                 "params": {k: flat[k] for k in names},
             }
         )
+    # A count with two rings too close to tell apart is one ring fitted as
+    # two (see ``_unresolved_pairs``): it does not compete. The first count
+    # is one ring and never has such a pair.
+    rows = [r for r in rows if not r.get("unresolved")]
     n_best = min(rows, key=lambda r: r["bic"])["n"]
     evidences = {
         r["n"]: r["log_evidence"]
