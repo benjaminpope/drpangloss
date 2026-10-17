@@ -14,8 +14,6 @@ We simulate the 7-hole NIRISS aperture mask at 4.3 µm with [`nrm_oidata`](api/c
 The search grid covers ±120 mas in both coordinates in steps of 16 mas, about $\lambda/(10B)$. That is fine enough that a companion lying between grid points loses at most a few per cent of its $\Delta\chi^2$ and is found close to its true position; a much coarser grid can place a companion's best match on the wrong grid point. The even number of points keeps the star's own position, where a companion cannot be told apart from the star, off the grid. The flux axis has 32 values spaced logarithmically from $3\times10^{-4}$ to $3\times10^{-2}$ (fluxes are always companion/primary). It plays two roles: it seeds the optimizer that refines the best flux at each position, and it is the prior of the log Bayes factor, which is then uniform in log flux between its ends. Finally we fix the FAP at which we will claim a detection: 0.135%, the one-sided Gaussian tail at 3σ. It is one-sided because a companion's flux cannot be negative, so only upward fluctuations count; the often quoted 0.27% is the two-sided value.
 
 ```python
-import time
-
 import jax
 import jax.numpy as jnp
 import numpy as onp
@@ -100,7 +98,6 @@ We use 10,000 null draws, so that about 13 of them lie above the 0.135% threshol
 FLUXES = onp.geomspace(1e-3, 3e-2, 8)
 injections = injection_grid([40.0, 60.0, 80.0, 100.0], FLUXES, n_pa=40, key=1)
 
-start = time.perf_counter()
 mc = injection_recovery(
     BinaryModelCartesian,
     null_scene,
@@ -110,19 +107,13 @@ mc = injection_recovery(
     n_null=10_000,
     injections=injections,
     draw_batch=8,
+    progress=False,
 )
-print(
-    f"{mc.n_null} null and {mc.n_injected} injected searches "
-    f"in {time.perf_counter() - start:.0f} s"
-)
+print(f"{mc.n_null} null and {mc.n_injected} injected searches")
 ```
 
 ```text
-injection_recovery:   0%|          | 0/177 [00:00<?, ?it/s]
-```
-
-```text
-10000 null and 1280 injected searches in 834 s
+10000 null and 1280 injected searches
 ```
 
 ## The look-elsewhere effect
@@ -237,11 +228,11 @@ real_noise = gaussian_null(null_scene, template, error_scale=1.5)
 bad = real_noise(jax.random.PRNGKey(11))  # companion-free, errors too small
 truth_mc = injection_recovery(  # what the wrong errors really give
     BinaryModelCartesian, null_scene, template, grid, key=2,
-    n_null=2000, noise=real_noise, draw_batch=8,
+    n_null=2000, noise=real_noise, draw_batch=8, progress=False,
 )
 boot_mc = injection_recovery(  # calibrated on the data's own residuals
     BinaryModelCartesian, null_scene, bad, grid, key=3,
-    n_null=2000, noise="bootstrap", draw_batch=8,
+    n_null=2000, noise="bootstrap", draw_batch=8, progress=False,
 )
 factors = rescale_errors(null_scene, bad)[1]
 
@@ -258,14 +249,6 @@ for label, calibration, actual in [
     t = calibration.threshold("delta_chi2", 0.01)[0]
     p = actual.false_alarm_probability("delta_chi2", t)[0]
     print(f"{label:<36}{t:6.1f}{p:10.1%}")
-```
-
-```text
-injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
-```
-
-```text
-injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
 ```
 
 ```text

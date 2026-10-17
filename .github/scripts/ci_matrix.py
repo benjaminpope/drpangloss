@@ -11,8 +11,9 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 |---------|------------------------------|-----------------------------------------|
 | gate    | pull request                 | py3.12 float32 and float64, 3 shards    |
 |         |                              | each, no slow tests; a PR touching the  |
-|         |                              | orbit modules adds their slow tests, one |
-|         |                              | changing pyproject.toml adds the floors |
+|         |                              | orbit modules or the disk pipeline adds |
+|         |                              | their slow tests, one changing          |
+|         |                              | pyproject.toml adds the floors          |
 | main    | push to main                 | the gate, with the slow tests           |
 | full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13, the floors |
 | nightly | daily schedule               | full, all with slow tests, + the        |
@@ -27,13 +28,16 @@ import os
 import re
 import subprocess
 
-# The orbit modules and their tests: a pull request touching one runs the
-# slow tests of these test files too (tests/conftest.py, VIRGIL_SLOW_FILES).
+# The orbit modules, the disk pipeline and their tests: a pull request
+# touching one runs the slow tests of these test files too
+# (tests/conftest.py, VIRGIL_SLOW_FILES).
 ORBIT_PATHS = re.compile(
-    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*)"
-    r"|tests/test_(aliases|epochs|orbit[a-z_]*))\.py$"
+    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*|pipeline/disk)"
+    r"|tests/test_(aliases|epochs|orbit[a-z_]*|pipeline_disk))\.py$"
 )
-ORBIT_SLOW_FILES = "test_aliases.py test_epochs.py test_orbit*.py"
+ORBIT_SLOW_FILES = (
+    "test_aliases.py test_epochs.py test_orbit*.py test_pipeline_disk.py"
+)
 
 LINUX = {"os": "ubuntu-latest", "python-version": "3.12", "x64": "0"}
 

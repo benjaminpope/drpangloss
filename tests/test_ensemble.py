@@ -14,6 +14,7 @@ from virgil.ensemble import (
     combine,
     _grow_grid,
     _on_common_grid,
+    _elongation,
     _oriented,
     draw_groups,
     ensemble,
@@ -527,6 +528,15 @@ def test_gp_group_without_a_star():
     assert onp.all(onp.isfinite(group.grid.log_evidence["iso"]))
 
 
+def test_elongated_data_fall_below_the_axis_ratio_that_adds_the_variant():
+    # The condition on which evidence_grid adds its anisotropic variant; the
+    # grid itself is the slow test below (its JIT compiles take about 30 s on
+    # a CI runner).
+    ratio, pa = _elongation(DATASETS[0], True, NPIX * SCALE)
+    assert 0.0 < ratio < 1.01 and 0.0 <= pa < 180.0
+
+
+@pytest.mark.slow
 def test_evidence_grid_adds_an_anisotropic_variant_for_elongated_data():
     elongated = dataclasses.replace(GP_SPEC, gp_axis_ratio=1.01)
     data = DATASETS[0]

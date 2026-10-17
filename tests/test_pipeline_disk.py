@@ -6,6 +6,14 @@ observed with five channels (so the spectral index is fitted). The runs
 are deliberately small, a coarse geometry grid, two ring counts, two
 length scales and a few NUTS steps: these tests check the plumbing and the
 contract, not the sampler.
+
+The full runs and the fits that take a minute or more are marked slow (they
+run on pushes to main, nightly, and on a pull request that changes the disk
+pipeline or this file). On other pull requests the ``test_smoke_*`` tests run
+a tiny problem: the rings model through the profile stage and a reload, the GP
+through the profile stage, and the ring back-fit. The compare and posterior
+stages, the quicklook, harmonics and the companion search run in the slow
+tier: each stage's JIT compile alone takes several seconds on a CI runner.
 """
 
 import inspect
@@ -347,6 +355,7 @@ def test_settings_and_model_are_validated(data):
 # --- the run folder -----------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_gp_run_contract(gp_run):
     pipeline, res = gp_run
     assert res.status == "complete"
@@ -384,6 +393,7 @@ def test_gp_run_contract(gp_run):
     assert not list(out.rglob("*.pkl")) and not list(out.rglob("*.pickle"))
 
 
+@pytest.mark.slow
 def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
     pipeline, res = gp_run
     s = res.summary
@@ -425,6 +435,7 @@ def test_gp_run_recovers_the_disk_and_the_companion(gp_run):
     )
 
 
+@pytest.mark.slow
 def test_geometry_search_leaves_a_wrong_mode(gp_run):
     pipeline, _ = gp_run
     # A single ring can settle in a mode far from a lopsided multi-ring disk's
@@ -444,6 +455,7 @@ def test_geometry_search_leaves_a_wrong_mode(gp_run):
     assert pipeline._report("profile")["geometry_search"]
 
 
+@pytest.mark.slow
 def test_gp_round_trip(gp_run, data):
     pipeline, _ = gp_run
     res = load(pipeline.output)
@@ -474,6 +486,7 @@ def test_gp_round_trip(gp_run, data):
     assert grid["axes"]["pa"].max() < 180.0
 
 
+@pytest.mark.slow
 def test_quicklook_notebook(gp_run):
     pipeline, _ = gp_run
     nb = json.loads((pipeline.output / "quicklook.ipynb").read_text())
@@ -499,6 +512,7 @@ def test_quicklook_notebook(gp_run):
     assert "| `absorbed_companion` |" in "".join(cells[-1]["source"])
 
 
+@pytest.mark.slow
 def test_rings_run_contract_and_recovery(rings_run):
     pipeline, res = rings_run
     s = res.summary
@@ -529,6 +543,7 @@ def test_rings_run_contract_and_recovery(rings_run):
     assert all("bic" in r and "log_evidence" in r for r in rows)
 
 
+@pytest.mark.slow
 def test_rings_posterior_is_folded(rings_run):
     _, res = rings_run
     samples = res.samples()
@@ -551,6 +566,7 @@ def test_ring_colour_is_validated(data, tmp_path):
     assert DiskPipeline.defaults()["ring_colour"] == "power_law"
 
 
+@pytest.mark.slow
 def test_blackbody_ring_colour_recovers_the_temperature(tmp_path):
     from virgil.spectra import BlackBody
 
@@ -602,6 +618,96 @@ def test_blackbody_ring_colour_recovers_the_temperature(tmp_path):
     assert chi2["power_law"] > chi2["blackbody"]
 
 
+_TINY = {
+    **SMALL,
+    "n_inc": 4,
+    "n_pa": 4,
+    "companion": False,
+    "max_rings": 1,
+    "harmonic_degree": 0,
+    "ell_halffringes": [1.5],
+}
+
+
+@pytest.fixture(scope="module")
+def tiny():
+    template = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
+        hour_angles_h=(-1.5, 1.5),
+        sigma_v2=0.01,
+        sigma_cp_deg=3.0,
+    )
+    return template.with_model(TRUTH, key=jax.random.PRNGKey(3))
+
+
+def test_smoke_rings_runs_through_profile_and_loads(tiny, tmp_path):
+    pipeline = DiskPipeline(tiny, "rings", output=tmp_path / "run", **_TINY)
+    res = pipeline.run(through="profile")
+    row = res.summary["profile"]["candidates"][0]
+    assert row["n"] == 1 and onp.isfinite(row["chi2_reduced"])
+    loaded = load(pipeline.output)
+    assert loaded.status == "partial"
+    assert isinstance(loaded.model("rings_1"), System)
+
+
+def test_smoke_gp_runs_through_profile(tiny, tmp_path, monkeypatch):
+    # No lattice starts: the geometry search keeps the single ring's geometry
+    # and the grid's rivals.
+    monkeypatch.setattr(disk, "_GEOMETRY_LATTICE_INC", ())
+    monkeypatch.setattr(disk, "_GEOMETRY_LATTICE_PA", ())
+    pipeline = DiskPipeline(
+        tiny,
+        "gp",
+        output=tmp_path / "run",
+        **{**_TINY, "n_inc": 3, "r_out_mas": 9.0},
+    )
+    res = pipeline.run(through="profile")
+    assert res.summary["profile"]["candidates"]
+    assert pipeline._report("profile")["geometry_search"]
+
+
+def test_smoke_backfit_moves_a_ring(tmp_path, monkeypatch):
+    monkeypatch.setattr(disk, "_BACKFIT_PASSES", 1)
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=32
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=32
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 3),
+        hour_angles_h=(-1.5, 1.5),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(11))
+    pipeline = DiskPipeline(
+        two,
+        "rings",
+        output=tmp_path / "run",
+        **{**_TINY, "max_rings": 2, "r_out_mas": 14.0},
+    )
+    pipeline.run(through="overview")
+    shape = disk._Shape(2, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 6.0,
+        "s1": 1.0,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+    }
+    wrong = disk._fit_rings(pipeline, shape, start)
+    better, steps = disk._backfit(pipeline, shape, wrong)
+    assert better.chi2 < wrong.chi2 and any(s["accepted"] for s in steps)
+    radii = sorted(float(better.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
+
+
 def test_without_ring_renumbers_the_later_rings():
     values = {
         "inc": 50.0,
@@ -621,6 +727,7 @@ def test_without_ring_renumbers_the_later_rings():
     assert len(out) == len(values) - 6
 
 
+@pytest.mark.slow
 def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
     truth = System(
         star=PointSource(flux=1.0),
@@ -665,6 +772,7 @@ def test_backfit_moves_a_ring_off_a_wrong_minimum(tmp_path):
     assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
 
+@pytest.mark.slow
 def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):
     # The back-fit must lower the objective that is reported, planet included:
     # on the planet-free scene a ring and the geometry can move to mimic the
@@ -945,6 +1053,7 @@ def test_resume_and_config_mismatch(data, tmp_path, monkeypatch):
 # --- CLI --------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_cli_disk_run_from_oifits(gp_run, tmp_path, capsys):
     pipeline, _ = gp_run
     path = pipeline.output / "data" / "processed.oifits"

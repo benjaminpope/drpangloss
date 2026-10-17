@@ -122,7 +122,7 @@ print(f"converged {one.info['converged']} after {one.info['steps']} steps; chi2 
 ```
 
 ```text
-converged True after 3621 steps; chi2 per point 1.007; image flux 0.0514 (truth 0.05)
+converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 0.05)
 ```
 
 ## Choosing the weight: the L-curve and the discrepancy principle
@@ -219,13 +219,15 @@ print(diagnose(final["moments"], data))
 ```
 
 ```text
-chi2_red         [0.979]
-anchored         True
-pixel_scale_mas  [20.9]
-edge_flux        [0.0161]
-centroid_mas     [[50, 18.3]]
-flip_dchi2       2.11e+04
-phase_regime     [0]
+chi2_red                [0.979]
+chi2_red_by_observable  [{'vis': 0.9793324189001241}]
+short_baseline_mean     None
+anchored                True
+pixel_scale_mas         [20.9]
+edge_flux               [0.0161]
+centroid_mas            [[50, 18.3]]
+flip_dchi2              2.11e+04
+phase_regime            [0]
 
 No warnings.
 ```

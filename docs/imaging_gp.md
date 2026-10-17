@@ -1,8 +1,6 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_gp.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 3: a Gaussian-process prior
 
-> **Install:** this tutorial shows progress bars with tqdm, which comes with the `notebooks` extra: `pip install "virgil-astro[notebooks]"`.
-
 Part 2 reconstructed the ring with maximum entropy, a penalty whose weight had to be swept and chosen. This part uses a **Gaussian-process (GP) prior** instead. The log-brightness of the image is modelled as a smooth random field about a template image, with two physical hyperparameters:
 - **σ**, how far the log-brightness may wander from the template;
 - **ℓ**, the correlation length: how far apart two pixels must be before they vary independently.
@@ -21,7 +19,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as onp
 import numpyro.distributions as dist
-from tqdm.auto import tqdm
 
 repo_root = Path.cwd()
 if not (repo_root / "src").exists():
@@ -104,7 +101,7 @@ print(f"{one.info['method']}: converged {one.info['converged']} in {one.info['st
 ```
 
 ```text
-lm: converged True in 37 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
+lm: converged True in 36 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
 ```
 
 ## Choosing σ and ℓ from the evidence
@@ -123,7 +120,7 @@ The pair with the largest evidence wins. ℓ is gridded in units of the beam, so
 lengths = [f * resolution.minor_mas for f in (0.25, 0.5, 1.0, 2.0)]
 sigmas = [1.0, 2.0, 4.0, 8.0]
 log_z, gp, previous = onp.zeros((4, 4)), {}, None
-for i, length in enumerate(tqdm(lengths, desc="ℓ")):
+for i, length in enumerate(lengths):
     for j, sigma in enumerate(sigmas):
         scene = gp_scene(sigma, length)
         gp[i, j] = previous = fit(scene, image_priors(scene) | flux_prior, data, init=None if previous is None else previous.values)
@@ -142,11 +139,7 @@ plt.show()
 print(f"best: σ = {sigmas[best[1]]}, ℓ = {lengths[best[0]]:.0f} mas; all fits converged: {all(r.info['converged'] for r in gp.values())}")
 ```
 
-```text
-ℓ:   0%|          | 0/4 [00:00<?, ?it/s]
-```
-
-![imaging_gp output 8.2](generated/imaging_gp_cell008_out02.png)
+![imaging_gp output 8.1](generated/imaging_gp_cell008_out01.png)
 
 ```text
 best: σ = 4.0, ℓ = 131 mas; all fits converged: True

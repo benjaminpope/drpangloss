@@ -652,6 +652,18 @@ contributors page; no code was copied)
 
 ### Fixed
 
+- **The pipelines no longer fail with numpyro's "Cannot find valid initial
+  parameters" on a non-detection.** With no companion the fitted flux runs to
+  the lower end of its prior (and an unresolved star's diameter to the edge of
+  `diam_range_mas`); NUTS then started exactly on the bound, where the
+  unconstrained value is infinite. `BinaryPipeline`, `StarPipeline` and
+  `DiskPipeline` now start the chains at least 1e-3 of the prior's width
+  inside any bound (so a start within 0.1% of a bound, which `fit` reports in
+  `at_bound`, moves slightly and gives different draws for the same seed); a
+  start that is still not finite raises a `ValueError` naming the start
+  values instead of numpyro's `RuntimeError`; and `BinaryPipeline` and
+  `StarPipeline` add a `start_at_bound` warning check when the best fit sits
+  at a bound.
 - **Projected correlated closure phases keep only their real directions in
   float32.** When an operator (a kernel-phase or DISCO phase projection) is
   applied to closure phases with four or more telescopes, their correlation

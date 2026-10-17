@@ -266,6 +266,27 @@ def prior_bound(fractions, *, warn=0.05):
     )
 
 
+def start_at_bound(names):
+    """The best fit, where NUTS starts, sits at a prior bound.
+
+    Parameters
+    ----------
+    names : sequence of str
+        The fitted parameters within 0.1% of a prior bound (``fit``'s
+        ``at_bound``). Callers add this check only when there are some.
+    """
+    names = list(names)
+    return Check(
+        "start_at_bound",
+        "warn",
+        names,
+        None,
+        f"The best fit sits at a prior bound for {', '.join(names)}, so the "
+        f"data do not constrain it there (a non-detection?): NUTS starts "
+        f"just inside the bound and that posterior is prior-dominated.",
+    )
+
+
 def r_hat(value, *, warn=1.01, fail=1.05):
     """Largest split R-hat over the sampled parameters."""
     if not _finite(value):

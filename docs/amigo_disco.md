@@ -56,11 +56,11 @@ Observable kind: mixed_log_complex
 
 ## Verify one mixed-DISCO projection
 
-The product stores one independent data vector per filter. For a complex visibility `cvis`, its model vector is
+The product stores one independent data vector per filter. For a complex visibility $V$, its model vector is
 
-```python
-A_logamp @ log(cvis).real + A_phase @ log(cvis).imag
-```
+$$y = A_{\mathrm{logamp}}\,\mathrm{Re}\log V + A_{\mathrm{phase}}\,\mathrm{Im}\log V,$$
+
+where `A_logamp` and `A_phase` are the product's two projection matrices.
 
 `OIData.model` applies that relation automatically.
 
