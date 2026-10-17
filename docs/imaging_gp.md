@@ -101,7 +101,7 @@ print(f"{one.info['method']}: converged {one.info['converged']} in {one.info['st
 ```
 
 ```text
-lm: converged True in 37 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
+lm: converged True in 36 steps; chi2 per point 1.023; flux 0.0507 (truth 0.05)
 ```
 
 ## Choosing σ and ℓ from the evidence
@@ -139,11 +139,7 @@ plt.show()
 print(f"best: σ = {sigmas[best[1]]}, ℓ = {lengths[best[0]]:.0f} mas; all fits converged: {all(r.info['converged'] for r in gp.values())}")
 ```
 
-```text
-ℓ:   0%|          | 0/4 [00:00<?, ?it/s]
-```
-
-![imaging_gp output 8.2](generated/imaging_gp_cell008_out02.png)
+![imaging_gp output 8.1](generated/imaging_gp_cell008_out01.png)
 
 ```text
 best: σ = 4.0, ℓ = 131 mas; all fits converged: True

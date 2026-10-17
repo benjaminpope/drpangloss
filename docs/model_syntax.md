@@ -70,7 +70,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'angular': {'sep': 144.22205101855957,
   'pa': 123.69006752597977,
   'flux': 0.004},
- 'max_complex_visibility_difference': 3.7834979593753815e-09}
+ 'max_complex_visibility_difference': 0.0}
 ```
 
 `OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
@@ -182,7 +182,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'flux': 0.004,
  'contrast': 250.0,
  'delta_mag': 5.994850021680094,
- 'max_complex_visibility_difference': 3.7834979593753815e-09}
+ 'max_complex_visibility_difference': 0.0}
 ```
 
 ```python
@@ -248,9 +248,9 @@ ll_cart_perturbed = float(
 ```
 
 ```text
-{'ll_cart_true': 259.32464599609375,
- 'll_ang_equivalent': 259.32464599609375,
- 'll_cart_perturbed': -580.6997680664062,
+{'ll_cart_true': 259.3246154785156,
+ 'll_ang_equivalent': 259.3246154785156,
+ 'll_cart_perturbed': -580.6996459960938,
  'true_beats_perturbed': True}
 ```
 

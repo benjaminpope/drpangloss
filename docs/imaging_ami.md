@@ -170,15 +170,15 @@ print(f"agree to float32 rounding: {bool(difference.max() < 1e-6)}")
 ```
 
 ```text
-lattice (MFT): 0.20 ms per evaluation
+lattice (MFT): 0.3 ms per evaluation on this machine
 ```
 
 ```text
-per point: 0.43 ms per evaluation
+per point: 0.2 ms per evaluation on this machine
 ```
 
 ```text
-largest difference: 4.1e-08
+agree to float32 rounding: True
 ```
 
 ## Another scene: a lopsided ring

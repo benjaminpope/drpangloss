@@ -113,11 +113,7 @@ print(f"{mc.n_null} null and {mc.n_injected} injected searches")
 ```
 
 ```text
-injection_recovery:   0%|          | 0/177 [00:00<?, ?it/s]
-```
-
-```text
-10000 null and 1280 injected searches in 834 s
+10000 null and 1280 injected searches
 ```
 
 ## The look-elsewhere effect
@@ -253,14 +249,6 @@ for label, calibration, actual in [
     t = calibration.threshold("delta_chi2", 0.01)[0]
     p = actual.false_alarm_probability("delta_chi2", t)[0]
     print(f"{label:<36}{t:6.1f}{p:10.1%}")
-```
-
-```text
-injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
-```
-
-```text
-injection_recovery:   0%|          | 0/32 [00:00<?, ?it/s]
 ```
 
 ```text

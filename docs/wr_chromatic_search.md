@@ -121,10 +121,6 @@ for dra, limit in zip(seps, limits):
 ```
 
 ```text
-  0%|          | 0/4 [00:00<?, ?it/s]
-```
-
-```text
 dra =  -10.0 mas: 3-sigma limit on the continuum flux ratio = 0.0574
 dra =   -6.0 mas: 3-sigma limit on the continuum flux ratio = 0.0118
 dra =    0.0 mas: 3-sigma limit on the continuum flux ratio = 0.0115

@@ -93,7 +93,7 @@ print(f"300 warmup + 300 draws; median {onp.median(steps):.0f} leapfrog steps pe
 ```
 
 ```text
-300 warmup + 300 draws in 67 s; median 127 leapfrog steps per draw (at most 1023); 0 divergences
+300 warmup + 300 draws; median 63 leapfrog steps per draw (at most 1023); 0 divergences
 ```
 
 ## Are the draws trustworthy?
@@ -109,7 +109,7 @@ print(f"flux {mid:.4f} (90%: {low:.4f}–{high:.4f}; truth 0.05), ESS {float(eff
 ```
 
 ```text
-flux 0.0507 (90%: 0.0504–0.0512; truth 0.05), ESS 346; latent ESS: 5th percentile 373, median 596 of 300
+flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 226; latent ESS: 5th percentile 209, median 294 of 300
 ```
 
 ## The posterior mean and standard deviation
@@ -132,11 +132,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-```text
-rendering draws:   0%|          | 0/300 [00:00<?, ?it/s]
-```
-
-![imaging_sampling output 10.2](generated/imaging_sampling_cell010_out02.png)
+![imaging_sampling output 10.1](generated/imaging_sampling_cell010_out01.png)
 
 ## What about σ and ℓ?
 
