@@ -45,6 +45,7 @@ from .imaging import (
     LCurve,
     MaxEntropy,
     StarletL1,
+    _as_list,
     _chi2,
     beam,
     envelope_fwhm,
@@ -366,10 +367,6 @@ class Ensemble:
         return "\n".join(lines)
 
 
-def _datasets(data):
-    return list(data) if isinstance(data, (list, tuple)) else [data]
-
-
 def draw_groups(data, n_groups, key, spec=None, star=True):
     """Draw the settings of ``n_groups`` groups of reconstructions.
 
@@ -413,9 +410,9 @@ def draw_groups(data, n_groups, key, spec=None, star=True):
             fwhm_mas=envelope_fwhm(data, star, spec.aperture_mas),
             aperture_mas=spec.aperture_mas,
         )
-    n_data = sum(d.n_independent for d in _datasets(data))
+    n_data = sum(d.n_independent for d in _as_list(data))
     # On a uv lattice (AMI) a field beyond field_of_view aliases.
-    lattice = any(d.uv_grid is not None for d in _datasets(data))
+    lattice = any(d.uv_grid is not None for d in _as_list(data))
     draws = []
     for index in range(int(n_groups)):
         family = spec.families[rng.integers(len(spec.families))]
@@ -545,21 +542,17 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
             data, draw, star=star, starts=starts, spec=spec, **fit_options
         )
     model = _start_model(starts[draw.start], draw, star)
-    path = "env" if star else None
     priors = image_priors(model)
-    others = ()
     if star:
         # The image's flux relative to the star is a scale: log-uniform.
         priors["env.flux"] = dist.LogUniform(1e-4, 1e3)
-    else:
-        others = (Centroid(draw.pixel_scale_mas),)
     curve = l_curve(
         model,
         priors,
         data,
-        FAMILIES[draw.family](1.0, path=path),
+        FAMILIES[draw.family](1.0, path="env" if star else None),
         draw.weights,
-        others,
+        () if star else (Centroid(draw.pixel_scale_mas),),
         **fit_options,
     )
     return Group(draw, curve)
@@ -632,6 +625,18 @@ class EvidenceGrid:
     pa_deg: float | None = None
 
 
+def _extend(axis, best, limits):
+    """Add a point a factor of 2 beyond ``best`` if it is the end of the sorted
+    ``axis`` and the new point is within ``limits``; whether it did."""
+    if best == axis[0] and best / 2 >= limits[0]:
+        axis.insert(0, best / 2)
+    elif best == axis[-1] and best * 2 <= limits[1]:
+        axis.append(best * 2)
+    else:
+        return False
+    return True
+
+
 def _grow_grid(
     evaluate, lengths, sigmas, length_limits, sigma_limits, growths
 ):
@@ -657,20 +662,9 @@ def _grow_grid(
     fill()
     for _ in range(growths):
         length, sigma = max(values, key=value)
-        grew = False
-        if length == ls[0] and length / 2 >= length_limits[0]:
-            ls.insert(0, length / 2)
-            grew = True
-        elif length == ls[-1] and length * 2 <= length_limits[1]:
-            ls.append(length * 2)
-            grew = True
-        if sigma == ss[0] and sigma / 2 >= sigma_limits[0]:
-            ss.insert(0, sigma / 2)
-            grew = True
-        elif sigma == ss[-1] and sigma * 2 <= sigma_limits[1]:
-            ss.append(sigma * 2)
-            grew = True
-        if not grew:
+        grew_length = _extend(ls, length, length_limits)
+        grew_sigma = _extend(ss, sigma, sigma_limits)
+        if not (grew_length or grew_sigma):
             break
         fill()
     return ls, ss, values
@@ -1015,7 +1009,7 @@ def combine(data, groups, *, spec=None, star=True):
     Ensemble
     """
     spec = EnsembleSpec() if spec is None else spec
-    datasets = _datasets(data)
+    datasets = _as_list(data)
     groups = sorted(groups, key=lambda g: g.draw.index)
 
     def chi2_of(result):
@@ -1062,6 +1056,12 @@ def combine(data, groups, *, spec=None, star=True):
         for i in indices:
             members[i] = dataclasses.replace(members[i], reason=reason)
 
+    def keep(mask, reason):
+        """Drop the live members where ``mask`` is False, for ``reason``."""
+        nonlocal live
+        drop([i for i, k in zip(live, mask) if not k], reason)
+        live = [i for i, k in zip(live, mask) if k]
+
     live = [i for i, m in enumerate(members) if m.reason is None]
     if not live:
         raise ValueError("No member lies in its group's L-curve window.")
@@ -1070,8 +1070,7 @@ def combine(data, groups, *, spec=None, star=True):
     # propagates through min, which would reject every member.
     chi2 = onp.array([members[i].chi2_red for i in live])
     finite = onp.all(onp.isfinite(chi2), axis=1)
-    drop([i for i, f in zip(live, finite) if not f], "diverged")
-    live = [i for i, f in zip(live, finite) if f]
+    keep(finite, "diverged")
     if not live:
         raise ValueError("Every member's fit diverged (non-finite chi2).")
     chi2 = chi2[finite]
@@ -1080,8 +1079,7 @@ def combine(data, groups, *, spec=None, star=True):
         (chi2 <= spec.max_chi2_red) & (chi2 <= spec.chi2_ratio * best),
         axis=1,
     )
-    drop([i for i, g in zip(live, good) if not g], "chi2")
-    live = [i for i, g in zip(live, good) if g]
+    keep(good, "chi2")
     if not live:
         raise ValueError(
             f"No member has chi2/N below max_chi2_red={spec.max_chi2_red} "
@@ -1091,9 +1089,7 @@ def combine(data, groups, *, spec=None, star=True):
     median = onp.median(total)
     mad = 1.4826 * onp.median(onp.abs(total - median))
     if mad > 0:
-        outlier = total > median + spec.mad_cut * mad
-        drop([i for i, o in zip(live, outlier) if o], "outlier")
-        live = [i for i, o in zip(live, outlier) if not o]
+        keep(total <= median + spec.mad_cut * mad, "outlier")
 
     # The common grid: the finest pixels and the largest field.
     live.sort(key=lambda i: members[i].total_chi2_red)

@@ -39,6 +39,8 @@ shared machinery for linear marginalization in ``virgil._linear``
 stay smooth, also where modes are degenerate and where widths go to zero.
 """
 
+from functools import partial
+
 import equinox as eqx
 import jax
 import jax.numpy as np
@@ -66,14 +68,11 @@ class GainModes(eqx.Module):
     """Low-rank gain modes on the visibility observables.
 
     Built by [`gain_modes`][virgil.gains.gain_modes] (or
-    [`OIData.with_gains`][virgil.oidata.OIData.with_gains]); see the
-    module notes for the model.
-
-    Modes within one frame are kept in blocks, the connected groups of such
-    modes (one per frame for the built-in groups), padded to a common size.
-    Modes that span frames (only supplied ones can) are kept apart, as
-    dense columns, and whitened after the blocks. That way, a few modes
-    across frames do not merge every frame into one dense block.
+    [`OIData.with_gains`][virgil.oidata.OIData.with_gains]); see the module
+    notes for the model. Modes within one frame are kept in blocks (the
+    connected groups of such modes, padded to a common size); modes that span
+    frames (only supplied ones can) are kept apart as dense columns and whitened
+    after the blocks, so a few of them do not merge every frame into one block.
 
     Attributes
     ----------
@@ -88,10 +87,10 @@ class GainModes(eqx.Module):
         ``(n_block, n_mode)`` int32: each mode's group, an index into
         ``groups``.
     spanning : jax.Array or None
-        ``(n_vis, n_spanning)``: the shapes of modes that span frames, or
-        None if there are none. Never a zero-size array: XLA's Shardy pass
-        segfaults compiling a ``jax.pmap`` (numpyro's parallel chains) that
-        captures one (JAX 0.11.2).
+        ``(n_vis, n_spanning)``: the shapes of modes that span frames, or None
+        if there are none. Never zero-size: XLA's Shardy pass segfaults
+        compiling a ``jax.pmap`` (numpyro's parallel chains) that captures one
+        (JAX 0.11.2).
     spanning_group : jax.Array or None
         ``(n_spanning,)`` int32: their groups (None with ``spanning``).
     widths : jax.Array
@@ -289,19 +288,11 @@ def gain_modes(
         "baseline": baseline,
         "chromatic": chromatic,
     }
-    for name, width in built_in.items():
-        if width is not None and not (onp.isfinite(width) and width >= 0):
-            raise ValueError(
-                f"The {name} width must be non-negative, not {width}."
-            )
+    _check_widths(built_in)
     need_stations = any(w is not None for w in built_in.values())
     index, frame, stations = _frames_and_stations(data, need_stations)
     groups, widths, columns = [], [], []  # columns: (group, rows, values)
-
-    def add_group(name, width):
-        groups.append(name)
-        widths.append(float(width))
-        return len(groups) - 1
+    add_group = partial(_add_group, groups, widths)
 
     if need_stations:
         wavel = onp.broadcast_to(onp.asarray(data.wavel), onp.shape(data.u))[
@@ -348,16 +339,45 @@ def gain_modes(
     return _pack(columns, groups, widths, frame)
 
 
-def _pack(columns, groups, widths, frame):
-    """Sort columns into blocks within frames, and columns spanning frames.
+def _check_widths(widths):
+    for name, width in widths.items():
+        if width is not None and not (onp.isfinite(width) and width >= 0):
+            raise ValueError(
+                f"The {name} width must be non-negative, not {width}."
+            )
 
-    Columns within one frame are connected when they share a row; each
-    connected group (a component of the bipartite graph of columns and
-    rows) is a block, padded to a common size.
-    """
+
+def _add_group(names, widths, name, width):
+    """Append a group; return its index."""
+    names.append(name)
+    widths.append(float(width))
+    return len(names) - 1
+
+
+def _mode_blocks(touched, n_item):
+    """Group modes into blocks: modes are in one block when they touch a
+    common item. ``touched[k]`` are the items (of ``n_item``) mode ``k`` touches."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
+    n_col = len(touched)
+    col_ids = onp.concatenate(
+        [onp.full(t.size, k) for k, t in enumerate(touched)]
+    )
+    graph = coo_matrix(
+        (onp.ones(col_ids.size), (col_ids, n_col + onp.concatenate(touched))),
+        shape=(n_col + n_item, n_col + n_item),
+    )
+    label = connected_components(graph, directed=False)[1]
+    by_label = {}
+    for k in range(n_col):
+        by_label.setdefault(label[k], []).append(k)
+    return list(by_label.values())
+
+
+def _pack(columns, groups, widths, frame):
+    """Sort columns into blocks within frames (connected by shared rows,
+    padded to a common size) and columns spanning frames."""
     n_vis = frame.size
     within = [onp.unique(frame[r]).size == 1 for _, r, _ in columns]
     local = [c for c, w in zip(columns, within) if w]
@@ -367,28 +387,12 @@ def _pack(columns, groups, widths, frame):
         spanning[r, j] = values
     spanning_group = onp.array([g for g, _, _ in spanning_cols], onp.int32)
 
-    blocks = []
-    if local:
-        n_col = len(local)
-        col_ids = onp.concatenate(
-            [onp.full(r.size, k) for k, (_, r, _) in enumerate(local)]
-        )
-        row_ids = onp.concatenate([r for _, r, _ in local])
-        graph = coo_matrix(
-            (onp.ones(col_ids.size), (col_ids, n_col + row_ids)),
-            shape=(n_col + n_vis, n_col + n_vis),
-        )
-        _, label = connected_components(graph, directed=False)
-        by_label = {}
-        for k in range(n_col):
-            by_label.setdefault(label[k], []).append(k)
-        blocks = list(by_label.values())
+    blocks = _mode_blocks([r for _, r, _ in local], n_vis) if local else []
     block_rows = [
         onp.unique(onp.concatenate([local[k][1] for k in ks])) for ks in blocks
     ]
-    # With no blocks, keep one empty block (rows out of range, zero shapes,
-    # adding log(1 + 0) = 0) rather than zero-size arrays, which jax.pmap
-    # cannot compile (see GainModes.spanning).
+    # No blocks: keep one empty block, not zero-size arrays (see
+    # GainModes.spanning).
     n_row = max((r.size for r in block_rows), default=1)
     n_mode = max((len(ks) for ks in blocks), default=1)
     rows = onp.full((max(len(blocks), 1), n_row), n_vis, dtype=onp.int32)
@@ -422,19 +426,15 @@ class ClosureOffsets(eqx.Module):
 
     Built by [`closure_offsets`][virgil.gains.closure_offsets] (or
     [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]).
-    Each offset is a mode m over the closure phases, in radians per unit
-    width: φ_obs = φ + Σ τ_j z_j m_j with z_j ~ N(0, 1).
-
-    The likelihood of correlated closure phases whitens their sines with
-    ``OIData.cp_noise`` (see ``likelihood._whiten``). The offsets add
-    τ² m mᵀ to that covariance: a small-phase approximation, since an
-    offset δ changes sin Δ by about δ cos Δ. It holds for offsets (and
-    residuals) below about 0.3 rad; larger widths are not marginalized
-    exactly. Each mode is
-    whitened the same way, one closure-phase group (frame and channel) at
-    a time, and the modes of a frame then form one block of the rank-one
-    whitening ([`GainModes`][virgil.gains.GainModes] has the details).
-    The periodic penalty rows are left as they are.
+    Each offset is a mode m over the closure phases, in radians per unit width:
+    φ_obs = φ + Σ τ_j z_j m_j with z_j ~ N(0, 1). The offsets add τ² m mᵀ to
+    the covariance of the correlated closure phases' sines
+    (``OIData.cp_noise``), a small-phase approximation (an offset δ changes
+    sin Δ by about δ cos Δ) that holds below about 0.3 rad; larger widths are
+    not marginalized exactly. The modes are whitened like the sines, one
+    closure-phase group at a time, then in blocks as for
+    [`GainModes`][virgil.gains.GainModes]. The periodic penalty rows are left
+    as they are.
 
     Attributes
     ----------
@@ -443,13 +443,13 @@ class ClosureOffsets(eqx.Module):
     group_mask : numpy.ndarray
         ``(n_block, n_group)``: True for real groups (the rest is padding).
     values : numpy.ndarray
-        ``(n_block, n_mode, n_group, m)``: each mode's value at each slot
-        of each group (as ``cp_noise.groups``), zero on padding.
+        ``(n_block, n_mode, n_group, m)``: each mode's value at each slot of
+        each group (as ``cp_noise.groups``), zero on padding.
     group : numpy.ndarray
         ``(n_block, n_mode)`` int32: each mode's width group.
     rows : numpy.ndarray
-        ``(n_block, n_group · k)`` int32: the whitened row of each (group,
-        basis row), padded with ``n_out`` (out of range).
+        ``(n_block, n_group · k)`` int32: the whitened row of each (group, basis
+        row), padded with ``n_out`` (out of range).
     widths : jax.Array
         The default width of each group, in radians.
     groups_present : tuple of str
@@ -585,20 +585,12 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
             "Offsets per frame need each sample's frame: read the data from "
             "OIFITS, or give 'frame' (or 'mjd') in the dictionary."
         )
-    for name, width in (("baseline", baseline), ("triangle", triangle)):
-        if width is not None and not (onp.isfinite(width) and width >= 0):
-            raise ValueError(
-                f"The {name} width must be non-negative, not {width}."
-            )
+    _check_widths({"baseline": baseline, "triangle": triangle})
     legs = [onp.asarray(i) for i in (data.i_cps1, data.i_cps2, data.i_cps3)]
     n_phase = legs[0].size
     frame = onp.asarray(data.frame)[legs[0]]
     names, widths, columns = [], [], []  # columns: (group, rows, values)
-
-    def add_group(name, width):
-        names.append(name)
-        widths.append(float(width))
-        return len(names) - 1
+    add_group = partial(_add_group, names, widths)
 
     if baseline is not None or triangle is not None:
         if data.stations is None:
@@ -656,9 +648,6 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
 
 def _pack_offsets(cp_noise, columns, names, widths):
     """Group closure-phase modes into blocks of the groups they touch."""
-    from scipy.sparse import coo_matrix
-    from scipy.sparse.csgraph import connected_components
-
     cp_groups, cp_mask = (
         onp.asarray(cp_noise.groups),
         onp.asarray(cp_noise.mask),
@@ -669,21 +658,7 @@ def _pack_offsets(cp_noise, columns, names, widths):
     g_idx, s_idx = onp.nonzero(cp_mask)
     group_of[cp_groups[g_idx, s_idx]] = g_idx
     slot_of[cp_groups[g_idx, s_idx]] = s_idx
-    # Modes are connected when they touch a common group.
-    n_col = len(columns)
-    col_ids = onp.concatenate(
-        [onp.full(r.size, k) for k, (_, r, _) in enumerate(columns)]
-    )
-    grp_ids = onp.concatenate([group_of[r] for _, r, _ in columns])
-    graph = coo_matrix(
-        (onp.ones(col_ids.size), (col_ids, n_col + grp_ids)),
-        shape=(n_col + n_group, n_col + n_group),
-    )
-    _, label = connected_components(graph, directed=False)
-    by_label = {}
-    for k in range(n_col):
-        by_label.setdefault(label[k], []).append(k)
-    blocks = list(by_label.values())
+    blocks = _mode_blocks([group_of[r] for _, r, _ in columns], n_group)
     block_groups = [
         onp.unique(onp.concatenate([group_of[columns[k][1]] for k in ks]))
         for ks in blocks
