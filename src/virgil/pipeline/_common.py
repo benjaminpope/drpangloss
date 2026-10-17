@@ -390,8 +390,8 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
         if "valid initial parameters" not in str(error):
             raise
         raise ValueError(
-            "NUTS cannot start from the best fit: the log-posterior is not "
-            "finite there. Start values: "
+            "NUTS cannot start from the best fit: the log-posterior or its "
+            "gradient is not finite there. Start values: "
             + ", ".join(
                 f"{k}={onp.asarray(v).tolist()}" for k, v in start.items()
             )

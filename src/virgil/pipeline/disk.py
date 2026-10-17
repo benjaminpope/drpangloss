@@ -20,6 +20,7 @@ from ._common import (
     _m2loglike,
     _diagnostics,
     _geometry,
+    _interior_start,
     _load_report,
     _run_chains,
     _noise_quantiles,
@@ -801,6 +802,29 @@ def _finish(model, values, info, priors, data):
     )
 
 
+def _inside_priors(priors, start):
+    """``start`` with any value outside its prior's support pulled just inside.
+
+    A ring's starting width is one resolution element, which exceeds the
+    width prior's upper end (half the radial range) when the field holds
+    less than two of them, and a radius saved in single precision can fall a
+    rounding error below the radial range. A start outside the support has
+    no unconstrained value, and the fit returns NaN. Values on or inside a
+    bound stay as they are.
+    """
+    from .._flat import _base
+    from ..fitting import _bound_fraction
+
+    outside = {}
+    for name, value in start.items():
+        prior = priors.get(name)
+        if prior is None or _bound_fraction(prior, value) is None:
+            continue  # no prior, or none with finite edges
+        if not onp.all(_base(prior).support(onp.asarray(value, float))):
+            outside[name] = value
+    return {**start, **_interior_start(priors, outside)}
+
+
 def _fit_rings(p, shape, init):
     """MAP fit of a ring scene from ``init``: a ``_DiskFit``."""
     from ..fitting import fit
@@ -808,7 +832,11 @@ def _fit_rings(p, shape, init):
     ctx, data = p._ctx(), p.processed
     priors = _ring_priors(ctx, shape)
     result = fit(
-        _builder(ctx, shape), priors, data, noise=p._noise(), init=init
+        _builder(ctx, shape),
+        priors,
+        data,
+        noise=p._noise(),
+        init=_inside_priors(priors, init),
     )
     model, values = _fold_fit(ctx, shape, priors, result.model, result.values)
     return _finish(model, values, result.info, priors, data)
