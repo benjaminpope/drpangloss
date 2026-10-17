@@ -12,30 +12,32 @@ This tutorial applies the two methods common in interferometry to a non-detectio
 
 First, the imports.
 
-```python
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import jax.numpy as jnp
-import numpy as onp
-import jax.scipy as jsp
-import matplotlib.pyplot as plt
+    ```python
+    import sys
+    from pathlib import Path
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-src_path = repo_root / "src"
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
+    import jax.numpy as jnp
+    import numpy as onp
+    import jax.scipy as jsp
+    import matplotlib.pyplot as plt
 
-from virgil.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
-from virgil.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
-from virgil.models import BinaryModelCartesian
-from virgil.oidata import OIData
-from virgil.plotting import plot_contrast_curve, plot_grid_map, set_style
+    repo_root = Path.cwd()
+    if not (repo_root / "src").exists():
+        repo_root = repo_root.parent
+    src_path = repo_root / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
 
-set_style()  # the figure style used throughout the docs
-```
+    from virgil.grid_fit import laplace_flux_uncertainty_grid, optimized_flux_grid
+    from virgil.limits import absil_limits, flux_to_delta_mag, ruffio_upperlimit
+    from virgil.models import BinaryModelCartesian
+    from virgil.oidata import OIData
+    from virgil.plotting import plot_contrast_curve, plot_grid_map, set_style
+
+    set_style()  # the figure style used throughout the docs
+    ```
 
 ## Simulate Data
 

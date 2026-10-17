@@ -11,36 +11,38 @@ harmonix and jaxoplanet are not dependencies of virgil. You need harmonix 0.1.0 
 pip install harmonix
 ```
 
-```python
-import sys
-from pathlib import Path
+??? note "Imports and setup"
 
-import jax
-import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as np
-import numpyro.distributions as dist
-from jaxoplanet.starry import Surface, Ylm
-from jaxoplanet.starry.visualization import show_surface
-from jaxoplanet.starry.ylm import ylm_spot
-from harmonix.harmonix import Harmonix
+    ```python
+    import sys
+    from pathlib import Path
 
-repo_root = Path.cwd()
-if not (repo_root / "src").exists():
-    repo_root = repo_root.parent
-if str(repo_root / "src") not in sys.path:
-    sys.path.insert(0, str(repo_root / "src"))
+    import jax
+    import jax.numpy as jnp
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import numpyro.distributions as dist
+    from jaxoplanet.starry import Surface, Ylm
+    from jaxoplanet.starry.visualization import show_surface
+    from jaxoplanet.starry.ylm import ylm_spot
+    from harmonix.harmonix import Harmonix
 
-from virgil.coverage import vlti_oidata
-from virgil.fitting import fit
-from virgil.likelihood import whitened_residuals
-from virgil.models import HarmonixModel
-from virgil.priors import IsotropicLatitude
-from virgil.plotting import plot_model
+    repo_root = Path.cwd()
+    if not (repo_root / "src").exists():
+        repo_root = repo_root.parent
+    if str(repo_root / "src") not in sys.path:
+        sys.path.insert(0, str(repo_root / "src"))
 
-# Importing harmonix turns on float64, which its solutions need.
-print("float64:", jax.config.jax_enable_x64)
-```
+    from virgil.coverage import vlti_oidata
+    from virgil.fitting import fit
+    from virgil.likelihood import whitened_residuals
+    from virgil.models import HarmonixModel
+    from virgil.priors import IsotropicLatitude
+    from virgil.plotting import plot_model
+
+    # Importing harmonix turns on float64, which its solutions need.
+    print("float64:", jax.config.jax_enable_x64)
+    ```
 
 ```text
 float64: True
@@ -82,20 +84,22 @@ jaxoplanet's `show_surface` draws the map as a globe with a latitude–longitude
 
 Over one rotation, the spot crosses the disk and disappears over the limb.
 
-```python
-phases = np.linspace(0.0, 1.0, 6, endpoint=False)
-fig, axes = plt.subplots(2, len(phases), figsize=(16, 5.6))
-for ax_globe, ax_sky, phase in zip(axes[0], axes[1], phases):
-    plt.sca(ax_globe)
-    show_surface(star.surface, theta=2 * np.pi * phase, ax=ax_globe, res=300,
-                 cmap="inferno")
-    ax_globe.invert_xaxis()  # East to the left, as on the sky
-    ax_globe.set_title(f"rotation phase {phase:.2f}")
-    plot_model(HarmonixModel(star, observation_time=float(phase * period)),
-               fov_mas=3.0, npix=200, ax=ax_sky, cmap="inferno")
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    phases = np.linspace(0.0, 1.0, 6, endpoint=False)
+    fig, axes = plt.subplots(2, len(phases), figsize=(16, 5.6))
+    for ax_globe, ax_sky, phase in zip(axes[0], axes[1], phases):
+        plt.sca(ax_globe)
+        show_surface(star.surface, theta=2 * np.pi * phase, ax=ax_globe, res=300,
+                     cmap="inferno")
+        ax_globe.invert_xaxis()  # East to the left, as on the sky
+        ax_globe.set_title(f"rotation phase {phase:.2f}")
+        plot_model(HarmonixModel(star, observation_time=float(phase * period)),
+                   fov_mas=3.0, npix=200, ax=ax_sky, cmap="inferno")
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![harmonix output 6.1](generated/harmonix_cell006_out01.png)
 
@@ -291,17 +295,19 @@ contrast: start  0.500   fit  0.702   truth  0.700
 
 The fit recovers the spot and the radius. Here is the fitted star next to the true one on each night:
 
-```python
-fitted = spotted_star(**{k: result.values[k] for k in priors})
-fig, axes = plt.subplots(2, len(nights), figsize=(10, 6.6))
-for column, night in enumerate(nights):
-    for row, (label, s) in enumerate([("truth", star), ("fit", fitted)]):
-        plot_model(HarmonixModel(s, observation_time=night), fov_mas=3.0,
-                   npix=200, ax=axes[row, column], cmap="inferno",
-                   title=f"{label}, day {night:g}")
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fitted = spotted_star(**{k: result.values[k] for k in priors})
+    fig, axes = plt.subplots(2, len(nights), figsize=(10, 6.6))
+    for column, night in enumerate(nights):
+        for row, (label, s) in enumerate([("truth", star), ("fit", fitted)]):
+            plot_model(HarmonixModel(s, observation_time=night), fov_mas=3.0,
+                       npix=200, ax=axes[row, column], cmap="inferno",
+                       title=f"{label}, day {night:g}")
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![harmonix output 16.1](generated/harmonix_cell016_out01.png)
 

@@ -42,22 +42,24 @@ plt.show()
 
 The mesh above is what the model sums over, but what matters for interferometry is the rendered image. We render the star on a pixel grid with the common `plot_model` helper and set it next to a `UniformDisk` of the same equatorial diameter. Two things stand out. The star is squashed along its rotation axis, so its projected outline is an ellipse with the short axis along the pole direction rather than a circle, and its brightness is concentrated towards the pole instead of being flat. Together these make the visibilities depend on the baseline orientation, which is what lets a fit recover `inc` and `pa`.
 
-```python
-fov = 4.8
-fig, axes = plt.subplots(1, 2, figsize=(9, 4))
-plot_model(
-    UniformDisk(diam=4.0),
-    fov_mas=fov,
-    npix=128,
-    ax=axes[0],
-    title="Uniform disk, 4 mas",
-)
-plot_model(
-    star, fov_mas=fov, npix=128, ax=axes[1], title="Gravity-darkened star"
-)
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fov = 4.8
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+    plot_model(
+        UniformDisk(diam=4.0),
+        fov_mas=fov,
+        npix=128,
+        ax=axes[0],
+        title="Uniform disk, 4 mas",
+    )
+    plot_model(
+        star, fov_mas=fov, npix=128, ax=axes[1], title="Gravity-darkened star"
+    )
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![gravity_darkened_star output 5.1](generated/gravity_darkened_star_cell005_out01.png)
 

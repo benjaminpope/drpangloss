@@ -76,18 +76,20 @@ flux ratio at the line centre: 0.020
 
 Per channel, the model predicts the system's total flux and the companion's fraction of it. The companion's flux is constant, but the line lifts the total, so the fraction falls from about 8 per cent in the continuum to about 2 per cent at the line centre. The differential phase measures that change, not the mean.
 
-```python
-fig, ax = plt.subplots(figsize=(6, 3.5))
-fine = onp.linspace(waves[0], waves[-1], 200)
-fraction = 0.08 / truth.total_spectrum(fine)
-ax.plot((fine - BRG) * 1e9, fraction, label="companion / total (model)")
-ax.plot((waves - BRG) * 1e9, 0.08 / total, "o", label="data channels")
-ax.set_xlabel("wavelength - 2.1661 µm (nm)")
-ax.set_ylabel("companion flux fraction")
-ax.set_title("The flux ratio drops through the emission line")
-ax.legend()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    fine = onp.linspace(waves[0], waves[-1], 200)
+    fraction = 0.08 / truth.total_spectrum(fine)
+    ax.plot((fine - BRG) * 1e9, fraction, label="companion / total (model)")
+    ax.plot((waves - BRG) * 1e9, 0.08 / total, "o", label="data channels")
+    ax.set_xlabel("wavelength - 2.1661 µm (nm)")
+    ax.set_ylabel("companion flux fraction")
+    ax.set_title("The flux ratio drops through the emission line")
+    ax.legend()
+    plt.show()
+    ```
 
 ![wr_chromatic_search output 5.1](generated/wr_chromatic_search_cell005_out01.png)
 

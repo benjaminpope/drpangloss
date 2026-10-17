@@ -118,39 +118,41 @@ data_vec, err_vec = data.flatten_data()
 
 A resolved Gaussian disk has visibility amplitudes that fall smoothly with baseline length. The `render(...)` method gives a matching image-plane view for plotting and sanity checks.
 
-```python
-baseline = np.sqrt(np.asarray(u) ** 2 + np.asarray(v) ** 2)
-image = np.asarray(disk.render(npix=128, fov_mas=120.0))
+??? note "Plotting code"
 
-fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    ```python
+    baseline = np.sqrt(np.asarray(u) ** 2 + np.asarray(v) ** 2)
+    image = np.asarray(disk.render(npix=128, fov_mas=120.0))
 
-axes[0].scatter(baseline, np.asarray(vis_obs), alpha=0.8, label="noisy V$^2$")
-axes[0].scatter(baseline, np.asarray(vis_true), alpha=0.8, label="true V$^2$")
-axes[0].set_xlabel("Baseline length (m)")
-axes[0].set_ylabel("Visibility squared")
-axes[0].set_title("Resolved Gaussian disk")
-axes[0].legend(loc="best")
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
-axes[1].scatter(baseline, np.asarray(phi_obs), alpha=0.8, label="noisy phase")
-axes[1].scatter(baseline, np.asarray(phi_true), alpha=0.8, label="true phase")
-axes[1].set_xlabel("Baseline length (m)")
-axes[1].set_ylabel("Phase (deg)")
-axes[1].set_title("Phase response")
+    axes[0].scatter(baseline, np.asarray(vis_obs), alpha=0.8, label="noisy V$^2$")
+    axes[0].scatter(baseline, np.asarray(vis_true), alpha=0.8, label="true V$^2$")
+    axes[0].set_xlabel("Baseline length (m)")
+    axes[0].set_ylabel("Visibility squared")
+    axes[0].set_title("Resolved Gaussian disk")
+    axes[0].legend(loc="best")
 
-im = axes[2].imshow(
-    image,
-    extent=[60.0, -60.0, -60.0, 60.0],
-    cmap="magma",
-    vmax=np.quantile(image, 0.99),  # saturate the unresolved star
-)
-axes[2].set_xlabel(r"$\Delta$RA (mas)")
-axes[2].set_ylabel(r"$\Delta$Dec (mas)")
-axes[2].set_title("`System.render(...)`")
-fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+    axes[1].scatter(baseline, np.asarray(phi_obs), alpha=0.8, label="noisy phase")
+    axes[1].scatter(baseline, np.asarray(phi_true), alpha=0.8, label="true phase")
+    axes[1].set_xlabel("Baseline length (m)")
+    axes[1].set_ylabel("Phase (deg)")
+    axes[1].set_title("Phase response")
 
-plt.tight_layout()
-plt.show()
-```
+    im = axes[2].imshow(
+        image,
+        extent=[60.0, -60.0, -60.0, 60.0],
+        cmap="magma",
+        vmax=np.quantile(image, 0.99),  # saturate the unresolved star
+    )
+    axes[2].set_xlabel(r"$\Delta$RA (mas)")
+    axes[2].set_ylabel(r"$\Delta$Dec (mas)")
+    axes[2].set_title("`System.render(...)`")
+    fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![source_models output 8.1](generated/source_models_cell008_out01.png)
 
@@ -189,29 +191,31 @@ model_vec_udisk = data.model(udisk)
 
 Visibility squared falls off with Airy-like nulls as baseline length grows; `render(...)` gives the matching tophat image.
 
-```python
-image_udisk = np.asarray(udisk.render(npix=128, fov_mas=120.0))
+??? note "Plotting code"
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    ```python
+    image_udisk = np.asarray(udisk.render(npix=128, fov_mas=120.0))
 
-axes[0].scatter(baseline, np.asarray(vis_udisk), color="tab:orange")
-axes[0].set_xlabel("Baseline length (m)")
-axes[0].set_ylabel("Visibility squared")
-axes[0].set_title("Uniform disk")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-im = axes[1].imshow(
-    image_udisk,
-    extent=[60.0, -60.0, -60.0, 60.0],
-    cmap="magma",
-)
-axes[1].set_xlabel(r"$\Delta$RA (mas)")
-axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("`UniformDisk.render(...)`")
-fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+    axes[0].scatter(baseline, np.asarray(vis_udisk), color="tab:orange")
+    axes[0].set_xlabel("Baseline length (m)")
+    axes[0].set_ylabel("Visibility squared")
+    axes[0].set_title("Uniform disk")
 
-plt.tight_layout()
-plt.show()
-```
+    im = axes[1].imshow(
+        image_udisk,
+        extent=[60.0, -60.0, -60.0, 60.0],
+        cmap="magma",
+    )
+    axes[1].set_xlabel(r"$\Delta$RA (mas)")
+    axes[1].set_ylabel(r"$\Delta$Dec (mas)")
+    axes[1].set_title("`UniformDisk.render(...)`")
+    fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![source_models output 13.1](generated/source_models_cell013_out01.png)
 
@@ -256,42 +260,44 @@ model_vec_rim = data.model(rim_modulated)
 Rendering both variants side by side shows how `az_amps`/`az_pas` breaks the ring's azimuthal symmetry; the visibility-squared panel shows the modulated rim's (`flux`-mixed) Fourier response. The parameters are chosen so that the modulated rim and its image
 match the final geometric model of the post-AGB star IRAS 08544-4431 in [Hillen et al. 2016](http://dx.doi.org/10.1051/0004-6361/201628125).
 
-```python
-image_rim_symmetric = np.asarray(rim_symmetric.render(npix=256, fov_mas=30.0))
-image_rim_modulated = np.asarray(rim_modulated.render(npix=256, fov_mas=30.0))
+??? note "Plotting code"
 
-fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+    ```python
+    image_rim_symmetric = np.asarray(rim_symmetric.render(npix=256, fov_mas=30.0))
+    image_rim_modulated = np.asarray(rim_modulated.render(npix=256, fov_mas=30.0))
 
-axes[0].scatter(baseline, np.asarray(vis_rim), color="tab:purple")
-axes[0].set_xlabel("Baseline length (m)")
-axes[0].set_ylabel("Visibility squared")
-axes[0].set_title("Modulated rim")
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
 
-im1 = axes[1].imshow(
-    image_rim_symmetric,
-    extent=[15.0, -15.0, -15.0, 15.0],
-    cmap="magma",
-    vmax=np.quantile(image_rim_symmetric, 0.999),  # saturate the unresolved star
-)
-axes[1].set_xlabel(r"$\Delta$RA (mas)")
-axes[1].set_ylabel(r"$\Delta$Dec (mas)")
-axes[1].set_title("Symmetric rim")
-fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+    axes[0].scatter(baseline, np.asarray(vis_rim), color="tab:purple")
+    axes[0].set_xlabel("Baseline length (m)")
+    axes[0].set_ylabel("Visibility squared")
+    axes[0].set_title("Modulated rim")
 
-im2 = axes[2].imshow(
-    image_rim_modulated,
-    extent=[15.0, -15.0, -15.0, 15.0],
-    cmap="magma",
-    vmax=np.quantile(image_rim_modulated, 0.999),
-)
-axes[2].set_xlabel(r"$\Delta$RA (mas)")
-axes[2].set_ylabel(r"$\Delta$Dec (mas)")
-axes[2].set_title("Modulated rim (m=1, 2)")
-fig.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+    im1 = axes[1].imshow(
+        image_rim_symmetric,
+        extent=[15.0, -15.0, -15.0, 15.0],
+        cmap="magma",
+        vmax=np.quantile(image_rim_symmetric, 0.999),  # saturate the unresolved star
+    )
+    axes[1].set_xlabel(r"$\Delta$RA (mas)")
+    axes[1].set_ylabel(r"$\Delta$Dec (mas)")
+    axes[1].set_title("Symmetric rim")
+    fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
 
-plt.tight_layout()
-plt.show()
-```
+    im2 = axes[2].imshow(
+        image_rim_modulated,
+        extent=[15.0, -15.0, -15.0, 15.0],
+        cmap="magma",
+        vmax=np.quantile(image_rim_modulated, 0.999),
+    )
+    axes[2].set_xlabel(r"$\Delta$RA (mas)")
+    axes[2].set_ylabel(r"$\Delta$Dec (mas)")
+    axes[2].set_title("Modulated rim (m=1, 2)")
+    fig.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![source_models output 17.1](generated/source_models_cell017_out01.png)
 
@@ -330,24 +336,26 @@ cvis_star = star.model(u, v, wavel)
 
 The grey star's visible surface, coloured by local flux, shows the bright pole towards the upper left (with East to the left and North up, the pole at a position angle of 30 degrees) and the darkened equator. The chromatic star at 0.6 micron, drawn through `render`, has the same shape with the equator much dimmer than the pole.
 
-```python
-from virgil.plotting import plot_model
+??? note "Plotting code"
 
-fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    ```python
+    from virgil.plotting import plot_model
 
-star.plot_surface(ax=axes[0])
-axes[0].set_title("Grey star: visible surface")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-plot_model(
-    hot_star,
-    fov_mas=1.2,
-    npix=128,
-    ax=axes[1],
-    title="Chromatic star (9000 K pole) at 0.6 micron",
-)
+    star.plot_surface(ax=axes[0])
+    axes[0].set_title("Grey star: visible surface")
 
-plt.tight_layout()
-plt.show()
-```
+    plot_model(
+        hot_star,
+        fov_mas=1.2,
+        npix=128,
+        ax=axes[1],
+        title="Chromatic star (9000 K pole) at 0.6 micron",
+    )
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![source_models output 21.1](generated/source_models_cell021_out01.png)

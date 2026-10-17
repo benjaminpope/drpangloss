@@ -98,19 +98,21 @@ plt.show()
 
 Like every virgil component, the disks render on the sky. `plot_model` draws the quadratic star next to the uniform disk; the limb-darkened star has the same outline but a brighter centre.
 
-```python
-fig, axes = plt.subplots(1, 2, figsize=(9, 4))
-plot_model(UniformDisk(diam), fov_mas=7.0, npix=128, ax=axes[0], title="Uniform disk")
-plot_model(
-    stars["quadratic, u = (0.35, 0.25)"],
-    fov_mas=7.0,
-    npix=128,
-    ax=axes[1],
-    title="Quadratic limb darkening",
-)
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4))
+    plot_model(UniformDisk(diam), fov_mas=7.0, npix=128, ax=axes[0], title="Uniform disk")
+    plot_model(
+        stars["quadratic, u = (0.35, 0.25)"],
+        fov_mas=7.0,
+        npix=128,
+        ax=axes[1],
+        title="Quadratic limb darkening",
+    )
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![limb_darkening output 5.1](generated/limb_darkening_cell005_out01.png)
 

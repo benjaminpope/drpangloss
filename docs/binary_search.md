@@ -9,37 +9,39 @@ This tutorial recovers a binary from synthetic observables: a coarse likelihood 
 
 First, the imports.
 
-```python
-import warnings
-import jax
-import jax.numpy as jnp
-import numpy as onp
-import matplotlib.pyplot as plt
-from jax.flatten_util import ravel_pytree
+??? note "Imports and setup"
 
-warnings.filterwarnings("ignore", message="IProgress not found.*")
+    ```python
+    import warnings
+    import jax
+    import jax.numpy as jnp
+    import numpy as onp
+    import matplotlib.pyplot as plt
+    from jax.flatten_util import ravel_pytree
 
-import numpyro
-import numpyro.distributions as dist
-from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_value
+    warnings.filterwarnings("ignore", message="IProgress not found.*")
 
-from virgil.grid_fit import likelihood_grid
-from virgil.inference import fisher_projection, hessian_matrix
-from virgil.likelihood import loglike, posterior_predictive_summary
-from virgil.models import BinaryModelCartesian
-from virgil.oidata import OIData
-from virgil.plotting import (
-    set_style,
-    plot_data_model_correlation,
-    plot_grid_map,
-    plot_chainconsumer_diagnostics,
-    diagnostics_table_from_samples,
-    truth_cartesian_and_polar,
-)
+    import numpyro
+    import numpyro.distributions as dist
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.initialization import init_to_value
 
-set_style()  # the figure style used throughout the docs
-```
+    from virgil.grid_fit import likelihood_grid
+    from virgil.inference import fisher_projection, hessian_matrix
+    from virgil.likelihood import loglike, posterior_predictive_summary
+    from virgil.models import BinaryModelCartesian
+    from virgil.oidata import OIData
+    from virgil.plotting import (
+        set_style,
+        plot_data_model_correlation,
+        plot_grid_map,
+        plot_chainconsumer_diagnostics,
+        diagnostics_table_from_samples,
+        truth_cartesian_and_polar,
+    )
+
+    set_style()  # the figure style used throughout the docs
+    ```
 
 ## Simulate Data
 

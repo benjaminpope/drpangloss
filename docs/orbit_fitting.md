@@ -28,43 +28,45 @@ The orbit conventions are those of [Conventions](conventions.md#orbits): `Omega`
 
 We need numpyro for the sampler and virgil's coverage, epoch, fitting, orbit and prior tools. `plot_orbit_ensemble` draws orbits on the sky, `plot_chainconsumer_diagnostics` draws the corner plot, and `set_style` applies the docs' figure style. We sample in double precision: the likelihood sums a few thousand terms, and NUTS's energy checks are more reliable when that sum is accurate.
 
-```python
-import warnings
+??? note "Imports and setup"
 
-import equinox as eqx
-import jax
-import matplotlib.pyplot as plt
-import numpy as np
-import numpyro.distributions as dist
-import pandas as pd
-from numpyro.diagnostics import summary
-from numpyro.infer import MCMC, NUTS
-from numpyro.infer.initialization import init_to_value
+    ```python
+    import warnings
 
-from virgil.angles import AngleVector
-from virgil.coverage import vlti_oidata
-from virgil.epochs import Epochs, start_from_positions
-from virgil.likelihood import chain_init_params, numpyro_model
-from virgil.likelihood import whitened_residuals
-from virgil.models import Attached, OrbitalBinary, PointSource, System
-from virgil.orbits import (
-    KeplerOrbit,
-    PositionData,
-    orientation_priors,
-    total_mass,
-)
-from virgil.plotting import (
-    plot_chainconsumer_diagnostics,
-    plot_orbit_ensemble,
-    set_style,
-)
-from virgil.priors import hierarchical_scales
-from virgil.simulate import simulate
+    import equinox as eqx
+    import jax
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import numpyro.distributions as dist
+    import pandas as pd
+    from numpyro.diagnostics import summary
+    from numpyro.infer import MCMC, NUTS
+    from numpyro.infer.initialization import init_to_value
 
-jax.config.update("jax_enable_x64", True)
-warnings.filterwarnings("ignore", message="IProgress not found.*")
-set_style()
-```
+    from virgil.angles import AngleVector
+    from virgil.coverage import vlti_oidata
+    from virgil.epochs import Epochs, start_from_positions
+    from virgil.likelihood import chain_init_params, numpyro_model
+    from virgil.likelihood import whitened_residuals
+    from virgil.models import Attached, OrbitalBinary, PointSource, System
+    from virgil.orbits import (
+        KeplerOrbit,
+        PositionData,
+        orientation_priors,
+        total_mass,
+    )
+    from virgil.plotting import (
+        plot_chainconsumer_diagnostics,
+        plot_orbit_ensemble,
+        set_style,
+    )
+    from virgil.priors import hierarchical_scales
+    from virgil.simulate import simulate
+
+    jax.config.update("jax_enable_x64", True)
+    warnings.filterwarnings("ignore", message="IProgress not found.*")
+    set_style()
+    ```
 
 ## The system
 
@@ -651,16 +653,18 @@ flux ratio         0.151  +  0.001 −  0.001   truth      0.150
 
 The corner plot shows the joint posterior of the elements, with the truth marked. With the periastron unobserved, the period, eccentricity, time of periastron, inclination and node are correlated: a slightly longer period with a lower eccentricity and an earlier periastron fits the observed half orbit almost as well. The total mass inherits these through $a^3/P^2$; with a parallax, its error would add to the mass's through $M \propto D^3$. Only the next periastron passage will break the correlations.
 
-```python
-_, corner_fig, walks_fig = plot_chainconsumer_diagnostics(
-    {"joint NUTS": table},
-    columns=list(table.columns),
-    truth=truths,
-    colors=["#3c6e9f"],
-)
-plt.close(walks_fig)  # the chains' traces are not needed here
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    _, corner_fig, walks_fig = plot_chainconsumer_diagnostics(
+        {"joint NUTS": table},
+        columns=list(table.columns),
+        truth=truths,
+        colors=["#3c6e9f"],
+    )
+    plt.close(walks_fig)  # the chains' traces are not needed here
+    plt.show()
+    ```
 
 ![orbit_fitting output 29.1](generated/orbit_fitting_cell029_out01.png)
 
@@ -688,30 +692,32 @@ plt.show()
 
 Each panel zooms in on one epoch, showing the posterior samples of the companion's position at that epoch's mean time, relative to the true position, in microarcseconds. The orbit ties each night to the others, so even the worst-calibrated epochs are pinned about as tightly as the best, and the true position (red cross) should fall within each cloud.
 
-```python
-fig, axes = plt.subplots(
-    2, 4, figsize=(12, 6.2), sharex=True, sharey=True, constrained_layout=True
-)
-thin = slice(None, None, 4)
-for k, ax in enumerate(axes.flat[:N_EPOCHS]):
-    off_ra = 1e3 * (dra_t[k] - true_dra[k])
-    off_de = 1e3 * (ddec_t[k] - true_ddec[k])
-    ax.scatter(off_ra[thin], off_de[thin], s=2, color="#3c6e9f", alpha=0.3)
-    ax.plot(0, 0, "+", color="#d1495b", ms=14, mew=2)
-    ax.set_title(
-        f"MJD {epoch_mjd[k]:.0f}  (V² ×{TRUE_V2_SCALE[k]:.1f}, "
-        f"CP ×{TRUE_CP_SCALE[k]:.1f})",
-        fontsize="small",
+??? note "Plotting code"
+
+    ```python
+    fig, axes = plt.subplots(
+        2, 4, figsize=(12, 6.2), sharex=True, sharey=True, constrained_layout=True
     )
-    ax.set_aspect("equal")
-axes[0, 0].invert_xaxis()  # East to the left (shared by every panel)
-for ax in axes[-1]:
-    ax.set_xlabel("Δα − true (μas)")
-for ax in axes[:, 0]:
-    ax.set_ylabel("Δδ − true (μas)")
-fig.suptitle("Companion position at each epoch, from the joint posterior")
-plt.show()
-```
+    thin = slice(None, None, 4)
+    for k, ax in enumerate(axes.flat[:N_EPOCHS]):
+        off_ra = 1e3 * (dra_t[k] - true_dra[k])
+        off_de = 1e3 * (ddec_t[k] - true_ddec[k])
+        ax.scatter(off_ra[thin], off_de[thin], s=2, color="#3c6e9f", alpha=0.3)
+        ax.plot(0, 0, "+", color="#d1495b", ms=14, mew=2)
+        ax.set_title(
+            f"MJD {epoch_mjd[k]:.0f}  (V² ×{TRUE_V2_SCALE[k]:.1f}, "
+            f"CP ×{TRUE_CP_SCALE[k]:.1f})",
+            fontsize="small",
+        )
+        ax.set_aspect("equal")
+    axes[0, 0].invert_xaxis()  # East to the left (shared by every panel)
+    for ax in axes[-1]:
+        ax.set_xlabel("Δα − true (μas)")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Δδ − true (μas)")
+    fig.suptitle("Companion position at each epoch, from the joint posterior")
+    plt.show()
+    ```
 
 ![orbit_fitting output 33.1](generated/orbit_fitting_cell033_out01.png)
 
@@ -832,37 +838,39 @@ MJD 60095: rms residual 1.02 σ over 72 closure phases
 
 The error scales are part of the posterior too. Each epoch's $V^2$ and closure-phase factors are recovered (median and 68% interval against the truth). The population's median and spread, which describe how far the "pipeline" errors are off, can be compared with the population the factors were drawn from (median 1.3, spread 0.3); with only eight draws per population, the spread in particular is loosely constrained.
 
-```python
-fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), constrained_layout=True)
-for ax, (name, term, true_scale) in zip(
-    axes,
-    [
-        ("V²", "vis_scale", TRUE_V2_SCALE),
-        ("closure phase", "phi_scale", TRUE_CP_SCALE),
-    ],
-):
-    fitted = np.array(
-        [np.asarray(samples[f"noise[{k}].{term}"]) for k in range(N_EPOCHS)]
-    )
-    lo, mid, hi = np.percentile(fitted, [16, 50, 84], axis=1)
-    ax.errorbar(
-        epoch_mjd, mid, [mid - lo, hi - mid], fmt="o", color="#3c6e9f",
-        label="posterior (68%)",
-    )
-    ax.plot(epoch_mjd, true_scale, "x", color="#d1495b", ms=9, mew=2,
-            label="true")
-    ax.set(xlabel="MJD", ylabel=f"{name} error scale", title=name)
-axes[0].legend(frameon=False, fontsize="small")
-plt.show()
+??? note "Plotting code"
 
-for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
-    for part in ("median", "spread"):
-        lo, mid, hi = np.percentile(samples[f"{prefix}_{part}"], [16, 50, 84])
-        print(
-            f"{label:14s} population {part:6s} {mid:.2f} "
-            f"+{hi - mid:.2f} −{mid - lo:.2f}"
+    ```python
+    fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), constrained_layout=True)
+    for ax, (name, term, true_scale) in zip(
+        axes,
+        [
+            ("V²", "vis_scale", TRUE_V2_SCALE),
+            ("closure phase", "phi_scale", TRUE_CP_SCALE),
+        ],
+    ):
+        fitted = np.array(
+            [np.asarray(samples[f"noise[{k}].{term}"]) for k in range(N_EPOCHS)]
         )
-```
+        lo, mid, hi = np.percentile(fitted, [16, 50, 84], axis=1)
+        ax.errorbar(
+            epoch_mjd, mid, [mid - lo, hi - mid], fmt="o", color="#3c6e9f",
+            label="posterior (68%)",
+        )
+        ax.plot(epoch_mjd, true_scale, "x", color="#d1495b", ms=9, mew=2,
+                label="true")
+        ax.set(xlabel="MJD", ylabel=f"{name} error scale", title=name)
+    axes[0].legend(frameon=False, fontsize="small")
+    plt.show()
+
+    for prefix, label in (("v2_scale", "V²"), ("cp_scale", "closure phase")):
+        for part in ("median", "spread"):
+            lo, mid, hi = np.percentile(samples[f"{prefix}_{part}"], [16, 50, 84])
+            print(
+                f"{label:14s} population {part:6s} {mid:.2f} "
+                f"+{hi - mid:.2f} −{mid - lo:.2f}"
+            )
+    ```
 
 ![orbit_fitting output 39.1](generated/orbit_fitting_cell039_out01.png)
 

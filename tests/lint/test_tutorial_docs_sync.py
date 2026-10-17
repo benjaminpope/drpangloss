@@ -145,7 +145,7 @@ def test_hide_input_tag_folds_the_code_but_keeps_the_outputs(tmp_path):
     nb_path.write_text(json.dumps({"cells": cells}))
     rendered = module.render_notebook_markdown(nb_path)
     assert "```python\nshown = 1\n```" in rendered
-    assert module.HIDE_INPUT_SUMMARY + "\n\n    ```python\n" in rendered
+    assert module.HIDE_INPUT_SUMMARIES["hide-input"] + "\n\n    ```python\n" in rendered
     # Every line of the folded code, blank ones included, sits in the block.
     assert (
         "    def f():\n        return 1\n\n    folded = f()\n    ```\n"

@@ -185,35 +185,37 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'max_complex_visibility_difference': 0.0}
 ```
 
-```python
-vis_cart = np.asarray(data.to_vis(cvis_true))
-vis_ang = np.asarray(data.to_vis(cvis_ang))
-phi_cart = np.asarray(data.to_phases(cvis_true))
-phi_ang = np.asarray(data.to_phases(cvis_ang))
+??? note "Plotting code"
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    ```python
+    vis_cart = np.asarray(data.to_vis(cvis_true))
+    vis_ang = np.asarray(data.to_vis(cvis_ang))
+    phi_cart = np.asarray(data.to_phases(cvis_true))
+    phi_ang = np.asarray(data.to_phases(cvis_ang))
 
-ax1.scatter(vis_cart, vis_ang, alpha=0.7)
-line_v = np.linspace(
-    min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100
-)
-ax1.plot(line_v, line_v, "k--", lw=1)
-ax1.set_xlabel("Cartesian model V²")
-ax1.set_ylabel("Angular model V²")
-ax1.set_title("Visibility mapping")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
-ax2.scatter(phi_cart, phi_ang, alpha=0.7)
-line_p = np.linspace(
-    min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100
-)
-ax2.plot(line_p, line_p, "k--", lw=1)
-ax2.set_xlabel("Cartesian model phase (deg)")
-ax2.set_ylabel("Angular model phase (deg)")
-ax2.set_title("Phase mapping")
+    ax1.scatter(vis_cart, vis_ang, alpha=0.7)
+    line_v = np.linspace(
+        min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100
+    )
+    ax1.plot(line_v, line_v, "k--", lw=1)
+    ax1.set_xlabel("Cartesian model V²")
+    ax1.set_ylabel("Angular model V²")
+    ax1.set_title("Visibility mapping")
 
-plt.tight_layout()
-plt.show()
-```
+    ax2.scatter(phi_cart, phi_ang, alpha=0.7)
+    line_p = np.linspace(
+        min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100
+    )
+    ax2.plot(line_p, line_p, "k--", lw=1)
+    ax2.set_xlabel("Cartesian model phase (deg)")
+    ax2.set_ylabel("Angular model phase (deg)")
+    ax2.set_title("Phase mapping")
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![model_syntax output 12.1](generated/model_syntax_cell012_out01.png)
 

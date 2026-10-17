@@ -144,21 +144,23 @@ brightest components (dra, ddec in mas: flux):
 
 χ² per point falls steadily from about 160 to 1.3 over the first 50 iterations. The first major cycle then refits the components' fluxes and takes χ² straight to the target. After it, the flux sits on the companion and the knot (circled), with only faint components on the pixels next to them. The restored image, the components convolved with the beam, is the radio astronomers' way of showing what the data resolve; virgil's `plot_model(..., beam=, convolve=True)` draws it.
 
-```python
-fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
-axes[0].semilogy(result.chi2_red)
-axes[0].axhline(1.0, color="k", ls=":", lw=1)
-axes[0].set(xlabel="iteration", ylabel="χ² per point", title="CLEAN's progress")
-plot_model(result.model.clean, fov, npix, ax=axes[1], title="CLEAN components")
-plot_model(
-    result.model.clean, fov, npix, ax=axes[2], beam=resolution, convolve=True,
-    title="restored (components ⊛ beam)",
-)
-for ax in axes[1:]:
-    ax.plot([-90, 130], [70, -110], "o", mfc="none", mec="cyan", ms=14)
-plt.tight_layout()
-plt.show()
-```
+??? note "Plotting code"
+
+    ```python
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+    axes[0].semilogy(result.chi2_red)
+    axes[0].axhline(1.0, color="k", ls=":", lw=1)
+    axes[0].set(xlabel="iteration", ylabel="χ² per point", title="CLEAN's progress")
+    plot_model(result.model.clean, fov, npix, ax=axes[1], title="CLEAN components")
+    plot_model(
+        result.model.clean, fov, npix, ax=axes[2], beam=resolution, convolve=True,
+        title="restored (components ⊛ beam)",
+    )
+    for ax in axes[1:]:
+        ax.plot([-90, 130], [70, -110], "o", mfc="none", mec="cyan", ms=14)
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![imaging_clean output 8.1](generated/imaging_clean_cell008_out01.png)
 

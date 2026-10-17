@@ -82,9 +82,15 @@ def _provisional_admonition() -> str:
     return module.ADMONITION
 
 
-# A code cell tagged "hide-input" is folded in the published page, under this
-# collapsed admonition (pymdownx.details), with its outputs left visible.
-HIDE_INPUT_SUMMARY = '??? note "Code"'
+# A code cell with one of these tags is folded in the published page, under a
+# collapsed admonition (pymdownx.details) with this title, and its outputs stay
+# visible. Fold boilerplate only (imports, setup, plotting), never the code
+# the tutorial is teaching.
+HIDE_INPUT_SUMMARIES = {
+    "hide-input": '??? note "Code"',
+    "hide-imports": '??? note "Imports and setup"',
+    "hide-plot": '??? note "Plotting code"',
+}
 
 
 def _to_md_source(cell_source: list[str] | str) -> str:
@@ -175,10 +181,14 @@ def render_notebook_markdown(
             lines.append("")
         elif cell_type == "code":
             fenced = ["```python", *source.split("\n"), "```"]
-            if "hide-input" in tags:
+            summary = next(
+                (HIDE_INPUT_SUMMARIES[tag] for tag in tags if tag in HIDE_INPUT_SUMMARIES),
+                None,
+            )
+            if summary:
                 # A collapsed block: the long code is one click away and the
                 # outputs below stay visible.
-                lines.append(HIDE_INPUT_SUMMARY)
+                lines.append(summary)
                 lines.append("")
                 lines.extend(f"    {line}" if line else "" for line in fenced)
             else:
