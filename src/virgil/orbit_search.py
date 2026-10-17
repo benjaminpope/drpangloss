@@ -46,6 +46,7 @@ import numpy as onp
 
 from ._deprecate import old_order
 from ._precision import cast_tree, run_in
+from ._marginal import gauss_legendre, log_quadrature
 from .epochs import (
     _SCALES,
     Epochs,
@@ -609,9 +610,7 @@ def _nodes(f, x, fx, scale, lo, hi, order):
     """Gauss–Legendre nodes and log weights over each side of the peak
     ``x``, each side's range grown until ``f`` falls by ``_DEPTH``, in the
     variable u with x = x̂ ± L u³."""
-    t, w = (
-        np.asarray(v, x.dtype) for v in onp.polynomial.legendre.leggauss(order)
-    )
+    t, w = gauss_legendre(order, x.dtype)
     side = np.asarray([-1.0, 1.0], x.dtype)
     room = np.stack([x - lo, hi - x])
 
@@ -643,7 +642,7 @@ def _marginal_1d(f, x0, lo, hi, delta, shared):
     nodes, log_w = _nodes(f, x, fx, scale, lo, hi, shared.order)
     values = jax.vmap(f)(nodes)
     values = np.where(np.isnan(values), -np.inf, values)
-    log_z = jax.nn.logsumexp(values + log_w) - math.log(hi - lo)
+    log_z = log_quadrature(values, log_w) - math.log(hi - lo)
     sigma = np.where(h < 0, 1.0 / np.sqrt(np.where(h < 0, -h, 1.0)), np.nan)
     return log_z, x, fx, sigma, ok & np.isfinite(log_z)
 
@@ -1054,44 +1053,22 @@ def score_orbits(
 ):
     """Score candidate orbits on all epochs, with the flux shared.
 
-    For each candidate, the companion's position is computed at every
-    sample's own time, and the visibilities ``g`` of a unit companion
-    there once. Every evaluation at another flux is then cheap
-    arithmetic on ``g``: for a scene linear in the companion's flux f
-    (a component weight), the complex visibility is
-    ``V(f) = (A + f B) / (T₀ + f ΔT)``, with ``A`` and the total fluxes
-    computed once per dataset and ``B`` from ``g``. With a slope, f
-    differs per sample: f = f₀ (λ/λ₀)^β.
-
-    For each dataset and flux the score is the scale-marginalized
-    log likelihood ``m = -Σ_b (ν_b/2) ln χ²_b`` of
+    Each candidate's companion is placed at every sample's own time, and
+    the scene, which must be linear in the companion's flux, is evaluated
+    for a unit companion once; other fluxes are then cheap arithmetic. The
+    score is the scale-marginalized log likelihood of
     [`marginal_loglike`][virgil.epochs.marginal_loglike] (or, with
-    ``s_max``, its bounded form; with ``scales="quoted"``, ``-χ²/2``).
-    Gains ([`OIData.with_gains`][virgil.oidata.OIData.with_gains]) and
-    closure-phase offsets
-    ([`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
-    are profiled analytically inside χ²: their widths are ignored, and each
-    independent mode removes one degree of freedom from its block (a
-    single gain per dataset is ``with_gains(modes=onp.ones((1, n)))``, with
-    ``n`` the number of samples).
-
-    Each band's flux is then integrated out under its log-uniform prior.
-    The coarse grid only finds the peak: Newton steps in ln f (and β)
-    profile it, and Gauss–Legendre nodes on each side of it, out to a
-    12-nat drop or the prior's bounds, integrate it, so that the marginal does not
-    depend on where the peak falls between grid points (a well-measured
-    flux, σ_ln f ≈ 0.02, is far narrower than any affordable grid step).
-    Where the curvature at the peak is not usable, the coarse grid's
-    trapezoidal rule is used and ``OrbitScores.fallback`` is set. The
-    extra terms are then added.
+    ``scales="quoted"``, ``-χ²/2``), with gains and closure-phase offsets
+    profiled analytically and each band's flux integrated out under a
+    log-uniform prior; where the peak's curvature is unusable, the coarse
+    grid's trapezoidal rule is used and ``OrbitScores.fallback`` is set.
+    The extra terms are then added. See [`virgil.orbit_search`][virgil.orbit_search].
 
     Parameters
     ----------
     model : callable
         ``model(orbit, flux)`` returns the time-dependent scene, e.g.
-        [`OrbitalBinary`][virgil.models.OrbitalBinary] itself. (Unlike
-        [`rank_orbits`][virgil.epochs.rank_orbits], whose
-        ``model(orbit)`` has a fixed flux.) It must be
+        [`OrbitalBinary`][virgil.models.OrbitalBinary] itself. It must be
         linear in ``flux`` (a component weight), and the scene at flux 0
         must not depend on the orbit; both are checked on the first and
         last candidates.
@@ -1119,29 +1096,19 @@ def score_orbits(
     dof, s_max : optional
         The effective-dof fraction (one number, or a dict keyed by dataset
         or epoch name) and the bound on the scales, as for
-        ``marginal_loglike`` (each block's likelihood integrated over
-        ln s in [-ln s_max, ln s_max], log-uniform). The default
-        ``s_max=5`` leaves about twice the error inflation of typical
-        interferometric data: a candidate that needs more than that on some
-        dataset is penalized, and flagged in ``OrbitScores.scale_at_bound``.
-        The bound also keeps the score finite: with ``s_max=None`` a block's
-        -(ν/2) ln χ² is unbounded as χ² → 0, so a block with few degrees of
-        freedom (one triangle's closure phases, say) that a flux or slope
-        fits almost exactly makes a narrow spike in the score, which can
-        dominate the profile (``profiled``, ``flux``, ``slope``). A finite
-        ``s_max`` bounds each block's gain at about ν ln s_max.
-        ``rank_orbits`` defaults to ``s_max=None`` because it has no flux
-        to profile, so no spike to bound.
+        ``marginal_loglike``. The default ``s_max=5`` bounds each block's
+        gain at about ν ln s_max and keeps the score finite (``rank_orbits``
+        defaults to ``s_max=None``: it has no flux to profile). A candidate
+        needing more inflation on some dataset is penalized and flagged in
+        ``OrbitScores.scale_at_bound``.
     batch_size : int, optional
-        Candidates evaluated together by ``jax.lax.map`` (default: as many
-        as keep about a million model visibilities in memory at once,
-        counting every dataset, the flux grid and the gain modes, at least
-        one and at most all). The result does not depend on it.
+        Candidates evaluated together by ``jax.lax.map`` (default: about a
+        million model visibilities in memory at once). The result does not
+        depend on it.
     max_evaluations : int, optional
-        A budget in work units: candidates × Σ over datasets of the score
-        evaluations of the dataset's band's marginal (coarse grid points,
-        Newton steps counting each derivative as one, and nodes). The cost is predicted before
-        anything is evaluated, and a cost over budget raises a
+        A budget in score evaluations (candidates × Σ over datasets of the
+        band marginal's coarse points, Newton steps and nodes), predicted
+        before anything is evaluated; a cost over budget raises a
         ``ValueError``.
     dtype : {"float64", "float32"}, optional
         Precision of the evaluation (default float64, in a local
