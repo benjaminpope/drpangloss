@@ -39,6 +39,10 @@ Provisional in 0.4:
 
 ### Added
 
+- `OIData(..., insname=)` selects the instrument table(s) when reading an
+  OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
+  error message already told users to pass it.
+
 - `starting_orbits(batch_size=)` bounds the memory of the grid solve (the
   grid is solved in fixed-size batches).
 
