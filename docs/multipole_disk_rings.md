@@ -1,5 +1,5 @@
 <!-- AUTO-GENERATED FROM notebooks/multipole_disk_rings.ipynb by scripts/sync_tutorial_docs.py. -->
-# A planet in a gap between inclined rings
+# Nonparametric disks: a planet in a gap between inclined rings
 
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.

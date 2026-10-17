@@ -85,7 +85,7 @@ nav:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
-      - "A planet in a gap between rings": multipole_disk_rings.md
+      - "Nonparametric disks": multipole_disk_rings.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
