@@ -156,7 +156,8 @@ def position_angle(dra, ddec):
         # arctan2 has a NaN gradient at the origin, where the angle is
         # undefined: give it a harmless point there (0° either way), so that
         # a sampler or optimizer that starts on the origin sees finite
-        # derivatives.
+        # derivatives. The angle at the origin (and at signed zeros, which
+        # compare equal to 0) is 0°; NumPy's arctan2 still tells them apart.
         origin = (dra == 0) & (ddec == 0)
         dra, ddec = np.where(origin, 0.0, dra), np.where(origin, 1.0, ddec)
     pa = xp.mod(xp.rad2deg(xp.arctan2(dra, ddec)), 360.0)

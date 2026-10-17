@@ -16,6 +16,7 @@ from virgil.pipeline import BinaryPipeline
 from virgil.pipeline import _checks as checks
 from virgil._geometry import separation_pa
 from virgil.pipeline._common import _START_INSET, _interior_start, _run_chains
+from virgil.pipeline.binary import _fit_start
 from virgil.pipeline.disk import _inside_priors
 
 pytestmark = pytest.mark.xdist_group("pipeline_start_at_bound")
@@ -175,3 +176,32 @@ def test_run_chains_starts_an_angular_model_on_the_origin():
     )
     dra = onp.asarray(mcmc.get_samples()["dra"])
     assert onp.all(onp.isfinite(dra)) and dra.shape == (40,)
+
+
+class _Stub:
+    settings = {"flux_range": (1e-4, 1.0)}
+
+    @staticmethod
+    def _sampled_model():
+        return "template"
+
+
+@pytest.mark.parametrize(
+    "peak", [(0.0, 0.0), (-1.3e-5, -1.3e-5), (30.0, -5.0)]
+)
+def test_angular_fit_starts_off_the_origin_but_not_off_a_real_peak(peak):
+    """An angular template has no position gradient on the origin: a search
+    peak on the grid's centre starts the fit a little off it."""
+    search = {
+        "dra_mas": peak[0],
+        "ddec_mas": peak[1],
+        "flux": 1e-3,
+        "grid_step_mas": 40.0,
+    }
+    priors = {k: None for k in ("dra", "ddec", "flux")}
+    _, start = _fit_start(_Stub, search, priors, angular=True)
+    moved = float(onp.hypot(start["dra"], start["ddec"]))
+    if peak == (30.0, -5.0):
+        assert (float(start["dra"]), float(start["ddec"])) == peak
+    else:
+        assert moved == pytest.approx(0.4)
