@@ -823,6 +823,14 @@ def test_rings_leave_out_an_unresolved_count_and_go_on(tmp_path, monkeypatch):
         return [(1, 2, 0.0, 1.0)] if n == 2 else []
 
     monkeypatch.setattr(disk, "_unresolved_pairs", flag_two)
+    tried = []
+    fit_with_planet = disk._fit_with_planet
+
+    def record(p, shape, *args, **kwargs):
+        tried.append(shape.n)
+        return fit_with_planet(p, shape, *args, **kwargs)
+
+    monkeypatch.setattr(disk, "_fit_with_planet", record)
     settings = {
         **SMALL,
         "companion": False,
@@ -833,10 +841,65 @@ def test_rings_leave_out_an_unresolved_count_and_go_on(tmp_path, monkeypatch):
     pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
     res = pipeline.run()
     rows = res.summary["profile"]["candidates"]
-    assert [r["n"] for r in rows] == [1, 2, 3]
-    assert [bool(r["unresolved"]) for r in rows] == [False, True, False]
-    assert {r["n"] for r in res.summary["compare"]["rows"]} == {1, 3}
-    assert res.summary["disk"]["n_rings"] in (1, 3)
+    # The flagged count did not stop the search: three rings were tried (the
+    # third is pruned back to two, whose fit the first already holds).
+    assert tried == [1, 2, 3]
+    flagged = [r["n"] for r in rows if r["unresolved"]]
+    assert flagged == [2]
+    assert {r["n"] for r in res.summary["compare"]["rows"]} == {1}
+    assert res.summary["disk"]["n_rings"] == 1
+
+
+@pytest.mark.slow
+def test_prune_drops_a_ring_that_carries_no_light(tmp_path):
+    truth = System(
+        star=PointSource(flux=1.0),
+        inner=MultipoleDisk(
+            GaussianRing(3.0, 0.8), inc=50.0, pa=30.0, flux=0.3, n_r=48
+        ),
+        outer=MultipoleDisk(
+            GaussianRing(8.5, 1.0), inc=50.0, pa=30.0, flux=0.4, n_r=48
+        ),
+    )
+    two = vlti_oidata(
+        wavelengths_m=onp.linspace(1.6e-6, 2.4e-6, 4),
+        hour_angles_h=(-2.0, 0.0, 2.0),
+        sigma_v2=0.005,
+        sigma_cp_deg=1.0,
+    ).with_model(truth, key=jax.random.PRNGKey(14))
+    settings = {
+        **SMALL,
+        "companion": False,
+        "harmonic_degree": 0,
+        "max_rings": 3,
+        "r_out_mas": 14.0,
+    }
+    pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
+    pipeline.run(through="geometry")
+    ctx = pipeline._ctx()
+    shape = disk._Shape(3, False, 0, False)
+    start = {
+        "inc": 50.0,
+        "pa": 30.0,
+        "r1": 3.0,
+        "s1": 0.8,
+        "f1": 0.3,
+        "r2": 8.5,
+        "s2": 1.0,
+        "f2": 0.4,
+        # The null ring: at the inner radius, the width floor, the flux floor.
+        "r3": ctx.r_in,
+        "s3": 0.1 * ctx.halffringe,
+        "f3": 1e-3,
+    }
+    padded = disk._fit_rings(pipeline, shape, start)
+    fit, pruned, dropped = disk._prune(pipeline, shape, padded)
+    assert pruned.n == 2 and len(dropped) == 1
+    assert dropped[0]["delta_bic"] < 0
+    n_data = int(pipeline.processed.n_independent)
+    assert disk._bic(fit, n_data) < disk._bic(padded, n_data)
+    radii = sorted(float(fit.values[f"r{i}"]) for i in (1, 2))
+    assert radii == pytest.approx([3.0, 8.5], abs=0.6)
 
 
 @pytest.mark.slow

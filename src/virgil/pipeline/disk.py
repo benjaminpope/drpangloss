@@ -1329,6 +1329,47 @@ def _backfit(p, shape, fit):
     return fit, steps
 
 
+def _prune(p, shape, fit):
+    """Drop every ring whose removal lowers the BIC, one at a time.
+
+    A greedy fit can end with a ring that carries no light (parked at the
+    inner radius, at the width floor and the flux floor): the data do not
+    want it, and a fit without it has the same χ² and fewer parameters. Each
+    ring in turn is dropped and the rest refitted from where they are; the
+    drop that lowers the BIC most is kept, and this repeats until none does.
+
+    Returns ``(fit, shape, dropped)``; each dropped ring is recorded with its
+    radius, width and flux and the BIC change (negative is better).
+    """
+    ctx, n_data = p._ctx(), int(p.processed.n_independent)
+    dropped = []
+    while shape.n > 1:
+        smaller = dataclasses.replace(shape, n=shape.n - 1)
+        best = None
+        for k in range(1, shape.n + 1):
+            held = _without_ring(_scalars(fit.values), k)
+            start = _ring_start(
+                ctx, held, smaller.n, None, ctx.degree, ctx.colour
+            )
+            trial = _fit_rings(p, smaller, start)
+            d_bic = _bic(trial, n_data) - _bic(fit, n_data)
+            if d_bic < 0 and (best is None or d_bic < best[2]):
+                best = (k, trial, d_bic)
+        if best is None:
+            break
+        k, trial, d_bic = best
+        dropped.append(
+            {
+                "r": float(fit.values[f"r{k}"]),
+                "s": float(fit.values[f"s{k}"]),
+                "f": float(fit.values[f"f{k}"]),
+                "delta_bic": d_bic,
+            }
+        )
+        fit, shape = trial, smaller
+    return fit, shape, dropped
+
+
 def _profile_rings(p):
     s, ctx, data = p.settings, p._ctx(), p.processed
     n_data = int(data.n_independent)
@@ -1355,15 +1396,24 @@ def _profile_rings(p):
         )
         if search is not None:
             searches.append({"rings": n, **search})
+        fit, shape, dropped = _prune(p, shape, fit)
         previous = _scalars(fit.values)
-        name = f"rings_{n}"
-        unresolved = _unresolved_pairs(ctx, fit.values, n)
+        # A ring that had to be dropped was one too many: the rings are used
+        # up. The pruned fit is the candidate for its own count (and replaces
+        # that count's earlier fit if it beats it).
+        count = shape.n
+        name = f"rings_{count}"
+        unresolved = _unresolved_pairs(ctx, fit.values, count)
+        earlier = next((c for c in candidates if c["n"] == count), None)
+        if earlier is not None and earlier["bic"] <= _bic(fit, n_data):
+            break
+        candidates = [c for c in candidates if c["n"] != count]
         _save_fit(
             p.output / "models" / name, fit, list(_ring_priors(ctx, shape))
         )
         candidates.append(
             {
-                "n": n,
+                "n": count,
                 "name": name,
                 "chi2": fit.chi2,
                 "chi2_reduced": fit.chi2 / n_data,
@@ -1372,9 +1422,13 @@ def _profile_rings(p):
                 "converged": fit.info.get("converged"),
                 "planet": shape.planet,
                 "unresolved": [list(pair) for pair in unresolved],
+                "pruned": dropped,
                 "backfit": steps,
             }
         )
+        candidates.sort(key=lambda c: c["n"])
+        if dropped:
+            break
         # A count with two rings too close to tell apart is one ring split
         # in two (a profile that is not Gaussian) or a ring still to be
         # found; `compare` leaves it out, and the search goes on from it. It
