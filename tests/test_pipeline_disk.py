@@ -676,7 +676,7 @@ def test_unresolved_pairs_are_rings_closer_than_their_widths_or_a_halffringe():
     }  # fmt: skip
     pairs = disk._unresolved_pairs(_Scales, values, 4)
     # 10.05 and 9.97 are 0.08 apart; 14.0 is 4 mas from them, more than the
-    # half-fringe and more than the sum of the widths.
+    # half-fringe and more than twice the widths.
     assert [(i, j) for i, j, _, _ in pairs] == [(1, 2)]
     # Wide rings 3 mas apart overlap even though the half-fringe is 2 mas.
     wide = {"r1": 8.0, "s1": 2.0, "r2": 11.0, "s2": 2.0}
@@ -685,12 +685,16 @@ def test_unresolved_pairs_are_rings_closer_than_their_widths_or_a_halffringe():
     scaled = {k: 2.0 * v for k, v in wide.items()}
     scaled_ctx = type("C", (), {"halffringe": 4.0})
     assert len(disk._unresolved_pairs(scaled_ctx, scaled, 2)) == 1
+    # A narrow ring on a broad one is a second feature: the broad ring's
+    # width does not hide it.
+    halo = {"r1": 10.0, "s1": 4.0, "r2": 13.0, "s2": 0.3}
+    assert disk._unresolved_pairs(_Scales, halo, 2) == []
 
 
-def test_rings_do_not_count_a_split_ring(tmp_path):
-    # Two rings, fitted with up to three: a third ring that comes out on top
-    # of one of the two (the split of a ring into two Gaussians) is not a
-    # third ring, so the count chosen is two whatever the BIC says of it.
+def test_rings_leave_out_an_unresolved_count_and_go_on(tmp_path, monkeypatch):
+    # Two rings, fitted with up to three. The rule is forced to flag the
+    # two-ring count, as a split ring would be: that count is recorded,
+    # does not compete in `compare`, and does not stop the search.
     truth = System(
         star=PointSource(flux=1.0),
         inner=MultipoleDisk(
@@ -706,6 +710,11 @@ def test_rings_do_not_count_a_split_ring(tmp_path):
         sigma_v2=0.005,
         sigma_cp_deg=1.0,
     ).with_model(truth, key=jax.random.PRNGKey(13))
+
+    def flag_two(ctx, values, n):
+        return [(1, 2, 0.0, 1.0)] if n == 2 else []
+
+    monkeypatch.setattr(disk, "_unresolved_pairs", flag_two)
     settings = {
         **SMALL,
         "companion": False,
@@ -716,14 +725,10 @@ def test_rings_do_not_count_a_split_ring(tmp_path):
     pipeline = DiskPipeline(two, "rings", output=tmp_path / "run", **settings)
     res = pipeline.run()
     rows = res.summary["profile"]["candidates"]
-    kept = {r["n"] for r in res.summary["compare"]["rows"]}
-    # A candidate with an unresolved pair is recorded, ends the search and
-    # does not compete.
-    for row in rows:
-        assert (row["n"] in kept) == (not row["unresolved"])
-        if row["unresolved"]:
-            assert row is rows[-1]
-    assert res.summary["disk"]["n_rings"] == 2
+    assert [r["n"] for r in rows] == [1, 2, 3]
+    assert [bool(r["unresolved"]) for r in rows] == [False, True, False]
+    assert {r["n"] for r in res.summary["compare"]["rows"]} == {1, 3}
+    assert res.summary["disk"]["n_rings"] in (1, 3)
 
 
 def test_backfit_runs_with_the_planet_in_the_scene(tmp_path):

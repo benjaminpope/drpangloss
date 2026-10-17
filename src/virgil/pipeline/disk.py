@@ -1243,18 +1243,21 @@ def _unresolved_pairs(ctx, values, n):
     """Pairs of the ``n`` rings closer than the data can tell apart.
 
     Two rings are one feature, fitted as two, when their radii differ by
-    less than the sum of their widths (two equal Gaussians are unimodal
-    within 2σ) or by less than a half-fringe (the visibilities hold nothing
-    finer). The limit depends only on the rings' own scales, so it is the
-    same whatever the units of the radius. Returns ``(i, j, separation,
-    limit)`` for each such pair, ``i < j``, in mas.
+    less than twice the narrower one's width (two equal Gaussians are
+    unimodal within 2σ; a narrow ring on a broad one is a second feature
+    however broad the other) or by less than a half-fringe (the
+    visibilities hold nothing finer). Both limits are lengths in the same
+    units as the radii, so the rule has no preferred scale beyond the data's
+    own. Returns ``(i, j, separation, limit)`` for each such pair, ``i < j``,
+    in mas.
     """
     pairs = []
     for i in range(1, n + 1):
         for j in range(i + 1, n + 1):
             sep = abs(float(values[f"r{i}"]) - float(values[f"r{j}"]))
             limit = max(
-                float(values[f"s{i}"]) + float(values[f"s{j}"]), ctx.halffringe
+                2.0 * min(float(values[f"s{i}"]), float(values[f"s{j}"])),
+                ctx.halffringe,
             )
             if sep < limit:
                 pairs.append((i, j, sep, limit))
@@ -1372,12 +1375,16 @@ def _profile_rings(p):
                 "backfit": steps,
             }
         )
-        # A ring split in two lowers the BIC with a profile that is not
-        # Gaussian, not with another ring: stop, and `compare` leaves this
-        # count out.
-        if unresolved:
-            break
-        if n > 1 and candidates[-1]["bic"] >= candidates[-2]["bic"]:
+        # A count with two rings too close to tell apart is one ring split
+        # in two (a profile that is not Gaussian) or a ring still to be
+        # found; `compare` leaves it out, and the search goes on from it. It
+        # stops when a count does not beat the last resolved one.
+        resolved = [c for c in candidates[:-1] if not c["unresolved"]]
+        if (
+            not unresolved
+            and resolved
+            and candidates[-1]["bic"] >= resolved[-1]["bic"]
+        ):
             break
     _plot_profile_fits(p, candidates, "n", "rings")
     return {"candidates": candidates, "searches": searches}
@@ -1810,9 +1817,16 @@ def _compare_rings(p):
         )
     # A count with two rings too close to tell apart is one ring fitted as
     # two (see ``_unresolved_pairs``): it does not compete. The first count
-    # is one ring and never has such a pair.
+    # is one ring and never has such a pair. Those with a lower BIC than the
+    # winner are reported: the data want a profile the rings cannot give.
+    split = [r for r in rows if r.get("unresolved")]
     rows = [r for r in rows if not r.get("unresolved")]
     n_best = min(rows, key=lambda r: r["bic"])["n"]
+    split = [
+        r["n"]
+        for r in split
+        if r["bic"] < next(q for q in rows if q["n"] == n_best)["bic"]
+    ]
     evidences = {
         r["n"]: r["log_evidence"]
         for r in rows
@@ -1834,6 +1848,7 @@ def _compare_rings(p):
             "n_best": n_best,
             "preferred_by_bic": n_best,
             "preferred_by_evidence": by_evidence,
+            "split_counts": split,
             "rows": rows,
             "params": best["params"],
             "inc_deg": best["params"]["inc"],
@@ -2395,7 +2410,11 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         )
     else:
         by["ring_count"] = _checks.ring_count(
-            compare["n_best"], rows, hf, nats=settings["ring_count_nats"]
+            compare["n_best"],
+            rows,
+            hf,
+            nats=settings["ring_count_nats"],
+            split=compare["split_counts"],
         )
     by["outer_edge"] = _checks.outer_edge(
         compare["outer_fraction"], hf, warn=settings["outer_edge_fraction"]
