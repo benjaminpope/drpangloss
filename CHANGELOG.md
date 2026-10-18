@@ -394,6 +394,12 @@ contributors page; no code was copied)
 
 **Imaging, inference and data**
 
+- **`starting_image(pad_to_mas=...)`** pads the start image with empty pixels
+  out to a field wider than the interferometric limit λ/B_min, which
+  `largest_mas` (a cap) cannot do: `largest_mas=54` used to give HR 4049 a
+  ±17.8 mas grid whatever was asked. `largest_mas` above λ/B_min now
+  warns, naming `pad_to_mas`. Defaults are unchanged.
+
 - **`image_field`, `second_moment_fwhm` and `OIData.unflagged`.**
   `image_field(data)` is `field_fwhms` (6) times the source's FWHM, at least
   `inner_elements` (4) resolution elements λ/(2 B_max) across, and at most
