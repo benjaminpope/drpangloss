@@ -13,7 +13,7 @@ import numpy as onp
 from scipy import stats
 
 from .._grid import batch_size_or_default
-from .._precision import cast_tree, run_in
+from .._precision import cast_tree, in_float64, run_in
 from ..likelihood import model_loglike
 from . import _io
 
@@ -134,6 +134,47 @@ def _m2loglike(model, data, **noise):
     the quoted errors it differs from χ² by a constant.
     """
     return -2.0 * float(model_loglike(model, data, **noise))
+
+
+def _overview_plots(p, data):
+    """Save the overview of ``data`` and its (u, v) coverage."""
+    from ..plotting import plot_oidata_overview, plot_uv_coverage
+
+    fig, _ = plot_oidata_overview(data)
+    _save(fig, p.output / "plots" / "overview_data.png")
+    fig, _ = plot_uv_coverage(data)
+    _save(fig, p.output / "plots" / "overview_uv.png")
+
+
+def _overview(p):
+    _overview_plots(p, p.processed)
+    return {}
+
+
+def _quicklook(p):
+    from . import _quicklook as ql
+
+    ql.write_quicklook(p.output, execute=p.settings["quicklook_execute"])
+    return {"executed": bool(p.settings["quicklook_execute"])}
+
+
+def _scales_of(values):
+    """The fitted error scales among a fit's ``values``, by name."""
+    return {
+        k.split(".", 1)[1]: float(v)
+        for k, v in values.items()
+        if k.startswith("noise.")
+    }
+
+
+@in_float64
+def _chi2_64(model, data, **noise):
+    return _chi2(model, data, **noise)
+
+
+@in_float64
+def _m2loglike_64(model, data, **noise):
+    return _m2loglike(model, data, **noise)
 
 
 def _scale_blocks(data, noise):

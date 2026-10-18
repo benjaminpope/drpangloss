@@ -21,4 +21,3 @@ machinery of the positive form.
         - latents_from_reflection
         - spectral_factor
         - image_harmonics_from_h
-        - image_harmonics_from_latents

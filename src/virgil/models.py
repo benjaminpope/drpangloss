@@ -51,7 +51,14 @@ from ._geometry import (
 from . import _elr
 from ._deprecate import renamed
 from .harmonics import cone_coefficients, rim_coefficients
-from ._utils import FWHM_PER_SIGMA, check_part_name, concrete, dtor, mas2rad
+from ._utils import (
+    FWHM_PER_SIGMA,
+    _named_part,
+    check_part_name,
+    concrete,
+    dtor,
+    mas2rad,
+)
 from .orbits import _days_since, _warn_if_mjd_without_t_ref
 from .spectra import Spectrum, _planck_ratio, flux_at
 
@@ -183,21 +190,6 @@ def _concrete_sum(values):
     if any(v is None for v in values):
         return None
     return float(sum(onp.sum(v) for v in values))
-
-
-def _named_part(self, name, kind):
-    """``__getattr__`` of a model with named ``parts``: the part ``name``."""
-    try:
-        names = object.__getattribute__(self, "names")
-        parts = object.__getattribute__(self, "parts")
-    except AttributeError:
-        raise AttributeError(name) from None
-    if name in names:
-        return parts[names.index(name)]
-    raise AttributeError(
-        f"{type(self).__name__} has no {kind} or attribute '{name}'; its "
-        f"{kind}s are {list(names)}."
-    )
 
 
 class SourceModel(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
@@ -2382,7 +2374,8 @@ _LAGUERRE_MAX_NODES = 150
 
 
 def _legendre_rule(n_r):
-    """Gauss-Legendre nodes and weights on [-1, 1] (NumPy, built once)."""
+    """Gauss-Legendre nodes and weights on [-1, 1], computed with NumPy on
+    every call (not cached)."""
     x, w = onp.polynomial.legendre.leggauss(int(n_r))
     return np.asarray(x), np.asarray(w)
 

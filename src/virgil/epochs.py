@@ -500,6 +500,10 @@ class _Surface:
     def chi2(self, model, data, noise=None):
         """χ² of each block of ``data`` for ``model``, on the quoted errors."""
         r = whitened_residuals(model, data, **(noise or {}))
+        return self.block_chi2(r)
+
+    def block_chi2(self, r):
+        """χ² of each block of the whitened residuals ``r``."""
         return np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
 
     def dof_vector(self, dof):
@@ -577,7 +581,7 @@ class _Surface:
         √(stop_gradient ``w_b``): curvature rows of the score (see
         [`weights`][virgil.epochs._Surface.weights]). The weights are
         frozen, so ``½ |rows|²`` has the score's Gauss–Newton curvature."""
-        chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
+        chi2 = self.block_chi2(r)
         w = jax.lax.stop_gradient(self.weights(chi2, dof, data))
         return np.concatenate(
             [
@@ -1242,9 +1246,7 @@ def _grid_scores(points, data, surface, batch_size, diam=None):
 
     def one(x):
         whitened, errors = _whitened_and_errors(_binary(x, diam), data, {})
-        chi2 = np.stack(
-            [np.sum(whitened[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
-        )
+        chi2 = surface.block_chi2(whitened)
         return _gaussian_loglike(whitened, errors), chi2
 
     return jax.lax.map(one, points, batch_size=batch_size)
@@ -1282,9 +1284,7 @@ def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
         chi2 = surface.chi2(_binary(x, diam), data)
     else:
         r = _amp_residuals(_binary(x, diam), data, surface, amp_range)
-        chi2 = np.stack(
-            [np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
-        )
+        chi2 = surface.block_chi2(r)
     return -surface.score(chi2, dof, data)
 
 

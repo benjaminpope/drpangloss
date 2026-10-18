@@ -13,6 +13,11 @@ from .._precision import in_float64
 from .._utils import rad2mas
 from . import _checks, _io
 from ._common import (
+    _overview,
+    _quicklook,
+    _scales_of,
+    _chi2_64,
+    _m2loglike_64,
     _SAMPLER_SETTINGS,
     _diagnostics,
     _load_report,
@@ -22,7 +27,6 @@ from ._common import (
     _bound_samples,
     _chi2,
     _geometry,
-    _m2loglike,
     _m2loglike_grid,
     _quantiles,
     _refine_diameter,
@@ -546,32 +550,12 @@ def _load_star(p):
     return _load_report(p, freq_max_per_rad=_freq_max(p.processed))
 
 
-def _overview(p):
-    from ..plotting import plot_oidata_overview, plot_uv_coverage
-
-    fig, _ = plot_oidata_overview(p.processed)
-    _save(fig, p.output / "plots" / "overview_data.png")
-    fig, _ = plot_uv_coverage(p.processed)
-    _save(fig, p.output / "plots" / "overview_uv.png")
-    return {}
-
-
 # --- the diameter scan and its lobes ---
 
 # A closure phase flips by 180 degrees where a model's visibility changes
 # sign, so a χ² evaluated in float32 near a null can jump by orders of
 # magnitude; ``fit`` and the grid tools are float64 inside, and so are the
 # numbers this pipeline reports.
-
-
-@in_float64
-def _chi2_64(model, data, **noise):
-    return _chi2(model, data, **noise)
-
-
-@in_float64
-def _m2loglike_64(model, data, **noise):
-    return _m2loglike(model, data, **noise)
 
 
 @in_float64
@@ -735,15 +719,6 @@ class LobeFit:
     priors: dict
     lobe: dict
     warnings: list
-
-
-def _scales_of(values):
-    """The fitted error scales among a fit's ``values``, by name."""
-    return {
-        k.split(".", 1)[1]: float(v)
-        for k, v in values.items()
-        if k.startswith("noise.")
-    }
 
 
 def _diameter_grid(centre, priors):
@@ -1251,13 +1226,6 @@ def _posterior(p):
             m["divergence_fraction"] for m in per_model.values()
         ),
     }
-
-
-def _quicklook(p):
-    from . import _quicklook as ql
-
-    ql.write_quicklook(p.output, execute=p.settings["quicklook_execute"])
-    return {"executed": bool(p.settings["quicklook_execute"])}
 
 
 # === SUMMARY AND CHECKS ===

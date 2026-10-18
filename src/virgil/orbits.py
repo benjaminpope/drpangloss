@@ -1120,8 +1120,6 @@ class StateVectorOrbit(zdx.Base):
         return self.to_kepler().relative(mjd)
 
 
-# Default sd (km/s) of the zero-point prior when marginalizing with ``True``.
-
 # km/s per (mas/day at 1 pc): 1 mas at 1 pc is 1e-3 au.
 _KMS_PER_MAS_DAY_PC = _AU_M * 1e-6 / _DAY_S  # 1 mas at 1 pc is 1e-3 au
 

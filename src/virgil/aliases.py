@@ -452,8 +452,7 @@ def _scale_vis(r, d, n, amp):
 def _epoch_chi2(surface, model, d, amp_range):
     """Raw χ² per block of one epoch and its V² amplitude."""
     r, amp = _epoch_residuals(surface, model, d, amp_range)
-    chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks])
-    return chi2, amp
+    return surface.block_chi2(r), amp
 
 
 # The kernels take the data as traced arguments, so one compilation serves

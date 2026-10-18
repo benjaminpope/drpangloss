@@ -10,6 +10,8 @@ import numpy as onp
 
 from . import _checks, _io
 from ._common import (
+    _overview,
+    _quicklook,
     _SAMPLER_SETTINGS,
     _diagnostics,
     _load_report,
@@ -367,16 +369,6 @@ class BinaryPipeline(_Pipeline):
 
 
 # === STAGES ===
-
-
-def _overview(p):
-    from ..plotting import plot_oidata_overview, plot_uv_coverage
-
-    fig, _ = plot_oidata_overview(p.processed)
-    _save(fig, p.output / "plots" / "overview_data.png")
-    fig, _ = plot_uv_coverage(p.processed)
-    _save(fig, p.output / "plots" / "overview_uv.png")
-    return {}
 
 
 # --- search ---
@@ -862,13 +854,6 @@ def _plot_posterior(output, samples, reported):
     )
     _save(fig_corner, output / "plots" / "posterior_corner.png")
     _save(fig_walk, output / "plots" / "posterior_trace.png")
-
-
-def _quicklook(p):
-    from . import _quicklook as ql
-
-    ql.write_quicklook(p.output, execute=p.settings["quicklook_execute"])
-    return {"executed": bool(p.settings["quicklook_execute"])}
 
 
 # === SUMMARY AND CHECKS ===

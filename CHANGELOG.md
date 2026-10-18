@@ -300,6 +300,16 @@ Provisional in 0.4:
 
 ### Removed
 
+- **Unused helpers, with no caller in virgil or its analyses.**
+  `virgil.tempering.lag_correlation`, `lag1_correlation` and
+  `factor_from_correlation` (`estimate_factors` computes the lag statistics
+  itself) and `chain_factor` (the exact AR(1) factor, now a helper of the
+  tests); `virgil.plotting.plot_hmc_fisher_chainconsumer` (call
+  `plot_chainconsumer_diagnostics` for each coordinate system); and
+  `virgil.harmonics.image_harmonics_from_latents`
+  (`image_harmonics_from_h(step_up(reflection_coefficients(re, im)))`). No
+  result changes.
+
 - **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
   0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`:
   the flux at every wavelength is the same (identical between the end nodes,

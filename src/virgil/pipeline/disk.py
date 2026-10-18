@@ -14,10 +14,13 @@ import numpy as onp
 from .._precision import in_float64
 from . import _checks, _io
 from ._common import (
+    _overview_plots,
+    _quicklook,
+    _scales_of,
+    _chi2_64,
+    _m2loglike_64,
     _SAMPLER_SETTINGS,
     _bound_samples,
-    _chi2,
-    _m2loglike,
     _diagnostics,
     _geometry,
     _interior_start,
@@ -60,8 +63,6 @@ _ELL_PER_EQUIVALENT = math.sqrt(3.0)
 # check.
 _RENDER_NPIX = 512
 _UNSET = object()
-# Δχ² within which another cell of the geometry grid is a rival minimum.
-_RIVAL_DELTA_CHI2 = _checks.RIVAL_DELTA_CHI2
 _BACKFIT_PASSES = 2
 _BACKFIT_MIN_GAIN = 2.0  # BIC units: below this a re-placement is noise
 # Coarse starts for the Gaussian process's geometry, beside the single ring's.
@@ -666,13 +667,9 @@ def _load_disk(p):
 def _overview(p):
     p._error_factor = 1.0
     from ..imaging import image_field
-    from ..plotting import plot_oidata_overview, plot_uv_coverage
 
     s, data = p.settings, p.processed
-    fig, _ = plot_oidata_overview(data)
-    _save(fig, p.output / "plots" / "overview_data.png")
-    fig, _ = plot_uv_coverage(data)
-    _save(fig, p.output / "plots" / "overview_uv.png")
+    _overview_plots(p, data)
 
     halffringe = _geometry(data)["resolution_mas"]
     # The hole is the larger of the half-fringe and the star's radius:
@@ -914,24 +911,6 @@ class _DiskFit:
     score: float | None = None
 
 
-def _scales_of(values):
-    return {
-        k.split(".", 1)[1]: float(v)
-        for k, v in values.items()
-        if k.startswith("noise.")
-    }
-
-
-@in_float64
-def _chi2_64(model, data):
-    return _chi2(model, data)
-
-
-@in_float64
-def _m2loglike_64(model, data, scales):
-    return _m2loglike(model, data, **scales)
-
-
 def _n_free(values, priors):
     return int(
         sum(onp.size(values[k]) for k in priors if k in values)
@@ -950,7 +929,7 @@ def _finish(model, values, info, priors, data):
         chi2=float(chi2),
         scales=scales,
         n_free=_n_free(values, priors),
-        score=_m2loglike_64(model, data, scales) if scales else None,
+        score=_m2loglike_64(model, data, **scales) if scales else None,
     )
 
 
@@ -1136,7 +1115,7 @@ def _geometry_stage(p):
     )
     inc_deg = onp.degrees(onp.arccos(cos_axis))
     minima = _grid_minima(delta, inc_deg)
-    rivals = [m for m in minima[1:] if m[0] < _RIVAL_DELTA_CHI2]
+    rivals = [m for m in minima[1:] if m[0] < _checks.RIVAL_DELTA_CHI2]
 
     _io.write_h5(
         p.output / "grids.h5",
@@ -2425,11 +2404,8 @@ def _profile_curves(model, r):
             has_alpha = True
         alpha += i0 * a
         if part.harmonics is not None and part.harmonics.degree:
-            try:
-                h = onp.asarray(part.harmonics.image_harmonics(r))
-            except TypeError:
-                h = onp.asarray(part.harmonics.image_harmonics())
-            first = onp.abs(h[1]) if h.ndim == 1 else onp.abs(h[1])
+            h = onp.asarray(part.harmonics.image_harmonics(r))
+            first = onp.abs(h[1])
             lop += i0 * onp.broadcast_to(first, r.shape)
             has_lop = True
     safe = onp.where(total > 0, total, 1.0)
@@ -2702,13 +2678,6 @@ def _posterior(p):
     }
 
 
-def _quicklook(p):
-    from . import _quicklook as ql
-
-    ql.write_quicklook(p.output, execute=p.settings["quicklook_execute"])
-    return {"executed": bool(p.settings["quicklook_execute"])}
-
-
 # === SUMMARY AND CHECKS ===
 
 _DATA_KEYS = (
@@ -2792,7 +2761,7 @@ def _disk_section(name, compare):
     return section
 
 
-def _chi2_checks(entry, compare, settings):
+def _chi2_checks(entry, compare):
     checks = [
         _checks.chi2_reduced(
             "chi2_reduced",
@@ -2922,7 +2891,7 @@ def _summarize(name, settings, reports):
         "raised_search": comp["raised_search"],
     }
     sections["disk"] = _disk_section(name, comp)
-    checks += _chi2_checks(entry, comp, settings)
+    checks += _chi2_checks(entry, comp)
     checks += _fit_checks(entry, settings, over, geo, comp)
     if post and not post.get("skipped"):
         sections["posterior"] = {k: post[k] for k in _POSTERIOR_KEYS}

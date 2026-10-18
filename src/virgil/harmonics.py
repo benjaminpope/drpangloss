@@ -20,6 +20,8 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
+from ._utils import dtor
+
 __all__ = [
     "cone_coefficients",
     "from_image_harmonics",
@@ -28,8 +30,6 @@ __all__ = [
     "to_image_harmonics",
     "to_legacy",
 ]
-
-_DEG = onp.pi / 180.0
 
 # The series of tanh(x) / x is used below x**2 = _SERIES_X2 (error < 1e-13).
 _SERIES_X2 = 1e-4
@@ -98,11 +98,6 @@ def image_harmonics_from_h(h):
             for m in range(1, top + 1)
         ]
     )
-
-
-def image_harmonics_from_latents(re, im):
-    """Image harmonics of the positive form from its latents (``(M, ...)``)."""
-    return image_harmonics_from_h(step_up(reflection_coefficients(re, im)))
 
 
 def linear_from_image(image_harmonics):
@@ -321,7 +316,7 @@ def rim_coefficients(az_amps, az_pas, pa):
     """
     amps, pas = np.atleast_1d(az_amps), np.atleast_1d(az_pas)
     orders = np.arange(1, amps.size + 1)
-    angle = orders * (pas - pa) * _DEG
+    angle = orders * (pas - pa) * dtor
     return amps * np.cos(angle), amps * np.sin(angle)
 
 
@@ -343,7 +338,7 @@ def cone_coefficients(az_amps, az_pas, pa):
     amps, pas = np.atleast_1d(az_amps), np.atleast_1d(az_pas)
     orders = np.arange(1, amps.size + 1)
     sign = (-1.0) ** orders
-    angle = orders * (pa + 90.0 - pas) * _DEG
+    angle = orders * (pa + 90.0 - pas) * dtor
     return sign * amps * np.cos(angle), -sign * amps * np.sin(angle)
 
 
