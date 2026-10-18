@@ -71,6 +71,7 @@ from .orbits import (
     _PHASE_COHERENCE,
     PositionData,
     _phase_drift,
+    _warn_if_mjd_without_t_ref,
     starting_orbits,
 )
 from ._deprecate import external_stacklevel
@@ -96,6 +97,35 @@ __all__ = [
 __provisional__ = ("*",)
 
 _AT = ("dataset", "epoch")
+
+
+def _snapshots_of_one_scene(times, scene):
+    """The snapshots of one scene, from one ``vmap`` over the times.
+
+    One Kepler solve and one copy of the scene graph for all datasets, not
+    one each, so the graph that ``jit`` and ``grad`` see does not grow with
+    the number of datasets. The times are offsets from their mean (a float64
+    ``t_ref``), so float32 keeps the phase.
+    """
+    times = onp.asarray(times, onp.float64)
+    n = len(times)
+    if not scene.time_dependent:
+        return [scene] * n
+    for orbit in jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: hasattr(x, "_relative")
+    ):
+        if hasattr(orbit, "_relative"):
+            _warn_if_mjd_without_t_ref(orbit.t_ref, times)
+    t0 = float(times.mean())
+    batched = eqx.filter_vmap(lambda dt: scene.at(dt, t0))(
+        np.asarray(times - t0)
+    )
+    return [
+        jax.tree_util.tree_map(
+            lambda x: x[k] if eqx.is_array(x) else x, batched
+        )
+        for k in range(n)
+    ]
 
 
 class Epochs:
@@ -272,11 +302,9 @@ class Epochs:
         list of SourceModel
             Static models, in the order of ``data``.
         """
-        scenes = (
-            list(scene)
-            if isinstance(scene, (list, tuple))
-            else [scene] * len(self.data)
-        )
+        if not isinstance(scene, (list, tuple)):
+            return _snapshots_of_one_scene(self.times, scene)
+        scenes = list(scene)
         if len(scenes) != len(self.data):
             raise ValueError(
                 f"{len(scenes)} scenes for {len(self.data)} datasets."

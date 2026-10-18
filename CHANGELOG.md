@@ -147,6 +147,7 @@ Provisional in 0.4:
 
 ### Changed
 
+- `Epochs.snapshots` evaluates a single scene at all the datasets' times with one `vmap`, so the gradient graph no longer grows with the number of datasets (about half the jaxpr equations for an `OrbitalBinary`), and the `DiskPipeline` ring stages reuse one compiled model instead of recompiling every fit. Results are unchanged.
 - `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
   per layout of the data instead of on every call. Results are unchanged.
   `epoch_positions(batch_size=)` now defaults from the data's size, as the
