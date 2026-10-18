@@ -181,7 +181,7 @@ def test_white_noise_gives_f_within_five_percent_of_one():
 
 
 def test_the_estimator_recovers_f_for_ar1_and_for_common_mode_noise():
-    # AR(1), rho = 0.6, n = 8: f = chain_factor. Common mode, c = 0.6: f =
+    # AR(1), rho = 0.6, n = 8: f = _chain_factor. Common mode, c = 0.6: f =
     # 1 + (n - 1) c = 5.2, which a lag-1 AR(1) estimate puts at 3.2. The
     # inflation of the errors (chi2/N = 12) does not matter.
     rng = onp.random.default_rng(1)
