@@ -140,6 +140,9 @@ class _Pipeline:
     STABILITY = "provisional"
     STAGES: tuple = ()
     _DEFAULTS: dict = {}
+    # The config key that fills the second argument of ``from_oifits`` when
+    # that is not the model (the orbit pipeline's ``metadata``).
+    _SECOND_KEY = None
 
     def __init__(self, data, model=None, *, output="run", **settings):
         self.data = data
@@ -212,7 +215,8 @@ class _Pipeline:
         """
         path = Path(path)
         config = _io.read_json(path)
-        unknown = set(config) - {"pipeline", "data", "output", "settings"}
+        known = {"pipeline", "data", "output", "settings", cls._SECOND_KEY}
+        unknown = set(config) - known
         if unknown:
             raise ValueError(f"{path}: unknown keys {sorted(unknown)}.")
         if config.get("pipeline", cls.NAME) != cls.NAME:
@@ -227,6 +231,8 @@ class _Pipeline:
         settings.update(overrides)
         if not Path(output).is_absolute() and "output" in config:
             output = path.parent / output
+        if model is None and cls._SECOND_KEY:
+            model = config.get(cls._SECOND_KEY)
         return cls.from_oifits(paths, model, output=output, **settings)
 
     # --- shared state, rebuilt on demand so that resume works ------------
@@ -270,11 +276,22 @@ class _Pipeline:
         """``(sections, checks)`` from the stage reports so far."""
         raise NotImplementedError
 
+    def _data_fingerprint(self):
+        """The hash of the data, for ``run.json`` and the resume check."""
+        return _io.data_fingerprint(self.data)
+
+    def _input_files(self):
+        """The input files for ``run.json``: ``{"path", "sha256", ...}``."""
+        return [
+            {"path": p, "sha256": _io.sha256_file(p)}
+            for p in self.inputs or []
+        ]
+
     def _input_record(self):
-        record = {"data_sha256": _io.data_fingerprint(self.data), "files": []}
-        for p in self.inputs or []:
-            record["files"].append({"path": p, "sha256": _io.sha256_file(p)})
-        return record
+        return {
+            "data_sha256": self._data_fingerprint(),
+            "files": self._input_files(),
+        }
 
     def _model_digest(self):
         try:
@@ -295,7 +312,7 @@ class _Pipeline:
             for key in sorted(set(stored) | set(self.settings))
             if stored.get(key) != self.settings.get(key)
         ]
-        if record["inputs"]["data_sha256"] != _io.data_fingerprint(self.data):
+        if record["inputs"]["data_sha256"] != self._data_fingerprint():
             diffs.append("the data differ")
         if record.get("model") != self._model_digest():
             diffs.append("the model template differs")

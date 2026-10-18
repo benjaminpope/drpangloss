@@ -6,6 +6,8 @@
                                  [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline disk DATA... --output DIR [--model rings|gp]
                                  [--through S] [--fresh] [--set key=value ...]
+    virgil-pipeline orbit DATA... --output DIR [--metadata FILE.json]
+                                  [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline info DIR
     virgil-pipeline quicklook DIR [--no-execute]
     virgil-pipeline validate DIR
@@ -26,6 +28,7 @@ from ._io import SCHEMA, read_json, sha256_file
 _PIPELINES = {
     "binary": ("virgil.pipeline.binary", "BinaryPipeline"),
     "disk": ("virgil.pipeline.disk", "DiskPipeline"),
+    "orbit": ("virgil.pipeline.orbit", "OrbitPipeline"),
     "star": ("virgil.pipeline.star", "StarPipeline"),
 }
 
@@ -52,9 +55,12 @@ def _run(args):
 
     module, name = _PIPELINES[args.command]
     cls = getattr(importlib.import_module(module), name)
+    second = getattr(args, "model", None)
+    if getattr(args, "metadata", None):
+        second = read_json(Path(args.metadata))
     pipeline = cls.from_oifits(
         args.data,
-        getattr(args, "model", None),
+        second,
         output=args.output,
         **_settings(args.set),
     )
@@ -213,6 +219,12 @@ def build_parser():
                 "--model",
                 help='fit one model, e.g. "uniform" or "limb_darkened" '
                 "(default: both, compared)",
+            )
+        if name == "orbit":
+            p.add_argument(
+                "--metadata",
+                help="JSON file {file: {epoch, instrument, mjd}} (see "
+                "OrbitPipeline.from_oifits)",
             )
         if name == "disk":
             p.add_argument(

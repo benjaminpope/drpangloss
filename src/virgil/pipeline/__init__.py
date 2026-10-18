@@ -33,6 +33,7 @@ from ._io import SCHEMA, Result, load
 _LAZY = {
     "BinaryPipeline": ".binary",
     "DiskPipeline": ".disk",
+    "OrbitPipeline": ".orbit",
     "StarPipeline": ".star",
 }
 
@@ -42,6 +43,7 @@ __all__ = [
     "Check",
     "ConfigMismatchError",
     "DiskPipeline",
+    "OrbitPipeline",
     "Result",
     "Stage",
     "StarPipeline",

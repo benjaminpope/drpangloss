@@ -21,7 +21,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Polar fields ([`virgil.fields`](api/fields.md)) | `MultipoleField`, `multipole_field_priors` |
 | Ensembles' Gaussian-process members ([`virgil.ensemble`](api/ensemble.md)) | `evidence_grid`, `gp_members`, `GPFit`, `EvidenceGrid` |
 | Variational inference | the module [`virgil.svi`](api/svi.md) (`variational`, `VariationalResult`) |
-| Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
+| Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 

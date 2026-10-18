@@ -39,6 +39,19 @@ Provisional in 0.4:
 
 ### Added
 
+- **`OrbitPipeline`** (`virgil.pipeline`, provisional; `virgil-pipeline
+  orbit`): the default multi-epoch binary-orbit run is a blind period-alias
+  search. `OrbitPipeline.from_oifits(files).run()` groups the files into
+  nights, finds the companion's position on each, searches every alias band
+  of the period with the engine's defaults (no published period, window,
+  warm start or prior), ranks the bands, reports the winner's margin over the
+  runner-up and a `no-orbit` test against a single star, and samples the
+  winning band (and any band that is not negligible) with NUTS. New checks:
+  `night_flags`, `labels_free`, `alias_ambiguity`, `tempering`,
+  `primary_resolved`, `no_orbit` and `period_bound`. `Result.aliases()`
+  reloads the search, and `AliasResult` records its prior ranges
+  (`AliasResult.prior`).
+
 - **`DiskPipeline` defaults from imaging nine PIONIER post-AGB discs**
   (provisional, so no deprecation; the lessons are from
   virgil-validation#133). For `model="gp"`, `error_scale="auto"` (the new

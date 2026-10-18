@@ -101,6 +101,33 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 
 Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The rings are fitted on the quoted errors (`error_scale="quoted"`, the default there), and `error_scale="fit"` is available for them only; `"rescale"` is for the Gaussian process (see above). The star is a grey point source unless `star_diameter_mas` (a uniform disk; the inner radius is then at least its radius), `star_temperature_k` or `star_index` says otherwise, and the disk's spectral index is relative to that star: it is conditional on the star's assumed spectrum, so read it with the `model.star` section of the summary beside it (on real discs a different star index moved the disk's index by 0.3 to 1.4). The rings' colour is a power-law index per ring by default; `ring_colour="blackbody"` (rings only) fits a temperature per ring and for the planet instead, which follows blackbody-like spectra across a broad band that a power law misses. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
 
+## `OrbitPipeline`: a binary seen on several nights (provisional)
+
+`OrbitPipeline` fits the orbit of a binary observed on several nights, and it does not need to be told the period. The default run is a blind search over the period aliases: the window of periods comes from the data, and no published period, warm start or paper prior is used. Give it the OIFITS files (each is split into nights at gaps of `gap_days`), or an `Epochs`, or `{night: data}`:
+
+```python
+from virgil.pipeline import OrbitPipeline
+
+res = OrbitPipeline.from_oifits(files, output="runs/hd1234").run()
+
+res.summary["modes"]["winner"]      # the winning alias band and its orbit
+res.summary["modes"]["delta_log_z"] # its margin over the runner-up, in nats
+res.aliases().table()               # every band: log Z, probability, flags
+```
+
+Per-file rulings go in `metadata` (`epoch`, `instrument`, `mjd` for a file whose time stamp is wrong) and `exclude` (`{file, night or dataset: reason}`, recorded in `run.json`). The command line is `virgil-pipeline orbit FILES... --output DIR [--metadata FILE.json]`.
+
+| Stage | What it does | Reuses |
+| --- | --- | --- |
+| `load` | Groups the data into nights, applies `wavel_range` and `error_floor` and records the nights | `OIData.split_by_epoch`, `Epochs` |
+| `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
+| `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
+| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
+| `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
+| `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
+
+A run that interrupts resumes: the bands already fitted are read back from their checkpoints, so only the missing bands are refitted. `run(resume=False)` starts over, bands included. The winner is the band of highest evidence; the summary's `delta_log_z` is its log Z over the runner-up's, and `alias_ambiguity` warns below 10 nats and fails below 1. `no-orbit` compares the best orbit's evidence (with its prior volume) with the log likelihood of the star alone, and a run that finds no orbit skips the posterior. The posterior is sampled with NUTS on the engine's tempered likelihood and not with `gauss_newton_mass`'s mass matrix, because the winning mode sits on a narrow ridge in log period and periastron time that a dense mass matrix adapted during warm-up follows.
+
 ## The run folder
 
 | Path | Contents |
@@ -165,6 +192,13 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `absorbed_companion` (`DiskPipeline`: Δχ² of a point source added to the best model's residuals) | at least `companion_min_delta_chi2` (25); the message says whether a harmonic of one degree higher removes it | |
 | `render_consistency` (`DiskPipeline`, `"gp"`: χ²/N of the model and of its disk rendered to pixels, on the channel nearest the reference wavelength) | the rendered image's χ²/N differs by more than `render_tolerance` (0.1) plus 0.02: the image is not the model the fit found; refit with a larger `n_r` (`suggest_n_r` sizes the nodes for the visibilities, not for pixels) | |
 | `at_bound` (`DiskPipeline`) | any fitted parameter within 0.1% of a prior bound: the data do not constrain it there, or the prior is too tight | |
+| `night_flags` (`OrbitPipeline`: nights whose position cannot seed an orbit; their data still count in the likelihood) | any night flagged | |
+| `labels_free` (`OrbitPipeline`: a point-reflected orbit with an evidence within 3 nats of the best) | the data do not say which star is which | |
+| `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
+| `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
+| `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
+| `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |
+| `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages
 

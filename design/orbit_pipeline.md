@@ -3,10 +3,11 @@
 Status (2026-10-16): **the canonical orbit plan.** It supersedes
 `automatic_orbits.md`, `orbit_aliases.md` and `thiele_innes_marginalisation.md`
 (see their headers for what stays valid).
-- Phases 1a to 1d are merged: the engine result API (1a, #359), night flags
-  (1b, #366), engine defaults (1c, #368) and tempering (1d, #372, with
-  review follow-up #380).
-- **1e `OrbitPipeline` and 1f docs are next.**
+- Phases 1a to 1e are merged: the engine result API (1a, #359), night flags
+  (1b, #366), engine defaults (1c, #368), tempering (1d, #372, with
+  review follow-up #380) and `OrbitPipeline` (1e).
+- **1f docs are next** (rewrite `orbit_fitting.md` around the pipeline; the
+  pipeline page and API entries already exist).
 - `orbit_search.score_orbits` ships as **provisional** in 0.4.0, with the rest
   of `epochs`, `aliases` and `tempering` (`docs/stability.md`).
 - Release gate: the unattended run on the Gl 229 data stays the gate for 0.4.0

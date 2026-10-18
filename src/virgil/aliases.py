@@ -1798,6 +1798,11 @@ class AliasResult:
     unseeded : tuple of dict
         The nights flagged by [`epoch_positions`][virgil.epochs.epoch_positions] that seeded nothing; their data
         still count in every band's likelihood.
+    prior : dict or None
+        The prior ranges of the fit (``a_range``, ``flux_range``,
+        ``ecc_max``, ``s_max``, ``diam_range``), which a sampler of the
+        engine's posterior needs to rebuild it; None for a file that did
+        not record them.
     """
 
     t_ref: float
@@ -1818,6 +1823,7 @@ class AliasResult:
     temper_blocks: dict | None = None
     temper_f_raw: float | None = None
     temper_rho: dict | None = None
+    prior: dict | None = None
 
     def __post_init__(self):
         for b in self.bands:
@@ -1936,6 +1942,7 @@ class AliasResult:
             temper_blocks=self.temper_blocks,
             temper_f_raw=self.temper_f_raw,
             temper_rho=self.temper_rho,
+            prior=self.prior,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -2060,6 +2067,7 @@ class AliasResult:
             temper_blocks=p.get("temper_blocks"),
             temper_f_raw=p.get("temper_f_raw"),
             temper_rho=p.get("temper_rho"),
+            prior=p.get("prior"),
             **settings,
         )
 
@@ -2399,10 +2407,17 @@ def _dof_pairs(factors):
         invalidate a checkpoint); empty (untempered, the fast path) when
         every ``f_b`` is 1.
     """
-    if factors is None or all(v == 1.0 for v in factors.blocks.values()):
+    return _dof_of_blocks(None if factors is None else factors.blocks)
+
+
+def _dof_of_blocks(blocks):
+    """``_dof_pairs`` of a ``{block name: f_b}`` mapping (or None): what
+    ``AliasResult.temper_blocks`` stores, so that a rebuilt problem has
+    exactly the tempering of the fit."""
+    if blocks is None or all(v == 1.0 for v in blocks.values()):
         return ()
     return tuple(
-        (k, float(f"{1.0 / v:.6g}")) for k, v in sorted(factors.blocks.items())
+        (k, float(f"{1.0 / v:.6g}")) for k, v in sorted(blocks.items())
     )
 
 
@@ -2624,6 +2639,77 @@ def _resample(results, store, n_samples, p_min, seed):
         )
         samples[b.n] = _physical(xs[pick])
     return samples
+
+
+def _band_target(result, data, n=None):
+    """The engine's posterior of one band, rebuilt from a saved result, for
+    a sampler: ``(problem, bounds, x, settings)``.
+
+    ``problem.surfaces``, ``.data``, ``.cfg`` and ``.dof`` give
+    ``_loglike`` exactly as the fit scored it (tempered, V² amplitude
+    profiled); ``bounds`` are the band's prior bounds; ``x`` is the band's
+    best mode in the sampled coordinates. The public ``numpyro_model`` has
+    neither the tempering nor the per-night amplitude, so it would sample
+    a different (untempered) posterior.
+
+    Parameters
+    ----------
+    result : AliasResult
+        A result that recorded its prior (``result.prior``).
+    data : sequence of OIData
+        The epochs of the fit.
+    n : int, optional
+        The band's orbit count (default: the best band).
+
+    Returns
+    -------
+    tuple
+        ``(_Problem, _Bounds, ndarray, _Settings)``.
+    """
+    band = (
+        result.best if n is None else next(b for b in result.bands if b.n == n)
+    )
+    if result.prior is None:
+        raise ValueError(
+            "This AliasResult did not record its prior ranges (it was "
+            "saved by an older virgil): refit it to sample its posterior."
+        )
+    live = [m for m in band.modes if onp.isfinite(m["log_z"])]
+    if not live:
+        raise ValueError(f"Band N = {band.n} has no valid mode.")
+    mode = max(live, key=lambda m: m["log_z"])
+    prior = result.prior
+    settings = _Settings(
+        p_range=tuple(result.p_range),
+        a_range=tuple(prior["a_range"]),
+        flux_range=tuple(prior["flux_range"]),
+        ecc_max=prior["ecc_max"],
+        s_max=prior["s_max"],
+        t_ref=result.t_ref,
+        n_candidates=0,
+        n_refine=0,
+        n_random=0,
+        pool_size=0,
+        k=0.0,
+        eccs=None,
+        min_distance_mas=0.0,
+        max_steps=0,
+        n_is=0,
+        flag_nats=0.0,
+        ess_min=0.0,
+        seed=0,
+        primary_diam=result.primary_diam,
+        diam_range=tuple(prior["diam_range"]),
+        vis_amp=result.vis_amp,
+        dof=_dof_of_blocks(result.temper_blocks),
+    )
+    problem = _Problem(cast_tree(list(data), "float64"), settings)
+    return (
+        problem,
+        _Bounds.of(band, settings),
+        onp.asarray(mode["x"], float),
+        settings,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3051,6 +3137,13 @@ def fit_orbit_aliases(
         temper_f=None if factors is None else factors.f,
         temper_blocks=None if factors is None else dict(factors.blocks),
         temper_f_raw=None if factors is None else factors.f_raw,
+        prior=dict(
+            a_range=settings.a_range,
+            flux_range=settings.flux_range,
+            ecc_max=settings.ecc_max,
+            s_max=settings.s_max,
+            diam_range=settings.diam_range,
+        ),
         temper_rho=None
         if factors is None or not factors.rho
         else {
