@@ -16,6 +16,5 @@
         - plot_oidata_overview
         - plot_data_model_correlation
         - plot_chainconsumer_diagnostics
-        - plot_hmc_fisher_chainconsumer
         - diagnostics_table_from_samples
         - truth_cartesian_and_polar

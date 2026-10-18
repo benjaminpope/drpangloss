@@ -176,6 +176,78 @@ def test_snapshots_match_the_per_sample_model_for_one_time_per_dataset():
         )
 
 
+def _per_epoch_loglike(epochs, scene):
+    """The loglike with one ``at`` per dataset (the pre-vmap path)."""
+    return sum(
+        model_loglike(scene.at(float(t)), d)
+        for t, d in zip(epochs.times, epochs.data)
+    )
+
+
+def _snapshot_scenes():
+    orbit = _orbit()
+    return {
+        "binary": lambda **p: OrbitalBinary(
+            orbit.set("period", p["period"]), FLUX
+        ),
+        "system": lambda **p: System(
+            primary=PointSource(),
+            comp=Attached(PointSource(FLUX), orbit.set("period", p["period"])),
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", ["binary", "system"])
+def test_vmapped_snapshots_match_one_at_per_dataset(name):
+    scene_fn = _snapshot_scenes()[name]
+    epochs = Epochs(
+        {f"e{k}": _night(T_REF + t) for k, t in enumerate([0, 200, 450])}
+    )
+
+    def new(period):
+        return epochs.loglike(scene_fn(period=period))
+
+    def old(period):
+        return _per_epoch_loglike(epochs, scene_fn(period=period))
+
+    with jax.enable_x64(True):
+        period = np.asarray(TRUTH["period"] * 1.02)
+        value_new, grad_new = jax.value_and_grad(new)(period)
+        value_old, grad_old = jax.value_and_grad(old)(period)
+        onp.testing.assert_allclose(value_new, value_old, rtol=1e-10)
+        onp.testing.assert_allclose(grad_new, grad_old, rtol=1e-8)
+        scene = scene_fn(period=period)
+        for snap, t in zip(epochs.snapshots(scene), epochs.times):
+            for a, b in zip(
+                jax.tree_util.tree_leaves(snap),
+                jax.tree_util.tree_leaves(scene.at(float(t))),
+            ):
+                onp.testing.assert_allclose(a, b, rtol=1e-10)
+
+
+def test_vmapped_snapshots_still_warn_about_mjds_without_a_t_ref():
+    epochs = Epochs({"a": _night(T_REF), "b": _night(T_REF + 50.0)})
+    with jax.enable_x64(True):
+        with pytest.warns(UserWarning, match="t_ref"):
+            epochs.snapshots(OrbitalBinary(KeplerOrbit(**TRUTH), FLUX))
+
+
+def test_vmapped_snapshots_shrink_the_gradient_graph():
+    scene_fn = _snapshot_scenes()["binary"]
+    epochs = Epochs(
+        {f"e{k}": _night(T_REF + t) for k, t in enumerate([0, 100, 200, 300])}
+    )
+    new = jax.make_jaxpr(
+        jax.value_and_grad(lambda p: epochs.loglike(scene_fn(period=p)))
+    )(np.asarray(TRUTH["period"]))
+    old = jax.make_jaxpr(
+        jax.value_and_grad(
+            lambda p: _per_epoch_loglike(epochs, scene_fn(period=p))
+        )
+    )(np.asarray(TRUTH["period"]))
+    assert len(new.eqns) < len(old.eqns)
+
+
 def test_snapshots_approximate_a_slowly_moving_scene_within_a_night():
     """The snapshot's loss of likelihood is bounded by the orbital motion.
 

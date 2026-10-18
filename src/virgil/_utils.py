@@ -192,3 +192,18 @@ def resolve_flux_param(keys, flux_param=None):
             "'flux'. Pass flux_param=<key>."
         )
     return candidates[0]
+
+
+def _named_part(self, name, kind):
+    """``__getattr__`` of a model with named ``parts``: the part ``name``."""
+    try:
+        names = object.__getattribute__(self, "names")
+        parts = object.__getattribute__(self, "parts")
+    except AttributeError:
+        raise AttributeError(name) from None
+    if name in names:
+        return parts[names.index(name)]
+    raise AttributeError(
+        f"{type(self).__name__} has no {kind} or attribute '{name}'; its "
+        f"{kind}s are {list(names)}."
+    )

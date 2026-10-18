@@ -588,6 +588,11 @@ contributors page; no code was copied)
     per layout of the data, and repeated refinements in
     `start_from_positions` compile once. `epoch_positions(batch_size=)`
     defaults from the data's size (it was 4096) and `batch_size=0` raises.
+  - `Epochs.snapshots` evaluates a single scene at all the datasets' times with
+    one `vmap`, so the gradient graph no longer grows with the number of
+    datasets (about half the jaxpr equations for an `OrbitalBinary`), and the
+    `DiskPipeline` ring stages reuse one compiled model instead of recompiling
+    every fit.
   - The evidence helpers (`log_evidence`, `error_scale`, `laplace_samples`,
     `chi2_by_observable`, `classic_maxent`) take the Jacobian's SVD on the
     device in float64, QR-reduced when it is far from square, instead of
@@ -668,6 +673,13 @@ contributors page; no code was copied)
   full-tier test run of the tagged commit.
 
 ### Fixed
+
+- **The limb-darkening tutorial printed an understated χ²/N.** It divided the
+  sum of squared whitened residuals by their number (234 rows), but
+  four-telescope closure phases give more residual rows than independent data
+  (162), so the printed values were 451.32 and 0.79 instead of about 652 and
+  1.14. The tutorial now uses `virgil.imaging.chi2_by_observable`, which counts
+  independent data, and its outputs were rerun.
 
 - **The pipelines no longer fail with numpyro's "Cannot find valid initial
   parameters" on a non-detection.** With no companion the fitted flux runs to
@@ -760,6 +772,16 @@ contributors page; no code was copied)
 - **`DetectionMC.load` checks the file format** (see Migration).
 
 ### Removed
+
+- **Unused helpers, with no caller in virgil or its analyses.**
+  `virgil.tempering.lag_correlation`, `lag1_correlation` and
+  `factor_from_correlation` (`estimate_factors` computes the lag statistics
+  itself) and `chain_factor` (the exact AR(1) factor, now a helper of the
+  tests); `virgil.plotting.plot_hmc_fisher_chainconsumer` (call
+  `plot_chainconsumer_diagnostics` for each coordinate system); and
+  `virgil.harmonics.image_harmonics_from_latents`
+  (`image_harmonics_from_h(step_up(reflection_coefficients(re, im)))`). No
+  result changes.
 
 - **`virgil.spectra.Tabulated`.** The 0.3.0 entry promised its removal in
   0.4.0. Replace `Tabulated(ratio, wavel)` with `Nodes(ratio, wavel)`: the

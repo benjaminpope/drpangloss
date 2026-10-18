@@ -36,7 +36,7 @@ import jax.numpy as np
 import numpy as onp
 import zodiax as zdx
 
-from ._utils import check_part_name, concrete
+from ._utils import _named_part, check_part_name, concrete
 
 
 __all__ = [
@@ -572,17 +572,7 @@ class Sum(Spectrum):
         return dict(zip(self.names, self.parts))
 
     def __getattr__(self, name):
-        try:
-            names = object.__getattribute__(self, "names")
-            parts = object.__getattribute__(self, "parts")
-        except AttributeError:
-            raise AttributeError(name) from None
-        if name in names:
-            return parts[names.index(name)]
-        raise AttributeError(
-            f"Sum has no part or attribute '{name}'; its parts are "
-            f"{list(names)}."
-        )
+        return _named_part(self, name, "part")
 
     def _at(self, wavel):
         return sum(part._at(wavel) for part in self.parts)

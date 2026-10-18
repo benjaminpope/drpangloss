@@ -30,7 +30,7 @@ import zodiax as zdx
 from jax.scipy.fft import idctn
 
 from ._geometry import pixel_offsets, undo_elliptical_transf_coord
-from ._utils import concrete
+from ._utils import concrete, dtor
 from .models import _check_nu, _gp_factor, _log_azimuthal_spectrum
 
 __all__ = [
@@ -54,6 +54,33 @@ def _check_positive(name, value):
         onp.all(onp.isfinite(value)) and onp.all(value > 0.0)
     ):
         raise ValueError(f"{name} must be finite and positive, not {value}.")
+
+
+def _check_template(mean, shape, shape_name, mean_floor):
+    """The validated brightness template ``mean`` (None for none) of an
+    image of ``shape`` (called ``shape_name`` in the error), and the
+    ``mean_floor`` as a float."""
+    if mean is not None:
+        mean = np.asarray(mean, dtype=float)
+        if mean.shape != shape:
+            raise ValueError(
+                f"mean has shape {mean.shape}, but {shape_name} {shape}."
+            )
+        value = concrete(mean)
+        if value is not None and not (
+            onp.all(onp.isfinite(value)) and value.max() > 0.0
+        ):
+            raise ValueError(
+                "mean must be a finite template with a positive peak."
+            )
+    _check_positive("mean_floor", mean_floor)
+    return mean, float(mean_floor)
+
+
+def _add_template(eta, mean, mean_floor):
+    """``eta`` plus the log of the template ``mean`` (peak 1) and its floor."""
+    template = np.maximum(mean, 0.0) / np.max(mean)
+    return eta + np.log(template + mean_floor)
 
 
 def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
@@ -204,23 +231,9 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         self.order = int(order)
         if self.order < 1:
             raise ValueError(f"order must be a positive integer, not {order}.")
-        if mean is not None:
-            mean = np.asarray(mean, dtype=float)
-            if mean.shape != self.latent.shape:
-                raise ValueError(
-                    f"mean has shape {mean.shape}, but latent has shape "
-                    f"{self.latent.shape}."
-                )
-            value = concrete(mean)
-            if value is not None and not (
-                onp.all(onp.isfinite(value)) and value.max() > 0.0
-            ):
-                raise ValueError(
-                    "mean must be a finite template with a positive peak."
-                )
-        self.mean = mean
-        _check_positive("mean_floor", mean_floor)
-        self.mean_floor = float(mean_floor)
+        self.mean, self.mean_floor = _check_template(
+            mean, self.latent.shape, "latent has shape", mean_floor
+        )
 
     @property
     def shape(self):
@@ -244,16 +257,13 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         )
         eta = idctn(amplitude * self.latent, type=2, norm="ortho")
         if self.mean is not None:
-            template = np.maximum(self.mean, 0.0) / np.max(self.mean)
-            eta = eta + np.log(template + self.mean_floor)
+            eta = _add_template(eta, self.mean, self.mean_floor)
         return eta
 
 
 # ---------------------------------------------------------------------------
 # MultipoleField: a multipole-kernel residual field aligned with a disk
 # ---------------------------------------------------------------------------
-
-_DEG = np.pi / 180.0
 
 
 def _radial_factor(nodes, length, nu):
@@ -521,23 +531,9 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             self.geometry_from = geometry_from
             self.fallback = tuple(float(v) for v in values)
             self.inc = self.pa = self.dra = self.ddec = None
-        if mean is not None:
-            mean = np.asarray(mean, dtype=float)
-            if mean.shape != self.image_shape:
-                raise ValueError(
-                    f"mean has shape {mean.shape}, but image_shape is "
-                    f"{self.image_shape}."
-                )
-            value = concrete(mean)
-            if value is not None and not (
-                onp.all(onp.isfinite(value)) and value.max() > 0.0
-            ):
-                raise ValueError(
-                    "mean must be a finite template with a positive peak."
-                )
-        self.mean = mean
-        _check_positive("mean_floor", mean_floor)
-        self.mean_floor = float(mean_floor)
+        self.mean, self.mean_floor = _check_template(
+            mean, self.image_shape, "image_shape is", mean_floor
+        )
         self.outside = float(outside)
 
     @classmethod
@@ -633,7 +629,7 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         x = pixel_offsets(ncol, pixel_scale_mas)[None, :] - dra
         y = pixel_offsets(nrow, pixel_scale_mas)[:, None] - ddec
         x, y = np.broadcast_arrays(x, y)
-        stretch = np.maximum(np.cos(inc * _DEG), 1e-8)
+        stretch = np.maximum(np.cos(inc * dtor), 1e-8)
         xe, ye = undo_elliptical_transf_coord(x, y, pa, stretch)
         r = np.hypot(xe, ye)
         # The azimuth runs from the deprojected North towards East, as for
@@ -649,8 +645,7 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             fill=self.outside,
         )
         if self.mean is not None:
-            template = np.maximum(self.mean, 0.0) / np.max(self.mean)
-            eta = eta + np.log(template + self.mean_floor)
+            eta = _add_template(eta, self.mean, self.mean_floor)
         return eta
 
 

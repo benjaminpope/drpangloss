@@ -71,6 +71,7 @@ from .orbits import (
     _PHASE_COHERENCE,
     PositionData,
     _phase_drift,
+    _warn_if_mjd_without_t_ref,
     starting_orbits,
 )
 from ._deprecate import external_stacklevel
@@ -96,6 +97,35 @@ __all__ = [
 __provisional__ = ("*",)
 
 _AT = ("dataset", "epoch")
+
+
+def _snapshots_of_one_scene(times, scene):
+    """The snapshots of one scene, from one ``vmap`` over the times.
+
+    One Kepler solve and one copy of the scene graph for all datasets, not
+    one each, so the graph that ``jit`` and ``grad`` see does not grow with
+    the number of datasets. The times are offsets from their mean (a float64
+    ``t_ref``), so float32 keeps the phase.
+    """
+    times = onp.asarray(times, onp.float64)
+    n = len(times)
+    if not scene.time_dependent:
+        return [scene] * n
+    for orbit in jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: hasattr(x, "_relative")
+    ):
+        if hasattr(orbit, "_relative"):
+            _warn_if_mjd_without_t_ref(orbit.t_ref, times)
+    t0 = float(times.mean())
+    batched = eqx.filter_vmap(lambda dt: scene.at(dt, t0))(
+        np.asarray(times - t0)
+    )
+    return [
+        jax.tree_util.tree_map(
+            lambda x: x[k] if eqx.is_array(x) else x, batched
+        )
+        for k in range(n)
+    ]
 
 
 class Epochs:
@@ -272,11 +302,9 @@ class Epochs:
         list of SourceModel
             Static models, in the order of ``data``.
         """
-        scenes = (
-            list(scene)
-            if isinstance(scene, (list, tuple))
-            else [scene] * len(self.data)
-        )
+        if not isinstance(scene, (list, tuple)):
+            return _snapshots_of_one_scene(self.times, scene)
+        scenes = list(scene)
         if len(scenes) != len(self.data):
             raise ValueError(
                 f"{len(scenes)} scenes for {len(self.data)} datasets."
@@ -500,6 +528,10 @@ class _Surface:
     def chi2(self, model, data, noise=None):
         """χ² of each block of ``data`` for ``model``, on the quoted errors."""
         r = whitened_residuals(model, data, **(noise or {}))
+        return self.block_chi2(r)
+
+    def block_chi2(self, r):
+        """χ² of each block of the whitened residuals ``r``."""
         return np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
 
     def dof_vector(self, dof):
@@ -577,7 +609,7 @@ class _Surface:
         √(stop_gradient ``w_b``): curvature rows of the score (see
         [`weights`][virgil.epochs._Surface.weights]). The weights are
         frozen, so ``½ |rows|²`` has the score's Gauss–Newton curvature."""
-        chi2 = np.stack([np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.blocks])
+        chi2 = self.block_chi2(r)
         w = jax.lax.stop_gradient(self.weights(chi2, dof, data))
         return np.concatenate(
             [
@@ -1242,9 +1274,7 @@ def _grid_scores(points, data, surface, batch_size, diam=None):
 
     def one(x):
         whitened, errors = _whitened_and_errors(_binary(x, diam), data, {})
-        chi2 = np.stack(
-            [np.sum(whitened[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
-        )
+        chi2 = surface.block_chi2(whitened)
         return _gaussian_loglike(whitened, errors), chi2
 
     return jax.lax.map(one, points, batch_size=batch_size)
@@ -1282,9 +1312,7 @@ def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
         chi2 = surface.chi2(_binary(x, diam), data)
     else:
         r = _amp_residuals(_binary(x, diam), data, surface, amp_range)
-        chi2 = np.stack(
-            [np.sum(r[a:b] ** 2) for _, a, b, _, _ in surface.blocks]
-        )
+        chi2 = surface.block_chi2(r)
     return -surface.score(chi2, dof, data)
 
 
