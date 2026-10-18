@@ -2641,6 +2641,13 @@ def _resample(results, store, n_samples, p_min, seed):
     return samples
 
 
+# === INTERNAL INTERFACE OF OrbitPipeline ===
+# ``_band_target`` (with the ``_loglike`` and ``_physical`` it returns the
+# pieces of) is all the pipeline takes from this module besides the public
+# ``fit_orbit_aliases`` and ``AliasResult``; change it with
+# ``tests/test_pipeline_orbit.py`` at hand.
+
+
 def _band_target(result, data, n=None):
     """The engine's posterior of one band, rebuilt from a saved result, for
     a sampler: ``(problem, bounds, x, settings)``.

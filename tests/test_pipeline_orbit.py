@@ -8,7 +8,6 @@ golden cases (a full blind run each) are marked slow.
 import copy
 import inspect
 import json
-import shutil
 
 import jax
 import numpy as onp
@@ -354,7 +353,7 @@ def test_summary_keys_and_check_order_snapshot():
     assert sections["orbit"]["source"] == "posterior"
 
 
-def test_a_partial_run_summarizes_what_it_has():
+def test_partial_and_no_orbit_summaries():
     reports = _fake_reports()
     for later in ("posterior", "modes", "search"):
         reports.pop(later)
@@ -362,21 +361,16 @@ def test_a_partial_run_summarizes_what_it_has():
             OrbitPipeline.defaults(), reports
         )
         assert later not in sections
-        assert [c.name for c in checks] == [
-            c for c in CHECKS if c in {x.name for x in checks}
-        ]
-
-
-def test_no_orbit_summary_has_no_posterior_checks():
+        names = [c.name for c in checks]
+        assert names == [c for c in CHECKS if c in names]
     reports = _fake_reports()
     reports["modes"]["no_orbit"] = {"delta_log_z": -2.0, "verdict": "no-orbit"}
     reports["posterior"] = {"skipped": "no-orbit", "modes": []}
     sections, checks = orbit_module._summarize(
         OrbitPipeline.defaults(), reports
     )
-    names = [c.name for c in checks]
-    assert "r_hat" not in names
-    assert dict((c.name, c.status) for c in checks)["no_orbit"] == "fail"
+    status = {c.name: c.status for c in checks}
+    assert "r_hat" not in status and status["no_orbit"] == "fail"
     assert sections["orbit"]["source"] == "map"
 
 
@@ -405,6 +399,8 @@ def test_no_orbit_summary_has_no_posterior_checks():
         (_checks.tempering, (False, 1.2, 1.2), "pass"),
         (_checks.tempering, (True, 3.0, 3.0), "warn"),
         (_checks.primary_resolved, (False, 0.1, False), "pass"),
+        (_checks.primary_resolved, (True, 9.0, True), "warn"),
+        (_checks.tempering, (False, None, None), "pass"),
         (_checks.primary_resolved, (True, 1.0, False), "pass"),
     ],
 )
@@ -429,6 +425,7 @@ def test_settings_are_validated(nights):
         ({"posterior_p_min": 2.0}, "posterior_p_min"),
         ({"vis_amp": [2.0, 1.0]}, "vis_amp"),
         ({"max_grid": 2}, "max_grid"),
+        ({"n_peaks": True}, "n_peaks"),
     ):
         with pytest.raises(ValueError, match=match):
             OrbitPipeline(nights, **bad)
@@ -457,21 +454,6 @@ def test_exclude_works_on_an_epochs_input_too(nights):
     pipeline = OrbitPipeline(given, exclude={"n2": "bad night"})
     assert pipeline.data.names == ("n0", "n1")
     assert [float(t) for t in pipeline.data.times] == [60000.0, 60010.0]
-
-
-def test_metadata_mjd_dates_data_without_times(nights):
-    # The remedy the error message offers must work.
-    d = __import__("copy").copy(nights["n0"])
-    for name in ("t_ref", "dt", "frame"):
-        object.__setattr__(d, name, None)
-    assert d.mjd is None
-    dated = orbit_module._with_mean_mjd(d, 60123.0)
-    assert onp.isclose(float(onp.mean(dated.mjd)), 60123.0)
-
-
-def test_bool_is_not_an_integer_setting(nights):
-    with pytest.raises(ValueError, match="n_peaks"):
-        OrbitPipeline(nights, n_peaks=True)
 
 
 def test_epochs_and_dicts_are_equivalent_inputs(nights):
@@ -760,7 +742,6 @@ def test_the_class_is_exported_lazily():
     assert module.OrbitPipeline is OrbitPipeline
     assert "OrbitPipeline" in dir(module)
     assert copy.deepcopy(OrbitPipeline.defaults()) == DEFAULTS
-    assert shutil  # imported for the folder tests
 
 
 # --- golden synthetic cases (slow) --------------------------------------------

@@ -211,8 +211,8 @@ class OrbitPipeline(_Pipeline):
         metadata : dict, optional
             ``{file (path or name): {...}}``, each entry giving any of:
             ``epoch`` (a night label for the file), ``instrument`` (the
-            OIFITS instrument table to read), ``mjd`` (the mean time of the
-            file's data, when its stamp is wrong). Rulings that leave data
+            OIFITS instrument table to read), ``mjd`` (the time of the
+            night the file holds, when its stamp is wrong or absent). Rulings that leave data
             out go in the ``exclude`` setting, with their reason.
         output : str or os.PathLike, optional
             Run folder.
@@ -469,24 +469,6 @@ def _build_epochs(mapping, times):
     return Epochs(mapping, times=keep or None)
 
 
-def _with_mean_mjd(data, mjd):
-    """``data`` shifted in time so that its samples average to ``mjd``."""
-    import copy
-
-    import jax.numpy as np
-
-    out = copy.copy(data)
-    if data.mjd is None:  # one snapshot at the given time
-        n = onp.size(data.u)
-        object.__setattr__(out, "t_ref", float(mjd))
-        object.__setattr__(out, "dt", np.zeros(n))
-        object.__setattr__(out, "frame", np.zeros(n, np.int32))
-    else:
-        shift = float(mjd) - float(onp.mean(data.mjd))
-        object.__setattr__(out, "t_ref", float(data.t_ref) + shift)
-    return out
-
-
 def _match_metadata(metadata, paths):
     """``{path: entry}`` of the metadata whose key is a path, its
     resolved path or its file name."""
@@ -521,15 +503,15 @@ def _read_nights(paths, metadata, gap_days):
     for path in paths:
         entry = meta.get(path, {})
         data = OIData(path, insname=entry.get("instrument"))
-        if "mjd" in entry:
-            data = _with_mean_mjd(data, entry["mjd"])
-        elif data.mjd is None:
-            raise ValueError(f"{path} has no times: give metadata 'mjd'.")
         notes[path] = {"path": path, **entry, "nights": [], "datasets": []}
         for piece in data.split_by_epoch(gap_days):
-            parts.append(
-                (float(onp.mean(piece.mjd)), entry.get("epoch"), piece, path)
-            )
+            if "mjd" in entry:
+                mean = float(entry["mjd"])
+            elif data.mjd is None:
+                raise ValueError(f"{path} has no times: give metadata 'mjd'.")
+            else:
+                mean = float(onp.mean(piece.mjd))
+            parts.append((mean, entry.get("epoch"), piece, path))
     groups, last = {}, None  # last: (label, mean) of the open automatic night
     for mean, epoch, piece, path in sorted(parts, key=lambda t: t[0]):
         if epoch:
@@ -542,15 +524,17 @@ def _read_nights(paths, metadata, gap_days):
                 label += "b"
         if not epoch:
             last = (label, mean)
-        groups.setdefault(label, []).append((piece, path))
-    mapping = {}
+        groups.setdefault(label, []).append((piece, path, mean))
+    mapping, times = {}, {}
     for label, group in groups.items():
-        names = _named(label, [piece for piece, _ in group])
+        names = _named(label, [piece for piece, _, _ in group])
         mapping[label] = names
-        for name, (_, path) in zip(names, group):
+        for name, (_, path, mean) in zip(names, group):
             notes[path]["nights"].append(label)
             notes[path]["datasets"].append(name)
-    return mapping, {}, notes
+            if "mjd" in notes[path]:
+                times[name] = mean
+    return mapping, times, notes
 
 
 def _apply_exclude(mapping, exclude, notes):

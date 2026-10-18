@@ -1521,15 +1521,7 @@ def tempering(out_of_range, f, f_raw):
     f, f_raw : float or None
         The pooled effective-channel factor and its unfloored value.
     """
-    if f is None:
-        return Check(
-            "tempering",
-            "pass",
-            None,
-            [0.5, 2.0],
-            "The likelihood is not tempered.",
-        )
-    if out_of_range:
+    if f is not None and out_of_range:
         return Check(
             "tempering",
             "warn",
@@ -1542,14 +1534,16 @@ def tempering(out_of_range, f, f_raw):
     return Check(
         "tempering",
         "pass",
-        float(f),
+        None if f is None else float(f),
         [0.5, 2.0],
-        f"The effective-channel factor f = {f:.3g} is within [0.5, 2].",
+        "The likelihood is not tempered."
+        if f is None
+        else f"The effective-channel factor f = {f:.3g} is within [0.5, 2].",
     )
 
 
 def primary_resolved(resolved, diam, at_edge):
-    """The primary star's size in the orbit fit.
+    """Whether the primary's fitted diameter is trustworthy.
 
     Parameters
     ----------
@@ -1561,14 +1555,6 @@ def primary_resolved(resolved, diam, at_edge):
     at_edge : bool
         The estimate sits at the edge of the diameter grid.
     """
-    if resolved is None:
-        return Check(
-            "primary_resolved",
-            "pass",
-            None,
-            None,
-            "The primary's diameter was fixed by the settings.",
-        )
     if resolved and at_edge:
         return Check(
             "primary_resolved",
@@ -1579,21 +1565,12 @@ def primary_resolved(resolved, diam, at_edge):
             f"({diam:.3g} mas) is the largest tried: the disk may be "
             "larger, or the V² are biased.",
         )
-    if resolved:
-        return Check(
-            "primary_resolved",
-            "pass",
-            diam,
-            None,
-            f"The primary is resolved: a uniform disk of {diam:.3g} mas "
-            "was fitted.",
-        )
     return Check(
         "primary_resolved",
         "pass",
         diam,
         None,
-        "The primary is unresolved: a point.",
+        "The primary's size is not at the edge of the diameters tried.",
     )
 
 
