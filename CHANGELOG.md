@@ -61,7 +61,7 @@ Provisional in 0.4:
   `design/pipeline.md` records the planned changes (an optional `Resolved`
   term) and the guidance on `"gp"` against the Cartesian field.
 
-- `OIData(..., insname=) selects the instrument table(s) when reading an
+- `OIData(..., insname=)` selects the instrument table(s) when reading an
   OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
   error message already told users to pass it.
 

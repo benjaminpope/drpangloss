@@ -126,8 +126,9 @@ def chi2_reduced(name, chi2_red, *, label, warn=2.0, fail=5.0):
     )
 
 
-def error_scale(scales, *, warn=2.0, fail=5.0):
-    """Fitted error-scale factors ``s`` (only with ``error_scale="fit"``).
+def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted"):
+    """Error-scale factors ``s``: fitted (``error_scale="fit"``) or estimated
+    once by MacKay's rule (``"rescale"``, ``kind="estimated"``).
 
     A factor much greater than 1 means the quoted errors are too small or
     the model is wrong; rescaling then makes χ² ≈ 1 by construction, so the
@@ -148,7 +149,7 @@ def error_scale(scales, *, warn=2.0, fail=5.0):
         status,
         worst,
         warn,
-        f"Fitted error scales {names}: {meaning}.",
+        f"{kind.capitalize()} error scales {names}: {meaning}.",
     )
 
 
@@ -654,7 +655,9 @@ def _upper_first(text):
     return text[:1].upper() + text[1:]
 
 
-def length_scale(evidences, ells, halffringe, *, nats=3.0, edge=None):
+def length_scale(
+    evidences, ells, halffringe, *, nats=3.0, edge=None, extended=None
+):
     """Whether the data measure the Gaussian-process length scale ℓ.
 
     The Laplace evidences of the profile fitted at each ℓ of a grid differ
@@ -677,6 +680,9 @@ def length_scale(evidences, ells, halffringe, *, nats=3.0, edge=None):
         largest of the grid after the one extension the pipeline allows
         itself: the grid has then chosen its own edge, so the choice
         reflects the grid and not the data.
+    extended : str or None, optional
+        The side the grid was extended on (``None`` when it was not, as when
+        the smallest ℓ was already at the floor).
 
     Notes
     -----
@@ -708,11 +714,23 @@ def length_scale(evidences, ells, halffringe, *, nats=3.0, edge=None):
             "warn",
             spread,
             nats,
-            f"The best ℓ is the {edge}est of the grid even after the grid "
-            f"was extended once in that direction ({where}): the grid chose "
-            "its own edge, so ℓ is not measured. Widen ell_halffringes "
-            "(below a pixel or half a half-fringe, a small ℓ gives beads "
-            "with χ²/N far under 1).",
+            f"The best ℓ is the {edge}est of the grid"
+            + (
+                " even after the grid was extended once in that direction"
+                if extended == edge
+                else " and the grid could not be extended that way"
+                if edge == "low"
+                else ""
+            )
+            + f" ({where}): the grid chose its own edge, so ℓ is not "
+            "measured. "
+            + (
+                "The floor ell_floor_halffringes stops a smaller ℓ (below "
+                "a pixel a small ℓ gives beads with χ²/N far under 1): "
+                "treat the data as not resolving the structure."
+                if edge == "low"
+                else "Widen ell_halffringes upward."
+            ),
         )
     if spread < nats:
         return Check(
@@ -1247,8 +1265,10 @@ def render_consistency(chi2_model, chi2_render, *, tolerance=0.1, floor=0.02):
         float(chi2_render / chi2_model) if chi2_model > 0 else None,
         tolerance,
         (
-            f"χ²/N is {chi2_model:.3g} for the model and {chi2_render:.3g} "
-            "for its rendered image"
+            f"On the reference channel with the disk's colour removed, on "
+            f"the rescaled errors if any (not the summary's χ²/N): χ²/N is "
+            f"{chi2_model:.3g} for the model and {chi2_render:.3g} for its "
+            "rendered image"
             + (
                 "."
                 if ok

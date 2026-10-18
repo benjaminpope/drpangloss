@@ -2058,9 +2058,16 @@ def _light_fraction(model, lo, hi):
 
 def _residual_search(p, model):
     """The point-source search on ``model``'s residuals, as a check."""
-    return _point_source_search(
+    search = _point_source_search(
         model, p.processed, p._ctx(), p.settings["batch_size"]
     )
+    # The profile stage's search is on the quoted errors; with a rescale the
+    # data here are scaled by s, which multiplies Δχ² by 1/s². Put the
+    # threshold of ``companion_min_delta_chi2`` on one footing.
+    factor = p._rescale_factor()
+    if factor != 1.0:
+        search = {**search, "delta_chi2": search["delta_chi2"] * factor**2}
+    return search
 
 
 def _common_compare(p, model, fit, extra):
@@ -2068,7 +2075,9 @@ def _common_compare(p, model, fit, extra):
     ctx, data = p._ctx(), p.processed
     n = int(data.n_independent)
     factor = p._rescale_factor()
-    scales = fit.scales or ({"mackay": factor} if factor != 1.0 else None)
+    scales = fit.scales or (
+        {"mackay": factor} if p.error_mode == "rescale" else None
+    )
     return {
         "n_independent": n,
         "chi2": fit.chi2,
@@ -2792,7 +2801,14 @@ def _chi2_checks(entry, compare, settings):
         )
     ]
     if compare["error_scales"]:
-        checks.append(_checks.error_scale(compare["error_scales"]))
+        checks.append(
+            _checks.error_scale(
+                compare["error_scales"],
+                kind="estimated"
+                if compare["error_scale_factor"] is not None
+                else "fitted",
+            )
+        )
     return checks
 
 
@@ -2807,6 +2823,7 @@ def _fit_checks(entry, settings, overview, geometry, compare):
             hf,
             nats=settings["length_scale_nats"],
             edge=compare["grid"]["on_grid_edge"],
+            extended=compare["grid"]["extended"],
         )
         by["structure_unconstrained"] = _checks.structure_unconstrained(
             compare["evidence_spread"],

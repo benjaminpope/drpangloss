@@ -1375,3 +1375,39 @@ def test_the_hole_is_at_least_the_stars_radius(tiny, tmp_path):
     pipeline.run(through="overview")
     assert pipeline._report("overview")["r_in_mas"] == pytest.approx(20.0)
     assert pipeline._report("overview")["star"]["shape"] == "uniform disk"
+
+
+@pytest.mark.slow
+def test_gp_render_check_runs_and_passes_on_a_well_sampled_disc(gp_run):
+    # The render path (the colour swap, the reference channel, the pixel
+    # convention) must work, or every gp run shows a meaningless warning.
+    pipeline, res = gp_run
+    render = pipeline._report("compare")["render"]
+    assert onp.isfinite(render["chi2_model"])
+    assert onp.isfinite(render["chi2_render"])
+    check = next(c for c in res.checks if c.name == "render_consistency")
+    assert check.status == "pass", check.message
+    # Direct call on the best model gives the same numbers.
+    again = disk._render_stats(pipeline, res.model())
+    assert again["chi2_render"] == pytest.approx(render["chi2_render"])
+
+
+def test_length_scale_message_is_honest_about_the_extension():
+    from virgil.pipeline import _checks
+
+    z, ell = [-1.0, -4.0, -9.0], [1.0, 2.0, 4.0]
+    unextended = _checks.length_scale(z, ell, 1.0, edge="low", extended=None)
+    assert "could not be extended" in unextended.message
+    assert "ell_floor_halffringes" in unextended.message
+    done = _checks.length_scale(z, ell, 1.0, edge="low", extended="low")
+    assert "extended once" in done.message
+
+
+def test_estimated_scale_is_not_called_fitted():
+    from virgil.pipeline import _checks
+
+    assert (
+        "Estimated"
+        in _checks.error_scale({"mackay": 0.8}, kind="estimated").message
+    )
+    assert "Fitted" in _checks.error_scale({"vis_scale": 0.8}).message

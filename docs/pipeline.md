@@ -94,8 +94,8 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 | --- | --- | --- |
 | `load`, `overview` | As for `BinaryPipeline`, and the resolution scale and radial range | |
 | `geometry` | χ² of a single ring over a grid of inclination (uniform in cos *i*) and position angle on [0°, 180°), then a fit of that ring from the best cell: the geometry is multimodal and is never left to a local optimizer from one start. Its dynamic range sets the Gaussian process's σ | `likelihood_grid`, `fit`, `laplace_cov` |
-| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry` |
-| `compare` | The Laplace evidence (and BIC) of each candidate; the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
+| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search. For `"gp"` it also estimates the MacKay error scale, scores the Laplace evidence of each length (so a run stopped after `profile` has them) and extends the grid once if the best is on an edge | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry`, `log_evidence`, `error_scale` |
+| `compare` | The Laplace evidence (and BIC) of each ring count (`"gp"`: it chooses among the evidences `profile` scored); the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
 | `posterior` (`posterior=True`) | NUTS with the geometry released; the position angle is folded into [0°, 180°) with the harmonics rotated to match | `numpyro_model`, `chain_init_params` |
 | `quicklook` | The geometry grid and a six-panel summary of the disk | |
 
@@ -141,7 +141,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | Check | Warns | Fails |
 | --- | --- | --- |
 | `chi2` (on the quoted errors) | above 2 (errors likely underestimated) or below 0.5 (errors likely overestimated) | above 5 (the model does not describe the data, or the errors are much too small) |
-| `error_scale` (with `error_scale="fit"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
+| `error_scale` (with `error_scale="fit"`, or the MacKay estimate of `"rescale"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
 | `detection` (approximate look-elsewhere-corrected significance against `detection_sigma`; use `injection_recovery` or `gaussian_null` for a calibrated threshold) | below the threshold | |
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
