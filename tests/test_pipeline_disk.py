@@ -1155,6 +1155,13 @@ def _context():
     )
 
 
+def test_builder_is_cached_so_equal_arguments_share_one_compile():
+    ctx, shape = _context(), disk._Shape(2, False, 1, False)
+    build = disk._builder(ctx, shape)
+    assert disk._builder(_context(), disk._Shape(2, False, 1, False)) is build
+    assert disk._builder(ctx, disk._Shape(3, False, 1, False)) is not build
+
+
 def test_grid_minima_wrap_the_position_angle():
     # A bowl about (inc index 2, pa index 0): the pa axis is periodic.
     ii, jj = onp.meshgrid(onp.arange(4), onp.arange(6), indexing="ij")

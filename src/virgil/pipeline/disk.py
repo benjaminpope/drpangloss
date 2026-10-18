@@ -834,8 +834,14 @@ def _ring_scene(ctx, shape, v):
     return System(**parts)
 
 
+@functools.lru_cache(maxsize=None)
 def _builder(ctx, shape):
-    """The scene as a function of its parameters (``fit`` calls it by name)."""
+    """The scene as a function of its parameters (``fit`` calls it by name).
+
+    Cached, so equal arguments give the same function: ``fit`` and
+    ``laplace_cov`` treat the function as static and recompile for every new
+    one.
+    """
 
     def build(**v):
         return _ring_scene(ctx, shape, v)
