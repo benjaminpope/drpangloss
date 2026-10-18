@@ -81,15 +81,18 @@ persistence has to replay (§4).
 {
   "schema": "virgil.noise_spec/1",
   "instrument": "PIONIER",
-  "white": {"v2": 0.32, "t3": 0.65},
+  "white": {"vis": 0.32, "phi": 0.65},
   "gains": {"telescope": 0.0055, "baseline": 0.0045, "chromatic": null},
   "closure_offsets": {"triangle": 0.0036, "baseline": null},
   "provenance": {"run": "…", "date": "2026-10-04", "bound": "lower"}
 }
 ```
 
-- `white`: multiplicative scales on the *quoted* errors per observable (`v2`,
-  `t3`). A missing key means 1.
+- `white`: multiplicative scales on the *quoted* errors, keyed by `OIData`'s own
+  names for `with_error_scale`: `vis` (`d_vis`, whether the data are V² or
+  amplitudes), `phi` (closure or absolute phases) and the kinds in
+  `observables.KINDS` (`t3amp`, `visamp`, ...). No translation table: a key the
+  data lack is left alone, an unknown key is an error. A missing key means 1.
 - `gains`: 1σ widths on log |V| (the unit of `with_gains`). `null` leaves a
   group out.
 - `closure_offsets`: widths in **radians** (the unit of `with_closure_offsets`).
@@ -98,11 +101,21 @@ persistence has to replay (§4).
   carried into `run.json`, `summary.json` and the quicklook. `bound` is
   `"lower"` or `"estimate"`.
 - Units are converted **once, in the emitter** (the instrument package), never
-  in virgil. `validate_noise_spec` guards against unit confusion: a closure
-  offset above 0.05 rad (probably degrees) or a gain width above 0.1 on log |V|
-  is refused, and an offset above 0.02 rad warns.
-- Unknown top-level keys are an error; unknown `provenance` keys are kept; a
-  newer major `schema` is refused naming the version.
+  in virgil, and the emitter's own tests guard against degrees written as
+  radians. `validate_noise_spec` refuses only what is invalid for any
+  instrument: non-finite or negative widths, a white scale ≤ 0, a closure
+  offset above 0.3 rad (the small-angle limit of `with_closure_offsets`) and a
+  gain width above 1 on log |V|. It *warns* about widths plausible for one
+  instrument but large for most (offset above 0.02 rad, gain width above 0.1),
+  naming the likely unit slip; ground-based SAM (about 3° = 0.05 rad) and
+  CHARA transfer-function errors (10–15 % on log |V|) must be able to emit their
+  measured widths.
+- **Versioning.** The schema string carries a major number only. Unknown keys
+  are an error at the top level *and inside every group*; only `provenance`
+  is free-form. So a new group, or a new key in a group, is a major bump, and
+  an older reader refuses the spec naming the version instead of silently
+  dropping a term (a missing calibrator-PCA term would make a fit
+  overconfident).
 
 ### Extending to other instruments
 
@@ -110,7 +123,7 @@ An instrument whose noise needs a term outside these three does not get a
 pipeline branch. The route is two steps, each generic:
 
 1. `OIData` (and the likelihood) learns the new term, so any caller can use it.
-2. The spec gains a group for it under a new minor or major `schema`
+2. The spec gains a group or key for it under a new major `schema`
    (`gains.modes` for GRAVITY's calibrator PCA, a covariance block for AMI);
    v1 readers refuse a v2 spec naming the version, they do not misread it.
 
@@ -165,6 +178,17 @@ raise at `load` with the existing reason string. A pipeline given data that
 already carry gains *and* a spec refuses: `apply_noise_spec` will not stack
 them.
 
+**`error_scale` with a spec, in PR 2.** `DiskPipeline`'s default is `model="gp"`
+with `error_scale="auto"`, which resolves to `"rescale"`; `imaging.error_scale`
+checks nuisance blocks only on its `by_observable=True` path
+(`_check_scalable_blocks`), so Disk's `error_scale(model, data, path="disk")`
+would silently compute the MacKay `s² = χ²/(N − γ)` on data with gains, which
+assumes the whole covariance scales. So the safe behaviour ships *with* the
+setting, not after it: with a spec, `"auto"` resolves to `"quoted"`, an explicit
+`"rescale"` raises `ValueError` pointing here, and `_check_scalable_blocks`
+also covers the single-scale path so no caller can reach the wrong `s`. The
+white-part `s` is the later PR (§7).
+
 ## 4. Persistence, resume and the summary
 
 Today `processed.oifits` is the data *as fitted*, so gains and offsets, which
@@ -192,12 +216,16 @@ replay.
   compare helpers refuse to rank runs whose `sha256` differ (§6).
 - **Replay lives in `Result.data()`**, which promises the data actually fitted.
   It reads `processed.oifits` and replays `apply_noise_spec` with the stored
-  spec. `run.json` records two new fingerprints written by the `load` stage:
-  `processed_sha256` (the pre-spec data, as written to `processed.oifits`) and
-  `fitted_sha256` (after the spec). The processed fingerprint and `noise_sha256`
-  are checked exactly (an error on failure). The replayed data are checked
-  against `fitted_sha256` *with a tolerance*, as a warning: the gain modes come
-  from JAX, whose last bits change with version, backend and precision.
+  spec. `data_sha256` is of the raw input, so the `load` stage records what
+  replay needs:
+  - `inputs.processed_sha256`, taken on the `OIData` *re-read from
+    `processed.oifits`* (so the OIFITS round trip is part of the hash), checked
+    exactly: an error on failure, as is `noise_sha256`;
+  - `data/noise_replay.json`, **numbers, not a hash**: the shape and the
+    Frobenius norm of each applied gain-mode matrix and of its Gram matrix
+    `G Gᵀ`. Replay compares them with `allclose`, and a mismatch is a warning:
+    the modes come from JAX, whose last bits change with version, backend and
+    precision, so a digest of them would always fail.
 - **`_unsupported_reason`**: the gains/offsets branch leaves the writer check
   (the writer only sees pre-spec data) but still triggers for a hand-built
   `with_gains(...)` object passed straight in, exactly as today.
@@ -299,12 +327,12 @@ cannot see (open question below).
   whole covariance scales, so `s` is found by a bracketed 1-D maximization of
   `log_evidence`, and is reported beside, never multiplied into, the spec's
   white scale (two numbers: a measured instrument property and a per-target
-  model-adequacy factor). `imaging.error_scale` currently refuses gains and
-  offsets (`_check_scalable_blocks`), so this needs a generalization.
+  model-adequacy factor). `imaging.error_scale` must be generalized so the
+  nuisance block does not scale; until then PR 2 refuses `"rescale"` with a
+  spec (§3).
   `"fit"` fits scales on the white part with the gains fixed, starting at 1
   (never at the spec's scale, which would apply it twice); gain widths are
-  never fitted by a pipeline. **Fallback:** ship `"rescale"` raising
-  `ValueError` when a spec is set, and add the above later.
+  never fitted by a pipeline. The refusal is what PR 2 ships.
 - **Residual correlation check.** A pure function in `_checks.py`: the
   fraction of V² residual variance in each (frame, baseline) channel mean,
   against 1/n_ch for white noise, and the adjacent-channel correlation.
@@ -344,26 +372,30 @@ None of this is in 0.4.0.
    and tests. Stability per `AGENTS.md`: new public features start provisional.
 3. **virgil PR 2**: the `noise_spec` setting through `_core`/`_io`: `processed`,
    persistence, `noise_sha256`, resume message, the summary `noise` section,
-   `--noise-spec`, the `_unsupported_reason` split. Star, Binary and Disk
-   together (they share `_core`); OrbitPipeline takes it when it lands.
+   `--noise-spec`, the `_unsupported_reason` split, and the `error_scale`
+   guard of §3 (`"auto"` → `"quoted"`, `"rescale"` refused, the check on the
+   single-scale path). Star, Binary and Disk together (they share `_core`);
+   OrbitPipeline takes it when it lands.
 4. **virgil PR 3**: the residual-correlation check (independent of the spec;
    can land first) and the render/`at_bound` text.
-5. **virgil PR 4**: `error_scale` with a spec (or the fallback).
+5. **virgil PR 4**: `error_scale="rescale"` on the white part with a spec.
 6. **virgil PR 5** (optional): the `bandwidth` setting.
 
 PR 3 is cheapest and most valuable alone; if time is short, ship PRs 3 and 2
-(with the fallback) and defer the rest.
+and defer the rest.
 
 **Tests** (synthetic `OIData`, no heavy fits): each `validate` rejection and the
 unit guard; `apply` equals the manual `with_error_scale().with_gains()
 .with_closure_offsets()` chain and refuses double application; a run reproduces
-its `fitted_sha256` after `load`, and changing one width raises `ConfigMismatchError`
+its `processed_sha256` and replay numbers after `load`, and changing one width raises `ConfigMismatchError`
 naming the spec; `processed.oifits` is written for specced data and is the
 pre-spec data; `summary.json` has the `noise` section; the render path cannot
-drop the spec; a pipeline test with a stub instrument (a plain dict, no
+drop the spec; `DiskPipeline(data, noise_spec=spec)` with default settings does
+not reach MacKay `rescale`, and explicit `"rescale"` raises; a spec with `phi`
+or `t3amp` keys scales the right observable; a pipeline test with a stub instrument (a plain dict, no
 instrument package) shows the pipelines run identically whatever `instrument`
 says.
 
 **Back-compat.** `noise_spec=None` leaves fits and hashes unchanged; existing
-run folders resume. `run.json` gains `inputs.noise_sha256`, `processed_sha256` and `fitted_sha256` (absent = no spec or an older run),
+run folders resume. `run.json` gains `inputs.noise_sha256` and `inputs.processed_sha256` (absent = no spec or an older run) and the data folder gains `noise_replay.json`,
 a minor, additive schema bump.
