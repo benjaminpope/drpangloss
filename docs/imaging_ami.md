@@ -3,7 +3,7 @@
 
 Before reconstructing images from aperture-masking data, we need to be sure we can *simulate* such data from a known image. This tutorial does that for JWST/NIRISS AMI data as processed by AMIGO, whose products are "mixed DISCO" coefficients: linear combinations of the log-amplitudes and phases of the complex visibilities, with independent errors.
 
-Real DISCO products are large, so we use `virgil.coverage.ami_grid_record`, a small record built the same way, computed on the fly. Its complex visibilities live on a fine uv grid, rotated on the sky as AMI data are by the parallactic angle, and only the cells inside the mask's splodges carry information, weighted by the mask's transfer function. That information is compressed, as in AMIGO, into orthonormal modes that are blind to the source's flux and position, keeping 99% of the precision. Everything below is simulated.
+Real DISCO products are large, so we use `virgil.coverage.ami_grid_record`, a small record built the same way and computed on the fly. Its complex visibilities live on a fine uv grid, rotated on the sky by the parallactic angle as AMI data are, and only the cells inside the mask's splodges carry information, weighted by the mask's transfer function. As in AMIGO, that information is compressed into orthonormal modes that are blind to the source's flux and position, keeping 99% of the precision. Everything below is simulated.
 
 ```python
 import sys
@@ -49,13 +49,13 @@ uv lattice rotated by -6.9 deg
 
 ![imaging_ami output 2.2](generated/imaging_ami_cell002_out02.png)
 
-The samples are a lattice rotated by the parallactic angle. virgil finds the lattice when the data are loaded (`template.uv_grid`); we will use it at the end.
+The samples are a lattice rotated by the parallactic angle. virgil finds the lattice when the data are loaded (`template.uv_grid`); we use it at the end.
 
 ## The truth scene
 
 At 4.8 µm the finest fringes have a period of about 150 mas, so structure several hundred milliarcseconds across spans several resolution elements, and pixels of 20 mas are fine enough. Our truth is a dusty spiral in the style of the "pinwheel" nebulae of WR 104 and WR 137, around an unresolved star.
 
-`virgil.scenes.spiral` returns a unit-sum image in the virgil orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component, it carries a `flux` relative to the others in a `System`: here the dust has 5% of the star's flux.
+`virgil.scenes.spiral` returns a unit-sum image in the virgil orientation (East left, North up). `Image.from_brightness` turns it into a model component whose pixels are the free parameters of an imaging fit. Like every component it carries a `flux` relative to the others in a `System`; here the dust has 5% of the star's flux.
 
 ```python
 npix, pixel_scale = 64, 20.0  # 1280 mas field of view
@@ -115,7 +115,7 @@ The first coefficients are the log-amplitudes and the rest are shift-invariant p
 
 ## Check: one bright pixel is a binary
 
-A good test of a pixelised model is a case with a known answer. An `Image` with all of its flux in a single pixel is a point source at that pixel's offset, so inside a `System` with a star it must agree with the analytic `BinaryModelCartesian`. Row 20 is North of the image centre and column 40 is West of it, so `pixel_offsets` gives the offset with East and North positive.
+A pixelized model should be tested on a case with a known answer. An `Image` with all its flux in a single pixel is a point source at that pixel's offset, so inside a `System` with a star it must agree with the analytic `BinaryModelCartesian`. Row 20 is North of the image centre and column 40 is West of it, so `pixel_offsets` gives the offset with East and North positive.
 
 ```python
 row, col = 20, 40
@@ -145,7 +145,7 @@ The two agree to float32 rounding, so the image and the analytic model are inter
 
 ## Pixels that follow the detector
 
-The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice, and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). That gives the same answer, and on a CPU it is much faster. The timings below were measured on the machine that built this page (a GPU runs both forms in about the same time, limited by kernel launches), so they vary. For AMI this means pixels aligned with the detector rather than with North; `render` and `plot_model` still show the image North up.
+The visibilities of an `Image` are an exact sum over its pixels, whatever the uv sampling. When the samples lie on a lattice and the image's pixel grid is rotated to match it (`rotation_deg`), the sum separates into two small matrix products, the matrix Fourier transform of Soummer et al. (2007). It gives the same answer and is much faster on a CPU. The timings below were measured on the machine that built this page, so they vary; a GPU runs both forms in about the same time, limited by kernel launches. For AMI this means pixels aligned with the detector rather than with North, though `render` and `plot_model` still show the image North up.
 
 ```python
 rotation = template.uv_grid.rotation_deg
@@ -222,4 +222,4 @@ plt.show()
 
 ## Next steps
 
-We now have simulated data and a truth to compare against. The next parts reconstruct the image from data like these, starting from a parametric fit and moving to free pixels with regularisation.
+We now have simulated data and a truth to compare against. The next parts reconstruct the image from data like these, starting with a parametric fit and moving to free pixels with regularization.

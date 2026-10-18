@@ -3,11 +3,11 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without running the code again. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
+A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without rerunning the code. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
 
-A pipeline adds no science. Every number it reports comes from a public virgil function that a tutorial also calls, so any result can be reproduced by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
+A pipeline adds no science: every number it reports comes from a public virgil function that a tutorial also calls, so you can reproduce any result by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
 
-Install the extra (it pulls in the plotting extra, `h5py`, `nbformat`, `nbclient` and `ipykernel`):
+Install the extra (it brings in the plotting extra, `h5py`, `nbformat`, `nbclient` and `ipykernel`):
 
 ```bash
 pip install 'virgil-astro[pipeline]'
@@ -34,7 +34,7 @@ model = res.model()         # the best-fit model, a real virgil object
 
 A pipeline takes the data, a model template, a run folder and keyword settings. Settings resolve as the class defaults (`BinaryPipeline.defaults()`), then a JSON config file (`BinaryPipeline.from_config(path)`), then keyword arguments. `run(through="limits")` stops after a stage, which is how a non-detection skips the fit and the sampler.
 
-A run resumes by default: a completed stage whose outputs exist is skipped, and once a stage reruns every later stage reruns. A resumed run refuses, with `ConfigMismatchError`, when the settings, the data hash or the model template differ from those stored in the folder. `run(resume=False)` starts again.
+A run resumes by default: a completed stage whose outputs exist is skipped, and once a stage reruns every later stage reruns. A resumed run raises `ConfigMismatchError` if the settings, the data hash or the model template differ from those stored in the folder. `run(resume=False)` starts again.
 
 ## The stages of `BinaryPipeline`
 
@@ -50,7 +50,7 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 
 The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position (`dra` and `ddec` on a box of half-width `max_sep_mas`) and log-uniform in flux and in error scales. Both templates sample the same `dra`, `ddec` and `flux`, so they give the same prior on the sky; a `BinaryModelAngular` template reports `sep` and `pa` derived from them, with no wrap at 0 or 360 degrees in the fit. The flux range is a setting (`flux_range`).
 
-The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets the parameters of the fit and the posterior.
+The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
 
 ## `StarPipeline`: stellar diameters
 
@@ -83,9 +83,9 @@ res = DiskPipeline(data, "rings", output="runs/rings", companion=True).run()
 res.summary["disk"], res.model(), res.model("geometry")
 ```
 
-`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is **provisional**: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
+`DiskPipeline` fits a [`MultipoleDisk`][virgil.models.MultipoleDisk] around one star. It is provisional: the settings, stages and summary keys may change in any 0.4.x release without a deprecation. `model=` picks one of two parallel options, never a chain:
 
-- `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept.
+- `"gp"` (the default, the option that assumes least about the disk): one [`RadialGP`][virgil.models.RadialGP] profile with low-degree harmonics (`harmonic_degree`) and, with more than `spectral_index_min_channels` channels, a spectral index that is itself a Gaussian process. At each length scale of `ell_halffringes` the profile is fitted with the geometry held at the single-ring fit's values (fast), then again with the inclination and position angle released, and the length of largest Laplace evidence is kept. A grid must not choose its own edge: if the best length is the smallest or the largest, the grid is extended once in that direction (never below `ell_floor_halffringes`, half a half-fringe), and the `length_scale` check warns if the best is still on an edge (`on_grid_edge` in the summary). With `error_scale="rescale"` (the default here) one MacKay error scale is estimated from a baseline fit at the middle length, with the companion if there is one and the geometry released, and every fit and evidence after it is on the rescaled data, so they share one footing; the scale is reported (`chi2.error_scale_factor`), and χ²/N is still quoted on the quoted errors.
 - `"rings"`: *N* [`GaussianRing`][virgil.models.GaussianRing] profiles that share the inclination and position angle, added one at a time (each starting at the radius of a one-ring scan) until the BIC stops improving or `max_rings` is reached; after each fit every ring is re-placed in turn (dropped, rescanned on a finer radius grid, everything refitted) and the result kept if the BIC falls (not if it leaves two rings closer than twice the narrower one's width or a half-fringe). A count with such a pair is one ring fitted as two, or a ring still to be found: it is left out of the comparison and the search goes on; a ring whose removal lowers the BIC (one parked at the inner radius with no light, say) is dropped after the fit, which ends the search, the pruned fit standing as the candidate of its own count; `ring_count` warns when such a count had the lower BIC. The Laplace evidence and the BIC of every count are reported and the count of least BIC is kept.
 
 The resolution scale is the half-fringe λ/2B of the longest baseline. The inner radius, the ring-width floor and the length-scale grid are stated in half-fringes, and the outer radius defaults to half the [`image_field`][virgil.imaging.image_field]: set `r_out_mas` if the disk is larger. A companion search is opt-in (`companion=True`): the residuals are searched for a point source on a grid, and a detection above `companion_min_delta_chi2` is fitted jointly with the disk. A search of the best model's residuals always runs, to check that the disk has not absorbed a compact source.
@@ -94,12 +94,12 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 | --- | --- | --- |
 | `load`, `overview` | As for `BinaryPipeline`, and the resolution scale and radial range | |
 | `geometry` | χ² of a single ring over a grid of inclination (uniform in cos *i*) and position angle on [0°, 180°), then a fit of that ring from the best cell: the geometry is multimodal and is never left to a local optimizer from one start. Its dynamic range sets the Gaussian process's σ | `likelihood_grid`, `fit`, `laplace_cov` |
-| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry` |
-| `compare` | The Laplace evidence (and BIC) of each candidate; the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
+| `profile` | The ring counts, or the length scales, each fitted by Levenberg–Marquardt; the companion search. For `"gp"` it also estimates the MacKay error scale, scores the Laplace evidence of each length (so a run stopped after `profile` has them) and extends the grid once if the best is on an edge | `fit`, `likelihood_grid`, `gp_priors`, `MultipoleDisk.freeze_geometry`, `log_evidence`, `error_scale` |
+| `compare` | The Laplace evidence (and BIC) of each ring count (`"gp"`: it chooses among the evidences `profile` scored); the preferred one is `models/best` | `log_evidence`, `laplace_cov` |
 | `posterior` (`posterior=True`) | NUTS with the geometry released; the position angle is folded into [0°, 180°) with the harmonics rotated to match | `numpyro_model`, `chain_init_params` |
 | `quicklook` | The geometry grid and a six-panel summary of the disk | |
 
-Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The fit is on the quoted errors, and `error_scale="fit"` is available for the rings only (the Gaussian process's evidence needs the quoted errors). The spectral index is relative to the star, a grey reference source unless `star_temperature_k` is given. The rings' colour is a power-law index per ring by default; `ring_colour="blackbody"` (rings only) fits a temperature per ring and for the planet instead, which follows blackbody-like spectra across a broad band that a power law misses. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
+Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The rings are fitted on the quoted errors (`error_scale="quoted"`, the default there), and `error_scale="fit"` is available for them only; `"rescale"` is for the Gaussian process (see above). The star is a grey point source unless `star_diameter_mas` (a uniform disk; the inner radius is then at least its radius), `star_temperature_k` or `star_index` says otherwise, and the disk's spectral index is relative to that star: it is conditional on the star's assumed spectrum, so read it with the `model.star` section of the summary beside it (on real discs a different star index moved the disk's index by 0.3 to 1.4). The rings' colour is a power-law index per ring by default; `ring_colour="blackbody"` (rings only) fits a temperature per ring and for the planet instead, which follows blackbody-like spectra across a broad band that a power law misses. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
 
 ## The run folder
 
@@ -115,7 +115,7 @@ Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the positio
 | `quicklook.ipynb` | An executed notebook that reloads the folder and shows the figures and checks |
 | `quicklook.log` | The stderr of the quicklook's kernel, kept out of the terminal |
 
-Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pickles. Each file is written atomically, so a crash never leaves a half-written file under its final name, and nothing is written outside the run folder.
+Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pickles. Files are written atomically, so a crash never leaves a half-written file under its final name, and nothing is written outside the run folder.
 
 ## Reading a run: `load` and `Result`
 
@@ -136,12 +136,12 @@ Everything is JSON, HDF5, NumPy `.npz`, PNG, OIFITS or one notebook, with no pic
 
 ## Checks
 
-Checks are pure functions of plain numbers. The same run always gives the same checks, in a fixed order, each with a status of `pass`, `warn` or `fail`. The first is always the chi-squared per independent datum of the model on the quoted errors: a fitted error scale makes chi-squared close to one by construction, so it is never the headline number.
+Checks are pure functions of plain numbers, so the same run always gives the same checks in a fixed order, each with a status of `pass`, `warn` or `fail`. The first is always the chi-squared per independent datum of the model on the quoted errors: a fitted error scale makes chi-squared close to one by construction, so it is never the headline number.
 
 | Check | Warns | Fails |
 | --- | --- | --- |
 | `chi2` (on the quoted errors) | above 2 (errors likely underestimated) or below 0.5 (errors likely overestimated) | above 5 (the model does not describe the data, or the errors are much too small) |
-| `error_scale` (with `error_scale="fit"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
+| `error_scale` (with `error_scale="fit"`, or the MacKay estimate of `"rescale"`) | a scale above 2 | a scale above 5, a failed fit rather than a calibration |
 | `detection` (approximate look-elsewhere-corrected significance against `detection_sigma`; use `injection_recovery` or `gaussian_null` for a calibrated threshold) | below the threshold | |
 | `grid_edge` (peak on the edge of the `dra` or `ddec` axis; the flux axis is not a search boundary) | at the edge | |
 | `start_at_bound` (only when triggered: the best fit, where NUTS starts, within 0.1% of a prior bound; typically a non-detection, with the flux or diameter at the edge of its range) | any: NUTS starts just inside the bound and the posterior is prior-dominated | |
@@ -158,14 +158,17 @@ Checks are pure functions of plain numbers. The same run always gives the same c
 | `limb_darkening_constrained` (posterior against prior standard deviation of `q1`, `q2`) | a ratio of 0.8 or more | |
 | `length_scale` (`DiskPipeline`, `"gp"`: the spread of the Laplace evidences across the length-scale grid) | under `length_scale_nats` (3): the data do not measure ℓ, which is then a prior choice | |
 | `ring_count` (`DiskPipeline`, `"rings"`: the margin of the chosen count over its neighbours, the smaller of ΔBIC/2 and the log-evidence difference, and every ring's width against the half-fringe) | a margin under `ring_count_nats` (3), a ring narrower than the half-fringe, or a count with a lower BIC left out because two of its rings are too close to tell apart | |
+| `structure_unconstrained` (`DiskPipeline`, `"gp"`: the evidence spread across ℓ with the smallest correlation between the radial profiles of the fits at each ℓ) | a spread under `length_scale_nats` with a correlation under `unconstrained_correlation` (0.8): the data do not constrain the structure and the image is mostly the prior | |
 | `inner_edge` (`DiskPipeline`, `"gp"`: the disk's light within a half-fringe of the inner radius, and its Laplace correlation with the disk flux) | above `inner_edge_fraction` (0.1) or a correlation above `inner_edge_correlation` (0.9): an unresolved core trades against the star's flux | |
 | `outer_edge` (`DiskPipeline`: the light within a half-fringe of `r_out_mas`) | above `outer_edge_fraction` (0.01): refit with a larger `r_out_mas` | |
 | `inclination` (`DiskPipeline`) | an inclination under `inclination_min_deg` (15°, the position angle is then unconstrained), a position-angle standard deviation above 45°, or several comparable minima of the geometry grid | |
 | `absorbed_companion` (`DiskPipeline`: Δχ² of a point source added to the best model's residuals) | at least `companion_min_delta_chi2` (25); the message says whether a harmonic of one degree higher removes it | |
+| `render_consistency` (`DiskPipeline`, `"gp"`: χ²/N of the model and of its disk rendered to pixels, on the channel nearest the reference wavelength) | the rendered image's χ²/N differs by more than `render_tolerance` (0.1) plus 0.02: the image is not the model the fit found; refit with a larger `n_r` (`suggest_n_r` sizes the nodes for the visibilities, not for pixels) | |
+| `at_bound` (`DiskPipeline`) | any fitted parameter within 0.1% of a prior bound: the data do not constrain it there, or the prior is too tight | |
 
 ### Warnings raised inside stages
 
-A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised by a virgil function inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
+A stage runs under `warnings.catch_warnings(record=True)` with the filter set to `"always"`, so a warning raised inside a stage never reaches the terminal or the notebook. Each distinct message is recorded once per stage, with its stage, category and message, in `stages/<name>/report.json` and in the `warnings` list of `summary.json`; `describe()` counts them. The known messages are also turned into checks, matched by keywords so that rewording a message does not break the mapping. These checks appear only when the warning occurred, after the checks above, and always warn:
 
 | Check | Raised by | Meaning |
 | --- | --- | --- |
@@ -178,7 +181,7 @@ Deprecation notices are recorded in `warnings` but raise no check. The quicklook
 
 ## Stability
 
-The pipelines are **provisional in 0.4**: their constructor keywords, settings and defaults, stage names, `summary.json` keys, check names, thresholds and order, and file names may change in any 0.4.x release, without a deprecation. They are promoted to stable after a release of use. The tier is the class attribute `STABILITY` (`"provisional"`), written to `run.json` and `summary.json`; nothing warns at runtime. See [Stability](stability.md) for the tiers.
+The pipelines are provisional in 0.4: their constructor keywords, settings and defaults, stage names, `summary.json` keys, check names, thresholds and order, and file names may change in any 0.4.x release, without a deprecation. They are promoted to stable after a release of use. The tier is the class attribute `STABILITY` (`"provisional"`), written to `run.json` and `summary.json`; nothing warns at runtime. See [Stability](stability.md) for the tiers.
 
 What does not change under the provisional tier:
 
@@ -192,7 +195,7 @@ When a pipeline is promoted to stable, it keeps the following within a schema ve
 - the check names, their order and their thresholds;
 - the file names in the run folder.
 
-Changes to a stable pipeline are then additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
+After that, changes are additive: new settings whose defaults keep the old behaviour, new summary keys, new checks appended at the end, and new files. Anything else needs a new schema version. Snapshot tests already pin the signatures, defaults, summary keys and check order, so a change is visible in review; while a pipeline is provisional, updating the snapshot is allowed.
 
 Open before promotion: `global_nsigma` is a Šidák estimate with a nominal number of resolution elements, not a simulated false-alarm probability (the grid maxima are correlated, and the resolution element is anisotropic). It must be calibrated by simulation, or dropped from the summary keys and the `detection` check, before the pipelines become stable. Until then it is labelled an approximation in `summary.json` (`global_nsigma_method`).
 
@@ -218,7 +221,7 @@ virgil-pipeline validate runs/hd1234    # complete, and every file matches its h
 virgil-pipeline quicklook runs/hd1234   # rebuild the quicklook notebook
 ```
 
-`--set KEY=VALUE` overrides a setting (the value is parsed as JSON where it can be). `info` and `validate` read only JSON and hashes and do no JAX work, although `import virgil` still imports JAX.
+`--set KEY=VALUE` overrides a setting (the value is parsed as JSON where possible). `info` and `validate` read only JSON and hashes and do no JAX work, although `import virgil` still imports JAX.
 
 ## API reference
 

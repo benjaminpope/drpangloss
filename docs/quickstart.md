@@ -1,12 +1,12 @@
 # Quickstart
 
-Install virgil (the PyPI name is `virgil-astro`; `pip install virgil` is a different project), load an OIFITS file, and fit a binary to it. It runs in seconds on a laptop.
+Install virgil, load an OIFITS file and fit a binary to it, in seconds on a laptop. The PyPI name is `virgil-astro`; `pip install virgil` is a different project.
 
 ```bash
 pip install virgil-astro
 ```
 
-The file is `data/NuHor_F480M.oifits` in the [repository](https://github.com/benjaminpope/virgil): JWST aperture-masking observations of a single star, so the data contain no companion. To show what a detection looks like, the example injects one into the file's own sampling and errors with [`simulate`][virgil.simulate.simulate]. To fit your own file, load it and skip that line. After `pip install`, the file is not on your disk: download it first and point `OIData` at the copy.
+The example file, `data/NuHor_F480M.oifits` in the [repository](https://github.com/benjaminpope/virgil), holds JWST aperture-masking observations of a single star with no companion. So that you can see a detection, the example injects one with [`simulate`][virgil.simulate.simulate], using the file's own sampling and errors. For your own file, skip that line. `pip install` does not include the file, so download it first:
 
 ```bash
 curl -LO https://raw.githubusercontent.com/benjaminpope/virgil/main/data/NuHor_F480M.oifits
@@ -46,12 +46,12 @@ print({name: float(value) for name, value in result.values.items()})
 print(result.info["chi2_red"], result.info["converged"])
 ```
 
-The result recovers the injected companion: `dra` near 120 mas, `ddec` near -80 mas and `flux` near 0.02, with a reduced χ² near 1 (the exact numbers vary a little between JAX versions).
+You should recover the injected companion: `dra` near 120 mas, `ddec` near -80 mas and `flux` near 0.02, with a reduced χ² near 1. The exact numbers vary a little between JAX versions.
 
 - `dra` and `ddec` are offsets in milliarcseconds, with East positive in `dra` and North positive in `ddec`; `flux` is the companion/primary flux ratio. See [conventions](conventions.md).
-- The grid search is the first step in any companion search, because the likelihood of visibilities has many local maxima. [Binary search](binary_search.md) shows how to plot the grid and sample the posterior.
-- `result.model` is the fitted model, and `result.values` its parameters. [`fit`][virgil.fitting.fit] accepts any model and prior, not only binaries.
+- Always start a companion search with a grid: the likelihood has many local maxima. [Binary search](binary_search.md) shows how to plot the grid and sample the posterior.
+- `result.model` is the fitted model and `result.values` its parameters. [`fit`][virgil.fitting.fit] takes any model and prior, not only binaries.
 
 ## Where next
 
-The [landing page](index.md#where-to-start) lists a page for each task. The [pipelines](pipeline.md) run the same search, limits, fit and sampling in one call and leave a run folder.
+The [landing page](index.md#where-to-start) lists a page for each task. The [pipelines](pipeline.md) run the search, limits, fit and sampling in one call and leave a run folder.

@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/amigo_disco.ipynb by scripts/sync_tutorial_docs.py. -->
 # AMIGO mixed-DISCO products
 
-AMIGO pipeline reductions write filter-keyed mixed-DISCO products. `virgil.amigo.load_oi_data` loads each filter into an `OIData` object whose standardized model vector uses the stored log-amplitude and phase projection operators.
+The AMIGO pipeline writes filter-keyed mixed-DISCO products. `virgil.amigo.load_oi_data` loads each filter into an `OIData` whose model vector uses the stored log-amplitude and phase projection operators.
 
-This notebook is deliberately short: once loaded, these observations use the same `joint_loglike` and `joint_prediction` interfaces as the complete hierarchical inference tutorial.
+This notebook is short on purpose: once loaded, these data use the same `joint_loglike` and `joint_prediction` interfaces as the hierarchical inference tutorial.
 
 ## Load the product
 
@@ -60,9 +60,7 @@ The product stores one independent data vector per filter. For a complex visibil
 
 $$y = A_{\mathrm{logamp}}\,\mathrm{Re}\log V + A_{\mathrm{phase}}\,\mathrm{Im}\log V,$$
 
-where `A_logamp` and `A_phase` are the product's two projection matrices.
-
-`OIData.model` applies that relation automatically.
+where `A_logamp` and `A_phase` are the product's two projection matrices. `OIData.model` applies this for you.
 
 ```python
 oidata = observations_by_filter["F430M"]
@@ -80,7 +78,7 @@ prediction.shape, data.shape, errors.shape
 
 ## Use the shared hierarchical interface
 
-The loaded filters are ordinary `OIData` objects. A hierarchical model supplies shared astrometry and one flux per filter; the complete grid, optimization, and HMC workflow is shown in the hierarchical inference tutorial.
+The loaded filters are ordinary `OIData` objects. A hierarchical model supplies shared astrometry and one flux per filter; the hierarchical inference tutorial shows the full grid, optimization and HMC workflow.
 
 ```python
 params = {

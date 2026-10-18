@@ -1,11 +1,11 @@
 <!-- AUTO-GENERATED FROM notebooks/model_syntax.ipynb by scripts/sync_tutorial_docs.py. -->
 # Visibility Models
 
-This tutorial explains how `BinaryModelCartesian` and `BinaryModelAngular` work internally, how they interact with `OIData`, and how likelihoods are built from an `OIData` instance plus a model class.
+This tutorial shows how `BinaryModelCartesian` and `BinaryModelAngular` work internally, how they interact with `OIData`, and how a likelihood is built from an `OIData` instance and a model class.
 
 ## Introduce the visibility model parameterizations
 
-We first define the Cartesian and angular binary models on the same baseline geometry, and verify they produce equivalent complex visibilities when parameters are converted consistently.
+We define the Cartesian and angular binary models on the same baseline geometry, and check that they give equivalent complex visibilities when the parameters are converted consistently.
 
 ```python
 import sys
@@ -34,9 +34,9 @@ set_style()  # the figure style used throughout the docs
 
 ## Generate OIData from models
 
-Now we generate synthetic observables from the Cartesian model and package them into an `OIData` instance.
+Next we generate synthetic observables from the Cartesian model and package them into an `OIData` instance.
 
-These models are *parametrized functions* that take a set of parameters like sep, pa and flux, and instantiate an object - say, `model` - which can then apply these to data. You then call `model.model(u, v, wavel)` and it evaluates the complex visibilities at those coordinates.
+A model is a *parametrized function*: it takes parameters such as sep, pa and flux and builds an object, say `model`, that you can apply to data. Calling `model.model(u, v, wavel)` evaluates the complex visibilities at those coordinates.
 
 ```python
 rng = np.random.default_rng(21)
@@ -73,7 +73,7 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'max_complex_visibility_difference': 0.0}
 ```
 
-`OIData` stores observables, uncertainties, and convention flags (`v2_flag` and `cp_flag`) so model outputs can be converted and flattened consistently. It flattens all these data into vectors and keeps track of what kind of observable is being used.
+`OIData` stores observables, uncertainties and convention flags (`v2_flag` and `cp_flag`), so that model outputs can be converted and flattened consistently. It flattens the data into vectors and tracks which kind of observable each one is.
 
 ```python
 vis_true = jnp.abs(cvis_true) ** 2
@@ -122,7 +122,7 @@ data = OIData(
 
 ## How `OIData.model(...)` builds comparable vectors
 
-`OIData.model(model)` evaluates complex visibilities through the model and converts them to the configured observables (`V²` and phases here), then flattens to match `OIData.flatten_data()`.
+`OIData.model(model)` evaluates complex visibilities through the model, converts them to the configured observables (`V²` and phases here), and flattens them to match `OIData.flatten_data()`.
 
 ```python
 model_vector = data.model(model_cart_true)
@@ -185,41 +185,43 @@ max_complex_diff = float(np.max(np.abs(np.asarray(cvis_ang - cvis_true))))
  'max_complex_visibility_difference': 0.0}
 ```
 
-```python
-vis_cart = np.asarray(data.to_vis(cvis_true))
-vis_ang = np.asarray(data.to_vis(cvis_ang))
-phi_cart = np.asarray(data.to_phases(cvis_true))
-phi_ang = np.asarray(data.to_phases(cvis_ang))
+??? note "Plotting code"
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    ```python
+    vis_cart = np.asarray(data.to_vis(cvis_true))
+    vis_ang = np.asarray(data.to_vis(cvis_ang))
+    phi_cart = np.asarray(data.to_phases(cvis_true))
+    phi_ang = np.asarray(data.to_phases(cvis_ang))
 
-ax1.scatter(vis_cart, vis_ang, alpha=0.7)
-line_v = np.linspace(
-    min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100
-)
-ax1.plot(line_v, line_v, "k--", lw=1)
-ax1.set_xlabel("Cartesian model V²")
-ax1.set_ylabel("Angular model V²")
-ax1.set_title("Visibility mapping")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
-ax2.scatter(phi_cart, phi_ang, alpha=0.7)
-line_p = np.linspace(
-    min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100
-)
-ax2.plot(line_p, line_p, "k--", lw=1)
-ax2.set_xlabel("Cartesian model phase (deg)")
-ax2.set_ylabel("Angular model phase (deg)")
-ax2.set_title("Phase mapping")
+    ax1.scatter(vis_cart, vis_ang, alpha=0.7)
+    line_v = np.linspace(
+        min(vis_cart.min(), vis_ang.min()), max(vis_cart.max(), vis_ang.max()), 100
+    )
+    ax1.plot(line_v, line_v, "k--", lw=1)
+    ax1.set_xlabel("Cartesian model V²")
+    ax1.set_ylabel("Angular model V²")
+    ax1.set_title("Visibility mapping")
 
-plt.tight_layout()
-plt.show()
-```
+    ax2.scatter(phi_cart, phi_ang, alpha=0.7)
+    line_p = np.linspace(
+        min(phi_cart.min(), phi_ang.min()), max(phi_cart.max(), phi_ang.max()), 100
+    )
+    ax2.plot(line_p, line_p, "k--", lw=1)
+    ax2.set_xlabel("Cartesian model phase (deg)")
+    ax2.set_ylabel("Angular model phase (deg)")
+    ax2.set_title("Phase mapping")
+
+    plt.tight_layout()
+    plt.show()
+    ```
 
 ![model_syntax output 12.1](generated/model_syntax_cell012_out01.png)
 
 ## Likelihood wiring from `OIData` + model class
 
-`loglike(values, params, model, data)` zips parameter names to values, instantiates `model(**param_dict)` (or, for a template model instance, sets the leaves at those paths), evaluates `data.model(...)`, then compares to flattened data with Gaussian errors.
+`loglike(values, params, model, data)` zips parameter names to values and instantiates `model(**param_dict)` (for a template model instance, it sets the leaves at those paths instead). It then evaluates `data.model(...)` and compares the result to the flattened data with Gaussian errors.
 
 ```python
 params_cart = ["dra", "ddec", "flux"]
@@ -254,4 +256,4 @@ ll_cart_perturbed = float(
  'true_beats_perturbed': True}
 ```
 
-This gives a practical under-the-hood view: model classes define parameter syntax and complex visibilities, `OIData` defines observable conventions and flattening, and `loglike` stitches both pieces together for inference workflows.
+So model classes define the parameter syntax and complex visibilities, `OIData` defines observable conventions and flattening, and `loglike` joins the two for inference.

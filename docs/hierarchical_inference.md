@@ -3,11 +3,9 @@
 
 > **Install:** this tutorial needs the `plots` extra (pandas and ChainConsumer): `pip install "virgil-astro[plots]"`.
 
-We often have multiple datasets with different telescopes or wavelengths, and it is useful to be able to treat a shared scene geometry with different fluxes at different wavelengths, for example; this is the principle behind (say) [SPARCO](https://arxiv.org/abs/1403.3343), where objects in the scene are allowed to have different SEDs.
+When you have several datasets from different telescopes or wavelengths, you often want one scene geometry with a different flux in each, as in [SPARCO](https://arxiv.org/abs/1403.3343), where objects in the scene have their own SEDs.
 
-Here is a simple example where we fit a binary model to three interferometric observations simultaneously, taken at three different wavelengths. The binary position is shared between filters, while each filter has its own flux ratio.
-
-Many of the ideas in this notebook are explored in greater detail [in the Zodiax docs](https://louisdesdoigts.github.io/zodiax/optimisation_tools/) - check them out!
+Here we fit a binary to three interferometric observations at three wavelengths at once. The position is shared between filters, and each filter has its own flux ratio. The [Zodiax docs](https://louisdesdoigts.github.io/zodiax/optimisation_tools/) explore many of these ideas in more detail.
 
 ```python
 import sys
@@ -64,7 +62,7 @@ set_style()  # the figure style used throughout the docs
 
 ## Simulate three observations
 
-The three `OIData` objects have the same baseline sampling and uncertainties but wavelengths of 800 nm, 1.0 micron, and 1.2 microns.
+The three `OIData` objects have the same baseline sampling and uncertainties, at wavelengths of 800 nm, 1.0 micron and 1.2 microns.
 
 ```python
 observations, truth = simulate_observations(seed=7)
@@ -95,7 +93,7 @@ observations, truth = simulate_observations(seed=7)
 
 ## Define the hierarchy
 
-A hierarchical model is easily expressed by an ordinary JAX pytree. The astrometry is shared, while indexing the flux vector selects a parameter unique to each observation. This is the same model-building pattern used by Zodiax: parameters remain separate from the objects that describe each observation.
+The hierarchy is an ordinary JAX pytree. The astrometry is shared, and indexing the flux vector picks out each observation's own flux. This is Zodiax's pattern: parameters stay separate from the objects that describe each observation.
 
 ```python
 params = {
@@ -122,7 +120,7 @@ initial log-likelihood: -5654.119194585739, optimal: 682.298987712977
 
 ## Joint grid initialization
 
-Before fitting independent fluxes in each filter, we search a compact grid in shared right ascension, declination, and flux. The best shared-flux point provides a robust starting position and initializes every filter flux for the hierarchical optimization and HMC steps.
+Before fitting a separate flux in each filter, we search a compact grid in shared right ascension, declination and flux. The best shared-flux point gives a reliable starting position and the starting value of every filter's flux for the optimization and HMC.
 
 ```python
 joint_grid_samples = {
@@ -172,7 +170,7 @@ params = {
 
 ## Preconditioning before Inference
 
-The Fisher Information Matrix tells us the expected information in the data, providing both a limit to the best possible covariance we can obtain from the data (the Cramér-Rao lower bound) and a way of normalising parameters, which might have very different scales and correlations. It is often best to do this normalization before Bayesian inference, in order to precondition the model for fast convergence.
+The Fisher information matrix measures the information the data are expected to carry. It bounds the best covariance the data can give (the Cramér–Rao lower bound), and it normalizes parameters whose scales and correlations differ widely. Normalizing before inference preconditions the model for fast convergence.
 
 ```python
 prediction_fn = lambda values: joint_prediction(values, binary_model, observations)
@@ -189,7 +187,7 @@ Fisher matrix: 5 x 5
 
 ## Optimization
 
-The Fisher matrix defines well-scaled local coordinates. We optimize in those coordinates, then map the result back to the physical parameter tree.
+We optimize in the well-scaled local coordinates the Fisher matrix defines, then map the result back to the physical parameter tree.
 
 ```python
 initial_vector, unravel = ravel_pytree(params)
@@ -255,11 +253,11 @@ log10 flux (1.2 microns)  -2.154878       0.004064
 
 ## Interpreting the local covariance
 
-The table above comes from the Hessian of the negative log likelihood at the optimum. It is a local Laplace approximation, which we compare with HMC below.
+The table above comes from the Hessian of the negative log likelihood at the optimum: a local Laplace approximation, which we compare with HMC below.
 
 ## Hamiltonian Monte Carlo
 
-The same shared-position, per-filter-flux parameter tree can be sampled with NumPyro. We initialize HMC from the joint grid maximum used by the optimizer.
+NumPyro samples the same parameter tree, with a shared position and per-filter fluxes, starting from the joint grid maximum that the optimizer used.
 
 ```python
 def model_hmc():
@@ -299,7 +297,7 @@ Posterior RA 17.96,       Dec -11.93
 
 ## Corner plot of shared and per-filter parameters
 
-Let's visualize the recovered parameters and compare them to the truth values from which they are simulated:
+The recovered parameters against the values used to simulate the data:
 
 ```python
 parameter_columns = ["ddec (mas)", "dra (mas)"] + [f"log10 flux ({label})" for label in FILTER_LABELS]
@@ -346,7 +344,7 @@ findfont: Failed to find font weight medium for DejaVu Sans, now using 400.
 
 ## Posterior predictive correlation per filter
 
-As always, we check the fit against the data directly rather than trusting the corner plot alone. Each filter has its own flux, so we build one data-vs-model correlation plot per observation using the shared astrometry samples paired with that filter's flux samples.
+Check the fit against the data, not just the corner plot. Each filter has its own flux, so there is one data-vs-model correlation plot per observation, pairing the shared astrometry samples with that filter's flux samples.
 
 ```python
 # Subsample the Laplace draws for the (slower, per-sample) posterior predictive check.
@@ -378,7 +376,7 @@ for index, (label, observation) in enumerate(zip(FILTER_LABELS, observations)):
 
 ## Visibility and phase versus baseline
 
-Finally, we look at visibility amplitude and phase directly as a function of baseline length, one column per filter. Because the three observations share the same array geometry, the baseline lengths are identical; only the flux, and therefore the fitted amplitude and phase, differ between filters.
+Finally, visibility amplitude and phase against baseline length, one column per filter. The observations share the array geometry, so the baseline lengths are identical; only the flux, and so the fitted amplitude and phase, differs between filters.
 
 ```python
 fig, axes = plt.subplots(

@@ -375,8 +375,22 @@ contributors page; no code was copied)
   and fits a detection jointly with the disk (the residuals are always
   searched, to check that the disk has not absorbed one). Priors are
   group-invariant. Stages are `geometry`, `profile`, `compare`, an opt-in
-  `posterior` (NUTS with the geometry released) and `quicklook`. See the
-  Pipelines page.
+  `posterior` (NUTS with the geometry released) and `quicklook`. Defaults
+  come from imaging nine PIONIER post-AGB discs: for `model="gp"`,
+  `error_scale="auto"` (the default; `"rescale"` for the Gaussian process,
+  `"quoted"` for the rings) estimates one MacKay error scale from a baseline
+  fit and evaluates every fit and Laplace evidence on the rescaled data
+  (`chi2.error_scale_factor`; χ²/N stays on the quoted errors), and
+  `imaging.error_scale` accepts a `MultipoleDisk` with Gaussian-process parts
+  as `log_evidence` does. The ℓ grid cannot choose its own edge: the best ℓ on
+  an edge extends the grid once (`ell_floor_halffringes`, 0.5, is the lowest
+  ℓ/√3), `on_grid_edge` is recorded and `length_scale` warns if it persists.
+  The star can be a uniform disk (`star_diameter_mas`, which also floors the
+  inner radius at its radius) with a power-law spectrum (`star_index`), and
+  the summary's `model.star` records it. New checks: `structure_unconstrained`
+  (flat evidence and unstable radial profiles across ℓ), `render_consistency`
+  (the rendered image against the model's χ²) and `at_bound` (parameters within
+  0.1% of a prior bound). See the Pipelines page.
 
 **Imaging, inference and data**
 

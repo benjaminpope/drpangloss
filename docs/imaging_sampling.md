@@ -1,9 +1,9 @@
 <!-- AUTO-GENERATED FROM notebooks/imaging_sampling.ipynb by scripts/sync_tutorial_docs.py. -->
 # Imaging, part 5: sampling the posterior
 
-Parts 2–4 found one image, the maximum a posteriori (MAP). It doesn't say how sure we should be of any feature in it: is that knot real, or is the gap in the ring significant? Answering that needs the **posterior**, the distribution of images consistent with the data and the prior. This part draws images from it with numpyro's No-U-Turn Sampler (NUTS) and maps their **mean** and **standard deviation**, pixel by pixel.
+Parts 2–4 found one image, the maximum a posteriori (MAP), which doesn't say how sure we should be of any feature in it: is that knot real, or is the gap in the ring significant? Answering that needs the **posterior**, the distribution of images consistent with the data and the prior. This part draws images from it with numpyro's No-U-Turn Sampler (NUTS) and maps their **mean** and **standard deviation**, pixel by pixel.
 
-The Gaussian-process prior of part 3 is what makes this practical. Its latents have standard-normal priors, so the posterior is smooth and close to Gaussian near the MAP. Sampling an image of thousands of pixels is still slow if done naively, because the data pin down some directions in image space far more tightly than others. The fix is to give NUTS the shape of the posterior in advance, through `gauss_newton_mass`, and that is the main idea of this part.
+The Gaussian-process prior of part 3 makes this practical. Its latents have standard-normal priors, so the posterior is smooth and close to Gaussian near the MAP. Sampling an image of thousands of pixels is still slow if done naively, because the data pin down some directions in image space far more tightly than others. The remedy is to give NUTS the shape of the posterior in advance, through `gauss_newton_mass`, and that is the main idea of this part.
 
 Sampling needs float64, so the first cell switches it on.
 
@@ -56,7 +56,7 @@ print(f"{n}² = {n * n} pixels, {int(data.flatten_data()[0].size)} data")
 
 ## The MAP, at the evidence's σ and ℓ
 
-Part 3's evidence chose σ = 4 and ℓ equal to the beam's minor axis. Here they are held fixed at those values, which is empirical Bayes. The free parameters are the field's latents and the image's flux, as in part 3, and `fit` finds the MAP with Levenberg–Marquardt. The sampler starts there.
+Part 3's evidence chose σ = 4 and ℓ equal to the beam's minor axis. We hold them fixed at those values, which is empirical Bayes. The free parameters are the field's latents and the image's flux, as in part 3, and `fit` finds the MAP with Levenberg–Marquardt. The sampler starts there.
 
 ```python
 sigma, length = 4.0, resolution.minor_mas
@@ -73,7 +73,7 @@ MAP: converged True in 45 steps; chi2 per point 0.95; flux 0.0507 (truth 0.05); 
 
 ## Why plain NUTS is slow, and the mass matrix that fixes it
 
-NUTS simulates a particle sliding on the surface of the negative log posterior. Its step size must suit the posterior's narrowest direction. Here that is a combination of latents fixed tightly by the data, or the image's flux, which is measured to about 1%. Its trajectory must also cross the widest direction: latents the data barely touch, which keep their unit prior width. With 588 precise data, the ratio of the two widths is in the hundreds, and NUTS runs to its limit of 1023 steps per draw. On this scene that took 4 minutes on an A100 GPU, and about 20 on a laptop.
+NUTS simulates a particle sliding on the surface of the negative log posterior. Its step size must suit the posterior's narrowest direction: a combination of latents fixed tightly by the data, or the image's flux, which is measured to about 1%. Its trajectory must also cross the widest direction: latents the data barely touch, which keep their unit prior width. With 588 precise data, the ratio of the two widths is in the hundreds, and NUTS runs to its limit of 1023 steps per draw. On this scene that took 4 minutes on an A100 GPU, and about 20 on a laptop.
 
 The **mass matrix** fixes this by rescaling the space before the particle moves. If its inverse equals the posterior covariance, every direction has unit width, and short trajectories suffice. Near the MAP the posterior is close to a Gaussian whose precision is the Gauss–Newton matrix JᵀJ, where J is the Jacobian of the whitened residuals (the data's and the priors') with respect to the sampled coordinates. `gauss_newton_mass` computes (JᵀJ)⁻¹ at the MAP and returns NUTS's arguments. It switches off NUTS's own estimate of the mass matrix during warmup, because a covariance estimated from a few hundred draws in thousands of dimensions is far worse.
 
@@ -98,7 +98,7 @@ print(f"300 warmup + 300 draws; median {onp.median(steps):.0f} leapfrog steps pe
 
 ## Are the draws trustworthy?
 
-Successive NUTS draws are correlated, so 300 draws are worth fewer independent ones. The **effective sample size** (ESS) measures how many. A few hundred is ample for a mean and a standard deviation. Here it is computed for the flux and for every latent. NUTS draws can be anticorrelated, so the ESS can exceed the number of draws.
+Successive NUTS draws are correlated, so 300 draws are worth fewer independent ones. The **effective sample size** (ESS) measures how many; a few hundred is ample for a mean and a standard deviation. Here it is computed for the flux and for every latent. NUTS draws can be anticorrelated, so the ESS can exceed the number of draws.
 
 ```python
 flux = onp.asarray(samples["env.flux"])
@@ -114,7 +114,7 @@ flux 0.0507 (90%: 0.0503–0.0511; truth 0.05), ESS 226; latent ESS: 5th percent
 
 ## The posterior mean and standard deviation
 
-Each draw is a complete image: a brightness distribution and its flux. Rendering them all gives the posterior mean, which is a better summary than the MAP (it averages over the images the data allow), and the standard deviation of each pixel.
+Each draw is a complete image: a brightness distribution and its flux. Rendering them all gives the posterior mean, a better summary than the MAP because it averages over the images the data allow, and the standard deviation of each pixel.
 
 The third panel is new compared with parts 2–4. With a standard deviation, the difference between the mean and the truth can be shown as a **z-score**, the difference in units of the uncertainty. If the uncertainties are honest, it should look like noise of order one with no structure. Pixels where the posterior has almost no flux, outside the ring and under the star, have almost no spread and are left blank.
 
@@ -136,13 +136,13 @@ plt.show()
 
 ## What about σ and ℓ?
 
-Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 3's evidence grid shows how much that matters: if neighbouring σ and ℓ have nearly the same evidence, images drawn at either would do as well. Sampling them too is possible. Give them priors (they are scales, so log-uniform on stated bounds) and run plain NUTS without `gauss_newton_mass`, whose matrix would be wrong as they move. On this scene that took about 4 minutes on an A100 GPU, and gave σ = 3–10 and ℓ = 80–340 mas (90% intervals), consistent with the evidence's choice. Run that on a GPU, or average images over the evidence grid's neighbouring points.
+Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 3's evidence grid shows how much that matters: if neighbouring σ and ℓ have nearly the same evidence, images drawn at either would do as well. You can sample them too. Give them priors (they are scales, so log-uniform on stated bounds) and run plain NUTS without `gauss_newton_mass`, whose matrix would be wrong as they move. On this scene that took about 4 minutes on an A100 GPU, and gave σ = 3–10 and ℓ = 80–340 mas (90% intervals), consistent with the evidence's choice. Run it on a GPU, or average images over the evidence grid's neighbouring points.
 
 ## Ensembles are not posteriors
 
-[Part 7](imaging_ensemble.md) averages many regularised reconstructions with different regularisers, weights, pixels and fields, and also gives a per-pixel standard deviation. That spread measures how much the image depends on those choices, not the noise in the data: it can be large for noiseless data and small for noisy data that every regulariser smooths alike. The posterior standard deviation here is the reverse: the uncertainty from the noise, for one prior. A feature that is significant here but missing from many ensemble members depends on the prior.
+[Part 7](imaging_ensemble.md) averages many regularized reconstructions with different regularizers, weights, pixels and fields, and also gives a per-pixel standard deviation. That spread measures how much the image depends on those choices, not the noise in the data: it can be large for noiseless data and small for noisy data that every regularizer smooths alike. The posterior standard deviation here is the reverse: the uncertainty from the noise, for one prior. A feature that is significant here but missing from many ensemble members depends on the prior.
 
 ## Summary
 - **NUTS on a Gaussian-field image** samples the field's standard-normal latents with `numpyro_model`, starting at the MAP from `fit`.
 - **Large images need a mass matrix.** `gauss_newton_mass` turns the MAP's Gauss–Newton curvature into a dense mass matrix. On this 62² image it cut the cost from 1023 to tens of leapfrog steps per draw. Use it with σ and ℓ fixed, and keep every sampled parameter, flux included, in `priors`.
-- **The posterior mean and standard deviation** summarise the image and its uncertainty pixel by pixel, and make residuals into z-scores.
+- **The posterior mean and standard deviation** summarize the image and its uncertainty pixel by pixel, and make residuals into z-scores.

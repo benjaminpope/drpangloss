@@ -35,6 +35,9 @@ _STEP_FRACTION = 0.25
 _STEP_TOLERANCE = 1e-9
 # The fit starts at least this factor inside the ends of the flux prior.
 _START_MARGIN = 2.0
+# A fit that would start within this fraction of a grid step of the origin
+# starts exactly this far from it.
+_ORIGIN_NUDGE = 1e-2
 _AXIS_ORDER = ("dra", "ddec", "flux")
 _AXIS_UNITS = {"dra": "mas", "ddec": "mas", "flux": "companion/primary"}
 
@@ -695,6 +698,13 @@ def _fit_start(p, search, priors, angular):
     start = {k: onp.asarray(start[k], dtype=float) for k in priors}
     template = p._sampled_model()
     if angular:
+        # The angle is undefined on the origin, where the angular template
+        # has no gradient in position (finite, but zero): a search peak on
+        # (or within rounding of it) starts a little off it, as a Cartesian
+        # template needs no such step.
+        nudge = _ORIGIN_NUDGE * search["grid_step_mas"]
+        if onp.hypot(start["dra"], start["ddec"]) < nudge:
+            start["dra"], start["ddec"] = onp.asarray(nudge), onp.asarray(0.0)
         return template, start
     return template.set(list(priors), list(start.values())), None
 

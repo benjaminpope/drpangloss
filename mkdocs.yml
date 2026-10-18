@@ -85,7 +85,7 @@ nav:
       - "Visibility models": model_syntax.md
       - "Extended source models": source_models.md
       - "Composing models": composition.md
-      - "A planet in a gap between rings": multipole_disk_rings.md
+      - "Nonparametric disks": multipole_disk_rings.md
       - "Spotted stars with harmonix": harmonix.md
       - "Limb-darkened stars": limb_darkening.md
       - "Gravity-darkened stars": gravity_darkened_star.md
@@ -98,6 +98,7 @@ nav:
       - "6. Sparse images and CLEAN": imaging_clean.md
       - "7. Ensembles": imaging_ensemble.md
   - Pipelines:
+      - "Pipeline tutorial": pipelines.md
       - "Pipelines and their stability": pipeline.md
   - API Reference:
       - Overview: api/index.md
