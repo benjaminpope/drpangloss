@@ -39,7 +39,29 @@ Provisional in 0.4:
 
 ### Added
 
-- `OIData(..., insname=)` selects the instrument table(s) when reading an
+- **`DiskPipeline` defaults from imaging nine PIONIER post-AGB discs**
+  (provisional, so no deprecation; the lessons are from
+  virgil-validation#133). For `model="gp"`, `error_scale="auto"` (the new
+  default, `"rescale"` for the Gaussian process and `"quoted"` for the
+  rings) estimates one MacKay error scale from a baseline fit and
+  evaluates every fit and Laplace evidence on the rescaled data
+  (`chi2.error_scale_factor`; χ²/N stays on the quoted errors);
+  `imaging.error_scale` now accepts a `MultipoleDisk` with Gaussian-process
+  parts as `log_evidence` does. The ℓ grid cannot choose its own edge: the
+  best ℓ on an edge extends the grid once that way (`ell_floor_halffringes`,
+  0.5, is the lowest ℓ/√3), `on_grid_edge` is recorded and `length_scale`
+  warns if it persists; the evidences are now computed in `profile`. The
+  star can be a uniform disk (`star_diameter_mas`, which also floors the
+  inner radius at its radius) with a power-law spectrum (`star_index`), and
+  the summary's `model.star` records it, since the disk's spectral index
+  is conditional on it. New checks: `structure_unconstrained` (flat
+  evidence and unstable radial profiles across ℓ), `render_consistency`
+  (the rendered image against the model's χ²) and `at_bound` (parameters
+  within 0.1% of a prior bound). `r_out` still comes from `image_field`.
+  `design/pipeline.md` records the planned changes (an optional `Resolved`
+  term) and the guidance on `"gp"` against the Cartesian field.
+
+- `OIData(..., insname=) selects the instrument table(s) when reading an
   OIFITS file, as `read_oifits` does; the GRAVITY fringe-tracker/science
   error message already told users to pass it.
 

@@ -654,7 +654,7 @@ def _upper_first(text):
     return text[:1].upper() + text[1:]
 
 
-def length_scale(evidences, ells, halffringe, *, nats=3.0):
+def length_scale(evidences, ells, halffringe, *, nats=3.0, edge=None):
     """Whether the data measure the Gaussian-process length scale ℓ.
 
     The Laplace evidences of the profile fitted at each ℓ of a grid differ
@@ -672,6 +672,11 @@ def length_scale(evidences, ells, halffringe, *, nats=3.0):
         λ/2B of the longest baseline (mas).
     nats : float, optional
         Spread of the evidences (max − min) below which ℓ is not measured.
+    edge : str or None, optional
+        ``"low"`` or ``"high"`` when the best ℓ is still the smallest or the
+        largest of the grid after the one extension the pipeline allows
+        itself: the grid has then chosen its own edge, so the choice
+        reflects the grid and not the data.
 
     Notes
     -----
@@ -697,6 +702,18 @@ def length_scale(evidences, ells, halffringe, *, nats=3.0):
         f"length of {equivalent:.3g} mas, {equivalent / halffringe:.2g}× "
         "the half-fringe"
     )
+    if edge is not None:
+        return Check(
+            "length_scale",
+            "warn",
+            spread,
+            nats,
+            f"The best ℓ is the {edge}est of the grid even after the grid "
+            f"was extended once in that direction ({where}): the grid chose "
+            "its own edge, so ℓ is not measured. Widen ell_halffringes "
+            "(below a pixel or half a half-fringe, a small ℓ gives beads "
+            "with χ²/N far under 1).",
+        )
     if spread < nats:
         return Check(
             "length_scale",
@@ -1163,3 +1180,137 @@ def stage_warning_checks(warning_records):
     if other:
         checks.append(stage_warnings(other))
     return checks
+
+
+def at_bound(names):
+    """Fitted parameters within 0.1% of a prior bound.
+
+    A prior capped too tight pins a parameter silently: the fit is then the
+    prior's edge, not a measurement. Passes with none.
+
+    Parameters
+    ----------
+    names : sequence of str
+        The fitted parameters at a bound (``fit``'s ``at_bound``).
+    """
+    names = list(names)
+    if not names:
+        return Check(
+            "at_bound",
+            "pass",
+            [],
+            None,
+            "No fitted parameter sits at a prior bound.",
+        )
+    return Check(
+        "at_bound",
+        "warn",
+        names,
+        None,
+        f"The best fit sits at a prior bound for {', '.join(names)}: the "
+        "data do not constrain it there, or the prior is too tight. Widen "
+        "the prior before reading the value.",
+    )
+
+
+def render_consistency(chi2_model, chi2_render, *, tolerance=0.1, floor=0.02):
+    """Whether the rendered image fits the data as well as the model does.
+
+    A ``MultipoleDisk`` is evaluated in the Fourier domain, but an image
+    is a sum of pixels, so a profile needs more quadrature nodes to render
+    than to fit: the model's χ²/N hardly moves with ``n_r`` while a
+    rendered image's can be 30 per cent worse. An image drawn from a model
+    that fails this check is not the image the fit found.
+
+    Parameters
+    ----------
+    chi2_model, chi2_render : float
+        χ²/N of the model and of its rendered image (same data and scene).
+    tolerance : float, optional
+        Allowed relative difference (default 0.1).
+    floor : float, optional
+        Allowed absolute difference, in χ²/N (default 0.02).
+    """
+    if not (_finite(chi2_model) and _finite(chi2_render)):
+        return Check(
+            "render_consistency",
+            "warn",
+            None,
+            tolerance,
+            "The rendered image's χ² could not be computed.",
+        )
+    gap = abs(chi2_render - chi2_model)
+    ok = gap <= tolerance * chi2_model + floor
+    return Check(
+        "render_consistency",
+        "pass" if ok else "warn",
+        float(chi2_render / chi2_model) if chi2_model > 0 else None,
+        tolerance,
+        (
+            f"χ²/N is {chi2_model:.3g} for the model and {chi2_render:.3g} "
+            "for its rendered image"
+            + (
+                "."
+                if ok
+                else ": the image is not the model the fit found. Refit "
+                "with a larger n_r (suggest_n_r sizes the nodes for the "
+                "visibilities, not for pixels)."
+            )
+        ),
+    )
+
+
+def structure_unconstrained(
+    spread, correlation, *, nats=3.0, minimum=0.8, halffringe=None
+):
+    """Whether the data constrain the structure at all.
+
+    Flat evidences across the length-scale grid alone say the data do not
+    measure ℓ (see ``length_scale``). Flat evidences *and* radial profiles
+    that differ between the fits (a low minimum correlation) say more: the
+    image is the prior's, and a different ℓ, a smaller hole or another
+    strategy would give a different image that fits as well. On poorly
+    constrained data shrinking the hole changed nothing.
+
+    Parameters
+    ----------
+    spread : float
+        Spread (max − min) of the Laplace evidences across ℓ (nats).
+    correlation : float or None
+        Smallest Pearson correlation between the radial profiles of the
+        fits at the grid's lengths.
+    nats : float, optional
+        Spread below which the evidences are flat.
+    minimum : float, optional
+        Correlation below which the profiles are unstable.
+    """
+    if not (_finite(spread) and _finite(correlation)):
+        return Check(
+            "structure_unconstrained",
+            "pass",
+            None,
+            minimum,
+            "Stability of the structure across ℓ was not assessed.",
+        )
+    flat = spread < nats
+    unstable = correlation < minimum
+    if flat and unstable:
+        return Check(
+            "structure_unconstrained",
+            "warn",
+            float(correlation),
+            minimum,
+            f"The evidences across ℓ differ by {spread:.2g} nats and the "
+            f"radial profiles correlate only {correlation:.2g} between "
+            "them: the data do not constrain the structure, so the image "
+            "is mostly the prior. Do not read its features; compare "
+            "another strategy before trusting any.",
+        )
+    return Check(
+        "structure_unconstrained",
+        "pass",
+        float(correlation),
+        minimum,
+        f"The radial profile is stable across ℓ (smallest correlation "
+        f"{correlation:.2g}) or the evidence separates the lengths.",
+    )

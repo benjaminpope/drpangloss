@@ -200,8 +200,11 @@ As built, where the text below left a choice open or the build differed:
 - `posterior` is a setting that defaults to `False` (the Gaussian process's
   latents make NUTS heavy); the stage then records `skipped` and writes no
   `samples.h5`.
-- `error_scale="fit"` is for `"rings"` only: `log_evidence` needs the quoted
-  errors. Constructing `"gp"` with it raises `ValueError`.
+- `error_scale="fit"` is for `"rings"` only: `log_evidence` needs fixed
+  errors. Constructing `"gp"` with it raises `ValueError`. The default,
+  `"auto"`, is `"rescale"` for `"gp"` (one MacKay scale from a baseline fit,
+  then fixed: see "Lessons from imaging real discs") and `"quoted"` for
+  `"rings"`.
 - Each GP fit starts with the geometry of the single-ring `geometry` fit
   held (fast, cached Bessel matrices), then is refitted with `inc` and `pa`
   released: with harmonics and a companion the single ring's position angle
@@ -352,6 +355,12 @@ to the entries named.
    the residuals, or when raising the degree removes it. A low degree is
    the default for this reason.
 
+Added 2026-10-18 (see "Lessons from imaging real discs"), after the checks
+above in `CHECKS` order: `structure_unconstrained` (`"gp"`, after
+`length_scale`), `render_consistency` (`"gp"`) and `at_bound` (both models).
+`length_scale` also warns when the best ℓ is on an edge of the grid after its
+one extension.
+
 As for `StarPipeline`, warnings captured inside a stage (non-convergence
 and so on) become checks appended after these, only when they occurred.
 
@@ -405,6 +414,100 @@ quoted errors near 1 for the rings and near the tutorial's for the GP),
 not against the tutorial's evidences. The tutorial fixes its GP
 hyperparameters by hand from the scene's scale, which a pipeline cannot
 do: the GP run uses its own ℓ grid and σ, and the difference is stated.
+
+### Lessons from imaging real discs (2026-10-18)
+
+From virgil-validation#133: nine VLTI/PIONIER post-AGB discs (De Prins et
+al. 2026), five strategies (MaxEnt, isotropic and anisotropic Cartesian
+`GaussianField`, a polar `MultipoleField`, and a `MultipoleDisk` with a
+residual field), compared with the published ORGANIC images. Each lesson is
+marked **built** (in `DiskPipeline`), **already** (it was the default) or
+**planned** (a model or API change, not built).
+
+1. **Error scale before evidence. Built** for `"gp"`. The MacKay scales on
+   the nine targets were 0.81 to 1.34 (below 1 on five, so PIONIER's errors
+   are conservative on about half the targets, not all), and every fit
+   stalled at χ²/N of 0.5 to 0.7 *on the rescaled errors*, which is the
+   flexible profile fitting noise, not a sign of large errors. The scale is
+   estimated once, from a baseline fit at the middle ℓ with the companion in
+   and the geometry released (a missing component would be absorbed into
+   the scale), and then fixed, so `log_evidence` is on one footing across ℓ.
+   It is the "rescale then fix" mode that the earlier prohibition of
+   `error_scale="fit"` with `"gp"` allowed for. χ²/N is still quoted on the
+   quoted errors, and the scale is reported. Planned: the same for `"rings"`
+   (`laplace_cov` without Gaussian-process latents needs γ from the Hessian).
+2. **A grid must not choose its own edge. Built.** The ℓ/√3 grid already
+   started at one half-fringe (ℓ ≥ 1.7 half-fringes, well above the pixel);
+   the failures on PIONIER were evidence picking the smallest ℓ of a
+   narrow grid (beads, χ²/N about 0.5). Now the best ℓ at either end extends
+   the grid once that way, never below `ell_floor_halffringes` (0.5);
+   `on_grid_edge` is recorded; `length_scale` warns if the best is still on
+   an edge. A σ grid does not exist in the pipeline (σ comes from the
+   single ring's dynamic range), so there is nothing to widen there.
+3. **The outer edge comes from the field, never from the ring. Already.**
+   `r_out` is half of `image_field`; capping a polar GP at 1.5 to 2.5 times
+   the rim radius cost about 560 nats (HD 95767) and 1080 (IW Car) and
+   degraded the images. The `outer_edge` check's remedy (a larger
+   `r_out_mas`) stays the only route to changing it; no stage sets `r_out`
+   from a fitted radius. Faint resolved outer flux is real and a resolved
+   background cannot stand in for it.
+4. **Inner edge is the larger of the half-fringe and the star's radius.
+   Built.** The hole is `max(λ/2B_max, star_diameter_mas / 2)`; the
+   `inner_edge` check stays. On poorly constrained data (PS Gem) shrinking
+   the hole changed nothing (flat evidence, an image that failed against
+   ORGANIC), which `structure_unconstrained` now flags: flat evidences
+   across ℓ and radial profiles that correlate below 0.8 between the fits.
+   It is a within-run proxy for "unstable across strategies"; comparing
+   strategies is a comparison of runs.
+5. **The star model. Built.** A uniform disk (`star_diameter_mas`) and a
+   power-law spectrum (`star_index`; or `star_temperature_k`) are settings.
+   The disk's spectral index is conditional on the star's spectrum (on the
+   real discs it moved by 0.3 to 1.4 with the star's index, and ln Z by 32
+   and 98 for HD 95767 and IW Car), so the summary's `model.star` section
+   records it beside the index. Planned: a fitted star diameter.
+6. **An over-resolved background. Planned.** PIONIER's short baselines
+   need a `models.Resolved` term and its index runs to a prior bound on
+   nearly every target. It is a model change (a fourth part in the
+   `"gp"` System, with `at_bound` already catching the bound), so it is a
+   future `resolved=True` setting. When built, report the total
+   over-resolved flux (the background plus the disk's light beyond `r_out`)
+   and not the separate indices; today `outer_edge` reports the light near
+   `r_out`.
+7. **Prior bounds. Built.** An `at_bound` check lists every fitted parameter
+   within 0.1% of a prior bound (from `fit`'s `at_bound`, as
+   `BinaryPipeline`'s `start_at_bound` does). The companion flux prior is
+   already `LogUniform(1e-4, 1)`, wider than the proposed `(1e-3, 1)`.
+8. **Render consistency. Built as a check.** `render_consistency` compares
+   χ²/N of the model with that of its disk rendered to pixels, on the channel
+   nearest the reference wavelength and with the disk's colour removed (a
+   pixel image has one brightness), the star and companion kept. On the
+   nine targets the disc-plus-field strategy failed a 10 per cent guard on
+   seven (not six), the rendered χ²/N being 32 to 50 per cent above the
+   model's. `suggest_n_r` sizes the nodes for the visibilities, where χ²
+   converges early, and under-resolves a *pixel* image (IW Car: rendered
+   2.44 at 48 nodes, 1.92 at 192, the model's 1.86); the pipeline does not
+   change `n_r`, and the check's remedy is a larger `n_r`.
+9. **Tied geometry. Not in `DiskPipeline` (it uses no `MultipoleField`).**
+   Reading `brightness` of a `MultipoleField(geometry_from=...)` outside
+   `System.resolved()` uses the fallback geometry by design (it is
+   documented as the value for an Image evaluated outside a System), so a
+   user who renders the field before resolving sees a wrong image without an
+   error. A separate small fix: warn, or raise, when `Image.brightness`
+   reads an unresolved tie. Tracked outside this pipeline.
+10. **Which model wins. Guidance; the default is unchanged.** The polar GP
+    (geometry from our own parametric fit) matched ORGANIC best on most
+    targets (NCC 0.93 to 0.98), but the Laplace evidence usually preferred
+    the Cartesian `GaussianField` (by about 20 nats for IW Car and EN TrA;
+    polar was preferred only on IRAS 15469, and the anisotropic Cartesian
+    field on HR 4049 and EN TrA). It strongly disfavoured polar on
+    IRAS 08544, a binary core plus a ring (−262 nats), and by 186, 57 and
+    44 nats on AI Sco, PS Gem and HD 95767. So `"gp"` (a `RadialGP` with
+    harmonics, polar by construction) is the model that assumes a
+    smooth, star-centred, low-order azimuthal disk; read a large evidence
+    deficit against a Cartesian field (not computed by this pipeline) as a
+    reason to doubt that assumption (a binary core, a clump), not as noise.
+    `"gp"` stays the default (Ben's decision, 2026-10-15); changing it, or
+    adding a Cartesian entry to the registry, is Ben's call.
 
 ### Decisions
 

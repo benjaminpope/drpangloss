@@ -130,12 +130,15 @@ DEFAULTS = {
     "inc_max_deg": 85.0,
     "max_rings": 4,
     "ell_halffringes": [1.0, 2.0, 4.0],
+    "ell_floor_halffringes": 0.5,
     "harmonic_degree": 1,
     "spectral_index": None,
     "spectral_index_min_channels": 3,
     "ring_colour": "power_law",
     "wavel0_m": None,
     "star_temperature_k": None,
+    "star_diameter_mas": None,
+    "star_index": None,
     "companion": False,
     "companion_min_delta_chi2": 25.0,
     "companion_max_sep_mas": None,
@@ -146,9 +149,11 @@ DEFAULTS = {
     "inner_edge_correlation": 0.9,
     "outer_edge_fraction": 0.01,
     "inclination_min_deg": 15.0,
+    "render_tolerance": 0.1,
+    "unconstrained_correlation": 0.8,
     "wavel_range": None,
     "error_floor": None,
-    "error_scale": "quoted",
+    "error_scale": "auto",
     "batch_size": None,
     "posterior": False,
     "num_warmup": 1000,
@@ -190,6 +195,7 @@ COMMON_KEYS = {
         "colour",
         "wavel0_m",
         "ell_mas",
+        "star",
     },
     "geometry": {
         "inc_deg",
@@ -204,7 +210,13 @@ COMMON_KEYS = {
         "grid",
     },
     "profile": {"candidates"},
-    "chi2": {"n_independent", "error_scale", "reduced", "error_scales"},
+    "chi2": {
+        "n_independent",
+        "error_scale",
+        "error_scale_factor",
+        "reduced",
+        "error_scales",
+    },
     "compare": {"best", "rows", "residual_search", "raised_search"},
 }
 GP_KEYS = {
@@ -213,6 +225,8 @@ GP_KEYS = {
         "model",
         "best",
         "ell_mas",
+        "on_grid_edge",
+        "grid_extended",
         "flux",
         "inc_deg",
         "pa_deg",
@@ -244,11 +258,15 @@ RINGS_KEYS = {
 }
 GP_CHECKS = [
     "chi2_reduced",
+    "error_scale",
     "length_scale",
+    "structure_unconstrained",
     "inner_edge",
     "outer_edge",
     "inclination",
     "absorbed_companion",
+    "render_consistency",
+    "at_bound",
 ]
 RINGS_CHECKS = [
     "chi2_reduced",
@@ -256,6 +274,7 @@ RINGS_CHECKS = [
     "outer_edge",
     "inclination",
     "absorbed_companion",
+    "at_bound",
     "prior_bound",
     "r_hat",
     "ess",
@@ -299,11 +318,14 @@ def test_api_snapshot():
     assert disk.CHECKS == (
         "chi2_reduced",
         "length_scale",
+        "structure_unconstrained",
         "ring_count",
         "inner_edge",
         "outer_edge",
         "inclination",
         "absorbed_companion",
+        "render_consistency",
+        "at_bound",
     )
     for entry in disk.models().values():
         assert set(entry.checks) <= set(disk.CHECKS)
@@ -344,11 +366,23 @@ def test_settings_and_model_are_validated(data):
         DiskPipeline(data, spectral_index="yes")
     with pytest.raises(ValueError, match="error_scale"):
         DiskPipeline(data, error_scale="rescaled")
+    with pytest.raises(ValueError, match="ell_floor_halffringes"):
+        DiskPipeline(data, ell_halffringes=[0.25, 1.0])
+    with pytest.raises(ValueError, match="star_diameter_mas"):
+        DiskPipeline(data, star_diameter_mas=-1.0)
+    with pytest.raises(ValueError, match="not both"):
+        DiskPipeline(data, star_temperature_k=6000.0, star_index=-3.0)
+    with pytest.raises(ValueError, match="is for model"):
+        DiskPipeline(data, "rings", error_scale="rescale")
     with pytest.raises(TypeError, match="unknown settings"):
         DiskPipeline(data, num_sample=10)
     # The Gaussian process's evidence needs the quoted errors.
     with pytest.raises(ValueError, match="not available for model="):
         DiskPipeline(data, "gp", error_scale="fit")
+    # "auto" is the rescale for the Gaussian process, the quoted errors for rings.
+    assert DiskPipeline(data).error_mode == "rescale"
+    assert DiskPipeline(data, "rings").error_mode == "quoted"
+    assert DiskPipeline(data, error_scale="quoted").error_mode == "quoted"
     DiskPipeline(data, "rings", error_scale="fit")
 
 
@@ -665,7 +699,30 @@ def test_smoke_gp_runs_through_profile(tiny, tmp_path, monkeypatch):
     )
     res = pipeline.run(through="profile")
     assert res.summary["profile"]["candidates"]
-    assert pipeline._report("profile")["geometry_search"]
+    report = pipeline._report("profile")
+    assert report["geometry_search"]
+    # error_scale="auto" is the MacKay rescale for the GP: one scale, found
+    # once and applied to every later fit; the candidates' χ² stay on the
+    # quoted errors, and each carries its evidence.
+    factor = report["error_scale_factor"]
+    assert factor is not None and 0.0 < factor < 10.0
+    row = report["candidates"][0]
+    assert row["chi2"] == pytest.approx(row["chi2_rescaled"] * factor**2)
+    assert onp.isfinite(row["log_evidence"])
+    assert set(report["grid"]) == {
+        "first_best_on_edge",
+        "extended",
+        "on_grid_edge",
+    }
+    # A new object resumes the scale from the report, not from memory.
+    again = DiskPipeline(
+        tiny,
+        "gp",
+        output=tmp_path / "run",
+        **{**_TINY, "n_inc": 3, "r_out_mas": 9.0},
+    )
+    assert again._rescale_factor() == pytest.approx(factor)
+    assert again.processed.d_vis == pytest.approx(tiny.d_vis * factor)
 
 
 def test_smoke_backfit_moves_a_ring(tmp_path, monkeypatch):
@@ -1204,3 +1261,117 @@ def test_cli_disk_run_from_oifits(gp_run, tmp_path, capsys):
     assert cli.main(["validate", str(out)]) == 0
     with pytest.raises(SystemExit):
         cli.main(["disk", str(path), "--model", "cone"])
+
+
+# --- the policies learned on the post-AGB discs ---------------------------------
+
+
+def _row(ell, z):
+    return {"ell_mas": ell, "log_evidence": z}
+
+
+def test_edge_side_finds_a_grid_that_chose_its_own_edge():
+    assert disk._edge_side([_row(1.0, -5.0), _row(2.0, -9.0)]) == "low"
+    assert disk._edge_side([_row(1.0, -9.0), _row(2.0, -5.0)]) == "high"
+    inside = [_row(1.0, -9.0), _row(2.0, -5.0), _row(4.0, -8.0)]
+    assert disk._edge_side(inside) is None
+    # An extension row need not come last: order is by ℓ, not position.
+    shuffled = [_row(1.0, -9.0), _row(4.0, -8.0), _row(0.5, -5.0)]
+    assert disk._edge_side(shuffled) == "low"
+    # One length (or a missing evidence) cannot sit on an edge.
+    assert disk._edge_side([_row(1.0, -5.0)]) is None
+    assert disk._edge_side([_row(1.0, None), _row(2.0, -5.0)]) is None
+
+
+def test_length_scale_warns_when_the_grid_still_chose_its_edge():
+    from virgil.pipeline import _checks
+
+    z, ell = [-10.0, -4.0, -1.0], [1.0, 2.0, 4.0]
+    assert _checks.length_scale(z, ell, 1.0).status == "pass"
+    check = _checks.length_scale(z, ell, 1.0, edge="high")
+    assert check.status == "warn" and "its own edge" in check.message
+
+
+def test_at_bound_lists_every_parameter_at_a_prior_bound():
+    from virgil.pipeline import _checks
+
+    assert _checks.at_bound([]).status == "pass"
+    check = _checks.at_bound(["planet.flux", "disk.flux"])
+    assert check.status == "warn"
+    assert "planet.flux" in check.message and "disk.flux" in check.message
+
+
+def test_render_consistency_compares_the_image_with_the_model():
+    from virgil.pipeline import _checks
+
+    assert _checks.render_consistency(1.86, 1.90).status == "pass"
+    # IW Car at n_r = 48: 2.44 against the model's 1.86.
+    check = _checks.render_consistency(1.86, 2.44)
+    assert check.status == "warn" and "larger n_r" in check.message
+    assert _checks.render_consistency(None, 1.0).status == "warn"
+
+
+def test_structure_unconstrained_needs_flat_evidence_and_unstable_profiles():
+    from virgil.pipeline import _checks
+
+    warn = _checks.structure_unconstrained(0.5, 0.4)
+    assert warn.status == "warn" and "prior" in warn.message
+    # Flat evidence with a stable profile is the length_scale check's case.
+    assert _checks.structure_unconstrained(0.5, 0.97).status == "pass"
+    # An unstable profile that the evidence separates is a measured ℓ.
+    assert _checks.structure_unconstrained(40.0, 0.4).status == "pass"
+    assert _checks.structure_unconstrained(None, None).status == "pass"
+
+
+def test_star_is_a_point_source_until_given_a_size_or_a_spectrum(data):
+    from virgil.models import UniformDisk
+
+    def star(**settings):
+        pipeline = DiskPipeline(data, **settings)
+        report = {"star": disk._star_report(pipeline.settings)}
+        ctx = disk._Context(
+            halffringe=1.0,
+            r_in=1.0,
+            r_out=9.0,
+            n_ring=16,
+            n_gp=16,
+            wavel0=2.0e-6,
+            colour=True,
+            law="power_law",
+            degree=1,
+            star_teff=pipeline.settings["star_temperature_k"],
+            star_diam=pipeline.settings["star_diameter_mas"],
+            star_index=pipeline.settings["star_index"],
+            companion=False,
+            max_sep=1.0,
+            step=1.0,
+            inc_max=85.0,
+            ells=(1.0,),
+            ell_floor=0.5,
+        )
+        return disk._star(ctx), report["star"]
+
+    point, info = star()
+    assert isinstance(point, PointSource) and info["spectrum"] == "grey"
+    resolved, info = star(star_diameter_mas=0.8, star_index=-4.0)
+    assert isinstance(resolved, UniformDisk)
+    assert float(resolved.diam) == pytest.approx(0.8)
+    assert info == {
+        "shape": "uniform disk",
+        "diameter_mas": 0.8,
+        "spectrum": "power law, index -4",
+    }
+    assert float(resolved.flux.index) == pytest.approx(-4.0)
+
+
+def test_the_hole_is_at_least_the_stars_radius(tiny, tmp_path):
+    pipeline = DiskPipeline(
+        tiny,
+        "gp",
+        output=tmp_path / "run",
+        star_diameter_mas=40.0,
+        r_out_mas=60.0,
+    )
+    pipeline.run(through="overview")
+    assert pipeline._report("overview")["r_in_mas"] == pytest.approx(20.0)
+    assert pipeline._report("overview")["star"]["shape"] == "uniform disk"

@@ -56,6 +56,10 @@ _HARMONIC_NODES = 10
 _ALPHA_NODES = 22
 # Squared-exponential equivalent of the Matérn ν = 3/2 length ℓ: ℓ/√3.
 _ELL_PER_EQUIVALENT = math.sqrt(3.0)
+# Largest side (pixels) of the image rendered by the ``render_consistency``
+# check.
+_RENDER_NPIX = 512
+_UNSET = object()
 # Δχ² within which another cell of the geometry grid is a rival minimum.
 _RIVAL_DELTA_CHI2 = _checks.RIVAL_DELTA_CHI2
 _BACKFIT_PASSES = 2
@@ -110,11 +114,14 @@ class DiskModel:
 CHECKS = (
     "chi2_reduced",
     "length_scale",
+    "structure_unconstrained",
     "ring_count",
     "inner_edge",
     "outer_edge",
     "inclination",
     "absorbed_companion",
+    "render_consistency",
+    "at_bound",
 )
 
 _MODELS = None
@@ -139,6 +146,7 @@ def models():
                         "outer_edge",
                         "inclination",
                         "absorbed_companion",
+                        "at_bound",
                     ),
                     candidate="rings",
                 ),
@@ -151,10 +159,13 @@ def models():
                     checks=(
                         "chi2_reduced",
                         "length_scale",
+                        "structure_unconstrained",
                         "inner_edge",
                         "outer_edge",
                         "inclination",
                         "absorbed_companion",
+                        "render_consistency",
+                        "at_bound",
                     ),
                     candidate="gp",
                 ),
@@ -213,16 +224,26 @@ class DiskPipeline(_Pipeline):
       length scale of a grid (ℓ/√3 of 1, 2 and 4 half-fringes by default),
       then refitted with the inclination and position angle released, since
       a single ring's geometry is a few degrees off for a lopsided,
-      multi-ring disk;
-      ``compare`` keeps the length of largest Laplace evidence. σ comes
-      from the dynamic range of the single-ring profile, not from a known
-      truth, and the Matérn smoothness is fixed at ν = 3/2.
+      multi-ring disk. A grid must not choose its own edge: when the best
+      length is the smallest or largest, the grid is extended once that
+      way (not below ``ell_floor_halffringes``), and the ``length_scale``
+      check warns if the best is still on an edge (``on_grid_edge`` in the
+      summary). ``compare`` keeps the length of largest Laplace evidence. σ
+      comes from the dynamic range of the single-ring profile, not from a
+      known truth, and the Matérn smoothness is fixed at ν = 3/2.
 
-    The spectral index is relative to the star, which is a grey reference
-    source unless ``star_temperature_k`` is given. The fit is on the quoted
-    errors unless ``error_scale="fit"`` (rings only, since the Gaussian
-    process's evidence needs the quoted errors), and χ²/N is always
-    reported on the quoted errors. Priors are group-invariant: uniform in
+    The spectral index is relative to the star, so it is conditional on the
+    star's assumed spectrum: the star is a point source with a grey
+    spectrum unless ``star_diameter_mas`` (a uniform disk, which also sets
+    the inner radius to at least its radius), ``star_temperature_k`` or
+    ``star_index`` is given, and the summary says which. Errors: with
+    ``error_scale="rescale"`` (the default for ``"gp"``) one MacKay scale
+    is estimated from the baseline fit at the middle ℓ and the data are
+    rescaled by it, so that every fit and every evidence is on one footing;
+    the scale is reported, and PIONIER-like errors are often conservative
+    (a scale under 1). ``"quoted"`` (the default for ``"rings"``) fits the
+    errors as given, and ``"fit"`` (rings only) samples error scales. χ²/N
+    is always reported on the quoted errors. Priors are group-invariant: uniform in
     ``cos inc``, uniform angles (an ``AngleVector``, with no wrap),
     log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian
     (scale 0.4) on the real and imaginary parts of each ring's harmonics, so
@@ -251,6 +272,8 @@ class DiskPipeline(_Pipeline):
         - ``max_rings`` (4): the most rings fitted (``"rings"``).
         - ``ell_halffringes`` ([1, 2, 4]): the grid of ℓ/√3, in
           half-fringes (``"gp"``).
+        - ``ell_floor_halffringes`` (0.5): the smallest ℓ/√3, in
+          half-fringes, that the grid or its extension may reach.
         - ``harmonic_degree`` (1): the degree of the harmonics (0 for none).
         - ``spectral_index`` (None): ``True`` or ``False`` to force the
           colour on or off; by default it is on with more than
@@ -263,7 +286,10 @@ class DiskPipeline(_Pipeline):
           a broad band that a power law misses.
         - ``wavel0_m`` (None), ``star_temperature_k`` (None): the
           reference wavelength (default the mean wavelength) and the star's
-          blackbody (default a grey reference).
+          blackbody (default a grey reference). ``star_diameter_mas``
+          (None: a point source) makes the star a uniform disk and
+          ``star_index`` (None) gives it a power-law spectrum; only one of
+          ``star_temperature_k`` and ``star_index`` may be set.
         - ``companion`` (False): search the residuals for a point source and
           fit any detection (``companion_min_delta_chi2``, 25) jointly;
           ``companion_max_sep_mas`` (None, i.e. ``r_out_mas``) and
@@ -272,9 +298,13 @@ class DiskPipeline(_Pipeline):
         - ``length_scale_nats`` (3), ``ring_count_nats`` (3),
           ``inner_edge_fraction`` (0.1), ``inner_edge_correlation`` (0.9),
           ``outer_edge_fraction`` (0.01), ``inclination_min_deg`` (15):
-          thresholds of the checks.
-        - ``wavel_range`` (None), ``error_floor`` (None), ``error_scale``
-          ("quoted"), ``batch_size`` (None): as for the other pipelines.
+          thresholds of the checks, and ``render_tolerance`` (0.1) and
+          ``unconstrained_correlation`` (0.8) those of ``render_consistency``
+          and ``structure_unconstrained``.
+        - ``error_scale`` ("auto": ``"rescale"`` for ``"gp"``, ``"quoted"``
+          for ``"rings"``; or ``"quoted"``, ``"fit"`` (rings), ``"rescale"``
+          (gp)), ``wavel_range`` (None), ``error_floor`` (None),
+          ``batch_size`` (None): as for the other pipelines.
         - ``posterior`` (False), ``num_warmup``, ``num_samples``,
           ``num_chains`` (1000, 1000, 4), ``chain_method`` ("vectorized"),
           ``seed`` (0): NUTS.
@@ -309,12 +339,15 @@ class DiskPipeline(_Pipeline):
         "inc_max_deg": 85.0,
         "max_rings": 4,
         "ell_halffringes": [1.0, 2.0, 4.0],
+        "ell_floor_halffringes": 0.5,
         "harmonic_degree": 1,
         "spectral_index": None,
         "spectral_index_min_channels": 3,
         "ring_colour": "power_law",
         "wavel0_m": None,
         "star_temperature_k": None,
+        "star_diameter_mas": None,
+        "star_index": None,
         "companion": False,
         "companion_min_delta_chi2": 25.0,
         "companion_max_sep_mas": None,
@@ -325,9 +358,11 @@ class DiskPipeline(_Pipeline):
         "inner_edge_correlation": 0.9,
         "outer_edge_fraction": 0.01,
         "inclination_min_deg": 15.0,
+        "render_tolerance": 0.1,
+        "unconstrained_correlation": 0.8,
         "wavel_range": None,
         "error_floor": None,
-        "error_scale": "quoted",
+        "error_scale": "auto",
         "batch_size": None,
         "posterior": False,
         "num_warmup": 1000,
@@ -355,8 +390,57 @@ class DiskPipeline(_Pipeline):
         if name == "gp" and self.settings["error_scale"] == "fit":
             raise ValueError(
                 'error_scale="fit" is not available for model="gp": the '
-                "Laplace evidence that chooses ℓ needs the quoted errors."
+                "Laplace evidence that chooses ℓ needs fixed errors; use "
+                '"rescale" (the default), which estimates one scale and '
+                "then fixes it."
             )
+        if name == "rings" and self.settings["error_scale"] == "rescale":
+            raise ValueError(
+                'error_scale="rescale" is for model="gp" (the MacKay scale '
+                'needs Gaussian-process latents); use "fit" for rings.'
+            )
+        if (
+            self.settings["star_temperature_k"] is not None
+            and self.settings["star_index"] is not None
+        ):
+            raise ValueError(
+                "Give star_temperature_k or star_index, not both: each sets "
+                "the star's spectrum."
+            )
+
+    _error_factor = _UNSET
+    _scaled = None
+
+    @property
+    def error_mode(self):
+        """``"quoted"``, ``"fit"`` or ``"rescale"``: ``error_scale`` with
+        ``"auto"`` resolved (``"rescale"`` for ``"gp"``, else ``"quoted"``)."""
+        return _error_mode(self.settings, self.name)
+
+    @property
+    def processed(self):
+        """The data after ``wavel_range`` and ``error_floor``, and (with
+        ``error_scale="rescale"``, once the ``profile`` stage has estimated
+        it) the MacKay error scale: every fit and evidence after that point
+        is on these data."""
+        data = super().processed
+        factor = self._rescale_factor()
+        if factor == 1.0:
+            return data
+        if self._scaled is None or self._scaled[0] != factor:
+            self._scaled = (factor, data.with_error_scale(factor))
+        return self._scaled[1]
+
+    def _rescale_factor(self):
+        if self.error_mode != "rescale":
+            return 1.0
+        if self._error_factor is _UNSET:
+            try:
+                value = self._report("profile").get("error_scale_factor")
+            except (OSError, ValueError, KeyError):
+                value = None
+            self._error_factor = 1.0 if value is None else float(value)
+        return self._error_factor
 
     def _default_model(self):
         return "gp"
@@ -396,8 +480,24 @@ class DiskPipeline(_Pipeline):
             raise ValueError("spectral_index must be None, True or False.")
         if s["ring_colour"] not in ("power_law", "blackbody"):
             raise ValueError('ring_colour must be "power_law" or "blackbody".')
-        if s["error_scale"] not in ("quoted", "fit"):
-            raise ValueError('error_scale must be "quoted" or "fit".')
+        if s["error_scale"] not in ("auto", "quoted", "fit", "rescale"):
+            raise ValueError(
+                'error_scale must be "auto", "quoted", "fit" or "rescale".'
+            )
+        if not s["ell_floor_halffringes"] > 0:
+            raise ValueError("ell_floor_halffringes must be positive.")
+        if any(v < s["ell_floor_halffringes"] for v in ell):
+            raise ValueError(
+                "ell_halffringes must not go below ell_floor_halffringes "
+                f"({s['ell_floor_halffringes']}): a length below the pixel "
+                "scale gives bead-like images that fit with χ²/N far under 1."
+            )
+        if s["star_diameter_mas"] is not None and not (
+            s["star_diameter_mas"] > 0
+        ):
+            raise ValueError("star_diameter_mas must be positive.")
+        if s["star_index"] is not None and not onp.isfinite(s["star_index"]):
+            raise ValueError("star_index must be finite.")
         for name in ("num_samples", "num_chains"):
             if not (isinstance(s[name], int) and s[name] >= 1):
                 raise ValueError(f"{name} must be an integer >= 1.")
@@ -460,6 +560,13 @@ class DiskPipeline(_Pipeline):
         return _summarize(self.name, self.settings, reports)
 
 
+def _error_mode(settings, name):
+    mode = settings["error_scale"]
+    if mode == "auto":
+        return "rescale" if name == "gp" else "quoted"
+    return mode
+
+
 def _model_files(name):
     """The files ``_save_fit`` writes for the model ``models/<name>``."""
     return tuple(
@@ -490,6 +597,9 @@ class _Context:
     step: float
     inc_max: float
     ells: tuple
+    star_diam: float | None = None
+    star_index: float | None = None
+    ell_floor: float = 0.0
 
     @classmethod
     def from_report(cls, settings, overview):
@@ -504,11 +614,14 @@ class _Context:
             law=settings["ring_colour"],
             degree=int(settings["harmonic_degree"]),
             star_teff=settings["star_temperature_k"],
+            star_diam=settings["star_diameter_mas"],
+            star_index=settings["star_index"],
             companion=bool(settings["companion"]),
             max_sep=overview["companion_max_sep_mas"],
             step=overview["companion_step_mas"],
             inc_max=float(settings["inc_max_deg"]),
             ells=tuple(overview["ell_mas"]),
+            ell_floor=overview["ell_floor_mas"],
         )
 
     @property
@@ -546,10 +659,12 @@ def _n_nodes(settings, data, r_in, r_out, halffringe, ell_min):
 
 
 def _load_disk(p):
+    p._error_factor = 1.0  # the data as given, whatever an old run found
     return _load_report(p)
 
 
 def _overview(p):
+    p._error_factor = 1.0
     from ..imaging import image_field
     from ..plotting import plot_oidata_overview, plot_uv_coverage
 
@@ -560,7 +675,10 @@ def _overview(p):
     _save(fig, p.output / "plots" / "overview_uv.png")
 
     halffringe = _geometry(data)["resolution_mas"]
-    r_in = float(s["r_in_mas"] or halffringe)
+    # The hole is the larger of the half-fringe and the star's radius:
+    # compact flux piles up just outside a hole edge that is smaller.
+    star_radius = 0.5 * float(s["star_diameter_mas"] or 0.0)
+    r_in = float(s["r_in_mas"] or max(halffringe, star_radius))
     r_out = float(s["r_out_mas"] or 0.5 * image_field(data))
     if not r_out > r_in:
         raise ValueError(
@@ -585,6 +703,10 @@ def _overview(p):
         "colour": bool(colour),
         "wavel0_m": _wavel0(data, s),
         "ell_mas": ell,
+        "ell_floor_mas": _ELL_PER_EQUIVALENT
+        * s["ell_floor_halffringes"]
+        * halffringe,
+        "star": _star_report(s),
         "companion_max_sep_mas": float(s["companion_max_sep_mas"] or r_out),
         "companion_step_mas": float(
             s["companion_step_mas"] or 0.5 * halffringe
@@ -606,12 +728,42 @@ class _Shape:
 
 
 def _star(ctx):
-    from ..models import PointSource
-    from ..spectra import BlackBody
+    """The star: a point source, or a uniform disk of ``star_diameter_mas``,
+    grey unless ``star_temperature_k`` or ``star_index`` gives it a spectrum.
 
-    if ctx.star_teff is None:
-        return PointSource(flux=1.0)
-    return PointSource(flux=BlackBody(1.0, ctx.star_teff, ctx.wavel0))
+    The disk's spectral index is relative to this star, so it is conditional
+    on the spectrum assumed here (the summary reports it).
+    """
+    from ..models import PointSource, UniformDisk
+    from ..spectra import BlackBody, PowerLaw
+
+    flux = 1.0
+    if ctx.star_teff is not None:
+        flux = BlackBody(1.0, ctx.star_teff, ctx.wavel0)
+    elif ctx.star_index is not None:
+        flux = PowerLaw(1.0, ctx.star_index, ctx.wavel0)
+    if ctx.star_diam is not None:
+        return UniformDisk(diam=ctx.star_diam, flux=flux)
+    return PointSource(flux=flux)
+
+
+def _star_report(settings):
+    """What the star is, for the summary: the disk's colour is relative to it."""
+    if settings["star_temperature_k"] is not None:
+        spectrum = f"blackbody {settings['star_temperature_k']:g} K"
+    elif settings["star_index"] is not None:
+        spectrum = f"power law, index {settings['star_index']:g}"
+    else:
+        spectrum = "grey"
+    return {
+        "shape": (
+            "uniform disk"
+            if settings["star_diameter_mas"] is not None
+            else "point source"
+        ),
+        "diameter_mas": settings["star_diameter_mas"],
+        "spectrum": spectrum,
+    }
 
 
 def _flux(ctx, ratio, colour_value, colour):
@@ -963,6 +1115,7 @@ def _plot_geometry(p, cos_axis, pa_axis, delta):
 
 
 def _geometry_stage(p):
+    p._error_factor = 1.0  # the geometry is found on the quoted errors
     ctx, data = p._ctx(), p.processed
     s = p.settings
     inc_max = math.radians(ctx.inc_max)
@@ -1734,7 +1887,73 @@ def _geometry_search(p, geo, ell):
     return best[1], fit, rows
 
 
+def _mackay_scale(model, data):
+    """MacKay's error scale ``s`` at a Gaussian-process disk's MAP fit.
+
+    ``s² = χ² / (N − γ)`` with ``γ`` the effective number of parameters the
+    data measure (``imaging.error_scale``, here on the disk's latents).
+    """
+    from ..imaging import error_scale
+
+    return float(error_scale(model, data, path="disk"))
+
+
+def _score_ell(p, ell, planet, geo, n_data, k, factor):
+    """Fit the Gaussian-process disk at one ℓ and score it: a candidate row.
+
+    The Laplace evidence is computed on the data the fit used (rescaled with
+    ``error_scale="rescale"``), so every ℓ is scored on one footing.
+    """
+    from ..imaging import log_evidence
+
+    fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)
+    name = f"gp_ell{k}"
+    _save_fit(p.output / "models" / name, fit, list(priors))
+    try:
+        log_z = float(log_evidence(fit.model, p.processed, path="disk"))
+    except Exception as err:  # noqa: BLE001 - reported as a missing evidence
+        warnings.warn(
+            f"The evidence at ℓ = {ell:.3g} mas could not be computed "
+            f"({err}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        log_z = None
+    ctx = p._ctx()
+    return {
+        "name": name,
+        "ell_mas": ell,
+        "ell_equivalent_mas": ell / _ELL_PER_EQUIVALENT,
+        "ell_halffringes": ell / _ELL_PER_EQUIVALENT / ctx.halffringe,
+        # On the quoted errors, whatever scale the fit used.
+        "chi2": fit.chi2 * factor**2,
+        "chi2_reduced": fit.chi2 * factor**2 / n_data,
+        "chi2_rescaled": fit.chi2,
+        "n_free": fit.n_free,
+        "converged": fit.info.get("converged"),
+        "steps": fit.info.get("steps"),
+        "planet": planet is not None,
+        "log_evidence": log_z,
+    }
+
+
+def _edge_side(candidates):
+    """``"low"`` or ``"high"`` when the best evidence is the smallest or the
+    largest ℓ tried, else None (also with fewer than two scored lengths)."""
+    scored = [c for c in candidates if c["log_evidence"] is not None]
+    if len(scored) < 2:
+        return None
+    best = max(scored, key=lambda c: c["log_evidence"])
+    ells = [c["ell_mas"] for c in candidates]
+    if best["ell_mas"] <= min(ells):
+        return "low"
+    if best["ell_mas"] >= max(ells):
+        return "high"
+    return None
+
+
 def _profile_gp(p):
+    p._error_factor = 1.0  # until the baseline fit gives the scale
     ctx, data = p._ctx(), p.processed
     n_data = int(data.n_independent)
     geo = _gp_geometry(p)
@@ -1749,32 +1968,56 @@ def _profile_gp(p):
         searches.append(search)
         if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
             planet = _planet_start(search, ctx)
+    factor = 1.0
+    if p.error_mode == "rescale":
+        # One scale from the baseline fit at the middle ℓ, then fixed: every
+        # fit, evidence and check after this is on the rescaled errors. The
+        # baseline holds the companion when there is one and has the
+        # geometry released: structure the model lacks would be absorbed
+        # into the scale.
+        base, _ = _gp_fit(p, ctx.ell_mid, planet, geo=geo, release=True)
+        factor = _mackay_scale(base.model, data)
+        p._error_factor = factor
+        data = p.processed
     candidates = []
-    for k, ell in enumerate(ctx.ells):
-        fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)
-        name = f"gp_ell{k}"
-        _save_fit(p.output / "models" / name, fit, list(priors))
+    for ell in ctx.ells:
         candidates.append(
-            {
-                "name": name,
-                "ell_mas": ell,
-                "ell_equivalent_mas": ell / _ELL_PER_EQUIVALENT,
-                "ell_halffringes": ell / _ELL_PER_EQUIVALENT / ctx.halffringe,
-                "chi2": fit.chi2,
-                "chi2_reduced": fit.chi2 / n_data,
-                "n_free": fit.n_free,
-                "converged": fit.info.get("converged"),
-                "steps": fit.info.get("steps"),
-                "planet": planet is not None,
-            }
+            _score_ell(p, ell, planet, geo, n_data, len(candidates), factor)
         )
-    for c in candidates:
-        c["ell_index"] = candidates.index(c)
+    # A grid must not choose its own edge: when the best ℓ is the smallest
+    # or the largest, extend the grid once that way (the smallest not below
+    # the floor), and let ``length_scale`` warn if it is still on an edge.
+    side = _edge_side(candidates)
+    extended = None
+    if side is not None:
+        ells = [c["ell_mas"] for c in candidates]
+        new = (
+            max(ctx.ell_floor, min(ells) / 2.0)
+            if side == "low"
+            else 2.0 * max(ells)
+        )
+        if (side == "high" and new > max(ells)) or (
+            side == "low" and new < min(ells) * (1.0 - 1e-9)
+        ):
+            candidates.append(
+                _score_ell(
+                    p, new, planet, geo, n_data, len(candidates), factor
+                )
+            )
+            extended = side
+    for k, c in enumerate(candidates):
+        c["ell_index"] = k
     _plot_profile_fits(p, candidates, "ell_mas", "ℓ (mas)")
     return {
         "candidates": candidates,
         "searches": searches,
         "geometry_search": starts,
+        "error_scale_factor": factor if p.error_mode == "rescale" else None,
+        "grid": {
+            "first_best_on_edge": side,
+            "extended": extended,
+            "on_grid_edge": _edge_side(candidates),
+        },
     }
 
 
@@ -1824,17 +2067,30 @@ def _common_compare(p, model, fit, extra):
     """Numbers every ``compare`` reports, for the preferred model."""
     ctx, data = p._ctx(), p.processed
     n = int(data.n_independent)
+    factor = p._rescale_factor()
+    scales = fit.scales or ({"mackay": factor} if factor != 1.0 else None)
     return {
         "n_independent": n,
         "chi2": fit.chi2,
         "chi2_reduced": fit.chi2 / n,
-        "error_scales": fit.scales or None,
+        "error_scales": scales,
+        "error_scale_factor": factor if p.error_mode == "rescale" else None,
+        "at_bound": _best_at_bound(p),
         "degree": ctx.degree,
         "outer_fraction": _light_fraction(
             model, ctx.r_out - ctx.halffringe, onp.inf
         ),
         **extra,
     }
+
+
+def _best_at_bound(p):
+    """The fitted parameters of ``models/best`` within 0.1% of a prior bound."""
+    try:
+        info = _io.read_json(p.output / "models" / "best" / "info.json")
+    except (OSError, ValueError):
+        return []
+    return list(info.get("at_bound") or [])
 
 
 def _load_candidate(p, name):
@@ -1870,9 +2126,7 @@ def _compare_rings(p):
         flat = _scalars(values)
         sd = _laplace_sd(ctx, shape, names, flat, data)
         log_z = None
-        if p.settings["error_scale"] == "quoted" and all(
-            sd[k] is not None for k in names
-        ):
+        if p.error_mode == "quoted" and all(sd[k] is not None for k in names):
             x = onp.array([flat[k] for k in names])
             cov = onp.asarray(
                 laplace_cov(x, names, _builder(ctx, shape), data)
@@ -1994,30 +2248,88 @@ def _inner_stats(model, data, ctx):
     return value, (cross / denom if denom > 0 else None)
 
 
-def _compare_gp(p):
-    from ..imaging import log_evidence
+def _stability(p, rows):
+    """The evidence spread across ℓ and the smallest correlation between
+    the radial profiles of the fits at each ℓ (None when not computable)."""
+    ctx = p._ctx()
+    z = [r["log_evidence"] for r in rows if r["log_evidence"] is not None]
+    spread = max(z) - min(z) if len(z) >= 2 else None
+    r = onp.linspace(ctx.r_in, ctx.r_out, 200)
+    curves = []
+    for row in rows:
+        _, _, _, model = _load_candidate(p, row["name"])
+        total = _profile_curves(model, r)[0]
+        if onp.all(onp.isfinite(total)) and onp.std(total) > 0:
+            curves.append(onp.asarray(total, dtype=float))
+    if len(curves) < 2:
+        return spread, None
+    corr = onp.corrcoef(onp.stack(curves))
+    return spread, float(onp.min(corr))
+
+
+def _render_stats(p, model):
+    """χ²/N of the model and of its disk rendered to pixels, as a dict.
+
+    Compared on the channel nearest the reference wavelength with the disk's
+    colour removed, so that the pixel image (one brightness) is exactly the
+    disk the model describes there; the star and any companion are kept.
+    ``None`` entries when it cannot be computed.
+    """
+    import equinox as eqx
+    import jax.numpy as np
+
+    from ..imaging import nyquist_pixel_scale
+    from ..models import Image, System
 
     ctx, data = p._ctx(), p.processed
-    rows = []
-    for c in p._report("profile")["candidates"]:
-        _, _, _, model = _load_candidate(p, c["name"])
-        try:
-            log_z = float(log_evidence(model, data, path="disk"))
-        except Exception as err:  # noqa: BLE001 - reported as a missing evidence
-            warnings.warn(
-                f"The evidence at ℓ = {c['ell_mas']:.3g} mas could not be "
-                f"computed ({err}).",
-                RuntimeWarning,
-                stacklevel=2,
+    out = {"chi2_model": None, "chi2_render": None, "npix": None}
+    try:
+        wavel = onp.unique(onp.round(onp.asarray(data.wavel, float), 12))
+        w0 = wavel[onp.argmin(onp.abs(wavel - ctx.wavel0))]
+        channel = data.select(w0 * (1.0 - 1e-6), w0 * (1.0 + 1e-6))
+        n = int(channel.n_independent)
+        if model.disk.spectral_index is not None:
+            model = eqx.tree_at(
+                lambda m: m.disk.spectral_index,
+                model,
+                None,
+                is_leaf=lambda x: x is None,
             )
-            log_z = None
-        rows.append({**c, "log_evidence": log_z})
+        fov = 2.0 * ctx.r_out
+        pixel = max(0.5 * nyquist_pixel_scale(data), fov / _RENDER_NPIX)
+        npix = int(2 * math.ceil(fov / pixel / 2.0))
+        bright = onp.asarray(model.disk.render(npix, fov), dtype=float)
+        bright = bright / bright.sum()
+        image = Image(
+            np.log(np.asarray(onp.clip(bright, 1e-14, None))),
+            fov / npix,
+            flux=model.disk.flux,
+        )
+        swapped = System({**model.components, "disk": image})
+        out["chi2_model"] = _chi2_64(model, channel)[0] / n
+        out["chi2_render"] = _chi2_64(swapped, channel)[0] / n
+        out["npix"] = npix
+    except Exception as err:  # noqa: BLE001 - reported by the check
+        warnings.warn(
+            f"The render check could not run ({err}).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return out
+
+
+def _compare_gp(p):
+    ctx, data = p._ctx(), p.processed
+    # The evidences were computed with the fits, on the data they used.
+    rows = [dict(c) for c in p._report("profile")["candidates"]]
     scored = [r for r in rows if r["log_evidence"] is not None]
     best = max(scored or rows, key=lambda r: r["log_evidence"] or -onp.inf)
     _save_best(p, best["name"])
     _, _, values, model = _load_candidate(p, best["name"])
     fit = _DiskFit(model, {}, {}, best["chi2"], {}, best["n_free"])
     inner_fraction, inner_corr = _inner_stats(model, data, ctx)
+    spread, stability = _stability(p, rows)
+    rendered = _render_stats(p, model)
     geometry = p._report("geometry")
     planet = best["planet"]
     search = _residual_search(p, model)
@@ -2049,6 +2361,10 @@ def _compare_gp(p):
             "rows": rows,
             "inner_fraction": inner_fraction,
             "inner_correlation": inner_corr,
+            "evidence_spread": spread,
+            "profile_correlation": stability,
+            "render": rendered,
+            "grid": p._report("profile")["grid"],
             # The released geometry; the position angle's spread is the
             # single-ring fit's, an approximation used only to gate the
             # inclination check.
@@ -2408,6 +2724,7 @@ _OVERVIEW_KEYS = (
     "colour",
     "wavel0_m",
     "ell_mas",
+    "star",
 )
 _GEOMETRY_KEYS = (
     "inc_deg",
@@ -2454,7 +2771,12 @@ def _disk_section(name, compare):
             ],
         )
     else:
-        section.update(ell_mas=compare["ell_mas"], flux=compare["flux"])
+        section.update(
+            ell_mas=compare["ell_mas"],
+            flux=compare["flux"],
+            on_grid_edge=compare["grid"]["on_grid_edge"],
+            grid_extended=compare["grid"]["extended"],
+        )
     section["inc_deg"] = compare["inc_deg"]
     section["pa_deg"] = compare["pa_deg"]
     section["companion"] = compare["companion"]
@@ -2484,6 +2806,18 @@ def _fit_checks(entry, settings, overview, geometry, compare):
             [r["ell_mas"] for r in rows],
             hf,
             nats=settings["length_scale_nats"],
+            edge=compare["grid"]["on_grid_edge"],
+        )
+        by["structure_unconstrained"] = _checks.structure_unconstrained(
+            compare["evidence_spread"],
+            compare["profile_correlation"],
+            nats=settings["length_scale_nats"],
+            minimum=settings["unconstrained_correlation"],
+        )
+        by["render_consistency"] = _checks.render_consistency(
+            compare["render"]["chi2_model"],
+            compare["render"]["chi2_render"],
+            tolerance=settings["render_tolerance"],
         )
         by["inner_edge"] = _checks.inner_edge(
             compare["inner_fraction"],
@@ -2509,6 +2843,7 @@ def _fit_checks(entry, settings, overview, geometry, compare):
         geometry["grid"]["n_minima"],
         minimum=settings["inclination_min_deg"],
     )
+    by["at_bound"] = _checks.at_bound(compare["at_bound"])
     raised = compare["raised_search"]
     by["absorbed_companion"] = _checks.absorbed_companion(
         compare["residual_search"]["delta_chi2"],
@@ -2558,7 +2893,8 @@ def _summarize(name, settings, reports):
         return sections, checks
     sections["chi2"] = {
         "n_independent": comp["n_independent"],
-        "error_scale": settings["error_scale"],
+        "error_scale": _error_mode(settings, name),
+        "error_scale_factor": comp["error_scale_factor"],
         "reduced": {comp["best"]: comp["chi2_reduced"]},
         "error_scales": comp["error_scales"],
     }
