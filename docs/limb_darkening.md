@@ -41,6 +41,7 @@ from numpyro.infer import MCMC, NUTS, init_to_value
 
 from virgil.coverage import vlti_oidata
 from virgil.fitting import fit
+from virgil.imaging import chi2_by_observable
 from virgil.likelihood import numpyro_model, whitened_residuals
 from virgil.models import (
     LimbDarkenedDisk,
@@ -180,16 +181,23 @@ priors = {
 }
 ld = fit(QuadraticLimbDarkenedDisk(5.0, q1=0.5, q2=0.5), priors, data)
 for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
-    residuals = onp.asarray(whitened_residuals(model, data))
+    # Raw chi-squared per independent datum, on the quoted errors. The
+    # whitened residuals of four-telescope closure phases have more rows
+    # than there are independent data, so dividing by their number would
+    # understate chi-squared.
+    stats = chi2_by_observable(model, data)
     print(
         f"{name:>13}: diam = {float(model.diam):.3f} mas, "
-        f"chi2 per point {onp.mean(residuals**2):.2f} ({residuals.size} points)"
+        f"chi2/N = {stats['chi2_red']['total']:.2f} (N = {stats['n']['total']})"
     )
 ```
 
 ```text
- uniform disk: diam = 5.686 mas, chi2 per point 451.32 (234 points)
-limb-darkened: diam = 6.022 mas, chi2 per point 0.79 (234 points)
+ uniform disk: diam = 5.686 mas, chi2/N = 651.91 (N = 162)
+```
+
+```text
+limb-darkened: diam = 6.022 mas, chi2/N = 1.14 (N = 162)
 ```
 
 A point estimate hides how well the limb darkening is measured. The priors are bounded and $q_1, q_2$ are nonlinear functions of $u_1, u_2$, so a Gaussian (Laplace) approximation is a poor description here. We sample the posterior with NUTS instead, with four chains that all start at the best fit (so the split R-hat printed below checks that they mix within and between chains from a common start, not that they converge from dispersed ones). `numpyro_model` turns the template and the priors into a numpyro model, with no hand-written model function. On the left is the posterior in Kipping's $(q_1, q_2)$, where the prior is uniform over the whole square; on the right are the same samples mapped to $(u_1, u_2)$, inside the physical triangle. The data constrain a combination of the two coefficients much better than either alone, as is usual for limb darkening: $u_1$ and $u_2$ are strongly anticorrelated, and the diameter is correlated with both, since a darker limb also makes the star look smaller.
@@ -252,6 +260,9 @@ plt.show()
 
 ```text
 largest split r_hat over the four chains: 1.02
+```
+
+```text
          truth         posterior
   diam   6.000      6.046 ± 0.058
     q1   0.360      0.573 ± 0.224
@@ -260,7 +271,7 @@ largest split r_hat over the four chains: 1.02
     u2   0.250      0.559 ± 0.243
 ```
 
-![limb_darkening output 11.2](generated/limb_darkening_cell011_out02.png)
+![limb_darkening output 11.3](generated/limb_darkening_cell011_out03.png)
 
 The squared visibilities against spatial frequency show where the difference lies. Both fits agree in the first lobe; beyond the first null the uniform disk's second lobe is too low, while the limb-darkened model follows the data.
 
@@ -307,7 +318,7 @@ print(res.describe())
 ```
 
 ```text
-StarPipeline run in /tmp/tmpugbv9uvd/star_run: complete
+StarPipeline run in /tmp/tmpqs9tzc4_/star_run: complete
   data.n_vis = 108
   data.n_phi = 72
   data.n_independent = 162
