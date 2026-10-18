@@ -13,7 +13,9 @@ the wrong error structure, and the fit pays for it.
 - **The pair test** (virgil-vlti, `design/pionier_systematics.md`: IW Car,
   PIONIER, ESO 1103.D-0797, 11 disjoint pairs of consecutive frames) finds that
   only about 0.32σ of the quoted V² error is white. The rest is an achromatic
-  gain per frame, about 0.55 % per telescope and 0.45 % per baseline on |V|
+  gain per frame. The pair test fits widths on V² (1.1 % per telescope and
+  0.9 % per baseline); on log |V|, the unit of `with_gains` and of the spec,
+  that is half: about 0.55 % per telescope and 0.45 % per baseline
   (ΔlnL = +250 to +275 over independent errors). Closure-phase errors are about
   1.5× too large (white scale 0.65), with an offset of about 0.21° per frame and
   triangle once the target's own change is subtracted. These are lower bounds,
@@ -96,9 +98,10 @@ Rules:
 - `white` are multiplicative scales on the *quoted* errors per observable
   (`v2`, `t3`; `t3` follows the closure-phase naming of `OIData`). Missing key
   means 1.
-- `gains` are 1σ widths on log |V| (the unit of `with_gains`). Note the pair
-  test reports V² widths; virgil-vlti halves them when emitting, so the spec has
-  one unit. `chromatic` is the width of the (λ_ref/λ)² shape of `with_gains`.
+- `gains` are 1σ widths on log |V| (the unit of `with_gains`). `Fit.widths` of
+  the pair test are on V² (IW Car: 1.1 % and 0.9 %), so virgil-vlti halves them
+  when emitting (the example's 0.0055 and 0.0045); the spec has one unit, and
+  the halving happens once, in the emitter only. `chromatic` is the width of the (λ_ref/λ)² shape of `with_gains`.
   `null` leaves a group out.
 - `closure_offsets` are in **radians** (the unit of `with_closure_offsets`);
   virgil-vlti converts from degrees. `triangle` and `baseline` as in
@@ -119,8 +122,10 @@ New module `virgil.noise_spec` (public, small):
 - `validate_noise_spec(spec) -> dict`: returns a normalized copy (floats,
   defaults filled, `null` groups kept) or raises `ValueError` listing every
   problem: wrong schema, negative or non-finite widths, unknown keys, white
-  scale ≤ 0, offsets in implausible units (a width above 0.5 rad is almost
-  surely degrees).
+  scale ≤ 0, offsets in implausible units. Realistic closure-offset widths are about
+  4e-3 rad (0.21°), so a width above 0.05 rad is refused as probably degrees
+  (0.21 written in degrees would otherwise pass as 12°), and one above 0.02 rad
+  warns. Gain widths above 0.1 on log |V| are refused likewise.
 - `load_noise_spec(source)`: path or dict, then `validate_noise_spec`.
 - `apply_noise_spec(data, spec, *, white=True, gains=True, offsets=True)
   -> OIData`: the one function that applies a spec. In order: scale the quoted
@@ -144,21 +149,23 @@ measured width from calibrators or pair tests is more trustworthy than one the
 fit can trade against the image, which is exactly what failed in the post-AGB
 work.
 
-## 2. The pipeline `noise=` setting
+## 2. The pipeline `noise_spec=` setting
 
-All pipelines take `noise`:
+The setting is `noise_spec`, not `noise`: `noise=` already means *fitted
+noise-term priors* in `fit`, `numpyro_model` and `Epochs` (`conventions.md`), a
+different object under a shared-parameter name. All pipelines take `noise_spec`:
 
 - `None` (default): current behaviour, independent errors.
 - A spec dict, or a path (`str`/`PathLike`) to a spec JSON.
 
 Settings resolve as defaults, then the JSON config, then keyword arguments,
-unchanged. In the **config file** `noise` may be a path (relative to the config
+unchanged. In the **config file** `noise_spec` may be a path (relative to the config
 file) or an inline object. The **resolved** setting stored in `run.json` is
 always the full validated spec inline (plus `noise_path`, the path it came
 from, for humans), so a run folder is self-contained and a moved config does
 not change the meaning of a resumed run.
 
-**CLI:** `virgil-pipeline ... --noise spec.json` (and `--noise none` to override
+**CLI:** `virgil-pipeline ... --noise-spec spec.json` (and `--noise-spec none` to override
 a config). No flags for individual widths: a width not in a spec file has no
 provenance.
 
@@ -167,11 +174,15 @@ default drawn from one target (IW Car) would be wrong for most of the nine we
 saw. A pipeline given PIONIER data and no spec instead *warns* (via the
 residual-correlation check, §5) when the residuals show the structure.
 
-Applied when: `load` stage, after selections and error floors and before any
-stage uses the data. Order matters: floors act on the quoted errors, then the
-spec's white scale multiplies the floored errors, as in the pair test (which
-scales the quoted σ). The stage report records the spec's provenance and the
-applied groups.
+Applied when: `load` stage, after selections and before any stage uses the
+data. Order matters: the pair test scaled the *raw quoted* σ, so the white
+scale is applied first and `error_floor` (an absolute floor) after it, so a
+floor stays a floor instead of becoming 0.32 × floor. Because the floor and
+the gains both model excess error, a run that sets both `error_floor` and
+`noise_spec` gets a warning that the floor is probably double counting.
+`apply_noise_spec` therefore takes un-floored data and the `load` stage
+reorders accordingly: spec white scale, then floor, then gains. The stage
+report records the spec's provenance and the applied groups.
 
 **Model compatibility:**
 
@@ -190,8 +201,9 @@ Today `processed.oifits` is the data *as fitted*, so gains and offsets, which
 OIFITS cannot hold, block it. The new rule is to store the **raw processed data
 and the spec**, and rebuild the fitted data by replay.
 
-- `data/processed.oifits`: the data after selections and error floors, *before*
-  the spec. It is always writable for supported data, so the file never carries
+- `data/processed.oifits`: the data after selections, *before* the spec's white scale, the error
+  floor and the gains (which `Result.data()` replays in that order; without a
+  spec the floor is applied as today). It is always writable for supported data, so the file never carries
   the nuisance model.
 - `data/noise_spec.json`: the validated spec, byte-stable (sorted keys).
 - `run.json`: `inputs` gains `noise_sha256` (hash of the canonical spec JSON;
@@ -201,16 +213,20 @@ and the spec**, and rebuild the fitted data by replay.
   resume check additionally compares `noise_sha256` first, so the error message
   can say "the noise spec differs" rather than "the data differ". Changing the
   spec invalidates every stage from `load`.
-- **`virgil.pipeline.load(folder)`** reads `processed.oifits`, replays
-  `apply_noise_spec` with the stored spec, and checks that the resulting
-  fingerprint equals `run.json`'s `data_sha256`. A mismatch is an error: it
-  means the spec application changed between versions (a real reproducibility
-  failure we want to see).
+- **Replay lives in `Result.data()`** (`_io.py`), whose docstring promises the
+  data actually fitted; `virgil.pipeline.load` only builds the `Result`. It reads
+  `processed.oifits`, replays `apply_noise_spec` with the stored spec, and
+  checks two things: the pre-spec fingerprint plus `noise_sha256` (both exact,
+  recorded in `run.json`), and the replayed gain modes against the stored
+  `data_sha256` *with a tolerance*, not byte equality: the modes come from JAX,
+  whose last bits change with version, backend and float32/float64, which the
+  routine lock upgrades would turn into spurious refusals. A tolerance failure
+  is a warning; an exact-hash failure is an error.
 - **`_unsupported_reason`.** The gains/offsets branch is deleted from the
   *writer* check (the writer only ever sees pre-spec data), but a data object
   that reaches the writer *with* gains still gets the same reason string, so a
   hand-built `OIData.with_gains(...)` passed straight to a pipeline keeps working
-  as today: no OIFITS written, reason in the load report. The `noise=` route is
+  as today: no OIFITS written, reason in the load report. The `noise_spec=` route is
   the supported way and loses that limitation. (A pipeline given pre-gained data
   *and* a spec refuses: `apply_noise_spec` will not stack them.)
 
@@ -239,9 +255,14 @@ with the quoted errors". We recommend **B**.
 
 Consequences for B, to settle in the implementation PR:
 
-- `error_scale` with gains uses the same fixed point
-  `s² = χ²_white / (N − γ)` where `χ²` and `γ` are computed under the covariance
-  that includes the gains with fixed widths. The current refusal is lifted only
+- With gains the covariance is `C(s) = s² W + G Gᵀ` (W the diagonal quoted
+  white term, G the fixed gain modes). The MacKay fixed point `s² = χ²/(N − γ)`
+  holds only when the whole covariance scales with `s²`; here setting
+  d ln Z / d s² = 0 has no closed form and reduces to it only for G = 0.
+  Reusing it with gain-aware χ² and γ would bias `s` by treating the
+  gain-dominated directions as if they scaled. So `s` is found by a 1-D
+  maximization of `log_evidence` over `s` (bracketed, log-spaced), and
+  "χ²_white" is not used. The current refusal is lifted only
   for the single-scale path; `by_observable=True` with gains is allowed *per
   observable* only if the gains touch one observable (V² here, so `vis`
   and `phi` scales are well defined). Otherwise it still raises.
@@ -252,16 +273,17 @@ Consequences for B, to settle in the implementation PR:
   failed fit, not a noise measurement.
 
 **Fallback if B proves fragile:** ship A first (error_scale `"rescale"` raises
-`ValueError` when `noise` is set, with a message pointing here) and add B later.
+`ValueError` when `noise_spec` is set, with a message pointing here) and add B later.
 It is a strictly smaller first PR and the default for GP fits would then be
 `"quoted"` when a spec is given.
 
 ### What `"fit"` means with a spec
 
 `"fit"` fits log-uniform scales on V² and closure phase. With a spec, it fits
-those scales *on the white part*, with the spec's gains fixed, starting from
-the spec's white scale. The fitted `vis_scale` multiplies the already-spec-scaled
-errors, so the quoted value `1` means "the spec is right". The gain widths are
+those scales *on the white part*, with the spec's gains fixed. The fitted
+`vis_scale` multiplies the already-spec-scaled errors, so the start is `1` and
+the log-uniform bounds are centred on 1: `1` means "the spec is right". (The
+start is never the spec's white scale, which would apply it twice.) The gain widths are
 never fitted by `"fit"`; fitting them is the existing explicit `noise=`
 site-level API, and is out of pipeline scope for 0.4.1.
 
@@ -305,12 +327,15 @@ errors *and* `f > 2/n_ch`, or when `ρ > 0.3`; fail when `f > 0.6`. Defaults fro
 the nine post-AGB targets (42–87 % and 0.4–0.94 respectively) are conservative;
 tune on them in the test plan. The warning text says: "The V² residuals are
 correlated across channels (…); this is the signature of per-frame calibration
-gains. Measure a noise spec with virgil-vlti's pair test and pass `noise=`; see
-the noise-spec guide." The check is useful **without a spec**: it is the
+gains. Measure a noise spec with virgil-vlti's pair test and pass `noise_spec=`; see
+the noise-spec section of `docs/conventions.md`." The check is useful **without a spec**: it is the
 detector that tells a user they need one. With a spec it should *drop*; staying
 high means the spec's widths are too small, and the text says that instead.
 
-It applies to V² only. Closure-phase offsets share channels the same way but
+Data without a (frame, baseline, channel) layout (`_baseline_layout` returns a
+reason: uv-grid, flagged, projected or single-channel data, where n_ch = 1
+makes f ≡ 1) skip the check with that reason; they neither raise nor fail. It
+applies to V² only. Closure-phase offsets share channels the same way but
 the independent-triangle bookkeeping (`closure_noise.md`) means a first version
 should cover V² and add closure phase only once the null expectation is
 derived.
@@ -333,9 +358,13 @@ derived.
 
 `read_oifits(..., bandwidth=True)` is off by default. PIONIER's six channels
 are broad (R≈40); smearing at long baselines is a few percent in V², the same
-order as the gains we are trying to model. Reading without it biases V² high
-and the gain width absorbs the difference, which would inflate the measured
-spec on a different dataset than the one used to measure it.
+order as the gains we are trying to model. Smearing is a deterministic, smooth function of (u, v, λ), nearly the same in
+two consecutive frames, so it cancels in the pair difference and cannot inflate
+the measured per-frame gain widths. In a fit, unmodelled smearing instead shows
+up as a static, baseline-length-dependent V² deficit that the model or image
+absorbs, which the random per-frame gains do not. So it is a separate bias
+from the one this note addresses, worth fixing on its own account but not a
+reason to doubt the spec.
 
 Recommendation: do **not** change the global default in 0.4.1 (it is a public
 `read_oifits` behaviour change, and a pipeline's `data_sha256` would change for
@@ -344,17 +373,29 @@ every existing run). Instead:
 - the pipelines gain a setting `bandwidth` (default `None` = leave as read),
   which, when `True`, requires that the data were read with `bandwidth=True` and
   errors otherwise with the exact `read_oifits` call;
-- the noise spec's provenance records `bandwidth` (bool) from the measurement,
-  and the pipeline warns if it differs from the data's;
+- the spec's provenance may record `bandwidth` (bool) for information; there is
+  no mismatch warning, since the mechanism above does not operate;
 - the 0.5 question is whether `bandwidth=True` becomes the default; collect the
   IW Car comparison (below) first.
 
 ## 7. Migration, back-compat, tests, order
 
-**Back-compat.** `noise=None` is byte-identical to today: same settings
-resolution, same hash. Existing run folders resume. `run.json` gains `noise_sha256`
+**Back-compat.** `noise_spec=None` leaves the fit and its hash unchanged: same
+settings resolution, same data fingerprint. Existing run folders resume. `run.json` gains `noise_sha256`
 (absent = no spec); the schema version bumps minor (additive). Hand-built
 `with_gains` data keep working through the pipelines exactly as now.
+
+**Behaviour changes for the CHANGELOG.** The residual-correlation check runs on
+every pipeline, with or without a spec, so `summary.json`'s check list and
+worst status change, and most existing PIONIER runs (f of 42–87 %) would go
+from pass to fail at f > 0.6. List it as a behaviour change, or ship it as warn
+only (no fail) in 0.4.1 and raise it to fail in 0.5.
+
+**Stability.** Per `AGENTS.md`, new public features start provisional:
+`virgil.noise_spec` gets `__provisional__ = ("*",)` and the `ADMONITION`; the
+pipelines' `noise_spec` and `bandwidth` settings are listed in
+`docs/stability.md` and the CHANGELOG Stability section. The noise spec is
+documented in `docs/conventions.md` and the pipeline docs, not on a new page.
 
 **Tests (no heavy fits; synthetic OIData).**
 
@@ -371,7 +412,7 @@ resolution, same hash. Existing run folders resume. `run.json` gains `noise_sha2
 - Checks: `residual_correlation` pass on white noise (many seeds, false-alarm
   rate), warn on synthetic gains, quieter after `apply_noise_spec`; the nine
   post-AGB cases as a regression table (kept as numbers, no data).
-- CLI: `--noise` path, inline config, `none` override.
+- CLI: `--noise-spec` path, inline config, `none` override.
 
 **Implementation order.**
 
@@ -379,9 +420,8 @@ resolution, same hash. Existing run folders resume. `run.json` gains `noise_sha2
    unit conversions; `bound` and `bandwidth` provenance. No virgil dependency;
    its test validates against a copy of the schema (or against virgil's
    validator when virgil is installed, skipped otherwise).
-2. **virgil PR 1**: `virgil.noise_spec` (validate, load, apply), docs page
-   "Noise spec", tests.
-3. **virgil PR 2**: pipeline `noise=` setting through `_core`/`_io`, `load`,
+2. **virgil PR 1**: `virgil.noise_spec` (validate, load, apply), `docs/conventions.md` section (no new page), provisional markings, tests.
+3. **virgil PR 2**: pipeline `noise_spec=` setting through `_core`/`_io`, `load`,
    persistence, resume hash, CLI/config, `_unsupported_reason` split. Star,
    Binary and Disk together (they share `_core`), with the evidence-footing
    guard.
