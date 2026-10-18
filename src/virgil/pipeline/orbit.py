@@ -502,7 +502,20 @@ def _read_nights(paths, metadata, gap_days):
     parts, notes = [], {}
     for path in paths:
         entry = meta.get(path, {})
-        data = OIData(path, insname=entry.get("instrument"))
+        try:
+            data = OIData(path, insname=entry.get("instrument"))
+        except ValueError as error:
+            if not str(error).startswith("No unflagged data"):
+                raise ValueError(f"{path}: {error}") from error
+            warnings.warn(f"{path} is skipped: {error}", stacklevel=2)
+            notes[path] = {
+                "path": path,
+                **entry,
+                "skipped": str(error),
+                "nights": [],
+                "datasets": [],
+            }
+            continue
         notes[path] = {"path": path, **entry, "nights": [], "datasets": []}
         for piece in data.split_by_epoch(gap_days):
             if "mjd" in entry:

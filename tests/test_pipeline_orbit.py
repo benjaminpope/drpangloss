@@ -514,6 +514,31 @@ def test_from_oifits_groups_files_into_nights(files):
     ]
 
 
+def test_a_file_with_no_usable_data_is_skipped_with_a_note(files, monkeypatch):
+    import virgil.oidata as oidata
+
+    real = oidata.OIData
+
+    def fake(path, *args, **kwargs):
+        if path == files[2]:
+            raise ValueError("No unflagged data: every visibility is flagged.")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(oidata, "OIData", fake)
+    with pytest.warns(UserWarning, match="skipped"):
+        pipeline = OrbitPipeline.from_oifits(files)
+    assert len(pipeline.data.names) == 2
+    note = next(f for f in pipeline._input_files() if "skipped" in f)
+    assert note["path"].endswith(files[2].rsplit("/", 1)[-1])
+    with pytest.raises(ValueError, match="bad table"):
+        monkeypatch.setattr(
+            oidata,
+            "OIData",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("bad table")),
+        )
+        OrbitPipeline.from_oifits(files[:1], metadata={files[0]: {}})
+
+
 def test_metadata_is_checked(files):
     with pytest.raises(ValueError, match="match no input file"):
         OrbitPipeline.from_oifits(files, {"nothere.oifits": {"epoch": "x"}})
