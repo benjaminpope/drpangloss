@@ -2353,15 +2353,19 @@ def error_scale(model, data, path="env", *, by_observable=False):
     ----------
     model : SourceModel or FitResult
         The MAP model, whose Image at ``path`` has a GaussianField
-        log-brightness, or better the [`FitResult`][virgil.fitting.FitResult]
+        log-brightness (or whose MultipoleDisk at ``path`` has
+        Gaussian-process parts, as for
+        [`log_evidence`][virgil.imaging.log_evidence]), or better the
+        [`FitResult`][virgil.fitting.FitResult]
         itself, so that fitted ``noise=`` terms are caught (a ``ValueError``).
         A list of models raises a ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str or tuple of str or None, optional
         Path of the Image in the model (default ``"env"``), a tuple of paths of
-        Images with GaussianFields (γ counts all their latents), or ``None``
-        for every such Image in the model (a ``TypeError`` if there is none).
+        Images with GaussianFields and Gaussian-process MultipoleDisks (γ
+        counts all their latents), or ``None`` for every such Image and disk
+        in the model (a ``TypeError`` if there is none).
     by_observable : bool, optional
         One scale per kind of observable (default False: one scale for all the
         data), for when the V² and the closure phases are off by different
@@ -2378,9 +2382,7 @@ def error_scale(model, data, path="env", *, by_observable=False):
         is issued if the block scales do not converge.
     """
     model = _single_model(model, "error_scale")
-    latent_paths = tuple(
-        latent for _, latent in _field_latents(model, path, "error_scale")
-    )
+    latent_paths = _evidence_latents(model, path, "error_scale")
     r, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     datasets = _as_list(data)
     if by_observable:
