@@ -51,7 +51,11 @@ Provisional in 0.4:
   `primary_resolved`, `no_orbit` and `period_bound`. `Result.aliases()`
   reloads the search, and `AliasResult` records its prior ranges
   (`AliasResult.prior`).
-
+- **`starting_image(field_mas=...)`** pads the start image with empty pixels
+  out to a field wider than the interferometric limit λ/B_min, which
+  `largest_mas` (a cap) cannot do: `largest_mas=54` used to give HR 4049 a
+  ±17.8 mas grid whatever was asked. `largest_mas` above λ/B_min now
+  warns, naming `field_mas`. Defaults are unchanged.
 - **`DiskPipeline` defaults from imaging nine PIONIER post-AGB discs**
   (provisional, so no deprecation; the lessons are from
   virgil-validation#133). For `model="gp"`, `error_scale="auto"` (the new

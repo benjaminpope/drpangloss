@@ -788,6 +788,13 @@ def envelope_fwhm(data, star=True, aperture_mas=None):
     return _envelope_fit(data, star, aperture_mas)[1]
 
 
+def _pad_brightness(brightness, npix):
+    """``brightness`` zero-padded symmetrically to ``npix`` x ``npix`` (the
+    difference from its own size must be even, to keep the centre pixel)."""
+    margin = (npix - brightness.shape[0]) // 2
+    return np.pad(brightness, margin)
+
+
 @keyword_only("star", "oversample", "largest_mas", "start", "hole_mas")
 def starting_image(
     data,
@@ -800,6 +807,7 @@ def starting_image(
     field_fwhms=6.0,
     inner_elements=4.0,
     aperture_mas=None,
+    pad_to_mas=None,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -807,13 +815,16 @@ def starting_image(
     circular Gaussian envelope with free flux and width, from a few starting
     widths, then builds the image: a field of ``field_fwhms`` envelope FWHMs
     (the rule of [`image_field`][virgil.imaging.image_field], never above
-    ``largest_mas``), pixels ``oversample`` times finer than the Nyquist scale,
+    ``largest_mas`` and never above the interferometric field λ / B_min that
+    [`field_of_view`][virgil.imaging.field_of_view] gives), pixels ``oversample`` times finer than the Nyquist scale,
     and the fitted flux. The pixels are the fitted Gaussian
     (``start="moments"``) or the positive part of the
     [`dirty_image`][virgil.imaging.dirty_image] with the star removed
     (``start="dirty"``; better when the Fourier coverage is dense, worse when
-    sparse). Fit it with ``fit(start, image_priors(start), data,
-    regularizers)``; add a prior on ``"env.flux"`` (``"flux"`` with
+    sparse). To image beyond λ / B_min, for example to leave room for a disc
+    larger than the data size, pass ``pad_to_mas``: the grid is padded with
+    empty pixels (at the floor brightness) out to that width. Fit it with
+    ``fit(start, image_priors(start), data, regularizers)``; add a prior on ``"env.flux"`` (``"flux"`` with
     ``star=False``) to fit the flux too.
 
     Parameters
@@ -828,7 +839,9 @@ def starting_image(
     oversample : float, optional
         Pixels per Nyquist pixel.
     largest_mas : float, optional
-        A cap on the field of view.
+        A cap on the data-sized field. It cannot raise the field above the
+        interferometric limit λ / B_min (a warning says so when it would have);
+        use ``pad_to_mas`` for a larger grid.
     start : {"moments", "dirty"}, optional
         The starting pixels, as above.
     hole_mas : float, optional
@@ -843,6 +856,15 @@ def starting_image(
     aperture_mas : float, optional
         A telescope's field of view, as a ceiling on the field and on the
         envelope's width.
+    pad_to_mas : float, optional
+        The least width (mas) of the grid. Unlike ``EnsembleSpec.field_mas``,
+        which replaces the data's field and is capped at ``field_of_view``, this
+        never shrinks the grid and may exceed that field. If it exceeds the data-sized field,
+        the start image is padded with empty pixels, centred, to
+        ``ceil(pad_to_mas / pixel)`` pixels (one more if needed to keep the
+        centre pixel), at the same pixel scale. Beyond λ / B_min the data
+        do not constrain the flux, so pair a large field with a support or
+        priors. Unset (the default), the field is the data-sized one.
 
     Returns
     -------
@@ -860,8 +882,27 @@ def starting_image(
         aperture_mas=aperture_mas,
         largest_mas=onp.inf if largest_mas is None else largest_mas,
     )
+    if largest_mas is not None:
+        limit = field_of_view(
+            data, largest_mas=onp.inf, aperture_mas=aperture_mas
+        )
+        if largest_mas > limit and fov >= limit * (1.0 - 1e-9):
+            warnings.warn(
+                f"largest_mas={largest_mas:g} is a cap and cannot raise the "
+                f"field above the data's field of view, field_of_view(data) "
+                f"= {limit:.4g} mas (the smallest of λ/B_min, the bandwidth-"
+                "smearing field and aperture_mas), which limits the field "
+                "here. Pass pad_to_mas to pad the start image to a larger "
+                "grid; the data do not constrain flux beyond that field.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
     scale = nyquist_pixel_scale(data) / float(oversample)
-    npix = int(onp.ceil(fov / scale))
+    natural = int(onp.ceil(fov / scale))
+    npix = natural
+    if pad_to_mas is not None and pad_to_mas > natural * scale:
+        npix = int(onp.ceil(pad_to_mas / scale))
+        npix += (npix - natural) % 2
     support = None
     if hole_mas is not None:
         support = circular_support(npix, scale, npix * scale, hole_mas)
@@ -870,11 +911,12 @@ def starting_image(
         # An unresolved envelope drives sigma to its lower bound, and a
         # Gaussian narrower than a pixel samples to zeros: start one pixel wide.
         model = GaussianDisk(max(float(envelope.sigma), scale))
+        # On the larger grid the Gaussian simply continues to its (tiny) tails.
         image = Image.from_model(model, npix, scale, **options)
     elif start == "dirty":
         ratio = float(envelope.flux) if star else None
-        dirty = dirty_image(data, npix, scale, flux_ratio=ratio)
-        positive = np.maximum(dirty, 0.0)
+        dirty = dirty_image(data, natural, scale, flux_ratio=ratio)
+        positive = _pad_brightness(np.maximum(dirty, 0.0), npix)
         image = Image.from_brightness(positive, scale, floor=1e-3, **options)
     else:
         raise ValueError(f"start must be 'moments' or 'dirty', not {start!r}.")
