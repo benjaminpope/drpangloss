@@ -27,6 +27,16 @@ from virgil.oidata import OIData, cp_indices  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 
 T_REF = 60000.0
+
+
+def _chain_factor(rho, n_channels):
+    """The exact AR(1) factor ``1 + 2 Σ (1 - k/n) ρ^k`` of a chain of
+    ``n_channels``, the oracle for ``estimate_factors``."""
+    n = int(n_channels)
+    k = onp.arange(1, n)
+    return float(1.0 + 2.0 * onp.sum((1.0 - k / n) * rho**k))
+
+
 TRUTH = dict(
     period=12.38,
     dt_peri=2.0,
@@ -171,7 +181,7 @@ def test_white_noise_gives_f_within_five_percent_of_one():
 
 
 def test_the_estimator_recovers_f_for_ar1_and_for_common_mode_noise():
-    # AR(1), rho = 0.6, n = 8: f = chain_factor. Common mode, c = 0.6: f =
+    # AR(1), rho = 0.6, n = 8: f = _chain_factor. Common mode, c = 0.6: f =
     # 1 + (n - 1) c = 5.2, which a lag-1 AR(1) estimate puts at 3.2. The
     # inflation of the errors (chi2/N = 12) does not matter.
     rng = onp.random.default_rng(1)
@@ -180,11 +190,11 @@ def test_the_estimator_recovers_f_for_ar1_and_for_common_mode_noise():
     chains = [{"vis": _chains_of(4000, 8)}]
     f_ar = tempering.estimate_factors([{"vis": ar.reshape(-1)}], chains)
     f_cm = tempering.estimate_factors([{"vis": cm.reshape(-1)}], chains)
-    assert f_ar.f == pytest.approx(tempering.chain_factor(0.6, 8), rel=0.07)
+    assert f_ar.f == pytest.approx(_chain_factor(0.6, 8), rel=0.07)
     assert f_cm.f == pytest.approx(5.2, rel=0.07)
     assert f_cm.blocks["vis"] == pytest.approx(f_cm.f)
     # the AR(1) reading of the same lag-1 correlation misses the common mode
-    ar1_guess = tempering.chain_factor(f_cm.rho["vis"], 8)
+    ar1_guess = _chain_factor(f_cm.rho["vis"], 8)
     assert ar1_guess < 0.7 * f_cm.f
     # lag-1 and lag-2 are diagnostics: AR has rho2 = rho1^2, common mode not
     assert f_ar.rho2["vis"] == pytest.approx(f_ar.rho["vis"] ** 2, abs=0.05)
@@ -643,7 +653,7 @@ def test_the_tempered_posterior_is_calibrated_and_the_untempered_one_is_not(
           f"untempered {med[False]:.2f}")  # fmt: skip
     # the estimated f must be the true one (a lag-1 AR(1) estimate gives
     # 3.2 for common mode, truth 5.2, and a median offset near 1.5)
-    truth_f = 1 + 7 * rho if common else tempering.chain_factor(rho, 8)
+    truth_f = 1 + 7 * rho if common else _chain_factor(rho, 8)
     print(f"median f {med['f']:.2f}, truth {truth_f:.2f}")
     assert med["f"] == pytest.approx(truth_f, rel=0.25)
     assert med[True] < 1.45

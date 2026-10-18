@@ -539,9 +539,7 @@ class _Scorer:
             )
             rows = np.asarray(offsets.rows)
             r = r.at[n_vis:stop].set(_profile(r[n_vis:stop], rows, cols))
-        return np.stack(
-            [np.sum(r[a:b] ** 2) for _, a, b, _, _ in self.surface.blocks]
-        )
+        return self.surface.block_chi2(r)
 
     def score(self, chi2, dof, plain, scales):
         if scales == "quoted":

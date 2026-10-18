@@ -21,12 +21,8 @@ __all__ = [
     "adjacent_channels",
     "block_dof",
     "channel_chains",
-    "chain_factor",
     "estimate_factors",
-    "factor_from_correlation",
     "flat_signature",
-    "lag1_correlation",
-    "lag_correlation",
     "out_of_range",
 ]
 
@@ -269,115 +265,6 @@ def out_of_range(f, f_raw=None):
     bottom."""
     f_raw = f if f_raw is None else f_raw
     return bool(f > FLAG_RANGE[1] or f_raw < FLAG_RANGE[0])
-
-
-def lag_correlation(z, chains, lag=1):
-    """The correlation of residuals ``lag`` channels apart within chains,
-    ``Σ z_a z_b`` over ``½ Σ (z_a² + z_b²)``, and the number of pairs.
-
-    It is scale free: inflating every error by one factor leaves it
-    unchanged. NaN for no pairs or a zero residual.
-
-    Parameters
-    ----------
-    z : array
-        Whitened residuals of one block.
-    chains : sequence of array
-        The block's chains (``channel_chains``).
-    lag : int, optional
-        The channel separation (default 1).
-
-    Returns
-    -------
-    rho : float
-    n_pairs : int
-    """
-    return lag1_correlation(z, _pairs_of(chains, lag))
-
-
-def lag1_correlation(z, pairs):
-    """The correlation of neighbouring residuals, ``Σ z_a z_b`` over
-    ``½ Σ (z_a² + z_b²)``, and the number of pairs.
-
-    It is scale free: inflating every error by one factor leaves it
-    unchanged. A diagnostic of ``estimate_factors``, not an input of ``f``.
-
-    Parameters
-    ----------
-    z : array
-        Whitened residuals of one block.
-    pairs : tuple of array
-        Index pairs ``(a, b)`` (``adjacent_channels``).
-
-    Returns
-    -------
-    rho : float
-        NaN for no pairs or a zero residual.
-    n_pairs : int
-    """
-    a, b = pairs
-    if len(a) == 0:
-        return float("nan"), 0
-    z = onp.asarray(z, float)
-    den = 0.5 * onp.sum(z[a] ** 2 + z[b] ** 2)
-    if not den > 0:
-        return float("nan"), len(a)
-    return float(onp.sum(z[a] * z[b]) / den), len(a)
-
-
-def chain_factor(rho, n_channels=onp.inf):
-    """The factor ``f(ρ, n) = 1 + 2 Σ (1 - k/n) ρ^k`` of an AR(1) chain.
-
-    The ratio of points to effective points of a chain of ``n_channels``
-    with correlation ρ^|i-j|: ``(1 + ρ)/(1 - ρ)`` for a long chain, at
-    most ``n_channels``. ``estimate_factors`` does not use it (it measures
-    ``f`` without a model of the correlation); it is the exact value for
-    AR(1) chains, which the tests compare with.
-
-    Parameters
-    ----------
-    rho : float
-        The lag-1 correlation, in (-1, 1).
-    n_channels : float, optional
-        The chain length (default infinite).
-
-    Returns
-    -------
-    float
-    """
-    if not onp.isfinite(n_channels):
-        return (1.0 + rho) / (1.0 - rho)
-    n = max(int(round(n_channels)), 1)
-    k = onp.arange(1, n)
-    return float(1.0 + 2.0 * onp.sum((1.0 - k / n) * rho**k))
-
-
-def factor_from_correlation(rho, n_pairs=None, n_channels=onp.inf):
-    """The AR(1) ``f(ρ, n)`` of a lag-1 correlation, for comparison.
-
-    ρ is limited to ``[-0.5, 0.98]`` and NaN gives 1. This is the old
-    estimator of ``estimate_factors``, kept as a reference: it undercounts
-    common-mode correlation, where ρ2 is not ρ1² (see the module
-    docstring).
-
-    Parameters
-    ----------
-    rho : float
-        The lag-1 correlation.
-    n_pairs : int, optional
-        Unused; kept for the signature of the old estimator.
-    n_channels : float, optional
-        The chain length (default infinite).
-
-    Returns
-    -------
-    float
-        Below 1 for a negative ρ.
-    """
-    if not onp.isfinite(rho):
-        return 1.0
-    rho = float(onp.clip(rho, -0.5, 0.98))
-    return max(chain_factor(rho, n_channels), 1.0 / 3.0)
 
 
 def flat_signature(rho1, rho2, n_pairs):

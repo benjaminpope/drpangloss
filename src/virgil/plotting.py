@@ -597,67 +597,6 @@ def truth_cartesian_and_polar(truth):
     return truth_cart, truth_polar
 
 
-def plot_hmc_fisher_chainconsumer(
-    hmc_table,
-    fisher_table,
-    truth_cartesian,
-    colors=("#1f77b4", "#ff7f0e"),
-):
-    """
-    Plot paired Cartesian and polar ChainConsumer diagnostics for HMC and Fisher-HMC.
-
-    Parameters
-    ----------
-    hmc_table : pandas.DataFrame
-        Posterior table for vanilla HMC.
-    fisher_table : pandas.DataFrame
-        Posterior table for Fisher-reparameterized HMC.
-    truth_cartesian : dict
-        Truth mapping in Cartesian coordinates.
-    colors : tuple[str, str], optional
-        Colors used for HMC and Fisher-HMC chains.
-
-    Returns
-    -------
-    dict
-        Mapping with the ChainConsumer objects (``"cartesian"``,
-        ``"polar"``), their figures (``"cartesian_figures"``,
-        ``"polar_figures"``, each ``(corner, walks)``) and the truth
-        mappings.
-    """
-    truth_cart, truth_polar = truth_cartesian_and_polar(truth_cartesian)
-
-    cartesian_consumer, *cartesian_figures = plot_chainconsumer_diagnostics(
-        {
-            "HMC Cartesian": hmc_table,
-            "Fisher-HMC Cartesian": fisher_table,
-        },
-        columns=["dra", "ddec", "flux"],
-        truth=truth_cart,
-        colors=list(colors),
-    )
-
-    polar_consumer, *polar_figures = plot_chainconsumer_diagnostics(
-        {
-            "HMC Polar": hmc_table,
-            "Fisher-HMC Polar": fisher_table,
-        },
-        columns=["sep", "pa", "flux"],
-        truth=truth_polar,
-        colors=list(colors),
-    )
-
-    return {
-        "cartesian": cartesian_consumer,
-        "polar": polar_consumer,
-        "cartesian_figures": tuple(cartesian_figures),
-        "polar_figures": tuple(polar_figures),
-        "truth_cartesian": truth_cart,
-        "truth_polar": truth_polar,
-    }
-
-
-@_styled
 def _reversed_cmap(cmap):
     """Reverse a colour map given by name or as a ``Colormap``.
 

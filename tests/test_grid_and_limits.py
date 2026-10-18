@@ -354,9 +354,7 @@ def test_diagnostics_table_from_samples_follows_north_to_east_pa_convention():
 
 
 def test_truth_cartesian_and_polar_follows_north_to_east_pa_convention():
-    """Same North-to-East check as above, for the truth-marker helper used
-    by plot_hmc_fisher_chainconsumer.
-    """
+    """Same North-to-East check as above, for the truth-marker helper."""
     truth = {"dra": 40.0, "ddec": 0.0, "flux": 1.0}
     _, truth_polar = truth_cartesian_and_polar(truth)
     assert truth_polar["pa"] == pytest.approx(90.0)
