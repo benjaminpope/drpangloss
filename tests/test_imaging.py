@@ -536,3 +536,21 @@ def test_dirty_image_in_chunks_matches_the_dense_synthesis(monkeypatch):
         monkeypatch.setattr(imaging, "_DIRTY_BATCH", batch)
         got = onp.asarray(dirty_image(data, npix, scale))
         onp.testing.assert_allclose(got, dense, rtol=1e-5, atol=1e-6)
+
+
+def test_a_dirty_start_padded_beyond_the_field_keeps_the_natural_block():
+    truth = System(
+        star=PointSource(),
+        env=_image(gaussian_blob(NPIX, SCALE, 40.0, dra=30.0), flux=0.1),
+    )
+    data = DATA.with_model(truth, key=jax.random.PRNGKey(7))
+    natural = starting_image(data, start="dirty")
+    n = natural.env.log_brightness.shape[0]
+    wide = starting_image(
+        data, start="dirty", pad_to_mas=3.0 * n * natural.env.pixel_scale_mas
+    )
+    m = wide.env.log_brightness.shape[0]
+    assert m >= 3 * n and (m - n) % 2 == 0
+    margin = (m - n) // 2
+    centre = wide.env.log_brightness[margin : margin + n, margin : margin + n]
+    assert np.allclose(centre, natural.env.log_brightness, atol=1e-6)
