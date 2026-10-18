@@ -177,10 +177,14 @@ replay.
 - `data/noise_spec.json`: the validated spec, byte-stable (sorted keys).
 - `run.json`: `inputs.noise_sha256` (hash of the canonical spec JSON; `null`
   without a spec) and the spec inline in the resolved settings.
-- **Resume / `ConfigMismatchError`.** `_check_resume` compares the resolved
-  settings and `data_sha256` (`data_fingerprint`, taken on the *fitted* data, so
-  it already covers the gains). It additionally compares `noise_sha256` first,
-  so the error says "the noise spec differs", not "the data differ". Changing
+- **Resume / `ConfigMismatchError`.** `data_sha256` (`_input_record`,
+  `_check_resume`) is the fingerprint of the *input* data, before `wavel_range`,
+  `error_floor` or any spec, so it does not cover the gains. The inline spec in
+  the resolved settings is compared like any other setting, but `noise_sha256`
+  must be compared explicitly as well: it is the guard that still works when the
+  settings are stored differently, and it gives the message "the noise spec
+  differs" rather than a long settings diff. Skipping it would let a run resume
+  with different widths and fit later stages under another covariance. Changing
   the spec invalidates every stage from `load`.
 - **`summary.json`** gains a shared `noise` section, written by `_write_summary`
   in `_core.py` so no pipeline implements it: `{schema, instrument, sha256,
@@ -188,10 +192,12 @@ replay.
   compare helpers refuse to rank runs whose `sha256` differ (§6).
 - **Replay lives in `Result.data()`**, which promises the data actually fitted.
   It reads `processed.oifits` and replays `apply_noise_spec` with the stored
-  spec. The pre-spec fingerprint and `noise_sha256` are checked exactly (an
-  error on failure). The replayed gain modes are checked against the stored
-  `data_sha256` *with a tolerance*, as a warning: they come from JAX, whose last
-  bits change with version, backend and precision.
+  spec. `run.json` records two new fingerprints written by the `load` stage:
+  `processed_sha256` (the pre-spec data, as written to `processed.oifits`) and
+  `fitted_sha256` (after the spec). The processed fingerprint and `noise_sha256`
+  are checked exactly (an error on failure). The replayed data are checked
+  against `fitted_sha256` *with a tolerance*, as a warning: the gain modes come
+  from JAX, whose last bits change with version, backend and precision.
 - **`_unsupported_reason`**: the gains/offsets branch leaves the writer check
   (the writer only sees pre-spec data) but still triggers for a hand-built
   `with_gains(...)` object passed straight in, exactly as today.
@@ -277,7 +283,7 @@ cannot see (open question below).
 ## 7. Open questions
 
 - **Prepared-data record.** Step one's record (window, exclusions) lives
-  beside the run, not in `run.json`; `data_sha256` proves identity but not
+  beside the run, not in `run.json`; `data_sha256` proves identity of the input but not
   meaning. Should the pipelines accept an optional free-form `prepared_by`
   dict (like `provenance`) stored in `run.json` and `summary.json`, never
   interpreted? Cheap; decide in the PR that adds `noise_spec`.
@@ -351,7 +357,7 @@ PR 3 is cheapest and most valuable alone; if time is short, ship PRs 3 and 2
 **Tests** (synthetic `OIData`, no heavy fits): each `validate` rejection and the
 unit guard; `apply` equals the manual `with_error_scale().with_gains()
 .with_closure_offsets()` chain and refuses double application; a run reproduces
-its fingerprint after `load`, and changing one width raises `ConfigMismatchError`
+its `fitted_sha256` after `load`, and changing one width raises `ConfigMismatchError`
 naming the spec; `processed.oifits` is written for specced data and is the
 pre-spec data; `summary.json` has the `noise` section; the render path cannot
 drop the spec; a pipeline test with a stub instrument (a plain dict, no
@@ -359,5 +365,5 @@ instrument package) shows the pipelines run identically whatever `instrument`
 says.
 
 **Back-compat.** `noise_spec=None` leaves fits and hashes unchanged; existing
-run folders resume. `run.json` gains `inputs.noise_sha256` (absent = no spec),
+run folders resume. `run.json` gains `inputs.noise_sha256`, `processed_sha256` and `fitted_sha256` (absent = no spec or an older run),
 a minor, additive schema bump.
