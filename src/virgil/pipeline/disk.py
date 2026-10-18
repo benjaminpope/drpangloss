@@ -19,17 +19,25 @@ from ._common import (
     _scales_of,
     _chi2_64,
     _m2loglike_64,
-    _SAMPLER_SETTINGS,
-    _bound_samples,
+    _chain_health,
     _diagnostics,
+    _draws,
     _geometry,
+    _integer,
     _interior_start,
     _load_report,
-    _run_chains,
     _noise_quantiles,
-    _quantiles,
-    _sample_stats,
+    _pick,
+    _positive,
+    _prior_bounds,
+    _run_chains,
+    _sampler_checks,
+    _sampler_report,
     _save,
+    _save_fit,
+    _site_summary,
+    _validate_common,
+    _write_samples,
 )
 from ._core import Stage, _Pipeline
 
@@ -453,8 +461,8 @@ class DiskPipeline(_Pipeline):
 
     @classmethod
     def _validate(cls, s):
-        if s["r_in_mas"] is not None and not s["r_in_mas"] > 0:
-            raise ValueError("r_in_mas must be positive.")
+        if s["r_in_mas"] is not None:
+            _positive(s, "r_in_mas")
         if s["r_out_mas"] is not None and not s["r_out_mas"] > (
             s["r_in_mas"] or 0.0
         ):
@@ -464,19 +472,14 @@ class DiskPipeline(_Pipeline):
         ):
             raise ValueError("n_r must be an integer from 8 to 144.")
         for name in ("n_inc", "n_pa"):
-            if not (isinstance(s[name], int) and s[name] >= 2):
-                raise ValueError(f"{name} must be an integer >= 2.")
+            _integer(s, name, 2)
         if not 0.0 < s["inc_max_deg"] < 90.0:
             raise ValueError("inc_max_deg must be between 0 and 90.")
-        if not (isinstance(s["max_rings"], int) and s["max_rings"] >= 1):
-            raise ValueError("max_rings must be an integer >= 1.")
+        _integer(s, "max_rings", 1)
         ell = s["ell_halffringes"]
         if not ell or any(not v > 0 for v in ell):
             raise ValueError("ell_halffringes must be positive numbers.")
-        if not (
-            isinstance(s["harmonic_degree"], int) and s["harmonic_degree"] >= 0
-        ):
-            raise ValueError("harmonic_degree must be an integer >= 0.")
+        _integer(s, "harmonic_degree", 0)
         if s["spectral_index"] not in (None, True, False):
             raise ValueError("spectral_index must be None, True or False.")
         if s["ring_colour"] not in ("power_law", "blackbody"):
@@ -485,35 +488,18 @@ class DiskPipeline(_Pipeline):
             raise ValueError(
                 'error_scale must be "auto", "quoted", "fit" or "rescale".'
             )
-        if not s["ell_floor_halffringes"] > 0:
-            raise ValueError("ell_floor_halffringes must be positive.")
+        _positive(s, "ell_floor_halffringes")
         if any(v < s["ell_floor_halffringes"] for v in ell):
             raise ValueError(
                 "ell_halffringes must not go below ell_floor_halffringes "
                 f"({s['ell_floor_halffringes']}): a length below the pixel "
                 "scale gives bead-like images that fit with χ²/N far under 1."
             )
-        if s["star_diameter_mas"] is not None and not (
-            s["star_diameter_mas"] > 0
-        ):
-            raise ValueError("star_diameter_mas must be positive.")
+        if s["star_diameter_mas"] is not None:
+            _positive(s, "star_diameter_mas")
         if s["star_index"] is not None and not onp.isfinite(s["star_index"]):
             raise ValueError("star_index must be finite.")
-        for name in ("num_samples", "num_chains"):
-            if not (isinstance(s[name], int) and s[name] >= 1):
-                raise ValueError(f"{name} must be an integer >= 1.")
-        if not (isinstance(s["num_warmup"], int) and s["num_warmup"] >= 0):
-            raise ValueError("num_warmup must be an integer >= 0.")
-        if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
-            raise ValueError(
-                'chain_method must be "vectorized", "sequential" or "parallel".'
-            )
-        if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
-            raise ValueError("wavel_range must be [min, max] in metres.")
-        if s["error_floor"] is not None and not isinstance(
-            s["error_floor"], dict
-        ):
-            raise ValueError("error_floor must be a dict of absolute floors.")
+        _validate_common(s)
 
     def _model_digest(self):
         return {
@@ -1158,7 +1144,7 @@ def _geometry_stage(p):
     fit = _fit_rings(p, shape, start)
     values = _scalars(fit.values)
     names = list(_ring_priors(ctx, shape))
-    sd = _laplace_sd(ctx, shape, names, values, data)
+    sd, _ = _laplace(ctx, shape, names, values, data)
     n = int(data.n_independent)
     _save_fit(p.output / "models" / "geometry", fit, names)
     return {
@@ -1189,13 +1175,9 @@ def _geometry_stage(p):
     }
 
 
-def _save_fit(folder, fit, params):
-    _io.save_model(folder, fit.model, fit.values, params)
-    _io.write_json(folder / "info.json", fit.info)
-
-
-def _laplace_sd(ctx, shape, names, values, data):
-    """Laplace standard deviations of the ring scene's scalar parameters."""
+def _laplace(ctx, shape, names, values, data):
+    """``(sd, cov)``: Laplace standard deviations of the ring scene's scalar
+    parameters and their covariance (``None`` where it failed)."""
     from ..inference import laplace_cov
 
     try:
@@ -1208,8 +1190,8 @@ def _laplace_sd(ctx, shape, names, values, data):
             RuntimeWarning,
             stacklevel=2,
         )
-        return {k: None for k in names}
-    return {k: float(v) for k, v in zip(names, sd)}
+        return {k: None for k in names}, None
+    return {k: float(v) for k, v in zip(names, sd)}, cov
 
 
 # === POINT-SOURCE SEARCH ON RESIDUALS ===
@@ -2106,7 +2088,6 @@ def _save_best(p, name):
 
 
 def _compare_rings(p):
-    from ..inference import laplace_cov
     from ..likelihood import whitened_residuals
 
     ctx, data = p._ctx(), p.processed
@@ -2118,13 +2099,9 @@ def _compare_rings(p):
         priors = _ring_priors(ctx, shape)
         names = list(priors)
         flat = _scalars(values)
-        sd = _laplace_sd(ctx, shape, names, flat, data)
+        sd, cov = _laplace(ctx, shape, names, flat, data)
         log_z = None
-        if p.error_mode == "quoted" and all(sd[k] is not None for k in names):
-            x = onp.array([flat[k] for k in names])
-            cov = onp.asarray(
-                laplace_cov(x, names, _builder(ctx, shape), data)
-            )
+        if p.error_mode == "quoted" and cov is not None:
             sign, logdet = onp.linalg.slogdet(cov)
             if sign > 0:
                 r = onp.asarray(whitened_residuals(model, data), dtype=float)
@@ -2615,11 +2592,7 @@ def _nuts(p, model, priors, start):
     mcmc = _run_chains(
         posterior, p.settings, start, dense_mass=True, priors=priors
     )
-    samples = {
-        k: onp.asarray(v)
-        for k, v in mcmc.get_samples(group_by_chain=True).items()
-    }
-    return samples, _sample_stats(mcmc)
+    return _draws(mcmc)
 
 
 def _posterior(p):
@@ -2642,45 +2615,26 @@ def _posterior(p):
     }
     diagnostics = {k: _diagnostics([x]) for k, x in floats.items()}
     summary = {
-        k: {
-            **_quantiles(x, angle=k == pa_site, period=180.0),
-            "std": float(onp.std(x)),
-            **diagnostics[k],
-        }
+        k: _site_summary(x, diagnostics[k], angle=k == pa_site, period=180.0)
         for k, x in floats.items()
         if x.ndim == 2 and not k.endswith("_vec")
     }
-    bound = {
-        k: _bound_samples(priors[k], samples[k])
-        for k in priors
-        if k in samples and samples[k].ndim == 2
+    bounded = {
+        k: priors[k] for k in priors if k in samples and samples[k].ndim == 2
     }
-    _io.write_h5(
-        p.output / "samples.h5",
+    _write_samples(
+        p,
         {"posterior": samples, "sample_stats": stats},
-        attrs={
-            "/": {
-                "schema": _io.SCHEMA,
-                "pa_site": pa_site,
-                "pa_folded": "pa within 90 degrees of the MAP, harmonics of order m times (-1)^m",
-                "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
-            }
-        },
+        pa_site=pa_site,
+        pa_folded="pa within 90 degrees of the MAP, harmonics of order m times (-1)^m",
     )
     return {
         "skipped": False,
         "best": p._report("compare")["best"],
         "params": summary,
         "noise": _noise_quantiles(samples),
-        "num_chains": s["num_chains"],
-        "num_samples": s["num_samples"],
-        "num_warmup": s["num_warmup"],
-        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-        "divergence_fraction": float(onp.mean(stats["diverging"])),
-        "prior_bound_fraction": {
-            k: v for k, v in bound.items() if v is not None
-        },
+        **_sampler_report(s, [_chain_health(diagnostics, stats)]),
+        "prior_bound_fraction": _prior_bounds(bounded, samples),
     }
 
 
@@ -2846,15 +2800,6 @@ def _fit_checks(entry, settings, overview, geometry, compare):
     return [by[name] for name in CHECKS if name in by and name in entry.checks]
 
 
-def _posterior_checks(post):
-    return [
-        _checks.prior_bound(post["prior_bound_fraction"]),
-        _checks.r_hat(post["r_hat_max"]),
-        _checks.ess(post["ess_bulk_min"]),
-        _checks.divergences(post["divergence_fraction"]),
-    ]
-
-
 def _summarize(name, settings, reports):
     entry = models()[name]
     sections, checks = {}, []
@@ -2870,7 +2815,7 @@ def _summarize(name, settings, reports):
         )
     )
     if load:
-        sections["data"] = {k: load[k] for k in _DATA_KEYS}
+        sections["data"] = _pick(load, _DATA_KEYS)
     if over:
         sections["model"] = {
             "name": name,
@@ -2878,7 +2823,7 @@ def _summarize(name, settings, reports):
             **{k: over[k] for k in _OVERVIEW_KEYS},
         }
     if geo:
-        sections["geometry"] = {k: geo[k] for k in _GEOMETRY_KEYS}
+        sections["geometry"] = _pick(geo, _GEOMETRY_KEYS)
     if prof:
         sections["profile"] = {"candidates": prof["candidates"]}
     if not comp:
@@ -2900,6 +2845,6 @@ def _summarize(name, settings, reports):
     checks += _chi2_checks(entry, comp)
     checks += _fit_checks(entry, settings, over, geo, comp)
     if post and not post.get("skipped"):
-        sections["posterior"] = {k: post[k] for k in _POSTERIOR_KEYS}
-        checks += _posterior_checks(post)
+        sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
+        checks += _sampler_checks(post)
     return sections, checks

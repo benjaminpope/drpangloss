@@ -12,18 +12,29 @@ from . import _checks, _io
 from ._common import (
     _overview,
     _quicklook,
-    _SAMPLER_SETTINGS,
+    _chain_health,
+    _corner_trace,
     _diagnostics,
+    _draws,
+    _integer,
     _load_report,
-    _run_chains,
+    _load_start,
     _noise_quantiles,
-    _sample_stats,
-    _bound_samples,
+    _pair,
+    _pick,
+    _positive,
+    _prior_bounds,
+    _run_chains,
+    _sampler_checks,
+    _sampler_report,
+    _site_summary,
+    _validate_common,
+    _write_samples,
     _chi2,
     _geometry,
     _moments,
-    _quantiles,
     _save,
+    _scales_of,
 )
 from .._geometry import separation_pa
 from ._core import Stage, _Pipeline
@@ -220,39 +231,18 @@ class BinaryPipeline(_Pipeline):
 
     @classmethod
     def _validate(cls, s):
-        def positive(name):
-            if not (isinstance(s[name], (int, float)) and s[name] > 0):
-                raise ValueError(f"{name} must be positive; got {s[name]!r}.")
-
         for name in ("sigma", "detection_sigma", "fov_fraction"):
-            positive(name)
-        for name in ("max_sep_mas", "grid_step_mas", "batch_size"):
+            _positive(s, name)
+        for name in ("max_sep_mas", "grid_step_mas"):
             if s[name] is not None:
-                positive(name)
-        for name in ("num_samples", "num_chains", "limit_bins"):
-            if not (isinstance(s[name], int) and s[name] >= 1):
-                raise ValueError(f"{name} must be an integer >= 1.")
-        if not (isinstance(s["max_grid"], int) and s["max_grid"] >= 3):
-            raise ValueError("max_grid must be an integer >= 3.")
-        if not (isinstance(s["num_warmup"], int) and s["num_warmup"] >= 0):
-            raise ValueError("num_warmup must be an integer >= 0.")
-        if not (isinstance(s["n_flux"], int) and s["n_flux"] >= 2):
-            raise ValueError("n_flux must be an integer >= 2.")
-        lo, hi = s["flux_range"]
-        if not 0 < lo < hi:
-            raise ValueError("flux_range must satisfy 0 < min < max.")
+                _positive(s, name)
+        _integer(s, "limit_bins", 1)
+        _integer(s, "max_grid", 3)
+        _integer(s, "n_flux", 2)
+        _pair(s, "flux_range")
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
-        if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
-            raise ValueError(
-                'chain_method must be "vectorized", "sequential" or "parallel".'
-            )
-        if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
-            raise ValueError("wavel_range must be [min, max] in metres.")
-        if s["error_floor"] is not None and not isinstance(
-            s["error_floor"], dict
-        ):
-            raise ValueError("error_floor must be a dict of absolute floors.")
+        _validate_common(s)
 
     # --- shared state, rebuilt on demand so that resume works ------------
 
@@ -661,13 +651,9 @@ def _fit(p):
     result = fit(template, priors, data, noise=p._noise(), init=init)
     values = _fitted_values(result, angular)
     reported = ["sep", "pa", "flux"] if angular else list(priors)
-    _io.save_model(
-        p.output / "models" / "best", result.model, values, reported
-    )
-    _io.write_json(
-        p.output / "models" / "best" / "info.json",
-        _io.clean_json(dict(result.info)),
-    )
+    best = p.output / "models" / "best"
+    _io.save_model(best, result.model, values, reported)
+    _io.write_json(best / "info.json", _io.clean_json(dict(result.info)))
     _plot_fit(p, result, values, list(priors), angular)
     return _fit_report(data, result, values, reported, priors)
 
@@ -728,11 +714,7 @@ def _fit_report(data, result, values, reported, priors):
     # meant to be normal: test only the independent whitened residuals.
     resid = resid[: int(data.n_independent)]
     skew, kurt = _moments(resid)
-    scales = {
-        k.split(".", 1)[1]: float(v)
-        for k, v in values.items()
-        if k.startswith("noise.")
-    }
+    scales = _scales_of(values)
     return {
         "params": {k: float(values[k]) for k in reported},
         "converged": result.info.get("converged"),
@@ -752,80 +734,62 @@ def _fit_report(data, result, values, reported, priors):
 
 
 def _posterior(p):
-    s = p.settings
     fit_report = p._report("fit")
     _, max_sep = p._grid()
     priors = p._priors(max_sep)
     reported = list(fit_report["params"])
     angular = _is_angular(p)
 
-    mcmc = _run_nuts(p, priors, angular)
-    sampled = {
-        k: onp.asarray(v)
-        for k, v in mcmc.get_samples(group_by_chain=True).items()
-    }
+    sampled, stats = _run_nuts(p, priors, angular)
     samples = dict(sampled)
     if angular:
         # The model's own parameters, derived from the sampled offsets.
         samples["sep"], samples["pa"] = separation_pa(
             sampled["dra"], sampled["ddec"]
         )
-    sample_stats = _sample_stats(mcmc)
-    _write_samples(p, samples, sample_stats, reported, fit_report["priors"])
+    _write_samples(
+        p,
+        {"posterior": samples, "sample_stats": stats},
+        params=reported,
+        priors=fit_report["priors"],
+    )
 
     diagnostics = {k: _diagnostics([x]) for k, x in sampled.items()}
     derived = _derived_diagnostics(samples) if angular else {}
     summary = {
-        k: {
-            **_quantiles(samples[k], angle=(k == "pa")),
-            **derived.get(k, diagnostics.get(k, {})),
-        }
+        k: _site_summary(
+            samples[k],
+            derived.get(k, diagnostics.get(k, {})),
+            std=False,
+            angle=(k == "pa"),
+        )
         for k in reported
     }
-    _plot_posterior(p.output, samples, reported)
+    _corner_trace(p.output, samples, reported)
+    health = _chain_health(diagnostics, stats)
     return {
         "params": summary,
         "noise": _noise_quantiles(samples),
-        "num_chains": s["num_chains"],
-        "num_samples": s["num_samples"],
-        "num_warmup": s["num_warmup"],
-        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-        "divergence_fraction": float(onp.mean(sample_stats["diverging"])),
+        **_sampler_report(p.settings, [health]),
         "prior_bound_fraction": _prior_bounds(priors, samples),
     }
 
 
 def _run_nuts(p, priors, angular):
-    """NUTS from the fit, one start per chain; returns the finished MCMC."""
+    """NUTS from the fit, one start per chain: ``(samples, stats)``."""
     from ..likelihood import numpyro_model
 
-    s = p.settings
     best = p.output / "models" / "best"
     model = p._sampled_model() if angular else _io.load_model(best)
-    start = {
-        k: onp.asarray(v)
-        for k, v in _io.load_model_values(best).items()
-        if k in priors
-    }
     posterior = numpyro_model(model, priors, p.processed, noise=p._noise())
-    return _run_chains(posterior, s, start, dense_mass=False, priors=priors)
-
-
-def _write_samples(p, samples, sample_stats, reported, priors):
-    s = p.settings
-    _io.write_h5(
-        p.output / "samples.h5",
-        {"posterior": samples, "sample_stats": sample_stats},
-        attrs={
-            "/": {
-                "schema": _io.SCHEMA,
-                "params": reported,
-                "priors": priors,
-                "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
-            }
-        },
+    mcmc = _run_chains(
+        posterior,
+        p.settings,
+        _load_start(best, priors),
+        dense_mass=False,
+        priors=priors,
     )
+    return _draws(mcmc)
 
 
 def _derived_diagnostics(samples):
@@ -835,25 +799,6 @@ def _derived_diagnostics(samples):
         "sep": _diagnostics([samples["sep"]]),
         "pa": _diagnostics([onp.sin(pa), onp.cos(pa)]),
     }
-
-
-def _prior_bounds(priors, samples):
-    """Fraction of samples at a prior bound, for the priors that have edges."""
-    fractions = {k: _bound_samples(priors[k], samples[k]) for k in priors}
-    return {k: f for k, f in fractions.items() if f is not None}
-
-
-def _plot_posterior(output, samples, reported):
-    import pandas as pd
-
-    from ..plotting import plot_chainconsumer_diagnostics
-
-    flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in reported}
-    _, fig_corner, fig_walk = plot_chainconsumer_diagnostics(
-        {"posterior": pd.DataFrame(flat)}, columns=reported
-    )
-    _save(fig_corner, output / "plots" / "posterior_corner.png")
-    _save(fig_walk, output / "plots" / "posterior_trace.png")
 
 
 # === SUMMARY AND CHECKS ===
@@ -902,10 +847,6 @@ _POSTERIOR_KEYS = (
     "ess_bulk_min",
     "divergence_fraction",
 )
-
-
-def _pick(report, keys):
-    return {k: report[k] for k in keys}
 
 
 def _companion(params, source):
@@ -1003,15 +944,6 @@ def _fit_checks(fit, companion, load):
     return checks
 
 
-def _posterior_checks(post):
-    return [
-        _checks.prior_bound(post["prior_bound_fraction"]),
-        _checks.r_hat(post["r_hat_max"]),
-        _checks.ess(post["ess_bulk_min"]),
-        _checks.divergences(post["divergence_fraction"]),
-    ]
-
-
 def _summarize(settings, reports):
     """``(sections, checks)`` of the summary from the stage reports so far."""
     load, search, limits, fit, post = (
@@ -1036,5 +968,5 @@ def _summarize(settings, reports):
         checks += _fit_checks(fit, sections["companion"], load)
     if post:
         sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-        checks += _posterior_checks(post)
+        checks += _sampler_checks(post)
     return sections, checks

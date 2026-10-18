@@ -5,6 +5,7 @@ prior-bound fractions and figure saving."""
 from __future__ import annotations
 
 import math
+import numbers
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ from scipy import stats
 from .._grid import batch_size_or_default
 from .._precision import cast_tree, in_float64, run_in
 from ..likelihood import model_loglike
-from . import _io
+from . import _checks, _io
 
 # Fraction of a prior's range, at either end, counted as "at the bound".
 _BOUND_FRACTION = 0.01
@@ -514,3 +515,158 @@ def _quantiles(x, angle=False, period=360.0):
     else:
         q = onp.percentile(x, [50, 16, 84])
     return {"median": float(q[0]), "q16": float(q[1]), "q84": float(q[2])}
+
+
+# === POSTERIOR SCAFFOLDING ===
+# The posterior stages differ in what they sample but not in how they report
+# it: draws by site, chain health, a sampler block, one samples.h5 and a
+# corner and trace figure.
+
+
+def _draws(mcmc):
+    """``(samples, stats)`` of a finished run: draws by site and the NUTS
+    statistics, each ``(chain, draw)``."""
+    samples = {
+        k: onp.asarray(v)
+        for k, v in mcmc.get_samples(group_by_chain=True).items()
+    }
+    return samples, _sample_stats(mcmc)
+
+
+def _chain_health(diagnostics, stats):
+    """Worst R-hat, smallest ESS and divergence fraction of one run, from
+    its per-site ``_diagnostics`` and NUTS ``stats``."""
+    return {
+        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
+        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
+        "divergence_fraction": float(onp.mean(stats["diverging"])),
+    }
+
+
+def _sampler_report(settings, parts):
+    """The sampler block of a posterior report: the settings and the worst
+    ``_chain_health`` of ``parts`` (one per model, band or run)."""
+    parts = list(parts)
+    return {
+        "num_chains": settings["num_chains"],
+        "num_samples": settings["num_samples"],
+        "num_warmup": settings["num_warmup"],
+        "r_hat_max": max(m["r_hat_max"] for m in parts),
+        "ess_bulk_min": min(m["ess_bulk_min"] for m in parts),
+        "divergence_fraction": max(m["divergence_fraction"] for m in parts),
+    }
+
+
+def _site_summary(x, diagnostics=None, *, std=True, **angle):
+    """Median and 1σ interval (``angle=True``, ``period=`` for an angle),
+    the standard deviation unless ``std=False``, then the diagnostics."""
+    x = onp.asarray(x, dtype=float).ravel()
+    out = _quantiles(x, **angle)
+    if std:
+        out["std"] = float(onp.std(x))
+    return {**out, **(diagnostics or {})}
+
+
+def _prior_bounds(priors, samples):
+    """Fraction of samples at a prior bound, for the priors that have edges."""
+    fractions = {k: _bound_samples(priors[k], samples[k]) for k in priors}
+    return {k: f for k, f in fractions.items() if f is not None}
+
+
+def _load_start(folder, priors):
+    """The saved model's values for the sampled ``priors``: a start per site."""
+    return {
+        k: onp.asarray(v)
+        for k, v in _io.load_model_values(folder).items()
+        if k in priors
+    }
+
+
+def _write_samples(p, groups, **attrs):
+    """Write ``samples.h5``: ``groups`` with the schema, ``attrs`` and the
+    sampler settings as root attributes."""
+    sampler = {k: p.settings[k] for k in _SAMPLER_SETTINGS}
+    _io.write_h5(
+        p.output / "samples.h5",
+        groups,
+        attrs={"/": {"schema": _io.SCHEMA, **attrs, "sampler": sampler}},
+    )
+
+
+def _corner_trace(output, samples, columns):
+    """Save ``plots/posterior_corner.png`` and ``posterior_trace.png`` for
+    the ``columns`` of ``samples`` (each ``(chain, draw)``)."""
+    import pandas as pd
+
+    from ..plotting import plot_chainconsumer_diagnostics
+
+    flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in columns}
+    _, corner, walks = plot_chainconsumer_diagnostics(
+        {"posterior": pd.DataFrame(flat)}, columns=list(columns)
+    )
+    _save(corner, output / "plots" / "posterior_corner.png")
+    _save(walks, output / "plots" / "posterior_trace.png")
+
+
+def _sampler_checks(post, *, bounds=None, walls=None):
+    """The four sampler checks, in order: prior bounds, R-hat, ESS and
+    divergences. ``bounds`` replaces ``post["prior_bound_fraction"]`` and
+    ``walls`` is the wall probe of the worst model."""
+    return [
+        _checks.prior_bound(
+            post["prior_bound_fraction"] if bounds is None else bounds
+        ),
+        _checks.r_hat(post["r_hat_max"]),
+        _checks.ess(post["ess_bulk_min"]),
+        _checks.divergences(post["divergence_fraction"], walls=walls),
+    ]
+
+
+def _save_fit(folder, fit, params):
+    """Save a ``FitResult`` to ``folder``: the model, its values for
+    ``params`` and ``info.json``."""
+    _io.save_model(folder, fit.model, fit.values, params)
+    _io.write_json(folder / "info.json", fit.info)
+
+
+def _pick(report, keys):
+    return {k: report[k] for k in keys}
+
+
+# === SETTINGS VALIDATION ===
+# Shared checks of the settings dict ``s``; the messages are the contract of
+# the tests, so a pipeline keeps its own for anything it checks itself.
+
+
+def _positive(s, name):
+    if not (isinstance(s[name], numbers.Real) and s[name] > 0):
+        raise ValueError(f"{name} must be positive; got {s[name]!r}.")
+
+
+def _integer(s, name, minimum):
+    if not (isinstance(s[name], int) and s[name] >= minimum):
+        raise ValueError(f"{name} must be an integer >= {minimum}.")
+
+
+def _pair(s, name, low=0):
+    """``name`` is ``[min, max]`` with ``low < min < max``."""
+    pair = s[name]
+    if len(pair) != 2 or not low < pair[0] < pair[1]:
+        raise ValueError(f"{name} must satisfy {low} < min < max.")
+
+
+def _validate_common(s):
+    """The sampler and data settings every pipeline has."""
+    _integer(s, "num_samples", 1)
+    _integer(s, "num_chains", 1)
+    _integer(s, "num_warmup", 0)
+    if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
+        raise ValueError(
+            'chain_method must be "vectorized", "sequential" or "parallel".'
+        )
+    if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
+        raise ValueError("wavel_range must be [min, max] in metres.")
+    if s["error_floor"] is not None and not isinstance(s["error_floor"], dict):
+        raise ValueError("error_floor must be a dict of absolute floors.")
+    if s["batch_size"] is not None:
+        _positive(s, "batch_size")
