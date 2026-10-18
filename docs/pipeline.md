@@ -115,11 +115,11 @@ res.summary["modes"]["delta_log_z"] # its margin over the runner-up, in nats
 res.aliases().table()               # every band: log Z, probability, flags
 ```
 
-Per-file rulings go in `metadata` (`epoch`, `instrument`, `mjd` for a file whose time stamp is wrong) and `exclude` (`{file, night or dataset: reason}`, recorded in `run.json`). The command line is `virgil-pipeline orbit FILES... --output DIR [--metadata FILE.json]`.
+`OrbitPipeline` takes data that the instrument package has already prepared (the channel, band edges, outlier exposures and noise model): it neither selects a channel, trims the band nor screens exposures, and it has no instrument-specific settings, so it works the same for every instrument. Per-file rulings go in `metadata` (`epoch`, and `mjd` for a file whose time stamp is wrong or absent) and `exclude` (`{file, night or dataset: reason}`, recorded in `run.json`). The command line is `virgil-pipeline orbit FILES... --output DIR [--metadata FILE.json]`.
 
 | Stage | What it does | Reuses |
 | --- | --- | --- |
-| `load` | Groups the data into nights, applies `wavel_range` and `error_floor` and records the nights | `OIData.split_by_epoch`, `Epochs` |
+| `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
 | `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
 | `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
 | `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
@@ -197,6 +197,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `bands_failed` (`OrbitPipeline`: alias bands whose fit raised) | any band failed: the winner's margin does not cover it | |
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
 | `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
+| `mode_converged` (`OrbitPipeline`: the best sampled point against the search's best mode) | over 1 nat: the search stopped short of the optimum; raise `n_candidates`, `n_refine` or `max_steps` | |
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |

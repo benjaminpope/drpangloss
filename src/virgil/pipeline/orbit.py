@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import inspect
 import json
 import math
 import warnings
@@ -56,6 +57,15 @@ _AT_BOUND = 0.01
 _BAND_ROWS = 10
 
 
+def _engine_defaults(*names):
+    """The defaults of ``fit_orbit_aliases`` for ``names``: the search
+    effort lives there only."""
+    from ..aliases import fit_orbit_aliases
+
+    params = inspect.signature(fit_orbit_aliases).parameters
+    return {k: params[k].default for k in names}
+
+
 def _x64(fn):
     """Run a stage in float64, as the engine's entry points do."""
 
@@ -75,8 +85,9 @@ class OrbitPipeline(_Pipeline):
 
     Stages: ``load → epochs → search → modes → posterior → quicklook``.
 
-    * ``load`` groups the data into nights, applies ``wavel_range`` and
-      ``error_floor``, and records every file's night.
+    * ``load`` groups the data into nights as given (the data are expected
+      to be prepared already, with the instrument's own channel, band and
+      noise handling) and records every file's night.
     * ``epochs`` finds the companion's position in each night
       ([`epoch_positions`][virgil.epochs.epoch_positions]) on a grid widened
       until no best peak is at its edge, and flags the nights that cannot
@@ -110,8 +121,6 @@ class OrbitPipeline(_Pipeline):
 
         - ``gap_days`` (0.5): frames further apart than this are in
           different nights (``from_oifits``).
-        - ``wavel_range`` (None), ``error_floor`` (None): as for
-          ``BinaryPipeline``.
         - ``exclude`` ({}): ``{file, night or dataset: reason}`` left out,
           a ruling recorded in ``run.json``.
         - ``flag_nights`` (True): flag the nights that cannot seed an orbit.
@@ -128,8 +137,10 @@ class OrbitPipeline(_Pipeline):
         - ``primary_diam`` ("auto"), ``vis_amp`` (True), ``sign_free``
           (True), ``flip_flux`` (True), ``temper`` (True): as for the
           engine.
-        - ``n_bands_max`` (200), ``n_candidates`` (100), ``n_refine`` (6),
-          ``n_is`` (2000): search effort.
+        - ``n_bands_max``, ``n_candidates``, ``n_refine``, ``max_steps``,
+          ``n_is``: search effort; the defaults are those of
+          ``fit_orbit_aliases``, so the engine is the one place to raise
+          them (the ``mode_converged`` check says when to).
         - ``alias_nats`` (10), ``no_orbit_nats`` (10): thresholds of the
           ``alias_ambiguity`` and ``no_orbit`` checks.
         - ``posterior_p_min`` (0.05), ``max_modes`` (3): bands sampled by
@@ -151,8 +162,6 @@ class OrbitPipeline(_Pipeline):
     _SECOND_KEY = "metadata"
     _DEFAULTS = {
         "gap_days": 0.5,
-        "wavel_range": None,
-        "error_floor": None,
         "exclude": {},
         "flag_nights": True,
         "n_peaks": 5,
@@ -169,10 +178,9 @@ class OrbitPipeline(_Pipeline):
         "sign_free": True,
         "flip_flux": True,
         "temper": True,
-        "n_bands_max": 200,
-        "n_candidates": 100,
-        "n_refine": 6,
-        "n_is": 2000,
+        **_engine_defaults(
+            "n_bands_max", "n_candidates", "n_refine", "max_steps", "n_is"
+        ),
         "alias_nats": 10.0,
         "no_orbit_nats": 10.0,
         "posterior_p_min": 0.05,
@@ -210,8 +218,7 @@ class OrbitPipeline(_Pipeline):
             OIFITS files, each split into nights at gaps of ``gap_days``.
         metadata : dict, optional
             ``{file (path or name): {...}}``, each entry giving any of:
-            ``epoch`` (a night label for the file), ``instrument`` (the
-            OIFITS instrument table to read), ``mjd`` (the time of the
+            ``epoch`` (a night label for the file), ``mjd`` (the time of the
             night the file holds, when its stamp is wrong or absent). Rulings that leave data
             out go in the ``exclude`` setting, with their reason.
         output : str or os.PathLike, optional
@@ -260,6 +267,7 @@ class OrbitPipeline(_Pipeline):
             ("n_bands_max", 1),
             ("n_candidates", 1),
             ("n_refine", 1),
+            ("max_steps", 1),
             ("n_is", 1),
             ("max_modes", 1),
             ("num_samples", 1),
@@ -308,36 +316,8 @@ class OrbitPipeline(_Pipeline):
             raise ValueError(
                 'chain_method must be "vectorized", "sequential" or "parallel".'
             )
-        if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
-            raise ValueError("wavel_range must be [min, max] in metres.")
-        if s["error_floor"] is not None and not isinstance(
-            s["error_floor"], dict
-        ):
-            raise ValueError("error_floor must be a dict of absolute floors.")
         if not isinstance(s["exclude"], dict):
             raise ValueError("exclude must be a {name: reason} dict.")
-
-    # --- shared state, rebuilt on demand so that resume works ------------
-
-    @property
-    def processed(self):
-        """The nights after the ``wavel_range`` and ``error_floor`` settings,
-        as an ``Epochs``."""
-        if self._processed is None:
-            s = self.settings
-            mapping = {}
-            for name, epoch, d in zip(
-                self.data.dataset_names, self.data.epoch_of, self.data.data
-            ):
-                if s["wavel_range"] is not None:
-                    d = d.select(*s["wavel_range"])
-                if s["error_floor"] is not None:
-                    d = d.with_error_floor(absolute=s["error_floor"])
-                mapping.setdefault(epoch, {})[name] = d
-            self._processed = _build_epochs(
-                mapping, dict(zip(self.data.dataset_names, self.data.times))
-            )
-        return self._processed
 
     def _data_fingerprint(self):
         epochs = self.data
@@ -481,7 +461,7 @@ def _match_metadata(metadata, paths):
     unknown = sorted(set(metadata) - used)
     if unknown:
         raise ValueError(f"metadata keys {unknown} match no input file.")
-    allowed = {"epoch", "instrument", "mjd"}
+    allowed = {"epoch", "mjd"}
     for path, entry in out.items():
         bad = sorted(set(entry) - allowed)
         if bad:
@@ -503,7 +483,7 @@ def _read_nights(paths, metadata, gap_days):
     for path in paths:
         entry = meta.get(path, {})
         try:
-            data = OIData(path, insname=entry.get("instrument"))
+            data = OIData(path)
         except ValueError as error:
             if not str(error).startswith("No unflagged data"):
                 raise ValueError(f"{path}: {error}") from error
@@ -584,7 +564,7 @@ def _apply_exclude(mapping, exclude, notes):
 
 @_x64
 def _load(p):
-    epochs = p.processed
+    epochs = p.data
     data = list(epochs.data)
     rows = [
         {
@@ -626,7 +606,7 @@ def _position_grid(p, half):
     """The ``(grid, n, step)`` of the position search of half-width ``half``
     (mas); ``max_grid`` coarsens the step (the report says so)."""
     s = p.settings
-    finest = _geometry(list(p.processed.data))["lambda_over_b_mas"]
+    finest = _geometry(list(p.data.data))["lambda_over_b_mas"]
     wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
     most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
     n = min(2 * math.ceil(half / wanted) + 1, most)
@@ -650,7 +630,7 @@ def _night_positions(p):
     # orbits: solved problems"; test_pipeline_orbit.py::
     # test_the_position_grid_widens_until_no_peak_is_on_its_edge).
     s = p.settings
-    coarsest = _geometry(list(p.processed.data))["fov_mas"]
+    coarsest = _geometry(list(p.data.data))["fov_mas"]
     cap = s["a_range"][1] * (1.0 + s["ecc_max"])  # the largest separation
     half = s["max_sep_mas"] or min(coarsest, cap)
     halves = []
@@ -660,7 +640,7 @@ def _night_positions(p):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             found = epoch_positions(
-                p.processed,
+                p.data,
                 grid,
                 n_peaks=s["n_peaks"],
                 s_max=s["s_max"],
@@ -812,7 +792,7 @@ def _search(p):
     # The default run is blind: no period window, start or paper prior
     # (test_blind_search_resolves_the_two_season_gap_alias).
     s = p.settings
-    epochs = p.processed
+    epochs = p.data
     result = fit_orbit_aliases(
         list(epochs.data),
         None if s["period_range"] is None else tuple(s["period_range"]),
@@ -824,6 +804,7 @@ def _search(p):
         s_max=s["s_max"],
         n_candidates=s["n_candidates"],
         n_refine=s["n_refine"],
+        max_steps=s["max_steps"],
         sign_free=s["sign_free"],
         n_is=s["n_is"],
         seed=s["seed"],
@@ -974,7 +955,7 @@ def _modes(p):
 
     s = p.settings
     result = _load_result(p)
-    epochs = p.processed
+    epochs = p.data
     data = list(epochs.data)
     best, bands = result.best, result.bands
     runner = next((b for b in bands[1:] if onp.isfinite(b.log_z)), None)
@@ -1143,7 +1124,21 @@ def _sample_band(p, result, data, n):
     }
     stats = _sample_stats(mcmc)
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
+    summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
     return physical, stats, summary
+
+
+def _optimum_gap(problem, draws, x0, n_max=500):
+    """How far (nats) the best sampled point lies above the start, the
+    search's best mode: positive means the search stopped short of the
+    optimum (a draw cannot beat a true maximum). At most ``n_max`` draws,
+    evenly spread, are scored."""
+    import jax.numpy as np
+
+    keep = draws[:: max(1, len(draws) // n_max)]
+    scored = onp.asarray(problem.batch(np.asarray(keep)))
+    start = float(onp.asarray(problem.batch(np.asarray(x0[None])))[0])
+    return max(0.0, float(onp.nanmax(scored)) - start)
 
 
 def _band_summary(n, physical, drawn, stats, priors, bounds):
@@ -1216,7 +1211,7 @@ def _posterior(p):
             )
         return {"skipped": "no-orbit", "modes": []}
     result = _load_result(p)
-    data = list(p.processed.data)
+    data = list(p.data.data)
     groups, summaries = {}, []
     for n in modes["sampled"]:
         physical, stats, summary = _sample_band(p, result, data, n)
@@ -1238,6 +1233,7 @@ def _posterior(p):
         "divergence_fraction": max(
             m["divergence_fraction"] for m in summaries
         ),
+        "optimum_gap_max": max(m["optimum_gap"] for m in summaries),
         "prior_bound_fraction": _worst_fractions(summaries),
     }
 
@@ -1324,6 +1320,7 @@ _POSTERIOR_KEYS = (
     "r_hat_max",
     "ess_bulk_min",
     "divergence_fraction",
+    "optimum_gap_max",
 )
 
 
@@ -1447,5 +1444,6 @@ def _summarize(settings, reports):
                 _checks.r_hat(post["r_hat_max"]),
                 _checks.ess(post["ess_bulk_min"]),
                 _checks.divergences(post["divergence_fraction"]),
+                _checks.mode_converged(post["optimum_gap_max"]),
             ]
     return sections, checks

@@ -223,7 +223,7 @@ def build_parser():
         if name == "orbit":
             p.add_argument(
                 "--metadata",
-                help="JSON file {file: {epoch, instrument, mjd}} (see "
+                help="JSON file {file: {epoch, mjd}} (see "
                 "OrbitPipeline.from_oifits)",
             )
         if name == "disk":

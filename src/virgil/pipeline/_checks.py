@@ -1509,6 +1509,38 @@ def winner_flags(flags):
     )
 
 
+def mode_converged(gap, *, warn=1.0):
+    """Whether the search's best mode was an optimum.
+
+    Parameters
+    ----------
+    gap : float
+        How far (nats) the best sampled point lies above the mode the
+        search found; a draw cannot beat a true maximum, so a gap means
+        the search stopped short.
+    warn : float, optional
+        Gap above which to warn.
+    """
+    if gap > warn:
+        return Check(
+            "mode_converged",
+            "warn",
+            float(gap),
+            warn,
+            f"The sampler found a point {gap:.3g} nats above the search's "
+            "best mode: the search stopped short of the optimum, so the "
+            "band evidences (and the ranking) may be off. Raise "
+            "`n_candidates`, `n_refine` or `max_steps`.",
+        )
+    return Check(
+        "mode_converged",
+        "pass",
+        float(gap),
+        warn,
+        "The search's best mode is an optimum of the sampled density.",
+    )
+
+
 def tempering(out_of_range, f, f_raw):
     """Whether the correlated-channel tempering is outside what the
     likelihood can trust.

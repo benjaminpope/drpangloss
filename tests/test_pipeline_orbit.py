@@ -35,6 +35,7 @@ from virgil.pipeline import (  # noqa: E402
 from virgil.pipeline import _checks, _quicklook  # noqa: E402
 from virgil.simulate import simulate  # noqa: E402
 from tests._shared import vlti_night  # noqa: E402
+from virgil.pipeline.orbit import _engine_defaults  # noqa: E402
 
 # One xdist worker builds each fixture once.
 pytestmark = pytest.mark.xdist_group("pipeline_orbit")
@@ -107,8 +108,6 @@ API = {
 STAGES = ("load", "epochs", "search", "modes", "posterior", "quicklook")
 DEFAULTS = {
     "gap_days": 0.5,
-    "wavel_range": None,
-    "error_floor": None,
     "exclude": {},
     "flag_nights": True,
     "n_peaks": 5,
@@ -125,10 +124,9 @@ DEFAULTS = {
     "sign_free": True,
     "flip_flux": True,
     "temper": True,
-    "n_bands_max": 200,
-    "n_candidates": 100,
-    "n_refine": 6,
-    "n_is": 2000,
+    **_engine_defaults(
+        "n_bands_max", "n_candidates", "n_refine", "max_steps", "n_is"
+    ),
     "alias_nats": 10.0,
     "no_orbit_nats": 10.0,
     "posterior_p_min": 0.05,
@@ -171,6 +169,7 @@ CHECKS = [
     "r_hat",
     "ess",
     "divergences",
+    "mode_converged",
 ]
 
 
@@ -228,6 +227,7 @@ def test_the_default_run_is_blind():
         ("n_bands_max", "n_bands_max"),
         ("n_candidates", "n_candidates"),
         ("n_refine", "n_refine"),
+        ("max_steps", "max_steps"),
         ("n_is", "n_is"),
         ("seed", "seed"),
     ):
@@ -327,6 +327,7 @@ def _fake_reports():
             "r_hat_max": 1.0,
             "ess_bulk_min": 900.0,
             "divergence_fraction": 0.0,
+            "optimum_gap_max": 0.0,
             "prior_bound_fraction": {"ecc": 0.0},
         },
     }
@@ -384,6 +385,8 @@ def test_partial_and_no_orbit_summaries():
         (_checks.no_orbit, (50.0,), "pass"),
         (_checks.no_orbit, (5.0,), "warn"),
         (_checks.no_orbit, (-1.0,), "fail"),
+        (_checks.mode_converged, (0.0,), "pass"),
+        (_checks.mode_converged, (25.0,), "warn"),
         (_checks.bands_failed, ([],), "pass"),
         (_checks.bands_failed, ([21, 22],), "warn"),
         (_checks.winner_flags, ([],), "pass"),
