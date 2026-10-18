@@ -1017,7 +1017,7 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
 
     from ..grid_fit import likelihood_grid
 
-    ll = onp.asarray(
+    return onp.asarray(
         likelihood_grid(
             functools.partial(_single_ring, ctx),
             data=p.processed,
@@ -1030,7 +1030,6 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
             batch_size=p.settings["batch_size"],
         )
     )
-    return ll
 
 
 def _grid_minima(delta, inc_deg):
@@ -1098,8 +1097,9 @@ def _geometry_stage(p):
 
     ll = _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis)
     ll = onp.where(onp.isfinite(ll), ll, -onp.inf)
-    best_cell = ll.reshape(ll.shape[:2] + (-1,)).max(axis=-1)
-    flat = ll.reshape(ll.shape[:2] + (-1,)).argmax(axis=-1)
+    cells = ll.reshape(ll.shape[:2] + (-1,))
+    best_cell = cells.max(axis=-1)
+    flat = cells.argmax(axis=-1)
     delta = 2.0 * (best_cell.max() - best_cell)
     i, j = onp.unravel_index(int(onp.argmax(best_cell)), best_cell.shape)
     k_r, k_f = onp.unravel_index(
@@ -1118,10 +1118,7 @@ def _geometry_stage(p):
             },
             "geometry": {
                 "delta_chi2": delta,
-                "r1_mas": r_axis[
-                    ll.reshape(ll.shape[:2] + (-1,)).argmax(axis=-1)
-                    // _FLUX_GRID.size
-                ],
+                "r1_mas": r_axis[flat // _FLUX_GRID.size],
             },
         },
         attrs={
@@ -1276,7 +1273,7 @@ def _planet_start(search, ctx):
     return start
 
 
-def _ring_start(ctx, held, n, new, degree, colour):
+def _ring_start(ctx, held, n, new):
     """Starting values of an ``n``-ring scene.
 
     ``held`` has the earlier rings' values; ``new`` is the scan's radius and
@@ -1291,9 +1288,9 @@ def _ring_start(ctx, held, n, new, degree, colour):
             new["f"],
         )
     for ring in range(1, n + 1):
-        if colour:
+        if ctx.colour:
             start.setdefault(f"a{ring}", _colour_start(ctx))
-        for j in range(1, degree + 1):
+        for j in range(1, ctx.degree + 1):
             start.setdefault(f"h{ring}_re{j}", 0.0)
             start.setdefault(f"h{ring}_im{j}", 0.0)
     return start
@@ -1441,9 +1438,7 @@ def _backfit(p, shape, fit):
             new = _scan_new_ring(
                 p, ctx, shape, base, step=0.5 * ctx.halffringe
             )
-            start = _ring_start(
-                ctx, held, shape.n, new, ctx.degree, ctx.colour
-            )
+            start = _ring_start(ctx, held, shape.n, new)
             trial = _fit_rings(p, shape, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
             pairs = _unresolved_pairs(ctx, trial.values, shape.n)
@@ -1496,9 +1491,7 @@ def _prune(p, shape, fit):
         best = None
         for k in range(1, shape.n + 1):
             held = _without_ring(_scalars(fit.values), k)
-            start = _ring_start(
-                ctx, held, smaller.n, None, ctx.degree, ctx.colour
-            )
+            start = _ring_start(ctx, held, smaller.n, None)
             trial = _fit_rings(p, smaller, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
             if d_bic < 0 and (best is None or d_bic < best[2]):
@@ -1535,10 +1528,10 @@ def _profile_rings(p):
             if not k.startswith(("dra", "ddec", "fp", "ap"))
         }
         if n == 1:
-            start = _ring_start(ctx, held, 1, None, ctx.degree, ctx.colour)
+            start = _ring_start(ctx, held, 1, None)
         else:
             new = _scan_new_ring(p, ctx, shape, _fill_new(ctx, held, n))
-            start = _ring_start(ctx, held, n, new, ctx.degree, ctx.colour)
+            start = _ring_start(ctx, held, n, new)
         fit, shape, search, steps = _fit_with_planet(
             p, shape, start, backfit=True
         )
@@ -1740,13 +1733,11 @@ def _companion_report(p, planet):
     }
 
 
-def _gp_fit(
-    p, ell, planet, degree=None, geo=None, release=False, max_steps=None
-):
+def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
     """MAP fit of the Gaussian-process disk at one ℓ.
 
-    The geometry is frozen at ``geo`` (the single-ring fit's by default),
-    which makes the fit fast. A single ring is only an approximation to a
+    The geometry is frozen at ``geo`` (the single-ring fit's), which makes
+    the fit fast. A single ring is only an approximation to a
     lopsided, multi-ring disk, so its inclination and position angle are a
     few degrees off, and a frozen error is paid for by the profile and the
     companion. With ``release`` a second fit frees them, starting from the
@@ -1756,15 +1747,12 @@ def _gp_fit(
     import equinox as eqx
 
     from ..fitting import fit
-    from ..models import System
 
     ctx, data = p._ctx(), p.processed
-    geo = geo or _gp_geometry(p)
     template, priors = _gp_template(ctx, geo, ell, planet, degree)
     frozen = eqx.tree_at(
         lambda m: m.parts[1], template, template.disk.freeze_geometry(data)
     )
-    assert isinstance(frozen, System)
     result = fit(frozen, priors, data, max_steps=max_steps)
     values, info = result.values, result.info
     if release:
@@ -1865,7 +1853,7 @@ def _mackay_scale(model, data):
     return float(error_scale(model, data, path="disk"))
 
 
-def _score_ell(p, ell, planet, geo, n_data, k, factor):
+def _score_ell(p, ell, planet, geo, k):
     """Fit the Gaussian-process disk at one ℓ and score it: a candidate row.
 
     The Laplace evidence is computed on the data the fit used (rescaled with
@@ -1886,7 +1874,8 @@ def _score_ell(p, ell, planet, geo, n_data, k, factor):
             stacklevel=2,
         )
         log_z = None
-    ctx = p._ctx()
+    ctx, factor = p._ctx(), p._rescale_factor()
+    n_data = int(p.processed.n_independent)
     return {
         "name": name,
         "ell_mas": ell,
@@ -1922,7 +1911,6 @@ def _edge_side(candidates):
 def _profile_gp(p):
     p._error_factor = 1.0  # until the baseline fit gives the scale
     ctx, data = p._ctx(), p.processed
-    n_data = int(data.n_independent)
     geo = _gp_geometry(p)
     geo, fit, starts = _geometry_search(p, geo, ctx.ell_mid)
     planet, searches = None, []
@@ -1945,12 +1933,9 @@ def _profile_gp(p):
         base, _ = _gp_fit(p, ctx.ell_mid, planet, geo=geo, release=True)
         factor = _mackay_scale(base.model, data)
         p._error_factor = factor
-        data = p.processed
     candidates = []
     for ell in ctx.ells:
-        candidates.append(
-            _score_ell(p, ell, planet, geo, n_data, len(candidates), factor)
-        )
+        candidates.append(_score_ell(p, ell, planet, geo, len(candidates)))
     # A grid must not choose its own edge: when the best ℓ is the smallest
     # or the largest, extend the grid once that way (the smallest not below
     # the floor), and let ``length_scale`` warn if it is still on an edge.
@@ -1966,11 +1951,7 @@ def _profile_gp(p):
         if (side == "high" and new > max(ells)) or (
             side == "low" and new < min(ells) * (1.0 - 1e-9)
         ):
-            candidates.append(
-                _score_ell(
-                    p, new, planet, geo, n_data, len(candidates), factor
-                )
-            )
+            candidates.append(_score_ell(p, new, planet, geo, len(candidates)))
             extended = side
     for k, c in enumerate(candidates):
         c["ell_index"] = k
@@ -2037,20 +2018,18 @@ def _residual_search(p, model):
     return search
 
 
-def _common_compare(p, model, fit, extra):
+def _common_compare(p, model, chi2, extra):
     """Numbers every ``compare`` reports, for the preferred model."""
     ctx, data = p._ctx(), p.processed
     n = int(data.n_independent)
     factor = p._rescale_factor()
-    scales = fit.scales or (
-        {"mackay": factor} if p.error_mode == "rescale" else None
-    )
+    rescaled = p.error_mode == "rescale"
     return {
         "n_independent": n,
-        "chi2": fit.chi2,
-        "chi2_reduced": fit.chi2 / n,
-        "error_scales": scales,
-        "error_scale_factor": factor if p.error_mode == "rescale" else None,
+        "chi2": chi2,
+        "chi2_reduced": chi2 / n,
+        "error_scales": {"mackay": factor} if rescaled else None,
+        "error_scale_factor": factor if rescaled else None,
         "at_bound": _best_at_bound(p),
         "degree": ctx.degree,
         "outer_fraction": _light_fraction(
@@ -2062,22 +2041,20 @@ def _common_compare(p, model, fit, extra):
 
 def _best_at_bound(p):
     """The fitted parameters of ``models/best`` within 0.1% of a prior bound."""
-    try:
-        info = _io.read_json(p.output / "models" / "best" / "info.json")
-    except (OSError, ValueError):
-        return []
+    info = _io.read_json(p.output / "models" / "best" / "info.json")
     return list(info.get("at_bound") or [])
 
 
 def _load_candidate(p, name):
     folder = p.output / "models" / name
-    manifest = _io.read_json(folder / "manifest.json")
-    values = _io.load_model_values(folder)
-    return folder, manifest, values, _io.load_model(folder)
+    return _io.load_model_values(folder), _io.load_model(folder)
 
 
 def _save_best(p, name):
-    folder, manifest, values, model = _load_candidate(p, name)
+    """Copy candidate ``name`` to ``models/best``; its (values, model)."""
+    folder = p.output / "models" / name
+    values, model = _load_candidate(p, name)
+    manifest = _io.read_json(folder / "manifest.json")
     _io.save_model(
         p.output / "models" / "best", model, values, manifest["params"]
     )
@@ -2085,6 +2062,7 @@ def _save_best(p, name):
         p.output / "models" / "best" / "info.json",
         _io.read_json(folder / "info.json"),
     )
+    return values, model
 
 
 def _compare_rings(p):
@@ -2094,7 +2072,7 @@ def _compare_rings(p):
     rows = []
     for c in p._report("profile")["candidates"]:
         n = c["n"]
-        folder, manifest, values, model = _load_candidate(p, c["name"])
+        values, model = _load_candidate(p, c["name"])
         shape = _Shape(n, ctx.colour, ctx.degree, c["planet"])
         priors = _ring_priors(ctx, shape)
         names = list(priors)
@@ -2128,28 +2106,22 @@ def _compare_rings(p):
     # winner are reported: the data want a profile the rings cannot give.
     split = [r for r in rows if r.get("unresolved")]
     rows = [r for r in rows if not r.get("unresolved")]
-    n_best = min(rows, key=lambda r: r["bic"])["n"]
-    split = [
-        r["n"]
-        for r in split
-        if r["bic"] < next(q for q in rows if q["n"] == n_best)["bic"]
-    ]
+    best = min(rows, key=lambda r: r["bic"])
+    n_best = best["n"]
+    split = [r["n"] for r in split if r["bic"] < best["bic"]]
     evidences = {
         r["n"]: r["log_evidence"]
         for r in rows
         if r["log_evidence"] is not None
     }
     by_evidence = max(evidences, key=evidences.get) if evidences else None
-    best = next(r for r in rows if r["n"] == n_best)
-    _save_best(p, best["name"])
-    _, _, _, model = _load_candidate(p, best["name"])
-    fit = _DiskFit(model, {}, {}, best["chi2"], {}, best["n_free"])
+    _, model = _save_best(p, best["name"])
     search = _residual_search(p, model)
     pa_sd = best["sd"].get("pa")
     report = _common_compare(
         p,
         model,
-        fit,
+        best["chi2"],
         {
             "best": best["name"],
             "n_best": n_best,
@@ -2228,7 +2200,7 @@ def _stability(p, rows):
     r = onp.linspace(ctx.r_in, ctx.r_out, 200)
     curves = []
     for row in rows:
-        _, _, _, model = _load_candidate(p, row["name"])
+        model = _load_candidate(p, row["name"])[1]
         total = _profile_curves(model, r)[0]
         if onp.all(onp.isfinite(total)) and onp.std(total) > 0:
             curves.append(onp.asarray(total, dtype=float))
@@ -2295,25 +2267,18 @@ def _compare_gp(p):
     rows = [dict(c) for c in p._report("profile")["candidates"]]
     scored = [r for r in rows if r["log_evidence"] is not None]
     best = max(scored or rows, key=lambda r: r["log_evidence"] or -onp.inf)
-    _save_best(p, best["name"])
-    _, _, values, model = _load_candidate(p, best["name"])
-    fit = _DiskFit(model, {}, {}, best["chi2"], {}, best["n_free"])
+    values, model = _save_best(p, best["name"])
     inner_fraction, inner_corr = _inner_stats(model, data, ctx)
     spread, stability = _stability(p, rows)
     rendered = _render_stats(p, model)
     geometry = p._report("geometry")
-    planet = best["planet"]
+    planet_values = (
+        _planet_values(values, ctx.colour) if best["planet"] else None
+    )
     search = _residual_search(p, model)
     raised = None
     if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
         # Does a higher harmonic degree remove it?
-        planet_values = (
-            _planet_values(
-                _io.load_model_values(p.output / "models" / "best"), ctx.colour
-            )
-            if planet
-            else None
-        )
         higher, _ = _gp_fit(
             p,
             best["ell_mas"],
@@ -2325,7 +2290,7 @@ def _compare_gp(p):
     report = _common_compare(
         p,
         model,
-        fit,
+        best["chi2"],
         {
             "best": best["name"],
             "ell_mas": best["ell_mas"],
@@ -2345,9 +2310,7 @@ def _compare_gp(p):
             "flux": float(onp.asarray(values["disk.flux"])),
             "residual_search": search,
             "raised_search": raised,
-            "companion": _companion_report(
-                p, _planet_values(values, ctx.colour) if planet else None
-            ),
+            "companion": _companion_report(p, planet_values),
         },
     )
     _plot_summary_file(p, model)
@@ -2530,6 +2493,11 @@ def _fold_pa(samples, pa_site, parity, centre):
     return out
 
 
+def _best_row(compare):
+    """The ``compare`` row of the preferred model."""
+    return next(r for r in compare["rows"] if r["name"] == compare["best"])
+
+
 def _posterior_setup(p):
     """Model, priors, start, position-angle site and parity of the NUTS run.
 
@@ -2540,8 +2508,8 @@ def _posterior_setup(p):
     ctx = p._ctx()
     compare = p._report("compare")
     values = _io.load_model_values(p.output / "models" / "best")
+    row = _best_row(compare)
     if p.name == "rings":
-        row = next(r for r in compare["rows"] if r["n"] == compare["n_best"])
         shape = _Shape(row["n"], ctx.colour, ctx.degree, row["planet"])
         priors = _ring_priors(ctx, shape)
         start = {k: onp.asarray(values[k]) for k in priors}
@@ -2561,7 +2529,6 @@ def _posterior_setup(p):
             float(values["pa"]),
         )
     geo = _released_geometry(p, values)
-    row = next(r for r in compare["rows"] if r["name"] == compare["best"])
     planet = _planet_values(values, ctx.colour) if row["planet"] else None
     template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)
     model = _apply(template, values, priors)
@@ -2692,20 +2659,12 @@ _POSTERIOR_KEYS = (
 def _disk_section(name, compare):
     section = {"model": name, "best": compare["best"]}
     if name == "rings":
+        row = _best_row(compare)
         section.update(
             n_rings=compare["n_best"],
             rings=[
                 {"r_mas": r, "sigma_mas": w, "flux": f}
-                for r, w, f in zip(
-                    *(
-                        next(
-                            row
-                            for row in compare["rows"]
-                            if row["n"] == compare["n_best"]
-                        )[key]
-                        for key in ("radii", "widths", "fluxes")
-                    )
-                )
+                for r, w, f in zip(row["radii"], row["widths"], row["fluxes"])
             ],
         )
     else:

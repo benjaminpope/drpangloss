@@ -27,6 +27,7 @@ from ._common import (
     _run_chains,
     _sampler_checks,
     _sampler_report,
+    _save_map_correlation,
     _site_summary,
     _validate_common,
     _write_samples,
@@ -388,7 +389,7 @@ def _search(p):
         BinaryModelCartesian, data, grid, batch_size=s["batch_size"]
     )
     maps = _search_maps(data, grid, s["batch_size"])
-    _write_search_grids(p.output, grid, maps)
+    _write_grids(p.output, grid, search=maps)
     best = {"dra": float(detection["dra"]), "ddec": float(detection["ddec"])}
     _plot_search(p.output, grid, maps, best)
     return _search_report(data, grid, axis, detection)
@@ -462,23 +463,17 @@ def _null_model():
     return BinaryModelCartesian(0.0, 0.0, 0.0)
 
 
-def _grid_attrs():
-    return {"/": {"axis_order": list(_AXIS_ORDER), "schema": _io.SCHEMA}}
-
-
-def _axes_group(axes):
-    """The ``axes`` group of grids.h5: each axis with its units."""
-    return {
-        k: (onp.asarray(axes[k]), {"units": _AXIS_UNITS[k]})
+def _write_grids(output, grid, **groups):
+    """Write ``grids.h5``: the ``axes`` group (each axis with its units),
+    then ``groups``."""
+    axes = {
+        k: (onp.asarray(grid[k]), {"units": _AXIS_UNITS[k]})
         for k in _AXIS_ORDER
     }
-
-
-def _write_search_grids(output, grid, maps):
     _io.write_h5(
         output / "grids.h5",
-        {"axes": _axes_group(grid), "search": maps},
-        attrs=_grid_attrs(),
+        {"axes": axes, **groups},
+        attrs={"/": {"axis_order": list(_AXIS_ORDER), "schema": _io.SCHEMA}},
     )
 
 
@@ -559,7 +554,14 @@ def _limits(p):
     profile = radial_profile(
         limit, dra, ddec, r_max=max_sep, bins=s["limit_bins"]
     )
-    _write_limits(p, grid, limit)
+    # write_h5 cannot append: rewrite the file with the search group read back.
+    meta = {"sigma": s["sigma"], "method": "absil"}
+    _write_grids(
+        p.output,
+        grid,
+        search=_io.read_h5(p.output / "grids.h5", "search"),
+        limits={"limit_flux": (limit, meta)},
+    )
     _plot_limits(p, grid, limit, profile)
     return _limits_report(s["sigma"], profile)
 
@@ -587,21 +589,6 @@ def _limit_map(p, grid):
     # Inside the resolution limit separation and flux are degenerate.
     resolution = _geometry(p.processed)["resolution_mas"]
     return onp.where(r < resolution, onp.nan, limit)
-
-
-def _write_limits(p, grid, limit):
-    """Add the ``limits`` group to the search's grids.h5."""
-    path = p.output / "grids.h5"
-    meta = {"sigma": p.settings["sigma"], "method": "absil"}
-    _io.write_h5(
-        path,
-        {
-            "axes": _axes_group(grid),
-            "search": _io.read_h5(path, "search"),
-            "limits": {"limit_flux": (limit, meta)},
-        },
-        attrs=_grid_attrs(),
-    )
 
 
 def _plot_limits(p, grid, limit, profile):
@@ -654,7 +641,12 @@ def _fit(p):
     best = p.output / "models" / "best"
     _io.save_model(best, result.model, values, reported)
     _io.write_json(best / "info.json", _io.clean_json(dict(result.info)))
-    _plot_fit(p, result, values, list(priors), angular)
+    _save_map_correlation(
+        p,
+        p._sampled_model() if angular else result.model,
+        values,
+        list(priors),
+    )
     return _fit_report(data, result, values, reported, priors)
 
 
@@ -694,18 +686,6 @@ def _fitted_values(result, angular):
         model = result.model
         values.update(sep=onp.asarray(model.sep), pa=onp.asarray(model.pa))
     return values
-
-
-def _plot_fit(p, result, values, params, angular):
-    from ..likelihood import posterior_predictive_summary
-    from ..plotting import plot_data_model_correlation
-
-    one = {k: onp.asarray([float(values[k])]) for k in params}
-    model = p._sampled_model() if angular else result.model
-    pred = posterior_predictive_summary(one, model, p.processed, params)
-    fig = plot_data_model_correlation(p.processed, {"MAP fit": pred})
-    fig = fig[0] if isinstance(fig, tuple) else fig
-    _save(fig, p.output / "plots" / "fit_correlation.png")
 
 
 def _fit_report(data, result, values, reported, priors):

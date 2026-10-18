@@ -629,6 +629,18 @@ def _save_fit(folder, fit, params):
     _io.write_json(folder / "info.json", fit.info)
 
 
+def _save_map_correlation(p, model, values, params):
+    """Save ``plots/fit_correlation.png``: ``model`` at the MAP ``values``
+    of ``params`` against ``p.processed``."""
+    from ..likelihood import posterior_predictive_summary
+    from ..plotting import plot_data_model_correlation
+
+    one = {k: onp.asarray([float(onp.asarray(values[k]))]) for k in params}
+    pred = posterior_predictive_summary(one, model, p.processed, params)
+    fig, _ = plot_data_model_correlation(p.processed, {"MAP fit": pred})
+    _save(fig, p.output / "plots" / "fit_correlation.png")
+
+
 def _pick(report, keys):
     return {k: report[k] for k in keys}
 

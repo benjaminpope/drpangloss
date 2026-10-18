@@ -32,6 +32,7 @@ from ._common import (
     _run_chains,
     _sampler_checks,
     _sampler_report,
+    _save_map_correlation,
     _save_fit,
     _site_summary,
     _validate_common,
@@ -684,8 +685,6 @@ class LobeFit:
     m2loglike : float
         −2 log L at the fitted error scales: the score that compares lobes
         and models.
-    residuals : ndarray
-        Whitened residuals on the quoted errors.
     scales : dict
         The fitted error scales by name (empty on the quoted errors).
     priors : dict
@@ -702,7 +701,6 @@ class LobeFit:
     chi2: float
     chi2_fitted: float
     m2loglike: float
-    residuals: onp.ndarray
     scales: dict
     priors: dict
     lobe: dict
@@ -802,7 +800,7 @@ def _fit_lobe(p, entry, lobe, noise):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         model, values, info = _fit_model(p, entry, priors, lobe["diam"], noise)
-    chi2, residuals = _chi2_64(model, data)
+    chi2, _ = _chi2_64(model, data)
     scales = _scales_of(values)
     chi2_fitted = _chi2_64(model, data, **scales)[0] if scales else chi2
     return LobeFit(
@@ -812,7 +810,6 @@ def _fit_lobe(p, entry, lobe, noise):
         chi2=float(chi2),
         chi2_fitted=float(chi2_fitted),
         m2loglike=float(_m2loglike_64(model, data, **scales)),
-        residuals=residuals,
         scales=scales,
         priors=priors,
         lobe=lobe,
@@ -955,20 +952,11 @@ def _choose_model(reports, registry, n):
 
 def _fit_plots(p, registry, fits, best):
     """The MAP fit's data-model correlation and the V² curves."""
-    from ..likelihood import posterior_predictive_summary
-    from ..plotting import plot_data_model_correlation
-
-    data, params = p.processed, list(registry[best].params)
-    one = {
-        k: onp.asarray([float(onp.asarray(fits[best].values[k]))])
-        for k in params
-    }
-    pred = posterior_predictive_summary(one, fits[best].model, data, params)
-    fig = plot_data_model_correlation(data, {"MAP fit": pred})
-    fig = fig[0] if isinstance(fig, tuple) else fig
-    _save(fig, p.output / "plots" / "fit_correlation.png")
+    _save_map_correlation(
+        p, fits[best].model, fits[best].values, list(registry[best].params)
+    )
     fig = plot_v2_models(
-        data, {registry[n].label: fits[n].model for n in p.names}
+        p.processed, {registry[n].label: fits[n].model for n in p.names}
     )
     _save(fig, p.output / "plots" / "fit_v2.png")
 
