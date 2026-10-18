@@ -4,7 +4,7 @@ title: "VIRGIL: the Versatile Interferometric Reconstruction and Gradient-based 
 abstract: "Modelling and imaging interferometric data in JAX (PyPI distribution virgil-astro)."
 type: software
 version: 0.4.0
-date-released: "2026-10-DD"  # the release step fills in the tag date
+date-released: "2026-10-18"
 license: MIT
 repository-code: "https://github.com/benjaminpope/virgil"
 doi: "TBD"  # software DOI (e.g. Zenodo), to be added at release
