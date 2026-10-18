@@ -807,7 +807,7 @@ def starting_image(
     field_fwhms=6.0,
     inner_elements=4.0,
     aperture_mas=None,
-    field_mas=None,
+    pad_to_mas=None,
 ):
     """A starting model for an image fit, sized from the data.
 
@@ -822,7 +822,7 @@ def starting_image(
     [`dirty_image`][virgil.imaging.dirty_image] with the star removed
     (``start="dirty"``; better when the Fourier coverage is dense, worse when
     sparse). To image beyond λ / B_min, for example to leave room for a disc
-    larger than the data size, pass ``field_mas``: the grid is padded with
+    larger than the data size, pass ``pad_to_mas``: the grid is padded with
     empty pixels (at the floor brightness) out to that width. Fit it with
     ``fit(start, image_priors(start), data, regularizers)``; add a prior on ``"env.flux"`` (``"flux"`` with
     ``star=False``) to fit the flux too.
@@ -841,7 +841,7 @@ def starting_image(
     largest_mas : float, optional
         A cap on the data-sized field. It cannot raise the field above the
         interferometric limit λ / B_min (a warning says so when it would have);
-        use ``field_mas`` for a larger grid.
+        use ``pad_to_mas`` for a larger grid.
     start : {"moments", "dirty"}, optional
         The starting pixels, as above.
     hole_mas : float, optional
@@ -856,10 +856,12 @@ def starting_image(
     aperture_mas : float, optional
         A telescope's field of view, as a ceiling on the field and on the
         envelope's width.
-    field_mas : float, optional
-        The least width (mas) of the grid. If it exceeds the data-sized field,
+    pad_to_mas : float, optional
+        The least width (mas) of the grid. Unlike ``EnsembleSpec.field_mas``,
+        which replaces the data's field and is capped at ``field_of_view``, this
+        never shrinks the grid and may exceed that field. If it exceeds the data-sized field,
         the start image is padded with empty pixels, centred, to
-        ``ceil(field_mas / pixel)`` pixels (one more if needed to keep the
+        ``ceil(pad_to_mas / pixel)`` pixels (one more if needed to keep the
         centre pixel), at the same pixel scale. Beyond λ / B_min the data
         do not constrain the flux, so pair a large field with a support or
         priors. Unset (the default), the field is the data-sized one.
@@ -887,17 +889,19 @@ def starting_image(
         if largest_mas > limit and fov >= limit * (1.0 - 1e-9):
             warnings.warn(
                 f"largest_mas={largest_mas:g} is a cap and cannot raise the "
-                f"field above the interferometric limit λ/B_min ({limit:.4g} "
-                "mas), which the field is limited to. Pass field_mas to pad "
-                "the start image to a larger grid.",
+                f"field above the data's field of view, field_of_view(data) "
+                f"= {limit:.4g} mas (the smallest of λ/B_min, the bandwidth-"
+                "smearing field and aperture_mas), which limits the field "
+                "here. Pass pad_to_mas to pad the start image to a larger "
+                "grid; the data do not constrain flux beyond that field.",
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )
     scale = nyquist_pixel_scale(data) / float(oversample)
     natural = int(onp.ceil(fov / scale))
     npix = natural
-    if field_mas is not None and field_mas > natural * scale:
-        npix = int(onp.ceil(field_mas / scale))
+    if pad_to_mas is not None and pad_to_mas > natural * scale:
+        npix = int(onp.ceil(pad_to_mas / scale))
         npix += (npix - natural) % 2
     support = None
     if hole_mas is not None:
