@@ -322,3 +322,51 @@ def test_starting_image_takes_the_larger_of_envelope_and_moment(monkeypatch):
     start = starting_image(data, star=False)
     field = start.log_brightness.shape[0] * start.pixel_scale_mas
     assert field == pytest.approx(6.0 * 6.0, rel=0.08)
+
+
+def _grid_width(start):
+    return start.log_brightness.shape[0] * start.pixel_scale_mas
+
+
+def test_field_mas_pads_the_start_image_beyond_the_interferometric_field():
+    u, v = _baselines()
+    data = _gaussian(4.7, u, v)
+    natural = starting_image(data, star=False)
+    for kind in ("moments",):  # the dirty start needs phases; see below
+        wide = starting_image(
+            data, star=False, start=kind, field_mas=3.0 * LAMBDA_OVER_B_MIN
+        )
+        assert wide.pixel_scale_mas == natural.pixel_scale_mas
+        assert _grid_width(wide) >= 3.0 * LAMBDA_OVER_B_MIN
+        assert _grid_width(wide) < 3.0 * LAMBDA_OVER_B_MIN + 2 * wide.pixel_scale_mas
+        # The extra pixels keep the centre pixel of the natural grid.
+        assert (wide.log_brightness.shape[0] - natural.log_brightness.shape[0]) % 2 == 0
+    # A field smaller than the data-sized one changes nothing.
+    small = starting_image(data, star=False, field_mas=1.0)
+    assert small.log_brightness.shape == natural.log_brightness.shape
+
+
+def test_starting_image_defaults_do_not_warn(recwarn):
+    u, v = _baselines()
+    data = _gaussian(4.7, u, v)
+    starting_image(data, star=False)
+    starting_image(data, star=False, largest_mas=10.0)
+    assert not [w for w in recwarn if "largest_mas" in str(w.message)]
+
+
+def test_largest_mas_above_the_interferometric_field_warns_and_is_capped():
+    u, v = _baselines()
+    data = _gaussian(30.0, u, v)  # wants more than λ/B_min
+    with pytest.warns(UserWarning, match="field_mas"):
+        capped = starting_image(data, star=False, largest_mas=1000.0)
+    assert _grid_width(capped) <= LAMBDA_OVER_B_MIN + capped.pixel_scale_mas
+
+
+def test_padding_a_dirty_start_keeps_the_centre():
+    from virgil.imaging import _pad_brightness
+
+    image = onp.arange(25.0).reshape(5, 5)
+    padded = onp.asarray(_pad_brightness(image, 9))
+    assert padded.shape == (9, 9)
+    assert padded[2:7, 2:7].tolist() == image.tolist()
+    assert padded.sum() == image.sum()
