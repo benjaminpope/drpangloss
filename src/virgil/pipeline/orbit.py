@@ -50,7 +50,7 @@ _SITES = (
 # The star alone: a companion this faint (log flux ratio) is invisible.
 _NO_COMPANION = math.log(1e-12)
 # Diameters tried for the star alone when the orbit fit a diameter.
-_N_DIAM_NULL = 25
+_N_DIAM_NULL = 100
 # Fraction of a prior's range, at an end, counted as "at the bound".
 _AT_BOUND = 0.01
 _BAND_ROWS = 10
@@ -239,7 +239,9 @@ class OrbitPipeline(_Pipeline):
                 raise ValueError(f"{name} must be positive; got {s[name]!r}.")
 
         def integer(name, minimum):
-            if not (isinstance(s[name], int) and s[name] >= minimum):
+            if isinstance(s[name], bool) or not (
+                isinstance(s[name], int) and s[name] >= minimum
+            ):
                 raise ValueError(f"{name} must be an integer >= {minimum}.")
 
         def pair(name, low=0.0):
@@ -460,17 +462,28 @@ def _build_epochs(mapping, times):
     snapshot times (``{dataset: MJD}``, entries None to use the data's)."""
     from ..epochs import Epochs
 
-    keep = {k: float(v) for k, v in times.items() if v is not None}
+    names = {name for group in mapping.values() for name in group}
+    keep = {
+        k: float(v) for k, v in times.items() if v is not None and k in names
+    }
     return Epochs(mapping, times=keep or None)
 
 
 def _with_mean_mjd(data, mjd):
     """``data`` shifted in time so that its samples average to ``mjd``."""
-    import equinox as eqx
+    import copy
 
-    shift = float(mjd) - float(onp.mean(data.mjd))
-    out = eqx.tree_at(lambda d: d.dt, data, data.dt)  # a fresh copy
-    object.__setattr__(out, "t_ref", float(data.t_ref) + shift)
+    import jax.numpy as np
+
+    out = copy.copy(data)
+    if data.mjd is None:  # one snapshot at the given time
+        n = onp.size(data.u)
+        object.__setattr__(out, "t_ref", float(mjd))
+        object.__setattr__(out, "dt", np.zeros(n))
+        object.__setattr__(out, "frame", np.zeros(n, np.int32))
+    else:
+        shift = float(mjd) - float(onp.mean(data.mjd))
+        object.__setattr__(out, "t_ref", float(data.t_ref) + shift)
     return out
 
 
@@ -510,15 +523,25 @@ def _read_nights(paths, metadata, gap_days):
         data = OIData(path, insname=entry.get("instrument"))
         if "mjd" in entry:
             data = _with_mean_mjd(data, entry["mjd"])
-        if data.mjd is None:
+        elif data.mjd is None:
             raise ValueError(f"{path} has no times: give metadata 'mjd'.")
         notes[path] = {"path": path, **entry, "nights": [], "datasets": []}
         for piece in data.split_by_epoch(gap_days):
-            mean = float(onp.mean(piece.mjd))
-            label = entry.get("epoch") or f"mjd{math.floor(mean)}"
-            parts.append((mean, label, piece, path))
-    groups = {}
-    for _, label, piece, path in sorted(parts, key=lambda t: t[0]):
+            parts.append(
+                (float(onp.mean(piece.mjd)), entry.get("epoch"), piece, path)
+            )
+    groups, last = {}, None  # last: (label, mean) of the open automatic night
+    for mean, epoch, piece, path in sorted(parts, key=lambda t: t[0]):
+        if epoch:
+            label = epoch
+        elif last is not None and mean - last[1] <= gap_days:
+            label = last[0]
+        else:
+            label = f"mjd{math.floor(mean)}"
+            while label in groups:  # two nights in one day, gap_days small
+                label += "b"
+        if not epoch:
+            last = (label, mean)
         groups.setdefault(label, []).append((piece, path))
     mapping = {}
     for label, group in groups.items():
@@ -831,6 +854,9 @@ def _search_report(result, data, names):
         "p_range": list(result.p_range),
         "window_capped": result.window_capped,
         "n_bands": len(result.bands),
+        "failed_bands": [
+            int(b.n) for b in result.bands if "band-failed" in b.flags
+        ],
         "t_ref": result.t_ref,
         "span_days": result.span,
         "primary_diam": result.primary_diam,
@@ -922,17 +948,27 @@ def _single_star(problem, x, diam_range):
     # test_a_single_star_is_no_orbit pins the verdict.
     """The best log likelihood of the star alone: the engine's likelihood at
     ``x`` with an invisible companion (and, if the orbit fitted the primary's
-    diameter, the best diameter on a log grid over its prior range)."""
+    diameter, the best diameter: a log grid over its prior range, then a
+    finer one about the best cell, so the null is not under-fitted)."""
     import jax.numpy as np
 
     x = onp.array(x, float)
     x[7] = _NO_COMPANION
-    if len(x) > 8:
-        xs = onp.tile(x, (_N_DIAM_NULL, 1))
-        xs[:, 8] = onp.log(onp.geomspace(*diam_range, _N_DIAM_NULL))
-    else:
-        xs = x[None]
-    return float(onp.max(onp.asarray(problem.batch(np.asarray(xs)))))
+
+    def best(logd):
+        xs = onp.tile(x, (len(logd), 1))
+        xs[:, 8] = logd
+        return onp.asarray(problem.batch(np.asarray(xs)))
+
+    if len(x) <= 8:
+        return float(onp.max(onp.asarray(problem.batch(np.asarray(x[None])))))
+    grid = onp.log(onp.geomspace(*diam_range, _N_DIAM_NULL))
+    ll = best(grid)
+    k = int(onp.argmax(ll))
+    near = onp.linspace(
+        grid[max(k - 1, 0)], grid[min(k + 1, len(grid) - 1)], _N_DIAM_NULL
+    )
+    return float(max(onp.max(ll), onp.max(best(near))))
 
 
 @_x64
@@ -1150,11 +1186,11 @@ def _band_summary(n, physical, drawn, stats, priors, bounds):
 
 
 def _bound_fractions(drawn, priors, ecc_top):
-    """Fraction of draws at a bound of the ranges the user sets: the size
-    and flux (both ends) and the top of the eccentricity (zero is no bound:
-    circular orbits sit there)."""
+    """Fraction of draws at a bound of the box: the band's period edges
+    (the posterior cut by its band), the size and flux (both ends) and the top
+    of the eccentricity (zero is no bound: circular orbits sit there)."""
     out = {}
-    for site in ("log_a", "log_flux", "log_diam"):
+    for site in ("log_period", "log_a", "log_flux", "log_diam"):
         if site in drawn:
             out[site] = _bound_samples(priors[site], drawn[site])
     prior = priors["ecc"]
@@ -1262,6 +1298,7 @@ _SEARCH_KEYS = (
     "p_range",
     "window_capped",
     "n_bands",
+    "failed_bands",
     "t_ref",
     "span_days",
     "primary_diam",
@@ -1326,6 +1363,7 @@ def _orbit_section(modes, post):
     )
     return {
         "n": modes["winner"]["n"],
+        "verdict": modes["no_orbit"]["verdict"],
         "source": "posterior" if winner else "map",
         "elements": winner["params"]
         if winner
@@ -1365,6 +1403,7 @@ def _summarize(settings, reports):
         )
     if search:
         checks.append(_checks.labels_free(search["labels_free"]))
+        checks.append(_checks.bands_failed(search["failed_bands"]))
     if modes:
         sections["modes"] = _pick(modes, _MODES_KEYS)
         runner = modes["runner_up"]
@@ -1375,6 +1414,7 @@ def _summarize(settings, reports):
                 warn=settings["alias_nats"],
             )
         )
+        checks.append(_checks.winner_flags(modes["winner"]["flags"]))
     if search:
         t = search["tempering"]
         checks.append(_checks.tempering(t["out_of_range"], t["f"], t["f_raw"]))

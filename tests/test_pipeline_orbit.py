@@ -152,7 +152,7 @@ SUMMARY_KEYS = {
     "chi2": {"n_independent", "best_orbit_reduced", "nights"},
     "search": set(orbit_module._SEARCH_KEYS),
     "modes": set(orbit_module._MODES_KEYS),
-    "orbit": {"n", "source", "elements"},
+    "orbit": {"n", "verdict", "source", "elements"},
     "posterior": set(orbit_module._POSTERIOR_KEYS),
     "warnings": None,
     "checks": None,
@@ -161,7 +161,9 @@ CHECKS = [
     "chi2",
     "night_flags",
     "labels_free",
+    "bands_failed",
     "alias_ambiguity",
+    "winner_flags",
     "tempering",
     "primary_resolved",
     "no_orbit",
@@ -205,11 +207,40 @@ def test_api_snapshot():
 def test_the_default_run_is_blind():
     # The default path carries no published period, window, start or prior:
     # the unconfigured search must pass the engine nothing but data-derived
-    # arguments (the engine's own defaults do the rest).
+    # arguments (the engine's own defaults do the rest), and those defaults
+    # must be the engine's, so the two cannot drift apart.
+    from virgil.aliases import fit_orbit_aliases
+
     d = OrbitPipeline.defaults()
     assert d["period_range"] is None
     assert d["primary_diam"] == "auto"
     assert not {"init", "p_range", "positions"} & set(d)
+    engine = inspect.signature(fit_orbit_aliases).parameters
+    for ours, theirs in (
+        ("a_range", "a_range"),
+        ("flux_range", "flux_range"),
+        ("ecc_max", "ecc_max"),
+        ("s_max", "s_max"),
+        ("primary_diam", "primary_diam"),
+        ("vis_amp", "vis_amp"),
+        ("sign_free", "sign_free"),
+        ("flip_flux", "flip_flux"),
+        ("temper", "temper"),
+        ("n_bands_max", "n_bands_max"),
+        ("n_candidates", "n_candidates"),
+        ("n_refine", "n_refine"),
+        ("n_is", "n_is"),
+        ("seed", "seed"),
+    ):
+        assert list(np_tuple(d[ours])) == list(
+            np_tuple(engine[theirs].default)
+        ), ours
+    assert engine["init"].default is None
+    assert engine["skip_flagged"].default is True
+
+
+def np_tuple(x):
+    return x if isinstance(x, (list, tuple)) else (x,)
 
 
 def _fake_reports():
@@ -249,6 +280,7 @@ def _fake_reports():
             "p_range": [3.0, 100.0],
             "window_capped": None,
             "n_bands": 5,
+            "failed_bands": [],
             "t_ref": 1.0,
             "span_days": 10.0,
             "primary_diam": None,
@@ -269,6 +301,8 @@ def _fake_reports():
                 "p": 1.0,
                 "log_z": 0.0,
                 "elements": {"period": 12.1},
+                "flipped": False,
+                "flags": [],
             },
             "runner_up": {"n": 21, "p": 0.0, "log_z": -30.0},
             "delta_log_z": 30.0,
@@ -356,6 +390,11 @@ def test_no_orbit_summary_has_no_posterior_checks():
         (_checks.no_orbit, (50.0,), "pass"),
         (_checks.no_orbit, (5.0,), "warn"),
         (_checks.no_orbit, (-1.0,), "fail"),
+        (_checks.bands_failed, ([],), "pass"),
+        (_checks.bands_failed, ([21, 22],), "warn"),
+        (_checks.winner_flags, ([],), "pass"),
+        (_checks.winner_flags, (["poor-fit"],), "pass"),
+        (_checks.winner_flags, (["low-ess", "not-converged"],), "warn"),
         (_checks.labels_free, (False,), "pass"),
         (_checks.labels_free, (True,), "warn"),
         (_checks.night_flags, ({}, 5), "pass"),
@@ -412,6 +451,29 @@ def test_an_orbit_needs_two_nights(nights):
         OrbitPipeline(nights, exclude={"n1": "x", "n2": "y"})
 
 
+def test_exclude_works_on_an_epochs_input_too(nights):
+    # Times of the excluded datasets must not reach the rebuilt Epochs.
+    given = Epochs(nights, times={"n0": 60000.0, "n1": 60010.0, "n2": 60020.0})
+    pipeline = OrbitPipeline(given, exclude={"n2": "bad night"})
+    assert pipeline.data.names == ("n0", "n1")
+    assert [float(t) for t in pipeline.data.times] == [60000.0, 60010.0]
+
+
+def test_metadata_mjd_dates_data_without_times(nights):
+    # The remedy the error message offers must work.
+    d = __import__("copy").copy(nights["n0"])
+    for name in ("t_ref", "dt", "frame"):
+        object.__setattr__(d, name, None)
+    assert d.mjd is None
+    dated = orbit_module._with_mean_mjd(d, 60123.0)
+    assert onp.isclose(float(onp.mean(dated.mjd)), 60123.0)
+
+
+def test_bool_is_not_an_integer_setting(nights):
+    with pytest.raises(ValueError, match="n_peaks"):
+        OrbitPipeline(nights, n_peaks=True)
+
+
 def test_epochs_and_dicts_are_equivalent_inputs(nights):
     by_dict = OrbitPipeline(nights)
     by_epochs = OrbitPipeline(Epochs(nights))
@@ -445,9 +507,23 @@ def test_from_oifits_groups_files_into_nights(files):
     assert [round(float(t)) for t in pipeline.data.times] == [
         round(float(m + 1 / 24)) for m in SEASONS[:3]
     ]
-    # One file per night; with a larger gap the nights merge.
-    merged = OrbitPipeline.from_oifits(files[:2], gap_days=30.0)
-    assert len(merged.data.names) == 1 or len(merged.data.names) == 2
+    # Files of one night split by 0h UT are one night, and a larger gap_days
+    # merges nights further apart.
+    straddle = {
+        files[0]: {"mjd": 60000.95},
+        files[1]: {"mjd": 60001.05},
+        files[2]: {"mjd": 60200.0},
+    }
+    one = OrbitPipeline.from_oifits(files, straddle)
+    assert len(one.data.names) == 2 and len(one.data.dataset_names) == 3
+    apart = {
+        files[0]: {"mjd": 60000.0},
+        files[1]: {"mjd": 60010.0},
+        files[2]: {"mjd": 60200.0},
+    }
+    assert len(OrbitPipeline.from_oifits(files, apart).data.names) == 3
+    merged = OrbitPipeline.from_oifits(files, apart, gap_days=30.0)
+    assert len(merged.data.names) == 2
     meta = {files[0]: {"epoch": "first"}, files[1]: {"epoch": "second"}}
     labelled = OrbitPipeline.from_oifits(files, meta)
     assert {"first", "second"} <= set(labelled.data.names)
@@ -616,7 +692,7 @@ def test_cli_orbit_runs_from_oifits_with_metadata(files, tmp_path, capsys):
     ]
     assert run["config"]["max_grid"] == 25
     assert "data.n_nights" in capsys.readouterr().out
-    assert cli.main(["validate", str(out)]) in (0, 1)  # partial: reads only
+    assert cli.main(["validate", str(out)]) == 0
 
 
 def Path_name(path):

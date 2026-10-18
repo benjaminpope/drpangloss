@@ -1442,6 +1442,73 @@ def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
     )
 
 
+def bands_failed(failed):
+    """Alias bands the search could not evaluate.
+
+    Parameters
+    ----------
+    failed : sequence of int
+        The orbit counts N of the bands whose fit raised (their evidence is
+        -inf, so they never win nor appear as the runner-up).
+    """
+    if not len(failed):
+        return Check(
+            "bands_failed",
+            "pass",
+            0,
+            0,
+            "Every alias band was evaluated.",
+        )
+    shown = ", ".join(str(n) for n in list(failed)[:10])
+    more = "" if len(failed) <= 10 else f" and {len(failed) - 10} more"
+    return Check(
+        "bands_failed",
+        "warn",
+        len(failed),
+        0,
+        f"The fit of {len(failed)} alias band(s) failed (N = {shown}{more}): "
+        "the winner's margin does not cover them. Re-run, or rerun those "
+        "bands with `fit_orbit_aliases`.",
+    )
+
+
+_WINNER_FLAGS = (
+    "not-converged",
+    "laplace-is-differ",
+    "low-ess",
+    "near-prior-bound",
+    "no-valid-mode",
+    "starts-failed",
+)
+
+
+def winner_flags(flags):
+    """The evidence engine's own flags on the winning band.
+
+    Parameters
+    ----------
+    flags : sequence of str
+        The winner's flags; a poor fit has its own check (`chi2`).
+    """
+    bad = [f for f in flags if f in _WINNER_FLAGS]
+    if not bad:
+        return Check(
+            "winner_flags",
+            "pass",
+            [],
+            None,
+            "The winning band's evidence has no flags.",
+        )
+    return Check(
+        "winner_flags",
+        "warn",
+        bad,
+        None,
+        f"The winning band's evidence carries {', '.join(bad)}: its log Z, "
+        "and so the margin over the runner-up, is less reliable.",
+    )
+
+
 def tempering(out_of_range, f, f_raw):
     """Whether the correlated-channel tempering is outside what the
     likelihood can trust.

@@ -126,7 +126,7 @@ Per-file rulings go in `metadata` (`epoch`, `instrument`, `mjd` for a file whose
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
-A run that interrupts resumes: the bands already fitted are read back from their checkpoints, so only the missing bands are refitted. `run(resume=False)` starts over, bands included. The winner is the band of highest evidence; the summary's `delta_log_z` is its log Z over the runner-up's, and `alias_ambiguity` warns below 10 nats and fails below 1. `no-orbit` compares the best orbit's evidence (with its prior volume) with the log likelihood of the star alone, and a run that finds no orbit skips the posterior. The posterior is sampled with NUTS on the engine's tempered likelihood and not with `gauss_newton_mass`'s mass matrix, because the winning mode sits on a narrow ridge in log period and periastron time that a dense mass matrix adapted during warm-up follows.
+A run that interrupts resumes: the bands already fitted are read back from their checkpoints, so only the missing bands are refitted. `run(resume=False)` starts over, bands included. The winner is the band of highest evidence; the summary's `delta_log_z` is its log Z over the runner-up's, and `alias_ambiguity` warns below 10 nats and fails below 1. `no-orbit` compares the best orbit's evidence (with its prior volume) with the best log likelihood of the star alone (a maximum, not an evidence, so the test leans towards no orbit), and a run that finds no orbit skips the posterior. The posterior is sampled with NUTS on the engine's tempered likelihood and not with `gauss_newton_mass`'s mass matrix, because the winning mode sits on a narrow ridge in log period and periastron time that a dense mass matrix adapted during warm-up follows.
 
 ## The run folder
 
@@ -194,7 +194,9 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `at_bound` (`DiskPipeline`) | any fitted parameter within 0.1% of a prior bound: the data do not constrain it there, or the prior is too tight | |
 | `night_flags` (`OrbitPipeline`: nights whose position cannot seed an orbit; their data still count in the likelihood) | any night flagged | |
 | `labels_free` (`OrbitPipeline`: a point-reflected orbit with an evidence within 3 nats of the best) | the data do not say which star is which | |
+| `bands_failed` (`OrbitPipeline`: alias bands whose fit raised) | any band failed: the winner's margin does not cover it | |
 | `alias_ambiguity` (`OrbitPipeline`: log Z of the best alias band over the runner-up's, `alias_nats`) | under 10 nats: the runner-up is not excluded | under 1 nat: the period is not determined |
+| `winner_flags` (`OrbitPipeline`: the winning band's evidence flags, such as `not-converged`, `laplace-is-differ`, `low-ess`) | any flag: its log Z is less reliable | |
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |
