@@ -10,21 +10,23 @@ The other tutorials build an analysis one step at a time, which is how you learn
 
 A pipeline adds no science. Every number it reports comes from a public virgil function that you can call yourself, as the "As a pipeline" sections of the [binary search](binary_search.md), [contrast limits](contrast_limits.md) and [limb darkening](limb_darkening.md) tutorials show. This page is about the machinery around those functions. We use the smallest problem that shows all of it: a simulated companion around a star, seen through a seven-hole aperture mask.
 
-```python
-import json
-import subprocess
-import sys
-from pathlib import Path
-from tempfile import mkdtemp
+??? note "Imports and setup"
 
-import jax
-import numpy as onp
-from IPython.display import Image, display
+    ```python
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    from tempfile import mkdtemp
 
-from virgil.coverage import nrm_oidata
-from virgil.models import BinaryModelCartesian
-from virgil.pipeline import BinaryPipeline, ConfigMismatchError, load
-```
+    import jax
+    import numpy as onp
+    from IPython.display import Image, display
+
+    from virgil.coverage import nrm_oidata
+    from virgil.models import BinaryModelCartesian
+    from virgil.pipeline import BinaryPipeline, ConfigMismatchError, load
+    ```
 
 ## Simulate a binary
 
@@ -92,10 +94,12 @@ print(res.describe())
 
 The figures live in `res.plots`. This is the contrast curve from the `limits` stage: the faintest companion the data could have shown at each separation.
 
-```python
-print([p.name for p in res.plots])
-display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
-```
+??? note "Plotting code"
+
+    ```python
+    print([p.name for p in res.plots])
+    display(Image(filename=str(res.path / "plots" / "limits_contrast_curve.png")))
+    ```
 
 ## Loading a run instead of rerunning it
 
