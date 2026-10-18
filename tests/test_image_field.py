@@ -338,9 +338,14 @@ def test_field_mas_pads_the_start_image_beyond_the_interferometric_field():
         )
         assert wide.pixel_scale_mas == natural.pixel_scale_mas
         assert _grid_width(wide) >= 3.0 * LAMBDA_OVER_B_MIN
-        assert _grid_width(wide) < 3.0 * LAMBDA_OVER_B_MIN + 2 * wide.pixel_scale_mas
+        assert (
+            _grid_width(wide)
+            < 3.0 * LAMBDA_OVER_B_MIN + 2 * wide.pixel_scale_mas
+        )
         # The extra pixels keep the centre pixel of the natural grid.
-        assert (wide.log_brightness.shape[0] - natural.log_brightness.shape[0]) % 2 == 0
+        assert (
+            wide.log_brightness.shape[0] - natural.log_brightness.shape[0]
+        ) % 2 == 0
     # A field smaller than the data-sized one changes nothing.
     small = starting_image(data, star=False, field_mas=1.0)
     assert small.log_brightness.shape == natural.log_brightness.shape
