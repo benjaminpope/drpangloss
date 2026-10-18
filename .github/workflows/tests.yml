@@ -132,6 +132,21 @@ jobs:
             ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
+      # TEMPORARY diagnosis of test_a_tiny_case_writes_valid_rows failing on
+      # the lowest job only (21.25 mas on CI, 0.001 mas locally at the same
+      # versions): the runner's CPU, then the test alone in a fresh process
+      # without and with the JAX cache. Removed once the cause is known.
+      - name: diagnose the lowest-job failure
+        if: failure() && matrix.lowest
+        env: {JAX_ENABLE_X64: "0"}
+        run: |
+          lscpu | grep -E "Model name|Flags" | cut -c1-400 || true
+          t=tests/test_benchmark_harness.py::test_a_tiny_case_writes_valid_rows
+          echo "--- alone, no cache"
+          JAX_ENABLE_COMPILATION_CACHE=false .venv/bin/python -m pytest $t -o addopts= -p no:cacheprovider -q 2>&1 | grep -E "^E  |passed|failed" || true
+          echo "--- alone, with the restored cache"
+          JAX_COMPILATION_CACHE_DIR=.jax-cache JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0 JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES=0 .venv/bin/python -m pytest $t -o addopts= -p no:cacheprovider -q 2>&1 | grep -E "^E  |passed|failed" || true
+
       - name: kernel log
         if: always() && runner.os == 'Linux'
         run: sudo dmesg | grep -iE "oom|killed process" | tail -20 || true
