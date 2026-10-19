@@ -44,6 +44,7 @@ from .orbits import (
 __all__ = [
     "ARC_DELTA_CHI2",
     "ARC_JITTER",
+    "ARC_MIN_GAP",
     "CycleCounts",
     "NightMotion",
     "arc_profile",
@@ -62,6 +63,14 @@ ARC_JITTER = 0.1
 # the errors are scaled up to the best fit's χ²/dof, when above 1): 5σ for one
 # parameter, generous so that the true cycle count is never cut.
 ARC_DELTA_CHI2 = 25.0
+# The cut fits signed positions, so every seeding night's sign must be
+# decided: its best peak must beat its point reflection (a label swap; a
+# twin's reflection ties) by this many nats. ``epoch_positions``'
+# ``gap_marginal`` bounds that margin from below whenever the reflection,
+# 2 × the separation away, is a rival (more than λ/B_max from the peak);
+# its ``sep-below-resolution`` flag catches the rest. As its ``low-gap``
+# flag's default: 5 nats, a likelihood ratio of about 150.
+ARC_MIN_GAP = 5.0
 # A half-night position further than this fraction of λ/B_max from the
 # night's own is another peak, not motion: that night has no velocity.
 _MAX_SHIFT = 0.5

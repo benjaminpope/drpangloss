@@ -56,6 +56,7 @@ from ._geometry import fringe_scales
 from .arcs import (
     ARC_DELTA_CHI2,
     ARC_JITTER,
+    ARC_MIN_GAP,
     arc_profile,
     night_motion,
     unwrap_cycles,
@@ -2270,16 +2271,14 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     return positions, skipped, False
 
 
-# A near-equal pair's labels are undetermined, and so is the sign of each
-# night's position: the short arcs need signs, so they skip such a pair.
-_ARC_FLUX_MAX = 0.8
-
-
-def _signs_trusted(positions):
-    """Whether the unflagged nights (``EpochPositions``) have trustworthy
-    signs: their median flux is below ``_ARC_FLUX_MAX``."""
-    flux = onp.asarray(positions.flux)[~onp.asarray(positions.flagged)]
-    return flux.size > 0 and float(onp.median(flux)) < _ARC_FLUX_MAX
+def _signs_trusted(positions, min_gap):
+    """Whether every unflagged night (``EpochPositions``) has a decided
+    sign: a ``gap_marginal`` of at least ``min_gap`` nats over its rivals,
+    the point reflection among them (``ARC_MIN_GAP``). A near-equal pair's
+    reflections tie, so its nights fail this, by the data, not by a flux."""
+    keep = ~onp.asarray(positions.flagged)
+    gaps = onp.asarray(positions.gap_marginal, float)[keep]
+    return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
 def _seed_motion(data, positions, skip_flagged, jitter):
@@ -2832,6 +2831,7 @@ def fit_orbit_aliases(
     short_arcs=True,
     arc_jitter=ARC_JITTER,
     arc_delta_chi2=ARC_DELTA_CHI2,
+    arc_min_gap=ARC_MIN_GAP,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -2875,13 +2875,16 @@ def fit_orbit_aliases(
         The most bands of a default ``p_range`` (a longer window is cut), and
         the tempering for correlated channels
         ([`virgil.tempering`][virgil.tempering]): estimated, a factor, or off.
-    short_arcs, arc_jitter, arc_delta_chi2 : optional
+    short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands whose cycle counts the short arcs admit, seeded by
         the positions and within-night velocities
         ([`virgil.arcs`][virgil.arcs]); the position floor (a fraction of
-        lambda/B_max) and the χ² margin. Needs ``EpochPositions``,
-        ``skip_flagged`` and an unequal pair (median flux below 0.8): only
-        then do the nights' positions have trustworthy signs.
+        lambda/B_max), the χ² margin, and the ``gap_marginal`` (nats) every
+        seeding night needs for its sign to count as decided (its best
+        peak over its point reflection). Needs ``EpochPositions`` and
+        ``skip_flagged``, with every seeding night decided; otherwise (a
+        near-equal pair, whose reflections tie) every band is seeded from
+        the positions as without it.
 
     Returns
     -------
@@ -3079,12 +3082,12 @@ def fit_orbit_aliases(
         and short_arcs
         and skip_flagged
         and isinstance(seed_positions, EpochPositions)
-        and _signs_trusted(seed_positions)
+        and _signs_trusted(seed_positions, arc_min_gap)
     ):
         # AGENTS.md, "Cycle counts from short arcs" row: the nights' motion
-        # narrows the bands and seeds each one. A flagged night, or any
-        # night of a near-equal pair, can have a reflected (label-swapped)
-        # position, so the cut needs the flags and an unequal pair: other
+        # narrows the bands and seeds each one. The cut fits signed
+        # positions, so it needs every seeding night's sign decided: by
+        # the flags and its gap over its reflection (a label swap). Other
         # positions seed every band as before.
         profile, counts, motion = _short_arc_profile(
             data,

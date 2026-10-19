@@ -2124,11 +2124,13 @@ def _short_arc(flux, period=12.1, diam=None):
 FAST_DEFAULTS = dict(n_candidates=10, n_refine=2, n_is=200, n_samples=20)
 
 
-def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
+def _arc_positions(
+    orbit, times, flux, signs=None, offset=(0.2, -0.2), gap=20.0
+):
     """Per-night ``EpochPositions`` of a short arc without a grid search:
     the true companion positions, off by ``offset`` (mas) and, where
     ``signs`` is -1, reflected through the primary (a twin's positions are
-    known only up to that sign)."""
+    known only up to that sign), each ``gap`` nats above its rivals."""
     from virgil.epochs import EpochPositions
 
     n = len(times)
@@ -2141,7 +2143,7 @@ def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
         ddec=sign * onp.asarray(ddec) + offset[1],
         cov=onp.tile(0.05 * onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, min(flux, 0.9)),
-        gap_marginal=onp.full(n, 20.0),
+        gap_marginal=onp.full(n, gap),
         chi2_raw=({},) * n,
         scale=({},) * n,
     )
@@ -2152,7 +2154,10 @@ def test_a_twin_fit_is_labels_free_with_default_arguments():
     # Equal fluxes: each night's position is known only up to the point
     # reflection, which the data cannot undo.
     orbit, data, times = _short_arc(1.0)
-    positions = _arc_positions(orbit, times, 1.0, signs=[1, -1, 1, -1])
+    # A twin's reflected peak ties with its best: the gaps are small.
+    positions = _arc_positions(
+        orbit, times, 1.0, signs=[1, -1, 1, -1], gap=0.5
+    )
     result = fit_orbit_aliases(
         data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
     )
@@ -2245,18 +2250,20 @@ def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
     assert fit == [one, bands[7]]
 
 
-def test_a_near_equal_pair_has_no_trusted_signs():
-    # A twin's labels, and so each night's sign, are undetermined: the
-    # short arcs leave its bands alone. A flagged night does not count.
+def test_short_arcs_need_every_seeding_nights_sign_decided():
+    # The signed cut needs each unflagged night to beat its point
+    # reflection by arc_min_gap; a twin's reflections tie. A flagged night
+    # does not count.
     pos = types.SimpleNamespace(
-        flux=onp.array([0.5, 0.9, 0.5]),
+        gap_marginal=onp.array([8.0, 30.0, 0.1]),
         flagged=onp.array([False, False, True]),
     )
-    assert aliases._signs_trusted(pos)
-    pos.flux = onp.array([0.85, 0.9, 0.5])
-    assert not aliases._signs_trusted(pos)
+    assert aliases._signs_trusted(pos, 5.0)
+    assert not aliases._signs_trusted(pos, 10.0)
+    pos.gap_marginal = onp.array([8.0, 0.5, 30.0])
+    assert not aliases._signs_trusted(pos, 5.0)
     pos.flagged = onp.ones(3, bool)
-    assert not aliases._signs_trusted(pos)
+    assert not aliases._signs_trusted(pos, 5.0)
 
 
 # Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,
