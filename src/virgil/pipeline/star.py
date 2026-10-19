@@ -18,17 +18,28 @@ from ._common import (
     _scales_of,
     _chi2_64,
     _m2loglike_64,
-    _SAMPLER_SETTINGS,
+    _chain_health,
+    _corner_trace,
     _diagnostics,
+    _draws,
+    _integer,
     _load_report,
-    _run_chains,
+    _load_start,
     _noise_quantiles,
-    _sample_stats,
-    _bound_samples,
+    _pair,
+    _pick,
+    _prior_bounds,
+    _run_chains,
+    _sampler_checks,
+    _sampler_report,
+    _save_map_correlation,
+    _save_fit,
+    _site_summary,
+    _validate_common,
+    _write_samples,
     _chi2,
     _geometry,
     _m2loglike_grid,
-    _quantiles,
     _refine_diameter,
     _save,
     _spatial_frequencies,
@@ -383,34 +394,12 @@ class StarPipeline(_Pipeline):
     @classmethod
     def _validate(cls, s):
         if s["diam_range_mas"] is not None:
-            rng = s["diam_range_mas"]
-            if len(rng) != 2 or not 0 < rng[0] < rng[1]:
-                raise ValueError(
-                    "diam_range_mas must be [min, max] with 0 < min < max."
-                )
-        if not (isinstance(s["n_scan"], int) and s["n_scan"] >= 20):
-            raise ValueError("n_scan must be an integer >= 20.")
-        if not (isinstance(s["max_lobes"], int) and s["max_lobes"] >= 1):
-            raise ValueError("max_lobes must be an integer >= 1.")
-        for name in ("num_samples", "num_chains"):
-            if not (isinstance(s[name], int) and s[name] >= 1):
-                raise ValueError(f"{name} must be an integer >= 1.")
-        if not (isinstance(s["num_warmup"], int) and s["num_warmup"] >= 0):
-            raise ValueError("num_warmup must be an integer >= 0.")
-        if s["batch_size"] is not None and not s["batch_size"] > 0:
-            raise ValueError("batch_size must be positive.")
+            _pair(s, "diam_range_mas")
+        _integer(s, "n_scan", 20)
+        _integer(s, "max_lobes", 1)
         if s["error_scale"] not in ("quoted", "fit"):
             raise ValueError('error_scale must be "quoted" or "fit".')
-        if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
-            raise ValueError(
-                'chain_method must be "vectorized", "sequential" or "parallel".'
-            )
-        if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
-            raise ValueError("wavel_range must be [min, max] in metres.")
-        if s["error_floor"] is not None and not isinstance(
-            s["error_floor"], dict
-        ):
-            raise ValueError("error_floor must be a dict of absolute floors.")
+        _validate_common(s)
 
     def _model_digest(self):
         record = super()._model_digest()
@@ -696,8 +685,6 @@ class LobeFit:
     m2loglike : float
         −2 log L at the fitted error scales: the score that compares lobes
         and models.
-    residuals : ndarray
-        Whitened residuals on the quoted errors.
     scales : dict
         The fitted error scales by name (empty on the quoted errors).
     priors : dict
@@ -714,7 +701,6 @@ class LobeFit:
     chi2: float
     chi2_fitted: float
     m2loglike: float
-    residuals: onp.ndarray
     scales: dict
     priors: dict
     lobe: dict
@@ -814,7 +800,15 @@ def _fit_lobe(p, entry, lobe, noise):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         model, values, info = _fit_model(p, entry, priors, lobe["diam"], noise)
-    chi2, residuals = _chi2_64(model, data)
+    if (
+        info.get("method") == "scan"
+    ):  # no fit problem to ask: test the diameter
+        from ..fitting import _AT_BOUND, _bound_fraction
+
+        edge = _bound_fraction(priors["diam"], values["diam"])
+        if edge is not None and not _AT_BOUND < edge < 1 - _AT_BOUND:
+            info = {**info, "at_bound": ("diam",)}
+    chi2, _ = _chi2_64(model, data)
     scales = _scales_of(values)
     chi2_fitted = _chi2_64(model, data, **scales)[0] if scales else chi2
     return LobeFit(
@@ -824,7 +818,6 @@ def _fit_lobe(p, entry, lobe, noise):
         chi2=float(chi2),
         chi2_fitted=float(chi2_fitted),
         m2loglike=float(_m2loglike_64(model, data, **scales)),
-        residuals=residuals,
         scales=scales,
         priors=priors,
         lobe=lobe,
@@ -965,27 +958,13 @@ def _choose_model(reports, registry, n):
 # --- the fit stage ---
 
 
-def _save_fit(folder, entry, fit):
-    _io.save_model(folder, fit.model, fit.values, list(entry.params))
-    _io.write_json(folder / "info.json", fit.info)
-
-
 def _fit_plots(p, registry, fits, best):
     """The MAP fit's data-model correlation and the V² curves."""
-    from ..likelihood import posterior_predictive_summary
-    from ..plotting import plot_data_model_correlation
-
-    data, params = p.processed, list(registry[best].params)
-    one = {
-        k: onp.asarray([float(onp.asarray(fits[best].values[k]))])
-        for k in params
-    }
-    pred = posterior_predictive_summary(one, fits[best].model, data, params)
-    fig = plot_data_model_correlation(data, {"MAP fit": pred})
-    fig = fig[0] if isinstance(fig, tuple) else fig
-    _save(fig, p.output / "plots" / "fit_correlation.png")
+    _save_map_correlation(
+        p, fits[best].model, fits[best].values, list(registry[best].params)
+    )
     fig = plot_v2_models(
-        data, {registry[n].label: fits[n].model for n in p.names}
+        p.processed, {registry[n].label: fits[n].model for n in p.names}
     )
     _save(fig, p.output / "plots" / "fit_v2.png")
 
@@ -1011,14 +990,19 @@ def _fit(p):
     # diameter prior. The lobe table is recorded in the summary.
     noise = p._noise()
     fits, reports = {}, {}
+
     for name in p.names:
         fits[name], reports[name] = _fit_in_lobes(
             p, registry[name], lobes, noise
         )
-        _save_fit(p.output / "models" / name, registry[name], fits[name])
+        _save_fit(
+            p.output / "models" / name, fits[name], list(registry[name].params)
+        )
     n = int(data.n_independent)
     best, decisive, comparisons = _choose_model(reports, registry, n)
-    _save_fit(p.output / "models" / "best", registry[best], fits[best])
+    _save_fit(
+        p.output / "models" / "best", fits[best], list(registry[best].params)
+    )
     _fit_plots(p, registry, fits, best)
     scan_best = min(lobes, key=lambda lobe: lobe["scan_delta_chi2"])
     return {
@@ -1049,8 +1033,7 @@ def _bound_fractions(entry, priors, noise, samples):
     """
     sampled = {k: v for k, v in priors.items() if k not in entry.shape}
     sampled.update({f"noise.{k}": v for k, v in (noise or {}).items()})
-    fractions = {k: _bound_samples(v, samples[k]) for k, v in sampled.items()}
-    return {k: v for k, v in fractions.items() if v is not None}
+    return _prior_bounds(sampled, samples)
 
 
 def _rewarn(caught):
@@ -1114,16 +1097,13 @@ def _nuts(model, data, p, name, priors, start):
     """NUTS for one fitted model: ``(samples, stats, summary)``."""
     from ..likelihood import numpyro_model
 
-    s = p.settings
     entry = models()[name]
     noise = p._noise()
     posterior = numpyro_model(model, priors, data, noise=noise)
-    mcmc = _run_chains(posterior, s, start, dense_mass=True, priors=priors)
-    samples = {
-        k: onp.asarray(v)
-        for k, v in mcmc.get_samples(group_by_chain=True).items()
-    }
-    stats = _sample_stats(mcmc)
+    mcmc = _run_chains(
+        posterior, p.settings, start, dense_mass=True, priors=priors
+    )
+    samples, stats = _draws(mcmc)
     diagnostics = {site: _diagnostics([x]) for site, x in samples.items()}
     if entry.derived:
         samples.update(entry.derived(samples))
@@ -1132,24 +1112,16 @@ def _nuts(model, data, p, name, priors, start):
         for k in samples
         if k not in entry.params and not k.startswith("noise.")
     )
-    summary = {}
-    for k in reported:
-        flat = onp.asarray(samples[k], dtype=float).ravel()
-        summary[k] = {
-            **_quantiles(flat),
-            "std": float(onp.std(flat)),
-            **diagnostics.get(k, {}),
-        }
-    noise_sites = _noise_quantiles(samples)
+    summary = {
+        k: _site_summary(samples[k], diagnostics.get(k, {})) for k in reported
+    }
     return (
         samples,
         stats,
         {
             "params": summary,
-            "noise": noise_sites,
-            "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-            "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-            "divergence_fraction": float(onp.mean(stats["diverging"])),
+            "noise": _noise_quantiles(samples),
+            **_chain_health(diagnostics, stats),
             "wall_probe": _wall_probe(entry, data, samples, priors),
             "prior_bound_fraction": _bound_fractions(
                 entry, priors, noise, samples
@@ -1159,27 +1131,21 @@ def _nuts(model, data, p, name, priors, start):
 
 
 def _posterior(p):
-    import pandas as pd
-
-    from ..plotting import plot_chainconsumer_diagnostics
-
-    s = p.settings
     fit_report = p._report("fit")
     best = fit_report["best"]
     groups, per_model, params_attr = {}, {}, {}
     for name in p.names:
-        entry = models()[name]
-        priors = entry.priors(*fit_report["models"][name]["diam_bounds_mas"])
-        start = {
-            k: onp.asarray(v)
-            for k, v in _io.load_model_values(
-                p.output / "models" / name
-            ).items()
-            if k in priors
-        }
-        model = _io.load_model(p.output / "models" / name)
+        folder = p.output / "models" / name
+        priors = models()[name].priors(
+            *fit_report["models"][name]["diam_bounds_mas"]
+        )
         samples, stats, summary = _nuts(
-            model, p.processed, p, name, priors, start
+            _io.load_model(folder),
+            p.processed,
+            p,
+            name,
+            priors,
+            _load_start(folder, priors),
         )
         groups[f"posterior_{name}"] = samples
         groups[f"sample_stats_{name}"] = stats
@@ -1187,44 +1153,20 @@ def _posterior(p):
         params_attr[name] = list(summary["params"])
         if name == best:
             groups["posterior"], groups["sample_stats"] = samples, stats
-    _io.write_h5(
-        p.output / "samples.h5",
+    _write_samples(
+        p,
         groups,
-        attrs={
-            "/": {
-                "schema": _io.SCHEMA,
-                "best": best,
-                "params": params_attr,
-                "priors": {
-                    n: fit_report["models"][n]["priors"] for n in p.names
-                },
-                "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
-            }
-        },
+        best=best,
+        params=params_attr,
+        priors={n: fit_report["models"][n]["priors"] for n in p.names},
     )
-
     sampled = list(models()[best].params)
-    frame = {
-        k: onp.asarray(groups["posterior"][k], dtype=float).ravel()
-        for k in sampled
-    }
-    _, fig_corner, fig_walk = plot_chainconsumer_diagnostics(
-        {"posterior": pd.DataFrame(frame)}, columns=sampled
-    )
-    _save(fig_corner, p.output / "plots" / "posterior_corner.png")
-    _save(fig_walk, p.output / "plots" / "posterior_trace.png")
+    _corner_trace(p.output, groups["posterior"], sampled)
     return {
         "models": per_model,
         "best": best,
         "sampled": sampled,
-        "num_chains": s["num_chains"],
-        "num_samples": s["num_samples"],
-        "num_warmup": s["num_warmup"],
-        "r_hat_max": max(m["r_hat_max"] for m in per_model.values()),
-        "ess_bulk_min": min(m["ess_bulk_min"] for m in per_model.values()),
-        "divergence_fraction": max(
-            m["divergence_fraction"] for m in per_model.values()
-        ),
+        **_sampler_report(p.settings, per_model.values()),
     }
 
 
@@ -1389,20 +1331,12 @@ def _posterior_checks(post):
     worst = max(
         post["models"].values(), key=lambda m: m["divergence_fraction"]
     )
-    return [
-        _checks.prior_bound(
-            {
-                f"{n}.{k}": v
-                for n, m in post["models"].items()
-                for k, v in m["prior_bound_fraction"].items()
-            }
-        ),
-        _checks.r_hat(post["r_hat_max"]),
-        _checks.ess(post["ess_bulk_min"]),
-        _checks.divergences(
-            post["divergence_fraction"], walls=worst.get("wall_probe")
-        ),
-    ]
+    bounds = {
+        f"{n}.{k}": v
+        for n, m in post["models"].items()
+        for k, v in m["prior_bound_fraction"].items()
+    }
+    return _sampler_checks(post, bounds=bounds, walls=worst.get("wall_probe"))
 
 
 def _summarize(settings, reports):
@@ -1414,7 +1348,7 @@ def _summarize(settings, reports):
         reports.get("posterior"),
     )
     if load:
-        sections["data"] = {k: load[k] for k in _DATA_KEYS}
+        sections["data"] = _pick(load, _DATA_KEYS)
     if not fit:
         return sections, checks
 
@@ -1436,6 +1370,6 @@ def _summarize(settings, reports):
         if entry.shape:
             sections["shape"], check = _shape(fit, post, entry)
             checks.append(check)
-        sections["posterior"] = {k: post[k] for k in _POSTERIOR_KEYS}
+        sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
         checks += _posterior_checks(post)
     return sections, checks

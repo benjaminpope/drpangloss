@@ -335,3 +335,748 @@ def test_absorbed_companion():
     assert "degree 2 can absorb a compact source" in found.message
     found = checks.absorbed_companion(60.0, 55.0, 1)
     assert "removes" not in found.message
+
+
+# --- every status branch, with the name and the JSON round trip --------------
+
+INF = float("inf")
+
+
+def _lobes(*deltas):
+    return [
+        {"diam_mas": 1.0 + i, "diam_bounds_mas": [0.5, 9.0], "delta_chi2": d}
+        for i, d in enumerate(deltas)
+    ]
+
+
+def _lengths(**kwargs):
+    return checks.length_scale(
+        [-20.0, -8.0, -9.5], [1.7, 3.5, 6.9], 1.5, **kwargs
+    )
+
+
+_BRANCHES = [
+    # (id, documented name, a call returning the Check, expected status)
+    (
+        "chi2-inf",
+        "c",
+        lambda: checks.chi2_reduced("c", INF, label="x"),
+        "fail",
+    ),
+    (
+        "chi2-none",
+        "c",
+        lambda: checks.chi2_reduced("c", None, label="x"),
+        "fail",
+    ),
+    (
+        "chi2-pass",
+        "c",
+        lambda: checks.chi2_reduced("c", 1.5, label="x"),
+        "pass",
+    ),
+    ("scale-empty", "error_scale", lambda: checks.error_scale({}), "pass"),
+    (
+        "scale-estimated",
+        "error_scale",
+        lambda: checks.error_scale({"v": 3.0}, kind="estimated"),
+        "warn",
+    ),
+    ("detect-nan", "detection", lambda: checks.detection(NAN, NAN), "warn"),
+    ("detect-none", "detection", lambda: checks.detection(None, None), "warn"),
+    (
+        "grid-flat-axis",
+        "grid_edge",
+        lambda: checks.grid_edge([0], [1], "x"),
+        "pass",
+    ),
+    (
+        "prior-bound-empty",
+        "prior_bound",
+        lambda: checks.prior_bound({}),
+        "pass",
+    ),
+    (
+        "prior-bound-at-warn",
+        "prior_bound",
+        lambda: checks.prior_bound({"a": 0.05}),
+        "pass",
+    ),
+    (
+        "start-at-bound",
+        "start_at_bound",
+        lambda: checks.start_at_bound(("flux", "sep")),
+        "warn",
+    ),
+    ("at-bound-none", "at_bound", lambda: checks.at_bound([]), "pass"),
+    ("at-bound-some", "at_bound", lambda: checks.at_bound(("flux",)), "warn"),
+    ("r-hat-nan", "r_hat", lambda: checks.r_hat(NAN), "fail"),
+    ("r-hat-inf", "r_hat", lambda: checks.r_hat(INF), "fail"),
+    ("r-hat-none", "r_hat", lambda: checks.r_hat(None), "fail"),
+    ("ess-nan", "ess", lambda: checks.ess(NAN), "fail"),
+    ("ess-none", "ess", lambda: checks.ess(None), "fail"),
+    ("div-pass", "divergences", lambda: checks.divergences(0.0), "pass"),
+    (
+        "div-walls-exposed",
+        "divergences",
+        lambda: checks.divergences(
+            0.1, walls={"radius_sd": 3.0, "exposed": 0.4}
+        ),
+        "warn",
+    ),
+    (
+        "div-walls-barely-exposed",
+        "divergences",
+        lambda: checks.divergences(
+            0.1, walls={"radius_sd": 3.0, "exposed": 0.01}
+        ),
+        "fail",
+    ),
+    (
+        "div-walls-no-key",
+        "divergences",
+        lambda: checks.divergences(0.1, walls={"radius_sd": 3.0}),
+        "fail",
+    ),
+    (
+        "div-walls-irrelevant",
+        "divergences",
+        lambda: checks.divergences(
+            0.005, walls={"radius_sd": 3.0, "exposed": 1.0}
+        ),
+        "warn",
+    ),
+    (
+        "normality-nan-skew",
+        "residual_normality",
+        lambda: checks.residual_normality(NAN, 0.0, 1000),
+        "warn",
+    ),
+    (
+        "normality-tiny-n",
+        "residual_normality",
+        lambda: checks.residual_normality(NAN, NAN, 7),
+        "pass",
+    ),
+    (
+        "fov-at-resolution",
+        "field_of_view",
+        lambda: checks.field_of_view(50.0, 50.0, 700.0),
+        "pass",
+    ),
+    (
+        "fov-at-fov",
+        "field_of_view",
+        lambda: checks.field_of_view(700.0, 50.0, 700.0),
+        "pass",
+    ),
+    (
+        "resolution-nan",
+        "resolution",
+        lambda: checks.resolution_regime(NAN, 1e8),
+        "fail",
+    ),
+    (
+        "resolution-inf",
+        "resolution",
+        lambda: checks.resolution_regime(1.0, INF),
+        "fail",
+    ),
+    (
+        "resolution-unresolved",
+        "resolution",
+        lambda: checks.resolution_regime(1.0, 1e7),
+        "fail",
+    ),
+    (
+        "resolution-short-of-null",
+        "resolution",
+        lambda: checks.resolution_regime(1.0, 1e8),
+        "warn",
+    ),
+    (
+        "resolution-past-null",
+        "resolution",
+        lambda: checks.resolution_regime(1.0, 3e8),
+        "pass",
+    ),
+    ("lobes-none", "multimodal", lambda: checks.multimodal([]), "pass"),
+    (
+        "lobes-one",
+        "multimodal",
+        lambda: checks.multimodal(_lobes(0.0)),
+        "pass",
+    ),
+    (
+        "lobes-clear",
+        "multimodal",
+        lambda: checks.multimodal(_lobes(0.0, 100.0)),
+        "pass",
+    ),
+    (
+        "lobes-rival-unsorted",
+        "multimodal",
+        lambda: checks.multimodal(_lobes(40.0, 5.0, 0.0)),
+        "warn",
+    ),
+    (
+        "lobes-nan-gap",
+        "multimodal",
+        lambda: checks.multimodal(_lobes(0.0, NAN)),
+        "warn",
+    ),
+    (
+        "gain-nan",
+        "gain",
+        lambda: checks.model_gain(
+            "gain", NAN, 1.0, 100, n_extra=3, simple="a", complex_="b"
+        ),
+        "fail",
+    ),
+    (
+        "gain-negative",
+        "gain",
+        lambda: checks.model_gain(
+            "gain", 10.0, 20.0, 100, n_extra=3, simple="a", complex_="b"
+        ),
+        "warn",
+    ),
+    (
+        "gain-preferred",
+        "gain",
+        lambda: checks.model_gain(
+            "gain", 200.0, 100.0, 100, n_extra=3, simple="a", complex_="b"
+        ),
+        "pass",
+    ),
+    (
+        "gain-adequate",
+        "gain",
+        lambda: checks.model_gain(
+            "gain", 101.0, 100.0, 100, n_extra=3, simple="a", complex_="b"
+        ),
+        "pass",
+    ),
+    (
+        "gain-slightly-negative",
+        "gain",
+        lambda: checks.model_gain(
+            "gain", 100.0, 100.5, 1, n_extra=1, simple="a", complex_="b"
+        ),
+        "pass",
+    ),
+    (
+        "constrained-empty",
+        "pc",
+        lambda: checks.prior_constrained("pc", {}),
+        "pass",
+    ),
+    (
+        "constrained-data",
+        "pc",
+        lambda: checks.prior_constrained("pc", {"a": 0.1, "b": 0.79}),
+        "pass",
+    ),
+    (
+        "constrained-prior",
+        "pc",
+        lambda: checks.prior_constrained("pc", {"a": 0.1, "b": 0.8}),
+        "warn",
+    ),
+    (
+        "constrained-nan",
+        "pc",
+        lambda: checks.prior_constrained("pc", {"a": NAN}),
+        "warn",
+    ),
+    (
+        "lengths-nan",
+        "length_scale",
+        lambda: checks.length_scale([1.0, INF], [1, 2], 1.0),
+        "warn",
+    ),
+    (
+        "lengths-one",
+        "length_scale",
+        lambda: checks.length_scale([1.0], [1], 1.0),
+        "warn",
+    ),
+    (
+        "lengths-edge-low-extended",
+        "length_scale",
+        lambda: _lengths(edge="low", extended="low"),
+        "warn",
+    ),
+    (
+        "lengths-edge-low-floor",
+        "length_scale",
+        lambda: _lengths(edge="low", extended=None),
+        "warn",
+    ),
+    (
+        "lengths-edge-high-extended",
+        "length_scale",
+        lambda: _lengths(edge="high", extended="high"),
+        "warn",
+    ),
+    (
+        "lengths-edge-high-plain",
+        "length_scale",
+        lambda: _lengths(edge="high"),
+        "warn",
+    ),
+    (
+        "lengths-edge-other-side",
+        "length_scale",
+        lambda: _lengths(edge="high", extended="low"),
+        "warn",
+    ),
+    ("lengths-flat", "length_scale", lambda: _lengths(nats=50.0), "warn"),
+    (
+        "ring-nan-width",
+        "ring_count",
+        lambda: checks.ring_count(
+            1,
+            [{"n": 1, "bic": 1.0, "log_evidence": None, "widths": [NAN]}],
+            1.0,
+        ),
+        "warn",
+    ),
+    (
+        "ring-lowest-count",
+        "ring_count",
+        lambda: checks.ring_count(
+            1, _ring_rows([100.0, 140.0], [None, None]), 1.0
+        ),
+        "pass",
+    ),
+    (
+        "inner-inf",
+        "inner_edge",
+        lambda: checks.inner_edge(INF, 0.0, 1.0),
+        "warn",
+    ),
+    (
+        "inner-nan-correlation",
+        "inner_edge",
+        lambda: checks.inner_edge(0.5, NAN, 1.0),
+        "warn",
+    ),
+    (
+        "inner-at-limits",
+        "inner_edge",
+        lambda: checks.inner_edge(0.1, 0.9, 1.0),
+        "pass",
+    ),
+    (
+        "outer-at-limit",
+        "outer_edge",
+        lambda: checks.outer_edge(0.01, 1.0),
+        "pass",
+    ),
+    ("outer-inf", "outer_edge", lambda: checks.outer_edge(INF, 1.0), "warn"),
+    (
+        "inc-nan",
+        "inclination",
+        lambda: checks.inclination(NAN, 1.0, 1),
+        "warn",
+    ),
+    (
+        "inc-at-minimum",
+        "inclination",
+        lambda: checks.inclination(15.0, 45.0, 1),
+        "pass",
+    ),
+    (
+        "inc-nan-pa",
+        "inclination",
+        lambda: checks.inclination(50.0, NAN, 1),
+        "warn",
+    ),
+    (
+        "absorbed-nan",
+        "absorbed_companion",
+        lambda: checks.absorbed_companion(NAN, None, 1),
+        "pass",
+    ),
+    (
+        "absorbed-at-threshold",
+        "absorbed_companion",
+        lambda: checks.absorbed_companion(25.0, NAN, 2),
+        "warn",
+    ),
+    (
+        "render-nan-model",
+        "render_consistency",
+        lambda: checks.render_consistency(NAN, 1.0),
+        "warn",
+    ),
+    (
+        "render-inf",
+        "render_consistency",
+        lambda: checks.render_consistency(1.0, INF),
+        "warn",
+    ),
+    (
+        "render-same",
+        "render_consistency",
+        lambda: checks.render_consistency(1.3, 1.3),
+        "pass",
+    ),
+    (
+        "render-floor-only",
+        "render_consistency",
+        lambda: checks.render_consistency(0.0, 0.02),
+        "pass",
+    ),
+    (
+        "render-30-per-cent-worse",
+        "render_consistency",
+        lambda: checks.render_consistency(1.0, 1.3),
+        "warn",
+    ),
+    (
+        "render-better-by-30-per-cent",
+        "render_consistency",
+        lambda: checks.render_consistency(1.0, 0.7),
+        "warn",
+    ),
+    (
+        "render-zero-model",
+        "render_consistency",
+        lambda: checks.render_consistency(0.0, 0.5),
+        "warn",
+    ),
+    (
+        "structure-nan-spread",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(NAN, 0.1),
+        "pass",
+    ),
+    (
+        "structure-no-correlation",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(0.5, None),
+        "pass",
+    ),
+    (
+        "structure-flat-and-unstable",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(0.5, 0.3),
+        "warn",
+    ),
+    (
+        "structure-flat-but-stable",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(0.5, 0.95),
+        "pass",
+    ),
+    (
+        "structure-separated-but-unstable",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(30.0, 0.3),
+        "pass",
+    ),
+    (
+        "structure-at-limits",
+        "structure_unconstrained",
+        lambda: checks.structure_unconstrained(3.0, 0.8),
+        "pass",
+    ),
+    (
+        "convergence-empty",
+        "convergence",
+        lambda: checks.convergence([]),
+        "warn",
+    ),
+    (
+        "convergence-zero-grid",
+        "convergence",
+        lambda: checks.convergence(
+            [_w("did not converge at 5 of 0 grid positions")]
+        ),
+        "warn",
+    ),
+    (
+        "flux-axis-empty",
+        "flux_axis_resolution",
+        lambda: checks.flux_axis_resolution([]),
+        "warn",
+    ),
+    (
+        "limits-empty",
+        "limits_clipped",
+        lambda: checks.limits_clipped([]),
+        "warn",
+    ),
+    (
+        "stage-warnings-many",
+        "stage_warnings",
+        lambda: checks.stage_warnings([_w(f"w{i}") for i in range(5)]),
+        "warn",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name, make, status",
+    [pytest.param(n, m, s, id=i) for i, n, m, s in _BRANCHES],
+)
+def test_every_branch_returns_its_named_status_and_a_json_ready_check(
+    name, make, status
+):
+    check = make()
+    assert isinstance(check, Check)
+    assert (check.name, check.status) == (name, status)
+    assert isinstance(check.message, str) and check.message.strip()
+    record = json.loads(json.dumps(check.to_dict(), allow_nan=False))
+    assert Check.from_dict(record).to_dict() == record
+
+
+@pytest.mark.parametrize(
+    "make, fragments",
+    [
+        (
+            lambda: checks.divergences(
+                0.1, walls={"radius_sd": 3, "exposed": 0.4}
+            ),
+            ["40 per cent of steps of 3 posterior", "hard wall"],
+        ),
+        (
+            lambda: checks.divergences(
+                0.1, walls={"radius_sd": 3, "exposed": 0.01}
+            ),
+            ["10 per cent", "the posterior is not reliable"],
+        ),
+        (
+            lambda: checks.error_scale({"v": 3.0}, kind="estimated"),
+            ["Estimated error"],
+        ),
+        (lambda: checks.resolution_regime(1.0, 1e7), ["upper limit"]),
+        (
+            lambda: checks.resolution_regime(1.0, 1e8),
+            ["limb darkening is degenerate"],
+        ),
+        (
+            lambda: checks.resolution_regime(1.0, 3e8),
+            ["limb darkening can be constrained"],
+        ),
+        (lambda: checks.resolution_regime(NAN, 1e8), ["not finite"]),
+        (lambda: checks.multimodal(_lobes(0.0)), ["Only one"]),
+        (
+            lambda: checks.multimodal(_lobes(0.0, 100.0)),
+            ["beats the next", "100"],
+        ),
+        (
+            lambda: checks.multimodal(_lobes(40.0, 5.0, 0.0)),
+            ["2 mas against the best 3 mas", "Δχ² = 5", "< 25"],
+        ),
+        (
+            lambda: checks.model_gain(
+                "g", NAN, 1.0, 9, n_extra=1, simple="a", complex_="b"
+            ),
+            ["not finite"],
+        ),
+        (
+            lambda: checks.model_gain(
+                "g", 10.0, 20.0, 9, n_extra=1, simple="one", complex_="two"
+            ),
+            [
+                "The two model fits worse than the one model",
+                "did not converge",
+            ],
+        ),
+        (
+            lambda: checks.model_gain(
+                "g", 200.0, 1.0, 9, n_extra=2, simple="one", complex_="two"
+            ),
+            ["exceeds the BIC penalty 4.39", "the two model is preferred"],
+        ),
+        (
+            lambda: checks.model_gain(
+                "g", 5.0, 4.0, 9, n_extra=2, simple="one", complex_="two"
+            ),
+            ["does not exceed the BIC penalty", "the one model is adequate"],
+        ),
+        (
+            lambda: checks.prior_constrained(
+                "p", {"a": 0.1, "b": 0.9, "c": NAN}
+            ),
+            ["for b, c", "a 0.10, b 0.90, c nan"],
+        ),
+        (
+            lambda: checks.prior_constrained("p", {"a": 0.1}),
+            ["constrain every parameter"],
+        ),
+        (lambda: checks.at_bound([]), ["No fitted parameter"]),
+        (lambda: checks.at_bound(["a", "b"]), ["for a, b", "Widen the prior"]),
+        (
+            lambda: checks.start_at_bound(["a", "b"]),
+            ["for a, b", "prior-dominated"],
+        ),
+        (
+            lambda: _lengths(edge="low", extended="low"),
+            ["lowest of the grid even after"],
+        ),
+        (
+            lambda: _lengths(edge="low"),
+            ["lowest of the grid and the grid could not", "floor"],
+        ),
+        (
+            lambda: _lengths(edge="high", extended="high"),
+            ["highest of the grid even after", "Widen ell_halffringes"],
+        ),
+        (
+            lambda: _lengths(edge="high"),
+            ["highest of the grid (best", "Widen ell_halffringes"],
+        ),
+        (
+            lambda: _lengths(edge="high", extended="low"),
+            ["highest of the grid ("],
+        ),
+        (
+            lambda: checks.render_consistency(NAN, 1.0),
+            ["could not be computed"],
+        ),
+        (
+            lambda: checks.render_consistency(1.0, 1.3),
+            ["not the model the fit found", "n_r"],
+        ),
+        (
+            lambda: checks.render_consistency(1.0, 1.0),
+            ["1 for the model and 1 for its"],
+        ),
+        (
+            lambda: checks.structure_unconstrained(NAN, 0.1),
+            ["was not assessed"],
+        ),
+        (
+            lambda: checks.structure_unconstrained(0.5, 0.3),
+            ["differ by 0.5 nats", "correlate only 0.3", "mostly the prior"],
+        ),
+        (
+            lambda: checks.structure_unconstrained(0.5, 0.95),
+            ["is stable across ℓ"],
+        ),
+        (
+            lambda: checks.convergence(
+                [_w("did not converge at 5 of 0 grid")]
+            ),
+            ["at some grid positions"],
+        ),
+        (lambda: checks.flux_axis_resolution([]), ["peak:"]),
+        (lambda: checks.limits_clipped([]), ["Some limits fell outside"]),
+        (
+            lambda: checks.limits_clipped(
+                [_w("2 limits clipped"), _w("7 limits clipped")]
+            ),
+            ["7 limits fell outside"],
+        ),
+        (
+            lambda: checks.stage_warnings([_w(f"w{i}") for i in range(5)]),
+            ["5 warning(s)", "w0; w1; w2 (and 2 more)"],
+        ),
+        (lambda: checks.stage_warnings([_w("only")]), ["only. See the"]),
+        (lambda: checks.inclination(NAN, 1.0, 1), ["nan°", "unconstrained"]),
+        (
+            lambda: checks.inclination(50.0, NAN, 1),
+            ["standard deviation is nan°"],
+        ),
+        (lambda: checks.absorbed_companion(25.0, NAN, 2), ["remains"]),
+        (
+            lambda: checks.ring_count(
+                2,
+                _ring_rows([120.0, 100.0], [None, None]),
+                1.0,
+                nats=99.0,
+            ),
+            ["do not clearly prefer 2 to 1 ring ", "(margin 10 nats)"],
+        ),
+    ],
+)
+def test_messages_say_which_branch_they_took(make, fragments):
+    message = make().message
+    for fragment in fragments:
+        assert fragment in message, (fragment, message)
+
+
+def test_stage_warning_checks_order_benign_filter_and_recognized_categories():
+    found = checks.stage_warning_checks(
+        [
+            _w("odd", "UserWarning"),
+            _w("old", "PyparsingDeprecationWarning"),
+            _w("fd", "ResourceWarning"),
+            _w("import", "ImportWarning"),
+            # recognized by keyword even when the category is a benign one
+            _w("the optimizer did not converge", "DeprecationWarning"),
+            _w("limits were clipped"),
+            _w("uses flux_bounds somewhere"),
+            _w("could not resolve the likelihood peak"),
+        ]
+    )
+    assert [c.name for c in found] == [
+        "convergence",
+        "flux_axis_resolution",
+        "limits_clipped",
+        "stage_warnings",
+    ]
+    assert found[-1].value == 1 and "odd" in found[-1].message
+    assert "old" not in found[-1].message and "fd" not in found[-1].message
+
+
+def test_ring_count_message_pluralizes_and_reports_missing_neighbours():
+    single = _ring_rows([100.0], [None])
+    found = checks.ring_count(1, single, 1.0)
+    assert found.value is None and found.message.startswith("1 ring preferred")
+    assert "at least 0 nats" in found.message
+    rows = _ring_rows([100.0, 100.5, 101.0], [None] * 3)
+    found = checks.ring_count(2, rows, 1.0)
+    assert "2 rings" in found.message and "1 or 3 rings" in found.message
+    assert "1 or 3 rings (margin -0.25, 0.25 nats)" in found.message
+
+
+def test_check_status_is_one_of_the_three_known_values():
+    assert checks.STATUSES == ("pass", "warn", "fail")
+    assert checks.bic_penalty(3, 100) == pytest.approx(3 * 4.605170185988092)
+    assert checks.bic_penalty(2, 0) == pytest.approx(2 * 0.6931471805599453)
+
+
+@pytest.mark.parametrize("order", [("a", "b"), ("b", "a")])
+def test_a_nan_site_makes_the_worst_chain_health_nan_in_any_order(order):
+    """A stuck parameter (NaN R-hat) must not hide behind a finite site,
+    whichever the site order, and the checks then fail."""
+    import numpy as onp
+
+    from virgil.pipeline._common import _chain_health, _sampler_report
+
+    site = {
+        "a": {"r_hat": 1.0, "ess_bulk": 900.0},
+        "b": {"r_hat": float("nan"), "ess_bulk": float("nan")},
+    }
+    stats = {"diverging": onp.zeros((2, 5), bool)}
+    health = _chain_health({k: site[k] for k in order}, stats)
+    assert onp.isnan(health["r_hat_max"]) and onp.isnan(health["ess_bulk_min"])
+    ok = {"r_hat_max": 1.0, "ess_bulk_min": 500.0, "divergence_fraction": 0.0}
+    settings = {"num_chains": 2, "num_samples": 5, "num_warmup": 1}
+    for parts in ([health, ok], [ok, health]):
+        report = _sampler_report(settings, parts)
+        assert onp.isnan(report["r_hat_max"])
+        assert onp.isnan(report["ess_bulk_min"])
+        assert checks.r_hat(report["r_hat_max"]).status == "fail"
+        assert checks.ess(report["ess_bulk_min"]).status == "fail"
+
+
+def test_a_stuck_element_of_a_vector_site_makes_its_diagnostics_nan():
+    import numpy as onp
+
+    from virgil.pipeline._common import _diagnostics
+
+    rng = onp.random.default_rng(0)
+    moving = rng.normal(size=(2, 200, 3))
+    assert onp.isfinite(_diagnostics([moving])["r_hat"])
+    stuck = moving.copy()
+    stuck[:, :, 1] = 0.5  # one coefficient never moves
+    out = _diagnostics([stuck])
+    assert onp.isnan(out["r_hat"]) and onp.isnan(out["ess_bulk"])
+    assert checks.r_hat(out["r_hat"]).status == "fail"
+    assert checks.ess(out["ess_bulk"]).status == "fail"

@@ -890,6 +890,10 @@ Provisional in 0.4:
 
 ### Fixed
 
+- **`StarPipeline` reports a scanned (uniform-disk) fit that sits on its diameter bound.** Only gradient fits listed `at_bound`, so a uniform fit at the edge of `diam_range_mas` passed the fit stage silently; it now lists `diam` in `at_bound` and adds the `start_at_bound` warning, as the limb-darkened fit does.
+- **Pipelines no longer crash in the posterior figures when the chains never move.** Draws with zero width made chainconsumer raise "Axis limits cannot be NaN or Inf", failing the run in the plotting step instead of reporting the non-convergence. The corner and trace figures are now placeholders with a recorded warning, and the R-hat and ESS checks fail as they should.
+- **Pipeline sampler reports no longer hide a stuck parameter.** The worst R-hat and smallest ESS in `posterior` reports were taken with Python `max`/`min`, so a NaN at one site was dropped when a finite site came first and the R-hat and ESS checks passed. A NaN at any site now makes the worst value NaN, which those checks fail.
+- **Pipeline setting validation is uniform.** `BinaryPipeline`, `StarPipeline` and `DiskPipeline` validate the shared sampler and data settings with one helper: `DiskPipeline` now rejects a non-positive `batch_size`, a non-number where a positive number is required is a `ValueError` (it was a `TypeError`), and messages for positive settings read "X must be positive; got V." (provisional pipelines; valid runs and results are unchanged). A missing or corrupt `models/best/info.json` now makes `DiskPipeline`'s `compare` stage raise instead of reporting an empty `at_bound`.
 - **Short-arc seeding no longer breaks velocity fits or drops position
   seeds.** `arcs._half_position` unpacked two values from `_refine_marginal`,
   which has returned `(x, value, stop)` since the refinement change below, so
