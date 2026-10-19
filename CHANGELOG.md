@@ -190,6 +190,15 @@ Provisional in 0.4:
 
 ### Changed
 
+- **Fit summary performance.** `fit` no longer compiles a second gradient of
+  the whole model to report `info["chi2"]` and `info["grad_norm"]`. The
+  chi-squared is a forward evaluation, and for L-BFGS the gradient norm is
+  read from the optimizer's final state, which already holds the gradient at
+  the returned point. Only LM and Adam, which have none, still compute it
+  afresh. The `info` keys and values are unchanged, as is the API; the
+  progress report and L-BFGS restarts also skip the gradient where they do
+  not need it. For a model with many datasets this saves a large share of
+  the compile time of a fit.
 - `Epochs.snapshots` evaluates a single scene at all the datasets' times with one `vmap`, so the gradient graph no longer grows with the number of datasets (about half the jaxpr equations for an `OrbitalBinary`), and the `DiskPipeline` ring stages reuse one compiled model instead of recompiling every fit. Results are unchanged.
 - `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
   per layout of the data instead of on every call. Results are unchanged.
