@@ -111,16 +111,15 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
 
 ### 3.2 virgil (OrbitPipeline and alias engine; virgil never imports virgil-vlti)
 
-1. **Score data with gains on the marginal surface.** Two options:
-   - **R1 (recommended).** Integrate the white-noise scale numerically. Per block, C(s) = s²D +
-     UUᵀ (U from the gains or offsets). ∫ L(s) p(ln s) d ln s is taken by a fixed Gauss–Legendre
-     rule (about 16 nodes) over the existing Jeffreys range [−ln s_max, ln s_max]. Each node uses
-     `_whiten_with_log_norm`, which has the exact log det. This keeps the meaning of today's
-     evidences and stays smooth for gradients. The cost is about 16 whitenings per block, which
-     is affordable after binning.
-   - **R2.** Quoted scale (s = 1), with the template's overall width fitted (`vis_gain_modes`,
-     log-uniform about 1). It is cheaper but trusts the propagated errors.
-   Either way `_Surface` stops refusing gains. A regression test requires that zero-width gains
+1. **Score data with gains on the marginal surface (R1, decided).** Integrate the white-noise
+   scale numerically. Per block, C(s) = s²D + UUᵀ (U from the gains or offsets).
+   ∫ L(s) p(ln s) d ln s is taken by a fixed Gauss–Legendre rule (about 16 nodes) over the
+   existing Jeffreys range [−ln s_max, ln s_max]. Each node uses `_whiten_with_log_norm`, which
+   has the exact log det. This keeps the meaning of today's evidences and stays smooth for
+   gradients. The cost is about 16 whitenings per block, which is affordable after binning.
+   R2 was rejected (quoted scale s = 1 with the template's overall width fitted: cheaper, but it
+   trusts the propagated errors).
+   `_Surface` stops refusing gains. A regression test requires that zero-width gains
    reproduce today's surface to rounding.
 2. **`vis_amp` with gains is refused.** Telescope and baseline gains supersede the per-night
    amplitude. `vis_amp` stays only for the legacy uncalibrated path, which is labelled legacy in
@@ -177,10 +176,10 @@ has; laptop runs ≤ 2 min, `OMP_NUM_THREADS=2`, one process.
 4. virgil PR with the 1e/release-review owners: §3.2.1–3, then §3.2.5.
 5. vv PR: gallery reads via the loader; then the OzSTAR rerun and validation (§4).
 
-## 6. Questions for Ben
+## 6. Decisions (Ben, 2026-10-20)
 
-1. R1 (numerical scale marginalization) or R2 (quoted scale, fitted template width)?
-2. Nights without calibrators: closure phases only (recommended), or drop the night?
-3. Bin HIGH by 8 (R ≈ 500)?
-4. Programme binaries as calibrators: exclude (recommended), or model them as binaries?
-5. Relabel the current gallery results "legacy uncalibrated V²" now, before the rerun?
+1. R1: numerical marginalization of the white-noise scale.
+2. Nights without calibrators: closure phases only.
+3. Bin HIGH by 8 (R ≈ 500).
+4. Exclude programme binaries as calibrators.
+5. Label the current gallery results "legacy uncalibrated V²" now, before the rerun.
