@@ -1064,3 +1064,19 @@ def test_a_nan_site_makes_the_worst_chain_health_nan_in_any_order(order):
         assert onp.isnan(report["ess_bulk_min"])
         assert checks.r_hat(report["r_hat_max"]).status == "fail"
         assert checks.ess(report["ess_bulk_min"]).status == "fail"
+
+
+def test_a_stuck_element_of_a_vector_site_makes_its_diagnostics_nan():
+    import numpy as onp
+
+    from virgil.pipeline._common import _diagnostics
+
+    rng = onp.random.default_rng(0)
+    moving = rng.normal(size=(2, 200, 3))
+    assert onp.isfinite(_diagnostics([moving])["r_hat"])
+    stuck = moving.copy()
+    stuck[:, :, 1] = 0.5  # one coefficient never moves
+    out = _diagnostics([stuck])
+    assert onp.isnan(out["r_hat"]) and onp.isnan(out["ess_bulk"])
+    assert checks.r_hat(out["r_hat"]).status == "fail"
+    assert checks.ess(out["ess_bulk"]).status == "fail"

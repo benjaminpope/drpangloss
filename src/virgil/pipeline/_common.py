@@ -454,17 +454,17 @@ def _sample_stats(mcmc):
 
 
 def _diagnostics(arrays):
-    """Worst split R-hat and bulk ESS of ``arrays`` (each ``(chain, draw)``)."""
+    """Worst split R-hat and bulk ESS of ``arrays`` (each ``(chain, draw)``
+    or ``(chain, draw, k)``). A NaN anywhere, such as the 0/0 R-hat of a
+    stuck element, makes the worst value NaN, which the checks fail."""
     from numpyro.diagnostics import effective_sample_size, split_gelman_rubin
 
     return {
-        "r_hat": max(
-            float(onp.nanmax(onp.asarray(split_gelman_rubin(x))))
-            for x in arrays
+        "r_hat": float(
+            onp.max([onp.max(split_gelman_rubin(x)) for x in arrays])
         ),
-        "ess_bulk": min(
-            float(onp.nanmin(onp.asarray(effective_sample_size(x))))
-            for x in arrays
+        "ess_bulk": float(
+            onp.min([onp.min(effective_sample_size(x)) for x in arrays])
         ),
     }
 

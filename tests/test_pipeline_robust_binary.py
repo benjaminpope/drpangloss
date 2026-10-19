@@ -555,3 +555,19 @@ def test_the_default_settings_never_pass_a_wrong_companion_silently(
         assert flagged, "a wrong companion position passed every check"
         assert res.summary["worst_check"] in ("warn", "fail")
         assert "[warn]" in res.describe() or "[fail]" in res.describe()
+
+
+def test_the_corner_and_trace_figures_survive_draws_that_never_move(tmp_path):
+    """Pins the fallback in ``_common._corner_trace`` directly: zero-width
+    draws cannot be laid out, so placeholder figures and a warning replace
+    them (the run-level test below depends on how far NUTS moves)."""
+    import numpy as onp
+
+    from virgil.pipeline._common import _corner_trace
+
+    samples = {"a": onp.full((2, 10), 1.5), "b": onp.full((2, 10), -0.5)}
+    (tmp_path / "plots").mkdir()
+    with pytest.warns(RuntimeWarning, match="not drawn"):
+        _corner_trace(tmp_path, samples, ["a", "b"])
+    for name in ("posterior_corner.png", "posterior_trace.png"):
+        assert (tmp_path / "plots" / name).stat().st_size > 0
