@@ -36,9 +36,22 @@ Provisional in 0.4:
   `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
-- `virgil.metrics`.
+- `virgil.metrics`;
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances.
 
 ### Added
+
+- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
+  (virgil#75), and `virgil.set_ft_defaults` changes the defaults. nufftax is
+  now a dependency. **The default changes results slightly**: on a CPU an image
+  of at least 64² pixels with at least max(500, 2N) points (N the larger side),
+  or on a GPU one of at least 128² pixels with 3000 or more points, uses a
+  non-uniform FFT, accurate
+  to 1e-5 (float32) or 1e-12 (float64) of the zero-baseline visibility rather
+  than exact. Pass `ft="dft"`, or call `set_ft_defaults(ft="dft")`, for the
+  exact sum; CLEAN (`_CleanScene`) has no `ft` and follows the global default.
+  `jax.hessian` and nested `vmap` through the NUFFT fail in nufftax 0.6.1; use
+  `ft="dft"` there. `ft` and `set_ft_defaults` are provisional.
 
 - **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
   `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`

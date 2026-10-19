@@ -118,13 +118,17 @@ Why:
 
 ### 6. Fourier backends
 
-Visibilities are the exact separable DFT, or the exact two-sided MFT for
-data on uv lattices (Stage 2b). A NUFFT backend (jax-finufft) was built and
-benchmarked in Stage 2 and then **removed** (issue #75): accurate, but on a
-GPU its per-call planning cost (jax-finufft #157) made it slower than the
-DFT except for very large problems. Revisit only when jax-finufft can reuse
-plans; its code is in the git history of PR #71. A padded FFT with
-interpolation is never used.
+Visibilities are the exact separable DFT, the exact two-sided MFT for data
+on uv lattices (Stage 2b), or, chosen automatically by problem size, a NUFFT
+through nufftax (pure JAX; a core dependency; issue #75, reinstated
+2026-10). jax-finufft was built and benchmarked in Stage 2 and removed: it
+re-creates cuFFT plans on every call (jax-finufft #157, a flat 6-7 ms on the
+GPU). nufftax has no such cost (0.15-0.7 ms value+grad on an A100), so
+jax-finufft is no longer needed. `ft="auto"` uses the NUFFT when
+the problem is large enough: on a GPU `M >= 3000` and `min(N1, N2) >= 128`;
+on a CPU `M >= max(500, 2·max(N1, N2))` and `min(N1, N2) >= 64` (the `_FT_DEFAULTS` dict in `_geometry`, set with `virgil.set_ft_defaults`, which also makes `ft="dft"` or `"nufft"` global); `ft="dft"` and
+`ft="nufft"` force a choice. A `UVGrid` match still takes the MFT. A padded
+FFT with interpolation is never used.
 
 Why:
 - The DFT is exact to float32 rounding (accuracy table below) and cheap for
@@ -137,8 +141,12 @@ Why:
   and for measured AMI performance (0.14 degrees), but **not** for AMI at
   1e-4 contrast (sigma_CP of about 2e-5 rad). There, use the DFT or float64
   NUFFT.
-- jax-finufft re-plans on every call (issue #157) and uses private JAX
-  internals (fine on 0.9.1, vmap broke on 0.10.2).
+- jax-finufft re-planned on every call (issue #157) and used private JAX
+  internals (vmap broke on 0.10.2); nufftax is plain JAX and vmaps.
+- nufftax wraps t = 2π s u modulo 2π, but the even-axis half-pixel phase
+  exp(+i t/2) is 4π-periodic: `_nufft` transforms the wrapped t and applies
+  that phase to the original t. Default eps is 1e-5 in float32 (relative to
+  V(0)) and 1e-12 in float64.
 - Even N is a trap for any FFT-based method: putting the image centre at
   (N-1)/2 inside a grid centred on N/2 gives a half-pixel offset.
 
@@ -284,14 +292,14 @@ LM metric with whitened latents gives the same linear algebra.
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| Reinstating a NUFFT backend (issue #75; code in PR #71) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
+| NUFFT thresholds and eps (`_FT_DEFAULTS` in `_geometry`) | A new nufftax release changes its floor, or a GPU CPU-style rule is wanted |
 
 The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
 below. Any re-run is done by the user, never by Claude.
 
 ## GPU benchmark results
 
-The NUFFT backend was removed after Stage 3 (issue #75); its code, tests and benchmark scripts are in the git history of PR #71.
+The jax-finufft backend was removed after Stage 3 (issue #75); its code is in the git history of PR #71. It was reinstated through nufftax (below).
 
 Run 2026-09-30 on OzSTAR (NT) node gina10, one NVIDIA A100-SXM4-80GB,
 jax 0.10.2 with the conda-forge CUDA build of jax-finufft, by
@@ -318,29 +326,63 @@ V(0) = 1):
 - FINUFFT's float64 GPU accuracy is fine here (2.8e-8), so the concern
   from jax-finufft issue #162 does not apply to this build.
 
-**Speed** (jitted value + gradient, ms):
+**Speed** (A100, jitted value+grad, float32, ms; DFT / nufftax; jobs 17776437
+and 18762629, then 18819744, jax 0.10.2, nufftax 0.6.1; ozstar_scripts#35).
 
-![GPU timings](figures/bench_ft_gpu.png)
+| Image | points | DFT / nufftax (speed-up) |
+| --- | --- | --- |
+| 64² | 10⁵ | 0.95 / 1.05 (0.9×); never really wins |
+| 128² | 10³ | 0.161 / 0.148 (1.1×) |
+| | 10⁴ | 0.387 / 0.183 (2×) |
+| | 10⁵ | 2.26 / 0.455 (5×) |
+| 256² | 10³ | 0.218 / 0.165 (1.3×) |
+| | 3×10³ | 0.375 / 0.168 (2×) |
+| | 10⁴ | 0.84 / 0.18 (5×) |
+| | 10⁵ | 5.87 / 0.336 (17×) |
+| 512² | 3×10³ | 0.841 / 0.232 (4×) |
+| | 10⁵ | 19.5 / 0.388 (50×) |
+| 1024² | 100 | 0.253 / 0.517 (0.5×) |
+| | 10³ | 1.02 / 0.523 (2×) |
+| | 3×10³ | 2.61 / 0.555 (5×) |
+| | 3×10⁴ | 22.1 / 0.571 (39×) |
 
-| float32, ms | 10³ pts | 10⁴ | 10⁵ |
-| --- | --- | --- | --- |
-| DFT 64² / NUFFT 64² | 0.14 / 6.1 | 0.24 / 6.7 | 0.96 / 6.8 |
-| DFT 128² / NUFFT 128² | 0.15 / 6.8 | 0.41 / 7.1 | 2.3 / 6.8 |
-| DFT 256² / NUFFT 256² | 0.23 / 6.4 | 0.87 / 6.7 | 6.5 / 7.0 |
-| DFT 512² / NUFFT 512² | 0.40 / 7.0 | 2.6 / 6.5 | 20 / 6.9 |
-
-- The NUFFT costs a flat ~7 ms per call, whatever the size: jax-finufft
-  re-plans on every call (its issue #157), and that dominates.
-- The DFT is therefore faster on the GPU everywhere except the largest
-  case, 512² with 10⁵ points (20 against 7 ms; 26 against 7 in float64).
-  They break even at npix² × points ≈ 7 × 10⁹ (256² × 10⁵).
+- nufftax's floor is about 0.15-0.23 ms up to 512² and 0.52 ms at 1024², so
+  the DFT wins with few points (1024² with 100 points: 0.25 against 0.52 ms).
+  Hence a rule on points, not on points × pixels: ≥ 3000 points and a smaller
+  side of 128 or more.
+- float64 (eps 1e-12) crosses at about 1000-3000 points for sides of 96 and
+  up (1024², 3000 points: 3.15 / 1.14; 512², 10⁵: 25 / 0.945).
+- The earlier jax-finufft timings (flat ~7 ms) are superseded.
 - The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32
   (20 against 886 ms).
 
-**Rule of thumb, updated:** use the DFT (or the MFT for lattices) by
-default on both CPU and GPU. Use the NUFFT on a CPU above ~10³ irregular
-points (npix² × points ≳ 3 × 10⁷), and on a GPU only for very large
-problems (npix² × points ≳ 10¹⁰) until jax-finufft can reuse its plans.
+**CPU** (Apple M1 Max, 8 performance cores, jax 0.11.2, nufftax 0.6.1,
+`JAX_PLATFORMS=cpu`, ozstar_scripts@4f4ad9e, 2026-10-19; value+grad of Σ|V|²,
+ms, float32, DFT / nufftax at eps 1e-5, speed-up):
+
+| Image | 10³ points | 10⁴ | 10⁵ |
+| --- | --- | --- | --- |
+| 64² | 0.57 / 0.34 (1.7×) | 3.8 / 0.94 (4×) | 33 / 6.7 (5×) |
+| 128² | 1.4 / 0.59 (2.4×) | 11 / 1.35 (8×) | 146 / 7.0 (21×) |
+| 256² | 3.7 / 1.0 (3.7×) | 29 / 1.8 (16×) | 273 / 7.9 (35×) |
+| 512² | 10.7 / 3.0 (3.6×) | 86 / 3.9 (22×) | 824 / 12.5 (66×) |
+| 1024² | 35 / 14.5 (2.4×) | 310 / 15.9 (19×) | not run (about 3 s) |
+
+- Float64: 256² with 10⁵ points 473 / 16.7 ms (28×); 512², 1610 / 33 (49×).
+  At eps 1e-12 these are 473 / 70 (7×) and 1610 / 86 (19×).
+- With a single point the DFT wins at every size (64²: 0.07 against 0.14 ms;
+  1024²: 2.0 against 13.6).
+- nufftax has a floor growing with N² (the FFT of the 2N grid, about 0.3 ms at
+  64² and 14 ms at 1024²); the DFT loses from M ≈ 150-400 at every N from 64
+  to 1024 (a fine scan puts the crossover at about 60 points at 64² and 1600
+  at 1024², about 2N; the fixed cost varied 2-4× between runs). The CPU rule
+  therefore leans towards the DFT: M ≥ max(500, 2N) and a smaller side of 64 or more.
+- float32 eps 1e-5 rather than 1e-6: at 1e-6 the error stays near 1e-5 (the
+  float32 floor) and runs are 1.2-1.5× slower; virgil's float32 DFT has a
+  relative error of 7e-6 to 9e-5 on the same tests. float64 at 1e-12 matches
+  the DFT (3e-13 to 9e-13 against 1e-14).
+- A variant with precomputed points was slower on a CPU (sorted `segment_sum`)
+  and is not pursued.
 
 ## Stage log
 
