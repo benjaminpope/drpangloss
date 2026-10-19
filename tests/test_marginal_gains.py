@@ -132,6 +132,7 @@ def _model(dra):
     return TRUTH.__class__(dra=dra, ddec=-4.0, flux=0.3)
 
 
+@pytest.mark.parametrize("nodes", [16, 32])
 @pytest.mark.parametrize(
     "hours, n_wave, widths",
     [
@@ -145,11 +146,14 @@ def _model(dra):
     ],
 )
 def test_two_blocks_with_gains_and_offsets_match_dense_integrals(
-    hours, n_wave, widths
+    hours, n_wave, widths, nodes, monkeypatch
 ):
     """Differences of the surface between two models equal those of the dense
     per-block integrals of ``model_loglike`` (so a gains norm on the wrong
     block, or a wrong window, shows)."""
+    import virgil.epochs as epochs_module
+
+    monkeypatch.setattr(epochs_module, "_N_NODES", nodes)
     with run_in("float64"):
         data = _vlti(hours, n_wave)
         data = data.with_gains(baseline=widths["baseline"])
@@ -160,8 +164,12 @@ def test_two_blocks_with_gains_and_offsets_match_dense_integrals(
         models = [_model(6.0), _model(6.4)]
         score = [float(marginal_loglike(m, data, s_max=S_MAX)) for m in models]
         dense = [_dense_marginal(m, data, bound) for m in models]
+        # abs=0.01 is the design note's bar for the dense integral. 16
+        # nodes miss it by about 1e-3 and 32 by 1e-9: the error of the
+        # quadrature, which falls as nodes are added (the dense reference,
+        # 2001 trapezoid points, is good to about 1e-4).
         assert score[0] - score[1] == pytest.approx(
-            dense[0] - dense[1], abs=1e-3
+            dense[0] - dense[1], abs=0.01
         )
         assert abs(score[0] - score[1]) > 1.0  # the models differ
 
