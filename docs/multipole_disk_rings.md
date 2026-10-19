@@ -97,11 +97,6 @@ plt.show()
 ```
 
 ```text
-auto.py:21: TqdmWarning: IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
-  from .autonotebook import tqdm as notebook_tqdm
-```
-
-```text
 stats.py:24: SyntaxWarning: invalid escape sequence '\m'
   Calculates the z-score $(\mu - x) / \sigma$ of a value given a mean and standard
 stats.py:46: SyntaxWarning: invalid escape sequence '\m'
@@ -112,7 +107,7 @@ stats.py:46: SyntaxWarning: invalid escape sequence '\m'
 planet: sky separation 14.40 mas, disk-plane radius 14.40 mas (rings at 4.5, 10.0, 21.5 mas)
 ```
 
-![multipole_disk_rings output 3.4](generated/multipole_disk_rings_cell003_out04.png)
+![multipole_disk_rings output 3.3](generated/multipole_disk_rings_cell003_out03.png)
 
 ## The parametric fit
 
@@ -437,9 +432,9 @@ For real data, use the two together: the Gaussian process to find structure and 
 
 ## As a pipeline
 
-Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving (a count with two rings closer than twice the narrower one's width, or a half-fringe, is left out, and a ring whose removal lowers the BIC is dropped), and keeps the count of least BIC. `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only this notebook's choices: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 30 mas (the default is half the field of view, which cuts through the outer ring at 21.5 mas), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.4, 1 and 2 half-fringes of the longest baseline, about 1.4 to 2.1, 3.5 to 5.2 and 6.9 to 10.4 mas for a half-fringe of 2 to 3 mas, which brackets the 2 and 5 mas used above. Neither run samples: `posterior=True` would run NUTS with the geometry released.
+Both fits above can be run with [`DiskPipeline`](pipeline.md), which is provisional. It fixes the order of the steps and writes a run folder that reloads without recomputing. The simulated `data` are its `load` stage. A grid over the inclination and position angle with a single ring, then a fit of that ring, is its `geometry` stage; the geometry it finds is the starting point of the parametric fit and the geometry that the Gaussian process holds. The `profile` and `compare` stages fit the model and choose among its variants. `model="rings"` adds Gaussian rings, each sharing the inclination and position angle, until the BIC stops improving (a count with two rings closer than twice the narrower one's width, or a half-fringe, is left out, and a ring whose removal lowers the BIC is dropped), and keeps the count of least BIC. `model="gp"` (the default) fits a `RadialGP` profile with `Harmonics` of degree one and a spectral index that is itself a Gaussian process, at each length scale of a grid, and keeps the length of largest Laplace evidence. The cell below sets only this notebook's choices: the 6000 K blackbody star, the 3 micron reference wavelength, an outer radius of 30 mas (the default is half the field of view, which cuts through the outer ring at 21.5 mas), and the companion search, which is off by default. The length-scale grid is $\ell/\sqrt{3}$ of 0.5, 1 and 2 half-fringes of the longest baseline, so, for the half-fringe of 1.9 mas here, $\ell$ is about 1.65, 3.3 and 6.6 mas, which brackets the 2 and 5 mas used above. The smallest, 0.5 half-fringe, is the pipeline's floor: a shorter length gives bead-like images that fit with $\chi^2/N$ far under 1. Neither run samples: `posterior=True` would run NUTS with the geometry released.
 
-The pipelines find the rings and the planet without being told how many or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. Each run reports $\chi^2/N$ on the quoted errors as the first check.
+The pipelines find the rings and the planet without being told how many or where. Their priors are the pipeline's group-invariant ones (a flux, radius and width are log-uniform, the inclination is uniform in $\cos i$, the position angle an angle vector), and each ring's colour is a power law in wavelength, which only approximates the blackbodies that made the data. So the numbers agree with the hand-written fits to within the Laplace uncertainties, not exactly. Each run reports $\chi^2/N$ on the quoted errors as the first check. The Gaussian-process run's `length_scale` check warns that its best $\ell$ is the lowest of the grid, at the pipeline's floor, so the data prefer the smallest length allowed and do not measure it, as in the evidence comparison above.
 
 ```python
 from tempfile import mkdtemp
@@ -452,7 +447,7 @@ settings = dict(
     wavel0_m=W0,
     companion=True,
     max_rings=4,
-    ell_halffringes=[0.4, 1.0, 2.0],
+    ell_halffringes=[0.5, 1.0, 2.0],
     quicklook_execute=False,
 )
 # The rings are blackbodies here, so give the rings model that colour law (the
@@ -471,7 +466,7 @@ print(gp_res.describe())
 ```
 
 ```text
-DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpf0pso3gu/rings_run: complete
+DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp_rfgbbxz/rings_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -485,7 +480,7 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpf0pso3gu
   model.r_in_mas = 1.90299
   model.r_out_mas = 30
   model.n_r_rings = 32
-  model.n_r_gp = 88
+  model.n_r_gp = 72
   model.n_channels = 9
   model.wavel0_m = 3e-06
   geometry.inc_deg = 59.8072
@@ -504,10 +499,11 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpf0pso3gu
   [pass] outer_edge: 0.17 per cent of the light is within one half-fringe of the outer edge.
   [pass] inclination: Inclination 50.1° with a single minimum of the geometry grid.
   [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 12.2).
+  [pass] at_bound: No fitted parameter sits at a prior bound.
   [warn] stage_warnings: 1 warning(s) were raised inside the stages: The matrix to invert is not positive definite (the point is not a likelihood maximum, or a parameter is unconstrained); the result has negative or infinite variances.. See the 'warnings' list of summary.json.
   1 warning(s) recorded in the compare stage(s) (see the checks, or Result.summary['warnings'])
 
-DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmppamw7lw1/gp_run: complete
+DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpe5j1xamz/gp_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -521,7 +517,7 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmppamw7lw1
   model.r_in_mas = 1.90299
   model.r_out_mas = 30
   model.n_r_rings = 32
-  model.n_r_gp = 88
+  model.n_r_gp = 72
   model.n_channels = 9
   model.wavel0_m = 3e-06
   geometry.inc_deg = 59.8072
@@ -532,16 +528,21 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmppamw7lw1
   geometry.chi2_reduced = 55.6727
   geometry.gp_sigma = 0.788053
   chi2.n_independent = 567
-  disk.ell_mas = 1.31843
-  disk.flux = 0.890231
-  disk.inc_deg = 49.7939
-  disk.pa_deg = 30.6799
-  [pass] chi2_reduced: χ²/N = 1.16 for the Gaussian-process disk fit on quoted errors: consistent with the quoted errors.
-  [pass] length_scale: The evidence prefers one length scale by 24 nats (best ℓ = 1.32 mas, a squared-exponential length of 0.761 mas, 0.4× the half-fringe).
-  [pass] inner_edge: 2.1 per cent of the light is within one half-fringe of the inner edge (correlation with the flux 0.44).
-  [warn] outer_edge: 1.8 per cent of the model's light lies within one half-fringe (1.9 mas) of its outer edge: light beyond it cannot be placed. Refit with a larger r_out_mas.
+  chi2.error_scale_factor = 1.1164
+  disk.ell_mas = 1.64804
+  disk.flux = 0.890811
+  disk.inc_deg = 49.8094
+  disk.pa_deg = 30.6551
+  [pass] chi2_reduced: χ²/N = 1.17 for the Gaussian-process disk fit on quoted errors: consistent with the quoted errors.
+  [pass] error_scale: Estimated error scales mackay = 1.12: close to the quoted errors.
+  [warn] length_scale: The best ℓ is the lowest of the grid and the grid could not be extended that way (best ℓ = 1.65 mas, a squared-exponential length of 0.951 mas, 0.5× the half-fringe): the grid chose its own edge, so ℓ is not measured. The floor ell_floor_halffringes stops a smaller ℓ (below a pixel a small ℓ gives beads with χ²/N far under 1): treat the data as not resolving the structure.
+  [pass] structure_unconstrained: The radial profile is stable across ℓ (smallest correlation 0.9) or the evidence separates the lengths.
+  [pass] inner_edge: 2.2 per cent of the light is within one half-fringe of the inner edge (correlation with the flux 0.45).
+  [warn] outer_edge: 1.7 per cent of the model's light lies within one half-fringe (1.9 mas) of its outer edge: light beyond it cannot be placed. Refit with a larger r_out_mas.
   [pass] inclination: Inclination 49.8° with a single minimum of the geometry grid.
-  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.6).
+  [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 9.61).
+  [pass] render_consistency: On the reference channel with the disk's colour removed, on the rescaled errors if any (not the summary's χ²/N): χ²/N is 0.821 for the model and 0.82 for its rendered image.
+  [pass] at_bound: No fitted parameter sits at a prior bound.
   [warn] stage_warnings: 1 warning(s) were raised inside the stages: fit(method='lm') did not converge in 25 steps, the step limit; raise max_steps.. See the 'warnings' list of summary.json.
   1 warning(s) recorded in the profile stage(s) (see the checks, or Result.summary['warnings'])
 ```
