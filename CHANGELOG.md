@@ -19,8 +19,9 @@ each module lists its provisional names in `__provisional__`, which
 
 Provisional in 0.4:
 
-- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
-  `virgil.tempering` (the orbit fitting, aliases and search);
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.arcs`,
+  `virgil.orbit_search` and `virgil.tempering` (the orbit fitting, aliases
+  and search);
 - the `MultipoleDisk` family in `virgil.models`: `MultipoleDisk`, `ThinRing`,
   `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
   `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
@@ -51,6 +52,26 @@ Provisional in 0.4:
   exact sum; CLEAN (`_CleanScene`) has no `ft` and follows the global default.
   `jax.hessian` and nested `vmap` through the NUFFT fail in nufftax 0.6.1; use
   `ft="dft"` there. `ft` and `set_ft_defaults` are provisional.
+
+- **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
+  `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`
+  and `skip_flagged=True` when every seeding night beats its point
+  reflection by `arc_min_gap` (5 nats of `gap_marginal`; a twin's
+  reflections tie, and other positions seed every band as before),
+  measures each night's
+  velocity from its two halves (`night_motion`), joins the nights shortest
+  gap first and keeps the periods whose Thiele–Innes fit to the positions
+  and velocities, profiled over eccentricity, inclination and orientation,
+  is within `arc_delta_chi2` (25) of the best (`unwrap_cycles`), so a long
+  gap admits only the cycle counts the shorter arcs allow. Each band is
+  seeded deterministically from the same fit (`arc_profile`). An excluded
+  band whose seeds beat every kept band's is fitted after all, with a
+  warning, and too few data keep the whole window. Positions, and each
+  half night behind a velocity, get a floor of `arc_jitter` (0.1) of
+  λ/B_max. `AliasResult.short_arc` records the
+  admitted periods and bands and the cheap-check scores; band
+  probabilities `p` are now conditional on the bands fitted, not the whole
+  window. `short_arcs=False` is the previous behaviour. Checkpoints from earlier versions are not reused.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
@@ -855,6 +876,31 @@ Provisional in 0.4:
   docs now describe flat-coordinate sampling as opt-in.
 
 ### Fixed
+
+- **`epoch_positions` no longer discards a refinement that does not
+  converge.** The damped-Newton refinement of a grid peak returned its start
+  point unless it stopped as `CONVERGED`, although the kernel only accepts
+  steps that lower the loss. A run that stalled at the rounding floor or
+  reached its 200-step limit therefore left the peak at its grid cell. In the
+  CI job on the oldest dependencies that left the true peak of a benchmark
+  night at marginal -469 (-154 refined), below its point reflection (-361):
+  a 21 mas error. `_refine_marginal` now keeps the best point reached and
+  returns the kernel's stop code; only a start that is not finite falls
+  back to the start. `epoch_positions` warns when the refinement of a night's
+  best peak did not converge, and `estimate_primary_diameter` when one of the
+  fits that set the diameter and its gain did not (the marginal score at that
+  point is a lower bound; the warning names the stop). The refinements
+  behind `fit_orbit_aliases` also keep an improved point where they used to
+  fall back to the start, and since its default `primary_diam="auto"` calls
+  `estimate_primary_diameter`, it can emit that warning too.
+  Two things the fix exposed are corrected with it. `estimate_primary_diameter`
+  took the point-primary score from one fit started at the grid's positions,
+  which can end at a poor local maximum (33 nats below what the same model
+  reaches from a disc's positions) and read as a resolved disc once refinements
+  were no longer discarded; the baseline is now the better of that fit and a
+  refit from the best diameter's positions. And `epoch_positions` no longer
+  raises `LinAlgError` when the Hessian at a kept point is not finite: the
+  covariance falls back to the step size.
 
 - **The limb-darkening tutorial printed an understated χ²/N.** It divided the sum of squared whitened residuals by their number (234 rows), but four-telescope closure phases give more residual rows than independent data (162), so the printed values were 451.32 and 0.79 instead of about 652 and 1.14. The tutorial now uses `virgil.imaging.chi2_by_observable`, which counts independent data, and its outputs were rerun.
 

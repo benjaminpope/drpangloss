@@ -7,7 +7,9 @@ import json
 import types
 import warnings
 
+import equinox as eqx
 import jax
+import jax.numpy as np
 import numpy as onp
 import pytest
 
@@ -1288,8 +1290,9 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-SEED_ALIAS_NIGHT = 79
+SEED_ALIAS_NIGHT = 79  # any seed does: the alias is built, not found
 ALIAS_NIGHT = 3  # the night whose best peak is the alias
+MIRROR_LEAN = 0.1  # how far its closure phases lean toward the mirror image
 SOUND_NIGHTS = [k for k in range(6) if k != ALIAS_NIGHT]
 FLAGGED_ALIAS = [k == ALIAS_NIGHT for k in range(6)]
 
@@ -1318,16 +1321,25 @@ def _numpy_noise(night, rng):
 
 
 def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
-    """Six single-frame nights of the true orbit, drawn so that night
-    ``ALIAS_NIGHT``'s best static-binary peak is a single-night alias (19 mas
-    from the truth: the Gl 229 2024-02-27 situation) and every other night is
-    right and unflagged, found by scanning seeds. Each night has its own
-    numpy generator, so the nights are independent of one another.
+    """Six nights of the true orbit, built so that night ``ALIAS_NIGHT``'s
+    best static-binary peak is a single-night alias, 19 mas from the truth
+    (the Gl 229 2024-02-27 situation), and every other night is right and
+    unflagged.
 
-    The noise is drawn with numpy, not ``jax.random``: a JAX key gives
-    different bits in float32 and float64, so a seed scanned under one
-    precision gives a different night, usually without the alias, under the
-    other. The seed was scanned in both, and
+    The alias is built into the data, not left to the noise. The night's V²
+    are the truth's, which a binary shares with its point reflection through
+    the primary; its closure phases, which alone tell the two apart, are the
+    truth's reflected and scaled by ``MIRROR_LEAN`` and carry no noise, so
+    the reflection beats the truth by a fraction of a nat. The surface then
+    has two peaks that tie within the ``alias-peaks`` limit and the mirror
+    image is the higher, whatever the optimizer does.
+
+    The other nights have three frames at one epoch (the frames of
+    ``vlti_night`` are an hour apart, and near periastron the companion
+    moves a few tenths of a mas in that time, more than a static binary
+    fits) and their own numpy noise, drawn per night so the nights are
+    independent. The noise is numpy, not ``jax.random``: a JAX key gives
+    different bits in float32 and float64, and
     ``test_the_alias_night_fixture_is_the_same_in_float32_and_float64``
     checks that the two agree."""
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
@@ -1335,16 +1347,14 @@ def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     data = []
     for k, m in enumerate(EPOCHS):
         rng = onp.random.default_rng((seed, k))
-        night = simulate(scene, _night(m, frames=1, rotation=7.0 * k))
+        base = _night(m, rotation=7.0 * k)
+        base = eqx.tree_at(lambda n: n.dt, base, np.zeros_like(base.dt))
+        night = simulate(scene, base)
         d_vis, d_phi = _numpy_noise(night, rng)
+        phi = onp.asarray(night.phi)
+        phi = -MIRROR_LEAN * phi if k == ALIAS_NIGHT else phi + d_phi
         data.append(
-            night.set(
-                ["vis", "phi"],
-                [
-                    onp.asarray(night.vis) + d_vis,
-                    onp.asarray(night.phi) + d_phi,
-                ],
-            )
+            night.set(["vis", "phi"], [onp.asarray(night.vis) + d_vis, phi])
         )
     dra, ddec, _ = orbit.relative(EPOCHS)
     return data, onp.asarray(dra), onp.asarray(ddec)
@@ -1395,6 +1405,11 @@ def test_the_alias_night_fixture_is_the_same_in_float32_and_float64():
     )
     miss = onp.hypot(f64.dra - dra, f64.ddec - ddec)
     assert miss[ALIAS_NIGHT] > 3.0 and onp.all(miss[SOUND_NIGHTS] < 0.5)
+    # The sound nights are decisive, not just lucky: their gaps are far
+    # above the low-gap limit, and the alias night's is below the
+    # alias-peaks limit.
+    assert onp.all(f64.gap_marginal[SOUND_NIGHTS] > 10.0)
+    assert f64.gap_marginal[ALIAS_NIGHT] < 2.0
 
 
 @pytest.mark.slow
@@ -1410,13 +1425,13 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     assert found.flagged.tolist() == FLAGGED_ALIAS
     assert "alias-peaks" in found.flag_codes()[f"n{ALIAS_NIGHT}"]
     seeded = []
-    real = aliases.position_profile
+    real = aliases._short_arc_profile
 
-    def spy(positions, *args, **kw):
+    def spy(data, seed, positions, *args, **kw):
         seeded.append(positions)
-        return real(positions, *args, **kw)
+        return real(data, seed, positions, *args, **kw)
 
-    monkeypatch.setattr(aliases, "position_profile", spy)
+    monkeypatch.setattr(aliases, "_short_arc_profile", spy)
     result = fit_orbit_aliases(
         data,
         (11.3, 12.9),
@@ -1466,12 +1481,22 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     data, *_ = _alias_night_data()
     found = _alias_night_positions()
     seeded = []
-    real = aliases.position_profile
+    real, real_arcs = aliases.position_profile, aliases._short_arc_profile
+    # skip_flagged=False seeds every band from the positions (no short
+    # arcs: a flagged night's sign cannot be trusted); True, the short arcs.
     monkeypatch.setattr(
         aliases,
         "position_profile",
         lambda positions, *a, **k: (
             seeded.append(positions) or real(positions, *a, **k)
+        ),
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, positions, *a, **k: (
+            seeded.append(positions)
+            or real_arcs(data, seed, positions, *a, **k)
         ),
     )
     kw = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
@@ -1484,6 +1509,7 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     skipped.save(tmp_path / "r.json")
     loaded = AliasResult.load(tmp_path / "r.json")
     assert loaded.unseeded == skipped.unseeded
+    assert loaded.short_arc == skipped.short_arc and skipped.short_arc["kept"]
     assert loaded.unseeded[0]["flags"][0]["reason"]
     # A file written before the record was kept has none.
     payload = json.loads((tmp_path / "r.json").read_text())
@@ -1541,6 +1567,16 @@ def _seed_settings(monkeypatch, positions, **options):
         "position_profile",
         lambda pos, bands, **kw: seen.setdefault("seeded", len(pos.dt))
         and [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            seen.setdefault("seeded", len(pos.dt))
+            and [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     with pytest.raises(_Stop):
         fit_orbit_aliases(
@@ -1695,6 +1731,15 @@ def _spy_settings(monkeypatch, **options):
         aliases,
         "position_profile",
         lambda pos, bands, **kw: [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     data, _ = _synthetic(12.1)
     with pytest.raises(_Stop):
@@ -2094,11 +2139,13 @@ def _short_arc(flux, period=12.1, diam=None):
 FAST_DEFAULTS = dict(n_candidates=10, n_refine=2, n_is=200, n_samples=20)
 
 
-def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
+def _arc_positions(
+    orbit, times, flux, signs=None, offset=(0.2, -0.2), gap=20.0
+):
     """Per-night ``EpochPositions`` of a short arc without a grid search:
     the true companion positions, off by ``offset`` (mas) and, where
     ``signs`` is -1, reflected through the primary (a twin's positions are
-    known only up to that sign)."""
+    known only up to that sign), each ``gap`` nats above its rivals."""
     from virgil.epochs import EpochPositions
 
     n = len(times)
@@ -2111,7 +2158,7 @@ def _arc_positions(orbit, times, flux, signs=None, offset=(0.2, -0.2)):
         ddec=sign * onp.asarray(ddec) + offset[1],
         cov=onp.tile(0.05 * onp.eye(2), (n, 1, 1)),
         flux=onp.full(n, min(flux, 0.9)),
-        gap_marginal=onp.full(n, 20.0),
+        gap_marginal=onp.full(n, gap),
         chi2_raw=({},) * n,
         scale=({},) * n,
     )
@@ -2122,12 +2169,32 @@ def test_a_twin_fit_is_labels_free_with_default_arguments():
     # Equal fluxes: each night's position is known only up to the point
     # reflection, which the data cannot undo.
     orbit, data, times = _short_arc(1.0)
-    positions = _arc_positions(orbit, times, 1.0, signs=[1, -1, 1, -1])
+    # A twin's reflected peak ties with its best: the gaps are small.
+    positions = _arc_positions(
+        orbit, times, 1.0, signs=[1, -1, 1, -1], gap=0.5
+    )
     result = fit_orbit_aliases(
         data, positions=positions, t_ref=T_REF, **FAST_DEFAULTS
     )
     assert result.labels_free
     assert result.best.chi2_red < 3.0
+
+
+@pytest.mark.slow
+def test_a_poor_point_primary_fit_does_not_resolve_a_diameter():
+    """The twin's night 1 fitted as a point primary from the grid's start
+    ends 33 nats below where the same point model gets from a disc's
+    positions: the +34 nats of a 0.5 mas disc are that local maximum, not a
+    resolved primary. The baseline is the better of the two fits."""
+    from virgil.epochs import RESOLVE_NATS, estimate_primary_diameter
+
+    orbit, data, times = _short_arc(1.0)
+    positions = _arc_positions(orbit, times, 1.0, signs=[1, -1, 1, -1])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        est = estimate_primary_diameter(data, positions)
+    assert not est.resolved
+    assert est.delta_nats < RESOLVE_NATS
 
 
 @pytest.mark.slow
@@ -2178,3 +2245,94 @@ def test_a_resolved_primary_is_fitted_and_an_unresolved_one_is_a_point():
             assert result.best.best["diam"] == pytest.approx(1.05, rel=0.2)
         else:
             assert result.primary_diam is None
+
+
+def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
+    # AGENTS.md, "Cycle counts from short arcs" row: the cheap check never
+    # lets the short arcs silently drop a band whose seeds fit better.
+    from virgil.arcs import CycleCounts
+
+    bands = alias_bands([0.0, 100.0], (5.0, 14.0))
+    one = bands[2]
+    counts = CycleCounts(((one.p_lo + 1e-6, one.p_hi - 1e-6),), ())
+    scores = {b.n: -100.0 for b in bands}
+    monkeypatch.setattr(aliases, "_seed_scores", lambda *a: scores)
+    scores[bands[5].n] = -10.0
+    with pytest.warns(UserWarning, match="short arcs excluded"):
+        fit, record = aliases._short_arc_bands(
+            None, None, bands, {}, counts, None
+        )
+    assert fit == [one, bands[5]]
+    assert record["kept"] == [one.n] and record["readmitted"] == [bands[5].n]
+    assert bands[5].n not in record["excluded"]
+    scores[bands[5].n] = -200.0  # worse than the kept band: stays out
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fit, record = aliases._short_arc_bands(
+            None, None, bands, {}, counts, None
+        )
+    assert fit == [one] and len(record["excluded"]) == len(bands) - 1
+    # Arcs that admit no band keep them all.
+    none = CycleCounts(((1.0, 2.0),), ())
+    fit, _ = aliases._short_arc_bands(None, None, bands, {}, none, None)
+    assert fit == bands
+    # A warm start's band is always fitted.
+    warm = types.SimpleNamespace(init=(0.5 * (bands[7].p_lo + bands[7].p_hi),))
+    fit, _ = aliases._short_arc_bands(None, warm, bands, {}, counts, None)
+    assert fit == [one, bands[7]]
+
+
+def test_short_arcs_need_every_seeding_nights_sign_decided():
+    # The signed cut needs each unflagged night to beat its point
+    # reflection by arc_min_gap; a twin's reflections tie. A flagged night
+    # does not count.
+    pos = types.SimpleNamespace(
+        gap_marginal=onp.array([8.0, 30.0, 0.1]),
+        flagged=onp.array([False, False, True]),
+    )
+    assert aliases._signs_trusted(pos, 5.0)
+    assert not aliases._signs_trusted(pos, 10.0)
+    pos.gap_marginal = onp.array([8.0, 0.5, 30.0])
+    assert not aliases._signs_trusted(pos, 5.0)
+    pos.flagged = onp.ones(3, bool)
+    assert not aliases._signs_trusted(pos, 5.0)
+
+
+# Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,
+# three a month or so apart, then a gap of most of a year and one more: the
+# window holds over a hundred bands. With default settings, a cold fit (no
+# p_range, no init) keeps the true band and ranks it first, at any
+# eccentricity and inclination.
+SEASONS = T_REF + onp.array([0.0, 4.03, 63.9, 93.8, 125.7, 359.1, 413.9])
+
+
+@functools.cache
+def _seasonal(ecc, inc):
+    truth = {**TRUTH, "ecc": ecc, "inc": inc}
+    orbit = KeplerOrbit(**truth, t_ref=T_REF)
+    scene = OrbitalBinary(orbit, FLUX)
+    key = jax.random.PRNGKey(5)
+    data = [
+        simulate(
+            scene,
+            vlti_night(m, 4, 25.0 * k, d_phi=0.05),
+            key=jax.random.fold_in(key, k),
+        )
+        for k, m in enumerate(SEASONS)
+    ]
+    return truth, data, _locate_alias_nights(data)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("ecc, inc", [(0.3, 50.0), (0.7, 80.0)])
+def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):
+    truth, data, found = _seasonal(ecc, inc)
+    result = fit_orbit_aliases(
+        data, positions=found, t_ref=T_REF, n_is=200, n_samples=20
+    )
+    n_true = round(float(onp.ptp(result.times)) / truth["period"])
+    record = result.short_arc
+    assert n_true in record["kept"] + record["readmitted"]
+    assert len(record["kept"]) < len(record["kept"] + record["excluded"]) / 2
+    assert result.best.n == n_true
+    assert abs(result.best.best["period"] - truth["period"]) < 0.05
