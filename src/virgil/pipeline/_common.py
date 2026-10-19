@@ -608,9 +608,25 @@ def _corner_trace(output, samples, columns):
     from ..plotting import plot_chainconsumer_diagnostics
 
     flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in columns}
-    _, corner, walks = plot_chainconsumer_diagnostics(
-        {"posterior": pd.DataFrame(flat)}, columns=list(columns)
-    )
+    try:
+        _, corner, walks = plot_chainconsumer_diagnostics(
+            {"posterior": pd.DataFrame(flat)}, columns=list(columns)
+        )
+    except ValueError as err:
+        # Chains that never moved have zero-width draws, which chainconsumer
+        # cannot lay out; the R-hat and ESS checks report the failure.
+        import warnings
+
+        import matplotlib.pyplot as plt
+
+        warnings.warn(
+            f"posterior figures not drawn ({err}); the draws may not vary",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        corner, walks = (plt.figure(figsize=(4, 1)) for _ in range(2))
+        for fig in (corner, walks):
+            fig.text(0.5, 0.5, "draws do not vary", ha="center", va="center")
     _save(corner, output / "plots" / "posterior_corner.png")
     _save(walks, output / "plots" / "posterior_trace.png")
 
