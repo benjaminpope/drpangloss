@@ -118,11 +118,12 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
    scale numerically. Per block, C(s) = s²D + UUᵀ (U from the gains or offsets), integrated over
    ln s with the Jeffreys prior on [−ln s_max, ln s_max]. R2 was rejected (quoted scale s = 1
    with the template's overall width fitted: cheaper, but it trusts the propagated errors).
-   - **Quadrature: a fixed Gauss–Legendre rule on a peak-centred window** (±6/√ν around the
-     block's peak, inside the Jeffreys range; virgil#437). A rule over the whole range would
-     undersample the peak, whose width in ln s is about 1/√(2ν). The node count (16 or 32) is
-     kept only if a test shows it matches a dense 1-D integral to better than 0.01 in log L at
-     s_max; if both pass, the cheaper.
+   - **Quadrature: a fixed 32-node Gauss–Legendre rule on a peak-centred window** (Newton-centred,
+     ±9 curvature-σ scaled by dof, inside the Jeffreys range; virgil#437). A rule over the whole
+     range would undersample the peak, whose width in ln s is about 1/√(2ν). Against a dense
+     4001-point integral (vis + phi + gains + offsets), max |Δlog L| is 1.1e-3 for 16 nodes and
+     6.5e-10 for 32: both meet the 0.01 bar at s_max. 32 is kept because 16 misses the
+     zero-width-gains regression (match to the plain surface at 1e-6) by about 2e-3.
    - **Optional speed-up: a closed-form integrand.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
      Ũ = D^{-½}U (`gains._columns`), low-rank per block. One thin SVD per block, Ũ = QΛ^{½}
      (K columns), then for every s, in O(K):
@@ -153,6 +154,8 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
    - **Acceptance:** block f ≤ 3 on calibrated data. f > 3 is reported as "noise model
      inadequate" and is never silently tempered away. For 2 < f ≤ 3 the existing `FLAG_RANGE`
      (0.5–2) tempering warning still fires, as information: tempering is applied and reported.
+     The "noise model inadequate" wording applies to data with gains or offsets; data without
+     them keep the plain `FLAG_RANGE` warning (as on main after virgil#437).
 4. **One treatment of gains: marginalize.** `orbit_search` profiles gains while the alias
    engine marginalizes them, so with many gain dofs per night the ranking and the evidence can
    disagree about the best orbit. `orbit_search` changes to marginalizing by default. This is
