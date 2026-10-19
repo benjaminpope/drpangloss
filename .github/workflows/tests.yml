@@ -145,7 +145,7 @@ jobs:
           echo "--- alone, no cache"
           JAX_ENABLE_COMPILATION_CACHE=false .venv/bin/python -m pytest $t -o addopts= -p no:cacheprovider -q 2>&1 | grep -E "^E  |passed|failed" || true
           echo "--- positions: snapshots, truth, found"
-          .venv/bin/python - <<'PY' 2>&1 | grep -E "^(truth|found|err|snap)" || true
+          .venv/bin/python - <<'PY' 2>&1 | grep -E "^(truth|found|err|snap|peaks1)" || true
           import sys
           sys.path.insert(0, "benchmarks/orbits")
           import jax, numpy as onp
@@ -163,6 +163,9 @@ jobs:
           print("found dra ", onp.round(onp.asarray(res.dra), 3))
           print("found ddec", onp.round(onp.asarray(res.ddec), 3))
           print("err       ", onp.round(onp.hypot(res.dra - tdra, res.ddec - tddec), 3))
+          import dataclasses
+          for f in dataclasses.fields(res.peaks[1]):
+              print("peaks1", f.name, onp.asarray(getattr(res.peaks[1], f.name)).tolist())
           PY
           echo "--- alone, with the restored cache"
           JAX_COMPILATION_CACHE_DIR=.jax-cache JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0 JAX_PERSISTENT_CACHE_MIN_ENTRY_SIZE_BYTES=0 .venv/bin/python -m pytest $t -o addopts= -p no:cacheprovider -q 2>&1 | grep -E "^E  |passed|failed" || true
