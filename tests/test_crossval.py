@@ -9,7 +9,6 @@ import pytest
 from virgil import CalibrationNuisance, ComplexVisData, Image
 from virgil._geometry import _FT_DEFAULTS
 from virgil.crossval import (
-    aggregate,
     aggregate_files,
     cross_validate,
     cv_task,
