@@ -113,6 +113,7 @@ an argument:
 
 ```python
 import equinox as eqx
+import jax.numpy as jnp
 
 @eqx.filter_jit
 def loss_and_grad(term, values):

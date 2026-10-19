@@ -787,7 +787,7 @@ def test_fit_compiles_once_across_masks_and_weights(monkeypatch):
     def run(i, lam):
         term = data.term(scene, nuis, mask=fold != i, chunk_size=2000)
         n0 = len(traced)
-        fit(
+        result = fit(
             model,
             priors,
             data=(),
@@ -797,7 +797,16 @@ def test_fit_compiles_once_across_masks_and_weights(monkeypatch):
             method="lbfgs",
             max_steps=2,
         )
-        return len(traced) - n0
+        return len(traced) - n0, term, result
 
-    assert run(0, 1e3) > 0
-    assert run(1, 2e3) == 0  # same shapes: no retrace, so no recompile
+    n_first, _, first = run(0, 1e3)
+    assert n_first > 0
+    n_second, term1, second = run(1, 2e3)
+    assert n_second == 0  # same shapes: no retrace, so no recompile
+    # ... and fold 1's mask reached the computation: the reported chi2 is that
+    # of an eager evaluation of fold 1's term at the fitted values
+    eager = float(np.sum(term1(second.values) ** 2))
+    assert second.info["chi2"][-1] == pytest.approx(eager, rel=1e-8)
+    assert second.info["chi2"][-1] != pytest.approx(
+        first.info["chi2"][-1], rel=1e-3
+    )

@@ -423,14 +423,10 @@ class ComplexVisData(eqx.Module):
 
         Notes
         -----
-        The data are array leaves of the returned term. ``fit`` passes them to
-        its jitted functions as arguments, but a plain ``jax.jit`` closure over
-        the term bakes them in as compile-time constants. Pass the term as an
-        argument instead::
-
-            @eqx.filter_jit
-            def loss(term, values):
-                return jnp.sum(term(values) ** 2) + term.log_norm(values)
+        ``fit`` passes the data to its jitted functions as arguments. In your
+        own jitted code pass the term as an argument too, with
+        ``eqx.filter_jit``; a ``jax.jit`` closure over it bakes the data in as
+        constants (see the radio interferometry page).
         """
         if isinstance(scene, SourceModel):
             raise TypeError(
