@@ -2312,6 +2312,19 @@ def _short_arc_profile(
     profile = arc_profile(
         positions, motion, bands, n_best=n_best, sign_free=sign_free, **grid
     )
+    # The arc seeds are additive: each band keeps the position-level seeds
+    # it would have without short arcs (after the arc seeds, which the cheap
+    # check scores), so within a band the arcs never seed worse.
+    plain = position_profile(
+        positions,
+        bands,
+        k=grid["k"],
+        n_best=n_best,
+        eccs=grid["eccs"],
+        sign_free=sign_free,
+    )
+    for arc, row in zip(profile, plain, strict=True):
+        arc["orbits"] = arc["orbits"] + row["orbits"]
     return profile, counts, motion
 
 
@@ -3139,6 +3152,8 @@ def fit_orbit_aliases(
     # (with sign_free the signed and the sign-free orbits both seed)
     n_orbits = n_candidates * (2 if sign_free else 1)
     n_seeded = 0 if positions is None else 2 * n_scan * n_orbits
+    if counts is not None:  # the arc seeds come beside the position seeds
+        n_seeded *= 2
     n_pool = n_random + n_seeded + (1 if init else 0)  # senses, fluxes, init
     settings = _Settings(
         p_range=tuple(map(float, p_range)),
