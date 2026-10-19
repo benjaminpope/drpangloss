@@ -49,10 +49,12 @@ Provisional in 0.4:
   gap admits only the cycle counts the shorter arcs allow. Each band is
   seeded deterministically from the same fit (`arc_profile`). An excluded
   band whose seeds beat every kept band's is fitted after all, with a
-  warning, and too few data keep the whole window. Positions get a floor
-  of `arc_jitter` (0.1) of λ/B_max. `AliasResult.short_arc` records the
-  admitted periods and bands; `short_arcs=False` is the previous
-  behaviour. Checkpoints from earlier versions are not reused.
+  warning, and too few data keep the whole window. Positions, and each
+  half night behind a velocity, get a floor of `arc_jitter` (0.1) of
+  λ/B_max. `AliasResult.short_arc` records the
+  admitted periods and bands and the cheap-check scores; band
+  probabilities `p` are now conditional on the bands fitted, not the whole
+  window. `short_arcs=False` is the previous behaviour. Checkpoints from earlier versions are not reused.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which

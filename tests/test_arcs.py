@@ -32,18 +32,22 @@ TRUTH = dict(
 def _positions_and_motion(
     truth, nights=NIGHTS, sigma=0.05, sigma_v=0.3, seed=0
 ):
-    """Positions with a bias of a fraction of the resolution, and the
-    velocities of the first and last nights."""
+    """Positions with errors ``sigma`` and a bias of 0.3 mas shared by each
+    season's nights (not in the stated errors), and the velocities of the
+    first and last nights with a shared bias of ``sigma_v``."""
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
     rng = onp.random.default_rng(seed)
     r = onp.stack(orbit.relative(nights)[:2], -1)
-    r = r + (sigma + 0.3) * rng.standard_normal(r.shape)
+    season = onp.concatenate([[0], onp.cumsum(onp.diff(nights) > 30.0)])
+    angle = rng.uniform(0.0, 2 * onp.pi, season.max() + 1)[season]
+    bias = 0.3 * onp.stack([onp.cos(angle), onp.sin(angle)], -1)
+    r = r + bias + sigma * rng.standard_normal(r.shape)
     h = 1e-4
     v = (
         onp.stack(orbit.relative(nights + h)[:2], -1)
         - onp.stack(orbit.relative(nights - h)[:2], -1)
     ) / (2 * h)
-    v = v + sigma_v * rng.standard_normal(v.shape)
+    v = v + sigma_v * (onp.array([0.6, 0.8]) + rng.standard_normal(v.shape))
     measured = onp.zeros(len(nights), bool)
     measured[[0, -1]] = True
     n = len(nights)
@@ -85,9 +89,29 @@ def test_the_velocity_free_fit_is_the_position_fit():
     assert arcs._arc(pos, motion, 0.0).n_data == 2 * len(NIGHTS) + 4
 
 
+def test_the_polish_lowers_an_off_grid_minimum():
+    # A coarse (τ, e) grid only bounds a period's χ² from above: at high e
+    # the truth falls between grid points, and the cut must not see that.
+    truth = {**TRUTH, "ecc": 0.8}
+    orbit = KeplerOrbit(**truth, t_ref=T_REF)
+    dra, ddec, _ = orbit.relative(NIGHTS)
+    n = len(NIGHTS)
+    pos = PositionData(
+        NIGHTS, dra, ddec, onp.tile(0.01 * onp.eye(2), (n, 1, 1)), t_ref=T_REF
+    )
+    arc = arcs._arc(pos, None, 0.0)
+    periods = onp.array([truth["period"]])
+    grid, _, chi2 = arcs._pv_grid(arc, periods, ECCS)
+    steps = onp.array([[1e-3, truth["period"] / arcs._N_PHASE, 0.15]])
+    polished = arcs._polish(arc, grid, chi2, steps, 0.9)
+    assert polished[0] < 0.1 * chi2.min()
+
+
 # The true cycle count survives for a range of eccentricities and
-# inclinations (face-on to near edge-on), with the positions biased by 0.3
-# mas, and the velocities narrow the bands well below the window's.
+# inclinations (face-on to near edge-on), with each season's positions
+# biased by 0.3 mas and the velocities by their error, and the default floor
+# (0.1 of λ/B_max ≈ 3.5 mas): the velocities narrow the bands well below the
+# window's.
 @pytest.mark.parametrize("ecc, inc", [(0.0, 10.0), (0.5, 60.0), (0.8, 85.0)])
 def test_the_true_cycle_count_survives(ecc, inc):
     truth = {**TRUTH, "ecc": ecc, "inc": inc}

@@ -2235,11 +2235,12 @@ def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
     assert fit == [one, bands[7]]
 
 
-# Seasonal gaps: two nights 4 d apart, one 4 months later, a gap of most of
-# a year and two more nights: the window holds about 90 bands. With default
-# settings, a cold fit (no p_range, no init) keeps the true band and ranks
-# it first, at any eccentricity and inclination.
-SEASONS = T_REF + onp.array([0.0, 4.0, 125.7, 359.1, 413.9])
+# Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,
+# three a month or so apart, then a gap of most of a year and one more: the
+# window holds over a hundred bands. With default settings, a cold fit (no
+# p_range, no init) keeps the true band and ranks it first, at any
+# eccentricity and inclination.
+SEASONS = T_REF + onp.array([0.0, 4.03, 63.9, 93.8, 125.7, 359.1, 413.9])
 
 
 @functools.cache
@@ -2269,6 +2270,6 @@ def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):
     n_true = round(float(onp.ptp(result.times)) / truth["period"])
     record = result.short_arc
     assert n_true in record["kept"] + record["readmitted"]
-    assert len(record["kept"]) < len(record["kept"] + record["excluded"]) / 3
+    assert len(record["kept"]) < len(record["kept"] + record["excluded"]) / 2
     assert result.best.n == n_true
     assert abs(result.best.best["period"] - truth["period"]) < 0.05

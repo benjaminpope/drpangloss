@@ -1812,8 +1812,10 @@ class AliasResult:
         still count in every band's likelihood.
     short_arc : dict or None
         The short-arc stage: the admissible period ``intervals``, the bands
-        ``kept``, ``excluded`` and ``readmitted`` by the cheap check, the
-        number of ``velocities`` and the unwrapping ``steps``; None when off.
+        ``kept``, ``excluded`` and ``readmitted`` by the cheap check, each
+        band's cheap-check log likelihood (``seed_scores``, ``[N, value]``),
+        the number of ``velocities`` and the unwrapping ``steps``; None when
+        off. The bands' ``p`` are then conditional on the bands fitted.
     """
 
     t_ref: float
@@ -2268,13 +2270,13 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     return positions, skipped, False
 
 
-def _seed_motion(data, positions, skip_flagged):
+def _seed_motion(data, positions, skip_flagged, jitter):
     """The within-night velocities of the seeding nights, aligned with
     ``EpochPositions.positions(skip_flagged=...)``; None for other
     positions."""
     if not isinstance(positions, EpochPositions):
         return None
-    motion = night_motion(data, positions)
+    motion = night_motion(data, positions, jitter=jitter)
     return motion.take(~positions.flagged) if skip_flagged else motion
 
 
@@ -2286,6 +2288,7 @@ def _short_arc_profile(
     *,
     skip_flagged,
     p_range,
+    arc_jitter,
     delta_chi2,
     n_best,
     sign_free,
@@ -2294,7 +2297,7 @@ def _short_arc_profile(
     """``(profile, counts, motion)``: each band's seeds from the positions
     and the night velocities, and the periods the short arcs admit;
     ``grid`` is ``ecc_max``, ``jitter_mas``, ``k`` and ``eccs``."""
-    motion = _seed_motion(data, seed_positions, skip_flagged)
+    motion = _seed_motion(data, seed_positions, skip_flagged, arc_jitter)
     counts = unwrap_cycles(
         positions, motion, p_range=p_range, delta_chi2=delta_chi2, **grid
     )
@@ -2342,7 +2345,7 @@ def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
 
     kept = [b for b in bands if counts.admits(b) or warm(b)] or list(bands)
     excluded = [b for b in bands if b not in kept]
-    readmitted = []
+    readmitted, score = [], {}
     if excluded:
         score = _seed_scores(problem, settings, bands, seeds)
         top = max(score[b.n] for b in kept)
@@ -2369,6 +2372,7 @@ def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
         excluded=[b.n for b in excluded if b not in readmitted],
         readmitted=[b.n for b in readmitted],
         velocities=0 if motion is None else int(motion.measured.sum()),
+        seed_scores=[[n, v] for n, v in score.items()],
         steps=list(counts.steps),
     )
 
@@ -3069,6 +3073,7 @@ def fit_orbit_aliases(
             bands,
             skip_flagged=skip_flagged,
             p_range=p_range,
+            arc_jitter=float(arc_jitter),
             ecc_max=ecc_max,
             jitter_mas=arc_jitter_mas,
             delta_chi2=arc_delta_chi2,

@@ -183,14 +183,16 @@ def _half_position(part, x0, resolution, diam):
     return x[:2], cov
 
 
-def night_motion(data, positions, *, max_shift=_MAX_SHIFT):
+def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
     """Each night's angular velocity, from the positions of its two halves.
 
     Each night's frames are split in time into an earlier and a later half;
     each half's position is refined from the night's
     ([`epoch_positions`][virgil.epochs.epoch_positions]) on the same
     scale-marginalized surface, with the same primary. The velocity is their
-    difference over the time between them, with the halves' covariances.
+    difference over the time between them, with the halves' covariances,
+    each with a floor of ``jitter`` λ/B_max added in quadrature: the halves
+    see different uv coverage, so their biases need not cancel.
     A night with one frame, or whose halves move to another peak (more than
     ``max_shift`` λ/B_max), has none.
 
@@ -203,6 +205,9 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT):
     max_shift : float, optional
         The furthest a half may move from the night's position, in units of
         the night's λ/B_max (default 0.5).
+    jitter : float, optional
+        Each half's position floor, in units of the night's λ/B_max
+        (default ``ARC_JITTER``).
 
     Returns
     -------
@@ -247,7 +252,8 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT):
             continue
         dt = halves[1][1] - halves[0][1]
         vel[i] = (r2 - r1) / dt
-        cov[i] = (c1 + c2) / dt**2
+        floor = 2.0 * (jitter * resolution) ** 2 * onp.eye(2)
+        cov[i] = (c1 + c2 + floor) / dt**2
         measured[i] = True
     return NightMotion(onp.asarray(positions.mjd, float), vel, cov, measured)
 
@@ -368,12 +374,21 @@ def _eccs(eccs, ecc_max):
     return onp.arange(0.0, ecc_max + 1e-9, 0.05)
 
 
+def _ecc_step(eccs, ecc_max):
+    return float(onp.max(onp.diff(eccs))) if len(eccs) > 1 else ecc_max
+
+
 def _pv_grid(arc, periods, eccs, n_phase=_N_PHASE):
     """The grid ``(period, dt_peri, ecc)`` over ``periods × eccs ×
     phases`` (period-major), with each point's constants and χ²."""
     phases = onp.arange(n_phase) / n_phase
     p, e, f = onp.meshgrid(periods, eccs, phases, indexing="ij")
     grid = onp.stack([p.ravel(), (f * p).ravel(), e.ravel()], axis=1)
+    return (grid, *_pv_points(arc, grid))
+
+
+def _pv_points(arc, grid):
+    """Each ``(period, dt_peri, ecc)`` row's constants and χ²."""
     size = min(_BATCH, 1 << (len(grid) - 1).bit_length())
     padded = onp.concatenate(
         [grid, onp.repeat(grid[-1:], -len(grid) % size, axis=0)]
@@ -389,7 +404,36 @@ def _pv_grid(arc, periods, eccs, n_phase=_N_PHASE):
         ]
     params = onp.concatenate([onp.asarray(o[0]) for o in out])[: len(grid)]
     chi2 = onp.concatenate([onp.asarray(o[1]) for o in out])[: len(grid)]
-    return grid, params, onp.where(onp.isfinite(chi2), chi2, onp.inf)
+    return params, onp.where(onp.isfinite(chi2), chi2, onp.inf)
+
+
+_STEPS = onp.stack(
+    onp.meshgrid(*[(-1.0, 0.0, 1.0)] * 3, indexing="ij"), -1
+).reshape(-1, 3)
+
+
+def _polish(arc, grid, chi2, steps, ecc_max, n_iter=4):
+    """Each grid period's χ² minimum, lowered by a pattern search in
+    ``(period, dt_peri, ecc)`` about its best grid point, halving
+    ``steps`` (``(n, 3)``) each time: a coarse grid only bounds the
+    profile χ² from above, and the cut must not exclude a period for
+    falling between grid points."""
+    n = len(steps)
+    chi2 = chi2.reshape(n, -1)
+    best = chi2.argmin(axis=1)
+    x = grid.reshape(n, -1, 3)[onp.arange(n), best]
+    low = chi2[onp.arange(n), best]
+    for _ in range(n_iter):
+        steps = steps / 2.0
+        trial = x[:, None, :] + _STEPS[None] * steps[:, None, :]
+        trial[..., 2] = onp.clip(trial[..., 2], 0.0, ecc_max)
+        _, c = _pv_points(arc, trial.reshape(-1, 3))
+        c = c.reshape(n, len(_STEPS))
+        j = c.argmin(axis=1)
+        better = c[onp.arange(n), j] < low
+        x = onp.where(better[:, None], trial[onp.arange(n), j], x)
+        low = onp.where(better, c[onp.arange(n), j], low)
+    return low
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +480,8 @@ def unwrap_cycles(
     each admissible period (on a grid that stays in phase across the arc) is
     scored by its best Thiele–Innes fit to the arc's positions and
     velocities, over the eccentricity, the time of periastron and every
-    orientation and size, and kept while its χ² is within
+    orientation and size (a grid, polished locally about its best point),
+    and kept while its χ² is within
     ``delta_chi2 * max(1, chi2_min / dof)`` of the best. Each longer gap
     so admits only the cycle counts the shorter arcs allow. Too few data
     leave the whole window: weak constraints keep more periods, never fewer.
@@ -486,8 +531,17 @@ def unwrap_cycles(
                 if hi > lo * (1 + 1e-12)
             ]
         )
-        _, _, chi2 = _pv_grid(sub, periods, eccs)
-        per_period = chi2.reshape(len(periods), -1).min(axis=1)
+        grid, _, chi2 = _pv_grid(sub, periods, eccs)
+        # The period grid's and the (τ, e) grid's steps.
+        spacing = onp.stack(
+            [
+                periods**2 / (k * baseline),
+                periods / _N_PHASE,
+                onp.full(len(periods), _ecc_step(eccs, ecc_max)),
+            ],
+            -1,
+        )
+        per_period = _polish(sub, grid, chi2, spacing, ecc_max)
         best = float(per_period.min())
         scale = max(1.0, best / dof)
         keep = per_period <= best + delta_chi2 * scale
