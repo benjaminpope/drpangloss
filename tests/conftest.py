@@ -82,6 +82,8 @@ DTYPE_INDEPENDENT = (
     "test_pipeline_binary.py",
     "test_pipeline_checks.py",
     "test_pipeline_io.py",
+    "test_pipeline_robust_binary.py",
+    "test_pipeline_robust_star.py",
     "test_pipeline_star.py",
     "test_plotting_detection.py",
     "test_stability.py",

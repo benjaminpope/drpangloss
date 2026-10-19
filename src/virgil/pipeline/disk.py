@@ -19,17 +19,25 @@ from ._common import (
     _scales_of,
     _chi2_64,
     _m2loglike_64,
-    _SAMPLER_SETTINGS,
-    _bound_samples,
+    _chain_health,
     _diagnostics,
+    _draws,
     _geometry,
+    _integer,
     _interior_start,
     _load_report,
-    _run_chains,
     _noise_quantiles,
-    _quantiles,
-    _sample_stats,
+    _pick,
+    _positive,
+    _prior_bounds,
+    _run_chains,
+    _sampler_checks,
+    _sampler_report,
     _save,
+    _save_fit,
+    _site_summary,
+    _validate_common,
+    _write_samples,
 )
 from ._core import Stage, _Pipeline
 
@@ -453,8 +461,8 @@ class DiskPipeline(_Pipeline):
 
     @classmethod
     def _validate(cls, s):
-        if s["r_in_mas"] is not None and not s["r_in_mas"] > 0:
-            raise ValueError("r_in_mas must be positive.")
+        if s["r_in_mas"] is not None:
+            _positive(s, "r_in_mas")
         if s["r_out_mas"] is not None and not s["r_out_mas"] > (
             s["r_in_mas"] or 0.0
         ):
@@ -464,19 +472,14 @@ class DiskPipeline(_Pipeline):
         ):
             raise ValueError("n_r must be an integer from 8 to 144.")
         for name in ("n_inc", "n_pa"):
-            if not (isinstance(s[name], int) and s[name] >= 2):
-                raise ValueError(f"{name} must be an integer >= 2.")
+            _integer(s, name, 2)
         if not 0.0 < s["inc_max_deg"] < 90.0:
             raise ValueError("inc_max_deg must be between 0 and 90.")
-        if not (isinstance(s["max_rings"], int) and s["max_rings"] >= 1):
-            raise ValueError("max_rings must be an integer >= 1.")
+        _integer(s, "max_rings", 1)
         ell = s["ell_halffringes"]
         if not ell or any(not v > 0 for v in ell):
             raise ValueError("ell_halffringes must be positive numbers.")
-        if not (
-            isinstance(s["harmonic_degree"], int) and s["harmonic_degree"] >= 0
-        ):
-            raise ValueError("harmonic_degree must be an integer >= 0.")
+        _integer(s, "harmonic_degree", 0)
         if s["spectral_index"] not in (None, True, False):
             raise ValueError("spectral_index must be None, True or False.")
         if s["ring_colour"] not in ("power_law", "blackbody"):
@@ -485,35 +488,18 @@ class DiskPipeline(_Pipeline):
             raise ValueError(
                 'error_scale must be "auto", "quoted", "fit" or "rescale".'
             )
-        if not s["ell_floor_halffringes"] > 0:
-            raise ValueError("ell_floor_halffringes must be positive.")
+        _positive(s, "ell_floor_halffringes")
         if any(v < s["ell_floor_halffringes"] for v in ell):
             raise ValueError(
                 "ell_halffringes must not go below ell_floor_halffringes "
                 f"({s['ell_floor_halffringes']}): a length below the pixel "
                 "scale gives bead-like images that fit with χ²/N far under 1."
             )
-        if s["star_diameter_mas"] is not None and not (
-            s["star_diameter_mas"] > 0
-        ):
-            raise ValueError("star_diameter_mas must be positive.")
+        if s["star_diameter_mas"] is not None:
+            _positive(s, "star_diameter_mas")
         if s["star_index"] is not None and not onp.isfinite(s["star_index"]):
             raise ValueError("star_index must be finite.")
-        for name in ("num_samples", "num_chains"):
-            if not (isinstance(s[name], int) and s[name] >= 1):
-                raise ValueError(f"{name} must be an integer >= 1.")
-        if not (isinstance(s["num_warmup"], int) and s["num_warmup"] >= 0):
-            raise ValueError("num_warmup must be an integer >= 0.")
-        if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
-            raise ValueError(
-                'chain_method must be "vectorized", "sequential" or "parallel".'
-            )
-        if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
-            raise ValueError("wavel_range must be [min, max] in metres.")
-        if s["error_floor"] is not None and not isinstance(
-            s["error_floor"], dict
-        ):
-            raise ValueError("error_floor must be a dict of absolute floors.")
+        _validate_common(s)
 
     def _model_digest(self):
         return {
@@ -1031,7 +1017,7 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
 
     from ..grid_fit import likelihood_grid
 
-    ll = onp.asarray(
+    return onp.asarray(
         likelihood_grid(
             functools.partial(_single_ring, ctx),
             data=p.processed,
@@ -1044,7 +1030,6 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
             batch_size=p.settings["batch_size"],
         )
     )
-    return ll
 
 
 def _grid_minima(delta, inc_deg):
@@ -1112,8 +1097,9 @@ def _geometry_stage(p):
 
     ll = _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis)
     ll = onp.where(onp.isfinite(ll), ll, -onp.inf)
-    best_cell = ll.reshape(ll.shape[:2] + (-1,)).max(axis=-1)
-    flat = ll.reshape(ll.shape[:2] + (-1,)).argmax(axis=-1)
+    cells = ll.reshape(ll.shape[:2] + (-1,))
+    best_cell = cells.max(axis=-1)
+    flat = cells.argmax(axis=-1)
     delta = 2.0 * (best_cell.max() - best_cell)
     i, j = onp.unravel_index(int(onp.argmax(best_cell)), best_cell.shape)
     k_r, k_f = onp.unravel_index(
@@ -1132,10 +1118,7 @@ def _geometry_stage(p):
             },
             "geometry": {
                 "delta_chi2": delta,
-                "r1_mas": r_axis[
-                    ll.reshape(ll.shape[:2] + (-1,)).argmax(axis=-1)
-                    // _FLUX_GRID.size
-                ],
+                "r1_mas": r_axis[flat // _FLUX_GRID.size],
             },
         },
         attrs={
@@ -1158,7 +1141,7 @@ def _geometry_stage(p):
     fit = _fit_rings(p, shape, start)
     values = _scalars(fit.values)
     names = list(_ring_priors(ctx, shape))
-    sd = _laplace_sd(ctx, shape, names, values, data)
+    sd, _ = _laplace(ctx, shape, names, values, data)
     n = int(data.n_independent)
     _save_fit(p.output / "models" / "geometry", fit, names)
     return {
@@ -1189,13 +1172,9 @@ def _geometry_stage(p):
     }
 
 
-def _save_fit(folder, fit, params):
-    _io.save_model(folder, fit.model, fit.values, params)
-    _io.write_json(folder / "info.json", fit.info)
-
-
-def _laplace_sd(ctx, shape, names, values, data):
-    """Laplace standard deviations of the ring scene's scalar parameters."""
+def _laplace(ctx, shape, names, values, data):
+    """``(sd, cov)``: Laplace standard deviations of the ring scene's scalar
+    parameters and their covariance (``None`` where it failed)."""
     from ..inference import laplace_cov
 
     try:
@@ -1208,8 +1187,8 @@ def _laplace_sd(ctx, shape, names, values, data):
             RuntimeWarning,
             stacklevel=2,
         )
-        return {k: None for k in names}
-    return {k: float(v) for k, v in zip(names, sd)}
+        return {k: None for k in names}, None
+    return {k: float(v) for k, v in zip(names, sd)}, cov
 
 
 # === POINT-SOURCE SEARCH ON RESIDUALS ===
@@ -1294,7 +1273,7 @@ def _planet_start(search, ctx):
     return start
 
 
-def _ring_start(ctx, held, n, new, degree, colour):
+def _ring_start(ctx, held, n, new):
     """Starting values of an ``n``-ring scene.
 
     ``held`` has the earlier rings' values; ``new`` is the scan's radius and
@@ -1309,9 +1288,9 @@ def _ring_start(ctx, held, n, new, degree, colour):
             new["f"],
         )
     for ring in range(1, n + 1):
-        if colour:
+        if ctx.colour:
             start.setdefault(f"a{ring}", _colour_start(ctx))
-        for j in range(1, degree + 1):
+        for j in range(1, ctx.degree + 1):
             start.setdefault(f"h{ring}_re{j}", 0.0)
             start.setdefault(f"h{ring}_im{j}", 0.0)
     return start
@@ -1459,9 +1438,7 @@ def _backfit(p, shape, fit):
             new = _scan_new_ring(
                 p, ctx, shape, base, step=0.5 * ctx.halffringe
             )
-            start = _ring_start(
-                ctx, held, shape.n, new, ctx.degree, ctx.colour
-            )
+            start = _ring_start(ctx, held, shape.n, new)
             trial = _fit_rings(p, shape, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
             pairs = _unresolved_pairs(ctx, trial.values, shape.n)
@@ -1514,9 +1491,7 @@ def _prune(p, shape, fit):
         best = None
         for k in range(1, shape.n + 1):
             held = _without_ring(_scalars(fit.values), k)
-            start = _ring_start(
-                ctx, held, smaller.n, None, ctx.degree, ctx.colour
-            )
+            start = _ring_start(ctx, held, smaller.n, None)
             trial = _fit_rings(p, smaller, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
             if d_bic < 0 and (best is None or d_bic < best[2]):
@@ -1553,10 +1528,10 @@ def _profile_rings(p):
             if not k.startswith(("dra", "ddec", "fp", "ap"))
         }
         if n == 1:
-            start = _ring_start(ctx, held, 1, None, ctx.degree, ctx.colour)
+            start = _ring_start(ctx, held, 1, None)
         else:
             new = _scan_new_ring(p, ctx, shape, _fill_new(ctx, held, n))
-            start = _ring_start(ctx, held, n, new, ctx.degree, ctx.colour)
+            start = _ring_start(ctx, held, n, new)
         fit, shape, search, steps = _fit_with_planet(
             p, shape, start, backfit=True
         )
@@ -1758,13 +1733,11 @@ def _companion_report(p, planet):
     }
 
 
-def _gp_fit(
-    p, ell, planet, degree=None, geo=None, release=False, max_steps=None
-):
+def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
     """MAP fit of the Gaussian-process disk at one ℓ.
 
-    The geometry is frozen at ``geo`` (the single-ring fit's by default),
-    which makes the fit fast. A single ring is only an approximation to a
+    The geometry is frozen at ``geo`` (the single-ring fit's), which makes
+    the fit fast. A single ring is only an approximation to a
     lopsided, multi-ring disk, so its inclination and position angle are a
     few degrees off, and a frozen error is paid for by the profile and the
     companion. With ``release`` a second fit frees them, starting from the
@@ -1774,15 +1747,12 @@ def _gp_fit(
     import equinox as eqx
 
     from ..fitting import fit
-    from ..models import System
 
     ctx, data = p._ctx(), p.processed
-    geo = geo or _gp_geometry(p)
     template, priors = _gp_template(ctx, geo, ell, planet, degree)
     frozen = eqx.tree_at(
         lambda m: m.parts[1], template, template.disk.freeze_geometry(data)
     )
-    assert isinstance(frozen, System)
     result = fit(frozen, priors, data, max_steps=max_steps)
     values, info = result.values, result.info
     if release:
@@ -1883,7 +1853,7 @@ def _mackay_scale(model, data):
     return float(error_scale(model, data, path="disk"))
 
 
-def _score_ell(p, ell, planet, geo, n_data, k, factor):
+def _score_ell(p, ell, planet, geo, k):
     """Fit the Gaussian-process disk at one ℓ and score it: a candidate row.
 
     The Laplace evidence is computed on the data the fit used (rescaled with
@@ -1904,7 +1874,8 @@ def _score_ell(p, ell, planet, geo, n_data, k, factor):
             stacklevel=2,
         )
         log_z = None
-    ctx = p._ctx()
+    ctx, factor = p._ctx(), p._rescale_factor()
+    n_data = int(p.processed.n_independent)
     return {
         "name": name,
         "ell_mas": ell,
@@ -1940,7 +1911,6 @@ def _edge_side(candidates):
 def _profile_gp(p):
     p._error_factor = 1.0  # until the baseline fit gives the scale
     ctx, data = p._ctx(), p.processed
-    n_data = int(data.n_independent)
     geo = _gp_geometry(p)
     geo, fit, starts = _geometry_search(p, geo, ctx.ell_mid)
     planet, searches = None, []
@@ -1963,12 +1933,9 @@ def _profile_gp(p):
         base, _ = _gp_fit(p, ctx.ell_mid, planet, geo=geo, release=True)
         factor = _mackay_scale(base.model, data)
         p._error_factor = factor
-        data = p.processed
     candidates = []
     for ell in ctx.ells:
-        candidates.append(
-            _score_ell(p, ell, planet, geo, n_data, len(candidates), factor)
-        )
+        candidates.append(_score_ell(p, ell, planet, geo, len(candidates)))
     # A grid must not choose its own edge: when the best ℓ is the smallest
     # or the largest, extend the grid once that way (the smallest not below
     # the floor), and let ``length_scale`` warn if it is still on an edge.
@@ -1984,11 +1951,7 @@ def _profile_gp(p):
         if (side == "high" and new > max(ells)) or (
             side == "low" and new < min(ells) * (1.0 - 1e-9)
         ):
-            candidates.append(
-                _score_ell(
-                    p, new, planet, geo, n_data, len(candidates), factor
-                )
-            )
+            candidates.append(_score_ell(p, new, planet, geo, len(candidates)))
             extended = side
     for k, c in enumerate(candidates):
         c["ell_index"] = k
@@ -2055,20 +2018,18 @@ def _residual_search(p, model):
     return search
 
 
-def _common_compare(p, model, fit, extra):
+def _common_compare(p, model, chi2, extra):
     """Numbers every ``compare`` reports, for the preferred model."""
     ctx, data = p._ctx(), p.processed
     n = int(data.n_independent)
     factor = p._rescale_factor()
-    scales = fit.scales or (
-        {"mackay": factor} if p.error_mode == "rescale" else None
-    )
+    rescaled = p.error_mode == "rescale"
     return {
         "n_independent": n,
-        "chi2": fit.chi2,
-        "chi2_reduced": fit.chi2 / n,
-        "error_scales": scales,
-        "error_scale_factor": factor if p.error_mode == "rescale" else None,
+        "chi2": chi2,
+        "chi2_reduced": chi2 / n,
+        "error_scales": {"mackay": factor} if rescaled else None,
+        "error_scale_factor": factor if rescaled else None,
         "at_bound": _best_at_bound(p),
         "degree": ctx.degree,
         "outer_fraction": _light_fraction(
@@ -2080,22 +2041,20 @@ def _common_compare(p, model, fit, extra):
 
 def _best_at_bound(p):
     """The fitted parameters of ``models/best`` within 0.1% of a prior bound."""
-    try:
-        info = _io.read_json(p.output / "models" / "best" / "info.json")
-    except (OSError, ValueError):
-        return []
+    info = _io.read_json(p.output / "models" / "best" / "info.json")
     return list(info.get("at_bound") or [])
 
 
 def _load_candidate(p, name):
     folder = p.output / "models" / name
-    manifest = _io.read_json(folder / "manifest.json")
-    values = _io.load_model_values(folder)
-    return folder, manifest, values, _io.load_model(folder)
+    return _io.load_model_values(folder), _io.load_model(folder)
 
 
 def _save_best(p, name):
-    folder, manifest, values, model = _load_candidate(p, name)
+    """Copy candidate ``name`` to ``models/best``; its (values, model)."""
+    folder = p.output / "models" / name
+    values, model = _load_candidate(p, name)
+    manifest = _io.read_json(folder / "manifest.json")
     _io.save_model(
         p.output / "models" / "best", model, values, manifest["params"]
     )
@@ -2103,28 +2062,24 @@ def _save_best(p, name):
         p.output / "models" / "best" / "info.json",
         _io.read_json(folder / "info.json"),
     )
+    return values, model
 
 
 def _compare_rings(p):
-    from ..inference import laplace_cov
     from ..likelihood import whitened_residuals
 
     ctx, data = p._ctx(), p.processed
     rows = []
     for c in p._report("profile")["candidates"]:
         n = c["n"]
-        folder, manifest, values, model = _load_candidate(p, c["name"])
+        values, model = _load_candidate(p, c["name"])
         shape = _Shape(n, ctx.colour, ctx.degree, c["planet"])
         priors = _ring_priors(ctx, shape)
         names = list(priors)
         flat = _scalars(values)
-        sd = _laplace_sd(ctx, shape, names, flat, data)
+        sd, cov = _laplace(ctx, shape, names, flat, data)
         log_z = None
-        if p.error_mode == "quoted" and all(sd[k] is not None for k in names):
-            x = onp.array([flat[k] for k in names])
-            cov = onp.asarray(
-                laplace_cov(x, names, _builder(ctx, shape), data)
-            )
+        if p.error_mode == "quoted" and cov is not None:
             sign, logdet = onp.linalg.slogdet(cov)
             if sign > 0:
                 r = onp.asarray(whitened_residuals(model, data), dtype=float)
@@ -2151,28 +2106,22 @@ def _compare_rings(p):
     # winner are reported: the data want a profile the rings cannot give.
     split = [r for r in rows if r.get("unresolved")]
     rows = [r for r in rows if not r.get("unresolved")]
-    n_best = min(rows, key=lambda r: r["bic"])["n"]
-    split = [
-        r["n"]
-        for r in split
-        if r["bic"] < next(q for q in rows if q["n"] == n_best)["bic"]
-    ]
+    best = min(rows, key=lambda r: r["bic"])
+    n_best = best["n"]
+    split = [r["n"] for r in split if r["bic"] < best["bic"]]
     evidences = {
         r["n"]: r["log_evidence"]
         for r in rows
         if r["log_evidence"] is not None
     }
     by_evidence = max(evidences, key=evidences.get) if evidences else None
-    best = next(r for r in rows if r["n"] == n_best)
-    _save_best(p, best["name"])
-    _, _, _, model = _load_candidate(p, best["name"])
-    fit = _DiskFit(model, {}, {}, best["chi2"], {}, best["n_free"])
+    _, model = _save_best(p, best["name"])
     search = _residual_search(p, model)
     pa_sd = best["sd"].get("pa")
     report = _common_compare(
         p,
         model,
-        fit,
+        best["chi2"],
         {
             "best": best["name"],
             "n_best": n_best,
@@ -2251,7 +2200,7 @@ def _stability(p, rows):
     r = onp.linspace(ctx.r_in, ctx.r_out, 200)
     curves = []
     for row in rows:
-        _, _, _, model = _load_candidate(p, row["name"])
+        model = _load_candidate(p, row["name"])[1]
         total = _profile_curves(model, r)[0]
         if onp.all(onp.isfinite(total)) and onp.std(total) > 0:
             curves.append(onp.asarray(total, dtype=float))
@@ -2318,25 +2267,18 @@ def _compare_gp(p):
     rows = [dict(c) for c in p._report("profile")["candidates"]]
     scored = [r for r in rows if r["log_evidence"] is not None]
     best = max(scored or rows, key=lambda r: r["log_evidence"] or -onp.inf)
-    _save_best(p, best["name"])
-    _, _, values, model = _load_candidate(p, best["name"])
-    fit = _DiskFit(model, {}, {}, best["chi2"], {}, best["n_free"])
+    values, model = _save_best(p, best["name"])
     inner_fraction, inner_corr = _inner_stats(model, data, ctx)
     spread, stability = _stability(p, rows)
     rendered = _render_stats(p, model)
     geometry = p._report("geometry")
-    planet = best["planet"]
+    planet_values = (
+        _planet_values(values, ctx.colour) if best["planet"] else None
+    )
     search = _residual_search(p, model)
     raised = None
     if search["delta_chi2"] >= p.settings["companion_min_delta_chi2"]:
         # Does a higher harmonic degree remove it?
-        planet_values = (
-            _planet_values(
-                _io.load_model_values(p.output / "models" / "best"), ctx.colour
-            )
-            if planet
-            else None
-        )
         higher, _ = _gp_fit(
             p,
             best["ell_mas"],
@@ -2348,7 +2290,7 @@ def _compare_gp(p):
     report = _common_compare(
         p,
         model,
-        fit,
+        best["chi2"],
         {
             "best": best["name"],
             "ell_mas": best["ell_mas"],
@@ -2368,9 +2310,7 @@ def _compare_gp(p):
             "flux": float(onp.asarray(values["disk.flux"])),
             "residual_search": search,
             "raised_search": raised,
-            "companion": _companion_report(
-                p, _planet_values(values, ctx.colour) if planet else None
-            ),
+            "companion": _companion_report(p, planet_values),
         },
     )
     _plot_summary_file(p, model)
@@ -2553,6 +2493,11 @@ def _fold_pa(samples, pa_site, parity, centre):
     return out
 
 
+def _best_row(compare):
+    """The ``compare`` row of the preferred model."""
+    return next(r for r in compare["rows"] if r["name"] == compare["best"])
+
+
 def _posterior_setup(p):
     """Model, priors, start, position-angle site and parity of the NUTS run.
 
@@ -2563,8 +2508,8 @@ def _posterior_setup(p):
     ctx = p._ctx()
     compare = p._report("compare")
     values = _io.load_model_values(p.output / "models" / "best")
+    row = _best_row(compare)
     if p.name == "rings":
-        row = next(r for r in compare["rows"] if r["n"] == compare["n_best"])
         shape = _Shape(row["n"], ctx.colour, ctx.degree, row["planet"])
         priors = _ring_priors(ctx, shape)
         start = {k: onp.asarray(values[k]) for k in priors}
@@ -2584,7 +2529,6 @@ def _posterior_setup(p):
             float(values["pa"]),
         )
     geo = _released_geometry(p, values)
-    row = next(r for r in compare["rows"] if r["name"] == compare["best"])
     planet = _planet_values(values, ctx.colour) if row["planet"] else None
     template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)
     model = _apply(template, values, priors)
@@ -2615,11 +2559,7 @@ def _nuts(p, model, priors, start):
     mcmc = _run_chains(
         posterior, p.settings, start, dense_mass=True, priors=priors
     )
-    samples = {
-        k: onp.asarray(v)
-        for k, v in mcmc.get_samples(group_by_chain=True).items()
-    }
-    return samples, _sample_stats(mcmc)
+    return _draws(mcmc)
 
 
 def _posterior(p):
@@ -2642,45 +2582,26 @@ def _posterior(p):
     }
     diagnostics = {k: _diagnostics([x]) for k, x in floats.items()}
     summary = {
-        k: {
-            **_quantiles(x, angle=k == pa_site, period=180.0),
-            "std": float(onp.std(x)),
-            **diagnostics[k],
-        }
+        k: _site_summary(x, diagnostics[k], angle=k == pa_site, period=180.0)
         for k, x in floats.items()
         if x.ndim == 2 and not k.endswith("_vec")
     }
-    bound = {
-        k: _bound_samples(priors[k], samples[k])
-        for k in priors
-        if k in samples and samples[k].ndim == 2
+    bounded = {
+        k: priors[k] for k in priors if k in samples and samples[k].ndim == 2
     }
-    _io.write_h5(
-        p.output / "samples.h5",
+    _write_samples(
+        p,
         {"posterior": samples, "sample_stats": stats},
-        attrs={
-            "/": {
-                "schema": _io.SCHEMA,
-                "pa_site": pa_site,
-                "pa_folded": "pa within 90 degrees of the MAP, harmonics of order m times (-1)^m",
-                "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
-            }
-        },
+        pa_site=pa_site,
+        pa_folded="pa within 90 degrees of the MAP, harmonics of order m times (-1)^m",
     )
     return {
         "skipped": False,
         "best": p._report("compare")["best"],
         "params": summary,
         "noise": _noise_quantiles(samples),
-        "num_chains": s["num_chains"],
-        "num_samples": s["num_samples"],
-        "num_warmup": s["num_warmup"],
-        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-        "divergence_fraction": float(onp.mean(stats["diverging"])),
-        "prior_bound_fraction": {
-            k: v for k, v in bound.items() if v is not None
-        },
+        **_sampler_report(s, [_chain_health(diagnostics, stats)]),
+        "prior_bound_fraction": _prior_bounds(bounded, samples),
     }
 
 
@@ -2738,20 +2659,12 @@ _POSTERIOR_KEYS = (
 def _disk_section(name, compare):
     section = {"model": name, "best": compare["best"]}
     if name == "rings":
+        row = _best_row(compare)
         section.update(
             n_rings=compare["n_best"],
             rings=[
                 {"r_mas": r, "sigma_mas": w, "flux": f}
-                for r, w, f in zip(
-                    *(
-                        next(
-                            row
-                            for row in compare["rows"]
-                            if row["n"] == compare["n_best"]
-                        )[key]
-                        for key in ("radii", "widths", "fluxes")
-                    )
-                )
+                for r, w, f in zip(row["radii"], row["widths"], row["fluxes"])
             ],
         )
     else:
@@ -2846,15 +2759,6 @@ def _fit_checks(entry, settings, overview, geometry, compare):
     return [by[name] for name in CHECKS if name in by and name in entry.checks]
 
 
-def _posterior_checks(post):
-    return [
-        _checks.prior_bound(post["prior_bound_fraction"]),
-        _checks.r_hat(post["r_hat_max"]),
-        _checks.ess(post["ess_bulk_min"]),
-        _checks.divergences(post["divergence_fraction"]),
-    ]
-
-
 def _summarize(name, settings, reports):
     entry = models()[name]
     sections, checks = {}, []
@@ -2870,7 +2774,7 @@ def _summarize(name, settings, reports):
         )
     )
     if load:
-        sections["data"] = {k: load[k] for k in _DATA_KEYS}
+        sections["data"] = _pick(load, _DATA_KEYS)
     if over:
         sections["model"] = {
             "name": name,
@@ -2878,7 +2782,7 @@ def _summarize(name, settings, reports):
             **{k: over[k] for k in _OVERVIEW_KEYS},
         }
     if geo:
-        sections["geometry"] = {k: geo[k] for k in _GEOMETRY_KEYS}
+        sections["geometry"] = _pick(geo, _GEOMETRY_KEYS)
     if prof:
         sections["profile"] = {"candidates": prof["candidates"]}
     if not comp:
@@ -2900,6 +2804,6 @@ def _summarize(name, settings, reports):
     checks += _chi2_checks(entry, comp)
     checks += _fit_checks(entry, settings, over, geo, comp)
     if post and not post.get("skipped"):
-        sections["posterior"] = {k: post[k] for k in _POSTERIOR_KEYS}
-        checks += _posterior_checks(post)
+        sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
+        checks += _sampler_checks(post)
     return sections, checks
