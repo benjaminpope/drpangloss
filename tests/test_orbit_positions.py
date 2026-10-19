@@ -995,7 +995,9 @@ def test_refine_marginal_keeps_the_point_unless_the_start_is_not_finite(
     monkeypatch.setattr(
         epochs._gauss_newton,
         "solve",
-        lambda *a, **k: SimpleNamespace(z=z, value=np.asarray(-7.0), stop=stop),
+        lambda *a, **k: SimpleNamespace(
+            z=z, value=np.asarray(-7.0), stop=stop
+        ),
     )
     bounds = [(-9.0, 9.0), (-9.0, 9.0), (1e-4, 1.0)]
     x, value, ok = epochs._refine_marginal(x0, 1.0, None, None, bounds)
