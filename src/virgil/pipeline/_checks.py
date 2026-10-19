@@ -1334,3 +1334,359 @@ def structure_unconstrained(
         f"The radial profile is stable across ℓ (smallest correlation "
         f"{correlation:.2g}) or the evidence separates the lengths.",
     )
+
+
+# === ORBIT CHECKS ===
+
+
+def night_flags(flags, n_nights):
+    """Nights whose position cannot seed an orbit.
+
+    Parameters
+    ----------
+    flags : dict[str, list[str]]
+        ``{night: flag codes}`` of the flagged nights (the ones that seed
+        nothing; their data still count in every likelihood).
+    n_nights : int
+        The number of nights.
+    """
+    if not flags:
+        return Check(
+            "night_flags",
+            "pass",
+            0,
+            None,
+            f"None of the {n_nights} nights is flagged.",
+        )
+    listing = "; ".join(f"{k}: {', '.join(v)}" for k, v in flags.items())
+    return Check(
+        "night_flags",
+        "warn",
+        len(flags),
+        None,
+        f"{len(flags)} of {n_nights} nights are flagged ({listing}): they "
+        "seed no orbit, but their data still count in the likelihood.",
+    )
+
+
+def labels_free(free):
+    """Whether the data leave the stars' labels undetermined.
+
+    Parameters
+    ----------
+    free : bool
+        The best mode has a point-reflected partner of comparable
+        evidence (``AliasResult.labels_free``).
+    """
+    if free:
+        return Check(
+            "labels_free",
+            "warn",
+            True,
+            None,
+            "The data do not say which star is which: the reflected orbit "
+            "(ω + 180°, Ω unchanged) fits as well. Compare orbits in the "
+            "sky plane and accept the reflection.",
+        )
+    return Check(
+        "labels_free",
+        "pass",
+        False,
+        None,
+        "The labels of the stars are determined by the data.",
+    )
+
+
+def alias_ambiguity(delta, runner_up, *, warn=10.0, fail=1.0):
+    """The winning alias band's evidence over the runner-up's.
+
+    Parameters
+    ----------
+    delta : float or None
+        log Z of the best band minus that of the next (nats), on the
+        tempered likelihood; None with a single band.
+    runner_up : int or None
+        The runner-up's orbit count, for the message.
+    warn, fail : float, optional
+        A margin below ``warn`` nats warns (the runner-up is not
+        excluded); below ``fail`` fails (the period is not determined).
+    """
+    if delta is None or not _finite(delta):
+        return Check(
+            "alias_ambiguity",
+            "pass",
+            None,
+            warn,
+            "There is a single alias band: no rival period.",
+        )
+    if delta < fail:
+        status, meaning = (
+            "fail",
+            "the data do not choose between the periods",
+        )
+    elif delta < warn:
+        status, meaning = (
+            "warn",
+            "the runner-up alias is not excluded; confirm it with more "
+            "epochs or another instrument",
+        )
+    else:
+        status, meaning = "pass", "the winning period is decisive"
+    return Check(
+        "alias_ambiguity",
+        status,
+        float(delta),
+        warn,
+        f"The best alias band beats the runner-up (N = {runner_up}) by "
+        f"{delta:.3g} nats: {meaning}.",
+    )
+
+
+def bands_failed(failed):
+    """Alias bands the search could not evaluate.
+
+    Parameters
+    ----------
+    failed : sequence of int
+        The orbit counts N of the bands whose fit raised (their evidence is
+        -inf, so they never win nor appear as the runner-up).
+    """
+    if not len(failed):
+        return Check(
+            "bands_failed",
+            "pass",
+            0,
+            0,
+            "Every alias band was evaluated.",
+        )
+    shown = ", ".join(str(n) for n in list(failed)[:10])
+    more = "" if len(failed) <= 10 else f" and {len(failed) - 10} more"
+    return Check(
+        "bands_failed",
+        "warn",
+        len(failed),
+        0,
+        f"The fit of {len(failed)} alias band(s) failed (N = {shown}{more}): "
+        "the winner's margin does not cover them. Re-run, or rerun those "
+        "bands with `fit_orbit_aliases`.",
+    )
+
+
+_WINNER_FLAGS = (
+    "not-converged",
+    "laplace-is-differ",
+    "low-ess",
+    "near-prior-bound",
+    "no-valid-mode",
+    "starts-failed",
+)
+
+
+def winner_flags(flags):
+    """The evidence engine's own flags on the winning band.
+
+    Parameters
+    ----------
+    flags : sequence of str
+        The winner's flags; a poor fit has its own check (`chi2`).
+    """
+    bad = [f for f in flags if f in _WINNER_FLAGS]
+    if not bad:
+        return Check(
+            "winner_flags",
+            "pass",
+            [],
+            None,
+            "The winning band's evidence has no flags.",
+        )
+    return Check(
+        "winner_flags",
+        "warn",
+        bad,
+        None,
+        f"The winning band's evidence carries {', '.join(bad)}: its log Z, "
+        "and so the margin over the runner-up, is less reliable.",
+    )
+
+
+def mode_converged(gap, *, warn=1.0):
+    """Whether the search's best mode was an optimum.
+
+    Parameters
+    ----------
+    gap : float
+        How far (nats) the best sampled point lies above the mode the
+        search found; a draw cannot beat a true maximum, so a gap means
+        the search stopped short.
+    warn : float, optional
+        Gap above which to warn.
+    """
+    if gap > warn:
+        return Check(
+            "mode_converged",
+            "warn",
+            float(gap),
+            warn,
+            f"The sampler found a point {gap:.3g} nats above the search's "
+            "best mode: the search stopped short of the optimum, so the "
+            "band evidences (and the ranking) may be off. Raise "
+            "`n_candidates`, `n_refine` or `max_steps`.",
+        )
+    return Check(
+        "mode_converged",
+        "pass",
+        float(gap),
+        warn,
+        "The search's best mode is an optimum of the sampled density.",
+    )
+
+
+def tempering(out_of_range, f, f_raw):
+    """Whether the correlated-channel tempering is outside what the
+    likelihood can trust.
+
+    Parameters
+    ----------
+    out_of_range : bool
+        ``AliasResult.tempering``: a factor above 2, a raw factor below
+        0.5, or a flat residual correlation.
+    f, f_raw : float or None
+        The pooled effective-channel factor and its unfloored value.
+    """
+    if f is not None and out_of_range:
+        return Check(
+            "tempering",
+            "warn",
+            float(f),
+            [0.5, 2.0],
+            f"The effective-channel factor f = {f:.3g} (raw "
+            f"{f_raw:.3g}) is outside [0.5, 2] or the residual "
+            "correlation is not AR(1): the evidences are less reliable.",
+        )
+    return Check(
+        "tempering",
+        "pass",
+        None if f is None else float(f),
+        [0.5, 2.0],
+        "The likelihood is not tempered."
+        if f is None
+        else f"The effective-channel factor f = {f:.3g} is within [0.5, 2].",
+    )
+
+
+def primary_resolved(resolved, diam, at_edge):
+    """Whether the primary's fitted diameter is trustworthy.
+
+    Parameters
+    ----------
+    resolved : bool or None
+        The data resolve the primary (a uniform disk was fitted); None if
+        the diameter was fixed or not estimated.
+    diam : float or None
+        The estimated diameter (mas).
+    at_edge : bool
+        The estimate sits at the edge of the diameter grid.
+    """
+    if resolved and at_edge:
+        return Check(
+            "primary_resolved",
+            "warn",
+            diam,
+            None,
+            f"The primary is resolved but its estimated diameter "
+            f"({diam:.3g} mas) is the largest tried: the disk may be "
+            "larger, or the V² are biased.",
+        )
+    return Check(
+        "primary_resolved",
+        "pass",
+        diam,
+        None,
+        "The primary's size is not at the edge of the diameters tried.",
+    )
+
+
+def no_orbit(delta, *, threshold=10.0):
+    """The orbit's evidence against a single star.
+
+    Parameters
+    ----------
+    delta : float or None
+        log Z of the best orbit minus the log likelihood of the star
+        alone (nats); the orbit's prior volume is in its evidence.
+    threshold : float, optional
+        Below this the data show no orbit: warn; below 0, the single star
+        is preferred: fail.
+    """
+    if delta is None or not _finite(delta):
+        return Check(
+            "no_orbit",
+            "fail",
+            None,
+            threshold,
+            "The evidence of the orbit against a single star could not be "
+            "computed.",
+        )
+    if delta < 0:
+        status, meaning = (
+            "fail",
+            "a single star fits as well as any orbit: no orbit is detected",
+        )
+    elif delta < threshold:
+        status, meaning = (
+            "warn",
+            "the orbit is not clearly better than a single star",
+        )
+    else:
+        status, meaning = "pass", "the orbit is clearly preferred"
+    return Check(
+        "no_orbit",
+        status,
+        float(delta),
+        threshold,
+        f"The best orbit beats a single star by {delta:.3g} nats: {meaning}.",
+    )
+
+
+def period_bound(bound, lower, p_range):
+    """Whether the period is at an end of its window.
+
+    Parameters
+    ----------
+    bound : bool
+        The best period is at the top of the window, or flat towards it (a
+        short arc): the period is unconstrained.
+    lower : bool
+        The best period is at the bottom, where the sampling limit may
+        have cut the truth.
+    p_range : sequence of float
+        The window (days), for the message.
+    """
+    lo, hi = float(p_range[0]), float(p_range[1])
+    if bound:
+        return Check(
+            "period_bound",
+            "warn",
+            True,
+            [lo, hi],
+            f"The period is unconstrained: the best value is at the top "
+            f"of the window ({lo:.3g} to {hi:.3g} d), as for an arc "
+            "shorter than the orbit. Observe a longer arc.",
+        )
+    if lower:
+        return Check(
+            "period_bound",
+            "warn",
+            True,
+            [lo, hi],
+            f"The best period is at the bottom of the window "
+            f"({lo:.3g} d), which the sampling of the nights sets: a "
+            "shorter period may have been cut off.",
+        )
+    return Check(
+        "period_bound",
+        "pass",
+        False,
+        [lo, hi],
+        f"The period is inside its window ({lo:.3g} to {hi:.3g} d).",
+    )

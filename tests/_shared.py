@@ -33,8 +33,13 @@ def float_leaves(grads):
     ]
 
 
-def vlti_night(mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5):
-    """VLTI-like data: ``frames`` four-telescope snapshots 1 h apart."""
+def vlti_night(
+    mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5, stations=False
+):
+    """VLTI-like data: ``frames`` four-telescope snapshots 1 h apart.
+
+    ``stations=True`` records the station pair of every sample, which writing
+    the data as OIFITS needs."""
     delta = STATIONS[PAIRS[:, 1] - 1] - STATIONS[PAIRS[:, 0] - 1]
     i1, i2, i3 = cp_indices(PAIRS, TRIANGLES)
     n = len(PAIRS)
@@ -46,8 +51,10 @@ def vlti_night(mjd, frames=1, rotation=0.0, d_vis=0.01, d_phi=0.5):
         [delta[:, 0] * onp.sin(a) + delta[:, 1] * onp.cos(a) for a in angles]
     )
     shift = lambda i: onp.concatenate([i + k * n for k in range(frames)])  # noqa: E731
+    extra = {"stations": onp.tile(PAIRS, (frames, 1))} if stations else {}
     return OIData(
         {
+            **extra,
             "u": u,
             "v": v,
             "wavel": 2.2e-6,

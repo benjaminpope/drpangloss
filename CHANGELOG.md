@@ -363,6 +363,18 @@ contributors page; no code was copied)
 
 **Pipelines** (`virgil.pipeline`, the `pipeline` extra; provisional)
 
+- **`OrbitPipeline`** (`virgil.pipeline`, provisional; `virgil-pipeline
+  orbit`): the default multi-epoch binary-orbit run is a blind period-alias
+  search. `OrbitPipeline.from_oifits(files).run()` groups the files into
+  nights, finds the companion's position on each, searches every alias band
+  of the period with the engine's defaults (no published period, window,
+  warm start or prior), ranks the bands, reports the winner's margin over the
+  runner-up and a `no-orbit` test against a single star, and samples the
+  winning band (and any band that is not negligible) with NUTS. New checks:
+  `night_flags`, `labels_free`, `alias_ambiguity`, `tempering`,
+  `primary_resolved`, `no_orbit` and `period_bound`. `Result.aliases()`
+  reloads the search, and `AliasResult` records its prior ranges
+  (`AliasResult.prior`).
 - `BinaryPipeline` (companion search, contrast limits, fit and NUTS
   posterior) and `StarPipeline` (angular diameter and limb darkening, with
   a registry of models by short name) run fixed, named stages on public

@@ -13,6 +13,8 @@ folder, the checks and the stability policy, see
 
 ::: virgil.pipeline.disk.DiskPipeline
 
+::: virgil.pipeline.orbit.OrbitPipeline
+
 ::: virgil.pipeline.disk.DiskModel
 
 ::: virgil.pipeline.disk.models

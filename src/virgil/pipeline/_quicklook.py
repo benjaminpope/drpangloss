@@ -394,9 +394,82 @@ def _disk_cells(run, summary, path):
     return cells
 
 
+def _orbit_cells(run, summary, path):
+    done = _completed(run)
+    cells = []
+    if "epochs" in done:
+        nights = summary["nights"]
+        cells.append(
+            (
+                "## Nights\n\n"
+                f"{len(nights)} nights, each with the companion's best "
+                "position (separation, flux ratio), the margin of its best "
+                "peak over its best rival (`gap_marginal`, nats), the flags "
+                "that stop it seeding an orbit, and the raw χ²/N of the "
+                "best orbit.",
+                'import pandas as pd\n\npd.DataFrame(res.summary["nights"])',
+            )
+        )
+    if "search" in done:
+        search = summary["search"]
+        low, high = search["p_range"]
+        cells.append(
+            (
+                "## Alias search\n\n"
+                f"{search['n_bands']} alias bands tile the period window "
+                f"{low:.4g}–{high:.4g} d, which the data set (no published "
+                "period was used). The left panel is each band's evidence "
+                "against the best; the right panel its raw χ²/ν.",
+                'display(Image("plots/search_bands.png"))',
+            )
+        )
+    if "modes" in done:
+        modes = summary["modes"]
+        win, null = modes["winner"], modes["no_orbit"]
+        gap = modes["delta_log_z"]
+        margin = (
+            "there is no other band"
+            if gap is None
+            else f"it leads the runner-up by {gap:.4g} nats"
+        )
+        cells.append(
+            (
+                "## Modes\n\n"
+                f"The winner is the band of N = {win['n']} orbits "
+                f"(probability {win['p']:.3g}); {margin}. Against a single "
+                f"star it gains {null['delta_log_z']:.4g} nats "
+                f"(verdict: {null['verdict']}). The sky plot shows the best "
+                "orbit, each night's position and error ellipse (hollow if "
+                "flagged), and the orbit at the nights.",
+                'display(Image("plots/modes_sky.png"))\n'
+                "import pandas as pd\n\n"
+                'pd.DataFrame(res.summary["modes"]["table"])',
+            )
+        )
+    if "posterior" in done and "modes" in summary.get("posterior", {}):
+        post = summary["posterior"]
+        sampled = [m["n"] for m in post["modes"]]
+        sites = list(post["modes"][0]["params"]) if sampled else []
+        if sampled:
+            cells.append(
+                (
+                    "## Posterior\n\n"
+                    f"NUTS drew {post['num_samples']} samples in each of "
+                    f"{post['num_chains']} chains after "
+                    f"{post['num_warmup']} warm-up steps in each of the "
+                    f"bands N = {sampled}. The corner plot shows the "
+                    "winner's elements; the other bands are in "
+                    "`res.samples(name='n<N>')`.",
+                    _corner_code(sites),
+                )
+            )
+    return cells
+
+
 _SECTIONS = {
     "binary": _binary_cells,
     "disk": _disk_cells,
+    "orbit": _orbit_cells,
     "star": _star_cells,
 }
 
