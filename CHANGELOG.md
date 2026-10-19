@@ -27,6 +27,10 @@ Provisional in 0.4:
   `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
   `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis` and `gp_priors`;
   and in `virgil.fields`, `MultipoleField` and `multipole_field_priors`;
+- the module `virgil.radio` (new: complex visibilities from CASA measurement
+  sets with per-observation calibration nuisances; instrument-neutral, with
+  the spectral-index prior `Uniform(0, 5)` and the data-derived reference
+  frequency and offset bound among its defaults);
 - the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
   `gp_members`, `GPFit` and `EvidenceGrid`;
 - `virgil.svi` (`variational`);
@@ -889,6 +893,19 @@ Provisional in 0.4:
 
 ### Fixed
 
+- **Short-arc seeding no longer breaks velocity fits or drops position
+  seeds.** `arcs._half_position` unpacked two values from `_refine_marginal`,
+  which has returned `(x, value, stop)` since the refinement change below, so
+  any short-arc fit that measured a half-night velocity raised `ValueError`;
+  it now accepts a velocity only from a converged refinement. And the arc
+  seeds replaced the position-profile seeds of every band the arcs kept: with
+  six nights (no random starts) the true band of a two-season gap case
+  (N=20, P = 12.38 d) ended at log Z -511.2 against -253.4 with
+  `short_arcs=False`, and N=19 won. The arc seeds are now added beside each
+  kept band's position seeds (log Z -253.4 for N=20 with the arcs on). Each
+  kept band now scores about twice as many starting candidates, so default
+  short-arc fits are slower, and checkpoints from earlier versions are refit
+  (checkpoint format 6).
 - **`epoch_positions` no longer discards a refinement that does not
   converge.** The damped-Newton refinement of a grid peak returned its start
   point unless it stopped as `CONVERGED`, although the kernel only accepts
