@@ -847,6 +847,31 @@ Provisional in 0.4:
 - **Pipelines no longer crash in the posterior figures when the chains never move.** Draws with zero width made chainconsumer raise "Axis limits cannot be NaN or Inf", failing the run in the plotting step instead of reporting the non-convergence. The corner and trace figures are now placeholders with a recorded warning, and the R-hat and ESS checks fail as they should.
 - **Pipeline sampler reports no longer hide a stuck parameter.** The worst R-hat and smallest ESS in `posterior` reports were taken with Python `max`/`min`, so a NaN at one site was dropped when a finite site came first and the R-hat and ESS checks passed. A NaN at any site now makes the worst value NaN, which those checks fail.
 - **Pipeline setting validation is uniform.** `BinaryPipeline`, `StarPipeline` and `DiskPipeline` validate the shared sampler and data settings with one helper: `DiskPipeline` now rejects a non-positive `batch_size`, a non-number where a positive number is required is a `ValueError` (it was a `TypeError`), and messages for positive settings read "X must be positive; got V." (provisional pipelines; valid runs and results are unchanged). A missing or corrupt `models/best/info.json` now makes `DiskPipeline`'s `compare` stage raise instead of reporting an empty `at_bound`.
+- **`epoch_positions` no longer discards a refinement that does not
+  converge.** The damped-Newton refinement of a grid peak returned its start
+  point unless it stopped as `CONVERGED`, although the kernel only accepts
+  steps that lower the loss. A run that stalled at the rounding floor or
+  reached its 200-step limit therefore left the peak at its grid cell. In the
+  CI job on the oldest dependencies that left the true peak of a benchmark
+  night at marginal -469 (-154 refined), below its point reflection (-361):
+  a 21 mas error. `_refine_marginal` now keeps the best point reached and
+  returns the kernel's stop code; only a start that is not finite falls
+  back to the start. `epoch_positions` warns when the refinement of a night's
+  best peak did not converge, and `estimate_primary_diameter` when one of the
+  fits that set the diameter and its gain did not (the marginal score at that
+  point is a lower bound; the warning names the stop). The refinements
+  behind `fit_orbit_aliases` also keep an improved point where they used to
+  fall back to the start, and since its default `primary_diam="auto"` calls
+  `estimate_primary_diameter`, it can emit that warning too.
+  Two things the fix exposed are corrected with it. `estimate_primary_diameter`
+  took the point-primary score from one fit started at the grid's positions,
+  which can end at a poor local maximum (33 nats below what the same model
+  reaches from a disc's positions) and read as a resolved disc once refinements
+  were no longer discarded; the baseline is now the better of that fit and a
+  refit from the best diameter's positions. And `epoch_positions` no longer
+  raises `LinAlgError` when the Hessian at a kept point is not finite: the
+  covariance falls back to the step size.
+
 - **The limb-darkening tutorial printed an understated χ²/N.** It divided the sum of squared whitened residuals by their number (234 rows), but four-telescope closure phases give more residual rows than independent data (162), so the printed values were 451.32 and 0.79 instead of about 652 and 1.14. The tutorial now uses `virgil.imaging.chi2_by_observable`, which counts independent data, and its outputs were rerun.
 
 - **The pipelines no longer fail with numpyro's "Cannot find valid initial parameters" on a non-detection.** With no companion the fitted flux runs to the lower end of its prior (and an unresolved star's diameter to the edge of `diam_range_mas`); NUTS then started exactly on the bound, where the unconstrained value is infinite. `BinaryPipeline`, `StarPipeline` and `DiskPipeline` now start the chains at least 1e-3 of the prior's width inside any bound (so a start within 0.1% of a bound, which `fit` reports in `at_bound`, moves slightly and gives different draws for the same seed), a start that is still not finite raises a `ValueError` naming the start values instead of numpyro's `RuntimeError`, and `BinaryPipeline` and `StarPipeline` add a `start_at_bound` warning check when the best fit sits at a bound.
