@@ -420,6 +420,13 @@ class ComplexVisData(eqx.Module):
             Points are padded with zero weight to a multiple of this and
             evaluated with ``jax.lax.map`` over chunks, bounding memory
             (the transform is never ``vmap``-ed).
+
+        Notes
+        -----
+        ``fit`` passes the data to its jitted functions as arguments. In your
+        own jitted code pass the term as an argument too, with
+        ``eqx.filter_jit``; a ``jax.jit`` closure over it bakes the data in as
+        constants (see the radio interferometry page).
         """
         if isinstance(scene, SourceModel):
             raise TypeError(

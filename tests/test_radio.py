@@ -708,3 +708,105 @@ def test_read_ddid_applies_the_casa_convention_without_casatools():
     )
     onp.testing.assert_allclose(onp.asarray(read.vis), model, atol=1e-12)
     assert onp.all(onp.asarray(read.weight) == 8.0)
+
+
+# -- the data stay jit arguments, not compile-time constants -----------------
+
+
+def _constant_bytes(lowered):
+    """Bytes of dense constants embedded in a lowered module's text."""
+    import re
+
+    return sum(
+        len(m) for m in re.findall(r"dense<[^>]{200,}>", lowered.as_text())
+    )
+
+
+def _big_term_problem(n=200_000):
+    rng = onp.random.default_rng(3)
+    ddid = rng.integers(0, 3, n)
+    data = ComplexVisData.from_arrays(
+        rng.uniform(-4e6, 4e6, n),
+        rng.uniform(-4e6, 4e6, n),
+        rng.normal(size=n) + 1j * rng.normal(size=n),
+        rng.uniform(0.5, 2.0, n) * 1e4,
+        onp.array([230e9, 238e9, 245e9])[ddid],
+        ddid=ddid,
+        obs=onp.array([0, 0, 1])[ddid],
+    )
+    nuis = CalibrationNuisance(data, taper_fwhm_mas=50.0)
+    values = _values(nuis)
+
+    def scene(v):
+        return Image(v["log_brightness"], PIXEL, ft="dft")
+
+    values["log_brightness"] = np.zeros((8, 8))
+    return data, nuis, scene, values
+
+
+def test_term_data_are_arguments_not_constants():
+    data, nuis, scene, values = _big_term_problem()
+    term = data.term(scene, nuis, chunk_size=100_000)
+
+    def loss(t, v):
+        return jax.value_and_grad(
+            lambda w: 0.5 * np.sum(t(w) ** 2) + t.log_norm(w)
+        )(v)
+
+    as_arg = eqx.filter_jit(loss).lower(term, values)
+    closed = jax.jit(lambda v: loss(term, v)).lower(values)
+    assert _constant_bytes(as_arg) < 1e6
+    assert _constant_bytes(closed) > 1e7  # the documented pitfall
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+def test_fit_compiles_once_across_masks_and_weights(monkeypatch):
+    import numpyro.distributions as dist
+
+    from virgil.imaging import MaxEntropy
+    from virgil.radio import _RadioTerm
+
+    data, nuis, scene, values = _big_term_problem(n=4000)
+    fold, _ = dartboard_folds(data, k=3)
+    priors = nuis.priors()
+    priors["log_brightness"] = dist.Normal(0.0, 3.0)
+
+    def model(**v):
+        return scene(v)
+
+    traced = []
+    original = _RadioTerm.__call__
+
+    def counting(self, v):
+        if isinstance(v["cal.flux"], jax.core.Tracer):
+            traced.append(1)
+        return original(self, v)
+
+    monkeypatch.setattr(_RadioTerm, "__call__", counting)
+
+    def run(i, lam):
+        term = data.term(scene, nuis, mask=fold != i, chunk_size=2000)
+        n0 = len(traced)
+        result = fit(
+            model,
+            priors,
+            data=(),
+            likelihoods=[term],
+            regularizers=[MaxEntropy(lam)],
+            init=dict(values),
+            method="lbfgs",
+            max_steps=2,
+        )
+        return len(traced) - n0, term, result
+
+    n_first, _, first = run(0, 1e3)
+    assert n_first > 0
+    n_second, term1, second = run(1, 2e3)
+    assert n_second == 0  # same shapes: no retrace, so no recompile
+    # ... and fold 1's mask reached the computation: the reported chi2 is that
+    # of an eager evaluation of fold 1's term at the fitted values
+    eager = float(np.sum(term1(second.values) ** 2))
+    assert second.info["chi2"][-1] == pytest.approx(eager, rel=1e-8)
+    assert second.info["chi2"][-1] != pytest.approx(
+        first.info["chi2"][-1], rel=1e-3
+    )
