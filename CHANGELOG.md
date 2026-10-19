@@ -72,8 +72,10 @@ Provisional in 0.4:
 - **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
   `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`
   and `skip_flagged=True` when every seeding night beats its point
-  reflection by `arc_min_gap` (5 nats of `gap_marginal`; a twin's
-  reflections tie, and other positions seed every band as before),
+  reflection by `arc_min_gap` (5 nats of `gap_marginal / f`, tempered
+  like the evidence, with the cut's position and velocity covariances
+  times `f`; a twin's reflections tie, and other positions seed every
+  band as before),
   measures each night's
   velocity from its two halves (`night_motion`), joins the nights shortest
   gap first and keeps the periods whose Thiele–Innes fit to the positions

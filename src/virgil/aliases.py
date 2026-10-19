@@ -2279,20 +2279,29 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     return positions, skipped, False
 
 
-def _signs_trusted(positions, min_gap):
+def _signs_trusted(positions, min_gap, temper_f=1.0):
     """Whether every unflagged night (``EpochPositions``) has a decided
     sign: a ``gap_marginal`` of at least ``min_gap`` nats over its rivals,
     the point reflection among them (``ARC_MIN_GAP``). A near-equal pair's
-    reflections tie, so its nights fail this, by the data, not by a flux."""
+    reflections tie, so its nights fail this, by the data, not by a flux.
+
+    ``gap_marginal`` treats the channels as independent, so it is
+    ``temper_f`` times too decisive when they are correlated: it is divided
+    by the effective-channel factor, as the evidence is. A night whose
+    position peak is only decisive on the untempered surface (a fringe
+    alias, far from the companion) would otherwise be trusted to exclude
+    bands."""
     keep = ~onp.asarray(positions.flagged)
-    gaps = onp.asarray(positions.gap_marginal, float)[keep]
+    gaps = onp.asarray(positions.gap_marginal, float)[keep] / temper_f
     return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
-def _seed_motion(data, positions, skip_flagged, jitter):
+def _seed_motion(data, positions, skip_flagged, jitter, error_scale=1.0):
     """The within-night velocities of the seeding nights (``EpochPositions``),
     aligned with ``EpochPositions.positions(skip_flagged=...)``."""
-    motion = night_motion(data, positions, jitter=jitter)
+    motion = night_motion(
+        data, positions, jitter=jitter, error_scale=error_scale
+    )
     return motion.take(~positions.flagged) if skip_flagged else motion
 
 
@@ -2308,17 +2317,33 @@ def _short_arc_profile(
     delta_chi2,
     n_best,
     sign_free,
+    error_scale=1.0,
     **grid,
 ):
     """``(profile, counts, motion)``: each band's seeds from the positions
-    and the night velocities, and the periods the short arcs admit;
-    ``grid`` is ``ecc_max``, ``jitter_mas``, ``k`` and ``eccs``."""
-    motion = _seed_motion(data, seed_positions, skip_flagged, arc_jitter)
+    and the night velocities, and the periods the short arcs admit; the
+    positions' and velocities' covariances are times ``error_scale`` (the
+    effective-channel factor); ``grid`` is ``ecc_max``, ``jitter_mas``,
+    ``k`` and ``eccs``."""
+    motion = _seed_motion(
+        data, seed_positions, skip_flagged, arc_jitter, error_scale
+    )
     counts = unwrap_cycles(
-        positions, motion, p_range=p_range, delta_chi2=delta_chi2, **grid
+        positions,
+        motion,
+        p_range=p_range,
+        delta_chi2=delta_chi2,
+        error_scale=error_scale,
+        **grid,
     )
     profile = arc_profile(
-        positions, motion, bands, n_best=n_best, sign_free=sign_free, **grid
+        positions,
+        motion,
+        bands,
+        n_best=n_best,
+        sign_free=sign_free,
+        error_scale=error_scale,
+        **grid,
     )
     return profile, counts, motion
 
@@ -2972,9 +2997,10 @@ def fit_orbit_aliases(
         Fit only the bands whose cycle counts the short arcs admit, seeded by
         the positions and within-night velocities
         ([`virgil.arcs`][virgil.arcs]); the position floor (a fraction of
-        lambda/B_max), the χ² margin, and the ``gap_marginal`` (nats) every
-        seeding night needs for its sign to count as decided (its best
-        peak over its point reflection). Needs ``EpochPositions`` and
+        lambda/B_max), the χ² margin, and the tempered ``gap_marginal / f``
+        (nats) every seeding night needs for its sign to count as decided
+        (its best peak over its point reflection); the cut's position and
+        velocity errors are tempered by ``f`` too. Needs ``EpochPositions`` and
         ``skip_flagged``, with every seeding night decided; otherwise (a
         near-equal pair, whose reflections tie) every band is seeded from
         the positions as without it.
@@ -3170,13 +3196,27 @@ def fit_orbit_aliases(
     profile, counts, motion = None, None, None
     resolution_mas = float(fringe_scales(data)[0])
     arc_jitter_mas = float(arc_jitter) * resolution_mas
-    if (
+    # The positions' gaps and covariances come from the untempered surface:
+    # the cut uses them tempered by f, as the evidence is.
+    temper_f = 1.0 if factors is None else float(factors.f)
+    arcs_possible = (
         positions is not None
         and short_arcs
         and skip_flagged
         and isinstance(seed_positions, EpochPositions)
-        and _signs_trusted(seed_positions, arc_min_gap)
-    ):
+    )
+    arcs_decided = arcs_possible and _signs_trusted(
+        seed_positions, arc_min_gap, temper_f
+    )
+    if arcs_possible and not arcs_decided:
+        _LOG.info(
+            "short arcs skipped: a seeding night's gap_marginal / f (f = "
+            "%.3g) is below arc_min_gap = %.3g nats; every band is seeded "
+            "from the positions.",
+            temper_f,
+            arc_min_gap,
+        )
+    if arcs_decided:
         # AGENTS.md, "Cycle counts from short arcs" row: the nights' motion
         # narrows the bands and seeds each one. The cut fits signed
         # positions, so it needs every seeding night's sign decided: by
@@ -3192,6 +3232,7 @@ def fit_orbit_aliases(
             arc_jitter=float(arc_jitter),
             ecc_max=ecc_max,
             jitter_mas=arc_jitter_mas,
+            error_scale=temper_f,
             delta_chi2=arc_delta_chi2,
             k=k,
             n_best=n_candidates,

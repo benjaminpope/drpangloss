@@ -30,24 +30,28 @@ TRUTH = dict(
 
 
 def _positions_and_motion(
-    truth, nights=NIGHTS, sigma=0.05, sigma_v=0.3, seed=0
+    truth, nights=NIGHTS, sigma=0.05, sigma_v=0.3, seed=0, underestimate=1.0
 ):
     """Positions with errors ``sigma`` and a bias of 0.3 mas shared by each
     season's nights (not in the stated errors), and the velocities of the
-    first and last nights with a shared bias of ``sigma_v``."""
+    first and last nights with a shared bias of ``sigma_v``. With
+    ``underestimate`` the actual random errors are that many times the
+    stated ``sigma`` and ``sigma_v``."""
     orbit = KeplerOrbit(**truth, t_ref=T_REF)
     rng = onp.random.default_rng(seed)
     r = onp.stack(orbit.relative(nights)[:2], -1)
     season = onp.concatenate([[0], onp.cumsum(onp.diff(nights) > 30.0)])
     angle = rng.uniform(0.0, 2 * onp.pi, season.max() + 1)[season]
     bias = 0.3 * onp.stack([onp.cos(angle), onp.sin(angle)], -1)
-    r = r + bias + sigma * rng.standard_normal(r.shape)
+    r = r + bias + underestimate * sigma * rng.standard_normal(r.shape)
     h = 1e-4
     v = (
         onp.stack(orbit.relative(nights + h)[:2], -1)
         - onp.stack(orbit.relative(nights - h)[:2], -1)
     ) / (2 * h)
-    v = v + sigma_v * (onp.array([0.6, 0.8]) + rng.standard_normal(v.shape))
+    v = v + underestimate * sigma_v * (
+        onp.array([0.6, 0.8]) + rng.standard_normal(v.shape)
+    )
     measured = onp.zeros(len(nights), bool)
     measured[[0, -1]] = True
     n = len(nights)
@@ -124,6 +128,47 @@ def test_the_true_cycle_count_survives(ecc, inc):
     assert n_true in kept
     assert len(kept) < len(alias_bands(NIGHTS, P_RANGE)) / 4
     assert counts.steps  # the short arcs constrained it
+
+
+# Errors read off a surface that treats correlated channels as independent
+# are too small by √f: here by 6 (f = 36). Scaled by f, as the evidence is
+# tempered, the cut keeps the true cycle count. No floor, so that the stated
+# errors are all there is.
+@pytest.mark.parametrize("seed", range(4))
+def test_errors_underestimated_sixfold_keep_the_true_cycle_count(seed):
+    pos, motion = _positions_and_motion(TRUTH, seed=seed, underestimate=6.0)
+    n_true = round(float(onp.ptp(NIGHTS)) / TRUTH["period"])
+    counts = arcs.unwrap_cycles(
+        pos, motion, p_range=P_RANGE, eccs=ECCS, error_scale=36.0
+    )
+    kept = _kept(counts)
+    assert n_true in kept
+    assert len(kept) < len(alias_bands(NIGHTS, P_RANGE))  # not the window
+    # weaker errors, more bands: never fewer than at the stated errors
+    stated = arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, eccs=ECCS)
+    assert len(kept) >= len(_kept(stated))
+    profile = arcs.arc_profile(
+        pos,
+        motion,
+        [b for b in alias_bands(NIGHTS, P_RANGE) if b.n == n_true],
+        eccs=ECCS,
+        error_scale=36.0,
+    )
+    assert abs(profile[0]["period"] - TRUTH["period"]) < 0.05
+
+
+def test_the_error_scale_widens_the_positions_and_velocities():
+    pos, motion = _positions_and_motion(TRUTH)
+    one = arcs._arc(pos, motion, 0.1)
+    scaled = arcs._arc(pos, motion, 0.1, error_scale=9.0)
+    # (whiteners are inverse standard deviations: a floor of 0.1 mas is
+    # added to the scaled σ² = 9 × 0.05², not scaled itself)
+    sd = lambda a: 1.0 / a.wr[0, 0, 0]  # noqa: E731
+    assert onp.isclose(sd(one) ** 2, 0.05**2 + 0.1**2, rtol=1e-6)
+    assert onp.isclose(sd(scaled) ** 2, 9 * 0.05**2 + 0.1**2, rtol=1e-6)
+    for bad in (0.5, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="error_scale"):
+            arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, error_scale=bad)
 
 
 def test_too_few_data_keep_the_whole_window():

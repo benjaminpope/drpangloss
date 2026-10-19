@@ -196,7 +196,14 @@ def _half_position(part, x0, resolution, diam):
     return x[:2], cov
 
 
-def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
+def night_motion(
+    data,
+    positions,
+    *,
+    max_shift=_MAX_SHIFT,
+    jitter=ARC_JITTER,
+    error_scale=1.0,
+):
     """Each night's angular velocity, from the positions of its two halves.
 
     Each night's frames are split in time into an earlier and a later half;
@@ -205,7 +212,10 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
     scale-marginalized surface, with the same primary. The velocity is their
     difference over the time between them, with the halves' covariances,
     each with a floor of ``jitter`` λ/B_max added in quadrature: the halves
-    see different uv coverage, so their biases need not cancel.
+    see different uv coverage, so their biases need not cancel. The
+    covariances come from a surface that treats the channels as independent:
+    ``error_scale`` (the effective-channel factor ``f`` of the tempering)
+    multiplies them before the floor, as it divides the evidence.
     A night with one frame, or whose halves move to another peak (more than
     ``max_shift`` λ/B_max), has none.
 
@@ -221,6 +231,9 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
     jitter : float, optional
         Each half's position floor, in units of the night's λ/B_max
         (default ``ARC_JITTER``).
+    error_scale : float, optional
+        The factor (at least 1) multiplying the halves' covariances
+        (default 1).
 
     Returns
     -------
@@ -230,6 +243,7 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
     --------
     >>> motion = night_motion(data, positions)  # doctest: +SKIP
     """
+    _check_error_scale(error_scale)
     sets = list(data.data) if isinstance(data, Epochs) else list(data)
     n = len(sets)
     if n != len(positions.names):
@@ -266,7 +280,7 @@ def night_motion(data, positions, *, max_shift=_MAX_SHIFT, jitter=ARC_JITTER):
         dt = halves[1][1] - halves[0][1]
         vel[i] = (r2 - r1) / dt
         floor = 2.0 * (jitter * resolution) ** 2 * onp.eye(2)
-        cov[i] = (c1 + c2 + floor) / dt**2
+        cov[i] = (error_scale * (c1 + c2) + floor) / dt**2
         measured[i] = True
     return NightMotion(onp.asarray(positions.mjd, float), vel, cov, measured)
 
@@ -309,18 +323,28 @@ def _whitener(cov):
     return onp.linalg.inv(onp.linalg.cholesky(cov))
 
 
-def _position_cov(positions, jitter_mas):
-    """The covariances of ``PositionData`` (from its whiteners), with
-    ``jitter_mas`` added in quadrature."""
+def _check_error_scale(error_scale):
+    if not onp.isfinite(error_scale) or error_scale < 1.0:
+        raise ValueError(
+            f"error_scale must be a finite factor >= 1 (errors are never "
+            f"sharpened), got {error_scale!r}."
+        )
+
+
+def _position_cov(positions, jitter_mas, error_scale=1.0):
+    """The covariances of ``PositionData`` (from its whiteners) times
+    ``error_scale``, with ``jitter_mas`` added in quadrature."""
     w = onp.asarray(positions.whitener, float)
     cov = onp.linalg.inv(onp.einsum("nji,njk->nik", w, w))
-    return cov + jitter_mas**2 * onp.eye(2)
+    return error_scale * cov + jitter_mas**2 * onp.eye(2)
 
 
-def _arc(positions, motion, jitter_mas):
+def _arc(positions, motion, jitter_mas, error_scale=1.0):
     """The ``_Arc`` of ``PositionData`` and the aligned ``NightMotion`` (or
-    None), with ``jitter_mas`` added in quadrature to each position."""
-    cov = _position_cov(positions, jitter_mas)
+    None), with the positions' covariances times ``error_scale`` and
+    ``jitter_mas`` added in quadrature to each position."""
+    _check_error_scale(error_scale)
+    cov = _position_cov(positions, jitter_mas, error_scale)
     n = len(cov)
     if motion is None:
         v, wv = onp.zeros((n, 2)), onp.zeros((n, 2, 2))
@@ -482,6 +506,7 @@ def unwrap_cycles(
     p_range,
     ecc_max=0.9,
     jitter_mas=0.0,
+    error_scale=1.0,
     delta_chi2=ARC_DELTA_CHI2,
     k=9.0,
     eccs=None,
@@ -507,9 +532,12 @@ def unwrap_cycles(
         The same nights' velocities ([`night_motion`][virgil.arcs.night_motion]).
     p_range : (float, float)
         The period window (days).
-    ecc_max, jitter_mas, delta_chi2, k, eccs : optional
+    ecc_max, jitter_mas, error_scale, delta_chi2, k, eccs : optional
         The largest eccentricity; a position floor (mas) added in quadrature;
-        the χ² margin; the phase coherence of the period grids
+        the factor (at least 1) multiplying the positions' covariances, the
+        effective-channel factor of the tempering, with the velocities'
+        ``error_scale`` in [`night_motion`][virgil.arcs.night_motion]; the
+        χ² margin; the phase coherence of the period grids
         ([`period_grid`][virgil.orbits.period_grid]); trial eccentricities
         (default 0 to ``ecc_max`` in steps of 0.05).
 
@@ -522,7 +550,7 @@ def unwrap_cycles(
     >>> counts = unwrap_cycles(positions, motion, p_range=(2.0, 1600.0))  # doctest: +SKIP
     >>> [b for b in alias_bands(times, (2.0, 1600.0)) if counts.admits(b)]  # doctest: +SKIP
     """
-    arc = _arc(positions, motion, jitter_mas)
+    arc = _arc(positions, motion, jitter_mas, error_scale)
     eccs = _eccs(eccs, ecc_max)
     order = onp.argsort(arc.t, kind="stable")
     group = onp.arange(len(arc.t))
@@ -584,6 +612,7 @@ def arc_profile(
     *,
     ecc_max=0.9,
     jitter_mas=0.0,
+    error_scale=1.0,
     k=9.0,
     n_best=3,
     eccs=None,
@@ -592,8 +621,9 @@ def arc_profile(
     """Each band's best orbits from the positions and the velocities.
 
     As [`position_profile`][virgil.aliases.position_profile], with each
-    night's velocity in the Thiele–Innes fit as well, and a position floor
-    ``jitter_mas`` (mas) added in quadrature. With ``sign_free`` the
+    night's velocity in the Thiele–Innes fit as well, the positions'
+    covariances times ``error_scale`` and a position floor ``jitter_mas``
+    (mas) added in quadrature. With ``sign_free`` the
     sign-free orbits of the positions alone are added (``n_best`` of each).
 
     Returns
@@ -602,7 +632,7 @@ def arc_profile(
         Per band: ``n``, ``chi2`` (best), ``period`` of the best orbit and
         the ``orbits`` ``[(KeplerOrbit, χ²), ...]``.
     """
-    arc = _arc(positions, motion, jitter_mas)
+    arc = _arc(positions, motion, jitter_mas, error_scale)
     eccs = _eccs(eccs, ecc_max)
     times = arc.t + arc.t_ref
     rows = []
