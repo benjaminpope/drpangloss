@@ -83,6 +83,7 @@ def _whiten_with_log_norm(
     gain_terms=None,
     offset_terms=None,
     frozen=False,
+    split_norm=False,
 ):
     """Whitened residuals, effective errors, and the marginal log-normalizer.
 
@@ -95,7 +96,10 @@ def _whiten_with_log_norm(
     follow ``docs/conventions.md`` (Observables; Closure phases with four or more
     telescopes; Likelihood normalization). Extra observables follow the phases,
     each block whitened by itself. With ``frozen=True`` the diagonal ``errors``
-    pass through ``jax.lax.stop_gradient`` for ``_curvature_rows``.
+    pass through ``jax.lax.stop_gradient`` for ``_curvature_rows``. With
+    ``split_norm=True`` ``log_norm`` is instead ``[gains', offsets']`` (the
+    visibility and phase parts; extra blocks are left out), as the
+    scale-marginalized surface needs them block by block.
     """
     prediction = np.asarray(prediction)
     resid = prediction - np.asarray(reference)
@@ -125,6 +129,8 @@ def _whiten_with_log_norm(
         effective.append(e)
         log_norm = log_norm + np.sum(np.log(e) - np.log(errors[offset:end]))
         offset = end
+    if split_norm:
+        log_norm = np.stack([vis_norm, phase_norm])
     return np.concatenate(whitened), np.concatenate(effective), log_norm
 
 

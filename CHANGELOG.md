@@ -7,6 +7,18 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Orbit fitting with gains
+
+- The scale-marginalized surface (`marginal_loglike`, `epoch_positions`,
+  `rank_orbits`, `fit_orbit_aliases`) accepts data with gains or closure-phase
+  offsets, which it refused. Each affected block has covariance
+  s²D + UUᵀ, so ln s is integrated numerically (32-node Gauss–Legendre on a
+  window around the integrand's peak, exact log determinant at every node).
+  Such data take `s_max = 10` when none is given. `vis_amp` is refused for
+  them; `vis_amp=True` (the default) then means none, logged at INFO. For
+  data with gains or offsets, an estimated tempering factor above 3 warns
+  "noise model inadequate".
+
 ### Stability
 
 virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
