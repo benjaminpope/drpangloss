@@ -929,3 +929,46 @@ def test_a_checkpoint_with_tempering_on_roundtrips_and_depends_on_f(
         )
         assert len(calls) == 2 * n_first
     assert aliases._CHECKPOINT_FORMAT >= 4
+
+
+def test_the_short_arcs_see_the_tempered_gaps_and_errors(monkeypatch):
+    # With a fixed f = 4, a night decisive by 12 nats untempered is only 3
+    # nats decisive: the short-arc stage must not run on it (a spurious
+    # peak, decisive only by the independent-channel surface, would cut the
+    # true band), and when it runs it widens the errors by f.
+    import dataclasses
+
+    data, positions = _cached(0.0, n=3)
+    seen = []
+
+    def arcs_stage(data, seed, pos, bands, **kw):
+        seen.append(kw["cov_scale"])
+        raise _Stop
+
+    monkeypatch.setattr(aliases, "_short_arc_profile", arcs_stage)
+    monkeypatch.setattr(
+        aliases,
+        "position_profile",
+        lambda pos, bands, **k: [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases, "_preflight", lambda *a: (_ for _ in ()).throw(_Stop)
+    )
+
+    def run(gap, f):
+        found = dataclasses.replace(
+            positions, gap_marginal=onp.full(len(positions.names), gap)
+        )
+        with pytest.raises(_Stop), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            aliases.fit_orbit_aliases(
+                data, (12.0, 13.0), positions=found, t_ref=T_REF,
+                primary_diam=None, n_random=5, temper=f,
+            )  # fmt: skip
+
+    run(12.0, 4.0)  # 12 / 4 = 3 nats < 5: no arcs stage
+    assert seen == []
+    run(40.0, 4.0)  # 10 nats tempered
+    assert seen == [4.0]
+    run(12.0, 1.0)  # untempered: as before
+    assert seen == [4.0, 1.0]
