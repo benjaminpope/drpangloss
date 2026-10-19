@@ -1480,15 +1480,15 @@ class _RefineProblem(eqx.Module):
 def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
     """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
     the IRLS curvature, in float64, deterministic) within ``bounds``.
-    Returns the point, the surface's negative value there and whether the
-    run converged.
+    Returns the point, the surface's negative value there and the kernel's
+    stop code (``_gauss_newton.CONVERGED`` and so on).
 
     The kernel only accepts steps that lower the loss, so a run that stalls
-    at the rounding floor or reaches ``max_steps`` still ends at a point at
-    least as good as ``x0``, and that point is returned (``converged`` is
-    False: the surface's value there is a lower bound on its maximum). Only
-    a start that is not finite returns ``x0`` and ``inf``, which the caller
-    reads as no improvement."""
+    (``STALLED``, the damping limit) or reaches ``max_steps`` (``LIMIT``)
+    still ends at a point at least as good as ``x0``, and that point is
+    returned (the surface's value there is a lower bound on its maximum).
+    Only a start that is not finite (``NON_FINITE``) returns ``x0`` and
+    ``inf``, which the caller reads as no improvement."""
     state = _gauss_newton.solve(
         _RefineProblem(d64, dof, surface, diam, amp_range),
         onp.asarray(x0, float),
@@ -1499,12 +1499,20 @@ def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
     )
     stop = int(state.stop)
     if stop == _gauss_newton.NON_FINITE:
-        return onp.asarray(x0, dtype=float), float("inf"), False
-    return (
-        onp.asarray(state.z, dtype=float),
-        float(state.value),
-        stop == _gauss_newton.CONVERGED,
-    )
+        return onp.asarray(x0, dtype=float), float("inf"), stop
+    return onp.asarray(state.z, dtype=float), float(state.value), stop
+
+
+_STOP_CAUSE = {
+    _gauss_newton.STALLED: "the damping limit",
+    _gauss_newton.LIMIT: "the step limit",
+    _gauss_newton.NON_FINITE: "a start where the surface is not finite",
+}
+
+
+def _unconverged_cause(stops):
+    """The causes in ``stops`` (kernel stop codes, not CONVERGED), in words."""
+    return " and ".join(_STOP_CAUSE[c] for c in sorted(set(stops)))
 
 
 def _flag_one_night(
@@ -1690,9 +1698,9 @@ def epoch_positions(
     UserWarning
         If a dataset's best peak is at the edge of the grid, its raw
         chi-squared/N is above 4, or the refinement of its best peak did
-        not converge (it stalled at the rounding floor or reached its step
-        limit): the position is the best point reached and the marginal
-        score there is a lower bound.
+        not converge (it ended at the damping limit or the step limit): the
+        position is the best point reached and the marginal score there is
+        a lower bound.
 
     Examples
     --------
@@ -1730,7 +1738,7 @@ def epoch_positions(
     bounds = [(a.min() - s, a.max() + s) for a, s in zip(axes[:2], steps)]
     bounds.append((0.1 * float(axes[2].min()), 1.0))
     rows, inflated, edge_grid, edge_peak = [], [], [], []
-    unconverged = []
+    unconverged = {}  # night -> the stop code of its best peak's refinement
     night_flags = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
@@ -1767,16 +1775,16 @@ def epoch_positions(
                 m = _grid_marginal(chi2, dof64, d64, surface)
             return onp.asarray(quoted), onp.asarray(m)
 
-        refine_ok = []  # whether each grid peak's refinement converged
+        refine_stop = []  # each grid peak's refinement stop code
 
         def refine_one(
             x0, d64=d64, surface=surface, dof64=dof64, diam64=diam64
         ):
             with run_in("float64"):
-                x, value, ok = _refine_marginal(
+                x, value, stop = _refine_marginal(
                     x0, dof64, d64, surface, bounds, diam64
                 )
-            refine_ok.append(ok)
+            refine_stop.append(stop)
             return x, -value
 
         peaks, peak_loglike, peak_marginal, order = _rank_peaks(
@@ -1790,8 +1798,8 @@ def epoch_positions(
             gap_marginal = _refined_gap(
                 peaks, peak_marginal, marginal, xx, yy, rival
             )
-            if not refine_ok[order[0]]:
-                unconverged.append(name)
+            if refine_stop[order[0]] != _gauss_newton.CONVERGED:
+                unconverged[name] = refine_stop[order[0]]
         at_edge = [
             a in (0, xx.shape[0] - 1) or b in (0, xx.shape[1] - 1)
             for a, b, _ in cells
@@ -1888,9 +1896,10 @@ def epoch_positions(
     if unconverged:
         warnings.warn(
             f"The refinement of the best peak of {', '.join(unconverged)} "
-            "did not converge (it stalled at the rounding floor or reached "
-            "its step limit): the position is the best point reached, and "
-            "its marginal score and covariance are approximate.",
+            "did not converge (it ended at "
+            f"{_unconverged_cause(unconverged.values())}): the position is "
+            "the best point reached, and its marginal score and covariance "
+            "are approximate.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
@@ -2033,8 +2042,10 @@ def estimate_primary_diameter(
     UserWarning
         If the best diameter is the largest tried (``at_grid_edge``): widen
         ``diam_grid``. Also if a night's refinement did not converge (it
-        stalled at the rounding floor or reached its step limit): its
-        profile scores are lower bounds.
+        ended at the damping limit or the step limit) in the fits that set
+        the reported diameter and gain (at the first and the best grid
+        diameter, the accepted vertex and the reseed): its scores there are
+        lower bounds.
 
     Examples
     --------
@@ -2076,10 +2087,8 @@ def estimate_primary_diameter(
         ]
         amp = None if vis_amp is None else tuple(map(float, vis_amp))
 
-        unconverged = set()  # nights with a refinement that did not converge
-
         def refit(i, x0, diam):
-            """Refine night ``i`` from ``x0`` at ``diam``: (x, score)."""
+            """Refine night ``i`` from ``x0`` at ``diam``: (x, score, stop)."""
             window = _REFINE_WINDOW * resolution[i]
             x0 = onp.clip(
                 x0,
@@ -2092,37 +2101,42 @@ def estimate_primary_diameter(
                 (1e-4, 1.0),
             ]
             dm = None if diam <= 0 else np.asarray(float(diam))
-            x, value, ok = _refine_marginal(
+            x, value, stop = _refine_marginal(
                 x0, dofs[i], d64[i], surfaces[i], bounds, dm, amp
             )
-            if not ok:
-                unconverged.add(i)
             if not onp.isfinite(value):  # no improvement: score the start
                 value = float(
                     _negative_marginal(
                         np.asarray(x0), dofs[i], d64[i], surfaces[i], dm, amp
                     )
                 )
-            return x, -value
+            return x, -value, stop
 
         def profile_at(diam, begin):
-            """Summed score over the used nights at ``diam``, and the
-            fitted positions (None for the nights left out)."""
-            total, xs = 0.0, list(begin)
+            """Summed score over the used nights at ``diam``, the fitted
+            positions (None for the nights left out) and the stop codes of
+            the refinements that did not converge, by night."""
+            total, xs, bad = 0.0, list(begin), {}
             for i in onp.flatnonzero(use):
-                xs[i], score = refit(i, begin[i], diam)
+                xs[i], score, stop = refit(i, begin[i], diam)
                 total += score
-            return total, xs
+                if stop != _gauss_newton.CONVERGED:
+                    bad[i] = stop
+            return total, xs, bad
 
-        profile, xs, fits = [], start, []
+        profile, xs, fits, bads = [], start, [], []
         for diam in grid:  # ascending: each starts from the last fit
-            total, xs = profile_at(diam, xs)
+            total, xs, bad = profile_at(diam, xs)
             profile.append(total)
             fits.append(xs)
+            bads.append(bad)
         profile = onp.asarray(profile)
         best = int(onp.argmax(profile))
         diam, sigma = float(grid[best]), float("nan")
         gain = float(profile[best] - profile[0])
+        # The refinements that set the reported diameter and gain; the other
+        # grid diameters and the curvature probes only shape the search.
+        unconverged = {**bads[0], **bads[best]}
         if 0 < best < len(grid) - 1:
             # A parabola through the best grid point and its neighbours
             # locates the maximum between grid points.
@@ -2131,14 +2145,15 @@ def estimate_primary_diameter(
             )
             vertex = -b / (2 * a) if a < 0 else float("nan")
             if grid[best - 1] <= vertex <= grid[best + 1]:
-                total, _ = profile_at(vertex, fits[best])
+                total, _, bad = profile_at(vertex, fits[best])
                 if total >= profile[best]:
                     diam, gain = float(vertex), float(total - profile[0])
+                    unconverged.update(bad)
             # The uncertainty is the curvature of the profile at the
             # maximum, from steps of 15% of the diameter.
             h = 0.15 * diam
-            up, _ = profile_at(diam + h, fits[best])
-            down, _ = profile_at(diam - h, fits[best])
+            up, _, _ = profile_at(diam + h, fits[best])
+            down, _, _ = profile_at(diam - h, fits[best])
             peak = gain + profile[0]
             curve = 2 * peak - up - down
             if curve > 0:
@@ -2158,8 +2173,10 @@ def estimate_primary_diameter(
             dm = None if chosen <= 0 else np.asarray(float(chosen))
             xs_all, covs = [], []
             for i in range(len(sets)):
-                x, _ = refit(i, start[i], chosen)
+                x, _, stop = refit(i, start[i], chosen)
                 xs_all.append(x)
+                if stop != _gauss_newton.CONVERGED:
+                    unconverged[i] = stop
                 full = onp.asarray(
                     _negative_marginal_hessian(
                         np.asarray(x), dofs[i], d64[i], surfaces[i], dm, amp
@@ -2185,11 +2202,11 @@ def estimate_primary_diameter(
             seeded = positions
         if unconverged:
             warnings.warn(
-                "A refinement did not converge (it stalled at the rounding "
-                "floor or reached its step limit) for "
+                "A refinement that sets the diameter did not converge (it "
+                f"ended at {_unconverged_cause(unconverged.values())}) for "
                 f"{', '.join(positions.names[i] for i in sorted(unconverged))}"
-                ": the profile scores there are lower bounds, so the "
-                "diameter and its gain are approximate.",
+                ": its score there is a lower bound, so the diameter and "
+                "its gain are approximate.",
                 UserWarning,
                 stacklevel=external_stacklevel(),
             )

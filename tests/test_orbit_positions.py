@@ -956,7 +956,8 @@ def test_a_refinement_that_does_not_converge_keeps_its_best_point(monkeypatch):
     with pytest.warns(UserWarning, match="did not converge"):
         found = epoch_positions(Epochs({"night": night}), GRID)
     peaks = found.peaks[0]
-    assert not onp.array_equal(peaks.dra, grid.dra)  # moved off the grid
+    # The best peak moved off its grid cell.
+    assert peaks.dra[0] != grid.dra[0] or peaks.ddec[0] != grid.ddec[0]
     assert peaks.marginal[0] >= grid.marginal[0]
     # The converged refinement is better still.
     monkeypatch.undo()
@@ -972,19 +973,19 @@ def test_a_converged_refinement_raises_no_warning():
 
 
 @pytest.mark.parametrize(
-    "stop_name, kept, converged",
+    "stop_name, kept",
     [
-        ("CONVERGED", True, True),
-        ("STALLED", True, False),
-        ("LIMIT", True, False),
-        ("NON_FINITE", False, False),
+        ("CONVERGED", True),
+        ("STALLED", True),
+        ("LIMIT", True),
+        ("NON_FINITE", False),
     ],
 )
 def test_refine_marginal_keeps_the_point_unless_the_start_is_not_finite(
-    monkeypatch, stop_name, kept, converged
+    monkeypatch, stop_name, kept
 ):
     """Only a start that is not finite returns ``(x0, inf)``; a stall or the
-    step limit keeps the best point reached and says it did not converge."""
+    step limit keeps the best point reached; the kernel's stop code says why."""
     from types import SimpleNamespace
 
     from virgil import _gauss_newton, epochs
@@ -1000,11 +1001,23 @@ def test_refine_marginal_keeps_the_point_unless_the_start_is_not_finite(
         ),
     )
     bounds = [(-9.0, 9.0), (-9.0, 9.0), (1e-4, 1.0)]
-    x, value, ok = epochs._refine_marginal(x0, 1.0, None, None, bounds)
-    assert ok is converged
+    x, value, code = epochs._refine_marginal(x0, 1.0, None, None, bounds)
+    assert code == stop
     if kept:
         onp.testing.assert_array_equal(x, onp.asarray(z))
         assert value == -7.0
     else:
         onp.testing.assert_array_equal(x, x0)
         assert value == float("inf")
+
+
+def test_unconverged_cause_names_each_stop_code():
+    from virgil import _gauss_newton as gn
+    from virgil.epochs import _unconverged_cause
+
+    assert _unconverged_cause([gn.STALLED]) == "the damping limit"
+    assert _unconverged_cause([gn.LIMIT, gn.LIMIT]) == "the step limit"
+    both = _unconverged_cause([gn.LIMIT, gn.NON_FINITE, gn.STALLED])
+    assert "the damping limit" in both
+    assert "the step limit" in both
+    assert "not finite" in both

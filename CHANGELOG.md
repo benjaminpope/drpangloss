@@ -851,11 +851,14 @@ Provisional in 0.4:
   CI job on the oldest dependencies that left the true peak of a benchmark
   night at marginal -469 (-154 refined), below its point reflection (-361):
   a 21 mas error. `_refine_marginal` now keeps the best point reached and
-  reports whether the run converged; only a start that is not finite falls
-  back to the start. `epoch_positions` and `estimate_primary_diameter` warn
-  when a refinement did not converge (the marginal score at that point is a
-  lower bound). The refinements behind `fit_orbit_aliases` also keep an
-  improved point where they used to fall back to the start.
+  returns the kernel's stop code; only a start that is not finite falls
+  back to the start. `epoch_positions` warns when the refinement of a night's
+  best peak did not converge, and `estimate_primary_diameter` when one of the
+  fits that set the diameter and its gain did not (the marginal score at that
+  point is a lower bound; the warning names the stop). The refinements
+  behind `fit_orbit_aliases` also keep an improved point where they used to
+  fall back to the start, and since its default `primary_diam="auto"` calls
+  `estimate_primary_diameter`, it can emit that warning too.
 
 - **The limb-darkening tutorial printed an understated χ²/N.** It divided the sum of squared whitened residuals by their number (234 rows), but four-telescope closure phases give more residual rows than independent data (162), so the printed values were 451.32 and 0.79 instead of about 652 and 1.14. The tutorial now uses `virgil.imaging.chi2_by_observable`, which counts independent data, and its outputs were rerun.
 
