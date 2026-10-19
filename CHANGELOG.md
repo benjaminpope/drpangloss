@@ -43,8 +43,9 @@ Provisional in 0.4:
 - `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
   (virgil#75). **The default changes results slightly**: with the optional
   `nufft` extra (nufftax; also in `[test]` and `[dev]`) installed, an image of
-  at least 128² pixels with points × pixels above about 3e7 (CPU) or 1e8 (GPU)
-  uses a non-uniform FFT, accurate to 1e-6 (float32) or 1e-12 (float64) of the
+  at least 64² pixels with 500 or more points (CPU), or at least 128² pixels
+  with points × pixels above 1e8 (GPU), uses a non-uniform FFT, accurate to
+  1e-5 (float32) or 1e-12 (float64) of the
   zero-baseline visibility rather than exact. Pass `ft="dft"` for the exact sum;
   CLEAN (`_CleanScene`) has no `ft` yet and always uses `"auto"`. Without the
   extra, the exact sum is used, with a one-time `UserWarning` above the

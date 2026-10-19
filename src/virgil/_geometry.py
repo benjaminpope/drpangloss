@@ -97,14 +97,19 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
     return np.sum(partial * cols, axis=-1)
 
 
-# virgil#75: nufftax (pure JAX) beats the DFT only above a work size
-# M·N1·N2 and for images of at least _NUFFT_MIN_SIDE pixels. A100 f32
-# benchmarks (ozstar_scripts#35, job 18762629): 4-20x faster at 256² with
-# 1e4-1e5 points, no faster below ~1e8 or at 64². The CPU value is provisional.
-_NUFFT_WORK = {"gpu": 1e8, "cpu": 3e7}
-_NUFFT_MIN_SIDE = 128
-# Requested relative tolerance (of the zero-baseline visibility).
-_NUFFT_EPS_F32 = 1e-6
+# virgil#75: nufftax (pure JAX) against the DFT, value+grad, f32. A100
+# (DFT job 17776437, nufftax job 18762629; ozstar_scripts#35): no faster below
+# M·N1·N2 ~ 1e8 or at 64², 4-50x above. Apple M1 Max CPU (2026-10-19,
+# ozstar_scripts@4f4ad9e): nufftax's FFT floor grows with N² and the DFT loses
+# from M ~ 150-400 points at every N from 64 to 1024, so the CPU rule is on M.
+_NUFFT_GPU_WORK = 1e8
+_NUFFT_GPU_MIN_SIDE = 128
+_NUFFT_CPU_POINTS = 500
+_NUFFT_CPU_MIN_SIDE = 64
+# Requested relative tolerance (of the zero-baseline visibility). 1e-5 in f32
+# is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and 1.2-1.5x
+# faster than 1e-6.
+_NUFFT_EPS_F32 = 1e-5
 _NUFFT_EPS_F64 = 1e-12
 
 
@@ -134,8 +139,17 @@ def _use_nufft(shape, n_points):
     """
     nrow, ncol = shape
     backend = jax.default_backend()
-    work = _NUFFT_WORK["gpu" if backend == "gpu" else "cpu"]
-    if min(nrow, ncol) < _NUFFT_MIN_SIDE or n_points * nrow * ncol < work:
+    if backend == "gpu":
+        big = (
+            min(nrow, ncol) >= _NUFFT_GPU_MIN_SIDE
+            and n_points * nrow * ncol >= _NUFFT_GPU_WORK
+        )
+    else:
+        big = (
+            min(nrow, ncol) >= _NUFFT_CPU_MIN_SIDE
+            and n_points >= _NUFFT_CPU_POINTS
+        )
+    if not big:
         return False
     if _nufftax_available():
         return True

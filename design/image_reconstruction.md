@@ -125,8 +125,8 @@ through nufftax (pure JAX; optional `nufft` extra; issue #75, reinstated
 re-creates cuFFT plans on every call (jax-finufft #157, a flat 6-7 ms on the
 GPU). nufftax has no such cost (0.15-0.7 ms value+grad on an A100), so
 jax-finufft is no longer needed. `ft="auto"` uses the NUFFT when
-`M·N1·N2 >= _NUFFT_WORK[backend]` and `min(N1, N2) >= 128` (provisional:
-GPU 1e8, CPU 3e7, named constants in `_geometry`); `ft="dft"` and
+the problem is large enough: on a GPU `M·N1·N2 >= 1e8` and `min(N1, N2) >= 128`;
+on a CPU `M >= 500` and `min(N1, N2) >= 64` (named constants in `_geometry`); `ft="dft"` and
 `ft="nufft"` force a choice. A `UVGrid` match still takes the MFT. A padded
 FFT with interpolation is never used.
 
@@ -145,7 +145,7 @@ Why:
   internals (vmap broke on 0.10.2); nufftax is plain JAX and vmaps.
 - nufftax wraps t = 2π s u modulo 2π, but the even-axis half-pixel phase
   exp(+i t/2) is 4π-periodic: `_nufft` transforms the wrapped t and applies
-  that phase to the original t. Default eps is 1e-6 in float32 (relative to
+  that phase to the original t. Default eps is 1e-5 in float32 (relative to
   V(0)) and 1e-12 in float64.
 - Even N is a trap for any FFT-based method: putting the image centre at
   (N-1)/2 inside a grid centred on N/2 gives a half-pixel offset.
@@ -292,7 +292,7 @@ LM metric with whitened latents gives the same linear algebra.
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| NUFFT thresholds and eps (`_NUFFT_WORK`, `_NUFFT_EPS_*`) | The CPU benchmark on OzSTAR is in (the CPU table below is pending) |
+| NUFFT thresholds and eps (`_NUFFT_*` in `_geometry`) | A new nufftax release changes its floor, or a GPU CPU-style rule is wanted |
 
 The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
 below. Any re-run is done by the user, never by Claude.
@@ -338,13 +338,37 @@ speed-up). DFT from job 17776437; nufftax 0.6 from job 18762629
 | 512² | 0.40 / 0.22 (1.8×) | 2.6 / 0.24 (11×) | 20 / 0.38 (52×) |
 | 1024² | 0.87 / 0.55 (1.6×) | 7.3 / 0.56 (13×) | |
 
-- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets `_NUFFT_WORK["gpu"]`
+- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets `_NUFFT_GPU_WORK`
   and the 128-pixel minimum side.
 - The earlier jax-finufft timings (flat ~7 ms) are superseded.
 - The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32
   (20 against 886 ms).
 
-**CPU table:** pending (OzSTAR measurement); `_NUFFT_WORK["cpu"]` = 3e7 is provisional.
+**CPU** (Apple M1 Max, 8 performance cores, jax 0.11.2, nufftax 0.6.1,
+`JAX_PLATFORMS=cpu`, ozstar_scripts@4f4ad9e, 2026-10-19; value+grad of Σ|V|²,
+ms, float32, DFT / nufftax at eps 1e-5, speed-up):
+
+| Image | 10³ points | 10⁴ | 10⁵ |
+| --- | --- | --- | --- |
+| 64² | 0.57 / 0.34 (1.7×) | 3.8 / 0.94 (4×) | 33 / 6.7 (5×) |
+| 128² | 1.4 / 0.59 (2.4×) | 11 / 1.35 (8×) | 146 / 7.0 (21×) |
+| 256² | 3.7 / 1.0 (3.7×) | 29 / 1.8 (16×) | 273 / 7.9 (35×) |
+| 512² | 10.7 / 3.0 (3.6×) | 86 / 3.9 (22×) | 824 / 12.5 (66×) |
+| 1024² | 35 / 14.5 (2.4×) | 310 / 15.9 (19×) | not run (about 3 s) |
+
+- Float64: 256² with 10⁵ points 473 / 16.7 ms (28×); 512², 1610 / 33 (49×).
+  At eps 1e-12 these are 473 / 70 (7×) and 1610 / 86 (19×).
+- With a single point the DFT wins at every size (64²: 0.07 against 0.14 ms;
+  1024²: 2.0 against 13.6).
+- nufftax has a floor growing with N² (the FFT of the 2N grid, about 0.3 ms at
+  64² and 14 ms at 1024²); the DFT loses from M ≈ 150-400 at every N from 64
+  to 1024. That sets the CPU rule (M ≥ 500, side ≥ 64).
+- float32 eps 1e-5 rather than 1e-6: at 1e-6 the error stays near 1e-5 (the
+  float32 floor) and runs are 1.2-1.5× slower; virgil's float32 DFT has a
+  relative error of 7e-6 to 9e-5 on the same tests. float64 at 1e-12 matches
+  the DFT (3e-13 to 9e-13 against 1e-14).
+- A variant with precomputed points was slower on a CPU (sorted `segment_sum`)
+  and is not pursued.
 
 ## Stage log
 

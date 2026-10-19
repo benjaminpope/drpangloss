@@ -40,7 +40,8 @@ def test_nufft_matches_the_direct_sum(shape, x64):
         got = _nufft(np.asarray(image), np.asarray(uu), np.asarray(vv), 3.0)
         # The image sums to one: absolute error is relative to V(0).
         error = onp.max(onp.abs(onp.asarray(got) - expected))
-    assert error < (1e-10 if x64 else 1e-5)
+    # eps is 1e-5 in float32, as accurate as the float32 DFT.
+    assert error < (1e-10 if x64 else 5e-5)
 
 
 @pytest.mark.parametrize("shape", [(16, 16), (12, 15), (17, 17)])
@@ -67,7 +68,7 @@ def test_gradient_matches_the_dft_gradient():
         return jax.grad(f)(np.asarray(image))
 
     dft = objective("dft")
-    assert np.max(np.abs(objective("nufft") - dft)) < 1e-5 * np.max(
+    assert np.max(np.abs(objective("nufft") - dft)) < 5e-5 * np.max(
         np.abs(dft)
     )
 
@@ -85,7 +86,7 @@ def test_forward_mode_matches_the_dft():
         return jax.jvp(f, (image,), (tangent,))[1], jax.jacfwd(f)(image)
 
     for got, expected in zip(run("nufft"), run("dft")):
-        assert np.max(np.abs(got - expected)) < 1e-4
+        assert np.max(np.abs(got - expected)) < 5e-4  # eps 1e-5 of |V| ~ 13
 
 
 @pytest.mark.xfail(
@@ -107,10 +108,11 @@ def test_use_nufft_decisions(monkeypatch):
     assert not _use_nufft((256, 256), 100)  # below the work threshold
     assert not _use_nufft((64, 64), 10**6)  # too small an image
     monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
-    assert _use_nufft((128, 128), 10_000)
-    assert not _use_nufft((128, 128), 1_000)
+    assert _use_nufft((64, 64), 500)
+    assert not _use_nufft((64, 64), 499)
+    assert not _use_nufft((32, 32), 10**6)
     monkeypatch.setattr(jax, "default_backend", lambda: "tpu")
-    assert _use_nufft((128, 128), 10_000)  # any other backend counts as cpu
+    assert _use_nufft((128, 128), 1_000)  # any other backend counts as cpu
 
 
 def test_auto_follows_the_decision(monkeypatch):
