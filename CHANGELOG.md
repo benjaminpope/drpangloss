@@ -35,13 +35,21 @@ Provisional in 0.4:
   `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
-- `virgil.metrics`.
+- `virgil.metrics`;
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, with its automatic thresholds and tolerances.
 
 ### Added
 
-- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`:
-  with the optional `nufft` extra (nufftax), large images with many irregular
-  uv points use a non-uniform FFT, chosen automatically by size (virgil#75).
+- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
+  (virgil#75). **The default changes results slightly**: with the optional
+  `nufft` extra (nufftax; also in `[test]` and `[dev]`) installed, an image of
+  at least 128² pixels with points × pixels above about 3e7 (CPU) or 1e8 (GPU)
+  uses a non-uniform FFT, accurate to 1e-6 (float32) or 1e-12 (float64) of the
+  zero-baseline visibility rather than exact. Pass `ft="dft"` for the exact sum;
+  CLEAN (`_CleanScene`) has no `ft` yet and always uses `"auto"`. Without the
+  extra, the exact sum is used, with a one-time `UserWarning` above the
+  threshold. `jax.hessian` through the NUFFT fails in nufftax 0.6 (reverse over
+  reverse); use `ft="dft"` there. `ft` is provisional.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which

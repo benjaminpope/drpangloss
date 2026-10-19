@@ -72,6 +72,35 @@ def test_gradient_matches_the_dft_gradient():
     )
 
 
+def test_forward_mode_matches_the_dft():
+    # CLEAN, the image Jacobian, LM and Gauss-Newton differentiate forward.
+    image, uu, vv = _problem((16, 15), n=60)
+    image = np.asarray(image)
+    tangent = np.asarray(onp.random.default_rng(4).normal(size=image.shape))
+
+    def run(ft):
+        def f(b):
+            return image_visibilities(b, uu, vv, 3.0, ft)
+
+        return jax.jvp(f, (image,), (tangent,))[1], jax.jacfwd(f)(image)
+
+    for got, expected in zip(run("nufft"), run("dft")):
+        assert np.max(np.abs(got - expected)) < 1e-4
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="nufftax 0.6 cannot batch its vjp: reverse-over-reverse fails",
+)
+def test_hessian_through_the_nufft():
+    image, uu, vv = _problem((8, 8), n=10)
+
+    def f(b):
+        return np.sum(np.abs(image_visibilities(b, uu, vv, 3.0, "nufft")) ** 2)
+
+    jax.hessian(f)(np.asarray(image))
+
+
 def test_use_nufft_decisions(monkeypatch):
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
     assert _use_nufft((256, 256), 10_000)
