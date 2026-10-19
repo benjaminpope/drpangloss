@@ -41,7 +41,9 @@ Provisional in 0.4:
 ### Added
 
 - **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
-  `fit_orbit_aliases(short_arcs=True)`, the default, measures each night's
+  `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`
+  and `skip_flagged=True` for an unequal pair (median flux below 0.8;
+  other positions seed every band as before), measures each night's
   velocity from its two halves (`night_motion`), joins the nights shortest
   gap first and keeps the periods whose Thiele–Innes fit to the positions
   and velocities, profiled over eccentricity, inclination and orientation,

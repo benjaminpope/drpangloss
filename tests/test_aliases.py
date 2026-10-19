@@ -1466,12 +1466,22 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     data, *_ = _alias_night_data()
     found = _alias_night_positions()
     seeded = []
-    real = aliases._short_arc_profile
+    real, real_arcs = aliases.position_profile, aliases._short_arc_profile
+    # skip_flagged=False seeds every band from the positions (no short
+    # arcs: a flagged night's sign cannot be trusted); True, the short arcs.
+    monkeypatch.setattr(
+        aliases,
+        "position_profile",
+        lambda positions, *a, **k: (
+            seeded.append(positions) or real(positions, *a, **k)
+        ),
+    )
     monkeypatch.setattr(
         aliases,
         "_short_arc_profile",
         lambda data, seed, positions, *a, **k: (
-            seeded.append(positions) or real(data, seed, positions, *a, **k)
+            seeded.append(positions)
+            or real_arcs(data, seed, positions, *a, **k)
         ),
     )
     kw = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
@@ -2233,6 +2243,20 @@ def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
     warm = types.SimpleNamespace(init=(0.5 * (bands[7].p_lo + bands[7].p_hi),))
     fit, _ = aliases._short_arc_bands(None, warm, bands, {}, counts, None)
     assert fit == [one, bands[7]]
+
+
+def test_a_near_equal_pair_has_no_trusted_signs():
+    # A twin's labels, and so each night's sign, are undetermined: the
+    # short arcs leave its bands alone. A flagged night does not count.
+    pos = types.SimpleNamespace(
+        flux=onp.array([0.5, 0.9, 0.5]),
+        flagged=onp.array([False, False, True]),
+    )
+    assert aliases._signs_trusted(pos)
+    pos.flux = onp.array([0.85, 0.9, 0.5])
+    assert not aliases._signs_trusted(pos)
+    pos.flagged = onp.ones(3, bool)
+    assert not aliases._signs_trusted(pos)
 
 
 # Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,

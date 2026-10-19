@@ -2270,12 +2270,21 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     return positions, skipped, False
 
 
+# A near-equal pair's labels are undetermined, and so is the sign of each
+# night's position: the short arcs need signs, so they skip such a pair.
+_ARC_FLUX_MAX = 0.8
+
+
+def _signs_trusted(positions):
+    """Whether the unflagged nights (``EpochPositions``) have trustworthy
+    signs: their median flux is below ``_ARC_FLUX_MAX``."""
+    flux = onp.asarray(positions.flux)[~onp.asarray(positions.flagged)]
+    return flux.size > 0 and float(onp.median(flux)) < _ARC_FLUX_MAX
+
+
 def _seed_motion(data, positions, skip_flagged, jitter):
-    """The within-night velocities of the seeding nights, aligned with
-    ``EpochPositions.positions(skip_flagged=...)``; None for other
-    positions."""
-    if not isinstance(positions, EpochPositions):
-        return None
+    """The within-night velocities of the seeding nights (``EpochPositions``),
+    aligned with ``EpochPositions.positions(skip_flagged=...)``."""
     motion = night_motion(data, positions, jitter=jitter)
     return motion.take(~positions.flagged) if skip_flagged else motion
 
@@ -2870,7 +2879,9 @@ def fit_orbit_aliases(
         Fit only the bands whose cycle counts the short arcs admit, seeded by
         the positions and within-night velocities
         ([`virgil.arcs`][virgil.arcs]); the position floor (a fraction of
-        lambda/B_max) and the χ² margin.
+        lambda/B_max) and the χ² margin. Needs ``EpochPositions``,
+        ``skip_flagged`` and an unequal pair (median flux below 0.8): only
+        then do the nights' positions have trustworthy signs.
 
     Returns
     -------
@@ -3063,9 +3074,18 @@ def fit_orbit_aliases(
     profile, counts, motion = None, None, None
     resolution_mas = float(fringe_scales(data)[0])
     arc_jitter_mas = float(arc_jitter) * resolution_mas
-    if positions is not None and short_arcs:
+    if (
+        positions is not None
+        and short_arcs
+        and skip_flagged
+        and isinstance(seed_positions, EpochPositions)
+        and _signs_trusted(seed_positions)
+    ):
         # AGENTS.md, "Cycle counts from short arcs" row: the nights' motion
-        # narrows the bands and seeds each one.
+        # narrows the bands and seeds each one. A flagged night, or any
+        # night of a near-equal pair, can have a reflected (label-swapped)
+        # position, so the cut needs the flags and an unequal pair: other
+        # positions seed every band as before.
         profile, counts, motion = _short_arc_profile(
             data,
             seed_positions,
