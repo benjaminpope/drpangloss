@@ -191,3 +191,94 @@ def test_flared_disk_takes_ft(monkeypatch):
     a = FlaredDiskHG(ft="dft", **kwargs).model(u, v, WAVEL)
     b = FlaredDiskHG(ft="nufft", **kwargs).model(u, v, WAVEL)
     assert np.max(np.abs(a - b)) < 3e-5
+
+
+@pytest.fixture
+def choose(monkeypatch):
+    """Set ``ft="auto"`` to nufftax (True) or the DFT (False) on a CPU."""
+
+    def set_choice(nufft):
+        monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
+        monkeypatch.setattr(_geometry, "_NUFFT_CPU_MIN_SIDE", 1)
+        monkeypatch.setattr(
+            _geometry, "_NUFFT_CPU_POINTS", 1 if nufft else 10**9
+        )
+        jax.clear_caches()  # the choice is made at trace time
+
+    return set_choice
+
+
+def test_jvp_alone_and_under_vmap_matches_the_dft(choose):
+    image, uu, vv = _problem((8, 9), n=20)
+    image = np.asarray(image)
+    tangents = np.asarray(onp.random.default_rng(2).normal(size=(3, 8, 9)))
+
+    def run(nufft):
+        choose(nufft)
+
+        def jvp(t):
+            return jax.jvp(
+                lambda b: image_visibilities(b, uu, vv, 3.0),
+                (image,),
+                (t,),
+            )
+
+        return jvp(tangents[0]), jax.vmap(jvp)(tangents)
+
+    for got, expected in zip(run(True), run(False)):
+        for a, b in zip(got, expected):
+            assert np.max(np.abs(a - b)) < 5e-4  # eps 1e-5 of V(0) ~ 36
+
+
+def _irregular_data():
+    from virgil.coverage import vlti_oidata
+
+    truth = Image.from_brightness(
+        onp.random.default_rng(6).uniform(size=(16, 16)), 4.0
+    )
+    data = vlti_oidata(wavelengths_m=onp.linspace(3.0e-6, 3.2e-6, 3))
+    return data.with_model(truth, key=jax.random.PRNGKey(0))
+
+
+def test_clean_agrees_between_transforms(choose):
+    from virgil.imaging import clean
+    from virgil.models import PointSource
+
+    data = _irregular_data()
+    runs = []
+    for nufft in (False, True):
+        choose(nufft)
+        runs.append(
+            clean(data, 16, 4.0, base=PointSource(), max_iterations=10)
+        )
+    dft, auto = runs
+    assert np.allclose(dft.components, auto.components, atol=1e-4)
+    assert np.allclose(dft.chi2_red, auto.chi2_red, rtol=1e-2)
+
+
+def test_laplace_samples_agree_between_transforms(choose):
+    from virgil.fields import GaussianField
+    from virgil.imaging import _residual_jacobian, laplace_samples
+    from virgil.models import PointSource, System
+
+    data = _irregular_data()
+    n = 4
+    mean = onp.full((n, n), 0.1)
+    scene = System(
+        star=PointSource(),
+        env=Image(
+            GaussianField(onp.zeros((n, n)), 1.5, 2.0, mean=mean),
+            4.0,
+            flux=0.4,
+        ),
+    )
+    out = []
+    for nufft in (False, True):
+        choose(nufft)
+        _, jac = _residual_jacobian(scene, data, "env.log_brightness.latent")
+        draws = laplace_samples(scene, data, 4, jax.random.PRNGKey(1))
+        assert np.all(np.isfinite(draws["latents"]))
+        out.append(jac)
+    # The draws themselves depend on an eigen-decomposition's signs; compare
+    # the Jacobian they come from.
+    assert np.max(np.abs(out[0] - out[1])) < 1e-3 * np.max(np.abs(out[0]))
