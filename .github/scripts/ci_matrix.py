@@ -15,7 +15,8 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 |         |                              | their slow tests, one changing          |
 |         |                              | pyproject.toml adds the floors          |
 | main    | push to main                 | the gate, with the slow tests           |
-| full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13, the floors |
+| full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13 and the     |
+|         |                              | floors (the last two in 2 shards each)  |
 | nightly | daily schedule               | full, all with slow tests, + the        |
 |         |                              | newest-dependencies canary              |
 
@@ -84,18 +85,31 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
                 "slow": nightly,
             }
         )
-        include.append({**LINUX, "python-version": "3.13", "slow": nightly})
+        # Two shards each: unsharded, py3.13 and the floors outgrew the
+        # 30-minute pull-request limit (tests.yml), which stays as the hang
+        # detector.
+        include += [
+            {
+                **LINUX,
+                "python-version": "3.13",
+                "slow": nightly,
+                "shard": f"{k}/2",
+            }
+            for k in (1, 2)
+        ]
     if full or pyproject:
         # Every direct dependency at the oldest version pyproject.toml
         # allows.
-        include.append(
+        include += [
             {
                 **LINUX,
                 "python-version": "3.11",
                 "lowest": True,
                 "slow": nightly,
+                "shard": f"{k}/2",
             }
-        )
+            for k in (1, 2)
+        ]
     if nightly:
         # Newer than uv.lock: catches a break from a new release before
         # lock-upgrade.yml's pull request merges.
