@@ -78,6 +78,12 @@ legacy = [
 orbits = [
   "jaxoplanet>=0.1.0",
 ]
+# virgil.radio.ComplexVisData.read_ms reads CASA measurement sets with
+# casatools, which has no wheels for Python 3.14 yet (3.12 and 3.13 for the
+# newest releases, 3.11 for older ones).
+radio = [
+  "casatools>=6.6; python_version < '3.14'",
+]
 # Spherical-harmonic stars (HarmonixModel) need jaxoplanet, and harmonix
 # itself (`pip install "harmonix>=0.1.0"`, on PyPI), which is not an extra.
 integrations = [
