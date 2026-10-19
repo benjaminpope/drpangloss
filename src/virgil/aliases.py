@@ -2478,7 +2478,7 @@ def _temper_factors(data, positions, diam, vis_amp, names):
                 (x0[1] - window, x0[1] + window),
                 (1e-4, 1.0),
             ]
-            x, value = _refine_marginal(
+            x, value, _ = _refine_marginal(
                 x0, np.asarray(1.0), d, surface, bounds, dm, amp
             )
             if not onp.isfinite(value):  # no improvement: keep the position

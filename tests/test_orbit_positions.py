@@ -934,7 +934,8 @@ def test_refined_peaks_match_the_lbfgs_refinement(case):
     )
 
 
-def test_a_refinement_that_does_not_converge_keeps_the_grid_point(monkeypatch):
+def _one_step(monkeypatch):
+    """Let every refinement run one damped-Newton step (stop ``LIMIT``)."""
     from virgil import _gauss_newton
 
     real = _gauss_newton.solve
@@ -943,8 +944,65 @@ def test_a_refinement_that_does_not_converge_keeps_the_grid_point(monkeypatch):
         return real(problem, start, **{**kw, "max_steps": 1})
 
     monkeypatch.setattr(_gauss_newton, "solve", one_step)
+
+
+def test_a_refinement_that_does_not_converge_keeps_its_best_point(monkeypatch):
+    """The kernel only accepts steps that lower the loss, so a run that stops
+    early (here after one step) still beats the grid point and is kept,
+    with a warning that it did not converge."""
     night = _night(ARRAYS["3T"], seed=1)
-    peaks = _positions(night).peaks[0]
     grid = _positions(night, refine=False).peaks[0]
-    onp.testing.assert_array_equal(peaks.dra, grid.dra)
-    onp.testing.assert_array_equal(peaks.ddec, grid.ddec)
+    _one_step(monkeypatch)
+    with pytest.warns(UserWarning, match="did not converge"):
+        found = epoch_positions(Epochs({"night": night}), GRID)
+    peaks = found.peaks[0]
+    assert not onp.array_equal(peaks.dra, grid.dra)  # moved off the grid
+    assert peaks.marginal[0] >= grid.marginal[0]
+    # The converged refinement is better still.
+    monkeypatch.undo()
+    assert _positions(night).peaks[0].marginal[0] > peaks.marginal[0]
+
+
+def test_a_converged_refinement_raises_no_warning():
+    night = _night(ARRAYS["3T"], seed=1)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message=".*did not converge.*")
+        warnings.simplefilter("ignore", RuntimeWarning)
+        epoch_positions(Epochs({"night": night}), GRID)
+
+
+@pytest.mark.parametrize(
+    "stop_name, kept, converged",
+    [
+        ("CONVERGED", True, True),
+        ("STALLED", True, False),
+        ("LIMIT", True, False),
+        ("NON_FINITE", False, False),
+    ],
+)
+def test_refine_marginal_keeps_the_point_unless_the_start_is_not_finite(
+    monkeypatch, stop_name, kept, converged
+):
+    """Only a start that is not finite returns ``(x0, inf)``; a stall or the
+    step limit keeps the best point reached and says it did not converge."""
+    from types import SimpleNamespace
+
+    from virgil import _gauss_newton, epochs
+
+    x0 = onp.array([1.0, 2.0, 0.3])
+    z = np.asarray([1.5, 2.5, 0.2])
+    stop = getattr(_gauss_newton, stop_name)
+    monkeypatch.setattr(
+        epochs._gauss_newton,
+        "solve",
+        lambda *a, **k: SimpleNamespace(z=z, value=np.asarray(-7.0), stop=stop),
+    )
+    bounds = [(-9.0, 9.0), (-9.0, 9.0), (1e-4, 1.0)]
+    x, value, ok = epochs._refine_marginal(x0, 1.0, None, None, bounds)
+    assert ok is converged
+    if kept:
+        onp.testing.assert_array_equal(x, onp.asarray(z))
+        assert value == -7.0
+    else:
+        onp.testing.assert_array_equal(x, x0)
+        assert value == float("inf")

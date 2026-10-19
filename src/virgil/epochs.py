@@ -1480,9 +1480,15 @@ class _RefineProblem(eqx.Module):
 def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
     """Maximize the scale-marginalized surface from ``x0`` (damped Newton on
     the IRLS curvature, in float64, deterministic) within ``bounds``.
-    Returns the point and the surface's negative value there; a run that
-    does not converge (or starts non-finite) returns ``x0`` and ``inf``,
-    which the caller reads as no improvement."""
+    Returns the point, the surface's negative value there and whether the
+    run converged.
+
+    The kernel only accepts steps that lower the loss, so a run that stalls
+    at the rounding floor or reaches ``max_steps`` still ends at a point at
+    least as good as ``x0``, and that point is returned (``converged`` is
+    False: the surface's value there is a lower bound on its maximum). Only
+    a start that is not finite returns ``x0`` and ``inf``, which the caller
+    reads as no improvement."""
     state = _gauss_newton.solve(
         _RefineProblem(d64, dof, surface, diam, amp_range),
         onp.asarray(x0, float),
@@ -1491,9 +1497,14 @@ def _refine_marginal(x0, dof, d64, surface, bounds, diam=None, amp_range=None):
         dtol=1e-12,
         max_steps=200,
     )
-    if int(state.stop) != _gauss_newton.CONVERGED:
-        return onp.asarray(x0, dtype=float), float("inf")
-    return onp.asarray(state.z, dtype=float), float(state.value)
+    stop = int(state.stop)
+    if stop == _gauss_newton.NON_FINITE:
+        return onp.asarray(x0, dtype=float), float("inf"), False
+    return (
+        onp.asarray(state.z, dtype=float),
+        float(state.value),
+        stop == _gauss_newton.CONVERGED,
+    )
 
 
 def _flag_one_night(
@@ -1674,6 +1685,15 @@ def epoch_positions(
     -------
     EpochPositions
 
+    Warns
+    -----
+    UserWarning
+        If a dataset's best peak is at the edge of the grid, its raw
+        chi-squared/N is above 4, or the refinement of its best peak did
+        not converge (it stalled at the rounding floor or reached its step
+        limit): the position is the best point reached and the marginal
+        score there is a lower bound.
+
     Examples
     --------
     >>> found = epoch_positions(epochs, grid)  # doctest: +SKIP
@@ -1710,6 +1730,7 @@ def epoch_positions(
     bounds = [(a.min() - s, a.max() + s) for a, s in zip(axes[:2], steps)]
     bounds.append((0.1 * float(axes[2].min()), 1.0))
     rows, inflated, edge_grid, edge_peak = [], [], [], []
+    unconverged = []
     night_flags = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
@@ -1746,13 +1767,16 @@ def epoch_positions(
                 m = _grid_marginal(chi2, dof64, d64, surface)
             return onp.asarray(quoted), onp.asarray(m)
 
+        refine_ok = []  # whether each grid peak's refinement converged
+
         def refine_one(
             x0, d64=d64, surface=surface, dof64=dof64, diam64=diam64
         ):
             with run_in("float64"):
-                x, value = _refine_marginal(
+                x, value, ok = _refine_marginal(
                     x0, dof64, d64, surface, bounds, diam64
                 )
+            refine_ok.append(ok)
             return x, -value
 
         peaks, peak_loglike, peak_marginal, order = _rank_peaks(
@@ -1766,6 +1790,8 @@ def epoch_positions(
             gap_marginal = _refined_gap(
                 peaks, peak_marginal, marginal, xx, yy, rival
             )
+            if not refine_ok[order[0]]:
+                unconverged.append(name)
         at_edge = [
             a in (0, xx.shape[0] - 1) or b in (0, xx.shape[1] - 1)
             for a, b, _ in cells
@@ -1856,6 +1882,15 @@ def epoch_positions(
             f"The best refined peak of {', '.join(edge_peak)} started from "
             "the edge of the grid: the companion may lie outside it. Widen "
             "the grid.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    if unconverged:
+        warnings.warn(
+            f"The refinement of the best peak of {', '.join(unconverged)} "
+            "did not converge (it stalled at the rounding floor or reached "
+            "its step limit): the position is the best point reached, and "
+            "its marginal score and covariance are approximate.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
@@ -1997,7 +2032,9 @@ def estimate_primary_diameter(
     -----
     UserWarning
         If the best diameter is the largest tried (``at_grid_edge``): widen
-        ``diam_grid``.
+        ``diam_grid``. Also if a night's refinement did not converge (it
+        stalled at the rounding floor or reached its step limit): its
+        profile scores are lower bounds.
 
     Examples
     --------
@@ -2039,6 +2076,8 @@ def estimate_primary_diameter(
         ]
         amp = None if vis_amp is None else tuple(map(float, vis_amp))
 
+        unconverged = set()  # nights with a refinement that did not converge
+
         def refit(i, x0, diam):
             """Refine night ``i`` from ``x0`` at ``diam``: (x, score)."""
             window = _REFINE_WINDOW * resolution[i]
@@ -2053,9 +2092,11 @@ def estimate_primary_diameter(
                 (1e-4, 1.0),
             ]
             dm = None if diam <= 0 else np.asarray(float(diam))
-            x, value = _refine_marginal(
+            x, value, ok = _refine_marginal(
                 x0, dofs[i], d64[i], surfaces[i], bounds, dm, amp
             )
+            if not ok:
+                unconverged.add(i)
             if not onp.isfinite(value):  # no improvement: score the start
                 value = float(
                     _negative_marginal(
@@ -2142,6 +2183,16 @@ def estimate_primary_diameter(
             )
         else:
             seeded = positions
+        if unconverged:
+            warnings.warn(
+                "A refinement did not converge (it stalled at the rounding "
+                "floor or reached its step limit) for "
+                f"{', '.join(positions.names[i] for i in sorted(unconverged))}"
+                ": the profile scores there are lower bounds, so the "
+                "diameter and its gain are approximate.",
+                UserWarning,
+                stacklevel=external_stacklevel(),
+            )
     return PrimaryDiameter(
         diam=diam,
         sigma=sigma,
