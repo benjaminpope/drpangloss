@@ -29,7 +29,9 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
      `likelihood._whiten_with_log_norm`.
    - But `fit_orbit_aliases` scores every epoch on `epochs._Surface`, whose constructor calls
      `_check_marginal_data` and raises `NotImplementedError` for data with gains or closure
-     offsets, because the analytic error-scale marginalization assumes C = s²D.
+     offsets (and extra observables with a model-dependent covariance, which matters if |V| or
+     T3AMP blocks are ever loaded), because the analytic error-scale marginalization assumes
+     C = s²D.
    - The `vis_amp` profile in `aliases._epoch_residuals` rebuilds the model as `obs + r·err`,
      which is valid only for diagonal errors.
    - `orbit_search` profiles gains (one dof each) instead of marginalizing them: an
@@ -73,8 +75,9 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
   wrong nights are off in Dec by 3–15 mas: that fits. A right noise model sets the relative
   heights of the peaks correctly but does not remove them. The orbit must choose between them:
   keep several peaks per night and flag implausible ones (§3.2.5).
-- **Binning HIGH to R ≈ 500 (8 channels) costs nothing for a continuum binary.** The phase change
-  across one bin for s = 15 mas, B = 130 m is about 0.01 cycle. Keep the Brγ window
+- **Binning HIGH by 8 channels costs nothing for a continuum binary.** HIGH samples about 2.5
+  channels per resolution element, so 8 channels give MEDIUM-like sampling (resolving power
+  about 1,200). The phase change across one bin for s = 15 mas, B = 130 m is about 0.004 cycle. Keep the Brγ window
   (2.155–2.175 µm) out, as Track B does.
 - **Primary diameter.** Keep the UD primary (virgil 1c). Calibrator-diameter uncertainties enter
   as modes from virgil-vlti, not as inflated errors.
@@ -112,25 +115,49 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
 ### 3.2 virgil (OrbitPipeline and alias engine; virgil never imports virgil-vlti)
 
 1. **Score data with gains on the marginal surface (R1, decided).** Integrate the white-noise
-   scale numerically. Per block, C(s) = s²D + UUᵀ (U from the gains or offsets).
-   ∫ L(s) p(ln s) d ln s is taken by a fixed Gauss–Legendre rule (about 16 nodes) over the
-   existing Jeffreys range [−ln s_max, ln s_max]. Each node uses `_whiten_with_log_norm`, which
-   has the exact log det. This keeps the meaning of today's evidences and stays smooth for
-   gradients. The cost is about 16 whitenings per block, which is affordable after binning.
-   R2 was rejected (quoted scale s = 1 with the template's overall width fitted: cheaper, but it
-   trusts the propagated errors).
+   scale numerically. Per block, C(s) = s²D + UUᵀ (U from the gains or offsets), integrated over
+   ln s with the Jeffreys prior on [−ln s_max, ln s_max]. R2 was rejected (quoted scale s = 1
+   with the template's overall width fitted: cheaper, but it trusts the propagated errors).
+   - **Quadrature: keep `_marginal.log_integral`**, the adaptive rule `_Surface.score` already
+     uses (peak-centred window, narrowed scans, then 64-node Gauss–Legendre). A fixed rule over
+     the whole range undersamples the peak, whose width in ln s is about 1/√(2ν): 0.02–0.05 for
+     a binned night, against node spacings of about 0.2 for 16 nodes.
+   - **Make log L(ln s) cheap instead.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
+     Ũ = D^{-½}U (`gains._columns`), low-rank per block. One thin SVD per block, Ũ = QΛ^{½}
+     (K columns), then for every s, in O(K):
+     χ²(s) = (|r|² − |Qᵀr|²)/s² + Σ_k (Qᵀr)_k²/(s² + λ_k), and
+     ½ ln det = (N − K) ln s + ½ Σ_k ln(s² + λ_k).
+     This is exact and smooth, includes cross-frame (`spanning`) modes while each block's rank
+     stays small, and costs one SVD per block per model evaluation rather than one whitening per
+     node. λ_k = 0 gives back today's integrand.
+   - virgil#437 implements R1 with 32 nodes on a ±6/√ν window, whitening at each node; the
+     closed form above is the target that replaces it.
    `_Surface` stops refusing gains. A regression test requires that zero-width gains
    reproduce today's surface to rounding.
-2. **`vis_amp` with gains is refused.** Telescope and baseline gains supersede the per-night
-   amplitude. `vis_amp` stays only for the legacy uncalibrated path, which is labelled legacy in
+2. **`vis_amp` is off for data with gains.** Telescope and baseline gains supersede the
+   per-night amplitude (whose profile also assumes diagonal errors). Following the precedent for
+   data without V² (`aliases.py`, the `vis_amp` resolution), the default `vis_amp=True` resolves to
+   off with a log message, so `test_the_engine_defaults_need_no_per_system_arguments` still holds;
+   an explicit amplitude range with gains raises. AGENTS.md's "V² amplitude" row gains a line on
+   this. `vis_amp` stays on for the legacy uncalibrated path, which is labelled legacy in
    results and on the gallery.
-3. **Tempering after whitening.** `estimate_factors` is computed on residuals whitened with the
-   gains. Acceptance: block f ≲ 3 on calibrated data. Larger values keep the existing
-   `FLAG_RANGE` warning and are reported as "noise model inadequate", never silently tempered
-   away.
-4. **One treatment of gains.** `orbit_search` profiles gains while the alias engine will
-   marginalize them. Align them (marginalize), or document the difference. This is for the
-   1e / release-review owners.
+3. **Tempering after the gains.**
+   - **Residuals:** the conditional residuals, r minus the posterior-mean gain contribution,
+     divided by the quoted errors. They keep channel order, which `channel_chains` needs (a full
+     whitening mixes a frame's channels), and the common mode the gains absorb is gone before
+     f is estimated.
+   - **Static fits:** the per-night best static fits that `_temper_factors` uses carry the
+     gains as well, or f still sees the transfer-function residual.
+   - **What `dof` tempers:** the whole per-block log L(s), the log det included (a power
+     likelihood, as today). This does not double count: f is measured only on what the gains
+     leave.
+   - **Acceptance:** block f within `FLAG_RANGE` (0.5–2) on calibrated data. Outside it the
+     existing warning fires and says "noise model inadequate"; nothing is silently tempered
+     away. (virgil#437 warns at f > 3; it should use `FLAG_RANGE`.)
+4. **One treatment of gains: marginalize.** `orbit_search` profiles gains while the alias
+   engine marginalizes them, so with many gain dofs per night the ranking and the evidence can
+   disagree about the best orbit. `orbit_search` changes to marginalizing by default. This is
+   for the 1e / release-review owners.
 5. **Implausible-peak flag and kept modes.**
    - Flag a night whose best peak's separation exceeds the robust maximum of the other nights'
      by a set factor, or that no orbit in the band visits.
@@ -143,7 +170,9 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
 ### 3.3 vv
 
 `gallery_orbits.py` reads through the loader only. The gallery marks each system's data path
-("calibrated + template gains", "closure phases only", or "legacy uncalibrated V²"). #147's
+per night ("calibrated + template gains", "closure phases only", or "legacy uncalibrated
+V²"); a system whose nights differ (calibrators for only some nights) is labelled "mixed", with
+the per-night paths in its table. #147's
 current results are labelled legacy until rerun.
 
 ## 4. Validation, cheapest first
@@ -151,9 +180,12 @@ current results are labelled legacy until rerun.
 1. **Unit tests (virgil, virgil-vlti).**
    - Loader alignment.
    - Zero-width gains reproduce today's `_Surface`.
-   - R1's quadrature matches a dense 1-D integral and a dense-Cholesky log det on a small case.
+   - R1's closed-form integrand matches the dense `GainModes.covariance` (Cholesky χ² and log
+     det) for s ≫ widths, s ≪ widths and s ≈ widths, and the integral matches a dense 1-D
+     quadrature on a small case.
 2. **One night of HD 9312 on the laptop (≤ 2 min, bin 8).** After calibration and gains:
-   χ²/N ≈ 1, tempering f ≲ 3, and the peak set contains the published position (compared only
+   χ²/N ≈ 1 on the effective covariance (s²D + UUᵀ at s = 1; the raw χ² on the propagated
+   errors is reported beside it, as `chi2_per_night` does today), tempering f ≤ 2, and the peak set contains the published position (compared only
    after the fit).
 3. **OzSTAR: all 12 gallery systems, blind.** Success means:
    - the published orbits are recovered in the sky plane (Thiele–Innes) where the papers solved
@@ -180,6 +212,6 @@ has; laptop runs ≤ 2 min, `OMP_NUM_THREADS=2`, one process.
 
 1. R1: numerical marginalization of the white-noise scale.
 2. Nights without calibrators: closure phases only.
-3. Bin HIGH by 8 (R ≈ 500).
+3. Bin HIGH by 8 (MEDIUM-like sampling).
 4. Exclude programme binaries as calibrators.
 5. Label the current gallery results "legacy uncalibrated V²" now, before the rerun.
