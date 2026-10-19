@@ -2298,6 +2298,22 @@ def test_short_arcs_need_every_seeding_nights_sign_decided():
     assert not aliases._signs_trusted(pos, 5.0)
 
 
+def test_the_sign_gate_tempers_the_gaps_like_the_evidence():
+    # Gl 229's seeding nights had untempered gaps of 735, 44, 8.6, 140 and
+    # 1126 nats, all above 5, but f = 41: tempered, 8.6 / 41 = 0.2 nats
+    # decides nothing, and three of the nights' peaks were not the
+    # companion's. The gate must see the tempered gaps.
+    pos = types.SimpleNamespace(
+        gap_marginal=onp.array([735.7, 44.4, 8.6, 140.0, 1126.1]),
+        flagged=onp.zeros(5, bool),
+    )
+    assert aliases._signs_trusted(pos, 5.0)
+    assert aliases._signs_trusted(pos, 5.0, 1.0)
+    assert not aliases._signs_trusted(pos, 5.0, 41.1)
+    pos.gap_marginal = onp.array([735.7, 440.0, 220.0, 260.0, 1126.1])
+    assert aliases._signs_trusted(pos, 5.0, 41.1)  # decisive after tempering
+
+
 # Seasonal gaps spaced like Gl 229 Ba-Bb's GRAVITY nights: two 4 d apart,
 # three a month or so apart, then a gap of most of a year and one more: the
 # window holds over a hundred bands. With default settings, a cold fit (no
