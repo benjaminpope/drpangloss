@@ -723,6 +723,16 @@ class Result:
             return samples
         return {k: v.reshape((-1,) + v.shape[2:]) for k, v in samples.items()}
 
+    def aliases(self):
+        """The alias search of an orbit run, as an
+        [`AliasResult`][virgil.aliases.AliasResult] (every band's modes,
+        evidences and best orbit), from ``stages/search/aliases.json``."""
+        from ..aliases import AliasResult
+
+        return AliasResult.load(
+            self._stage_file("stages/search/aliases.json", "search")
+        )
+
     def sample_stats(self, name=None):
         """NUTS diagnostics per transition, shaped ``(chain, draw)``."""
         return read_h5(
