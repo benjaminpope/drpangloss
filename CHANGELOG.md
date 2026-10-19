@@ -282,8 +282,10 @@ the command line is matched literally, so it would not catch them.
   λ/B_max. `AliasResult.short_arc` records the
   admitted periods and bands and the cheap-check scores; band
   probabilities `p` are now conditional on the bands fitted, not the whole
-  window. `short_arcs=False` is the previous behaviour. Checkpoints from earlier
-  versions are not reused.
+  window. The arc seeds are added beside each kept band's position seeds, not in
+  their place, and a half-night velocity is accepted only from a converged
+  refinement. `short_arcs=False` is the previous behaviour. Checkpoints from
+  earlier versions are not reused.
 - **Tutorial**: the orbit tutorial fits one snapshot per night with `Epochs`
   and `OrbitalBinary`, starts from `start_from_positions`, and starts one
   NUTS chain per distinct mode.
@@ -898,7 +900,11 @@ Provisional in 0.4:
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
 - the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`,
-  `set_ft_defaults`, and the automatic thresholds and tolerances.
+  `set_ft_defaults`, and the automatic thresholds and tolerances;
+- the module `virgil.radio` (new: complex visibilities from CASA measurement
+  sets with per-observation calibration nuisances; instrument-neutral, with
+  the spectral-index prior `Uniform(0, 5)` and the data-derived reference
+  frequency and offset bound among its defaults).
 
 ## 0.3.0 (2026-10-06)
 

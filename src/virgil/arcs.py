@@ -24,6 +24,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
+from . import _gauss_newton
 from ._geometry import fringe_scales
 from ._precision import cast_tree, run_in
 from .epochs import (
@@ -178,8 +179,11 @@ def _half_position(part, x0, resolution, diam):
         surface = _Surface(d64)
         dof = np.asarray(surface.dof_vector(None), float)
         dm = None if not diam else np.asarray(float(diam))
-        x, value, _ = _refine_marginal(x0, dof, d64, surface, bounds, dm)
-        if not onp.isfinite(value):
+        x, value, stop = _refine_marginal(x0, dof, d64, surface, bounds, dm)
+        # Only a converged refinement measures a velocity: a stalled or
+        # step-limited one keeps its best point, which may be a long way
+        # from the half's peak.
+        if stop != _gauss_newton.CONVERGED or not onp.isfinite(value):
             return None
         hess = onp.asarray(
             _negative_marginal_hessian(np.asarray(x), dof, d64, surface, dm)
