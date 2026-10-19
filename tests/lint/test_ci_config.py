@@ -25,6 +25,8 @@ def _ids(jobs):
     return {j["id"] for j in jobs}
 
 
+FLOORS = {f"ubuntu-latest-py3.11-x640-lowest-shard{k}of2" for k in "12"}
+PY313 = {f"ubuntu-latest-py3.13-x640-shard{k}of2" for k in "12"}
 GATE = {
     f"ubuntu-latest-py3.12-x64{x}-shard{k}of3" for x in "01" for k in "123"
 }
@@ -46,7 +48,7 @@ def test_pull_request_touching_orbit_modules_adds_their_slow_tests():
 
 def test_pyproject_pull_request_adds_the_floors_only():
     jobs = _jobs("pull_request", pyproject=True)
-    assert _ids(jobs) == GATE | {"ubuntu-latest-py3.11-x640-lowest"}
+    assert _ids(jobs) == GATE | FLOORS
     assert not any(j["slow"] for j in jobs)
 
 
@@ -58,15 +60,10 @@ def test_main_push_is_the_gate_with_slow_tests():
 
 def test_full_ci_label_adds_macos_py313_and_the_floors():
     jobs = _jobs("pull_request", full_label=True)
-    assert _ids(jobs) == GATE | {
-        "macos-latest-py3.11-x640",
-        "ubuntu-latest-py3.13-x640",
-        "ubuntu-latest-py3.11-x640-lowest",
-    }
-    gate = [j for j in jobs if "shard" in j]
-    assert all(j["slow"] for j in gate)
+    assert _ids(jobs) == GATE | PY313 | FLOORS | {"macos-latest-py3.11-x640"}
+    assert all(j["slow"] for j in jobs if j["id"] in GATE)
     # The extra jobs run slow tests nightly only.
-    assert not any(j["slow"] for j in jobs if "shard" not in j)
+    assert not any(j["slow"] for j in jobs if j["id"] not in GATE)
 
 
 def test_dispatch_is_full_and_nightly_adds_canary_and_slow_everywhere():
@@ -155,8 +152,10 @@ def _job(name, conclusion="success"):
 FULL_JOBS = [
     _job("ubuntu-latest py3.12 shard 1/3"),
     _job("macos-latest py3.11"),
-    _job("ubuntu-latest py3.13"),
-    _job("ubuntu-latest py3.11 lowest"),
+    _job("ubuntu-latest py3.13 1/2"),
+    _job("ubuntu-latest py3.13 2/2"),
+    _job("ubuntu-latest py3.11 lowest 1/2"),
+    _job("ubuntu-latest py3.11 lowest 2/2"),
     _job("build and install the wheel"),
     _job("join the x64 evidence", "skipped"),
 ]
