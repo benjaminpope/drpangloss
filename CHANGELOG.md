@@ -291,6 +291,15 @@ the command line is matched literally, so it would not catch them.
 - **Tutorial**: the orbit tutorial fits one snapshot per night with `Epochs`
   and `OrbitalBinary`, starts from `start_from_positions`, and starts one
   NUTS chain per distinct mode.
+- **Orbit fitting with gains.** The scale-marginalized surface
+  (`marginal_loglike`, `epoch_positions`, `rank_orbits`, `fit_orbit_aliases`)
+  accepts data with gains or closure-phase offsets, which it refused. Each
+  affected block has covariance s²D + UUᵀ, so ln s is integrated numerically
+  (32-node Gauss–Legendre on a window around the integrand's peak, exact log
+  determinant at every node). Such data take `s_max = 10` when none is given.
+  `vis_amp` is refused for them; `vis_amp=True` (the default) then means none,
+  logged at INFO. For data with gains or offsets, an estimated tempering
+  factor above 3 warns "noise model inadequate".
 
 **`MultipoleDisk` family** (provisional; follows the ideas of frank, Jennings
 et al. 2020, and vis-r, Kennedy 2025, credited in the docstrings and on the

@@ -165,12 +165,12 @@ def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
     assert found.scale[0]["phi_scale"] > 1.5 * found.scale[0]["vis_scale"]
 
 
-def test_data_with_a_model_dependent_normalization_are_refused():
+def test_data_with_gains_are_scored_with_the_scale_integrated_numerically():
     data = _night(VLTI_UTS, 1).with_gains(telescope=0.05)
-    with pytest.raises(NotImplementedError, match="gains"):
-        epoch_positions(Epochs({"night": data}), GRID)
-    with pytest.raises(NotImplementedError, match="gains"):
-        marginal_loglike(BinaryModelCartesian(*TRUTH), data)
+    model = BinaryModelCartesian(*TRUTH)
+    assert onp.isfinite(float(marginal_loglike(model, data, s_max=30.0)))
+    found = epoch_positions(Epochs({"night": data}), GRID)
+    assert onp.all(onp.isfinite(found.dra))
 
 
 def test_one_kernel_serves_every_dataset_of_one_shape(monkeypatch):
@@ -264,6 +264,7 @@ def test_bounded_marginal_is_the_incomplete_gamma_integral(
     surface.blocks = (("v2", 0, 1, nu, False),)
     surface.nu = onp.array([nu], dtype=float)
     surface.s_max = s_max
+    surface.numeric = False
     with jax.enable_x64(True):
         got = float(surface.score(np.asarray([chi2]), dof, None))
     want = _bounded_gaussian_marginal(chi2, nu, dof, s_max)
@@ -277,6 +278,7 @@ def _bounded_surface(nu, s_max):
     surface.blocks = (("v2", 0, 1, nu, False),)
     surface.nu = onp.array([nu], dtype=float)
     surface.s_max = s_max
+    surface.numeric = False
     return surface
 
 

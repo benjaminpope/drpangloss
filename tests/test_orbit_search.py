@@ -536,8 +536,14 @@ def test_profiled_gain_matches_a_fitted_v2_scale():
             for name, d in zip(epochs.dataset_names, epochs.data)
         }
     )
-    with pytest.raises(NotImplementedError):
-        marginal_loglike(BinaryModelCartesian(1.0, 1.0, 0.4), gained.data[0])
+    # (the marginal surface, which once refused gains, integrates their scale)
+    assert onp.isfinite(
+        float(
+            marginal_loglike(
+                BinaryModelCartesian(1.0, 1.0, 0.4), gained.data[0]
+            )
+        )
+    )
     got = score_orbits(
         OrbitalBinary, gained, [TRUTH], shared=SharedFlux([0.4]), s_max=None
     )
