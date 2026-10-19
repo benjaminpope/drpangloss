@@ -7,8 +7,6 @@ i.e. counter-clockwise from the top in a plot with East to the left. This
 matches the coordinate grid produced by :func:`image_coordinates`.
 """
 
-import warnings
-
 import equinox as eqx
 import jax
 import jax.numpy as np
@@ -58,9 +56,8 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas, ft="auto"):
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
     ft : {"auto", "dft", "nufft"}
-        ``"dft"`` is the exact sum; ``"nufft"`` needs ``pip install
-        "virgil-astro[nufft]"``; ``"auto"`` picks the faster by problem size
-        (:func:`_use_nufft`) and uses the DFT without nufftax.
+        ``"dft"`` is the exact sum; ``"nufft"`` a non-uniform FFT; ``"auto"``
+        follows :func:`set_ft_defaults` (by default the faster for the size).
 
     Returns
     -------
@@ -102,71 +99,99 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
 # M·N1·N2 ~ 1e8 or at 64², 4-50x above. Apple M1 Max CPU (2026-10-19,
 # ozstar_scripts@4f4ad9e): nufftax's FFT floor grows with N² and the DFT loses
 # from M ~ 150-400 points at every N from 64 to 1024, so the CPU rule is on M.
-_NUFFT_GPU_WORK = 1e8
-_NUFFT_GPU_MIN_SIDE = 128
-_NUFFT_CPU_POINTS = 500
-_NUFFT_CPU_MIN_SIDE = 64
-# Requested relative tolerance (of the zero-baseline visibility). 1e-5 in f32
-# is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and 1.2-1.5x
-# faster than 1e-6.
-_NUFFT_EPS_F32 = 1e-5
-_NUFFT_EPS_F64 = 1e-12
+# eps is a requested tolerance relative to the zero-baseline visibility. 1e-5
+# in f32 is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and
+# 1.2-1.5x faster than 1e-6.
+_FT_DEFAULTS = {
+    "ft": "auto",
+    "cpu_min_points": 500,
+    "cpu_min_side": 64,
+    "gpu_min_work": 1e8,
+    "gpu_min_side": 128,
+    "eps_f32": 1e-5,
+    "eps_f64": 1e-12,
+}
 
 
-def _nufftax():
-    """The nufftax package, with an install hint if it is missing."""
-    try:
-        import nufftax
-    except ImportError as err:
-        raise ImportError(
-            'ft="nufft" needs nufftax: pip install "virgil-astro[nufft]".'
-        ) from err
-    return nufftax
+def set_ft_defaults(
+    ft=None,
+    cpu_min_points=None,
+    cpu_min_side=None,
+    gpu_min_work=None,
+    gpu_min_side=None,
+    eps_f32=None,
+    eps_f64=None,
+):
+    """Set how ``ft="auto"`` chooses the Fourier transform of pixel images.
+
+    Only the arguments you pass change. The NUFFT is used on a CPU when
+    there are at least ``cpu_min_points`` points and the image's smaller side
+    is at least ``cpu_min_side``; on a GPU when points × pixels is at least
+    ``gpu_min_work`` and the smaller side at least ``gpu_min_side``. ``eps_f32``
+    and ``eps_f64`` are its tolerances, relative to the zero-baseline
+    visibility.
+
+    The settings are read when a function is traced: a jitted function that
+    has already compiled keeps its old choice.
+
+    Parameters
+    ----------
+    ft : {"auto", "dft", "nufft"}, optional
+        What models with ``ft="auto"`` use: ``"dft"`` always gives the exact
+        sum, ``"nufft"`` always the NUFFT, ``"auto"`` chooses by size.
+    cpu_min_points, cpu_min_side, gpu_min_work, gpu_min_side : float, optional
+        The size thresholds above.
+    eps_f32, eps_f64 : float, optional
+        NUFFT tolerances for float32 and float64 images.
+
+    Returns
+    -------
+    dict
+        The previous settings: ``set_ft_defaults(**old)`` restores them.
+    """
+    new = dict(
+        ft=ft,
+        cpu_min_points=cpu_min_points,
+        cpu_min_side=cpu_min_side,
+        gpu_min_work=gpu_min_work,
+        gpu_min_side=gpu_min_side,
+        eps_f32=eps_f32,
+        eps_f64=eps_f64,
+    )
+    if ft is not None and ft not in _FT_CHOICES:
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    old = dict(_FT_DEFAULTS)
+    _FT_DEFAULTS.update({k: v for k, v in new.items() if v is not None})
+    return old
 
 
-def _nufftax_available():
-    try:
-        _nufftax()
-    except ImportError:
-        return False
-    return True
+_FT_CHOICES = ("auto", "dft", "nufft")
 
 
 def _use_nufft(shape, n_points):
-    """Whether ``ft="auto"`` uses the NUFFT: large enough, and installed.
-
-    Without nufftax a problem above the threshold warns once and uses the DFT.
-    """
+    """Whether ``ft="auto"`` uses the NUFFT for this size and the defaults."""
     nrow, ncol = shape
-    backend = jax.default_backend()
-    if backend == "gpu":
-        big = (
-            min(nrow, ncol) >= _NUFFT_GPU_MIN_SIDE
-            and n_points * nrow * ncol >= _NUFFT_GPU_WORK
+    settings = _FT_DEFAULTS
+    if settings["ft"] != "auto":
+        return settings["ft"] == "nufft"
+    if jax.default_backend() == "gpu":
+        return (
+            min(nrow, ncol) >= settings["gpu_min_side"]
+            and n_points * nrow * ncol >= settings["gpu_min_work"]
         )
-    else:
-        big = (
-            min(nrow, ncol) >= _NUFFT_CPU_MIN_SIDE
-            and n_points >= _NUFFT_CPU_POINTS
-        )
-    if not big:
-        return False
-    if _nufftax_available():
-        return True
-    warnings.warn(
-        "nufftax would be faster for this image and number of points: "
-        'pip install "virgil-astro[nufft]".',
-        stacklevel=4,
+    return (
+        min(nrow, ncol) >= settings["cpu_min_side"]
+        and n_points >= settings["cpu_min_points"]
     )
-    return False
 
 
 def _nufft(brightness, uu, vv, pixel_scale_mas, eps=None):
     """:func:`_dft` by nufftax's type-2 transform, to relative tolerance eps."""
-    nufft2d2 = _nufftax().nufft2d2
+    from nufftax import nufft2d2
+
     dtype = np.result_type(brightness.dtype, np.float32)
     if eps is None:
-        eps = _NUFFT_EPS_F64 if dtype == np.float64 else _NUFFT_EPS_F32
+        eps = _FT_DEFAULTS["eps_f64" if dtype == np.float64 else "eps_f32"]
     nrow, ncol = brightness.shape
     # x pairs with the last axis. V = Σ f[k] exp(+i k t) exp(+i t (1 - n%2)/2) over modes k = index - n//2,
     # t = 2π s f (rad per pixel): the DFT's centre is (n - 1)/2, not n//2.

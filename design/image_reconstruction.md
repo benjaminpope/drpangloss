@@ -120,13 +120,13 @@ Why:
 
 Visibilities are the exact separable DFT, the exact two-sided MFT for data
 on uv lattices (Stage 2b), or, chosen automatically by problem size, a NUFFT
-through nufftax (pure JAX; optional `nufft` extra; issue #75, reinstated
+through nufftax (pure JAX; a core dependency; issue #75, reinstated
 2026-10). jax-finufft was built and benchmarked in Stage 2 and removed: it
 re-creates cuFFT plans on every call (jax-finufft #157, a flat 6-7 ms on the
 GPU). nufftax has no such cost (0.15-0.7 ms value+grad on an A100), so
 jax-finufft is no longer needed. `ft="auto"` uses the NUFFT when
 the problem is large enough: on a GPU `M·N1·N2 >= 1e8` and `min(N1, N2) >= 128`;
-on a CPU `M >= 500` and `min(N1, N2) >= 64` (named constants in `_geometry`); `ft="dft"` and
+on a CPU `M >= 500` and `min(N1, N2) >= 64` (the `_FT_DEFAULTS` dict in `_geometry`, set with `virgil.set_ft_defaults`, which also makes `ft="dft"` or `"nufft"` global); `ft="dft"` and
 `ft="nufft"` force a choice. A `UVGrid` match still takes the MFT. A padded
 FFT with interpolation is never used.
 
@@ -292,7 +292,7 @@ LM metric with whitened latents gives the same linear algebra.
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| NUFFT thresholds and eps (`_NUFFT_*` in `_geometry`) | A new nufftax release changes its floor, or a GPU CPU-style rule is wanted |
+| NUFFT thresholds and eps (`_FT_DEFAULTS` in `_geometry`) | A new nufftax release changes its floor, or a GPU CPU-style rule is wanted |
 
 The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
 below. Any re-run is done by the user, never by Claude.
@@ -338,7 +338,7 @@ speed-up). DFT from job 17776437; nufftax 0.6 from job 18762629
 | 512² | 0.40 / 0.22 (1.8×) | 2.6 / 0.24 (11×) | 20 / 0.38 (52×) |
 | 1024² | 0.87 / 0.55 (1.6×) | 7.3 / 0.56 (13×) | |
 
-- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets `_NUFFT_GPU_WORK`
+- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets the GPU work threshold
   and the 128-pixel minimum side.
 - The earlier jax-finufft timings (flat ~7 ms) are superseded.
 - The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32

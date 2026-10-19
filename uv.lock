@@ -3832,6 +3832,7 @@ dependencies = [
     { name = "jaxbessel" },
     { name = "lineax" },
     { name = "matplotlib" },
+    { name = "nufftax" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "numpyro" },
@@ -3854,7 +3855,6 @@ dev = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "nbclient" },
     { name = "nbformat" },
-    { name = "nufftax" },
     { name = "pandas" },
     { name = "pre-commit" },
     { name = "pyoifits" },
@@ -3884,9 +3884,6 @@ notebooks = [
     { name = "pandas" },
     { name = "tqdm" },
 ]
-nufft = [
-    { name = "nufftax" },
-]
 orbits = [
     { name = "jaxoplanet" },
 ]
@@ -3908,7 +3905,6 @@ test = [
     { name = "ipykernel" },
     { name = "nbclient" },
     { name = "nbformat" },
-    { name = "nufftax" },
     { name = "pandas" },
     { name = "pyoifits" },
     { name = "pytest" },
@@ -3941,8 +3937,7 @@ requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.30" },
     { name = "nbclient", marker = "extra == 'pipeline'", specifier = ">=0.9" },
     { name = "nbformat", marker = "extra == 'pipeline'", specifier = ">=5.9" },
-    { name = "nufftax", marker = "extra == 'nufft'", specifier = ">=0.6" },
-    { name = "nufftax", marker = "extra == 'test'", specifier = ">=0.6" },
+    { name = "nufftax", specifier = ">=0.6" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "numpyro", specifier = ">=0.19.0" },
     { name = "optax", specifier = ">=0.2.6" },
@@ -3961,11 +3956,11 @@ requires-dist = [
     { name = "virgil-astro", extras = ["plots"], marker = "extra == 'pipeline'" },
     { name = "virgil-astro", extras = ["plots", "integrations"], marker = "extra == 'notebooks'" },
     { name = "virgil-astro", extras = ["plots", "pipeline"], marker = "extra == 'test'" },
-    { name = "virgil-astro", extras = ["test", "docs", "orbits", "nufft"], marker = "extra == 'dev'" },
+    { name = "virgil-astro", extras = ["test", "docs", "orbits"], marker = "extra == 'dev'" },
     { name = "zensical", marker = "extra == 'docs'", specifier = ">=0.0.62,<0.1" },
     { name = "zodiax", specifier = ">=0.4.1" },
 ]
-provides-extras = ["plots", "legacy", "nufft", "orbits", "integrations", "pipeline", "test", "notebooks", "docs", "dev"]
+provides-extras = ["plots", "legacy", "orbits", "integrations", "pipeline", "test", "notebooks", "docs", "dev"]
 
 [package.metadata.requires-dev]
 harmonix = [{ name = "harmonix", specifier = ">=0.1.0" }]

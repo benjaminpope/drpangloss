@@ -23,7 +23,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Variational inference | the module [`virgil.svi`](api/svi.md) (`variational`, `VariationalResult`) |
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
-| Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, its automatic thresholds and its tolerances |
+| Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, its automatic thresholds and its tolerances |
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md).

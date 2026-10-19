@@ -84,7 +84,7 @@ from . import (  # noqa: E402
     spectra,
     svi,
 )
-from ._geometry import pixel_offsets  # noqa: E402
+from ._geometry import pixel_offsets, set_ft_defaults  # noqa: E402
 from .detection import detection_statistics  # noqa: E402
 from .epochs import Epochs, rank_orbits, start_from_positions  # noqa: E402
 from .fields import GaussianField, MultipoleField  # noqa: E402
@@ -280,6 +280,7 @@ __all__ = [
     "optimized_flux_grid",
     "optimized_likelihood_grid",
     "pixel_offsets",
+    "set_ft_defaults",
     "gp_priors",
     "multipole_disk_cvis",
     "radial_profile",

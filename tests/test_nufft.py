@@ -10,14 +10,13 @@ from virgil._geometry import (
     UVGrid,
     _nufft,
     _use_nufft,
+    set_ft_defaults,
     image_visibilities,
 )
 from virgil.likelihood import model_loglike
 from virgil.models import FlaredDiskHG, Image
 from tests._shared import vlti_night
 from tests.test_image_model import MAS2RAD, _dft_reference
-
-pytest.importorskip("nufftax")
 
 WAVEL = 4.8e-6
 
@@ -91,7 +90,10 @@ def test_forward_mode_matches_the_dft():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="nufftax 0.6 cannot batch its vjp: reverse-over-reverse fails",
+    reason=(
+        "nufftax 0.6.1's batching rule handles one batch dimension at axis 0, "
+        "and jax.hessian is two nested vmaps"
+    ),
 )
 def test_hessian_through_the_nufft():
     image, uu, vv = _problem((8, 8), n=10)
@@ -165,20 +167,58 @@ def test_a_matching_uv_grid_keeps_the_matrix_transform(monkeypatch):
     assert vis.shape == (25,)
 
 
-def test_absent_nufftax(monkeypatch):
-    def missing():
-        raise ImportError('needs nufftax: pip install "virgil-astro[nufft]"')
+@pytest.fixture
+def restore_defaults():
+    old = set_ft_defaults()
+    yield
+    set_ft_defaults(**old)
 
-    monkeypatch.setattr(_geometry, "_nufftax", missing)
+
+def test_set_ft_defaults_sets_and_restores(restore_defaults):
+    old = set_ft_defaults()
+    assert old["ft"] == "auto" and old["cpu_min_points"] == 500
+    previous = set_ft_defaults(cpu_min_points=10, eps_f32=1e-4)
+    assert previous == old
+    now = set_ft_defaults()
+    assert now["cpu_min_points"] == 10 and now["eps_f32"] == 1e-4
+    assert now["cpu_min_side"] == old["cpu_min_side"]  # untouched
+    set_ft_defaults(**previous)
+    assert set_ft_defaults() == old
+    with pytest.raises(ValueError, match="ft must be"):
+        set_ft_defaults(ft="fft")
+
+
+def test_thresholds_set_through_the_function_change_the_decision(
+    monkeypatch, restore_defaults
+):
+    monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
+    assert not _use_nufft((32, 32), 100)
+    set_ft_defaults(cpu_min_points=50, cpu_min_side=16)
+    assert _use_nufft((32, 32), 100)
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+    assert not _use_nufft((32, 32), 100)
+    set_ft_defaults(gpu_min_work=1e5, gpu_min_side=16)
+    assert _use_nufft((32, 32), 100)
+
+
+def test_global_ft_forces_a_transform(monkeypatch, restore_defaults):
+    monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
+    set_ft_defaults(ft="dft")
+    assert not _use_nufft((512, 512), 10**6)
+    set_ft_defaults(ft="nufft")
+    assert _use_nufft((4, 4), 1)
+    # An explicit ft on a call beats the global setting.
     image, uu, vv = _problem((16, 16), n=20)
-    image = np.asarray(image)
-    with pytest.raises(ImportError, match=r"virgil-astro\[nufft\]"):
-        image_visibilities(image, uu, vv, 3.0, "nufft")
-    # auto falls back to the exact sum, silently when the problem is small ...
-    assert not _use_nufft((16, 16), 20)
-    # ... and with a warning when nufftax would have been faster.
-    with pytest.warns(UserWarning, match="nufftax would be faster"):
-        assert not _use_nufft((256, 256), 10**6)
+    set_ft_defaults(ft="dft")
+    calls = []
+    real = _geometry._nufft
+    monkeypatch.setattr(
+        _geometry, "_nufft", lambda *a: calls.append(1) or real(*a)
+    )
+    image_visibilities(np.asarray(image), uu, vv, 3.0)
+    assert not calls
+    image_visibilities(np.asarray(image), uu, vv, 3.0, "nufft")
+    assert calls
 
 
 def test_flared_disk_takes_ft(monkeypatch):
@@ -193,15 +233,27 @@ def test_flared_disk_takes_ft(monkeypatch):
     assert np.max(np.abs(a - b)) < 3e-5
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="nufftax 0.6.1 batches only one dimension at axis 0: nested vmap",
+)
+def test_nested_vmap_through_the_nufft():
+    _, uu, vv = _problem((8, 8), n=10)
+    batch = np.ones((2, 3, 8, 8))
+    jax.vmap(jax.vmap(lambda b: image_visibilities(b, uu, vv, 3.0, "nufft")))(
+        batch
+    )
+
+
 @pytest.fixture
 def choose(monkeypatch):
     """Set ``ft="auto"`` to nufftax (True) or the DFT (False) on a CPU."""
 
     def set_choice(nufft):
         monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
-        monkeypatch.setattr(_geometry, "_NUFFT_CPU_MIN_SIDE", 1)
-        monkeypatch.setattr(
-            _geometry, "_NUFFT_CPU_POINTS", 1 if nufft else 10**9
+        monkeypatch.setitem(_geometry._FT_DEFAULTS, "cpu_min_side", 1)
+        monkeypatch.setitem(
+            _geometry._FT_DEFAULTS, "cpu_min_points", 1 if nufft else 10**9
         )
         jax.clear_caches()  # the choice is made at trace time
 

@@ -1992,8 +1992,8 @@ class Image(Component):
         Fourier transform, which is much faster.
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points: the exact sum, a non-uniform FFT
-        (``pip install "virgil-astro[nufft]"``) or, by default, whichever is
-        faster for the problem size.
+        or, by default, whichever is faster for the problem size (see
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
 
     Examples
     --------
@@ -2170,8 +2170,8 @@ class FlaredDisk(Component):
         Pixel size of that grid in milliarcseconds.
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points: the exact sum, a non-uniform FFT
-        (``pip install "virgil-astro[nufft]"``) or, by default, whichever is
-        faster for the problem size.
+        or, by default, whichever is faster for the problem size (see
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
     skew : float or array-like, optional
         Truncation $\alpha$ of the ring's inner edge (default 0, symmetric).
     aspect : float or array-like, optional

@@ -36,21 +36,20 @@ Provisional in 0.4:
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
-- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, with its automatic thresholds and tolerances.
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances.
 
 ### Added
 
 - `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
-  (virgil#75). **The default changes results slightly**: with the optional
-  `nufft` extra (nufftax; also in `[test]` and `[dev]`) installed, an image of
-  at least 64² pixels with 500 or more points (CPU), or at least 128² pixels
-  with points × pixels above 1e8 (GPU), uses a non-uniform FFT, accurate to
-  1e-5 (float32) or 1e-12 (float64) of the
-  zero-baseline visibility rather than exact. Pass `ft="dft"` for the exact sum;
-  CLEAN (`_CleanScene`) has no `ft` yet and always uses `"auto"`. Without the
-  extra, the exact sum is used, with a one-time `UserWarning` above the
-  threshold. `jax.hessian` through the NUFFT fails in nufftax 0.6 (reverse over
-  reverse); use `ft="dft"` there. `ft` is provisional.
+  (virgil#75), and `virgil.set_ft_defaults` changes the defaults. nufftax is
+  now a dependency. **The default changes results slightly**: on a CPU an image
+  of at least 64² pixels with 500 or more points, or on a GPU one of at least
+  128² pixels with points × pixels above 1e8, uses a non-uniform FFT, accurate
+  to 1e-5 (float32) or 1e-12 (float64) of the zero-baseline visibility rather
+  than exact. Pass `ft="dft"`, or call `set_ft_defaults(ft="dft")`, for the
+  exact sum; CLEAN (`_CleanScene`) has no `ft` and follows the global default.
+  `jax.hessian` and nested `vmap` through the NUFFT fail in nufftax 0.6.1; use
+  `ft="dft"` there. `ft` and `set_ft_defaults` are provisional.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
