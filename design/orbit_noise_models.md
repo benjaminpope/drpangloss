@@ -10,16 +10,21 @@ except row 1g ("hierarchical gains"), which this note supersedes.
 
 The orbit search treats quoted errors as white, with a free error scale per
 block (`epochs._Surface`) and a tempering factor `f` for correlated channels
-(`virgil.tempering`). The virgil-validation orbit gallery (vv#147, 12
-GRAVITY/PIONIER binaries) shows where that breaks. On HD 9312 (GRAVITY,
-published P = 36.5 d), raw χ²/N is 22–104 on every night and `f` is 854. That
-is close to the number of channels per frame and baseline, so each frame's
-spectrum carries about one independent number: a per-frame gain, not
-correlated channels. On 5 of 10 nights the best peak is a north–south
-sidelobe (separation 4.3–13.4 mas against about 5.5 mas for the orbit). No
-night flag fires, because `flag_alias_nats` is applied to the *untempered*
-gap. The orbit beats a single star by only 2.4 nats, and 36.5 d ranks 30th of
-200 bands.
+(`virgil.tempering`). Spectro-interferometric data break that assumption: when
+calibration errors are a gain per frame, common to all channels, `f`
+approaches the number of channels per (frame, baseline). Three things then
+fail together:
+- the per-night peak gaps are overconfident by about `f`;
+- unmodelled gains move the per-night peaks;
+- the night flags, applied to the untempered gaps, do not fire.
+
+The search then seeds from sidelobes, and tempering by `1/f` flattens the
+evidence until no orbit stands out.
+
+**Worked example (virgil-validation#147, GRAVITY).** HD 9312 has raw χ²/N of
+22–104 on every night and `f` = 854. On 5 of 10 nights the best peak is a
+north–south sidelobe, and no flag fires. The orbit beats a single star by
+2.4 nats, and the published period ranks 30th of 200 bands.
 
 virgil already has the right likelihood term: `OIData.with_gains` and
 `with_closure_offsets`, which `virgil.gains` marginalizes analytically.
@@ -107,7 +112,7 @@ log-determinant's curvature is left out of the step, which is safe because a
 step is kept only if the log likelihood rises. The Laplace Hessian is the
 exact JAX Hessian, so it includes the log-determinant. Rough cost: 3–10× per
 likelihood evaluation on GRAVITY MEDIUM. It is to be measured on OzSTAR before
-anything else is built; the 200-band HD 9312 run is the benchmark.
+anything else is built; a 200-band GRAVITY run (the worked example) is the benchmark.
 
 **Per-night V² amplitude (`vis_amp`).** Keep it. It covers night-level losses
 that the gain prior (about 1 %) does not: anisoplanatism
@@ -153,8 +158,8 @@ ripple).
 
 ## 4. Peak picking
 
-**Is a noise model expected to fix HD 9312?** Partly. Three effects are mixed
-up in it:
+**Is a noise model expected to remove sidelobe picks?** Partly. Three effects
+are mixed up in them:
 - The gaps are inflated by about `f`. A per-frame gain that the model does not
   include makes a sidelobe look decisive by tens to hundreds of nats. Whitening
   by `C` fixes this, and so the `alias-peaks` and `low-gap` flags fire.
@@ -163,7 +168,7 @@ up in it:
   to the within-frame chromatic modulation and to the closure phases, which is
   what tells sidelobes apart.
 - Coverage. A single night's uv tracks leave a real north–south ambiguity at
-  about λ/B. HD 9312 (≲ 5.5 mas, near λ/B_max ≈ 3.5 mas) is in this regime, and
+  about λ/B. Companions within a few λ/B_max are in this regime (the worked example: ≲ 5.5 mas, λ/B_max ≈ 3.5 mas), and
   no noise model removes it.
 
 So the expectation is that the spec turns wrong-but-confident nights into
@@ -173,7 +178,7 @@ flagged ones. It is not expected to make every night pick the right peak.
 1. **Tempered night flags.** `epoch_positions` applies `flag_alias_nats` and
    `flag_min_gap` to the gap divided by the night's `f`, as the short-arc cut
    already does (`docs/orbit_fitting.md`, "Short arcs"). Without a spec, this
-   alone would have flagged HD 9312's ambiguous nights.
+   alone would have flagged the worked example's ambiguous nights.
 2. **Cross-night consistency flag `sep-outlier`.** A night's best separation
    above `k ×` the median of the other unflagged nights (relative, `k` about 2,
    and no prior from any published orbit) *and* with a rival peak inside that
@@ -220,23 +225,23 @@ data and grids run on OzSTAR (one job array, GPU nodes).
    the truth, while the white gap is inflated by about n_ch. (c) `f` on
    whitened residuals is within 5 % of 1. (d) A `vis_amp` and gains round trip.
    (e) `sep-outlier` and the tempered flags fire on a two-peak synthetic night.
-2. **Release gate: Gl 229.** A cold alias search at the release commit, run
+2. **Release gate (worked example: Gl 229).** A cold alias search at the release commit, run
    with and without a spec, must still rank N = 34 (P = 12.134 d) first with
    Δlog Z > 10 over the runner-up.
-3. **HD 9312, blind.** A 2 × 2 ablation: spec on/off × safeguard on/off. Pass:
+3. **A failing system, blind (worked example: HD 9312).** A 2 × 2 ablation: spec on/off × safeguard on/off. Pass:
    36.5 d is the top band, and the orbit beats both a single star and free
    positions decisively. Blind starts only, no published period or positions.
    Record which change does the work.
 4. **No regressions** on the other 11 gallery systems: the same top band (or a
    better one against the reference), with χ²/N and `f` reported before and
    after.
-5. **Injection–recovery (p-value calibration).** Inject orbits on HD 9312's and
+5. **Injection–recovery (p-value calibration).** Inject orbits on the failing system's and
    two other systems' (u, v, t) sampling. Draw the noise from the spec
    (`with_model(key=)`) and, separately, from virgil-vlti's resampled-residual
    nulls (`nulls.resampled_null_datasets`, virgil-vlti#39), so that a spec is
    not checked only against itself. Calibrate the band `p`, `alias_ambiguity`
    and the `no-orbit` odds. Null injections set the false-alarm rates.
-6. **Cost.** Wall time per band with and without the spec, from the HD 9312
+6. **Cost.** Wall time per band with and without the spec, from the failing-system
    run. Decide from it whether the grid stage needs the fixed-`C` shortcut of
    §2.
 
@@ -248,7 +253,7 @@ data and grids run on OzSTAR (one job array, GPU nodes).
   evidences could use white-only even if the search uses common.
 - **Q2. Order of work.** Should the §4 safeguard (tempered flags,
   `sep-outlier`) ship first and alone? It needs no spec and is cheap, and it
-  may be enough for HD 9312.
+  may be enough for the worked example.
 - **Q3. Per-night specs.** Should v1 use one spec per orbit run (pooled
   widths), or should `noise_spec` accept `{epoch: spec}`, since years-apart
   nights have different calibrators and conditions?
