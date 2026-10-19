@@ -886,7 +886,10 @@ Provisional in 0.4:
   six nights (no random starts) the true band of a two-season gap case
   (N=20, P = 12.38 d) ended at log Z -511.2 against -253.4 with
   `short_arcs=False`, and N=19 won. The arc seeds are now added beside each
-  kept band's position seeds (log Z -253.4 for N=20 with the arcs on).
+  kept band's position seeds (log Z -253.4 for N=20 with the arcs on). Each
+  kept band now scores about twice as many starting candidates, so default
+  short-arc fits are slower, and checkpoints from earlier versions are refit
+  (checkpoint format 6).
 - **`epoch_positions` no longer discards a refinement that does not
   converge.** The damped-Newton refinement of a grid peak returned its start
   point unless it stopped as `CONVERGED`, although the kernel only accepts

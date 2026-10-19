@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("jaxoplanet")
 
-from virgil import arcs  # noqa: E402
+from virgil import _gauss_newton, arcs  # noqa: E402
 from virgil._precision import run_in  # noqa: E402
 from virgil.aliases import alias_bands  # noqa: E402
 from virgil.models import OrbitalBinary  # noqa: E402
@@ -201,3 +201,26 @@ def test_a_half_night_position_is_refined_to_a_converged_peak():
     assert found is not None
     x, cov = found
     assert onp.hypot(*(x - truth)) < 0.5 and cov.shape == (2, 2)
+
+
+def test_a_half_night_that_does_not_converge_has_no_position(monkeypatch):
+    # A stalled or step-limited refinement keeps its best point, which may be
+    # far from the half's peak: it must not measure a velocity.
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    data = simulate(
+        OrbitalBinary(orbit, 0.3),
+        vlti_night(NIGHTS[0], 6, 0.0, d_phi=0.05),
+        key=jax.random.PRNGKey(0),
+    )
+    (early, _), _ = arcs._halves(data)
+    scale = float(arcs.fringe_scales(early)[0])
+    for stop in (_gauss_newton.STALLED, _gauss_newton.LIMIT):
+        monkeypatch.setattr(
+            arcs,
+            "_refine_marginal",
+            lambda x0, *a, stop=stop, **k: (onp.asarray(x0), 0.0, stop),
+        )
+        assert (
+            arcs._half_position(early, onp.array([1.0, 1.0, 0.3]), scale, None)
+            is None
+        )

@@ -1397,7 +1397,7 @@ def _failed_band(band, error):
 # Checkpoints
 # ---------------------------------------------------------------------------
 
-_CHECKPOINT_FORMAT = 5  # bump when a checkpoint's contents change
+_CHECKPOINT_FORMAT = 6  # bump when a checkpoint's contents change
 
 
 def _checkpoint_key(data, positions, bands, times, settings):
@@ -2312,19 +2312,6 @@ def _short_arc_profile(
     profile = arc_profile(
         positions, motion, bands, n_best=n_best, sign_free=sign_free, **grid
     )
-    # The arc seeds are additive: each band keeps the position-level seeds
-    # it would have without short arcs (after the arc seeds, which the cheap
-    # check scores), so within a band the arcs never seed worse.
-    plain = position_profile(
-        positions,
-        bands,
-        k=grid["k"],
-        n_best=n_best,
-        eccs=grid["eccs"],
-        sign_free=sign_free,
-    )
-    for arc, row in zip(profile, plain, strict=True):
-        arc["orbits"] = arc["orbits"] + row["orbits"]
     return profile, counts, motion
 
 
@@ -3197,6 +3184,20 @@ def fit_orbit_aliases(
         else None
     )
     seeds = {} if profile is None else {r["n"]: r["orbits"] for r in profile}
+    if counts is not None:
+        # The arc seeds are additive: each band also keeps the position-level
+        # seeds it would have without short arcs, after the arc seeds (which
+        # the cheap check scores). They stay out of ``profile``, whose rows
+        # are the arc fit alone.
+        for row in position_profile(
+            positions,
+            bands,
+            k=k,
+            n_best=n_candidates,
+            eccs=eccs,
+            sign_free=sign_free,
+        ):
+            seeds[row["n"]] = seeds[row["n"]] + row["orbits"]
     short_arc = None
     if counts is not None:
         bands, short_arc = _short_arc_bands(
