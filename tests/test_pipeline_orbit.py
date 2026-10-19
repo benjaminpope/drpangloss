@@ -775,7 +775,9 @@ def test_the_class_is_exported_lazily():
 # --- golden synthetic cases (slow) --------------------------------------------
 
 # The search keeps the engine's default effort (that is the point: the
-# default run must work); only the sampler is small.
+# default run must work); only the sampler is small. A blind run takes
+# 2-5 minutes on a CI runner, so each golden carries a 15-minute timeout
+# in place of the 5-minute hang detector of pyproject.toml.
 GOLDEN = {
     "num_warmup": 200,
     "num_samples": 150,
@@ -790,6 +792,7 @@ def _blind(nights, out, **settings):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     # Two seasons 238 d apart leave the period aliased to many integer
     # orbit counts; only the closure phases can say which. No period window,
@@ -830,6 +833,7 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_a_twin_is_labels_free(tmp_path):
     data = _simulate(SEASONS, flux=1.0, seed=5)
     _, res = _blind(data, tmp_path / "run")
@@ -839,6 +843,7 @@ def test_a_twin_is_labels_free(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_a_resolved_primary_is_fitted(tmp_path):
     import virgil.aliases as aliases
 
@@ -861,6 +866,7 @@ def test_a_resolved_primary_is_fitted(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_a_single_star_is_no_orbit(tmp_path):
     data = _simulate(SEASONS, flux=None, seed=9)
     _, res = _blind(data, tmp_path / "run")
@@ -876,6 +882,7 @@ def test_a_single_star_is_no_orbit(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
     truth = {**TRUTH, "ecc": 0.8}
     data = _simulate(SEASONS, truth=truth, seed=11)
@@ -887,6 +894,7 @@ def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(900)
 def test_the_real_summary_has_the_snapshot_keys(tmp_path):
     data = _simulate(SEASONS, seed=3)
     _, res = _blind(data, tmp_path / "run")
