@@ -7,7 +7,9 @@ import json
 import types
 import warnings
 
+import equinox as eqx
 import jax
+import jax.numpy as np
 import numpy as onp
 import pytest
 
@@ -1288,8 +1290,9 @@ def _check_fitted_diameter(data, result, tmp_path):
 # --- night flags: a flagged night seeds nothing, but its data still count -----
 
 
-SEED_ALIAS_NIGHT = 79
+SEED_ALIAS_NIGHT = 79  # any seed does: the alias is built, not found
 ALIAS_NIGHT = 3  # the night whose best peak is the alias
+MIRROR_LEAN = 0.1  # how far its closure phases lean toward the mirror image
 SOUND_NIGHTS = [k for k in range(6) if k != ALIAS_NIGHT]
 FLAGGED_ALIAS = [k == ALIAS_NIGHT for k in range(6)]
 
@@ -1318,16 +1321,25 @@ def _numpy_noise(night, rng):
 
 
 def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
-    """Six single-frame nights of the true orbit, drawn so that night
-    ``ALIAS_NIGHT``'s best static-binary peak is a single-night alias (19 mas
-    from the truth: the Gl 229 2024-02-27 situation) and every other night is
-    right and unflagged, found by scanning seeds. Each night has its own
-    numpy generator, so the nights are independent of one another.
+    """Six nights of the true orbit, built so that night ``ALIAS_NIGHT``'s
+    best static-binary peak is a single-night alias, 19 mas from the truth
+    (the Gl 229 2024-02-27 situation), and every other night is right and
+    unflagged.
 
-    The noise is drawn with numpy, not ``jax.random``: a JAX key gives
-    different bits in float32 and float64, so a seed scanned under one
-    precision gives a different night, usually without the alias, under the
-    other. The seed was scanned in both, and
+    The alias is built into the data, not left to the noise. The night's V²
+    are the truth's, which a binary shares with its point reflection through
+    the primary; its closure phases, which alone tell the two apart, are the
+    truth's reflected and scaled by ``MIRROR_LEAN`` and carry no noise, so
+    the reflection beats the truth by a fraction of a nat. The surface then
+    has two peaks that tie within the ``alias-peaks`` limit and the mirror
+    image is the higher, whatever the optimizer does.
+
+    The other nights have three frames at one epoch (the frames of
+    ``vlti_night`` are an hour apart, and near periastron the companion
+    moves a few tenths of a mas in that time, more than a static binary
+    fits) and their own numpy noise, drawn per night so the nights are
+    independent. The noise is numpy, not ``jax.random``: a JAX key gives
+    different bits in float32 and float64, and
     ``test_the_alias_night_fixture_is_the_same_in_float32_and_float64``
     checks that the two agree."""
     orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
@@ -1335,16 +1347,14 @@ def _draw_alias_night_data(seed=SEED_ALIAS_NIGHT):
     data = []
     for k, m in enumerate(EPOCHS):
         rng = onp.random.default_rng((seed, k))
-        night = simulate(scene, _night(m, frames=1, rotation=7.0 * k))
+        base = _night(m, rotation=7.0 * k)
+        base = eqx.tree_at(lambda n: n.dt, base, np.zeros_like(base.dt))
+        night = simulate(scene, base)
         d_vis, d_phi = _numpy_noise(night, rng)
+        phi = onp.asarray(night.phi)
+        phi = -MIRROR_LEAN * phi if k == ALIAS_NIGHT else phi + d_phi
         data.append(
-            night.set(
-                ["vis", "phi"],
-                [
-                    onp.asarray(night.vis) + d_vis,
-                    onp.asarray(night.phi) + d_phi,
-                ],
-            )
+            night.set(["vis", "phi"], [onp.asarray(night.vis) + d_vis, phi])
         )
     dra, ddec, _ = orbit.relative(EPOCHS)
     return data, onp.asarray(dra), onp.asarray(ddec)
@@ -1395,6 +1405,11 @@ def test_the_alias_night_fixture_is_the_same_in_float32_and_float64():
     )
     miss = onp.hypot(f64.dra - dra, f64.ddec - ddec)
     assert miss[ALIAS_NIGHT] > 3.0 and onp.all(miss[SOUND_NIGHTS] < 0.5)
+    # The sound nights are decisive, not just lucky: their gaps are far
+    # above the low-gap limit, and the alias night's is below the
+    # alias-peaks limit.
+    assert onp.all(f64.gap_marginal[SOUND_NIGHTS] > 10.0)
+    assert f64.gap_marginal[ALIAS_NIGHT] < 2.0
 
 
 @pytest.mark.slow
@@ -2128,6 +2143,23 @@ def test_a_twin_fit_is_labels_free_with_default_arguments():
     )
     assert result.labels_free
     assert result.best.chi2_red < 3.0
+
+
+@pytest.mark.slow
+def test_a_poor_point_primary_fit_does_not_resolve_a_diameter():
+    """The twin's night 1 fitted as a point primary from the grid's start
+    ends 33 nats below where the same point model gets from a disc's
+    positions: the +34 nats of a 0.5 mas disc are that local maximum, not a
+    resolved primary. The baseline is the better of the two fits."""
+    from virgil.epochs import RESOLVE_NATS, estimate_primary_diameter
+
+    orbit, data, times = _short_arc(1.0)
+    positions = _arc_positions(orbit, times, 1.0, signs=[1, -1, 1, -1])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        est = estimate_primary_diameter(data, positions)
+    assert not est.resolved
+    assert est.delta_nats < RESOLVE_NATS
 
 
 @pytest.mark.slow
