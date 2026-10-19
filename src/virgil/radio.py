@@ -5,7 +5,7 @@ visibilities at arbitrary (u, v) points, read from a CASA measurement set or
 built from arrays. Its [`term`][virgil.radio.ComplexVisData.term] is a
 likelihood term for [`fit`][virgil.fitting.fit] (and `numpyro_model`) whose
 model is any [`SourceModel`][virgil.models.SourceModel], multiplied by
-per-execution-block nuisances ([`CalibrationNuisance`][virgil.radio.CalibrationNuisance]):
+per-observation nuisances ([`CalibrationNuisance`][virgil.radio.CalibrationNuisance]):
 a flux scale, relative gains, phase-centre offsets, error scales per
 spectral window and a spectral index.
 
@@ -75,11 +75,11 @@ class ComplexVisData(eqx.Module):
         ``1 / σ²`` of each of the real and imaginary parts (Jy⁻²).
     freq : (N,) float64
         Channel frequency (Hz).
-    ddid, eb : (N,) int32
-        Data-description and execution-block labels, relabelled 0..n-1 in
-        sorted order of the originals ``ddid_ids`` and ``eb_ids``.
-    ddid_eb : tuple of int
-        The (relabelled) execution block of each ddid.
+    ddid, obs : (N,) int32
+        Data-description and observation labels, relabelled 0..n-1 in
+        sorted order of the originals ``ddid_ids`` and ``obs_ids``.
+    ddid_obs : tuple of int
+        The (relabelled) observation of each ddid.
     time, ant1, ant2, chan : optional arrays
         MJD seconds, antenna indices and channel index, when known.
     """
@@ -90,10 +90,10 @@ class ComplexVisData(eqx.Module):
     weight: jax.Array
     freq: jax.Array
     ddid: jax.Array
-    eb: jax.Array
+    obs: jax.Array
     ddid_ids: tuple = eqx.field(static=True)
-    eb_ids: tuple = eqx.field(static=True)
-    ddid_eb: tuple = eqx.field(static=True)
+    obs_ids: tuple = eqx.field(static=True)
+    ddid_obs: tuple = eqx.field(static=True)
     time: jax.Array | None = None
     ant1: jax.Array | None = None
     ant2: jax.Array | None = None
@@ -110,7 +110,7 @@ class ComplexVisData(eqx.Module):
         weight,
         freq,
         ddid=0,
-        eb=0,
+        obs=0,
         *,
         time=None,
         ant1=None,
@@ -119,8 +119,8 @@ class ComplexVisData(eqx.Module):
     ):
         """Build from arrays; scalars broadcast over the points.
 
-        ``ddid`` and ``eb`` are the original labels, relabelled 0..n-1 in
-        sorted order. Each ddid must belong to one execution block.
+        ``ddid`` and ``obs`` are the original labels, relabelled 0..n-1 in
+        sorted order. Each ddid must belong to one observation.
         """
         u = onp.atleast_1d(onp.asarray(u, dtype=onp.float64))
         n = u.size
@@ -136,7 +136,7 @@ class ComplexVisData(eqx.Module):
         weight = full(weight, onp.float64)
         freq = full(freq, onp.float64)
         ddid_orig = full(ddid, onp.int64)
-        eb_orig = full(eb, onp.int64)
+        obs_orig = full(obs, onp.int64)
         optional = {
             "time": time,
             "ant1": ant1,
@@ -153,7 +153,7 @@ class ComplexVisData(eqx.Module):
             weight=weight,
             freq=freq,
             ddid=ddid_orig,
-            eb=eb_orig,
+            obs=obs_orig,
         ).items():
             if x.shape != (n,):
                 raise ValueError(f"{name} has shape {x.shape}, not ({n},).")
@@ -169,15 +169,15 @@ class ComplexVisData(eqx.Module):
         if not (onp.all(onp.isfinite(freq)) and onp.all(freq > 0)):
             raise ValueError("freq must be finite and positive.")
         ddid_ids, ddid_l = _relabel(ddid_orig)
-        eb_ids, eb_l = _relabel(eb_orig)
-        ddid_eb = []
+        obs_ids, obs_l = _relabel(obs_orig)
+        ddid_obs = []
         for d in range(len(ddid_ids)):
-            ebs = onp.unique(eb_l[ddid_l == d])
-            if ebs.size != 1:
+            obs = onp.unique(obs_l[ddid_l == d])
+            if obs.size != 1:
                 raise ValueError(
-                    f"ddid {ddid_ids[d]} spans several execution blocks."
+                    f"ddid {ddid_ids[d]} spans several observations."
                 )
-            ddid_eb.append(int(ebs[0]))
+            ddid_obs.append(int(obs[0]))
         return cls(
             u=np.asarray(u),
             v=np.asarray(v),
@@ -185,10 +185,10 @@ class ComplexVisData(eqx.Module):
             weight=np.asarray(weight),
             freq=np.asarray(freq),
             ddid=np.asarray(ddid_l),
-            eb=np.asarray(eb_l),
+            obs=np.asarray(obs_l),
             ddid_ids=ddid_ids,
-            eb_ids=eb_ids,
-            ddid_eb=tuple(ddid_eb),
+            obs_ids=obs_ids,
+            ddid_obs=tuple(ddid_obs),
             **{
                 k: None if x is None else np.asarray(x)
                 for k, x in optional.items()
@@ -202,6 +202,7 @@ class ComplexVisData(eqx.Module):
         ddids=None,
         stride=1,
         datacolumn="DATA",
+        field=None,
         conjugate=None,
         u_sign=None,
     ):
@@ -222,6 +223,9 @@ class ComplexVisData(eqx.Module):
             The measurement set.
         ddids : sequence of int, optional
             ``DATA_DESC_ID`` values to read (default all).
+        field : int, optional
+            ``FIELD_ID`` to read. By default the selection must hold one
+            field only; a mosaic (several fields) raises.
         stride : int, optional
             Keep every ``stride``-th row of each ddid.
         datacolumn : str, optional
@@ -264,6 +268,20 @@ class ComplexVisData(eqx.Module):
             wanted = range(len(spw_of)) if ddids is None else list(ddids)
             parts = []
             tb.open(path)
+            wanted = [int(d) for d in wanted]
+            fields = onp.unique(
+                onp.asarray(tb.getcol("FIELD_ID"))[
+                    onp.isin(onp.asarray(tb.getcol("DATA_DESC_ID")), wanted)
+                ]
+            )
+            if field is None and fields.size > 1:
+                raise ValueError(
+                    f"the selection holds {fields.size} fields {fields.tolist()}"
+                    " (a mosaic?); pass field=. Mosaics are not supported."
+                )
+            field_query = (
+                "" if field is None else f" && FIELD_ID=={int(field)}"
+            )
             for d in wanted:
                 d = int(d)
                 if not 0 <= d < len(spw_of):
@@ -272,7 +290,9 @@ class ComplexVisData(eqx.Module):
                     )
                 corr = corr_types[int(pol_of[d])]
                 pair = _parallel_hands(corr)
-                sub = tb.query(f"DATA_DESC_ID=={d} && ANTENNA1!=ANTENNA2")
+                sub = tb.query(
+                    f"DATA_DESC_ID=={d} && ANTENNA1!=ANTENNA2{field_query}"
+                )
                 try:
                     if sub.nrows() == 0:
                         continue
@@ -323,16 +343,16 @@ class ComplexVisData(eqx.Module):
             x = getattr(self, f.name)
             leaves[f.name] = (
                 x
-                if f.name in ("ddid_ids", "eb_ids", "ddid_eb") or x is None
+                if f.name in ("ddid_ids", "obs_ids", "ddid_obs") or x is None
                 else x[idx]
             )
         return type(self)(**leaves)
 
-    def select(self, ddids=None, ebs=None):
-        """Points of the given ddids and/or execution blocks.
+    def select(self, ddids=None, obs=None):
+        """Points of the given ddids and/or observations.
 
-        ``ddids`` and ``ebs`` are the original ids (``ddid_ids``,
-        ``eb_ids``). Labels are kept; see
+        ``ddids`` and ``obs`` are the original ids (``ddid_ids``,
+        ``obs_ids``). Labels are kept; see
         [`subset`][virgil.radio.ComplexVisData.subset].
         """
         keep = onp.ones(len(self), dtype=bool)
@@ -341,9 +361,9 @@ class ComplexVisData(eqx.Module):
                 self.ddid_ids.index(int(d)) for d in onp.atleast_1d(ddids)
             ]
             keep &= onp.isin(onp.asarray(self.ddid), labels)
-        if ebs is not None:
-            labels = [self.eb_ids.index(int(e)) for e in onp.atleast_1d(ebs)]
-            keep &= onp.isin(onp.asarray(self.eb), labels)
+        if obs is not None:
+            labels = [self.obs_ids.index(int(e)) for e in onp.atleast_1d(obs)]
+            keep &= onp.isin(onp.asarray(self.obs), labels)
         return self.subset(keep)
 
     # -- model --------------------------------------------------------
@@ -366,7 +386,7 @@ class ComplexVisData(eqx.Module):
             self.v,
             self.freq,
             self.ddid,
-            self.eb,
+            self.obs,
         )
 
     def term(self, scene, nuisance, mask=None, chunk_size=10_000_000):
@@ -465,7 +485,7 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
         vis=vis[ch, rw],
         weight=wsum[ch, rw],
         freq=freq,
-        eb=obs[rw].astype(onp.int64),
+        obs=obs[rw].astype(onp.int64),
         time=time[rw],
         ant1=ant1[rw],
         ant2=ant2[rw],
@@ -479,23 +499,23 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
 
 
 class CalibrationNuisance:
-    """Per-execution-block calibration nuisances of a radio dataset.
+    """Per-observation calibration nuisances of a radio dataset.
 
     Static configuration: which nuisances are fitted and their site names.
     The sites (``prefix="cal"``) are keys of the fit's ``priors``; a function
     model must accept them:
 
-    ===============  ==============  ==========================  ============
-    Site             Shape           Default prior               Not fitted
-    ===============  ==============  ==========================  ============
-    ``cal.flux``     ``()``          ``LogUniform(1e-4, 1e2)``   always fitted
-    ``cal.gain``     ``(n_eb-1,)``   ``LogUniform(0.5, 2)``      1
-    ``cal.offset``   ``(n_eb-1, 2)`` ``Uniform(-100, 100)`` mas  0
-    ``cal.sigma``    ``(n_ddid,)``   ``LogUniform(0.1, 10)``     1
-    ``cal.alpha``    ``()``          ``Uniform(0, 5)``           0
-    ===============  ==============  ==========================  ============
+    ===============  ================  ==========================  =============
+    Site             Shape             Default prior               Not fitted
+    ===============  ================  ==========================  =============
+    ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   always fitted
+    ``cal.gain``     ``(n_obs-1,)``    ``LogUniform(0.5, 2)``      1
+    ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ, θ)`` mas      0
+    ``cal.sigma``    ``(n_ddid,)``     ``LogUniform(0.1, 10)``     1
+    ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
+    ===============  ================  ==========================  =============
 
-    The reference execution block (``ref_eb``, an index) has gain 1 and zero
+    The reference observation (``ref_obs``, an index) has gain 1 and zero
     offset. The model at a point is
     ``F g_e (ν/ν₀)^α exp(-2πi(δα_e u + δδ_e v)) T(u, v) V_scene(u, v)``,
     the offset ramp with the sign of a component's ``dra``, ``ddec``; ``T`` is
@@ -506,12 +526,13 @@ class CalibrationNuisance:
     Parameters
     ----------
     data : ComplexVisData
-    ref_eb : int
+    ref_obs : int
     gains, offsets, sigmas, alpha : bool
         Which nuisances are fitted (the flux always is). Gains and offsets
-        need more than one execution block.
-    nu0_hz : float
-        Reference frequency of the spectral index.
+        need more than one observation.
+    nu0_hz : float, optional
+        Reference frequency of the spectral index; default the
+        weight-averaged frequency of ``data``.
     taper_fwhm_mas : float, optional
         FWHM of a Gaussian taper (a convolution), in mas.
     prefix : str
@@ -521,25 +542,31 @@ class CalibrationNuisance:
     def __init__(
         self,
         data,
-        ref_eb=0,
+        ref_obs=0,
         gains=True,
         offsets=True,
         sigmas=True,
         alpha=True,
-        nu0_hz=239e9,
+        nu0_hz=None,
         taper_fwhm_mas=None,
         prefix="cal",
     ):
-        self.n_eb = len(data.eb_ids)
+        self.n_obs = len(data.obs_ids)
         self.n_ddid = len(data.ddid_ids)
-        if not 0 <= int(ref_eb) < self.n_eb:
-            raise ValueError(f"ref_eb must be in 0..{self.n_eb - 1}.")
-        self.ref_eb = int(ref_eb)
-        self.gains = bool(gains) and self.n_eb > 1
-        self.offsets = bool(offsets) and self.n_eb > 1
+        if not 0 <= int(ref_obs) < self.n_obs:
+            raise ValueError(f"ref_obs must be in 0..{self.n_obs - 1}.")
+        self.ref_obs = int(ref_obs)
+        self.gains = bool(gains) and self.n_obs > 1
+        self.offsets = bool(offsets) and self.n_obs > 1
         self.sigmas = bool(sigmas)
         self.alpha = bool(alpha)
+        w = onp.asarray(data.weight, dtype=onp.float64)
+        if nu0_hz is None:
+            nu0_hz = float(onp.sum(w * onp.asarray(data.freq)) / onp.sum(w))
         self.nu0_hz = float(nu0_hz)
+        q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v))
+        q_min = float(q[q > 0].min()) if onp.any(q > 0) else onp.inf
+        self.offset_bound_mas = float(rad2mas / (2.0 * q_min))
         self.taper_fwhm_mas = (
             None if taper_fwhm_mas is None else float(taper_fwhm_mas)
         )
@@ -554,31 +581,47 @@ class CalibrationNuisance:
         """Names of the fitted sites."""
         return tuple(self.priors())
 
-    def priors(self):
-        """Default priors of the fitted sites, a dict for ``fit``."""
+    def priors(self, **bounds):
+        """Default priors of the fitted sites, a dict for ``fit``.
+
+        ``bounds`` override the ends ``(lo, hi)`` of a site's prior, keyed by
+        ``flux``, ``gain``, ``offset``, ``sigma`` or ``alpha``. The default
+        offset bound is ``±θ`` with ``θ = 1/(2 q_min)`` (mas), ``q_min`` the
+        shortest baseline of the data: a shift of the phase centre beyond
+        that is less than half a turn of phase on every baseline.
+        """
         import numpyro.distributions as dist
 
-        k = self.n_eb - 1
-        out = {self._site("flux"): dist.LogUniform(1e-4, 1e2)}
+        unknown = set(bounds) - {"flux", "gain", "offset", "sigma", "alpha"}
+        if unknown:
+            raise ValueError(f"unknown bounds {sorted(unknown)}.")
+        k = self.n_obs - 1
+        theta = self.offset_bound_mas
+        lo, hi = bounds.get("flux", (1e-4, 1e2))
+        out = {self._site("flux"): dist.LogUniform(lo, hi)}
         if self.gains:
+            lo, hi = bounds.get("gain", (0.5, 2.0))
             out[self._site("gain")] = dist.LogUniform(
-                np.full(k, 0.5), np.full(k, 2.0)
+                np.full(k, lo), np.full(k, hi)
             )
         if self.offsets:
+            lo, hi = bounds.get("offset", (-theta, theta))
             out[self._site("offset")] = dist.Uniform(
-                np.full((k, 2), -100.0), np.full((k, 2), 100.0)
+                np.full((k, 2), lo), np.full((k, 2), hi)
             )
         if self.sigmas:
+            lo, hi = bounds.get("sigma", (0.1, 10.0))
             out[self._site("sigma")] = dist.LogUniform(
-                np.full(self.n_ddid, 0.1), np.full(self.n_ddid, 10.0)
+                np.full(self.n_ddid, lo), np.full(self.n_ddid, hi)
             )
         if self.alpha:
-            out[self._site("alpha")] = dist.Uniform(0.0, 5.0)
+            lo, hi = bounds.get("alpha", (0.0, 5.0))
+            out[self._site("alpha")] = dist.Uniform(lo, hi)
         return out
 
     def defaults(self):
         """Starting values of the fitted sites."""
-        k = self.n_eb - 1
+        k = self.n_obs - 1
         out = {self._site("flux"): 0.1}
         if self.gains:
             out[self._site("gain")] = onp.ones(k)
@@ -591,23 +634,23 @@ class CalibrationNuisance:
         return out
 
     def _expand(self, free, fill):
-        """Insert the reference execution block (value ``fill``) at ``ref_eb``."""
-        return np.insert(free, self.ref_eb, fill, axis=0)
+        """Insert the reference observation (value ``fill``) at ``ref_obs``."""
+        return np.insert(free, self.ref_obs, fill, axis=0)
 
     def _unpack(self, values):
-        """(flux, gain[n_eb], offset[n_eb, 2], sigma[n_ddid], alpha)."""
+        """(flux, gain[n_obs], offset[n_obs, 2], sigma[n_ddid], alpha)."""
         site = self._site
         gain = (
             self._expand(np.asarray(values[site("gain")]), 1.0)
             if self.gains
-            else np.ones(self.n_eb)
+            else np.ones(self.n_obs)
         )
         offset = (
             self._expand(
                 np.reshape(np.asarray(values[site("offset")]), (-1, 2)), 0.0
             )
             if self.offsets
-            else np.zeros((self.n_eb, 2))
+            else np.zeros((self.n_obs, 2))
         )
         sigma = (
             np.asarray(values[site("sigma")])
@@ -625,13 +668,13 @@ class CalibrationNuisance:
         return np.exp(-((np.pi * theta) ** 2) * q2 / (4.0 * onp.log(2.0)))
 
 
-def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, eb):
+def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
     flux, gain, offset, _, alpha = unpacked
     lam = C_LIGHT / freq
     vis = scene.model(u * lam, v * lam, lam)
-    ramp = offset_phase(u, v, offset[eb, 0], offset[eb, 1])
+    ramp = offset_phase(u, v, offset[obs, 0], offset[obs, 1])
     spectral = (freq / nuisance.nu0_hz) ** alpha
-    return flux * gain[eb] * spectral * ramp * nuisance._taper(u, v) * vis
+    return flux * gain[obs] * spectral * ramp * nuisance._taper(u, v) * vis
 
 
 # ----------------------------------------------------------------------
@@ -668,7 +711,7 @@ class _RadioTerm(eqx.Module):
             vis=padded(data.vis, 0.0, onp.complex128),
             freq=padded(data.freq, float(data.freq[0]), onp.float64),
             ddid=padded(data.ddid, 0, onp.int32),
-            eb=padded(data.eb, 0, onp.int32),
+            obs=padded(data.obs, 0, onp.int32),
             # zero weight outside the mask and on the padding
             sqrt_w=padded(
                 onp.sqrt(onp.asarray(data.weight)) * mask, 0.0, onp.float64
@@ -702,7 +745,7 @@ class _RadioTerm(eqx.Module):
                 a["v"],
                 a["freq"],
                 a["ddid"],
-                a["eb"],
+                a["obs"],
             )
             r = (a["vis"] - model) * a["sqrt_w"] / sigma[a["ddid"]]
             return np.real(r), np.imag(r)
@@ -743,11 +786,13 @@ class _RadioTerm(eqx.Module):
 # ----------------------------------------------------------------------
 
 
-def primary_beam(npix, pixel_scale_mas, freq_hz, dish_m=12.0, factor=1.13):
+def primary_beam(npix, pixel_scale_mas, freq_hz, dish_m, factor):
     """Log primary-beam attenuation ``-4 ln 2 r² / FWHM²`` on the pixel grid.
 
     ``FWHM = factor c / (ν D)`` and ``r`` is the distance from the image
-    centre (pixel grid of
+    centre (``factor`` is about 1.0–1.3 depending on the illumination: for
+    example 12 m dishes with ``factor = 1.13``, as ALMA's, or 22 m dishes for
+    ATCA; use the telescope's documented values). The pixel grid is that of
     [`pixel_offsets`][virgil._geometry.pixel_offsets]). Add it to an
     [`Image`][virgil.models.Image]'s log-brightness so that the image is the
     sky times the beam.

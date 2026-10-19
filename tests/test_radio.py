@@ -30,19 +30,21 @@ PIXEL = 2.0  # mas
 NPIX = 64
 
 
-def _data(n=1500, n_eb=2, ddids_per_eb=(2, 1), seed=0, noise=0.0, scene=None):
-    """Random uv points over ddids of several EBs; vis = scene or noise."""
+def _data(
+    n=1500, n_obs=2, ddids_per_obs=(2, 1), seed=0, noise=0.0, scene=None
+):
+    """Random uv points over ddids of several observations; vis = scene or noise."""
     rng = onp.random.default_rng(seed)
-    ddid_eb = [e for e, k in enumerate(ddids_per_eb) for _ in range(k)]
-    ddid = rng.integers(0, len(ddid_eb), n)
-    eb = onp.asarray(ddid_eb)[ddid]
+    ddid_obs = [e for e, k in enumerate(ddids_per_obs) for _ in range(k)]
+    ddid = rng.integers(0, len(ddid_obs), n)
+    obs = onp.asarray(ddid_obs)[ddid]
     freq = onp.asarray([230e9, 238e9, 245e9])[ddid]
     u = rng.uniform(-4e6, 4e6, n)
     v = rng.uniform(-4e6, 4e6, n)
     weight = rng.uniform(0.5, 2.0, n) * 1e4
     vis = rng.normal(size=n) + 1j * rng.normal(size=n)
     return ComplexVisData.from_arrays(
-        u, v, vis, weight, freq, ddid=ddid + 10, eb=eb + 3
+        u, v, vis, weight, freq, ddid=ddid + 10, obs=obs + 3
     )
 
 
@@ -62,12 +64,12 @@ def _expected(data, scene, flux, gain, offset, alpha, nu0):
     lam = C_LIGHT / onp.asarray(data.freq)
     u, v = onp.asarray(data.u), onp.asarray(data.v)
     vis = onp.asarray(scene.model(u * lam, v * lam, lam))
-    eb = onp.asarray(data.eb)
+    obs = onp.asarray(data.obs)
     ramp = onp.exp(
-        -2j * onp.pi * mas2rad * (offset[eb, 0] * u + offset[eb, 1] * v)
+        -2j * onp.pi * mas2rad * (offset[obs, 0] * u + offset[obs, 1] * v)
     )
     return (
-        flux * gain[eb] * (onp.asarray(data.freq) / nu0) ** alpha * ramp * vis
+        flux * gain[obs] * (onp.asarray(data.freq) / nu0) ** alpha * ramp * vis
     )
 
 
@@ -114,9 +116,9 @@ def test_offset_ramp_is_a_shift_of_the_scene():
     lam = C_LIGHT / onp.asarray(data.freq)
     u, v = onp.asarray(data.u), onp.asarray(data.v)
     want = onp.asarray(shifted.model(u * lam, v * lam, lam))
-    sel = onp.asarray(data.eb) == 1
+    sel = onp.asarray(data.obs) == 1
     onp.testing.assert_allclose(got[sel], want[sel], rtol=1e-9, atol=1e-12)
-    # the reference EB is not shifted
+    # the reference observation is not shifted
     ref = onp.asarray(_image().model(u * lam, v * lam, lam))
     onp.testing.assert_allclose(got[~sel], ref[~sel], rtol=1e-9, atol=1e-12)
 
@@ -237,8 +239,8 @@ def test_fit_recovers_nuisances():
         flux=0.5, gain=1.15, off=(6.0, -4.0), s=(1.3, 0.8, 1.0), alpha=2.6
     )
     ddid = rng.integers(0, 3, n)
-    ddid_eb = onp.array([0, 0, 1])
-    eb = ddid_eb[ddid]
+    ddid_obs = onp.array([0, 0, 1])
+    obs = ddid_obs[ddid]
     freq = onp.array([230e9, 240e9, 245e9])[ddid]
     u = rng.uniform(-3e6, 3e6, n)
     v = rng.uniform(-3e6, 3e6, n)
@@ -250,7 +252,7 @@ def test_fit_recovers_nuisances():
     lam = C_LIGHT / freq
     clean = onp.asarray(template.model(u * lam, v * lam, lam))
     ramp = onp.where(
-        eb == 1,
+        obs == 1,
         onp.exp(
             -2j
             * onp.pi
@@ -261,17 +263,17 @@ def test_fit_recovers_nuisances():
     )
     vis = (
         truth["flux"]
-        * onp.where(eb == 1, truth["gain"], 1.0)
+        * onp.where(obs == 1, truth["gain"], 1.0)
         * (freq / 239e9) ** truth["alpha"]
         * ramp
         * clean
     )
     vis = vis + sigma * (rng.normal(size=n) + 1j * rng.normal(size=n))
     data = ComplexVisData.from_arrays(
-        u, v, vis, weight, freq, ddid=ddid, eb=eb
+        u, v, vis, weight, freq, ddid=ddid, obs=obs
     )
     nuis = CalibrationNuisance(data, nu0_hz=239e9)
-    priors = nuis.priors()
+    priors = nuis.priors(offset=(-100.0, 100.0))
     # vector-valued sites reach fit() as arrays
     assert priors["cal.gain"].batch_shape == (1,)
     term = data.term(lambda v: template, nuis, chunk_size=700)
@@ -355,7 +357,7 @@ def test_from_arrays_validation():
         ComplexVisData.from_arrays([1.0], [1.0], [1 + 0j], [0.0], 230e9)
     with pytest.raises(ValueError, match="finite"):
         ComplexVisData.from_arrays([1.0], [1.0], [onp.nan + 0j], [1.0], 230e9)
-    with pytest.raises(ValueError, match="several execution blocks"):
+    with pytest.raises(ValueError, match="several observations"):
         ComplexVisData.from_arrays(
             [1.0, 2.0],
             [1.0, 2.0],
@@ -363,7 +365,7 @@ def test_from_arrays_validation():
             [1.0] * 2,
             230e9,
             ddid=[0, 0],
-            eb=[0, 1],
+            obs=[0, 1],
         )
 
 
@@ -371,8 +373,8 @@ def test_select_keeps_labels():
     data = _data()
     sub = data.select(ddids=[11])
     assert set(onp.asarray(sub.ddid)) == {1}
-    assert sub.ddid_ids == data.ddid_ids and sub.eb_ids == (3, 4)
-    assert len(data.select(ebs=[4])) == int((onp.asarray(data.eb) == 1).sum())
+    assert sub.ddid_ids == data.ddid_ids and sub.obs_ids == (3, 4)
+    assert len(data.select(obs=[4])) == int((onp.asarray(data.obs) == 1).sum())
 
 
 # ----------------------------------------------------------------------
@@ -523,7 +525,7 @@ def test_read_ms_convention(synthetic_ms):
         len(data) == n_rows * NCHAN
     )  # nothing flagged, cross-correlations only
     assert data.ddid_ids == (0, 1)
-    assert len(data.eb_ids) == 1
+    assert len(data.obs_ids) == 1
     # u, v from UVW and the channel frequency, per ddid
     for d in (0, 1):
         sub = data.select(ddids=[d])
@@ -559,3 +561,19 @@ def test_read_ms_convention(synthetic_ms):
         path, conjugate=not virgil.radio.MS_CONJUGATE
     )
     assert onp.max(onp.abs(onp.asarray(wrong.vis) - want)) > 1e-2
+
+
+def test_defaults_come_from_the_data():
+    data = _data()
+    nuis = CalibrationNuisance(data)
+    w, f = onp.asarray(data.weight), onp.asarray(data.freq)
+    assert nuis.nu0_hz == pytest.approx(onp.sum(w * f) / onp.sum(w))
+    q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v))
+    theta = rad2mas / (2 * q.min())
+    prior = nuis.priors()["cal.offset"]
+    assert float(prior.high[0, 0]) == pytest.approx(theta)
+    custom = nuis.priors(offset=(-5.0, 5.0), alpha=(0.0, 3.0))
+    assert float(custom["cal.offset"].high[0, 0]) == 5.0
+    assert float(custom["cal.alpha"].high) == 3.0
+    with pytest.raises(ValueError, match="unknown"):
+        nuis.priors(bogus=(0, 1))

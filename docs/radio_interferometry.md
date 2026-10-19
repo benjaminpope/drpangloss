@@ -1,10 +1,10 @@
 # Radio interferometry
 
 [`virgil.radio`](api/radio.md) fits calibrated complex visibilities at
-arbitrary (u, v) points, the data of radio and millimetre arrays such as
-ALMA. Any [source model](source_models.md) works, including a pixel
+arbitrary (u, v) points, the data of any radio or millimetre array whose
+visibilities are in a CASA measurement set. Any [source model](source_models.md) works, including a pixel
 [`Image`](api/models/classes/image.md) whose Fourier transform runs through
-the NUFFT backend. Each execution block (EB) may have its own flux scale,
+the NUFFT backend. Each observation (observation) may have its own flux scale,
 phase-centre offset and error scale, fitted together with the sky.
 
 ## Install
@@ -40,8 +40,8 @@ first use.
   `w₁ + w₂`.
 * A weight is `1/σ²` for each of the real and imaginary parts (CASA's
   meaning). `WEIGHT_SPECTRUM` is used if present, otherwise `WEIGHT`.
-* `ddid` and `eb` (`DATA_DESC_ID`, `OBSERVATION_ID`) are relabelled
-  0..n−1 in sorted order; the originals are kept in `ddid_ids`, `eb_ids`.
+* `ddid` and `obs` (`DATA_DESC_ID`, `OBSERVATION_ID`) are relabelled
+  0..n−1 in sorted order; the originals are kept in `ddid_ids`, `obs_ids`.
 
 ## Reading data
 
@@ -51,19 +51,19 @@ from virgil import ComplexVisData
 data = ComplexVisData.read_ms("target.ms", stride=100)  # every 100th row
 ```
 
-`read_ms` handles one ddid at a time, so memory is that of the largest ddid.
-`select(ddids=..., ebs=...)` and `subset(mask)` keep the labels, so a
+`read_ms` raises if the selection holds more than one field (a mosaic); pass `field=` to pick one. It handles one ddid at a time, so memory is that of the largest ddid.
+`select(ddids=..., obs=...)` and `subset(mask)` keep the labels, so a
 calibration model built for the full data still fits.
 
 ## A model with calibration nuisances
 
-The model at a point `k` of execution block `e` is
+The model at a point `k` of observation `e` is
 
 `M_k = F g_e (ν_k/ν₀)^α exp(−2πi(δα_e u_k + δδ_e v_k)) T(u_k, v_k) V_scene(u_k, v_k)`
 
 with the total flux `F` (Jy), relative gains `g_e`, phase-centre offsets
 `(δα_e, δδ_e)` in mas, a spectral index `α` and an optional Gaussian taper
-`T` (a convolution of the image). The reference EB has `g = 1` and no
+`T` (a convolution of the image). The reference observation has `g = 1` and no
 offset. Each ddid `d` has an error scale `s_d` multiplying its errors, fitted
 with a log-uniform prior. `CalibrationNuisance` holds this configuration
 and the default priors:
@@ -72,7 +72,7 @@ and the default priors:
 import numpyro.distributions as dist
 from virgil import CalibrationNuisance, Image, fit
 
-nuis = CalibrationNuisance(data, ref_eb=0, nu0_hz=239e9)
+nuis = CalibrationNuisance(data, ref_obs=0)  # nu0_hz: the data's mean frequency
 priors = nuis.priors()  # cal.flux, cal.gain, cal.offset, cal.sigma, cal.alpha
 init = nuis.defaults()
 
@@ -88,7 +88,7 @@ term = data.term(scene, nuis, chunk_size=1_000_000)
 result = fit(model, priors, data=(), likelihoods=[term], init=init, method="lbfgs")
 ```
 
-Vector-valued sites (`cal.gain` has one entry per non-reference EB) are
+Vector-valued sites (`cal.gain` has one entry per non-reference observation) are
 ordinary array-valued parameters. Because the error scales are fitted, the
 term reports a log normalization and `fit` uses L-BFGS.
 
@@ -102,10 +102,13 @@ number of points of each ddid.
 
 ## Primary beam and cross-validation
 
-`primary_beam(npix, pixel_scale_mas, freq_hz)` is the log attenuation
-`−4 ln 2 r²/FWHM²` of a Gaussian primary beam of an array of 12 m dishes
-(FWHM `1.13 λ/D`). Add it to an `Image`'s log-brightness so that the image
-is the sky times the beam.
+`primary_beam(npix, pixel_scale_mas, freq_hz, dish_m, factor)` is the log
+attenuation `−4 ln 2 r²/FWHM²` of a Gaussian primary beam with
+`FWHM = factor × λ/dish_m`. Nothing is assumed about the telescope: take the
+dish diameter and factor from its documentation. For example, ALMA's 12 m
+antennas have `factor = 1.13` (ALMA Technical Handbook), and ATCA's antennas
+are 22 m in diameter (ATNF). Add the result to an `Image`'s log-brightness so
+that the image is the sky times the beam.
 
 `dartboard_folds(data, k=5)` splits the data into `k` folds for
 cross-validation by cells of the uv plane (annuli in q, sectors in the

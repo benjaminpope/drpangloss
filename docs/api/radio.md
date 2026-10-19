@@ -1,7 +1,6 @@
 # `virgil.radio`
 
-Complex visibilities from radio interferometers (for example ALMA
-measurement sets), with per-execution-block calibration nuisances and a
+Complex visibilities from radio interferometers  (CASA measurement sets), with per-observation calibration nuisances and a
 likelihood term for [`fit`](fitting.md). See the
 [radio interferometry guide](../radio_interferometry.md).
 
