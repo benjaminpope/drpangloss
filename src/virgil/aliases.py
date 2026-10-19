@@ -459,12 +459,13 @@ def _scale_vis(r, d, n, amp):
     return r.at[:n].set((amp * mod - obs) / err)
 
 
-def _epoch_chi2(surface, model, d, amp_range):
-    """Raw χ² per block of one epoch and its V² amplitude."""
+def _epoch_chi2(surface, model, d, amp_range, dof=None):
+    """Raw χ² per block of one epoch and its V² amplitude (for a numeric
+    surface, the table its ``score`` integrates: see ``plain_chi2``)."""
     if surface.numeric:  # whitened per node of the scale integral
         if amp_range is not None:
             _refuse_amp_with_gains(d)
-        return surface.chi2(model, d), np.ones((), d.vis.dtype)
+        return surface.chi2(model, d, None, dof), np.ones((), d.vis.dtype)
     r, amp = _epoch_residuals(surface, model, d, amp_range)
     return surface.block_chi2(r), amp
 
@@ -503,7 +504,7 @@ def _loglike(surfaces, x, data, cfg, dof):
     """
     model = _model(x, cfg)
     return sum(
-        s.score(_epoch_chi2(s, model, d, cfg[3])[0], dof_s, d)
+        s.score(_epoch_chi2(s, model, d, cfg[3], dof_s)[0], dof_s, d)
         for s, d, dof_s in zip(surfaces, data, dof)
     )
 
@@ -614,7 +615,7 @@ class _Problem:
         rows = []
         for s, d in zip(self.surfaces, self.data):
             chi2, amp = _epoch_chi2(s, model, d, self.cfg[3])
-            chi2 = onp.asarray(chi2)
+            chi2 = onp.asarray(s.plain_chi2(chi2))
             rows.append(
                 dict(
                     blocks=list(s.names),
@@ -2704,7 +2705,7 @@ def _temper_factors(data, positions, diam, vis_amp, names):
 _INADEQUATE_F = 3.0
 
 
-def _warn_tempering(factors):
+def _warn_tempering(factors, calibrated=False):
     """Warn about estimated tempering the fit cannot trust (a block ``f``
     outside ``FLAG_RANGE``, blocks on the pooled ``f``, a flat correlation).
 
@@ -2712,9 +2713,13 @@ def _warn_tempering(factors):
     ----------
     factors : ChannelFactors
         The estimated factors (a user's fixed ``f`` is not warned about).
+    calibrated : bool, optional
+        Whether the data carry gains or closure offsets, so that ``f`` is
+        estimated on residuals whitened with them: a large ``f`` then says
+        the noise model is inadequate.
     """
     where = external_stacklevel()
-    if factors.f_max > _INADEQUATE_F:
+    if calibrated and factors.f_max > _INADEQUATE_F:
         worst = max(factors.blocks, key=factors.blocks.get)
         warnings.warn(
             f"fit_orbit_aliases(): noise model inadequate: the "
@@ -3346,7 +3351,13 @@ def fit_orbit_aliases(
         arc_delta_chi2=float(arc_delta_chi2),
     )
     if factors is not None and not fixed_f:
-        _warn_tempering(factors)
+        _warn_tempering(
+            factors,
+            any(
+                d.gains is not None or d.phase_offsets is not None
+                for d in data
+            ),
+        )
     problem = _Problem(data, settings)
     _preflight(problem, settings, bands[0])
     key = (

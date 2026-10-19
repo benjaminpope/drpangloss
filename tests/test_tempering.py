@@ -846,6 +846,15 @@ def test_blocks_without_chains_of_their_own_warn_and_the_largest_block_flags():
         aliases._warn_tempering(flat)
 
 
+def test_large_f_reads_as_an_inadequate_noise_model_only_with_gains():
+    big = tempering.ChannelFactors(5.0, {"vis": 5.0}, {}, {}, f_raw=5.0)
+    with pytest.warns(UserWarning, match="noise model inadequate"):
+        aliases._warn_tempering(big, calibrated=True)
+    with pytest.warns(UserWarning, match="effective-channel factor") as caught:
+        aliases._warn_tempering(big)
+    assert "inadequate" not in " ".join(str(w.message) for w in caught)
+
+
 def test_the_flag_follows_the_largest_block_and_the_flat_signature():
     def flagged(**kw):
         return AliasResult(

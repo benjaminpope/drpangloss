@@ -491,10 +491,13 @@ def _check_marginal_data(data):
 
 # Nodes of the Gauss-Legendre rule that integrates ln s of a block whose
 # covariance is s²D + UUᵀ (gains, closure offsets), the half-width of its
-# window in units of 1/√ν, and the fixed-point steps that centre it.
+# window in standard deviations of the (tempered) integrand, the Newton
+# steps that find its peak, and the bound that ln s takes when the caller
+# gives none (a numeric integral needs one).
 _N_NODES = 32
-_WINDOW = 6.0
-_N_CENTRE = 3
+_WINDOW = 9.0
+_N_CENTRE = 4
+_NUMERIC_S_MAX = 10.0
 
 
 class _Surface:
@@ -521,8 +524,10 @@ class _Surface:
     table with each block's χ², log normalizer and quadrature at the nodes
     of a Gauss–Legendre rule over a window around the block's peak (inside
     ``[-ln s_max, ln s_max]``), whitened exactly for each s (the exact log
-    determinant of ``likelihood._whiten_with_log_norm``). Without ``s_max``
-    the χ² is that of the gain-whitened residuals at s = 1.
+    determinant of ``likelihood._whiten_with_log_norm``). The window is
+    centred (Newton) on the integrand's peak and spans ±9 standard
+    deviations of its curvature, tempered by ``dof``. Such data with no
+    ``s_max`` take ``s_max = 10``: the integral needs a bound.
     """
 
     def __init__(self, data, s_max=None):
@@ -530,9 +535,10 @@ class _Surface:
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
-            s_max is not None
-            and (data.gains is not None or data.phase_offsets is not None)
+            data.gains is not None or data.phase_offsets is not None
         )
+        if self.numeric and s_max is None:
+            s_max = _NUMERIC_S_MAX
         # Observables per block of errors: the visibilities, the phases and
         # each extra block (their errors, not their residual rows).
         self.sizes = (
@@ -553,12 +559,13 @@ class _Surface:
     def __eq__(self, other):
         return isinstance(other, _Surface) and self._key() == other._key()
 
-    def chi2(self, model, data, noise=None):
+    def chi2(self, model, data, noise=None, dof=None):
         """χ² of each block of ``data`` for ``model``, on the quoted errors
         (for a ``numeric`` surface, the table ``score`` integrates; its
-        first column is that χ², see ``plain_chi2``)."""
+        first column is that χ², see ``plain_chi2``). ``dof`` (as for
+        ``score``) only sets the width of that table's window."""
         if self.numeric:
-            return self._table(model, data, noise or {})
+            return self._table(model, data, noise or {}, dof)
         r = whitened_residuals(model, data, **(noise or {}))
         return self.block_chi2(r)
 
@@ -567,7 +574,7 @@ class _Surface:
         """The blocks' χ² at s = 1 of what ``chi2`` returned."""
         return chi2[..., 0] if chi2.ndim > 1 else chi2
 
-    def _table(self, model, data, noise):
+    def _table(self, model, data, noise, dof=None):
         """Per block ``[χ²(1) | ln s | χ² | log norm | log weight]`` (the
         last four at ``_N_NODES`` nodes), by whitening the data with the
         errors times each node's s."""
@@ -598,10 +605,24 @@ class _Surface:
             own = np.stack([self._norm_of(k, norm) for k in range(n_block)])
             return chi2, own
 
+        def log_f(log_s):
+            """Each block's log integrand at its own ``log_s`` (blocks are
+            independent, so a sum has their derivatives as its gradient)."""
+            chi2, own = at(log_s)
+            return np.stack(
+                [
+                    self._log_f(k, log_s[k : k + 1], chi2[k], own[k], data)[0]
+                    for k in range(n_block)
+                ]
+            )
+
         nu = np.asarray(self.nu)
         chi2_one = at(np.zeros(n_block))[0]
+        # The peak: a fixed-point start (χ²(s) = ν), then Newton steps on
+        # the exact log integrand (its curvature is about -2(ν - k) with
+        # k the gains' rank, so the χ² = ν point sits k/2ν off the peak).
         centre = np.zeros(n_block)
-        for _ in range(_N_CENTRE):
+        for _ in range(2):
             chi2_c = at(centre)[0]
             tiny = np.finfo(chi2_c.dtype).tiny
             centre = np.clip(
@@ -609,8 +630,18 @@ class _Surface:
                 -bound,
                 bound,
             )
-        centre = jax.lax.stop_gradient(centre)
-        half = _WINDOW / np.sqrt(nu)
+        slope = jax.grad(lambda t: np.sum(log_f(t)))
+        curve = jax.grad(lambda t: np.sum(slope(t)))
+        for _ in range(_N_CENTRE):
+            step = slope(centre) / np.maximum(-curve(centre), 0.1 * nu)
+            centre = np.clip(centre + np.clip(step, -1.0, 1.0), -bound, bound)
+        curvature = np.maximum(-curve(centre), 0.1 * nu)
+        centre, curvature = jax.lax.stop_gradient((centre, curvature))
+        dof = np.broadcast_to(
+            np.asarray(1.0 if dof is None else dof, chi2_one.dtype),
+            (n_block,),
+        )
+        half = _WINDOW / np.sqrt(curvature * jax.lax.stop_gradient(dof))
         lo = np.maximum(centre - half, -bound)
         hi = np.minimum(centre + half, bound)
         x, w = gauss_legendre(_N_NODES, chi2_one.dtype)
@@ -620,6 +651,21 @@ class _Surface:
         log_w = np.log(w)[None, :] + np.log(rad)[:, None]
         return np.concatenate(
             [chi2_one[:, None], nodes, chi2_n, norm_n, log_w], axis=1
+        )
+
+    def _log_f(self, k, log_s, chi2, norm, data):
+        """Block k's log integrand (untempered) at ``log_s``, given its χ²
+        and gains/offsets log normalizer there."""
+        _, _, _, nu, von_mises = self.blocks[k]
+        if not von_mises:
+            return -0.5 * chi2 - nu * log_s - norm
+        # von Mises, as in ``score`` (never with gains or offsets)
+        sigma = np.asarray(data.d_phi, log_s.dtype).reshape(-1)
+        kappa = 1.0 / (np.exp(2.0 * log_s)[:, None] * sigma**2)
+        return (
+            -0.5 * chi2
+            - np.sum(np.log(np.sqrt(2.0 * np.pi) * i0e(kappa)), axis=1)
+            + np.sum(np.log(sigma))
         )
 
     def _block_of_size(self):
@@ -676,21 +722,12 @@ class _Surface:
         n = _N_NODES
         dof = np.broadcast_to(np.asarray(dof, table.dtype), self.nu.shape)
         total = 0.0
-        for k, (_, _, _, nu, von_mises) in enumerate(self.blocks):
+        for k in range(len(self.blocks)):
             log_s = table[k, 1 : 1 + n]
             chi2 = table[k, 1 + n : 1 + 2 * n]
             norm = table[k, 1 + 2 * n : 1 + 3 * n]
             log_w = table[k, 1 + 3 * n :]
-            if von_mises:  # as in ``score``; never with offsets or gains
-                sigma = np.asarray(data.d_phi, table.dtype).reshape(-1)
-                kappa = 1.0 / (np.exp(2.0 * log_s)[:, None] * sigma**2)
-                log_f = (
-                    -0.5 * chi2
-                    - np.sum(np.log(np.sqrt(2.0 * np.pi) * i0e(kappa)), axis=1)
-                    + np.sum(np.log(sigma))
-                )
-            else:
-                log_f = -0.5 * chi2 - nu * log_s - norm
+            log_f = self._log_f(k, log_s, chi2, norm, data)
             total = total + jax.nn.logsumexp(dof[k] * log_f + log_w)
         return total
 
@@ -815,9 +852,10 @@ def marginal_loglike(
     float
     """
     surface = _Surface(data, s_max)
+    dof_all = np.asarray(surface.dof_vector(block_dof)) * _check_dof(dof)
     return surface.score(
-        surface.chi2(model, data, noise),
-        np.asarray(surface.dof_vector(block_dof)) * _check_dof(dof),
+        surface.chi2(model, data, noise, dof_all),
+        dof_all,
         data,
     )
 
@@ -926,7 +964,7 @@ def _loglike_kernel(static, inputs, datasets, dofs):
         snapshots = Epochs.snapshots(p.epochs, p.scene_of(x))
         if p.scales == "marginal":
             total = sum(
-                f.score(f.chi2(s, d, n), dofs[k], d)
+                f.score(f.chi2(s, d, n, dofs[k]), dofs[k], d)
                 for k, (s, d, n, f) in enumerate(
                     zip(snapshots, datasets, p.noise, p.surfaces)
                 )
@@ -1416,13 +1454,13 @@ def _binary(x, diam=None):
 
 
 @functools.partial(jax.jit, static_argnames=("surface", "batch_size"))
-def _grid_scores(points, data, surface, batch_size, diam=None):
+def _grid_scores(points, data, surface, batch_size, diam=None, dof=None):
     """The quoted-error log likelihood and the blocks' χ² at each point."""
 
     def one(x):
         whitened, errors = _whitened_and_errors(_binary(x, diam), data, {})
         if surface.numeric:
-            chi2 = surface.chi2(_binary(x, diam), data)
+            chi2 = surface.chi2(_binary(x, diam), data, None, dof)
         else:
             chi2 = surface.block_chi2(whitened)
         return _gaussian_loglike(whitened, errors), chi2
@@ -1460,7 +1498,7 @@ def _amp_residuals(model, data, surface, amp_range):
 
 def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
     if amp_range is None:
-        chi2 = surface.chi2(_binary(x, diam), data)
+        chi2 = surface.chi2(_binary(x, diam), data, None, dof)
     else:
         r = _amp_residuals(_binary(x, diam), data, surface, amp_range)
         chi2 = surface.block_chi2(r)
@@ -1903,6 +1941,7 @@ def epoch_positions(
                 surface,
                 min(batch_size_or_default(batch_size, d), len(points)),
                 diam64,
+                np.asarray(dof_k),
             )
             marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
             marginal = onp.asarray(marginal).reshape(xx.shape)
@@ -1921,7 +1960,7 @@ def epoch_positions(
         def score(x, d64=d64, surface=surface, dof64=dof64, diam64=diam64):
             with run_in("float64"):
                 quoted, chi2 = _grid_scores(
-                    np.asarray(x), d64, surface, len(x), diam64
+                    np.asarray(x), d64, surface, len(x), diam64, dof64
                 )
                 m = _grid_marginal(chi2, dof64, d64, surface)
             return onp.asarray(quoted), onp.asarray(m)
