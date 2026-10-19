@@ -195,3 +195,4 @@ to maximum entropy (`LCurve.classic_maxent`).
     options:
       members:
         - pixel_offsets
+        - set_ft_defaults

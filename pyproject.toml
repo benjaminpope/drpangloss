@@ -34,6 +34,8 @@ dependencies = [
   "optax>=0.2.6",
   "numpyro>=0.19.0",
   "numpy>=2.0",
+  # The NUFFT of large pixel images (pure JAX; needs only jax and numpy).
+  "nufftax>=0.6",
   # scipy.spatial.ConvexHull triangulates the stellar mesh in _elr.py
   # (jax already depends on scipy).
   "scipy>=1.13",

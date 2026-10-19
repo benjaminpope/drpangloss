@@ -415,6 +415,16 @@ contributors page; no code was copied)
 
 **Imaging, inference and data**
 
+- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
+  (virgil#75), and `virgil.set_ft_defaults` changes the defaults. nufftax is
+  now a dependency. **The default changes results slightly**: on a CPU an image
+  of at least 64² pixels with at least max(500, 2N) points (N the larger side),
+  or on a GPU one of at least 128² pixels with 3000 or more points, uses a
+  non-uniform FFT, accurate to 1e-5 (float32) or 1e-12 (float64) of the
+  zero-baseline visibility rather than exact. Pass `ft="dft"`, or call `set_ft_defaults(ft="dft")`, for the
+  exact sum; CLEAN (`_CleanScene`) has no `ft` and follows the global default.
+  `jax.hessian` and nested `vmap` through the NUFFT fail in nufftax 0.6.1; use
+  `ft="dft"` there. `ft` and `set_ft_defaults` are provisional.
 - **`starting_image(pad_to_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
   `largest_mas` (a cap) cannot do: `largest_mas=54` used to give HR 4049 a
@@ -886,7 +896,9 @@ Provisional in 0.4:
   (`global_nsigma` is to be settled first). The run schema
   `virgil-pipeline-run-v1` is unchanged;
 - `virgil.imaging.clean` and `CleanResult`;
-- `virgil.metrics`.
+- `virgil.metrics`;
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`,
+  `set_ft_defaults`, and the automatic thresholds and tolerances.
 
 ## 0.3.0 (2026-10-06)
 
