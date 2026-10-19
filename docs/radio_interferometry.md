@@ -105,6 +105,30 @@ The term evaluates the points in chunks of `chunk_size` with `jax.lax.map`,
 padded with zero weight, so memory is bounded by the chunk rather than the
 number of visibilities.
 
+The data live in the term as array leaves, so `fit` passes them to its jitted
+functions as arguments: they are never compile-time constants, and fits that
+differ only in the mask (`mask=fold != i`) or in a regularizer weight reuse one
+compiled loss. Keep it that way in your own jitted code by passing the term as
+an argument:
+
+```python
+import equinox as eqx
+
+@eqx.filter_jit
+def loss_and_grad(term, values):
+    return eqx.filter_value_and_grad(
+        lambda v: 0.5 * jnp.sum(term(v) ** 2) + term.log_norm(v)
+    )(values)
+
+loss, grad = loss_and_grad(term, values)
+```
+
+Do not write `jax.jit(lambda values: ... term(values) ...)`: a closure over the
+term embeds every visibility in the compiled program (gigabytes at ALMA scale,
+with JAX's "large amount of constants were captured" warning, slow compiles and
+executables too big for the persistent cache). The same holds for a
+`jax.jit(jax.value_and_grad(f))` where `f` closes over `term`.
+
 For a fit with the scene on the model side only, `data.model(scene, values,
 nuis)` returns `M_k` and `data.chi2_by_ddid(scene, values, nuis)` the χ² and
 number of points of each ddid.

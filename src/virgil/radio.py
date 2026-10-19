@@ -420,6 +420,17 @@ class ComplexVisData(eqx.Module):
             Points are padded with zero weight to a multiple of this and
             evaluated with ``jax.lax.map`` over chunks, bounding memory
             (the transform is never ``vmap``-ed).
+
+        Notes
+        -----
+        The data are array leaves of the returned term. ``fit`` passes them to
+        its jitted functions as arguments, but a plain ``jax.jit`` closure over
+        the term bakes them in as compile-time constants. Pass the term as an
+        argument instead::
+
+            @eqx.filter_jit
+            def loss(term, values):
+                return jnp.sum(term(values) ** 2) + term.log_norm(values)
         """
         if isinstance(scene, SourceModel):
             raise TypeError(
