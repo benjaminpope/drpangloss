@@ -1,5 +1,8 @@
 """Radio-interferometric (u, v, complex visibility) data and calibration.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 [`ComplexVisData`][virgil.radio.ComplexVisData] holds calibrated complex
 visibilities at arbitrary (u, v) points, read from a CASA measurement set or
 built from arrays. Its [`term`][virgil.radio.ComplexVisData.term] is a
@@ -28,6 +31,8 @@ import numpy as onp
 from ._geometry import offset_phase, pixel_offsets
 from ._utils import mas2rad, rad2mas
 from .models import SourceModel
+
+__provisional__ = ("*",)
 
 __all__ = [
     "CalibrationNuisance",
@@ -76,10 +81,14 @@ class ComplexVisData(eqx.Module):
     freq : (N,) float64
         Channel frequency (Hz).
     ddid, obs : (N,) int32
-        Data-description and observation labels, relabelled 0..n-1 in
-        sorted order of the originals ``ddid_ids`` and ``obs_ids``.
+        Labels relabelled 0..n-1: ``obs`` in sorted order of the original
+        ``OBSERVATION_ID`` (``obs_ids``); ``ddid`` numbers the sorted
+        (``DATA_DESC_ID``, observation) pairs, so a ddid shared by several
+        observations of a concatenated set gets one label (and one error
+        scale) per observation. ``ddid_ids`` holds each label's original
+        ``DATA_DESC_ID``.
     ddid_obs : tuple of int
-        The (relabelled) observation of each ddid.
+        The (relabelled) observation of each ddid label.
     time, ant1, ant2, chan : optional arrays
         MJD seconds, antenna indices and channel index, when known.
     """
@@ -168,16 +177,17 @@ class ComplexVisData(eqx.Module):
             raise ValueError("weight must be finite and positive.")
         if not (onp.all(onp.isfinite(freq)) and onp.all(freq > 0)):
             raise ValueError("freq must be finite and positive.")
-        ddid_ids, ddid_l = _relabel(ddid_orig)
         obs_ids, obs_l = _relabel(obs_orig)
-        ddid_obs = []
-        for d in range(len(ddid_ids)):
-            obs = onp.unique(obs_l[ddid_l == d])
-            if obs.size != 1:
-                raise ValueError(
-                    f"ddid {ddid_ids[d]} spans several observations."
-                )
-            ddid_obs.append(int(obs[0]))
+        # A label is a (ddid, observation) pair: a concatenated measurement
+        # set can hold one ddid in several observations, each with its own
+        # error scale.
+        pair = ddid_orig * (len(obs_ids) + 1) + obs_l
+        _, first, ddid_l = onp.unique(
+            pair, return_index=True, return_inverse=True
+        )
+        ddid_l = ddid_l.astype(onp.int32)
+        ddid_ids = tuple(int(d) for d in ddid_orig[first])
+        ddid_obs = [int(o) for o in obs_l[first]]
         return cls(
             u=np.asarray(u),
             v=np.asarray(v),
@@ -358,7 +368,9 @@ class ComplexVisData(eqx.Module):
         keep = onp.ones(len(self), dtype=bool)
         if ddids is not None:
             labels = [
-                self.ddid_ids.index(int(d)) for d in onp.atleast_1d(ddids)
+                i
+                for i, d in enumerate(self.ddid_ids)
+                if d in set(int(x) for x in onp.atleast_1d(ddids))
             ]
             keep &= onp.isin(onp.asarray(self.ddid), labels)
         if obs is not None:
@@ -397,7 +409,8 @@ class ComplexVisData(eqx.Module):
         scene : callable
             Maps the fitted values (a dict by site name) to a
             [`SourceModel`][virgil.models.SourceModel], as ``PositionData.term``
-            takes ``orbit``.
+            takes ``orbit``. It must be a function of the values, not a model
+            instance: arrays held by the term would be compile-time constants.
         nuisance : CalibrationNuisance
             The calibration model; its sites are keys of the fit's priors.
         mask : (N,) bool, optional
@@ -408,6 +421,11 @@ class ComplexVisData(eqx.Module):
             evaluated with ``jax.lax.map`` over chunks, bounding memory
             (the transform is never ``vmap``-ed).
         """
+        if isinstance(scene, SourceModel):
+            raise TypeError(
+                "scene must be a function of the fitted values, e.g. "
+                "`lambda values: model`, not a model instance."
+            )
         return _RadioTerm(self, scene, nuisance, mask, chunk_size)
 
     def chi2_by_ddid(self, scene, values, nuisance, mask=None):
@@ -416,6 +434,9 @@ class ComplexVisData(eqx.Module):
         Returns ``(chi2, n)``: float64 arrays of length ``n_ddid``, ``n`` the
         number of unmasked points of each ddid (χ² sums two terms per point).
         """
+        if isinstance(scene, SourceModel):
+            model = scene
+            scene = lambda values: model  # noqa: E731
         term = self.term(scene, nuisance, mask=mask)
         r2 = term._r2(values)
         mask_ = (
@@ -566,6 +587,13 @@ class CalibrationNuisance:
         self.nu0_hz = float(nu0_hz)
         q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v))
         q_min = float(q[q > 0].min()) if onp.any(q > 0) else onp.inf
+        # Starting flux: the weighted mean visibility of the shortest 1% of
+        # baselines, which tends to the total flux for a compact source.
+        short = onp.argsort(q)[: max(1, q.size // 100)]
+        total = onp.sum(
+            w[short] * onp.asarray(data.vis)[short].real
+        ) / onp.sum(w[short])
+        self.flux_start = float(total) if total > 0 else 0.1
         self.offset_bound_mas = float(rad2mas / (2.0 * q_min))
         self.taper_fwhm_mas = (
             None if taper_fwhm_mas is None else float(taper_fwhm_mas)
@@ -622,7 +650,7 @@ class CalibrationNuisance:
     def defaults(self):
         """Starting values of the fitted sites."""
         k = self.n_obs - 1
-        out = {self._site("flux"): 0.1}
+        out = {self._site("flux"): self.flux_start}
         if self.gains:
             out[self._site("gain")] = onp.ones(k)
         if self.offsets:
@@ -732,9 +760,7 @@ class _RadioTerm(eqx.Module):
         nuis = self.nuisance
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
-        scene = self.scene
-        if not isinstance(scene, SourceModel):
-            scene = scene(values)
+        scene = self.scene(values)
 
         def chunk(a):
             model = _model_points(

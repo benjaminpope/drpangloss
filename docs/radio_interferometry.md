@@ -1,5 +1,8 @@
 # Radio interferometry
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 [`virgil.radio`](api/radio.md) fits calibrated complex visibilities at
 arbitrary (u, v) points, the data of any radio or millimetre array whose
 visibilities are in a CASA measurement set. Any [source model](source_models.md) works, including a pixel
@@ -40,8 +43,11 @@ first use.
   `w₁ + w₂`.
 * A weight is `1/σ²` for each of the real and imaginary parts (CASA's
   meaning). `WEIGHT_SPECTRUM` is used if present, otherwise `WEIGHT`.
-* `ddid` and `obs` (`DATA_DESC_ID`, `OBSERVATION_ID`) are relabelled
-  0..n−1 in sorted order; the originals are kept in `ddid_ids`, `obs_ids`.
+* `obs` (`OBSERVATION_ID`) is relabelled 0..n−1 in sorted order, the
+  originals kept in `obs_ids`. `ddid` numbers the sorted
+  (`DATA_DESC_ID`, observation) pairs, so a concatenated set in which one
+  `DATA_DESC_ID` spans several observations gets a label, and an error
+  scale, for each; `ddid_ids` holds each label's original `DATA_DESC_ID`.
 
 ## Reading data
 
@@ -64,8 +70,11 @@ The model at a point `k` of observation `e` is
 with the total flux `F` (Jy), relative gains `g_e`, phase-centre offsets
 `(δα_e, δδ_e)` in mas, a spectral index `α` and an optional Gaussian taper
 `T` (a convolution of the image). The reference observation has `g = 1` and no
-offset. Each ddid `d` has an error scale `s_d` multiplying its errors, fitted
-with a log-uniform prior. `CalibrationNuisance` holds this configuration
+offset. Each ddid label `d` has an error scale `s_d` multiplying its errors, fitted
+with a log-uniform prior. The spectral index `α` has the prior
+`Uniform(0, 5)` by default, which excludes the falling spectra of
+synchrotron or free-free sources: pass `priors(alpha=(-3, 5))` for those, or
+`alpha=False` to fix it at 0. `CalibrationNuisance` holds this configuration
 and the default priors:
 
 ```python
@@ -112,7 +121,9 @@ that the image is the sky times the beam.
 
 `dartboard_folds(data, k=5)` splits the data into `k` folds for
 cross-validation by cells of the uv plane (annuli in q, sectors in the
-azimuth mod π), so that a point and its Hermitian partner, and neighbouring
-points of an integration, never straddle a train/test split. Fit with
+azimuth mod π), so that a point and its Hermitian partner never straddle a
+train/test split and most neighbouring points share a fold (points either
+side of a cell edge can still fall in different folds, so scores can be
+slightly optimistic). Fit with
 `term(..., mask=fold != i)` and score the held-out points with
 `chi2_by_ddid(..., mask=fold == i)`.

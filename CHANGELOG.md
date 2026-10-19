@@ -27,6 +27,10 @@ Provisional in 0.4:
   `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
   `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis` and `gp_priors`;
   and in `virgil.fields`, `MultipoleField` and `multipole_field_priors`;
+- the module `virgil.radio` (new: complex visibilities from CASA measurement
+  sets with per-observation calibration nuisances; instrument-neutral, with
+  the spectral-index prior `Uniform(0, 5)` and the data-derived reference
+  frequency and offset bound among its defaults);
 - the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
   `gp_members`, `GPFit` and `EvidenceGrid`;
 - `virgil.svi` (`variational`);

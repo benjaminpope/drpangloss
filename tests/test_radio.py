@@ -24,7 +24,13 @@ from virgil._geometry import _FT_DEFAULTS
 from virgil._utils import mas2rad, rad2mas
 from virgil.radio import C_LIGHT
 
-jax.config.update("jax_enable_x64", True)
+
+@pytest.fixture(autouse=True)
+def float64():
+    """Tight tolerances need float64; opt in locally, as AGENTS.md asks."""
+    with jax.enable_x64(True):
+        yield
+
 
 PIXEL = 2.0  # mas
 NPIX = 64
@@ -357,16 +363,6 @@ def test_from_arrays_validation():
         ComplexVisData.from_arrays([1.0], [1.0], [1 + 0j], [0.0], 230e9)
     with pytest.raises(ValueError, match="finite"):
         ComplexVisData.from_arrays([1.0], [1.0], [onp.nan + 0j], [1.0], 230e9)
-    with pytest.raises(ValueError, match="several observations"):
-        ComplexVisData.from_arrays(
-            [1.0, 2.0],
-            [1.0, 2.0],
-            [1 + 0j] * 2,
-            [1.0] * 2,
-            230e9,
-            ddid=[0, 0],
-            obs=[0, 1],
-        )
 
 
 def test_select_keeps_labels():
@@ -577,3 +573,138 @@ def test_defaults_come_from_the_data():
     assert float(custom["cal.alpha"].high) == 3.0
     with pytest.raises(ValueError, match="unknown"):
         nuis.priors(bogus=(0, 1))
+
+
+def test_model_and_term_in_float32():
+    data = _data(n=400)
+    nuis = CalibrationNuisance(data)
+    values = _values(
+        nuis,
+        **{"cal.flux": 0.3, "cal.gain": [1.1], "cal.offset": [[4.0, -2.0]]},
+    )
+    scene = _image()
+    ref = onp.asarray(data.model(scene, values, nuis))
+    ref_res = onp.asarray(
+        data.term(lambda v: scene, nuis, chunk_size=150)(values)
+    )
+    with jax.enable_x64(False):
+        data32 = ComplexVisData.from_arrays(
+            data.u,
+            data.v,
+            data.vis,
+            data.weight,
+            data.freq,
+            ddid=data.ddid,
+            obs=data.obs,
+        )
+        nuis32 = CalibrationNuisance(data32)
+        values32 = {
+            k: np.asarray(v, dtype=np.float32) for k, v in values.items()
+        }
+        scene32 = Image(
+            onp.asarray(scene.log_brightness, dtype=onp.float32),
+            PIXEL,
+            ft="dft",
+        )
+        got = onp.asarray(data32.model(scene32, values32, nuis32))
+        res = onp.asarray(
+            data32.term(lambda v: scene32, nuis32, chunk_size=150)(values32)
+        )
+        assert got.dtype == onp.complex64 and res.dtype == onp.float32
+    assert onp.linalg.norm(got - ref) / onp.linalg.norm(ref) < 1e-3
+    assert onp.linalg.norm(res - ref_res) / onp.linalg.norm(ref_res) < 1e-2
+
+
+def test_ddid_shared_by_two_observations():
+    rng = onp.random.default_rng(4)
+    n = 300
+    obs = rng.integers(0, 2, n)
+    data = ComplexVisData.from_arrays(
+        rng.uniform(-1e6, 1e6, n),
+        rng.uniform(-1e6, 1e6, n),
+        onp.ones(n, complex),
+        onp.ones(n),
+        230e9,
+        ddid=7,
+        obs=obs + 20,
+    )
+    # one original ddid, two labels (one per observation)
+    assert data.ddid_ids == (7, 7) and data.ddid_obs == (0, 1)
+    assert data.obs_ids == (20, 21)
+    nuis = CalibrationNuisance(data)
+    assert nuis.priors()["cal.sigma"].batch_shape == (2,)
+    assert len(data.select(ddids=[7])) == n
+    assert len(data.select(ddids=[7], obs=[21])) == int(obs.sum())
+
+
+def test_term_needs_a_function_of_the_values():
+    data = _data(n=50)
+    nuis = CalibrationNuisance(data)
+    with pytest.raises(TypeError, match="function"):
+        data.term(_image(), nuis)
+
+
+class _FakeTable:
+    """The columns of a CASA table query, as `read_ms` reads them."""
+
+    def __init__(self, cols):
+        self.cols = cols
+
+    def getcol(self, name, start=0, nrow=-1, incr=1):
+        x = self.cols[name]
+        return x[..., ::incr]
+
+    def colnames(self):
+        return list(self.cols)
+
+    def iscelldefined(self, name, row):
+        return name in self.cols
+
+
+def test_read_ddid_applies_the_casa_convention_without_casatools():
+    """CASA's DATA is V* with u = +UVW[0] ν/c (pinned by test 9 with casatools).
+
+    A fake table holds the DATA a point source gives under that rule; the
+    reader must undo it, so the test runs in CI where casatools is missing.
+    """
+    from virgil.radio import _read_ddid
+
+    rng = onp.random.default_rng(8)
+    nrow, nchan = 40, 3
+    freq = 230e9 + 1e8 * onp.arange(nchan)
+    uvw = rng.uniform(-300, 300, (3, nrow))
+    u = uvw[0][None] * freq[:, None] / C_LIGHT
+    v = uvw[1][None] * freq[:, None] / C_LIGHT
+    x, y = 300.0 * mas2rad, 100.0 * mas2rad
+    true = onp.exp(-2j * onp.pi * (u * x + v * y))  # (nchan, nrow), virgil's V
+    data = onp.stack([onp.conj(true), onp.conj(true)])  # CASA stores V*
+    cols = {
+        "DATA": data,
+        "FLAG": onp.zeros(data.shape, bool),
+        "FLAG_ROW": onp.zeros(nrow, bool),
+        "UVW": uvw,
+        "TIME": onp.arange(nrow, dtype=float),
+        "ANTENNA1": onp.zeros(nrow, int),
+        "ANTENNA2": onp.ones(nrow, int),
+        "OBSERVATION_ID": onp.zeros(nrow, int),
+        "WEIGHT": onp.full((2, nrow), 4.0),
+    }
+    part = _read_ddid(
+        _FakeTable(cols),
+        (0, 1),
+        freq,
+        1,
+        "DATA",
+        virgil.radio.MS_CONJUGATE,
+        virgil.radio.MS_U_SIGN,
+    )
+    part["ddid"] = onp.zeros(part["u"].size, dtype=onp.int64)
+    read = ComplexVisData.from_arrays(**part)
+    nuis = CalibrationNuisance(
+        read, gains=False, offsets=False, sigmas=False, alpha=False
+    )
+    model = onp.asarray(
+        read.model(PointSource(dra=300.0, ddec=100.0), {"cal.flux": 1.0}, nuis)
+    )
+    onp.testing.assert_allclose(onp.asarray(read.vis), model, atol=1e-12)
+    assert onp.all(onp.asarray(read.weight) == 8.0)
