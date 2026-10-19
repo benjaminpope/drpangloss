@@ -72,6 +72,10 @@ plots = [
 legacy = [
   "astroquery>=0.4.7",
 ]
+# ft="nufft" for large images and many uv points (nufftax, pure JAX).
+nufft = [
+  "nufftax>=0.6",
+]
 # Keplerian orbits (virgil.orbits) solve Kepler's equation with jaxoplanet.
 orbits = [
   "jaxoplanet>=0.1.0",
@@ -91,6 +95,7 @@ pipeline = [
   "virgil-astro[plots]",
 ]
 test = [
+  "nufftax>=0.6",
   "pytest>=8.0",
   "pytest-xdist>=3.5",
   "pytest-timeout>=2.3",
@@ -110,7 +115,7 @@ docs = [
 ]
 dev = [
   # orbits, so the orbit and alias tests run locally instead of skipping.
-  "virgil-astro[test,docs,orbits]",
+  "virgil-astro[test,docs,orbits,nufft]",
   "ruff==0.11.0",
   "pre-commit",
   "build",

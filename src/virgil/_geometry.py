@@ -7,6 +7,8 @@ i.e. counter-clockwise from the top in a plot with East to the left. This
 matches the coordinate grid produced by :func:`image_coordinates`.
 """
 
+import warnings
+
 import equinox as eqx
 import jax
 import jax.numpy as np
@@ -35,13 +37,15 @@ def pixel_offsets(npix, pixel_scale_mas):
     return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
 
 
-def image_visibilities(brightness, uu, vv, pixel_scale_mas):
-    """Exact Fourier transform of a pixel image at arbitrary frequencies.
+def image_visibilities(brightness, uu, vv, pixel_scale_mas, ft="auto"):
+    """Fourier transform of a pixel image at arbitrary frequencies.
 
     Each pixel is a point at its centre: ``V = Σ I[row, col] exp(-2πi (u x_col
     + v y_row))``, the sign convention of :func:`offset_phase`, done at
     ``Precision.HIGHEST`` (the A100/H100 default, TF32, is ~1e-3 accurate).
-    On a regular uv grid :func:`grid_visibilities` is faster.
+    On a regular uv grid :func:`grid_visibilities` is faster. Large problems
+    use the optional ``nufftax`` transform (see ``ft``), accurate to a
+    requested tolerance rather than exactly.
 
     Parameters
     ----------
@@ -53,6 +57,10 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
         broadcastable shapes.
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
+    ft : {"auto", "dft", "nufft"}
+        ``"dft"`` is the exact sum; ``"nufft"`` needs ``pip install
+        "virgil-astro[nufft]"``; ``"auto"`` picks the faster by problem size
+        (:func:`_use_nufft`) and uses the DFT without nufftax.
 
     Returns
     -------
@@ -61,8 +69,17 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
     """
     brightness = np.asarray(brightness)
     uu, vv = np.broadcast_arrays(uu, vv)
-    vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
-    return vis.reshape(np.shape(uu))
+    shape = np.shape(uu)
+    uu, vv = np.ravel(uu), np.ravel(vv)
+    if ft not in ("auto", "dft", "nufft"):
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    if ft == "auto":
+        ft = "nufft" if _use_nufft(brightness.shape, uu.size) else "dft"
+    if ft == "nufft":
+        vis = _nufft(brightness, uu, vv, pixel_scale_mas)
+    else:
+        vis = _dft(brightness, uu, vv, pixel_scale_mas)
+    return vis.reshape(shape)
 
 
 def _fourier_matrix(freq_per_rad, npix, pixel_scale_mas):
@@ -78,6 +95,76 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
     highest = jax.lax.Precision.HIGHEST
     partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
     return np.sum(partial * cols, axis=-1)
+
+
+# virgil#75: nufftax (pure JAX) beats the DFT only above a work size
+# M·N1·N2 and for images of at least _NUFFT_MIN_SIDE pixels. A100 f32
+# benchmarks (ozstar_scripts#35, job 18762629): 4-20x faster at 256² with
+# 1e4-1e5 points, no faster below ~1e8 or at 64². The CPU value is provisional.
+_NUFFT_WORK = {"gpu": 1e8, "cpu": 3e7}
+_NUFFT_MIN_SIDE = 128
+# Requested relative tolerance (of the zero-baseline visibility).
+_NUFFT_EPS_F32 = 1e-6
+_NUFFT_EPS_F64 = 1e-12
+
+
+def _nufftax():
+    """The nufftax package, with an install hint if it is missing."""
+    try:
+        import nufftax
+    except ImportError as err:
+        raise ImportError(
+            'ft="nufft" needs nufftax: pip install "virgil-astro[nufft]".'
+        ) from err
+    return nufftax
+
+
+def _nufftax_available():
+    try:
+        _nufftax()
+    except ImportError:
+        return False
+    return True
+
+
+def _use_nufft(shape, n_points):
+    """Whether ``ft="auto"`` uses the NUFFT: large enough, and installed.
+
+    Without nufftax a problem above the threshold warns once and uses the DFT.
+    """
+    nrow, ncol = shape
+    backend = jax.default_backend()
+    work = _NUFFT_WORK["gpu" if backend == "gpu" else "cpu"]
+    if min(nrow, ncol) < _NUFFT_MIN_SIDE or n_points * nrow * ncol < work:
+        return False
+    if _nufftax_available():
+        return True
+    warnings.warn(
+        "nufftax would be faster for this image and number of points: "
+        'pip install "virgil-astro[nufft]".',
+        stacklevel=4,
+    )
+    return False
+
+
+def _nufft(brightness, uu, vv, pixel_scale_mas, eps=None):
+    """:func:`_dft` by nufftax's type-2 transform, to relative tolerance eps."""
+    nufft2d2 = _nufftax().nufft2d2
+    dtype = np.result_type(brightness.dtype, np.float32)
+    if eps is None:
+        eps = _NUFFT_EPS_F64 if dtype == np.float64 else _NUFFT_EPS_F32
+    nrow, ncol = brightness.shape
+    # x pairs with the last axis. V = Σ f[k] exp(+i k t) exp(+i t (1 - n%2)/2) over modes k = index - n//2,
+    # t = 2π s f (rad per pixel): the DFT's centre is (n - 1)/2, not n//2.
+    t_row = 2.0 * np.pi * mas2rad * pixel_scale_mas * vv.astype(dtype)
+    t_col = 2.0 * np.pi * mas2rad * pixel_scale_mas * uu.astype(dtype)
+    # nufftax wraps t modulo 2π, but the half-pixel phase on an even axis is
+    # 4π-periodic: transform the wrapped t and apply that phase to the original.
+    wrap = lambda t: t - 2.0 * np.pi * np.round(t / (2.0 * np.pi))  # noqa: E731
+    source = brightness.astype(np.result_type(dtype, np.complex64))
+    vis = nufft2d2(wrap(t_col), wrap(t_row), source, eps=eps, isign=1)
+    shift = 0.5 * ((1 - nrow % 2) * t_row + (1 - ncol % 2) * t_col)
+    return vis * np.exp(1j * shift)
 
 
 def grid_visibilities(brightness, uu_axis, vv_axis, pixel_scale_mas):

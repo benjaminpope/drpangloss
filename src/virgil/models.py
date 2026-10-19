@@ -1927,13 +1927,14 @@ def circular_support(npix, pixel_scale_mas, radius_mas, inner_radius_mas=0.0):
 
 
 def _pixel_visibilities(
-    fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None
+    fluxes, pixel_scale_mas, rotation_deg, u, v, wavel, grid=None, ft="auto"
 ):
     """Fourier transform of pixel fluxes centred on the origin, unnormalized.
 
     Uses the exact matrix Fourier transform when the samples lie on a uv
     ``grid`` whose rotation matches the pixels' (and there is a single
-    wavelength), and the direct transform otherwise.
+    wavelength), and the direct transform (``ft``, see
+    [`image_visibilities`][virgil._geometry.image_visibilities]) otherwise.
     """
     matched = (
         grid is not None
@@ -1947,7 +1948,7 @@ def _pixel_visibilities(
         )
         return vis.ravel()[grid.index]
     uu, vv = rotate(u / wavel, v / wavel, -rotation_deg)
-    return image_visibilities(fluxes, uu, vv, pixel_scale_mas)
+    return image_visibilities(fluxes, uu, vv, pixel_scale_mas, ft)
 
 
 class Image(Component):
@@ -1989,6 +1990,10 @@ class Image(Component):
         data (``data.uv_grid.rotation_deg``, e.g. AMI data at their
         parallactic angle) is transformed with an exact two-sided matrix
         Fourier transform, which is much faster.
+    ft : {"auto", "dft", "nufft"}, optional
+        Transform for irregular uv points: the exact sum, a non-uniform FFT
+        (``pip install "virgil-astro[nufft]"``) or, by default, whichever is
+        faster for the problem size.
 
     Examples
     --------
@@ -2001,6 +2006,7 @@ class Image(Component):
     support: jax.Array | None
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2011,7 +2017,13 @@ class Image(Component):
         dra=0.0,
         ddec=0.0,
         rotation_deg=0.0,
+        ft="auto",
     ):
+        if ft not in ("auto", "dft", "nufft"):
+            raise ValueError(
+                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
+            )
+        self.ft = ft
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
@@ -2095,7 +2107,7 @@ class Image(Component):
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
         return image_visibilities(
-            self.brightness, uu, vv, self.pixel_scale_mas
+            self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
 
     def model_on_grid(self, u, v, wavel, grid):
@@ -2107,6 +2119,7 @@ class Image(Component):
             v,
             wavel,
             grid,
+            self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
@@ -2155,6 +2168,10 @@ class FlaredDisk(Component):
         star, where the surface is singular.
     pixel_scale_mas : float
         Pixel size of that grid in milliarcseconds.
+    ft : {"auto", "dft", "nufft"}, optional
+        Transform for irregular uv points: the exact sum, a non-uniform FFT
+        (``pip install "virgil-astro[nufft]"``) or, by default, whichever is
+        faster for the problem size.
     skew : float or array-like, optional
         Truncation $\alpha$ of the ring's inner edge (default 0, symmetric).
     aspect : float or array-like, optional
@@ -2180,6 +2197,7 @@ class FlaredDisk(Component):
     symmetric: jax.Array
     npix: int = eqx.field(static=True)
     pixel_scale_mas: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2196,7 +2214,13 @@ class FlaredDisk(Component):
         flux=1.0,
         dra=0.0,
         ddec=0.0,
+        ft="auto",
     ):
+        if ft not in ("auto", "dft", "nufft"):
+            raise ValueError(
+                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
+            )
+        self.ft = ft
         self.radius = np.asarray(radius, dtype=float)
         self.fwhm = np.asarray(fwhm, dtype=float)
         self.inc = np.asarray(inc, dtype=float)
@@ -2236,7 +2260,7 @@ class FlaredDisk(Component):
         xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
         pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
         return image_visibilities(
-            pixels / np.sum(pixels), uu, vv, self.pixel_scale_mas
+            pixels / np.sum(pixels), uu, vv, self.pixel_scale_mas, self.ft
         )
 
     def _centred_image(self, xx, yy, pixel_scale_mas):

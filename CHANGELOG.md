@@ -39,6 +39,10 @@ Provisional in 0.4:
 
 ### Added
 
+- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`:
+  with the optional `nufft` extra (nufftax), large images with many irregular
+  uv points use a non-uniform FFT, chosen automatically by size (virgil#75).
+
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
   `largest_mas` (a cap) cannot do: `largest_mas=54` used to give HR 4049 a

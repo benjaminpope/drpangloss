@@ -118,13 +118,17 @@ Why:
 
 ### 6. Fourier backends
 
-Visibilities are the exact separable DFT, or the exact two-sided MFT for
-data on uv lattices (Stage 2b). A NUFFT backend (jax-finufft) was built and
-benchmarked in Stage 2 and then **removed** (issue #75): accurate, but on a
-GPU its per-call planning cost (jax-finufft #157) made it slower than the
-DFT except for very large problems. Revisit only when jax-finufft can reuse
-plans; its code is in the git history of PR #71. A padded FFT with
-interpolation is never used.
+Visibilities are the exact separable DFT, the exact two-sided MFT for data
+on uv lattices (Stage 2b), or, chosen automatically by problem size, a NUFFT
+through nufftax (pure JAX; optional `nufft` extra; issue #75, reinstated
+2026-10). jax-finufft was built and benchmarked in Stage 2 and removed: it
+re-creates cuFFT plans on every call (jax-finufft #157, a flat 6-7 ms on the
+GPU). nufftax has no such cost (0.15-0.7 ms value+grad on an A100), so
+jax-finufft is no longer needed. `ft="auto"` uses the NUFFT when
+`M·N1·N2 >= _NUFFT_WORK[backend]` and `min(N1, N2) >= 128` (provisional:
+GPU 1e8, CPU 3e7, named constants in `_geometry`); `ft="dft"` and
+`ft="nufft"` force a choice. A `UVGrid` match still takes the MFT. A padded
+FFT with interpolation is never used.
 
 Why:
 - The DFT is exact to float32 rounding (accuracy table below) and cheap for
@@ -137,8 +141,12 @@ Why:
   and for measured AMI performance (0.14 degrees), but **not** for AMI at
   1e-4 contrast (sigma_CP of about 2e-5 rad). There, use the DFT or float64
   NUFFT.
-- jax-finufft re-plans on every call (issue #157) and uses private JAX
-  internals (fine on 0.9.1, vmap broke on 0.10.2).
+- jax-finufft re-planned on every call (issue #157) and used private JAX
+  internals (vmap broke on 0.10.2); nufftax is plain JAX and vmaps.
+- nufftax wraps t = 2π s u modulo 2π, but the even-axis half-pixel phase
+  exp(+i t/2) is 4π-periodic: `_nufft` transforms the wrapped t and applies
+  that phase to the original t. Default eps is 1e-6 in float32 (relative to
+  V(0)) and 1e-12 in float64.
 - Even N is a trap for any FFT-based method: putting the image centre at
   (N-1)/2 inside a grid centred on N/2 gives a half-pixel offset.
 
@@ -284,14 +292,14 @@ LM metric with whitened latents gives the same linear algebra.
 | Basis and decoder parameterisations | zodiax 0.6 `Map`/`Mask`/decoders are released |
 | MGVI/geoVI | Not planned |
 | Bandwidth-smearing forward model | A real field-of-view need |
-| Reinstating a NUFFT backend (issue #75; code in PR #71) | jax-finufft reuses plans (jax-finufft #157) and we have datasets of ≳10⁵ irregular points with ≳256² images |
+| NUFFT thresholds and eps (`_NUFFT_WORK`, `_NUFFT_EPS_*`) | The CPU benchmark on OzSTAR is in (the CPU table below is pending) |
 
 The OzSTAR GPU benchmark was run on 2026-09-30; see "GPU benchmark results"
 below. Any re-run is done by the user, never by Claude.
 
 ## GPU benchmark results
 
-The NUFFT backend was removed after Stage 3 (issue #75); its code, tests and benchmark scripts are in the git history of PR #71.
+The jax-finufft backend was removed after Stage 3 (issue #75); its code is in the git history of PR #71. It was reinstated through nufftax (below).
 
 Run 2026-09-30 on OzSTAR (NT) node gina10, one NVIDIA A100-SXM4-80GB,
 jax 0.10.2 with the conda-forge CUDA build of jax-finufft, by
@@ -318,29 +326,25 @@ V(0) = 1):
 - FINUFFT's float64 GPU accuracy is fine here (2.8e-8), so the concern
   from jax-finufft issue #162 does not apply to this build.
 
-**Speed** (jitted value + gradient, ms):
+**Speed** (jitted value + gradient of Σ|V|², A100, float32, ms; DFT / nufftax,
+speed-up). DFT from job 17776437; nufftax 0.6 from job 18762629
+(ozstar_scripts#35).
 
-![GPU timings](figures/bench_ft_gpu.png)
-
-| float32, ms | 10³ pts | 10⁴ | 10⁵ |
+| Image | 10³ points | 10⁴ | 10⁵ |
 | --- | --- | --- | --- |
-| DFT 64² / NUFFT 64² | 0.14 / 6.1 | 0.24 / 6.7 | 0.96 / 6.8 |
-| DFT 128² / NUFFT 128² | 0.15 / 6.8 | 0.41 / 7.1 | 2.3 / 6.8 |
-| DFT 256² / NUFFT 256² | 0.23 / 6.4 | 0.87 / 6.7 | 6.5 / 7.0 |
-| DFT 512² / NUFFT 512² | 0.40 / 7.0 | 2.6 / 6.5 | 20 / 6.9 |
+| 64² | 0.14 / 0.15 (0.9×) | 0.24 / 0.28 (0.9×) | 0.96 / 1.08 (0.9×) |
+| 128² | 0.15 / 0.18 (0.8×) | 0.41 / 0.20 (2×) | 2.3 / 0.49 (5×) |
+| 256² | 0.23 / 0.18 (1.3×) | 0.87 / 0.20 (4×) | 6.5 / 0.37 (18×) |
+| 512² | 0.40 / 0.22 (1.8×) | 2.6 / 0.24 (11×) | 20 / 0.38 (52×) |
+| 1024² | 0.87 / 0.55 (1.6×) | 7.3 / 0.56 (13×) | |
 
-- The NUFFT costs a flat ~7 ms per call, whatever the size: jax-finufft
-  re-plans on every call (its issue #157), and that dominates.
-- The DFT is therefore faster on the GPU everywhere except the largest
-  case, 512² with 10⁵ points (20 against 7 ms; 26 against 7 in float64).
-  They break even at npix² × points ≈ 7 × 10⁹ (256² × 10⁵).
+- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets `_NUFFT_WORK["gpu"]`
+  and the 128-pixel minimum side.
+- The earlier jax-finufft timings (flat ~7 ms) are superseded.
 - The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32
   (20 against 886 ms).
 
-**Rule of thumb, updated:** use the DFT (or the MFT for lattices) by
-default on both CPU and GPU. Use the NUFFT on a CPU above ~10³ irregular
-points (npix² × points ≳ 3 × 10⁷), and on a GPU only for very large
-problems (npix² × points ≳ 10¹⁰) until jax-finufft can reuse its plans.
+**CPU table:** pending (OzSTAR measurement); `_NUFFT_WORK["cpu"]` = 3e7 is provisional.
 
 ## Stage log
 

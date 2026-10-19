@@ -268,3 +268,7 @@ Take a Gaussian approximation at the fit in the same flat coordinate and carry i
 virgil never switches on JAX's 64-bit mode globally. Library code runs in float32 by default and is correct in float64 too. Fitting entry points such as [`fit`][virgil.fitting.fit] optimize in a local float64 context (`virgil._precision.run_in`), casting model, data and priors on the way in. Pass `dtype="float32"` to `fit` for a faster, less precise run.
 
 Float32 is why absolute times are stored as `dt`. Matrix products and Fourier transforms over pixels use the highest matmul precision, because on A100 and H100 GPUs the default silently uses TF32, with a relative error of about $10^{-3}$.
+
+### Fourier transform of pixel images
+
+An [`Image`][virgil.models.Image] (and the `FlaredDisk` family) computes visibilities at irregular uv points as an exact sum over pixels, or, with the optional `nufft` extra (`pip install "virgil-astro[nufft]"`), a non-uniform FFT from nufftax. The argument `ft` is `"auto"` (default), `"dft"` or `"nufft"`. With `"auto"` virgil uses the NUFFT only where it is faster: images of 128² pixels or larger and roughly $10^4$ or more points (the product of points and pixels sets the threshold, lower on a CPU than on a GPU), and the exact sum otherwise or when nufftax is not installed. The NUFFT agrees with the sum to a relative tolerance of $10^{-6}$ in float32 and $10^{-12}$ in float64. Data on a regular uv lattice, such as AMI, use the exact matrix Fourier transform whatever `ft` says.
