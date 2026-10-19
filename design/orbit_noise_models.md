@@ -1,271 +1,186 @@
-# Instrument noise models in the orbit search
+# Orbit fits with calibrated data and virgil-vlti noise models
 
-Status (2026-10-20): **design for review, nothing implemented.** Extends
-`instrument_noise_in_pipelines.md` (the `noise_spec` interface, target 0.4.1)
-to `OrbitPipeline` and the engine under it (`epochs.epoch_positions`,
-`aliases.fit_orbit_aliases`). It replaces nothing in `orbit_pipeline.md`
-except row 1g ("hierarchical gains"), which this note supersedes.
+Status: design for review, no code. Scope: virgil `OrbitPipeline`/`fit_orbit_aliases`, the
+virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits.py`). Written
+2026-10-20 after the gallery run (OzSTAR 18821038/18826461/18826486, virgil e3e1f2d, vv
+461723b, results in vv#147).
 
-## Why
+## 1. What went wrong (checked against code and data)
 
-The orbit search treats quoted errors as white, with a free error scale per
-block (`epochs._Surface`) and a tempering factor `f` for correlated channels
-(`virgil.tempering`). Spectro-interferometric data break that assumption: when
-calibration errors are a gain per frame, common to all channels, `f`
-approaches the number of channels per (frame, baseline). Three things then
-fail together:
-- the per-night peak gaps are overconfident by about `f`;
-- unmodelled gains move the per-night peaks;
-- the night flags, applied to the untempered gaps, do not fire.
+1. **The GRAVITY data were never calibrated.** All 144 GRAVITY files of the 11 GRAVITY gallery
+   systems are `SINGLE_SCI_VIS` (ESO PRO CATG; pipeline gravity/1.9.7): reduced, *not*
+   calibrated. Only NN Del (PIONIER, `TARGET_OIDATA_CALIBRATED`) is calibrated. vv's own Track B
+   rule (`design/trackb_criteria.md` §GRAVITY) says V² from these files must not be used: it
+   carries the transfer function T(frame, baseline, λ), a multiplicative bias that a free error
+   scale cannot remove. The gallery path put V² back (`reanalyse_orbits._read_with_vis`) with one
+   V² amplitude per night (`aliases._epoch_residuals`, `vis_amp`) as the only correction. One
+   scalar per night cannot absorb a transfer function that changes per frame, baseline and
+   channel. This is the dominant cause of χ²/N 22–104 per night on HD 9312 and of its tempering
+   factor 1/854. (Gl 229's data are `DUAL_SCI_VIS` MEDIUM: also uncalibrated.)
+2. **HIGH resolution, unbinned.** 9 of the 11 GRAVITY systems are `INS SPEC RES = HIGH` (about
+   1,400 channels per baseline inside the Track B ranges), fitted at native resolution. Channel-
+   correlated residuals then dominate, and the compiled programs are large. The CPU
+   "LLVM … Unable to allocate section memory" aborts (HD 188088, HD 70937, HD 224974) are
+   plausibly this; not confirmed.
+3. **The noise machinery exists but the orbit engine refuses it.**
+   - virgil marginalizes channel-shared calibration gains analytically: `virgil.gains`
+     (groups telescope, baseline, chromatic, external `modes`), `OIData.with_gains`,
+     `OIData.with_closure_offsets`, with the exact log-determinant in
+     `likelihood._whiten_with_log_norm`.
+   - But `fit_orbit_aliases` scores every epoch on `epochs._Surface`, whose constructor calls
+     `_check_marginal_data` and raises `NotImplementedError` for data with gains or closure
+     offsets, because the analytic error-scale marginalization assumes C = s²D.
+   - The `vis_amp` profile in `aliases._epoch_residuals` rebuilds the model as `obs + r·err`,
+     which is valid only for diagonal errors.
+   - `orbit_search` profiles gains (one dof each) instead of marginalizing them: an
+     inconsistency between the two engines.
+4. **virgil-vlti already does the data side.**
+   - `virgil-vlti-calibrate` calibrates `*_SCI_VIS` with same-night `*_CAL_VIS` and is validated
+     against ESO's `gravity_viscal` (V² 0.12%, closure phases 0.06°).
+   - It windows (`--window`) and bins (`--bin`).
+   - It writes calibration-template modes beside each file (`--template`, with
+     `--tf-error propagated` so that nothing is counted twice) and calibrator-diameter modes
+     (`--cal`/`--diameter`, the `rel-` keys for `with_gains(modes=…)`).
+   - It screens calibrators (`calpca.screen_calibrators`).
+   - It ships the GRAVITY single-field MEDIUM template. The HIGH template is virgil-vlti#40
+     (open), and calibration fixes are in virgil-vlti#42 (open).
+   - The pair test (`pairs`, `templates.gain_template_from_pairs`) gives PIONIER gain widths.
+   - The step from files to a virgil `OIData` with gains exists only as tutorial code
+     (`docs/templates.md`, `stack_modes`). That is where mode/sample misalignment bugs would
+     come from.
+5. **Calibrators are partly found.** vv's `~/data/eso_binaries/trackb/gravity_calibrators.json`
+   (same-programme candidates, 2.9 GB, never downloaded) covers HD 41255 (7 of 14 science files),
+   HD 188088, ο Leo, HD 70937, HD 210763 and κ Vel. It has nothing for AK For, HD 224974,
+   HD 9312, LL Aqr or V963 Cen. Several candidates are themselves programme binaries (AK For,
+   HD 70937, HD 41255, ο Leo, V963 Cen, HD 224974, HD 210763, HD 188088): unusable as
+   calibrators.
 
-The search then seeds from sidelobes, and tempering by `1/f` flattens the
-evidence until no orbit stands out.
+## 2. Physics the design rests on
 
-**Worked example (virgil-validation#147, GRAVITY).** HD 9312 has raw χ²/N of
-22–104 on every night and `f` = 854. On 5 of 10 nights the best peak is a
-north–south sidelobe, and no flag fires. The orbit beats a single star by
-2.4 nats, and the published period ranks 30th of 200 bands.
+- **Calibration first, nuisances second.** Calibrated V² = V²_true × (1 + residual gain). The
+  residual is small (GRAVITY MEDIUM template: PCs of 1.9%, 0.52%, 0.43%, 0.29% per channel in V²,
+  41–81% telescope-based; closure phases 0.33°, 0.25°; PIONIER pair test 0.55%/telescope and
+  0.45%/baseline on |V|) and shared by a frame's channels. Marginalizing it is what turns 1,400
+  channels into the few numbers they really are.
+- **What V² still says once gains are marginalized.** Per-frame grey gains absorb the grey part
+  of V². A binary's V² signal survives through its chromatic modulation and its pattern between
+  baselines. For HD 9312 (separation ≤ 5.5 mas; λ/B ≈ 3.5 mas at 2.2 µm on 130 m) that is about
+  0.2 fringe cycles across K, so most position information comes from closure phases. This is
+  the honest information content. The evidences will be weaker than white noise claims and far
+  stronger than tempering by 1/854.
+- **Sidelobes are real ambiguities, not noise.** A single night of AT snapshots has elongated
+  (u, v) coverage, so its χ² surface has sidelobes along the poorly sampled direction. HD 9312's
+  wrong nights are off in Dec by 3–15 mas: that fits. A right noise model sets the relative
+  heights of the peaks correctly but does not remove them. The orbit must choose between them:
+  keep several peaks per night and flag implausible ones (§3.2.5).
+- **Binning HIGH to R ≈ 500 (8 channels) costs nothing for a continuum binary.** The phase change
+  across one bin for s = 15 mas, B = 130 m is about 0.01 cycle. Keep the Brγ window
+  (2.155–2.175 µm) out, as Track B does.
+- **Primary diameter.** Keep the UD primary (virgil 1c). Calibrator-diameter uncertainties enter
+  as modes from virgil-vlti, not as inflated errors.
 
-virgil already has the right likelihood term: `OIData.with_gains` and
-`with_closure_offsets`, which `virgil.gains` marginalizes analytically.
-virgil-vlti already measures the widths: the pair test (`pairs.pair_test`) and
-the calibrator-PCA templates (`templates.template_modes`). The orbit search
-uses neither, because `_Surface` refuses data with gains
-(`epochs._check_marginal_data`).
+## 3. Design
 
-## 1. API boundary
+### 3.1 Data (virgil-vlti, no noise code in vv)
 
-**No new `noise=` argument on the engine.** The noise model travels *in the
-data*, as everywhere else in virgil. `epoch_positions` and `fit_orbit_aliases`
-accept an `OIData` (or a list of epochs) on which `with_gains` and
-`with_closure_offsets` have already been called; §2 is what lets them. A
-user of the engine applies the widths themselves.
+1. **Calibrators.**
+   - Extend the manifest to the five uncovered systems with the same archive query (ESO TAP,
+     same programme and night; then other programmes on the same night and configuration).
+   - Exclude every Track B or gallery science target and any star with known companions.
+   - Prefer `STD`/`*_CAL_VIS` products.
+   - Download to `~/data/eso_binaries/trackb/<system>/calibrators/`.
+2. **Calibrate** each night with `virgil-vlti-calibrate --tf-error propagated --template
+   gravity_single_high_combined_… --bin 8 --window 2.05 2.38`, plus calibrator diameters
+   (`--cal`/`--diameter`, so diameter modes are written). Screen with
+   `calpca.screen_calibrators`. MEDIUM systems (κ Vel, LL Aqr) use the shipped MEDIUM template
+   and `--bin 1`.
+3. **Nights without a usable calibrator: closure phases only**, with the template's closure-phase
+   modes as closure offsets. V² from `SCI_VIS` is never used again.
+4. **One loader, in virgil-vlti**, replacing the tutorial `stack_modes`:
+   - `virgil_vlti.to_oidata(paths, insname, ranges=…, observables=…) -> OIData` reads the
+     calibrated files;
+   - it applies virgil's selection, then sets `with_gains(modes=…)` and
+     `with_closure_offsets(modes=…)` from the `.template_modes.npz` / `.modes.npz` beside each
+     file, aligned sample for sample after selection, zero on flagged samples, closure-phase
+     modes per frame;
+   - tests assert that the alignment is exact, that the template widths are unchanged, and that
+     a zero-mode load equals plain `OIData`.
+   (The name is for review.)
+5. **PIONIER** (NN Del, and future PIONIER systems): files are already calibrated. Gain widths
+   come from the pair test (`gain_template_from_pairs`) through the same loader.
 
-**`OrbitPipeline` takes `noise_spec=`**, exactly as Star, Binary and Disk do
-in `instrument_noise_in_pipelines.md` §3: a `virgil.noise_spec/1` dict, a path
-to its JSON, or an object with `to_noise_spec()`. `_Pipeline.processed` calls
-`apply_noise_spec` once per epoch, and persistence, `noise_sha256` and the
-summary `noise` section are shared through `_core`. The orbit pipeline adds one
-thing: multi-night data. v1 applies **one spec to every epoch** (widths pooled
-over the nights, as the pair test measures them). A mapping `{epoch: spec}` is
-an open question (Q3).
+### 3.2 virgil (OrbitPipeline and alias engine; virgil never imports virgil-vlti)
 
-**Per-datum modes** (the calibrator-PCA templates) are not in spec v1. They
-reach virgil as the `virgil.modes/1` OIFITS tables that virgil-vlti's
-architecture review (§2, 2026-10-19) proposes, read into `with_gains(modes=)`
-and `with_closure_offsets(modes=)`, and are named by spec v2 `gains.modes`
-(`instrument_noise_in_pipelines.md` §2, "Extending"). Until that reader exists,
-GRAVITY uses spec v1 widths (§5).
+1. **Score data with gains on the marginal surface.** Two options:
+   - **R1 (recommended).** Integrate the white-noise scale numerically. Per block, C(s) = s²D +
+     UUᵀ (U from the gains or offsets). ∫ L(s) p(ln s) d ln s is taken by a fixed Gauss–Legendre
+     rule (about 16 nodes) over the existing Jeffreys range [−ln s_max, ln s_max]. Each node uses
+     `_whiten_with_log_norm`, which has the exact log det. This keeps the meaning of today's
+     evidences and stays smooth for gradients. The cost is about 16 whitenings per block, which
+     is affordable after binning.
+   - **R2.** Quoted scale (s = 1), with the template's overall width fitted (`vis_gain_modes`,
+     log-uniform about 1). It is cheaper but trusts the propagated errors.
+   Either way `_Surface` stops refusing gains. A regression test requires that zero-width gains
+   reproduce today's surface to rounding.
+2. **`vis_amp` with gains is refused.** Telescope and baseline gains supersede the per-night
+   amplitude. `vis_amp` stays only for the legacy uncalibrated path, which is labelled legacy in
+   results and on the gallery.
+3. **Tempering after whitening.** `estimate_factors` is computed on residuals whitened with the
+   gains. Acceptance: block f ≲ 3 on calibrated data. Larger values keep the existing
+   `FLAG_RANGE` warning and are reported as "noise model inadequate", never silently tempered
+   away.
+4. **One treatment of gains.** `orbit_search` profiles gains while the alias engine will
+   marginalize them. Align them (marginalize), or document the difference. This is for the
+   1e / release-review owners.
+5. **Implausible-peak flag and kept modes.**
+   - Flag a night whose best peak's separation exceeds the robust maximum of the other nights'
+     by a set factor, or that no orbit in the band visits.
+   - Carry the top M peaks per night into the band seeding, as the blind-solver design already
+     requires ("keep each night's modes").
+   - Flags are reported, never silently dropped.
+6. **Compile size.** Binning should remove the CPU aborts. If not, map the per-night kernel over
+   padded nights (`lax.map`/scan) rather than unrolling. This is the 1e session's call.
 
-| Piece | Lives in |
-| --- | --- |
-| Gains, offsets, analytic marginalization | virgil (`gains`, `_linear`); exists |
-| `noise_spec` load, validate, apply | virgil `noise_spec` (0.4.1 PR 1, planned) |
-| Gain-aware search surface, flags (§2, §4) | virgil `epochs`, `aliases` (new) |
-| `OrbitPipeline(noise_spec=)` | virgil `pipeline/orbit.py` via `_core` (0.4.1 PR 2) |
-| Pair test, spec emission | virgil-vlti `pairs`, `noise_spec_emission.md` (planned) |
-| Calibrator-PCA templates, modes OIFITS | virgil-vlti `calpca`, `templates`; HIGH in virgil-vlti#40 |
-| Per-system specs, residual pair tests, gallery runs | virgil-validation |
+### 3.3 vv
 
-virgil never imports virgil-vlti. The boundary test of
-`instrument_noise_in_pipelines.md` §1 holds: no `insname` branch in the
-engine.
+`gallery_orbits.py` reads through the loader only. The gallery marks each system's data path
+("calibrated + template gains", "closure phases only", or "legacy uncalibrated V²"). #147's
+current results are labelled legacy until rerun.
 
-## 2. Likelihood
+## 4. Validation, cheapest first
 
-**Analytically marginalized, never sampled.** A GRAVITY night has tens of
-frames × (4 telescope + 6 baseline) gains: hundreds of nuisance parameters per
-night, thousands per orbit. `virgil.gains` integrates them out as a low-rank
-covariance `C = D + U Uᵀ`, block-diagonal by frame, with `U = J τ m` and
-`J = 2 V²_model`. Widths are fixed by the spec, not fitted
-(`instrument_noise_in_pipelines.md` §2).
+1. **Unit tests (virgil, virgil-vlti).**
+   - Loader alignment.
+   - Zero-width gains reproduce today's `_Surface`.
+   - R1's quadrature matches a dense 1-D integral and a dense-Cholesky log det on a small case.
+2. **One night of HD 9312 on the laptop (≤ 2 min, bin 8).** After calibration and gains:
+   χ²/N ≈ 1, tempering f ≲ 3, and the peak set contains the published position (compared only
+   after the fit).
+3. **OzSTAR: all 12 gallery systems, blind.** Success means:
+   - the published orbits are recovered in the sky plane (Thiele–Innes) where the papers solved
+     them;
+   - HD 9312's top band is near 36.5 d;
+   - every miss is explained by flags or an absence of calibrators.
+4. **Gl 229.** The release gate stays on its current path, unchanged. Once the dual-field
+   template exists, add a dual-field in-field-calibrated Gl 229 run (`virgil-vlti --dual-field`).
+   It must still rank N = 34 first with Δlog Z > 10.
+5. **Injection–recovery** for p-value calibration (OzSTAR array).
 
-**The search surface with gains.** `_Surface.score` integrates a scale `s` per
-block out of a likelihood whose covariance is `s² D`. With gains, the proposal
-is to scale the **whole** covariance, `C(s) = s² (D + U Uᵀ)`. Then the score
-keeps its closed form, applied to the whitened χ², plus one log-determinant
-that does not depend on `s`:
+Rules: blind starts only; no noise code in vv; nothing reimplemented that virgil or virgil-vlti
+has; laptop runs ≤ 2 min, `OMP_NUM_THREADS=2`, one process.
 
-    m = −Σ_b (ν_b/2) ln χ²_{w,b} − ½ Σ_b ln det(D + U Uᵀ)_b ,
+## 5. Order and owners
 
-or the same `ln s` integral with `s_max`. `_linear.whiten_blocks` already
-returns both the whitened residuals and the half-log-determinant. The surface
-keeps the property that makes it a search surface: an overall error
-misquotation still cancels from peak gaps. A white-only scale,
-`C(s) = s² D + U Uᵀ`, is the more physical choice (`instrument_noise` §7,
-"`error_scale` with a spec"). It loses the closed form, and each node of the
-`ln s` quadrature needs its own whitening. It is Q1.
+1. Ben merges virgil-vlti#42 (calibration fixes) and #40 (HIGH template).
+2. virgil-vlti PR: the loader (§3.1.4), with tests.
+3. Calibrator manifest, download and calibration (§3.1.1–3), run as one job.
+4. virgil PR with the 1e/release-review owners: §3.2.1–3, then §3.2.5.
+5. vv PR: gallery reads via the loader; then the OzSTAR rerun and validation (§4).
 
-**Where `J` comes from.**
-- In the **per-night grid scans** (`epoch_positions`, the grid stage), take `J`
-  from the observed V², clipped at zero. `C` is then fixed per night, its
-  whitening is precomputed once, and the grid's cost is unchanged apart from
-  one `O(n·k)` product per point (k = number of modes per frame).
-- In **refinement and the alias-band fits**, take `J` from the model, as
-  `virgil.gains` does (Lachaume 2021), so that the covariance does not depend
-  on the noisy data. Each evaluation re-whitens: about 10 rank-one steps per
-  frame for spec v1, and up to about 40 with PCA modes.
+## 6. Questions for Ben
 
-**Joint alias-band fits.** `aliases._loglike` sums the gain-aware per-epoch
-score. In the Gauss–Newton kernel, the IRLS rows become the whitened rows. The
-log-determinant's curvature is left out of the step, which is safe because a
-step is kept only if the log likelihood rises. The Laplace Hessian is the
-exact JAX Hessian, so it includes the log-determinant. Rough cost: 3–10× per
-likelihood evaluation on GRAVITY MEDIUM. It is to be measured on OzSTAR before
-anything else is built; a 200-band GRAVITY run (the worked example) is the benchmark.
-
-**Per-night V² amplitude (`vis_amp`).** Keep it. It covers night-level losses
-that the gain prior (about 1 %) does not: anisoplanatism
-(`gravity.anisoplanatic_v2_loss`), fibre response and smearing. The variable
-projection becomes `A = (m̃ᵀ õ)/(m̃ᵀ m̃)` on whitened model and data. `J` is
-evaluated on the unscaled model, an error second order in the gain widths. `A`
-and the mean of a night's telescope gains are partly degenerate, but `A` is
-free in (0.5, 1.2) while the gains carry a 1 % prior, so `A` takes the mean.
-
-**UD primary.** The model is unchanged. Gains act on the UD model through `J`.
-One degeneracy matters: a `chromatic` gain, (λ_ref/λ)² per baseline, has the
-shape of a small disk's V² deficit at one baseline. So when
-`primary_diam="auto"` or `"fit"`, `chromatic` is used only if the spec
-measured it, and `estimate_primary_diameter` and `RESOLVE_NATS` run on the
-gain-aware score.
-
-**Closure offsets** enter the phase blocks in the same way
-(`with_closure_offsets`, small-angle). With the PIONIER widths (0.21°) they
-barely change positions. They are kept because the pair test measured them.
-
-## 3. Tempering
-
-Tempering stays as the safety net, but it is estimated *after* the noise
-model. The adjacent-channel estimator in `virgil.tempering` runs on residuals
-whitened by `C`, so that a gain the spec explains is not counted twice. If the
-spec is adequate, `f` should fall from hundreds to about 1–2. Tempering then
-covers only what the spec misses (chromatic structure, wavelength-calibration
-ripple).
-
-**Adequacy checks**, all reported per night in the summary, none per system:
-1. **χ²/N on the specced covariance** (whitened, raw: not rescaled, per
-   `report-raw-chi2`) and the profiled `ŝ`. A spec is adequate when `ŝ` is
-   within a factor of 2 of 1 on most nights.
-2. **`f` within `FLAG_RANGE`** (0.5–2) on the whitened residuals. The existing
-   `tempering` flag already says so.
-3. **Residual-correlation check** (`instrument_noise` §7, PR 3): the fraction of
-   residual variance in each (frame, baseline) channel mean against 1/n_ch,
-   computed on whitened residuals. It applies without a spec as well, and then
-   says that one is needed.
-4. **Pair test on the orbit residuals** (virgil-validation, using virgil-vlti
-   `pair_test` on data − best model): the widths it finds must be consistent
-   with the spec's. An excess means the spec is too narrow for that target.
-
-## 4. Peak picking
-
-**Is a noise model expected to remove sidelobe picks?** Partly. Three effects
-are mixed up in them:
-- The gaps are inflated by about `f`. A per-frame gain that the model does not
-  include makes a sidelobe look decisive by tens to hundreds of nats. Whitening
-  by `C` fixes this, and so the `alias-peaks` and `low-gap` flags fire.
-- Unmodelled gains bias the peak heights. Smooth V²(B) offsets per frame are
-  fitted by moving the companion. Marginalizing the gains leaves the position
-  to the within-frame chromatic modulation and to the closure phases, which is
-  what tells sidelobes apart.
-- Coverage. A single night's uv tracks leave a real north–south ambiguity at
-  about λ/B. Companions within a few λ/B_max are in this regime (the worked example: ≲ 5.5 mas, λ/B_max ≈ 3.5 mas), and
-  no noise model removes it.
-
-So the expectation is that the spec turns wrong-but-confident nights into
-flagged ones. It is not expected to make every night pick the right peak.
-
-**The safeguard, independent of any noise model:**
-1. **Tempered night flags.** `epoch_positions` applies `flag_alias_nats` and
-   `flag_min_gap` to the gap divided by the night's `f`, as the short-arc cut
-   already does (`docs/orbit_fitting.md`, "Short arcs"). Without a spec, this
-   alone would have flagged the worked example's ambiguous nights.
-2. **Cross-night consistency flag `sep-outlier`.** A night's best separation
-   above `k ×` the median of the other unflagged nights (relative, `k` about 2,
-   and no prior from any published orbit) *and* with a rival peak inside that
-   bound is flagged. The flag names the rival.
-3. **Keep the competing peaks.** Flagged nights already seed nothing but still
-   count in every band's likelihood. Each band fit is direct to the data, so
-   the band decides between a flagged night's peaks. The change: after the
-   fit, report for each flagged night which peak the winning orbit passes
-   through (`night_resolved_to`). A band whose orbit goes through rivals on
-   most flagged nights is visible, not hidden.
-4. **Seed floor.** When flagging leaves fewer than two seeding nights, the
-   engine falls back to random candidates (existing behaviour). It must never
-   seed from a flagged night.
-
-## 5. Instruments
-
-| Data | Noise source | Status |
-| --- | --- | --- |
-| PIONIER | pair test → spec v1: white V²/CP scales, `telescope`/`baseline` gains, triangle offsets | pair test exists; emission planned |
-| GRAVITY MEDIUM | pair test → spec v1 now; calibrator-PCA modes (`gravity_single_medium_combined_2023-2025`) via spec v2 later | template ships; modes reader missing |
-| GRAVITY HIGH | the same; the HIGH template is in virgil-vlti#40 (AT only) | open PR |
-| GRAVITY (UT, other configurations) | pair test only; `Template.mismatches` (strict) refuses a mismatched template | — |
-| No model | today's behaviour: white errors + scale + tempering | default |
-
-Templates and spec gains must not stack. A PCA template already splits
-telescope and baseline terms, so with `gains.modes` the `telescope` and
-`baseline` groups stay `null`. `validate_noise_spec` should reject the
-combination (architecture review §4a: one shared width for external modes
-double-counts).
-
-**Without a model**, the pipeline runs as today and says so. The summary
-records `noise: null`. When `f > 2`, or when the residual-correlation check
-fails, the warning says "correlated noise: supply a noise spec", instead of
-only `tempering`.
-
-## 6. Validation plan
-
-Laptop: synthetic unit tests only (seconds, `OMP_NUM_THREADS=2`). All real
-data and grids run on OzSTAR (one job array, GPU nodes).
-
-1. **Unit (virgil).** (a) Widths → 0 reproduces the current `_Surface` score
-   exactly. (b) On a synthetic binary with injected gains (`OIData.with_model`
-   with `key` draws them), the gain-aware gap is within Monte-Carlo scatter of
-   the truth, while the white gap is inflated by about n_ch. (c) `f` on
-   whitened residuals is within 5 % of 1. (d) A `vis_amp` and gains round trip.
-   (e) `sep-outlier` and the tempered flags fire on a two-peak synthetic night.
-2. **Release gate (worked example: Gl 229).** A cold alias search at the release commit, run
-   with and without a spec, must still rank N = 34 (P = 12.134 d) first with
-   Δlog Z > 10 over the runner-up.
-3. **A failing system, blind (worked example: HD 9312).** A 2 × 2 ablation: spec on/off × safeguard on/off. Pass:
-   36.5 d is the top band, and the orbit beats both a single star and free
-   positions decisively. Blind starts only, no published period or positions.
-   Record which change does the work.
-4. **No regressions** on the other 11 gallery systems: the same top band (or a
-   better one against the reference), with χ²/N and `f` reported before and
-   after.
-5. **Injection–recovery (p-value calibration).** Inject orbits on the failing system's and
-   two other systems' (u, v, t) sampling. Draw the noise from the spec
-   (`with_model(key=)`) and, separately, from virgil-vlti's resampled-residual
-   nulls (`nulls.resampled_null_datasets`, virgil-vlti#39), so that a spec is
-   not checked only against itself. Calibrate the band `p`, `alias_ambiguity`
-   and the `no-orbit` odds. Null injections set the false-alarm rates.
-6. **Cost.** Wall time per band with and without the spec, from the failing-system
-   run. Decide from it whether the grid stage needs the fixed-`C` shortcut of
-   §2.
-
-## 7. Open questions for Ben
-
-- **Q1. Scale model.** Should the scale be common, `s²(D + UUᵀ)` (closed form,
-  cheap, the recommendation for the search surface), or white-only,
-  `s²D + UUᵀ` (more physical; quadrature costs about 10× more)? Final
-  evidences could use white-only even if the search uses common.
-- **Q2. Order of work.** Should the §4 safeguard (tempered flags,
-  `sep-outlier`) ship first and alone? It needs no spec and is cheap, and it
-  may be enough for the worked example.
-- **Q3. Per-night specs.** Should v1 use one spec per orbit run (pooled
-  widths), or should `noise_spec` accept `{epoch: spec}`, since years-apart
-  nights have different calibrators and conditions?
-- **Q4. Data-derived widths without virgil-vlti.** For instruments with no
-  package, should the pipeline offer an explicit, opt-in self-spec, with a
-  per-(frame, baseline) gain width estimated from the residual channel means?
-  It breaks "widths are measured, not fitted", so the default would stay off.
-- **Q5. GRAVITY now.** Should GRAVITY use pair-test spec v1 until the modes
-  reader and spec v2 land, or should the orbit work wait for the calibrator-PCA
-  templates (HIGH is not merged)?
-- **Q6. Release target.** Should this be 0.4.1 alongside the `noise_spec` PRs,
-  or 0.5? The surface change touches `epochs` and `aliases`, both provisional.
-- **Q7. `vis_amp` with a spec.** Should `vis_amp` stay on by default, or go off
-  when the spec has telescope gains? It overlaps them, and leaving it on costs
-  one profiled parameter per night.
+1. R1 (numerical scale marginalization) or R2 (quoted scale, fitted template width)?
+2. Nights without calibrators: closure phases only (recommended), or drop the night?
+3. Bin HIGH by 8 (R ≈ 500)?
+4. Programme binaries as calibrators: exclude (recommended), or model them as binaries?
+5. Relabel the current gallery results "legacy uncalibrated V²" now, before the rerun?
