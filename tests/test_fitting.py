@@ -48,9 +48,7 @@ def _image_fit(npix=16):
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_recovers_a_binary(method):
     options = {"max_steps": 3000} if method == "adam" else {}
-    result = fit(
-        START, PRIORS, DATA, method=method, dtype="float64", **options
-    )
+    result = fit(START, PRIORS, DATA, method=method, **options)
     assert abs(result.values["dra"] - 150.0) < 3.0
     assert abs(result.values["ddec"] + 80.0) < 3.0
     assert abs(result.values["flux"] - 0.02) < 2e-3
@@ -1177,8 +1175,9 @@ def test_summary_matches_a_full_gradient_recomputation(
         virgil.fitting, "_LBFGS_ROUND", options.pop("round", 2000)
     )
     monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", 3)
+    reports = []
     if "progress" in options:
-        options["progress"] = lambda report: None
+        options["progress"] = reports.append
     seen = []
     summary = virgil.fitting._summary
 
@@ -1189,9 +1188,7 @@ def test_summary_matches_a_full_gradient_recomputation(
     monkeypatch.setattr(virgil.fitting, "_summary", spy)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        result = fit(
-            START, PRIORS, DATA, method=method, dtype="float64", **options
-        )
+        result = fit(START, PRIORS, DATA, method=method, **options)
     problem, z, scale, grad_norm = seen[-1]
     # Only L-BFGS has a gradient to hand.
     assert (grad_norm is not None) == (method == "lbfgs")
@@ -1200,6 +1197,12 @@ def test_summary_matches_a_full_gradient_recomputation(
     assert result.info["loss"] == pytest.approx(loss, rel=1e-9)
     assert result.info["chi2"] == pytest.approx(chi2, rel=1e-9)
     assert result.info["grad_norm"] == pytest.approx(norm, rel=1e-6, abs=1e-12)
+    if reports:
+        # The progress report's gradient norm is the same state's, not a
+        # step behind.
+        assert reports[-1]["grad_norm"] == pytest.approx(
+            result.info["grad_norm"]
+        )
 
 
 def test_final_gradient_is_the_carrys_before_any_step():
