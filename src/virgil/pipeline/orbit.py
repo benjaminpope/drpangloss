@@ -851,6 +851,12 @@ def _search_report(result, data, names):
         "period_bound": bool(result.period_bound),
         "period_at_lower_bound": bool(result.period_at_lower_bound),
         "unseeded": [dict(u) for u in result.unseeded],
+        "short_arc": None
+        if result.short_arc is None
+        else {
+            k: result.short_arc[k]
+            for k in ("kept", "excluded", "readmitted", "velocities")
+        },
         "chi2": {
             "nights": {
                 name: {
@@ -1302,6 +1308,7 @@ _SEARCH_KEYS = (
     "period_bound",
     "period_at_lower_bound",
     "unseeded",
+    "short_arc",
 )
 _MODES_KEYS = (
     "winner",

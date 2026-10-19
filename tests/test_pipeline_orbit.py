@@ -291,6 +291,7 @@ def _fake_reports():
             "period_bound": False,
             "period_at_lower_bound": False,
             "unseeded": [],
+            "short_arc": None,
             "chi2": {"nights": {"n0": chi2}, "chi2": 10.0, "n": 10},
             "bands": [band],
         },
@@ -811,7 +812,8 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     pipeline, res = _blind(data, tmp_path / "run")
     assert len(seen["args"]) == 2 and seen["args"][1] is None  # no window
     kwargs = seen["kwargs"]
-    assert "init" not in kwargs and "skip_flagged" not in kwargs
+    # the engine's own defaults, which include the short-arc stage
+    assert not {"init", "skip_flagged", "short_arcs"} & set(kwargs)
     assert kwargs["primary_diam"] == "auto" and kwargs["a_range"] == (
         1.0,
         30.0,
@@ -822,6 +824,9 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     assert abs(modes["winner"]["elements"]["period"] - TRUTH["period"]) < 0.05
     assert modes["delta_log_z"] > 10.0  # the runner-up is ruled out
     assert modes["no_orbit"]["verdict"] == "orbit"
+    arcs = res.summary["search"]["short_arc"]  # the engine's default stage
+    assert arcs is not None and n_true in arcs["kept"]
+    assert res.aliases().short_arc["kept"] == arcs["kept"]
     post = res.summary["posterior"]["modes"][0]["params"]
     assert abs(post["period"]["median"] - TRUTH["period"]) < 0.05
     assert res.status == "complete"
