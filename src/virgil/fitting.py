@@ -721,7 +721,7 @@ def fit(
         # that new values do not recompile. The step limits of LM and Adam
         # set a loop's length, so they stay static.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
-        stop = None
+        stop = grad_norm = None
         if method == "lm":
             limit = max_steps or 1000
             z, steps, converged, stop = _lm(
@@ -729,7 +729,7 @@ def fit(
             )
         elif method == "lbfgs":
             limit = max_steps or 20_000
-            z, steps, converged, stop = _lbfgs(
+            z, steps, converged, stop, grad_norm = _lbfgs(
                 problem,
                 z0,
                 traced_scale,
@@ -757,7 +757,7 @@ def fit(
             )
         model = problem.build(z)
         values = problem.constrain(z)
-        loss, chi2, grad_norm = _summary(problem, z, traced_scale)
+        loss, chi2, grad_norm = _summary(problem, z, traced_scale, grad_norm)
         loss = float(loss)
         if not math.isfinite(loss) and converged is not False:
             # E.g. LM or Adam ending on NaN parameters.
@@ -1160,22 +1160,60 @@ def _has_residuals(problem, z):
 
 
 @eqx.filter_jit
-def _summary(problem, z, scale):
-    """The loss, each dataset's chi-squared (with inflated errors) and the gradient
-    norm at ``z``, as reported in ``FitResult.info``.
+def _forward_summary(problem, z):
+    """The loss and each dataset's chi-squared (with inflated errors) at ``z``.
+
+    Forward only: it does not differentiate the model.
     """
     values = problem.constrain(z)
     residuals = problem.data_residuals(problem.build(z), values)
     residuals += [term(values) for term in problem.likelihoods]
-    chi2 = [np.sum(r**2) for r in residuals]
-    gradient = jax.grad(_scaled_loss(problem, scale))(z)
-    return problem.loss(z), chi2, _largest(gradient)
+    return problem.loss(z), [np.sum(r**2) for r in residuals]
 
 
-def _loss_and_gradient(problem, z, scale):
+@eqx.filter_jit
+def _gradient_norm(problem, z, scale):
+    """The largest component of the loss-per-data-point gradient at ``z``."""
+    return _largest(jax.grad(_scaled_loss(problem, scale))(z))
+
+
+def _summary(problem, z, scale, grad_norm=None):
+    """The loss, each dataset's chi-squared and the gradient norm at ``z``, as
+    reported in ``FitResult.info``.
+
+    ``grad_norm`` is the gradient norm if the optimizer already holds it (L-BFGS
+    does, see ``_final_gradient``). Left as ``None`` (LM, Adam), it is computed by
+    differentiating the whole model, which is costly to compile.
+    """
+    loss, chi2 = _forward_summary(problem, z)
+    if grad_norm is None:
+        grad_norm = _gradient_norm(problem, z, scale)
+    return loss, chi2, grad_norm
+
+
+def _loss_and_gradient(problem, z, scale, grad_norm=None):
     """The loss and gradient norm at ``z``, as ``_summary`` reports them."""
-    loss, _, grad_norm = _summary(problem, z, scale)
+    loss, _, grad_norm = _summary(problem, z, scale, grad_norm)
     return float(loss), float(grad_norm)
+
+
+def _final_gradient(carry):
+    """The gradient norm at the point an L-BFGS carry holds, without a new gradient.
+
+    The carry's own gradient is that of the step's start, one step behind its
+    point. The line search leaves the gradient at the new point in the optimizer
+    state, from which the next step would reuse it. Before any step the carry's
+    gradient is the one at the start.
+    """
+    count, _, state, _, gradient, _ = carry
+    if int(count) == 0:
+        return gradient
+    return _state_gradient_norm(state)
+
+
+@jax.jit
+def _state_gradient_norm(state):
+    return _largest(optax.tree_utils.tree_get(state, "grad"))
 
 
 def _largest(tree):
@@ -1447,7 +1485,7 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
 
 
 def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
-    """L-BFGS in rounds, returning ``(z, steps, converged, stop)``.
+    """L-BFGS in rounds, returning ``(z, steps, converged, stop, grad_norm)``.
 
     A round that ends at its step limit without converging restarts from its last
     point with fresh curvature memory, until a round gains less than
@@ -1456,8 +1494,8 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
     limit, total, z, tolerance = int(max_steps), 0, z0, None
     size = _LBFGS_ROUND
     while True:
-        before = float(_loss_and_gradient(problem, z, scale)[0])
-        z, steps, converged, stop, tolerance = _lbfgs_round(
+        before = float(_forward_summary(problem, z)[0])
+        z, steps, converged, stop, tolerance, grad_norm = _lbfgs_round(
             problem,
             z,
             scale,
@@ -1474,8 +1512,8 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
         # (the line search out of precision) or a timed-out or non-finite
         # one ends the fit.
         if converged or stop != "limit" or total >= limit:
-            return z, total, converged, stop
-        gain = before - float(_loss_and_gradient(problem, z, scale)[0])
+            return z, total, converged, stop, grad_norm
+        gain = before - float(_forward_summary(problem, z)[0])
         if not gain > _RESTART_GAIN:  # also true of a NaN
             size = limit  # little progress: the rest as one last round
 
@@ -1492,7 +1530,9 @@ def _lbfgs_round(
     offset,
     tolerance=None,
 ):
-    """One round of L-BFGS: ``(z, steps, converged, stop, tolerance)``.
+    """One round of L-BFGS: ``(z, steps, converged, stop, tolerance, grad_norm)``.
+
+    ``grad_norm`` is the gradient norm at ``z``, taken from the optimizer's state.
 
     ``tolerance`` is the first round's convergence test (``None`` there), kept by
     later rounds. ``stop`` is ``"limit"``, ``"time"``, ``"stalled"`` or
@@ -1521,7 +1561,10 @@ def _lbfgs_round(
             break
         z = carry[1]
         if budget.check(
-            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+            offset + count,
+            lambda: _loss_and_gradient(
+                problem, z, scale, _final_gradient(carry)
+            ),
         ):
             stop = "time"
             break
@@ -1536,21 +1579,23 @@ def _lbfgs_round(
         )
     count, z, _, value, gradient, moved = carry
     count, value, gradient = int(count), float(value), float(gradient)
+    grad_norm = _final_gradient(carry)
     if budget.chunked:
         budget.finish(
-            offset + count, lambda: _loss_and_gradient(problem, z, scale)
+            offset + count,
+            lambda: _loss_and_gradient(problem, z, scale, grad_norm),
         )
     # A gradient seen only at the start (count 0) that is not finite gives
     # a non-finite tolerance too.
     finite = math.isfinite(tolerance) and math.isfinite(value)
     if not finite or (count > 0 and not math.isfinite(gradient)):
-        return z, count, False, "non-finite", tolerance
+        return z, count, False, "non-finite", tolerance, grad_norm
     if gradient <= tolerance:
-        return z, count, True, None, tolerance
+        return z, count, True, None, tolerance, grad_norm
     if stop == "time":
-        return z, count, False, "time", tolerance
+        return z, count, False, "time", tolerance, grad_norm
     stop = "limit" if bool(moved) else "stalled"
-    return z, count, False, stop, tolerance
+    return z, count, False, stop, tolerance, grad_norm
 
 
 @eqx.filter_jit

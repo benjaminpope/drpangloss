@@ -48,7 +48,9 @@ def _image_fit(npix=16):
 @pytest.mark.parametrize("method", ["lm", "lbfgs", "adam"])
 def test_fit_recovers_a_binary(method):
     options = {"max_steps": 3000} if method == "adam" else {}
-    result = fit(START, PRIORS, DATA, method=method, **options)
+    result = fit(
+        START, PRIORS, DATA, method=method, dtype="float64", **options
+    )
     assert abs(result.values["dra"] - 150.0) < 3.0
     assert abs(result.values["ddec"] + 80.0) < 3.0
     assert abs(result.values["flux"] - 0.02) < 2e-3
@@ -259,7 +261,7 @@ def test_lbfgs_warning_says_why_it_stopped_early(
     import virgil.fitting
 
     def stopped(problem, z0, *_):
-        return (7, z0, None, loss, gradient, moved), 1e-3
+        return (7, z0, {"grad": z0}, loss, gradient, moved), 1e-3
 
     monkeypatch.setattr(virgil.fitting, "_lbfgs_run", stopped)
     with pytest.warns(RuntimeWarning, match=message):
@@ -1133,3 +1135,81 @@ def test_lm_compiles_one_kernel_whatever_the_step_bound(monkeypatch):
             three = fit(far, PRIORS, DATA, max_steps=3, method="lm")
     assert (four.info["steps"], three.info["steps"]) == (4, 3)
     assert compiles == []
+
+
+def _full_gradient_summary(problem, z, scale):
+    """The loss, chi-squared and gradient norm, the way ``fit`` once reported them:
+    by differentiating the whole model again at the result.
+    """
+    values = problem.constrain(z)
+    residuals = problem.data_residuals(problem.build(z), values)
+    residuals += [term(values) for term in problem.likelihoods]
+    gradient = jax.grad(lambda z: problem.loss(z) / scale)(z)
+    norm = max(float(np.max(np.abs(g))) for g in jax.tree.leaves(gradient))
+    return (
+        float(problem.loss(z)),
+        [float(np.sum(r**2)) for r in residuals],
+        norm,
+    )
+
+
+@pytest.mark.parametrize(
+    "method, options",
+    [
+        ("lbfgs", {"max_steps": 6}),  # stopped, so the gradient is large
+        ("lbfgs", {}),  # converged
+        ("lbfgs", {"max_steps": 10, "round": 3}),  # restarted rounds
+        ("lbfgs", {"progress": True}),  # chunked
+        ("lm", {"max_steps": 2}),
+        ("adam", {"max_steps": 5}),
+    ],
+)
+def test_summary_matches_a_full_gradient_recomputation(
+    monkeypatch, method, options
+):
+    # The reported loss, chi-squared and gradient norm come from a forward
+    # pass and, for L-BFGS, the optimizer's state, with no second gradient of
+    # the whole model. They must equal the gradient taken afresh at the result.
+    import virgil.fitting
+
+    options = dict(options)
+    monkeypatch.setattr(
+        virgil.fitting, "_LBFGS_ROUND", options.pop("round", 2000)
+    )
+    monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", 3)
+    if "progress" in options:
+        options["progress"] = lambda report: None
+    seen = []
+    summary = virgil.fitting._summary
+
+    def spy(problem, z, scale, grad_norm=None):
+        seen.append((problem, z, scale, grad_norm))
+        return summary(problem, z, scale, grad_norm)
+
+    monkeypatch.setattr(virgil.fitting, "_summary", spy)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        result = fit(
+            START, PRIORS, DATA, method=method, dtype="float64", **options
+        )
+    problem, z, scale, grad_norm = seen[-1]
+    # Only L-BFGS has a gradient to hand.
+    assert (grad_norm is not None) == (method == "lbfgs")
+    with run_in("float64"):
+        loss, chi2, norm = _full_gradient_summary(problem, z, scale)
+    assert result.info["loss"] == pytest.approx(loss, rel=1e-9)
+    assert result.info["chi2"] == pytest.approx(chi2, rel=1e-9)
+    assert result.info["grad_norm"] == pytest.approx(norm, rel=1e-6, abs=1e-12)
+
+
+def test_final_gradient_is_the_carrys_before_any_step():
+    # Before a step the optimizer state holds no gradient yet (the line
+    # search has not run), so the carry's own, at the start, is the answer;
+    # after one, the state's, at the new point.
+    from virgil.fitting import _final_gradient
+
+    state = {"grad": np.array([3.0, -4.0])}
+    at_start = (0, None, state, 1.0, np.asarray(0.5), True)
+    assert float(_final_gradient(at_start)) == 0.5
+    after = (2, None, state, 1.0, np.asarray(0.5), True)
+    assert float(_final_gradient(after)) == 4.0
