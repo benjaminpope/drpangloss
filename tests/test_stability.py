@@ -40,6 +40,7 @@ EXPECTED = {
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
     "virgil.metrics": {"*"},
+    "virgil.radio": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "MultipoleDisk",
