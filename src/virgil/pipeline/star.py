@@ -800,6 +800,14 @@ def _fit_lobe(p, entry, lobe, noise):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         model, values, info = _fit_model(p, entry, priors, lobe["diam"], noise)
+    if (
+        info.get("method") == "scan"
+    ):  # no fit problem to ask: test the diameter
+        from ..fitting import _AT_BOUND, _bound_fraction
+
+        edge = _bound_fraction(priors["diam"], values["diam"])
+        if edge is not None and not _AT_BOUND < edge < 1 - _AT_BOUND:
+            info = {**info, "at_bound": ("diam",)}
     chi2, _ = _chi2_64(model, data)
     scales = _scales_of(values)
     chi2_fitted = _chi2_64(model, data, **scales)[0] if scales else chi2
