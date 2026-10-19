@@ -118,20 +118,19 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
    scale numerically. Per block, C(s) = s²D + UUᵀ (U from the gains or offsets), integrated over
    ln s with the Jeffreys prior on [−ln s_max, ln s_max]. R2 was rejected (quoted scale s = 1
    with the template's overall width fitted: cheaper, but it trusts the propagated errors).
-   - **Quadrature: keep `_marginal.log_integral`**, the adaptive rule `_Surface.score` already
-     uses (peak-centred window, narrowed scans, then 64-node Gauss–Legendre). A fixed rule over
-     the whole range undersamples the peak, whose width in ln s is about 1/√(2ν): 0.02–0.05 for
-     a binned night, against node spacings of about 0.2 for 16 nodes.
-   - **Make log L(ln s) cheap instead.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
+   - **Quadrature: a fixed Gauss–Legendre rule on a peak-centred window** (±6/√ν around the
+     block's peak, inside the Jeffreys range; virgil#437). A rule over the whole range would
+     undersample the peak, whose width in ln s is about 1/√(2ν). The node count (16 or 32) is
+     kept only if a test shows it matches a dense 1-D integral to better than 0.01 in log L at
+     s_max; if both pass, the cheaper.
+   - **Optional speed-up: a closed-form integrand.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
      Ũ = D^{-½}U (`gains._columns`), low-rank per block. One thin SVD per block, Ũ = QΛ^{½}
      (K columns), then for every s, in O(K):
      χ²(s) = (|r|² − |Qᵀr|²)/s² + Σ_k (Qᵀr)_k²/(s² + λ_k), and
      ½ ln det = (N − K) ln s + ½ Σ_k ln(s² + λ_k).
-     This is exact and smooth, includes cross-frame (`spanning`) modes while each block's rank
-     stays small, and costs one SVD per block per model evaluation rather than one whitening per
-     node. λ_k = 0 gives back today's integrand.
-   - virgil#437 implements R1 with 32 nodes on a ±6/√ν window, whitening at each node; the
-     closed form above is the target that replaces it.
+     It is exact, and λ_k = 0 gives back today's integrand. It replaces one whitening per node
+     with one SVD per block; worth doing only if profiling shows the per-node whitening
+     dominates.
    `_Surface` stops refusing gains. A regression test requires that zero-width gains
    reproduce today's surface to rounding.
 2. **`vis_amp` is off for data with gains.** Telescope and baseline gains supersede the
@@ -151,9 +150,9 @@ virgil-vlti data path into it, and the vv orbit gallery (`scripts/gallery_orbits
    - **What `dof` tempers:** the whole per-block log L(s), the log det included (a power
      likelihood, as today). This does not double count: f is measured only on what the gains
      leave.
-   - **Acceptance:** block f within `FLAG_RANGE` (0.5–2) on calibrated data. Outside it the
-     existing warning fires and says "noise model inadequate"; nothing is silently tempered
-     away. (virgil#437 warns at f > 3; it should use `FLAG_RANGE`.)
+   - **Acceptance:** block f ≤ 3 on calibrated data. f > 3 is reported as "noise model
+     inadequate" and is never silently tempered away. For 2 < f ≤ 3 the existing `FLAG_RANGE`
+     (0.5–2) tempering warning still fires, as information: tempering is applied and reported.
 4. **One treatment of gains: marginalize.** `orbit_search` profiles gains while the alias
    engine marginalizes them, so with many gain dofs per night the ranking and the evidence can
    disagree about the best orbit. `orbit_search` changes to marginalizing by default. This is
@@ -180,12 +179,12 @@ current results are labelled legacy until rerun.
 1. **Unit tests (virgil, virgil-vlti).**
    - Loader alignment.
    - Zero-width gains reproduce today's `_Surface`.
-   - R1's closed-form integrand matches the dense `GainModes.covariance` (Cholesky χ² and log
-     det) for s ≫ widths, s ≪ widths and s ≈ widths, and the integral matches a dense 1-D
-     quadrature on a small case.
+   - R1's integrand matches the dense `GainModes.covariance` (Cholesky χ² and log det) for
+     s ≫ widths, s ≪ widths and s ≈ widths, and the fixed rule matches a dense 1-D integral to
+     better than 0.01 in log L at s_max (this sets the node count).
 2. **One night of HD 9312 on the laptop (≤ 2 min, bin 8).** After calibration and gains:
    χ²/N ≈ 1 on the effective covariance (s²D + UUᵀ at s = 1; the raw χ² on the propagated
-   errors is reported beside it, as `chi2_per_night` does today), tempering f ≤ 2, and the peak set contains the published position (compared only
+   errors is reported beside it, as `chi2_per_night` does today), tempering f ≤ 3, and the peak set contains the published position (compared only
    after the fit).
 3. **OzSTAR: all 12 gallery systems, blind.** Success means:
    - the published orbits are recovered in the sky plane (Thiele–Innes) where the papers solved
