@@ -164,12 +164,12 @@ def test_two_blocks_with_gains_and_offsets_match_dense_integrals(
         models = [_model(6.0), _model(6.4)]
         score = [float(marginal_loglike(m, data, s_max=S_MAX)) for m in models]
         dense = [_dense_marginal(m, data, bound) for m in models]
-        # abs=0.01 is the design note's bar for the dense integral. 16
-        # nodes miss it by about 1e-3 and 32 by 1e-9: the error of the
-        # quadrature, which falls as nodes are added (the dense reference,
-        # 2001 trapezoid points, is good to about 1e-4).
+        # The quadrature's error falls as nodes are added: about 1e-3 at
+        # 16 nodes and 1e-9 at 32 (the dense reference, 2001 trapezoid
+        # points, is good to about 1e-4). 16 nodes are held to 0.01, the
+        # default 32 to the tighter 1e-3.
         assert score[0] - score[1] == pytest.approx(
-            dense[0] - dense[1], abs=0.01
+            dense[0] - dense[1], abs=0.01 if nodes == 16 else 1e-3
         )
         assert abs(score[0] - score[1]) > 1.0  # the models differ
 
