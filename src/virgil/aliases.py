@@ -67,6 +67,7 @@ from .epochs import (
     _amp_residuals,
     _binary,
     _refine_marginal,
+    _refuse_amp_with_gains,
     _Surface,
     estimate_primary_diameter,
 )
@@ -427,6 +428,7 @@ def _epoch_residuals(surface, model, d, amp_range):
     r = whitened_residuals(model, d)
     if amp_range is None or surface.names[0] != "vis":
         return r, np.ones((), r.dtype)
+    _refuse_amp_with_gains(d)
     if d.vis_mode != "v2" or d.observable_kind != "split":
         raise NotImplementedError(
             "vis_amp needs squared visibilities as the visibility channel "
@@ -459,6 +461,10 @@ def _scale_vis(r, d, n, amp):
 
 def _epoch_chi2(surface, model, d, amp_range):
     """Raw χ² per block of one epoch and its V² amplitude."""
+    if surface.numeric:  # whitened per node of the scale integral
+        if amp_range is not None:
+            _refuse_amp_with_gains(d)
+        return surface.chi2(model, d), np.ones((), d.vis.dtype)
     r, amp = _epoch_residuals(surface, model, d, amp_range)
     return surface.block_chi2(r), amp
 
@@ -2454,6 +2460,19 @@ def _default_vis_amp(data):
     """``_VIS_AMP_DEFAULT`` when every dataset has squared visibilities as
     its visibility channel (what ``vis_amp`` needs), else None (logged at
     INFO with the datasets that disqualify it)."""
+    gained = [
+        k
+        for k, d in enumerate(data)
+        if getattr(d, "gains", None) is not None
+        or getattr(d, "phase_offsets", None) is not None
+    ]
+    if gained:
+        _LOG.info(
+            "vis_amp=True: no V² amplitude, because dataset(s) %s carry "
+            "gains or closure offsets, which supersede it.",
+            gained,
+        )
+        return None
     bad = [
         k
         for k, d in enumerate(data)
@@ -2680,6 +2699,11 @@ def _temper_factors(data, positions, diam, vis_amp, names):
     return estimate_factors(residuals, used, names)
 
 
+# f above this, on residuals whitened with the gains, is a noise model that
+# does not describe the data (docs: design/orbit_noise_models.md, 3.2.3).
+_INADEQUATE_F = 3.0
+
+
 def _warn_tempering(factors):
     """Warn about estimated tempering the fit cannot trust (a block ``f``
     outside ``FLAG_RANGE``, blocks on the pooled ``f``, a flat correlation).
@@ -2690,7 +2714,18 @@ def _warn_tempering(factors):
         The estimated factors (a user's fixed ``f`` is not warned about).
     """
     where = external_stacklevel()
-    if out_of_range(factors.f_max, factors.f_raw):
+    if factors.f_max > _INADEQUATE_F:
+        worst = max(factors.blocks, key=factors.blocks.get)
+        warnings.warn(
+            f"fit_orbit_aliases(): noise model inadequate: the "
+            f"effective-channel factor is f = {factors.f_max:.3g} (block "
+            f"{worst!r}) after whitening, above {_INADEQUATE_F:g}. The "
+            "likelihood is tempered by 1/f, which hides a misfit or an "
+            "unmodelled calibration error: check the gains and errors.",
+            UserWarning,
+            stacklevel=where,
+        )
+    elif out_of_range(factors.f_max, factors.f_raw):
         worst = max(factors.blocks, key=factors.blocks.get)
         warnings.warn(
             f"fit_orbit_aliases(): the effective-channel factor is "
@@ -3078,6 +3113,9 @@ def fit_orbit_aliases(
     # by the first pass of ``primary_diam="auto"``.
     if isinstance(vis_amp, (bool, onp.bool_)):
         vis_amp = _default_vis_amp(data) if vis_amp else None
+    elif vis_amp is not None:
+        for d in data:
+            _refuse_amp_with_gains(d)
     if vis_amp is not None:
         vis_amp = tuple(map(float, vis_amp))
         if not 0 < vis_amp[0] < vis_amp[1]:
