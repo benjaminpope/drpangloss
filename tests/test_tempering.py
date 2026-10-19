@@ -365,6 +365,15 @@ def test_the_dof_argument_is_f_one_or_a_fixed_f(monkeypatch):
         "position_profile",
         lambda pos, bands, **kw: [dict(orbits=[]) for _ in bands],
     )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
+    )
 
     def run(**kw):
         with pytest.raises(Stop), warnings.catch_warnings():
@@ -402,6 +411,15 @@ def test_correlated_channels_are_tempered_by_default(monkeypatch):
         aliases,
         "position_profile",
         lambda pos, bands, **kw: [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     with pytest.warns(UserWarning, match="effective-channel factor"):
         with pytest.raises(Stop):
@@ -680,6 +698,15 @@ def _stub_fit(monkeypatch, data, positions, **kw):
         aliases,
         "position_profile",
         lambda pos, bands, **k: [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **k: (
+            [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     with pytest.raises(_Stop), warnings.catch_warnings():
         warnings.simplefilter("ignore")

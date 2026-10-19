@@ -53,6 +53,13 @@ from ._precision import cast_tree, in_float64, run_in
 from ._utils import clean_json
 from .detection import _fingerprint
 from ._geometry import fringe_scales
+from .arcs import (
+    ARC_DELTA_CHI2,
+    ARC_JITTER,
+    arc_profile,
+    night_motion,
+    unwrap_cycles,
+)
 from .epochs import (
     _REFINE_WINDOW,
     EpochPositions,
@@ -647,6 +654,11 @@ class _Settings:
     # ((block name, 1/f_b), ...): the tempering; () is none. Not in ``cfg``:
     # the kernels take it traced (``_Problem.dof``), so f never recompiles.
     dof: tuple = ()
+    # The short-arc stage (seeds and bands): on/off, its position floor (mas)
+    # and its χ² margin; in the checkpoint key, not in the kernels.
+    short_arcs: bool = False
+    arc_jitter_mas: float = 0.0
+    arc_delta_chi2: float = ARC_DELTA_CHI2
 
     @property
     def fit_diam(self):
@@ -1384,7 +1396,7 @@ def _failed_band(band, error):
 # Checkpoints
 # ---------------------------------------------------------------------------
 
-_CHECKPOINT_FORMAT = 4  # bump when a checkpoint's contents change
+_CHECKPOINT_FORMAT = 5  # bump when a checkpoint's contents change
 
 
 def _checkpoint_key(data, positions, bands, times, settings):
@@ -1798,6 +1810,10 @@ class AliasResult:
     unseeded : tuple of dict
         The nights flagged by [`epoch_positions`][virgil.epochs.epoch_positions] that seeded nothing; their data
         still count in every band's likelihood.
+    short_arc : dict or None
+        The short-arc stage: the admissible period ``intervals``, the bands
+        ``kept``, ``excluded`` and ``readmitted`` by the cheap check, the
+        number of ``velocities`` and the unwrapping ``steps``; None when off.
     """
 
     t_ref: float
@@ -1818,6 +1834,7 @@ class AliasResult:
     temper_blocks: dict | None = None
     temper_f_raw: float | None = None
     temper_rho: dict | None = None
+    short_arc: dict | None = None
 
     def __post_init__(self):
         for b in self.bands:
@@ -1936,6 +1953,7 @@ class AliasResult:
             temper_blocks=self.temper_blocks,
             temper_f_raw=self.temper_f_raw,
             temper_rho=self.temper_rho,
+            short_arc=self.short_arc,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -2060,6 +2078,7 @@ class AliasResult:
             temper_blocks=p.get("temper_blocks"),
             temper_f_raw=p.get("temper_f_raw"),
             temper_rho=p.get("temper_rho"),
+            short_arc=p.get("short_arc"),
             **settings,
         )
 
@@ -2247,6 +2266,111 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
         )
         return None, skipped, True
     return positions, skipped, False
+
+
+def _seed_motion(data, positions, skip_flagged):
+    """The within-night velocities of the seeding nights, aligned with
+    ``EpochPositions.positions(skip_flagged=...)``; None for other
+    positions."""
+    if not isinstance(positions, EpochPositions):
+        return None
+    motion = night_motion(data, positions)
+    return motion.take(~positions.flagged) if skip_flagged else motion
+
+
+def _short_arc_profile(
+    data,
+    seed_positions,
+    positions,
+    bands,
+    *,
+    skip_flagged,
+    p_range,
+    delta_chi2,
+    n_best,
+    sign_free,
+    **grid,
+):
+    """``(profile, counts, motion)``: each band's seeds from the positions
+    and the night velocities, and the periods the short arcs admit;
+    ``grid`` is ``ecc_max``, ``jitter_mas``, ``k`` and ``eccs``."""
+    motion = _seed_motion(data, seed_positions, skip_flagged)
+    counts = unwrap_cycles(
+        positions, motion, p_range=p_range, delta_chi2=delta_chi2, **grid
+    )
+    profile = arc_profile(
+        positions, motion, bands, n_best=n_best, sign_free=sign_free, **grid
+    )
+    return profile, counts, motion
+
+
+_N_CHECK = 3  # seed orbits per band that the cheap whole-window check scores
+
+
+def _seed_scores(problem, settings, bands, seeds):
+    """Each band's best log likelihood over its first ``_N_CHECK``
+    position-level orbits (at every seed flux and both senses, unrefined):
+    a cheap check of the whole window."""
+    s = dataclasses.replace(settings, n_random=0, init=None)
+    pools = [
+        _candidates(s, b, _Bounds.of(b, s), None, seeds[b.n][:_N_CHECK])
+        for b in bands
+    ]
+    owner = onp.repeat([b.n for b in bands], [len(x) for x in pools])
+    xs, size = onp.concatenate(pools), settings.pool_size
+    score = onp.concatenate(
+        [
+            _score_pool(problem, settings, xs[i : i + size])
+            for i in range(0, len(xs), size)
+        ]
+    )
+    return {b.n: float(score[owner == b.n].max()) for b in bands}
+
+
+def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
+    """The bands to fit, and ``AliasResult.short_arc``.
+
+    The bands the cycle counts admit, plus any excluded band whose seeds
+    score better (``_seed_scores``) than every admitted band's: the
+    short-arc stage never silently drops a band the cheap check prefers.
+    The band of a warm start (``init``) is always kept.
+    """
+    init = None if settings is None else settings.init
+
+    def warm(b):  # a warm start's band is always fitted
+        return init is not None and b.p_lo <= init[0] <= b.p_hi
+
+    kept = [b for b in bands if counts.admits(b) or warm(b)] or list(bands)
+    excluded = [b for b in bands if b not in kept]
+    readmitted = []
+    if excluded:
+        score = _seed_scores(problem, settings, bands, seeds)
+        top = max(score[b.n] for b in kept)
+        readmitted = [b for b in excluded if score[b.n] > top]
+    if readmitted:
+        warnings.warn(
+            "fit_orbit_aliases(): the short arcs excluded bands N="
+            f"{[b.n for b in readmitted]}, but their seeds fit the data "
+            "better than those of the bands they admit: fitting them too.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+    fit = [b for b in bands if b in kept or b in readmitted]
+    _LOG.info(
+        "short arcs: %d of %d bands admitted (%d readmitted), %d velocities",
+        len(kept),
+        len(bands),
+        len(readmitted),
+        0 if motion is None else int(motion.measured.sum()),
+    )
+    return fit, dict(
+        intervals=[list(i) for i in counts.intervals],
+        kept=[b.n for b in kept],
+        excluded=[b.n for b in excluded if b not in readmitted],
+        readmitted=[b.n for b in readmitted],
+        velocities=0 if motion is None else int(motion.measured.sum()),
+        steps=list(counts.steps),
+    )
 
 
 def _skipped_codes(skipped):
@@ -2692,6 +2816,9 @@ def fit_orbit_aliases(
     skip_flagged=True,
     n_bands_max=_N_BANDS_MAX,
     temper=True,
+    short_arcs=True,
+    arc_jitter=ARC_JITTER,
+    arc_delta_chi2=ARC_DELTA_CHI2,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -2735,6 +2862,11 @@ def fit_orbit_aliases(
         The most bands of a default ``p_range`` (a longer window is cut), and
         the tempering for correlated channels
         ([`virgil.tempering`][virgil.tempering]): estimated, a factor, or off.
+    short_arcs, arc_jitter, arc_delta_chi2 : optional
+        Fit only the bands whose cycle counts the short arcs admit, seeded by
+        the positions and within-night velocities
+        ([`virgil.arcs`][virgil.arcs]); the position floor (a fraction of
+        lambda/B_max) and the χ² margin.
 
     Returns
     -------
@@ -2924,8 +3056,28 @@ def fit_orbit_aliases(
     positions, unseeded, fell_back = _seeding_positions(
         positions, t_ref, skip_flagged, mean_times
     )
-    profile = None
-    if positions is not None:
+    profile, counts, motion = None, None, None
+    resolution_mas = float(fringe_scales(data)[0])
+    arc_jitter_mas = float(arc_jitter) * resolution_mas
+    if positions is not None and short_arcs:
+        # AGENTS.md, "Cycle counts from short arcs" row: the nights' motion
+        # narrows the bands and seeds each one.
+        profile, counts, motion = _short_arc_profile(
+            data,
+            seed_positions,
+            positions,
+            bands,
+            skip_flagged=skip_flagged,
+            p_range=p_range,
+            ecc_max=ecc_max,
+            jitter_mas=arc_jitter_mas,
+            delta_chi2=arc_delta_chi2,
+            k=k,
+            n_best=n_candidates,
+            eccs=eccs,
+            sign_free=sign_free,
+        )
+    elif positions is not None:
         # AGENTS.md, "Label swap" row: sign_free seeds both labelings.
         profile = position_profile(
             positions,
@@ -2985,9 +3137,12 @@ def fit_orbit_aliases(
         diam_seed=diam_seed,
         vis_amp=vis_amp,
         flip_flux=bool(flip_flux),
-        resolution_mas=float(fringe_scales(data)[0]),
+        resolution_mas=resolution_mas,
         init=init_flat,
         dof=_dof_pairs(factors),
+        short_arcs=counts is not None,
+        arc_jitter_mas=arc_jitter_mas if counts is not None else 0.0,
+        arc_delta_chi2=float(arc_delta_chi2),
     )
     if factors is not None and not fixed_f:
         _warn_tempering(factors)
@@ -2998,9 +3153,15 @@ def fit_orbit_aliases(
         if checkpoint_dir is not None
         else None
     )
+    seeds = {} if profile is None else {r["n"]: r["orbits"] for r in profile}
+    short_arc = None
+    if counts is not None:
+        bands, short_arc = _short_arc_bands(
+            problem, settings, bands, seeds, counts, motion
+        )
 
     results, store, error = [], {}, None
-    for index, band in enumerate(bands):
+    for band in bands:
         done = _load_band(checkpoint_dir, band, key)
         if done is None:
             try:
@@ -3008,7 +3169,7 @@ def fit_orbit_aliases(
                     problem,
                     settings,
                     band,
-                    None if profile is None else profile[index]["orbits"],
+                    seeds.get(band.n),
                     mean_times,
                 )
             except TypeError:
@@ -3048,6 +3209,7 @@ def fit_orbit_aliases(
         primary_fit=primary_fit,
         period_at_lower_bound=period_at_lower,
         window_capped=window_capped,
+        short_arc=short_arc,
         temper_f=None if factors is None else factors.f,
         temper_blocks=None if factors is None else dict(factors.blocks),
         temper_f_raw=None if factors is None else factors.f_raw,

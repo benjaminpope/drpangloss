@@ -1410,13 +1410,13 @@ def test_a_single_night_alias_is_flagged_and_the_alias_fit_finds_the_band(
     assert found.flagged.tolist() == FLAGGED_ALIAS
     assert "alias-peaks" in found.flag_codes()[f"n{ALIAS_NIGHT}"]
     seeded = []
-    real = aliases.position_profile
+    real = aliases._short_arc_profile
 
-    def spy(positions, *args, **kw):
+    def spy(data, seed, positions, *args, **kw):
         seeded.append(positions)
-        return real(positions, *args, **kw)
+        return real(data, seed, positions, *args, **kw)
 
-    monkeypatch.setattr(aliases, "position_profile", spy)
+    monkeypatch.setattr(aliases, "_short_arc_profile", spy)
     result = fit_orbit_aliases(
         data,
         (11.3, 12.9),
@@ -1466,12 +1466,12 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     data, *_ = _alias_night_data()
     found = _alias_night_positions()
     seeded = []
-    real = aliases.position_profile
+    real = aliases._short_arc_profile
     monkeypatch.setattr(
         aliases,
-        "position_profile",
-        lambda positions, *a, **k: (
-            seeded.append(positions) or real(positions, *a, **k)
+        "_short_arc_profile",
+        lambda data, seed, positions, *a, **k: (
+            seeded.append(positions) or real(data, seed, positions, *a, **k)
         ),
     )
     kw = dict(t_ref=T_REF, n_candidates=10, n_refine=2, n_is=100, n_samples=10)
@@ -1484,6 +1484,7 @@ def test_skip_flagged_can_be_switched_off_and_unseeded_survives_save_load(
     skipped.save(tmp_path / "r.json")
     loaded = AliasResult.load(tmp_path / "r.json")
     assert loaded.unseeded == skipped.unseeded
+    assert loaded.short_arc == skipped.short_arc and skipped.short_arc["kept"]
     assert loaded.unseeded[0]["flags"][0]["reason"]
     # A file written before the record was kept has none.
     payload = json.loads((tmp_path / "r.json").read_text())
@@ -1541,6 +1542,16 @@ def _seed_settings(monkeypatch, positions, **options):
         "position_profile",
         lambda pos, bands, **kw: seen.setdefault("seeded", len(pos.dt))
         and [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            seen.setdefault("seeded", len(pos.dt))
+            and [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     with pytest.raises(_Stop):
         fit_orbit_aliases(
@@ -1695,6 +1706,15 @@ def _spy_settings(monkeypatch, **options):
         aliases,
         "position_profile",
         lambda pos, bands, **kw: [dict(orbits=[]) for _ in bands],
+    )
+    monkeypatch.setattr(
+        aliases,
+        "_short_arc_profile",
+        lambda data, seed, pos, bands, **kw: (
+            [dict(orbits=[]) for _ in bands],
+            None,
+            None,
+        ),
     )
     data, _ = _synthetic(12.1)
     with pytest.raises(_Stop):
@@ -2178,3 +2198,77 @@ def test_a_resolved_primary_is_fitted_and_an_unresolved_one_is_a_point():
             assert result.best.best["diam"] == pytest.approx(1.05, rel=0.2)
         else:
             assert result.primary_diam is None
+
+
+def test_an_excluded_band_that_beats_the_kept_ones_is_readmitted(monkeypatch):
+    # AGENTS.md, "Cycle counts from short arcs" row: the cheap check never
+    # lets the short arcs silently drop a band whose seeds fit better.
+    from virgil.arcs import CycleCounts
+
+    bands = alias_bands([0.0, 100.0], (5.0, 14.0))
+    one = bands[2]
+    counts = CycleCounts(((one.p_lo + 1e-6, one.p_hi - 1e-6),), ())
+    scores = {b.n: -100.0 for b in bands}
+    monkeypatch.setattr(aliases, "_seed_scores", lambda *a: scores)
+    scores[bands[5].n] = -10.0
+    with pytest.warns(UserWarning, match="short arcs excluded"):
+        fit, record = aliases._short_arc_bands(
+            None, None, bands, {}, counts, None
+        )
+    assert fit == [one, bands[5]]
+    assert record["kept"] == [one.n] and record["readmitted"] == [bands[5].n]
+    assert bands[5].n not in record["excluded"]
+    scores[bands[5].n] = -200.0  # worse than the kept band: stays out
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        fit, record = aliases._short_arc_bands(
+            None, None, bands, {}, counts, None
+        )
+    assert fit == [one] and len(record["excluded"]) == len(bands) - 1
+    # Arcs that admit no band keep them all.
+    none = CycleCounts(((1.0, 2.0),), ())
+    fit, _ = aliases._short_arc_bands(None, None, bands, {}, none, None)
+    assert fit == bands
+    # A warm start's band is always fitted.
+    warm = types.SimpleNamespace(init=(0.5 * (bands[7].p_lo + bands[7].p_hi),))
+    fit, _ = aliases._short_arc_bands(None, warm, bands, {}, counts, None)
+    assert fit == [one, bands[7]]
+
+
+# Seasonal gaps: two nights 4 d apart, one 4 months later, a gap of most of
+# a year and two more nights: the window holds about 90 bands. With default
+# settings, a cold fit (no p_range, no init) keeps the true band and ranks
+# it first, at any eccentricity and inclination.
+SEASONS = T_REF + onp.array([0.0, 4.0, 125.7, 359.1, 413.9])
+
+
+@functools.cache
+def _seasonal(ecc, inc):
+    truth = {**TRUTH, "ecc": ecc, "inc": inc}
+    orbit = KeplerOrbit(**truth, t_ref=T_REF)
+    scene = OrbitalBinary(orbit, FLUX)
+    key = jax.random.PRNGKey(5)
+    data = [
+        simulate(
+            scene,
+            vlti_night(m, 4, 25.0 * k, d_phi=0.05),
+            key=jax.random.fold_in(key, k),
+        )
+        for k, m in enumerate(SEASONS)
+    ]
+    return truth, data, _locate_alias_nights(data)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("ecc, inc", [(0.3, 50.0), (0.7, 80.0)])
+def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):
+    truth, data, found = _seasonal(ecc, inc)
+    result = fit_orbit_aliases(
+        data, positions=found, t_ref=T_REF, n_is=200, n_samples=20
+    )
+    n_true = round(float(onp.ptp(result.times)) / truth["period"])
+    record = result.short_arc
+    assert n_true in record["kept"] + record["readmitted"]
+    assert len(record["kept"]) < len(record["kept"] + record["excluded"]) / 3
+    assert result.best.n == n_true
+    assert abs(result.best.best["period"] - truth["period"]) < 0.05
