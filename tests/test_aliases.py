@@ -2336,3 +2336,58 @@ def test_a_cold_seasonal_gap_fit_ranks_the_true_alias_first(ecc, inc):
     assert len(record["kept"]) < len(record["kept"] + record["excluded"]) / 2
     assert result.best.n == n_true
     assert abs(result.best.best["period"] - truth["period"]) < 0.05
+
+
+@pytest.mark.slow
+def test_short_arc_seeds_come_beside_the_position_seeds():
+    # Two seasons 238 d apart, six nights (so no random starts): the true
+    # orbit is 20 cycles across them (P = 12.38 d), N=19 a poor fit at a
+    # prior bound. Short arcs once replaced the position-profile seeds of
+    # every band they kept, and the true band's best fit then fell from
+    # log Z -253 to -511, below N=19's -359. The arcs now add seeds.
+    truth = dict(TRUTH, period=12.38)
+    scene = OrbitalBinary(KeplerOrbit(**truth, t_ref=T_REF), FLUX)
+    key = jax.random.PRNGKey(3)
+    with jax.enable_x64(True):
+        data = [
+            simulate(
+                scene,
+                _night(m, rotation=7.0 * k),
+                key=jax.random.fold_in(key, k),
+            )
+            for k, m in enumerate(EPOCHS)
+        ]
+        axis = onp.linspace(-30.0, 30.0, 121)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            found = epoch_positions(
+                Epochs({f"n{k}": d for k, d in enumerate(data)}),
+                {
+                    "dra": axis,
+                    "ddec": axis,
+                    "flux": onp.geomspace(0.01, 1.0, 13),
+                },
+            )
+        fits = {}
+        for arcs in (True, False):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                fits[arcs] = fit_orbit_aliases(
+                    data,
+                    (11.0, 13.6),
+                    positions=found,
+                    t_ref=T_REF,
+                    short_arcs=arcs,
+                    a_range=(1.0, 30.0),
+                    primary_diam="auto",
+                )
+    n_true = round(float(onp.ptp(EPOCHS)) / truth["period"])
+    with_arcs, without = fits[True], fits[False]
+    assert (
+        with_arcs.short_arc["kept"] and n_true in with_arcs.short_arc["kept"]
+    )
+    assert with_arcs.best.n == without.best.n == n_true
+    assert abs(with_arcs.best.best["period"] - truth["period"]) < 0.05
+    log_z = lambda r, n: next(b.log_z for b in r.bands if b.n == n)  # noqa: E731
+    # within a kept band the arcs never seed worse than the positions alone
+    assert log_z(with_arcs, n_true) > log_z(without, n_true) - 5.0
