@@ -1039,3 +1039,28 @@ def test_check_status_is_one_of_the_three_known_values():
     assert checks.STATUSES == ("pass", "warn", "fail")
     assert checks.bic_penalty(3, 100) == pytest.approx(3 * 4.605170185988092)
     assert checks.bic_penalty(2, 0) == pytest.approx(2 * 0.6931471805599453)
+
+
+@pytest.mark.parametrize("order", [("a", "b"), ("b", "a")])
+def test_a_nan_site_makes_the_worst_chain_health_nan_in_any_order(order):
+    """A stuck parameter (NaN R-hat) must not hide behind a finite site,
+    whichever the site order, and the checks then fail."""
+    import numpy as onp
+
+    from virgil.pipeline._common import _chain_health, _sampler_report
+
+    site = {
+        "a": {"r_hat": 1.0, "ess_bulk": 900.0},
+        "b": {"r_hat": float("nan"), "ess_bulk": float("nan")},
+    }
+    stats = {"diverging": onp.zeros((2, 5), bool)}
+    health = _chain_health({k: site[k] for k in order}, stats)
+    assert onp.isnan(health["r_hat_max"]) and onp.isnan(health["ess_bulk_min"])
+    ok = {"r_hat_max": 1.0, "ess_bulk_min": 500.0, "divergence_fraction": 0.0}
+    settings = {"num_chains": 2, "num_samples": 5, "num_warmup": 1}
+    for parts in ([health, ok], [ok, health]):
+        report = _sampler_report(settings, parts)
+        assert onp.isnan(report["r_hat_max"])
+        assert onp.isnan(report["ess_bulk_min"])
+        assert checks.r_hat(report["r_hat_max"]).status == "fail"
+        assert checks.ess(report["ess_bulk_min"]).status == "fail"

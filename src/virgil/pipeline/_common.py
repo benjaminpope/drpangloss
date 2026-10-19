@@ -535,10 +535,15 @@ def _draws(mcmc):
 
 def _chain_health(diagnostics, stats):
     """Worst R-hat, smallest ESS and divergence fraction of one run, from
-    its per-site ``_diagnostics`` and NUTS ``stats``."""
+    its per-site ``_diagnostics`` and NUTS ``stats``. A NaN at any site makes
+    the worst value NaN, which the R-hat and ESS checks fail."""
     return {
-        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
+        "r_hat_max": float(
+            onp.max([d["r_hat"] for d in diagnostics.values()])
+        ),
+        "ess_bulk_min": float(
+            onp.min([d["ess_bulk"] for d in diagnostics.values()])
+        ),
         "divergence_fraction": float(onp.mean(stats["diverging"])),
     }
 
@@ -551,9 +556,11 @@ def _sampler_report(settings, parts):
         "num_chains": settings["num_chains"],
         "num_samples": settings["num_samples"],
         "num_warmup": settings["num_warmup"],
-        "r_hat_max": max(m["r_hat_max"] for m in parts),
-        "ess_bulk_min": min(m["ess_bulk_min"] for m in parts),
-        "divergence_fraction": max(m["divergence_fraction"] for m in parts),
+        "r_hat_max": float(onp.max([m["r_hat_max"] for m in parts])),
+        "ess_bulk_min": float(onp.min([m["ess_bulk_min"] for m in parts])),
+        "divergence_fraction": float(
+            onp.max([m["divergence_fraction"] for m in parts])
+        ),
     }
 
 
