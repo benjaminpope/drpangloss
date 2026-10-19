@@ -964,6 +964,22 @@ def test_a_refinement_that_does_not_converge_keeps_its_best_point(monkeypatch):
     assert _positions(night).peaks[0].marginal[0] > peaks.marginal[0]
 
 
+def test_a_non_finite_hessian_falls_back_to_the_step_covariance(monkeypatch):
+    """A kept point can sit where the Hessian is not finite (a flux at its
+    bound): the covariance is then the step size, not a crash in pinv."""
+    import virgil.epochs as epochs_module
+
+    night = _night(ARRAYS["3T"], seed=1)
+    monkeypatch.setattr(
+        epochs_module,
+        "_negative_marginal_hessian",
+        lambda *a, **k: np.full((3, 3), np.nan),
+    )
+    found = epoch_positions(Epochs({"night": night}), GRID)
+    assert onp.all(onp.isfinite(found.cov))
+    assert not found.peaks[0].laplace[0]
+
+
 def test_a_converged_refinement_raises_no_warning():
     night = _night(ARRAYS["3T"], seed=1)
     with warnings.catch_warnings():

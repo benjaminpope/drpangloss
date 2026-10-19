@@ -1835,7 +1835,7 @@ def epoch_positions(
         best = peaks[0]
         cov = max(steps) ** 2 * onp.eye(2)
         with run_in("float64"):
-            if refine:
+            if refine and onp.all(onp.isfinite(hessians[0])):
                 full = onp.linalg.pinv(hessians[0])
                 if onp.all(onp.isfinite(full)) and onp.all(
                     onp.linalg.eigvalsh(full[:2, :2]) > 0
@@ -1964,7 +1964,9 @@ class PrimaryDiameter:
     grid, profile : numpy.ndarray
         The diameters tried (``grid[0]`` is 0, a point primary) and the
         summed score of the nights at each (positions re-refined at each
-        diameter).
+        diameter; the point primary's score is the better of that fit and a
+        refit from the best diameter's positions, so a poor local maximum
+        does not pass for a resolved disc).
     positions : EpochPositions
         The input positions, re-seeded for the chosen model: refined at
         ``diam`` with ``primary_diam=diam`` when ``resolved``, else
@@ -2132,6 +2134,15 @@ def estimate_primary_diameter(
             bads.append(bad)
         profile = onp.asarray(profile)
         best = int(onp.argmax(profile))
+        if best > 0:
+            # A point primary fitted from the grid's starts can end at a
+            # worse local maximum than a disc's fit: the gain would then
+            # measure the local maximum, not the diameter. Refit it from the
+            # best disc's positions and keep the better baseline.
+            total, _, bad = profile_at(0.0, fits[best])
+            if total > profile[0]:
+                profile[0], bads[0] = total, bad
+                best = int(onp.argmax(profile))
         diam, sigma = float(grid[best]), float("nan")
         gain = float(profile[best] - profile[0])
         # The refinements that set the reported diameter and gain; the other

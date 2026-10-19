@@ -859,6 +859,14 @@ Provisional in 0.4:
   behind `fit_orbit_aliases` also keep an improved point where they used to
   fall back to the start, and since its default `primary_diam="auto"` calls
   `estimate_primary_diameter`, it can emit that warning too.
+  Two things the fix exposed are corrected with it. `estimate_primary_diameter`
+  took the point-primary score from one fit started at the grid's positions,
+  which can end at a poor local maximum (33 nats below what the same model
+  reaches from a disc's positions) and read as a resolved disc once refinements
+  were no longer discarded; the baseline is now the better of that fit and a
+  refit from the best diameter's positions. And `epoch_positions` no longer
+  raises `LinAlgError` when the Hessian at a kept point is not finite: the
+  covariance falls back to the step size.
 
 - **The limb-darkening tutorial printed an understated χ²/N.** It divided the sum of squared whitened residuals by their number (234 rows), but four-telescope closure phases give more residual rows than independent data (162), so the printed values were 451.32 and 0.79 instead of about 652 and 1.14. The tutorial now uses `virgil.imaging.chi2_by_observable`, which counts independent data, and its outputs were rerun.
 
