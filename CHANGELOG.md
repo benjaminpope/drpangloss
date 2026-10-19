@@ -19,13 +19,18 @@ each module lists its provisional names in `__provisional__`, which
 
 Provisional in 0.4:
 
-- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
-  `virgil.tempering` (the orbit fitting, aliases and search);
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.arcs`,
+  `virgil.orbit_search` and `virgil.tempering` (the orbit fitting, aliases
+  and search);
 - the `MultipoleDisk` family in `virgil.models`: `MultipoleDisk`, `ThinRing`,
   `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
   `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
   `VonMises`, `Cone`, `PowerLawHeight`, `multipole_disk_cvis` and `gp_priors`;
   and in `virgil.fields`, `MultipoleField` and `multipole_field_priors`;
+- the module `virgil.radio` (new: complex visibilities from CASA measurement
+  sets with per-observation calibration nuisances; instrument-neutral, with
+  the spectral-index prior `Uniform(0, 5)` and the data-derived reference
+  frequency and offset bound among its defaults);
 - the Gaussian-process members of `virgil.ensemble`: `evidence_grid`,
   `gp_members`, `GPFit` and `EvidenceGrid`;
 - `virgil.svi` (`variational`);
@@ -35,9 +40,42 @@ Provisional in 0.4:
   `virgil-pipeline-run-v1` is unchanged, and a provisional pipeline no
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
-- `virgil.metrics`.
+- `virgil.metrics`;
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances.
 
 ### Added
+
+- `Image` and the `FlaredDisk` family take `ft="auto" | "dft" | "nufft"`
+  (virgil#75), and `virgil.set_ft_defaults` changes the defaults. nufftax is
+  now a dependency. **The default changes results slightly**: on a CPU an image
+  of at least 64² pixels with at least max(500, 2N) points (N the larger side),
+  or on a GPU one of at least 128² pixels with 3000 or more points, uses a
+  non-uniform FFT, accurate
+  to 1e-5 (float32) or 1e-12 (float64) of the zero-baseline visibility rather
+  than exact. Pass `ft="dft"`, or call `set_ft_defaults(ft="dft")`, for the
+  exact sum; CLEAN (`_CleanScene`) has no `ft` and follows the global default.
+  `jax.hessian` and nested `vmap` through the NUFFT fail in nufftax 0.6.1; use
+  `ft="dft"` there. `ft` and `set_ft_defaults` are provisional.
+
+- **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
+  `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`
+  and `skip_flagged=True` when every seeding night beats its point
+  reflection by `arc_min_gap` (5 nats of `gap_marginal`; a twin's
+  reflections tie, and other positions seed every band as before),
+  measures each night's
+  velocity from its two halves (`night_motion`), joins the nights shortest
+  gap first and keeps the periods whose Thiele–Innes fit to the positions
+  and velocities, profiled over eccentricity, inclination and orientation,
+  is within `arc_delta_chi2` (25) of the best (`unwrap_cycles`), so a long
+  gap admits only the cycle counts the shorter arcs allow. Each band is
+  seeded deterministically from the same fit (`arc_profile`). An excluded
+  band whose seeds beat every kept band's is fitted after all, with a
+  warning, and too few data keep the whole window. Positions, and each
+  half night behind a velocity, get a floor of `arc_jitter` (0.1) of
+  λ/B_max. `AliasResult.short_arc` records the
+  admitted periods and bands and the cheap-check scores; band
+  probabilities `p` are now conditional on the bands fitted, not the whole
+  window. `short_arcs=False` is the previous behaviour. Checkpoints from earlier versions are not reused.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
@@ -847,6 +885,19 @@ Provisional in 0.4:
 - **Pipelines no longer crash in the posterior figures when the chains never move.** Draws with zero width made chainconsumer raise "Axis limits cannot be NaN or Inf", failing the run in the plotting step instead of reporting the non-convergence. The corner and trace figures are now placeholders with a recorded warning, and the R-hat and ESS checks fail as they should.
 - **Pipeline sampler reports no longer hide a stuck parameter.** The worst R-hat and smallest ESS in `posterior` reports were taken with Python `max`/`min`, so a NaN at one site was dropped when a finite site came first and the R-hat and ESS checks passed. A NaN at any site now makes the worst value NaN, which those checks fail.
 - **Pipeline setting validation is uniform.** `BinaryPipeline`, `StarPipeline` and `DiskPipeline` validate the shared sampler and data settings with one helper: `DiskPipeline` now rejects a non-positive `batch_size`, a non-number where a positive number is required is a `ValueError` (it was a `TypeError`), and messages for positive settings read "X must be positive; got V." (provisional pipelines; valid runs and results are unchanged). A missing or corrupt `models/best/info.json` now makes `DiskPipeline`'s `compare` stage raise instead of reporting an empty `at_bound`.
+- **Short-arc seeding no longer breaks velocity fits or drops position
+  seeds.** `arcs._half_position` unpacked two values from `_refine_marginal`,
+  which has returned `(x, value, stop)` since the refinement change below, so
+  any short-arc fit that measured a half-night velocity raised `ValueError`;
+  it now accepts a velocity only from a converged refinement. And the arc
+  seeds replaced the position-profile seeds of every band the arcs kept: with
+  six nights (no random starts) the true band of a two-season gap case
+  (N=20, P = 12.38 d) ended at log Z -511.2 against -253.4 with
+  `short_arcs=False`, and N=19 won. The arc seeds are now added beside each
+  kept band's position seeds (log Z -253.4 for N=20 with the arcs on). Each
+  kept band now scores about twice as many starting candidates, so default
+  short-arc fits are slower, and checkpoints from earlier versions are refit
+  (checkpoint format 6).
 - **`epoch_positions` no longer discards a refinement that does not
   converge.** The damped-Newton refinement of a grid peak returned its start
   point unless it stopped as `CONVERGED`, although the kernel only accepts

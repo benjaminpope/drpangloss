@@ -35,10 +35,12 @@ NAMES = [
 EXPECTED = {
     "virgil.epochs": {"*"},
     "virgil.aliases": {"*"},
+    "virgil.arcs": {"*"},
     "virgil.orbit_search": {"*"},
     "virgil.tempering": {"*"},
     "virgil.svi": {"*"},
     "virgil.metrics": {"*"},
+    "virgil.radio": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "MultipoleDisk",

@@ -68,6 +68,7 @@ nav:
       - "OIFITS files": oifits_files.md
       - "AMIGO DISCO data": amigo_disco.md
       - "Spectro-interferometric observables": spectro_observables.md
+      - "Radio interferometry": radio_interferometry.md
   - Binaries:
       - "Binary search": binary_search.md
       - "Grid searches": grid_searches.md
@@ -134,9 +135,11 @@ nav:
       - Spectra: api/spectra.md
       - Orbits: api/orbits.md
       - Orbit aliases: api/aliases.md
+      - Short arcs: api/arcs.md
       - Tempering: api/tempering.md
       - Epochs: api/epochs.md
       - Orbit Search: api/orbit_search.md
+      - Radio: api/radio.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md

@@ -35,13 +35,15 @@ def pixel_offsets(npix, pixel_scale_mas):
     return (0.5 * (npix - 1) - np.arange(npix)) * pixel_scale_mas
 
 
-def image_visibilities(brightness, uu, vv, pixel_scale_mas):
-    """Exact Fourier transform of a pixel image at arbitrary frequencies.
+def image_visibilities(brightness, uu, vv, pixel_scale_mas, ft="auto"):
+    """Fourier transform of a pixel image at arbitrary frequencies.
 
     Each pixel is a point at its centre: ``V = Σ I[row, col] exp(-2πi (u x_col
     + v y_row))``, the sign convention of :func:`offset_phase`, done at
     ``Precision.HIGHEST`` (the A100/H100 default, TF32, is ~1e-3 accurate).
-    On a regular uv grid :func:`grid_visibilities` is faster.
+    On a regular uv grid :func:`grid_visibilities` is faster. Large problems
+    use the optional ``nufftax`` transform (see ``ft``), accurate to a
+    requested tolerance rather than exactly.
 
     Parameters
     ----------
@@ -53,6 +55,9 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
         broadcastable shapes.
     pixel_scale_mas : float
         Pixel size in milliarcseconds.
+    ft : {"auto", "dft", "nufft"}
+        ``"dft"`` is the exact sum; ``"nufft"`` a non-uniform FFT; ``"auto"``
+        follows :func:`set_ft_defaults` (by default the faster for the size).
 
     Returns
     -------
@@ -61,8 +66,17 @@ def image_visibilities(brightness, uu, vv, pixel_scale_mas):
     """
     brightness = np.asarray(brightness)
     uu, vv = np.broadcast_arrays(uu, vv)
-    vis = _dft(brightness, np.ravel(uu), np.ravel(vv), pixel_scale_mas)
-    return vis.reshape(np.shape(uu))
+    shape = np.shape(uu)
+    uu, vv = np.ravel(uu), np.ravel(vv)
+    if ft not in ("auto", "dft", "nufft"):
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    if ft == "auto":
+        ft = "nufft" if _use_nufft(brightness.shape, uu.size) else "dft"
+    if ft == "nufft":
+        vis = _nufft(brightness, uu, vv, pixel_scale_mas)
+    else:
+        vis = _dft(brightness, uu, vv, pixel_scale_mas)
+    return vis.reshape(shape)
 
 
 def _fourier_matrix(freq_per_rad, npix, pixel_scale_mas):
@@ -78,6 +92,124 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
     highest = jax.lax.Precision.HIGHEST
     partial = np.matmul(rows, brightness.astype(rows.dtype), precision=highest)
     return np.sum(partial * cols, axis=-1)
+
+
+# virgil#75: nufftax (pure JAX) against the DFT, value+grad, f32; both rules
+# lean towards the DFT. GPU (A100; jobs 17776437, 18762629, 18819744;
+# ozstar_scripts#35): nufftax has a floor of 0.15-0.23 ms up to 512² and
+# 0.52 ms at 1024², and wins from ~3000 points at 128² and up; 64² never
+# really wins. CPU (Apple M1 Max, 2026-10-19 scans): the crossover is ~60
+# points at 64² and ~1600 at 1024², about 2 N, and the fixed cost varied 2-4x.
+# eps is a requested tolerance relative to the zero-baseline visibility. 1e-5
+# in f32 is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and
+# 1.2-1.5x faster than 1e-6.
+_FT_DEFAULTS = {
+    "ft": "auto",
+    "cpu_min_points": 500,
+    "cpu_points_per_side": 2,
+    "cpu_min_side": 64,
+    "gpu_min_points": 3000,
+    "gpu_min_side": 128,
+    "eps_f32": 1e-5,
+    "eps_f64": 1e-12,
+}
+
+
+def set_ft_defaults(
+    ft=None,
+    cpu_min_points=None,
+    cpu_points_per_side=None,
+    cpu_min_side=None,
+    gpu_min_points=None,
+    gpu_min_side=None,
+    eps_f32=None,
+    eps_f64=None,
+):
+    """Set how ``ft="auto"`` chooses the Fourier transform of pixel images.
+
+    Only the arguments you pass change. On a CPU the NUFFT is used when
+    there are at least ``max(cpu_min_points, cpu_points_per_side * N)`` points,
+    N the image's larger side, and its smaller side is at least
+    ``cpu_min_side``; on a GPU when there are at least ``gpu_min_points``
+    points and the smaller side is at least ``gpu_min_side``. ``eps_f32`` and
+    ``eps_f64`` are its tolerances, relative to the zero-baseline visibility.
+
+    The settings are read when a function is traced: a jitted function that
+    has already compiled keeps its old choice.
+
+    Parameters
+    ----------
+    ft : {"auto", "dft", "nufft"}, optional
+        What models with ``ft="auto"`` use: ``"dft"`` always gives the exact
+        sum, ``"nufft"`` always the NUFFT, ``"auto"`` chooses by size.
+    cpu_min_points, cpu_points_per_side, cpu_min_side : float, optional
+        The CPU thresholds above.
+    gpu_min_points, gpu_min_side : float, optional
+        The GPU thresholds above.
+    eps_f32, eps_f64 : float, optional
+        NUFFT tolerances for float32 and float64 images.
+
+    Returns
+    -------
+    dict
+        The previous settings: ``set_ft_defaults(**old)`` restores them.
+    """
+    new = dict(
+        ft=ft,
+        cpu_min_points=cpu_min_points,
+        cpu_points_per_side=cpu_points_per_side,
+        cpu_min_side=cpu_min_side,
+        gpu_min_points=gpu_min_points,
+        gpu_min_side=gpu_min_side,
+        eps_f32=eps_f32,
+        eps_f64=eps_f64,
+    )
+    if ft is not None and ft not in _FT_CHOICES:
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    old = dict(_FT_DEFAULTS)
+    _FT_DEFAULTS.update({k: v for k, v in new.items() if v is not None})
+    return old
+
+
+_FT_CHOICES = ("auto", "dft", "nufft")
+
+
+def _use_nufft(shape, n_points):
+    """Whether ``ft="auto"`` uses the NUFFT for this size and the defaults."""
+    nrow, ncol = shape
+    settings = _FT_DEFAULTS
+    if settings["ft"] != "auto":
+        return settings["ft"] == "nufft"
+    if jax.default_backend() == "gpu":
+        return (
+            min(nrow, ncol) >= settings["gpu_min_side"]
+            and n_points >= settings["gpu_min_points"]
+        )
+    return min(nrow, ncol) >= settings["cpu_min_side"] and n_points >= max(
+        settings["cpu_min_points"],
+        settings["cpu_points_per_side"] * max(nrow, ncol),
+    )
+
+
+def _nufft(brightness, uu, vv, pixel_scale_mas, eps=None):
+    """:func:`_dft` by nufftax's type-2 transform, to relative tolerance eps."""
+    from nufftax import nufft2d2
+
+    dtype = np.result_type(brightness.dtype, np.float32)
+    if eps is None:
+        eps = _FT_DEFAULTS["eps_f64" if dtype == np.float64 else "eps_f32"]
+    nrow, ncol = brightness.shape
+    # x pairs with the last axis. V = Σ f[k] exp(+i k t) exp(+i t (1 - n%2)/2) over modes k = index - n//2,
+    # t = 2π s f (rad per pixel): the DFT's centre is (n - 1)/2, not n//2.
+    t_row = 2.0 * np.pi * mas2rad * pixel_scale_mas * vv.astype(dtype)
+    t_col = 2.0 * np.pi * mas2rad * pixel_scale_mas * uu.astype(dtype)
+    # nufftax wraps t modulo 2π, but the half-pixel phase on an even axis is
+    # 4π-periodic: transform the wrapped t and apply that phase to the original.
+    wrap = lambda t: t - 2.0 * np.pi * np.round(t / (2.0 * np.pi))  # noqa: E731
+    source = brightness.astype(np.result_type(dtype, np.complex64))
+    vis = nufft2d2(wrap(t_col), wrap(t_row), source, eps=eps, isign=1)
+    shift = 0.5 * ((1 - nrow % 2) * t_row + (1 - ncol % 2) * t_col)
+    return vis * np.exp(1j * shift)
 
 
 def grid_visibilities(brightness, uu_axis, vv_axis, pixel_scale_mas):
