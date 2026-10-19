@@ -2296,12 +2296,10 @@ def _signs_trusted(positions, min_gap, temper_f=1.0):
     return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
-def _seed_motion(data, positions, skip_flagged, jitter, error_scale=1.0):
+def _seed_motion(data, positions, skip_flagged, jitter, cov_scale=1.0):
     """The within-night velocities of the seeding nights (``EpochPositions``),
     aligned with ``EpochPositions.positions(skip_flagged=...)``."""
-    motion = night_motion(
-        data, positions, jitter=jitter, error_scale=error_scale
-    )
+    motion = night_motion(data, positions, jitter=jitter, cov_scale=cov_scale)
     return motion.take(~positions.flagged) if skip_flagged else motion
 
 
@@ -2317,23 +2315,23 @@ def _short_arc_profile(
     delta_chi2,
     n_best,
     sign_free,
-    error_scale=1.0,
+    cov_scale=1.0,
     **grid,
 ):
     """``(profile, counts, motion)``: each band's seeds from the positions
     and the night velocities, and the periods the short arcs admit; the
-    positions' and velocities' covariances are times ``error_scale`` (the
+    positions' and velocities' covariances are times ``cov_scale`` (the
     effective-channel factor); ``grid`` is ``ecc_max``, ``jitter_mas``,
     ``k`` and ``eccs``."""
     motion = _seed_motion(
-        data, seed_positions, skip_flagged, arc_jitter, error_scale
+        data, seed_positions, skip_flagged, arc_jitter, cov_scale
     )
     counts = unwrap_cycles(
         positions,
         motion,
         p_range=p_range,
         delta_chi2=delta_chi2,
-        error_scale=error_scale,
+        cov_scale=cov_scale,
         **grid,
     )
     profile = arc_profile(
@@ -2342,7 +2340,7 @@ def _short_arc_profile(
         bands,
         n_best=n_best,
         sign_free=sign_free,
-        error_scale=error_scale,
+        cov_scale=cov_scale,
         **grid,
     )
     return profile, counts, motion
@@ -3197,8 +3195,9 @@ def fit_orbit_aliases(
     resolution_mas = float(fringe_scales(data)[0])
     arc_jitter_mas = float(arc_jitter) * resolution_mas
     # The positions' gaps and covariances come from the untempered surface:
-    # the cut uses them tempered by f, as the evidence is.
-    temper_f = 1.0 if factors is None else float(factors.f)
+    # the cut uses them tempered, as the evidence is. The gap sums the
+    # blocks, each tempered by its own f_b: the largest is the safe one.
+    temper_f = 1.0 if factors is None else float(factors.f_max)
     arcs_possible = (
         positions is not None
         and short_arcs
@@ -3232,7 +3231,7 @@ def fit_orbit_aliases(
             arc_jitter=float(arc_jitter),
             ecc_max=ecc_max,
             jitter_mas=arc_jitter_mas,
-            error_scale=temper_f,
+            cov_scale=temper_f,
             delta_chi2=arc_delta_chi2,
             k=k,
             n_best=n_candidates,

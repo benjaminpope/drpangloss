@@ -942,7 +942,7 @@ def test_the_short_arcs_see_the_tempered_gaps_and_errors(monkeypatch):
     seen = []
 
     def arcs_stage(data, seed, pos, bands, **kw):
-        seen.append(kw["error_scale"])
+        seen.append(kw["cov_scale"])
         raise _Stop
 
     monkeypatch.setattr(aliases, "_short_arc_profile", arcs_stage)

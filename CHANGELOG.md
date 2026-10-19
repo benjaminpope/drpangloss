@@ -98,12 +98,12 @@ Provisional in 0.4:
   warns, naming `field_mas`. Defaults are unchanged.
 - **`DiskPipeline` defaults from imaging nine PIONIER post-AGB discs**
   (provisional, so no deprecation; the lessons are from
-  virgil-validation#133). For `model="gp"`, `error_scale="auto"` (the new
+  virgil-validation#133). For `model="gp"`, `cov_scale="auto"` (the new
   default, `"rescale"` for the Gaussian process and `"quoted"` for the
   rings) estimates one MacKay error scale from a baseline fit and
   evaluates every fit and Laplace evidence on the rescaled data
-  (`chi2.error_scale_factor`; χ²/N stays on the quoted errors);
-  `imaging.error_scale` now accepts a `MultipoleDisk` with Gaussian-process
+  (`chi2.cov_scale_factor`; χ²/N stays on the quoted errors);
+  `imaging.cov_scale` now accepts a `MultipoleDisk` with Gaussian-process
   parts as `log_evidence` does. The ℓ grid cannot choose its own edge: the
   best ℓ on an edge extends the grid once that way (`ell_floor_halffringes`,
   0.5, is the lowest ℓ/√3), `on_grid_edge` is recorded and `length_scale`
@@ -220,7 +220,7 @@ Provisional in 0.4:
   other grid functions do (it was 4096), and `batch_size=0` raises.
 
 - **Imaging and metrics performance.** The evidence helpers (`log_evidence`,
-  `error_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
+  `cov_scale`, `laplace_samples`, `chi2_by_observable`, `classic_maxent`)
   take the Jacobian's SVD on the device in float64, QR-reduced when it is
   far from square, instead of NumPy's SVD on the host (#328). `dirty_image`
   sums the visibilities in chunks of samples, so its memory no longer grows
@@ -663,7 +663,7 @@ Provisional in 0.4:
   or re-renders the quicklook of a run folder.
   `import virgil` does not import the pipelines. See the Pipelines page.
   `StarPipeline` compares diameter lobes and models on −2 log L
-  (`model_loglike`, so with `error_scale="fit"` each candidate is scored
+  (`model_loglike`, so with `cov_scale="fit"` each candidate is scored
   at its own maximum-likelihood error scales, not on a χ² that those
   scales make equal to N), walks the registry's parent chain with a BIC
   penalty (`summary["comparison"]` decides, `summary["comparisons"]` lists
@@ -832,7 +832,7 @@ Provisional in 0.4:
   `flux_range` is refit with the stars' labels swapped, which can add a mode to a band's evidence. It also adds
   settings to the checkpoint key, so existing `checkpoint_dir`s are refit. `flip_flux=False` restores the old fits.
 - **The evidence helpers take several field Images.** `log_evidence`,
-  `error_scale` and `laplace_samples` accept `path=None` (every Image whose
+  `cov_scale` and `laplace_samples` accept `path=None` (every Image whose
   log-brightness is a `GaussianField`) or a tuple of paths, and take the
   Jacobian over all those latents together, so a compact and an extended
   GP Image in one `System` get a joint Laplace evidence. `laplace_samples`
@@ -960,7 +960,7 @@ Provisional in 0.4:
 
 - **Bandwidth smearing for binaries, rotated scenes and resolved backgrounds.** With `bandwidth` set, `BinaryModelCartesian`, `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())` raised a `TypeError` saying only that Systems of Components are supported. They are now smeared (binaries as their `to_system()`, `Resolved` has no offset to smear, `Rotated` rotates the baselines), and an unsupported model, such as an `OrbitalBinary` that is not a snapshot, raises a `TypeError` that names it and lists the supported ones.
 
-- **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(error_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
+- **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(cov_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
 
 - **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'
   L-BFGS-B refinement stopped on its relative-reduction test 50-800 nats
@@ -1092,13 +1092,13 @@ analysis or warn:
 
 ### Added
 
-- **Per-observable error scales.** `error_scale(model, data,
+- **Per-observable error scales.** `cov_scale(model, data,
   by_observable=True)` re-estimates MacKay's noise scale separately for each
   kind of observable (`"vis"`, `"phi"`, and each kind in `extras`, pooled over
   datasets), solving the coupled equations `1/β_b = χ²_b/(N_b − γ_b)` with
   `γ_b` from the hat matrix. Use it when blocks are mis-calibrated by
   different factors (in a MATISSE N-band contest file, V² gave χ² per point
-  0.005 and closure phases 0.49). `OIData.with_error_scale` accepts the
+  0.005 and closure phases 0.49). `OIData.with_cov_scale` accepts the
   returned dictionary of factors per kind. Data whose covariance includes
   nuisance terms that do not scale with the quoted errors (gains, closure
   offsets, marginalized flux scales, differential phases with a finite
@@ -1220,7 +1220,7 @@ analysis or warn:
   and later stages in `design/detection_roc.md` (virgil#2).
 - **Detection Monte Carlo (`virgil.detection`, stage 2 of virgil#2).**
   Null simulators `gaussian_null` (noise from the template's errors, with an
-  `error_scale` for mis-estimated errors) and `bootstrap_null` (a sign-flip or
+  `cov_scale` for mis-estimated errors) and `bootstrap_null` (a sign-flip or
   resampling residual bootstrap about the null scene; correlated closure
   phases are whitened and re-coloured with the new `ClosureNoise.colour`),
   and `rescale_errors` (visibility and phase errors scaled separately so the
@@ -1542,7 +1542,7 @@ analysis or warn:
   evidence takes `log det(I + JᵀJ)` from the singular values of the Jacobian,
   instead of a Cholesky factor of `I + J Jᵀ`, which was numerically
   indefinite and raised `LinAlgError` when `J Jᵀ` is rank deficient;
-  `classic_maxent`'s curvature and `error_scale`'s λ use the squared singular
+  `classic_maxent`'s curvature and `cov_scale`'s λ use the squared singular
   values too. The CLEAN major-cycle refit survives an `nnls` failure: it
   gets a larger iteration limit and falls back to bounded `lsq_linear`, so
   no-base CLEAN runs on the 2004 contest data instead of raising.
@@ -1658,7 +1658,7 @@ analysis or warn:
   AMIGO DISCO data), `fit` (Levenberg-Marquardt, L-BFGS or Adam, in float64 by
   default), the regularizers `MaxEntropy`, `TSV`, `TV` and `Centroid`,
   `l_curve` with corner, discrepancy and classic MaxEnt weights,
-  `GaussianField` Gaussian-process pixels, `log_evidence`, `error_scale`
+  `GaussianField` Gaussian-process pixels, `log_evidence`, `cov_scale`
   (MacKay's re-estimate of the error bars), `dirty_image`, `beam`,
   `convolve_beam`, `diagnose`, and a Gauss-Newton mass matrix for NUTS. See
   the imaging tutorials in the docs.
@@ -1701,8 +1701,8 @@ analysis or warn:
   `max_steps`: the gradient tolerance is floored at sqrt(eps) of the starting
   gradient.
 - `laplace_cov` and `fisher` compute in float64, like `fit`.
-- `error_scale` solves MacKay's self-consistent equation instead of
-  evaluating it at beta = 1; `log_evidence`, `error_scale` and
+- `cov_scale` solves MacKay's self-consistent equation instead of
+  evaluating it at beta = 1; `log_evidence`, `cov_scale` and
   `classic_maxent` accept a `FitResult` and refuse fits with fitted noise
   terms or per-dataset model lists, which they cannot handle.
 - Index arrays cached under one x64 mode no longer break the other on JAX

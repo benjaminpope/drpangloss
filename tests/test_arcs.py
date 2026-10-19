@@ -139,36 +139,96 @@ def test_errors_underestimated_sixfold_keep_the_true_cycle_count(seed):
     pos, motion = _positions_and_motion(TRUTH, seed=seed, underestimate=6.0)
     n_true = round(float(onp.ptp(NIGHTS)) / TRUTH["period"])
     counts = arcs.unwrap_cycles(
-        pos, motion, p_range=P_RANGE, eccs=ECCS, error_scale=36.0
+        pos, motion, p_range=P_RANGE, eccs=ECCS, cov_scale=36.0
     )
     kept = _kept(counts)
     assert n_true in kept
     assert len(kept) < len(alias_bands(NIGHTS, P_RANGE))  # not the window
-    # weaker errors, more bands: never fewer than at the stated errors
-    stated = arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, eccs=ECCS)
-    assert len(kept) >= len(_kept(stated))
+    # (that the scale widens the cut is test_the_cov_scale_widens_the_cut:
+    # here the unscaled χ² rescale already keeps the true band)
     profile = arcs.arc_profile(
         pos,
         motion,
         [b for b in alias_bands(NIGHTS, P_RANGE) if b.n == n_true],
         eccs=ECCS,
-        error_scale=36.0,
+        cov_scale=36.0,
     )
     assert abs(profile[0]["period"] - TRUTH["period"]) < 0.05
 
 
-def test_the_error_scale_widens_the_positions_and_velocities():
+# Well-fitting data (errors as stated, small enough that the fit's χ²/dof
+# is near 1): the cut's margin is then 25 in χ², and scaling every
+# covariance by f divides the χ² by f, so it keeps strictly more bands.
+def test_the_cov_scale_widens_the_cut():
+    pos, motion = _positions_and_motion(TRUTH, sigma=0.3, sigma_v=0.5)
+    n_true = round(float(onp.ptp(NIGHTS)) / TRUTH["period"])
+    stated = arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, eccs=ECCS)
+    scaled = arcs.unwrap_cycles(
+        pos, motion, p_range=P_RANGE, eccs=ECCS, cov_scale=36.0
+    )
+    assert n_true in _kept(stated) and n_true in _kept(scaled)
+    assert len(_kept(scaled)) > len(_kept(stated))
+    # the same χ² in both, with its scale (χ²/dof) floored at 1 before the
+    # margin: scaling moves the steps' χ² down by f
+    for a, b in zip(stated.steps, scaled.steps):
+        assert b["chi2"] < a["chi2"]
+
+
+def test_a_night_velocity_covariance_scales_before_the_floor():
+    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
+    scene = OrbitalBinary(orbit, 0.3)
+    nights = NIGHTS[[0, 3]]
+    data = [
+        simulate(
+            scene,
+            vlti_night(m, 6, 20.0 * k, d_phi=0.05),
+            key=jax.random.PRNGKey(k),
+        )
+        for k, m in enumerate(nights)
+    ]
+    mid = nights + 2.5 / 24.0
+    dra, ddec, _ = orbit.relative(mid)
+    pos = types.SimpleNamespace(
+        names=["a", "b"], mjd=mid, dra=onp.asarray(dra),
+        ddec=onp.asarray(ddec), flux=[0.3, 0.3], primary_diam=None,
+    )  # fmt: skip
+    bare = arcs.night_motion(data, pos, jitter=0.0)
+    wide = arcs.night_motion(data, pos, jitter=0.0, cov_scale=9.0)
+    floored = arcs.night_motion(data, pos, jitter=0.1, cov_scale=9.0)
+    assert bare.measured.all() and wide.measured.all()
+    assert onp.allclose(wide.cov, 9.0 * bare.cov, rtol=1e-6)
+    assert onp.allclose(wide.vel, bare.vel)
+    # the floor is added after: it is not multiplied
+    extra = floored.cov - wide.cov
+    assert onp.all(onp.linalg.eigvalsh(extra) > 0)
+    unscaled_floor = arcs.night_motion(data, pos, jitter=0.1)
+    assert onp.allclose(
+        extra, unscaled_floor.cov - bare.cov, rtol=1e-6, atol=1e-12
+    )
+
+
+def test_the_sign_free_seeds_use_the_scaled_positions_too():
+    pos, _ = _positions_and_motion(TRUTH)
+    same = arcs._jittered(pos, 0.0)
+    assert same is pos
+    wide = arcs._jittered(pos, 0.0, cov_scale=9.0)
+    assert onp.allclose(
+        arcs._position_cov(wide, 0.0), 9.0 * arcs._position_cov(pos, 0.0)
+    )
+
+
+def test_the_cov_scale_widens_the_positions_and_velocities():
     pos, motion = _positions_and_motion(TRUTH)
     one = arcs._arc(pos, motion, 0.1)
-    scaled = arcs._arc(pos, motion, 0.1, error_scale=9.0)
+    scaled = arcs._arc(pos, motion, 0.1, cov_scale=9.0)
     # (whiteners are inverse standard deviations: a floor of 0.1 mas is
     # added to the scaled σ² = 9 × 0.05², not scaled itself)
     sd = lambda a: 1.0 / a.wr[0, 0, 0]  # noqa: E731
     assert onp.isclose(sd(one) ** 2, 0.05**2 + 0.1**2, rtol=1e-6)
     assert onp.isclose(sd(scaled) ** 2, 9 * 0.05**2 + 0.1**2, rtol=1e-6)
     for bad in (0.5, float("nan"), float("inf")):
-        with pytest.raises(ValueError, match="error_scale"):
-            arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, error_scale=bad)
+        with pytest.raises(ValueError, match="cov_scale"):
+            arcs.unwrap_cycles(pos, motion, p_range=P_RANGE, cov_scale=bad)
 
 
 def test_too_few_data_keep_the_whole_window():
