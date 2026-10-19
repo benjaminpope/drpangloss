@@ -19,8 +19,9 @@ each module lists its provisional names in `__provisional__`, which
 
 Provisional in 0.4:
 
-- the modules `virgil.epochs`, `virgil.aliases`, `virgil.orbit_search` and
-  `virgil.tempering` (the orbit fitting, aliases and search);
+- the modules `virgil.epochs`, `virgil.aliases`, `virgil.arcs`,
+  `virgil.orbit_search` and `virgil.tempering` (the orbit fitting, aliases
+  and search);
 - the `MultipoleDisk` family in `virgil.models`: `MultipoleDisk`, `ThinRing`,
   `GaussianRing`, `RadialPowerLaw`, `ExpTail`, `Gap`, `RadialSum`,
   `RadialLinear`, `RadialPower`, `RadialGP`, `RadialGPFunction`, `MultipoleKernel`, `Harmonics`,
@@ -38,6 +39,26 @@ Provisional in 0.4:
 - `virgil.metrics`.
 
 ### Added
+
+- **Short arcs narrow the alias bands** (`virgil.arcs`, provisional).
+  `fit_orbit_aliases(short_arcs=True)`, the default with `EpochPositions`
+  and `skip_flagged=True` when every seeding night beats its point
+  reflection by `arc_min_gap` (5 nats of `gap_marginal`; a twin's
+  reflections tie, and other positions seed every band as before),
+  measures each night's
+  velocity from its two halves (`night_motion`), joins the nights shortest
+  gap first and keeps the periods whose Thiele–Innes fit to the positions
+  and velocities, profiled over eccentricity, inclination and orientation,
+  is within `arc_delta_chi2` (25) of the best (`unwrap_cycles`), so a long
+  gap admits only the cycle counts the shorter arcs allow. Each band is
+  seeded deterministically from the same fit (`arc_profile`). An excluded
+  band whose seeds beat every kept band's is fitted after all, with a
+  warning, and too few data keep the whole window. Positions, and each
+  half night behind a velocity, get a floor of `arc_jitter` (0.1) of
+  λ/B_max. `AliasResult.short_arc` records the
+  admitted periods and bands and the cheap-check scores; band
+  probabilities `p` are now conditional on the bands fitted, not the whole
+  window. `short_arcs=False` is the previous behaviour. Checkpoints from earlier versions are not reused.
 
 - **`starting_image(field_mas=...)`** pads the start image with empty pixels
   out to a field wider than the interferometric limit λ/B_min, which
