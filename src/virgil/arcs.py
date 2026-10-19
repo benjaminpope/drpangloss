@@ -178,7 +178,7 @@ def _half_position(part, x0, resolution, diam):
         surface = _Surface(d64)
         dof = np.asarray(surface.dof_vector(None), float)
         dm = None if not diam else np.asarray(float(diam))
-        x, value = _refine_marginal(x0, dof, d64, surface, bounds, dm)
+        x, value, _ = _refine_marginal(x0, dof, d64, surface, bounds, dm)
         if not onp.isfinite(value):
             return None
         hess = onp.asarray(
