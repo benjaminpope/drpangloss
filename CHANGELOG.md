@@ -680,6 +680,31 @@ contributors page; no code was copied)
 
 ### Fixed
 
+- **`epoch_positions` no longer discards a refinement that does not
+  converge.** The damped-Newton refinement of a grid peak returned its start
+  point unless it stopped as `CONVERGED`, although the kernel only accepts
+  steps that lower the loss. A run that stalled (the damping limit) or
+  reached its 200-step limit therefore left the peak at its grid cell. In the
+  CI job on the oldest dependencies that left the true peak of a benchmark
+  night at marginal -469 (-154 refined), below its point reflection (-361):
+  a 21 mas error. `_refine_marginal` now keeps the best point reached and
+  returns the kernel's stop code; only a start that is not finite falls
+  back to the start. `epoch_positions` warns when the refinement of a night's
+  best peak did not converge, and `estimate_primary_diameter` when one of the
+  fits that set the diameter and its gain did not (the marginal score at that
+  point is a lower bound; the warning names the stop). The refinements
+  behind `fit_orbit_aliases` also keep an improved point where they used to
+  fall back to the start, and since its default `primary_diam="auto"` calls
+  `estimate_primary_diameter`, it can emit that warning too.
+  Two things the fix exposed are corrected with it. `estimate_primary_diameter`
+  took the point-primary score from one fit started at the grid's positions,
+  which can end at a poor local maximum (33 nats below what the same model
+  reaches from a disc's positions) and read as a resolved disc once refinements
+  were no longer discarded; the baseline is now the better of that fit and a
+  refit from the best diameter's positions. And `epoch_positions` no longer
+  raises `LinAlgError` when the Hessian at a kept point is not finite: the
+  covariance falls back to the step size.
+
 - **The limb-darkening tutorial printed an understated χ²/N.** It divided the
   sum of squared whitened residuals by their number (234 rows), but
   four-telescope closure phases give more residual rows than independent data
