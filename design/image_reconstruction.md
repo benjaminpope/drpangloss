@@ -125,8 +125,8 @@ through nufftax (pure JAX; a core dependency; issue #75, reinstated
 re-creates cuFFT plans on every call (jax-finufft #157, a flat 6-7 ms on the
 GPU). nufftax has no such cost (0.15-0.7 ms value+grad on an A100), so
 jax-finufft is no longer needed. `ft="auto"` uses the NUFFT when
-the problem is large enough: on a GPU `M·N1·N2 >= 1e8` and `min(N1, N2) >= 128`;
-on a CPU `M >= 500` and `min(N1, N2) >= 64` (the `_FT_DEFAULTS` dict in `_geometry`, set with `virgil.set_ft_defaults`, which also makes `ft="dft"` or `"nufft"` global); `ft="dft"` and
+the problem is large enough: on a GPU `M >= 3000` and `min(N1, N2) >= 128`;
+on a CPU `M >= max(500, 2·max(N1, N2))` and `min(N1, N2) >= 64` (the `_FT_DEFAULTS` dict in `_geometry`, set with `virgil.set_ft_defaults`, which also makes `ft="dft"` or `"nufft"` global); `ft="dft"` and
 `ft="nufft"` force a choice. A `UVGrid` match still takes the MFT. A padded
 FFT with interpolation is never used.
 
@@ -326,20 +326,32 @@ V(0) = 1):
 - FINUFFT's float64 GPU accuracy is fine here (2.8e-8), so the concern
   from jax-finufft issue #162 does not apply to this build.
 
-**Speed** (jitted value + gradient of Σ|V|², A100, float32, ms; DFT / nufftax,
-speed-up). DFT from job 17776437; nufftax 0.6 from job 18762629
-(ozstar_scripts#35).
+**Speed** (A100, jitted value+grad, float32, ms; DFT / nufftax; jobs 17776437
+and 18762629, then 18819744, jax 0.10.2, nufftax 0.6.1; ozstar_scripts#35).
 
-| Image | 10³ points | 10⁴ | 10⁵ |
-| --- | --- | --- | --- |
-| 64² | 0.14 / 0.15 (0.9×) | 0.24 / 0.28 (0.9×) | 0.96 / 1.08 (0.9×) |
-| 128² | 0.15 / 0.18 (0.8×) | 0.41 / 0.20 (2×) | 2.3 / 0.49 (5×) |
-| 256² | 0.23 / 0.18 (1.3×) | 0.87 / 0.20 (4×) | 6.5 / 0.37 (18×) |
-| 512² | 0.40 / 0.22 (1.8×) | 2.6 / 0.24 (11×) | 20 / 0.38 (52×) |
-| 1024² | 0.87 / 0.55 (1.6×) | 7.3 / 0.56 (13×) | |
+| Image | points | DFT / nufftax (speed-up) |
+| --- | --- | --- |
+| 64² | 10⁵ | 0.95 / 1.05 (0.9×); never really wins |
+| 128² | 10³ | 0.161 / 0.148 (1.1×) |
+| | 10⁴ | 0.387 / 0.183 (2×) |
+| | 10⁵ | 2.26 / 0.455 (5×) |
+| 256² | 10³ | 0.218 / 0.165 (1.3×) |
+| | 3×10³ | 0.375 / 0.168 (2×) |
+| | 10⁴ | 0.84 / 0.18 (5×) |
+| | 10⁵ | 5.87 / 0.336 (17×) |
+| 512² | 3×10³ | 0.841 / 0.232 (4×) |
+| | 10⁵ | 19.5 / 0.388 (50×) |
+| 1024² | 100 | 0.253 / 0.517 (0.5×) |
+| | 10³ | 1.02 / 0.523 (2×) |
+| | 3×10³ | 2.61 / 0.555 (5×) |
+| | 3×10⁴ | 22.1 / 0.571 (39×) |
 
-- nufftax is no faster below M·N² ≈ 10⁸ or at 64²: that sets the GPU work threshold
-  and the 128-pixel minimum side.
+- nufftax's floor is about 0.15-0.23 ms up to 512² and 0.52 ms at 1024², so
+  the DFT wins with few points (1024² with 100 points: 0.25 against 0.52 ms).
+  Hence a rule on points, not on points × pixels: ≥ 3000 points and a smaller
+  side of 128 or more.
+- float64 (eps 1e-12) crosses at about 1000-3000 points for sides of 96 and
+  up (1024², 3000 points: 3.15 / 1.14; 512², 10⁵: 25 / 0.945).
 - The earlier jax-finufft timings (flat ~7 ms) are superseded.
 - The GPU DFT is 45× faster than the laptop CPU at 512² × 10⁵ in float32
   (20 against 886 ms).
@@ -362,7 +374,9 @@ ms, float32, DFT / nufftax at eps 1e-5, speed-up):
   1024²: 2.0 against 13.6).
 - nufftax has a floor growing with N² (the FFT of the 2N grid, about 0.3 ms at
   64² and 14 ms at 1024²); the DFT loses from M ≈ 150-400 at every N from 64
-  to 1024. That sets the CPU rule (M ≥ 500, side ≥ 64).
+  to 1024 (a fine scan puts the crossover at about 60 points at 64² and 1600
+  at 1024², about 2N; the fixed cost varied 2-4× between runs). The CPU rule
+  therefore leans towards the DFT: M ≥ max(500, 2N) and a smaller side of 64 or more.
 - float32 eps 1e-5 rather than 1e-6: at 1e-6 the error stays near 1e-5 (the
   float32 floor) and runs are 1.2-1.5× slower; virgil's float32 DFT has a
   relative error of 7e-6 to 9e-5 on the same tests. float64 at 1e-12 matches

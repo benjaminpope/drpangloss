@@ -94,19 +94,21 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
     return np.sum(partial * cols, axis=-1)
 
 
-# virgil#75: nufftax (pure JAX) against the DFT, value+grad, f32. A100
-# (DFT job 17776437, nufftax job 18762629; ozstar_scripts#35): no faster below
-# M·N1·N2 ~ 1e8 or at 64², 4-50x above. Apple M1 Max CPU (2026-10-19,
-# ozstar_scripts@4f4ad9e): nufftax's FFT floor grows with N² and the DFT loses
-# from M ~ 150-400 points at every N from 64 to 1024, so the CPU rule is on M.
+# virgil#75: nufftax (pure JAX) against the DFT, value+grad, f32; both rules
+# lean towards the DFT. GPU (A100; jobs 17776437, 18762629, 18819744;
+# ozstar_scripts#35): nufftax has a floor of 0.15-0.23 ms up to 512² and
+# 0.52 ms at 1024², and wins from ~3000 points at 128² and up; 64² never
+# really wins. CPU (Apple M1 Max, 2026-10-19 scans): the crossover is ~60
+# points at 64² and ~1600 at 1024², about 2 N, and the fixed cost varied 2-4x.
 # eps is a requested tolerance relative to the zero-baseline visibility. 1e-5
 # in f32 is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and
 # 1.2-1.5x faster than 1e-6.
 _FT_DEFAULTS = {
     "ft": "auto",
     "cpu_min_points": 500,
+    "cpu_points_per_side": 2,
     "cpu_min_side": 64,
-    "gpu_min_work": 1e8,
+    "gpu_min_points": 3000,
     "gpu_min_side": 128,
     "eps_f32": 1e-5,
     "eps_f64": 1e-12,
@@ -116,20 +118,21 @@ _FT_DEFAULTS = {
 def set_ft_defaults(
     ft=None,
     cpu_min_points=None,
+    cpu_points_per_side=None,
     cpu_min_side=None,
-    gpu_min_work=None,
+    gpu_min_points=None,
     gpu_min_side=None,
     eps_f32=None,
     eps_f64=None,
 ):
     """Set how ``ft="auto"`` chooses the Fourier transform of pixel images.
 
-    Only the arguments you pass change. The NUFFT is used on a CPU when
-    there are at least ``cpu_min_points`` points and the image's smaller side
-    is at least ``cpu_min_side``; on a GPU when points × pixels is at least
-    ``gpu_min_work`` and the smaller side at least ``gpu_min_side``. ``eps_f32``
-    and ``eps_f64`` are its tolerances, relative to the zero-baseline
-    visibility.
+    Only the arguments you pass change. On a CPU the NUFFT is used when
+    there are at least ``max(cpu_min_points, cpu_points_per_side * N)`` points,
+    N the image's larger side, and its smaller side is at least
+    ``cpu_min_side``; on a GPU when there are at least ``gpu_min_points``
+    points and the smaller side is at least ``gpu_min_side``. ``eps_f32`` and
+    ``eps_f64`` are its tolerances, relative to the zero-baseline visibility.
 
     The settings are read when a function is traced: a jitted function that
     has already compiled keeps its old choice.
@@ -139,8 +142,10 @@ def set_ft_defaults(
     ft : {"auto", "dft", "nufft"}, optional
         What models with ``ft="auto"`` use: ``"dft"`` always gives the exact
         sum, ``"nufft"`` always the NUFFT, ``"auto"`` chooses by size.
-    cpu_min_points, cpu_min_side, gpu_min_work, gpu_min_side : float, optional
-        The size thresholds above.
+    cpu_min_points, cpu_points_per_side, cpu_min_side : float, optional
+        The CPU thresholds above.
+    gpu_min_points, gpu_min_side : float, optional
+        The GPU thresholds above.
     eps_f32, eps_f64 : float, optional
         NUFFT tolerances for float32 and float64 images.
 
@@ -152,8 +157,9 @@ def set_ft_defaults(
     new = dict(
         ft=ft,
         cpu_min_points=cpu_min_points,
+        cpu_points_per_side=cpu_points_per_side,
         cpu_min_side=cpu_min_side,
-        gpu_min_work=gpu_min_work,
+        gpu_min_points=gpu_min_points,
         gpu_min_side=gpu_min_side,
         eps_f32=eps_f32,
         eps_f64=eps_f64,
@@ -177,11 +183,11 @@ def _use_nufft(shape, n_points):
     if jax.default_backend() == "gpu":
         return (
             min(nrow, ncol) >= settings["gpu_min_side"]
-            and n_points * nrow * ncol >= settings["gpu_min_work"]
+            and n_points >= settings["gpu_min_points"]
         )
-    return (
-        min(nrow, ncol) >= settings["cpu_min_side"]
-        and n_points >= settings["cpu_min_points"]
+    return min(nrow, ncol) >= settings["cpu_min_side"] and n_points >= max(
+        settings["cpu_min_points"],
+        settings["cpu_points_per_side"] * max(nrow, ncol),
     )
 
 

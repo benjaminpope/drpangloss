@@ -106,12 +106,16 @@ def test_hessian_through_the_nufft():
 
 def test_use_nufft_decisions(monkeypatch):
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
-    assert _use_nufft((256, 256), 10_000)
-    assert not _use_nufft((256, 256), 100)  # below the work threshold
-    assert not _use_nufft((64, 64), 10**6)  # too small an image
+    assert _use_nufft((256, 256), 3_000)
+    assert not _use_nufft((256, 256), 2_999)
+    assert not _use_nufft((1024, 1024), 100)  # the DFT is 2x faster here
+    assert not _use_nufft((64, 64), 10**6)  # 64² never wins on a GPU
     monkeypatch.setattr(jax, "default_backend", lambda: "cpu")
     assert _use_nufft((64, 64), 500)
     assert not _use_nufft((64, 64), 499)
+    assert _use_nufft((512, 512), 1_024)  # 2 points per row of the larger side
+    assert not _use_nufft((512, 512), 1_023)
+    assert _use_nufft((1024, 64), 2_048) and not _use_nufft((1024, 64), 2_047)
     assert not _use_nufft((32, 32), 10**6)
     monkeypatch.setattr(jax, "default_backend", lambda: "tpu")
     assert _use_nufft((128, 128), 1_000)  # any other backend counts as cpu
@@ -197,7 +201,7 @@ def test_thresholds_set_through_the_function_change_the_decision(
     assert _use_nufft((32, 32), 100)
     monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
     assert not _use_nufft((32, 32), 100)
-    set_ft_defaults(gpu_min_work=1e5, gpu_min_side=16)
+    set_ft_defaults(gpu_min_points=50, gpu_min_side=16)
     assert _use_nufft((32, 32), 100)
 
 
