@@ -1671,6 +1671,7 @@ def clean(
             return _refit(fixed, fluxes, chi2, *geometry)
 
         scores = scores_for(fluxes)
+        eps = float(np.finfo(fluxes.dtype).eps)
         history, stop = [], "max_iterations"
         since_refit = 0  # iterations since the last major cycle
         for iteration in range(max_iterations + 1):
@@ -1683,7 +1684,10 @@ def clean(
                 break
             if iteration == max_iterations:
                 break
-            stalled = not float(decrease) > 0.0 or (
+            # A step that cannot lower χ² beyond its rounding error is no
+            # step: at the optimum the gradient's sign is roundoff, so the
+            # test is against eps·χ², not against exactly zero.
+            stalled = not float(decrease) > eps * float(chi2) or (
                 stall_window
                 and since_refit >= stall_window
                 and history[-1 - stall_window] - history[-1]

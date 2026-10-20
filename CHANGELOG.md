@@ -22,6 +22,27 @@ anything before 1.0 may change between minor versions.
   (`sidelobe_flags`). Off by default in `fit_orbit_aliases`;
   `OrbitPipeline` sets `outlier_eps=0.02`.
 
+### Fixes: JAX 0.12 and CLEAN stalling
+
+- `separation_pa` returns a separation with a zero (not NaN) gradient at the
+  origin. `jnp.hypot` has a NaN gradient at (0, 0) on JAX 0.12.0, so an
+  angular model that started on the origin (a non-detection's best fit) had
+  non-finite derivatives and NUTS could not initialize there.
+- `clean`'s `"stalled"` stop compares the predicted decrease with `eps` times
+  the χ², not with exactly zero. At the optimum the sign of the gradient is
+  rounding noise, so whether CLEAN stopped depended on the platform and on
+  thread scheduling, and it sometimes ran to `max_iterations` instead.
+- The cold-cache seasonal-gap alias test (`slow` set) has a 600 s timeout: it takes
+  250-305 s on a runner with a cold JAX compile cache, against the 300 s default.
+
+### Faster FlaredDisk render
+
+- `FlaredDiskHG` and `FlaredDiskPowerLaw` form cos θ as y/ρ instead of calling
+  `arctan2` and `cos` (cos(θ/2)ⁿ = ((1 + cos θ)/2)ⁿ/²), roughly halving the
+  value-and-gradient time of a 96×96 render on CPU in float64. Results agree
+  with the old formulas to rounding; the gradient at a pixel exactly on the
+  star is now finite. `FlaredDiskGaussian` still needs θ.
+
 ### Closure offsets for three telescopes
 
 - `with_closure_offsets` accepts three-telescope data (one triangle per frame and
@@ -30,6 +51,26 @@ anything before 1.0 may change between minor versions.
   `cp_noise`, so the likelihood uses the sine-plus-penalty form of four-telescope
   data, whose normalization differs slightly from the von Mises form of plain
   three-telescope data.
+
+### Matrix Fourier transform for rendered disks on DISCO lattices
+
+- `FlaredDisk` (and `FlaredDiskHG`, `FlaredDiskGaussian`, `FlaredDiskPowerLaw`)
+  use the exact two-sided matrix Fourier transform on data with a `uv_grid`,
+  as `Image` does. A new `rotation_deg` orients the disk's pixel grid; the
+  default, `"grid"`, renders it in the frame of the data's lattice (North up
+  without one), so DISCO data always take the fast path. On the old PDS 70
+  product this changes ln L by under 0.005 (the pixel discretisation) and
+  runs 3–4× faster for a 96² disk at 1300 uv points. With `"grid"`,
+  `disk.model(u, v, wavel)` and data without a lattice keep North-up pixels,
+  so they differ from the lattice path by that discretisation. Provisional.
+- Ensembles on drpangloss DISCO dictionaries now cap every field factor at 1,
+  as on other lattice data (a larger field aliases), so the same seed draws
+  smaller fields than before.
+- Dictionaries with `disco_vis_mat` or `disco_phi_mat` (the drpangloss DISCO
+  format) get a `uv_grid` when their single-wavelength samples lie on a
+  lattice to 1e-5 cells, as the mixed-DISCO loader already did; both share
+  one lattice check. `find_uv_grid` now fits the lattice by least squares, so
+  float32 coordinates no longer defeat it.
 
 ### Image smoothing
 
@@ -105,6 +146,7 @@ Provisional in 0.4:
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
 - the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances;
+- the `rotation_deg` argument of `FlaredDisk*` (and its `"grid"` default) and the lattice tolerance for DISCO dictionaries;
 - image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers.
 
 ### Added

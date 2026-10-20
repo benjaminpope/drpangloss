@@ -28,6 +28,7 @@ from .observables import (
     in_ranges,
 )
 from ._geometry import UVGrid, find_uv_grid  # noqa: F401 (re-exported)
+from ._geometry import _disco_uv_grid
 from ._geometry import rotate
 from .amigo import is_mixed_disco_record, mixed_disco_fields
 from .models import smeared_model
@@ -371,7 +372,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             "vis_mode", data.get("observable_vis_mode", "auto")
         )
         self.vis_mode = self._resolve_vis_mode(vis_mode_in)
-        self.uv_grid = None
+        self.uv_grid = (
+            _disco_uv_grid(u, v, wavel)
+            if has_disco_vis or has_disco_phi
+            else None
+        )
         self.vis_encoding = "split"
         self._transform_observed_channels(
             validate_vis_covariance=has_disco_vis,
