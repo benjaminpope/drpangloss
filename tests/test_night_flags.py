@@ -2,6 +2,7 @@
 mixture of the orbit likelihood and the post-fit sidelobe flag
 (design/orbit_noise_models.md, "tempered night flags")."""
 
+import dataclasses
 import inspect
 import json
 import warnings
@@ -103,6 +104,14 @@ def test_chi2_high_is_judged_within_each_mode():
     )
 
 
+def test_mode_keys_tolerate_wavelength_jitter_but_not_other_setups():
+    one = ta._night(ta.T_REF)
+    jitter = one.set("wavel", one.wavel * 1.004)
+    other = one.set("wavel", one.wavel * 0 + 1.6e-6)
+    keys = _mode_keys(Epochs({"a": one, "b": jitter, "c": other, "d": one}))
+    assert keys[0] == keys[1] == keys[3] != keys[2]
+
+
 def test_mode_keys_separate_spectral_setups():
     one = ta._night(ta.T_REF)
     two = one.set("wavel", one.wavel * 0 + 1.6e-6)
@@ -175,17 +184,42 @@ def test_one_sidelobe_night_cannot_move_the_orbit_with_the_mixture():
     )
 
 
-def test_the_broad_component_is_the_grid_mean_and_tempers():
-    found = _positions(_with_bad_night(3.0)[:2])
-    assert found.log_broad.shape == (2,)
-    assert onp.allclose(found.log_broad_at(1.0), found.log_broad)
-    # Tempering divides the log likelihood (here negative throughout), so
-    # the broad component rises with f, and f between the tabulated
-    # factors interpolates between them.
-    assert onp.all(onp.diff(found.log_broad_temper, axis=1) > 0)
-    lo, hi = found.log_broad_at(2.0), found.log_broad_at(3.0)
-    mid = found.log_broad_at(2.5)
-    assert onp.all((lo < mid) & (mid < hi))
+def test_the_broad_component_shares_the_orbit_likelihoods_scale():
+    from virgil.epochs import broad_loglike
+
+    data = _with_bad_night(3.0)[:2]
+    found = _positions(data)
+    untempered = [onp.ones(2), onp.ones(2)]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        again = broad_loglike(data, found.grid, untempered)
+    assert onp.allclose(again, found.log_broad)
+
+    # Block-wise tempering (V^2 by f = 5, closure phases by f = 2): the
+    # broad component is rescored with it, so a night the orbit fits is
+    # not an outlier. (One factor for all blocks would put the two
+    # components thousands of nats apart.)
+    tempered = (("vis", 1 / 5.0), ("phi", 1 / 2.0))
+    clean = _with_bad_night(3.0)[:BAD]
+    settings = ta._settings(dof=tempered)
+    problem = aliases._Problem(
+        [cast_tree(d, "float64") for d in clean], settings
+    )
+    broad = broad_loglike(problem.data, _positions(clean).grid, problem.dof)
+    settings = dataclasses.replace(
+        settings, outlier_eps=0.02, log_broad=tuple(broad)
+    )
+    problem = aliases._Problem(problem.data, settings)
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 12.0, 12.2), settings)
+    x, _ = aliases._optimize(problem, bounds, ta._x_truth(), 50)
+    assert problem.outlier_probability(x).max() < 0.01
+    # The null model is scored without the mixture.
+    xs = onp.asarray(x)[None]
+    plain = aliases._Problem(problem.data, ta._settings(dof=tempered))
+    assert onp.allclose(
+        onp.asarray(problem.batch(xs, mixed=False)),
+        onp.asarray(plain.batch(xs)),
+    )
 
 
 @pytest.mark.slow
@@ -286,3 +320,12 @@ def test_sub_resolution_nights_are_located_and_still_seed():
     assert not found.flagged.any()  # reported, nobody excluded
     kept = found.positions(t_ref=EPOCH_T_REF)
     assert kept.dra.shape == (3,)
+
+
+def test_a_companion_above_flux_one_is_compared_as_the_reflected_star(twin):
+    epochs, found = twin
+    x, y = float(found.dra[0]), float(found.ddec[0])
+    f = float(found.flux[0])
+    # The same scene with the stars' labels swapped: (-r, 1/f).
+    swapped = sidelobe_flags(epochs, found, ([-x], [-y], [1.0 / f]))
+    assert swapped == [None]

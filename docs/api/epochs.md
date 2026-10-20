@@ -24,6 +24,8 @@ from a fit of positions.
         - estimate_primary_diameter
         - PrimaryDiameter
         - marginal_loglike
+        - broad_loglike
+        - sidelobe_flags
         - EpochPositions
         - EpochPeaks
         - NightFlag

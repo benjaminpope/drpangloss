@@ -711,19 +711,10 @@ def _positions_json(found):
             for night in found.flags
         ],
         "primary_diam": found.primary_diam,
-        "log_broad_temper": None
-        if found.log_broad_temper is None
-        else found.log_broad_temper.tolist(),
+        "grid": None
+        if found.grid is None
+        else [a.tolist() for a in found.grid],
     }
-
-
-def _broad(table):
-    """The ``EpochPositions`` fields of a saved ``log_broad_temper`` (none
-    in a file from before the outlier mixture)."""
-    if table is None:
-        return {}
-    table = onp.asarray(table, float)
-    return dict(log_broad=table[:, 0], log_broad_temper=table)
 
 
 def _positions_from_json(d):
@@ -759,7 +750,9 @@ def _positions_from_json(d):
             for night in d["flags"]
         ),
         primary_diam=d["primary_diam"],
-        **_broad(d.get("log_broad_temper")),
+        grid=None
+        if d.get("grid") is None
+        else tuple(onp.asarray(a, float) for a in d["grid"]),
     )
 
 
@@ -976,10 +969,14 @@ def _single_star(problem, x, diam_range):
     def best(logd):
         xs = onp.tile(x, (len(logd), 1))
         xs[:, 8] = logd
-        return onp.asarray(problem.batch(np.asarray(xs)))
+        return onp.asarray(problem.batch(np.asarray(xs), mixed=False))
 
     if len(x) <= 8:
-        return float(onp.max(onp.asarray(problem.batch(np.asarray(x[None])))))
+        return float(
+            onp.max(
+                onp.asarray(problem.batch(np.asarray(x[None]), mixed=False))
+            )
+        )
     grid = onp.log(onp.geomspace(*diam_range, _N_DIAM_NULL))
     ll = best(grid)
     k = int(onp.argmax(ll))

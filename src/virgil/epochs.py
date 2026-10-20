@@ -79,10 +79,6 @@ from .orbits import (
 from ._deprecate import external_stacklevel
 
 
-# The tempering factors at which ``EpochPositions.log_broad_temper`` is kept.
-BROAD_TEMPERS = (1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0, 200.0)
-
-
 __all__ = [
     "Epochs",
     "EpochPeaks",
@@ -1363,14 +1359,13 @@ class EpochPositions:
         The uniform-disk primary the positions were fitted with (mas), or None.
     log_broad : numpy.ndarray or None
         Each dataset's log mean likelihood over the search grid (the
-        scale-marginalized surface averaged over positions and fluxes): the
-        broad outlier component of
-        [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases], normalized
-        over the same field. None for positions that did not come from a
-        grid. ``log_broad_at(f)`` gives it for a surface tempered by ``f``.
-    log_broad_temper : numpy.ndarray or None
-        ``log_broad`` for the surface tempered by each of ``BROAD_TEMPERS``,
-        shape ``(n, len(BROAD_TEMPERS))``.
+        untempered scale-marginalized surface averaged over positions and
+        fluxes). ``fit_orbit_aliases`` recomputes it on the surface the
+        orbit is scored with (see ``broad_loglike``); None for positions
+        that did not come from a grid.
+    grid : tuple of numpy.ndarray or None
+        The ``(dra, ddec, flux)`` axes of the search grid, kept for
+        ``broad_loglike``.
     """
 
     names: tuple
@@ -1386,23 +1381,7 @@ class EpochPositions:
     flags: tuple = ()
     primary_diam: float | None = None
     log_broad: onp.ndarray | None = None
-    log_broad_temper: onp.ndarray | None = None
-
-    def log_broad_at(self, f=1.0):
-        """``log_broad`` of the surface tempered by ``f`` (its log
-        likelihood divided by ``f``), interpolated linearly in ``1/f`` from
-        ``log_broad_temper``; None without a grid."""
-        if self.log_broad_temper is None:
-            return None
-        inv = 1.0 / onp.asarray(BROAD_TEMPERS)
-        order = onp.argsort(inv)
-        x = float(onp.clip(1.0 / float(f), inv.min(), inv.max()))
-        return onp.array(
-            [
-                onp.interp(x, inv[order], row[order])
-                for row in self.log_broad_temper
-            ]
-        )
+    grid: tuple | None = None
 
     @property
     def flagged(self):
@@ -1833,21 +1812,79 @@ def _flag_one_night(
     return flags
 
 
+_MODE_TOL = 0.01  # relative wavelength tolerance of one spectral setup
+
+
 def _mode_keys(data):
-    """A key per dataset for its instrument mode: the number of spectral
-    channels and the wavelength range (to three figures), which separate
-    the resolutions and spectral setups of one instrument."""
-    keys = []
+    """A label per dataset for its instrument mode: its number of spectral
+    channels and wavelength range. Datasets with the same number of
+    channels and a range within 1% (the per-night jitter of a wavelength
+    calibration) share a label; a different resolution or band does not."""
+    modes, keys = [], []
     for d in data.data:
-        w = onp.asarray(d.wavel, dtype=float).ravel()
-        keys.append(
-            (
-                int(onp.unique(w).size),
-                float(f"{w.min():.3g}"),
-                float(f"{w.max():.3g}"),
-            )
-        )
+        w = onp.unique(onp.asarray(d.wavel, dtype=float).ravel())
+        lo, hi = float(w.min()), float(w.max())
+        for k, (n, a, b) in enumerate(modes):
+            if (
+                n == w.size
+                and abs(lo - a) <= _MODE_TOL * a
+                and abs(hi - b) <= _MODE_TOL * b
+            ):
+                keys.append(k)
+                break
+        else:
+            modes.append((w.size, lo, hi))
+            keys.append(len(modes) - 1)
     return keys
+
+
+def broad_loglike(data, grid, dof, *, s_max=None, primary_diam=None):
+    """Each night's log mean likelihood over a position grid: the broad
+    outlier component of
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases].
+
+    It is the scale-marginalized surface of
+    [`epoch_positions`][virgil.epochs.epoch_positions] averaged over the
+    grid's positions and fluxes, scored exactly as the orbit is: pass the
+    fit's block ``dof`` (``1/f_b`` per block, one vector per night) and
+    ``s_max``, so the mixture's two components share one scale.
+
+    Parameters
+    ----------
+    data : sequence of OIData
+    grid : tuple of array
+        The ``(dra, ddec, flux)`` axes (``EpochPositions.grid``).
+    dof : sequence of array
+        One vector of block ``1/f_b`` per night.
+    s_max, primary_diam : optional
+        As for ``epoch_positions``.
+
+    Returns
+    -------
+    numpy.ndarray
+    """
+    axes = [onp.asarray(a, float) for a in grid]
+    xx, yy, ff = onp.meshgrid(*axes, indexing="ij")
+    points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
+    diam = None if not primary_diam else float(primary_diam)
+    out = []
+    for d, dof_k in zip(data, dof):
+        surface = _Surface(d, s_max)
+        with run_in("float64"):
+            d64 = cast_tree(d, "float64")
+            dof64 = np.asarray(dof_k, dtype=np.float64)
+            _, chi2 = _grid_scores(
+                np.asarray(points),
+                d64,
+                surface,
+                min(batch_size_or_default(None, d), len(points)),
+                None if diam is None else np.asarray(diam),
+                dof64,
+            )
+            m = onp.asarray(_grid_marginal(chi2, dof64, d64, surface))
+        m = onp.where(onp.isfinite(m), m, -onp.inf)
+        out.append(float(onp.logaddexp.reduce(m) - onp.log(m.size)))
+    return onp.array(out)
 
 
 def _flag_chi2(chi2_all, factor, groups=None):
@@ -1929,6 +1966,8 @@ def sidelobe_flags(
     diam = positions.primary_diam
     for k, d in enumerate(getattr(data, "data", data)):
         px, py, pf = (float(onp.asarray(a)[k]) for a in predicted)
+        if pf > 1.0:  # the other star's labels: the same scene, reflected
+            px, py, pf = -px, -py, 1.0 / pf
         dx = onp.array([px - positions.dra[k], py - positions.ddec[k]])
         cov = onp.asarray(positions.cov[k])
         dist = float(onp.sqrt(dx @ onp.linalg.solve(cov, dx)))
@@ -1943,7 +1982,23 @@ def sidelobe_flags(
             at_pred = float(
                 marginal_loglike(model, cast_tree(d, "float64"), dof=dof)
             )
-        best = float(positions.peaks[k].marginal[0])
+        # Both ends of the gap are scored with the same model and dof (the
+        # catalogue's own scores may come from a point primary or another
+        # dof).
+        peak = _binary(
+            np.asarray(
+                [
+                    positions.dra[k],
+                    positions.ddec[k],
+                    min(float(positions.flux[k]), 1.0),
+                ]
+            ),
+            None if not diam else np.asarray(float(diam)),
+        )
+        with run_in("float64"):
+            best = float(
+                marginal_loglike(peak, cast_tree(d, "float64"), dof=dof)
+            )
         gap = best - at_pred
         if gap <= delta_nats:
             out.append(
@@ -2209,13 +2264,9 @@ def epoch_positions(
         }
         rows.append((best, cov, gap_marginal, per_block, scale, catalogue))
         log_broad.append(
-            [
-                float(
-                    onp.logaddexp.reduce((marginal / t).ravel())
-                    - onp.log(marginal.size)
-                )
-                for t in BROAD_TEMPERS
-            ]
+            float(
+                onp.logaddexp.reduce(marginal.ravel()) - onp.log(marginal.size)
+            )
         )
         night_flags.append(
             _flag_one_night(
@@ -2288,8 +2339,8 @@ def epoch_positions(
         peaks=tuple(r[5] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
-        log_broad=onp.array(log_broad)[:, 0],
-        log_broad_temper=onp.array(log_broad),
+        log_broad=onp.array(log_broad),
+        grid=tuple(axes),
     )
 
 

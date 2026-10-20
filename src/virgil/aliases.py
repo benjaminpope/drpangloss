@@ -70,6 +70,7 @@ from .epochs import (
     _refuse_amp_with_gains,
     _Surface,
     estimate_primary_diameter,
+    broad_loglike,
     sidelobe_flags,
 )
 from .likelihood import whitened_residuals
@@ -664,9 +665,16 @@ class _Problem:
             self.surfaces, x, self.data, self.cfg, self.dof, self.mix
         )
 
-    def batch(self, xs):
+    def batch(self, xs, mixed=True):
+        """``_loglike`` at each row of ``xs``; ``mixed=False`` leaves the
+        outlier mixture out (a null model is scored on its own terms)."""
         return _batch(
-            self.surfaces, xs, self.data, self.cfg, self.dof, self.mix
+            self.surfaces,
+            xs,
+            self.data,
+            self.cfg,
+            self.dof,
+            self.mix if mixed else None,
         )
 
     def outlier_probability(self, x):
@@ -2942,32 +2950,44 @@ def _resample(results, store, n_samples, p_min, seed):
 # ``tests/test_pipeline_orbit.py`` at hand.
 
 
-def _outlier_settings(eps, positions, factors, n_nights):
-    """The ``_Settings`` fields of the outlier mixture: ``eps`` on a broad
-    component, each night's mean likelihood over the position grid
-    (tempered as the fit is, by its largest factor). No mixture (``eps`` 0)
-    without a grid of positions."""
+def _with_outlier(problem, settings, eps, positions, diam, n_nights):
+    """``(problem, settings)`` with the outlier mixture: ``eps`` on a broad
+    component, each night's mean likelihood over the position grid scored
+    as the orbit is (the fit's own tempering, ``s_max`` and primary), so the
+    two components of a night share one scale. Unchanged (with a warning if
+    ``eps`` was asked for) without a grid of positions for these nights."""
     eps = float(eps)
     if not 0.0 <= eps < 1.0:
         raise ValueError(f"outlier_eps must be in [0, 1), got {eps}.")
     if eps == 0.0:
-        return {}
+        return problem, settings
     if (
         not isinstance(positions, EpochPositions)
+        or positions.grid is None
         or len(positions.names) != n_nights
     ):
         warnings.warn(
-            "outlier_eps needs EpochPositions of the same nights (it "
-            "carries each night's broad component): fitting without the "
-            "outlier mixture.",
+            "outlier_eps needs the EpochPositions of the same nights, with "
+            "their search grid (it gives each night's broad component): "
+            "fitting without the outlier mixture.",
             UserWarning,
             stacklevel=external_stacklevel(),
         )
-        return {}
-    broad = positions.log_broad_at(1.0 if factors is None else factors.f_max)
-    if broad is None or not onp.all(onp.isfinite(broad)):
-        return {}
-    return dict(outlier_eps=eps, log_broad=tuple(map(float, broad)))
+        return problem, settings
+    with run_in("float64"):
+        broad = broad_loglike(
+            problem.data,
+            positions.grid,
+            problem.dof,
+            s_max=settings.s_max,
+            primary_diam=diam,
+        )
+    if not onp.all(onp.isfinite(broad)):
+        return problem, settings
+    settings = dataclasses.replace(
+        settings, outlier_eps=eps, log_broad=tuple(map(float, broad))
+    )
+    return _Problem(problem.data, settings), settings
 
 
 def _night_diagnostics(problem, settings, result, positions, data, t_ref):
@@ -3514,7 +3534,6 @@ def fit_orbit_aliases(
         short_arcs=counts is not None,
         arc_jitter_mas=arc_jitter_mas if counts is not None else 0.0,
         arc_delta_chi2=float(arc_delta_chi2),
-        **_outlier_settings(outlier_eps, seed_positions, factors, len(data)),
     )
     if factors is not None and not fixed_f:
         _warn_tempering(
@@ -3525,6 +3544,18 @@ def fit_orbit_aliases(
             ),
         )
     problem = _Problem(data, settings)
+    problem, settings = _with_outlier(
+        problem,
+        settings,
+        outlier_eps,
+        seed_positions,
+        None
+        if primary_diam is None
+        else diam_seed
+        if primary_diam == "fit"
+        else primary_diam,
+        len(data),
+    )
     _preflight(problem, settings, bands[0])
     key = (
         _checkpoint_key(data, positions, bands, mean_times, settings)
