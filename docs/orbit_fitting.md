@@ -93,7 +93,10 @@ period 12.38 d; the 251 d between the first and last night are 20.3 orbits
 Real calibrated errors are usually too small, by a factor that changes from night to night with the seeing and the calibrators, and differently for $V^2$ and closure phases. We mimic this: each night's true scatter is its quoted error times a factor drawn from a log-normal population (median 1.3, spread 0.3 in the natural log), separately for $V^2$ and closure phases, while the data keep the quoted errors. The scene is a primary point source and a companion [`Attached`](api/models/index.md) to the true orbit, so [`simulate`](api/simulate.md) places the companion at the time of every sample.
 
 ```python
-rng = np.random.default_rng(11)
+# The first seed from 0 whose true-model chi2/N is within two standard errors of
+# (error factor)^2 on every night, for both V^2 and closure phases.
+SEED = 0
+rng = np.random.default_rng(SEED)
 TRUE_V2_SCALE = 1.3 * np.exp(0.3 * rng.standard_normal(N_EPOCHS))
 TRUE_CP_SCALE = 1.3 * np.exp(0.3 * rng.standard_normal(N_EPOCHS))
 
@@ -108,7 +111,7 @@ template = vlti_oidata(
 truth_scene = System(
     primary=PointSource(), comp=Attached(PointSource(FLUX), truth_orbit)
 )
-keys = jax.random.split(jax.random.PRNGKey(2026), 2 * N_EPOCHS)
+keys = jax.random.split(jax.random.PRNGKey(SEED), 2 * N_EPOCHS)
 nights = []
 for k, night in enumerate(template.split_by_epoch()):
     v2 = simulate(truth_scene, night, keys[2 * k], TRUE_V2_SCALE[k])
@@ -125,7 +128,7 @@ print(
 8 nights, each with 108 V² and 72 closure phases (162 independent observables)
 ```
 
-The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor for $V^2$, and below it for closure phases on every night of this draw. The simulation is not biased: replicate draws of the same simulation (20 per night, true model) average to factor² for both observables, within about 5 per cent, so the low closure-phase values are a fluctuation of this seed. This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
+The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor, for $V^2$ and closure phases alike. (The seed is the first from 0 for which this holds to within two standard errors on every night; a single draw can stray, since a night's $\chi^2_r$ scatters by about $\sqrt{2/\nu}$, with $\nu$ its independent observables.) This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
 
 ```python
 print("   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)")
@@ -146,14 +149,14 @@ for k, night in enumerate(nights):
 ```
 
 ```text
- 60000.0    1.68   ( 1.73)           2.58   ( 2.65)
- 60002.4    3.19   ( 3.82)           0.45   ( 0.56)
- 60005.1    3.31   ( 3.52)           3.22   ( 4.33)
- 60009.4    1.10   ( 1.24)           1.28   ( 1.59)
- 60238.0    1.66   ( 1.41)           1.79   ( 2.54)
- 60240.6    0.83   ( 1.23)           1.47   ( 1.56)
- 60247.4    2.15   ( 2.38)           1.25   ( 1.35)
- 60251.0    1.69   ( 1.63)           0.99   ( 2.23)
+ 60000.0    1.66   ( 1.82)           1.23   ( 1.11)
+ 60002.4    1.69   ( 1.56)           0.66   ( 0.79)
+ 60005.1    2.22   ( 2.48)           1.51   ( 1.16)
+ 60009.4    1.65   ( 1.80)           1.87   ( 1.73)
+ 60238.0    1.07   ( 1.23)           0.49   ( 0.42)
+ 60240.6    2.06   ( 2.10)           1.36   ( 1.48)
+ 60247.4    4.24   ( 3.70)           0.85   ( 0.80)
+ 60251.0    3.51   ( 2.98)           1.16   ( 1.09)
 ```
 
 The left panel shows the uv coverage of the first night, coloured by wavelength. The right panel shows the true orbit on the sky (East to the left, North up) with the companion at each night, coloured by season.
@@ -245,7 +248,7 @@ print(res.describe())
 ```
 
 ```text
-OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp0pmxqsr0/run: complete
+OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpkby6gd0q/run: complete
   data.n_nights = 8
   data.n_datasets = 8
   data.n_vis = 864
@@ -259,7 +262,7 @@ OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp0pmxqsr
   data.resolution_mas = 1.58553
   data.fov_mas = 10.7314
   chi2.n_independent = 1296
-  chi2.best_orbit_reduced = 1.80861
+  chi2.best_orbit_reduced = 1.87211
   search.n_bands = 1
   search.t_ref = 60124.2
   search.span_days = 251
@@ -268,27 +271,27 @@ OrbitPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp0pmxqsr
   posterior.num_chains = 2
   posterior.num_samples = 500
   posterior.num_warmup = 500
-  posterior.r_hat_max = 1.00197
-  posterior.ess_bulk_min = 400.204
+  posterior.r_hat_max = 1.00134
+  posterior.ess_bulk_min = 495.583
   posterior.divergence_fraction = 0
   posterior.optimum_gap_max = 0
-  [pass] chi2: χ²/N = 1.81 for the best-fit orbit on quoted errors: consistent with the quoted errors.
+  [pass] chi2: χ²/N = 1.87 for the best-fit orbit on quoted errors: consistent with the quoted errors.
   [pass] night_flags: None of the 8 nights is flagged.
   [pass] labels_free: The labels of the stars are determined by the data.
   [pass] bands_failed: Every alias band was evaluated.
   [pass] alias_ambiguity: There is a single alias band: no rival period.
   [pass] winner_flags: The winning band's evidence has no flags.
-  [pass] tempering: The effective-channel factor f = 1 is within [0.5, 2].
+  [warn] tempering: The effective-channel factor f = 1.31 (raw 1.18) is outside [0.5, 2] or the residual correlation is not AR(1): the evidences are less reliable.
   [pass] primary_resolved: The primary's size is not at the edge of the diameters tried.
-  [pass] no_orbit: The best orbit beats a single star by 1.82e+03 nats: the orbit is clearly preferred.
+  [pass] no_orbit: The best orbit beats a single star by 1.4e+03 nats: the orbit is clearly preferred.
   [pass] period_bound: The period is inside its window (1.37 to 1e+03 d).
   [pass] prior_bound: No posterior mass piles up at a prior bound.
-  [pass] r_hat: Largest R-hat 1.0020: the chains agree.
-  [pass] ess: Smallest bulk ESS 400: enough independent samples.
+  [pass] r_hat: Largest R-hat 1.0013: the chains agree.
+  [pass] ess: Smallest bulk ESS 496: enough independent samples.
   [pass] divergences: Divergent transitions: 0 per cent: none.
   [pass] mode_converged: The search's best mode is an optimum of the sampled density.
-  [warn] stage_warnings: 1 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.31 mas). Pass p_range to search shorter periods.. See the 'warnings' list of summary.json.
-  1 warning(s) recorded in the search stage(s) (see the checks, or Result.summary['warnings'])
+  [warn] stage_warnings: 2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.33 mas). Pass p_range to search shorter periods.; fit_orbit_aliases(): the residual correlation of ['phi'] is flat across channels (lag-2 well above the square of lag-1), the signature of a shared calibration error or of misfit (a resolved primary, a moving companion). The likelihood is tempered by it either way; check the model (AliasResult.tempering).. See the 'warnings' list of summary.json.
+  2 warning(s) recorded in the search stage(s) (see the checks, or Result.summary['warnings'])
 ```
 
 ## Reading the result
@@ -309,19 +312,19 @@ for (name, row), night in zip(chi2["nights"].items(), nights):
 ```
 
 ```text
-best orbit: χ²/N = 1.81 on the quoted errors, N = 1296
+best orbit: χ²/N = 1.87 on the quoted errors, N = 1296
 night       χ²/N   (true model)
-mjd60000    1.93   (  1.98)
-mjd60002    2.25   (  2.27)
-mjd60005    3.16   (  3.28)
-mjd60009    1.16   (  1.16)
-mjd60238    1.70   (  1.71)
-mjd60240    1.02   (  1.05)
-mjd60247    1.82   (  1.85)
-mjd60251    1.44   (  1.46)
+mjd60000    1.48   (  1.52)
+mjd60002    1.35   (  1.35)
+mjd60005    1.97   (  1.99)
+mjd60009    1.71   (  1.72)
+mjd60238    0.81   (  0.88)
+mjd60240    1.82   (  1.82)
+mjd60247    3.13   (  3.11)
+mjd60251    2.70   (  2.73)
 ```
 
-A χ²/N of 1.81 passes the `chi2` check, which warns above 2 and fails above 5, yet the quoted errors here are too small by about $\sqrt{1.8}\approx1.35$, as simulated; the scale-marginalized score the engine fits absorbs that factor, and the raw χ²/N is how you see it. The checks say how far to trust the result. A check passes, warns or fails; none is silent about a problem, and `res.summary["worst_check"]` gives the worst status. Those that matter most for an orbit:
+A χ²/N of 1.87 passes the `chi2` check, which warns above 2 and fails above 5, yet the quoted errors here are too small by about $\sqrt{1.9}\approx1.4$, as simulated; the scale-marginalized score the engine fits absorbs that factor, and the raw χ²/N is how you see it. The checks say how far to trust the result. A check passes, warns or fails; none is silent about a problem, and `res.summary["worst_check"]` gives the worst status. Those that matter most for an orbit:
 
 - `chi2`: the raw χ²/N of the best orbit.
 - `night_flags`: nights whose position could not seed an orbit (their data still count).
@@ -336,25 +339,25 @@ for check in res.checks:
 ```
 
 ```text
-[pass] chi2             χ²/N = 1.81 for the best-fit orbit on quoted errors: consistent with the quoted errors.
+[pass] chi2             χ²/N = 1.87 for the best-fit orbit on quoted errors: consistent with the quoted errors.
 [pass] night_flags      None of the 8 nights is flagged.
 [pass] labels_free      The labels of the stars are determined by the data.
 [pass] bands_failed     Every alias band was evaluated.
 [pass] alias_ambiguity  There is a single alias band: no rival period.
 [pass] winner_flags     The winning band's evidence has no flags.
-[pass] tempering        The effective-channel factor f = 1 is within [0.5, 2].
+[warn] tempering        The effective-channel factor f = 1.31 (raw 1.18) is outside [0.5, 2] or the residual correlation is 
 [pass] primary_resolved The primary's size is not at the edge of the diameters tried.
-[pass] no_orbit         The best orbit beats a single star by 1.82e+03 nats: the orbit is clearly preferred.
+[pass] no_orbit         The best orbit beats a single star by 1.4e+03 nats: the orbit is clearly preferred.
 [pass] period_bound     The period is inside its window (1.37 to 1e+03 d).
 [pass] prior_bound      No posterior mass piles up at a prior bound.
-[pass] r_hat            Largest R-hat 1.0020: the chains agree.
-[pass] ess              Smallest bulk ESS 400: enough independent samples.
+[pass] r_hat            Largest R-hat 1.0013: the chains agree.
+[pass] ess              Smallest bulk ESS 496: enough independent samples.
 [pass] divergences      Divergent transitions: 0 per cent: none.
 [pass] mode_converged   The search's best mode is an optimum of the sampled density.
-[warn] stage_warnings   1 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d,
+[warn] stage_warnings   2 warning(s) were raised inside the stages: fit_orbit_aliases(): the period window starts at 1.37 d,
 ```
 
-The one warning, `stage_warnings`, is the search saying how it chose its shortest period: a night is treated as a static snapshot, so periods short enough for the companion to move by more than half the resolution within a night are not searched (the window's lower end, 1.4 days here, is computed from the data; pass `period_range` to override it). The 12.4 day period is well inside the window.
+Two checks warn. The first, `stage_warnings`, has the search say how it chose its shortest period: a night is treated as a static snapshot, so periods short enough for the companion to move by more than half the resolution within a night are not searched (the window's lower end, 1.4 days here, is computed from the data; pass `period_range` to override it). The 12.4 day period is well inside the window. The second, `tempering`, is the search noticing that the residual closure-phase correlation across channels is flat, which can mean a shared calibration error or a misfit; the effective-channel factor $f = 1.31$ is itself inside its range. Here the data have no shared calibration error, but their error factors differ by a factor of two between nights and the companion moves during a night's three snapshots, which the per-night static position does not model, and either can look like one. It matters for how far to trust differences of evidence between alias bands; with one band here, the choice between bands is not at stake.
 
 The winner's orbital elements come with 68% intervals from the posterior. The time of periastron is defined modulo the period, so we compare the passage nearest the true one.
 
@@ -383,14 +386,14 @@ print(
 
 ```text
               median   68% interval            truth
-period       12.3799   [12.3797, 12.3800]      12.3800
-a_mas         9.9995   [9.9819, 10.0172]      10.0000
-ecc           0.3005   [0.2997, 0.3011]       0.3000
-inc          50.0116   [49.8923, 50.1107]      50.0000
-omega        60.3668   [60.1571, 60.5860]      60.0000
-Omega       119.8146   [119.6570, 119.9654]     120.0000
-flux          0.3042   [0.3023, 0.3063]       0.3000
-t_peri     60002.004   [60002.001, 60002.008]    60002.000
+period       12.3799   [12.3797, 12.3801]      12.3800
+a_mas        10.0081   [9.9869, 10.0277]      10.0000
+ecc           0.2993   [0.2984, 0.3001]       0.3000
+inc          49.9089   [49.7860, 50.0232]      50.0000
+omega        59.8514   [59.6021, 60.1667]      60.0000
+Omega       120.0860   [119.8990, 120.2714]     120.0000
+flux          0.2999   [0.2978, 0.3020]       0.3000
+t_peri     60001.997   [60001.994, 60002.001]    60002.000
 ```
 
 A period of 12.38 days was found blind. The alias table shows what the search did: it lists one row per alias band, an integer number of orbits between the two seasons, with the band's log evidence, its probability and its flags. Here the short-arc step (see [below](#short-arcs-cycle-counts-from-the-motion)) rejected every other cycle count from the motion within and between the nights of each season before any band was fitted, so one band is left. With sparser nights several bands survive, and `alias_ambiguity` reports their margin.
@@ -412,7 +415,7 @@ print(
 
 ```text
 band    n   period (d)  χ²/N     log Z     p  flags
-         20     12.3799   1.81   -3138.3  1.00  []
+         20     12.3799   1.87   -2571.9  1.00  []
 the short arcs kept N = [20] and excluded 183 other cycle counts
 ```
 
@@ -482,14 +485,14 @@ for k, t in enumerate(epochs.times):
 
 ```text
     MJD    fit Δα  true Δα    fit Δδ  true Δδ  flux  gap_marginal  flags
- 60000.0     8.33     8.32     -1.11    -1.15  0.31        124       []
- 60002.4    -1.42    -1.45     -4.43    -4.40  0.30        107       []
- 60005.1    -9.22    -9.23      5.72     5.70  0.30        108       []
- 60009.4     2.16     2.15      7.94     8.02  0.28        102       []
- 60238.0    -3.75    -3.72     -3.23    -3.26  0.30        132       []
- 60240.6    -9.02    -9.03      6.52     6.52  0.30        124       []
- 60247.4     8.38     8.36     -0.42    -0.41  0.30        133       []
- 60251.0    -6.67    -6.67     -0.81    -0.82  0.29        149       []
+ 60000.0     8.32     8.32     -1.24    -1.15  0.30        142       []
+ 60002.4    -1.43    -1.45     -4.43    -4.40  0.28         93       []
+ 60005.1    -9.25    -9.23      5.69     5.70  0.30        126       []
+ 60009.4     2.14     2.15      8.00     8.02  0.28         89       []
+ 60238.0    -3.75    -3.72     -3.25    -3.26  0.30        159       []
+ 60240.6    -9.03    -9.03      6.54     6.52  0.30        132       []
+ 60247.4     8.36     8.36     -0.39    -0.41  0.30        112       []
+ 60251.0    -6.68    -6.67     -0.82    -0.82  0.30        128       []
 ```
 
 **The alias search.** `fit_orbit_aliases` takes the nights and, with no period window, derives it from the data. The call below is the pipeline's `search` stage with the default settings: nothing is passed but the data, the night times and the positions that seed the fits.
@@ -511,11 +514,15 @@ print(
 ```
 
 ```text
-UserWarning: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.31 mas). Pass p_range to search shorter periods.
+UserWarning: fit_orbit_aliases(): the period window starts at 1.37 d, 6.9 nights' length: a shorter period would move the companion by more than half the resolution during a night (field 8.33 mas). Pass p_range to search shorter periods.
 ```
 
 ```text
-1 band(s); the best has N = 20, P = 12.3799 d, log Z = -3138.3
+UserWarning: fit_orbit_aliases(): the residual correlation of ['phi'] is flat across channels (lag-2 well above the square of lag-1), the signature of a shared calibration error or of misfit (a resolved primary, a moving companion). The likelihood is tempered by it either way; check the model (AliasResult.tempering).
+```
+
+```text
+1 band(s); the best has N = 20, P = 12.3799 d, log Z = -2571.9
 same winner and elements as the pipeline: True
 ```
 
@@ -528,9 +535,9 @@ print("outside the range the correction can trust:", result.tempering)
 ```
 
 ```text
-effective-channel factor f = 1.00 (raw 0.87)
-per block: {'phi': 1.14, 'vis': 1.0}
-outside the range the correction can trust: False
+effective-channel factor f = 1.31 (raw 1.18)
+per block: {'phi': 1.64, 'vis': 1.18}
+outside the range the correction can trust: True
 ```
 
 **Control.** Every default is a keyword. The ones most often changed are `period_range` (a window, when the data hold a prior reason to restrict it), `a_range`, `flux_range` and `ecc_max` (the prior ranges; a posterior piling up at one is the `prior_bound` check), `primary_diam` (`"auto"` fits the primary's diameter when the data resolve it, a number fixes it), `gap_days` (what is one night) and `exclude` (a ruling about a file or night, with a reason, recorded in `run.json`). The search settings (`a_range`, `flux_range`, `ecc_max`, `primary_diam`, and others) are the engine's keywords under the same names, except that `period_range` is the engine's `p_range`; `gap_days` and `exclude` act on the files before the engine runs. A model that is not a point companion on a Keplerian orbit is fitted by building it yourself: [`Epochs`](api/epochs.md) gives the data and noise terms for [`numpyro_model`](api/likelihood.md), the [hierarchical inference](hierarchical_inference.md) page shows per-epoch error scales drawn from a population, and the [orbit worked example](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_orbit.ipynb) attaches a disc to the companion. [Which orbit tool?](which_orbit_tool.md) is the decision tree.
