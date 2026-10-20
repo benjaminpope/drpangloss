@@ -28,9 +28,9 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
-from ._geometry import offset_phase, pixel_offsets
-from ._utils import mas2rad, rad2mas
-from .models import SourceModel
+from ._geometry import gaussian_taper, offset_phase, pixel_offsets
+from ._utils import rad2mas
+from .models import Image, SourceModel
 
 __provisional__ = ("*",)
 
@@ -698,9 +698,7 @@ class CalibrationNuisance:
     def _taper(self, u, v):
         if self.taper_fwhm_mas is None:
             return 1.0
-        theta = self.taper_fwhm_mas * mas2rad
-        q2 = u * u + v * v
-        return np.exp(-((np.pi * theta) ** 2) * q2 / (4.0 * onp.log(2.0)))
+        return gaussian_taper(u * u + v * v, self.taper_fwhm_mas)
 
 
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
@@ -715,6 +713,24 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
 # ----------------------------------------------------------------------
 # The likelihood term
 # ----------------------------------------------------------------------
+
+
+def _warn_double_taper(scene, nuisance):
+    if nuisance.taper_fwhm_mas is None:
+        return
+    images = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, Image)
+    )
+    if any(
+        isinstance(x, Image) and x.smooth_fwhm_mas is not None for x in images
+    ):
+        warnings.warn(
+            "CalibrationNuisance.taper_fwhm_mas and Image.smooth_fwhm_mas "
+            "are both set; the two Gaussians compound, blurring the model "
+            "twice. Use one of them.",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 class _RadioTerm(eqx.Module):
@@ -768,6 +784,7 @@ class _RadioTerm(eqx.Module):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
+        _warn_double_taper(scene, nuis)
 
         def chunk(a):
             model = _model_points(

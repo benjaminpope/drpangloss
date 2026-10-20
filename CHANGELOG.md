@@ -7,6 +7,15 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Image smoothing
+
+- `Image(smooth_fwhm_mas=...)` carries a fixed Gaussian smoothing kernel: its
+  visibilities are the pixel transform times the analytic Gaussian, and
+  `Image.smoothed()` returns the convolved pixels. `TSV`, `TV`, `MaxEntropy`,
+  `Laplacian`, `StarletL1` and `LogSum` take `smoothed=True` to penalize them,
+  as MPoL does. Defaults are unchanged. `CalibrationNuisance.taper_fwhm_mas`
+  stays; setting both warns. Provisional.
+
 ### Orbit fitting with gains
 
 - The scale-marginalized surface (`marginal_loglike`, `epoch_positions`,

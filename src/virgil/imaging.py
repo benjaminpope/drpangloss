@@ -79,6 +79,16 @@ class _ImageRegulariser(eqx.Module):
 
     weight: float
     path: str | None = eqx.field(static=True)
+    smoothed: bool = eqx.field(static=True, default=False)
+
+    def pixels(self, model):
+        """The pixels penalized: the raw ``brightness``, or, with the
+        ``smoothed`` option, the Image's ``smoothed()`` pixels (MPoL's
+        convention), clipped at zero against FFT round-off."""
+        image = self.image(model)
+        if not self.smoothed:
+            return image.brightness
+        return np.maximum(image.smoothed(), 0.0)
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
@@ -120,14 +130,18 @@ class TSV(_ImageRegulariser):
     path : str, optional
         Path of the Image in the model (e.g. ``"env"``); ``None`` if the model
         is the Image itself.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels (see ``smooth_fwhm_mas``)
+        instead of the raw ones. Default ``False``.
     """
 
-    def __init__(self, weight, path=None):
+    def __init__(self, weight, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def residuals(self, model):
-        dx, dy = _differences(self.image(model).brightness)
+        dx, dy = _differences(self.pixels(model))
         return np.sqrt(2.0 * self.weight) * np.concatenate(
             [np.ravel(dx), np.ravel(dy)]
         )
@@ -154,17 +168,21 @@ class TV(_ImageRegulariser):
         Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
         Path of the Image in the model.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels instead of the raw ones
+        (default ``False``).
     """
 
     epsilon: float
 
-    def __init__(self, weight, epsilon=1e-2, path=None):
+    def __init__(self, weight, epsilon=1e-2, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def value(self, model):
-        b = self.image(model).brightness
+        b = self.pixels(model)
         eps = self.epsilon / b.size
 
         def total(image):
@@ -192,22 +210,27 @@ class MaxEntropy(_ImageRegulariser):
         image's support is; normalized here. Default: flat over the support.
     path : str, optional
         Path of the Image in the model.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels instead of the raw ones
+        (default ``False``).
     """
 
     prior: object
 
-    def __init__(self, weight, prior=None, path=None):
+    def __init__(self, weight, prior=None, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
         self.prior = None if prior is None else np.asarray(prior)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def value(self, model):
         image = self.image(model)
-        b = image.brightness
+        b = self.pixels(model)
         if self.prior is None:
+            # Smoothing spreads flux beyond the support: flat over all pixels.
             inside = (
                 np.ones(b.shape, bool)
-                if image.support is None
+                if image.support is None or self.smoothed
                 else image.support
             )
             q = inside / np.sum(inside)
@@ -230,14 +253,18 @@ class Laplacian(_ImageRegulariser):
         Strength of the penalty.
     path : str, optional
         Path of the Image in the model.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels instead of the raw ones
+        (default ``False``).
     """
 
-    def __init__(self, weight, path=None):
+    def __init__(self, weight, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def residuals(self, model):
-        padded = np.pad(self.image(model).brightness, 2)
+        padded = np.pad(self.pixels(model), 2)
         laplacian = (
             padded[:-2, 1:-1]
             + padded[2:, 1:-1]
@@ -322,12 +349,17 @@ class StarletL1(_ImageRegulariser):
         Smoothing scale, as a fraction of the mean pixel flux (default 1e-2).
     path : str, optional
         Path of the Image in the model.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels instead of the raw ones
+        (default ``False``).
     """
 
     scales: int = eqx.field(static=True)
     epsilon: float
 
-    def __init__(self, weight, scales=4, epsilon=1e-2, path=None):
+    def __init__(
+        self, weight, scales=4, epsilon=1e-2, path=None, smoothed=False
+    ):
         if int(scales) != scales or scales < 1:
             raise ValueError(
                 f"scales must be a positive integer, not {scales}."
@@ -336,9 +368,10 @@ class StarletL1(_ImageRegulariser):
         self.scales = int(scales)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def value(self, model):
-        b = self.image(model).brightness
+        b = self.pixels(model)
         details, _ = starlet(b, self.scales)
         eps = self.epsilon / b.size
         return self.weight * np.sum(np.sqrt(details**2 + eps**2))
@@ -363,19 +396,27 @@ class LogSum(_ImageRegulariser):
         to count (default 1e-2).
     path : str, optional
         Path of the Image in the model.
+    smoothed : bool, optional
+        Penalize the Image's ``smoothed()`` pixels instead of the raw ones
+        (default ``False``).
     """
 
     epsilon: float
 
-    def __init__(self, weight, epsilon=1e-2, path=None):
+    def __init__(self, weight, epsilon=1e-2, path=None, smoothed=False):
         self.weight = np.asarray(weight, dtype=float)
         self.epsilon = np.asarray(epsilon, dtype=float)
         self.path = path
+        self.smoothed = bool(smoothed)
 
     def value(self, model):
         image = self.image(model)
-        b = image.brightness
-        n = b.size if image.support is None else np.sum(image.support)
+        b = self.pixels(model)
+        n = (
+            b.size
+            if image.support is None or self.smoothed
+            else np.sum(image.support)
+        )
         return self.weight * np.sum(np.log1p(b * n / self.epsilon))
 
 
