@@ -553,3 +553,43 @@ def check_az_prof_nonnegative(az_amps, az_pas, tol=1e-6):
         f_min = np.minimum(f_min, derivatives(t)[0])
 
     return 1.0 + f_min > -tol
+
+
+def gaussian_taper(q2, fwhm_mas):
+    r"""Fourier transform of a unit-flux Gaussian of FWHM ``fwhm_mas``.
+
+    ``exp(-π² θ² q² / (4 ln 2))``, with θ the FWHM in radians and ``q2`` the
+    squared baseline length in wavelengths. Exact at any uv point, so it is
+    both the nuisance taper and the visibility factor of a smoothed image.
+    """
+    theta = fwhm_mas * mas2rad
+    return np.exp(-((np.pi * theta) ** 2) * q2 / (4.0 * onp.log(2.0)))
+
+
+def gaussian_smooth(brightness, fwhm_pix):
+    """Convolve pixels with a Gaussian of FWHM ``fwhm_pix`` pixels, by FFT.
+
+    The kernel is the Gaussian sampled at the pixel centres and normalized to
+    unit sum, and the image is zero-padded to twice its size so the
+    convolution does not wrap around. The result is cropped to the input
+    shape, so flux that spreads beyond the edges is lost. Its DFT is the
+    input's times the analytic Gaussian (see :func:`gaussian_taper`) plus
+    aliases of order ``exp(-π² θ² (1/p - q)² / (4 ln 2))`` relative to the
+    total flux, which is below 1e-6 for ``q <= 0.25 / p`` once the FWHM is at
+    least 3 pixels, and large for narrower kernels.
+    """
+    nrow, ncol = brightness.shape
+    shape = (2 * nrow, 2 * ncol)
+    sigma2 = (fwhm_pix / (2.0 * onp.sqrt(2.0 * onp.log(2.0)))) ** 2
+
+    def kernel(n):
+        i = np.arange(n)
+        d = np.minimum(i, n - i)  # circular distance from index 0
+        k = np.exp(-0.5 * d**2 / sigma2)
+        return k / np.sum(k)
+
+    kr, kc = kernel(shape[0]), kernel(shape[1])
+    ft = np.fft.rfft2(brightness, s=shape)
+    kft = np.fft.rfft(kc)[None, :] * np.fft.fft(kr)[:, None]
+    out = np.fft.irfft2(ft * kft, s=shape)
+    return out[:nrow, :ncol]
