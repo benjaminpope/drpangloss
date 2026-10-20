@@ -78,6 +78,7 @@ def test_find_uv_grid_rejects_irregular_samples():
     u, v = onp.meshgrid(onp.arange(5.0), onp.arange(5.0))
     u = u.ravel() + 1e-3 * rng.normal(size=25)
     assert find_uv_grid(u, v.ravel()) is None
+    assert find_uv_grid(onp.zeros(3), onp.zeros(3)) is None
 
 
 def test_rotated_image_pixel_lands_at_the_rotated_sky_position():
