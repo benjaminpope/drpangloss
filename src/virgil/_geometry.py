@@ -418,6 +418,8 @@ def find_uv_grid(u, v, tolerance=1e-6):
     gap = onp.hypot(u - u[0], v - v[0])
     gap[0] = onp.inf
     nearest = int(onp.argmin(gap))
+    if not gap[nearest] > 0.0:
+        return None  # repeated samples: no lattice index is unique
     angle = onp.degrees(onp.arctan2(v[nearest] - v[0], u[nearest] - u[0]))
     rotation = float(-(((angle + 45.0) % 90.0) - 45.0))
     # First guess: cells along each axis of the rotated frame, which only
