@@ -288,9 +288,14 @@ the command line is matched literally, so it would not catch them.
   their place, and a half-night velocity is accepted only from a converged
   refinement. `short_arcs=False` is the previous behaviour. Checkpoints from
   earlier versions are not reused.
-- **Tutorial**: the orbit tutorial fits one snapshot per night with `Epochs`
-  and `OrbitalBinary`, starts from `start_from_positions`, and starts one
-  NUTS chain per distinct mode.
+- **Tutorial**: the orbit tutorial leads with `OrbitPipeline`. It simulates
+  two observing seasons of a binary whose period is aliased, runs
+  `OrbitPipeline.from_oifits(files).run()`, reads the raw χ²/N, the checks,
+  the alias bands and the orbit, and then shows the functions the pipeline
+  calls (`epoch_positions`, `fit_orbit_aliases`, tempering) for readers who
+  need control. `start_from_positions` is marked superseded by
+  `fit_orbit_aliases` and `OrbitPipeline` for an unknown period (docs only;
+  the function is unchanged).
 - **Orbit fitting with gains.** The scale-marginalized surface
   (`marginal_loglike`, `epoch_positions`, `rank_orbits`, `fit_orbit_aliases`)
   accepts data with gains or closure-phase offsets, which it refused. Each
@@ -300,6 +305,33 @@ the command line is matched literally, so it would not catch them.
   `vis_amp` is refused for them; `vis_amp=True` (the default) then means none,
   logged at INFO. For data with gains or offsets, an estimated tempering
   factor above 3 warns "noise model inadequate".
+  Grid batches for such data come from a memory budget (`memory_budget`,
+  1 GiB on a CPU by default) that counts the observables and the gains' rank,
+  so no data set runs out of memory by default; `epoch_positions`,
+  `fit_orbit_aliases` and `OrbitPipeline` take `batch_size` and
+  `memory_budget`. `epoch_positions` scores such grids at one fixed scale per
+  block (one whitening per point) and integrates ln s only within
+  `coarse_nats` (30) of the best point and its neighbours; the peaks are
+  refined with the full integral and `EpochPositions.exact_fraction` reports
+  the share. On a calibrated GRAVITY night (882 V², 588 closure phases) the
+  peaks are unchanged and the grid stage is about 6× faster. `gap_marginal`
+  rivals more than `coarse_nats` below the best, and the stored surface
+  there, are approximate; `coarse_nats=None` restores the full integral.
+- **Night flags inform instead of excluding.** `sep-below-resolution` is
+  reported but no longer keeps a night from seeding an orbit
+  (`NightFlag.blocking`; `epoch_positions(flag_sep_blocks=True)` restores
+  it). `chi2-high` compares each night with the median of its own instrument
+  mode (`flag_chi2_groups`, by default the spectral channels and wavelength
+  range). `EpochPositions.log_broad` is each night's mean likelihood over the
+  grid.
+- **Outlier nights.** `fit_orbit_aliases(outlier_eps=...)` mixes a broad
+  outlier component into each night's likelihood, so one bad (sidelobe) night
+  cannot move the orbit; `AliasResult.outlier` gives each night's posterior
+  outlier probability and `AliasResult.night_flags` the post-fit
+  `orbit-prefers-secondary` flag (`sidelobe_flags`). It is off by default in
+  `fit_orbit_aliases`; **`OrbitPipeline` sets `outlier_eps=0.02`**, so a
+  pipeline run down-weights a night the orbit cannot explain instead of
+  following it. Pass `outlier_eps=0` for the plain likelihood.
 
 **`MultipoleDisk` family** (provisional; follows the ideas of frank, Jennings
 et al. 2020, and vis-r, Kennedy 2025, credited in the docstrings and on the
@@ -554,6 +586,38 @@ contributors page; no code was copied)
   need no hand-flagged records. Dropping the closure phases rebuilds
   differential phases with their closure part, and gains go with the
   visibilities.
+- **Image smoothing** (provisional). `Image(smooth_fwhm_mas=...)` carries a
+  fixed Gaussian smoothing kernel: its visibilities are the pixel transform
+  times the analytic Gaussian, and `Image.smoothed()` returns the convolved
+  pixels. `TSV`, `TV`, `MaxEntropy`, `Laplacian`, `StarletL1` and `LogSum`
+  take `smoothed=True` to penalize them, as MPoL does. Defaults are
+  unchanged. `CalibrationNuisance.taper_fwhm_mas` stays; setting both warns.
+- **Matrix Fourier transform for rendered disks on DISCO lattices**
+  (provisional). `FlaredDisk` (and `FlaredDiskHG`, `FlaredDiskGaussian`,
+  `FlaredDiskPowerLaw`) use the exact two-sided matrix Fourier transform on
+  data with a `uv_grid`, as `Image` does. A new `rotation_deg` orients the
+  disk's pixel grid; the default, `"grid"`, renders it in the frame of the
+  data's lattice (North up without one), so DISCO data always take the fast
+  path. On the old PDS 70 product this changes ln L by under 0.005 (the pixel
+  discretization) and runs 3–4× faster for a 96² disk at 1300 uv points. With
+  `"grid"`, `disk.model(u, v, wavel)` and data without a lattice keep North-up
+  pixels, so they differ from the lattice path by that discretization.
+  Ensembles on drpangloss DISCO dictionaries now cap every field factor at 1,
+  as on other lattice data (a larger field aliases), so the same seed draws
+  smaller fields than before. Dictionaries with `disco_vis_mat` or
+  `disco_phi_mat` (the drpangloss DISCO format) get a `uv_grid` when their
+  single-wavelength samples lie on a lattice to 1e-5 cells, as the mixed-DISCO
+  loader already did; both share one lattice check, and `find_uv_grid` fits
+  the lattice by least squares, so float32 coordinates no longer defeat it.
+- **`OIData.with_closure_offsets` accepts three-telescope data** (one
+  triangle per frame and channel): triangle and `modes` offsets work, baseline
+  offsets are folded into the triangle group (width √3 × baseline) with a
+  warning. The result carries `cp_noise`, so the likelihood uses the
+  sine-plus-penalty form of four-telescope data, whose normalization differs
+  slightly from the von Mises form of plain three-telescope data.
+- **`virgil.crossval`** (provisional): k-fold cross-validation of a
+  hyperparameter for any likelihood term that takes a mask, as one process or
+  as array tasks with JSON records.
 
 ### Changed
 
@@ -646,6 +710,11 @@ contributors page; no code was copied)
   `UserWarning`. `variational` with `"bnaf"`, `"iaf"`, `"mvn"` or
   `"laplace"` raises `ValueError` above the limit, before allocating.
 - **Performance** (results unchanged up to rounding unless noted):
+  - `FlaredDiskHG` and `FlaredDiskPowerLaw` form cos θ as y/ρ instead of
+    calling `arctan2` and `cos` (cos(θ/2)ⁿ = ((1 + cos θ)/2)ⁿ/²), roughly
+    halving the value-and-gradient time of a 96×96 render on CPU in float64.
+    The gradient at a pixel exactly on the star is now finite;
+    `FlaredDiskGaussian` still needs θ.
   - `score_orbits`, `rank_orbits` and `chain_starts` compile their kernel once
     per layout of the data, and repeated refinements in
     `start_from_positions` compile once. `epoch_positions(batch_size=)`
@@ -745,6 +814,42 @@ contributors page; no code was copied)
 
 ### Fixed
 
+- **`separation_pa` has a zero gradient at the origin.** `jnp.hypot` has a NaN
+  gradient at (0, 0) on JAX 0.12.0, so an angular model that started on the
+  origin (a non-detection's best fit) had non-finite derivatives and NUTS
+  could not initialize there.
+- **`clean`'s `"stalled"` stop is platform-independent.** It compares the
+  predicted decrease with `eps` times the χ², not with exactly zero. At the
+  optimum the sign of the gradient is rounding noise, so whether CLEAN
+  stopped depended on the platform and on thread scheduling, and it sometimes
+  ran to `max_iterations` instead.
+- **Pipeline robustness (`virgil.pipeline`, provisional; valid runs and
+  their results are unchanged).**
+  - `from_oifits([])` raises a `ValueError` naming the pipeline ("needs at
+    least one OIFITS file") instead of a bare `IndexError`.
+  - Checks no longer pass silently on a value that is not finite:
+    `error_scale` (a NaN scale at any position), `divergences` (a NaN
+    fraction) and `prior_bound` (a NaN fraction) now fail, fail and warn
+    respectively; `field_of_view` and `mode_converged` warn on a NaN.
+    `ring_count` treats a ring count whose BIC margin is not finite as not
+    clearly preferred, warns when the chosen count is missing from its rows
+    instead of raising `KeyError`, and `inclination(None, ...)` warns ("the
+    inclination is unknown") instead of raising `TypeError`.
+    `OrbitPipeline`'s `_optimum_gap` is NaN, not 0, when no draw can be
+    scored and its worst gap and bound fractions keep a NaN from any band.
+  - The fit report's `priors` entries read `LogUniform(low=1e-05, high=0.5)`
+    instead of numpyro's `repr` with a memory address, so a rerun writes the
+    same report.
+  - `at_bound` and `start_at_bound` are one function in
+    `virgil.pipeline._checks` (`at_bound(names, start=True)`; `start_at_bound`
+    is gone). Check names, values and messages are unchanged.
+  - Integer and positive settings reject `True` and `False` in every pipeline
+    (`OrbitPipeline` already did).
+  - `OrbitPipeline` uses the shared validation, posterior summary, sampler
+    checks and `samples.h5` and figure writers: its band summaries take the
+    worst R-hat and ESS NaN-aware, and its corner and trace figures become a
+    placeholder with a warning when the chains never move. The search, its
+    numbers, the summary keys and the run folder are unchanged.
 - **`StarPipeline` reports a scanned (uniform-disk) fit that sits on its diameter bound.** Only gradient fits listed `at_bound`, so a uniform fit at the edge of `diam_range_mas` passed the fit stage silently; it now lists `diam` in `at_bound` and adds the `start_at_bound` warning, as the limb-darkened fit does.
 
 - **Pipelines no longer crash in the posterior figures when the chains never move.** Draws with zero width made chainconsumer raise "Axis limits cannot be NaN or Inf", failing the run in the plotting step instead of reporting the non-convergence. The corner and trace figures are now placeholders with a recorded warning, and the R-hat and ESS checks fail as they should.
@@ -952,6 +1057,11 @@ Provisional in 0.4:
 - `virgil.metrics`;
 - the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`,
   `set_ft_defaults`, and the automatic thresholds and tolerances;
+- the `rotation_deg` argument of `FlaredDisk*` (and its `"grid"` default) and
+  the lattice tolerance for DISCO dictionaries;
+- image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the
+  `smoothed` option of the regularizers;
+- `virgil.crossval`;
 - the module `virgil.radio` (new: complex visibilities from CASA measurement
   sets with per-observation calibration nuisances; instrument-neutral, with
   the spectral-index prior `Uniform(0, 5)` and the data-derived reference

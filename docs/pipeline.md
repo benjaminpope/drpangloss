@@ -5,7 +5,7 @@
 
 A tutorial shows how to do an analysis; a pipeline does it the same way every time and leaves a folder that a person, a script or an agent can read without rerunning the code. `virgil.pipeline` wraps virgil's public functions in fixed, named stages. Each stage writes its own outputs, an interrupted run resumes, and every run ends with deterministic quality checks and an executed quicklook notebook.
 
-A pipeline adds no science: every number it reports comes from a public virgil function that a tutorial also calls, so you can reproduce any result by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree.
+A pipeline adds no science: every number it reports comes from a public virgil function that a tutorial also calls, so you can reproduce any result by hand. The binary-search, contrast-limits and limb-darkening tutorials end with an "As a pipeline" section that does exactly that and asserts that the numbers agree; the [orbit tutorial](orbit_fitting.md) leads with its pipeline and then shows the functions underneath.
 
 Install the extra (it brings in the plotting extra, `h5py`, `nbformat`, `nbclient` and `ipykernel`):
 
@@ -114,6 +114,8 @@ res.summary["modes"]["winner"]      # the winning alias band and its orbit
 res.summary["modes"]["delta_log_z"] # its margin over the runner-up, in nats
 res.aliases().table()               # every band: log Z, probability, flags
 ```
+
+The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, reads the result and then calls the functions underneath (`epoch_positions`, `fit_orbit_aliases`) for the control the pipeline's settings do not give.
 
 `OrbitPipeline` takes data that the instrument package has already prepared (the channel, band edges, outlier exposures and noise model): it neither selects a channel, trims the band nor screens exposures, and it has no instrument-specific settings, so it works the same for every instrument. Per-file rulings go in `metadata` (`epoch`, and `mjd` for a file whose time stamp is wrong or absent) and `exclude` (`{file, night or dataset: reason}`, recorded in `run.json`). The command line is `virgil-pipeline orbit FILES... --output DIR [--metadata FILE.json]`.
 
@@ -241,8 +243,9 @@ Open before promotion: `global_nsigma` is a Šidák estimate with a nominal numb
 | `BinaryPipeline` | `binary` | provisional |
 | `StarPipeline` | `star` | provisional |
 | `DiskPipeline` | `disk` | provisional |
+| `OrbitPipeline` | `orbit` | provisional |
 
-Further pipelines (orbit and imaging) will be added to this table as they land, all provisional.
+Further pipelines (imaging) will be added to this table as they land, all provisional.
 
 ## Command line
 
@@ -253,6 +256,7 @@ virgil-pipeline binary hd1234.oifits -o runs/hd1234 --set sigma=3 --set num_chai
 virgil-pipeline binary hd1234.oifits -o runs/hd1234 --through limits --fresh
 virgil-pipeline star star.oifits -o runs/star --model limb_darkened
 virgil-pipeline disk disk.oifits -o runs/disk --model rings --set companion=true --set r_out_mas=25
+virgil-pipeline orbit night*.oifits -o runs/orbit --metadata rulings.json
 virgil-pipeline info runs/hd1234        # status and checks
 virgil-pipeline validate runs/hd1234    # complete, and every file matches its hash
 virgil-pipeline quicklook runs/hd1234   # rebuild the quicklook notebook

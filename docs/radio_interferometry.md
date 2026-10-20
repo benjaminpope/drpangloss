@@ -134,6 +134,53 @@ For a fit with the scene on the model side only, `data.model(scene, values,
 nuis)` returns `M_k` and `data.chi2_by_ddid(scene, values, nuis)` the χ² and
 number of points of each ddid.
 
+## Smoothing: `Image(smooth_fwhm_mas=...)` or the nuisance taper
+
+Two Gaussian blurs are available, for different jobs.
+
+- `CalibrationNuisance(taper_fwhm_mas=...)` multiplies the visibilities of
+  **any** scene (a parametric model, an `Image`, a `System`) by the Gaussian
+  `exp(-π² θ² q² / (4 ln 2))`. It is a uv-plane factor, so a regulariser,
+  which acts on pixels, never sees it.
+- `Image(..., smooth_fwhm_mas=...)` declares that the sky the data see is the
+  image's pixels convolved with a fixed Gaussian, as in MPoL's
+  `GaussConvFourier`. Its visibilities are the same factor times the pixel
+  transform (exact at any uv point for every `ft`), and
+  `Image.smoothed()` returns the convolved pixels by an FFT on a
+  zero-padded grid. Regularisers then penalize either the raw pixels (the
+  default) or the smoothed ones, with their `smoothed=True` option:
+
+```python
+env = Image(eta, 5.0, smooth_fwhm_mas=30.0)
+reg = MaxEntropy(w, smoothed=True)  # entropy of the blurred image
+```
+
+The regulariser option, rather than a model-level switch, keeps the default
+(raw pixels) untouched and lets you mix: entropy on the smoothed image with
+total variation on the raw one. `smoothed=True` clips FFT round-off at zero;
+`MaxEntropy` and `LogSum` then use a flat default over all pixels, since
+smoothing spreads flux beyond the `support`.
+
+MPoL's chain `BaseCube` (softplus) → `GaussConvFourier` (FWHM 30 mas) →
+`ImageCube` → NuFFT, with entropy on the smoothed cube, is
+`Image(eta, scale, smooth_fwhm_mas=30.0)` with `MaxEntropy(w, smoothed=True)`.
+
+Use the nuisance taper for a scene that is not an `Image`, or to blur a
+parametric model; use `smooth_fwhm_mas` when the blur belongs to the image
+model and regularisers should see it. Setting both blurs the model twice, so `fit` and
+`data.term` warn (`UserWarning`) when they meet.
+
+**Accuracy.** `smoothed()` crops its result to the image, so flux spreading
+past the edges is lost (keep the emission clear of them). For a kernel of at
+least 3 pixels FWHM the transform of the smoothed pixels equals the analytic
+Gaussian times the raw transform to about `exp(-π² θ² (1/p - q)² / (4 ln 2))`
+of the flux (an upper bound, times the raw transform at the aliased
+frequency), p the pixel size: about 1.5e-8 at FWHM 3 px and `q = 0.25 / p`.
+Measured on a compact image in float64 with `|q| <= 0.25 / p`, the error is
+3e-11 of the flux at 3 px. A narrower kernel is not band-limited on the pixel grid, and
+the discretisation error grows quickly; the visibilities, which use the
+analytic factor, stay exact.
+
 ## Primary beam and cross-validation
 
 `primary_beam(npix, pixel_scale_mas, freq_hz, dish_m, factor)` is the log
@@ -152,3 +199,77 @@ side of a cell edge can still fall in different folds, so scores can be
 slightly optimistic). Fit with
 `term(..., mask=fold != i)` and score the held-out points with
 `chi2_by_ddid(..., mask=fold == i)`.
+
+## Diagnostics
+
+Both diagnostics are model-free displays or checks: neither is part of the
+likelihood.
+
+### Error scale from time-adjacent samples
+
+`data.sigma_scale(by="ddid")` estimates the error scale `s` (the factor on
+the quoted errors `1/√w`) without a sky model. Samples of one baseline,
+channel and scan are sorted by time and paired (1st with 2nd, 3rd with
+4th, …); a pair has `Var(ΔRe) = s²(1/wᵢ + 1/wⱼ)`, so
+
+`ŝ² = mean over pairs of ΔRe² / (1/wᵢ + 1/wⱼ)`,
+
+the same for Im, and `ŝ` combines the two. Standard errors are the sample
+errors of those means.
+
+```python
+res = data.sigma_scale()            # per ddid label; by="obs" or None also work
+for label, s, se in zip(res.labels, res.s, res.s_se):
+    print(f"ddid {label}: s = {s:.3f} ± {se:.3f}")
+```
+
+Caveats:
+
+* **It is an upper bound.** A change of the sky, gain or phase between the
+  two integrations adds to `|ΔV|²`, so `ŝ` is biased high where the data vary
+  quickly (atmospheric phase, long integrations). Compare it with the fitted
+  `cal.sigma`: a fit well below `ŝ` is expected, a fit above it is not.
+* It needs `time`, `ant1`, `ant2` and `scan`, which `read_ms` fills (otherwise
+  `from_arrays(..., time=, ant1=, ant2=, scan=)`); it raises if they are
+  missing. With `read_ms(stride=k>1)` the rows are no longer adjacent.
+* `lag_ratio` compares the mean-square difference of far pairs (half a run
+  apart) to adjacent pairs. A ratio well above 1 means the pairing does what
+  it should; near 1 means constant data or a time order that does not follow
+  the data (for example a scrambled time column), so check `ŝ`.
+* It sorts one ddid at a time with NumPy and no Python loop over points:
+  memory is a few arrays of the largest ddid's length (see the PR notes for
+  numbers).
+
+### Dirty and residual images
+
+```python
+beam = data.dirty_beam(256, 0.5, weighting="briggs", robust=0.5)
+dirty = data.dirty_image(256, 0.5, weighting="briggs", robust=0.5)  # Jy/beam
+resid = data.dirty_image(
+    256, 0.5, weighting="briggs", scene=scene, values=values, nuisance=nuis,
+    use_sigma=True,
+)  # image of data - model, in Jy/beam
+```
+
+The image is `Σ wₖ Re[Vₖ e^{+2πi(uₖx + vₖy)}] / Σ wₖ`, computed with the
+adjoint (type-1) NUFFT of nufftax at the raw (u, v) (nothing is gridded onto
+cell centres; the accuracy is that of
+[`set_ft_defaults`][virgil._geometry.set_ft_defaults]'s tolerance); the real
+part adds the Hermitian conjugates. Dividing by `Σ w` makes the dirty beam
+`Σ w cos(2π(ux + vy)) / Σ w` peak at 1 at the phase centre, so the image is in
+Jy/beam and a point source of flux `F` at the centre peaks at `F`.
+
+* **Orientation** is that of `Image`: East to the left, North up, the phase
+  centre at pixel `((npix − 1)/2, (npix − 1)/2)` (between pixels for an even
+  `npix`, where the sampled beam peak is a little below 1: use an odd `npix` for a
+  centred pixel), pixel `(row, col)` at `dra = (c − col)s`, `ddec = (c − row)s`.
+* **Weighting**: `"natural"` is `w`; `"uniform"` is `w/W_c` with `W_c` the
+  weight in the point's uv cell; `"briggs"` is `w/(1 + W_c f²)` with
+  `f² = (5·10^−R)² / (Σ_c W_c² / Σ_k w_k)`, natural as `R → +∞` and uniform as
+  `R → −∞`. The density is counted on a uv grid (cell `1/FoV` by default;
+  Hermitian partners share a cell) and only reweights the points.
+* **Residuals**: with `scene`, `values` and `nuisance` the data minus the
+  model (with the calibration nuisances applied, as in `term`) is imaged;
+  `use_sigma=True` divides the weights by the fitted `s_d²`.
+* The beam is not deconvolved: this is a display and a check on a fit, never
+  a likelihood. Large data are transformed in chunks of `chunk_size` points.

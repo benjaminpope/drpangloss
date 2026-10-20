@@ -28,15 +28,16 @@ import jax
 import jax.numpy as np
 import numpy as onp
 
-from ._geometry import offset_phase, pixel_offsets
+from ._geometry import gaussian_taper, offset_phase, pixel_offsets
 from ._utils import mas2rad, rad2mas
-from .models import SourceModel
+from .models import Image, SourceModel
 
 __provisional__ = ("*",)
 
 __all__ = [
     "CalibrationNuisance",
     "ComplexVisData",
+    "SigmaScale",
     "dartboard_folds",
     "primary_beam",
 ]
@@ -89,8 +90,11 @@ class ComplexVisData(eqx.Module):
         ``DATA_DESC_ID``.
     ddid_obs : tuple of int
         The (relabelled) observation of each ddid label.
-    time, ant1, ant2, chan : optional arrays
-        MJD seconds, antenna indices and channel index, when known.
+    time, ant1, ant2, chan, scan : optional arrays
+        MJD seconds, antenna indices, channel index and scan number
+        (``SCAN_NUMBER``), when known. ``time``, ``ant1``, ``ant2`` and
+        ``scan`` are what [`sigma_scale`][virgil.radio.ComplexVisData.sigma_scale]
+        needs.
     """
 
     u: jax.Array
@@ -107,6 +111,7 @@ class ComplexVisData(eqx.Module):
     ant1: jax.Array | None = None
     ant2: jax.Array | None = None
     chan: jax.Array | None = None
+    scan: jax.Array | None = None
 
     # -- construction -------------------------------------------------
 
@@ -125,6 +130,7 @@ class ComplexVisData(eqx.Module):
         ant1=None,
         ant2=None,
         chan=None,
+        scan=None,
     ):
         """Build from arrays; scalars broadcast over the points.
 
@@ -151,6 +157,7 @@ class ComplexVisData(eqx.Module):
             "ant1": ant1,
             "ant2": ant2,
             "chan": chan,
+            "scan": scan,
         }
         for name, x in list(optional.items()):
             if x is not None:
@@ -458,6 +465,414 @@ class ComplexVisData(eqx.Module):
         n = onp.bincount(onp.asarray(self.ddid)[mask_], minlength=n_ddid)
         return onp.asarray(chi2), n
 
+    # -- diagnostics --------------------------------------------------
+
+    def sigma_scale(self, by="ddid"):
+        """Model-free estimate of the error scale from time-adjacent samples.
+
+        Samples of one baseline, channel and scan (and ddid label) are sorted
+        by time and paired without overlap (1st with 2nd, 3rd with 4th, ...).
+        With ``σ² = s²/w`` for each of the real and imaginary parts, a pair
+        has ``Var(ΔRe) = s²(1/w_i + 1/w_j)``, so per group
+
+        ``ŝ² = mean_pairs ΔRe² / (1/w_i + 1/w_j)``,
+
+        and the same for Im; the combined ``ŝ`` averages the two. The error
+        of ``ŝ²`` is the sample standard error of that mean (no Gaussian
+        assumption); ``se = se(ŝ²) / (2ŝ)``.
+
+        **This is an upper bound.** Any change of the sky (or of the gain and
+        phase) between the two integrations adds to ``|ΔV|²``, so ``ŝ`` is
+        biased high for rapidly varying data (long gaps, atmospheric phase)
+        and exact only if the signal is constant over a pair. Samples without
+        a partner in their run are not used. It needs the optional ``time``,
+        ``ant1``, ``ant2`` and ``scan`` fields (filled by
+        [`read_ms`][virgil.radio.ComplexVisData.read_ms]; with
+        ``stride > 1`` the rows read are no longer adjacent). Channels are
+        identified by their frequency.
+
+        Parameters
+        ----------
+        by : {"ddid", "obs", None}
+            Grouping of the result; ``None`` pools everything.
+
+        Returns
+        -------
+        SigmaScale
+            Group labels (original ids) and, per group, the number of pairs
+            and ``s``, ``s_re``, ``s_im`` with standard errors. Its
+            ``lag_ratio`` compares the far-pair and adjacent-pair mean-square
+            differences: a ratio well above 1 means the sky varies and
+            adjacency matters (``ŝ`` is then the conservative estimate); a
+            ratio near 1 means either constant data or time order that does
+            not follow the data (for example a scrambled time column), and
+            ``ŝ`` should be checked.
+        """
+        missing = [
+            n
+            for n in ("time", "ant1", "ant2", "scan")
+            if getattr(self, n) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"sigma_scale needs {', '.join(missing)}; build the data with "
+                "those fields (read_ms fills them)."
+            )
+        if by not in ("ddid", "obs", None):
+            raise ValueError("by must be 'ddid', 'obs' or None.")
+        ddid = onp.asarray(self.ddid)
+        obs = onp.asarray(self.obs)
+        if by == "obs":
+            group, labels = obs, list(self.obs_ids)
+        elif by == "ddid":
+            group, labels = ddid, list(self.ddid_ids)
+        else:
+            group, labels = onp.zeros(len(self), dtype=onp.int32), [None]
+        ng = len(labels)
+        sums = onp.zeros((ng, 3, 2))  # (re, im, both) x (sum z², sum z⁴)
+        npair = onp.zeros(ng, dtype=onp.int64)
+        far_sum = onp.zeros(ng)
+        far_n = onp.zeros(ng, dtype=onp.int64)
+        near_sum = onp.zeros(ng)
+        near_n = onp.zeros(ng, dtype=onp.int64)
+        for d in range(len(self.ddid_ids)):  # sort one ddid label at a time
+            idx = onp.flatnonzero(ddid == d)
+            if idx.size < 2:
+                continue
+            g = int(group[idx[0]]) if by is not None else 0
+            time = onp.asarray(self.time)[idx]
+            ant1 = onp.asarray(self.ant1)[idx].astype(onp.int64)
+            ant2 = onp.asarray(self.ant2)[idx].astype(onp.int64)
+            scan = onp.asarray(self.scan)[idx].astype(onp.int64)
+            _, chan = onp.unique(
+                onp.asarray(self.freq)[idx], return_inverse=True
+            )
+            base = ant1 * (ant2.max() + 1) + ant2
+            order = onp.lexsort((time, chan, base, scan))
+            key = onp.stack([scan, base, chan])[:, order]
+            idx = idx[order]
+            del time, ant1, ant2, scan, base, chan, order
+            new = onp.empty(idx.size, dtype=bool)
+            new[0] = True
+            new[1:] = (key[:, 1:] != key[:, :-1]).any(axis=0)
+            del key
+            start = onp.flatnonzero(new)
+            length = onp.diff(onp.append(start, idx.size))
+            run = onp.cumsum(new) - 1
+            pos = onp.arange(idx.size) - start[run]
+            rlen = length[run]
+            vis = onp.asarray(self.vis)
+            inv_w = 1.0 / onp.asarray(self.weight)
+
+            def z2(a, b):
+                a, b = idx[a], idx[b]
+                dv = vis[a] - vis[b]
+                den = inv_w[a] + inv_w[b]
+                return dv.real**2 / den, dv.imag**2 / den
+
+            first = onp.flatnonzero((pos % 2 == 0) & (pos + 1 < rlen))
+            if first.size:
+                zr, zi = z2(first, first + 1)
+                both = 0.5 * (zr + zi)
+                for k, z in enumerate((zr, zi, both)):
+                    sums[g, k] += (z.sum(), (z**2).sum())
+                npair[g] += first.size
+                near_sum[g] += both.sum()
+                near_n[g] += both.size
+            half = rlen // 2
+            far = onp.flatnonzero((pos < half) & (half >= 1))
+            if far.size:
+                zr, zi = z2(far, far + half[far])
+                far_sum[g] += (0.5 * (zr + zi)).sum()
+                far_n[g] += far.size
+        with onp.errstate(invalid="ignore", divide="ignore"):
+            n = npair.astype(float)
+            mean = sums[:, :, 0] / n[:, None]  # ŝ² of re, im, both
+            var = onp.maximum(sums[:, :, 1] / n[:, None] - mean**2, 0.0)
+            se2 = onp.sqrt(var / n[:, None])
+            s = onp.sqrt(mean)
+            se = se2 / (2.0 * s)
+            lag = (far_sum / far_n) / (near_sum / near_n)
+        return SigmaScale(
+            labels=tuple(labels),
+            n_pairs=npair,
+            s=s[:, 2],
+            s_se=se[:, 2],
+            s_re=s[:, 0],
+            s_re_se=se[:, 0],
+            s_im=s[:, 1],
+            s_im_se=se[:, 1],
+            lag_ratio=lag,
+        )
+
+    def _imaging_weights(self, weighting, robust, uv_cell, nuisance, values):
+        """Imaging weights: ``w`` (÷ s_d² if fitted), times uv-density factors."""
+        w = onp.asarray(self.weight, dtype=onp.float64)
+        if nuisance is not None and values is not None and nuisance.sigmas:
+            s = onp.asarray(nuisance._unpack(values)[3], dtype=onp.float64)
+            w = w / s[onp.asarray(self.ddid)] ** 2
+        if weighting == "natural":
+            return w
+        if weighting not in ("uniform", "briggs"):
+            raise ValueError(
+                "weighting must be 'natural', 'uniform' or 'briggs'."
+            )
+        u, v = onp.asarray(self.u), onp.asarray(self.v)
+        flip = (v < 0) | (
+            (v == 0) & (u < 0)
+        )  # Hermitian partners share a cell
+        iu = onp.floor(onp.where(flip, -u, u) / uv_cell).astype(onp.int64)
+        iv = onp.floor(onp.where(flip, -v, v) / uv_cell).astype(onp.int64)
+        iu -= iu.min()
+        cell = iv * (iu.max() + 1) + iu
+        _, inverse = onp.unique(cell, return_inverse=True)
+        density = onp.bincount(inverse, weights=w)[inverse]
+        if weighting == "uniform":
+            return w / density
+        # Briggs: w / (1 + W_c f²), f² = (5 · 10^-R)² / (Σ_c W_c² / Σ_k w_k)
+        w_c = onp.bincount(inverse, weights=w)
+        f2 = (5.0 * 10.0 ** (-robust)) ** 2 / (onp.sum(w_c**2) / onp.sum(w))
+        return w / (1.0 + density * f2)
+
+    def _adjoint(self, values, w, npix, pixel_scale_mas, chunk_size):
+        """``Σ_k w_k Re[a_k exp(+2πi(u_k x + v_k y))] / Σ w`` on the pixel grid.
+
+        The adjoint (type-1) NUFFT at the raw (u, v); taking the real part
+        adds the Hermitian conjugates. ``values`` complex (N,).
+        """
+        npix = int(npix)
+        c = 0.5 * (npix - 1)
+        total = float(onp.sum(w))
+        image = onp.zeros((npix, npix))
+        n = len(self)
+        for lo in range(0, n, int(chunk_size)):
+            sl = slice(lo, lo + int(chunk_size))
+            t_col = (
+                2.0
+                * onp.pi
+                * mas2rad
+                * pixel_scale_mas
+                * onp.asarray(self.u[sl])
+            )
+            t_row = (
+                2.0
+                * onp.pi
+                * mas2rad
+                * pixel_scale_mas
+                * onp.asarray(self.v[sl])
+            )
+            a = w[sl] * values[sl]
+            # exp(+i(t(c - col))) = exp(-i t m) exp(+i t (c - n//2)), m = col - n//2
+            a = a * onp.exp(1j * (t_col + t_row) * (c - npix // 2))
+            image += _type1(t_col, t_row, a, npix)
+        return image / total
+
+    def dirty_beam(
+        self,
+        npix,
+        pixel_scale_mas,
+        weighting="natural",
+        robust=0.5,
+        nuisance=None,
+        values=None,
+        uv_cell=None,
+        chunk_size=1_000_000,
+    ):
+        """The dirty beam ``Σ w cos(2π(u x + v y)) / Σ w`` on the pixel grid.
+
+        The response to a unit point source at the phase centre, normalized
+        to 1 there. See [`dirty_image`][virgil.radio.ComplexVisData.dirty_image]
+        for the parameters. On an even ``npix`` the phase centre lies between
+        four pixels (the convention of [`Image`][virgil.models.Image]), so the
+        sampled peak is slightly below 1; use an odd ``npix`` for a pixel
+        centred on it.
+        """
+        return self._dirty(
+            None,
+            npix,
+            pixel_scale_mas,
+            weighting,
+            robust,
+            nuisance,
+            values,
+            uv_cell,
+            chunk_size,
+            beam=True,
+        )
+
+    def dirty_image(
+        self,
+        npix,
+        pixel_scale_mas,
+        weighting="natural",
+        robust=0.5,
+        scene=None,
+        values=None,
+        nuisance=None,
+        use_sigma=False,
+        uv_cell=None,
+        chunk_size=1_000_000,
+    ):
+        """Dirty image ``Σ w Re[V e^{+2πi(u x + v y)}] / Σ w`` in Jy/beam.
+
+        A display diagnostic, never part of the likelihood. The transform is
+        the adjoint (type-1) NUFFT of nufftax at the raw (u, v) points (no
+        gridding of the data), accurate to the tolerance of
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]; the real part
+        adds the Hermitian conjugates. Dividing by ``Σ w`` makes the dirty
+        beam peak 1 (at the phase centre), so a point source of flux ``F``
+        at the centre peaks at ``F`` Jy/beam.
+
+        The image has the orientation of [`Image`][virgil.models.Image]:
+        East to the left (columns), North up (rows), the phase centre at
+        pixel ``((npix - 1)/2, (npix - 1)/2)`` (between pixels for even
+        ``npix``), pixel ``(row, col)`` at offset ``dra = (c - col) s``,
+        ``ddec = (c - row) s``.
+
+        Parameters
+        ----------
+        npix : int
+        pixel_scale_mas : float
+        weighting : {"natural", "uniform", "briggs"}
+            Natural: ``w`` (``1/σ²``). Uniform: ``w / W_c``, ``W_c`` the
+            summed weight of the point's uv cell. Briggs: ``w / (1 + W_c f²)``
+            with ``f² = (5·10^-R)² / (Σ_c W_c² / Σ_k w_k)``: natural as
+            ``R → +∞``, uniform as ``R → −∞`` (``R`` in about −2..2). The
+            densities are counted on a uv grid (Hermitian partners share a
+            cell) which only reweights the points.
+        robust : float
+            Briggs ``R``.
+        scene : callable or SourceModel, optional
+            With ``values`` and ``nuisance``, the image is of the residual
+            ``V − M`` (``M`` as in [`model`][virgil.radio.ComplexVisData.model]
+            including the calibration nuisances); ``scene`` is a model or a
+            function of the values as for ``term``.
+        values, nuisance : optional
+            Fitted values and the
+            [`CalibrationNuisance`][virgil.radio.CalibrationNuisance].
+        use_sigma : bool
+            Divide the weights by the fitted ``s_d²`` (needs ``values`` and
+            ``nuisance``).
+        uv_cell : float, optional
+            Cell of the density grid in wavelengths; default ``1/FoV``
+            (``FoV = npix · pixel_scale_mas`` in radians).
+        chunk_size : int
+            Points transformed at a time, bounding memory.
+
+        Returns
+        -------
+        (npix, npix) float64 array
+        """
+        return self._dirty(
+            (scene, values, nuisance),
+            npix,
+            pixel_scale_mas,
+            weighting,
+            robust,
+            nuisance if use_sigma else None,
+            values if use_sigma else None,
+            uv_cell,
+            chunk_size,
+            beam=False,
+        )
+
+    def _dirty(
+        self,
+        residual,
+        npix,
+        pixel_scale_mas,
+        weighting,
+        robust,
+        nuis_w,
+        values_w,
+        uv_cell,
+        chunk_size,
+        beam,
+    ):
+        if uv_cell is None:
+            uv_cell = 1.0 / (int(npix) * pixel_scale_mas * mas2rad)
+        if nuis_w is not None and values_w is None:
+            raise ValueError("use_sigma needs values and nuisance.")
+        w = self._imaging_weights(weighting, robust, uv_cell, nuis_w, values_w)
+        if beam:
+            a = onp.ones(len(self), dtype=onp.complex128)
+        else:
+            scene, values, nuisance = residual
+            a = onp.asarray(self.vis, dtype=onp.complex128)
+            if scene is not None:
+                if values is None or nuisance is None:
+                    raise ValueError("a scene needs values and nuisance.")
+                scene = scene(values) if callable(scene) else scene
+                a = a - self._model_chunked(
+                    scene, values, nuisance, chunk_size
+                )
+        return self._adjoint(a, w, npix, pixel_scale_mas, chunk_size)
+
+    def _model_chunked(self, scene, values, nuisance, chunk_size):
+        unpacked = nuisance._unpack(values)
+        out = onp.empty(len(self), dtype=onp.complex128)
+        for lo in range(0, len(self), int(chunk_size)):
+            sl = slice(lo, lo + int(chunk_size))
+            out[sl] = onp.asarray(
+                _model_points(
+                    scene,
+                    unpacked,
+                    nuisance,
+                    self.u[sl],
+                    self.v[sl],
+                    self.freq[sl],
+                    self.ddid[sl],
+                    self.obs[sl],
+                )
+            )
+        return out
+
+
+@dataclasses.dataclass(frozen=True)
+class SigmaScale:
+    """Result of [`ComplexVisData.sigma_scale`][virgil.radio.ComplexVisData.sigma_scale].
+
+    Arrays have one entry per group, in the order of ``labels`` (the original
+    ``DATA_DESC_ID`` or observation ids, or ``None`` when pooled). ``s`` is
+    the combined error scale and ``s_se`` its standard error; ``s_re`` and
+    ``s_im`` are the real and imaginary estimates; ``n_pairs`` the pairs
+    used; ``lag_ratio`` the far-pair to adjacent-pair mean-square difference.
+    All are upper bounds on the true scale (sky change inflates them).
+    """
+
+    labels: tuple
+    n_pairs: onp.ndarray
+    s: onp.ndarray
+    s_se: onp.ndarray
+    s_re: onp.ndarray
+    s_re_se: onp.ndarray
+    s_im: onp.ndarray
+    s_im_se: onp.ndarray
+    lag_ratio: onp.ndarray
+
+
+def _type1(t_col, t_row, a, npix):
+    """``Σ_k a_k exp(-i (t_col m + t_row m'))`` as a real (npix, npix) image.
+
+    ``m = col - npix//2`` (and ``m'`` for rows) via nufftax's type-1
+    transform at float64; the result's real part is the sum with the
+    Hermitian partners added.
+    """
+    from nufftax import nufft2d1
+
+    from ._geometry import _FT_DEFAULTS
+
+    wrap = lambda t: t - 2.0 * onp.pi * onp.round(t / (2.0 * onp.pi))  # noqa: E731
+    f = nufft2d1(
+        np.asarray(wrap(t_col)),
+        np.asarray(wrap(t_row)),
+        np.asarray(a),
+        (npix, npix),
+        eps=_FT_DEFAULTS["eps_f64"],
+        isign=-1,
+    )
+    return onp.asarray(np.real(f))
+
 
 def _parallel_hands(corr):
     """Indices of the parallel-hand pair in ``CORR_TYPE`` (XX, YY or RR, LL)."""
@@ -479,6 +894,7 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
     ant1 = sub.getcol("ANTENNA1", 0, -1, stride)
     ant2 = sub.getcol("ANTENNA2", 0, -1, stride)
     obs = sub.getcol("OBSERVATION_ID", 0, -1, stride)
+    scan = sub.getcol("SCAN_NUMBER", 0, -1, stride)
     weight = None
     if "WEIGHT_SPECTRUM" in sub.colnames() and sub.iscelldefined(
         "WEIGHT_SPECTRUM", 0
@@ -518,6 +934,7 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
         ant1=ant1[rw],
         ant2=ant2[rw],
         chan=ch.astype(onp.int16),
+        scan=scan[rw],
     )
 
 
@@ -698,9 +1115,7 @@ class CalibrationNuisance:
     def _taper(self, u, v):
         if self.taper_fwhm_mas is None:
             return 1.0
-        theta = self.taper_fwhm_mas * mas2rad
-        q2 = u * u + v * v
-        return np.exp(-((np.pi * theta) ** 2) * q2 / (4.0 * onp.log(2.0)))
+        return gaussian_taper(u * u + v * v, self.taper_fwhm_mas)
 
 
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
@@ -715,6 +1130,24 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
 # ----------------------------------------------------------------------
 # The likelihood term
 # ----------------------------------------------------------------------
+
+
+def _warn_double_taper(scene, nuisance):
+    if nuisance.taper_fwhm_mas is None:
+        return
+    images = jax.tree_util.tree_leaves(
+        scene, is_leaf=lambda x: isinstance(x, Image)
+    )
+    if any(
+        isinstance(x, Image) and x.smooth_fwhm_mas is not None for x in images
+    ):
+        warnings.warn(
+            "CalibrationNuisance.taper_fwhm_mas and Image.smooth_fwhm_mas "
+            "are both set; the two Gaussians compound, blurring the model "
+            "twice. Use one of them.",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 class _RadioTerm(eqx.Module):
@@ -768,6 +1201,7 @@ class _RadioTerm(eqx.Module):
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
         scene = self.scene(values)
+        _warn_double_taper(scene, nuis)
 
         def chunk(a):
             model = _model_points(

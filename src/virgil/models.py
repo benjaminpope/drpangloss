@@ -38,6 +38,8 @@ from jaxbessel import bessel_jn, bessel_jv_over_xv
 from ._geometry import (
     apply_elliptical_transf_coord,
     check_az_prof_nonnegative,
+    gaussian_smooth,
+    gaussian_taper,
     grid_visibilities,
     image_coordinates,
     image_visibilities,
@@ -1994,6 +1996,15 @@ class Image(Component):
         Transform for irregular uv points: the exact sum, a non-uniform FFT
         or, by default, whichever is faster for the problem size (see
         [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+    smooth_fwhm_mas : float, optional
+        FWHM in milliarcseconds of a fixed Gaussian smoothing kernel (not a
+        fitted parameter). The image the data see is the pixels convolved with
+        it, as in MPoL's ``GaussConvFourier``: the visibilities are the pixel
+        transform times the analytic Gaussian, exact at any uv point for every
+        ``ft``, and ``smoothed()`` gives the
+        convolved pixels. Regularisers can act on either (their ``smoothed``
+        option). Default ``None``: no smoothing. It compounds with
+        ``CalibrationNuisance.taper_fwhm_mas``, which tapers any scene.
 
     Examples
     --------
@@ -2007,6 +2018,7 @@ class Image(Component):
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
+    smooth_fwhm_mas: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2018,7 +2030,18 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
         ft="auto",
+        smooth_fwhm_mas=None,
     ):
+        if smooth_fwhm_mas is not None and not (
+            onp.isfinite(smooth_fwhm_mas) and smooth_fwhm_mas > 0.0
+        ):
+            raise ValueError(
+                "smooth_fwhm_mas must be None or finite and positive, "
+                f"not {smooth_fwhm_mas}."
+            )
+        self.smooth_fwhm_mas = (
+            None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
+        )
         if ft not in ("auto", "dft", "nufft"):
             raise ValueError(
                 f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
@@ -2104,11 +2127,33 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+    def smoothed(self):
+        """The pixels convolved with the Gaussian of ``smooth_fwhm_mas``.
+
+        Returns ``brightness`` itself when there is no smoothing. Otherwise
+        an FFT convolution on a zero-padded grid, cropped to the image, so
+        flux spreading past the edges is lost; see
+        ``virgil._geometry.gaussian_smooth`` for how closely
+        its transform matches the analytic Gaussian taper.
+        """
+        if self.smooth_fwhm_mas is None:
+            return self.brightness
+        return gaussian_smooth(
+            self.brightness, self.smooth_fwhm_mas / self.pixel_scale_mas
+        )
+
+    def _smoothing(self, u, v):
+        # Unrotated baselines in wavelengths: the taper is isotropic.
+        if self.smooth_fwhm_mas is None:
+            return 1.0
+        return gaussian_taper(u * u + v * v, self.smooth_fwhm_mas)
+
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
-        return image_visibilities(
+        vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
+        return vis * self._smoothing(uu, vv)
 
     def model_on_grid(self, u, v, wavel, grid):
         vis = _pixel_visibilities(
@@ -2121,19 +2166,85 @@ class Image(Component):
             grid,
             self.ft,
         )
+        vis = vis * self._smoothing(u / wavel, v / wavel)
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        # Bilinear resampling of the pixels, exact at their centres.
+        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
         xx, yy = rotate(xx, yy, -self.rotation_deg)
-        brightness = self.brightness
+        brightness = self.smoothed()
         nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas
         return map_coordinates(brightness, [rows, cols], order=1)
 
 
-class FlaredDisk(Component):
+class _PixelRendered(Component):
+    """A component whose visibilities are the transform of its own pixels.
+
+    Subclasses render their brightness (``_centred_image``) on a fixed,
+    centred ``npix`` x ``npix`` grid of ``pixel_scale_mas`` pixels, whose
+    "up" axis is at position angle ``rotation_deg``, and set ``ft``. On data
+    whose samples lie on a matching uv lattice (``data.uv_grid``) the
+    transform is the exact two-sided matrix Fourier transform, as for an
+    [`Image`][virgil.models.Image]; elsewhere it is ``ft``.
+    ``rotation_deg="grid"`` renders the pixels in the frame of whatever
+    lattice the data carry (North up without one), so that DISCO data always
+    use the matrix transform.
+    """
+
+    def _frame(self, grid):
+        """Position angle of the pixel grid's "up" axis for these data."""
+        if self.rotation_deg != "grid":
+            return self.rotation_deg
+        return 0.0 if grid is None else grid.rotation_deg
+
+    def _pixels(self, rotation_deg):
+        """Unit-sum pixel fluxes, centred, in a frame at ``rotation_deg``."""
+        xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
+        if rotation_deg != 0.0:
+            xx, yy = rotate(xx, yy, rotation_deg)
+        pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
+        return pixels / np.sum(pixels)
+
+    def _centred_cvis(self, uu, vv):
+        rotation = self._frame(None)
+        if rotation != 0.0:
+            uu, vv = rotate(uu, vv, -rotation)
+        return image_visibilities(
+            self._pixels(rotation), uu, vv, self.pixel_scale_mas, self.ft
+        )
+
+    def model_on_grid(self, u, v, wavel, grid):
+        rotation = self._frame(grid)
+        vis = _pixel_visibilities(
+            self._pixels(rotation),
+            self.pixel_scale_mas,
+            rotation,
+            u,
+            v,
+            wavel,
+            grid,
+            self.ft,
+        )
+        return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
+
+
+def _check_rotation(rotation_deg):
+    """``rotation_deg`` as stored: ``"grid"`` or a finite float."""
+    if isinstance(rotation_deg, str):
+        if rotation_deg != "grid":
+            raise ValueError(
+                f"rotation_deg must be a number or 'grid', not {rotation_deg!r}."
+            )
+        return rotation_deg
+    rotation_deg = float(rotation_deg)
+    if not onp.isfinite(rotation_deg):
+        raise ValueError(f"rotation_deg must be finite, not {rotation_deg}.")
+    return rotation_deg
+
+
+class FlaredDisk(_PixelRendered):
     r"""Flared, inclined scattered-light disk (Blakely et al. 2024, §III).
 
     A skewed Gaussian ring on a flared surface with a forward-scattering peak on
@@ -2148,7 +2259,11 @@ class FlaredDisk(Component):
     The brightness has no analytic Fourier transform, so the visibilities are the
     exact Fourier transform of the brightness sampled on a fixed, centred
     ``npix`` x ``npix`` grid of ``pixel_scale_mas`` pixels, which must cover the
-    disk and resolve its ring and sharp inner edge. The brightness equations are
+    disk and resolve its ring and sharp inner edge. On data whose uv samples lie
+    on a regular lattice (``data.uv_grid``, e.g. AMIGO DISCO products) the grid
+    is rendered in the lattice's frame (``rotation_deg``) and the transform is
+    the exact two-sided matrix Fourier transform, which is much faster than the
+    per-point sum; elsewhere it is ``ft``. The brightness equations are
     in [Model notes](../notes.md#flareddisk).
 
     Parameters
@@ -2171,7 +2286,18 @@ class FlaredDisk(Component):
     ft : {"auto", "dft", "nufft"}, optional
         Transform for irregular uv points: the exact sum, a non-uniform FFT
         or, by default, whichever is faster for the problem size (see
-        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]). Data on a
+        matching uv lattice use the matrix Fourier transform whatever it says.
+    rotation_deg : "grid" or float, optional
+        Position angle (North to East) of the pixel grid's "up" axis. The
+        default, ``"grid"``, follows the lattice of whatever data the disk
+        is evaluated on (``data.uv_grid.rotation_deg``; AMI data are on a
+        lattice at their parallactic angle), so that DISCO data, and several
+        filters or exposures whose lattices differ in rotation by rounding,
+        all use the matrix Fourier transform; without a lattice the grid is
+        North up. A number fixes the rotation (0: North up). The pixel grid
+        only discretises the brightness, so its rotation changes the
+        visibilities by the discretisation error alone.
     skew : float or array-like, optional
         Truncation $\alpha$ of the ring's inner edge (default 0, symmetric).
     aspect : float or array-like, optional
@@ -2198,6 +2324,7 @@ class FlaredDisk(Component):
     npix: int = eqx.field(static=True)
     pixel_scale_mas: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2215,12 +2342,14 @@ class FlaredDisk(Component):
         dra=0.0,
         ddec=0.0,
         ft="auto",
+        rotation_deg="grid",
     ):
         if ft not in ("auto", "dft", "nufft"):
             raise ValueError(
                 f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
             )
         self.ft = ft
+        self.rotation_deg = _check_rotation(rotation_deg)
         self.radius = np.asarray(radius, dtype=float)
         self.fwhm = np.asarray(fwhm, dtype=float)
         self.inc = np.asarray(inc, dtype=float)
@@ -2241,8 +2370,13 @@ class FlaredDisk(Component):
             )
         self._place(flux, dra, ddec)
 
-    def _phase_function(self, theta):
-        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side."""
+    def _phase_function(self, cos_theta, x, y):
+        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side.
+
+        Receives ``cos θ = y / ρ`` (1 at the star) and the mid-plane
+        coordinates, so that phase functions needing only ``cos θ`` avoid an
+        ``arctan2``; those needing θ itself compute ``arctan2(x, y)``.
+        """
         raise NotImplementedError
 
     def is_physical(self):
@@ -2254,13 +2388,6 @@ class FlaredDisk(Component):
             & (self.symmetric >= 0.0)
             # Edge-on (and beyond) cannot be deprojected.
             & (np.abs(self.inc) < 90.0)
-        )
-
-    def _centred_cvis(self, uu, vv):
-        xx, yy = image_coordinates(self.npix, self.npix * self.pixel_scale_mas)
-        pixels = self._centred_image(xx, yy, self.pixel_scale_mas)
-        return image_visibilities(
-            pixels / np.sum(pixels), uu, vv, self.pixel_scale_mas, self.ft
         )
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
@@ -2285,8 +2412,9 @@ class FlaredDisk(Component):
             * 0.5
             * (1.0 + jax.scipy.special.erf(self.skew * offset / np.sqrt(2.0)))
         )
-        theta = np.arctan2(x, y)
-        return (self._phase_function(theta) + self.symmetric) * ring
+        # cos θ = y / ρ; at the star arctan2(0, 0) = 0 gives cos θ = 1.
+        cos_theta = np.where((x == 0.0) & (y == 0.0), 1.0, y / rho)
+        return (self._phase_function(cos_theta, x, y) + self.symmetric) * ring
 
 
 class FlaredDiskHG(FlaredDisk):
@@ -2321,10 +2449,10 @@ class FlaredDiskHG(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (np.abs(self.g) < 1.0)
 
-    def _phase_function(self, theta):
+    def _phase_function(self, cos_theta, x, y):
         g = self.g
         return (1.0 - g**2) / (
-            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * np.cos(theta)) ** 1.5
+            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * cos_theta) ** 1.5
         )
 
 
@@ -2351,7 +2479,8 @@ class FlaredDiskGaussian(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (self.sigma_theta > 0.0)
 
-    def _phase_function(self, theta):
+    def _phase_function(self, cos_theta, x, y):
+        theta = np.arctan2(x, y)
         return np.exp(-0.5 * (theta / (self.sigma_theta * dtor)) ** 2)
 
 
@@ -2378,9 +2507,13 @@ class FlaredDiskPowerLaw(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (self.n >= 0.0)
 
-    def _phase_function(self, theta):
-        # Clipped: cos(θ/2) rounds to slightly below zero at θ = ±π.
-        return np.maximum(np.cos(0.5 * theta), 0.0) ** self.n
+    def _phase_function(self, cos_theta, x, y):
+        # cos(θ/2)^n = ((1 + cos θ) / 2)^(n/2), clipped: cos θ rounds to
+        # slightly below -1 at θ = ±π. The floor is the smallest positive
+        # float, not 0, so the power's gradient stays finite for n < 2 on the
+        # far-side axis (where the base is exactly 0).
+        tiny = np.finfo(np.result_type(cos_theta, float)).tiny
+        return np.maximum(0.5 * (1.0 + cos_theta), tiny) ** (0.5 * self.n)
 
 
 # ---------------------------------------------------------------------------

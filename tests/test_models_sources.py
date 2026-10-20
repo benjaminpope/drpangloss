@@ -477,6 +477,17 @@ def test_binary_render_is_available():
             2e-3,
         ),
         (
+            Image.from_model(
+                GaussianDisk(4.0),
+                49,
+                0.5,
+                dra=6.0,
+                ddec=-3.0,
+                smooth_fwhm_mas=2.0,
+            ),
+            2e-3,
+        ),
+        (
             _star_and_rim(
                 diam=14.0,
                 fwhm=3.0,
@@ -570,6 +581,7 @@ def test_binary_render_is_available():
         "square_root_limb_darkened_disk",
         "elliptical_limb_darkened_disk",
         "image",
+        "smoothed_image",
         "rim",
         "nested_system",
         "rotated",

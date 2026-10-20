@@ -92,6 +92,7 @@ __all__ = [
     "epoch_positions",
     "estimate_primary_diameter",
     "marginal_loglike",
+    "sidelobe_flags",
     "rank_orbits",
     "start_from_positions",
 ]
@@ -583,27 +584,9 @@ class _Surface:
         )
         n_block = len(self.blocks)
         bound = float(onp.log(self.s_max))
-        sizes = onp.asarray(self.sizes)
-        block_of = self._block_of_size()
-
-        def at(log_s):
-            scale = np.repeat(
-                np.exp(log_s[block_of]),
-                sizes,
-                total_repeat_length=int(sizes.sum()),
-            )
-            w, _, norm = _whiten_with_log_norm(
-                data,
-                prediction,
-                values,
-                errors * scale,
-                gain_terms,
-                offset_terms,
-                split_norm=True,
-            )
-            chi2 = self.block_chi2(w)
-            own = np.stack([self._norm_of(k, norm) for k in range(n_block)])
-            return chi2, own
+        at = self._at(
+            prediction, errors, values, gain_terms, offset_terms, data
+        )
 
         def log_f(log_s):
             """Each block's log integrand at its own ``log_s`` (blocks are
@@ -651,6 +634,53 @@ class _Surface:
         log_w = np.log(w)[None, :] + np.log(rad)[:, None]
         return np.concatenate(
             [chi2_one[:, None], nodes, chi2_n, norm_n, log_w], axis=1
+        )
+
+    def _at(self, prediction, errors, values, gain_terms, offset_terms, data):
+        """``at(log_s)``: each block's χ² and gains/offsets log normalizer
+        with the errors times ``exp(log_s)`` (one whitening, exact log det)."""
+        n_block = len(self.blocks)
+        sizes = onp.asarray(self.sizes)
+        block_of = self._block_of_size()
+
+        def at(log_s):
+            scale = np.repeat(
+                np.exp(log_s[block_of]),
+                sizes,
+                total_repeat_length=int(sizes.sum()),
+            )
+            w, _, norm = _whiten_with_log_norm(
+                data,
+                prediction,
+                values,
+                errors * scale,
+                gain_terms,
+                offset_terms,
+                split_norm=True,
+            )
+            chi2 = self.block_chi2(w)
+            own = np.stack([self._norm_of(k, norm) for k in range(n_block)])
+            return chi2, own
+
+        return at
+
+    def fixed_score(self, model, data, noise, dof, log_s):
+        """The tempered log integrand of a ``numeric`` surface summed over
+        blocks at the fixed per-block ``log_s``: one whitening, with the exact
+        log determinant, in place of the table's integral over ln s (a cheap
+        score of the same surface, off from it by a smooth log-width)."""
+        prediction, errors, values, gain_terms, offset_terms = (
+            _prediction_and_errors(model, data, noise or {})
+        )
+        chi2, own = self._at(
+            prediction, errors, values, gain_terms, offset_terms, data
+        )(log_s)
+        dof = np.broadcast_to(
+            np.asarray(1.0 if dof is None else dof, chi2.dtype), chi2.shape
+        )
+        return sum(
+            dof[k] * self._log_f(k, log_s[k : k + 1], chi2[k], own[k], data)[0]
+            for k in range(len(self.blocks))
         )
 
     def _log_f(self, k, log_s, chi2, norm, data):
@@ -1303,10 +1333,16 @@ class NightFlag:
         ``"sep-below-resolution"``, ``"flux-at-bound"``.
     reason : str
         A human-readable reason with the numbers behind it.
+    blocking : bool
+        Whether the flag keeps the night from seeding an orbit (the default).
+        A non-blocking flag is reported only: the night still seeds and, as
+        always, counts in the likelihood. ``sep-below-resolution`` is
+        non-blocking unless ``epoch_positions(flag_sep_blocks=True)``.
     """
 
     code: str
     reason: str
+    blocking: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1350,6 +1386,20 @@ class EpochPositions:
         a trustworthy night); see ``flagged``.
     primary_diam : float or None
         The uniform-disk primary the positions were fitted with (mas), or None.
+    log_broad : numpy.ndarray or None
+        Each dataset's log mean likelihood over the search grid (the
+        untempered scale-marginalized surface averaged over positions and
+        fluxes). ``fit_orbit_aliases`` recomputes it on the surface the
+        orbit is scored with (see ``broad_loglike``); None for positions
+        that did not come from a grid.
+    grid : tuple of numpy.ndarray or None
+        The ``(dra, ddec, flux)`` axes of the search grid, kept for
+        ``broad_loglike``.
+    exact_fraction : tuple of float or None
+        For each dataset, the fraction of grid points scored with the full
+        scale integral (1 unless the coarse-then-exact scoring of data with
+        gains or offsets skipped some; see ``epoch_positions``), or None
+        when the positions did not come from ``epoch_positions``.
     """
 
     names: tuple
@@ -1364,20 +1414,26 @@ class EpochPositions:
     peaks: tuple = ()
     flags: tuple = ()
     primary_diam: float | None = None
+    log_broad: onp.ndarray | None = None
+    grid: tuple | None = None
+    exact_fraction: tuple | None = None
 
     @property
     def flagged(self):
-        """Whether each dataset carries any flag (``flags``): a flagged
-        night seeds nothing in
+        """Whether each dataset carries a blocking flag (``flags``): a
+        flagged night seeds nothing in
         [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases], but its
-        data still count in the likelihood."""
+        data still count in the likelihood. Non-blocking flags (see
+        ``NightFlag.blocking``) are reported by ``flag_codes`` only."""
         if not self.flags:
             return onp.zeros(len(self.names), dtype=bool)
-        return onp.array([len(f) > 0 for f in self.flags], dtype=bool)
+        return onp.array(
+            [any(x.blocking for x in f) for f in self.flags], dtype=bool
+        )
 
     def flag_codes(self):
         """The flag codes of each dataset, ``{name: [code, ...]}``, for
-        the flagged datasets only."""
+        the datasets with any flag, blocking or not."""
         return {
             n: [f.code for f in fl]
             for n, fl in zip(self.names, self.flags)
@@ -1472,6 +1528,163 @@ def _grid_scores(points, data, surface, batch_size, diam=None, dof=None):
 def _grid_marginal(chi2, dof, data, surface):
     """The scale-marginalized score of each grid point's block χ²."""
     return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
+
+
+# The memory a grid point needs scales with what one whitening holds: the
+# observables and, with gains or offsets, their modes (rank). A table whitens
+# at ``_N_NODES`` nodes at once, and the window search differentiates through
+# whitenings: that working set is about _TABLE_COPIES times one whitening's
+# (measured on calibrated GRAVITY data: 325 MB per point, 34k floats; a 1190-point batch ran out of
+# memory on a laptop); a fixed-scale score is one whitening with its gradient
+# free, about _FIXED_COPIES.
+_TABLE_COPIES = 1200
+_FIXED_COPIES = 8
+CPU_MEMORY_BUDGET = 2**30
+ACCELERATOR_MEMORY_BUDGET = 2**33
+
+
+def default_memory_budget():
+    """Bytes one batch may use by default, for JAX's default backend."""
+    if jax.default_backend() == "cpu":
+        return CPU_MEMORY_BUDGET
+    return ACCELERATOR_MEMORY_BUDGET
+
+
+def _whitening_floats(data):
+    """The floats one whitening of ``data`` holds: observables plus the
+    gain and offset modes' columns."""
+    n = int(onp.size(data.vis) + onp.size(data.phi))
+    n += sum(int(b.data().size) for b in data.extras)
+    for modes, names in (
+        (data.gains, ("shapes", "spanning")),
+        (data.phase_offsets, ("values",)),
+    ):
+        if modes is not None:
+            n += sum(
+                int(onp.size(getattr(modes, a)))
+                for a in names
+                if getattr(modes, a, None) is not None
+            )
+    return n
+
+
+def _grid_batch(batch_size, memory_budget, data, surface, copies=None):
+    """Grid points per batch: ``batch_size`` if given, else what fits in
+    ``memory_budget`` bytes (default ``CPU_MEMORY_BUDGET``, or
+    ``ACCELERATOR_MEMORY_BUDGET`` off the CPU) for data with gains or offsets,
+    where each point holds ``copies`` whitenings of ``_whitening_floats``
+    float64s; the visibility rule of ``batch_size_or_default`` otherwise."""
+    if batch_size is not None:
+        return batch_size_or_default(batch_size, None)
+    default = batch_size_or_default(None, data)
+    if not surface.numeric:
+        return default
+    if memory_budget is None:
+        memory_budget = default_memory_budget()
+    if not memory_budget > 0:
+        raise ValueError(
+            f"memory_budget must be positive, got {memory_budget}."
+        )
+    copies = _TABLE_COPIES if copies is None else copies
+    per_point = 8 * copies * _whitening_floats(data)
+    return int(max(1, min(default, memory_budget // per_point)))
+
+
+@functools.partial(jax.jit, static_argnames=("surface", "batch_size"))
+def _grid_fixed(points, data, surface, batch_size, log_s, diam=None, dof=None):
+    """The tempered log integrand at each point at the fixed ``log_s``."""
+
+    def one(x):
+        return surface.fixed_score(_binary(x, diam), data, None, dof, log_s)
+
+    return jax.lax.map(one, points, batch_size=batch_size)
+
+
+def _coarse_then_exact(
+    points,
+    shape,
+    data,
+    surface,
+    diam,
+    dof,
+    batch_size,
+    memory_budget,
+    nats,
+    margin,
+):
+    """The scale-marginalized score of every grid point of a ``numeric``
+    surface, integrating ln s only where the surface is high.
+
+    All points are scored at one fixed scale per block (the profile scale of
+    the best point at s = 1): one whitening each. The points within ``nats``
+    of the best (in marginal nats: see below), and their ``margin``
+    neighbours, get the full integral. The
+    rest take their fixed-scale score plus the median difference (full minus
+    fixed) over the points within ``nats``. Returns ``(score, fraction)``,
+    the flat scores and the fraction of points scored in full.
+    """
+    from scipy.ndimage import binary_dilation
+
+    fixed_batch = _grid_batch(
+        None if batch_size is None else batch_size,
+        memory_budget,
+        data,
+        surface,
+        _FIXED_COPIES,
+    )
+    fixed_batch = min(fixed_batch, len(points))
+    zero = np.zeros(len(surface.blocks))
+    at_one = onp.asarray(
+        _grid_fixed(points, data, surface, fixed_batch, zero, diam, dof)
+    )
+    at_one = onp.where(onp.isfinite(at_one), at_one, -onp.inf)
+    best = points[int(onp.argmax(at_one))]
+    chi2 = surface.plain_chi2(
+        _block_chi2(np.asarray(best), data, surface, diam)
+    )
+    bound = float(onp.log(surface.s_max))
+    log_s = np.asarray(
+        onp.clip(
+            0.5 * onp.log(onp.maximum(onp.asarray(chi2), 1e-300) / surface.nu),
+            -bound,
+            bound,
+        )
+    )
+    coarse = onp.asarray(
+        _grid_fixed(points, data, surface, fixed_batch, log_s, diam, dof)
+    )
+    coarse = onp.where(onp.isfinite(coarse), coarse, -onp.inf)
+    # ``nats`` is a gap of the marginal. At the fixed scale a relative χ²
+    # excess ε costs νε/2 nats, but the marginal only (ν/2) ln(1+ε): the
+    # same marginal gap is a larger fixed-scale one, so cut there (ν the
+    # total of the blocks', a few nats' margin for small data).
+    nu = float(onp.sum(surface.nu))
+    cut = 0.5 * nu * onp.expm1(min(2.0 * nats / nu, 50.0))
+    core = coarse >= coarse.max() - cut
+    pick = core.reshape(shape)
+    if margin:
+        pick = binary_dilation(
+            pick, structure=onp.ones((3,) * pick.ndim), iterations=int(margin)
+        )
+    pick = pick.ravel()
+    chosen = points[pick]
+    batch = min(
+        _grid_batch(batch_size, memory_budget, data, surface), len(chosen)
+    )
+    # Pad to a power-of-two number of batches (repeating the first row), so
+    # that nights and grids of different sizes share a few compiled shapes.
+    n_batches = 1 << max(math.ceil(len(chosen) / batch) - 1, 0).bit_length()
+    padded = onp.concatenate(
+        [chosen, onp.repeat(chosen[:1], n_batches * batch - len(chosen), 0)]
+    )
+    _, chi2 = _grid_scores(np.asarray(padded), data, surface, batch, diam, dof)
+    chi2 = chi2[: len(chosen)]
+    exact = onp.asarray(_grid_marginal(chi2, dof, data, surface))
+    ok = onp.isfinite(exact) & core[pick]
+    offset = float(onp.median((exact - coarse[pick])[ok])) if ok.any() else 0.0
+    out = coarse + offset
+    out[pick] = exact
+    return out, float(pick.mean())
 
 
 def _amp_residuals(model, data, surface, amp_range):
@@ -1714,9 +1927,11 @@ def _flag_one_night(
     min_gap,
     sep_fraction,
     flux_tol,
+    sep_blocks=False,
 ):
     """The flags of one night that need only that night: ``alias-peaks``,
-    ``low-gap``, ``sep-below-resolution`` and ``flux-at-bound``. A
+    ``low-gap``, ``sep-below-resolution`` (non-blocking unless
+    ``sep_blocks``) and ``flux-at-bound``. A
     threshold of None disables its flag. The cross-night ``chi2-high`` is
     added by [`_flag_chi2`][virgil.epochs._flag_chi2]."""
     flags = []
@@ -1756,7 +1971,14 @@ def _flag_one_night(
                 "sep-below-resolution",
                 f"separation {sep:.2f} mas is below {sep_fraction:g} "
                 f"lambda/B_max = {sep_fraction * resolution:.2f} mas: the "
-                "companion is not resolved",
+                "companion is not resolved"
+                + (
+                    ""
+                    if sep_blocks
+                    else " (V^2 and closure phases still locate it below "
+                    "lambda/2B; reported only)"
+                ),
+                blocking=sep_blocks,
             )
         )
     if flux_tol is not None:
@@ -1782,31 +2004,237 @@ def _flag_one_night(
     return flags
 
 
-def _flag_chi2(chi2_all, factor):
+_MODE_TOL = 0.01  # relative wavelength tolerance of one spectral setup
+
+
+def _mode_keys(data):
+    """A label per dataset for its instrument mode: its number of spectral
+    channels and wavelength range. Datasets with the same number of
+    channels and a range within 1% (the per-night jitter of a wavelength
+    calibration) share a label; a different resolution or band does not."""
+    modes, keys = [], []
+    for d in data.data:
+        w = onp.unique(onp.asarray(d.wavel, dtype=float).ravel())
+        lo, hi = float(w.min()), float(w.max())
+        for k, (n, a, b) in enumerate(modes):
+            if (
+                n == w.size
+                and abs(lo - a) <= _MODE_TOL * a
+                and abs(hi - b) <= _MODE_TOL * b
+            ):
+                keys.append(k)
+                break
+        else:
+            modes.append((w.size, lo, hi))
+            keys.append(len(modes) - 1)
+    return keys
+
+
+def broad_loglike(
+    data,
+    grid,
+    dof,
+    *,
+    s_max=None,
+    primary_diam=None,
+    batch_size=None,
+    memory_budget=None,
+    coarse_nats=30.0,
+    coarse_margin=1,
+):
+    """Each night's log mean likelihood over a position grid: the broad
+    outlier component of
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases].
+
+    It is the scale-marginalized surface of
+    [`epoch_positions`][virgil.epochs.epoch_positions] averaged over the
+    grid's positions and fluxes, scored exactly as the orbit is: pass the
+    fit's block ``dof`` (``1/f_b`` per block, one vector per night) and
+    ``s_max``, so the mixture's two components share one scale.
+
+    Parameters
+    ----------
+    data : sequence of OIData
+    grid : tuple of array
+        The ``(dra, ddec, flux)`` axes (``EpochPositions.grid``).
+    dof : sequence of array
+        One vector of block ``1/f_b`` per night.
+    s_max, primary_diam, batch_size, memory_budget, coarse_nats, coarse_margin : optional
+        As for ``epoch_positions``.
+
+    Returns
+    -------
+    numpy.ndarray
+    """
+    axes = [onp.asarray(a, float) for a in grid]
+    xx, yy, ff = onp.meshgrid(*axes, indexing="ij")
+    points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
+    diam = None if not primary_diam else float(primary_diam)
+    out = []
+    for d, dof_k in zip(data, dof):
+        surface = _Surface(d, s_max)
+        with run_in("float64"):
+            d64 = cast_tree(d, "float64")
+            dof64 = np.asarray(dof_k, dtype=np.float64)
+            diam64 = None if diam is None else np.asarray(diam)
+            if surface.numeric and coarse_nats is not None:
+                m, _ = _coarse_then_exact(
+                    points,
+                    xx.shape,
+                    d64,
+                    surface,
+                    diam64,
+                    dof64,
+                    batch_size,
+                    memory_budget,
+                    float(coarse_nats),
+                    int(coarse_margin),
+                )
+                m = onp.asarray(m)
+            else:
+                _, chi2 = _grid_scores(
+                    np.asarray(points),
+                    d64,
+                    surface,
+                    min(
+                        _grid_batch(batch_size, memory_budget, d64, surface),
+                        len(points),
+                    ),
+                    diam64,
+                    dof64,
+                )
+                m = onp.asarray(_grid_marginal(chi2, dof64, d64, surface))
+        m = onp.where(onp.isfinite(m), m, -onp.inf)
+        out.append(float(onp.logaddexp.reduce(m) - onp.log(m.size)))
+    return onp.array(out)
+
+
+def _flag_chi2(chi2_all, factor, groups=None):
     """The ``chi2-high`` flag of each night: raw χ²/N more than ``factor``
-    times the median night's (None disables it; fewer than three nights
-    have no meaningful median, so they are never flagged)."""
+    times the median of the nights of its own ``groups`` entry (one
+    instrument mode: modes differ in χ²/N by their error models, so a
+    global median would flag a whole mode). None disables it; fewer than
+    three nights in a group have no meaningful median, so they are never
+    flagged."""
     chi2_all = onp.asarray(chi2_all, dtype=float)
     out = [[] for _ in chi2_all]
-    if factor is None or len(chi2_all) < 3:
+    if factor is None:
         return out
-    median = float(onp.median(chi2_all))
-    # A night whose chi2 stands far above the others (a bad night, a
-    # triple, extra light) fits no binary well, so its position is not a
-    # trustworthy seed whatever its peaks look like. The floor of 1 stops
-    # nights with chi2/N well below 1 (overestimated errors) from making a
-    # fair night an outlier. Outlier detection only: uniform failures and
-    # a majority of bad nights pass.
-    limit = factor * max(median, 1.0)
-    for k, c in enumerate(chi2_all):
-        if c > limit:
-            out[k].append(
+    groups = [0] * len(chi2_all) if groups is None else list(groups)
+    for g in dict.fromkeys(groups):
+        idx = [k for k, x in enumerate(groups) if x == g]
+        if len(idx) < 3:
+            continue
+        median = float(onp.median(chi2_all[idx]))
+        # A night whose chi2 stands far above the others of its mode (a
+        # bad night, a triple, extra light) fits no binary well, so its
+        # position is not a trustworthy seed whatever its peaks look like.
+        # The floor of 1 stops nights with chi2/N well below 1
+        # (overestimated errors) from making a fair night an outlier.
+        # Outlier detection only: uniform failures and a majority of bad
+        # nights pass.
+        limit = factor * max(median, 1.0)
+        for k in idx:
+            c = chi2_all[k]
+            if c > limit:
+                out[k].append(
+                    NightFlag(
+                        "chi2-high",
+                        f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
+                        f"({factor:g} x max(median night {median:.1f}, 1)"
+                        + (
+                            f" of its {len(idx)} nights of the same mode"
+                            if len(set(groups)) > 1
+                            else ""
+                        )
+                        + ")",
+                    )
+                )
+    return out
+
+
+def sidelobe_flags(
+    data, positions, predicted, *, k_sigma=3.0, delta_nats=10.0, dof=1.0
+):
+    """Which nights' orbit prefers a secondary peak of the night's surface.
+
+    A night is flagged (``orbit-prefers-secondary``) when its best
+    single-night peak lies more than ``k_sigma`` (Mahalanobis, from the
+    peak's covariance) from the orbit's predicted position, yet the
+    scale-marginalized surface at the predicted position is within
+    ``delta_nats`` of the peak: the orbit sits on another peak that the
+    night nearly allows. The flag is reported, never used to exclude the
+    night.
+
+    Parameters
+    ----------
+    data : Epochs or sequence of OIData
+        The data ``positions`` came from.
+    positions : EpochPositions
+        The single-night positions.
+    predicted : tuple of array
+        ``(dra, ddec, flux)`` of the orbit at each night (mas, mas,
+        companion/primary).
+    k_sigma, delta_nats, dof : float, optional
+        The distance (in sigma), the surface margin (nats) and the dof
+        fraction of ``epoch_positions``.
+
+    Returns
+    -------
+    list of NightFlag or None
+        One entry per night: a ``NightFlag`` or None.
+    """
+    out = []
+    diam = positions.primary_diam
+    for k, d in enumerate(getattr(data, "data", data)):
+        px, py, pf = (float(onp.asarray(a)[k]) for a in predicted)
+        if pf > 1.0:  # the other star's labels: the same scene, reflected
+            px, py, pf = -px, -py, 1.0 / pf
+        dx = onp.array([px - positions.dra[k], py - positions.ddec[k]])
+        cov = onp.asarray(positions.cov[k])
+        dist = float(onp.sqrt(dx @ onp.linalg.solve(cov, dx)))
+        if not dist > k_sigma:
+            out.append(None)
+            continue
+        model = _binary(
+            np.asarray([px, py, min(max(pf, 1e-6), 1.0)]),
+            None if not diam else np.asarray(float(diam)),
+        )
+        with run_in("float64"):
+            at_pred = float(
+                marginal_loglike(model, cast_tree(d, "float64"), dof=dof)
+            )
+        # Both ends of the gap are scored with the same model and dof (the
+        # catalogue's own scores may come from a point primary or another
+        # dof).
+        peak = _binary(
+            np.asarray(
+                [
+                    positions.dra[k],
+                    positions.ddec[k],
+                    min(float(positions.flux[k]), 1.0),
+                ]
+            ),
+            None if not diam else np.asarray(float(diam)),
+        )
+        with run_in("float64"):
+            best = float(
+                marginal_loglike(peak, cast_tree(d, "float64"), dof=dof)
+            )
+        gap = best - at_pred
+        if gap <= delta_nats:
+            out.append(
                 NightFlag(
-                    "chi2-high",
-                    f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
-                    f"({factor:g} x max(median night {median:.1f}, 1))",
+                    "orbit-prefers-secondary",
+                    f"the night's best peak is {dist:.1f} sigma from the "
+                    f"orbit's position, which the night's surface scores "
+                    f"{gap:.1f} nats below the peak (within "
+                    f"{delta_nats:g}): the orbit sits on a secondary peak",
+                    blocking=False,
                 )
             )
+        else:
+            out.append(None)
     return out
 
 
@@ -1820,6 +2248,9 @@ def epoch_positions(
     dof=1.0,
     s_max=None,
     batch_size=None,
+    memory_budget=None,
+    coarse_nats=30.0,
+    coarse_margin=1,
     primary_diam=None,
     flag_nights=True,
     flag_alias_nats=2.0,
@@ -1827,6 +2258,8 @@ def epoch_positions(
     flag_chi2_factor=3.0,
     flag_sep_fraction=0.5,
     flag_flux_tol=0.02,
+    flag_sep_blocks=False,
+    flag_chi2_groups=None,
 ):
     """The companion's position in each dataset of a binary.
 
@@ -1861,6 +2294,21 @@ def epoch_positions(
         The effective-dof fraction (a number, or a dict keyed by dataset or
         epoch name), the bound on the scales (as for ``marginal_loglike``) and
         the grid points evaluated together.
+    memory_budget : int, optional
+        Bytes one batch of grid points may use for data with gains or
+        closure-phase offsets, whose scale integral holds many whitenings per
+        point: the default batch is what fits, counting the observables and
+        the gains' rank (default 1 GiB on a CPU, 8 GiB otherwise). An explicit
+        ``batch_size`` overrides it.
+    coarse_nats, coarse_margin : float or None, int, optional
+        For data with gains or offsets: score the grid at one fixed error
+        scale per block (one whitening per point), integrate ln s only at
+        the points within ``coarse_nats`` (default 30, nats of the marginal) of the best and their
+        ``coarse_margin`` (default 1) neighbours, and give the others the
+        fixed-scale score plus the median difference of the two where both
+        exist. The peaks are refined with the full integral. None integrates
+        every point. ``EpochPositions.exact_fraction`` reports the share
+        computed in full.
     primary_diam : float, optional
         The primary's uniform-disk diameter (mas), fixed; None or 0 is a point
         primary. Give a value from the data or a calibrator, never from the orbit
@@ -1877,6 +2325,14 @@ def epoch_positions(
         this fraction of the night's own resolution, default 0.5) and
         ``flux-at-bound`` (within this fraction of a flux bound, default 0.02).
         None disables a flag.
+    flag_sep_blocks : bool, optional
+        Whether ``sep-below-resolution`` keeps a night from seeding an orbit
+        (default False: it is reported only, since V^2 and closure phases
+        locate a companion below lambda/2B at good SNR).
+    flag_chi2_groups : sequence, optional
+        One label per dataset: ``chi2-high`` compares each night with the
+        median of the nights sharing its label. Default: the nights'
+        instrument modes (number of spectral channels and wavelength range).
 
     Returns
     -------
@@ -1929,22 +2385,45 @@ def epoch_positions(
     rows, inflated, edge_grid, edge_peak = [], [], [], []
     unconverged = {}  # night -> the stop code of its best peak's refinement
     night_flags = []
+    log_broad = []  # each night's log mean likelihood over the grid
+    exact_share = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
         dof_k = _check_dof(_dof_for(dof, data, index))
         with run_in("float64"):
             d64 = cast_tree(d, "float64")
             diam64 = None if diam is None else np.asarray(diam)
-            _, chi2 = _grid_scores(
-                np.asarray(points),
-                d64,
-                surface,
-                min(batch_size_or_default(batch_size, d), len(points)),
-                diam64,
-                np.asarray(dof_k),
-            )
-            marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
-            marginal = onp.asarray(marginal).reshape(xx.shape)
+            dof_arr = np.asarray(dof_k)
+            if surface.numeric and coarse_nats is not None:
+                marginal, share = _coarse_then_exact(
+                    points,
+                    xx.shape,
+                    d64,
+                    surface,
+                    diam64,
+                    dof_arr,
+                    batch_size,
+                    memory_budget,
+                    float(coarse_nats),
+                    int(coarse_margin),
+                )
+                marginal = marginal.reshape(xx.shape)
+            else:
+                _, chi2 = _grid_scores(
+                    np.asarray(points),
+                    d64,
+                    surface,
+                    min(
+                        _grid_batch(batch_size, memory_budget, d64, surface),
+                        len(points),
+                    ),
+                    diam64,
+                    dof_arr,
+                )
+                marginal = _grid_marginal(chi2, dof_arr, d64, surface)
+                marginal = onp.asarray(marginal).reshape(xx.shape)
+                share = 1.0
+        exact_share.append(share)
         marginal = onp.where(onp.isfinite(marginal), marginal, -onp.inf)
         rival = (
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
@@ -2046,6 +2525,11 @@ def epoch_positions(
             for n, v in zip(surface.names, surface.scales(chi2_best))
         }
         rows.append((best, cov, gap_marginal, per_block, scale, catalogue))
+        log_broad.append(
+            float(
+                onp.logaddexp.reduce(marginal.ravel()) - onp.log(marginal.size)
+            )
+        )
         night_flags.append(
             _flag_one_night(
                 catalogue,
@@ -2056,6 +2540,7 @@ def epoch_positions(
                 min_gap=flag_min_gap,
                 sep_fraction=flag_sep_fraction,
                 flux_tol=flag_flux_tol,
+                sep_blocks=flag_sep_blocks,
             )
             if flag_nights
             else []
@@ -2097,7 +2582,11 @@ def epoch_positions(
         )
     flags = [[] for _ in rows]
     if flag_nights:
-        extra = _flag_chi2([r[3]["all"] for r in rows], flag_chi2_factor)
+        extra = _flag_chi2(
+            [r[3]["all"] for r in rows],
+            flag_chi2_factor,
+            _mode_keys(data) if flag_chi2_groups is None else flag_chi2_groups,
+        )
         flags = [a + b for a, b in zip(night_flags, extra)]
     return EpochPositions(
         names=data.dataset_names,
@@ -2112,6 +2601,9 @@ def epoch_positions(
         peaks=tuple(r[5] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
+        log_broad=onp.array(log_broad),
+        grid=tuple(axes),
+        exact_fraction=tuple(exact_share),
     )
 
 

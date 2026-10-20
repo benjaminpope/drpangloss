@@ -105,7 +105,11 @@ see that repository's `PLAN.md` for the boundary.
   display.
 - `OIData.model` calls `model_on_grid` when the data carry a `uv_grid` (a regular uv
   lattice, e.g. AMIGO DISCOs); it defaults to `model`. A model that overrides
-  `model_on_grid` must return exactly what `model` would, only faster.
+  `model_on_grid` must return exactly what `model` would, only faster. The
+  one exception is a rendered component (`FlaredDisk*`) with
+  `rotation_deg="grid"`, its default: on a lattice its pixels follow the
+  lattice's frame, elsewhere North up, so the two differ by the pixel
+  discretisation alone.
 - New model code goes in `virgil.models`.
 - New public features start **provisional**: list the name in the module's
   `__provisional__` tuple (`("*",)` for a whole new module), put the notice

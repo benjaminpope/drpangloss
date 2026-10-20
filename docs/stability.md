@@ -24,7 +24,9 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Pipelines | the whole of [`virgil.pipeline`](pipeline.md): `BinaryPipeline`, `StarPipeline`, `OrbitPipeline`, `Result`, `load` and the rest. Promoted to stable after a release of use |
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
 | Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, its automatic thresholds and its tolerances |
+| Rendered disks on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the lattice tolerance for DISCO dictionaries |
 | Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
+| Image smoothing | `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers |
 | Image-recovery scores | the module [`virgil.metrics`](api/metrics.md) |
 
 The user-guide pages about these features carry the same notice: [orbits](orbit_fitting.md), [`MultipoleDisk` rings](multipole_disk_rings.md), [CLEAN](imaging_clean.md), [ensembles](imaging_ensemble.md), [variational inference](variational_inference.md) and [pipelines](pipeline.md) and [radio interferometry](radio_interferometry.md).
