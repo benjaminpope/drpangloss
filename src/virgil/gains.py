@@ -570,8 +570,8 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
     Parameters
     ----------
     data : OIData
-        Closure phases (three telescopes: one triangle, no baseline
-        offsets), not projected, with frames and, for baseline and triangle offsets,
+        Closure phases (three telescopes: one triangle, whose baseline
+        offsets are folded into the triangle group), not projected, with frames and, for baseline and triangle offsets,
         station pairs, as read from OIFITS.
     baseline : float, optional
         Width (radians) of a phase offset per (frame, baseline), common to
@@ -595,15 +595,22 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
             "unprojected."
         )
     cp_noise = offsets_noise(data)
-    # Three telescopes: one triangle per frame and channel, so every group
-    # has one member and a baseline offset is indistinguishable from a
-    # triangle offset: the baseline group is skipped.
-    if data.cp_noise is None and baseline is not None:
+    # Three telescopes: one triangle per frame and channel (every group has
+    # one member). Offsets on its three baselines reach the closure phase as
+    # e1 + e2 - e3, exactly a triangle offset of width sqrt(3) times theirs,
+    # so the baseline group is folded into the triangle group.
+    if baseline is not None and onp.asarray(cp_noise.mask).sum(1).max() == 1:
         warnings.warn(
-            "Baseline offsets cannot be identified from closure phases of "
-            "three telescopes (one triangle): skipping the baseline group; "
-            "use triangle offsets.",
-            stacklevel=3,
+            "Closure phases of three telescopes (one triangle): baseline "
+            "offsets are the triangle offsets of width sqrt(3) x baseline, "
+            "and are added to the triangle group (so 'phi_offset_baseline' "
+            "is not a noise term here).",
+            stacklevel=2,
+        )
+        triangle = float(
+            onp.hypot(
+                0.0 if triangle is None else triangle, onp.sqrt(3.0) * baseline
+            )
         )
         baseline = None
     if data.frame is None:

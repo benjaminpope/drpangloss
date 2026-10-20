@@ -7,6 +7,15 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Closure offsets for three telescopes
+
+- `with_closure_offsets` accepts three-telescope data (one triangle per frame and
+  channel): triangle and `modes` offsets work, baseline offsets are folded into
+  the triangle group (width √3 × baseline) with a warning. The result carries
+  `cp_noise`, so the likelihood uses the sine-plus-penalty form of four-telescope
+  data, whose normalization differs slightly from the von Mises form of plain
+  three-telescope data.
+
 ### Image smoothing
 
 - `Image(smooth_fwhm_mas=...)` carries a fixed Gaussian smoothing kernel: its

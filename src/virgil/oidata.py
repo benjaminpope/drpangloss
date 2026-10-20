@@ -1633,8 +1633,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         these widths unless fitted as the noise terms ``phi_offset_baseline``,
         ``phi_offset_triangle`` or ``phi_offset_modes`` (log-uniform priors on
         stated bounds). Off by default; use it only
-        if calibrators show such offsets. Needs closure phases from four or more
-        telescopes, and is a small-offset approximation (δ ≲ 0.3 rad).
+        if calibrators show such offsets. Three telescopes (one triangle per frame and
+        channel) are supported: their baseline offsets are folded into the
+        triangle group, and, as for four, the likelihood then whitens the
+        sines with a periodic penalty (not the von Mises form of plain
+        three-telescope data, whose normalization differs by about
+        log(1 + σ²/8) per closure phase). A small-offset approximation
+        (δ ≲ 0.3 rad).
 
         Parameters
         ----------
