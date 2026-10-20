@@ -61,6 +61,8 @@ CASES = [
     (FlaredDiskPowerLaw, "n", 3.0),
     (FlaredDiskPowerLaw, "n", 2.5),
     (FlaredDiskPowerLaw, "n", 0.0),
+    (FlaredDiskPowerLaw, "n", 0.5),
+    (FlaredDiskPowerLaw, "n", 1.0),
 ]
 
 
@@ -120,3 +122,26 @@ def test_gradients_match_the_arctan2_formula(cls, name, value):
         assert onp.allclose(
             g_new, g_old, rtol=1e-9, atol=1e-12 * onp.abs(g_old).max()
         )
+
+
+@pytest.mark.parametrize("n", [0.5, 1.0, 1.5])
+@pytest.mark.parametrize(
+    "pa,npix,fov", [(0.0, 33, 264.0), (45.0, 32, 256.0), (90.0, 33, 264.0)]
+)
+def test_power_law_gradients_are_finite_with_pixels_on_the_far_side_axis(
+    n, pa, npix, fov
+):
+    # Pixels exactly on the minor axis behind the star have base (1+cos)/2 = 0.
+    with jax.enable_x64(True):
+        model = FlaredDiskPowerLaw(
+            **(GEOMETRY | {"n": n, "pa": pa, "ddec": 0.0})
+        )
+
+        def loss(values):
+            m = model
+            for k, v in zip(("n", "inc", "pa", "radius", "ddec"), values):
+                m = m.set(k, v)
+            return np.sum(m.render(npix=npix, fov_mas=fov) ** 2)
+
+        values = np.array([n, 50.0, pa, 80.0, 0.0])
+        assert onp.all(onp.isfinite(jax.grad(loss)(values)))

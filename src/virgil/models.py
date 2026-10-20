@@ -2509,8 +2509,11 @@ class FlaredDiskPowerLaw(FlaredDisk):
 
     def _phase_function(self, cos_theta, x, y):
         # cos(θ/2)^n = ((1 + cos θ) / 2)^(n/2), clipped: cos θ rounds to
-        # slightly below -1 at θ = ±π.
-        return np.maximum(0.5 * (1.0 + cos_theta), 0.0) ** (0.5 * self.n)
+        # slightly below -1 at θ = ±π. The floor is the smallest positive
+        # float, not 0, so the power's gradient stays finite for n < 2 on the
+        # far-side axis (where the base is exactly 0).
+        tiny = np.finfo(np.result_type(cos_theta, float)).tiny
+        return np.maximum(0.5 * (1.0 + cos_theta), tiny) ** (0.5 * self.n)
 
 
 # ---------------------------------------------------------------------------
