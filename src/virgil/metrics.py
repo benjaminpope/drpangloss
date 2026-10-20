@@ -47,7 +47,13 @@ def _array_and_scale(image, pixel_scale_mas):
             if pixel_scale_mas is None
             else pixel_scale_mas
         )
-        return np.asarray(image.brightness), float(scale)
+        # A smoothed Image is scored as the sky the data see.
+        pixels = (
+            image.smoothed()
+            if hasattr(image, "smoothed")
+            else image.brightness
+        )
+        return np.asarray(pixels), float(scale)
     if pixel_scale_mas is None:
         raise ValueError("Give pixel_scale_mas for an array (not an Image).")
     return np.asarray(image), float(pixel_scale_mas)

@@ -7,6 +7,15 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Image smoothing
+
+- `Image(smooth_fwhm_mas=...)` carries a fixed Gaussian smoothing kernel: its
+  visibilities are the pixel transform times the analytic Gaussian, and
+  `Image.smoothed()` returns the convolved pixels. `TSV`, `TV`, `MaxEntropy`,
+  `Laplacian`, `StarletL1` and `LogSum` take `smoothed=True` to penalize them,
+  as MPoL does. Defaults are unchanged. `CalibrationNuisance.taper_fwhm_mas`
+  stays; setting both warns. Provisional (see Stability below).
+
 ### Orbit fitting with gains
 
 - The scale-marginalized surface (`marginal_loglike`, `epoch_positions`,
@@ -57,7 +66,8 @@ Provisional in 0.4:
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
-- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances.
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances;
+- image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers.
 
 ### Added
 

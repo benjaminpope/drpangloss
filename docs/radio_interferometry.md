@@ -134,6 +134,53 @@ For a fit with the scene on the model side only, `data.model(scene, values,
 nuis)` returns `M_k` and `data.chi2_by_ddid(scene, values, nuis)` the χ² and
 number of points of each ddid.
 
+## Smoothing: `Image(smooth_fwhm_mas=...)` or the nuisance taper
+
+Two Gaussian blurs are available, for different jobs.
+
+- `CalibrationNuisance(taper_fwhm_mas=...)` multiplies the visibilities of
+  **any** scene (a parametric model, an `Image`, a `System`) by the Gaussian
+  `exp(-π² θ² q² / (4 ln 2))`. It is a uv-plane factor, so a regulariser,
+  which acts on pixels, never sees it.
+- `Image(..., smooth_fwhm_mas=...)` declares that the sky the data see is the
+  image's pixels convolved with a fixed Gaussian, as in MPoL's
+  `GaussConvFourier`. Its visibilities are the same factor times the pixel
+  transform (exact at any uv point for every `ft`), and
+  `Image.smoothed()` returns the convolved pixels by an FFT on a
+  zero-padded grid. Regularisers then penalize either the raw pixels (the
+  default) or the smoothed ones, with their `smoothed=True` option:
+
+```python
+env = Image(eta, 5.0, smooth_fwhm_mas=30.0)
+reg = MaxEntropy(w, smoothed=True)  # entropy of the blurred image
+```
+
+The regulariser option, rather than a model-level switch, keeps the default
+(raw pixels) untouched and lets you mix: entropy on the smoothed image with
+total variation on the raw one. `smoothed=True` clips FFT round-off at zero;
+`MaxEntropy` and `LogSum` then use a flat default over all pixels, since
+smoothing spreads flux beyond the `support`.
+
+MPoL's chain `BaseCube` (softplus) → `GaussConvFourier` (FWHM 30 mas) →
+`ImageCube` → NuFFT, with entropy on the smoothed cube, is
+`Image(eta, scale, smooth_fwhm_mas=30.0)` with `MaxEntropy(w, smoothed=True)`.
+
+Use the nuisance taper for a scene that is not an `Image`, or to blur a
+parametric model; use `smooth_fwhm_mas` when the blur belongs to the image
+model and regularisers should see it. Setting both blurs the model twice, so `fit` and
+`data.term` warn (`UserWarning`) when they meet.
+
+**Accuracy.** `smoothed()` crops its result to the image, so flux spreading
+past the edges is lost (keep the emission clear of them). For a kernel of at
+least 3 pixels FWHM the transform of the smoothed pixels equals the analytic
+Gaussian times the raw transform to about `exp(-π² θ² (1/p - q)² / (4 ln 2))`
+of the flux (an upper bound, times the raw transform at the aliased
+frequency), p the pixel size: about 1.5e-8 at FWHM 3 px and `q = 0.25 / p`.
+Measured on a compact image in float64 with `|q| <= 0.25 / p`, the error is
+3e-11 of the flux at 3 px. A narrower kernel is not band-limited on the pixel grid, and
+the discretisation error grows quickly; the visibilities, which use the
+analytic factor, stay exact.
+
 ## Primary beam and cross-validation
 
 `primary_beam(npix, pixel_scale_mas, freq_hz, dish_m, factor)` is the log
