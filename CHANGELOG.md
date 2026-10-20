@@ -7,6 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Faster FlaredDisk render
+
+- `FlaredDiskHG` and `FlaredDiskPowerLaw` form cos θ as y/ρ instead of calling
+  `arctan2` and `cos` (cos(θ/2)ⁿ = ((1 + cos θ)/2)ⁿ/²), roughly halving the
+  value-and-gradient time of a 96×96 render on CPU in float64. Results agree
+  with the old formulas to rounding; the gradient at a pixel exactly on the
+  star is now finite. `FlaredDiskGaussian` still needs θ.
+
 ### Closure offsets for three telescopes
 
 - `with_closure_offsets` accepts three-telescope data (one triangle per frame and

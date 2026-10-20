@@ -2370,8 +2370,13 @@ class FlaredDisk(_PixelRendered):
             )
         self._place(flux, dra, ddec)
 
-    def _phase_function(self, theta):
-        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side."""
+    def _phase_function(self, cos_theta, x, y):
+        """Azimuthal brightness ``f(θ)``, with θ in radians from the near side.
+
+        Receives ``cos θ = y / ρ`` (1 at the star) and the mid-plane
+        coordinates, so that phase functions needing only ``cos θ`` avoid an
+        ``arctan2``; those needing θ itself compute ``arctan2(x, y)``.
+        """
         raise NotImplementedError
 
     def is_physical(self):
@@ -2407,8 +2412,9 @@ class FlaredDisk(_PixelRendered):
             * 0.5
             * (1.0 + jax.scipy.special.erf(self.skew * offset / np.sqrt(2.0)))
         )
-        theta = np.arctan2(x, y)
-        return (self._phase_function(theta) + self.symmetric) * ring
+        # cos θ = y / ρ; at the star arctan2(0, 0) = 0 gives cos θ = 1.
+        cos_theta = np.where((x == 0.0) & (y == 0.0), 1.0, y / rho)
+        return (self._phase_function(cos_theta, x, y) + self.symmetric) * ring
 
 
 class FlaredDiskHG(FlaredDisk):
@@ -2443,10 +2449,10 @@ class FlaredDiskHG(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (np.abs(self.g) < 1.0)
 
-    def _phase_function(self, theta):
+    def _phase_function(self, cos_theta, x, y):
         g = self.g
         return (1.0 - g**2) / (
-            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * np.cos(theta)) ** 1.5
+            4.0 * np.pi * (1.0 + g**2 - 2.0 * g * cos_theta) ** 1.5
         )
 
 
@@ -2473,7 +2479,8 @@ class FlaredDiskGaussian(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (self.sigma_theta > 0.0)
 
-    def _phase_function(self, theta):
+    def _phase_function(self, cos_theta, x, y):
+        theta = np.arctan2(x, y)
         return np.exp(-0.5 * (theta / (self.sigma_theta * dtor)) ** 2)
 
 
@@ -2500,9 +2507,13 @@ class FlaredDiskPowerLaw(FlaredDisk):
     def is_physical(self):
         return super().is_physical() & (self.n >= 0.0)
 
-    def _phase_function(self, theta):
-        # Clipped: cos(θ/2) rounds to slightly below zero at θ = ±π.
-        return np.maximum(np.cos(0.5 * theta), 0.0) ** self.n
+    def _phase_function(self, cos_theta, x, y):
+        # cos(θ/2)^n = ((1 + cos θ) / 2)^(n/2), clipped: cos θ rounds to
+        # slightly below -1 at θ = ±π. The floor is the smallest positive
+        # float, not 0, so the power's gradient stays finite for n < 2 on the
+        # far-side axis (where the base is exactly 0).
+        tiny = np.finfo(np.result_type(cos_theta, float)).tiny
+        return np.maximum(0.5 * (1.0 + cos_theta), tiny) ** (0.5 * self.n)
 
 
 # ---------------------------------------------------------------------------
