@@ -125,7 +125,7 @@ print(
 8 nights, each with 108 V² and 72 closure phases (162 independent observables)
 ```
 
-The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor, for $V^2$ and closure phases alike. This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
+The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor for $V^2$, and somewhat below it for closure phases. This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
 
 ```python
 print("   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)")
@@ -321,7 +321,7 @@ mjd60247    1.82   (  1.85)
 mjd60251    1.44   (  1.46)
 ```
 
-The checks say how far to trust the result. A check passes, warns or fails; none is silent about a problem, and `res.worst_check` names the worst. Those that matter most for an orbit:
+A χ²/N of 1.81 passes the `chi2` check, which warns above 2 and fails above 5, yet the quoted errors here are too small by about $\sqrt{1.8}\approx1.35$, as simulated; the scale-marginalized score the engine fits absorbs that factor, and the raw χ²/N is how you see it. The checks say how far to trust the result. A check passes, warns or fails; none is silent about a problem, and `res.summary["worst_check"]` gives the worst status. Those that matter most for an orbit:
 
 - `chi2`: the raw χ²/N of the best orbit.
 - `night_flags`: nights whose position could not seed an orbit (their data still count).
@@ -533,7 +533,7 @@ per block: {'phi': 1.14, 'vis': 1.0}
 outside the range the correction can trust: False
 ```
 
-**Control.** Every default is a keyword. The ones most often changed are `period_range` (a window, when the data hold a prior reason to restrict it), `a_range`, `flux_range` and `ecc_max` (the prior ranges; a posterior piling up at one is the `prior_bound` check), `primary_diam` (`"auto"` fits the primary's diameter when the data resolve it, a number fixes it), `gap_days` (what is one night) and `exclude` (a ruling about a file or night, with a reason, recorded in `run.json`). The pipeline's settings are the engine's keywords under the same names, except that the pipeline's `period_range` is the engine's `p_range`. A model that is not a point companion on a Keplerian orbit is fitted by building it yourself: [`Epochs`](api/epochs.md) gives the data and noise terms for [`numpyro_model`](api/likelihood.md), the [hierarchical inference](hierarchical_inference.md) page shows per-epoch error scales drawn from a population, and the [orbit worked example](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_orbit.ipynb) attaches a disc to the companion. [Which orbit tool?](which_orbit_tool.md) is the decision tree.
+**Control.** Every default is a keyword. The ones most often changed are `period_range` (a window, when the data hold a prior reason to restrict it), `a_range`, `flux_range` and `ecc_max` (the prior ranges; a posterior piling up at one is the `prior_bound` check), `primary_diam` (`"auto"` fits the primary's diameter when the data resolve it, a number fixes it), `gap_days` (what is one night) and `exclude` (a ruling about a file or night, with a reason, recorded in `run.json`). The search settings (`a_range`, `flux_range`, `ecc_max`, `primary_diam`, and others) are the engine's keywords under the same names, except that `period_range` is the engine's `p_range`; `gap_days` and `exclude` act on the files before the engine runs. A model that is not a point companion on a Keplerian orbit is fitted by building it yourself: [`Epochs`](api/epochs.md) gives the data and noise terms for [`numpyro_model`](api/likelihood.md), the [hierarchical inference](hierarchical_inference.md) page shows per-epoch error scales drawn from a population, and the [orbit worked example](https://github.com/benjaminpope/virgil/blob/main/notebooks/mwe/mwe_orbit.ipynb) attaches a disc to the companion. [Which orbit tool?](which_orbit_tool.md) is the decision tree.
 
 ## The orbit on the sky
 
@@ -572,7 +572,7 @@ Data with gains or closure-phase offsets are scored with each affected block's c
 
 **Resolved primary.** A point primary absorbs a resolved star's visibility deficit into the companion's flux and position. `epoch_positions(primary_diam=)` fits beside a uniform-disk primary of fixed diameter, and `estimate_primary_diameter` is the first pass of `primary_diam="auto"`. It re-refines each night from its position at each diameter of a grid (0 and 0.03 to 1.3 of the finest fringe spacing $\lambda/B_\mathrm{max}$) on $m$, sums the nights' scores (the diameter is shared; flagged nights are left out unless every night is flagged), and takes the best by a parabola through its two neighbours, whose curvature gives `sigma`. The data resolve the primary when the best diameter is positive and its summed score exceeds the point primary's by `resolve_nats` (5 nats: one extra parameter, $\Delta\chi^2\approx10$, about 3$\sigma$), on the tempered score. It uses no published value; give a fixed diameter from the data or a calibrator, never from the orbit being tested. A $V^2$ contrast loss that is the same on every baseline is partly degenerate with a small disk here; `vis_amp` profiles a per-night amplitude to separate them, and the orbit fit's own amplitude refits the diameter. The static snapshot ignores motion within a night, as the seeds do.
 
-**Starting an orbit fit.** `epoch_positions` and the alias search take the nights' positions as seeds only when they are decisive (`gap_marginal` above `min_gap`) and unflagged; an ambiguous night's other peaks stay in `positions.peaks`, and only its visibilities judge between them. [`start_from_positions`](api/epochs.md) is superseded by `fit_orbit_aliases` and `OrbitPipeline` for orbits with an unknown period; it remains for fitting a model of your own from a known orbit scale.
+**Starting an orbit fit.** `epoch_positions` and the alias search take the nights' positions as seeds only when they are decisive (`gap_marginal` above `min_gap`) and unflagged; an ambiguous night's other peaks stay in `positions.peaks`, and only its visibilities judge between them. [`start_from_positions`](api/epochs.md) is superseded by `fit_orbit_aliases` and `OrbitPipeline` for orbits with an unknown period; it remains for starting a fit of a model of your own from per-night positions.
 
 ## Alias search: how it decides, and why its defaults
 
