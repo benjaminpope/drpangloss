@@ -7,6 +7,21 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Night flags inform instead of excluding
+
+- `sep-below-resolution` is reported but no longer keeps a night from seeding
+  an orbit (`NightFlag.blocking`; `epoch_positions(flag_sep_blocks=True)`
+  restores it). `chi2-high` compares each night with the median of its own
+  instrument mode (`flag_chi2_groups`, by default the spectral channels and
+  wavelength range). `EpochPositions.log_broad` is each night's mean
+  likelihood over the grid.
+- `fit_orbit_aliases(outlier_eps=...)` mixes a broad outlier component into
+  each night's likelihood, so one bad (sidelobe) night cannot move the orbit;
+  `AliasResult.outlier` gives each night's posterior outlier probability and
+  `AliasResult.night_flags` the post-fit `orbit-prefers-secondary` flag
+  (`sidelobe_flags`). Off by default in `fit_orbit_aliases`;
+  `OrbitPipeline` sets `outlier_eps=0.02`.
+
 ### Fixes: JAX 0.12 and CLEAN stalling
 
 - `separation_pa` returns a separation with a zero (not NaN) gradient at the

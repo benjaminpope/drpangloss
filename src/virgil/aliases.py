@@ -73,6 +73,8 @@ from .epochs import (
     _refuse_amp_with_gains,
     _Surface,
     estimate_primary_diameter,
+    broad_loglike,
+    sidelobe_flags,
 )
 from .likelihood import whitened_residuals
 from .models import OrbitalBinary, PointSource, System, UniformDisk
@@ -479,7 +481,22 @@ def _epoch_chi2(surface, model, d, amp_range, dof=None):
 # float per run, are static.
 
 
-def _loglike(surfaces, x, data, cfg, dof):
+_NO_OUTLIER = -1e30  # log weight of an absent outlier component
+
+
+def _night_loglikes(surfaces, x, data, cfg, dof):
+    """The scale-marginalized, tempered log likelihood of each epoch at ``x``
+    (a vector, one per epoch)."""
+    model = _model(x, cfg)
+    return np.stack(
+        [
+            s.score(_epoch_chi2(s, model, d, cfg[3], dof_s)[0], dof_s, d)
+            for s, d, dof_s in zip(surfaces, data, dof)
+        ]
+    )
+
+
+def _loglike(surfaces, x, data, cfg, dof, mix=None):
     """The scale-marginalized, tempered log likelihood of all epochs at ``x``.
 
     Each block's log likelihood is multiplied by its ``dof = 1/f_b``
@@ -499,17 +516,20 @@ def _loglike(surfaces, x, data, cfg, dof):
     dof : tuple of array
         One vector of block ``1/f_b`` per epoch, in the order of the
         surface's blocks (traced).
+    mix : array or None
+        The outlier mixture, shape ``(n_epochs, 2)``: each epoch's
+        ``(log(1 - eps), log(eps) + log L_broad)``, so that
+        ``L_night = (1 - eps) L + eps L_broad`` (traced). None is no mixture.
 
     Returns
     -------
     float
         The summed tempered log likelihood.
     """
-    model = _model(x, cfg)
-    return sum(
-        s.score(_epoch_chi2(s, model, d, cfg[3], dof_s)[0], dof_s, d)
-        for s, d, dof_s in zip(surfaces, data, dof)
-    )
+    per_night = _night_loglikes(surfaces, x, data, cfg, dof)
+    if mix is not None:
+        per_night = np.logaddexp(mix[:, 0] + per_night, mix[:, 1])
+    return np.sum(per_night)
 
 
 class _KernelProblem(eqx.Module):
@@ -529,18 +549,34 @@ class _KernelProblem(eqx.Module):
     surfaces: tuple = eqx.field(static=True)
     cfg: tuple = eqx.field(static=True)
     dof: tuple
+    mix: object = None
 
     def loss(self, x):
-        return -_loglike(self.surfaces, x, self.data, self.cfg, self.dof)
+        return -_loglike(
+            self.surfaces, x, self.data, self.cfg, self.dof, self.mix
+        )
 
     def rows(self, x):
         model = _model(x, self.cfg)
+        keep = 1.0
+        if self.mix is not None:
+            # The mixture's IRLS weight: each night's rows count with its
+            # inlier probability (its share of the night's likelihood).
+            ell = self.mix[:, 0] + _night_loglikes(
+                self.surfaces, x, self.data, self.cfg, self.dof
+            )
+            keep = jax.lax.stop_gradient(
+                np.exp(ell - np.logaddexp(ell, self.mix[:, 1]))
+            )
         return np.concatenate(
             [
                 s.weighted_rows(
                     _epoch_residuals(s, model, d, self.cfg[3])[0], dof_s, d
                 )
-                for s, d, dof_s in zip(self.surfaces, self.data, self.dof)
+                * np.sqrt(keep[i] if self.mix is not None else 1.0)
+                for i, (s, d, dof_s) in enumerate(
+                    zip(self.surfaces, self.data, self.dof)
+                )
             ]
         )
 
@@ -556,11 +592,11 @@ _hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
 )
 
 
-@functools.partial(jax.jit, static_argnums=(0, 3, 5))
-def _batch(surfaces, xs, data, cfg, dof, batch_size=64):
+@functools.partial(jax.jit, static_argnums=(0, 3, 6))
+def _batch(surfaces, xs, data, cfg, dof, mix=None, batch_size=64):
     """``_loglike`` at each row of ``xs``, ``batch_size`` rows at a time."""
     return jax.lax.map(
-        lambda x: _loglike(surfaces, x, data, cfg, dof),
+        lambda x: _loglike(surfaces, x, data, cfg, dof, mix),
         xs,
         batch_size=batch_size,
     )
@@ -585,6 +621,11 @@ def _candidate_batch(batch_size, memory_budget, data, surfaces):
     )
 
 
+_night_loglikes_jit = functools.partial(jax.jit, static_argnums=(0, 3))(
+    _night_loglikes
+)
+
+
 class _Problem:
     """The scale-marginalized log likelihood of all epochs and the priors."""
 
@@ -604,8 +645,20 @@ class _Problem:
             )
             for s in self.surfaces
         )
+        # The outlier mixture (None without ``outlier_eps``), traced.
+        self.mix = None
+        if settings.outlier_eps > 0 and len(settings.log_broad) == len(
+            self.data
+        ):
+            eps = settings.outlier_eps
+            self.mix = np.asarray(
+                [
+                    [onp.log1p(-eps), onp.log(eps) + lb]
+                    for lb in settings.log_broad
+                ]
+            )
         self.kernel = _KernelProblem(
-            tuple(self.data), self.surfaces, self.cfg, self.dof
+            tuple(self.data), self.surfaces, self.cfg, self.dof, self.mix
         )
         # Proper priors: log P log-uniform over the whole p_range, tau
         # uniform over one cycle, e uniform, cos i uniform, omega and Omega
@@ -628,15 +681,40 @@ class _Problem:
         )
 
     def value_and_grad(self, x):
-        return _value_and_grad(self.surfaces, x, self.data, self.cfg, self.dof)
+        return _value_and_grad(
+            self.surfaces, x, self.data, self.cfg, self.dof, self.mix
+        )
 
     def hessian(self, x):
-        return _hessian(self.surfaces, x, self.data, self.cfg, self.dof)
-
-    def batch(self, xs):
-        return _batch(
-            self.surfaces, xs, self.data, self.cfg, self.dof, self.batch_size
+        return _hessian(
+            self.surfaces, x, self.data, self.cfg, self.dof, self.mix
         )
+
+    def batch(self, xs, mixed=True):
+        """``_loglike`` at each row of ``xs``; ``mixed=False`` leaves the
+        outlier mixture out (a null model is scored on its own terms)."""
+        return _batch(
+            self.surfaces,
+            xs,
+            self.data,
+            self.cfg,
+            self.dof,
+            self.mix if mixed else None,
+            self.batch_size,
+        )
+
+    def outlier_probability(self, x):
+        """Each night's posterior outlier probability at ``x`` (NaN
+        without the mixture): ``eps L_broad / ((1 - eps) L + eps L_broad)``."""
+        if self.mix is None:
+            return onp.full(len(self.data), onp.nan)
+        ell = onp.asarray(
+            _night_loglikes_jit(
+                self.surfaces, np.asarray(x), self.data, self.cfg, self.dof
+            )
+        )
+        mix = onp.asarray(self.mix)
+        return onp.exp(mix[:, 1] - onp.logaddexp(mix[:, 0] + ell, mix[:, 1]))
 
     def per_epoch(self, x):
         """Raw χ²/ν per epoch and block, and the profile scales ŝ."""
@@ -691,6 +769,10 @@ class _Settings:
     # ((block name, 1/f_b), ...): the tempering; () is none. Not in ``cfg``:
     # the kernels take it traced (``_Problem.dof``), so f never recompiles.
     dof: tuple = ()
+    # The outlier mixture: each night's weight ``outlier_eps`` on a broad
+    # component of log likelihood ``log_broad[k]`` (0 is no mixture).
+    outlier_eps: float = 0.0
+    log_broad: tuple = ()
     # The short-arc stage (seeds and bands): on/off, its position floor (mas)
     # and its χ² margin; in the checkpoint key, not in the kernels.
     short_arcs: bool = False
@@ -1852,6 +1934,18 @@ class AliasResult:
         ``ecc_max``, ``s_max``, ``diam_range``), which a sampler of the
         engine's posterior needs to rebuild it; None for a file that did
         not record them.
+    outlier : dict or None
+        The outlier mixture of the fit, None without one: ``eps`` and each
+        night's ``log_broad`` component, ``names`` of the nights and
+        ``probability``, each night's posterior outlier probability at the
+        best orbit, ``eps L_broad / ((1 - eps) L + eps L_broad)`` (near 1:
+        the orbit does not fit that night and the fit ignored it).
+    night_flags : dict or None
+        ``{night: {"code", "reason"}}`` of the nights whose own surface
+        prefers another peak than the best orbit's position
+        (``orbit-prefers-secondary``, see
+        [`sidelobe_flags`][virgil.epochs.sidelobe_flags]). Reported only:
+        no night is excluded by it.
     short_arc : dict or None
         The short-arc stage: the admissible period ``intervals``, the bands
         ``kept``, ``excluded`` and ``readmitted`` by the cheap check, each
@@ -1880,6 +1974,8 @@ class AliasResult:
     temper_rho: dict | None = None
     prior: dict | None = None
     short_arc: dict | None = None
+    outlier: dict | None = None
+    night_flags: dict | None = None
 
     def __post_init__(self):
         for b in self.bands:
@@ -2000,6 +2096,8 @@ class AliasResult:
             temper_rho=self.temper_rho,
             prior=self.prior,
             short_arc=self.short_arc,
+            outlier=self.outlier,
+            night_flags=self.night_flags,
             bands=self.table(),
             band_details=[dataclasses.asdict(b) for b in self.bands],
             samples={
@@ -2126,6 +2224,8 @@ class AliasResult:
             temper_rho=p.get("temper_rho"),
             prior=p.get("prior"),
             short_arc=p.get("short_arc"),
+            outlier=p.get("outlier"),
+            night_flags=p.get("night_flags"),
             **settings,
         )
 
@@ -2876,6 +2976,99 @@ def _resample(results, store, n_samples, p_min, seed):
 # ``tests/test_pipeline_orbit.py`` at hand.
 
 
+def _with_outlier(
+    problem,
+    settings,
+    eps,
+    positions,
+    diam,
+    n_nights,
+    batch_size=None,
+    memory_budget=None,
+):
+    """``(problem, settings)`` with the outlier mixture: ``eps`` on a broad
+    component, each night's mean likelihood over the position grid scored
+    as the orbit is (the fit's own tempering, ``s_max`` and primary), so the
+    two components of a night share one scale. Unchanged (with a warning if
+    ``eps`` was asked for) without a grid of positions for these nights."""
+    eps = float(eps)
+    if not 0.0 <= eps < 1.0:
+        raise ValueError(f"outlier_eps must be in [0, 1), got {eps}.")
+    if eps == 0.0:
+        return problem, settings
+    if (
+        not isinstance(positions, EpochPositions)
+        or positions.grid is None
+        or len(positions.names) != n_nights
+    ):
+        warnings.warn(
+            "outlier_eps needs the EpochPositions of the same nights, with "
+            "their search grid (it gives each night's broad component): "
+            "fitting without the outlier mixture.",
+            UserWarning,
+            stacklevel=external_stacklevel(),
+        )
+        return problem, settings
+    with run_in("float64"):
+        broad = broad_loglike(
+            problem.data,
+            positions.grid,
+            problem.dof,
+            s_max=settings.s_max,
+            primary_diam=diam,
+            batch_size=batch_size,
+            memory_budget=memory_budget,
+        )
+    if not onp.all(onp.isfinite(broad)):
+        return problem, settings
+    settings = dataclasses.replace(
+        settings, outlier_eps=eps, log_broad=tuple(map(float, broad))
+    )
+    return (
+        _Problem(problem.data, settings, problem.batch_size),
+        settings,
+    )
+
+
+def _night_diagnostics(problem, settings, result, positions, data, t_ref):
+    """``(outlier, night_flags)`` of ``AliasResult``: the mixture's
+    posterior outlier probabilities and the sidelobe flags, both at the best
+    orbit of the best band (None where there is nothing to report)."""
+    best = result.best
+    if not best.best or not isinstance(positions, EpochPositions):
+        return None, None
+    live = [m for m in best.modes if onp.isfinite(m["log_z"])]
+    outlier = None
+    if problem.mix is not None and live:
+        x = onp.asarray(max(live, key=lambda m: m["log_z"])["x"], float)
+        outlier = dict(
+            eps=settings.outlier_eps,
+            log_broad=list(settings.log_broad),
+            names=list(positions.names),
+            probability=problem.outlier_probability(x).tolist(),
+        )
+    night_flags = None
+    try:
+        scene = best.scene()
+        snaps = [scene.at(float(t), t_ref) for t in positions.mjd]
+        pred = [
+            onp.array(
+                [float(getattr(getattr(s, "companion", s), a)) for s in snaps]
+            )
+            for a in ("dra", "ddec", "flux")
+        ]
+        found = sidelobe_flags(data, positions, pred)
+    except Exception as caught:  # noqa: BLE001 - a diagnostic never fails the fit
+        _LOG.info("sidelobe flags skipped: %s", caught)
+        found = []
+    night_flags = {
+        n: {"code": f.code, "reason": f.reason}
+        for n, f in zip(positions.names, found)
+        if f is not None
+    }
+    return outlier, night_flags
+
+
 def _band_target(result, data, n=None):
     """The engine's posterior of one band, rebuilt from a saved result, for
     a sampler: ``(problem, bounds, x, settings)``.
@@ -2937,6 +3130,8 @@ def _band_target(result, data, n=None):
         diam_range=tuple(prior["diam_range"]),
         vis_amp=result.vis_amp,
         dof=_dof_of_blocks(result.temper_blocks),
+        outlier_eps=float((result.outlier or {}).get("eps", 0.0)),
+        log_broad=tuple((result.outlier or {}).get("log_broad", ())),
     )
     problem = _Problem(cast_tree(list(data), "float64"), settings)
     return (
@@ -3019,6 +3214,7 @@ def fit_orbit_aliases(
     arc_jitter=ARC_JITTER,
     arc_delta_chi2=ARC_DELTA_CHI2,
     arc_min_gap=ARC_MIN_GAP,
+    outlier_eps=0.0,
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -3395,6 +3591,20 @@ def fit_orbit_aliases(
             ),
         )
     problem = _Problem(data, settings, batch_size, memory_budget)
+    problem, settings = _with_outlier(
+        problem,
+        settings,
+        outlier_eps,
+        seed_positions,
+        None
+        if primary_diam is None
+        else diam_seed
+        if primary_diam == "fit"
+        else primary_diam,
+        len(data),
+        batch_size,
+        memory_budget,
+    )
     _preflight(problem, settings, bands[0])
     key = (
         _checkpoint_key(data, positions, bands, mean_times, settings)
@@ -3456,7 +3666,7 @@ def fit_orbit_aliases(
     # AGENTS.md, "Period window from the data" row: a short arc is flat
     # towards long periods, so P is unconstrained (``period_bound``).
     period_bound, period_at_lower = _period_flags(results, p_range)
-    return AliasResult(
+    result = AliasResult(
         t_ref,
         mean_times,
         float(onp.ptp(mean_times)),
@@ -3493,3 +3703,7 @@ def fit_orbit_aliases(
             for k in factors.rho
         },
     )
+    result.outlier, result.night_flags = _night_diagnostics(
+        problem, settings, result, seed_positions, data, t_ref
+    )
+    return result

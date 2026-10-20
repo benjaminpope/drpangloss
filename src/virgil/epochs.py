@@ -92,6 +92,7 @@ __all__ = [
     "epoch_positions",
     "estimate_primary_diameter",
     "marginal_loglike",
+    "sidelobe_flags",
     "rank_orbits",
     "start_from_positions",
 ]
@@ -1332,10 +1333,16 @@ class NightFlag:
         ``"sep-below-resolution"``, ``"flux-at-bound"``.
     reason : str
         A human-readable reason with the numbers behind it.
+    blocking : bool
+        Whether the flag keeps the night from seeding an orbit (the default).
+        A non-blocking flag is reported only: the night still seeds and, as
+        always, counts in the likelihood. ``sep-below-resolution`` is
+        non-blocking unless ``epoch_positions(flag_sep_blocks=True)``.
     """
 
     code: str
     reason: str
+    blocking: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1379,6 +1386,15 @@ class EpochPositions:
         a trustworthy night); see ``flagged``.
     primary_diam : float or None
         The uniform-disk primary the positions were fitted with (mas), or None.
+    log_broad : numpy.ndarray or None
+        Each dataset's log mean likelihood over the search grid (the
+        untempered scale-marginalized surface averaged over positions and
+        fluxes). ``fit_orbit_aliases`` recomputes it on the surface the
+        orbit is scored with (see ``broad_loglike``); None for positions
+        that did not come from a grid.
+    grid : tuple of numpy.ndarray or None
+        The ``(dra, ddec, flux)`` axes of the search grid, kept for
+        ``broad_loglike``.
     exact_fraction : tuple of float or None
         For each dataset, the fraction of grid points scored with the full
         scale integral (1 unless the coarse-then-exact scoring of data with
@@ -1398,21 +1414,26 @@ class EpochPositions:
     peaks: tuple = ()
     flags: tuple = ()
     primary_diam: float | None = None
+    log_broad: onp.ndarray | None = None
+    grid: tuple | None = None
     exact_fraction: tuple | None = None
 
     @property
     def flagged(self):
-        """Whether each dataset carries any flag (``flags``): a flagged
-        night seeds nothing in
+        """Whether each dataset carries a blocking flag (``flags``): a
+        flagged night seeds nothing in
         [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases], but its
-        data still count in the likelihood."""
+        data still count in the likelihood. Non-blocking flags (see
+        ``NightFlag.blocking``) are reported by ``flag_codes`` only."""
         if not self.flags:
             return onp.zeros(len(self.names), dtype=bool)
-        return onp.array([len(f) > 0 for f in self.flags], dtype=bool)
+        return onp.array(
+            [any(x.blocking for x in f) for f in self.flags], dtype=bool
+        )
 
     def flag_codes(self):
         """The flag codes of each dataset, ``{name: [code, ...]}``, for
-        the flagged datasets only."""
+        the datasets with any flag, blocking or not."""
         return {
             n: [f.code for f in fl]
             for n, fl in zip(self.names, self.flags)
@@ -1906,9 +1927,11 @@ def _flag_one_night(
     min_gap,
     sep_fraction,
     flux_tol,
+    sep_blocks=False,
 ):
     """The flags of one night that need only that night: ``alias-peaks``,
-    ``low-gap``, ``sep-below-resolution`` and ``flux-at-bound``. A
+    ``low-gap``, ``sep-below-resolution`` (non-blocking unless
+    ``sep_blocks``) and ``flux-at-bound``. A
     threshold of None disables its flag. The cross-night ``chi2-high`` is
     added by [`_flag_chi2`][virgil.epochs._flag_chi2]."""
     flags = []
@@ -1948,7 +1971,14 @@ def _flag_one_night(
                 "sep-below-resolution",
                 f"separation {sep:.2f} mas is below {sep_fraction:g} "
                 f"lambda/B_max = {sep_fraction * resolution:.2f} mas: the "
-                "companion is not resolved",
+                "companion is not resolved"
+                + (
+                    ""
+                    if sep_blocks
+                    else " (V^2 and closure phases still locate it below "
+                    "lambda/2B; reported only)"
+                ),
+                blocking=sep_blocks,
             )
         )
     if flux_tol is not None:
@@ -1974,31 +2004,237 @@ def _flag_one_night(
     return flags
 
 
-def _flag_chi2(chi2_all, factor):
+_MODE_TOL = 0.01  # relative wavelength tolerance of one spectral setup
+
+
+def _mode_keys(data):
+    """A label per dataset for its instrument mode: its number of spectral
+    channels and wavelength range. Datasets with the same number of
+    channels and a range within 1% (the per-night jitter of a wavelength
+    calibration) share a label; a different resolution or band does not."""
+    modes, keys = [], []
+    for d in data.data:
+        w = onp.unique(onp.asarray(d.wavel, dtype=float).ravel())
+        lo, hi = float(w.min()), float(w.max())
+        for k, (n, a, b) in enumerate(modes):
+            if (
+                n == w.size
+                and abs(lo - a) <= _MODE_TOL * a
+                and abs(hi - b) <= _MODE_TOL * b
+            ):
+                keys.append(k)
+                break
+        else:
+            modes.append((w.size, lo, hi))
+            keys.append(len(modes) - 1)
+    return keys
+
+
+def broad_loglike(
+    data,
+    grid,
+    dof,
+    *,
+    s_max=None,
+    primary_diam=None,
+    batch_size=None,
+    memory_budget=None,
+    coarse_nats=30.0,
+    coarse_margin=1,
+):
+    """Each night's log mean likelihood over a position grid: the broad
+    outlier component of
+    [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases].
+
+    It is the scale-marginalized surface of
+    [`epoch_positions`][virgil.epochs.epoch_positions] averaged over the
+    grid's positions and fluxes, scored exactly as the orbit is: pass the
+    fit's block ``dof`` (``1/f_b`` per block, one vector per night) and
+    ``s_max``, so the mixture's two components share one scale.
+
+    Parameters
+    ----------
+    data : sequence of OIData
+    grid : tuple of array
+        The ``(dra, ddec, flux)`` axes (``EpochPositions.grid``).
+    dof : sequence of array
+        One vector of block ``1/f_b`` per night.
+    s_max, primary_diam, batch_size, memory_budget, coarse_nats, coarse_margin : optional
+        As for ``epoch_positions``.
+
+    Returns
+    -------
+    numpy.ndarray
+    """
+    axes = [onp.asarray(a, float) for a in grid]
+    xx, yy, ff = onp.meshgrid(*axes, indexing="ij")
+    points = onp.stack([xx.ravel(), yy.ravel(), ff.ravel()], -1)
+    diam = None if not primary_diam else float(primary_diam)
+    out = []
+    for d, dof_k in zip(data, dof):
+        surface = _Surface(d, s_max)
+        with run_in("float64"):
+            d64 = cast_tree(d, "float64")
+            dof64 = np.asarray(dof_k, dtype=np.float64)
+            diam64 = None if diam is None else np.asarray(diam)
+            if surface.numeric and coarse_nats is not None:
+                m, _ = _coarse_then_exact(
+                    points,
+                    xx.shape,
+                    d64,
+                    surface,
+                    diam64,
+                    dof64,
+                    batch_size,
+                    memory_budget,
+                    float(coarse_nats),
+                    int(coarse_margin),
+                )
+                m = onp.asarray(m)
+            else:
+                _, chi2 = _grid_scores(
+                    np.asarray(points),
+                    d64,
+                    surface,
+                    min(
+                        _grid_batch(batch_size, memory_budget, d64, surface),
+                        len(points),
+                    ),
+                    diam64,
+                    dof64,
+                )
+                m = onp.asarray(_grid_marginal(chi2, dof64, d64, surface))
+        m = onp.where(onp.isfinite(m), m, -onp.inf)
+        out.append(float(onp.logaddexp.reduce(m) - onp.log(m.size)))
+    return onp.array(out)
+
+
+def _flag_chi2(chi2_all, factor, groups=None):
     """The ``chi2-high`` flag of each night: raw χ²/N more than ``factor``
-    times the median night's (None disables it; fewer than three nights
-    have no meaningful median, so they are never flagged)."""
+    times the median of the nights of its own ``groups`` entry (one
+    instrument mode: modes differ in χ²/N by their error models, so a
+    global median would flag a whole mode). None disables it; fewer than
+    three nights in a group have no meaningful median, so they are never
+    flagged."""
     chi2_all = onp.asarray(chi2_all, dtype=float)
     out = [[] for _ in chi2_all]
-    if factor is None or len(chi2_all) < 3:
+    if factor is None:
         return out
-    median = float(onp.median(chi2_all))
-    # A night whose chi2 stands far above the others (a bad night, a
-    # triple, extra light) fits no binary well, so its position is not a
-    # trustworthy seed whatever its peaks look like. The floor of 1 stops
-    # nights with chi2/N well below 1 (overestimated errors) from making a
-    # fair night an outlier. Outlier detection only: uniform failures and
-    # a majority of bad nights pass.
-    limit = factor * max(median, 1.0)
-    for k, c in enumerate(chi2_all):
-        if c > limit:
-            out[k].append(
+    groups = [0] * len(chi2_all) if groups is None else list(groups)
+    for g in dict.fromkeys(groups):
+        idx = [k for k, x in enumerate(groups) if x == g]
+        if len(idx) < 3:
+            continue
+        median = float(onp.median(chi2_all[idx]))
+        # A night whose chi2 stands far above the others of its mode (a
+        # bad night, a triple, extra light) fits no binary well, so its
+        # position is not a trustworthy seed whatever its peaks look like.
+        # The floor of 1 stops nights with chi2/N well below 1
+        # (overestimated errors) from making a fair night an outlier.
+        # Outlier detection only: uniform failures and a majority of bad
+        # nights pass.
+        limit = factor * max(median, 1.0)
+        for k in idx:
+            c = chi2_all[k]
+            if c > limit:
+                out[k].append(
+                    NightFlag(
+                        "chi2-high",
+                        f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
+                        f"({factor:g} x max(median night {median:.1f}, 1)"
+                        + (
+                            f" of its {len(idx)} nights of the same mode"
+                            if len(set(groups)) > 1
+                            else ""
+                        )
+                        + ")",
+                    )
+                )
+    return out
+
+
+def sidelobe_flags(
+    data, positions, predicted, *, k_sigma=3.0, delta_nats=10.0, dof=1.0
+):
+    """Which nights' orbit prefers a secondary peak of the night's surface.
+
+    A night is flagged (``orbit-prefers-secondary``) when its best
+    single-night peak lies more than ``k_sigma`` (Mahalanobis, from the
+    peak's covariance) from the orbit's predicted position, yet the
+    scale-marginalized surface at the predicted position is within
+    ``delta_nats`` of the peak: the orbit sits on another peak that the
+    night nearly allows. The flag is reported, never used to exclude the
+    night.
+
+    Parameters
+    ----------
+    data : Epochs or sequence of OIData
+        The data ``positions`` came from.
+    positions : EpochPositions
+        The single-night positions.
+    predicted : tuple of array
+        ``(dra, ddec, flux)`` of the orbit at each night (mas, mas,
+        companion/primary).
+    k_sigma, delta_nats, dof : float, optional
+        The distance (in sigma), the surface margin (nats) and the dof
+        fraction of ``epoch_positions``.
+
+    Returns
+    -------
+    list of NightFlag or None
+        One entry per night: a ``NightFlag`` or None.
+    """
+    out = []
+    diam = positions.primary_diam
+    for k, d in enumerate(getattr(data, "data", data)):
+        px, py, pf = (float(onp.asarray(a)[k]) for a in predicted)
+        if pf > 1.0:  # the other star's labels: the same scene, reflected
+            px, py, pf = -px, -py, 1.0 / pf
+        dx = onp.array([px - positions.dra[k], py - positions.ddec[k]])
+        cov = onp.asarray(positions.cov[k])
+        dist = float(onp.sqrt(dx @ onp.linalg.solve(cov, dx)))
+        if not dist > k_sigma:
+            out.append(None)
+            continue
+        model = _binary(
+            np.asarray([px, py, min(max(pf, 1e-6), 1.0)]),
+            None if not diam else np.asarray(float(diam)),
+        )
+        with run_in("float64"):
+            at_pred = float(
+                marginal_loglike(model, cast_tree(d, "float64"), dof=dof)
+            )
+        # Both ends of the gap are scored with the same model and dof (the
+        # catalogue's own scores may come from a point primary or another
+        # dof).
+        peak = _binary(
+            np.asarray(
+                [
+                    positions.dra[k],
+                    positions.ddec[k],
+                    min(float(positions.flux[k]), 1.0),
+                ]
+            ),
+            None if not diam else np.asarray(float(diam)),
+        )
+        with run_in("float64"):
+            best = float(
+                marginal_loglike(peak, cast_tree(d, "float64"), dof=dof)
+            )
+        gap = best - at_pred
+        if gap <= delta_nats:
+            out.append(
                 NightFlag(
-                    "chi2-high",
-                    f"raw chi2/N {c:.1f} exceeds {limit:.1f} "
-                    f"({factor:g} x max(median night {median:.1f}, 1))",
+                    "orbit-prefers-secondary",
+                    f"the night's best peak is {dist:.1f} sigma from the "
+                    f"orbit's position, which the night's surface scores "
+                    f"{gap:.1f} nats below the peak (within "
+                    f"{delta_nats:g}): the orbit sits on a secondary peak",
+                    blocking=False,
                 )
             )
+        else:
+            out.append(None)
     return out
 
 
@@ -2022,6 +2258,8 @@ def epoch_positions(
     flag_chi2_factor=3.0,
     flag_sep_fraction=0.5,
     flag_flux_tol=0.02,
+    flag_sep_blocks=False,
+    flag_chi2_groups=None,
 ):
     """The companion's position in each dataset of a binary.
 
@@ -2087,6 +2325,14 @@ def epoch_positions(
         this fraction of the night's own resolution, default 0.5) and
         ``flux-at-bound`` (within this fraction of a flux bound, default 0.02).
         None disables a flag.
+    flag_sep_blocks : bool, optional
+        Whether ``sep-below-resolution`` keeps a night from seeding an orbit
+        (default False: it is reported only, since V^2 and closure phases
+        locate a companion below lambda/2B at good SNR).
+    flag_chi2_groups : sequence, optional
+        One label per dataset: ``chi2-high`` compares each night with the
+        median of the nights sharing its label. Default: the nights'
+        instrument modes (number of spectral channels and wavelength range).
 
     Returns
     -------
@@ -2139,6 +2385,7 @@ def epoch_positions(
     rows, inflated, edge_grid, edge_peak = [], [], [], []
     unconverged = {}  # night -> the stop code of its best peak's refinement
     night_flags = []
+    log_broad = []  # each night's log mean likelihood over the grid
     exact_share = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
@@ -2278,6 +2525,11 @@ def epoch_positions(
             for n, v in zip(surface.names, surface.scales(chi2_best))
         }
         rows.append((best, cov, gap_marginal, per_block, scale, catalogue))
+        log_broad.append(
+            float(
+                onp.logaddexp.reduce(marginal.ravel()) - onp.log(marginal.size)
+            )
+        )
         night_flags.append(
             _flag_one_night(
                 catalogue,
@@ -2288,6 +2540,7 @@ def epoch_positions(
                 min_gap=flag_min_gap,
                 sep_fraction=flag_sep_fraction,
                 flux_tol=flag_flux_tol,
+                sep_blocks=flag_sep_blocks,
             )
             if flag_nights
             else []
@@ -2329,7 +2582,11 @@ def epoch_positions(
         )
     flags = [[] for _ in rows]
     if flag_nights:
-        extra = _flag_chi2([r[3]["all"] for r in rows], flag_chi2_factor)
+        extra = _flag_chi2(
+            [r[3]["all"] for r in rows],
+            flag_chi2_factor,
+            _mode_keys(data) if flag_chi2_groups is None else flag_chi2_groups,
+        )
         flags = [a + b for a, b in zip(night_flags, extra)]
     return EpochPositions(
         names=data.dataset_names,
@@ -2344,6 +2601,8 @@ def epoch_positions(
         peaks=tuple(r[5] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
+        log_broad=onp.array(log_broad),
+        grid=tuple(axes),
         exact_fraction=tuple(exact_share),
     )
 

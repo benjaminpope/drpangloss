@@ -132,7 +132,15 @@ class OrbitPipeline(_Pipeline):
           different nights (``from_oifits``).
         - ``exclude`` ({}): ``{file, night or dataset: reason}`` left out,
           a ruling recorded in ``run.json``.
-        - ``flag_nights`` (True): flag the nights that cannot seed an orbit.
+        - ``flag_nights`` (True): flag the nights that cannot seed an orbit;
+          ``flag_sep_blocks`` (False): whether a separation below λ/2B also
+          keeps a night from seeding (it is reported either way).
+        - ``outlier_eps`` (0.02): the prior outlier probability of each
+          night in the orbit fit, whose likelihood is
+          ``(1 - eps) L + eps L_broad`` with ``L_broad`` the night's mean
+          likelihood over the position grid, so that one bad night (a
+          sidelobe) cannot move the orbit; 0 turns it off. The posterior
+          outlier probability of each night is in the search report.
         - ``batch_size`` (None), ``memory_budget`` (None, bytes),
           ``coarse_nats`` (30): the grid points (and candidate orbits) scored
           together, by default what fits in the budget (1 GiB on a CPU), and,
@@ -179,6 +187,8 @@ class OrbitPipeline(_Pipeline):
         "gap_days": 0.5,
         "exclude": {},
         "flag_nights": True,
+        "flag_sep_blocks": False,
+        "outlier_eps": 0.02,
         "batch_size": None,
         "memory_budget": None,
         "coarse_nats": 30.0,
@@ -652,6 +662,7 @@ def _night_positions(p):
                 n_peaks=s["n_peaks"],
                 s_max=s["s_max"],
                 flag_nights=s["flag_nights"],
+                flag_sep_blocks=s["flag_sep_blocks"],
                 batch_size=s["batch_size"],
                 memory_budget=s["memory_budget"],
                 coarse_nats=s["coarse_nats"],
@@ -710,10 +721,16 @@ def _positions_json(found):
             for peak in found.peaks
         ],
         "flags": [
-            [{"code": f.code, "reason": f.reason} for f in night]
+            [
+                {"code": f.code, "reason": f.reason, "blocking": f.blocking}
+                for f in night
+            ]
             for night in found.flags
         ],
         "primary_diam": found.primary_diam,
+        "grid": None
+        if found.grid is None
+        else [a.tolist() for a in found.grid],
     }
 
 
@@ -743,10 +760,16 @@ def _positions_from_json(d):
         scale=tuple(d["scale"]),
         peaks=tuple(peak(r) for r in d["peaks"]),
         flags=tuple(
-            tuple(NightFlag(f["code"], f["reason"]) for f in night)
+            tuple(
+                NightFlag(f["code"], f["reason"], f.get("blocking", True))
+                for f in night
+            )
             for night in d["flags"]
         ),
         primary_diam=d["primary_diam"],
+        grid=None
+        if d.get("grid") is None
+        else tuple(onp.asarray(a, float) for a in d["grid"]),
     )
 
 
@@ -774,7 +797,8 @@ def _epochs(p):
             "chi2_raw": float(found.chi2_raw[k].get("all", math.nan)),
             "edge": edge[name],
             "flags": [
-                {"code": f.code, "reason": f.reason} for f in found.flags[k]
+                {"code": f.code, "reason": f.reason, "blocking": f.blocking}
+                for f in found.flags[k]
             ],
         }
         for k, name in enumerate(found.names)
@@ -826,6 +850,7 @@ def _search(p):
         flip_flux=s["flip_flux"],
         n_bands_max=s["n_bands_max"],
         temper=s["temper"],
+        outlier_eps=s["outlier_eps"],
         batch_size=s["batch_size"],
         memory_budget=s["memory_budget"],
     )
@@ -859,6 +884,15 @@ def _search_report(result, data, names):
             "blocks": result.temper_blocks,
             "out_of_range": bool(result.tempering),
         },
+        "outliers": None
+        if result.outlier is None
+        else {
+            "eps": result.outlier["eps"],
+            "probability": dict(
+                zip(result.outlier["names"], result.outlier["probability"])
+            ),
+        },
+        "night_flags": dict(result.night_flags or {}),
         "labels_free": bool(result.labels_free),
         "period_bound": bool(result.period_bound),
         "period_at_lower_bound": bool(result.period_at_lower_bound),
@@ -954,10 +988,14 @@ def _single_star(problem, x, diam_range):
     def best(logd):
         xs = onp.tile(x, (len(logd), 1))
         xs[:, 8] = logd
-        return onp.asarray(problem.batch(np.asarray(xs)))
+        return onp.asarray(problem.batch(np.asarray(xs), mixed=False))
 
     if len(x) <= 8:
-        return float(onp.max(onp.asarray(problem.batch(np.asarray(x[None])))))
+        return float(
+            onp.max(
+                onp.asarray(problem.batch(np.asarray(x[None]), mixed=False))
+            )
+        )
     grid = onp.log(onp.geomspace(*diam_range, _N_DIAM_NULL))
     ll = best(grid)
     k = int(onp.argmax(ll))
@@ -1097,7 +1135,12 @@ def _orbit_model(problem, priors):
         numpyro.factor(
             "loglike",
             _loglike(
-                problem.surfaces, x, problem.data, problem.cfg, problem.dof
+                problem.surfaces,
+                x,
+                problem.data,
+                problem.cfg,
+                problem.dof,
+                problem.mix,
             ),
         )
 

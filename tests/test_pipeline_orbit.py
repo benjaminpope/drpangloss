@@ -110,6 +110,8 @@ DEFAULTS = {
     "gap_days": 0.5,
     "exclude": {},
     "flag_nights": True,
+    "flag_sep_blocks": False,
+    "outlier_eps": 0.02,
     "batch_size": None,
     "memory_budget": None,
     "coarse_nats": 30.0,
