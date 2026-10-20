@@ -165,6 +165,7 @@ def test_the_covariance_is_the_analytic_curvature_of_the_marginal_surface():
     assert found.scale[0]["phi_scale"] > 1.5 * found.scale[0]["vis_scale"]
 
 
+@pytest.mark.slow  # the grid whitens every point at 32 scales: 37-84 s on CI
 def test_data_with_gains_are_scored_with_the_scale_integrated_numerically():
     data = _night(VLTI_UTS, 1).with_gains(telescope=0.05)
     model = BinaryModelCartesian(*TRUTH)
