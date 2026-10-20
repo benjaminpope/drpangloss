@@ -687,6 +687,7 @@ def test_read_ddid_applies_the_casa_convention_without_casatools():
         "ANTENNA1": onp.zeros(nrow, int),
         "ANTENNA2": onp.ones(nrow, int),
         "OBSERVATION_ID": onp.zeros(nrow, int),
+        "SCAN_NUMBER": onp.full(nrow, 7),
         "WEIGHT": onp.full((2, nrow), 4.0),
     }
     part = _read_ddid(
@@ -708,3 +709,315 @@ def test_read_ddid_applies_the_casa_convention_without_casatools():
     )
     onp.testing.assert_allclose(onp.asarray(read.vis), model, atol=1e-12)
     assert onp.all(onp.asarray(read.weight) == 8.0)
+
+
+# ----------------------------------------------------------------------
+# Diagnostics: dirty image, dirty beam, sigma_scale
+# ----------------------------------------------------------------------
+
+
+def _uv_data(n=4000, seed=0, vis=None, weight=None):
+    rng = onp.random.default_rng(seed)
+    u = rng.uniform(-3e6, 3e6, n)
+    v = rng.uniform(-3e6, 3e6, n)
+    if vis is None:
+        vis = rng.normal(size=n) + 1j * rng.normal(size=n)
+    if weight is None:
+        weight = rng.uniform(1.0, 3.0, n)
+    return ComplexVisData.from_arrays(u, v, vis, weight, 230e9)
+
+
+@pytest.mark.parametrize("npix", [32, 31])
+@pytest.mark.parametrize("weighting", ["natural", "uniform", "briggs"])
+def test_dirty_image_matches_brute_force(npix, weighting):
+    data = _uv_data(n=3000)
+    s = 0.7
+    img = data.dirty_image(npix, s, weighting=weighting)
+    w = data._imaging_weights(
+        weighting, 0.5, 1.0 / (npix * s * mas2rad), None, None
+    )
+    c = 0.5 * (npix - 1)
+    x = (c - onp.arange(npix)) * s * mas2rad
+    X, Y = onp.meshgrid(x, x, indexing="xy")
+    u, v = onp.asarray(data.u), onp.asarray(data.v)
+    vis = onp.asarray(data.vis)
+    ph = 2 * onp.pi * (u[:, None, None] * X + v[:, None, None] * Y)
+    ref = (
+        w[:, None, None]
+        * (
+            vis.real[:, None, None] * onp.cos(ph)
+            - vis.imag[:, None, None] * onp.sin(ph)
+        )
+    ).sum(0) / w.sum()
+    assert onp.abs(img - ref).max() < 1e-10 * onp.abs(ref).max()
+
+
+def test_dirty_image_point_source_position():
+    data = _uv_data(n=3000)
+    dra, ddec, flux = 6.0, -4.0, 2.5  # mas: East and South of the centre
+    s, npix = 1.0, 33
+    u, v = onp.asarray(data.u), onp.asarray(data.v)
+    vis = flux * onp.exp(-2j * onp.pi * mas2rad * (dra * u + ddec * v))
+    d = ComplexVisData.from_arrays(u, v, vis, data.weight, 230e9)
+    img = d.dirty_image(npix, s)
+    row, col = onp.unravel_index(onp.argmax(img), img.shape)
+    c = 0.5 * (npix - 1)
+    assert col == c - dra / s  # East is to the left
+    assert row == c - ddec / s  # South is down
+    assert img[row, col] == pytest.approx(flux, rel=0.05)
+    assert img[row, col] <= flux * (1 + 1e-9)
+
+
+def test_dirty_beam_peak_and_briggs_limits():
+    data = _uv_data(n=3000)
+    for wt in ("natural", "uniform", "briggs"):
+        b = data.dirty_beam(33, 1.0, weighting=wt)
+        assert b[16, 16] == pytest.approx(1.0, abs=1e-10)
+        assert b.max() <= 1.0 + 1e-10
+    rel = lambda a, b: onp.abs(a - b).max()  # noqa: E731
+    kw = dict(npix=33, pixel_scale_mas=1.0, weighting="briggs")
+    nat = data.dirty_beam(33, 1.0, weighting="natural")
+    uni = data.dirty_beam(33, 1.0, weighting="uniform")
+    hi = data.dirty_beam(robust=2.0, **kw)
+    lo = data.dirty_beam(robust=-2.0, **kw)
+    mid = data.dirty_beam(robust=0.5, **kw)
+    assert rel(hi, nat) < 0.5 * rel(hi, uni)
+    assert rel(lo, uni) < 0.5 * rel(lo, nat)
+    assert rel(hi, nat) < rel(mid, nat) < rel(lo, nat)
+
+
+def test_dirty_even_beam_peak_at_centre_is_one():
+    data = _uv_data(n=500)
+    b = data.dirty_beam(32, 0.2)  # small pixels: the sample is near the peak
+    assert 0.99 < b.max() <= 1.0
+
+
+def test_dirty_residual_of_true_model_is_zero():
+    scene = _image()
+    data0 = _data(n=1500, noise=0.0)
+    nuis = CalibrationNuisance(data0, ref_obs=0)
+    values = _values(nuis, **{"cal.flux": 1.3})
+    model = onp.asarray(data0.model(scene, values, nuis))
+    data = ComplexVisData.from_arrays(
+        data0.u,
+        data0.v,
+        model,
+        data0.weight,
+        data0.freq,
+        ddid=data0.ddid,
+        obs=data0.obs,
+    )
+    resid = data.dirty_image(
+        32, 2.0, scene=scene, values=values, nuisance=nuis
+    )
+    img = data.dirty_image(32, 2.0)
+    assert onp.abs(resid).max() < 1e-10 * onp.abs(img).max()
+    # a function of the values works as well, and use_sigma needs a fit
+    resid2 = data.dirty_image(
+        32,
+        2.0,
+        scene=lambda v: scene,
+        values=values,
+        nuisance=nuis,
+        use_sigma=True,
+    )
+    assert onp.abs(resid2).max() < 1e-10 * onp.abs(img).max()
+    with pytest.raises(ValueError):
+        data.dirty_image(32, 2.0, scene=scene)
+
+
+def _sigma_data(shuffle=False, seed=3, period=3000.0):
+    rng = onp.random.default_rng(seed)
+    nant, nint, nchan = 6, 40, 3
+    scales = [1.0, 1.5, 2.0]  # one per ddid
+    cols = {k: [] for k in "u v vis weight freq ddid time a1 a2 scan".split()}
+    for d, s in enumerate(scales):
+        for a1 in range(nant):
+            for a2 in range(a1 + 1, nant):
+                for ch in range(nchan):
+                    for scan in (1, 2):
+                        t = onp.arange(nint, dtype=float) * 6.0 + 1e4 * scan
+                        w = rng.uniform(1.0, 4.0, nint) * 100.0
+                        sky = (1.0 + 0.5 * onp.sin(t / period)) * onp.exp(
+                            1j * 0.001 * (t - t[0])
+                        )  # slowly varying
+                        noise = (
+                            (
+                                rng.normal(size=nint)
+                                + 1j * rng.normal(size=nint)
+                            )
+                            * s
+                            / onp.sqrt(w)
+                        )
+                        cols["vis"].append(sky + noise)
+                        cols["weight"].append(w)
+                        cols["time"].append(t)
+                        cols["u"].append(
+                            onp.full(nint, 1e5 * (a1 + 1) + 7.0 * a2)
+                        )
+                        cols["v"].append(onp.full(nint, 3e4 * (a2 + 1)))
+                        cols["freq"].append(onp.full(nint, 230e9 + 1e7 * ch))
+                        cols["ddid"].append(onp.full(nint, d))
+                        cols["a1"].append(onp.full(nint, a1))
+                        cols["a2"].append(onp.full(nint, a2))
+                        cols["scan"].append(onp.full(nint, scan))
+    c = {k: onp.concatenate(x) for k, x in cols.items()}
+    if shuffle:  # the time column no longer follows the data
+        c["time"] = c["time"][
+            onp.random.default_rng(9).permutation(c["time"].size)
+        ]
+    perm = onp.random.default_rng(1).permutation(
+        c["u"].size
+    )  # row order is irrelevant
+    c = {k: x[perm] for k, x in c.items()}
+    return scales, ComplexVisData.from_arrays(
+        c["u"],
+        c["v"],
+        c["vis"],
+        c["weight"],
+        c["freq"],
+        ddid=c["ddid"],
+        time=c["time"],
+        ant1=c["a1"],
+        ant2=c["a2"],
+        scan=c["scan"],
+    )
+
+
+def test_sigma_scale_recovers_known_scales():
+    scales, data = _sigma_data()
+    res = data.sigma_scale()
+    assert res.labels == (0, 1, 2)
+    for k, s in enumerate(scales):
+        # the slow sky inflates by < 1e-3 here, far below the standard error
+        assert abs(res.s[k] - s) < 3 * res.s_se[k]
+        assert abs(res.s_re[k] - s) < 3 * res.s_re_se[k]
+        assert abs(res.s_im[k] - s) < 3 * res.s_im_se[k]
+        assert res.n_pairs[k] > 1000
+    assert data.sigma_scale(by=None).labels == (None,)
+    assert data.sigma_scale(by="obs").s.shape == (1,)
+    # preserved by selection
+    sub = data.select(ddids=[1]).sigma_scale()
+    assert sub.n_pairs[1] == res.n_pairs[1] and sub.n_pairs[0] == 0
+
+
+def test_sigma_scale_detects_scrambled_time():
+    # a steeply varying sky makes adjacency matter; with the time column
+    # scrambled the pairs are not adjacent, the estimate is far off and the
+    # lag ratio drops to 1
+    _, data = _sigma_data(period=60.0)
+    _, bad = _sigma_data(shuffle=True, period=60.0)
+    good_res, bad_res = data.sigma_scale(), bad.sigma_scale()
+    assert onp.all(bad_res.s > 1.3 * good_res.s)
+    assert onp.all(onp.abs(bad_res.lag_ratio - 1.0) < 0.2)
+    assert onp.all(good_res.lag_ratio > 3.0)
+
+
+def test_sigma_scale_needs_fields():
+    data = _uv_data(n=50)
+    with pytest.raises(ValueError, match="time, ant1, ant2, scan"):
+        data.sigma_scale()
+    with pytest.raises(ValueError, match="by must"):
+        _sigma_data()[1].sigma_scale(by="bogus")
+
+
+# -- the data stay jit arguments, not compile-time constants -----------------
+
+
+def _constant_bytes(lowered):
+    """Bytes of dense constants embedded in a lowered module's text."""
+    import re
+
+    return sum(
+        len(m) for m in re.findall(r"dense<[^>]{200,}>", lowered.as_text())
+    )
+
+
+def _big_term_problem(n=200_000):
+    rng = onp.random.default_rng(3)
+    ddid = rng.integers(0, 3, n)
+    data = ComplexVisData.from_arrays(
+        rng.uniform(-4e6, 4e6, n),
+        rng.uniform(-4e6, 4e6, n),
+        rng.normal(size=n) + 1j * rng.normal(size=n),
+        rng.uniform(0.5, 2.0, n) * 1e4,
+        onp.array([230e9, 238e9, 245e9])[ddid],
+        ddid=ddid,
+        obs=onp.array([0, 0, 1])[ddid],
+    )
+    nuis = CalibrationNuisance(data, taper_fwhm_mas=50.0)
+    values = _values(nuis)
+
+    def scene(v):
+        return Image(v["log_brightness"], PIXEL, ft="dft")
+
+    values["log_brightness"] = np.zeros((8, 8))
+    return data, nuis, scene, values
+
+
+def test_term_data_are_arguments_not_constants():
+    data, nuis, scene, values = _big_term_problem()
+    term = data.term(scene, nuis, chunk_size=100_000)
+
+    def loss(t, v):
+        return jax.value_and_grad(
+            lambda w: 0.5 * np.sum(t(w) ** 2) + t.log_norm(w)
+        )(v)
+
+    as_arg = eqx.filter_jit(loss).lower(term, values)
+    closed = jax.jit(lambda v: loss(term, v)).lower(values)
+    assert _constant_bytes(as_arg) < 1e6
+    assert _constant_bytes(closed) > 1e7  # the documented pitfall
+
+
+@pytest.mark.filterwarnings("ignore:fit.*did not converge")
+def test_fit_compiles_once_across_masks_and_weights(monkeypatch):
+    import numpyro.distributions as dist
+
+    from virgil.imaging import MaxEntropy
+    from virgil.radio import _RadioTerm
+
+    data, nuis, scene, values = _big_term_problem(n=4000)
+    fold, _ = dartboard_folds(data, k=3)
+    priors = nuis.priors()
+    priors["log_brightness"] = dist.Normal(0.0, 3.0)
+
+    def model(**v):
+        return scene(v)
+
+    traced = []
+    original = _RadioTerm.__call__
+
+    def counting(self, v):
+        if isinstance(v["cal.flux"], jax.core.Tracer):
+            traced.append(1)
+        return original(self, v)
+
+    monkeypatch.setattr(_RadioTerm, "__call__", counting)
+
+    def run(i, lam):
+        term = data.term(scene, nuis, mask=fold != i, chunk_size=2000)
+        n0 = len(traced)
+        result = fit(
+            model,
+            priors,
+            data=(),
+            likelihoods=[term],
+            regularizers=[MaxEntropy(lam)],
+            init=dict(values),
+            method="lbfgs",
+            max_steps=2,
+        )
+        return len(traced) - n0, term, result
+
+    n_first, _, first = run(0, 1e3)
+    assert n_first > 0
+    n_second, term1, second = run(1, 2e3)
+    assert n_second == 0  # same shapes: no retrace, so no recompile
+    # ... and fold 1's mask reached the computation: the reported chi2 is that
+    # of an eager evaluation of fold 1's term at the fitted values
+    eager = float(np.sum(term1(second.values) ** 2))
+    assert second.info["chi2"][-1] == pytest.approx(eager, rel=1e-8)
+    assert second.info["chi2"][-1] != pytest.approx(
+        first.info["chi2"][-1], rel=1e-3
+    )

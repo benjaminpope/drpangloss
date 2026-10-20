@@ -38,6 +38,8 @@ from jaxbessel import bessel_jn, bessel_jv_over_xv
 from ._geometry import (
     apply_elliptical_transf_coord,
     check_az_prof_nonnegative,
+    gaussian_smooth,
+    gaussian_taper,
     grid_visibilities,
     image_coordinates,
     image_visibilities,
@@ -1994,6 +1996,15 @@ class Image(Component):
         Transform for irregular uv points: the exact sum, a non-uniform FFT
         or, by default, whichever is faster for the problem size (see
         [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+    smooth_fwhm_mas : float, optional
+        FWHM in milliarcseconds of a fixed Gaussian smoothing kernel (not a
+        fitted parameter). The image the data see is the pixels convolved with
+        it, as in MPoL's ``GaussConvFourier``: the visibilities are the pixel
+        transform times the analytic Gaussian, exact at any uv point for every
+        ``ft``, and ``smoothed()`` gives the
+        convolved pixels. Regularisers can act on either (their ``smoothed``
+        option). Default ``None``: no smoothing. It compounds with
+        ``CalibrationNuisance.taper_fwhm_mas``, which tapers any scene.
 
     Examples
     --------
@@ -2007,6 +2018,7 @@ class Image(Component):
     pixel_scale_mas: float = eqx.field(static=True)
     rotation_deg: float = eqx.field(static=True)
     ft: str = eqx.field(static=True)
+    smooth_fwhm_mas: float | None = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2018,7 +2030,18 @@ class Image(Component):
         ddec=0.0,
         rotation_deg=0.0,
         ft="auto",
+        smooth_fwhm_mas=None,
     ):
+        if smooth_fwhm_mas is not None and not (
+            onp.isfinite(smooth_fwhm_mas) and smooth_fwhm_mas > 0.0
+        ):
+            raise ValueError(
+                "smooth_fwhm_mas must be None or finite and positive, "
+                f"not {smooth_fwhm_mas}."
+            )
+        self.smooth_fwhm_mas = (
+            None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
+        )
         if ft not in ("auto", "dft", "nufft"):
             raise ValueError(
                 f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
@@ -2104,11 +2127,33 @@ class Image(Component):
         flat = jax.nn.softmax(eta.ravel(), where=where)
         return flat.reshape(eta.shape)
 
+    def smoothed(self):
+        """The pixels convolved with the Gaussian of ``smooth_fwhm_mas``.
+
+        Returns ``brightness`` itself when there is no smoothing. Otherwise
+        an FFT convolution on a zero-padded grid, cropped to the image, so
+        flux spreading past the edges is lost; see
+        ``virgil._geometry.gaussian_smooth`` for how closely
+        its transform matches the analytic Gaussian taper.
+        """
+        if self.smooth_fwhm_mas is None:
+            return self.brightness
+        return gaussian_smooth(
+            self.brightness, self.smooth_fwhm_mas / self.pixel_scale_mas
+        )
+
+    def _smoothing(self, u, v):
+        # Unrotated baselines in wavelengths: the taper is isotropic.
+        if self.smooth_fwhm_mas is None:
+            return 1.0
+        return gaussian_taper(u * u + v * v, self.smooth_fwhm_mas)
+
     def _centred_cvis(self, uu, vv):
         uu, vv = rotate(uu, vv, -self.rotation_deg)
-        return image_visibilities(
+        vis = image_visibilities(
             self.brightness, uu, vv, self.pixel_scale_mas, self.ft
         )
+        return vis * self._smoothing(uu, vv)
 
     def model_on_grid(self, u, v, wavel, grid):
         vis = _pixel_visibilities(
@@ -2121,12 +2166,13 @@ class Image(Component):
             grid,
             self.ft,
         )
+        vis = vis * self._smoothing(u / wavel, v / wavel)
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
 
     def _centred_image(self, xx, yy, pixel_scale_mas):
-        # Bilinear resampling of the pixels, exact at their centres.
+        # Bilinear resampling of the (smoothed) pixels, exact at their centres.
         xx, yy = rotate(xx, yy, -self.rotation_deg)
-        brightness = self.brightness
+        brightness = self.smoothed()
         nrow, ncol = brightness.shape
         rows = 0.5 * (nrow - 1) - yy / self.pixel_scale_mas
         cols = 0.5 * (ncol - 1) - xx / self.pixel_scale_mas

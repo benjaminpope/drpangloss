@@ -1242,6 +1242,22 @@ def _tolerance(gradient, gtol):
     )
 
 
+class _DescentTrustRegion(optx.ClassicalTrustRegion):
+    """optimistix's trust region, also rejecting any step that raises the loss
+    (optimistix accepts one when its predicted reduction is positive)."""
+
+    def step(self, first_step, y, y_eval, f_info, f_eval_info, state):
+        step_size, accept, result, new_state = super().step(
+            first_step, y, y_eval, f_info, f_eval_info, state
+        )
+        worse = f_eval_info.as_min() > f_info.as_min()
+        reject = worse & ~first_step
+        shrunk = state.step_size * self.low_constant
+        new_size = np.where(reject, shrunk, step_size)
+        new_state = eqx.tree_at(lambda s: s.step_size, new_state, new_size)
+        return new_size, accept & ~reject, result, new_state
+
+
 class _GradientStoppedLM(optx.LevenbergMarquardt):
     """Levenberg-Marquardt that stops when the gradient of the loss is small, like the
     L-BFGS path (optimistix's own tests pass at once from a warm start, or never for
@@ -1256,6 +1272,7 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
 
     def __init__(self, tolerance, limit, linear_solver):
         super().__init__(rtol=0.0, atol=0.0, linear_solver=linear_solver)
+        self.search = _DescentTrustRegion()
         self.tolerance = tolerance
         self.limit = limit
 

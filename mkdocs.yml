@@ -69,6 +69,7 @@ nav:
       - "AMIGO DISCO data": amigo_disco.md
       - "Spectro-interferometric observables": spectro_observables.md
       - "Radio interferometry": radio_interferometry.md
+      - "Cross-validation": cross_validation.md
   - Binaries:
       - "Binary search": binary_search.md
       - "Grid searches": grid_searches.md
@@ -140,6 +141,7 @@ nav:
       - Epochs: api/epochs.md
       - Orbit Search: api/orbit_search.md
       - Radio: api/radio.md
+      - Cross-validation: api/crossval.md
       - Fields: api/fields.md
       - Scenes: api/scenes.md
       - Metrics: api/metrics.md

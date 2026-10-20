@@ -7,6 +7,31 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Image smoothing
+
+- `Image(smooth_fwhm_mas=...)` carries a fixed Gaussian smoothing kernel: its
+  visibilities are the pixel transform times the analytic Gaussian, and
+  `Image.smoothed()` returns the convolved pixels. `TSV`, `TV`, `MaxEntropy`,
+  `Laplacian`, `StarletL1` and `LogSum` take `smoothed=True` to penalize them,
+  as MPoL does. Defaults are unchanged. `CalibrationNuisance.taper_fwhm_mas`
+  stays; setting both warns. Provisional (see Stability below).
+
+### Orbit fitting with gains
+
+- The scale-marginalized surface (`marginal_loglike`, `epoch_positions`,
+  `rank_orbits`, `fit_orbit_aliases`) accepts data with gains or closure-phase
+  offsets, which it refused. Each affected block has covariance
+  s²D + UUᵀ, so ln s is integrated numerically (32-node Gauss–Legendre on a
+  window around the integrand's peak, exact log determinant at every node).
+  Such data take `s_max = 10` when none is given. `vis_amp` is refused for
+  them; `vis_amp=True` (the default) then means none, logged at INFO. For
+  data with gains or offsets, an estimated tempering factor above 3 warns
+  "noise model inadequate".
+
+### Added
+
+- `virgil.crossval`: k-fold cross-validation of a hyperparameter for any likelihood term that takes a mask, as one process or as array tasks with JSON records (provisional).
+
 ### Stability
 
 virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
@@ -41,7 +66,8 @@ Provisional in 0.4:
   longer emits a `FutureWarning`;
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
-- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances.
+- the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances;
+- image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers.
 
 ### Added
 
@@ -961,6 +987,8 @@ Provisional in 0.4:
 - **Bandwidth smearing for binaries, rotated scenes and resolved backgrounds.** With `bandwidth` set, `BinaryModelCartesian`, `BinaryModelAngular`, `Rotated` scenes and `System(star, bg=Resolved())` raised a `TypeError` saying only that Systems of Components are supported. They are now smeared (binaries as their `to_system()`, `Resolved` has no offset to smear, `Rotated` rotates the baselines), and an unsupported model, such as an `OrbitalBinary` that is not a snapshot, raises a `TypeError` that names it and lists the supported ones.
 
 - **`fit(method="lbfgs")` restarts a round that crawls.** L-BFGS now runs in rounds of 2000 steps and restarts from the last point with fresh curvature memory (keeping the first round's gradient tolerance) while a round that used all its steps still gains in the loss, and runs the rest of `max_steps` as one last round once it does not, instead of spending all 20 000 steps with a memory spoilt by a parameter running into a bound. On macOS the limb-darkened `StarPipeline(cov_scale="fit")` fit crawled to the step limit with χ² at the fitted scales 94 against N = 81; Linux converged in under 700 steps. Fits that converge, stall or time out within 2000 steps are unchanged, and `info["steps"]` is the total over the rounds.
+
+- **`fit(method="lm")` no longer accepts a step that raises the loss.** optimistix accepts a Levenberg–Marquardt step when the loss change is at most 1% of the *predicted* change, so a step whose predicted change is positive (a damped solve that came out wrong, which on macOS happened in about half of the fits of a noise-free limb-darkened star with a companion, started 5% from the truth) was accepted whatever it did to the loss: the companion's flux fell to 0, its offset ran to the prior bound, and the fit stopped there at χ² of order 10⁶ against 10⁻¹⁵ at the truth. Such a step is now rejected and the damping raised, so an LM fit never ends above its starting loss. Found by the independent validation suite ([virgil-validation#138](https://github.com/benjaminpope/virgil-validation/pull/138)).
 
 - **Alias fits reach the likelihood ridge.** `fit_orbit_aliases`'
   L-BFGS-B refinement stopped on its relative-reduction test 50-800 nats
