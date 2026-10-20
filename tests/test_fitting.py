@@ -2,17 +2,25 @@ import warnings
 
 import jax
 import jax.numpy as np
+import lineax as lx
 import numpy as onp
+import optimistix as optx
 import numpyro
 import numpyro.distributions as dist
 import pytest
 
 from virgil._precision import cast_tree, run_in
 from virgil.coverage import ami_grid_record, vlti_oidata
-from virgil.fitting import _Objective, fit
+from virgil.fitting import _GradientStoppedLM, _Objective, fit
 from virgil.imaging import TSV, Centroid, MaxEntropy, image_priors
 from virgil.likelihood import numpyro_model, whitened_residuals
-from virgil.models import BinaryModelCartesian, Image, PointSource, System
+from virgil.models import (
+    BinaryModelCartesian,
+    Image,
+    PointSource,
+    QuadraticLimbDarkenedDisk,
+    System,
+)
 from virgil.oidata import OIData
 from virgil.scenes import gaussian_blob
 
@@ -1218,3 +1226,84 @@ def test_final_gradient_is_the_carrys_before_any_step():
     assert float(_final_gradient(at_start)) == 0.5
     after = (2, None, state, 1.0, np.asarray(0.5), True)
     assert float(_final_gradient(after)) == 4.0
+
+
+def test_lm_rejects_a_step_that_raises_the_loss():
+    # An ill-conditioned damped solve can return a step whose predicted
+    # reduction is positive. optimistix then accepts any loss increase of
+    # at most 1% of that prediction (here 4.5 against 0.5 at the start),
+    # and a fit started beside the truth ran off to a prior bound.
+    solver = _GradientStoppedLM(1e-4, 100, lx.QR())
+    y, evaluated_at = np.zeros(2), np.array([2.0, 0.0])
+    now = optx.FunctionInfo.ResidualJac(
+        np.array([1.0, 0.0]), lx.MatrixLinearOperator(1000.0 * np.eye(2))
+    )
+    worse = optx.FunctionInfo.ResidualJac(np.array([3.0, 0.0]), now.jac)
+    better = optx.FunctionInfo.ResidualJac(np.array([0.5, 0.0]), now.jac)
+    state = solver.search.init(y, now)
+
+    def accepts(search, evaluated):
+        out = search.step(
+            np.array(False), y, evaluated_at, now, evaluated, state
+        )
+        return bool(out[1]), float(out[0])
+
+    assert accepts(optx.ClassicalTrustRegion(), worse)[0]  # the premise
+    assert accepts(solver.search, worse) == (False, 0.25)
+    assert accepts(solver.search, better)[0]
+
+
+def test_a_fit_near_the_truth_does_not_run_away_from_it():
+    # Noise-free limb-darkened star and companion, started 5% off in the
+    # star and 0.5 mas off in the companion. LM's first steps are large
+    # (the data are exact, so chi2 is ~1e6 at the start), and before it
+    # rejected steps that raise the loss, about half of such fits ended at
+    # the prior bound (the companion's flux near 0, its offset at the
+    # edge). Repeated, because the bad steps were intermittent.
+    truth_values = {
+        "star.diam": 6.0,
+        "star.q1": 0.36,
+        "star.q2": 0.29,
+        "comp.flux": 0.03,
+        "comp.dra": -14.0,
+        "comp.ddec": 9.0,
+    }
+    start_values = {
+        "star.diam": 5.7,
+        "star.q1": 0.5,
+        "star.q2": 0.5,
+        "comp.flux": 0.022,
+        "comp.dra": -13.5,
+        "comp.ddec": 8.7,
+    }
+    priors = {
+        "star.diam": dist.Uniform(0.0, 18.0),
+        "star.q1": dist.Uniform(0.0, 1.0),
+        "star.q2": dist.Uniform(0.0, 1.0),
+        "comp.flux": dist.Uniform(0.0, 1.0),
+        "comp.dra": dist.Uniform(-166.0, 166.0),
+        "comp.ddec": dist.Uniform(-166.0, 166.0),
+    }
+    with jax.enable_x64(True):
+        truth = System(
+            star=QuadraticLimbDarkenedDisk(6.0, q1=0.36, q2=0.29),
+            comp=PointSource(0.03, -14.0, 9.0),
+        )
+        data = vlti_oidata(
+            hour_angles_h=onp.linspace(-3.0, 3.0, 7),
+            wavelengths_m=onp.linspace(1.5e-6, 2.4e-6, 6),
+            sigma_v2=0.01,
+            sigma_cp_deg=0.5,
+        ).with_model(truth)
+        start = truth
+        for path, value in start_values.items():
+            start = start.set(path, value)
+        problem = _Objective(start, priors, data, (), None, ())
+        start_loss = float(problem.loss(problem.init()))
+        for _ in range(2):
+            result = fit(start, priors, data)
+            assert result.info["loss"] <= start_loss
+            assert result.info["chi2_red"] < 1.0
+            assert not result.info["at_bound"]
+            for path, value in truth_values.items():
+                assert result.values[path] == pytest.approx(value, rel=1e-2)
