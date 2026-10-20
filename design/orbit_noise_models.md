@@ -118,19 +118,28 @@ in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the rele
    propagated errors).
    - **Quadrature: a fixed 32-node Gauss–Legendre rule on a peak-centred window**
      (Newton-centred, ±9 curvature-σ scaled by dof, inside the Jeffreys range). A rule over the
-     whole range would undersample the peak, whose width in ln s is about 1/√(2ν). Against a
-     dense 4001-point integral (vis + phi + gains + offsets), max |Δlog L| is 1.1e-3 for 16
-     nodes and 6.5e-10 for 32 (virgil#442): both meet the 0.01 bar at s_max. 32 is kept because
-     16 misses the zero-width-gains regression (match to the plain surface at 1e-6) by about
-     2e-3.
-   - **Optional speed-up: a closed-form integrand.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
-     Ũ = D^{-½}U (`gains._columns`), low-rank per block. One thin SVD per block, Ũ = QΛ^{½}
-     (K columns), then for every s, in O(K):
-     χ²(s) = (|r|² − |Qᵀr|²)/s² + Σ_k (Qᵀr)_k²/(s² + λ_k), and
-     ½ ln det = (N − K) ln s + ½ Σ_k ln(s² + λ_k).
-     It is exact, and λ_k = 0 gives back the plain integrand. It replaces one whitening per node
-     with one SVD per block; worth doing only if profiling shows the per-node whitening
-     dominates.
+     whole range would undersample the peak, whose width in ln s is about 1/√(2ν). Tests
+     (`tests/test_marginal_gains.py`, virgil#442):
+     - the absolute score matches a 4001-point dense integral with a Cholesky log det (gains on
+       V² only, default nodes) to 1e-4;
+     - differences between two models agree with dense per-block integrals (2001-point
+       trapezoid, vis + phi + gains + offsets) to about 1e-3 at 16 nodes and about 1e-9 at 32,
+       asserted at 0.01 and 1e-3. The reference itself is good to about 1e-4, so these are
+       agreements of differences, not the absolute accuracy of log L.
+     32 is kept because 16 misses the zero-width-gains regression (match to the plain surface at
+     1e-6) by about 2e-3.
+   - **Optional speed-up: a Woodbury integrand.** Whitened by D, C(s) becomes s²I + ŨŨᵀ with
+     Ũ = D^{-½}U (`gains.GainModes._columns`), of K columns. Per node, a Cholesky of the K×K
+     matrix s²I + ŨᵀŨ gives χ²(s) and ln det C(s) exactly in O(K³), and stays differentiable
+     where an eigendecomposition does not: SVD/eigh gradients divide by λ_i − λ_j, so they are
+     NaN at repeated singular values (zero widths, equal widths on symmetric baselines).
+     Two constraints:
+     - Ũ depends on the model (the columns carry dObs/dlog|V|), so it is rebuilt at every
+       likelihood evaluation and gradients flow through it.
+     - K is small only per *frame*, when there are no `spanning` modes. With spanning modes K is
+       every mode in the block (frames × modes), and the K×K work can exceed the 32 whitenings it
+       replaces.
+     Worth doing only if profiling shows the per-node whitening dominates.
 2. **`vis_amp` is off for data with gains (done).** Telescope and baseline gains supersede the
    per-night amplitude, whose profile also assumes diagonal errors. The default `vis_amp=True`
    resolves to off with an INFO message, so the engine still needs no per-system arguments; an
