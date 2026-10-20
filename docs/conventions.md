@@ -166,7 +166,7 @@ An orbit's `t_ref` is the zero of its `dt_peri`. Set it near the data (e.g. `Kep
 
 ## Orbits
 
-[`virgil.orbits`](api/orbits.md) implements the conventions below, and [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit jointly to every epoch's visibilities and closure phases.
+[`virgil.orbits`](api/orbits.md) implements the conventions below, and [Orbits from interferometric data](orbit_fitting.md) uses them end to end, fitting an orbit to every epoch's visibilities and closure phases without being told the period.
 
 An orbit gives the position of a **secondary** star relative to a **primary** (or reference) star, which sits at the origin as the scene's reference component at `flux=1`; it need not be the more massive star. The relative position is $\mathbf{r} = (\mathrm{dra}, \mathrm{ddec}, dz)$, secondary minus primary.
 

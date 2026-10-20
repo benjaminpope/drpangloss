@@ -1,6 +1,6 @@
 # Orbit methods
 
-The methods behind the helpers of [`virgil.orbits`](api/orbits.md). Angle and sign conventions are on the [conventions](conventions.md#orbits) page, and [Orbits from interferometric data](orbit_fitting.md) uses everything below end to end.
+The methods behind the helpers of [`virgil.orbits`](api/orbits.md). Angle and sign conventions are on the [conventions](conventions.md#orbits) page, and [Orbits from interferometric data](orbit_fitting.md) runs the orbit pipeline and the functions underneath it end to end.
 
 ## Orientation priors {#orientation-priors}
 

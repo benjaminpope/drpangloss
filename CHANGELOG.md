@@ -1054,6 +1054,21 @@ Provisional in 0.4:
   supersedes the removal of `chi2ppf` in #293, which is reverted. Found
   by virgil-validation (F17).
 
+### Docs
+
+- **The orbit tutorial leads with `OrbitPipeline`.** `docs/orbit_fitting.md`
+  (from `notebooks/orbit_fitting.ipynb`) now simulates two observing seasons
+  of a binary whose period is aliased, runs
+  `OrbitPipeline.from_oifits(files).run()`, reads the raw χ²/N, the checks,
+  the alias bands and the orbit, and then shows the functions the pipeline
+  calls (`epoch_positions`, `fit_orbit_aliases`, tempering) for readers who
+  need control; the "how the engine decides" sections are kept. It replaces
+  the hierarchical joint-posterior walkthrough, which started from
+  `start_from_positions`. `start_from_positions` is marked superseded by
+  `fit_orbit_aliases` and `OrbitPipeline` for an unknown period (docs only;
+  the function is unchanged). The pipeline page gains the orbit command and
+  tier, and the API page describes the orbit run's result.
+
 ## 0.3.0 (2026-10-06)
 
 Everything listed as new was added after 0.2.0.
