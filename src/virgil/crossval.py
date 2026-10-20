@@ -1,5 +1,8 @@
 """K-fold cross-validation of a hyperparameter, generic over the data.
 
+!!! warning "Provisional"
+    May change in any 0.4.x release without a deprecation cycle.
+
 The unit of work is [`cv_task`][virgil.crossval.cv_task]: fit with one
 hyperparameter setting on the training points of one fold, then score the
 held-out points. It returns a small JSON-friendly record, so the (setting,
@@ -54,6 +57,8 @@ __all__ = [
     "load_records",
     "save_record",
 ]
+
+__provisional__ = ("*",)
 
 
 def fold_masks(fold, k):
