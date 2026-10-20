@@ -1243,16 +1243,8 @@ def _tolerance(gradient, gtol):
 
 
 class _DescentTrustRegion(optx.ClassicalTrustRegion):
-    """optimistix's trust region, which never accepts a step that raises the loss.
-
-    optimistix accepts a step when the loss change is at most 1% of the
-    *predicted* change. An ill-conditioned damped solve can return a step whose
-    predicted change is positive, and then that test accepts a loss increase of
-    any size (a companion's flux driven to 0, say, after which its position has
-    no gradient and runs to its bound). A step that does not lower the loss is
-    rejected and the damping raised instead; the evaluation of the start point
-    (``first_step``) is always accepted, as in optimistix.
-    """
+    """optimistix's trust region, also rejecting any step that raises the loss
+    (optimistix accepts one when its predicted reduction is positive)."""
 
     def step(self, first_step, y, y_eval, f_info, f_eval_info, state):
         step_size, accept, result, new_state = super().step(

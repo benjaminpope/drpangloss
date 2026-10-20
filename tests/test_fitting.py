@@ -1259,7 +1259,8 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
     # (the data are exact, so chi2 is ~1e6 at the start), and before it
     # rejected steps that raise the loss, about half of such fits ended at
     # the prior bound (the companion's flux near 0, its offset at the
-    # edge). Repeated, because the bad steps were intermittent.
+    # edge). The bad steps were intermittent and seen on macOS, so on Linux
+    # this is a regression guard and the unit test above pins the rule.
     truth_values = {
         "star.diam": 6.0,
         "star.q1": 0.36,
@@ -1300,10 +1301,9 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
             start = start.set(path, value)
         problem = _Objective(start, priors, data, (), None, ())
         start_loss = float(problem.loss(problem.init()))
-        for _ in range(2):
-            result = fit(start, priors, data)
-            assert result.info["loss"] <= start_loss
-            assert result.info["chi2_red"] < 1.0
-            assert not result.info["at_bound"]
-            for path, value in truth_values.items():
-                assert result.values[path] == pytest.approx(value, rel=1e-2)
+        result = fit(start, priors, data)
+    assert result.info["loss"] <= start_loss
+    assert result.info["chi2_red"] < 1.0
+    assert not result.info["at_bound"]
+    for path, value in truth_values.items():
+        assert result.values[path] == pytest.approx(value, rel=1e-2)
