@@ -1,7 +1,7 @@
 # Pipeline parsimony review: measurement and plan
 
 Status (2026-10-19): **phase A done** (disk, star, binary and `_common`);
-**phase B waits for #422** (`_core`, `_checks`, `_io`, `_quicklook`, `orbit.py`).
+**phase B done** (`_core`, `_checks`, `_io`, `_quicklook`, `cli`, `orbit.py`; see below).
 Measured on the tree of PR #422 (`origin/pr422`, merged with `main` at
 4dafa23), because `orbit.py` is part of what is being measured; re-measure
 after `git merge origin/main`.
@@ -63,6 +63,32 @@ non-reproducibility to fix with a stable `repr`.
   errors are often conservative"); it describes a typical case, no result
   depends on it. Shared modules are audited in phase B.
 - `repr(prior)` memory address in the fit report (above).
+
+## Phase B outcome (`_core`, `_checks`, `_io`, `_quicklook`, `cli`, `orbit.py`)
+
+Lines, before to after (against `main` 9ce6578):
+
+| Module | Before | After |
+| --- | ---: | ---: |
+| `orbit.py` | 1456 | 1411 |
+| `_checks.py` | 1692 | 1732 |
+| `_common.py` | 707 | 728 |
+| `_core.py` | 533 | 538 |
+| `binary.py`, `star.py` | 2327 | 2329 |
+| `_io.py`, `_quicklook.py`, `cli.py`, `disk.py` | unchanged | unchanged |
+| **Total** | 11275 | 11298 (+23) |
+
+`orbit.py` moved onto the shared validation, `_draws`, `_chain_health`,
+`_site_summary`, `_sampler_report`, `_sampler_checks`, `_write_samples`,
+`_corner_trace` and `_pick` (-45 lines, and its band summaries are now NaN
+aware). `at_bound` and `start_at_bound` merged into one function. The net is
+positive because the robustness fixes are code: NaN guards in six checks,
+`ring_count` and `inclination` edge cases, the empty-list error and a stable
+prior description (`_prior_repr`). `_io.py`, `_quicklook.py` and `cli.py` have
+no repeated work and no unused function, so they are unchanged. A shared
+"value against two thresholds" helper (plan item 7) was tried and dropped: the
+ladders differ in meaning text and non-finite message, so the helper was no
+shorter than the code it replaced.
 
 ## 1. Measurement
 

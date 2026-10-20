@@ -24,6 +24,7 @@ from ._common import (
     _pick,
     _positive,
     _prior_bounds,
+    _prior_repr,
     _run_chains,
     _sampler_checks,
     _sampler_report,
@@ -706,7 +707,7 @@ def _fit_report(data, result, values, reported, priors):
         "residual_excess_kurtosis": kurt,
         "n_residuals": int(resid.size),
         "at_bound": list(result.info.get("at_bound", []) or []),
-        "priors": {k: repr(v) for k, v in priors.items()},
+        "priors": {k: _prior_repr(v) for k, v in priors.items()},
     }
 
 
@@ -907,7 +908,7 @@ def _fit_checks(fit, companion, load):
     if fit["error_scales"]:
         checks.append(_checks.error_scale(fit["error_scales"]))
     if fit["at_bound"]:
-        checks.append(_checks.start_at_bound(fit["at_bound"]))
+        checks.append(_checks.at_bound(fit["at_bound"], start=True))
     checks.append(
         _checks.residual_normality(
             fit["residual_skew"],

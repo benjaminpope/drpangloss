@@ -308,15 +308,8 @@ def test_data_with_no_usable_samples_is_refused():
         OIData(empty)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=IndexError,
-    reason="from_oifits([]) raises a bare IndexError (src: _core.py, "
-    "paths[0] on an empty list) where read_oifits says 'empty list of "
-    "files'",
-)
 def test_from_oifits_refuses_an_empty_list_with_a_clear_error(tmp_path):
-    with pytest.raises(ValueError, match="empty list"):
+    with pytest.raises(ValueError, match="at least one OIFITS file"):
         BinaryPipeline.from_oifits([], output=tmp_path / "run")
 
 
