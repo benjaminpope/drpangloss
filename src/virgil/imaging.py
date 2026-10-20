@@ -84,11 +84,14 @@ class _ImageRegulariser(eqx.Module):
     def pixels(self, model):
         """The pixels penalized: the raw ``brightness``, or, with the
         ``smoothed`` option, the Image's ``smoothed()`` pixels (MPoL's
-        convention), clipped at zero against FFT round-off."""
+        convention), floored at the smallest positive float: FFT round-off
+        leaves tiny negatives, and an exact zero would give NaN gradients in
+        ``xlogy``."""
         image = self.image(model)
         if not self.smoothed:
             return image.brightness
-        return np.maximum(image.smoothed(), 0.0)
+        b = image.smoothed()
+        return np.maximum(b, np.finfo(b.dtype).tiny)
 
     def image(self, model):
         """The regularized [`Image`][virgil.models.Image] in ``model``."""
@@ -1824,6 +1827,11 @@ class LCurve:
             image = model.get(path)
             if _whitened_field(image.log_brightness):
                 raise TypeError("classic_maxent needs a pixel Image.")
+            if image.smooth_fwhm_mas is not None:
+                raise ValueError(
+                    "classic_maxent does not support a smoothed Image: its "
+                    "entropy metric uses the raw pixels."
+                )
             _, jac = _residual_jacobian(
                 model, data, path + ".log_brightness", on_device=True
             )
@@ -2946,7 +2954,7 @@ def diagnose(model, data, regularizers=()):
                     f"the Nyquist scale {nyquist:.3g} mas of the longest "
                     "baseline; use smaller pixels."
                 )
-            edge = float(1.0 - np.sum(im.brightness[2:-2, 2:-2]))
+            edge = float(1.0 - np.sum(im.smoothed()[2:-2, 2:-2]))
             checks["edge_flux"].append(edge)
             if edge > 0.05:
                 warns.append(

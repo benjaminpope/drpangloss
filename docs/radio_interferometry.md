@@ -167,15 +167,17 @@ MPoL's chain `BaseCube` (softplus) → `GaussConvFourier` (FWHM 30 mas) →
 
 Use the nuisance taper for a scene that is not an `Image`, or to blur a
 parametric model; use `smooth_fwhm_mas` when the blur belongs to the image
-model and regularisers should see it. Setting both blurs twice, so `fit` and
-`data.term` raise a `UserWarning` when they meet.
+model and regularisers should see it. Setting both blurs the model twice, so `fit` and
+`data.term` warn (`UserWarning`) when they meet.
 
 **Accuracy.** `smoothed()` crops its result to the image, so flux spreading
 past the edges is lost (keep the emission clear of them). For a kernel of at
 least 3 pixels FWHM the transform of the smoothed pixels equals the analytic
 Gaussian times the raw transform to about `exp(-π² θ² (1/p - q)² / (4 ln 2))`
-of the flux at `q <= 0.25 / p` (p the pixel size): 3e-11 in float64 for a
-compact image. A narrower kernel is not band-limited on the pixel grid, and
+of the flux (an upper bound, times the raw transform at the aliased
+frequency), p the pixel size: about 1.5e-8 at FWHM 3 px and `q = 0.25 / p`.
+Measured on a compact image in float64 with `|q| <= 0.25 / p`, the error is
+3e-11 of the flux at 3 px. A narrower kernel is not band-limited on the pixel grid, and
 the discretisation error grows quickly; the visibilities, which use the
 analytic factor, stay exact.
 

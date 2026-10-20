@@ -5,7 +5,7 @@ import jax.numpy as np
 import numpy as onp
 import pytest
 
-from virgil._geometry import gaussian_taper, image_visibilities
+from virgil._geometry import UVGrid, gaussian_taper, image_visibilities
 from virgil._utils import mas2rad
 from virgil.fitting import fit
 from virgil.imaging import MaxEntropy, TSV, TV, LogSum, image_priors
@@ -83,11 +83,18 @@ def test_no_smoothing_is_unchanged():
 
 def test_grid_path_is_smoothed_too():
     img = _blob(smooth_fwhm_mas=8.0)
-    u = onp.linspace(-3e6, 3e6, 7)
-    wavel = 1.3e-3
-    vis = img.model(u * wavel, 0.0 * u, wavel)
-    want = img._centred_cvis(u, 0.0 * u)
-    onp.testing.assert_allclose(vis, want, rtol=1e-5, atol=1e-7)
+    wavel = 4.8e-6
+    u_axis = np.linspace(-6.0, 6.0, 5)
+    v_axis = np.linspace(-6.0, 6.0, 4)
+    grid = UVGrid(u_axis, v_axis, np.arange(20), 0.0)
+    u = np.tile(u_axis, 4)
+    v = np.repeat(v_axis, 5)
+    got = img.model_on_grid(u, v, wavel, grid)
+    want = img.model(u, v, wavel)
+    onp.testing.assert_allclose(got, want, rtol=1e-4, atol=1e-6)
+    # ... and the smoothing is really in it
+    raw = _blob().model_on_grid(u, v, wavel, grid)
+    assert float(np.max(np.abs(got - raw))) > 1e-3
 
 
 def test_invalid_fwhm():
@@ -122,7 +129,12 @@ def test_max_entropy_on_smoothed_pixels_matches_hand_computation():
 
 
 @pytest.mark.parametrize(
-    "reg", [TV(1.0, smoothed=True), LogSum(1.0, smoothed=True)]
+    "reg",
+    [
+        TV(1.0, smoothed=True),
+        LogSum(1.0, smoothed=True),
+        MaxEntropy(1.0, smoothed=True),
+    ],
 )
 def test_other_regularisers_accept_smoothed(reg):
     img = _blob(smooth_fwhm_mas=8.0)
@@ -170,7 +182,7 @@ def test_fit_through_smoothed_image_compiles_once(monkeypatch):
         return start.set("log_brightness", values["log_brightness"])
 
     def model(**values):
-        return start
+        return scene(values)
 
     def run(weight):
         priors = nuis.priors()
