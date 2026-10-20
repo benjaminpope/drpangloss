@@ -82,9 +82,10 @@ in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the rele
   worked example's wrong nights are off in Dec by 3–15 mas: that fits. A right noise model sets
   the relative heights of the peaks correctly but does not remove them. The orbit must choose
   between them: keep several peaks per night and flag implausible ones (§3.2.5).
-- **Binning HIGH by 8 channels costs nothing for a continuum binary.** HIGH samples about 2.5
-  channels per resolution element, so 8 channels give MEDIUM-like sampling (resolving power
-  about 1,200). The phase change across one bin for s = 15 mas, B = 130 m is about 0.004 cycle.
+- **Binning HIGH by 8 channels costs nothing for a continuum binary.** About 1,400 channels over
+  2.05–2.38 µm (or K, about 0.45 µm) are 2.4–3.2e-4 µm each, so an 8-channel bin is about
+  2–2.6e-3 µm: resolving power λ/Δλ ≈ 850–1,100, MEDIUM-like. For s = 15 mas, B = 130 m (about
+  4.3 fringe cycles at 2.2 µm) the phase change across one bin is 0.004–0.005 cycle.
   Keep the Brγ window (2.155–2.175 µm) out.
 - **Primary diameter.** Keep the UD primary (virgil 1c). Calibrator-diameter uncertainties enter
   as modes from virgil-vlti, not as inflated errors.
@@ -155,12 +156,17 @@ in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the rele
      contribution, divided by the quoted errors. They keep channel order, and the common mode
      the gains absorb is gone before f is estimated, for closure phases too.
    - **What `dof` tempers:** the whole per-block log L(s), the log det included (a power
-     likelihood, as before). This does not double count: f is measured only on what the gains
-     leave.
-   - **Acceptance (done):** block f ≤ 3 on data with gains or offsets. f > 3 is reported as
-     "noise model inadequate" (`aliases._INADEQUATE_F`) and is never silently tempered away.
-     For 2 < f ≤ 3, and for data without gains, the `FLAG_RANGE` (0.5–2) warning fires as
-     before.
+     likelihood, as before). This is approximate: f is measured on what the gains leave, but
+     the power 1/f also discounts the K gain-mode directions, which were never measured to need
+     it. The bias is negligible for K ≪ N. Tempering only the complement of the gain modes
+     would remove it, but needs the Woodbury integrand below (§3.2.1), which would then no
+     longer be optional.
+   - **Acceptance (done):** block f ≤ 3 on data with gains or offsets, with f_raw ≥ 0.5.
+     f > 3 is reported as "noise model inadequate" (`aliases._INADEQUATE_F`) and is never
+     silently tempered away. For 2 < f ≤ 3 the `FLAG_RANGE` (0.5–2) tempering warning is
+     expected and accepted: tempering is applied and reported. f_raw < 0.5 (anticorrelated
+     residuals, `tempering.out_of_range`) fails. Data without gains keep the `FLAG_RANGE`
+     warning as before.
 4. **One treatment of gains: marginalize (open).** `orbit_search` profiles gains while the alias
    engine marginalizes them, so with many gain dofs per night the ranking and the evidence can
    disagree about the best orbit. `orbit_search` should marginalize by default.
@@ -190,7 +196,8 @@ V² stay labelled legacy until rerun.
    the s-regime cases.
 2. **One night of the failing system on the laptop (≤ 2 min, bin 8).** After calibration and
    gains: χ²/N ≈ 1 on the effective covariance (s²D + UUᵀ at s = 1; the raw χ² on the
-   propagated errors reported beside it, as `chi2_per_night` does), f ≤ 3, and the peak set
+   propagated errors reported beside it, as `chi2_per_night` does), 0.5 ≤ f_raw and f ≤ 3 (a `FLAG_RANGE` warning for 2 < f ≤ 3
+   is expected and accepted, §3.2.3), and the peak set
    contains the published position (compared only after the fit).
 3. **OzSTAR: the whole gallery, blind.** Success means the published orbits are recovered in
    the sky plane (Thiele–Innes) where the papers solved them, the failing system's top band is
