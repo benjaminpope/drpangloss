@@ -7,6 +7,22 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Matrix Fourier transform for rendered disks on DISCO lattices
+
+- `FlaredDisk` (and `FlaredDiskHG`, `FlaredDiskGaussian`, `FlaredDiskPowerLaw`)
+  use the exact two-sided matrix Fourier transform on data with a `uv_grid`,
+  as `Image` does. A new `rotation_deg` orients the disk's pixel grid; the
+  default, `"grid"`, renders it in the frame of the data's lattice (North up
+  without one), so DISCO data always take the fast path. On the old PDS 70
+  product this changes ln L by under 0.005 (the pixel discretisation) and
+  runs 3–4× faster for a 96² disk at 1300 uv points.
+- `Rotated` passes the lattice on to its source when its angle is fixed.
+- Dictionaries with `disco_vis_mat` or `disco_phi_mat` (the drpangloss DISCO
+  format) get a `uv_grid` when their single-wavelength samples lie on a
+  lattice to 1e-5 cells, as the mixed-DISCO loader already did; both use
+  `disco_uv_grid`. `find_uv_grid` now fits the lattice by least squares, so
+  float32 coordinates no longer defeat it.
+
 ### Image smoothing
 
 - `Image(smooth_fwhm_mas=...)` carries a fixed Gaussian smoothing kernel: its
