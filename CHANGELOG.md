@@ -835,6 +835,17 @@ contributors page; no code was copied)
   fit crawled to the step limit with χ² at the fitted scales 94 against N =
   81; Linux converged in under 700 steps. Fits that converge, stall or time
   out within 2000 steps are unchanged, and `info["steps"]` is the total.
+- **`fit(method="lm")` no longer accepts a step that raises the loss.**
+  optimistix accepts a Levenberg–Marquardt step when the loss change is at
+  most 1% of the *predicted* change, so a step whose predicted change is
+  positive (a damped solve that came out wrong, which on macOS happened in
+  about half of the fits of a noise-free limb-darkened star with a companion,
+  started 5% from the truth) was accepted whatever it did to the loss: the
+  companion's flux fell to 0, its offset ran to the prior bound, and the fit
+  stopped there at χ² of order 10⁶ against 10⁻¹⁵ at the truth. Such a step is
+  now rejected and the damping raised, so an LM fit never ends above its
+  starting loss. Found by the independent validation suite
+  ([virgil-validation#138](https://github.com/benjaminpope/virgil-validation/pull/138)).
 - **Alias fits reach the likelihood ridge.** The L-BFGS-B refinement stopped on
   its relative-reduction test 50–800 nats short of the optimum on a
   many-cycle orbit's narrow ridge, so about one noise draw in four settled in
