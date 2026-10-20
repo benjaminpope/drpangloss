@@ -19,6 +19,10 @@ anything before 1.0 may change between minor versions.
   data with gains or offsets, an estimated tempering factor above 3 warns
   "noise model inadequate".
 
+### Added
+
+- `virgil.crossval`: k-fold cross-validation of a hyperparameter for any likelihood term that takes a mask, as one process or as array tasks with JSON records (provisional).
+
 ### Stability
 
 virgil 0.4.0 has two tiers (see the [Stability page](docs/stability.md)).
