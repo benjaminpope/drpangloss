@@ -15,8 +15,12 @@ anything before 1.0 may change between minor versions.
   default, `"grid"`, renders it in the frame of the data's lattice (North up
   without one), so DISCO data always take the fast path. On the old PDS 70
   product this changes ln L by under 0.005 (the pixel discretisation) and
-  runs 3–4× faster for a 96² disk at 1300 uv points.
-- `Rotated` passes the lattice on to its source when its angle is fixed.
+  runs 3–4× faster for a 96² disk at 1300 uv points. With `"grid"`,
+  `disk.model(u, v, wavel)` and data without a lattice keep North-up pixels,
+  so they differ from the lattice path by that discretisation. Provisional.
+- Ensembles on drpangloss DISCO dictionaries now cap every field factor at 1,
+  as on other lattice data (a larger field aliases), so the same seed draws
+  smaller fields than before.
 - Dictionaries with `disco_vis_mat` or `disco_phi_mat` (the drpangloss DISCO
   format) get a `uv_grid` when their single-wavelength samples lie on a
   lattice to 1e-5 cells, as the mixed-DISCO loader already did; both use
@@ -83,6 +87,7 @@ Provisional in 0.4:
 - `virgil.imaging.clean` and `CleanResult`;
 - `virgil.metrics`;
 - the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, and the automatic thresholds and tolerances;
+- the `rotation_deg` argument of `FlaredDisk*` (and its `"grid"` default) and the lattice tolerance for DISCO dictionaries;
 - image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers.
 
 ### Added

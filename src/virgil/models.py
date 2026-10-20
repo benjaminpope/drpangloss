@@ -47,7 +47,6 @@ from ._geometry import (
     pixel_offsets,
     separation_pa,
     rotate,
-    UVGrid,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -5636,21 +5635,6 @@ class Rotated(SourceModel):
     def model(self, u, v, wavel):
         u, v = rotate(u, v, -self.rotation_deg)
         return self.source.model(u, v, wavel)
-
-    def model_on_grid(self, u, v, wavel, grid):
-        # The lattice, seen from the source's frame, turns the other way. Its
-        # rotation is static: a traced (fitted) angle takes the direct path.
-        angle = concrete(self.rotation_deg)
-        if angle is None or onp.size(angle) != 1:
-            return self.model(u, v, wavel)
-        u, v = rotate(u, v, -self.rotation_deg)
-        turned = UVGrid(
-            grid.u_axis,
-            grid.v_axis,
-            grid.index,
-            grid.rotation_deg - float(angle),
-        )
-        return self.source.model_on_grid(u, v, wavel, turned)
 
     def resolved(self):
         source = self.source.resolved()

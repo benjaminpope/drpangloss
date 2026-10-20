@@ -468,22 +468,22 @@ def find_uv_grid(u, v, tolerance=1e-6):
 # Largest offset of a DISCO sample from its fitted lattice point, in cells:
 # drpangloss-format products store (u, v) in float32, which rounds them by a
 # few 1e-6 cells across a lattice tens of cells wide.
-DISCO_GRID_TOLERANCE = 1e-5
+_DISCO_GRID_TOLERANCE = 1e-5
 
 
-def disco_uv_grid(u, v, wavel):
+def _disco_uv_grid(u, v, wavel):
     """The lattice of one filter of an AMIGO DISCO product, or ``None``.
 
     AMIGO builds its DISCO products on a regular uv lattice, so the samples
     of one filter (one wavelength) lie on one, to within
-    ``DISCO_GRID_TOLERANCE`` cells. ``None`` for several wavelengths, for
+    ``_DISCO_GRID_TOLERANCE`` cells. ``None`` for several wavelengths, for
     samples off a lattice, and for a lattice mostly empty (more than four
     cells per sample), whose transform could cost more than the per-point
     sum it replaces.
     """
     if onp.size(wavel) != 1:
         return None
-    grid = find_uv_grid(u, v, tolerance=DISCO_GRID_TOLERANCE)
+    grid = find_uv_grid(u, v, tolerance=_DISCO_GRID_TOLERANCE)
     if grid is None or grid.u_axis.size * grid.v_axis.size > 4 * onp.size(u):
         return None
     return grid

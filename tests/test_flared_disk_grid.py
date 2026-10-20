@@ -214,25 +214,26 @@ def test_dictionaries_off_a_dense_disco_lattice_get_none(case):
     assert OIData(record).uv_grid is None
 
 
-@pytest.mark.validates(
-    "virgil.models.Rotated.model_on_grid", roots=["self-consistency"]
-)
-def test_a_rotated_disk_follows_the_lattice_in_its_own_frame():
-    with jax.enable_x64(True):
-        data = OIData(ami_grid_record(rotation_deg=ROTATION))
-        grid = data.uv_grid
-        scene = Rotated(_disk(ft="dft"), 20.0)
-        fast = scene.model_on_grid(data.u, data.v, data.wavel, grid)
-        frame = grid.rotation_deg - 20.0
-        slow = Rotated(_disk(rotation_deg=frame, ft="dft"), 20.0).model(
-            data.u, data.v, data.wavel
-        )
-        assert np.max(np.abs(fast - slow)) < 1e-10 * np.max(np.abs(slow))
-        # A fitted (traced) angle cannot turn the static lattice.
-        traced = jax.jit(
-            lambda a: Rotated(_disk(ft="dft"), a).model_on_grid(
-                data.u, data.v, data.wavel, grid
-            )
-        )(20.0)
-        north = Rotated(_disk(rotation_deg=0.0, ft="dft"), 20.0)
-        assert np.allclose(traced, north.model(data.u, data.v, data.wavel))
+def test_a_rotated_disk_takes_the_direct_path_eagerly_and_under_jit():
+    # Rotated's angle is traced inside every fit, so it never forwards the
+    # lattice: the disk renders North up in its own frame either way.
+    data = OIData(ami_grid_record(rotation_deg=ROTATION))
+    scene = Rotated(_disk(ft="dft"), 20.0)
+    eager = data.model(scene)
+    jitted = eqx.filter_jit(lambda m: data.model(m))(scene)
+    direct = _without_grid(data).model(
+        Rotated(_disk(rotation_deg=0.0, ft="dft"), 20.0)
+    )
+    assert np.array_equal(eager, direct)
+    assert np.allclose(jitted, direct, rtol=1e-6, atol=1e-6)
+
+
+def test_ensemble_fields_are_capped_on_a_disco_dictionary_lattice():
+    from virgil.ensemble import EnsembleSpec, draw_groups
+
+    u, v = _lattice(31.7, dtype=onp.float32)
+    data = OIData(_disco_record(u, v))
+    assert data.uv_grid is not None
+    spec = EnsembleSpec(field_factors=(4.0,), field_mas=100.0, max_npix=1024)
+    for d in draw_groups(data, 4, jax.random.PRNGKey(0), spec):
+        assert d.npix * d.pixel_scale_mas <= 100.0 + d.pixel_scale_mas

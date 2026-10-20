@@ -12,7 +12,7 @@ from pathlib import Path
 import jax.numpy as np
 import numpy as onp
 
-from ._geometry import disco_uv_grid
+from ._geometry import _disco_uv_grid
 
 
 MIXED_DISCO_REQUIRED_FIELDS = (
@@ -138,7 +138,7 @@ def mixed_disco_fields(record):
         ),
         "vis_index": None,
         "phi_index": None,
-        "uv_grid": disco_uv_grid(u, v, record["wavelength_m"]),
+        "uv_grid": _disco_uv_grid(u, v, record["wavelength_m"]),
         "cp_noise": None,
         "vis_encoding": "mixed_log_complex",
         "vis_mode": "logamp",
