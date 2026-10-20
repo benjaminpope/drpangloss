@@ -125,7 +125,7 @@ print(
 8 nights, each with 108 V² and 72 closure phases (162 independent observables)
 ```
 
-The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor for $V^2$, and somewhat below it for closure phases. This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
+The quoted errors are too small, as the data show: the reduced χ² of the *true* model against each night's data, on the quoted errors, is close to the square of that night's error factor for $V^2$, and below it for closure phases on every night of this draw. The simulation is not biased: replicate draws of the same simulation (20 per night, true model) average to factor² for both observables, within about 5 per cent, so the low closure-phase values are a fluctuation of this seed. This raw χ²/N is the first number to look at for any fit; a fit that rescaled the errors until χ² came out near 1 would hide the problem.
 
 ```python
 print("   MJD    χ²_r V²  (true factor²)   χ²_r CP  (true factor²)")
