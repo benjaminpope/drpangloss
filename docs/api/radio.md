@@ -14,3 +14,4 @@ likelihood term for [`fit`](fitting.md). See the
         - CalibrationNuisance
         - primary_beam
         - dartboard_folds
+        - SigmaScale
