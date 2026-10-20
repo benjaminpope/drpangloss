@@ -405,9 +405,8 @@ def test_from_oifits_rejects_a_list_with_one_bad_file(junk, tiny, tmp_path):
 
 
 def test_from_oifits_without_files_raises(tmp_path):
-    # An empty list has no data: it must raise, not build a pipeline. (It is
-    # an IndexError today, "list index out of range", which names nothing.)
-    with pytest.raises((ValueError, IndexError)):
+    # An empty list has no data: it must raise, not build a pipeline.
+    with pytest.raises(ValueError, match="at least one OIFITS file"):
         DiskPipeline.from_oifits([], output=tmp_path / "run")
 
 

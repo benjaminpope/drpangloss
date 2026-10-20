@@ -29,7 +29,7 @@ import jax.numpy as np
 import numpy as onp
 
 from ._geometry import gaussian_taper, offset_phase, pixel_offsets
-from ._utils import rad2mas
+from ._utils import mas2rad, rad2mas
 from .models import Image, SourceModel
 
 __provisional__ = ("*",)

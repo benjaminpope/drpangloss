@@ -134,9 +134,13 @@ def error_scale(scales, *, warn=2.0, fail=5.0, kind="fitted"):
     the model is wrong; rescaling then makes χ² ≈ 1 by construction, so the
     raw χ²/N on quoted errors is the number to quote.
     """
-    worst = max((float(s) for s in scales.values()), default=1.0)
+    values = [float(s) for s in scales.values()]
+    worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
     names = ", ".join(f"{k} = {float(v):.3g}" for k, v in scales.items())
-    if worst > fail:
+    if not _finite(worst):
+        status = "fail"
+        meaning = "an error scale is not finite"
+    elif worst > fail:
         status = "fail"
         meaning = "the fit failed to describe the data on its quoted errors"
     elif worst > warn:
@@ -247,8 +251,10 @@ def prior_bound(fractions, *, warn=0.05):
     warn : float, optional
         Fraction above which to warn.
     """
+    piled = [k for k, f in fractions.items() if not _finite(f) or f > warn]
     worst = max(fractions.values(), default=0.0)
-    piled = [k for k, f in fractions.items() if f > warn]
+    if not all(map(_finite, fractions.values())):
+        worst = math.nan
     if piled:
         return Check(
             "prior_bound",
@@ -264,27 +270,6 @@ def prior_bound(fractions, *, warn=0.05):
         worst,
         warn,
         "No posterior mass piles up at a prior bound.",
-    )
-
-
-def start_at_bound(names):
-    """The best fit, where NUTS starts, sits at a prior bound.
-
-    Parameters
-    ----------
-    names : sequence of str
-        The fitted parameters within 0.1% of a prior bound (``fit``'s
-        ``at_bound``). Callers add this check only when there are some.
-    """
-    names = list(names)
-    return Check(
-        "start_at_bound",
-        "warn",
-        names,
-        None,
-        f"The best fit sits at a prior bound for {', '.join(names)}, so the "
-        f"data do not constrain it there (a non-detection?): NUTS starts "
-        f"just inside the bound and that posterior is prior-dominated.",
     )
 
 
@@ -333,6 +318,14 @@ def divergences(fraction, *, walls=None, warn=0.0, fail=0.01, exposed=0.05):
     warns instead of failing and says so. The ESS and R-hat checks still
     judge the draws.
     """
+    if not _finite(fraction):
+        return Check(
+            "divergences",
+            "fail",
+            fraction,
+            fail,
+            "The fraction of divergent transitions is not finite.",
+        )
     if fraction > fail:
         status, meaning = "fail", "the posterior is not reliable"
     elif fraction > warn:
@@ -413,6 +406,15 @@ def field_of_view(sep, resolution, fov):
     fov : float
         Field-of-view radius (mas), the coarsest λ/B of the samples.
     """
+    if not all(map(_finite, (sep, resolution, fov))):
+        return Check(
+            "field_of_view",
+            "warn",
+            sep,
+            [resolution, fov],
+            "The separation, resolution limit or field of view is not "
+            "finite, so the companion's position could not be checked.",
+        )
     if sep < resolution:
         return Check(
             "field_of_view",
@@ -779,6 +781,16 @@ def ring_count(n_best, rows, halffringe, *, nats=3.0, split=()):
     visibilities, so its width is not measured.
     """
     by_n = {r["n"]: r for r in rows}
+    if n_best not in by_n:
+        return Check(
+            "ring_count",
+            "warn",
+            None,
+            nats,
+            f"The fit with {n_best} ring{'s' if n_best != 1 else ''} is not "
+            "among the fitted ring counts, so the choice could not be "
+            "checked.",
+        )
     best = by_n[n_best]
     margins = {}
     for n in (n_best - 1, n_best + 1):
@@ -790,15 +802,18 @@ def ring_count(n_best, rows, halffringe, *, nats=3.0, split=()):
             other.get("log_evidence")
         ):
             gaps.append(best["log_evidence"] - other["log_evidence"])
-        margins[n] = min(gaps)
+        # A margin that is not finite (a BIC that failed) is not a clear one.
+        margins[n] = min(gaps) if all(map(_finite, gaps)) else math.nan
     narrow = [
         i + 1
-        for i, w in enumerate(best["widths"])
+        for i, w in enumerate(best.get("widths", ()))
         if not _finite(w) or w < halffringe
     ]
     worst = min(margins.values(), default=None)
+    if not all(map(_finite, margins.values())):
+        worst = None
     problems = []
-    unclear = [n for n, m in margins.items() if m < nats]
+    unclear = [n for n, m in margins.items() if not _finite(m) or m < nats]
     if unclear:
         problems.append(
             "the data do not clearly prefer "
@@ -950,9 +965,10 @@ def inclination(inc, pa_sd, n_minima, *, minimum=15.0, max_pa_sd=45.0):
     """
     reasons = []
     if not _finite(inc) or inc < minimum:
+        shown = "unknown" if inc is None else f"{float(inc):.3g}°"
         reasons.append(
-            f"the inclination is {float(inc):.3g}°, below {minimum:g}°, so "
-            "the position angle is unconstrained and is reported without an "
+            f"the inclination is {shown}, below {minimum:g}°, so the "
+            "position angle is unconstrained and is reported without an "
             "uncertainty"
         )
     elif pa_sd is not None and (not _finite(pa_sd) or pa_sd > max_pa_sd):
@@ -960,7 +976,7 @@ def inclination(inc, pa_sd, n_minima, *, minimum=15.0, max_pa_sd=45.0):
             "the position angle's Laplace standard deviation is "
             f"{float(pa_sd):.3g}°, so it is unconstrained"
         )
-    if n_minima > 1:
+    if n_minima is not None and n_minima > 1:
         reasons.append(
             f"the geometry grid has {n_minima} comparable minima, so the "
             "inclination and position angle are multimodal"
@@ -1200,7 +1216,7 @@ def stage_warning_checks(warning_records):
     return checks
 
 
-def at_bound(names):
+def at_bound(names, *, start=False):
     """Fitted parameters within 0.1% of a prior bound.
 
     A prior capped too tight pins a parameter silently: the fit is then the
@@ -1210,8 +1226,23 @@ def at_bound(names):
     ----------
     names : sequence of str
         The fitted parameters at a bound (``fit``'s ``at_bound``).
+    start : bool, optional
+        Report the bound as the start of NUTS (the ``start_at_bound`` check,
+        added by the posterior stage only when there are some): the
+        posterior then starts just inside the bound and is prior-dominated.
     """
     names = list(names)
+    listing = ", ".join(names)
+    if start:
+        return Check(
+            "start_at_bound",
+            "warn",
+            names,
+            None,
+            f"The best fit sits at a prior bound for {listing}, so the data "
+            "do not constrain it there (a non-detection?): NUTS starts just "
+            "inside the bound and that posterior is prior-dominated.",
+        )
     if not names:
         return Check(
             "at_bound",
@@ -1225,9 +1256,9 @@ def at_bound(names):
         "warn",
         names,
         None,
-        f"The best fit sits at a prior bound for {', '.join(names)}: the "
-        "data do not constrain it there, or the prior is too tight. Widen "
-        "the prior before reading the value.",
+        f"The best fit sits at a prior bound for {listing}: the data do not "
+        "constrain it there, or the prior is too tight. Widen the prior "
+        "before reading the value.",
     )
 
 
@@ -1521,6 +1552,15 @@ def mode_converged(gap, *, warn=1.0):
     warn : float, optional
         Gap above which to warn.
     """
+    if not _finite(gap):
+        return Check(
+            "mode_converged",
+            "warn",
+            None,
+            warn,
+            "The gap between the sampler's best point and the search's best "
+            "mode is not finite: whether the mode is an optimum is unknown.",
+        )
     if gap > warn:
         return Check(
             "mode_converged",

@@ -405,7 +405,7 @@ _BRANCHES = [
     (
         "start-at-bound",
         "start_at_bound",
-        lambda: checks.start_at_bound(("flux", "sep")),
+        lambda: checks.at_bound(("flux", "sep"), start=True),
         "warn",
     ),
     ("at-bound-none", "at_bound", lambda: checks.at_bound([]), "pass"),
@@ -911,7 +911,7 @@ def test_every_branch_returns_its_named_status_and_a_json_ready_check(
         (lambda: checks.at_bound([]), ["No fitted parameter"]),
         (lambda: checks.at_bound(["a", "b"]), ["for a, b", "Widen the prior"]),
         (
-            lambda: checks.start_at_bound(["a", "b"]),
+            lambda: checks.at_bound(["a", "b"], start=True),
             ["for a, b", "prior-dominated"],
         ),
         (
@@ -1080,3 +1080,96 @@ def test_a_stuck_element_of_a_vector_site_makes_its_diagnostics_nan():
     assert onp.isnan(out["r_hat"]) and onp.isnan(out["ess_bulk"])
     assert checks.r_hat(out["r_hat"]).status == "fail"
     assert checks.ess(out["ess_bulk"]).status == "fail"
+
+
+# --- values that are not finite are never silent --------------------------
+
+_NAN = float("nan")
+
+
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda: checks.error_scale({"vis_scale": _NAN}),
+        lambda: checks.error_scale({"vis_scale": _NAN, "phi_scale": 1.0}),
+        lambda: checks.error_scale({"phi_scale": 1.0, "vis_scale": _NAN}),
+        lambda: checks.divergences(_NAN),
+        lambda: checks.r_hat(_NAN),
+        lambda: checks.ess(_NAN),
+    ],
+)
+def test_a_nan_in_the_sampler_or_scale_checks_fails_in_any_position(make):
+    found = make()
+    assert _status(found) == "fail"
+    assert "not finite" in found.message
+    assert found.to_dict()["value"] is None
+
+
+@pytest.mark.parametrize(
+    "make, name",
+    [
+        (lambda: checks.prior_bound({"a": _NAN}), "prior_bound"),
+        (lambda: checks.prior_bound({"a": 0.0, "b": _NAN}), "prior_bound"),
+        (lambda: checks.prior_bound({"b": _NAN, "a": 0.0}), "prior_bound"),
+        (lambda: checks.field_of_view(_NAN, 1.0, 10.0), "field_of_view"),
+        (lambda: checks.field_of_view(5.0, _NAN, 10.0), "field_of_view"),
+        (lambda: checks.field_of_view(5.0, 1.0, _NAN), "field_of_view"),
+        (lambda: checks.mode_converged(_NAN), "mode_converged"),
+    ],
+)
+def test_a_nan_in_the_remaining_checks_warns_rather_than_passes(make, name):
+    found = make()
+    assert found.name == name
+    assert _status(found) == "warn"
+
+
+def test_prior_bound_names_the_parameter_whose_fraction_is_nan():
+    found = checks.prior_bound({"a": 0.0, "b": _NAN})
+    assert "b" in found.message and "a," not in found.message
+
+
+def test_inclination_that_is_none_warns_and_says_it_is_unknown():
+    found = checks.inclination(None, None, 1)
+    assert _status(found) == "warn"
+    assert "inclination is unknown" in found.message
+    assert _status(checks.inclination(_NAN, None, None)) == "warn"
+    assert _status(checks.inclination(50.0, None, None)) == "pass"
+
+
+_ROWS = [
+    {"n": 1, "bic": 100.0, "log_evidence": -50.0, "widths": [5.0]},
+    {"n": 2, "bic": 80.0, "log_evidence": -40.0, "widths": [5.0, 6.0]},
+    {"n": 3, "bic": 70.0, "log_evidence": -36.0, "widths": [5.0, 6.0, 7.0]},
+]
+
+
+def test_ring_count_with_a_bic_that_is_nan_is_not_a_clear_preference():
+    rows = [dict(r) for r in _ROWS]
+    rows[2]["bic"] = _NAN
+    found = checks.ring_count(2, rows, 1.0)
+    assert _status(found) == "warn"
+    assert "do not clearly prefer 2 to 3" in found.message
+    assert found.to_dict()["value"] is None
+    assert _status(checks.ring_count(2, _ROWS, 1.0)) == "warn"  # 2 vs 3 close
+
+
+def test_ring_count_without_the_chosen_count_among_the_rows_warns():
+    found = checks.ring_count(4, _ROWS, 1.0)
+    assert _status(found) == "warn"
+    assert "not among the fitted ring counts" in found.message
+
+
+def test_ring_count_tolerates_a_row_without_widths():
+    rows = [{k: v for k, v in r.items() if k != "widths"} for r in _ROWS]
+    found = checks.ring_count(1, rows[:2], 1.0)
+    assert _status(found) == "warn"
+    assert "do not clearly prefer 1 to 2" in found.message
+    assert "narrower than the half-fringe" not in found.message
+
+
+def test_at_bound_with_start_is_the_start_at_bound_check():
+    found = checks.at_bound(["flux", "sep"], start=True)
+    assert (found.name, found.status) == ("start_at_bound", "warn")
+    assert found.value == ["flux", "sep"]
+    assert "NUTS starts just inside the bound" in found.message
+    assert not hasattr(checks, "start_at_bound")

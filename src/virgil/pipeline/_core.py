@@ -196,6 +196,11 @@ class _Pipeline:
         from ..oidata import OIData
 
         paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+        if not paths:
+            raise ValueError(
+                f"{cls.__name__}.from_oifits needs at least one OIFITS file; "
+                "got an empty list."
+            )
         data = OIData(
             [str(p) for p in paths] if len(paths) > 1 else str(paths[0])
         )
