@@ -617,7 +617,19 @@ contributors page; no code was copied)
   slightly from the von Mises form of plain three-telescope data.
 - **`virgil.crossval`** (provisional): k-fold cross-validation of a
   hyperparameter for any likelihood term that takes a mask, as one process or
-  as array tasks with JSON records.
+  as array tasks with JSON records. It is provisional and may change in any
+  0.4.x release; it claims no parity with other imaging packages.
+- **`virgil.radio`** (provisional): fits calibrated complex visibilities from
+  CASA measurement sets, with per-observation flux scales, phase-centre
+  offsets and error scales fitted with the sky (`ComplexVisData`,
+  `CalibrationNuisance`). It is provisional, not final: its design, defaults
+  and names may change in any 0.4.x release, and it claims no parity with
+  MPoL or with published DSHARP analyses. A comparison with MPoL on ALMA
+  IM Lup data is in progress in virgil-validation. Reading a measurement set
+  needs the `radio` extra, `pip install "virgil-astro[radio]"`, which brings
+  `casatools>=6.6`. On some systems casatools 6.7.6 fails to import with a
+  missing `OPENSSL_3.0.1` symbol; casatools 6.7.0.31 works. virgil does not
+  pin it.
 
 ### Changed
 
