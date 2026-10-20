@@ -1,13 +1,16 @@
 # Binary orbits: one blind, automatic, user-friendly pipeline
 
-Status (2026-10-16): **the canonical orbit plan.** It supersedes
+Status (2026-10-20): **the canonical orbit plan.** It supersedes
 `automatic_orbits.md`, `orbit_aliases.md` and `thiele_innes_marginalisation.md`
 (see their headers for what stays valid).
-- Phases 1a to 1e are merged: the engine result API (1a, #359), night flags
+- Phases 1a to 1f are merged: the engine result API (1a, #359), night flags
   (1b, #366), engine defaults (1c, #368), tempering (1d, #372, with
-  review follow-up #380) and `OrbitPipeline` (1e).
-- **1f docs are next** (rewrite `orbit_fitting.md` around the pipeline; the
-  pipeline page and API entries already exist).
+  review follow-up #380), `OrbitPipeline` (1e, #422) and the docs (1f:
+  `orbit_fitting.md` leads with the pipeline and shows the engine
+  underneath; the pipeline page and API entries; `start_from_positions`
+  marked superseded in the docs). No `design/orbit_solver.md`: the v2 solver
+  internals were not worth keeping (the prototype LM is never merged).
+- Next: phase 2 (vv consolidation) and Phase 3 (the OzSTAR golden table).
 - `orbit_search.score_orbits` ships as **provisional** in 0.4.0, with the rest
   of `epochs`, `aliases` and `tempering` (`docs/stability.md`).
 - Release gate: the unattended run on the Gl 229 data stays the gate for 0.4.0
@@ -150,7 +153,7 @@ OrbitPipeline(epochs, output="run", **settings)
 
 ## Phase 1: virgil (one worker per PR, in order)
 
-Status: 1a to 1d merged (see the top of this note); 1e and 1f next; 1g only if a golden case fails.
+Status: 1a to 1f done (see the top of this note); 1g only if a golden case fails.
 | PR | Change | Exit test (virgil CI, seconds, synthetic) |
 |---|---|---|
 | 1a | Engine result API: `AliasResult.load`, public `scene()`, `residuals()`, per-night χ² (`aliases.py`) | round trip; vv's `best_scene`, `block_chi2` and `residual_stats` become dead code |
