@@ -11,7 +11,13 @@ import zodiax as zdx
 from ._closure import ClosureNoise
 from ._deprecate import renamed
 from ._utils import inflate_errors, wrap_phase
-from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
+from .gains import (
+    ClosureOffsets,
+    GainModes,
+    closure_offsets,
+    gain_modes,
+    offsets_noise,
+)
 from .observables import (
     KINDS,
     DifferentialPhase,
@@ -1647,10 +1653,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             offsets cannot be split.
         """
         offsets = closure_offsets(self, baseline, triangle, modes)
+        # Three telescopes have no cp_noise; the offsets are whitened with
+        # the one-triangle-per-group form.
         return eqx.tree_at(
-            lambda d: d.phase_offsets,
+            lambda d: (d.phase_offsets, d.cp_noise),
             self,
-            offsets,
+            (offsets, offsets_noise(self)),
             is_leaf=lambda x: x is None,
         )
 

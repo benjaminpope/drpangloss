@@ -76,11 +76,15 @@ class ClosureNoise(eqx.Module):
     keep: onp.ndarray  # flat indices of the real rows, in group order
 
     @classmethod
-    def from_indices(cls, i1, i2, i3):
-        """Build from closure-phase indices, or ``None`` if none correlate."""
+    def from_indices(cls, i1, i2, i3, force=False):
+        """Build from closure-phase indices, or ``None`` if none correlate.
+
+        ``force`` builds it anyway for three telescopes (every group one
+        triangle, whitened by its own σ), which closure-phase offsets need.
+        """
         i1, i2, i3 = (onp.asarray(i, dtype=int) for i in (i1, i2, i3))
         groups = _groups(i1, i2, i3)
-        if all(g.size == 1 for g in groups):
+        if not force and all(g.size == 1 for g in groups):
             return None  # three telescopes: nothing to decorrelate
         # Groups mostly repeat a few incidence patterns (one per frame and
         # channel), so factorise each distinct T only once.

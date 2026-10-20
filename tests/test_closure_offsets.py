@@ -91,14 +91,34 @@ def test_widths_zero_widths_and_refusals():
         fixed.select(wavel_max=2.3e-6)
 
 
-def test_three_telescopes_are_refused():
-    data = vlti_oidata(
+def _three_telescopes():
+    return vlti_oidata(
         stations=onp.array([[0.0, 0.0], [50.0, 10.0], [20.0, 60.0]]),
-        hour_angles_h=(0.0,),
+        hour_angles_h=(0.0, 1.0),
         wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, N_WAVE),
-    )
-    with pytest.raises(ValueError, match="four"):
+    ).with_model(TRUTH, jax.random.PRNGKey(1))
+
+
+def test_three_telescopes_get_triangle_offsets_and_skip_baseline():
+    data = _three_telescopes()
+    assert data.cp_noise is None
+    with pytest.warns(UserWarning, match="three telescopes"):
+        both = data.with_closure_offsets(baseline=0.01, triangle=0.02)
+    assert both.phase_offsets.groups_present == ("triangle",)
+    modes = onp.zeros((1, data.phi.size))
+    modes[0, :N_WAVE] = 0.01  # one frame
+    with_modes = data.with_closure_offsets(modes=modes)
+    assert with_modes.phase_offsets.groups_present == ("modes",)
+    with pytest.warns(UserWarning), pytest.raises(ValueError, match="No offsets"):
         data.with_closure_offsets(baseline=0.01)
+    plain = float(model_loglike(TRUTH, data))
+    for d in (both, with_modes):
+        assert onp.isfinite(float(model_loglike(TRUTH, d)))
+    zero = data.with_closure_offsets(triangle=0.0)
+    # A zero width leaves the sines' likelihood: close to the plain one
+    assert onp.isfinite(float(model_loglike(TRUTH, zero)))
+    wide = float(model_loglike(TRUTH, both))
+    assert wide != pytest.approx(plain)
 
 
 def test_supplied_modes_must_stay_in_a_frame():
