@@ -664,8 +664,20 @@ def _save_map_correlation(p, model, values, params):
     _save(fig, p.output / "plots" / "fit_correlation.png")
 
 
-def _pick(report, keys):
-    return {k: report[k] for k in keys}
+def _pick(report, keys, *, strict=True):
+    """The ``keys`` of ``report``; with ``strict=False`` those it has."""
+    return {k: report[k] for k in keys if strict or k in report}
+
+
+def _prior_repr(prior):
+    """``prior`` as ``"LogUniform(low=1e-05, high=0.5)"``: its class and
+    parameters, without the memory address of numpyro's ``repr``."""
+    args = ", ".join(
+        f"{k}={onp.asarray(getattr(prior, k)).tolist()}"
+        for k in getattr(prior, "arg_constraints", ())
+        if hasattr(prior, k)
+    )
+    return f"{type(prior).__name__}({args})"
 
 
 # === SETTINGS VALIDATION ===
@@ -674,12 +686,16 @@ def _pick(report, keys):
 
 
 def _positive(s, name):
-    if not (isinstance(s[name], numbers.Real) and s[name] > 0):
+    if isinstance(s[name], bool) or not (
+        isinstance(s[name], numbers.Real) and s[name] > 0
+    ):
         raise ValueError(f"{name} must be positive; got {s[name]!r}.")
 
 
 def _integer(s, name, minimum):
-    if not (isinstance(s[name], int) and s[name] >= minimum):
+    if isinstance(s[name], bool) or not (
+        isinstance(s[name], int) and s[name] >= minimum
+    ):
         raise ValueError(f"{name} must be an integer >= {minimum}.")
 
 
@@ -690,8 +706,8 @@ def _pair(s, name, low=0):
         raise ValueError(f"{name} must satisfy {low} < min < max.")
 
 
-def _validate_common(s):
-    """The sampler and data settings every pipeline has."""
+def _validate_sampler(s):
+    """The NUTS settings every pipeline has."""
     _integer(s, "num_samples", 1)
     _integer(s, "num_chains", 1)
     _integer(s, "num_warmup", 0)
@@ -699,6 +715,11 @@ def _validate_common(s):
         raise ValueError(
             'chain_method must be "vectorized", "sequential" or "parallel".'
         )
+
+
+def _validate_common(s):
+    """The sampler and data settings of the pipelines that read OIFITS data."""
+    _validate_sampler(s)
     if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
         raise ValueError("wavel_range must be [min, max] in metres.")
     if s["error_floor"] is not None and not isinstance(s["error_floor"], dict):

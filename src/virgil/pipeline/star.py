@@ -29,6 +29,7 @@ from ._common import (
     _pair,
     _pick,
     _prior_bounds,
+    _prior_repr,
     _run_chains,
     _sampler_checks,
     _sampler_report,
@@ -875,7 +876,7 @@ def _model_report(entry, fit, table, n):
         "chi2_reduced": fit.chi2 / n,
         "error_scales": fit.scales or None,
         "at_bound": list(fit.info.get("at_bound", []) or []),
-        "priors": {k: repr(v) for k, v in fit.priors.items()},
+        "priors": {k: _prior_repr(v) for k, v in fit.priors.items()},
         "prior_std": {
             k: float(onp.sqrt(fit.priors[k].variance)) for k in entry.shape
         },
@@ -1269,7 +1270,7 @@ def _fit_checks(fit, registry):
         f"{k}.{site}" for k in fit["names"] for site in reports[k]["at_bound"]
     ]
     if at_bound:
-        checks.append(_checks.start_at_bound(at_bound))
+        checks.append(_checks.at_bound(at_bound, start=True))
     return checks
 
 

@@ -90,7 +90,7 @@ def test_run_chains_without_priors_gives_a_clear_error_not_numpyros():
 
 
 def test_start_at_bound_check():
-    check = checks.start_at_bound(["flux"])
+    check = checks.at_bound(["flux"], start=True)
     assert check.status == "warn" and "flux" in check.message
     assert check.to_dict()["value"] == ["flux"]
 

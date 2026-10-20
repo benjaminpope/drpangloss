@@ -15,15 +15,24 @@ import numpy as onp
 
 from . import _checks, _io
 from ._common import (
-    _SAMPLER_SETTINGS,
     _bound_samples,
+    _chain_health,
+    _corner_trace,
     _diagnostics,
+    _draws,
     _geometry,
-    _quantiles,
+    _integer,
+    _pair,
+    _pick,
+    _positive,
     _quicklook,
     _run_chains,
-    _sample_stats,
+    _sampler_checks,
+    _sampler_report,
     _save,
+    _site_summary,
+    _validate_sampler,
+    _write_samples,
 )
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
@@ -241,27 +250,12 @@ class OrbitPipeline(_Pipeline):
 
     @classmethod
     def _validate(cls, s):
-        def positive(name):
-            if not (isinstance(s[name], (int, float)) and s[name] > 0):
-                raise ValueError(f"{name} must be positive; got {s[name]!r}.")
-
-        def integer(name, minimum):
-            if isinstance(s[name], bool) or not (
-                isinstance(s[name], int) and s[name] >= minimum
-            ):
-                raise ValueError(f"{name} must be an integer >= {minimum}.")
-
-        def pair(name, low=0.0):
-            lo, hi = s[name]
-            if not low < lo < hi:
-                raise ValueError(f"{name} must satisfy {low} < min < max.")
-
-        positive("gap_days")
+        _positive(s, "gap_days")
         for name in ("max_sep_mas", "grid_step_mas", "s_max"):
             if s[name] is not None:
-                positive(name)
+                _positive(s, name)
         for name in ("alias_nats", "no_orbit_nats"):
-            positive(name)
+            _positive(s, name)
         for name, low in (
             ("n_peaks", 1),
             ("n_bands_max", 1),
@@ -270,14 +264,11 @@ class OrbitPipeline(_Pipeline):
             ("max_steps", 1),
             ("n_is", 1),
             ("max_modes", 1),
-            ("num_samples", 1),
-            ("num_chains", 1),
-            ("num_warmup", 0),
         ):
-            integer(name, low)
-        integer("max_grid", 3)
-        pair("a_range")
-        pair("flux_range")
+            _integer(s, name, low)
+        _integer(s, "max_grid", 3)
+        _pair(s, "a_range")
+        _pair(s, "flux_range")
         if s["flux_range"][1] > 1.0:
             raise ValueError(
                 "flux_range must be at most 1: the flux flip makes the "
@@ -285,7 +276,7 @@ class OrbitPipeline(_Pipeline):
                 "the label-swapped mode twice."
             )
         if s["period_range"] is not None:
-            pair("period_range")
+            _pair(s, "period_range")
         if not 0 < s["ecc_max"] < 1:
             raise ValueError("ecc_max must be between 0 and 1.")
         if not 0 <= s["posterior_p_min"] <= 1:
@@ -312,10 +303,7 @@ class OrbitPipeline(_Pipeline):
             raise ValueError(
                 "vis_amp must be a bool or (lo, hi), 0 < lo < hi."
             )
-        if s["chain_method"] not in ("vectorized", "sequential", "parallel"):
-            raise ValueError(
-                'chain_method must be "vectorized", "sequential" or "parallel".'
-            )
+        _validate_sampler(s)
         if not isinstance(s["exclude"], dict):
             raise ValueError("exclude must be a {name: reason} dict.")
 
@@ -1119,16 +1107,12 @@ def _sample_band(p, result, data, n):
         dense_mass=True,
         priors=priors,
     )
-    drawn = {
-        k: onp.asarray(v)
-        for k, v in mcmc.get_samples(group_by_chain=True).items()
-    }
+    drawn, stats = _draws(mcmc)
     shape = drawn[sites[0]].shape
     flat = onp.stack([drawn[k].reshape(-1) for k in sites], axis=-1)
     physical = {
         k: onp.asarray(v).reshape(shape) for k, v in _physical(flat).items()
     }
-    stats = _sample_stats(mcmc)
     summary = _band_summary(n, physical, drawn, stats, priors, bounds)
     summary["optimum_gap"] = _optimum_gap(problem, flat, x0)
     return physical, stats, summary
@@ -1144,38 +1128,40 @@ def _optimum_gap(problem, draws, x0, n_max=500):
     keep = draws[:: max(1, len(draws) // n_max)]
     scored = onp.asarray(problem.batch(np.asarray(keep)))
     start = float(onp.asarray(problem.batch(np.asarray(x0[None])))[0])
-    return max(0.0, float(onp.nanmax(scored)) - start)
+    gap = float(onp.nanmax(scored)) - start
+    return max(0.0, gap) if math.isfinite(gap) else math.nan
 
 
 def _band_summary(n, physical, drawn, stats, priors, bounds):
     """The report of one sampled band: intervals, diagnostics, bound fractions."""
     diagnostics = {k: _diagnostics([x]) for k, x in drawn.items()}
     angles = {"omega": 360.0, "Omega": 180.0}
-    params = {}
-    for name, x in physical.items():
-        row = _quantiles(
-            x, angle=name in angles, period=angles.get(name, 360.0)
+    names = {
+        "log_period": "period",
+        "tau": "dt_peri",
+        "cos_inc": "inc",
+        "log_a": "a_mas",
+        "log_flux": "flux",
+        "log_diam": "diam",
+    }
+    by_name = {names.get(site, site): d for site, d in diagnostics.items()}
+    params = {
+        name: _site_summary(
+            x,
+            by_name.get(name),
+            std=False,
+            angle=name in angles,
+            period=angles.get(name, 360.0),
         )
-        params[name] = row
-    for site, d in diagnostics.items():
-        name = {
-            "log_period": "period",
-            "tau": "dt_peri",
-            "cos_inc": "inc",
-            "log_a": "a_mas",
-            "log_flux": "flux",
-            "log_diam": "diam",
-        }.get(site, site)
-        params[name].update(d)
+        for name, x in physical.items()
+    }
     lows = {
         k: float(v) for k, v in zip(_SITES, onp.asarray(bounds.lower, float))
     }
     return {
         "n": int(n),
         "params": params,
-        "r_hat_max": max(d["r_hat"] for d in diagnostics.values()),
-        "ess_bulk_min": min(d["ess_bulk"] for d in diagnostics.values()),
-        "divergence_fraction": float(onp.mean(stats["diverging"])),
+        **_chain_health(diagnostics, stats),
         "prior_bound_fraction": _bound_fractions(
             drawn, priors, bounds.upper[2]
         ),
@@ -1203,14 +1189,9 @@ def _bound_fractions(drawn, priors, ecc_top):
 def _posterior(p):
     s = p.settings
     modes = p._report("modes")
-    path = p.output / "samples.h5"
-    attrs = {
-        "schema": _io.SCHEMA,
-        "sampler": {k: s[k] for k in _SAMPLER_SETTINGS},
-    }
     if modes["no_orbit"]["verdict"] == "no-orbit":
         # No orbit to sample: a single star fits as well (see the checks).
-        _io.write_h5(path, {}, attrs={"/": {**attrs, "skipped": "no-orbit"}})
+        _write_samples(p, {}, skipped="no-orbit")
         for plot in ("corner", "trace"):
             _empty_plot(
                 p.output / "plots" / f"posterior_{plot}.png", "no orbit"
@@ -1226,19 +1207,15 @@ def _posterior(p):
         summaries.append(summary)
         if n == modes["winner"]["n"]:
             groups["posterior"], groups["sample_stats"] = physical, stats
-            _plot_posterior(p.output, physical)
-    attrs.update(winner=modes["winner"]["n"], bands=modes["sampled"])
-    _io.write_h5(path, groups, attrs={"/": attrs})
+            _corner_trace(
+                p.output, physical, [k for k in physical if k != "dt_peri"]
+            )
+    _write_samples(
+        p, groups, winner=modes["winner"]["n"], bands=modes["sampled"]
+    )
     return {
         "modes": summaries,
-        "num_chains": s["num_chains"],
-        "num_samples": s["num_samples"],
-        "num_warmup": s["num_warmup"],
-        "r_hat_max": max(m["r_hat_max"] for m in summaries),
-        "ess_bulk_min": min(m["ess_bulk_min"] for m in summaries),
-        "divergence_fraction": max(
-            m["divergence_fraction"] for m in summaries
-        ),
+        **_sampler_report(s, summaries),
         "optimum_gap_max": max(m["optimum_gap"] for m in summaries),
         "prior_bound_fraction": _worst_fractions(summaries),
     }
@@ -1259,20 +1236,6 @@ def _empty_plot(path, text):
     ax.text(0.5, 0.5, text, ha="center", va="center")
     ax.axis("off")
     _save(fig, path)
-
-
-def _plot_posterior(output, samples):
-    import pandas as pd
-
-    from ..plotting import plot_chainconsumer_diagnostics
-
-    names = [k for k in samples if k != "dt_peri"]
-    flat = {k: onp.asarray(samples[k], float).ravel() for k in names}
-    _, corner, walks = plot_chainconsumer_diagnostics(
-        {"posterior": pd.DataFrame(flat)}, columns=names
-    )
-    _save(corner, output / "plots" / "posterior_corner.png")
-    _save(walks, output / "plots" / "posterior_trace.png")
 
 
 # === SUMMARY AND CHECKS ===
@@ -1331,10 +1294,6 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _pick(report, keys):
-    return {k: report[k] for k in keys if k in report}
-
-
 def _nights_section(epochs, search):
     """Per night: position, flags with reasons and the raw χ²/N at the best
     orbit."""
@@ -1344,6 +1303,7 @@ def _nights_section(epochs, search):
         row = _pick(
             night,
             ("dataset", "mjd", "sep_mas", "flux", "gap_marginal", "edge"),
+            strict=False,
         )
         row["flags"] = night["flags"]
         row["chi2_per_n"] = chi2.get(night["dataset"], {}).get("chi2_per_n")
@@ -1380,7 +1340,7 @@ def _summarize(settings, reports):
     )
     sections, checks = {}, []
     if load:
-        sections["data"] = _pick(load, _DATA_KEYS)
+        sections["data"] = _pick(load, _DATA_KEYS, strict=False)
     if epochs:
         sections["nights"] = _nights_section(epochs, search)
     if search:
@@ -1390,7 +1350,7 @@ def _summarize(settings, reports):
             "best_orbit_reduced": pooled["chi2"] / pooled["n"],
             "nights": pooled["nights"],
         }
-        sections["search"] = _pick(search, _SEARCH_KEYS)
+        sections["search"] = _pick(search, _SEARCH_KEYS, strict=False)
         checks.append(
             _checks.chi2_reduced(
                 "chi2",
@@ -1406,7 +1366,7 @@ def _summarize(settings, reports):
         checks.append(_checks.labels_free(search["labels_free"]))
         checks.append(_checks.bands_failed(search["failed_bands"]))
     if modes:
-        sections["modes"] = _pick(modes, _MODES_KEYS)
+        sections["modes"] = _pick(modes, _MODES_KEYS, strict=False)
         runner = modes["runner_up"]
         checks.append(
             _checks.alias_ambiguity(
@@ -1444,13 +1404,8 @@ def _summarize(settings, reports):
     if modes:
         sections["orbit"] = _orbit_section(modes, post)
     if post:
-        sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
+        sections["posterior"] = _pick(post, _POSTERIOR_KEYS, strict=False)
         if "r_hat_max" in post:
-            checks += [
-                _checks.prior_bound(post["prior_bound_fraction"]),
-                _checks.r_hat(post["r_hat_max"]),
-                _checks.ess(post["ess_bulk_min"]),
-                _checks.divergences(post["divergence_fraction"]),
-                _checks.mode_converged(post["optimum_gap_max"]),
-            ]
+            checks += _sampler_checks(post)
+            checks.append(_checks.mode_converged(post["optimum_gap_max"]))
     return sections, checks
