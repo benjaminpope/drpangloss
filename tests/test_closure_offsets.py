@@ -109,7 +109,10 @@ def test_three_telescopes_get_triangle_offsets_and_skip_baseline():
     modes[0, :N_WAVE] = 0.01  # one frame
     with_modes = data.with_closure_offsets(modes=modes)
     assert with_modes.phase_offsets.groups_present == ("modes",)
-    with pytest.warns(UserWarning), pytest.raises(ValueError, match="No offsets"):
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(ValueError, match="No offsets"),
+    ):
         data.with_closure_offsets(baseline=0.01)
     plain = float(model_loglike(TRUTH, data))
     for d in (both, with_modes):
