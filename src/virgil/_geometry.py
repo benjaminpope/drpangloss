@@ -400,8 +400,11 @@ class UVGrid(eqx.Module):
 def find_uv_grid(u, v, tolerance=1e-6):
     """Return the lattice that ``(u, v)`` samples lie on, or ``None``.
 
-    Axes come from the shortest sample separation; every sample must lie
-    within ``tolerance`` cells of a lattice point.
+    A first guess at the axes comes from the shortest sample separation;
+    the origin, pitches and rotation are then fitted by least squares to
+    every sample, so that rounding of the coordinates (float32 products)
+    does not accumulate across the lattice. Every sample must lie within
+    ``tolerance`` cells of a point of the fitted lattice.
 
     Parameters
     ----------
@@ -413,7 +416,7 @@ def find_uv_grid(u, v, tolerance=1e-6):
     Returns
     -------
     UVGrid or None
-        ``rotation_deg`` is in ``(-45, 45]``.
+        ``rotation_deg`` is in ``(-45, 45]`` (up to the fitted correction).
     """
     u, v = onp.asarray(u, dtype=float), onp.asarray(v, dtype=float)
     if u.ndim != 1 or u.size < 2:
@@ -421,28 +424,77 @@ def find_uv_grid(u, v, tolerance=1e-6):
     gap = onp.hypot(u - u[0], v - v[0])
     gap[0] = onp.inf
     nearest = int(onp.argmin(gap))
+    if not gap[nearest] > 0.0:
+        return None  # repeated samples: no lattice index is unique
     angle = onp.degrees(onp.arctan2(v[nearest] - v[0], u[nearest] - u[0]))
     rotation = float(-(((angle + 45.0) % 90.0) - 45.0))
-    c, s = onp.cos(onp.radians(rotation)), onp.sin(onp.radians(rotation))
-    grid_u, grid_v = c * u - s * v, s * u + c * v  # rotate(u, v, -rotation)
-    axes, cells = [], []
-    for coord in (grid_u, grid_v):
-        start = coord.min()
+    # First guess: cells along each axis of the rotated frame, which only
+    # need to be the right integers (within a quarter of a cell).
+    grid = rotate(u, v, -rotation)
+    cells, pitches = [], []
+    for coord in grid:
         steps = onp.diff(onp.sort(coord))
-        steps = steps[steps > tolerance * gap[nearest]]
+        steps = steps[steps > max(tolerance, 1e-3) * gap[nearest]]
         pitch = steps.min() if steps.size else 1.0
-        cell = (coord - start) / pitch
-        if onp.max(onp.abs(cell - onp.round(cell))) > tolerance:
+        cell = (coord - coord.min()) / pitch
+        if onp.max(onp.abs(cell - onp.round(cell))) > 0.25:
             return None
-        cell = onp.round(cell).astype(int)
-        axes.append(start + pitch * onp.arange(cell.max() + 1))
-        cells.append(cell)
-    index = cells[1] * axes[0].size + cells[0]
+        cells.append(onp.round(cell))
+        pitches.append(pitch)
+    # Least-squares lattice: each frame coordinate is affine in the cells.
+    # The cross terms measure a residual rotation of each axis.
+    design = onp.column_stack([onp.ones_like(u), *cells])
+    (_, uc, ur), (_, vc, vr) = (
+        onp.linalg.lstsq(design, coord, rcond=None)[0] for coord in grid
+    )
+    spans = [onp.std(cell) for cell in cells]
+    turns = (onp.arctan2(-vc, uc), onp.arctan2(ur, vr))
+    weights = [
+        (onp.hypot(*e) * span) ** 2 if span > 0 else 0.0
+        for e, span in zip(((uc, vc), (ur, vr)), spans)
+    ]
+    rotation += float(onp.degrees(onp.average(turns, weights=weights)))
+    grid = rotate(u, v, -rotation)
+    axes = []
+    for coord, cell, span, e, pitch in zip(
+        grid, cells, spans, ((uc, vc), (ur, vr)), pitches
+    ):
+        pitch = onp.hypot(*e) if span > 0 else pitch
+        start = onp.mean(coord - pitch * cell)
+        if onp.max(onp.abs((coord - start) / pitch - cell)) > tolerance:
+            return None
+        axes.append(start + pitch * onp.arange(int(cell.max()) + 1))
+    cols, rows = (cell.astype(int) for cell in cells)
+    index = rows * axes[0].size + cols
     if onp.unique(index).size != index.size:
         return None
     return UVGrid(
         np.asarray(axes[0]), np.asarray(axes[1]), np.asarray(index), rotation
     )
+
+
+# Largest offset of a DISCO sample from its fitted lattice point, in cells:
+# drpangloss-format products store (u, v) in float32, which rounds them by a
+# few 1e-6 cells across a lattice tens of cells wide.
+_DISCO_GRID_TOLERANCE = 1e-5
+
+
+def _disco_uv_grid(u, v, wavel):
+    """The lattice of one filter of an AMIGO DISCO product, or ``None``.
+
+    AMIGO builds its DISCO products on a regular uv lattice, so the samples
+    of one filter (one wavelength) lie on one, to within
+    ``_DISCO_GRID_TOLERANCE`` cells. ``None`` for several wavelengths, for
+    samples off a lattice, and for a lattice mostly empty (more than four
+    cells per sample), whose transform could cost more than the per-point
+    sum it replaces.
+    """
+    if onp.size(wavel) != 1:
+        return None
+    grid = find_uv_grid(u, v, tolerance=_DISCO_GRID_TOLERANCE)
+    if grid is None or grid.u_axis.size * grid.v_axis.size > 4 * onp.size(u):
+        return None
+    return grid
 
 
 def offset_phase(uu, vv, dra, ddec):

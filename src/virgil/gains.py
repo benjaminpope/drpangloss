@@ -39,6 +39,7 @@ shared machinery for linear marginalization in ``virgil._linear``
 stay smooth, also where modes are degenerate and where widths go to zero.
 """
 
+import warnings
 from functools import partial
 
 import equinox as eqx
@@ -47,6 +48,7 @@ import jax.numpy as np
 import jax.scipy.linalg as jsl
 import numpy as onp
 
+from ._closure import ClosureNoise
 from ._linear import whiten_blocks
 from ._utils import group_indices
 
@@ -548,14 +550,28 @@ def _widths_for(groups, widths, terms, prefix, how):
     )
 
 
+def offsets_noise(data):
+    """The closure-phase noise structure offsets are whitened with.
+
+    ``data.cp_noise``, or for three telescopes (where it is ``None``: one
+    triangle per group, nothing to decorrelate) the same structure built
+    with every triangle its own group.
+    """
+    if data.cp_noise is not None:
+        return data.cp_noise
+    return ClosureNoise.from_indices(
+        data.i_cps1, data.i_cps2, data.i_cps3, force=True
+    )
+
+
 def closure_offsets(data, baseline=None, triangle=None, modes=None):
     """Closure-phase offsets for a dataset, with default widths.
 
     Parameters
     ----------
     data : OIData
-        Closure phases from four or more telescopes (``cp_noise``), not
-        projected, with frames and, for baseline and triangle offsets,
+        Closure phases (three telescopes: one triangle, whose baseline
+        offsets are folded into the triangle group), not projected, with frames and, for baseline and triangle offsets,
         station pairs, as read from OIFITS.
     baseline : float, optional
         Width (radians) of a phase offset per (frame, baseline), common to
@@ -573,13 +589,30 @@ def closure_offsets(data, baseline=None, triangle=None, modes=None):
     -------
     ClosureOffsets
     """
-    cp_noise = data.cp_noise
-    if not data.cp_flag or cp_noise is None or data.phi_mat is not None:
+    if not data.cp_flag or data.phi_mat is not None:
         raise ValueError(
-            "Closure-phase offsets need correlated closure phases from four "
-            "or more telescopes (OIData.cp_noise), unprojected. Three "
-            "telescopes are not supported yet."
+            "Closure-phase offsets need closure phases (OIData.cp_noise), "
+            "unprojected."
         )
+    cp_noise = offsets_noise(data)
+    # Three telescopes: one triangle per frame and channel (every group has
+    # one member). Offsets on its three baselines reach the closure phase as
+    # e1 + e2 - e3, exactly a triangle offset of width sqrt(3) times theirs,
+    # so the baseline group is folded into the triangle group.
+    if baseline is not None and onp.asarray(cp_noise.mask).sum(1).max() == 1:
+        warnings.warn(
+            "Closure phases of three telescopes (one triangle): baseline "
+            "offsets are the triangle offsets of width sqrt(3) x baseline, "
+            "and are added to the triangle group (so 'phi_offset_baseline' "
+            "is not a noise term here).",
+            stacklevel=2,
+        )
+        triangle = float(
+            onp.hypot(
+                0.0 if triangle is None else triangle, onp.sqrt(3.0) * baseline
+            )
+        )
+        baseline = None
     if data.frame is None:
         raise ValueError(
             "Offsets per frame need each sample's frame: read the data from "

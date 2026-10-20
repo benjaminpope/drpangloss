@@ -91,14 +91,59 @@ def test_widths_zero_widths_and_refusals():
         fixed.select(wavel_max=2.3e-6)
 
 
-def test_three_telescopes_are_refused():
-    data = vlti_oidata(
+def _three_telescopes():
+    return vlti_oidata(
         stations=onp.array([[0.0, 0.0], [50.0, 10.0], [20.0, 60.0]]),
-        hour_angles_h=(0.0,),
+        hour_angles_h=(0.0, 1.0),
         wavelengths_m=onp.linspace(2.0e-6, 2.4e-6, N_WAVE),
+    ).with_model(TRUTH, jax.random.PRNGKey(1))
+
+
+def test_three_telescopes_get_triangle_offsets_and_fold_baseline_into_them():
+    data = _three_telescopes()
+    assert data.cp_noise is None
+    with pytest.warns(UserWarning, match="three telescopes"):
+        both = data.with_closure_offsets(baseline=0.01, triangle=0.02)
+    assert both.phase_offsets.groups_present == ("triangle",)
+    # A second call replaces the offsets and still folds (the structure, not
+    # the call history, says three telescopes).
+    with pytest.warns(UserWarning, match="three telescopes"):
+        twice = data.with_closure_offsets(triangle=0.02).with_closure_offsets(
+            baseline=0.01
+        )
+    with pytest.warns(UserWarning, match="three telescopes"):
+        once = data.with_closure_offsets(baseline=0.01)
+    assert float(model_loglike(TRUTH, twice)) == pytest.approx(
+        float(model_loglike(TRUTH, once)), rel=1e-6
     )
-    with pytest.raises(ValueError, match="four"):
-        data.with_closure_offsets(baseline=0.01)
+    modes = onp.zeros((1, data.phi.size))
+    modes[0, :N_WAVE] = 0.01  # one frame
+    with_modes = data.with_closure_offsets(modes=modes)
+    assert with_modes.phase_offsets.groups_present == ("modes",)
+    # The offsets' effect on the sines, against a direct Gaussian per frame:
+    # covariance diag(σ²) + w² 11ᵀ, w² = 0.02² + 3 · 0.01².
+    zero = data.with_closure_offsets(triangle=0.0)
+    resid = onp.asarray(data.phi - data.with_model(TRUTH).phi)
+    sigma = onp.asarray(data.d_phi)
+    width2 = 0.02**2 + 3 * 0.01**2
+
+    def gaussian(w2):
+        total = 0.0
+        for r, s in zip(
+            onp.sin(resid).reshape(-1, N_WAVE), sigma.reshape(-1, N_WAVE)
+        ):
+            c = onp.diag(s**2) + w2
+            total -= (
+                0.5 * r @ onp.linalg.solve(c, r)
+                + 0.5 * onp.linalg.slogdet(c)[1]
+            )
+        return total
+
+    expected = gaussian(width2) - gaussian(0.0)
+    got = float(model_loglike(TRUTH, both)) - float(model_loglike(TRUTH, zero))
+    assert got == pytest.approx(expected, rel=1e-3, abs=1e-6)
+    for d in (both, with_modes, zero):
+        assert onp.isfinite(float(model_loglike(TRUTH, d)))
 
 
 def test_supplied_modes_must_stay_in_a_frame():

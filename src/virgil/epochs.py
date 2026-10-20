@@ -583,27 +583,9 @@ class _Surface:
         )
         n_block = len(self.blocks)
         bound = float(onp.log(self.s_max))
-        sizes = onp.asarray(self.sizes)
-        block_of = self._block_of_size()
-
-        def at(log_s):
-            scale = np.repeat(
-                np.exp(log_s[block_of]),
-                sizes,
-                total_repeat_length=int(sizes.sum()),
-            )
-            w, _, norm = _whiten_with_log_norm(
-                data,
-                prediction,
-                values,
-                errors * scale,
-                gain_terms,
-                offset_terms,
-                split_norm=True,
-            )
-            chi2 = self.block_chi2(w)
-            own = np.stack([self._norm_of(k, norm) for k in range(n_block)])
-            return chi2, own
+        at = self._at(
+            prediction, errors, values, gain_terms, offset_terms, data
+        )
 
         def log_f(log_s):
             """Each block's log integrand at its own ``log_s`` (blocks are
@@ -651,6 +633,53 @@ class _Surface:
         log_w = np.log(w)[None, :] + np.log(rad)[:, None]
         return np.concatenate(
             [chi2_one[:, None], nodes, chi2_n, norm_n, log_w], axis=1
+        )
+
+    def _at(self, prediction, errors, values, gain_terms, offset_terms, data):
+        """``at(log_s)``: each block's χ² and gains/offsets log normalizer
+        with the errors times ``exp(log_s)`` (one whitening, exact log det)."""
+        n_block = len(self.blocks)
+        sizes = onp.asarray(self.sizes)
+        block_of = self._block_of_size()
+
+        def at(log_s):
+            scale = np.repeat(
+                np.exp(log_s[block_of]),
+                sizes,
+                total_repeat_length=int(sizes.sum()),
+            )
+            w, _, norm = _whiten_with_log_norm(
+                data,
+                prediction,
+                values,
+                errors * scale,
+                gain_terms,
+                offset_terms,
+                split_norm=True,
+            )
+            chi2 = self.block_chi2(w)
+            own = np.stack([self._norm_of(k, norm) for k in range(n_block)])
+            return chi2, own
+
+        return at
+
+    def fixed_score(self, model, data, noise, dof, log_s):
+        """The tempered log integrand of a ``numeric`` surface summed over
+        blocks at the fixed per-block ``log_s``: one whitening, with the exact
+        log determinant, in place of the table's integral over ln s (a cheap
+        score of the same surface, off from it by a smooth log-width)."""
+        prediction, errors, values, gain_terms, offset_terms = (
+            _prediction_and_errors(model, data, noise or {})
+        )
+        chi2, own = self._at(
+            prediction, errors, values, gain_terms, offset_terms, data
+        )(log_s)
+        dof = np.broadcast_to(
+            np.asarray(1.0 if dof is None else dof, chi2.dtype), chi2.shape
+        )
+        return sum(
+            dof[k] * self._log_f(k, log_s[k : k + 1], chi2[k], own[k], data)[0]
+            for k in range(len(self.blocks))
         )
 
     def _log_f(self, k, log_s, chi2, norm, data):
@@ -1350,6 +1379,11 @@ class EpochPositions:
         a trustworthy night); see ``flagged``.
     primary_diam : float or None
         The uniform-disk primary the positions were fitted with (mas), or None.
+    exact_fraction : tuple of float or None
+        For each dataset, the fraction of grid points scored with the full
+        scale integral (1 unless the coarse-then-exact scoring of data with
+        gains or offsets skipped some; see ``epoch_positions``), or None
+        when the positions did not come from ``epoch_positions``.
     """
 
     names: tuple
@@ -1364,6 +1398,7 @@ class EpochPositions:
     peaks: tuple = ()
     flags: tuple = ()
     primary_diam: float | None = None
+    exact_fraction: tuple | None = None
 
     @property
     def flagged(self):
@@ -1472,6 +1507,163 @@ def _grid_scores(points, data, surface, batch_size, diam=None, dof=None):
 def _grid_marginal(chi2, dof, data, surface):
     """The scale-marginalized score of each grid point's block χ²."""
     return jax.vmap(lambda c: surface.score(c, dof, data))(chi2)
+
+
+# The memory a grid point needs scales with what one whitening holds: the
+# observables and, with gains or offsets, their modes (rank). A table whitens
+# at ``_N_NODES`` nodes at once, and the window search differentiates through
+# whitenings: that working set is about _TABLE_COPIES times one whitening's
+# (measured on calibrated GRAVITY data: 325 MB per point, 34k floats; a 1190-point batch ran out of
+# memory on a laptop); a fixed-scale score is one whitening with its gradient
+# free, about _FIXED_COPIES.
+_TABLE_COPIES = 1200
+_FIXED_COPIES = 8
+CPU_MEMORY_BUDGET = 2**30
+ACCELERATOR_MEMORY_BUDGET = 2**33
+
+
+def default_memory_budget():
+    """Bytes one batch may use by default, for JAX's default backend."""
+    if jax.default_backend() == "cpu":
+        return CPU_MEMORY_BUDGET
+    return ACCELERATOR_MEMORY_BUDGET
+
+
+def _whitening_floats(data):
+    """The floats one whitening of ``data`` holds: observables plus the
+    gain and offset modes' columns."""
+    n = int(onp.size(data.vis) + onp.size(data.phi))
+    n += sum(int(b.data().size) for b in data.extras)
+    for modes, names in (
+        (data.gains, ("shapes", "spanning")),
+        (data.phase_offsets, ("values",)),
+    ):
+        if modes is not None:
+            n += sum(
+                int(onp.size(getattr(modes, a)))
+                for a in names
+                if getattr(modes, a, None) is not None
+            )
+    return n
+
+
+def _grid_batch(batch_size, memory_budget, data, surface, copies=None):
+    """Grid points per batch: ``batch_size`` if given, else what fits in
+    ``memory_budget`` bytes (default ``CPU_MEMORY_BUDGET``, or
+    ``ACCELERATOR_MEMORY_BUDGET`` off the CPU) for data with gains or offsets,
+    where each point holds ``copies`` whitenings of ``_whitening_floats``
+    float64s; the visibility rule of ``batch_size_or_default`` otherwise."""
+    if batch_size is not None:
+        return batch_size_or_default(batch_size, None)
+    default = batch_size_or_default(None, data)
+    if not surface.numeric:
+        return default
+    if memory_budget is None:
+        memory_budget = default_memory_budget()
+    if not memory_budget > 0:
+        raise ValueError(
+            f"memory_budget must be positive, got {memory_budget}."
+        )
+    copies = _TABLE_COPIES if copies is None else copies
+    per_point = 8 * copies * _whitening_floats(data)
+    return int(max(1, min(default, memory_budget // per_point)))
+
+
+@functools.partial(jax.jit, static_argnames=("surface", "batch_size"))
+def _grid_fixed(points, data, surface, batch_size, log_s, diam=None, dof=None):
+    """The tempered log integrand at each point at the fixed ``log_s``."""
+
+    def one(x):
+        return surface.fixed_score(_binary(x, diam), data, None, dof, log_s)
+
+    return jax.lax.map(one, points, batch_size=batch_size)
+
+
+def _coarse_then_exact(
+    points,
+    shape,
+    data,
+    surface,
+    diam,
+    dof,
+    batch_size,
+    memory_budget,
+    nats,
+    margin,
+):
+    """The scale-marginalized score of every grid point of a ``numeric``
+    surface, integrating ln s only where the surface is high.
+
+    All points are scored at one fixed scale per block (the profile scale of
+    the best point at s = 1): one whitening each. The points within ``nats``
+    of the best (in marginal nats: see below), and their ``margin``
+    neighbours, get the full integral. The
+    rest take their fixed-scale score plus the median difference (full minus
+    fixed) over the points within ``nats``. Returns ``(score, fraction)``,
+    the flat scores and the fraction of points scored in full.
+    """
+    from scipy.ndimage import binary_dilation
+
+    fixed_batch = _grid_batch(
+        None if batch_size is None else batch_size,
+        memory_budget,
+        data,
+        surface,
+        _FIXED_COPIES,
+    )
+    fixed_batch = min(fixed_batch, len(points))
+    zero = np.zeros(len(surface.blocks))
+    at_one = onp.asarray(
+        _grid_fixed(points, data, surface, fixed_batch, zero, diam, dof)
+    )
+    at_one = onp.where(onp.isfinite(at_one), at_one, -onp.inf)
+    best = points[int(onp.argmax(at_one))]
+    chi2 = surface.plain_chi2(
+        _block_chi2(np.asarray(best), data, surface, diam)
+    )
+    bound = float(onp.log(surface.s_max))
+    log_s = np.asarray(
+        onp.clip(
+            0.5 * onp.log(onp.maximum(onp.asarray(chi2), 1e-300) / surface.nu),
+            -bound,
+            bound,
+        )
+    )
+    coarse = onp.asarray(
+        _grid_fixed(points, data, surface, fixed_batch, log_s, diam, dof)
+    )
+    coarse = onp.where(onp.isfinite(coarse), coarse, -onp.inf)
+    # ``nats`` is a gap of the marginal. At the fixed scale a relative χ²
+    # excess ε costs νε/2 nats, but the marginal only (ν/2) ln(1+ε): the
+    # same marginal gap is a larger fixed-scale one, so cut there (ν the
+    # total of the blocks', a few nats' margin for small data).
+    nu = float(onp.sum(surface.nu))
+    cut = 0.5 * nu * onp.expm1(min(2.0 * nats / nu, 50.0))
+    core = coarse >= coarse.max() - cut
+    pick = core.reshape(shape)
+    if margin:
+        pick = binary_dilation(
+            pick, structure=onp.ones((3,) * pick.ndim), iterations=int(margin)
+        )
+    pick = pick.ravel()
+    chosen = points[pick]
+    batch = min(
+        _grid_batch(batch_size, memory_budget, data, surface), len(chosen)
+    )
+    # Pad to a power-of-two number of batches (repeating the first row), so
+    # that nights and grids of different sizes share a few compiled shapes.
+    n_batches = 1 << max(math.ceil(len(chosen) / batch) - 1, 0).bit_length()
+    padded = onp.concatenate(
+        [chosen, onp.repeat(chosen[:1], n_batches * batch - len(chosen), 0)]
+    )
+    _, chi2 = _grid_scores(np.asarray(padded), data, surface, batch, diam, dof)
+    chi2 = chi2[: len(chosen)]
+    exact = onp.asarray(_grid_marginal(chi2, dof, data, surface))
+    ok = onp.isfinite(exact) & core[pick]
+    offset = float(onp.median((exact - coarse[pick])[ok])) if ok.any() else 0.0
+    out = coarse + offset
+    out[pick] = exact
+    return out, float(pick.mean())
 
 
 def _amp_residuals(model, data, surface, amp_range):
@@ -1820,6 +2012,9 @@ def epoch_positions(
     dof=1.0,
     s_max=None,
     batch_size=None,
+    memory_budget=None,
+    coarse_nats=30.0,
+    coarse_margin=1,
     primary_diam=None,
     flag_nights=True,
     flag_alias_nats=2.0,
@@ -1861,6 +2056,21 @@ def epoch_positions(
         The effective-dof fraction (a number, or a dict keyed by dataset or
         epoch name), the bound on the scales (as for ``marginal_loglike``) and
         the grid points evaluated together.
+    memory_budget : int, optional
+        Bytes one batch of grid points may use for data with gains or
+        closure-phase offsets, whose scale integral holds many whitenings per
+        point: the default batch is what fits, counting the observables and
+        the gains' rank (default 1 GiB on a CPU, 8 GiB otherwise). An explicit
+        ``batch_size`` overrides it.
+    coarse_nats, coarse_margin : float or None, int, optional
+        For data with gains or offsets: score the grid at one fixed error
+        scale per block (one whitening per point), integrate ln s only at
+        the points within ``coarse_nats`` (default 30, nats of the marginal) of the best and their
+        ``coarse_margin`` (default 1) neighbours, and give the others the
+        fixed-scale score plus the median difference of the two where both
+        exist. The peaks are refined with the full integral. None integrates
+        every point. ``EpochPositions.exact_fraction`` reports the share
+        computed in full.
     primary_diam : float, optional
         The primary's uniform-disk diameter (mas), fixed; None or 0 is a point
         primary. Give a value from the data or a calibrator, never from the orbit
@@ -1929,22 +2139,44 @@ def epoch_positions(
     rows, inflated, edge_grid, edge_peak = [], [], [], []
     unconverged = {}  # night -> the stop code of its best peak's refinement
     night_flags = []
+    exact_share = []
     for index, (name, d) in enumerate(zip(data.dataset_names, data.data)):
         surface = _Surface(d, s_max)
         dof_k = _check_dof(_dof_for(dof, data, index))
         with run_in("float64"):
             d64 = cast_tree(d, "float64")
             diam64 = None if diam is None else np.asarray(diam)
-            _, chi2 = _grid_scores(
-                np.asarray(points),
-                d64,
-                surface,
-                min(batch_size_or_default(batch_size, d), len(points)),
-                diam64,
-                np.asarray(dof_k),
-            )
-            marginal = _grid_marginal(chi2, np.asarray(dof_k), d64, surface)
-            marginal = onp.asarray(marginal).reshape(xx.shape)
+            dof_arr = np.asarray(dof_k)
+            if surface.numeric and coarse_nats is not None:
+                marginal, share = _coarse_then_exact(
+                    points,
+                    xx.shape,
+                    d64,
+                    surface,
+                    diam64,
+                    dof_arr,
+                    batch_size,
+                    memory_budget,
+                    float(coarse_nats),
+                    int(coarse_margin),
+                )
+                marginal = marginal.reshape(xx.shape)
+            else:
+                _, chi2 = _grid_scores(
+                    np.asarray(points),
+                    d64,
+                    surface,
+                    min(
+                        _grid_batch(batch_size, memory_budget, d64, surface),
+                        len(points),
+                    ),
+                    diam64,
+                    dof_arr,
+                )
+                marginal = _grid_marginal(chi2, dof_arr, d64, surface)
+                marginal = onp.asarray(marginal).reshape(xx.shape)
+                share = 1.0
+        exact_share.append(share)
         marginal = onp.where(onp.isfinite(marginal), marginal, -onp.inf)
         rival = (
             Epochs({name: d}).resolution_mas if gap_mas is None else gap_mas
@@ -2112,6 +2344,7 @@ def epoch_positions(
         peaks=tuple(r[5] for r in rows),
         flags=tuple(tuple(f) for f in flags),
         primary_diam=diam,
+        exact_fraction=tuple(exact_share),
     )
 
 

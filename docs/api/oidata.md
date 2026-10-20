@@ -65,10 +65,13 @@ perturbation: an offset δ changes the whitened sine sin Δ by about
 ## Attributes
 
 - `uv_grid`: a [`UVGrid`][virgil.oidata.UVGrid] for AMIGO DISCO products,
-  whose samples lie on a regular (possibly rotated) lattice, and `None` for
-  all other data, even on a lattice: virgil does not search ordinary data
-  for one. Matching models, such as an [`Image`][virgil.models.Image] with
-  the same `rotation_deg`, then evaluate faster with the same results. For
+  whose samples lie on a regular (possibly rotated) lattice: the mixed-DISCO
+  product, and dictionaries with a `disco_vis_mat` or `disco_phi_mat` whose
+  single-wavelength samples lie on one to 1e-5 cells (their float32 rounding).
+  It is `None` for all other data, even on a lattice: virgil does not search
+  ordinary data for one. Matching models, such as an
+  [`Image`][virgil.models.Image] or a [`FlaredDisk`][virgil.models.FlaredDisk]
+  with the same `rotation_deg`, then evaluate faster with the same results. For
   other lattice-sampled data set it with
   [`find_uv_grid`][virgil.oidata.find_uv_grid], e.g.
   `eqx.tree_at(lambda d: d.uv_grid, data, find_uv_grid(data.u, data.v),
@@ -175,8 +178,8 @@ AMIGO DISCO tutorial and [`virgil.amigo`](amigo.md) for loading it.
 ## uv grids
 
 AMIGO DISCO data are sampled on a regular uv lattice; `OIData.uv_grid`
-records it, so that a matching `Image` can use an exact matrix Fourier
-transform. Other data get `uv_grid=None`, even on a lattice; set it with
+records it, so that a matching `Image` or `FlaredDisk` can use an exact
+matrix Fourier transform. Other data get `uv_grid=None`, even on a lattice; set it with
 `find_uv_grid` (see `OIData`) to use the fast transform for them.
 
 ::: virgil.oidata.UVGrid
