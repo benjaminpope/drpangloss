@@ -236,6 +236,11 @@ class OrbitPipeline(_Pipeline):
             Settings overriding the defaults.
         """
         paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
+        if not paths:
+            raise ValueError(
+                f"{cls.__name__}.from_oifits needs at least one OIFITS file; "
+                "got an empty list."
+            )
         paths = [str(p) for p in paths]
         gap = settings.get("gap_days", cls._DEFAULTS["gap_days"])
         mapping, times, notes = _read_nights(paths, metadata or {}, gap)
@@ -1216,7 +1221,10 @@ def _posterior(p):
     return {
         "modes": summaries,
         **_sampler_report(s, summaries),
-        "optimum_gap_max": max(m["optimum_gap"] for m in summaries),
+        # NaN-propagating: a band that could not be scored must show.
+        "optimum_gap_max": float(
+            onp.max([m["optimum_gap"] for m in summaries])
+        ),
         "prior_bound_fraction": _worst_fractions(summaries),
     }
 
@@ -1225,7 +1233,7 @@ def _worst_fractions(summaries):
     out = {}
     for m in summaries:
         for k, f in m["prior_bound_fraction"].items():
-            out[k] = max(out.get(k, 0.0), f)
+            out[k] = float(onp.max([out.get(k, 0.0), f]))
     return out
 
 

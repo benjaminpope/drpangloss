@@ -1161,7 +1161,10 @@ def test_ring_count_without_the_chosen_count_among_the_rows_warns():
 
 def test_ring_count_tolerates_a_row_without_widths():
     rows = [{k: v for k, v in r.items() if k != "widths"} for r in _ROWS]
-    assert _status(checks.ring_count(1, rows[:2], 1.0)) in ("pass", "warn")
+    found = checks.ring_count(1, rows[:2], 1.0)
+    assert _status(found) == "warn"
+    assert "do not clearly prefer 1 to 2" in found.message
+    assert "narrower than the half-fringe" not in found.message
 
 
 def test_at_bound_with_start_is_the_start_at_bound_check():

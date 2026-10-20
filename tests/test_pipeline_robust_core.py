@@ -34,7 +34,7 @@ def test_from_oifits_refuses_an_empty_list_in_every_pipeline(
 
 
 @pytest.mark.parametrize(
-    "pipeline", [BinaryPipeline, StarPipeline, DiskPipeline]
+    "pipeline", [BinaryPipeline, StarPipeline, DiskPipeline, OrbitPipeline]
 )
 def test_from_oifits_names_the_pipeline_in_the_empty_list_error(
     pipeline, tmp_path
@@ -197,3 +197,18 @@ def test_a_band_with_a_stuck_site_has_a_nan_r_hat_whatever_the_site_order(
     summary = _band(drawn)
     assert onp.isnan(summary["r_hat_max"])
     assert checks.r_hat(summary["r_hat_max"]).status == "fail"
+
+
+@pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+def test_the_worst_bound_fraction_keeps_a_nan_in_any_band_order(order):
+    bands = [
+        {"prior_bound_fraction": {"ecc": 0.2}},
+        {"prior_bound_fraction": {"ecc": float("nan")}},
+    ]
+    worst = orbit._worst_fractions([bands[i] for i in order])
+    assert onp.isnan(worst["ecc"])
+    assert checks.prior_bound(worst).status == "warn"
+    ok = orbit._worst_fractions(
+        [bands[0], {"prior_bound_fraction": {"ecc": 0.4}}]
+    )
+    assert ok == {"ecc": 0.4}
