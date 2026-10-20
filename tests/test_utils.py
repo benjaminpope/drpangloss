@@ -152,6 +152,13 @@ def test_position_angle_and_separation_have_finite_gradients_at_the_origin():
         assert onp.all(onp.isfinite(jac)), point
     assert float(position_angle(np.asarray(0.0), np.asarray(0.0))) == 0.0
     assert float(jax.grad(position_angle)(0.0, 0.0)) == 0.0
+    # The separation is 0 on the origin, with a zero gradient.
+    sep = separation_pa(np.asarray(0.0), np.asarray(0.0))[0]
+    assert float(sep) == 0.0
+    grads = jax.grad(lambda x, y: separation_pa(x, y)[0], argnums=(0, 1))(
+        0.0, 0.0
+    )
+    assert [float(g) for g in grads] == [0.0, 0.0]
 
 
 def test_position_angle_is_north_through_east_in_zero_to_360():
