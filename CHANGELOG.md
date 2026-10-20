@@ -7,6 +7,15 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Closure offsets for three telescopes
+
+- `with_closure_offsets` accepts three-telescope data (one triangle per frame and
+  channel): triangle and `modes` offsets work, baseline offsets are folded into
+  the triangle group (width √3 × baseline) with a warning. The result carries
+  `cp_noise`, so the likelihood uses the sine-plus-penalty form of four-telescope
+  data, whose normalization differs slightly from the von Mises form of plain
+  three-telescope data.
+
 ### Matrix Fourier transform for rendered disks on DISCO lattices
 
 - `FlaredDisk` (and `FlaredDiskHG`, `FlaredDiskGaussian`, `FlaredDiskPowerLaw`)
@@ -23,8 +32,8 @@ anything before 1.0 may change between minor versions.
   smaller fields than before.
 - Dictionaries with `disco_vis_mat` or `disco_phi_mat` (the drpangloss DISCO
   format) get a `uv_grid` when their single-wavelength samples lie on a
-  lattice to 1e-5 cells, as the mixed-DISCO loader already did; both use
-  `disco_uv_grid`. `find_uv_grid` now fits the lattice by least squares, so
+  lattice to 1e-5 cells, as the mixed-DISCO loader already did; both share
+  one lattice check. `find_uv_grid` now fits the lattice by least squares, so
   float32 coordinates no longer defeat it.
 
 ### Image smoothing
@@ -47,6 +56,20 @@ anything before 1.0 may change between minor versions.
   them; `vis_amp=True` (the default) then means none, logged at INFO. For
   data with gains or offsets, an estimated tempering factor above 3 warns
   "noise model inadequate".
+
+- Grid batches for data with gains come from a memory budget
+  (`memory_budget`, 1 GiB on a CPU by default) that counts the observables and
+  the gains' rank, so no data set runs out of memory by default;
+  `epoch_positions`, `fit_orbit_aliases` and `OrbitPipeline` take
+  `batch_size` and `memory_budget`.
+- `epoch_positions` scores such grids at one fixed scale per block (one
+  whitening per point) and integrates ln s only within `coarse_nats` (30) of
+  the best point and its neighbours; the peaks are refined with the full
+  integral and `EpochPositions.exact_fraction` reports the share. On a
+  calibrated GRAVITY night (882 V², 588 closure phases) the peaks are
+  unchanged and the grid stage is ~6x faster. `gap_marginal` rivals more than
+  `coarse_nats` below the best, and the stored surface there, are approximate;
+  `coarse_nats=None` restores the full integral.
 
 ### Added
 

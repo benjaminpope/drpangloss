@@ -61,7 +61,10 @@ from .arcs import (
     night_motion,
     unwrap_cycles,
 )
+from ._grid import batch_size_or_default
 from .epochs import (
+    _grid_batch,
+    default_memory_budget,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_residuals,
@@ -553,21 +556,45 @@ _hessian = functools.partial(jax.jit, static_argnums=(0, 3))(
 )
 
 
-@functools.partial(jax.jit, static_argnums=(0, 3))
-def _batch(surfaces, xs, data, cfg, dof):
-    """``_loglike`` at each row of ``xs``, 64 rows at a time."""
+@functools.partial(jax.jit, static_argnums=(0, 3, 5))
+def _batch(surfaces, xs, data, cfg, dof, batch_size=64):
+    """``_loglike`` at each row of ``xs``, ``batch_size`` rows at a time."""
     return jax.lax.map(
-        lambda x: _loglike(surfaces, x, data, cfg, dof), xs, batch_size=64
+        lambda x: _loglike(surfaces, x, data, cfg, dof),
+        xs,
+        batch_size=batch_size,
+    )
+
+
+def _candidate_batch(batch_size, memory_budget, data, surfaces):
+    """Orbits per batch of candidates: 64 (as ever) for plain data, fewer
+    when gains or offsets make each epoch's scale integral hold many
+    whitenings; ``batch_size`` overrides. A candidate evaluates every epoch,
+    so each numeric epoch gets its share of ``memory_budget``."""
+    if batch_size is not None:
+        return batch_size_or_default(batch_size, None)
+    numeric = [(d, s) for d, s in zip(data, surfaces) if s.numeric]
+    if not numeric:
+        return 64
+    budget = (
+        default_memory_budget() if memory_budget is None else memory_budget
+    )
+    return min(
+        [64]
+        + [_grid_batch(None, budget / len(numeric), d, s) for d, s in numeric]
     )
 
 
 class _Problem:
     """The scale-marginalized log likelihood of all epochs and the priors."""
 
-    def __init__(self, data, settings):
+    def __init__(self, data, settings, batch_size=None, memory_budget=None):
         self.data, self.t_ref = list(data), settings.t_ref
         self.cfg = settings.cfg
         self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
+        self.batch_size = _candidate_batch(
+            batch_size, memory_budget, self.data, self.surfaces
+        )
         # The tempering, one array of block dofs per epoch (traced).
         self.dof = tuple(
             np.asarray(
@@ -607,7 +634,9 @@ class _Problem:
         return _hessian(self.surfaces, x, self.data, self.cfg, self.dof)
 
     def batch(self, xs):
-        return _batch(self.surfaces, xs, self.data, self.cfg, self.dof)
+        return _batch(
+            self.surfaces, xs, self.data, self.cfg, self.dof, self.batch_size
+        )
 
     def per_epoch(self, x):
         """Raw χ²/ν per epoch and block, and the profile scales ŝ."""
@@ -2984,6 +3013,8 @@ def fit_orbit_aliases(
     skip_flagged=True,
     n_bands_max=_N_BANDS_MAX,
     temper=True,
+    batch_size=None,
+    memory_budget=None,
     short_arcs=True,
     arc_jitter=ARC_JITTER,
     arc_delta_chi2=ARC_DELTA_CHI2,
@@ -3031,6 +3062,11 @@ def fit_orbit_aliases(
         The most bands of a default ``p_range`` (a longer window is cut), and
         the tempering for correlated channels
         ([`virgil.tempering`][virgil.tempering]): estimated, a factor, or off.
+    batch_size, memory_budget : optional
+        Candidate orbits scored together: by default 64, fewer for data with
+        gains or offsets so that a batch fits in ``memory_budget`` bytes
+        (see [`epoch_positions`][virgil.epochs.epoch_positions]); an explicit
+        ``batch_size`` overrides. They never change the result.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands whose cycle counts the short arcs admit, seeded by
         the positions and within-night velocities
@@ -3358,7 +3394,7 @@ def fit_orbit_aliases(
                 for d in data
             ),
         )
-    problem = _Problem(data, settings)
+    problem = _Problem(data, settings, batch_size, memory_budget)
     _preflight(problem, settings, bands[0])
     key = (
         _checkpoint_key(data, positions, bands, mean_times, settings)
