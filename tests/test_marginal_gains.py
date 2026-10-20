@@ -132,6 +132,7 @@ def _model(dra):
     return TRUTH.__class__(dra=dra, ddec=-4.0, flux=0.3)
 
 
+@pytest.mark.slow  # compile-dominated: 30-40 s per case on CI
 @pytest.mark.parametrize("nodes", [16, 32])
 @pytest.mark.parametrize(
     "hours, n_wave, widths",
@@ -184,6 +185,7 @@ def test_zero_width_gains_reproduce_the_plain_surface_when_tempered():
             assert float(b) == pytest.approx(float(a), abs=1e-6)
 
 
+@pytest.mark.slow  # compiles the gradient through the whole scale integral
 def test_gradient_matches_a_finite_difference():
     with run_in("float64"):
         data = _vlti((-2.0, 0.0, 2.0), 4)
