@@ -17,6 +17,8 @@ anything before 1.0 may change between minor versions.
   the χ², not with exactly zero. At the optimum the sign of the gradient is
   rounding noise, so whether CLEAN stopped depended on the platform and on
   thread scheduling, and it sometimes ran to `max_iterations` instead.
+- The cold-cache seasonal-gap alias test (`slow` set) has a 600 s timeout: it takes
+  250-305 s on a runner with a cold JAX compile cache, against the 300 s default.
 
 ### Closure offsets for three telescopes
 
