@@ -64,6 +64,7 @@ from .arcs import (
 from ._grid import batch_size_or_default
 from .epochs import (
     _grid_batch,
+    default_memory_budget,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_residuals,
@@ -568,17 +569,19 @@ def _batch(surfaces, xs, data, cfg, dof, batch_size=64):
 def _candidate_batch(batch_size, memory_budget, data, surfaces):
     """Orbits per batch of candidates: 64 (as ever) for plain data, fewer
     when gains or offsets make each epoch's scale integral hold many
-    whitenings (the largest epoch's, see ``epochs._grid_batch``);
-    ``batch_size`` overrides."""
+    whitenings; ``batch_size`` overrides. A candidate evaluates every epoch,
+    so each numeric epoch gets its share of ``memory_budget``."""
     if batch_size is not None:
         return batch_size_or_default(batch_size, None)
+    numeric = [(d, s) for d, s in zip(data, surfaces) if s.numeric]
+    if not numeric:
+        return 64
+    budget = (
+        default_memory_budget() if memory_budget is None else memory_budget
+    )
     return min(
-        64,
-        *(
-            _grid_batch(None, memory_budget, d, s)
-            for d, s in zip(data, surfaces)
-            if s.numeric
-        ),
+        [64]
+        + [_grid_batch(None, budget / len(numeric), d, s) for d, s in numeric]
     )
 
 

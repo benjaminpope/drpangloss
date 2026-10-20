@@ -113,3 +113,27 @@ def test_epoch_positions_agree_with_and_without_coarse_scoring():
     onp.testing.assert_allclose(
         quick.peaks[0].marginal[0], full.peaks[0].marginal[0], atol=1e-3
     )
+    onp.testing.assert_allclose(
+        quick.gap_marginal, full.gap_marginal, atol=1e-3
+    )
+    assert quick.flags == full.flags
+    # peaks within coarse_nats of the best are exact; lower ones approximate
+    exact = full.peaks[0].marginal >= full.peaks[0].marginal[0] - 30.0
+    k = int(exact.sum())
+    onp.testing.assert_allclose(
+        quick.peaks[0].marginal[:k], full.peaks[0].marginal[:k], atol=1e-3
+    )
+
+
+def test_candidate_batch_is_64_for_plain_data_and_shares_the_budget():
+    from virgil.aliases import _candidate_batch
+
+    plain, gained = _night(False), _night(True)
+    sp, sg = _Surface(plain, 10.0), _Surface(gained)
+    assert _candidate_batch(None, None, [plain, plain], [sp, sp]) == 64
+    one = _candidate_batch(None, 2**22, [gained], [sg])
+    five = _candidate_batch(None, 2**22, [gained] * 5, [sg] * 5)
+    assert 1 <= five <= one < 64
+    assert _candidate_batch(5, None, [gained], [sg]) == 5
+    # mixed epochs: the plain one does not take a share
+    assert _candidate_batch(None, 2**22, [plain, gained], [sp, sg]) == one

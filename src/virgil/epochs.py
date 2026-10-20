@@ -1522,6 +1522,13 @@ CPU_MEMORY_BUDGET = 2**30
 ACCELERATOR_MEMORY_BUDGET = 2**33
 
 
+def default_memory_budget():
+    """Bytes one batch may use by default, for JAX's default backend."""
+    if jax.default_backend() == "cpu":
+        return CPU_MEMORY_BUDGET
+    return ACCELERATOR_MEMORY_BUDGET
+
+
 def _whitening_floats(data):
     """The floats one whitening of ``data`` holds: observables plus the
     gain and offset modes' columns."""
@@ -1552,11 +1559,7 @@ def _grid_batch(batch_size, memory_budget, data, surface, copies=None):
     if not surface.numeric:
         return default
     if memory_budget is None:
-        memory_budget = (
-            CPU_MEMORY_BUDGET
-            if jax.default_backend() == "cpu"
-            else ACCELERATOR_MEMORY_BUDGET
-        )
+        memory_budget = default_memory_budget()
     if not memory_budget > 0:
         raise ValueError(
             f"memory_budget must be positive, got {memory_budget}."
@@ -1593,7 +1596,8 @@ def _coarse_then_exact(
 
     All points are scored at one fixed scale per block (the profile scale of
     the best point at s = 1): one whitening each. The points within ``nats``
-    of the best, and their ``margin`` neighbours, get the full integral. The
+    of the best (in marginal nats: see below), and their ``margin``
+    neighbours, get the full integral. The
     rest take their fixed-scale score plus the median difference (full minus
     fixed) over the points within ``nats``. Returns ``(score, fraction)``,
     the flat scores and the fraction of points scored in full.
@@ -1629,19 +1633,31 @@ def _coarse_then_exact(
         _grid_fixed(points, data, surface, fixed_batch, log_s, diam, dof)
     )
     coarse = onp.where(onp.isfinite(coarse), coarse, -onp.inf)
-    core = coarse >= coarse.max() - nats
+    # ``nats`` is a gap of the marginal. At the fixed scale a relative χ²
+    # excess ε costs νε/2 nats, but the marginal only (ν/2) ln(1+ε): the
+    # same marginal gap is a larger fixed-scale one, so cut there (ν the
+    # total of the blocks', a few nats' margin for small data).
+    nu = float(onp.sum(surface.nu))
+    cut = 0.5 * nu * onp.expm1(min(2.0 * nats / nu, 50.0))
+    core = coarse >= coarse.max() - cut
     pick = core.reshape(shape)
     if margin:
         pick = binary_dilation(
             pick, structure=onp.ones((3,) * pick.ndim), iterations=int(margin)
         )
     pick = pick.ravel()
+    chosen = points[pick]
     batch = min(
-        _grid_batch(batch_size, memory_budget, data, surface), int(pick.sum())
+        _grid_batch(batch_size, memory_budget, data, surface), len(chosen)
     )
-    _, chi2 = _grid_scores(
-        np.asarray(points[pick]), data, surface, batch, diam, dof
+    # Pad to a power-of-two number of batches (repeating the first row), so
+    # that nights and grids of different sizes share a few compiled shapes.
+    n_batches = 1 << max(math.ceil(len(chosen) / batch) - 1, 0).bit_length()
+    padded = onp.concatenate(
+        [chosen, onp.repeat(chosen[:1], n_batches * batch - len(chosen), 0)]
     )
+    _, chi2 = _grid_scores(np.asarray(padded), data, surface, batch, diam, dof)
+    chi2 = chi2[: len(chosen)]
     exact = onp.asarray(_grid_marginal(chi2, dof, data, surface))
     ok = onp.isfinite(exact) & core[pick]
     offset = float(onp.median((exact - coarse[pick])[ok])) if ok.any() else 0.0
@@ -2049,7 +2065,7 @@ def epoch_positions(
     coarse_nats, coarse_margin : float or None, int, optional
         For data with gains or offsets: score the grid at one fixed error
         scale per block (one whitening per point), integrate ln s only at
-        the points within ``coarse_nats`` (default 30) of the best and their
+        the points within ``coarse_nats`` (default 30, nats of the marginal) of the best and their
         ``coarse_margin`` (default 1) neighbours, and give the others the
         fixed-scale score plus the median difference of the two where both
         exist. The peaks are refined with the full integral. None integrates

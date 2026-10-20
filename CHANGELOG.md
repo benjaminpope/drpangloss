@@ -37,8 +37,10 @@ anything before 1.0 may change between minor versions.
   whitening per point) and integrates ln s only within `coarse_nats` (30) of
   the best point and its neighbours; the peaks are refined with the full
   integral and `EpochPositions.exact_fraction` reports the share. On a
-  calibrated GRAVITY night the surface and peaks are unchanged and the grid
-  stage is ~6x faster.
+  calibrated GRAVITY night (882 V², 588 closure phases) the peaks are
+  unchanged and the grid stage is ~6x faster. `gap_marginal` rivals more than
+  `coarse_nats` below the best, and the stored surface there, are approximate;
+  `coarse_nats=None` restores the full integral.
 
 ### Added
 
