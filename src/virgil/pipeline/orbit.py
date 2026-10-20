@@ -132,7 +132,15 @@ class OrbitPipeline(_Pipeline):
           different nights (``from_oifits``).
         - ``exclude`` ({}): ``{file, night or dataset: reason}`` left out,
           a ruling recorded in ``run.json``.
-        - ``flag_nights`` (True): flag the nights that cannot seed an orbit.
+        - ``flag_nights`` (True): flag the nights that cannot seed an orbit;
+          ``flag_sep_blocks`` (False): whether a separation below λ/2B also
+          keeps a night from seeding (it is reported either way).
+        - ``outlier_eps`` (0.02): the prior outlier probability of each
+          night in the orbit fit, whose likelihood is
+          ``(1 - eps) L + eps L_broad`` with ``L_broad`` the night's mean
+          likelihood over the position grid, so that one bad night (a
+          sidelobe) cannot move the orbit; 0 turns it off. The posterior
+          outlier probability of each night is in the search report.
         - ``n_peaks`` (5), ``max_sep_mas`` (None), ``grid_step_mas``
           (None), ``max_grid`` (201): the position search; by default the
           step is a quarter of the finest λ/B (coarsened to ``max_grid``
@@ -173,6 +181,8 @@ class OrbitPipeline(_Pipeline):
         "gap_days": 0.5,
         "exclude": {},
         "flag_nights": True,
+        "flag_sep_blocks": False,
+        "outlier_eps": 0.02,
         "n_peaks": 5,
         "max_sep_mas": None,
         "grid_step_mas": None,
@@ -638,6 +648,7 @@ def _night_positions(p):
                 n_peaks=s["n_peaks"],
                 s_max=s["s_max"],
                 flag_nights=s["flag_nights"],
+                flag_sep_blocks=s["flag_sep_blocks"],
             )
         halves.append(float(half))
         if not found.edge.any() or s["max_sep_mas"] or half >= cap:
@@ -693,11 +704,26 @@ def _positions_json(found):
             for peak in found.peaks
         ],
         "flags": [
-            [{"code": f.code, "reason": f.reason} for f in night]
+            [
+                {"code": f.code, "reason": f.reason, "blocking": f.blocking}
+                for f in night
+            ]
             for night in found.flags
         ],
         "primary_diam": found.primary_diam,
+        "log_broad_temper": None
+        if found.log_broad_temper is None
+        else found.log_broad_temper.tolist(),
     }
+
+
+def _broad(table):
+    """The ``EpochPositions`` fields of a saved ``log_broad_temper`` (none
+    in a file from before the outlier mixture)."""
+    if table is None:
+        return {}
+    table = onp.asarray(table, float)
+    return dict(log_broad=table[:, 0], log_broad_temper=table)
 
 
 def _positions_from_json(d):
@@ -726,10 +752,14 @@ def _positions_from_json(d):
         scale=tuple(d["scale"]),
         peaks=tuple(peak(r) for r in d["peaks"]),
         flags=tuple(
-            tuple(NightFlag(f["code"], f["reason"]) for f in night)
+            tuple(
+                NightFlag(f["code"], f["reason"], f.get("blocking", True))
+                for f in night
+            )
             for night in d["flags"]
         ),
         primary_diam=d["primary_diam"],
+        **_broad(d.get("log_broad_temper")),
     )
 
 
@@ -757,7 +787,8 @@ def _epochs(p):
             "chi2_raw": float(found.chi2_raw[k].get("all", math.nan)),
             "edge": edge[name],
             "flags": [
-                {"code": f.code, "reason": f.reason} for f in found.flags[k]
+                {"code": f.code, "reason": f.reason, "blocking": f.blocking}
+                for f in found.flags[k]
             ],
         }
         for k, name in enumerate(found.names)
@@ -809,6 +840,7 @@ def _search(p):
         flip_flux=s["flip_flux"],
         n_bands_max=s["n_bands_max"],
         temper=s["temper"],
+        outlier_eps=s["outlier_eps"],
     )
     with _io.atomic_path(
         p.output / "stages" / "search" / "aliases.json"
@@ -840,6 +872,15 @@ def _search_report(result, data, names):
             "blocks": result.temper_blocks,
             "out_of_range": bool(result.tempering),
         },
+        "outliers": None
+        if result.outlier is None
+        else {
+            "eps": result.outlier["eps"],
+            "probability": dict(
+                zip(result.outlier["names"], result.outlier["probability"])
+            ),
+        },
+        "night_flags": dict(result.night_flags or {}),
         "labels_free": bool(result.labels_free),
         "period_bound": bool(result.period_bound),
         "period_at_lower_bound": bool(result.period_at_lower_bound),
@@ -1078,7 +1119,12 @@ def _orbit_model(problem, priors):
         numpyro.factor(
             "loglike",
             _loglike(
-                problem.surfaces, x, problem.data, problem.cfg, problem.dof
+                problem.surfaces,
+                x,
+                problem.data,
+                problem.cfg,
+                problem.dof,
+                problem.mix,
             ),
         )
 

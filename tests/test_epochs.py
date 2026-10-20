@@ -809,6 +809,13 @@ def test_epoch_positions_flags_each_night_with_a_code_and_a_reason(
     assert "sep-below-resolution" in codes["close"]
     assert "chi2-high" in codes["bad"]
     assert codes["clean"] == set()
+    # A sub-resolution separation is reported, not blocking (V^2 and
+    # closure phases locate a companion below lambda/2B; this one also has
+    # a flux at the bound, which does block).
+    close = dict(zip(found.names, found.flags))["close"]
+    assert [f.blocking for f in close if f.code == "sep-below-resolution"] == [
+        False
+    ]
     assert found.flagged.tolist() == [False, True, True, True]
     assert set(found.flag_codes()) == {"twin", "close", "bad"}
     for fl in found.flags:

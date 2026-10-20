@@ -110,6 +110,8 @@ DEFAULTS = {
     "gap_days": 0.5,
     "exclude": {},
     "flag_nights": True,
+    "flag_sep_blocks": False,
+    "outlier_eps": 0.02,
     "n_peaks": 5,
     "max_sep_mas": None,
     "grid_step_mas": None,
