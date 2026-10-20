@@ -133,6 +133,12 @@ class OrbitPipeline(_Pipeline):
         - ``exclude`` ({}): ``{file, night or dataset: reason}`` left out,
           a ruling recorded in ``run.json``.
         - ``flag_nights`` (True): flag the nights that cannot seed an orbit.
+        - ``batch_size`` (None), ``memory_budget`` (None, bytes),
+          ``coarse_nats`` (30): the grid points (and candidate orbits) scored
+          together, by default what fits in the budget (1 GiB on a CPU), and,
+          for data with gains or offsets, the nats below the best within which
+          the position grid integrates the error scale in full (None: every
+          point); see ``epoch_positions``. None of them is a prior range.
         - ``n_peaks`` (5), ``max_sep_mas`` (None), ``grid_step_mas``
           (None), ``max_grid`` (201): the position search; by default the
           step is a quarter of the finest λ/B (coarsened to ``max_grid``
@@ -173,6 +179,9 @@ class OrbitPipeline(_Pipeline):
         "gap_days": 0.5,
         "exclude": {},
         "flag_nights": True,
+        "batch_size": None,
+        "memory_budget": None,
+        "coarse_nats": 30.0,
         "n_peaks": 5,
         "max_sep_mas": None,
         "grid_step_mas": None,
@@ -261,6 +270,11 @@ class OrbitPipeline(_Pipeline):
                 _positive(s, name)
         for name in ("alias_nats", "no_orbit_nats"):
             _positive(s, name)
+        for name in ("memory_budget", "coarse_nats"):
+            if s[name] is not None:
+                _positive(s, name)
+        if s["batch_size"] is not None:
+            _integer(s, "batch_size", 1)
         for name, low in (
             ("n_peaks", 1),
             ("n_bands_max", 1),
@@ -638,6 +652,9 @@ def _night_positions(p):
                 n_peaks=s["n_peaks"],
                 s_max=s["s_max"],
                 flag_nights=s["flag_nights"],
+                batch_size=s["batch_size"],
+                memory_budget=s["memory_budget"],
+                coarse_nats=s["coarse_nats"],
             )
         halves.append(float(half))
         if not found.edge.any() or s["max_sep_mas"] or half >= cap:
@@ -809,6 +826,8 @@ def _search(p):
         flip_flux=s["flip_flux"],
         n_bands_max=s["n_bands_max"],
         temper=s["temper"],
+        batch_size=s["batch_size"],
+        memory_budget=s["memory_budget"],
     )
     with _io.atomic_path(
         p.output / "stages" / "search" / "aliases.json"
