@@ -7,6 +7,19 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Fixes: JAX 0.12 and CLEAN stalling
+
+- `separation_pa` returns a separation with a zero (not NaN) gradient at the
+  origin. `jnp.hypot` has a NaN gradient at (0, 0) on JAX 0.12.0, so an
+  angular model that started on the origin (a non-detection's best fit) had
+  non-finite derivatives and NUTS could not initialize there.
+- `clean`'s `"stalled"` stop compares the predicted decrease with `eps` times
+  the χ², not with exactly zero. At the optimum the sign of the gradient is
+  rounding noise, so whether CLEAN stopped depended on the platform and on
+  thread scheduling, and it sometimes ran to `max_iterations` instead.
+- The cold-cache seasonal-gap alias test (`slow` set) has a 600 s timeout: it takes
+  250-305 s on a runner with a cold JAX compile cache, against the 300 s default.
+
 ### Faster FlaredDisk render
 
 - `FlaredDiskHG` and `FlaredDiskPowerLaw` form cos θ as y/ρ instead of calling

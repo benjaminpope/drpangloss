@@ -300,8 +300,14 @@ def position_angle(dra, ddec):
 
 def separation_pa(dra, ddec):
     """``(sep, pa)`` of the offset ``(dra, ddec)``; ``pa`` as in :func:`position_angle`."""
-    xp = onp if _numpy_inputs(dra, ddec) else np
-    return xp.hypot(dra, ddec), position_angle(dra, ddec)
+    if _numpy_inputs(dra, ddec):
+        return onp.hypot(dra, ddec), position_angle(dra, ddec)
+    # hypot's gradient at the origin is NaN (JAX 0.12 dropped the 0 that
+    # earlier releases returned), so the separation, like the angle, takes
+    # a harmless point there and is 0 with a zero gradient.
+    origin = (dra == 0) & (ddec == 0)
+    sep = np.hypot(np.where(origin, 1.0, dra), np.where(origin, 0.0, ddec))
+    return np.where(origin, 0.0, sep), position_angle(dra, ddec)
 
 
 def _unflagged_samples(data):
