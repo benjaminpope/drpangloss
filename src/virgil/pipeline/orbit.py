@@ -141,6 +141,12 @@ class OrbitPipeline(_Pipeline):
           likelihood over the position grid, so that one bad night (a
           sidelobe) cannot move the orbit; 0 turns it off. The posterior
           outlier probability of each night is in the search report.
+        - ``batch_size`` (None), ``memory_budget`` (None, bytes),
+          ``coarse_nats`` (30): the grid points (and candidate orbits) scored
+          together, by default what fits in the budget (1 GiB on a CPU), and,
+          for data with gains or offsets, the nats below the best within which
+          the position grid integrates the error scale in full (None: every
+          point); see ``epoch_positions``. None of them is a prior range.
         - ``n_peaks`` (5), ``max_sep_mas`` (None), ``grid_step_mas``
           (None), ``max_grid`` (201): the position search; by default the
           step is a quarter of the finest λ/B (coarsened to ``max_grid``
@@ -183,6 +189,9 @@ class OrbitPipeline(_Pipeline):
         "flag_nights": True,
         "flag_sep_blocks": False,
         "outlier_eps": 0.02,
+        "batch_size": None,
+        "memory_budget": None,
+        "coarse_nats": 30.0,
         "n_peaks": 5,
         "max_sep_mas": None,
         "grid_step_mas": None,
@@ -271,6 +280,11 @@ class OrbitPipeline(_Pipeline):
                 _positive(s, name)
         for name in ("alias_nats", "no_orbit_nats"):
             _positive(s, name)
+        for name in ("memory_budget", "coarse_nats"):
+            if s[name] is not None:
+                _positive(s, name)
+        if s["batch_size"] is not None:
+            _integer(s, "batch_size", 1)
         for name, low in (
             ("n_peaks", 1),
             ("n_bands_max", 1),
@@ -649,6 +663,9 @@ def _night_positions(p):
                 s_max=s["s_max"],
                 flag_nights=s["flag_nights"],
                 flag_sep_blocks=s["flag_sep_blocks"],
+                batch_size=s["batch_size"],
+                memory_budget=s["memory_budget"],
+                coarse_nats=s["coarse_nats"],
             )
         halves.append(float(half))
         if not found.edge.any() or s["max_sep_mas"] or half >= cap:
@@ -834,6 +851,8 @@ def _search(p):
         n_bands_max=s["n_bands_max"],
         temper=s["temper"],
         outlier_eps=s["outlier_eps"],
+        batch_size=s["batch_size"],
+        memory_budget=s["memory_budget"],
     )
     with _io.atomic_path(
         p.output / "stages" / "search" / "aliases.json"

@@ -11,7 +11,13 @@ import zodiax as zdx
 from ._closure import ClosureNoise
 from ._deprecate import renamed
 from ._utils import inflate_errors, wrap_phase
-from .gains import ClosureOffsets, GainModes, closure_offsets, gain_modes
+from .gains import (
+    ClosureOffsets,
+    GainModes,
+    closure_offsets,
+    gain_modes,
+    offsets_noise,
+)
 from .observables import (
     KINDS,
     DifferentialPhase,
@@ -1627,8 +1633,13 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         these widths unless fitted as the noise terms ``phi_offset_baseline``,
         ``phi_offset_triangle`` or ``phi_offset_modes`` (log-uniform priors on
         stated bounds). Off by default; use it only
-        if calibrators show such offsets. Needs closure phases from four or more
-        telescopes, and is a small-offset approximation (δ ≲ 0.3 rad).
+        if calibrators show such offsets. Three telescopes (one triangle per frame and
+        channel) are supported: their baseline offsets are folded into the
+        triangle group, and, as for four, the likelihood then whitens the
+        sines with a periodic penalty (not the von Mises form of plain
+        three-telescope data, whose normalization differs by about
+        log(1 + σ²/8) per closure phase). A small-offset approximation
+        (δ ≲ 0.3 rad).
 
         Parameters
         ----------
@@ -1647,10 +1658,12 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
             offsets cannot be split.
         """
         offsets = closure_offsets(self, baseline, triangle, modes)
+        # Three telescopes have no cp_noise; the offsets are whitened with
+        # the one-triangle-per-group form.
         return eqx.tree_at(
-            lambda d: d.phase_offsets,
+            lambda d: (d.phase_offsets, d.cp_noise),
             self,
-            offsets,
+            (offsets, offsets_noise(self)),
             is_leaf=lambda x: x is None,
         )
 
