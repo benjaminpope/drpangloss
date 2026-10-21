@@ -3,8 +3,8 @@
 Status (2026-10-16): **BinaryPipeline and StarPipeline built** (2026-10-08);
 the pipelines are provisional in 0.4.0 (`docs/stability.md`). `DiskPipeline`
 is in review (virgil#369). `OrbitPipeline` is next, planned in
-[`orbit_pipeline.md`](orbit_pipeline.md) (phase 1e); `ImagingPipeline` is not
-started.
+[`orbit_pipeline.md`](orbit_pipeline.md) (phase 1e); `ImagingPipeline` has its first version (one member), designed in
+[`imaging_pipeline.md`](imaging_pipeline.md).
 
 ## Goal
 
@@ -131,7 +131,7 @@ after promotion, and the snapshot tests already pin it.
 | `StarPipeline` | `star` | provisional (stable after one release of use) | load, overview, fit, posterior, quicklook; `model=` takes a model or a short name |
 | `OrbitPipeline` | `orbit` | provisional (planned) | multi-epoch positions, orbit search, fit, posterior |
 | `DiskPipeline` | `disk` | provisional | load, overview, geometry, profile, compare, posterior, quicklook; `model=` takes `"rings"` or `"gp"` |
-| `ImagingPipeline` | `imaging` | provisional (planned) | regularised images, weight selection, uncertainty |
+| `ImagingPipeline` | `image` | provisional | load, overview, start, star, hyperparameters, members, combine, quicklook (one member; the ensemble and channels follow); see [`imaging_pipeline.md`](imaging_pipeline.md) |
 
 ## StarPipeline and its model registry
 

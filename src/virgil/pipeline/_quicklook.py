@@ -54,8 +54,9 @@ def _intro(run, summary):
     )
     settings = ", ".join(f"`{k}={_fmt(v)}`" for k, v in run["config"].items())
     prov = run["provenance"]
+    note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
     return (
-        f"# Quicklook: {run['class']}\n\n"
+        note + f"# Quicklook: {run['class']}\n\n"
         f"This notebook was written by the virgil `{run['pipeline']}` pipeline "
         f"({run['stability']}, schema `{run['schema']}`) and fitted a "
         f"`{run['model']['class']}` template.\n\n"
@@ -394,6 +395,39 @@ def _disk_cells(run, summary, path):
     return cells
 
 
+_IMAGE_CAVEAT = (
+    "> **What this run can and cannot claim.** The image fits the data on "
+    "the quoted errors. It does **not** promise that the morphology is "
+    "right: data-fidelity checks alone passed contest reconstructions that "
+    "were judged terrible (blobby, or a chain of dots), and none of the "
+    "checks below measures whether an image looks like the source.\n\n"
+)
+
+
+def _image_cells(run, summary, path):
+    done = _completed(run)
+    cells = []
+    if "overview" in done:
+        cells.append(_data_cell((path / "data" / "processed.oifits").exists()))
+    if "combine" in done:
+        chi2 = ", ".join(
+            f"{k} {v:.3g}"
+            for k, v in summary["fit"]["chi2_red_by_observable"].items()
+        )
+        cells.append(
+            (
+                "## Image\n\nRaw χ²/N on the quoted errors: " + chi2 + ".",
+                "img = res.image()\n"
+                "h = 0.5 * img.pixels.shape[0] * img.pixel_scale_mas\n"
+                "x, y = img.dra, img.ddec\n"
+                "plt.imshow(img.pixels, cmap='inferno',\n"
+                "           extent=(x + h, x - h, y - h, y + h))\n"
+                "plt.colorbar(label='relative flux per pixel')",
+            )
+        )
+    return cells
+
+
 def _orbit_cells(run, summary, path):
     done = _completed(run)
     cells = []
@@ -469,6 +503,7 @@ def _orbit_cells(run, summary, path):
 _SECTIONS = {
     "binary": _binary_cells,
     "disk": _disk_cells,
+    "image": _image_cells,
     "orbit": _orbit_cells,
     "star": _star_cells,
 }
