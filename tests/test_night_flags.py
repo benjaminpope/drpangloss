@@ -212,8 +212,7 @@ def test_the_mixture_polishes_the_modes_the_plain_search_finds():
     rng = onp.random.default_rng(0)
     scale = onp.array([0.01, 0.2, 0.3, 0.3, 10, 10, 0.3, 0.3])
     starts = [
-        truth + 0.2 * rng.standard_normal(len(truth)) * scale
-        for _ in range(4)
+        truth + 0.2 * rng.standard_normal(len(truth)) * scale for _ in range(4)
     ]
     stalls = [
         aliases._optimize(problem, bounds, x, 50)[1] < optimum - 100.0
