@@ -632,7 +632,7 @@ def _load(p):
 def _position_grid(p, half, finest):
     """The ``(grid, n, step, wanted)`` of the position search of half-width
     ``half`` (mas), for a finest fringe scale ``finest``; ``max_grid``
-    coarsens the step below ``wanted`` (the report says so)."""
+    coarsens the step beyond ``wanted`` (the report says so)."""
     s = p.settings
     wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
     most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
