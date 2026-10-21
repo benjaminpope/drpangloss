@@ -997,12 +997,8 @@ def _single_star(problem, x, diam_range):
     diameter, the best diameter: a log grid over its prior range, then a
     finer one about the best cell, so the null is not under-fitted).
 
-    The null is scored on the plain likelihood (``mixed=False``) while the
-    orbit modes are scored on the outlier mixture (``outlier_eps``). The
-    asymmetry is deliberate: the mixture's broad component is a companion
-    somewhere else in the field, which the no-companion null must not be
-    given. A night that the orbit cannot reach therefore costs the null its
-    full misfit, and costs the orbit at most the bounded outlier price.
+    The null uses the plain likelihood (``mixed=False``), the modes the
+    outlier mixture: see docs/orbit_fitting.md.
     test_a_single_star_is_no_orbit pins the verdict."""
     import jax.numpy as np
 

@@ -87,7 +87,7 @@ img = res.image()          # a SkyImage: pixels, pixel_scale_mas, dra, ddec, bea
 !!! warning "A good fit is not a promise about the picture"
     The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the star decision, the sky orientation and the grid and field edges) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
 
-This first version fits an ensemble of 8 members at shared hyperparameters, which differ only in start, pixel scale and field, and `ensemble.combine` keeps those that fit V² and closure phases; `sigma.fits` is their spread, so it leaves out hyperparameter uncertainty. CLEAN starts, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come.
+This first version fits an ensemble of up to 8 members (`members`, default 8), which by default share the hyperparameters and differ only in start, pixel scale and field; `ensemble.combine` keeps those that fit V² and closure phases, and `sigma.fits` is their spread, which with shared hyperparameters leaves out hyperparameter uncertainty (`member_grids=True` gives each member its own). CLEAN starts, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come.
 
 ```bash
 virgil-pipeline image star.oifits -o runs/image --set star=auto
@@ -264,7 +264,7 @@ Open before promotion: `global_nsigma` is a Šidák estimate with a nominal numb
 | `StarPipeline` | `star` | provisional |
 | `DiskPipeline` | `disk` | provisional |
 | `OrbitPipeline` | `orbit` | provisional |
-| `ImagingPipeline` | `image` | provisional (an ensemble of 8 members at shared hyperparameters; channels follow) |
+| `ImagingPipeline` | `image` | provisional (an ensemble of up to 8 members; channels follow) |
 
 Further pipelines will be added to this table as they land, all provisional.
 

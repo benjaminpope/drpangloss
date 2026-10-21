@@ -330,15 +330,23 @@ def aggregate(records, larger_is_simpler=True):
         ``folds``; ``fold_scores`` of shape ``(n_settings, n_folds)``;
         ``score`` (the sum over folds), ``mean`` and ``sd`` (over folds, ``ddof
         = 1``), ``se`` (``sd/√n_folds``); ``chi2``, the raw χ² summed over folds
-        (``None`` if absent); ``best`` (index of the smallest mean),
+        (``None`` if absent); ``best`` (index of the smallest mean; a setting whose mean is NaN ranks
+        last, with a warning),
         ``one_se`` (index of the most regularized setting whose mean is within
         one ``se`` of the best's) and ``edge``, true if either is the first or
         last of a numeric grid; and, with groups, ``groups`` (labels) and
         ``group_score``, ``group_chi2`` and ``group_n`` of shape
         ``(n_settings, n_groups)`` summed over folds, with ``group_best``,
-        the index of each group's smallest score. A group's curve can differ
+        the index of each group's smallest score (-1 for a group whose
+        scores are all NaN). A group's curve can differ
         from the total: it shows which part of the data prefers which setting.
         Without a numeric grid, ``one_se`` and ``edge`` are ``None``.
+
+    Raises
+    ------
+    ValueError
+        If there are no records, records are missing or duplicated, or every
+        setting has a NaN score.
     """
     records = list(records)
     if not records:
@@ -445,7 +453,9 @@ def _group_curves(records, index, find, n_settings):
         "group_score": score,
         "group_chi2": chi2 if has_chi2 else None,
         "group_n": count,
-        "group_best": onp.argmin(
-            onp.where(onp.isnan(score), onp.inf, score), axis=0
+        "group_best": onp.where(
+            onp.isnan(score).all(axis=0),
+            -1,
+            onp.argmin(onp.where(onp.isnan(score), onp.inf, score), axis=0),
         ),
     }

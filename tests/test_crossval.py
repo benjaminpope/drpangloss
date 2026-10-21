@@ -278,3 +278,25 @@ def test_aggregate_all_nan_scores_raise():
     records = [_record(s, k, onp.nan) for s in (1.0, 2.0) for k in range(2)]
     with pytest.raises(ValueError, match="NaN"):
         aggregate(records)
+
+
+def test_aggregate_one_fold_has_no_standard_error():
+    records = [
+        _record(s, 0, v) for s, v in ((0.1, 3.0), (1.0, 1.0), (10.0, 2.0))
+    ]
+    out = aggregate(records)
+    assert out["best"] == 1 and out["one_se"] == 1
+
+
+def test_aggregate_group_with_only_nan_scores_has_no_best():
+    def record(setting, fold):
+        return {
+            **_record(setting, fold, 1.0 + setting),
+            "group_labels": ["g0", "g1"],
+            "group_score": [1.0 + setting, onp.nan],
+            "group_chi2": [None, None],
+            "group_n": [1, 1],
+        }
+
+    out = aggregate([record(s, k) for s in (1.0, 2.0) for k in range(2)])
+    assert out["group_best"].tolist() == [0, -1]
