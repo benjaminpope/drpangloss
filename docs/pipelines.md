@@ -169,7 +169,7 @@ config = work / "config.json"
 config.write_text(json.dumps({
     "data": [str(res.path / "data" / "processed.oifits")],
     "output": str(work / "config_run"),
-    "settings": {"num_warmup": 500, "num_samples": 500, "num_chains": 2, "sigma": 2.0, "max_sep_mas": 350.0},
+    "settings": {"num_warmup": 500, "num_samples": 500, "num_chains": 2, "sigma": 2.0, "max_sep_mas": 300.0},
 }, indent=2))
 
 p = BinaryPipeline.from_config(config, template, sigma=4.0)  # keywords win
