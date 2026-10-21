@@ -82,10 +82,10 @@ res = ImagingPipeline(data, output="runs/image").run()
 img = res.image()          # a SkyImage: pixels, pixel_scale_mas, dra, ddec, beam
 ```
 
-`ImagingPipeline` reconstructs a pixel image with a Gaussian-process prior whose amplitude σ and length ℓ are chosen by evidence (`star="auto"` also decides, by ΔlogZ against a threshold of 5 nats, whether a point source sits at the centre). The stages are `load`, `overview`, `start` (the envelope), `star`, `hyperparameters`, `members`, `combine` and `quicklook`. The result is `images/mean.fits` (a sky-oriented FITS with a WCS, the beam and the star's share of the flux), `models/best` (`res.model()`) and a quicklook that plots the image.
+`ImagingPipeline` reconstructs a pixel image with a Gaussian-process prior whose amplitude σ and length ℓ are chosen by evidence (`star="auto"` also decides, by ΔlogZ against a threshold of 5 nats, whether a point source sits at the centre). The stages are `load`, `overview`, `star`, `hyperparameters`, `combine` and `quicklook`. The result is `images/mean.fits` (a sky-oriented FITS with a WCS and the star's share of the flux), `models/best` (`res.model()`) and a quicklook that plots the image.
 
 !!! warning "A good fit is not a promise about the picture"
-    The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the grid edge, the star decision, the sky orientation and the light at the field edge) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
+    The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the star decision, the sky orientation and the grid and field edges) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
 
 This first version fits **one** member. CLEAN starts, the ensemble spread, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come.
 

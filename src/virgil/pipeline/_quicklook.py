@@ -396,14 +396,11 @@ def _disk_cells(run, summary, path):
 
 
 _IMAGE_CAVEAT = (
-    "> **What this run can and cannot claim.** It reports an image that "
-    "fits the data on the quoted errors, at hyperparameters chosen by a "
-    "stated rule. It does **not** promise that the morphology is right: "
-    "data-fidelity checks alone passed many imaging-contest reconstructions "
-    "that were judged terrible (blobby, or a chain of dots), and none of "
-    "the checks below measures whether an image looks like the source. "
-    "With one member there is no sigma map. A grey image of chromatic data "
-    "is not a fit.\n\n"
+    "> **What this run can and cannot claim.** The image fits the data on "
+    "the quoted errors. It does **not** promise that the morphology is "
+    "right: data-fidelity checks alone passed contest reconstructions that "
+    "were judged terrible (blobby, or a chain of dots), and none of the "
+    "checks below measures whether an image looks like the source.\n\n"
 )
 
 
@@ -412,23 +409,6 @@ def _image_cells(run, summary, path):
     cells = []
     if "overview" in done:
         cells.append(_data_cell((path / "data" / "processed.oifits").exists()))
-    if "hyperparameters" in done:
-        hyper = summary["hyperparameters"]
-        cells.append(
-            (
-                "## Hyperparameters\n\n"
-                f"σ = {hyper['sigma']:.3g}, ℓ = {hyper['length_mas']:.3g} mas "
-                f"({hyper['length_beam']:.3g} beam minor axes), chosen by "
-                "the Laplace log evidence on the grid below.",
-                "from virgil.pipeline._io import read_h5\n"
-                "g = read_h5('grids.h5', 'evidence_%s')\n"
-                "z = g['log_evidence']\n"
-                "plt.imshow(z - z.max(), origin='lower')\n"
-                "plt.colorbar(label='log Z - max')\n"
-                "plt.xlabel('sigma index')\n"
-                "plt.ylabel('length index')" % hyper["variant"],
-            )
-        )
     if "combine" in done:
         chi2 = ", ".join(
             f"{k} {v:.3g}"
@@ -436,18 +416,13 @@ def _image_cells(run, summary, path):
         )
         cells.append(
             (
-                "## Image\n\n"
-                f"Raw χ²/N on the quoted errors: {chi2}. The beam is in "
-                "`img.beam`.",
+                "## Image\n\nRaw χ²/N on the quoted errors: " + chi2 + ".",
                 "img = res.image()\n"
-                "print(img.pixels.shape, img.pixel_scale_mas, img.beam)\n"
                 "h = 0.5 * img.pixels.shape[0] * img.pixel_scale_mas\n"
                 "x, y = img.dra, img.ddec\n"
                 "plt.imshow(img.pixels, cmap='inferno',\n"
                 "           extent=(x + h, x - h, y - h, y + h))\n"
-                "plt.colorbar(label='relative flux per pixel')\n"
-                "plt.xlabel('dRA (mas, East left)')\n"
-                "plt.ylabel('dDec (mas)')",
+                "plt.colorbar(label='relative flux per pixel')",
             )
         )
     return cells

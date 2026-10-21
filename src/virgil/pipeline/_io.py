@@ -386,40 +386,29 @@ _MAS_PER_DEG = 3.6e6
 
 @dataclasses.dataclass(frozen=True)
 class SkyImage:
-    """An image read back by [`Result.image`][virgil.pipeline.Result.image].
-
-    ``pixels`` (ny, nx) are relative flux per pixel in virgil's orientation
-    (row 0 North, column 0 East); ``dra`` and ``ddec`` are the offset of the
-    image centre from the phase centre (East, North, mas); ``beam`` is a dict
-    of ``major_mas``, ``minor_mas`` and ``pa_deg`` or ``None``; ``header``
-    holds the primary HDU's keywords (``STARFRAC``, ``NMEMBERS``, ...).
+    """An image from [`Result.image`][virgil.pipeline.Result.image]:
+    ``pixels`` (row 0 North, column 0 East), the centre offset ``dra``,
+    ``ddec`` (mas) and the FITS ``header`` (``STARFRAC``: star's flux share).
     """
 
     pixels: onp.ndarray
     pixel_scale_mas: float
     dra: float
     ddec: float
-    beam: dict | None
     header: dict
 
 
 def write_fits_image(
-    path, pixels, pixel_scale_mas, *, dra=0.0, ddec=0.0, beam=None, header=None
+    path, pixels, pixel_scale_mas, *, dra=0.0, ddec=0.0, header=None
 ):
-    """Write a sky image (row 0 North, column 0 East) as FITS, atomically.
-
-    The array is stored flipped, so row 0 is the southern edge and
-    ``CDELT1`` is negative. The WCS is ``RA---SIN``/``DEC--SIN`` offsets
-    about the phase centre at (0, 0), with ``CRVAL = (dra, ddec)`` at the
-    image centre. ``beam`` (a dict of ``major_mas``, ``minor_mas``,
-    ``pa_deg``) is written as ``BMAJ``, ``BMIN`` and ``BPA``; ``header`` adds
-    keywords to the primary HDU.
-    """
+    """Write a sky image as FITS (stored flipped, ``CDELT1`` negative;
+    ``CRVAL = (dra, ddec)`` at the centre)."""
     fits = require_extra("astropy.io.fits")
-    pixels = onp.asarray(pixels, dtype=float)
-    ny, nx = pixels.shape
+    ny, nx = onp.shape(pixels)
     scale = float(pixel_scale_mas) / _MAS_PER_DEG
-    hdu = fits.PrimaryHDU(onp.ascontiguousarray(pixels[::-1]))
+    hdu = fits.PrimaryHDU(
+        onp.ascontiguousarray(onp.asarray(pixels, float)[::-1])
+    )
     hdu.header.update(
         {
             "CTYPE1": "RA---SIN",
@@ -434,13 +423,9 @@ def write_fits_image(
             "CDELT2": scale,
             "RADESYS": "ICRS",
             "BUNIT": "relative flux",
+            **(header or {}),
         }
     )
-    if beam is not None:
-        hdu.header["BMAJ"] = beam["major_mas"] / _MAS_PER_DEG
-        hdu.header["BMIN"] = beam["minor_mas"] / _MAS_PER_DEG
-        hdu.header["BPA"] = beam["pa_deg"]
-    hdu.header.update(header or {})
     with atomic_path(path) as tmp:
         hdu.writeto(tmp, overwrite=True)
 
@@ -449,26 +434,13 @@ def read_fits_image(path):
     """Read an image written by :func:`write_fits_image` as a ``SkyImage``."""
     fits = require_extra("astropy.io.fits")
     with fits.open(path) as hdul:
-        primary = hdul[0].header
-        data = hdul[0].data
-        header = {
-            k: primary[k]
-            for k in primary
-            if k and k not in ("COMMENT", "HISTORY")
-        }
-    beam = None
-    if "BMAJ" in header:
-        beam = {
-            "major_mas": float(header["BMAJ"]) * _MAS_PER_DEG,
-            "minor_mas": float(header["BMIN"]) * _MAS_PER_DEG,
-            "pa_deg": float(header["BPA"]),
-        }
+        header = dict(hdul[0].header)
+        pixels = onp.asarray(hdul[0].data, dtype=float)[::-1]
     return SkyImage(
-        pixels=onp.asarray(data, dtype=float)[::-1],
+        pixels=pixels,
         pixel_scale_mas=float(header["CDELT2"]) * _MAS_PER_DEG,
         dra=float(header["CRVAL1"]) * _MAS_PER_DEG,
         ddec=float(header["CRVAL2"]) * _MAS_PER_DEG,
-        beam=beam,
         header=header,
     )
 
@@ -876,8 +848,7 @@ class Result:
     def _model_folder(self, name):
         stage = "fit"
         if self.run["pipeline"] == "image":
-            # "best" is written by combine, "hyper_best" by hyperparameters.
-            stage = {"hyper_best": "hyperparameters"}.get(name, "combine")
+            stage = "hyperparameters"  # the only fit: models/best
         elif self.run["pipeline"] == "disk":
             # The disk pipeline's models come from three stages: the
             # single-ring geometry fit, the candidates of the profile

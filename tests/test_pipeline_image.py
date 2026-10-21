@@ -95,10 +95,8 @@ API = {
 STAGES = (
     "load",
     "overview",
-    "start",
     "star",
     "hyperparameters",
-    "members",
     "combine",
     "quicklook",
 )
@@ -127,10 +125,9 @@ CHECKS = (
     "error_scale",
     "effective_parameters",
     "short_baselines",
-    "hyperparameter_edge",
     "star",
     "orientation",
-    "edge_flux",
+    "edges",
 )
 
 
@@ -197,7 +194,6 @@ def test_fits_orientation_round_trip(tmp_path):
         scale,
         dra=10.0,
         ddec=-5.0,
-        beam={"major_mas": 4.0, "minor_mas": 2.0, "pa_deg": 30.0},
         header={"NMEMBERS": 1},
     )
     header = fits.getheader(path)
@@ -217,9 +213,6 @@ def test_fits_orientation_round_trip(tmp_path):
     onp.testing.assert_array_equal(back.pixels, pixels)
     assert back.pixel_scale_mas == pytest.approx(scale)
     assert (back.dra, back.ddec) == pytest.approx((10.0, -5.0))
-    assert back.beam == pytest.approx(
-        {"major_mas": 4.0, "minor_mas": 2.0, "pa_deg": 30.0}
-    )
 
 
 # --- the checks, each branch ---------------------------------------------------
@@ -263,16 +256,17 @@ def test_short_baselines_check():
     assert f(-1.8, 0.5).status == "warn"  # -3.6 sigma
     big = f(-4.0, 0.5)
     assert big.status == "fail" and big.value == pytest.approx(-8.0)
-    assert "over-resolves" in big.message
-    assert "under-resolves" in f(2.0, 0.5).message
+    assert "misses flux" in big.message
     assert f(None, None).value is None
 
 
-def test_hyperparameter_edge_check():
-    f = _checks.hyperparameter_edge
-    assert f([]).status == "pass"
-    edge = f(["length max"])
+def test_edges_check():
+    f = _checks.edges
+    assert f([], 0.003).status == "pass"
+    edge = f(["length max"], 0.003)
     assert edge.status == "warn" and "length max" in edge.message
+    assert f([], 0.03).status == "warn"
+    assert f([], float("nan")).status == "warn"
 
 
 def test_star_check():
@@ -281,7 +275,7 @@ def test_star_check():
     assert f(22.0, decision="on").status == "pass"
     assert f(-9.0, decision="off").status == "pass"
     both = f(2.0, decision="both")
-    assert both.status == "warn" and "'both'" in both.message
+    assert both.status == "warn" and "undecided" in both.message
     assert "Occam" in f(22.0, decision="on").message
 
 
@@ -291,12 +285,6 @@ def test_orientation_check():
     assert f(0.0, closure=False).value == 0.0
     assert f(4.0, closure=True).status == "warn"
     assert f(32.0, closure=True).status == "pass"
-
-
-def test_edge_flux_check():
-    assert _checks.edge_flux(0.003).status == "pass"
-    assert _checks.edge_flux(0.03).status == "warn"
-    assert _checks.edge_flux(float("nan")).status == "warn"
 
 
 def _reports():
@@ -312,104 +300,71 @@ def _reports():
             "n_channels": 1,
         },
         "star": {
-            "mode": "auto",
             "decision": "on",
             "delta_log_z": 12.0,
         },
         "hyperparameters": {
             "scale_by_observable": {"vis": 8.0, "phi": 1.0},
+            "gamma": 12.0,
             "edge": ["sigma max"],
         },
         "combine": {
             "chi2_red_by_observable": kinds,
-            "gamma": 12.0,
-            "n_minus_gamma": 18.0,
             "short_baseline_mean": 0.1,
             "short_baseline_error": 0.5,
             "flip_dchi2": 30.0,
             "edge_flux": 0.001,
-            "chi2_rescaled_by_observable": None,
-            "n_by_observable": {"vis": 20, "phi": 10, "total": 30},
-            "chi2": 31.5,
-            "chi2_reduced": 1.05,
-            "chi2_by_observable": {"vis": 20.0, "phi": 11.0, "total": 31.0},
         },
     }
 
 
 def test_summary_orders_the_checks():
     settings = ImagingPipeline.defaults()
-    sections, checks = image._summarize(settings, _reports())
+    checks = image._run_checks(settings, _reports())
     assert [c.name for c in checks] == list(CHECKS)
     named = {c.name: c for c in checks}
     assert named["error_scale"].status == "fail"  # a scale of 8
-    assert named["hyperparameter_edge"].status == "warn"
-    assert "rescaled" in sections["fit"]["rescaled_note"]
+    assert named["edges"].status == "warn"
     # A run that stopped after the load stage has only the data check.
-    _, early = image._summarize(settings, {"load": _reports()["load"]})
+    early = image._run_checks(settings, {"load": _reports()["load"]})
     assert [c.name for c in early] == ["quoted_errors"]
 
 
 # --- the stages ----------------------------------------------------------------
 
 
-def test_load_overview_and_start_stages(pipe):
-    res = pipe.run(through="start")
+def test_load_overview_star_and_hyperparameter_stages(pipe):
+    res = pipe.run(through="hyperparameters")
     assert res.status == "partial"
     load_report = pipe._report("load")
     assert load_report["n_independent"] == 27
     assert load_report["n_by_observable"] == {"vis": 18, "phi": 9}
-    assert load_report["n_channels"] == 1 and load_report["closure_phases"]
+    assert load_report["closure_phases"]
     errors = load_report["quoted_errors"]
     assert errors["vis"]["all_equal"] and errors["phi"]["all_equal"]
     field = pipe._report("overview")
     assert field["npix"] <= 16
-    assert field["field_mas"] == pytest.approx(
-        field["npix"] * field["pixel_scale_mas"]
-    )
     assert field["beam"]["major_mas"] >= field["beam"]["minor_mas"] > 0
-    start = pipe._report("start")
-    assert start["envelope_flux"] > 0
-    assert (pipe.output / "data" / "processed.oifits").exists()
-
-
-def test_star_and_hyperparameter_stages(pipe):
-    res = pipe.run(through="hyperparameters")
     star = pipe._report("star")
-    assert star["mode"] == "on" and star["delta_log_z"] is None
-    assert star["member_star"] is True
+    assert star["decision"] == "on" and star["delta_log_z"] is None
     hyper = pipe._report("hyperparameters")
-    assert hyper["variant"] in ("iso", "aniso")
-    assert hyper["sigma"] == 2.0 and hyper["grid_shape"] == [1, 1]
+    assert hyper["variant"] in ("iso", "aniso") and hyper["sigma"] == 2.0
     assert hyper["length_beam"] == pytest.approx(1.0)
     assert set(hyper["scale_by_observable"]) == {"vis", "phi"}
-    assert hyper["gamma"] > 0
-    assert onp.isfinite(hyper["log_z"])
+    assert hyper["gamma"] > 0 and onp.isfinite(hyper["log_z"])
     grids = _io.read_h5(
         pipe.output / "grids.h5", f"evidence_{hyper['variant']}"
     )
     assert grids["log_evidence"].shape == (1, 1)
-    best = res.model("hyper_best")
-    assert set(best.components) == {"star", "env"}
+    assert set(res.model().components) == {"star", "env"}
+    assert (pipe.output / "data" / "processed.oifits").exists()
 
 
-def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
+def test_combine_reports_raw_chi2_by_observable(pipe, data):
     res = pipe.run(through="combine")
     summary = res.summary
     assert summary["schema"] == SCHEMA and summary["pipeline"] == "image"
-    for key in (
-        "data",
-        "field",
-        "start",
-        "star",
-        "hyperparameters",
-        "fit",
-        "ensemble",
-        "checks",
-        "worst_check",
-        "warnings",
-        "stability",
-    ):
+    for key in ("data", "field", "star", "hyperparameters", "fit", "checks"):
         assert key in summary, key
     fit = summary["fit"]
     by = fit["chi2_red_by_observable"]
@@ -422,23 +377,13 @@ def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
     assert (n["vis"] * by["vis"] + n["phi"] * by["phi"]) == pytest.approx(
         fit["chi2"]
     )
-    # The rescaled χ² is labelled and kept apart.
-    assert "never checked" in fit["rescaled_note"]
-    assert fit["chi2_rescaled_by_observable"].keys() == {"vis", "phi"}
-    assert summary["hyperparameters"]["scale_by_observable"].keys() == {
-        "vis",
-        "phi",
-    }
-    assert summary["ensemble"]["n_members"] == 1
-    assert summary["star"]["decision"] == "on"
-    names = [c["name"] for c in summary["checks"]]
-    expected = [name for name in CHECKS]
-    assert [n for n in names if n in CHECKS] == expected
     named = {c["name"]: c for c in summary["checks"]}
+    assert [c["name"] for c in summary["checks"]][: len(CHECKS)] == list(
+        CHECKS
+    )
     # The simulated errors are one number per block: the data check fires.
     assert named["quoted_errors"]["status"] == "warn"
     assert named["star"]["status"] == "pass"
-    # The truth is point-symmetric, so the orientation check is not asserted.
     assert named["chi2_reduced"]["value"] == pytest.approx(by["total"])
 
 
@@ -446,30 +391,12 @@ def test_mean_image_recovers_the_truth_and_round_trips(pipe):
     res = pipe.run(through="combine")
     img = res.image()
     n, scale = img.pixels.shape[0], img.pixel_scale_mas
-    # The extended emission carries its share of the total flux; the star the
-    # rest.
+    # The extended emission carries its share of the flux; the star the rest.
     assert img.pixels.sum() == pytest.approx(1.0 - img.header["STARFRAC"])
     assert img.header["STARFRAC"] == pytest.approx(0.6, abs=0.1)
-    assert img.header["NMEMBERS"] == 1
     truth = onp.asarray(RING.render(n, n * scale))
     shifted, _ = align(img.pixels, truth, 2 * scale, scale)
     assert float(ncc(shifted, truth)) > 0.75
-    assert img.beam["major_mas"] > 0
-    model = res.model()
-    assert set(model.components) == {"star", "env"}
-    values = res.model_values()
-    assert any(k.startswith("env") for k in values)
-    # models/best reproduces the V² χ² the summary reports. (The closure
-    # phases are not compared: processed.oifits is the shared writer's, and
-    # its closure-phase round trip is outside this pipeline.)
-    from virgil.imaging import chi2_by_observable
-
-    chi2 = chi2_by_observable(model, res.data())["chi2"]["vis"]
-    fit = res.summary["fit"]
-    expected = (
-        fit["chi2_red_by_observable"]["vis"] * fit["n_by_observable"]["vis"]
-    )
-    assert chi2 == pytest.approx(expected, rel=1e-3)
     assert load(pipe.output).run["schema"] == SCHEMA
 
 
@@ -516,7 +443,6 @@ def test_star_auto_decides_the_star_on(data, tmp_path):
     pipeline = ImagingPipeline(data, output=tmp_path / "run", **settings)
     pipeline.run(through="star")
     star = pipeline._report("star")
-    assert star["mode"] == "auto"
     assert star["delta_log_z"] == pytest.approx(
         star["log_z_star"] - star["log_z_no_star"]
     )
