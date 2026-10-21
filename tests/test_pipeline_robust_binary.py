@@ -85,6 +85,18 @@ def completed(data, tmp_path_factory):
     return pipeline
 
 
+# The full run above costs ~15 s warm, ~45 s on a cold CI runner, so over the
+# fast-tier budget. A fixture's setup is charged to the first test that asks
+# for it, and every other test of the module then gets it for free. This one is
+# slow-marked and defined first, so it pays; the module shares one worker (see
+# the xdist group above) and runs in file order.
+@pytest.mark.slow
+def test_the_shared_complete_run_has_every_stage_and_output(completed):
+    for stage in STAGES:
+        assert stage_outputs(completed, stage)
+        assert _read(completed.output / "stages" / stage / "report.json")
+
+
 @pytest.fixture
 def stubbed(completed, monkeypatch):
     """Replace every stage function with a recorder; returns the call log.
