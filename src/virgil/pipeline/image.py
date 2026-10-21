@@ -183,7 +183,9 @@ class ImagingPipeline(_Pipeline):
         """Fit member ``k`` unless it is saved (after the ``hyperparameters``
         stage); the ``members`` stage runs every one that is missing."""
         if not 0 <= k < self.settings["members"]:
-            raise ValueError(f"k must be in 0..{self.settings['members'] - 1}.")
+            raise ValueError(
+                f"k must be in 0..{self.settings['members'] - 1}."
+            )
         folder = self.output / "members" / f"{k:03d}"
         if not (folder / "info.json").exists():
             spec, star, draws, variant = _member_setup(self)

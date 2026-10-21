@@ -1888,8 +1888,7 @@ def ensemble_spread(spread, n_kept, *, warn=0.5, shared=True):
         n_kept < 2 or not _finite(spread) or spread > warn,
         spread,
         warn,
-        f"The kept members differ by {100 * spread:.3g}% of the flux."
-        + note,
+        f"The kept members differ by {100 * spread:.3g}% of the flux." + note,
         "Fewer than two members are kept, or they differ by more than "
         f"{100 * warn:g}% of the flux: the mean is not stable." + note,
     )
