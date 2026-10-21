@@ -23,6 +23,11 @@ from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.models import QuadraticLimbDarkenedDisk  # noqa: E402
 from virgil.pipeline import StarPipeline, load  # noqa: E402
 from virgil.pipeline import star  # noqa: E402
+from tests._pipeline_helpers import (  # noqa: E402
+    checks_by_name,
+    stage_outputs,
+    started_times,
+)
 
 # Same group as the sibling file, so both run on one worker with
 # ``--dist loadgroup`` and share its warmed-up JAX caches.
@@ -58,10 +63,6 @@ def data():
 def null_data():
     """Pure noise around V = 1 and closure phase 0: nothing is resolved."""
     return _template().with_model(PointSource(), key=jax.random.PRNGKey(5))
-
-
-def _checks(res):
-    return {c.name: c for c in res.checks}
 
 
 # --- (a) per-stage resume and fresh runs -------------------------------------
@@ -123,24 +124,15 @@ def _copy_run(completed, tmp_path):
     )
 
 
-def _outputs(pipeline, stage):
-    return {s.name: s.outputs for s in pipeline._stages()}[stage]
-
-
-def _started(pipeline):
-    run = json.loads((pipeline.output / "run.json").read_text())
-    return {name: s.get("started") for name, s in run["stages"].items()}
-
-
 def test_a_complete_run_recomputes_nothing_whatever_the_stop(
     completed, stubbed, tmp_path
 ):
     pipeline = _copy_run(completed, tmp_path)
-    before = _started(pipeline)
+    before = started_times(pipeline)
     for through in (*STAGES, None):
         pipeline.run(through=through)
     assert stubbed == []
-    assert _started(pipeline) == before
+    assert started_times(pipeline) == before
     assert json.loads((pipeline.output / "run.json").read_text())[
         "status"
     ] == ("complete")
@@ -152,9 +144,9 @@ def test_resume_recomputes_a_damaged_stage_and_everything_after_it(
     completed, stubbed, tmp_path, stage, damage
 ):
     pipeline = _copy_run(completed, tmp_path)
-    before = _started(pipeline)
+    before = started_times(pipeline)
     if damage == "output removed":
-        victim = pipeline.output / _outputs(pipeline, stage)[0]
+        victim = pipeline.output / stage_outputs(pipeline, stage)[0]
         victim.unlink()
     else:
         path = pipeline.output / "run.json"
@@ -165,7 +157,7 @@ def test_resume_recomputes_a_damaged_stage_and_everything_after_it(
     k = STAGES.index(stage)
     # The stage and every later one reran; no earlier stage did.
     assert stubbed == list(STAGES[k:])
-    after = _started(pipeline)
+    after = started_times(pipeline)
     for earlier in STAGES[:k]:
         assert after[earlier] == before[earlier], earlier
     assert list(after) == list(STAGES)  # all complete again
@@ -181,7 +173,7 @@ def test_a_fresh_run_discards_every_output_and_runs_through_the_stage(
     everything = [
         pipeline.output / p
         for s in STAGES
-        for p in _outputs(pipeline, s)
+        for p in stage_outputs(pipeline, s)
         if not p.startswith("stages/")
     ]
     assert all(p.exists() for p in everything)
@@ -223,16 +215,6 @@ def test_a_fresh_run_through_the_overview_really_replaces_the_outputs(
 
 
 # --- (b) failures are loud ---------------------------------------------------
-
-
-@pytest.fixture
-def junk_files(tmp_path):
-    from astropy.io import fits
-
-    (tmp_path / "text.fits").write_text("this is not a FITS file\n")
-    (tmp_path / "empty.fits").write_bytes(b"")
-    fits.PrimaryHDU().writeto(tmp_path / "no_tables.fits")
-    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -327,7 +309,7 @@ def unconverged(data, tmp_path_factory):
 
 def test_chains_that_have_not_converged_are_flagged_not_passed(unconverged):
     res = unconverged
-    by_name = _checks(res)
+    by_name = checks_by_name(res)
     assert by_name["ess"].status == "fail"
     assert by_name["r_hat"].status != "pass"
     assert res.summary["worst_check"] == "fail"
@@ -356,7 +338,7 @@ def test_chains_that_never_move_still_end_in_failing_checks(data, tmp_path):
         num_samples=8,
         num_chains=2,
     ).run(through="posterior")
-    assert _checks(res)["ess"].status == "fail"
+    assert checks_by_name(res)["ess"].status == "fail"
 
 
 @pytest.mark.parametrize("bounds", [[1.0, 3.0], [10.0, 30.0]])
@@ -376,7 +358,7 @@ def test_a_prior_that_excludes_the_truth_is_reported(data, tmp_path, bounds):
         num_chains=2,
     ).run(through="posterior")
     s = res.summary
-    by_name = _checks(res)
+    by_name = checks_by_name(res)
     assert by_name["chi2_uniform"].status == "fail"
     assert by_name["prior_bound"].status == "warn"
     assert by_name["prior_bound"].value > 0.5
@@ -397,7 +379,7 @@ def test_a_limb_darkened_fit_at_the_prior_edge_is_an_at_bound_check(
         quicklook_execute=False,
         **TINY,
     ).run(through="fit")
-    check = _checks(res)["start_at_bound"]
+    check = checks_by_name(res)["start_at_bound"]
     assert check.status == "warn"
     assert "limb_darkened.diam" in check.value
     assert "prior bound" in check.message
@@ -415,7 +397,7 @@ def test_a_uniform_fit_at_the_prior_edge_is_an_at_bound_check(data, tmp_path):
         **TINY,
     ).run(through="fit")
     assert res.summary["fit"]["models"]["uniform"]["params"]["diam"] == 3.0
-    assert "start_at_bound" in _checks(res)
+    assert "start_at_bound" in checks_by_name(res)
 
 
 # --- (d) a null case ---------------------------------------------------------
@@ -431,7 +413,7 @@ def test_pure_noise_around_one_gives_flags_not_a_confident_diameter(
         **TINY,
     ).run(through="fit")
     s = res.summary
-    by_name = _checks(res)
+    by_name = checks_by_name(res)
     # The diameter runs to the lower edge of the prior (0.1 lambda/B, well
     # below the resolution), and the checks say so.
     assert s["star"]["diam_mas"] < 0.25 * s["data"]["resolution_mas"]
