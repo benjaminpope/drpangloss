@@ -8,6 +8,7 @@ wrong: a stage output missing, bad input files, chains too short to converge,
 a prior that excludes the truth. None of these may pass silently.
 """
 
+import inspect
 import json
 import shutil
 
@@ -83,18 +84,6 @@ def completed(data, tmp_path_factory):
     )
     assert pipeline.run().status == "complete"
     return pipeline
-
-
-# The full run above costs ~15 s warm, ~45 s on a cold CI runner, so over the
-# fast-tier budget. A fixture's setup is charged to the first test that asks
-# for it, and every other test of the module then gets it for free. This one is
-# slow-marked and defined first, so it pays; the module shares one worker (see
-# the xdist group above) and runs in file order.
-@pytest.mark.slow
-def test_the_shared_complete_run_has_every_stage_and_output(completed):
-    for stage in STAGES:
-        assert stage_outputs(completed, stage)
-        assert _read(completed.output / "stages" / stage / "report.json")
 
 
 @pytest.fixture
@@ -560,3 +549,15 @@ def test_the_corner_and_trace_figures_survive_draws_that_never_move(tmp_path):
         _corner_trace(tmp_path, samples, ["a", "b"])
     for name in ("posterior_corner.png", "posterior_trace.png"):
         assert (tmp_path / "plots" / name).stat().st_size > 0
+
+
+# The shared full run costs ~15 s warm and over 30 s on a cold CI runner, so
+# the tests that build on it (``completed``, ``stubbed``, ``unconverged``)
+# belong to the slow tier; the rest of the module stays in the fast one.
+for _name, _test in list(globals().items()):
+    if _name.startswith("test_") and {
+        "completed",
+        "stubbed",
+        "unconverged",
+    } & set(inspect.signature(_test).parameters):
+        globals()[_name] = pytest.mark.slow(_test)

@@ -8,6 +8,7 @@ input files, chains too short to converge, a prior that excludes the truth,
 data with no signal. None of these may pass silently.
 """
 
+import inspect
 import json
 import shutil
 
@@ -78,18 +79,6 @@ def completed(data, tmp_path_factory):
     res = pipeline.run()
     assert res.status == "complete"
     return pipeline
-
-
-# The full runs of this module (``completed``, ``unconverged``) cost too much
-# warm, and over 30 s on a cold CI runner, for the fast-tier budget. A
-# fixture's setup is charged to the first test that asks for it, and every
-# other test of the module then gets it for free. This test is slow-marked and
-# comes first, so it pays; the module shares one worker (see the xdist group
-# below) and runs in file order.
-@pytest.mark.slow
-def test_the_shared_runs_are_built_up_front(completed, unconverged):
-    assert completed.output.is_dir()
-    assert unconverged.status == "partial"  # stopped after the posterior
 
 
 FUNCTIONS = ("_load_star", "_overview", "_fit", "_posterior", "_quicklook")
@@ -494,3 +483,15 @@ def test_golden_default_model_set_recovers_the_star_without_failing_checks(
     res = _golden(truth, tmp_path, num_warmup=250, num_samples=250)
     _assert_golden(res, truth)
     assert res.summary["comparison"]["preferred"] == "uniform"
+
+
+# The shared full run costs ~15 s warm and over 30 s on a cold CI runner, so
+# the tests that build on it (``completed``, ``stubbed``, ``unconverged``)
+# belong to the slow tier; the rest of the module stays in the fast one.
+for _name, _test in list(globals().items()):
+    if _name.startswith("test_") and {
+        "completed",
+        "stubbed",
+        "unconverged",
+    } & set(inspect.signature(_test).parameters):
+        globals()[_name] = pytest.mark.slow(_test)
