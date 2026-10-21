@@ -43,16 +43,12 @@ def _bound_samples(prior, samples):
     )
 
 
-def _close(fig):
-    import matplotlib.pyplot as plt
-
-    plt.close(fig)
-
-
 def _save(fig, path):
     with _io.atomic_path(path) as tmp:
         fig.savefig(tmp, dpi=110, bbox_inches="tight")
-    _close(fig)
+    import matplotlib.pyplot as plt
+
+    plt.close(fig)
 
 
 def _geometry(data):

@@ -64,9 +64,9 @@ def atomic_path(path):
 
 
 def _json_default(value):
-    if isinstance(value, (onp.integer,)):
+    if isinstance(value, onp.integer):
         return int(value)
-    if isinstance(value, (onp.floating,)):
+    if isinstance(value, onp.floating):
         return _utils._clean_float(float(value))
     if isinstance(value, onp.bool_):
         return bool(value)
@@ -97,11 +97,8 @@ def read_json(path):
 
 def sha256_file(path):
     """SHA-256 of a file's bytes, as hex."""
-    h = hashlib.sha256()
     with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def data_fingerprint(data):
@@ -225,8 +222,6 @@ def model_spec(model):
     tuple
         ``(spec, arrays)``.
     """
-    import dataclasses
-
     import equinox as eqx
 
     arrays = {}
@@ -272,8 +267,6 @@ def model_spec(model):
 
 def model_from_spec(spec, arrays):
     """Rebuild a model from :func:`model_spec` output."""
-    import dataclasses
-
     import jax.numpy as np
 
     def decode(node):
