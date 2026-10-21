@@ -1,11 +1,12 @@
 # ImagingPipeline (provisional)
 
-Status: **PR B built** (2026-10-21): stages `load`, `overview`, `start`,
-`star`, `hyperparameters`, one-member `members`, pass-through `combine`
-and `quicklook`; checks 1–11; the FITS writer; `Result.image`; CLI `image`.
-PRs C (the ensemble: checks 12, 13, 15) and D (channels, check 14, the cube)
-are not built; the text below is their design. Two options are stubs that
-raise `NotImplementedError`: `anneal` and `star_model="ud"`.
+Status: **PR B built** (2026-10-21, then cut back at Ben's request): stages
+`load`, `overview`, `start` (the envelope only), `star`, `hyperparameters`,
+one-member `members`, pass-through `combine` and `quicklook`; checks 1–11;
+the FITS writer; `Result.image`; CLI `image`. Everything else below is
+design for PR C (the ensemble: CLEAN starts, classical regularizers by
+L-curve, `anneal`, checks 12, 13, 15) and PR D (channels, check 14, the
+cube); none of it is in the code, and there are no stub options for it.
 
 `ImagingPipeline(data, model=None, *, output="run", **settings)`, CLI
 `image`, `STABILITY = "provisional"`, schema `virgil-pipeline-run-v1`. It
@@ -457,7 +458,7 @@ These settle the questions the first draft left open.
 7. **Anneal.** An opt-in sub-beam Gaussian convolution at each optimizer step
    (width in beam fractions), recorded in `run.json`, not a check, to anneal
    out a chain of dots (Max Charles's dorito work). Needs a design check on
-   its interaction with the L-BFGS stall. **A stub** in PR B.
+   its interaction with the L-BFGS stall. Not in PR B.
 8. **Fragmentation.** The `islands` number only, no check, in v1.
 9. **Caveat.** The quicklook's first cell says that data-fidelity checks
    alone passed contest fits that Ben judged terrible, so the morphology is

@@ -57,10 +57,6 @@ SMALL = {
     "sigmas": [2.0],
     "lengths_beam": [1.0],
     "grid_growths": 0,
-    "anisotropic": False,
-    "clean_max_npix": 16,
-    "clean_iterations": 40,
-    "clean_scales_beam": [0.0],
     "max_steps": 20,
     "quicklook_execute": False,
 }
@@ -111,20 +107,11 @@ DEFAULTS = {
     "field_fwhms": 6.0,
     "field_mas": None,
     "max_npix": 128,
-    "clean": True,
-    "clean_max_npix": 65,
-    "clean_scales_beam": [0.0, 0.5, 1.0],
-    "clean_iterations": 3000,
     "star": "auto",
-    "star_model": "point",
     "star_threshold": 5.0,
     "sigmas": [1.0, 2.0, 4.0],
     "lengths_beam": [0.5, 1.0, 2.0],
-    "anisotropic": "auto",
     "grid_growths": 2,
-    "regularizers": [],
-    "n_weights": 8,
-    "anneal": None,
     "method": None,
     "max_steps": None,
     "seed": 0,
@@ -184,22 +171,9 @@ def test_settings_are_validated(data):
         {"oversample": -1.0},
         {"max_npix": 2},
         {"sigmas": []},
-        {"anisotropic": "yes"},
-        {"regularizers": ["l2"]},
-        {"regularizers": ["tv"]},  # star="auto" needs a Gaussian process
     ):
         with pytest.raises(ValueError):
             ImagingPipeline(data, **bad)
-    ImagingPipeline(data, regularizers=["tv"], star=False)  # valid
-    with pytest.raises(NotImplementedError, match="regularizer at a time"):
-        ImagingPipeline(data, regularizers=["tv", "tsv"], star=False)
-
-
-def test_unavailable_options_say_so(data):
-    with pytest.raises(NotImplementedError, match="anneal"):
-        ImagingPipeline(data, anneal=0.1)
-    with pytest.raises(NotImplementedError, match="star_model"):
-        ImagingPipeline(data, star_model="ud")
 
 
 # --- the FITS writer -----------------------------------------------------------
@@ -225,7 +199,6 @@ def test_fits_orientation_round_trip(tmp_path):
         ddec=-5.0,
         beam={"major_mas": 4.0, "minor_mas": 2.0, "pa_deg": 30.0},
         header={"NMEMBERS": 1},
-        extensions={"STD": pixels * 2},
     )
     header = fits.getheader(path)
     assert header["CTYPE1"] == "RA---SIN" and header["CTYPE2"] == "DEC--SIN"
@@ -247,9 +220,6 @@ def test_fits_orientation_round_trip(tmp_path):
     assert back.beam == pytest.approx(
         {"major_mas": 4.0, "minor_mas": 2.0, "pa_deg": 30.0}
     )
-    with fits.open(path) as hdul:
-        assert [h.name for h in hdul] == ["PRIMARY", "STD"]
-        assert hdul["STD"].data.max() == 2.0
 
 
 # --- the checks, each branch ---------------------------------------------------
@@ -280,25 +250,11 @@ def test_quoted_errors_check():
     )
 
 
-def test_error_scale_warns_in_both_directions():
-    f = _checks.error_scale_both_ways
-    assert f({"vis": 1.0, "phi": 1.2}).status == "pass"
-    assert f({"vis": 2.5, "phi": 1.0}).status == "warn"
-    low = f({"vis": 1.0, "phi": 0.3})
-    assert low.status == "warn" and "overstated" in low.message
-    assert f({"vis": 6.0}).status == "fail"
-    assert f({"vis": float("nan")}).status == "fail"
-    assert "not repeated on rescaled errors" in f({"vis": 1.0}).message
-    check = f(None)  # a classical regularizer has no Gaussian-process scale
-    assert check.status == "pass" and check.value is None
-
-
 def test_effective_parameters_check():
     f = _checks.effective_parameters
     assert f(56, 53.0).status == "warn"  # the 2022 AMI case
     assert "parametric model" in f(56, 53.0).message
     assert f(56, 20.0).status == "pass"
-    assert f(56, None).value is None
 
 
 def test_short_baselines_check():
@@ -307,9 +263,7 @@ def test_short_baselines_check():
     assert f(-1.8, 0.5).status == "warn"  # -3.6 sigma
     big = f(-4.0, 0.5)
     assert big.status == "fail" and big.value == pytest.approx(-8.0)
-    assert (
-        "over-resolves" in big.message and "not to be trusted" in big.message
-    )
+    assert "over-resolves" in big.message
     assert "under-resolves" in f(2.0, 0.5).message
     assert f(None, None).value is None
 
@@ -317,12 +271,8 @@ def test_short_baselines_check():
 def test_hyperparameter_edge_check():
     f = _checks.hyperparameter_edge
     assert f([]).status == "pass"
-    assert f(None).status == "pass"
     edge = f(["length max"])
     assert edge.status == "warn" and "length max" in edge.message
-    biased = f(["length max"], biased=True)
-    assert biased.status == "fail" and "not trusted" in biased.message
-    assert f([], biased=True).status == "pass"
 
 
 def test_star_check():
@@ -349,10 +299,8 @@ def test_edge_flux_check():
     assert _checks.edge_flux(float("nan")).status == "warn"
 
 
-def _reports(*, biased=False, extras=False):
+def _reports():
     kinds = {"vis": 1.0, "phi": 1.1, "total": 1.05}
-    if extras:
-        kinds["flux"] = 1.0
     equal = {"min": 1, "median": 1, "max": 1, "all_equal": False, "n_bad": 0}
     return {
         "load": {
@@ -367,13 +315,10 @@ def _reports(*, biased=False, extras=False):
             "mode": "auto",
             "decision": "on",
             "delta_log_z": 12.0,
-            "star_model": "point",
         },
         "hyperparameters": {
-            "method": "evidence",
-            "scale_by_observable": {"vis": 8.0 if biased else 1.0, "phi": 1.0},
+            "scale_by_observable": {"vis": 8.0, "phi": 1.0},
             "edge": ["sigma max"],
-            "interior": False,
         },
         "combine": {
             "chi2_red_by_observable": kinds,
@@ -392,19 +337,14 @@ def _reports(*, biased=False, extras=False):
     }
 
 
-def test_summary_orders_the_checks_and_sets_trust():
+def test_summary_orders_the_checks():
     settings = ImagingPipeline.defaults()
-    sections, checks = image._summarize(settings, _reports(extras=True))
-    assert [c.name for c in checks] == [*CHECKS, "chi2_reduced_flux"]
-    assert sections["hyperparameters"]["trusted"] is True
-    assert sections["errors"]["note"].startswith("rescaled")
-    # Biased data and an optimum on the grid edge: not trusted, and the edge
-    # check fails.
-    sections, checks = image._summarize(settings, _reports(biased=True))
+    sections, checks = image._summarize(settings, _reports())
+    assert [c.name for c in checks] == list(CHECKS)
     named = {c.name: c for c in checks}
-    assert named["error_scale"].status == "fail"
-    assert named["hyperparameter_edge"].status == "fail"
-    assert sections["hyperparameters"]["trusted"] is False
+    assert named["error_scale"].status == "fail"  # a scale of 8
+    assert named["hyperparameter_edge"].status == "warn"
+    assert "rescaled" in sections["fit"]["rescaled_note"]
     # A run that stopped after the load stage has only the data check.
     _, early = image._summarize(settings, {"load": _reports()["load"]})
     assert [c.name for c in early] == ["quoted_errors"]
@@ -427,16 +367,9 @@ def test_load_overview_and_start_stages(pipe):
     assert field["field_mas"] == pytest.approx(
         field["npix"] * field["pixel_scale_mas"]
     )
-    assert field["field_source"] == "image_field"
     assert field["beam"]["major_mas"] >= field["beam"]["minor_mas"] > 0
     start = pipe._report("start")
-    assert start["envelope_flux"] > 0 and start["clean_stop"]
-    assert 0 < start["clean_flux_fraction"] <= 1
-    clean = res.image("clean")
-    assert isinstance(clean, SkyImage)
-    assert clean.pixels.shape == (field["npix"],) * 2
-    assert clean.beam["minor_mas"] == pytest.approx(field["beam"]["minor_mas"])
-    assert res.model("clean") is not None
+    assert start["envelope_flux"] > 0
     assert (pipe.output / "data" / "processed.oifits").exists()
 
 
@@ -446,17 +379,18 @@ def test_star_and_hyperparameter_stages(pipe):
     assert star["mode"] == "on" and star["delta_log_z"] is None
     assert star["member_star"] is True
     hyper = pipe._report("hyperparameters")
-    assert hyper["method"] == "evidence" and hyper["variant"] == "iso"
+    assert hyper["variant"] in ("iso", "aniso")
     assert hyper["sigma"] == 2.0 and hyper["grid_shape"] == [1, 1]
     assert hyper["length_beam"] == pytest.approx(1.0)
     assert set(hyper["scale_by_observable"]) == {"vis", "phi"}
     assert hyper["gamma"] > 0
     assert onp.isfinite(hyper["log_z"])
-    grids = _io.read_h5(pipe.output / "grids.h5", "evidence_iso")
+    grids = _io.read_h5(
+        pipe.output / "grids.h5", f"evidence_{hyper['variant']}"
+    )
     assert grids["log_evidence"].shape == (1, 1)
     best = res.model("hyper_best")
     assert set(best.components) == {"star", "env"}
-    assert (pipe.output / "plots" / "hyperparameters.png").exists()
 
 
 def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
@@ -469,7 +403,6 @@ def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
         "start",
         "star",
         "hyperparameters",
-        "errors",
         "fit",
         "ensemble",
         "checks",
@@ -490,12 +423,13 @@ def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
         fit["chi2"]
     )
     # The rescaled χ² is labelled and kept apart.
-    assert "never checked" in summary["errors"]["note"]
-    assert summary["errors"]["scale_by_observable"].keys() == {"vis", "phi"}
-    assert (
-        summary["ensemble"]["n_members"] == summary["ensemble"]["n_kept"] == 1
-    )
-    assert summary["hyperparameters"]["trusted"] in (True, False)
+    assert "never checked" in fit["rescaled_note"]
+    assert fit["chi2_rescaled_by_observable"].keys() == {"vis", "phi"}
+    assert summary["hyperparameters"]["scale_by_observable"].keys() == {
+        "vis",
+        "phi",
+    }
+    assert summary["ensemble"]["n_members"] == 1
     assert summary["star"]["decision"] == "on"
     names = [c["name"] for c in summary["checks"]]
     expected = [name for name in CHECKS]
@@ -506,8 +440,6 @@ def test_members_and_combine_stages_report_raw_chi2_by_observable(pipe, data):
     assert named["star"]["status"] == "pass"
     assert named["orientation"]["status"] == "pass"
     assert named["chi2_reduced"]["value"] == pytest.approx(by["total"])
-    for plot in ("image_mean", "image_residual", "residual_frequency"):
-        assert (pipe.output / "plots" / f"{plot}.png").exists()
 
 
 def test_mean_image_recovers_the_truth_and_round_trips(pipe):
@@ -538,8 +470,6 @@ def test_mean_image_recovers_the_truth_and_round_trips(pipe):
         fit["chi2_red_by_observable"]["vis"] * fit["n_by_observable"]["vis"]
     )
     assert chi2 == pytest.approx(expected, rel=1e-3)
-    with pytest.raises(ValueError, match="mean"):
-        res.image("best")
     assert load(pipe.output).run["schema"] == SCHEMA
 
 
@@ -551,7 +481,7 @@ def test_the_quicklook_says_what_it_cannot_claim(pipe):
     assert "does **not** promise that the morphology is right" in first.source
     assert "chain of dots" in first.source
     code = "\n".join(c.source for c in nb.cells if c.cell_type == "code")
-    assert "res.image()" in code and "image_residual.png" in code
+    assert "res.image()" in code
 
 
 def test_validate_resume_and_config_mismatch(pipe, data):
@@ -611,29 +541,8 @@ def test_star_auto_decides_the_star_off_without_one(tmp_path):
 
 
 @pytest.mark.slow
-def test_a_classical_regularizer_is_chosen_by_l_curve(data, tmp_path):
-    settings = {
-        **SMALL,
-        "star": True,
-        "regularizers": ["tv"],
-        "n_weights": 3,
-    }
-    pipeline = ImagingPipeline(data, output=tmp_path / "run", **settings)
-    res = pipeline.run(through="combine")
-    hyper = res.summary["hyperparameters"]
-    assert hyper["method"] == "lcurve" and hyper["regularizer"] == "tv"
-    assert hyper["weight"] == pytest.approx(hyper["corner"])
-    grids = _io.read_h5(pipeline.output / "grids.h5", "lcurve")
-    assert len(grids["weights"]) == 3
-    named = {c["name"]: c for c in res.summary["checks"]}
-    assert named["error_scale"]["value"] is None
-    assert named["hyperparameter_edge"]["value"] is None
-    assert res.image().pixels.sum() > 0
-
-
-@pytest.mark.slow
 def test_the_executed_quicklook(data, tmp_path):
-    settings = {**SMALL, "quicklook_execute": True, "clean": False}
+    settings = {**SMALL, "quicklook_execute": True}
     pipeline = ImagingPipeline(data, output=tmp_path / "run", **settings)
     res = pipeline.run()
     assert res.status == "complete"

@@ -54,7 +54,7 @@ def _intro(run, summary):
     )
     settings = ", ".join(f"`{k}={_fmt(v)}`" for k, v in run["config"].items())
     prov = run["provenance"]
-    note = _image_caveat(summary) if run["pipeline"] == "image" else ""
+    note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
     return (
         note + f"# Quicklook: {run['class']}\n\n"
         f"This notebook was written by the virgil `{run['pipeline']}` pipeline "
@@ -402,78 +402,9 @@ _IMAGE_CAVEAT = (
     "data-fidelity checks alone passed many imaging-contest reconstructions "
     "that were judged terrible (blobby, or a chain of dots), and none of "
     "the checks below measures whether an image looks like the source. "
-    "With one member the sigma map is not available; with several it would "
-    "measure only sensitivity to the pipeline's own choices, not to choices "
-    "it never made (another regularizer, point sources, a two-scale field), "
-    "and it would exclude hyperparameter uncertainty because the "
-    "hyperparameters are shared by the members. A grey image of chromatic "
-    "data is not a fit.\n\n"
+    "With one member there is no sigma map. A grey image of chromatic data "
+    "is not a fit.\n\n"
 )
-
-
-def _image_caveat(summary):
-    text = _IMAGE_CAVEAT
-    hyper = summary.get("hyperparameters") or {}
-    if hyper.get("trusted") is False:
-        text += (
-            "> **The hyperparameters are not trusted:** the error scale or "
-            "the short-baseline residual failed, which means the data look "
-            "biased and the evidence's choice cannot be relied on. Choose "
-            "them by L-curve (`regularizers=...`) or by hand.\n\n"
-        )
-    return text
-
-
-def _image_hyper_cell(summary):
-    hyper = summary["hyperparameters"]
-    if hyper["method"] == "evidence":
-        what = (
-            f"The Gaussian-process prior has σ = {hyper['sigma']:.3g} and "
-            f"ℓ = {hyper['length_mas']:.3g} mas ({hyper['length_beam']:.3g} "
-            f"beam minor axes), variant `{hyper['variant']}`, chosen by the "
-            "Laplace log evidence on the grid below."
-        )
-    else:
-        what = (
-            f"The `{hyper['regularizer']}` weight {hyper['weight']:.3g} is "
-            "the one nearest the L-curve's corner "
-            f"({hyper['corner']:.3g})."
-        )
-    return (
-        "## Hyperparameters\n\n" + what + " The grid is not repeated on "
-        "rescaled errors.",
-        'display(Image("plots/hyperparameters.png"))',
-    )
-
-
-def _image_result_cell(summary):
-    fit = summary["fit"]
-    chi2 = ", ".join(
-        f"{k} {v:.3g}" for k, v in fit["chi2_red_by_observable"].items()
-    )
-    return (
-        "## Image\n\n"
-        f"Raw χ²/N on the quoted errors: {chi2}. The image is the mean of "
-        f"{summary['ensemble']['n_members']} member(s); the star carries "
-        f"{100 * (summary['fit'].get('star_fraction') or 0):.3g}% of the "
-        "flux when it is on. The ellipse is the beam.",
-        "img = res.image()\n"
-        "print(img.pixels.shape, img.pixel_scale_mas, img.beam)\n"
-        'display(Image("plots/image_mean.png"))',
-    )
-
-
-def _image_residual_cell(summary):
-    sb = summary["fit"]["short_baseline_mean_sigma"]
-    return (
-        "## Residuals\n\n"
-        "The residual image is the normalized χ² gradient per pixel: "
-        "positive where the model needs more flux. The residuals against "
-        "spatial frequency mark the shortest 20% of baselines, whose mean "
-        f"is {_fmt(sb)} standard errors.",
-        'display(Image("plots/image_residual.png"))\n'
-        'display(Image("plots/residual_frequency.png"))',
-    )
 
 
 def _image_cells(run, summary, path):
@@ -482,10 +413,43 @@ def _image_cells(run, summary, path):
     if "overview" in done:
         cells.append(_data_cell((path / "data" / "processed.oifits").exists()))
     if "hyperparameters" in done:
-        cells.append(_image_hyper_cell(summary))
+        hyper = summary["hyperparameters"]
+        cells.append(
+            (
+                "## Hyperparameters\n\n"
+                f"σ = {hyper['sigma']:.3g}, ℓ = {hyper['length_mas']:.3g} mas "
+                f"({hyper['length_beam']:.3g} beam minor axes), chosen by "
+                "the Laplace log evidence on the grid below.",
+                "from virgil.pipeline._io import read_h5\n"
+                "g = read_h5('grids.h5', 'evidence_%s')\n"
+                "z = g['log_evidence']\n"
+                "plt.imshow(z - z.max(), origin='lower')\n"
+                "plt.colorbar(label='log Z - max')\n"
+                "plt.xlabel('sigma index')\n"
+                "plt.ylabel('length index')" % hyper["variant"],
+            )
+        )
     if "combine" in done:
-        cells.append(_image_result_cell(summary))
-        cells.append(_image_residual_cell(summary))
+        chi2 = ", ".join(
+            f"{k} {v:.3g}"
+            for k, v in summary["fit"]["chi2_red_by_observable"].items()
+        )
+        cells.append(
+            (
+                "## Image\n\n"
+                f"Raw χ²/N on the quoted errors: {chi2}. The beam is in "
+                "`img.beam`.",
+                "img = res.image()\n"
+                "print(img.pixels.shape, img.pixel_scale_mas, img.beam)\n"
+                "h = 0.5 * img.pixels.shape[0] * img.pixel_scale_mas\n"
+                "x, y = img.dra, img.ddec\n"
+                "plt.imshow(img.pixels, cmap='inferno',\n"
+                "           extent=(x + h, x - h, y - h, y + h))\n"
+                "plt.colorbar(label='relative flux per pixel')\n"
+                "plt.xlabel('dRA (mas, East left)')\n"
+                "plt.ylabel('dDec (mas)')",
+            )
+        )
     return cells
 
 

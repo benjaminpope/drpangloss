@@ -386,23 +386,13 @@ _MAS_PER_DEG = 3.6e6
 
 @dataclasses.dataclass(frozen=True)
 class SkyImage:
-    """An image read back from a run's FITS file by [`Result.image`][virgil.pipeline.Result.image].
+    """An image read back by [`Result.image`][virgil.pipeline.Result.image].
 
-    Attributes
-    ----------
-    pixels : numpy.ndarray, shape (ny, nx)
-        Relative flux per pixel, in virgil's orientation: row 0 is North and
-        column 0 is East.
-    pixel_scale_mas : float
-        Pixel size.
-    dra, ddec : float
-        Offset of the image centre from the phase centre, in mas (East,
-        North).
-    beam : dict or None
-        ``major_mas``, ``minor_mas`` and ``pa_deg`` of the data's beam.
-    header : dict
-        Every header keyword of the primary HDU (``STARFRAC``, the star's
-        share of the total flux, ``NMEMBERS`` and so on).
+    ``pixels`` (ny, nx) are relative flux per pixel in virgil's orientation
+    (row 0 North, column 0 East); ``dra`` and ``ddec`` are the offset of the
+    image centre from the phase centre (East, North, mas); ``beam`` is a dict
+    of ``major_mas``, ``minor_mas`` and ``pa_deg`` or ``None``; ``header``
+    holds the primary HDU's keywords (``STARFRAC``, ``NMEMBERS``, ...).
     """
 
     pixels: onp.ndarray
@@ -414,51 +404,24 @@ class SkyImage:
 
 
 def write_fits_image(
-    path,
-    pixels,
-    pixel_scale_mas,
-    *,
-    dra=0.0,
-    ddec=0.0,
-    beam=None,
-    header=None,
-    extensions=None,
+    path, pixels, pixel_scale_mas, *, dra=0.0, ddec=0.0, beam=None, header=None
 ):
-    """Write a sky image as FITS with a celestial WCS, atomically.
+    """Write a sky image (row 0 North, column 0 East) as FITS, atomically.
 
-    ``pixels`` follows virgil's orientation (row 0 North, column 0 East) and
-    is stored flipped so that, as usual in FITS, row 0 is the southern edge
-    and the first axis runs towards the West: ``CDELT1`` is negative. The
-    coordinates are ``RA---SIN`` and ``DEC--SIN`` offsets about the phase
-    centre, which sits at (0, 0) deg, so the reference pixel (the image
-    centre) is at ``CRVAL = (dra, ddec)`` in degrees. The offsets are
-    small; the east–west offset is not scaled by cos(δ), since the phase
-    centre is placed at δ = 0.
-
-    Parameters
-    ----------
-    pixels : array, shape (ny, nx)
-        The image.
-    pixel_scale_mas : float
-        Pixel size.
-    dra, ddec : float, optional
-        Offset of the image centre from the phase centre (East, North), mas.
-    beam : virgil.imaging.Beam or dict, optional
-        Written as ``BMAJ``, ``BMIN`` (deg) and ``BPA``.
-    header : dict, optional
-        Extra keywords of the primary HDU.
-    extensions : dict, optional
-        Name to array of the same shape: further image extensions with the
-        same WCS.
+    The array is stored flipped, so row 0 is the southern edge and
+    ``CDELT1`` is negative. The WCS is ``RA---SIN``/``DEC--SIN`` offsets
+    about the phase centre at (0, 0), with ``CRVAL = (dra, ddec)`` at the
+    image centre. ``beam`` (a dict of ``major_mas``, ``minor_mas``,
+    ``pa_deg``) is written as ``BMAJ``, ``BMIN`` and ``BPA``; ``header`` adds
+    keywords to the primary HDU.
     """
     fits = require_extra("astropy.io.fits")
     pixels = onp.asarray(pixels, dtype=float)
     ny, nx = pixels.shape
     scale = float(pixel_scale_mas) / _MAS_PER_DEG
-
-    def hdu(array, cls):
-        h = cls(onp.ascontiguousarray(onp.asarray(array, float)[::-1]))
-        for key, value in {
+    hdu = fits.PrimaryHDU(onp.ascontiguousarray(pixels[::-1]))
+    hdu.header.update(
+        {
             "CTYPE1": "RA---SIN",
             "CTYPE2": "DEC--SIN",
             "CUNIT1": "deg",
@@ -470,34 +433,24 @@ def write_fits_image(
             "CDELT1": -scale,
             "CDELT2": scale,
             "RADESYS": "ICRS",
-        }.items():
-            h.header[key] = value
-        return h
-
-    primary = hdu(pixels, fits.PrimaryHDU)
-    primary.header["BUNIT"] = "relative flux"
+            "BUNIT": "relative flux",
+        }
+    )
     if beam is not None:
-        b = beam if isinstance(beam, dict) else dataclasses.asdict(beam)
-        primary.header["BMAJ"] = b["major_mas"] / _MAS_PER_DEG
-        primary.header["BMIN"] = b["minor_mas"] / _MAS_PER_DEG
-        primary.header["BPA"] = b["pa_deg"]
-    for key, value in (header or {}).items():
-        primary.header[key] = value
-    hdus = [primary]
-    for name, array in (extensions or {}).items():
-        extra = hdu(array, fits.ImageHDU)
-        extra.name = name
-        hdus.append(extra)
+        hdu.header["BMAJ"] = beam["major_mas"] / _MAS_PER_DEG
+        hdu.header["BMIN"] = beam["minor_mas"] / _MAS_PER_DEG
+        hdu.header["BPA"] = beam["pa_deg"]
+    hdu.header.update(header or {})
     with atomic_path(path) as tmp:
-        fits.HDUList(hdus).writeto(tmp, overwrite=True)
+        hdu.writeto(tmp, overwrite=True)
 
 
-def read_fits_image(path, extension=None):
+def read_fits_image(path):
     """Read an image written by :func:`write_fits_image` as a ``SkyImage``."""
     fits = require_extra("astropy.io.fits")
     with fits.open(path) as hdul:
         primary = hdul[0].header
-        data = hdul[0 if extension is None else extension].data
+        data = hdul[0].data
         header = {
             k: primary[k]
             for k in primary
@@ -837,26 +790,10 @@ class Result:
             )
         return OIData(path)
 
-    def image(self, name="mean"):
-        """An image of an imaging run, read from ``images/<name>.fits``.
-
-        Parameters
-        ----------
-        name : {"mean", "clean"}, optional
-            ``"mean"``: the ensemble's mean image (with one member, that
-            member's); ``"clean"``: CLEAN's restored image, whose
-            components are the ``COMPONENTS`` extension of the file.
-
-        Returns
-        -------
-        SkyImage
-            The pixels (row 0 North, column 0 East), pixel scale, offset
-            of the image centre and beam.
-        """
-        stage = {"mean": "combine", "clean": "start"}.get(name)
-        if stage is None:
-            raise ValueError(f'name must be "mean" or "clean"; got {name!r}.')
-        return read_fits_image(self._stage_file(f"images/{name}.fits", stage))
+    def image(self):
+        """The combined image of an imaging run, a [`SkyImage`][virgil.pipeline.SkyImage]
+        (with one member, that member's)."""
+        return read_fits_image(self._stage_file("images/mean.fits", "combine"))
 
     def model(self, name=None):
         """A fitted model, a real virgil object with its values set.
@@ -939,14 +876,8 @@ class Result:
     def _model_folder(self, name):
         stage = "fit"
         if self.run["pipeline"] == "image":
-            # The imaging pipeline's models: the evidence grid's winner, the
-            # CLEAN start, and the preferred one the combine stage writes.
-            stage = {
-                None: "combine",
-                "best": "combine",
-                "clean": "start",
-                "hyper_best": "hyperparameters",
-            }.get(name, "combine")
+            # "best" is written by combine, "hyper_best" by hyperparameters.
+            stage = {"hyper_best": "hyperparameters"}.get(name, "combine")
         elif self.run["pipeline"] == "disk":
             # The disk pipeline's models come from three stages: the
             # single-ring geometry fit, the candidates of the profile

@@ -82,12 +82,12 @@ res = ImagingPipeline(data, output="runs/image").run()
 img = res.image()          # a SkyImage: pixels, pixel_scale_mas, dra, ddec, beam
 ```
 
-`ImagingPipeline` reconstructs a pixel image with a Gaussian-process prior whose amplitude σ and length ℓ are chosen by evidence (`star="auto"` also decides, by ΔlogZ against a threshold of 5 nats, whether a point source sits at the centre). The stages are `load`, `overview`, `start` (a CLEAN image and the envelope size), `star`, `hyperparameters`, `members`, `combine` and `quicklook`. The result is `images/mean.fits` (a sky-oriented FITS with a WCS, the beam and the star's share of the flux), `images/clean.fits`, the fitted models (`res.model()`, `res.model("clean")`) and an executed quicklook.
+`ImagingPipeline` reconstructs a pixel image with a Gaussian-process prior whose amplitude σ and length ℓ are chosen by evidence (`star="auto"` also decides, by ΔlogZ against a threshold of 5 nats, whether a point source sits at the centre). The stages are `load`, `overview`, `start` (the envelope), `star`, `hyperparameters`, `members`, `combine` and `quicklook`. The result is `images/mean.fits` (a sky-oriented FITS with a WCS, the beam and the star's share of the flux), `models/best` (`res.model()`) and a quicklook that plots the image.
 
 !!! warning "A good fit is not a promise about the picture"
     The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the grid edge, the star decision, the sky orientation and the light at the field edge) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
 
-This first version fits **one** member: the ensemble spread, the family comparison and the chromatic stages are to come. `regularizers=["tv"]` (one at a time, with `star=True` or `False`) picks a classical regularizer by the L-curve corner instead of the evidence. Two options exist only to say they are planned and raise `NotImplementedError`: `anneal` and `star_model="ud"`. The design is in [`design/imaging_pipeline.md`](https://github.com/benjaminpope/virgil/blob/main/design/imaging_pipeline.md).
+This first version fits **one** member. CLEAN starts, the ensemble spread, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come. The design is in [`design/imaging_pipeline.md`](https://github.com/benjaminpope/virgil/blob/main/design/imaging_pipeline.md).
 
 ```bash
 virgil-pipeline image star.oifits -o runs/image --set star=auto
