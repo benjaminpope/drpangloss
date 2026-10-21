@@ -98,6 +98,13 @@ def test_processed_oifits_round_trip_closure_phases(tmp_path):
     assert back.cp_flag
 
 
+def test_processed_oifits_round_trip_nrm_oidata(tmp_path):
+    from virgil.coverage import nrm_oidata
+
+    back = _round_trip(nrm_oidata(), tmp_path)
+    assert back.cp_flag and back.phi.size == 35
+
+
 def test_processed_oifits_round_trip_several_channels(tmp_path):
     data = OIData(
         write_oifits(_tables(waves=(4.6e-6, 5.0e-6)), tmp_path / "in.fits")

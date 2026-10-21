@@ -849,6 +849,10 @@ contributors page; no code was copied)
 
 ### Fixed
 
+- **`nrm_oidata` carries station indices.** It now gives the hole pair of each
+  baseline as its station indices (numbered from 1), so the data can be
+  written to OIFITS and the pipelines' `processed.oifits` is no longer
+  skipped for it.
 - **`fit_orbit_aliases(outlier_eps=...)` ranks and refines on the plain
   likelihood.** Ranking and refining under the outlier mixture lost the true
   alias on a cold search: the mixture's weight on a night vanishes when a start
