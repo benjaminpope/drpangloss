@@ -23,7 +23,7 @@ from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.models import QuadraticLimbDarkenedDisk  # noqa: E402
 from virgil.pipeline import StarPipeline, load  # noqa: E402
 from virgil.pipeline import star  # noqa: E402
-from tests._pipeline_helpers import (  # noqa: E402
+from tests._shared import (  # noqa: E402
     checks_by_name,
     stage_outputs,
     started_times,

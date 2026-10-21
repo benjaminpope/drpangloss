@@ -302,10 +302,10 @@ class BinaryPipeline(_Pipeline):
         the offsets, so that its fit and posterior have the same prior as a
         ``BinaryModelCartesian`` one.
         """
-        from ..models import BinaryModelAngular
+        from ..models import BinaryModelAngular, BinaryModelCartesian
 
         if not isinstance(self.model, BinaryModelAngular):
-            return _null_model()
+            return BinaryModelCartesian(0.0, 0.0, 0.0)
 
         def model(dra, ddec, flux):
             sep, pa = separation_pa(dra, ddec)

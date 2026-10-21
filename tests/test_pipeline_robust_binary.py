@@ -21,7 +21,7 @@ pytest.importorskip("nbclient")
 from virgil import BinaryModelCartesian, OIData  # noqa: E402
 from virgil.pipeline import BinaryPipeline, load  # noqa: E402
 from virgil.pipeline import binary  # noqa: E402
-from tests._pipeline_helpers import (  # noqa: E402
+from tests._shared import (  # noqa: E402
     checks_by_name,
     stage_outputs,
     started_times,
