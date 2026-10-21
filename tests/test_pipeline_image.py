@@ -333,6 +333,7 @@ def test_summary_orders_the_checks():
 # --- the stages ----------------------------------------------------------------
 
 
+@pytest.mark.slow  # 30.7 s on a CI runner, marginally over the 30 s budget
 def test_load_overview_star_and_hyperparameter_stages(pipe):
     res = pipe.run(through="hyperparameters")
     assert res.status == "partial"
