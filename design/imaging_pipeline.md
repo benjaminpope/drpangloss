@@ -1,7 +1,8 @@
 # ImagingPipeline (provisional)
 
-Status: **PR B built** (2026-10-21, cut back twice at Ben's request). This
-note describes what the code does and, at the end, what PRs C and D add. It
+Status: **PRs B and C built** (2026-10-21, B cut back twice at Ben's
+request). This note describes what the code does and, at the end, what is
+not built. It
 replaces a 491-line first design; the cut material (CLEAN starts, classical
 regularizers by L-curve, `anneal`, the ensemble checks, the chromatic stage)
 is in the git history of this file and is not in the code, with no stub
@@ -42,13 +43,24 @@ can only flag, not fix.
    ratio is below 0.9; the grid grows `grid_growths` times while the
    optimum is on an edge). Saves the best fit as `models/best` and the grid
    as `grids.h5`; reports MacKay's per-observable error scales and γ.
-5. `combine`: loads `models/best`, renders the image on the sky grid
-   (`ensemble._on_common_grid`), writes `images/mean.fits` (row 0 North,
-   stored flipped, WCS `RA---SIN`/`DEC--SIN`, `STARFRAC` = the star's flux
-   share) and the diagnostics of `virgil.imaging` (`chi2_by_observable`,
-   `short_baseline_residual`, `diagnose`). One fit, so the "mean" is that
-   fit.
-6. `quicklook`: the notebook, with the caveat first and the image.
+5. `members`: `members` fits (default 8), each a Gaussian-process image at
+   the **shared** (σ, ℓ) of step 4, varying only the start (`moments` or
+   `flat`), the pixel scale (`oversample` or 1.5 × it) and the field (1 or 1.5 × `image_field`), with the star decision of step 3. They
+   are saved in `members/NNN/` and resumable: `run_member(k)` fits one, so
+   cluster array tasks can each run one member before `run()` finishes.
+   `member_grids=True` gives each member its own evidence grid instead (for
+   cluster runs).
+6. `combine`: `ensemble.combine` on the members, with V² and closure phases
+   as separate datasets: a member is dropped if either fits worse than the
+   best by the ensemble's χ² rules, and a member joins the mean only if the
+   mean's χ² stays within the noise on both. Writes `images/mean.fits` (row 0
+   North, stored flipped, WCS `RA---SIN`/`DEC--SIN`, `STARFRAC` = the star's
+   flux share) and `images/sigma.fits` (the members' standard deviation), and
+   the diagnostics of `virgil.imaging` on the mean image as displayed
+   (resampled to a common grid, so it fits slightly worse than the exact
+   mixture). The sigma map excludes hyperparameter uncertainty when the
+   hyperparameters are shared, and any error every member shares.
+7. `quicklook`: the notebook, with the caveat first and the image.
 
 `Result.image()` returns a `SkyImage` (pixels, pixel scale, centre offset
 `dra`/`ddec`, header).
@@ -77,6 +89,12 @@ computed on rescaled errors (that is ≈ 1 by construction).
     hyperparameter grid, or more than 1% of the flux is in the outer two
     pixels (the field may be too small).
 
+11. `ensemble_kept`: warn when fewer than 3, or under half, of the members
+    are kept.
+12. `ensemble_spread`: the members' summed pixel σ over their summed mean;
+    warn above 0.5 (a convention, not calibrated on truth) or with fewer
+    than two members. The message states what the spread excludes.
+
 Not checks, deliberately: rescaled χ², any image-quality score against a
 truth, and a "chain of dots" detector (a fragmentation number would be
 tuned on the contest images it is meant to judge).
@@ -89,9 +107,11 @@ The quicklook's first cell states the caveat above.
 
 ## Not built (PRs C and D)
 
-- **C**: an ensemble of members (CLEAN starts, classical regularizers by
-  L-curve, `anneal`), shared hyperparameters, `image_std`, and the checks
-  `ensemble_kept`, `ensemble_spread`, `family_agreement`.
+- **C, left out**: CLEAN-gain starts (the ensemble API has `moments`,
+  `dirty`, `flat`), star on/off as a member variation (`combine` takes one
+  star setting; the star stage decides it), classical regularizers by
+  L-curve and the `family_agreement` check (B has no `regularisers=`), and
+  `anneal`.
 - **D**: per-channel imaging, SPARCO, the `chromatic` check and a cube.
 
 Each branches from `main` after its predecessor merges. They call
