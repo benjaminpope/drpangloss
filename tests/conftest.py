@@ -239,3 +239,14 @@ def pytest_runtest_makereport(item, call):
         "fewer draws, a stub run) or mark it @pytest.mark.slow; see "
         "tests/conftest.py."
     )
+
+
+@pytest.fixture
+def junk_files(tmp_path):
+    """Files that are not valid OIFITS data: text, empty, and table-less FITS."""
+    from astropy.io import fits
+
+    (tmp_path / "text.fits").write_text("this is not a FITS file\n")
+    (tmp_path / "empty.fits").write_bytes(b"")
+    fits.PrimaryHDU().writeto(tmp_path / "no_tables.fits")
+    return tmp_path

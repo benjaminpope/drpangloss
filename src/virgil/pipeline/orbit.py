@@ -275,26 +275,29 @@ class OrbitPipeline(_Pipeline):
     @classmethod
     def _validate(cls, s):
         _positive(s, "gap_days")
-        for name in ("max_sep_mas", "grid_step_mas", "s_max"):
-            if s[name] is not None:
-                _positive(s, name)
         for name in ("alias_nats", "no_orbit_nats"):
             _positive(s, name)
-        for name in ("memory_budget", "coarse_nats"):
+        for name in (
+            "max_sep_mas",
+            "grid_step_mas",
+            "s_max",
+            "memory_budget",
+            "coarse_nats",
+        ):
             if s[name] is not None:
                 _positive(s, name)
         if s["batch_size"] is not None:
             _integer(s, "batch_size", 1)
-        for name, low in (
-            ("n_peaks", 1),
-            ("n_bands_max", 1),
-            ("n_candidates", 1),
-            ("n_refine", 1),
-            ("max_steps", 1),
-            ("n_is", 1),
-            ("max_modes", 1),
+        for name in (
+            "n_peaks",
+            "n_bands_max",
+            "n_candidates",
+            "n_refine",
+            "max_steps",
+            "n_is",
+            "max_modes",
         ):
-            _integer(s, name, low)
+            _integer(s, name, 1)
         _integer(s, "max_grid", 3)
         _pair(s, "a_range")
         _pair(s, "flux_range")
@@ -407,6 +410,12 @@ def _resolved(notes, path):
     return path
 
 
+def _names_file(key, path):
+    """Whether ``key`` names the file ``path``: as given, resolved or by
+    file name."""
+    return key in (path, str(Path(path).resolve()), Path(path).name)
+
+
 def _as_mapping(epochs):
     """``(mapping, times)`` of whatever the user gave: ``{night: {dataset:
     OIData}}`` and ``{dataset: MJD or None}``."""
@@ -472,7 +481,7 @@ def _match_metadata(metadata, paths):
     out, used = {}, set()
     for path in paths:
         for key, entry in metadata.items():
-            if key in (path, str(Path(path).resolve()), Path(path).name):
+            if _names_file(key, path):
                 out[path] = entry
                 used.add(key)
     unknown = sorted(set(metadata) - used)
@@ -554,12 +563,13 @@ def _apply_exclude(mapping, exclude, notes):
     for key, reason in exclude.items():
         hit = set()
         for path, note in notes.items():
-            if key in (path, str(Path(path).resolve()), Path(path).name):
+            if _names_file(key, path):
                 hit |= set(note["datasets"])
         for night, group in mapping.items():
             if key == night:
                 hit |= set(group)
-            hit |= {name for name in group if name == key}
+            if key in group:
+                hit.add(key)
         if not hit:
             raise ValueError(
                 f"exclude key {key!r} matches no file, night or dataset."
@@ -619,11 +629,11 @@ def _load(p):
 # --- epochs ---
 
 
-def _position_grid(p, half):
-    """The ``(grid, n, step)`` of the position search of half-width ``half``
-    (mas); ``max_grid`` coarsens the step (the report says so)."""
+def _position_grid(p, half, finest):
+    """The ``(grid, n, step, wanted)`` of the position search of half-width
+    ``half`` (mas), for a finest fringe scale ``finest``; ``max_grid``
+    coarsens the step beyond ``wanted`` (the report says so)."""
     s = p.settings
-    finest = _geometry(list(p.data.data))["lambda_over_b_mas"]
     wanted = s["grid_step_mas"] or _STEP_FRACTION * finest
     most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
     n = min(2 * math.ceil(half / wanted) + 1, most)
@@ -647,12 +657,13 @@ def _night_positions(p):
     # orbits: solved problems"; test_pipeline_orbit.py::
     # test_the_position_grid_widens_until_no_peak_is_on_its_edge).
     s = p.settings
-    coarsest = _geometry(list(p.data.data))["fov_mas"]
+    geometry = _geometry(list(p.data.data))
+    finest, coarsest = geometry["lambda_over_b_mas"], geometry["fov_mas"]
     cap = s["a_range"][1] * (1.0 + s["ecc_max"])  # the largest separation
     half = s["max_sep_mas"] or min(coarsest, cap)
     halves = []
     for _ in range(_MAX_WIDEN + 1):
-        grid, n, step, wanted = _position_grid(p, half)
+        grid, n, step, wanted = _position_grid(p, half, finest)
         # Only the last pass's warnings (an edge, say) describe the result.
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -775,7 +786,7 @@ def _positions_from_json(d):
 
 def _read_positions(p):
     path = p.output / "stages" / "epochs" / "positions.json"
-    return _positions_from_json(json.loads(path.read_text()))
+    return _positions_from_json(_io.read_json(path))
 
 
 @_x64
@@ -975,11 +986,11 @@ def _load_result(p):
 
 
 def _single_star(problem, x, diam_range):
-    # test_a_single_star_is_no_orbit pins the verdict.
     """The best log likelihood of the star alone: the engine's likelihood at
     ``x`` with an invisible companion (and, if the orbit fitted the primary's
     diameter, the best diameter: a log grid over its prior range, then a
-    finer one about the best cell, so the null is not under-fitted)."""
+    finer one about the best cell, so the null is not under-fitted).
+    test_a_single_star_is_no_orbit pins the verdict."""
     import jax.numpy as np
 
     x = onp.array(x, float)
@@ -1222,9 +1233,6 @@ def _band_summary(n, physical, drawn, stats, priors, bounds):
         )
         for name, x in physical.items()
     }
-    lows = {
-        k: float(v) for k, v in zip(_SITES, onp.asarray(bounds.lower, float))
-    }
     return {
         "n": int(n),
         "params": params,
@@ -1232,7 +1240,7 @@ def _band_summary(n, physical, drawn, stats, priors, bounds):
         "prior_bound_fraction": _bound_fractions(
             drawn, priors, bounds.upper[2]
         ),
-        "log_period_lower": lows["log_period"],
+        "log_period_lower": float(bounds.lower[_SITES.index("log_period")]),
     }
 
 

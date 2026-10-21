@@ -277,7 +277,7 @@ class BinaryPipeline(_Pipeline):
             "dra": axis,
             "ddec": axis,
             "flux": np.logspace(math.log10(lo), math.log10(hi), s["n_flux"]),
-        }, max_sep
+        }
 
     def _priors(self, max_sep):
         """Priors on ``dra``, ``ddec`` (uniform on the box) and ``flux``.
@@ -372,8 +372,7 @@ def _search(p):
     from ..models import BinaryModelCartesian
 
     data, s = p.processed, p.settings
-    grid, max_sep = p._grid()
-    axis = p._grid_axis()
+    grid, axis = p._grid(), p._grid_axis()
     if axis.coarsened:
         warnings.warn(
             f"max_grid={s['max_grid']} coarsens the grid step from "
@@ -550,7 +549,7 @@ def _limits(p):
     from ..limits import radial_profile
 
     s = p.settings
-    grid, max_sep = p._grid()
+    grid, max_sep = p._grid(), p._grid_axis().max_sep
     limit = _limit_map(p, grid)
     dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
     profile = radial_profile(
@@ -633,8 +632,7 @@ def _fit(p):
     from ..fitting import fit
 
     data = p.processed
-    _, max_sep = p._grid()
-    priors = p._priors(max_sep)
+    priors = p._priors(p._grid_axis().max_sep)
     angular = _is_angular(p)
     template, init = _fit_start(p, p._report("search"), priors, angular)
     result = fit(template, priors, data, noise=p._noise(), init=init)
@@ -732,8 +730,7 @@ def _fit_report(data, result, values, reported, priors):
 
 def _posterior(p):
     fit_report = p._report("fit")
-    _, max_sep = p._grid()
-    priors = p._priors(max_sep)
+    priors = p._priors(p._grid_axis().max_sep)
     reported = list(fit_report["params"])
     angular = _is_angular(p)
 
