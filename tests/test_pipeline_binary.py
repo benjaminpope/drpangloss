@@ -516,7 +516,7 @@ def test_grid_is_capped_at_an_odd_number_and_the_step_reported(data, tmp_path):
     settings = dict(TINY, quicklook_execute=False)
     settings.update(max_grid=12, grid_step_mas=10.0)
     pipeline = BinaryPipeline(data, output=tmp_path / "run", **settings)
-    grid, _ = pipeline._grid()
+    grid = pipeline._grid()
     assert grid["dra"].size == grid["ddec"].size == 11  # not 13
     max_sep, n, step, wanted = pipeline._grid_axis()
     assert n == 11 and step == pytest.approx(2 * max_sep / 10)

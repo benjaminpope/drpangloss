@@ -165,29 +165,21 @@ def _quadratic_disk(values):
 
 
 def _quadratic_derived(samples):
-    from ..models import QuadraticLimbDarkenedDisk
-
-    star = QuadraticLimbDarkenedDisk(
-        samples["diam"], q1=samples["q1"], q2=samples["q2"]
-    )
+    star = _quadratic_disk(samples)
     return {"u1": onp.asarray(star.u1), "u2": onp.asarray(star.u2)}
 
 
-def _diam_prior(lo, hi):
+def _uniform_priors(lo, hi):
     import numpyro.distributions as dist
 
-    return dist.LogUniform(lo, hi)
-
-
-def _uniform_priors(lo, hi):
-    return {"diam": _diam_prior(lo, hi)}
+    return {"diam": dist.LogUniform(lo, hi)}
 
 
 def _quadratic_priors(lo, hi):
     import numpyro.distributions as dist
 
     return {
-        "diam": _diam_prior(lo, hi),
+        **_uniform_priors(lo, hi),
         "q1": dist.Uniform(0.0, 1.0),
         "q2": dist.Uniform(0.0, 1.0),
     }
@@ -548,6 +540,23 @@ def _load_star(p):
 # numbers this pipeline reports.
 
 
+def _uniform_loglike(data, diameters, batch_size):
+    """The uniform-disk log likelihood at each of ``diameters``."""
+    import jax.numpy as np
+
+    from ..grid_fit import likelihood_grid
+    from ..models import UniformDisk
+
+    return onp.asarray(
+        likelihood_grid(
+            UniformDisk,
+            data=data,
+            grid={"diam": np.asarray(diameters)},
+            batch_size=batch_size,
+        )
+    )
+
+
 @in_float64
 def _scan(data, lo, hi, n_scan, batch_size):
     """Uniform-disk Δ(−2 log L) on a log-spaced diameter grid.
@@ -558,20 +567,8 @@ def _scan(data, lo, hi, n_scan, batch_size):
         ``(axis, delta)``: the diameters and the excess of −2 log L over
         its minimum on the grid (Δχ² on the quoted errors).
     """
-    import jax.numpy as np
-
-    from ..grid_fit import likelihood_grid
-    from ..models import UniformDisk
-
     axis = onp.geomspace(lo, hi, n_scan)
-    ll = onp.asarray(
-        likelihood_grid(
-            UniformDisk,
-            data=data,
-            grid={"diam": np.asarray(axis)},
-            batch_size=batch_size,
-        )
-    )
+    ll = _uniform_loglike(data, axis, batch_size)
     return axis, 2.0 * (onp.nanmax(ll) - ll)
 
 
@@ -630,22 +627,10 @@ def _find_lobes(axis, delta, lo, hi, cap, *, separation=_LOBE_SEPARATION):
 @in_float64
 def _refine(data, centre, lo, hi, step, batch_size):
     """The uniform-disk diameter of best likelihood within one coarse step."""
-    import jax.numpy as np
-
-    from ..grid_fit import likelihood_grid
-    from ..models import UniformDisk
-
     fine = onp.geomspace(
         max(lo, centre / step), min(hi, centre * step), _REFINE_POINTS
     )
-    ll = onp.asarray(
-        likelihood_grid(
-            UniformDisk,
-            data=data,
-            grid={"diam": np.asarray(fine)},
-            batch_size=batch_size,
-        )
-    )
+    ll = _uniform_loglike(data, fine, batch_size)
     return float(fine[int(onp.nanargmax(ll))])
 
 
