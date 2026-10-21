@@ -762,10 +762,12 @@ class Result:
             )
         return OIData(path)
 
-    def image(self):
-        """The combined image of an imaging run, a [`SkyImage`][virgil.pipeline.SkyImage]
-        (with one member, that member's)."""
-        return read_fits_image(self._stage_file("images/mean.fits", "combine"))
+    def image(self, which="mean"):
+        """The combined image of an imaging run (``which="sigma"``: the
+        spread of its members), a [`SkyImage`][virgil.pipeline.SkyImage]."""
+        return read_fits_image(
+            self._stage_file(f"images/{which}.fits", "combine")
+        )
 
     def model(self, name=None):
         """A fitted model, a real virgil object with its values set.

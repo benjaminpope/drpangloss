@@ -59,6 +59,7 @@ SMALL = {
     "sigmas": [2.0],
     "lengths_beam": [1.0],
     "grid_growths": 0,
+    "members": 2,
     "max_steps": 20,
     "quicklook_execute": False,
 }
@@ -99,6 +100,7 @@ STAGES = (
     "overview",
     "star",
     "hyperparameters",
+    "members",
     "combine",
     "quicklook",
 )
@@ -112,6 +114,8 @@ DEFAULTS = {
     "sigmas": [1.0, 2.0, 4.0],
     "lengths_beam": [0.5, 1.0, 2.0],
     "grid_growths": 2,
+    "members": 8,
+    "member_grids": False,
     "method": None,
     "max_steps": None,
     "seed": 0,
@@ -130,6 +134,8 @@ CHECKS = (
     "star",
     "orientation",
     "edges",
+    "ensemble_kept",
+    "ensemble_spread",
 )
 
 
@@ -170,6 +176,8 @@ def test_settings_are_validated(data):
         {"oversample": -1.0},
         {"max_npix": 2},
         {"sigmas": []},
+        {"members": 0},
+        {"members": 9},
     ):
         with pytest.raises(ValueError):
             ImagingPipeline(data, **bad)
@@ -316,8 +324,23 @@ def _reports():
             "short_baseline_error": 0.5,
             "flip_dchi2": 30.0,
             "edge_flux": 0.001,
+            "n_kept": 5,
+            "n_members": 8,
+            "spread": 0.2,
         },
     }
+
+
+def test_ensemble_checks():
+    kept = _checks.ensemble_kept
+    assert kept(5, 8).status == "pass"
+    assert kept(2, 4).status == "warn"  # fewer than min_kept
+    assert kept(3, 8).status == "warn"  # under half
+    spread = _checks.ensemble_spread
+    assert spread(0.2, 5).status == "pass"
+    assert spread(0.8, 5).status == "warn" and spread(0.0, 1).status == "warn"
+    assert "excludes hyperparameter uncertainty" in spread(0.2, 5).message
+    assert "excludes" not in spread(0.2, 5, shared=False).message
 
 
 def test_summary_orders_the_checks():
@@ -456,6 +479,53 @@ def test_star_auto_decides_the_star_on(data, tmp_path):
     )
     assert star["delta_log_z"] >= 5.0 and star["decision"] == "on"
     assert star["member_star"] is True
+
+
+def test_members_are_resumable_and_fill_the_ensemble(data, tmp_path):
+    """The array workflow: members out of order, then the stages finish."""
+    pipe = ImagingPipeline(data, output=tmp_path / "run", **SMALL)
+    pipe.run(through="hyperparameters")
+    pipe.run_member(1)
+    info = pipe.output / "members" / "001" / "info.json"
+    stamp = info.stat().st_mtime_ns
+    pipe.run_member(1)  # saved: not fitted again
+    assert info.stat().st_mtime_ns == stamp
+    with pytest.raises(ValueError, match="k must be"):
+        pipe.run_member(2)
+    res = pipe.run(through="combine")
+    assert info.stat().st_mtime_ns == stamp
+    assert (pipe.output / "members" / "000" / "info.json").exists()
+    fit = res.summary["fit"]
+    assert fit["n_members"] == 2 and 1 <= fit["n_kept"] <= 2
+    names = [c["name"] for c in res.summary["checks"]]
+    assert names[: len(CHECKS)] == list(CHECKS)
+    assert set(fit["chi2_red_mixture"]) == {"vis", "phi"}
+    # The members share the hyperparameters of the one evidence search.
+    hyper = pipe._report("hyperparameters")
+    spec, _, draws, variant = image._member_setup(pipe)
+    assert spec.gp_sigmas == (hyper["sigma"],) and spec.gp_growths == 0
+    assert spec.gp_lengths == (hyper["length_beam"],)
+    assert variant == hyper["variant"] and set(draws) == {0, 1}
+    mean, sigma = res.image(), res.image("sigma")
+    assert mean.pixels.shape == sigma.pixels.shape
+    assert sigma.pixels.max() > 0  # the two members start differently
+    # Raw χ²/N of the mean image, V² and closure phases apart.
+    assert set(fit["chi2_red_by_observable"]) == {"vis", "phi", "total"}
+
+
+@pytest.mark.slow
+def test_member_grids_fit_each_member_its_own_hyperparameters(data, tmp_path):
+    settings = {**SMALL, "members": 1, "member_grids": True}
+    pipe = ImagingPipeline(data, output=tmp_path / "run", **settings)
+    pipe.run(through="members")
+    assert (pipe.output / "members" / "000" / "info.json").exists()
+    spec, _, _, variant = image._member_setup(pipe)
+    assert variant is None and spec.gp_sigmas == (2.0,)  # the setting's grid
+    other = ImagingPipeline(
+        data, output=pipe.output, **{**settings, "max_steps": 5}
+    )
+    with pytest.raises(ConfigMismatchError):
+        other.run_member(0)
 
 
 # --- slower fits ---------------------------------------------------------------

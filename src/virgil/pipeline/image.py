@@ -9,6 +9,9 @@ reconstructions that were judged unusable.
 from __future__ import annotations
 
 import dataclasses
+import itertools
+import warnings
+from collections import Counter
 
 import jax
 import numpy as onp
@@ -36,6 +39,8 @@ CHECKS = (
     "star",
     "orientation",
     "edges",
+    "ensemble_kept",
+    "ensemble_spread",
 )
 _ANISOTROPIC_BELOW = 0.9  # beam axis ratio that adds the elliptical GP grid
 
@@ -51,13 +56,23 @@ class ImagingPipeline(_Pipeline):
     data-fidelity check were judged unusable). Multi-channel data give one
     grey image.
 
-    Stages: ``load → overview → star → hyperparameters → combine →
-    quicklook``. ``overview`` sets the grid; ``star="auto"`` compares fits
+    Stages: ``load → overview → star → hyperparameters → members → combine
+    → quicklook``. ``overview`` sets the grid; ``star="auto"`` compares fits
     with and without a star by log evidence (|ΔlogZ| ≥ ``star_threshold``
     decides); ``hyperparameters`` picks the Gaussian-process σ and ℓ by the
-    Laplace evidence and saves ``models/best``; ``combine`` writes
-    ``images/mean.fits`` and the diagnostics. Every χ²/N is on the quoted
-    errors.
+    Laplace evidence and saves ``models/best``; ``members`` fits ``members``
+    images at those **shared** hyperparameters, varying only the start, the
+    pixel scale and the field (1 or 1.5 times), each saved in
+    ``members/``; ``combine`` keeps the members that fit V² and closure
+    phases (``ensemble.combine``), and writes ``images/mean.fits``,
+    ``images/sigma.fits`` and the diagnostics of the mean image. Every χ²/N
+    is on the quoted errors. The sigma map is the spread of the members: with
+    shared hyperparameters it excludes hyperparameter uncertainty (and any
+    error every member shares).
+
+    To spread the members over cluster tasks, ``run(through="hyperparameters")``,
+    then ``run_member(k)`` for ``k`` in ``range(members)`` in any order or
+    process, then ``run()``.
 
     Parameters
     ----------
@@ -72,6 +87,9 @@ class ImagingPipeline(_Pipeline):
         ``field_fwhms``, ``field_mas``, ``max_npix`` (the grid); ``star``
         (``"auto"``, True, False) and ``star_threshold``; ``sigmas``,
         ``lengths_beam`` and ``grid_growths`` (the evidence grid);
+        ``members`` (default 8) and ``member_grids`` (an evidence grid per
+        member instead of the shared hyperparameters: slow, for cluster
+        runs);
         ``method`` and ``max_steps`` (the optimizer of
         [`fit`][virgil.fitting.fit]); ``seed``, ``wavel_range``,
         ``error_floor`` and ``quicklook_execute``.
@@ -84,13 +102,14 @@ class ImagingPipeline(_Pipeline):
     """
 
     NAME = "image"
-    _OWNED_EXTRA = ("images",)
+    _OWNED_EXTRA = ("images", "members")
     STABILITY = "provisional"
     STAGES = (
         "load",
         "overview",
         "star",
         "hyperparameters",
+        "members",
         "combine",
         "quicklook",
     )
@@ -104,6 +123,8 @@ class ImagingPipeline(_Pipeline):
         "sigmas": [1.0, 2.0, 4.0],
         "lengths_beam": [0.5, 1.0, 2.0],
         "grid_growths": 2,
+        "members": 8,
+        "member_grids": False,
         "method": None,
         "max_steps": None,
         "seed": 0,
@@ -125,6 +146,12 @@ class ImagingPipeline(_Pipeline):
             _positive(s, "field_mas")
         _integer(s, "max_npix", 4)
         _integer(s, "grid_growths", 0)
+        _integer(s, "members", 1)
+        if s["members"] > 8:
+            raise ValueError(
+                "members must be at most 8, the distinct starts, pixel "
+                "scales and fields."
+            )
         _integer(s, "seed", 0)
         for name in ("sigmas", "lengths_beam"):
             if not s[name] or min(s[name]) <= 0:
@@ -149,9 +176,50 @@ class ImagingPipeline(_Pipeline):
             ),
             Stage("star", _star, ("stages/star/report.json",)),
             Stage("hyperparameters", _hyperparameters, ("grids.h5", *model)),
-            Stage("combine", _combine, ("images/mean.fits",)),
+            # No outputs: run_member's folders survive a rerun of this stage.
+            Stage("members", _members, ()),
+            Stage(
+                "combine",
+                _combine,
+                ("images/mean.fits", "images/sigma.fits"),
+            ),
             Stage("quicklook", _quicklook, ("quicklook.ipynb",)),
         )
+
+    def run_member(self, k):
+        """Fit member ``k`` unless it is saved (after the ``hyperparameters``
+        stage); the ``members`` stage runs every one that is missing."""
+        if not 0 <= k < self.settings["members"]:
+            raise ValueError(
+                f"k must be in 0..{self.settings['members'] - 1}."
+            )
+        # As run() would: the same configuration, after the hyperparameters.
+        record = _io.read_json(self.output / "run.json")
+        self._check_resume(record)
+        if (
+            record["stages"].get("hyperparameters", {}).get("status")
+            != "complete"
+        ):
+            raise RuntimeError(
+                'Run the "hyperparameters" stage before run_member.'
+            )
+        folder = self.output / "members" / f"{k:03d}"
+        if not (folder / "info.json").exists():
+            spec, star, draws, variant = _member_setup(self)
+            grid = _evidence_grid(self, spec, star, draws[k])
+            best = grid.best
+            if variant:  # one point per variant: the shared hyperparameters
+                # Each member re-estimates the elongation on its own field.
+                best = next(
+                    (f for f in grid.fits.values() if f.variant == variant),
+                    best,
+                )
+                if best.variant != variant:
+                    warnings.warn(
+                        f"Member {k} found no {variant!r} grid on its field: "
+                        "it is fitted with the isotropic prior."
+                    )
+            _save_fit(folder, best.result, list(best.result.values))
 
     def _summarize(self, reports):
         checks = _run_checks(self.settings, reports)
@@ -163,17 +231,14 @@ class ImagingPipeline(_Pipeline):
 # === HELPERS ===
 
 
-def _grid_spec(s, field_mas, *, central=False):
-    """The ensemble spec of this run's one group; ``central`` is the single
-    middle-σ, middle-ℓ isotropic point of the star comparison."""
+def _grid_spec(s, field_mas, point=None, aniso=True):
+    """The ensemble spec of this run's one group. ``point`` is one
+    ``(σ, ℓ in beams)``, without growth; ``aniso`` adds the elliptical grid."""
     from ..ensemble import EnsembleSpec
 
     sigmas, lengths = sorted(s["sigmas"]), sorted(s["lengths_beam"])
-    if central:
-        sigmas, lengths = (
-            sigmas[len(sigmas) // 2 :][:1],
-            lengths[len(lengths) // 2 :][:1],
-        )
+    if point:
+        sigmas, lengths = [point[0]], [point[1]]
     return EnsembleSpec(
         families=("gp",),
         oversample=(float(s["oversample"]),),
@@ -183,8 +248,8 @@ def _grid_spec(s, field_mas, *, central=False):
         field_mas=field_mas,
         gp_sigmas=tuple(sigmas),
         gp_lengths=tuple(lengths),
-        gp_growths=0 if central else int(s["grid_growths"]),
-        gp_axis_ratio=None if central else _ANISOTROPIC_BELOW,
+        gp_growths=0 if point else int(s["grid_growths"]),
+        gp_axis_ratio=_ANISOTROPIC_BELOW if aniso else None,
     )
 
 
@@ -200,15 +265,16 @@ def _draw(p, spec, star):
     )[0]
 
 
-def _evidence_grid(p, spec, star):
+def _evidence_grid(p, spec, star, draw=None):
     from ..ensemble import evidence_grid, reference_starts
 
     s, data = p.settings, p.processed
+    draw = draw or _draw(p, spec, star)
     return evidence_grid(
         data,
-        _draw(p, spec, star),
+        draw,
         star=star,
-        starts=reference_starts(data, star, ("moments",)),
+        starts=reference_starts(data, star, (draw.start,)),
         spec=spec,
         **{k: s[k] for k in ("method", "max_steps") if s[k] is not None},
     )
@@ -269,8 +335,9 @@ def _star(p):
             "member_star": bool(s["star"]),
             "delta_log_z": None,
         }
+    middle = [sorted(s[k])[len(s[k]) // 2] for k in ("sigmas", "lengths_beam")]
     spec = _grid_spec(
-        s, p._report("overview")["field_requested_mas"], central=True
+        s, p._report("overview")["field_requested_mas"], middle, aniso=False
     )
     log_z = {
         star: float(_evidence_grid(p, spec, star).best.log_evidence)
@@ -353,44 +420,111 @@ def _hyperparameters(p):
     }
 
 
+def _member_setup(p):
+    """``(spec, star, draws, variant)`` of the members. They vary the start,
+    the pixel scale and the field (1 or 1.5 times); ``variant`` is the shared
+    hyperparameters' (None: an evidence grid per member)."""
+    from ..ensemble import draw_groups
+
+    s = p.settings
+    hyper, field = p._report("hyperparameters"), p._report("overview")
+    star = p._report("star")["member_star"]
+    shared = not s["member_grids"]
+    variant = hyper["variant"] if shared else None
+    spec = _grid_spec(
+        s,
+        field["field_requested_mas"],
+        (hyper["sigma"], hyper["length_beam"]) if shared else None,
+        variant != "iso",
+    )
+    # Each member is one distinct (start, pixel scale, field): a fit is fixed
+    # by them, so repeated draws would be copies.
+    key = jax.random.PRNGKey(int(s["seed"]))
+    draws = {}
+    for k, (over, factor, start) in enumerate(
+        itertools.product((1.0, 1.5), (1.0, 1.5), ("moments", "flat"))
+    ):
+        if k < s["members"]:
+            one = dataclasses.replace(
+                spec,
+                oversample=(over * spec.oversample[0],),
+                field_factors=(factor,),
+                starts=(start,),
+            )
+            draws[k] = dataclasses.replace(
+                draw_groups(p.processed, 1, key, one, star)[0], index=k
+            )
+    return spec, star, draws, variant
+
+
+def _members(p):
+    for k in range(p.settings["members"]):
+        p.run_member(k)
+    return {"n_members": int(p.settings["members"])}
+
+
+def _edge_flux(member, star):
+    """The fraction of a member's image in the outer two pixels of its grid."""
+    model = member.result.model
+    pixels = onp.asarray((model.env if star else model).brightness)
+    return float(1.0 - pixels[2:-2, 2:-2].sum() / pixels.sum())
+
+
 def _combine(p):
-    """The image and the diagnostics of the one fit."""
-    from ..ensemble import _on_common_grid, _parts
+    """The mean and sigma images of the kept members, and the diagnostics of
+    the mean image."""
+    from ..ensemble import GPFit, Group, _chi2, combine
+    from ..fitting import FitResult
     from ..imaging import (
         Centroid,
         chi2_by_observable,
         diagnose,
         short_baseline_residual,
     )
+    from ..models import PointSource, System
 
-    data, star = p.processed, p._report("star")["member_star"]
-    ov = p._report("overview")
-    model = _io.load_model(p.output / "models" / "best")
-    by_observable = chi2_by_observable(model, data)
+    data, ov = p.processed, p._report("overview")
+    spec, star, draws, _ = _member_setup(p)
+    # V² and closure phases are judged separately.
+    blocks = [
+        (k, block)
+        for k, block in (("vis", data.vis), ("phi", data.phi))
+        if onp.size(block)
+    ]
+    parts = [data.select(observables=k) for k, _ in blocks]
+    nan = float("nan")
+    groups = []
+    for k, draw in sorted(draws.items()):
+        folder = p.output / "members" / f"{k:03d}"
+        model = _io.load_model(folder)
+        info = {
+            "chi2": _chi2(model, parts),
+            "ndata": [d.n_independent for d in parts],
+        }
+        result = FitResult(model, _io.load_model_values(folder), info)
+        groups.append(Group(draw, None, (GPFit("gp", nan, nan, nan, result),)))
+    ens = combine(parts, groups, spec=spec, star=star)
+
+    # The star's share of the flux; the images carry the rest.
+    flux = float(ens.mean.flux)
+    fraction = flux / (1.0 + flux) if star else 1.0
+    scale = float(ens.mean.pixel_scale_mas)
+    kept = ens.kept
+    for name, pixels in (("mean", ens.mean.brightness), ("sigma", ens.std)):
+        _io.write_fits_image(
+            p.output / "images" / f"{name}.fits",
+            onp.asarray(pixels, dtype=float) * fraction,
+            scale,
+            header={"STARFRAC": 1.0 - fraction, "NMEMBERS": len(kept)},
+        )
+    scene = System(star=PointSource(), env=ens.mean) if star else ens.mean
+    by_observable = chi2_by_observable(scene, data)
     try:
-        sb_mean, sb_error = short_baseline_residual(model, data)
+        sb_mean, sb_error = short_baseline_residual(scene, data)
     except ValueError:  # no baseline-ordered visibilities
         sb_mean = sb_error = None
     diagnosis = diagnose(
-        model, data, () if star else (Centroid(ov["pixel_scale_mas"]),)
-    )
-
-    env, fraction = _parts(model, star)
-    scale = float(env.pixel_scale_mas)
-    pixels = onp.asarray(
-        _on_common_grid(env, int(env.eta.shape[0]), scale), dtype=float
-    )
-    pixels *= fraction / pixels.sum()
-    # A rotated image is rendered on the sky grid with its offset in the
-    # pixels; an unrotated one is resampled about its own centre.
-    offset = (0.0, 0.0) if float(env.rotation_deg) else (env.dra, env.ddec)
-    _io.write_fits_image(
-        p.output / "images" / "mean.fits",
-        pixels,
-        scale,
-        dra=float(offset[0]),
-        ddec=float(offset[1]),
-        header={"STARFRAC": 1.0 - fraction},
+        scene, data, () if star else (Centroid(ov["pixel_scale_mas"]),)
     )
     return {
         "chi2": by_observable["chi2"]["total"],
@@ -400,8 +534,15 @@ def _combine(p):
         "short_baseline_mean": sb_mean,
         "short_baseline_error": sb_error,
         "flip_dchi2": float(diagnosis.checks["flip_dchi2"]),
-        "edge_flux": float(max(diagnosis.checks["edge_flux"])),
+        # The widest field's outer pixels hide a smaller member's edge: each
+        # kept member is judged on its own grid.
+        "edge_flux": max(_edge_flux(m, star) for m in kept),
+        "chi2_red_mixture": dict(zip((k for k, _ in blocks), ens.chi2_red)),
         "star_fraction": 1.0 - fraction,
+        "n_members": len(ens.members),
+        "n_kept": len(kept),
+        "dropped": dict(Counter(m.reason for m in ens.members if not m.kept)),
+        "spread": float(ens.std.sum() / ens.mean.brightness.sum()),
     }
 
 
@@ -451,5 +592,14 @@ def _run_checks(settings, reports):
         checks += [
             _checks.orientation(fit["flip_dchi2"], load["closure_phases"]),
             _checks.edges(hyper["edge"], fit["edge_flux"]),
+        ]
+    if fit:
+        checks += [
+            _checks.ensemble_kept(fit["n_kept"], fit["n_members"]),
+            _checks.ensemble_spread(
+                fit["spread"],
+                fit["n_kept"],
+                shared=not settings["member_grids"],
+            ),
         ]
     return checks

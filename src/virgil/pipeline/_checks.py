@@ -1855,3 +1855,40 @@ def edges(grid_edges, flux, *, warn=0.01):
         f"The fit is {' and '.join(parts)}: the grid or the field is too "
         "small.",
     )
+
+
+def ensemble_kept(n_kept, n, *, min_kept=3):
+    """Warn when fewer than ``min_kept``, or under half, of the ``n`` members
+    survive the χ² filter (the spread is then not a useful map)."""
+    return _two_way(
+        "ensemble_kept",
+        n_kept < min_kept or 2 * n_kept < n,
+        n_kept,
+        min_kept,
+        f"{n_kept} of {n} members fit V² and closure phases and are in the "
+        "mean.",
+        f"Only {n_kept} of {n} members are in the mean (fewer than "
+        f"{min_kept}, or under half): the sigma map is not a useful map.",
+    )
+
+
+def ensemble_spread(spread, n_kept, *, warn=0.5, shared=True):
+    """The members' summed pixel standard deviation over their summed mean
+    (0 for identical images); ``warn`` is a convention, not calibrated on
+    truth."""
+    note = (
+        " The spread is over starts, grids and fields at shared "
+        "hyperparameters: it excludes hyperparameter uncertainty and any "
+        "error every member shares."
+        if shared
+        else " It is over starts, grids, fields and hyperparameters."
+    )
+    return _two_way(
+        "ensemble_spread",
+        n_kept < 2 or not _finite(spread) or spread > warn,
+        spread,
+        warn,
+        f"The kept members differ by {100 * spread:.3g}% of the flux." + note,
+        "Fewer than two members are kept, or they differ by more than "
+        f"{100 * warn:g}% of the flux: the mean is not stable." + note,
+    )
