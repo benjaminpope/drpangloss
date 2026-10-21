@@ -13,6 +13,11 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `nrm_oidata` now carries the hole pair of each baseline as its station
+  indices (numbered from 1), so the data can be written to OIFITS and the
+  pipelines' `processed.oifits` is no longer skipped for it. The pipelines
+  tutorial limits its search with `max_sep_mas`, since a seven-hole mask
+  cannot tell a companion from its lattice-vector aliases.
 - `fit_orbit_aliases(outlier_eps=...)` (and so `OrbitPipeline`, whose default
   is `outlier_eps=0.02`) ranked and refined its candidate orbits under the
   outlier mixture. The mixture's weight on a night vanishes when a start misses

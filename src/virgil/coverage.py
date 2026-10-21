@@ -193,7 +193,10 @@ def nrm_oidata(
     -------
     OIData
         Data with zero values, for
-        [`with_model`][virgil.oidata.OIData.with_model].
+        [`with_model`][virgil.oidata.OIData.with_model]. Each baseline
+        carries its pair of holes (numbered from 1, in the order of
+        ``holes``) as its station indices, so the data can be written to
+        OIFITS.
     """
     holes = onp.asarray(holes, float)
     pairs, baselines = _baselines(holes)
@@ -202,6 +205,7 @@ def nrm_oidata(
     i1, i2, i3 = cp_indices(pairs, triangles)
     return OIData(
         {
+            "stations": onp.asarray(pairs) + 1,
             "u": u,
             "v": v,
             "wavel": float(wavelength_m),
