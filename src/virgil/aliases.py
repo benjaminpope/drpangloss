@@ -31,6 +31,7 @@ MacKay (1992, https://doi.org/10.1162/neco.1992.4.3.415).
 See ``fit_orbit_aliases`` for the entry point.
 """
 
+import copy
 import dataclasses
 import functools
 import json
@@ -690,6 +691,22 @@ class _Problem:
             self.surfaces, x, self.data, self.cfg, self.dof, self.mix
         )
 
+    def without_mixture(self):
+        """This problem without the outlier mixture (itself without one).
+
+        The search ranks and refines on the plain likelihood and applies the
+        mixture afterwards, since the mixture's IRLS weights vanish on the
+        nights a start does not reach: from a start that misses a few
+        nights, the mixture fit settles on the nights it already fits (a
+        redescending estimator's local optimum) where the plain fit pulls
+        all of them in."""
+        if self.mix is None:
+            return self
+        plain = copy.copy(self)
+        plain.mix = None
+        plain.kernel = eqx.tree_at(lambda k: k.mix, self.kernel, None)
+        return plain
+
     def batch(self, xs, mixed=True):
         """``_loglike`` at each row of ``xs``; ``mixed=False`` leaves the
         outlier mixture out (a null model is scored on its own terms)."""
@@ -1205,14 +1222,22 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     """Rank the candidates by the observables and refine the best distinct
     few into modes.
 
-    Returns the distinct modes ``[(x, loglike), ...]`` and the number of
-    starts that failed. Only a ``TypeError`` (a bug or a misuse) propagates;
-    any other exception, a ``ValueError`` or ``LinAlgError`` from a start
-    say, counts it as failed. If every start fails, a ``RuntimeError``
-    chained to the last error is raised.
+    The ranking and the refinement use the plain likelihood; a problem with
+    the outlier mixture only polishes the modes found (see
+    [`_Problem.without_mixture`][virgil.aliases._Problem.without_mixture]),
+    so that the mixture can down-weight a night of a basin the search found
+    but cannot hide the basin.
+
+    Returns the distinct modes ``[(x, loglike), ...]`` (the log likelihood
+    of the problem given) and the number of starts that failed. Only a
+    ``TypeError`` (a bug or a misuse) propagates; any other exception, a
+    ``ValueError`` or ``LinAlgError`` from a start say, counts it as failed.
+    If every start fails, a ``RuntimeError`` chained to the last error is
+    raised.
     """
     s = settings
-    score = _score_pool(problem, s, pool)
+    search = _plain(problem)
+    score = _score_pool(search, s, pool)
     keep = onp.argsort(-score, kind="stable")[: 4 * s.n_refine]
     ranked = _distinct(
         [(pool[i], score[i]) for i in keep],
@@ -1226,7 +1251,7 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
     fitted, n_failed, error = [], 0, None
     for x0 in seeds:
         try:
-            x, value = _optimize(problem, bounds, x0, s.max_steps)
+            x, value = _optimize(search, bounds, x0, s.max_steps)
         except TypeError:
             raise
         except Exception as caught:  # noqa: BLE001 - one bad start
@@ -1238,7 +1263,38 @@ def _refine(problem, settings, bounds, pool, times, forced=()):
         raise RuntimeError(
             f"Every one of the {n_failed} optimizer starts failed."
         ) from error
-    return _distinct(fitted, times, s.t_ref, s.min_distance_mas), n_failed
+    modes = _distinct(fitted, times, s.t_ref, s.min_distance_mas)
+    if search is not problem:
+        modes = _distinct(
+            [_polish(problem, bounds, x, s.max_steps) for x, _ in modes],
+            times,
+            s.t_ref,
+            s.min_distance_mas,
+        )
+    return modes, n_failed
+
+
+def _plain(problem):
+    """``problem`` without the outlier mixture, itself when it has none."""
+    if getattr(problem, "mix", None) is None:
+        return problem
+    return problem.without_mixture()
+
+
+def _polish(problem, bounds, x, max_steps):
+    """A mode refit under ``problem`` (the outlier mixture) from the plain
+    fit's ``x``: ``(x, loglike)``. A mode the polish cannot improve keeps
+    ``x``, scored under ``problem``."""
+    try:
+        polished, value = _optimize(problem, bounds, x, max_steps)
+    except TypeError:
+        raise
+    except Exception:  # noqa: BLE001 - the plain mode stands
+        polished, value = x, -onp.inf
+    if not onp.isfinite(value):
+        polished = x
+        value = float(onp.asarray(problem.batch(np.asarray(x)[None]))[0])
+    return polished, value
 
 
 def _band_evidence(problem, settings, bounds, modes_xy, rng):
@@ -1331,10 +1387,13 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
     from the same orbit with the stars' labels swapped (the ratio is then
     below the top: the log-uniform prior on (lo, top] is not symmetric under
     the swap, and a fit pinned at the top is the signature of a ratio above
-    it). Returns the modes with the refits (distinct ones), the refits on
-    tracks no mode had, and the number that failed."""
+    it). A refit on a track no mode had is itself swapped back, so that the
+    modes of a relabelled pair come in pairs even when the search found only
+    one of them well. Returns the modes with the refits (distinct ones), the
+    refits on tracks no mode had, and the number that failed."""
     flips, refits, n_failed = [], [], 0
-    for x, _ in modes_xy:
+    queue = list(modes_xy)
+    for x, _ in queue:
         if not _pinned(x, bounds):
             continue
         try:
@@ -1352,12 +1411,14 @@ def _flip_modes(problem, settings, bounds, modes_xy, times):
         if onp.isfinite(vf):
             refits.append((xf, vf))
             new = _track(xf, settings.t_ref, times)
-            seen = (_track(m, settings.t_ref, times) for m, _ in modes_xy)
+            seen = [_track(m, settings.t_ref, times) for m, _ in queue]
             if all(  # a refit that lands on a known mode relabels nothing
                 onp.max(onp.hypot(*(new - t).T)) > settings.min_distance_mas
                 for t in seen
             ):
                 flips.append((xf, vf))
+                if len(queue) < 2 * len(modes_xy):  # one swap back
+                    queue.append((xf, vf))
     merged = _distinct(
         list(modes_xy) + refits,
         times,
@@ -2490,6 +2551,7 @@ def _seed_scores(problem, settings, bands, seeds):
     position-level orbits (at every seed flux and both senses, unrefined):
     a cheap check of the whole window."""
     s = dataclasses.replace(settings, n_random=0, init=None)
+    search = _plain(problem)
     pools = [
         _candidates(s, b, _Bounds.of(b, s), None, seeds[b.n][:_N_CHECK])
         for b in bands
@@ -2498,7 +2560,7 @@ def _seed_scores(problem, settings, bands, seeds):
     xs, size = onp.concatenate(pools), settings.pool_size
     score = onp.concatenate(
         [
-            _score_pool(problem, settings, xs[i : i + size])
+            _score_pool(search, settings, xs[i : i + size])
             for i in range(0, len(xs), size)
         ]
     )
