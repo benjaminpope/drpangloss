@@ -184,6 +184,54 @@ def test_one_sidelobe_night_cannot_move_the_orbit_with_the_mixture():
     )
 
 
+@ta.in_float64
+def test_the_mixture_polishes_the_modes_the_plain_search_finds():
+    # Gl 229 gate regression: the mixture's IRLS weights vanish on the
+    # nights a start misses, so a mixture fit from a start that is off by a
+    # little settles on the nights it already fits, 100s of nats short of
+    # the optimum that the plain fit reaches from the same start. The
+    # search refines on the plain likelihood and only polishes with the
+    # mixture, so a basin the plain search finds is not hidden by it.
+    data, _ = ta._simulate_orbit(12.1)
+    data = list(data)
+    found = _positions(data)
+    settings = ta._settings(
+        outlier_eps=0.02,
+        log_broad=tuple(found.log_broad),
+        n_refine=3,
+        max_steps=50,
+    )
+    problem = aliases._Problem(
+        [cast_tree(d, "float64") for d in data], settings
+    )
+    bounds = aliases._Bounds.of(aliases.AliasBand(20, 11.9, 12.3), settings)
+    truth = onp.asarray(ta._x_truth())
+    optimum = float(onp.asarray(problem.batch(truth[None]))[0])
+    # Starts near the truth (seeded perturbations in the orbit's elements)
+    # that the mixture fit alone leaves 160 to 330 nats short.
+    rng = onp.random.default_rng(0)
+    scale = onp.array([0.01, 0.2, 0.3, 0.3, 10, 10, 0.3, 0.3])
+    starts = [
+        truth + 0.2 * rng.standard_normal(len(truth)) * scale for _ in range(4)
+    ]
+    stalls = [
+        aliases._optimize(problem, bounds, x, 50)[1] < optimum - 100.0
+        for x in starts
+    ]
+    assert any(stalls), "the starts no longer exercise the failure"
+    modes, failed = aliases._refine(
+        problem, settings, bounds, onp.asarray(starts), ta.EPOCHS
+    )
+    assert not failed
+    best = max(v for _, v in modes)
+    assert best > optimum - 10.0  # the polished mode is the optimum
+    # The mixture is applied to the mode: it is scored under the mixture.
+    x = max(modes, key=lambda m: m[1])[0]
+    assert onp.isclose(
+        best, float(onp.asarray(problem.batch(onp.asarray(x)[None]))[0])
+    )
+
+
 def test_the_broad_component_shares_the_orbit_likelihoods_scale():
     from virgil.epochs import broad_loglike
 
