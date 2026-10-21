@@ -1371,13 +1371,15 @@ def structure_unconstrained(
 
 
 def night_flags(flags, n_nights):
-    """Nights whose position cannot seed an orbit.
+    """Nights that carry a flag.
 
     Parameters
     ----------
     flags : dict[str, list[str]]
-        ``{night: flag codes}`` of the flagged nights (the ones that seed
-        nothing; their data still count in every likelihood).
+        ``{night: flag codes}`` of the flagged nights. A blocking flag keeps
+        the night from seeding an orbit; a non-blocking one (such as
+        ``sep-below-resolution``) is reported only. Either way the night's
+        data still count in every likelihood.
     n_nights : int
         The number of nights.
     """
@@ -1395,8 +1397,9 @@ def night_flags(flags, n_nights):
         "warn",
         len(flags),
         None,
-        f"{len(flags)} of {n_nights} nights are flagged ({listing}): they "
-        "seed no orbit, but their data still count in the likelihood.",
+        f"{len(flags)} of {n_nights} nights are flagged ({listing}): a "
+        "blocking flag keeps a night from seeding an orbit, a non-blocking "
+        "one is reported only, and the data still count in the likelihood.",
     )
 
 

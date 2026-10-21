@@ -713,12 +713,17 @@ def _validate_sampler(s):
         )
 
 
-def _validate_common(s):
-    """The sampler and data settings of the pipelines that read OIFITS data."""
-    _validate_sampler(s)
+def _validate_data_settings(s):
+    """The data selection settings of the pipelines that read OIFITS data."""
     if s["wavel_range"] is not None and len(s["wavel_range"]) != 2:
         raise ValueError("wavel_range must be [min, max] in metres.")
     if s["error_floor"] is not None and not isinstance(s["error_floor"], dict):
         raise ValueError("error_floor must be a dict of absolute floors.")
+
+
+def _validate_common(s):
+    """The sampler and data settings of the pipelines that read OIFITS data."""
+    _validate_sampler(s)
+    _validate_data_settings(s)
     if s["batch_size"] is not None:
         _positive(s, "batch_size")

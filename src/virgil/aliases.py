@@ -2416,7 +2416,8 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
     ``positions`` may be ``PositionData`` (used as given) or the
     ``EpochPositions`` of ``epoch_positions`` for this data (checked by
     count and by time against ``times``, the epochs' mean times). With the
-    latter and ``skip_flagged``, every flagged night seeds nothing; the
+    latter and ``skip_flagged``, every night with a blocking flag seeds
+    nothing (a night with only non-blocking flags still seeds); the
     skipped nights are recorded for ``AliasResult.unseeded``. Skipping
     drops a night's *seed* only: ``data`` is untouched, so its observables
     still enter the likelihood. Fewer than two seeding nights (in any
@@ -2446,7 +2447,7 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
                 for name, mjd, fl in zip(
                     positions.names, positions.mjd, positions.flags
                 )
-                if fl
+                if any(f.blocking for f in fl)
             )
         n_seed = len(positions.names) - (
             int(positions.flagged.sum()) if skip_flagged else 0

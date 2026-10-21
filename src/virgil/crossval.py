@@ -35,6 +35,7 @@ same sums per group.
 import contextlib
 import json
 import math
+import warnings
 from numbers import Real
 
 import equinox as eqx
@@ -383,7 +384,16 @@ def aggregate(records, larger_is_simpler=True):
         else onp.full(len(settings), onp.nan)
     )
     se = sd / math.sqrt(len(folds))
-    best = int(onp.argmin(mean))
+    bad = onp.isnan(mean)
+    if bad.all():
+        raise ValueError("every setting has a NaN score.")
+    if bad.any():
+        warnings.warn(
+            f"NaN scores for settings {[settings[i] for i in onp.flatnonzero(bad)]}"
+            "; ranked last.",
+            stacklevel=2,
+        )
+    best = int(onp.nanargmin(mean))
     out = {
         "settings": settings,
         "folds": folds,
@@ -398,7 +408,8 @@ def aggregate(records, larger_is_simpler=True):
         "edge": None,
     }
     if numeric:
-        within = onp.flatnonzero(mean <= mean[best] + se[best])
+        tol = se[best] if onp.isfinite(se[best]) else 0.0  # one fold: no se
+        within = onp.flatnonzero(mean <= mean[best] + tol)
         # settings is sorted: the most regularized is an end of ``within``.
         one_se = int(within[-1] if larger_is_simpler else within[0])
         out["one_se"] = one_se
@@ -434,5 +445,7 @@ def _group_curves(records, index, find, n_settings):
         "group_score": score,
         "group_chi2": chi2 if has_chi2 else None,
         "group_n": count,
-        "group_best": onp.argmin(score, axis=0),
+        "group_best": onp.argmin(
+            onp.where(onp.isnan(score), onp.inf, score), axis=0
+        ),
     }
