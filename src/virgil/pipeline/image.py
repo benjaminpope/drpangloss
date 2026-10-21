@@ -24,6 +24,7 @@ from ._common import (
     _positive,
     _quicklook,
     _save_fit,
+    _validate_data_settings,
 )
 from ._core import Stage, _Pipeline
 
@@ -158,6 +159,7 @@ class ImagingPipeline(_Pipeline):
                 raise ValueError(f"{name} must be positive numbers.")
         if s["star"] not in ("auto", True, False):
             raise ValueError('star must be "auto", True or False.')
+        _validate_data_settings(s)
 
     def _model_digest(self):
         return {"class": "Image", "digest": None, "models": ["gp"]}

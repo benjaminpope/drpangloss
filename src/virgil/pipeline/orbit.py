@@ -139,8 +139,12 @@ class OrbitPipeline(_Pipeline):
           night in the orbit fit, whose likelihood is
           ``(1 - eps) L + eps L_broad`` with ``L_broad`` the night's mean
           likelihood over the position grid, so that one bad night (a
-          sidelobe) cannot move the orbit; 0 turns it off. The posterior
-          outlier probability of each night is in the search report.
+          sidelobe) cannot move the orbit; ``0 <= eps < 1``, 0 turns it off.
+          The posterior outlier probability of each night is in the search
+          report, with the ``orbit-prefers-secondary`` night flags (reported
+          only: no night is ever excluded). The no-orbit null is scored
+          without the mixture, as its broad component is a companion
+          elsewhere that a single star must not have.
         - ``batch_size`` (None), ``memory_budget`` (None, bytes),
           ``coarse_nats`` (30): the grid points (and candidate orbits) scored
           together, by default what fits in the budget (1 GiB on a CPU), and,
@@ -311,6 +315,8 @@ class OrbitPipeline(_Pipeline):
             _pair(s, "period_range")
         if not 0 < s["ecc_max"] < 1:
             raise ValueError("ecc_max must be between 0 and 1.")
+        if not 0 <= s["outlier_eps"] < 1:
+            raise ValueError("outlier_eps must be in [0, 1).")
         if not 0 <= s["posterior_p_min"] <= 1:
             raise ValueError("posterior_p_min must be in [0, 1].")
         diam = s["primary_diam"]
@@ -990,6 +996,9 @@ def _single_star(problem, x, diam_range):
     ``x`` with an invisible companion (and, if the orbit fitted the primary's
     diameter, the best diameter: a log grid over its prior range, then a
     finer one about the best cell, so the null is not under-fitted).
+
+    The null uses the plain likelihood (``mixed=False``), the modes the
+    outlier mixture: see docs/orbit_fitting.md.
     test_a_single_star_is_no_orbit pins the verdict."""
     import jax.numpy as np
 
@@ -1345,6 +1354,8 @@ _SEARCH_KEYS = (
     "primary_resolved",
     "primary_diam_estimate",
     "tempering",
+    "outliers",
+    "night_flags",
     "labels_free",
     "period_bound",
     "period_at_lower_bound",

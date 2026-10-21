@@ -323,7 +323,9 @@ the command line is matched literally, so it would not catch them.
   it). `chi2-high` compares each night with the median of its own instrument
   mode (`flag_chi2_groups`, by default the spectral channels and wavelength
   range). `EpochPositions.log_broad` is each night's mean likelihood over the
-  grid.
+  grid, and `broad_loglike` is in `virgil.epochs.__all__`. `AliasResult.unseeded`
+  lists only nights with a blocking flag, and the `night_flags` check says
+  that non-blocking flags are reported only.
 - **Outlier nights.** `fit_orbit_aliases(outlier_eps=...)` mixes a broad
   outlier component into each night's likelihood, so one bad (sidelobe) night
   cannot move the orbit; `AliasResult.outlier` gives each night's posterior
@@ -332,6 +334,8 @@ the command line is matched literally, so it would not catch them.
   `fit_orbit_aliases`; **`OrbitPipeline` sets `outlier_eps=0.02`**, so a
   pipeline run down-weights a night the orbit cannot explain instead of
   following it. Pass `outlier_eps=0` for the plain likelihood.
+  `OrbitPipeline` rejects an `outlier_eps` outside [0, 1), and its summary's
+  `search` section gains `outliers` and `night_flags`.
 
 **`MultipoleDisk` family** (provisional; follows the ideas of frank, Jennings
 et al. 2020, and vis-r, Kennedy 2025, credited in the docstrings and on the
@@ -418,7 +422,8 @@ contributors page; no code was copied)
   good fit does not promise the morphology. Twelve checks report the raw χ²/N
   split into V² and closure phases; the spread of the members excludes
   hyperparameter uncertainty and any error every member shares. `run_member(k)`
-  fits one member, for cluster array tasks. CLEAN starts, classical
+  fits one member, for cluster array tasks. `wavel_range` and `error_floor`
+  are validated before the data load. CLEAN starts, classical
   regularizers, `anneal` and the channels are not in this version.
 - **`OrbitPipeline`** (`virgil.pipeline`, provisional; `virgil-pipeline
   orbit`): the default multi-epoch binary-orbit run is a blind period-alias
@@ -631,8 +636,12 @@ contributors page; no code was copied)
   slightly from the von Mises form of plain three-telescope data.
 - **`virgil.crossval`** (provisional): k-fold cross-validation of a
   hyperparameter for any likelihood term that takes a mask, as one process or
-  as array tasks with JSON records. It is provisional and may change in any
-  0.4.x release; it claims no parity with other imaging packages.
+  as array tasks with JSON records. `aggregate` ranks a setting with a NaN
+  score last (with a warning) instead of choosing it as `best`, raises
+  `ValueError` if every setting is NaN, and works with a single fold; a group
+  whose scores are all NaN has `group_best = -1`. It is provisional and may
+  change in any 0.4.x release; it claims no parity with other imaging
+  packages.
 - **`virgil.radio`** (provisional): fits calibrated complex visibilities from
   CASA measurement sets, with per-observation flux scales, phase-centre
   offsets and error scales fitted with the sky (`ComplexVisData`,

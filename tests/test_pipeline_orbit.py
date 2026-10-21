@@ -287,6 +287,8 @@ def _fake_reports():
             "primary_diam_estimate": 0.1,
             "primary_at_grid_edge": False,
             "tempering": {"f": 1.0, "f_raw": 1.0, "out_of_range": False},
+            "outliers": {"eps": 0.02, "probability": {"n0": 0.5, "n1": 0.01}},
+            "night_flags": {"n1": ["low-gap"]},
             "labels_free": False,
             "period_bound": False,
             "period_at_lower_bound": False,
@@ -353,6 +355,14 @@ def test_summary_keys_and_check_order_snapshot():
     assert [c.name for c in checks] == CHECKS
     assert all(isinstance(c, Check) for c in checks)
     assert sections["orbit"]["source"] == "posterior"
+
+
+def test_summary_search_section_round_trips_outliers_and_night_flags():
+    reports = _fake_reports()
+    sections, _ = orbit_module._summarize(OrbitPipeline.defaults(), reports)
+    search = json.loads(json.dumps(sections["search"]))
+    for key in ("outliers", "night_flags"):
+        assert search[key] == reports["search"][key]
 
 
 def test_partial_and_no_orbit_summaries():
@@ -427,6 +437,8 @@ def test_settings_are_validated(nights):
         ({"chain_method": "x"}, "chain_method"),
         ({"n_candidates": 0}, "n_candidates"),
         ({"posterior_p_min": 2.0}, "posterior_p_min"),
+        ({"outlier_eps": 1.0}, "outlier_eps"),
+        ({"outlier_eps": -0.1}, "outlier_eps"),
         ({"vis_amp": [2.0, 1.0]}, "vis_amp"),
         ({"max_grid": 2}, "max_grid"),
         ({"n_peaks": True}, "n_peaks"),

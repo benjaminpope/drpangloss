@@ -1623,6 +1623,20 @@ def test_seeds_from_three_or_fewer_nights_keep_random_candidates(
     assert seen["n_random"] == 7
 
 
+def test_a_night_with_only_a_non_blocking_flag_still_seeds():
+    from virgil.epochs import NightFlag
+
+    stub = _stub_positions(("n5",))
+    flags = list(stub.flags)
+    flags[0] = (NightFlag("sep-below-resolution", "r", blocking=False),)
+    mixed = dataclasses.replace(stub, flags=tuple(flags))
+    seeds, skipped, fell_back = aliases._seeding_positions(
+        mixed, T_REF, True, mixed.mjd
+    )
+    assert len(seeds.dt) == 5 and not fell_back  # n0 seeds, n5 does not
+    assert [u["name"] for u in skipped] == ["n5"]
+
+
 def test_epoch_positions_must_match_the_data_and_the_primary():
     found = _stub_positions(("n5",))
     times = found.mjd
