@@ -87,7 +87,7 @@ img = res.image()          # a SkyImage: pixels, pixel_scale_mas, dra, ddec, bea
 !!! warning "A good fit is not a promise about the picture"
     The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the grid edge, the star decision, the sky orientation and the light at the field edge) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
 
-This first version fits **one** member. CLEAN starts, the ensemble spread, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come. The design is in [`design/imaging_pipeline.md`](https://github.com/benjaminpope/virgil/blob/main/design/imaging_pipeline.md).
+This first version fits **one** member. CLEAN starts, the ensemble spread, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come.
 
 ```bash
 virgil-pipeline image star.oifits -o runs/image --set star=auto

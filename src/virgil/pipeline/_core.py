@@ -32,8 +32,6 @@ _OWNED = (
     "quicklook.log",
     "data",
     "models",
-    "members",
-    "images",
     "plots",
     "stages",
 )
@@ -142,6 +140,8 @@ class _Pipeline:
     STABILITY = "provisional"
     STAGES: tuple = ()
     _DEFAULTS: dict = {}
+    # Folders a run of this pipeline owns besides ``_OWNED``.
+    _OWNED_EXTRA: tuple = ()
     # The config key that fills the second argument of ``from_oifits`` when
     # that is not the model (the orbit pipeline's ``metadata``).
     _SECOND_KEY = None
@@ -526,7 +526,7 @@ class _Pipeline:
         _io.write_json(self.output / "summary.json", summary)
 
     def _clear(self):
-        for name in _OWNED:
+        for name in (*_OWNED, *self._OWNED_EXTRA):
             path = self.output / name
             if path.is_dir():
                 shutil.rmtree(path)

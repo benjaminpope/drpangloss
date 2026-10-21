@@ -3,7 +3,7 @@
 It reports an image that fits the data on the quoted errors, from stated
 starts, at hyperparameters chosen by a stated rule, and cannot promise that
 the morphology is right: every data-fidelity check passed on contest
-reconstructions that were judged unusable. Design: ``design/imaging_pipeline.md``.
+reconstructions that were judged unusable.
 """
 
 from __future__ import annotations
@@ -97,6 +97,7 @@ class ImagingPipeline(_Pipeline):
     """
 
     NAME = "image"
+    _OWNED_EXTRA = ("members", "images")
     STABILITY = "provisional"
     STAGES = (
         "load",
@@ -533,13 +534,11 @@ def _sky_image(model, star):
     pixels = _on_common_grid(env, n, scale)
     pixels = onp.asarray(pixels, dtype=float)
     pixels = pixels / pixels.sum() * fraction
-    return (
-        pixels,
-        scale,
-        float(env.dra),
-        float(env.ddec),
-        1.0 - fraction,
-    )
+    # A rotated image is rendered on the sky grid with its offset in the
+    # pixels; an unrotated one is resampled about its own centre.
+    rotated = float(env.rotation_deg) != 0.0
+    dra, ddec = (0.0, 0.0) if rotated else (float(env.dra), float(env.ddec))
+    return pixels, scale, dra, ddec, 1.0 - fraction
 
 
 def _combine(p):
