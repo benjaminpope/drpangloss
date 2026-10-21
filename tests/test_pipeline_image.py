@@ -7,7 +7,9 @@ N = 27 independent data. The grid is 11 pixels on a side, the evidence grid a
 single point and every fit is capped at 20 steps, so these tests check the
 plumbing and the contract, not the optimizer. The pipeline's stages are run
 progressively (``run(through=...)`` resumes), so that the time of the compiles
-is shared among a few tests. The fits that are not needed for the fast tier,
+is shared among a few tests, which are all marked slow: whichever of them
+runs first pays for the compiles (30-35 s cold on a CI runner, over the budget).
+The fits that are not needed for the fast tier,
 the star-free scene, a classical regularizer and the executed quicklook, are
 marked slow.
 """
@@ -333,6 +335,7 @@ def test_summary_orders_the_checks():
 # --- the stages ----------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_load_overview_star_and_hyperparameter_stages(pipe):
     res = pipe.run(through="hyperparameters")
     assert res.status == "partial"
@@ -360,6 +363,7 @@ def test_load_overview_star_and_hyperparameter_stages(pipe):
     assert (pipe.output / "data" / "processed.oifits").exists()
 
 
+@pytest.mark.slow
 def test_combine_reports_raw_chi2_by_observable(pipe, data):
     res = pipe.run(through="combine")
     summary = res.summary
@@ -387,6 +391,7 @@ def test_combine_reports_raw_chi2_by_observable(pipe, data):
     assert named["chi2_reduced"]["value"] == pytest.approx(by["total"])
 
 
+@pytest.mark.slow
 def test_mean_image_recovers_the_truth_and_round_trips(pipe):
     res = pipe.run(through="combine")
     img = res.image()
@@ -400,6 +405,7 @@ def test_mean_image_recovers_the_truth_and_round_trips(pipe):
     assert load(pipe.output).run["schema"] == SCHEMA
 
 
+@pytest.mark.slow
 def test_the_quicklook_says_what_it_cannot_claim(pipe):
     pipe.run(through="combine")
     nb = _quicklook.build_notebook(pipe.output)
@@ -411,6 +417,7 @@ def test_the_quicklook_says_what_it_cannot_claim(pipe):
     assert "res.image()" in code
 
 
+@pytest.mark.slow
 def test_validate_resume_and_config_mismatch(pipe, data):
     assert cli.main(["validate", str(pipe.output)]) == 0
     pipe.run(through="combine")  # resumes: every stage is skipped
@@ -426,6 +433,7 @@ def test_validate_resume_and_config_mismatch(pipe, data):
         other.run()
 
 
+@pytest.mark.slow
 def test_cli_runs_the_image_pipeline(pipe, tmp_path, capsys):
     path = pipe.output / "data" / "processed.oifits"
     out = tmp_path / "cli"

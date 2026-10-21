@@ -184,6 +184,7 @@ def test_one_sidelobe_night_cannot_move_the_orbit_with_the_mixture():
     )
 
 
+@pytest.mark.slow  # 36-37 s on a CI runner, over the 30 s budget
 @ta.in_float64
 def test_the_mixture_polishes_the_modes_the_plain_search_finds():
     # Gl 229 gate regression: the mixture's IRLS weights vanish on the
