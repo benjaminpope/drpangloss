@@ -639,6 +639,7 @@ def _fit(p):
     template, init = _fit_start(p, p._report("search"), priors, angular)
     result = fit(template, priors, data, noise=p._noise(), init=init)
     values = _fitted_values(result, angular)
+    _require_finite(values, result.info)
     reported = ["sep", "pa", "flux"] if angular else list(priors)
     best = p.output / "models" / "best"
     _io.save_model(best, result.model, values, reported)
@@ -655,8 +656,9 @@ def _fit(p):
 def _fit_start(p, search, priors, angular):
     """The template to fit, and the starting values (``init``) if needed.
 
-    The fit starts at the search's best point, kept inside the priors. An angular template takes ``init``; a Cartesian one is
-    started by setting its parameters.
+    The fit starts at the search's best point, kept inside the priors. An
+    angular template takes ``init``; a Cartesian one is started by setting
+    its parameters.
     """
     lo, hi = p.settings["flux_range"]
     start = {
@@ -681,6 +683,17 @@ def _fit_start(p, search, priors, angular):
             start["dra"], start["ddec"] = onp.asarray(nudge), onp.asarray(0.0)
         return template, start
     return template.set(list(priors), list(start.values())), None
+
+
+def _require_finite(values, info):
+    """Raise, at the fit, if it returned a NaN or infinite parameter."""
+    bad = [k for k, v in values.items() if not onp.all(onp.isfinite(v))]
+    if bad:
+        raise ValueError(
+            f"The fit returned non-finite values for {bad} (stop: "
+            f"{info.get('stop')!r}, loss {info.get('loss')}); check the "
+            "start, the priors and the data."
+        )
 
 
 def _fitted_values(result, angular):

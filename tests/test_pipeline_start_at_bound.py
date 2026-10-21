@@ -243,3 +243,14 @@ def test_the_fit_starts_inside_the_position_prior_when_the_search_peaks_on_its_e
     inset = _START_INSET * 2 * edge  # the pull, in mas
     assert float(start["dra"]) == pytest.approx(-edge + inset, rel=1e-4)
     assert float(start["ddec"]) == pytest.approx(edge - inset, rel=1e-4)
+
+
+def test_a_non_finite_fit_is_reported_at_the_fit_not_in_the_summary():
+    from virgil.pipeline.binary import _require_finite
+
+    _require_finite({"dra": onp.asarray(1.0)}, {})
+    with pytest.raises(ValueError, match=r"\['dra'\].*'failed'"):
+        _require_finite(
+            {"dra": onp.asarray(onp.nan), "ddec": onp.asarray(2.0)},
+            {"stop": "failed", "loss": float("nan")},
+        )
