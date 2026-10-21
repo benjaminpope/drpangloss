@@ -80,6 +80,18 @@ def completed(data, tmp_path_factory):
     return pipeline
 
 
+# The full runs of this module (``completed``, ``unconverged``) cost too much
+# warm, and over 30 s on a cold CI runner, for the fast-tier budget. A
+# fixture's setup is charged to the first test that asks for it, and every
+# other test of the module then gets it for free. This test is slow-marked and
+# comes first, so it pays; the module shares one worker (see the xdist group
+# below) and runs in file order.
+@pytest.mark.slow
+def test_the_shared_runs_are_built_up_front(completed, unconverged):
+    assert completed.output.is_dir()
+    assert unconverged.status == "partial"  # stopped after the posterior
+
+
 FUNCTIONS = ("_load_star", "_overview", "_fit", "_posterior", "_quicklook")
 
 
