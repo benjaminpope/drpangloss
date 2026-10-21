@@ -40,7 +40,7 @@ print(data.vis.size, "squared visibilities and", data.phi.size, "closure phases"
 
 ## Run it
 
-A pipeline takes the data, a model template (its class sets the parameterization of the answer; the fit starts from the grid search's best point, so the template's values need no tuning), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so; every other setting is the default.
+A pipeline takes the data, a model template (its class sets the parameterization of the answer; the fit starts from the grid search's best point, so the template's values need no tuning), a run folder and keyword settings. We keep the sampler short with `num_warmup`, `num_samples` and `num_chains` so that the whole run takes a minute or so. We also set `max_sep_mas`, the half-width of the search grid. A seven-hole mask has its holes on a triangular lattice, so its visibilities and closure phases cannot tell a companion from one displaced by a lattice vector, and the nearest of these, six of them, are 776 mas away. The default grid is wider than that and can land on such an alias, so we limit it to 350 mas, which holds one lattice cell. Every other setting is the default.
 
 ```python
 work = Path(mkdtemp())
@@ -53,6 +53,7 @@ res = BinaryPipeline(
     num_warmup=500,
     num_samples=500,
     num_chains=2,
+    max_sep_mas=350.0,
 ).run()
 res.status
 ```
@@ -121,7 +122,7 @@ A non-detection does not need a fit or a sampler. `run(through="limits")` stops 
 ```python
 short = BinaryPipeline(
     data, template, output=work / "short_run",
-    num_warmup=500, num_samples=500, num_chains=2,
+    num_warmup=500, num_samples=500, num_chains=2, max_sep_mas=350.0,
 )
 res2 = short.run(through="limits")
 print(res2.status)
@@ -143,7 +144,7 @@ A resumed run refuses to continue if anything it depends on has changed: the set
 ```python
 changed = BinaryPipeline(
     data, template, output=work / "short_run",
-    num_warmup=500, num_samples=500, num_chains=2, sigma=5.0,
+    num_warmup=500, num_samples=500, num_chains=2, max_sep_mas=350.0, sigma=5.0,
 )
 try:
     changed.run()
@@ -168,7 +169,7 @@ config = work / "config.json"
 config.write_text(json.dumps({
     "data": [str(res.path / "data" / "processed.oifits")],
     "output": str(work / "config_run"),
-    "settings": {"num_warmup": 500, "num_samples": 500, "num_chains": 2, "sigma": 2.0},
+    "settings": {"num_warmup": 500, "num_samples": 500, "num_chains": 2, "sigma": 2.0, "max_sep_mas": 350.0},
 }, indent=2))
 
 p = BinaryPipeline.from_config(config, template, sigma=4.0)  # keywords win
@@ -211,7 +212,7 @@ cli("validate", res.path)
 cli(
     "binary", res.path / "data" / "processed.oifits",
     "-o", work / "cli_run", "--through", "limits",
-    "--set", "sigma=3", "--set", "n_flux=20",
+    "--set", "sigma=3", "--set", "n_flux=20", "--set", "max_sep_mas=350",
 )
 cli("info", work / "cli_run")
 ```

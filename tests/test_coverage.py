@@ -100,3 +100,16 @@ def test_vlti_nights_repeat_the_snapshots_with_times():
     )
     assert onp.unique(onp.asarray(timed.frame)).size == 6
     assert len(timed.split_by_epoch()) == 2
+
+
+def test_nrm_oidata_carries_the_hole_pair_of_every_baseline():
+    data = nrm_oidata()
+    pairs = onp.asarray(data.stations)
+    assert pairs.shape == (21, 2) and pairs.min() == 1 and pairs.max() == 7
+    assert len({tuple(p) for p in pairs}) == 21
+    # The station pair is the hole pair behind the baseline vector.
+    holes = onp.asarray(NIRISS_AMI_HOLES)
+    for (a, b), u, v in zip(pairs, onp.asarray(data.u), onp.asarray(data.v)):
+        onp.testing.assert_allclose(
+            onp.array([u, v]), holes[b - 1] - holes[a - 1], atol=1e-5
+        )
