@@ -205,3 +205,52 @@ def test_angular_fit_starts_off_the_origin_but_not_off_a_real_peak(peak):
         assert (float(start["dra"]), float(start["ddec"])) == peak
     else:
         assert moved == pytest.approx(0.4)
+
+
+class _CartesianStub(_Stub):
+    @staticmethod
+    def _sampled_model():
+        return BinaryModelCartesian(0.0, 0.0, 1e-3)
+
+
+@pytest.mark.parametrize("angular", [False, True])
+def test_the_fit_starts_inside_the_position_prior_when_the_search_peaks_on_its_edge(
+    angular,
+):
+    """The search grid ends where the position priors do, so a peak on the
+    grid's edge is on the prior's bound, where the unconstrained start is
+    infinite: the fit returned NaN and the summary crashed in
+    ``separation_pa`` ("where requires ndarray or scalar arguments, got
+    NoneType")."""
+    edge = 672.0
+    search = {
+        "dra_mas": -edge,
+        "ddec_mas": edge,
+        "flux": 1e-3,
+        "grid_step_mas": 40.0,
+    }
+    priors = {
+        "dra": dist.Uniform(-edge, edge),
+        "ddec": dist.Uniform(-edge, edge),
+        "flux": dist.LogUniform(1e-5, 0.5),
+    }
+    template, init = _fit_start(_CartesianStub, search, priors, angular)
+    start = (
+        init
+        if angular
+        else {k: float(template.get(k)) for k in ("dra", "ddec")}
+    )
+    inset = _START_INSET * 2 * edge  # the pull, in mas
+    assert float(start["dra"]) == pytest.approx(-edge + inset, rel=1e-4)
+    assert float(start["ddec"]) == pytest.approx(edge - inset, rel=1e-4)
+
+
+def test_a_non_finite_fit_is_reported_at_the_fit_not_in_the_summary():
+    from virgil.pipeline.binary import _require_finite
+
+    _require_finite({"dra": onp.asarray(1.0)}, {})
+    with pytest.raises(ValueError, match=r"\['dra'\].*'failed'"):
+        _require_finite(
+            {"dra": onp.asarray(onp.nan), "ddec": onp.asarray(2.0)},
+            {"stop": "failed", "loss": float("nan")},
+        )

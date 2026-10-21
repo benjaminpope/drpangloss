@@ -466,7 +466,7 @@ print(gp_res.describe())
 ```
 
 ```text
-DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp_rfgbbxz/rings_run: complete
+DiskPipeline run in /tmp/tmpk3u3kto3/rings_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -483,13 +483,13 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp_rfgbbxz
   model.n_r_gp = 72
   model.n_channels = 9
   model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8072
+  geometry.inc_deg = 59.8073
   geometry.pa_deg = 107.725
   geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26433
+  geometry.sigma_mas = 4.26434
   geometry.flux = 0.880331
   geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788053
+  geometry.gp_sigma = 0.788052
   chi2.n_independent = 567
   disk.n_rings = 3
   disk.inc_deg = 50.1075
@@ -500,10 +500,8 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmp_rfgbbxz
   [pass] inclination: Inclination 50.1° with a single minimum of the geometry grid.
   [pass] absorbed_companion: No significant point source remains in the residuals (Δχ² = 12.2).
   [pass] at_bound: No fitted parameter sits at a prior bound.
-  [warn] stage_warnings: 1 warning(s) were raised inside the stages: The matrix to invert is not positive definite (the point is not a likelihood maximum, or a parameter is unconstrained); the result has negative or infinite variances.. See the 'warnings' list of summary.json.
-  1 warning(s) recorded in the compare stage(s) (see the checks, or Result.summary['warnings'])
 
-DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpe5j1xamz/gp_run: complete
+DiskPipeline run in /tmp/tmp2i4id96b/gp_run: complete
   data.n_vis = 378
   data.n_phi = 252
   data.n_independent = 567
@@ -520,13 +518,13 @@ DiskPipeline run in /var/folders/19/fbthdtcx20d3xyc7y7vp_2v40000gn/T/tmpe5j1xamz
   model.n_r_gp = 72
   model.n_channels = 9
   model.wavel0_m = 3e-06
-  geometry.inc_deg = 59.8072
+  geometry.inc_deg = 59.8073
   geometry.pa_deg = 107.725
   geometry.r_mas = 19.0666
-  geometry.sigma_mas = 4.26433
+  geometry.sigma_mas = 4.26434
   geometry.flux = 0.880331
   geometry.chi2_reduced = 55.6727
-  geometry.gp_sigma = 0.788053
+  geometry.gp_sigma = 0.788052
   chi2.n_independent = 567
   chi2.error_scale_factor = 1.1164
   disk.ell_mas = 1.64804

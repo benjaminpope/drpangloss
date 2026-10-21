@@ -1730,3 +1730,165 @@ def period_bound(bound, lower, p_range):
         [lo, hi],
         f"The period is inside its window ({lo:.3g} to {hi:.3g} d).",
     )
+
+
+# --- checks of ImagingPipeline (every χ²/N is on the quoted errors) ---------
+
+
+def _two_way(name, bad, value, threshold, good_text, bad_text):
+    status = "warn" if bad else "pass"
+    return Check(
+        name, status, value, threshold, bad_text if bad else good_text
+    )
+
+
+def quoted_errors(blocks):
+    """Quoted errors that look like placeholders: all equal, or not positive
+    and finite (``blocks``: ``{"all_equal", "n_bad"}`` by kind)."""
+    equal = sorted(k for k, b in blocks.items() if b["all_equal"])
+    bad = sorted(k for k, b in blocks.items() if b["n_bad"])
+    parts = [f"all equal in {', '.join(equal)}"] * bool(equal)
+    parts += [f"zero or not finite in {', '.join(bad)}"] * bool(bad)
+    return _two_way(
+        "quoted_errors",
+        parts,
+        equal + bad,
+        None,
+        "The quoted errors vary and are positive.",
+        f"The quoted errors are {' and '.join(parts)}: they look like "
+        "placeholders, so the hyperparameters and every χ²/N are suspect.",
+    )
+
+
+def effective_parameters(n, n_gamma, *, warn=0.2):
+    """Warn when ``N - γ`` (MacKay's γ) is under ``warn`` of ``N``."""
+    fraction = (float(n) - float(n_gamma)) / float(n)
+    text = (
+        f"The data measure γ = {n_gamma:.3g} parameters for N = {n:.3g} data"
+    )
+    return _two_way(
+        "effective_parameters",
+        fraction < warn,
+        fraction,
+        warn,
+        text + ".",
+        text + ": compare with a parametric model.",
+    )
+
+
+def short_baselines(mean, error, *, warn=3.0, fail=5.0):
+    """Mean visibility residual on the shortest baselines, in errors."""
+    if mean is None or not _finite(mean):
+        return Check(
+            "short_baselines", "pass", None, warn, "No baseline-ordered data."
+        )
+    sigma = float(mean) / float(error)
+    status = (
+        ("fail" if abs(sigma) > fail else "warn")
+        if abs(sigma) > warn
+        else "pass"
+    )
+    note = " The image misses flux here, or the calibration is biased."
+    return Check(
+        "short_baselines",
+        status,
+        sigma,
+        warn,
+        f"Mean residual on the shortest baselines {format_sigma(sigma)}."
+        + (note if status != "pass" else ""),
+    )
+
+
+def star_decision(delta, *, threshold=5.0, decision=None, fixed=None):
+    """The star decision from ΔlogZ; ``delta`` is None if set by hand."""
+    if delta is None:
+        return Check(
+            "star",
+            "pass",
+            None,
+            threshold,
+            f"Set by hand (star={bool(fixed)}).",
+        )
+    caveat = " ΔlogZ lacks the star flux's Occam factor: not a significance."
+    return _two_way(
+        "star",
+        abs(delta) < threshold,
+        float(delta),
+        threshold,
+        f"ΔlogZ = {delta:+.3g} nats decides the star {decision}." + caveat,
+        f"ΔlogZ = {delta:+.3g} nats is inside ±{threshold:g}: undecided "
+        "(the larger evidence was kept)." + caveat,
+    )
+
+
+def orientation(flip_dchi2, closure, *, warn=9.0):
+    """The Δχ² of turning the image by 180° (zero without closure)."""
+    weak = not closure or not _finite(flip_dchi2) or flip_dchi2 < warn
+    return _two_way(
+        "orientation",
+        weak,
+        flip_dchi2 if closure else 0.0,
+        warn,
+        f"Turning the image by 180° raises χ² by {flip_dchi2:.3g}.",
+        "The orientation is weakly constrained (no closure phases, or a "
+        "180° turn changes χ² by under the threshold).",
+    )
+
+
+def edges(grid_edges, flux, *, warn=0.01):
+    """The fit pressed against an edge: the evidence optimum on the grid
+    (``"length min"``...), or more than ``warn`` of the image's flux in its
+    outer two pixels."""
+    parts = [
+        f"on the hyperparameter grid edge ({', '.join(grid_edges)})"
+    ] * bool(grid_edges)
+    parts += [f"{100 * float(flux):.3g}% of the flux in the outer pixels"] * (
+        not _finite(flux) or flux > warn
+    )
+    return _two_way(
+        "edges",
+        parts,
+        flux,
+        warn,
+        "The evidence optimum is inside the grid and the flux inside the "
+        "field.",
+        f"The fit is {' and '.join(parts)}: the grid or the field is too "
+        "small.",
+    )
+
+
+def ensemble_kept(n_kept, n, *, min_kept=3):
+    """Warn when fewer than ``min_kept``, or under half, of the ``n`` members
+    survive the χ² filter (the spread is then not a useful map)."""
+    return _two_way(
+        "ensemble_kept",
+        n_kept < min_kept or 2 * n_kept < n,
+        n_kept,
+        min_kept,
+        f"{n_kept} of {n} members fit V² and closure phases and are in the "
+        "mean.",
+        f"Only {n_kept} of {n} members are in the mean (fewer than "
+        f"{min_kept}, or under half): the sigma map is not a useful map.",
+    )
+
+
+def ensemble_spread(spread, n_kept, *, warn=0.5, shared=True):
+    """The members' summed pixel standard deviation over their summed mean
+    (0 for identical images); ``warn`` is a convention, not calibrated on
+    truth."""
+    note = (
+        " The spread is over starts, grids and fields at shared "
+        "hyperparameters: it excludes hyperparameter uncertainty and any "
+        "error every member shares."
+        if shared
+        else " It is over starts, grids, fields and hyperparameters."
+    )
+    return _two_way(
+        "ensemble_spread",
+        n_kept < 2 or not _finite(spread) or spread > warn,
+        spread,
+        warn,
+        f"The kept members differ by {100 * spread:.3g}% of the flux." + note,
+        "Fewer than two members are kept, or they differ by more than "
+        f"{100 * warn:g}% of the flux: the mean is not stable." + note,
+    )

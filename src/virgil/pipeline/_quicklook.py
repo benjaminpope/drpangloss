@@ -35,7 +35,21 @@ def _fmt(value):
     return str(value)
 
 
-def _intro(run, summary):
+def _nuts_sentence(post):
+    return (
+        f"NUTS drew {post['num_samples']} samples in each of "
+        f"{post['num_chains']} chains after {post['num_warmup']} warm-up steps"
+    )
+
+
+_KERNELSPEC = {
+    "name": "python3",
+    "display_name": "Python 3",
+    "language": "python",
+}
+
+
+def _intro(run):
     inputs = run["inputs"]
     if inputs["files"]:
         files = "\n".join(
@@ -54,8 +68,9 @@ def _intro(run, summary):
     )
     settings = ", ".join(f"`{k}={_fmt(v)}`" for k, v in run["config"].items())
     prov = run["provenance"]
+    note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
     return (
-        f"# Quicklook: {run['class']}\n\n"
+        note + f"# Quicklook: {run['class']}\n\n"
         f"This notebook was written by the virgil `{run['pipeline']}` pipeline "
         f"({run['stability']}, schema `{run['schema']}`) and fitted a "
         f"`{run['model']['class']}` template.\n\n"
@@ -178,9 +193,7 @@ def _binary_posterior_cells(summary):
     return [
         (
             "## Posterior\n\n"
-            f"NUTS drew {post['num_samples']} samples in each of "
-            f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-            "steps. The corner plot shows the fitted parameters.",
+            f"{_nuts_sentence(post)}. The corner plot shows the fitted parameters.",
             _corner_code('res.summary["fit"]["params"]'),
         ),
         (
@@ -279,9 +292,7 @@ def _star_posterior_cells(summary):
     return [
         (
             "## Posterior\n\n"
-            f"NUTS drew {post['num_samples']} samples in each of "
-            f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-            "steps, for each fitted model. The corner plot shows the "
+            f"{_nuts_sentence(post)}, for each fitted model. The corner plot shows the "
             f"preferred model, `{post['best']}`.",
             _corner_code('res.summary["posterior"]["sampled"]'),
         ),
@@ -365,9 +376,7 @@ def _disk_posterior_cell(summary):
     post = summary["posterior"]
     return (
         "## Posterior\n\n"
-        f"NUTS drew {post['num_samples']} samples in each of "
-        f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-        "steps, with the geometry released. The scalar sites: median with "
+        f"{_nuts_sentence(post)}, with the geometry released. The scalar sites: median with "
         "its 16th and 84th percentiles, split R-hat and bulk effective "
         "sample size.",
         'for name, row in res.summary["posterior"]["params"].items():\n'
@@ -391,6 +400,39 @@ def _disk_cells(run, summary, path):
         cells.append(_disk_result_cell(summary, has_data))
     if "posterior" in done and "posterior" in summary:
         cells.append(_disk_posterior_cell(summary))
+    return cells
+
+
+_IMAGE_CAVEAT = (
+    "> **What this run can and cannot claim.** The image fits the data on "
+    "the quoted errors. It does **not** promise that the morphology is "
+    "right: data-fidelity checks alone passed contest reconstructions that "
+    "were judged terrible (blobby, or a chain of dots), and none of the "
+    "checks below measures whether an image looks like the source.\n\n"
+)
+
+
+def _image_cells(run, summary, path):
+    done = _completed(run)
+    cells = []
+    if "overview" in done:
+        cells.append(_data_cell((path / "data" / "processed.oifits").exists()))
+    if "combine" in done:
+        chi2 = ", ".join(
+            f"{k} {v:.3g}"
+            for k, v in summary["fit"]["chi2_red_by_observable"].items()
+        )
+        cells.append(
+            (
+                "## Image\n\nRaw χ²/N on the quoted errors: " + chi2 + ".",
+                "img = res.image()\n"
+                "h = 0.5 * img.pixels.shape[0] * img.pixel_scale_mas\n"
+                "x, y = img.dra, img.ddec\n"
+                "plt.imshow(img.pixels, cmap='inferno',\n"
+                "           extent=(x + h, x - h, y - h, y + h))\n"
+                "plt.colorbar(label='relative flux per pixel')",
+            )
+        )
     return cells
 
 
@@ -469,6 +511,7 @@ def _orbit_cells(run, summary, path):
 _SECTIONS = {
     "binary": _binary_cells,
     "disk": _disk_cells,
+    "image": _image_cells,
     "orbit": _orbit_cells,
     "star": _star_cells,
 }
@@ -482,7 +525,7 @@ def build_notebook(path):
     summary = _io.read_json(path / "summary.json")
     v4 = nbformat.v4
     cells = [
-        v4.new_markdown_cell(_intro(run, summary)),
+        v4.new_markdown_cell(_intro(run)),
         v4.new_code_cell(
             "import warnings\n\n"
             "%matplotlib inline\n"
@@ -504,11 +547,7 @@ def build_notebook(path):
         cells.append(v4.new_code_cell(code))
     cells.append(v4.new_markdown_cell(_closing(summary)))
     nb = v4.new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "name": "python3",
-        "display_name": "Python 3",
-        "language": "python",
-    }
+    nb.metadata["kernelspec"] = _KERNELSPEC
     nb.metadata["virgil"] = {"schema": _io.SCHEMA, "pipeline": run["pipeline"]}
     return nb
 
@@ -581,11 +620,7 @@ def execute_notebook(nb, path, timeout=600):
         env = {**os.environ, **_KERNEL_ENV}
         with open(Path(path) / "quicklook.log", "wb") as log:
             client.execute(env=env, stderr=log)
-    nb.metadata["kernelspec"] = {
-        "name": "python3",
-        "display_name": "Python 3",
-        "language": "python",
-    }
+    nb.metadata["kernelspec"] = _KERNELSPEC
     return nb
 
 

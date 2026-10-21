@@ -30,9 +30,9 @@ Everything listed as new was added after 0.3.0, which is on PyPI.
   from radial profiles (rings, power laws, tails, gaps and Gaussian
   processes), azimuthal multipoles (positive `Harmonics`, `VonMises`),
   height, a spectral index and a residual `MultipoleField`.
-- **Pipelines** (provisional). `BinaryPipeline` and `StarPipeline` (and
-  `DiskPipeline`) run named stages on public virgil functions and write a
-  resumable run folder.
+- **Pipelines** (provisional). `BinaryPipeline`, `StarPipeline`,
+  `DiskPipeline`, `OrbitPipeline` and `ImagingPipeline` run named stages on
+  public virgil functions and write a resumable run folder.
 - **Imaging that sizes itself.** The image field comes from the data, the
   reconstruction ensemble (`virgil.ensemble`) sweeps it, and
   `gauss_newton_mass` and `variational` (SVI, `virgil.svi`) start NUTS and
@@ -406,6 +406,20 @@ contributors page; no code was copied)
 
 **Pipelines** (`virgil.pipeline`, the `pipeline` extra; provisional)
 
+- **`ImagingPipeline`** (`virgil.pipeline`, provisional; `virgil-pipeline
+  image`): a model-independent image of a dataset.
+  `ImagingPipeline.from_oifits(files).run()` chooses a Gaussian-process
+  prior's hyperparameters by evidence, decides by ΔlogZ (5 nats) whether a
+  central star is present, fits `members` (default 8) images at those shared
+  hyperparameters, varying only the start, the pixel scale and the field,
+  keeps the members that fit V² and closure phases, and writes the mean and
+  the spread of the members as sky-oriented FITS images (`Result.image()`, a
+  `SkyImage`), the fitted models and a quicklook whose first cell says that a
+  good fit does not promise the morphology. Twelve checks report the raw χ²/N
+  split into V² and closure phases; the spread of the members excludes
+  hyperparameter uncertainty and any error every member shares. `run_member(k)`
+  fits one member, for cluster array tasks. CLEAN starts, classical
+  regularizers, `anneal` and the channels are not in this version.
 - **`OrbitPipeline`** (`virgil.pipeline`, provisional; `virgil-pipeline
   orbit`): the default multi-epoch binary-orbit run is a blind period-alias
   search. `OrbitPipeline.from_oifits(files).run()` groups the files into
@@ -826,6 +840,23 @@ contributors page; no code was copied)
 
 ### Fixed
 
+- **`fit_orbit_aliases(outlier_eps=...)` ranks and refines on the plain
+  likelihood.** Ranking and refining under the outlier mixture lost the true
+  alias on a cold search: the mixture's weight on a night vanishes when a start
+  misses it, so a start that is off by a little settled on the nights it
+  already fit, tens to hundreds of nats short of the optimum that the plain
+  likelihood reaches from the same start (on Gl 229, the N=34 band's best mode
+  was 108 nats below the plain one). The search now ranks and refines on the
+  plain likelihood and applies the mixture as a polish of each mode found, so
+  the mixture, and so `OrbitPipeline` with its default `outlier_eps=0.02`, can
+  down-weight a night of a basin but cannot hide the basin.
+- **`BinaryPipeline` starts its fit inside the position priors.** A search
+  peak on the grid's edge is on the prior's bound (the grid and the priors
+  share their half-width), where the unconstrained start is infinite: the fit
+  returned NaN in float32 and the run crashed in the summary with `TypeError:
+  where requires ndarray or scalar arguments, got NoneType`. A fit that still
+  returns a non-finite parameter now raises a `ValueError` naming it at the
+  fit stage.
 - **`separation_pa` has a zero gradient at the origin.** `jnp.hypot` has a NaN
   gradient at (0, 0) on JAX 0.12.0, so an angular model that started on the
   origin (a non-detection's best fit) had non-finite derivatives and NUTS

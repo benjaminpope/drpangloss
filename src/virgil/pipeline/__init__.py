@@ -16,9 +16,8 @@ reloads into real virgil objects with [`load`][virgil.pipeline.load].
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-The whole of ``virgil.pipeline`` is provisional in 0.4: class names,
-constructor keywords, stage names, settings, summary keys and checks may
-change in any 0.4.x release. The run folder is versioned
+Provisional covers class names, constructor keywords, stage names,
+settings, summary keys and checks. The run folder is versioned
 (``virgil-pipeline-run-v1``) and ``load`` refuses schemas it does not know.
 The pipelines are promoted to stable after a release of use. They need
 the ``pipeline`` extra (``pip install 'virgil-astro[pipeline]'``).
@@ -28,11 +27,12 @@ import importlib
 
 from ._checks import Check
 from ._core import ConfigMismatchError, Stage
-from ._io import SCHEMA, Result, load
+from ._io import SCHEMA, Result, SkyImage, load
 
 _LAZY = {
     "BinaryPipeline": ".binary",
     "DiskPipeline": ".disk",
+    "ImagingPipeline": ".image",
     "OrbitPipeline": ".orbit",
     "StarPipeline": ".star",
 }
@@ -43,8 +43,10 @@ __all__ = [
     "Check",
     "ConfigMismatchError",
     "DiskPipeline",
+    "ImagingPipeline",
     "OrbitPipeline",
     "Result",
+    "SkyImage",
     "Stage",
     "StarPipeline",
     "load",

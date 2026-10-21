@@ -8,6 +8,7 @@ wrong: a stage output missing, bad input files, chains too short to converge,
 a prior that excludes the truth. None of these may pass silently.
 """
 
+import inspect
 import json
 import shutil
 
@@ -21,6 +22,11 @@ pytest.importorskip("nbclient")
 from virgil import BinaryModelCartesian, OIData  # noqa: E402
 from virgil.pipeline import BinaryPipeline, load  # noqa: E402
 from virgil.pipeline import binary  # noqa: E402
+from tests._shared import (  # noqa: E402
+    checks_by_name,
+    stage_outputs,
+    started_times,
+)
 
 # Same group as the sibling file, so both run on one worker with
 # ``--dist loadgroup`` and share its warmed-up JAX caches.
@@ -60,10 +66,6 @@ STAGE_FUNCTIONS = dict(
 def data():
     base = OIData("data/NuHor_F480M.oifits")
     return base.with_model(TRUTH, key=jax.random.PRNGKey(3))
-
-
-def _checks(res):
-    return {c.name: c for c in res.checks}
 
 
 def _read(path):
@@ -111,15 +113,6 @@ def _copy_run(completed, tmp_path):
     )
 
 
-def _outputs(pipeline, stage):
-    return {s.name: s.outputs for s in pipeline._stages()}[stage]
-
-
-def _started(pipeline):
-    run = _read(pipeline.output / "run.json")
-    return {name: s.get("started") for name, s in run["stages"].items()}
-
-
 def test_the_recorders_cover_every_stage():
     # A new stage must be added to STAGE_FUNCTIONS, or these tests would
     # silently run it for real.
@@ -135,10 +128,10 @@ def test_resume_recomputes_nothing_for_completed_stages(
     completed, stubbed, tmp_path, through
 ):
     pipeline = _copy_run(completed, tmp_path)
-    before = _started(pipeline)
+    before = started_times(pipeline)
     res = pipeline.run(through=through)
     assert stubbed == []
-    assert _started(pipeline) == before
+    assert started_times(pipeline) == before
     assert res.status == "complete"  # the stored stages were all kept
     assert list(_read(pipeline.output / "run.json")["stages"]) == list(STAGES)
 
@@ -149,9 +142,9 @@ def test_resume_recomputes_a_damaged_stage_and_everything_after_it(
     completed, stubbed, tmp_path, stage, damage
 ):
     pipeline = _copy_run(completed, tmp_path)
-    before = _started(pipeline)
+    before = started_times(pipeline)
     if damage == "output removed":
-        (pipeline.output / _outputs(pipeline, stage)[0]).unlink()
+        (pipeline.output / stage_outputs(pipeline, stage)[0]).unlink()
     else:
         path = pipeline.output / "run.json"
         run = _read(path)
@@ -161,7 +154,7 @@ def test_resume_recomputes_a_damaged_stage_and_everything_after_it(
     k = STAGES.index(stage)
     # The stage and every later one reran, in order; no earlier stage did.
     assert stubbed == list(STAGES[k:])
-    after = _started(pipeline)
+    after = started_times(pipeline)
     for earlier in STAGES[:k]:
         assert after[earlier] == before[earlier], earlier
     assert _read(pipeline.output / "run.json")["status"] == "complete"
@@ -176,10 +169,12 @@ def test_a_rerun_deletes_the_outputs_of_the_later_stages_first(
     pipeline = _copy_run(completed, tmp_path)
     k = STAGES.index(stage)
     stale = [
-        pipeline.output / p for s in STAGES[k:] for p in _outputs(pipeline, s)
+        pipeline.output / p
+        for s in STAGES[k:]
+        for p in stage_outputs(pipeline, s)
     ]
     assert all(p.exists() for p in stale)
-    (pipeline.output / _outputs(pipeline, stage)[0]).unlink()
+    (pipeline.output / stage_outputs(pipeline, stage)[0]).unlink()
     seen = []
     inner = getattr(binary, STAGE_FUNCTIONS[stage])
 
@@ -193,7 +188,7 @@ def test_a_rerun_deletes_the_outputs_of_the_later_stages_first(
     # Nothing of the earlier stages was touched.
     for s in STAGES[:k]:
         assert all(
-            (pipeline.output / p).exists() for p in _outputs(pipeline, s)
+            (pipeline.output / p).exists() for p in stage_outputs(pipeline, s)
         )
 
 
@@ -205,7 +200,7 @@ def test_a_fresh_run_discards_every_output_and_runs_through_the_stage(
     disappear and the stages up to ``through`` rerun."""
     pipeline = _copy_run(completed, tmp_path)
     everything = [
-        pipeline.output / p for s in STAGES for p in _outputs(pipeline, s)
+        pipeline.output / p for s in STAGES for p in stage_outputs(pipeline, s)
     ]
     assert all(p.exists() for p in everything)
     res = pipeline.run(through=stage, resume=False)
@@ -249,16 +244,6 @@ def test_a_fresh_run_through_the_overview_really_replaces_the_outputs(
 
 
 # --- (b) failures are loud ---------------------------------------------------
-
-
-@pytest.fixture
-def junk_files(tmp_path):
-    from astropy.io import fits
-
-    (tmp_path / "text.fits").write_text("this is not a FITS file\n")
-    (tmp_path / "empty.fits").write_bytes(b"")
-    fits.PrimaryHDU().writeto(tmp_path / "no_tables.fits")
-    return tmp_path
 
 
 @pytest.mark.parametrize(
@@ -339,7 +324,7 @@ def test_a_stage_that_raises_marks_the_run_failed_and_resume_continues(
     completed, tmp_path, monkeypatch
 ):
     pipeline = _copy_run(completed, tmp_path)
-    (pipeline.output / _outputs(pipeline, "fit")[0]).unlink()
+    (pipeline.output / stage_outputs(pipeline, "fit")[0]).unlink()
 
     def boom(p):
         raise RuntimeError("the optimizer blew up")
@@ -409,12 +394,12 @@ def test_chains_that_never_move_are_flagged_not_a_plotting_crash(
 ):
     res = _rerun_posterior(completed, tmp_path / "run", 2, 8)
     assert res.status == "complete"
-    assert _checks(res)["ess"].status == "fail"
+    assert checks_by_name(res)["ess"].status == "fail"
 
 
 def test_chains_that_have_not_converged_are_flagged_not_passed(unconverged):
     res = unconverged
-    by_name = _checks(res)
+    by_name = checks_by_name(res)
     assert by_name["ess"].status == "fail"
     assert by_name["r_hat"].status != "pass"
     assert res.summary["worst_check"] == "fail"
@@ -455,7 +440,7 @@ def test_a_prior_that_excludes_the_truth_is_reported_at_the_fit(
     ).run(through="fit")
     at_bound = res.summary["fit"]["at_bound"]
     assert expected & set(at_bound), at_bound
-    check = _checks(res)["start_at_bound"]
+    check = checks_by_name(res)["start_at_bound"]
     assert check.status == "warn" and check.value == at_bound
     assert "prior bound" in check.message
     assert res.summary["worst_check"] in ("warn", "fail")
@@ -507,7 +492,7 @@ def test_golden_injected_companion_is_recovered_at_the_default_settings(
     assert res.status == "complete"
     failing = [c.name for c in res.checks if c.status == "fail"]
     assert failing == [] and res.summary["worst_check"] != "fail"
-    by_name = _checks(res)
+    by_name = checks_by_name(res)
     assert by_name["detection"].status == "pass"
     assert (
         by_name["r_hat"].status == "pass" and by_name["ess"].status == "pass"
@@ -539,7 +524,7 @@ def test_the_default_settings_never_pass_a_wrong_companion_silently(
         and abs(companion["ddec_mas"] - TRUTH.ddec) < 10.0
     )
     if not near:
-        by_name = _checks(res)
+        by_name = checks_by_name(res)
         flagged = [
             name
             for name in _ALIAS_FLAGS
@@ -564,3 +549,15 @@ def test_the_corner_and_trace_figures_survive_draws_that_never_move(tmp_path):
         _corner_trace(tmp_path, samples, ["a", "b"])
     for name in ("posterior_corner.png", "posterior_trace.png"):
         assert (tmp_path / "plots" / name).stat().st_size > 0
+
+
+# The shared full run costs ~15 s warm and over 30 s on a cold CI runner, so
+# the tests that build on it (``completed``, ``stubbed``, ``unconverged``)
+# belong to the slow tier; the rest of the module stays in the fast one.
+for _name, _test in list(globals().items()):
+    if _name.startswith("test_") and {
+        "completed",
+        "stubbed",
+        "unconverged",
+    } & set(inspect.signature(_test).parameters):
+        globals()[_name] = pytest.mark.slow(_test)

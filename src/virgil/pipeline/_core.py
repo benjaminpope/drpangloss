@@ -140,6 +140,8 @@ class _Pipeline:
     STABILITY = "provisional"
     STAGES: tuple = ()
     _DEFAULTS: dict = {}
+    # Folders a run of this pipeline owns besides ``_OWNED``.
+    _OWNED_EXTRA: tuple = ()
     # The config key that fills the second argument of ``from_oifits`` when
     # that is not the model (the orbit pipeline's ``metadata``).
     _SECOND_KEY = None
@@ -292,12 +294,6 @@ class _Pipeline:
             for p in self.inputs or []
         ]
 
-    def _input_record(self):
-        return {
-            "data_sha256": self._data_fingerprint(),
-            "files": self._input_files(),
-        }
-
     def _model_digest(self):
         try:
             spec, arrays = _io.model_spec(self.model)
@@ -346,7 +342,10 @@ class _Pipeline:
             "error": None,
             "config": self.settings,
             "model": self._model_digest(),
-            "inputs": self._input_record(),
+            "inputs": {
+                "data_sha256": self._data_fingerprint(),
+                "files": self._input_files(),
+            },
             "provenance": versions,
             "stages": {},
             "created": _now(),
@@ -524,7 +523,7 @@ class _Pipeline:
         _io.write_json(self.output / "summary.json", summary)
 
     def _clear(self):
-        for name in _OWNED:
+        for name in (*_OWNED, *self._OWNED_EXTRA):
             path = self.output / name
             if path.is_dir():
                 shutil.rmtree(path)

@@ -42,6 +42,7 @@ from virgil.pipeline import _io, disk  # noqa: E402
 pytestmark = pytest.mark.xdist_group("pipeline_disk")
 
 MODELS = ("rings", "gp")
+# The stages are stubbed, so the stage-by-stage tests need only the first model.
 STAGES = DiskPipeline.STAGES
 # The function of ``virgil.pipeline.disk`` that each stage runs.
 STAGE_FUNCTIONS = dict(
@@ -209,7 +210,7 @@ def test_resume_recomputes_nothing_for_completed_stages(
 
 
 @pytest.mark.parametrize("stage", STAGES)
-@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("model", MODELS[:1])
 def test_a_missing_output_reruns_that_stage_and_every_later_one(
     stages, outputs, tiny, tmp_path, model, stage
 ):
@@ -236,7 +237,7 @@ def test_a_missing_output_reruns_that_stage_and_every_later_one(
 
 
 @pytest.mark.parametrize("stage", STAGES[:-1])
-@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("model", MODELS[:1])
 def test_rerunning_a_stage_removes_the_outputs_of_the_later_ones(
     stages, outputs, tiny, tmp_path, model, stage
 ):
@@ -257,7 +258,7 @@ def test_rerunning_a_stage_removes_the_outputs_of_the_later_ones(
 
 
 @pytest.mark.parametrize("stage", STAGES)
-@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("model", MODELS[:1])
 def test_a_fresh_run_recomputes_the_stage_and_clears_the_later_ones(
     stages, outputs, tiny, tmp_path, model, stage
 ):
@@ -299,7 +300,7 @@ def test_a_fresh_run_accepts_settings_that_resume_refuses(
 
 
 @pytest.mark.parametrize("failing", STAGES)
-@pytest.mark.parametrize("model", MODELS)
+@pytest.mark.parametrize("model", MODELS[:1])
 def test_a_failed_stage_is_retried_alone_and_recorded(
     stages, outputs, tiny, tmp_path, model, failing
 ):

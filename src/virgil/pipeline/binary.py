@@ -18,6 +18,7 @@ from ._common import (
     _draws,
     _integer,
     _load_report,
+    _interior_start,
     _load_start,
     _noise_quantiles,
     _pair,
@@ -276,7 +277,7 @@ class BinaryPipeline(_Pipeline):
             "dra": axis,
             "ddec": axis,
             "flux": np.logspace(math.log10(lo), math.log10(hi), s["n_flux"]),
-        }, max_sep
+        }
 
     def _priors(self, max_sep):
         """Priors on ``dra``, ``ddec`` (uniform on the box) and ``flux``.
@@ -371,8 +372,7 @@ def _search(p):
     from ..models import BinaryModelCartesian
 
     data, s = p.processed, p.settings
-    grid, max_sep = p._grid()
-    axis = p._grid_axis()
+    grid, axis = p._grid(), p._grid_axis()
     if axis.coarsened:
         warnings.warn(
             f"max_grid={s['max_grid']} coarsens the grid step from "
@@ -549,7 +549,7 @@ def _limits(p):
     from ..limits import radial_profile
 
     s = p.settings
-    grid, max_sep = p._grid()
+    grid, max_sep = p._grid(), p._grid_axis().max_sep
     limit = _limit_map(p, grid)
     dra, ddec = onp.asarray(grid["dra"]), onp.asarray(grid["ddec"])
     profile = radial_profile(
@@ -632,12 +632,12 @@ def _fit(p):
     from ..fitting import fit
 
     data = p.processed
-    _, max_sep = p._grid()
-    priors = p._priors(max_sep)
+    priors = p._priors(p._grid_axis().max_sep)
     angular = _is_angular(p)
     template, init = _fit_start(p, p._report("search"), priors, angular)
     result = fit(template, priors, data, noise=p._noise(), init=init)
     values = _fitted_values(result, angular)
+    _require_finite(values, result.info)
     reported = ["sep", "pa", "flux"] if angular else list(priors)
     best = p.output / "models" / "best"
     _io.save_model(best, result.model, values, reported)
@@ -654,9 +654,9 @@ def _fit(p):
 def _fit_start(p, search, priors, angular):
     """The template to fit, and the starting values (``init``) if needed.
 
-    The fit starts at the search's best point, with the flux kept inside
-    the prior. An angular template takes ``init``; a Cartesian one is
-    started by setting its parameters.
+    The fit starts at the search's best point, kept inside the priors. An
+    angular template takes ``init``; a Cartesian one is started by setting
+    its parameters.
     """
     lo, hi = p.settings["flux_range"]
     start = {
@@ -667,6 +667,9 @@ def _fit_start(p, search, priors, angular):
         ),
     }
     start = {k: onp.asarray(start[k], dtype=float) for k in priors}
+    # A search peak on the grid's edge is on the position prior's bound, where
+    # the unconstrained start is infinite (a NaN fit in float32).
+    start = _interior_start(priors, start)
     template = p._sampled_model()
     if angular:
         # The angle is undefined on the origin, where the angular template
@@ -678,6 +681,17 @@ def _fit_start(p, search, priors, angular):
             start["dra"], start["ddec"] = onp.asarray(nudge), onp.asarray(0.0)
         return template, start
     return template.set(list(priors), list(start.values())), None
+
+
+def _require_finite(values, info):
+    """Raise, at the fit, if it returned a NaN or infinite parameter."""
+    bad = [k for k, v in values.items() if not onp.all(onp.isfinite(v))]
+    if bad:
+        raise ValueError(
+            f"The fit returned non-finite values for {bad} (stop: "
+            f"{info.get('stop')!r}, loss {info.get('loss')}); check the "
+            "start, the priors and the data."
+        )
 
 
 def _fitted_values(result, angular):
@@ -716,8 +730,7 @@ def _fit_report(data, result, values, reported, priors):
 
 def _posterior(p):
     fit_report = p._report("fit")
-    _, max_sep = p._grid()
-    priors = p._priors(max_sep)
+    priors = p._priors(p._grid_axis().max_sep)
     reported = list(fit_report["params"])
     angular = _is_angular(p)
 

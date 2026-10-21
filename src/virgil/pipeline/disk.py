@@ -1948,9 +1948,7 @@ def _profile_gp(p):
             if side == "low"
             else 2.0 * max(ells)
         )
-        if (side == "high" and new > max(ells)) or (
-            side == "low" and new < min(ells) * (1.0 - 1e-9)
-        ):
+        if side == "high" or new < min(ells) * (1.0 - 1e-9):
             candidates.append(_score_ell(p, new, planet, geo, len(candidates)))
             extended = side
     for k, c in enumerate(candidates):
@@ -2690,12 +2688,7 @@ def _chi2_checks(entry, compare):
     ]
     if compare["error_scales"]:
         checks.append(
-            _checks.error_scale(
-                compare["error_scales"],
-                kind="estimated"
-                if compare["error_scale_factor"] is not None
-                else "fitted",
-            )
+            _checks.error_scale(compare["error_scales"], kind="estimated")
         )
     return checks
 

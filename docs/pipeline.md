@@ -73,6 +73,26 @@ res.summary["star"]["diam_mas"], res.model(), res.model("uniform")
 
 Priors are group-invariant: log-uniform in the diameter over `diam_range_mas` (by default from a tenth of the resolution limit to four times the field of view) and uniform on [0, 1] in `q1` and `q2`, which cover exactly the physical quadratic laws. The fit is on the quoted errors, and chi-squared per independent datum is reported on them for each model.
 
+## `ImagingPipeline`: a model-independent image (provisional, first version)
+
+```python
+from virgil.pipeline import ImagingPipeline
+
+res = ImagingPipeline(data, output="runs/image").run()
+img = res.image()          # a SkyImage: pixels, pixel_scale_mas, dra, ddec, beam
+```
+
+`ImagingPipeline` reconstructs a pixel image with a Gaussian-process prior whose amplitude σ and length ℓ are chosen by evidence (`star="auto"` also decides, by ΔlogZ against a threshold of 5 nats, whether a point source sits at the centre). The stages are `load`, `overview`, `star`, `hyperparameters`, `members` (default 8 fits at the shared hyperparameters, resumable one by one with `run_member(k)`), `combine` and `quicklook`. The result is `images/mean.fits` (a sky-oriented FITS with a WCS and the star's share of the flux) and `images/sigma.fits` (the spread of the members, which excludes hyperparameter uncertainty), `models/best` (`res.model()`) and a quicklook that plots the image.
+
+!!! warning "A good fit is not a promise about the picture"
+    The checks (a raw χ²/N split into V² and closure phases, the quoted errors, the error scale, the effective number of parameters, the short baselines, the star decision, the sky orientation and the grid and field edges) test the data fidelity. Fits that passed them alone were judged badly wrong, so the quicklook's first cell says that the morphology is not promised. The χ²/N is always on the quoted errors; the rescaled value is reported beside it and never checked.
+
+This first version fits **one** member. CLEAN starts, the ensemble spread, classical regularizers chosen by L-curve, the `anneal` option and per-channel imaging are to come.
+
+```bash
+virgil-pipeline image star.oifits -o runs/image --set star=auto
+```
+
 ## `DiskPipeline`: rings and haloes (provisional)
 
 ```python
@@ -244,8 +264,9 @@ Open before promotion: `global_nsigma` is a Šidák estimate with a nominal numb
 | `StarPipeline` | `star` | provisional |
 | `DiskPipeline` | `disk` | provisional |
 | `OrbitPipeline` | `orbit` | provisional |
+| `ImagingPipeline` | `image` | provisional (one member; the ensemble and channels follow) |
 
-Further pipelines (imaging) will be added to this table as they land, all provisional.
+Further pipelines will be added to this table as they land, all provisional.
 
 ## Command line
 

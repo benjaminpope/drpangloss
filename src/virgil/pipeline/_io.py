@@ -10,6 +10,7 @@ a recursive spec of public virgil classes (see :func:`model_spec`).
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import importlib
 import json
@@ -63,9 +64,9 @@ def atomic_path(path):
 
 
 def _json_default(value):
-    if isinstance(value, (onp.integer,)):
+    if isinstance(value, onp.integer):
         return int(value)
-    if isinstance(value, (onp.floating,)):
+    if isinstance(value, onp.floating):
         return _utils._clean_float(float(value))
     if isinstance(value, onp.bool_):
         return bool(value)
@@ -96,11 +97,8 @@ def read_json(path):
 
 def sha256_file(path):
     """SHA-256 of a file's bytes, as hex."""
-    h = hashlib.sha256()
     with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    return h.hexdigest()
+        return hashlib.file_digest(f, "sha256").hexdigest()
 
 
 def data_fingerprint(data):
@@ -224,8 +222,6 @@ def model_spec(model):
     tuple
         ``(spec, arrays)``.
     """
-    import dataclasses
-
     import equinox as eqx
 
     arrays = {}
@@ -271,8 +267,6 @@ def model_spec(model):
 
 def model_from_spec(spec, arrays):
     """Rebuild a model from :func:`model_spec` output."""
-    import dataclasses
-
     import jax.numpy as np
 
     def decode(node):
@@ -376,6 +370,72 @@ def load_model(folder):
             if k.startswith("spec/")
         }
     return model_from_spec(manifest["spec"], arrays)
+
+
+# === SKY IMAGES AS FITS ===
+
+_MAS_PER_DEG = 3.6e6
+
+
+@dataclasses.dataclass(frozen=True)
+class SkyImage:
+    """An image from [`Result.image`][virgil.pipeline.Result.image]:
+    ``pixels`` (row 0 North, column 0 East), the centre offset ``dra``,
+    ``ddec`` (mas) and the FITS ``header`` (``STARFRAC``: star's flux share).
+    """
+
+    pixels: onp.ndarray
+    pixel_scale_mas: float
+    dra: float
+    ddec: float
+    header: dict
+
+
+def write_fits_image(
+    path, pixels, pixel_scale_mas, *, dra=0.0, ddec=0.0, header=None
+):
+    """Write a sky image as FITS (stored flipped, ``CDELT1`` negative;
+    ``CRVAL = (dra, ddec)`` at the centre)."""
+    fits = require_extra("astropy.io.fits")
+    ny, nx = onp.shape(pixels)
+    scale = float(pixel_scale_mas) / _MAS_PER_DEG
+    hdu = fits.PrimaryHDU(
+        onp.ascontiguousarray(onp.asarray(pixels, float)[::-1])
+    )
+    hdu.header.update(
+        {
+            "CTYPE1": "RA---SIN",
+            "CTYPE2": "DEC--SIN",
+            "CUNIT1": "deg",
+            "CUNIT2": "deg",
+            "CRPIX1": (nx + 1) / 2.0,
+            "CRPIX2": (ny + 1) / 2.0,
+            "CRVAL1": float(dra) / _MAS_PER_DEG,
+            "CRVAL2": float(ddec) / _MAS_PER_DEG,
+            "CDELT1": -scale,
+            "CDELT2": scale,
+            "RADESYS": "ICRS",
+            "BUNIT": "relative flux",
+            **(header or {}),
+        }
+    )
+    with atomic_path(path) as tmp:
+        hdu.writeto(tmp, overwrite=True)
+
+
+def read_fits_image(path):
+    """Read an image written by :func:`write_fits_image` as a ``SkyImage``."""
+    fits = require_extra("astropy.io.fits")
+    with fits.open(path) as hdul:
+        header = dict(hdul[0].header)
+        pixels = onp.asarray(hdul[0].data, dtype=float)[::-1]
+    return SkyImage(
+        pixels=pixels,
+        pixel_scale_mas=float(header["CDELT2"]) * _MAS_PER_DEG,
+        dra=float(header["CRVAL1"]) * _MAS_PER_DEG,
+        ddec=float(header["CRVAL2"]) * _MAS_PER_DEG,
+        header=header,
+    )
 
 
 # === PROCESSED DATA AS OIFITS ===
@@ -695,6 +755,13 @@ class Result:
             )
         return OIData(path)
 
+    def image(self, which="mean"):
+        """The combined image of an imaging run (``which="sigma"``: the
+        spread of its members), a [`SkyImage`][virgil.pipeline.SkyImage]."""
+        return read_fits_image(
+            self._stage_file(f"images/{which}.fits", "combine")
+        )
+
     def model(self, name=None):
         """A fitted model, a real virgil object with its values set.
 
@@ -775,7 +842,9 @@ class Result:
 
     def _model_folder(self, name):
         stage = "fit"
-        if self.run["pipeline"] == "disk":
+        if self.run["pipeline"] == "image":
+            stage = "hyperparameters"  # the only fit: models/best
+        elif self.run["pipeline"] == "disk":
             # The disk pipeline's models come from three stages: the
             # single-ring geometry fit, the candidates of the profile
             # stage, and the preferred one chosen by compare.
