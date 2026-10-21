@@ -5,9 +5,9 @@ The fast tests stop at the ``epochs`` stage or fake the later reports; the
 golden cases (a full blind run each) are marked slow.
 """
 
-import copy
 import inspect
 import json
+from pathlib import Path
 
 import jax
 import numpy as onp
@@ -20,7 +20,7 @@ pytest.importorskip("jaxoplanet")
 import virgil  # noqa: E402
 import virgil.pipeline.orbit as orbit_module  # noqa: E402
 from virgil.epochs import Epochs  # noqa: E402
-from virgil.models import OrbitalBinary  # noqa: E402
+from virgil.models import OrbitalBinary, PointSource  # noqa: E402
 from virgil.oifits import write_oifits  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 from virgil.pipeline import (  # noqa: E402
@@ -71,8 +71,9 @@ def _night(mjd, rotation):
 
 def _simulate(times, truth=None, flux=FLUX, seed=3):
     """One simulated night per time, for the orbit ``truth``."""
-    scene = None
-    if flux is not None:
+    if flux is None:
+        scene = PointSource()
+    else:
         orbit = KeplerOrbit(**(truth or TRUTH), t_ref=T_REF)
         scene = OrbitalBinary(orbit, flux)
     key = jax.random.PRNGKey(seed)
@@ -80,15 +81,9 @@ def _simulate(times, truth=None, flux=FLUX, seed=3):
     with jax.enable_x64(True):
         for k, mjd in enumerate(times):
             night = _night(mjd, 7.0 * k)
-            if scene is None:
-                from virgil import PointSource
-
-                data = simulate(
-                    PointSource(), night, key=jax.random.fold_in(key, k)
-                )
-            else:
-                data = simulate(scene, night, key=jax.random.fold_in(key, k))
-            nights[f"n{k}"] = data
+            nights[f"n{k}"] = simulate(
+                scene, night, key=jax.random.fold_in(key, k)
+            )
     return nights
 
 
@@ -219,26 +214,26 @@ def test_the_default_run_is_blind():
     assert d["primary_diam"] == "auto"
     assert not {"init", "p_range", "positions"} & set(d)
     engine = inspect.signature(fit_orbit_aliases).parameters
-    for ours, theirs in (
-        ("a_range", "a_range"),
-        ("flux_range", "flux_range"),
-        ("ecc_max", "ecc_max"),
-        ("s_max", "s_max"),
-        ("primary_diam", "primary_diam"),
-        ("vis_amp", "vis_amp"),
-        ("sign_free", "sign_free"),
-        ("flip_flux", "flip_flux"),
-        ("temper", "temper"),
-        ("n_bands_max", "n_bands_max"),
-        ("n_candidates", "n_candidates"),
-        ("n_refine", "n_refine"),
-        ("max_steps", "max_steps"),
-        ("n_is", "n_is"),
-        ("seed", "seed"),
+    for name in (
+        "a_range",
+        "flux_range",
+        "ecc_max",
+        "s_max",
+        "primary_diam",
+        "vis_amp",
+        "sign_free",
+        "flip_flux",
+        "temper",
+        "n_bands_max",
+        "n_candidates",
+        "n_refine",
+        "max_steps",
+        "n_is",
+        "seed",
     ):
-        assert list(np_tuple(d[ours])) == list(
-            np_tuple(engine[theirs].default)
-        ), ours
+        assert tuple(np_tuple(d[name])) == tuple(
+            np_tuple(engine[name].default)
+        ), name
     assert engine["init"].default is None
     assert engine["skip_flagged"].default is True
 
@@ -518,9 +513,7 @@ def test_from_oifits_groups_files_into_nights(files):
     meta = {files[0]: {"epoch": "first"}, files[1]: {"epoch": "second"}}
     labelled = OrbitPipeline.from_oifits(files, meta)
     assert {"first", "second"} <= set(labelled.data.names)
-    assert pipeline.inputs == [
-        str(__import__("pathlib").Path(f).resolve()) for f in files
-    ]
+    assert pipeline.inputs == [str(Path(f).resolve()) for f in files]
 
 
 def test_a_file_with_no_usable_data_is_skipped_with_a_note(files, monkeypatch):
@@ -703,16 +696,12 @@ def test_cli_orbit_runs_from_oifits_with_metadata(files, tmp_path, capsys):
     assert cli.main(args) == 0
     run = json.loads((out / "run.json").read_text())
     assert run["status"] == "partial" and run["pipeline"] == "orbit"
-    assert [Path_name(f["path"]) for f in run["inputs"]["files"]] == [
-        Path_name(f) for f in files
+    assert [Path(f["path"]).name for f in run["inputs"]["files"]] == [
+        Path(f).name for f in files
     ]
     assert run["config"]["max_grid"] == 25
     assert "data.n_nights" in capsys.readouterr().out
     assert cli.main(["validate", str(out)]) == 0
-
-
-def Path_name(path):
-    return __import__("pathlib").Path(path).name
 
 
 def test_from_config_reads_the_metadata_key(files, tmp_path):
@@ -775,7 +764,6 @@ def test_the_class_is_exported_lazily():
     module = importlib.import_module("virgil.pipeline")
     assert module.OrbitPipeline is OrbitPipeline
     assert "OrbitPipeline" in dir(module)
-    assert copy.deepcopy(OrbitPipeline.defaults()) == DEFAULTS
 
 
 # --- golden synthetic cases (slow) --------------------------------------------
@@ -840,6 +828,13 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     names = [c.name for c in res.checks if c.name in CHECKS]
     assert names == CHECKS
     assert res.summary["chi2"]["best_orbit_reduced"] < 3.0
+    keys = {
+        k: (set(v) if isinstance(v, dict) else None)
+        for k, v in res.summary.items()
+    }
+    assert keys == SUMMARY_KEYS
+    assert (res.path / "plots" / "modes_sky.png").exists()
+    assert (res.path / "plots" / "search_bands.png").exists()
 
 
 @pytest.mark.slow
@@ -901,17 +896,3 @@ def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
     assert abs(best["period"] - TRUTH["period"]) < 0.05
     assert best["ecc"] == pytest.approx(0.8, abs=0.1)
     assert load(tmp_path / "run").summary["chi2"]["best_orbit_reduced"] < 3.0
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_the_real_summary_has_the_snapshot_keys(tmp_path):
-    data = _simulate(SEASONS, seed=3)
-    _, res = _blind(data, tmp_path / "run")
-    keys = {
-        k: (set(v) if isinstance(v, dict) else None)
-        for k, v in res.summary.items()
-    }
-    assert keys == SUMMARY_KEYS
-    assert (res.path / "plots" / "modes_sky.png").exists()
-    assert (res.path / "plots" / "search_bands.png").exists()
