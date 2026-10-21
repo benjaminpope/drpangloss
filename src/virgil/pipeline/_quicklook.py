@@ -35,7 +35,21 @@ def _fmt(value):
     return str(value)
 
 
-def _intro(run, summary):
+def _nuts_sentence(post):
+    return (
+        f"NUTS drew {post['num_samples']} samples in each of "
+        f"{post['num_chains']} chains after {post['num_warmup']} warm-up steps"
+    )
+
+
+_KERNELSPEC = {
+    "name": "python3",
+    "display_name": "Python 3",
+    "language": "python",
+}
+
+
+def _intro(run):
     inputs = run["inputs"]
     if inputs["files"]:
         files = "\n".join(
@@ -179,9 +193,7 @@ def _binary_posterior_cells(summary):
     return [
         (
             "## Posterior\n\n"
-            f"NUTS drew {post['num_samples']} samples in each of "
-            f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-            "steps. The corner plot shows the fitted parameters.",
+            f"{_nuts_sentence(post)}. The corner plot shows the fitted parameters.",
             _corner_code('res.summary["fit"]["params"]'),
         ),
         (
@@ -280,9 +292,7 @@ def _star_posterior_cells(summary):
     return [
         (
             "## Posterior\n\n"
-            f"NUTS drew {post['num_samples']} samples in each of "
-            f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-            "steps, for each fitted model. The corner plot shows the "
+            f"{_nuts_sentence(post)}, for each fitted model. The corner plot shows the "
             f"preferred model, `{post['best']}`.",
             _corner_code('res.summary["posterior"]["sampled"]'),
         ),
@@ -366,9 +376,7 @@ def _disk_posterior_cell(summary):
     post = summary["posterior"]
     return (
         "## Posterior\n\n"
-        f"NUTS drew {post['num_samples']} samples in each of "
-        f"{post['num_chains']} chains after {post['num_warmup']} warm-up "
-        "steps, with the geometry released. The scalar sites: median with "
+        f"{_nuts_sentence(post)}, with the geometry released. The scalar sites: median with "
         "its 16th and 84th percentiles, split R-hat and bulk effective "
         "sample size.",
         'for name, row in res.summary["posterior"]["params"].items():\n'
@@ -517,7 +525,7 @@ def build_notebook(path):
     summary = _io.read_json(path / "summary.json")
     v4 = nbformat.v4
     cells = [
-        v4.new_markdown_cell(_intro(run, summary)),
+        v4.new_markdown_cell(_intro(run)),
         v4.new_code_cell(
             "import warnings\n\n"
             "%matplotlib inline\n"
@@ -539,11 +547,7 @@ def build_notebook(path):
         cells.append(v4.new_code_cell(code))
     cells.append(v4.new_markdown_cell(_closing(summary)))
     nb = v4.new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "name": "python3",
-        "display_name": "Python 3",
-        "language": "python",
-    }
+    nb.metadata["kernelspec"] = _KERNELSPEC
     nb.metadata["virgil"] = {"schema": _io.SCHEMA, "pipeline": run["pipeline"]}
     return nb
 
@@ -616,11 +620,7 @@ def execute_notebook(nb, path, timeout=600):
         env = {**os.environ, **_KERNEL_ENV}
         with open(Path(path) / "quicklook.log", "wb") as log:
             client.execute(env=env, stderr=log)
-    nb.metadata["kernelspec"] = {
-        "name": "python3",
-        "display_name": "Python 3",
-        "language": "python",
-    }
+    nb.metadata["kernelspec"] = _KERNELSPEC
     return nb
 
 

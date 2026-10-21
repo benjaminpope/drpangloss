@@ -294,12 +294,6 @@ class _Pipeline:
             for p in self.inputs or []
         ]
 
-    def _input_record(self):
-        return {
-            "data_sha256": self._data_fingerprint(),
-            "files": self._input_files(),
-        }
-
     def _model_digest(self):
         try:
             spec, arrays = _io.model_spec(self.model)
@@ -348,7 +342,10 @@ class _Pipeline:
             "error": None,
             "config": self.settings,
             "model": self._model_digest(),
-            "inputs": self._input_record(),
+            "inputs": {
+                "data_sha256": self._data_fingerprint(),
+                "files": self._input_files(),
+            },
             "provenance": versions,
             "stages": {},
             "created": _now(),
