@@ -18,6 +18,7 @@ from ._common import (
     _draws,
     _integer,
     _load_report,
+    _interior_start,
     _load_start,
     _noise_quantiles,
     _pair,
@@ -654,8 +655,7 @@ def _fit(p):
 def _fit_start(p, search, priors, angular):
     """The template to fit, and the starting values (``init``) if needed.
 
-    The fit starts at the search's best point, with the flux kept inside
-    the prior. An angular template takes ``init``; a Cartesian one is
+    The fit starts at the search's best point, kept inside the priors. An angular template takes ``init``; a Cartesian one is
     started by setting its parameters.
     """
     lo, hi = p.settings["flux_range"]
@@ -667,6 +667,9 @@ def _fit_start(p, search, priors, angular):
         ),
     }
     start = {k: onp.asarray(start[k], dtype=float) for k in priors}
+    # A search peak on the grid's edge is on the position prior's bound, where
+    # the unconstrained start is infinite (a NaN fit in float32).
+    start = _interior_start(priors, start)
     template = p._sampled_model()
     if angular:
         # The angle is undefined on the origin, where the angular template
