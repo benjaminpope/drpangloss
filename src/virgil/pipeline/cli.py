@@ -6,6 +6,8 @@
                                  [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline disk DATA... --output DIR [--model rings|gp]
                                  [--through S] [--fresh] [--set key=value ...]
+    virgil-pipeline image DATA... --output DIR [--through S] [--fresh]
+                                  [--set key=value ...]
     virgil-pipeline orbit DATA... --output DIR [--metadata FILE.json]
                                   [--through S] [--fresh] [--set key=value ...]
     virgil-pipeline info DIR
@@ -28,6 +30,7 @@ from ._io import SCHEMA, read_json, sha256_file
 _PIPELINES = {
     "binary": ("virgil.pipeline.binary", "BinaryPipeline"),
     "disk": ("virgil.pipeline.disk", "DiskPipeline"),
+    "image": ("virgil.pipeline.image", "ImagingPipeline"),
     "orbit": ("virgil.pipeline.orbit", "OrbitPipeline"),
     "star": ("virgil.pipeline.star", "StarPipeline"),
 }

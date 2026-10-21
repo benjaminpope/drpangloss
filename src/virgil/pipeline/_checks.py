@@ -1730,3 +1730,365 @@ def period_bound(bound, lower, p_range):
         [lo, hi],
         f"The period is inside its window ({lo:.3g} to {hi:.3g} d).",
     )
+
+
+# --- checks of ImagingPipeline ------------------------------------------------
+#
+# Every χ²/N here is on the quoted errors; none is computed after rescaling.
+
+
+def quoted_errors(blocks):
+    """Quoted errors that make every hyperparameter choice suspect.
+
+    Parameters
+    ----------
+    blocks : dict
+        Observable block (``"vis"``, ``"phi"``) to ``{"min", "median",
+        "max", "all_equal", "n_bad"}``: ``all_equal`` when the errors of the
+        block agree to 1e-6 relative, ``n_bad`` the number that are zero or
+        not finite.
+    """
+    equal = sorted(k for k, b in blocks.items() if b["all_equal"])
+    bad = sorted(k for k, b in blocks.items() if b["n_bad"])
+    if equal or bad:
+        parts = []
+        if equal:
+            parts.append(f"all equal in {', '.join(equal)}")
+        if bad:
+            parts.append(f"zero or not finite in {', '.join(bad)}")
+        return Check(
+            "quoted_errors",
+            "warn",
+            equal + bad,
+            None,
+            "The quoted errors are " + " and ".join(parts) + ": they look "
+            "like placeholders, not measurements, so the evidence's choice "
+            "of hyperparameters and every χ²/N below are suspect.",
+        )
+    return Check(
+        "quoted_errors",
+        "pass",
+        [],
+        None,
+        "The quoted errors vary from sample to sample and are positive.",
+    )
+
+
+def error_scale_both_ways(scales, *, rescaled=False, warn=2.0, fail=5.0):
+    """MacKay's error scale ``s_b`` of each observable block at the winner.
+
+    Unlike [`error_scale`][virgil.pipeline._checks.error_scale] it also
+    warns below ``1/warn``: errors that are too large over-regularize every
+    evidence choice. The grid is not repeated on rescaled errors, so the
+    message says which hyperparameters the scales were estimated at.
+
+    Parameters
+    ----------
+    scales : dict or None
+        Block to scale, or ``None`` when the fit has no Gaussian-process
+        latents to estimate them from (a classical regularizer).
+    """
+    if scales is None:
+        return Check(
+            "error_scale",
+            "pass",
+            None,
+            warn,
+            "Not estimated: the MacKay scale needs a Gaussian-process "
+            "prior, and this run used a classical regularizer.",
+        )
+    values = [float(s) for s in scales.values()]
+    names = ", ".join(f"{k} = {float(v):.3g}" for k, v in scales.items())
+    worst = max(values, default=1.0) if all(map(_finite, values)) else math.nan
+    lowest = (
+        min(values, default=1.0) if all(map(_finite, values)) else math.nan
+    )
+    tail = (
+        " The hyperparameters were chosen on the quoted errors; the grid "
+        "was not repeated on rescaled errors."
+    )
+    if not (_finite(worst) and _finite(lowest)):
+        status, meaning = "fail", "an error scale is not finite"
+    elif worst > fail:
+        status, meaning = (
+            "fail",
+            "the image does not describe the data on its quoted errors",
+        )
+    elif worst > warn:
+        status, meaning = (
+            "warn",
+            "the quoted errors are too small or the model is wrong",
+        )
+    elif lowest < 1.0 / warn:
+        status, meaning = (
+            "warn",
+            "the quoted errors look overstated, which over-regularizes "
+            "every evidence choice",
+        )
+    else:
+        status, meaning = "pass", "close to the quoted errors"
+    return Check(
+        "error_scale",
+        status,
+        worst,
+        [1.0 / warn, warn],
+        f"Estimated error scales {names}: {meaning}.{tail}",
+    )
+
+
+def effective_parameters(n, n_gamma, *, warn=0.2):
+    """How many parameters the data measure, against how many data there are.
+
+    Parameters
+    ----------
+    n : float
+        Independent data.
+    n_gamma : float or None
+        MacKay's γ, the number of well-determined latent parameters; ``None``
+        without a Gaussian-process prior.
+    warn : float, optional
+        Warn when ``N - γ`` is below this fraction of ``N``.
+    """
+    if n_gamma is None or not _finite(n_gamma):
+        return Check(
+            "effective_parameters",
+            "pass",
+            None,
+            warn,
+            "Not estimated: it needs a Gaussian-process prior.",
+        )
+    spare = float(n) - float(n_gamma)
+    fraction = spare / float(n)
+    if fraction < warn:
+        return Check(
+            "effective_parameters",
+            "warn",
+            fraction,
+            warn,
+            f"The data measure γ = {n_gamma:.3g} parameters of the image "
+            f"for N = {n:.3g} data (N − γ = {spare:.3g}): a small χ²/N is "
+            "close to automatic. Compare with a parametric model "
+            "(BinaryPipeline, StarPipeline or DiskPipeline).",
+        )
+    return Check(
+        "effective_parameters",
+        "pass",
+        fraction,
+        warn,
+        f"γ = {n_gamma:.3g} well-determined parameters for N = {n:.3g} "
+        f"data: N − γ = {spare:.3g}.",
+    )
+
+
+def short_baselines(mean, error, *, warn=3.0, fail=5.0):
+    """Mean whitened visibility residual on the shortest baselines.
+
+    Parameters
+    ----------
+    mean, error : float or None
+        The mean of (model − data)/σ on the shortest 20% of spatial
+        frequencies and its standard error; ``None`` when the data have no
+        baseline-ordered visibilities.
+    """
+    if mean is None or not _finite(mean):
+        return Check(
+            "short_baselines",
+            "pass",
+            None,
+            warn,
+            "Not available: the data have no baseline-ordered visibilities.",
+        )
+    sigma = float(mean) / float(error)
+    if abs(sigma) > fail:
+        status = "fail"
+    elif abs(sigma) > warn:
+        status = "warn"
+    else:
+        status = "pass"
+    sign = (
+        "negative: flux the image over-resolves, or a calibration bias"
+        if sigma < 0
+        else "positive: flux the image under-resolves, or a calibration bias"
+    )
+    note = (
+        ""
+        if status == "pass"
+        else f" The bias is {sign}. Add a halo or check the calibration; "
+        "the evidence's hyperparameters are not to be trusted."
+    )
+    return Check(
+        "short_baselines",
+        status,
+        sigma,
+        warn,
+        f"Mean visibility residual on the shortest baselines "
+        f"{format_sigma(sigma)}.{note}",
+    )
+
+
+def hyperparameter_edge(edge, *, biased=False):
+    """The evidence optimum on an edge of the grid after it was grown.
+
+    Parameters
+    ----------
+    edge : list of str or None
+        Which edges the optimum sits on (``"length min"``, ``"sigma max"``,
+        ...); empty when interior, ``None`` without a Gaussian-process grid.
+    biased : bool, optional
+        The ``error_scale`` or ``short_baselines`` check failed: the data
+        are biased, so a choice on the grid edge is not automated.
+    """
+    if edge is None:
+        return Check(
+            "hyperparameter_edge",
+            "pass",
+            None,
+            None,
+            "Not applicable: the weight came from an L-curve, not an "
+            "evidence grid.",
+        )
+    if not edge:
+        return Check(
+            "hyperparameter_edge",
+            "pass",
+            [],
+            None,
+            "The evidence optimum is inside the grid.",
+        )
+    where = ", ".join(edge)
+    if biased:
+        return Check(
+            "hyperparameter_edge",
+            "fail",
+            list(edge),
+            None,
+            f"The evidence optimum is on the grid edge ({where}) while the "
+            "data look biased (error_scale or short_baselines): the "
+            "hyperparameters are not trusted. Choose them by L-curve "
+            "(regularizers=...) or by hand.",
+        )
+    return Check(
+        "hyperparameter_edge",
+        "warn",
+        list(edge),
+        None,
+        f"The evidence optimum is on the grid edge ({where}): the grid stopped "
+        "there (its limits or its growth steps), so the optimum may lie "
+        "beyond it.",
+    )
+
+
+def star_decision(delta, *, threshold=5.0, decision=None, fixed=None):
+    """The star-or-not decision from ΔlogZ (star minus no star) on one grid.
+
+    Parameters
+    ----------
+    delta : float or None
+        ΔlogZ; ``None`` when ``star`` was set by hand.
+    threshold : float, optional
+        Nats for a decisive result.
+    decision : {"on", "off", "both"}, optional
+        What the stage decided.
+    fixed : bool, optional
+        The setting when it was set by hand.
+    """
+    if delta is None:
+        word = "on" if fixed else "off"
+        return Check(
+            "star",
+            "pass",
+            None,
+            threshold,
+            f"The star was set by hand (star={bool(fixed)}): the image is "
+            f"fitted with the star {word}.",
+        )
+    caveat = (
+        " The Laplace evidence holds the star's flux at its MAP, so ΔlogZ "
+        "lacks that Occam factor (about ½ log N nats); it is not a "
+        "detection significance."
+    )
+    if abs(delta) >= threshold:
+        return Check(
+            "star",
+            "pass",
+            float(delta),
+            threshold,
+            f"ΔlogZ = {delta:+.3g} nats decides the star {decision}." + caveat,
+        )
+    return Check(
+        "star",
+        "warn",
+        float(delta),
+        threshold,
+        f"ΔlogZ = {delta:+.3g} nats is inside ±{threshold:g}: the data do "
+        "not decide whether there is a star (decision 'both'; the member "
+        f"with the larger evidence was kept).{caveat}",
+    )
+
+
+def orientation(flip_dchi2, closure, *, warn=9.0):
+    """The Δχ² of turning the image by 180° (``diagnose``'s ``flip_dchi2``).
+
+    Parameters
+    ----------
+    flip_dchi2 : float
+        The Δχ².
+    closure : bool
+        Whether the data have closure phases: without them the image and
+        its 180° rotation fit equally.
+    """
+    if not closure:
+        return Check(
+            "orientation",
+            "warn",
+            0.0,
+            warn,
+            "The data have no closure phases (V² only): the image and its "
+            "180° rotation fit equally, so the orientation is not measured.",
+        )
+    if not _finite(flip_dchi2) or flip_dchi2 < warn:
+        return Check(
+            "orientation",
+            "warn",
+            flip_dchi2,
+            warn,
+            f"Turning the image by 180° changes χ² by only "
+            f"{float(flip_dchi2):.3g} (under {warn:g}, about 3σ): the "
+            "orientation is weakly constrained.",
+        )
+    return Check(
+        "orientation",
+        "pass",
+        flip_dchi2,
+        warn,
+        f"Turning the image by 180° raises χ² by {flip_dchi2:.3g}: the "
+        "orientation is measured.",
+    )
+
+
+def edge_flux(fraction, *, warn=0.01):
+    """The fraction of an image's flux in the outer two pixels.
+
+    Parameters
+    ----------
+    fraction : float
+        The largest such fraction of any kept member's image.
+    """
+    if not _finite(fraction) or fraction > warn:
+        return Check(
+            "edge_flux",
+            "warn",
+            fraction,
+            warn,
+            f"{100 * float(fraction):.3g}% of the image's flux is in its "
+            f"outer two pixels (over {100 * warn:g}%): the field may be too "
+            "small. Set field_mas larger, or allow for a halo.",
+        )
+    return Check(
+        "edge_flux",
+        "pass",
+        fraction,
+        warn,
+        f"{100 * float(fraction):.3g}% of the image's flux is in its outer "
+        "two pixels.",
+    )

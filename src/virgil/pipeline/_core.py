@@ -32,6 +32,8 @@ _OWNED = (
     "quicklook.log",
     "data",
     "models",
+    "members",
+    "images",
     "plots",
     "stages",
 )

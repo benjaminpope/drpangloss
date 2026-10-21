@@ -7,6 +7,10 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### `ImagingPipeline`: a model-independent image (provisional)
+
+- `virgil.pipeline.ImagingPipeline` (CLI `virgil-pipeline image`) images a dataset with a Gaussian-process prior whose hyperparameters are chosen by evidence, decides by ΔlogZ (5 nats) whether a central star is present, and writes a sky-oriented FITS image (`Result.image()`, a `SkyImage`), the fitted models and a quicklook whose first cell says that a good fit does not promise the morphology. Eleven checks, with the raw χ²/N split into V² and closure phases. This first version fits one member; the ensemble and the channels come later, and `anneal` and `star_model="ud"` raise `NotImplementedError`. Design in `design/imaging_pipeline.md`.
+
 ### Night flags inform instead of excluding
 
 - `sep-below-resolution` is reported but no longer keeps a night from seeding

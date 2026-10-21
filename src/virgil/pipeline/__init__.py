@@ -28,11 +28,12 @@ import importlib
 
 from ._checks import Check
 from ._core import ConfigMismatchError, Stage
-from ._io import SCHEMA, Result, load
+from ._io import SCHEMA, Result, SkyImage, load
 
 _LAZY = {
     "BinaryPipeline": ".binary",
     "DiskPipeline": ".disk",
+    "ImagingPipeline": ".image",
     "OrbitPipeline": ".orbit",
     "StarPipeline": ".star",
 }
@@ -43,8 +44,10 @@ __all__ = [
     "Check",
     "ConfigMismatchError",
     "DiskPipeline",
+    "ImagingPipeline",
     "OrbitPipeline",
     "Result",
+    "SkyImage",
     "Stage",
     "StarPipeline",
     "load",
