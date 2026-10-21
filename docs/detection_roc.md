@@ -92,7 +92,7 @@ best companion at ΔRA = 88 mas, ΔDec = 40 mas, flux = 4.85e-03 (truth: 60.6 ma
 
 To learn how often noise alone gives so large a $\Delta\chi^2$, and how often a real companion is found, we repeat the search on simulated observations with [`injection_recovery`](api/detection.md#virgil.detection.injection_recovery). It simulates `n_null` companion-free **null draws**, with Gaussian noise from the template's errors ([`gaussian_null`](api/detection.md#virgil.detection.gaussian_null)), and one observation per companion in `injections`, here from [`injection_grid`](api/detection.md#virgil.detection.injection_grid): 4 separations from 40 to 100 mas times 8 fluxes from $10^{-3}$ to $3\times10^{-2}$, each at 40 random position angles. One compiled function searches every simulation exactly as the real data were searched, and returns a [`DetectionMC`](api/detection.md#virgil.detection.DetectionMC), a plain NumPy container from which everything below is computed.
 
-With 10,000 null draws, about 13 lie above the 0.135% threshold and pin it down; `draw_batch=32` searches 32 at once, which is faster on a CPU and on a GPU, where one search leaves the device idle. To split a larger run over cluster array jobs with different seeds, `save` each result and merge them with `DetectionMC.concatenate`.
+With 10,000 null draws, about 13 lie above the 0.135% threshold and pin it down; `draw_batch=32` searches 32 draws at once, which keeps a GPU busy. To split a larger run over cluster array jobs with different seeds, `save` each result and merge them with `DetectionMC.concatenate`.
 
 ```python
 FLUXES = onp.geomspace(1e-3, 3e-2, 8)
