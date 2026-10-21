@@ -7,6 +7,19 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Fixed
+
+- `fit_orbit_aliases(outlier_eps=...)` (and so `OrbitPipeline`, whose default
+  is `outlier_eps=0.02`) ranked and refined its candidate orbits under the
+  outlier mixture. The mixture's weight on a night vanishes when a start misses
+  it, so a start that is off by a little settled on the nights it already fit,
+  tens to hundreds of nats short of the optimum that the plain likelihood
+  reaches from the same start, and a cold search could lose the true alias
+  (virgil#451 on Gl 229: the N=34 band's best mode was 108 nats below the plain
+  one). The search now ranks and refines on the plain likelihood and applies
+  the mixture as a polish of each mode found, so the mixture can down-weight a
+  night of a basin but cannot hide the basin.
+
 ### Night flags inform instead of excluding
 
 - `sep-below-resolution` is reported but no longer keeps a night from seeding
