@@ -4,7 +4,7 @@ stages, round trip, resume, quicklook caveat and the CLI.
 The scene is a star (0.6 of the flux) and an inclined Gaussian ring, seen by
 four telescopes in one channel at three hour angles: V² and closure phases,
 N = 27 independent data. The grid is 11 pixels on a side, the evidence grid a
-single point and every fit is capped at 20 steps, so these tests check the
+single point and every fit is capped at 10 steps, so these tests check the
 plumbing and the contract, not the optimizer. The pipeline's stages are run
 progressively (``run(through=...)`` resumes), so that the time of the compiles
 is shared among a few tests. The fits that are not needed for the fast tier,
@@ -57,7 +57,7 @@ SMALL = {
     "sigmas": [2.0],
     "lengths_beam": [1.0],
     "grid_growths": 0,
-    "max_steps": 20,
+    "max_steps": 10,
     "quicklook_execute": False,
 }
 
@@ -333,7 +333,6 @@ def test_summary_orders_the_checks():
 # --- the stages ----------------------------------------------------------------
 
 
-@pytest.mark.slow  # 30.7 s on a CI runner, marginally over the 30 s budget
 def test_load_overview_star_and_hyperparameter_stages(pipe):
     res = pipe.run(through="hyperparameters")
     assert res.status == "partial"
