@@ -36,6 +36,14 @@ anything before 1.0 may change between minor versions.
   the χ², not with exactly zero. At the optimum the sign of the gradient is
   rounding noise, so whether CLEAN stopped depended on the platform and on
   thread scheduling, and it sometimes ran to `max_iterations` instead.
+- `BinaryPipeline` starts its fit inside the position priors. A search peak on
+  the grid's edge is on the prior's bound (the grid and the priors share their
+  half-width), where the unconstrained start is infinite: the fit returned NaN
+  in float32 and the run crashed in the summary with `TypeError: where requires
+  ndarray or scalar arguments, got NoneType`, as in `docs/pipelines.md`. A fit
+  that still returns a non-finite parameter now raises a `ValueError` naming it
+  at the fit stage. On the tutorial's data the run now completes but its search
+  still peaks on an edge alias, not the injected companion.
 - The cold-cache seasonal-gap alias test (`slow` set) has a 600 s timeout: it takes
   250-305 s on a runner with a cold JAX compile cache, against the 300 s default.
 
