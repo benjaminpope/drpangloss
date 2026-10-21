@@ -175,6 +175,7 @@ def test_settings_are_validated(data):
         {"max_npix": 2},
         {"sigmas": []},
         {"members": 0},
+        {"members": 9},
     ):
         with pytest.raises(ValueError):
             ImagingPipeline(data, **bad)
@@ -489,13 +490,17 @@ def test_members_are_resumable_and_fill_the_ensemble(data, tmp_path):
     fit = res.summary["fit"]
     assert fit["n_members"] == 2 and 1 <= fit["n_kept"] <= 2
     names = [c["name"] for c in res.summary["checks"]]
-    assert names[-2:] == ["ensemble_kept", "ensemble_spread"] or {
-        "ensemble_kept",
-        "ensemble_spread",
-    } <= set(names)
+    assert names[: len(CHECKS)] == list(CHECKS)
+    assert set(fit["chi2_red_mixture"]) == {"vis", "phi"}
+    # The members share the hyperparameters of the one evidence search.
+    hyper = pipe._report("hyperparameters")
+    spec, _, draws, variant = image._member_setup(pipe)
+    assert spec.gp_sigmas == (hyper["sigma"],) and spec.gp_growths == 0
+    assert spec.gp_lengths == (hyper["length_beam"],)
+    assert variant == hyper["variant"] and set(draws) == {0, 1}
     mean, sigma = res.image(), res.image("sigma")
     assert mean.pixels.shape == sigma.pixels.shape
-    assert onp.all(sigma.pixels >= 0)
+    assert sigma.pixels.max() > 0  # the two members start differently
     # Raw χ²/N of the mean image, V² and closure phases apart.
     assert set(fit["chi2_red_by_observable"]) == {"vis", "phi", "total"}
 
@@ -506,6 +511,13 @@ def test_member_grids_fit_each_member_its_own_hyperparameters(data, tmp_path):
     pipe = ImagingPipeline(data, output=tmp_path / "run", **settings)
     pipe.run(through="members")
     assert (pipe.output / "members" / "000" / "info.json").exists()
+    spec, _, _, variant = image._member_setup(pipe)
+    assert variant is None and spec.gp_sigmas == (2.0,)  # the setting's grid
+    other = ImagingPipeline(
+        data, output=pipe.output, **{**settings, "max_steps": 5}
+    )
+    with pytest.raises(ConfigMismatchError):
+        other.run_member(0)
 
 
 # --- slower fits ---------------------------------------------------------------

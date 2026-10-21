@@ -43,7 +43,8 @@ can only flag, not fix.
    ratio is below 0.9; the grid grows `grid_growths` times while the
    optimum is on an edge). Saves the best fit as `models/best` and the grid
    as `grids.h5`; reports MacKay's per-observable error scales and γ.
-5. `members`: `members` fits (default 8), each a Gaussian-process image at
+5. `members`: `members` fits (default and maximum 8, the distinct
+   combinations, enumerated rather than drawn so that none is a copy), each a Gaussian-process image at
    the **shared** (σ, ℓ) of step 4, varying only the start (`moments` or
    `flat`), the pixel scale (`oversample` or 1.5 × it) and the field (1 or 1.5 × `image_field`), with the star decision of step 3. They
    are saved in `members/NNN/` and resumable: `run_member(k)` fits one, so

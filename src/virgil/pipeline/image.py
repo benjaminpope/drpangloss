@@ -9,6 +9,8 @@ reconstructions that were judged unusable.
 from __future__ import annotations
 
 import dataclasses
+import itertools
+import warnings
 from collections import Counter
 
 import jax
@@ -145,6 +147,11 @@ class ImagingPipeline(_Pipeline):
         _integer(s, "max_npix", 4)
         _integer(s, "grid_growths", 0)
         _integer(s, "members", 1)
+        if s["members"] > 8:
+            raise ValueError(
+                "members must be at most 8, the distinct starts, pixel "
+                "scales and fields."
+            )
         _integer(s, "seed", 0)
         for name in ("sigmas", "lengths_beam"):
             if not s[name] or min(s[name]) <= 0:
@@ -186,15 +193,32 @@ class ImagingPipeline(_Pipeline):
             raise ValueError(
                 f"k must be in 0..{self.settings['members'] - 1}."
             )
+        # As run() would: the same configuration, after the hyperparameters.
+        record = _io.read_json(self.output / "run.json")
+        self._check_resume(record)
+        if (
+            record["stages"].get("hyperparameters", {}).get("status")
+            != "complete"
+        ):
+            raise RuntimeError(
+                'Run the "hyperparameters" stage before run_member.'
+            )
         folder = self.output / "members" / f"{k:03d}"
         if not (folder / "info.json").exists():
             spec, star, draws, variant = _member_setup(self)
             grid = _evidence_grid(self, spec, star, draws[k])
             best = grid.best
             if variant:  # one point per variant: the shared hyperparameters
+                # Each member re-estimates the elongation on its own field.
                 best = next(
-                    f for f in grid.fits.values() if f.variant == variant
+                    (f for f in grid.fits.values() if f.variant == variant),
+                    best,
                 )
+                if best.variant != variant:
+                    warnings.warn(
+                        f"Member {k} found no {variant!r} grid on its field: "
+                        "it is fitted with the isotropic prior."
+                    )
             _save_fit(folder, best.result, list(best.result.values))
 
     def _summarize(self, reports):
@@ -413,26 +437,37 @@ def _member_setup(p):
         (hyper["sigma"], hyper["length_beam"]) if shared else None,
         variant != "iso",
     )
-    spec = dataclasses.replace(
-        spec,
-        oversample=(spec.oversample[0], 1.5 * spec.oversample[0]),
-        field_factors=(1.0, 1.5),
-        starts=("moments", "flat"),
-    )
-    draws = draw_groups(
-        p.processed,
-        s["members"],
-        jax.random.PRNGKey(int(s["seed"])),
-        spec,
-        star,
-    )
-    return spec, star, {d.index: d for d in draws}, variant
+    # Each member is one distinct (start, pixel scale, field): a fit is fixed
+    # by them, so repeated draws would be copies.
+    key = jax.random.PRNGKey(int(s["seed"]))
+    draws = {}
+    for k, (over, factor, start) in enumerate(
+        itertools.product((1.0, 1.5), (1.0, 1.5), ("moments", "flat"))
+    ):
+        if k < s["members"]:
+            one = dataclasses.replace(
+                spec,
+                oversample=(over * spec.oversample[0],),
+                field_factors=(factor,),
+                starts=(start,),
+            )
+            draws[k] = dataclasses.replace(
+                draw_groups(p.processed, 1, key, one, star)[0], index=k
+            )
+    return spec, star, draws, variant
 
 
 def _members(p):
     for k in range(p.settings["members"]):
         p.run_member(k)
     return {"n_members": int(p.settings["members"])}
+
+
+def _edge_flux(member, star):
+    """The fraction of a member's image in the outer two pixels of its grid."""
+    model = member.result.model
+    pixels = onp.asarray((model.env if star else model).brightness)
+    return float(1.0 - pixels[2:-2, 2:-2].sum() / pixels.sum())
 
 
 def _combine(p):
@@ -451,11 +486,12 @@ def _combine(p):
     data, ov = p.processed, p._report("overview")
     spec, star, draws, _ = _member_setup(p)
     # V² and closure phases are judged separately.
-    parts = [
-        data.select(observables=k)
+    blocks = [
+        (k, block)
         for k, block in (("vis", data.vis), ("phi", data.phi))
         if onp.size(block)
     ]
+    parts = [data.select(observables=k) for k, _ in blocks]
     nan = float("nan")
     groups = []
     for k, draw in sorted(draws.items()):
@@ -498,7 +534,10 @@ def _combine(p):
         "short_baseline_mean": sb_mean,
         "short_baseline_error": sb_error,
         "flip_dchi2": float(diagnosis.checks["flip_dchi2"]),
-        "edge_flux": float(max(diagnosis.checks["edge_flux"])),
+        # The widest field's outer pixels hide a smaller member's edge: each
+        # kept member is judged on its own grid.
+        "edge_flux": max(_edge_flux(m, star) for m in kept),
+        "chi2_red_mixture": dict(zip((k for k, _ in blocks), ens.chi2_red)),
         "star_fraction": 1.0 - fraction,
         "n_members": len(ens.members),
         "n_kept": len(kept),
