@@ -3,6 +3,10 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
+This module is not final and claims no parity with MPoL or with published
+DSHARP analyses; a comparison with MPoL on ALMA IM Lup data is in progress in
+virgil-validation.
+
 [`virgil.radio`](api/radio.md) fits calibrated complex visibilities at
 arbitrary (u, v) points, the data of any radio or millimetre array whose
 visibilities are in a CASA measurement set. Any [source model](source_models.md) works, including a pixel
@@ -23,6 +27,10 @@ pip install "virgil-astro[radio]"
 Python 3.14. `ComplexVisData.from_arrays` needs nothing extra.
 `casatools` also needs CASA's measures data (see CASA's `casaconfig`) on
 first use.
+
+The extra brings `casatools>=6.6`. On some systems casatools 6.7.6 fails to
+import with a missing `OPENSSL_3.0.1` symbol; casatools 6.7.0.31 works
+(`pip install "casatools==6.7.0.31"`). virgil does not pin the version.
 
 ## Conventions
 

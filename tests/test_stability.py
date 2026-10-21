@@ -41,6 +41,7 @@ EXPECTED = {
     "virgil.svi": {"*"},
     "virgil.metrics": {"*"},
     "virgil.radio": {"*"},
+    "virgil.crossval": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
         "MultipoleDisk",

@@ -188,6 +188,8 @@ def _half_position(part, x0, resolution, diam):
         hess = onp.asarray(
             _negative_marginal_hessian(np.asarray(x), dof, d64, surface, dm)
         )
+    if not onp.all(onp.isfinite(hess)):
+        return None
     cov = onp.linalg.pinv(hess)[:2, :2]
     if not (
         onp.all(onp.isfinite(cov)) and onp.all(onp.linalg.eigvalsh(cov) > 0)
