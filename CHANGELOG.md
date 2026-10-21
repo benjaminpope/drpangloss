@@ -7,6 +7,14 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Changed
+
+- Docs: four slow example pages run faster on a GPU, with the same science.
+  `limb_darkening` scans the uniform-disk diameter in one vectorized,
+  compiled call; the L-curve sweeps of `imaging_rml` and `imaging_gp` use six
+  weights instead of 11; `detection_roc` searches 32 draws at once
+  (`draw_batch=32`).
+
 ## 0.4.0 (2026-10-18)
 
 Everything listed as new was added after 0.3.0, which is on PyPI.

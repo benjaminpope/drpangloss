@@ -92,7 +92,7 @@ best companion at ΔRA = 88 mas, ΔDec = 40 mas, flux = 4.85e-03 (truth: 60.6 ma
 
 To learn how often noise alone gives so large a $\Delta\chi^2$, and how often a real companion is found, we repeat the search on simulated observations with [`injection_recovery`](api/detection.md#virgil.detection.injection_recovery). It simulates `n_null` companion-free **null draws**, with Gaussian noise from the template's errors ([`gaussian_null`](api/detection.md#virgil.detection.gaussian_null)), and one observation per companion in `injections`, here from [`injection_grid`](api/detection.md#virgil.detection.injection_grid): 4 separations from 40 to 100 mas times 8 fluxes from $10^{-3}$ to $3\times10^{-2}$, each at 40 random position angles. One compiled function searches every simulation exactly as the real data were searched, and returns a [`DetectionMC`](api/detection.md#virgil.detection.DetectionMC), a plain NumPy container from which everything below is computed.
 
-With 10,000 null draws, about 13 lie above the 0.135% threshold and pin it down; `draw_batch=8` searches eight at once, faster on a CPU. To split a larger run over cluster array jobs with different seeds, `save` each result and merge them with `DetectionMC.concatenate`.
+With 10,000 null draws, about 13 lie above the 0.135% threshold and pin it down; `draw_batch=32` searches 32 at once, which is faster on a CPU and on a GPU, where one search leaves the device idle. To split a larger run over cluster array jobs with different seeds, `save` each result and merge them with `DetectionMC.concatenate`.
 
 ```python
 FLUXES = onp.geomspace(1e-3, 3e-2, 8)
@@ -106,7 +106,7 @@ mc = injection_recovery(
     key=0,
     n_null=10_000,
     injections=injections,
-    draw_batch=8,
+    draw_batch=32,
     progress=False,
 )
 print(f"{mc.n_null} null and {mc.n_injected} injected searches")
@@ -228,11 +228,11 @@ real_noise = gaussian_null(null_scene, template, error_scale=1.5)
 bad = real_noise(jax.random.PRNGKey(11))  # companion-free, errors too small
 truth_mc = injection_recovery(  # what the wrong errors really give
     BinaryModelCartesian, null_scene, template, grid, key=2,
-    n_null=2000, noise=real_noise, draw_batch=8, progress=False,
+    n_null=2000, noise=real_noise, draw_batch=32, progress=False,
 )
 boot_mc = injection_recovery(  # calibrated on the data's own residuals
     BinaryModelCartesian, null_scene, bad, grid, key=3,
-    n_null=2000, noise="bootstrap", draw_batch=8, progress=False,
+    n_null=2000, noise="bootstrap", draw_batch=32, progress=False,
 )
 factors = rescale_errors(null_scene, bad)[1]
 

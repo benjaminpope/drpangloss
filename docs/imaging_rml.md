@@ -134,7 +134,7 @@ converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 
 Here both starting images are swept, and the two criteria are marked on each curve.
 
 ```python
-weights = jnp.logspace(3.5, 1.0, 11)
+weights = jnp.logspace(3.5, 1.0, 6)
 curves = {kind: l_curve(s, image_priors(s) | {"env.flux": dist.LogUniform(1e-3, 2.0)}, data, MaxEntropy(1.0, path="env"), weights, max_steps=200_000) for kind, s in starts.items()}
 
 fig, ax = plt.subplots(figsize=(6, 4.5))
