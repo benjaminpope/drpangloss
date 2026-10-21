@@ -9,7 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### `ImagingPipeline`: a model-independent image (provisional)
 
-- `virgil.pipeline.ImagingPipeline` (CLI `virgil-pipeline image`) images a dataset with a Gaussian-process prior whose hyperparameters are chosen by evidence, decides by ΔlogZ (5 nats) whether a central star is present, and writes a sky-oriented FITS image (`Result.image()`, a `SkyImage`), the fitted models and a quicklook whose first cell says that a good fit does not promise the morphology. Ten checks, with the raw χ²/N split into V² and closure phases. This first version fits one member; CLEAN starts, the ensemble, classical regularizers, `anneal` and the channels come later. Design in `design/imaging_pipeline.md`.
+- `virgil.pipeline.ImagingPipeline` (CLI `virgil-pipeline image`) images a dataset with a Gaussian-process prior whose hyperparameters are chosen by evidence, decides by ΔlogZ (5 nats) whether a central star is present, and writes a sky-oriented FITS image (`Result.image()`, a `SkyImage`), the fitted models and a quicklook whose first cell says that a good fit does not promise the morphology. Ten checks, with the raw χ²/N split into V² and closure phases. The image is the mean of an ensemble of up to 8 members (default 8, at shared hyperparameters), with their spread as `sigma.fits`; CLEAN starts, classical regularizers, `anneal` and the channels come later. Design in `design/imaging_pipeline.md`.
 
 ### Fixed
 
@@ -23,6 +23,9 @@ anything before 1.0 may change between minor versions.
   one). The search now ranks and refines on the plain likelihood and applies
   the mixture as a polish of each mode found, so the mixture can down-weight a
   night of a basin but cannot hide the basin.
+
+- `crossval.aggregate` ranks a setting with a NaN score last (with a warning) instead of choosing it as `best` or raising `IndexError`, raises `ValueError` if every setting is NaN, and no longer fails with a single fold; a group whose scores are all NaN has `group_best = -1`.
+- `AliasResult.unseeded` lists only nights with a blocking flag, and the `night_flags` check says that non-blocking flags are reported only. `OrbitPipeline` rejects `outlier_eps` outside [0, 1), and `ImagingPipeline` validates `wavel_range` and `error_floor` before loading. `OrbitPipeline`'s summary `search` section gains `outliers` and `night_flags`; `broad_loglike` is in `virgil.epochs.__all__`.
 
 ### Night flags inform instead of excluding
 

@@ -9,6 +9,7 @@ import pytest
 from virgil import CalibrationNuisance, ComplexVisData, Image
 from virgil._geometry import _FT_DEFAULTS
 from virgil.crossval import (
+    aggregate,
     aggregate_files,
     cross_validate,
     cv_task,
@@ -256,3 +257,46 @@ def test_radio_smoke():
         out["group_score"].sum(axis=1), out["score"], rtol=1e-6
     )
     assert sum(r["n_test"] for r in out["records"][:2]) == n
+
+
+def _record(setting, fold, score):
+    return {"setting": setting, "fold": fold, "score": score, "chi2": None}
+
+
+@pytest.mark.parametrize("settings", [[0.1, 1.0, 10.0], ["a", "b", "c"]])
+def test_aggregate_ranks_nan_scores_last(settings):
+    scores = {settings[0]: onp.nan, settings[1]: 2.0, settings[2]: 3.0}
+    records = [_record(s, k, v) for s, v in scores.items() for k in range(3)]
+    with pytest.warns(UserWarning, match="NaN"):
+        out = aggregate(records)
+    assert out["settings"][out["best"]] == settings[1]
+    if out["one_se"] is not None:
+        assert out["settings"][out["one_se"]] != settings[0]
+
+
+def test_aggregate_all_nan_scores_raise():
+    records = [_record(s, k, onp.nan) for s in (1.0, 2.0) for k in range(2)]
+    with pytest.raises(ValueError, match="NaN"):
+        aggregate(records)
+
+
+def test_aggregate_one_fold_has_no_standard_error():
+    records = [
+        _record(s, 0, v) for s, v in ((0.1, 3.0), (1.0, 1.0), (10.0, 2.0))
+    ]
+    out = aggregate(records)
+    assert out["best"] == 1 and out["one_se"] == 1
+
+
+def test_aggregate_group_with_only_nan_scores_has_no_best():
+    def record(setting, fold):
+        return {
+            **_record(setting, fold, 1.0 + setting),
+            "group_labels": ["g0", "g1"],
+            "group_score": [1.0 + setting, onp.nan],
+            "group_chi2": [None, None],
+            "group_n": [1, 1],
+        }
+
+    out = aggregate([record(s, k) for s in (1.0, 2.0) for k in range(2)])
+    assert out["group_best"].tolist() == [0, -1]

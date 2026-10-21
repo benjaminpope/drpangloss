@@ -178,6 +178,8 @@ def test_settings_are_validated(data):
         {"sigmas": []},
         {"members": 0},
         {"members": 9},
+        {"wavel_range": [1e-6]},
+        {"error_floor": 0.1},
     ):
         with pytest.raises(ValueError):
             ImagingPipeline(data, **bad)

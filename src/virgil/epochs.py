@@ -88,6 +88,7 @@ __all__ = [
     "PrimaryDiameter",
     "RESOLVE_NATS",
     "RankedOrbits",
+    "broad_loglike",
     "chain_starts",
     "epoch_positions",
     "estimate_primary_diameter",

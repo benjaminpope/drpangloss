@@ -2002,7 +2002,7 @@ class Image(Component):
         it, as in MPoL's ``GaussConvFourier``: the visibilities are the pixel
         transform times the analytic Gaussian, exact at any uv point for every
         ``ft``, and ``smoothed()`` gives the
-        convolved pixels. Regularisers can act on either (their ``smoothed``
+        convolved pixels. Regularizers can act on either (their ``smoothed``
         option). Default ``None``: no smoothing. It compounds with
         ``CalibrationNuisance.taper_fwhm_mas``, which tapers any scene.
 
