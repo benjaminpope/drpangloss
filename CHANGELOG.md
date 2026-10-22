@@ -5,7 +5,7 @@ All notable changes to this project are recorded here, in the style of
 [semantic versioning](https://semver.org/), with the usual caveat that
 anything before 1.0 may change between minor versions.
 
-## 0.4.1 (2026-10-22)
+## 0.4.1 (2026-10-23)
 
 0.4.1 is a consolidation release. It adds no new model families. It makes the
 existing code shorter to read, safer by default on aperture-masking and DISCO
