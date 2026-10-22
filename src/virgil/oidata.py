@@ -50,6 +50,17 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     target : str or int, optional
         For OIFITS input, the target to keep (name or ``TARGET_ID``); required
         when the file holds more than one.
+    extras : sequence of str, optional
+        For OIFITS input, extra observables to read (as `read_oifits`);
+        default ``()``, none.
+    bandwidth : bool, optional
+        For OIFITS input, keep the channel widths (``EFF_BAND``, metres) as
+        ``bandwidth`` so models are smeared over each channel; default False,
+        ``bandwidth`` is None. For a dictionary give a ``bandwidth`` key.
+    insname : str or sequence of str, optional
+        For OIFITS input, the ``INSNAME`` table(s) to keep; None keeps all.
+        A GRAVITY file with fringe-tracker and science tables raises
+        ``ValueError`` without it.
 
     Notes
     -----

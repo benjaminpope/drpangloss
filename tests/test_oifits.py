@@ -204,6 +204,14 @@ def test_read_oifits_record_matches_oidata(tmp_path):
     assert np.allclose(OIData(record).phi, OIData(path).phi)
 
 
+def test_writing_the_flat_record_explains_what_to_write(tmp_path):
+    record = read_oifits(write_oifits(_tables(), tmp_path / "rec.oifits"))
+    with pytest.raises(ValueError, match=r"OIData\(record\)"):
+        write_oifits(record, tmp_path / "again.oifits")
+    again = write_oifits(OIData(record), tmp_path / "again.oifits")
+    assert np.allclose(OIData(again).vis, OIData(record).vis)
+
+
 # === OIData observables built from dictionaries ===
 
 
