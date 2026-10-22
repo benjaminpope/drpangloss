@@ -2,7 +2,7 @@
 
 Status (2026-10-22): **all five pipelines are built** (`BinaryPipeline`,
 `StarPipeline`, `DiskPipeline`, `OrbitPipeline`, `ImagingPipeline`) and
-provisional (`docs/stability.md`). `OrbitPipeline` is planned in
+provisional (`docs/stability.md`). `OrbitPipeline` is designed in
 [`orbit_pipeline.md`](orbit_pipeline.md); `ImagingPipeline` has its first
 version (one member), designed in [`imaging_pipeline.md`](imaging_pipeline.md).
 
