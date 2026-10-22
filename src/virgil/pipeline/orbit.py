@@ -792,46 +792,40 @@ def _alias_search(p, data, positions, times, checkpoint_dir):
 
     # The default run is blind: no period window, start or paper prior
     # (test_blind_search_resolves_the_two_season_gap_alias).
+    s = p.settings
     try:
-        return _fit_aliases(
-            p, fit_orbit_aliases, data, positions, times, checkpoint_dir
+        return fit_orbit_aliases(
+            data,
+            None if s["period_range"] is None else tuple(s["period_range"]),
+            positions=positions,
+            times=times,
+            a_range=tuple(s["a_range"]),
+            flux_range=tuple(s["flux_range"]),
+            ecc_max=s["ecc_max"],
+            s_max=s["s_max"],
+            n_candidates=s["n_candidates"],
+            n_refine=s["n_refine"],
+            max_steps=s["max_steps"],
+            sign_free=s["sign_free"],
+            n_is=s["n_is"],
+            seed=s["seed"],
+            checkpoint_dir=checkpoint_dir,
+            primary_diam=s["primary_diam"],
+            vis_amp=s["vis_amp"]
+            if isinstance(s["vis_amp"], bool)
+            else tuple(s["vis_amp"]),
+            flip_flux=s["flip_flux"],
+            n_bands_max=s["n_bands_max"],
+            temper=s["temper"],
+            outlier_eps=s["outlier_eps"],
+            batch_size=s["batch_size"],
+            memory_budget=s["memory_budget"],
         )
     except ValueError as error:
         # period_window names its own argument, which a pipeline user lacks.
         raise ValueError(
             str(error).replace("Pass p_range.", "Set period_range.")
         ) from error
-
-
-def _fit_aliases(p, fit_orbit_aliases, data, positions, times, checkpoint_dir):
-    s = p.settings
-    return fit_orbit_aliases(
-        data,
-        None if s["period_range"] is None else tuple(s["period_range"]),
-        positions=positions,
-        times=times,
-        a_range=tuple(s["a_range"]),
-        flux_range=tuple(s["flux_range"]),
-        ecc_max=s["ecc_max"],
-        s_max=s["s_max"],
-        n_candidates=s["n_candidates"],
-        n_refine=s["n_refine"],
-        max_steps=s["max_steps"],
-        sign_free=s["sign_free"],
-        n_is=s["n_is"],
-        seed=s["seed"],
-        checkpoint_dir=checkpoint_dir,
-        primary_diam=s["primary_diam"],
-        vis_amp=s["vis_amp"]
-        if isinstance(s["vis_amp"], bool)
-        else tuple(s["vis_amp"]),
-        flip_flux=s["flip_flux"],
-        n_bands_max=s["n_bands_max"],
-        temper=s["temper"],
-        outlier_eps=s["outlier_eps"],
-        batch_size=s["batch_size"],
-        memory_budget=s["memory_budget"],
-    )
 
 
 @_x64
