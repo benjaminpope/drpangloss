@@ -455,3 +455,38 @@ steps for w = 1e4 → 0.1 (identical χ²):
 
 Wall times are one run each on a loaded laptop. Float64 is at least as good;
 float32 is within the line search's run-to-run variation at the last weight.
+
+## L-BFGS memory sweep (2026-10-22)
+
+Steps to converge at the weakest weight (w = 0.1) of the L-curves with
+`precondition="diag"` and `MaxEntropy` (entropy metric, Rademacher probes), by
+L-BFGS memory `m`; `*` is not converged in 20 000. One run each, laptop under
+load; float32 at the weakest weight is noisy (line-search noise floor).
+
+| case | 5 | 10 | 20 | 30 | 50 | 60 | 75 | 100 | 150 | 200 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 41² VLTI-like, float64 | 20000* | 13748 | 17502 | 8999 | 4527 | 4296 | 3695 | 2837 | 2316 | 2644 |
+| 41² VLTI-like, float32 | 20000* | 20000* | 20000* | 20000* | 19524 | 14480 | 7225 | 3416 | 9401 | 9065 |
+| 41² VLTI-like, float64, no `precondition` | 20000* | 20000* | 20000* | 20000* | 20000* | 12597 | 8471 | 6541 | – | – |
+| 32² AMI, float64 | 3072 | 2882 | 2222 | 1546 | 725 | 667 | 724 | 754 | – | – |
+| 32² AMI, float32 | fails at w ≤ 10 for every m | | | | | | | | | |
+
+Wall time follows the steps (41², float64: 39 s at m = 5, 19 s at 50 and
+100). The history is `2·m·n` floats: 2.7 MB at m = 100 for these images, 1.6 GB
+for 10⁶ float64 pixels. Other cases:
+
+- 12² ensemble corner fits (`tv`, `maxent`, `starlet`, 144 coordinates,
+  converged): 547 965 steps (88 s) at m = 20, 269 727 (42 s) at 50, 74 256
+  (19 s) at 100.
+- A 3-parameter binary fit by L-BFGS: 14 steps for every m from 5 to 100.
+- `StarPipeline`, `BinaryPipeline`, `ImagePipeline` and `DiskPipeline` (the
+  test fixtures; `OrbitPipeline` makes no `fit` call): every `fit` is LM, which
+  ignores the memory, so the pipelines do not need a default of their own.
+
+Which cases need more than 50: the 41² image (float64 and float32) and the
+ensemble corner fits; 32² AMI and parametric fits do not (50–60 is as good as
+100). The smallest tested `m` within 10 % of the best everywhere it matters
+is not one number (float64 41² keeps improving to 150, float32 41² is best at
+100, 32² AMI at 60), so the default is 100, with one rule: it is cut so that the
+history stays under 2 GB, which binds only above 1.25 × 10⁶ float64 coordinates.
+An explicit `lbfgs_memory` is used as given.

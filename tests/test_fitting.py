@@ -1319,3 +1319,16 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
     assert not result.info["at_bound"]
     for path, value in truth_values.items():
         assert result.values[path] == pytest.approx(value, rel=1e-2)
+
+
+def test_the_lbfgs_history_is_100_unless_it_would_pass_the_byte_budget(
+    monkeypatch,
+):
+    from virgil import fitting
+
+    z = {"x": onp.zeros(1000)}
+    assert fitting._lbfgs_memory(None, z) == 100
+    assert fitting._lbfgs_memory(7, z) == 7
+    monkeypatch.setattr(fitting, "_LBFGS_BYTES", 2 * 1000 * 8 * 10)
+    assert fitting._lbfgs_memory(None, z) == 10
+    assert fitting._lbfgs_memory(500, z) == 500
