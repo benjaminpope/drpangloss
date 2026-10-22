@@ -853,7 +853,9 @@ def starting_image(
     [`field_of_view`][virgil.imaging.field_of_view]), with pixels ``oversample``
     times finer than Nyquist and the fitted flux. Fit it with
     ``fit(start, image_priors(start), data, regularizers)``; see
-    [imaging with regularizers](../imaging_rml.md).
+    [imaging with regularizers](../imaging_rml.md). The image flux is fixed
+    unless fitted: add a prior on ``"env.flux"`` (``"flux"`` with
+    ``star=False``) to ``image_priors(start)``.
 
     Parameters
     ----------
@@ -876,7 +878,9 @@ def starting_image(
     aperture_mas : float, optional
         A telescope's field of view, as a ceiling on field and envelope width.
     pad_to_mas : float, optional
-        Least grid width (mas), padded with empty pixels; may exceed λ / B_min.
+        Least grid width (mas), padded with empty pixels; may exceed λ / B_min,
+        but beyond it the data do not constrain the flux, so pair a large field
+        with a support or priors.
 
     Returns
     -------
@@ -2056,9 +2060,13 @@ def log_evidence(model, data, path="env"):
     up to a data-only constant, with ``z`` the whitened latents of the Image's
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
-    ``L`` the likelihood normalizer. Compare it across hyperparameters; it uses
-    the quoted errors, so no ``noise=`` terms or per-dataset models. See
-    [Evidence](../imaging_gp.md#choosing-and-from-the-evidence).
+    ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
+    conditional on those held in ``model`` (or give them log-uniform priors with
+    [`gp_priors`][virgil.models.gp_priors] and sample). Exact only for a linear
+    model, and it assumes correct error bars (see
+    [`error_scale`][virgil.imaging.error_scale]). It uses the quoted errors, so
+    no ``noise=`` terms or per-dataset models. See
+    [Evidence](../imaging_gp.md#choosing-and-l-from-the-evidence).
     Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
@@ -2119,7 +2127,10 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
     MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
     Only the latents vary, so the spread is narrower than the full posterior's
-    where other parameters correlate with the image. It uses the quoted errors.
+    where other parameters correlate with the image. Exact only for a linear
+    model, assumes correct error bars and is conditional on the hyperparameters
+    held in ``model`` (or give them log-uniform priors with
+    [`gp_priors`][virgil.models.gp_priors] and sample). It uses the quoted errors.
 
     Parameters
     ----------
@@ -2338,6 +2349,9 @@ def error_scale(model, data, path="env", *, by_observable=False):
     of parameters the data measure; see [Error scale](../imaging_gp.md#are-the-error-bars-right).
     Fit, call this, rescale with
     [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale], refit.
+    Rescale before choosing hyperparameters: bars that are too large make the
+    evidence over-regularize. ``s`` much greater than 1 means a failed or
+    inadequate model, not a noise fix: unmodelled structure is absorbed into ``s``.
     It uses the quoted errors, so no ``noise=`` terms or per-dataset models.
     Source: MacKay (1992), [references](../references.md#mackay1992).
 

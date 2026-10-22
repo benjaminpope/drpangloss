@@ -1104,7 +1104,7 @@ def rank_orbits(
     scales="marginal",
     noise=None,
     dof=1.0,
-    s_max=None,
+    s_max=None,  # deliberate: no flux is profiled here, so the scale integral needs no bound (score_orbits: 5)
     batch_size=None,
     dtype="float64",
 ):
@@ -1127,11 +1127,14 @@ def rank_orbits(
     scales : {"marginal", "quoted"}, optional
         ``"marginal"`` (default) integrates each dataset's error scales out
         ([`marginal_loglike`][virgil.epochs.marginal_loglike]); ``"quoted"`` uses
-        ``Epochs.loglike`` on the quoted errors.
+        ``Epochs.loglike`` on the quoted errors (the score is ``-χ²/2``, up to a
+        constant).
     noise : dict, optional
         Noise values keyed by epoch or dataset name ([conventions](../conventions.md)).
     dof, s_max : optional
-        As for ``marginal_loglike``.
+        As for ``marginal_loglike``; ``dof`` is a number or a dict keyed by
+        dataset or epoch name. ``s_max`` defaults to None (no bound; 10 for data
+        needing numeric integration), ``score_orbits`` to 5.
     batch_size : int, optional
         Orbits evaluated together (default about a million model visibilities).
     dtype : {"float64", "float32"}, optional
@@ -2202,6 +2205,8 @@ def epoch_positions(
     ``n_peaks`` best maxima and ranks them: the best is the position, its
     curvature the covariance. Each night also gets flags. The positions only
     start an orbit fit ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    Take ``primary_diam`` from the data or a calibrator, never from the orbit
+    under test (that is circular).
 
     Parameters
     ----------
@@ -2221,14 +2226,20 @@ def epoch_positions(
         (None: everywhere); see [night flags](../orbit_methods.md#night-flags).
     primary_diam : float, optional
         Fixed uniform-disk primary diameter (mas); None or 0 is a point primary.
+        Never the diameter implied by the orbit under test.
     flag_nights, flag_sep_blocks, flag_chi2_groups, flag_alias_nats, flag_min_gap, flag_chi2_factor, flag_sep_fraction, flag_flux_tol : optional
         Night flags and their thresholds: see
-        [night flags](../orbit_methods.md#night-flags). None disables a threshold.
+        [night flags](../orbit_methods.md#night-flags). None disables a numeric
+        threshold; ``flag_nights``, ``flag_sep_blocks`` and ``flag_chi2_groups``
+        are switches, not thresholds.
 
     Returns
     -------
     EpochPositions
-        ``dra``, ``ddec`` (mas, East and North of the primary), ``cov``, ``flags``.
+        ``dra``, ``ddec`` (mas, East and North of the primary), ``cov``,
+        ``flags``, and per night ``peaks`` (the catalogue of ``n_peaks``),
+        ``gap_marginal`` (nats between the best peak and its rival) and
+        ``chi2_raw`` (χ² on the quoted errors).
 
     Warns
     -----
@@ -2906,6 +2917,7 @@ def start_from_positions(
     Thiele-Innes orbits, a ranking by all the data, then
     [`fit`][virgil.fitting.fit] from the best distinct orbits
     ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    Nothing here enters the posterior: it only chooses where the fits start.
 
     Parameters
     ----------
@@ -2924,14 +2936,19 @@ def start_from_positions(
     t_ref : float
         Reference time (MJD) of the starting orbits (your model's).
     scales, noise : optional
-        As for ``rank_orbits`` ([conventions](../conventions.md)).
+        ``scales`` (default ``"marginal"``) as for ``rank_orbits``
+        ([conventions](../conventions.md)); ``noise`` feeds only the refinement
+        fits, not the ranking.
     dof, s_max, batch_size, eccs, n_phase : optional
         Passed to ``epoch_positions``, the ranking and ``starting_orbits``.
     n_candidates, n_refine, min_gap : optional
-        Orbits ranked, distinct ones refined, and the ``gap_marginal`` a dataset
-        needs to seed (the rest are in ``OrbitStart.ambiguous``).
+        Orbits ranked (default 200), distinct ones refined (4), and the
+        ``gap_marginal`` (nats, default 5) a dataset needs to seed (the rest are
+        in ``OrbitStart.ambiguous``).
     refine_positions, n_peaks, primary_diam, flag_options, skip_flagged : optional
-        As for ``epoch_positions`` (``flag_options``: its ``flag_*`` keywords).
+        As for ``epoch_positions`` (``flag_options``: its ``flag_*`` keywords,
+        ``flag_min_gap`` defaulting to ``min_gap``); flagged datasets seed
+        nothing but still count (default True).
     **fit_options
         Passed to the refinement fits; one that raises goes in ``OrbitStart.failed``.
 
@@ -3007,6 +3024,8 @@ def start_from_positions(
         dof=dof,
         s_max=s_max,
     )
+    # deliberate: the ranking ignores ``noise=``; nothing here enters the
+    # posterior, the start only picks where the fits begin.
     ranked = _ranked(orbits, loglike, data)
     chosen = _distinct(ranked, n_refine, 0.5 * ranked.resolution_mas)
     if not chosen:

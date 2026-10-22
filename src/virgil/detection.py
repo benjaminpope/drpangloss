@@ -104,7 +104,8 @@ def detection_statistics(
     -----
     RuntimeWarning
         With concrete data, if the flux axis does not resolve the peak, the
-        best flux lies above it, or the optimizer did not converge.
+        best flux lies above it, or the optimizer did not converge. Nothing is
+        checked under ``jit`` or ``lax.map``: test ``flux_peak_steps`` yourself.
 
     Examples
     --------
@@ -286,7 +287,7 @@ def _flux_step(flux_axis, flux):
 def _warn_if_concrete(stats, success, grid, flux_key):
     """The checks of :func:`detection_statistics` that need numbers."""
     steps = concrete(stats["flux_peak_steps"])
-    if steps is None:
+    if steps is None:  # caveat: traced under jit, so none of these checks run
         return
     warn_unconverged(success, "detection_statistics")
     flux = float(concrete(stats[flux_key]))
@@ -608,7 +609,8 @@ def injection_recovery(
     in one compiled kernel; see
     [Detection statistics](../detection_statistics.md#injection).
 
-    Source: Mawet et al. (2014), [references](../references.md#mawet2014).
+    Source: Mawet et al. (2014) for the small-sample false-alarm correction (not
+    applied here), [references](../references.md#mawet2014).
 
     Parameters
     ----------

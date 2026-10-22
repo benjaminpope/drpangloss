@@ -295,8 +295,9 @@ def variational(
     """Approximate the posterior with a guide fitted by numpyro's SVI.
 
     Maximizes the ELBO with Adam on the posterior of
-    [`numpyro_model`][virgil.likelihood.numpyro_model], started at the Laplace
-    approximation at ``start``. Which guide to use and how to check the result:
+    [`numpyro_model`][virgil.likelihood.numpyro_model]. With ``start`` the guide
+    starts at the Laplace approximation there; with ``start=None`` at the priors'
+    medians with width ``init_scale``. Which guide to use and how to check the result:
     [Variational inference](../variational_inference.md).
 
     Parameters
@@ -318,7 +319,8 @@ def variational(
     optimizer, learning_rate : optional
         Optimizer (default ``optax.adam``) and step size (3e-3).
     key, flat_coordinates : optional
-        As for ``numpyro_model``.
+        ``key`` (default ``PRNGKey(0)``) and ``flat_coordinates`` as for
+        ``numpyro_model``.
     dtype : {"float64", "float32"}, optional
         Precision (default ``"float64"``, as for ``fit``).
     dense_start, init_scale : optional
@@ -390,8 +392,8 @@ def variational(
             (autoguide.AutoDelta, autoguide.AutoLaplaceApproximation),
         )
         if dense_start and regularizers and values_c is not None:
-            # gauss_newton_mass takes no regularizers: without them an
-            # image's curvature is singular, so start at init_scale.
+            # caveat: gauss_newton_mass takes no regularizers (an image's curvature
+            # is singular without them), so with them the start is init_scale wide.
             warnings.warn(
                 "The Gauss–Newton starting width leaves out regularizers; "
                 f"with them, the guide starts with width "
