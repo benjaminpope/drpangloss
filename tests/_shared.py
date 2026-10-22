@@ -82,3 +82,34 @@ def stage_outputs(pipeline, stage):
 def started_times(pipeline):
     run = json.loads((pipeline.output / "run.json").read_text())
     return {name: s.get("started") for name, s in run["stages"].items()}
+
+
+def executed_quicklook(folder, images):
+    """Execute the quicklook notebook of the run in ``folder``; check it.
+
+    The run fixtures are built with ``quicklook_execute=False`` (a kernel
+    start is the slowest part of a run and only this check needs it). The
+    cell structure is common to every pipeline: prose before each code
+    cell, one output per code cell, none an error, ``images`` figures.
+    Returns ``(cells, code)``: the cells and the indices of the code cells.
+    """
+    from virgil.pipeline import _quicklook
+
+    path = _quicklook.write_quicklook(folder, execute=True)
+    cells = json.loads(path.read_text())["cells"]
+    assert (
+        cells[0]["cell_type"] == "markdown"
+        and cells[-1]["cell_type"] == "markdown"
+    )
+    code = [i for i, c in enumerate(cells) if c["cell_type"] == "code"]
+    for i in code:
+        assert cells[i - 1]["cell_type"] == "markdown"  # prose before code
+        assert len(cells[i]["outputs"]) == 1, cells[i]["source"]  # one output
+        assert cells[i]["outputs"][0]["output_type"] != "error"
+    n_images = sum(
+        "image/png" in o.get("data", {})
+        for i in code
+        for o in cells[i]["outputs"]
+    )
+    assert n_images == images
+    return cells, code

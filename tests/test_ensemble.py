@@ -440,6 +440,9 @@ def test_ensemble_recovers_two_blobs():
     )
     assert best.chi2_red[0] < 2.0
     scores = score(result.mean, truth.env)
+    # One fixed dataset and seed (the noise draw, key 7, is the only
+    # randomness): the margin over 0.8 is what a CI log should show.
+    print(f"two blobs: ncc {float(scores['ncc']):.3f} (floor 0.8)")
     assert scores["ncc"] > 0.8
 
 

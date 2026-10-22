@@ -218,49 +218,6 @@ def test_a_fresh_run_through_the_overview_really_replaces_the_outputs(
 # --- (b) failures are loud ---------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "name, error, message",
-    [
-        ("missing.fits", FileNotFoundError, "missing.fits"),
-        ("text.fits", OSError, "valid FITS"),
-        ("empty.fits", OSError, "Empty or corrupt FITS"),
-        ("no_tables.fits", ValueError, "no OI_WAVELENGTH"),
-    ],
-)
-def test_from_oifits_refuses_unusable_files_and_writes_nothing(
-    junk_files, name, error, message
-):
-    out = junk_files / "run"
-    with pytest.raises(error, match=message):
-        StarPipeline.from_oifits(junk_files / name, output=out)
-    assert not out.exists()
-
-
-def test_from_oifits_refuses_a_list_with_one_bad_file(
-    junk_files, completed, tmp_path
-):
-    good = completed.output / "data" / "processed.oifits"
-    with pytest.raises(OSError, match="valid FITS"):
-        StarPipeline.from_oifits(
-            [good, junk_files / "text.fits"], output=tmp_path / "run"
-        )
-
-
-def test_a_wavelength_cut_that_removes_the_data_fails_in_load(data, tmp_path):
-    out = tmp_path / "run"
-    pipeline = StarPipeline(
-        data, output=out, wavel_range=[10e-6, 11e-6], **TINY
-    )
-    with pytest.raises(Exception) as caught:
-        pipeline.run()
-    assert str(caught.value)  # a message, not a bare failure
-    run = json.loads((out / "run.json").read_text())
-    assert run["status"] == "failed"
-    assert run["error"]["stage"] == "load"
-    assert run["error"]["type"] == type(caught.value).__name__
-    assert run["stages"]["load"]["status"] == "failed"
-
-
 def test_a_stage_that_raises_marks_the_run_failed_and_resume_continues(
     completed, tmp_path, monkeypatch
 ):

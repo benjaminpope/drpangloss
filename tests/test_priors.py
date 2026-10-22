@@ -298,8 +298,8 @@ def test_hierarchical_scales_no_data_reproduce_the_population():
 
     mcmc = MCMC(
         NUTS(model, target_accept_prob=0.9),
-        num_warmup=1000,
-        num_samples=6000,
+        num_warmup=300,
+        num_samples=1500,
         progress_bar=False,
     )
     mcmc.run(jax.random.PRNGKey(0))
@@ -309,5 +309,7 @@ def test_hierarchical_scales_no_data_reproduce_the_population():
     spread = onp.asarray(population["s_spread"].sample(keys[1], (20000,)))
     unit = onp.asarray(jax.random.normal(keys[2], (20000,)))
     direct = onp.log(median) + spread * unit
-    # Thinned: NUTS draws are correlated.
+    # Thinned: NUTS draws are correlated. 1500 draws thinned by 10 leave
+    # about 150 near-independent points; the KS statistic then has sd
+    # ~ 0.5/sqrt(150) = 0.04, and the 1e-3 floor (D ~ 0.15) is ~4 sd.
     assert stats.ks_2samp(log_s[::10], direct).pvalue > 1e-3

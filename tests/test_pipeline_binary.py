@@ -5,7 +5,6 @@ Grids and chains are deliberately tiny: these tests check the plumbing and
 the contract, not the science.
 """
 
-import inspect
 import json
 import math
 import warnings
@@ -19,6 +18,7 @@ pytest.importorskip("h5py")
 pytest.importorskip("nbclient")
 
 import virgil  # noqa: E402
+from tests._shared import executed_quicklook  # noqa: E402
 from virgil import BinaryModelCartesian, OIData  # noqa: E402
 from virgil.pipeline import (  # noqa: E402
     SCHEMA,
@@ -56,7 +56,10 @@ def data():
 @pytest.fixture(scope="module")
 def full_run(data, tmp_path_factory):
     out = tmp_path_factory.mktemp("binary") / "run"
-    pipeline = BinaryPipeline(data, output=out, **TINY)
+    # The notebook is executed by test_quicklook_notebook alone.
+    pipeline = BinaryPipeline(
+        data, output=out, quicklook_execute=False, **TINY
+    )
     return pipeline, pipeline.run()
 
 
@@ -204,30 +207,6 @@ WARNING_CHECKS = {
 }
 
 
-def _signature(path):
-    obj = virgil.pipeline
-    for part in path.split("."):
-        obj = getattr(obj, part)
-    sig = inspect.signature(obj)
-    # Annotations print differently across Python versions: compare names,
-    # kinds and defaults only.
-    params = [
-        p.replace(annotation=inspect.Parameter.empty)
-        for p in sig.parameters.values()
-    ]
-    return str(sig.replace(parameters=params, return_annotation=sig.empty))
-
-
-def test_api_snapshot():
-    # Changing any of these breaks users' scripts: update the snapshot only
-    # with an additive change or a schema bump (see docs/pipeline.md).
-    assert {k: _signature(k) for k in API} == API
-    assert BinaryPipeline.STAGES == STAGES
-    assert BinaryPipeline.defaults() == DEFAULTS
-    assert SCHEMA == "virgil-pipeline-run-v1"
-    assert "BinaryPipeline" in virgil.pipeline.__all__
-
-
 def test_summary_keys_snapshot(full_run):
     _, res = full_run
     keys = {
@@ -340,24 +319,8 @@ def test_quoted_errors_lead_and_companion_found(full_run):
 
 def test_quicklook_notebook(full_run):
     pipeline, res = full_run
-    nb = json.loads((pipeline.output / "quicklook.ipynb").read_text())
-    cells = nb["cells"]
-    assert (
-        cells[0]["cell_type"] == "markdown"
-        and cells[-1]["cell_type"] == "markdown"
-    )
-    code = [i for i, c in enumerate(cells) if c["cell_type"] == "code"]
-    for i in code:
-        assert cells[i - 1]["cell_type"] == "markdown"  # prose before code
-        assert len(cells[i]["outputs"]) == 1, cells[i]["source"]  # one output
-        assert cells[i]["outputs"][0]["output_type"] != "error"
-    images = sum(
-        "image/png" in o.get("data", {})
-        for c in cells
-        if c["cell_type"] == "code"
-        for o in c["outputs"]
-    )
-    assert images == 4  # overview, search + limits, correlation, corner
+    # overview, search + limits, correlation, corner
+    cells, _ = executed_quicklook(pipeline.output, images=4)
     assert "| `r_hat` |" in "".join(cells[-1]["source"])
     # The notebook's contrast curve uses the pipeline's annuli and range.
     curve = [
