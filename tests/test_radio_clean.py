@@ -5,7 +5,7 @@ import pytest
 
 from virgil._utils import mas2rad
 from virgil.radio import ComplexVisData
-from virgil.radio_clean import _gaussian, clean, fit_beam
+from virgil.radio_clean import _auto_mask, _gaussian, clean, fit_beam
 
 S = 40.0  # mas per pixel
 N = 97
@@ -138,6 +138,17 @@ def test_auto_mask_finds_the_source_and_nsigma_stops():
     assert res.mask.sum() < 0.2 * N * N
     assert res.model.sum() == pytest.approx(1.0, rel=0.05)
     assert res.stop in ("nsigma", "no_progress", "niter")
+
+
+def test_auto_mask_seeds_the_peak_when_the_psf_sidelobe_is_high():
+    # sidelobethreshold x sidelobe x peak = 1.8 x the peak: the rule alone
+    # selects nothing, and clean() used to stop at once with no_progress
+    rng = onp.random.default_rng(3)
+    resid = _gaussian(
+        (N, N), (C - 5, C + 7), 6.0, 6.0, 0.0
+    ) + 0.01 * rng.normal(size=(N, N))
+    mask = _auto_mask(resid, 5.0, 0.6, 3.0, 5.0, 1.5)
+    assert mask[int(C - 5), int(C + 7)] and 0 < mask.sum() < 0.2 * N * N
 
 
 def test_user_mask_limits_components():

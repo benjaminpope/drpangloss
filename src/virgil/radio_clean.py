@@ -176,7 +176,11 @@ def _auto_mask(residual, beam_pix, psf_sidelobe, sidelobe, noise, low):
     ``max(noise × rms, sidelobe × sidelobe level × peak)``."""
     smooth = _Smoother(residual.shape)(residual, beam_pix * FWHM_TO_SIGMA)
     rms = _mad_rms(smooth)
-    high = max(noise * rms, sidelobe * psf_sidelobe * smooth.max())
+    # a poor PSF must not hide the brightest region: seed at half the peak at most
+    high = min(
+        max(noise * rms, sidelobe * psf_sidelobe * smooth.max()),
+        0.5 * smooth.max(),
+    )
     lab, n = ndimage.label(smooth > low * rms)
     if n == 0:
         return onp.zeros(residual.shape, bool)
