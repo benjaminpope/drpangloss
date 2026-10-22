@@ -47,6 +47,7 @@ from ._geometry import (
     pixel_offsets,
     separation_pa,
     rotate,
+    safe_azimuth,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -1963,11 +1964,7 @@ class Image(Component):
         self.smooth_fwhm_mas = (
             None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
         )
-        if ft not in ("auto", "dft", "nufft"):
-            raise ValueError(
-                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
-            )
-        self.ft = ft
+        self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
@@ -2114,6 +2111,26 @@ class _PixelRendered(Component):
     use the matrix transform.
     """
 
+    npix: int = eqx.field(static=True)
+    pixel_scale_mas: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
+
+    def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
+        """Validate and store the pixel grid and its transform."""
+        self.ft = _check_ft(ft)
+        self.rotation_deg = _check_rotation(rotation_deg)
+        self.npix = int(npix)
+        if self.npix <= 0 or self.npix % 2:
+            raise ValueError(f"npix must be positive and even, got {npix}.")
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        if not (
+            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
+        ):
+            raise ValueError(
+                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
+            )
+
     def _frame(self, grid):
         """Position angle of the pixel grid's "up" axis for these data."""
         if self.rotation_deg != "grid":
@@ -2149,6 +2166,13 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
+
+
+def _check_ft(ft):
+    """``ft`` if it is a valid transform name."""
+    if ft not in ("auto", "dft", "nufft"):
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    return ft
 
 
 def _check_rotation(rotation_deg):
@@ -2216,10 +2240,6 @@ class FlaredDisk(_PixelRendered):
     aspect: jax.Array
     flaring: jax.Array
     symmetric: jax.Array
-    npix: int = eqx.field(static=True)
-    pixel_scale_mas: float = eqx.field(static=True)
-    ft: str = eqx.field(static=True)
-    rotation_deg: float | str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2239,12 +2259,6 @@ class FlaredDisk(_PixelRendered):
         ft="auto",
         rotation_deg="grid",
     ):
-        if ft not in ("auto", "dft", "nufft"):
-            raise ValueError(
-                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
-            )
-        self.ft = ft
-        self.rotation_deg = _check_rotation(rotation_deg)
         self.radius = np.asarray(radius, dtype=float)
         self.fwhm = np.asarray(fwhm, dtype=float)
         self.inc = np.asarray(inc, dtype=float)
@@ -2253,16 +2267,7 @@ class FlaredDisk(_PixelRendered):
         self.aspect = np.asarray(aspect, dtype=float)
         self.flaring = np.asarray(flaring, dtype=float)
         self.symmetric = np.asarray(symmetric, dtype=float)
-        self.npix = int(npix)
-        if self.npix <= 0 or self.npix % 2:
-            raise ValueError(f"npix must be positive and even, got {npix}.")
-        self.pixel_scale_mas = float(pixel_scale_mas)
-        if not (
-            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
-        ):
-            raise ValueError(
-                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
-            )
+        self._set_grid(npix, pixel_scale_mas, ft, rotation_deg)
         self._place(flux, dra, ddec)
 
     def _phase_function(self, cos_theta, x, y):
@@ -4899,8 +4904,7 @@ class MultipoleDisk(Component):
         image = self.profile.intensity(r_ell, pixel_scale_mas / stretch)
         if self.harmonics is not None and self.harmonics.degree:
             # The azimuth runs from the deprojected North towards East.
-            origin = (xx_ell == 0.0) & (yy_ell == 0.0)
-            theta = np.arctan2(xx_ell, np.where(origin, 1.0, yy_ell))
+            theta = safe_azimuth(xx_ell, yy_ell)
             image = image * self.harmonics.factor(r_ell, theta)
         return image
 
