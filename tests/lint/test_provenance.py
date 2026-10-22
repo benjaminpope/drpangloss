@@ -345,6 +345,14 @@ def test_every_references_anchor_names_a_toml_key():
     assert not bad, f"references.md anchors with no TOML key: {bad}"
 
 
+def test_every_local_anchor_in_the_references_intro_names_a_toml_key():
+    intro = (ROOT / "references" / "references_intro.md").read_text(
+        encoding="utf-8"
+    )
+    bad = sorted(set(re.findall(r"\]\(#([\w-]+)\)", intro)) - set(REFS))
+    assert not bad, f"references_intro.md anchors with no TOML key: {bad}"
+
+
 def test_alt_years_say_why():
     bad = [
         k

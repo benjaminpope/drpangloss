@@ -32,7 +32,7 @@ against the arXiv abstract page, Crossref or NASA ADS.
   [Espinosa Lara & Rieutord 2011](#espinosalara2011); the implementation is
   Aaron Dotter's [GDit](#gdit), ported to JAX in his jax-interferometry), the
   spherical-harmonic star ([harmonix](#harmonix)), the Bessel functions
-  ([CEPHES](#cephes), via harmonix, now [jaxbessel](#jaxbessel)) and
+  (CEPHES, via harmonix, now [jaxbessel](#jaxbessel)) and
   spectrally dispersed data.
 - Max Charles: the image reconstruction in `virgil.imaging` is a port and
   extension of the visibility part of [dorito](#dorito), with ideas from Ian
