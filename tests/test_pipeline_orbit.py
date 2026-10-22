@@ -29,7 +29,6 @@ from virgil.pipeline import (  # noqa: E402
     Check,
     ConfigMismatchError,
     OrbitPipeline,
-    _io,
     cli,
     load,
 )
@@ -511,10 +510,8 @@ def test_epochs_and_dicts_are_equivalent_inputs(nights):
 def _write_nights(folder, nights):
     paths = []
     for name, data in nights.items():
-        tables, reason = _io.oidata_tables(data)
-        assert tables is not None, reason
         path = folder / f"{name}.oifits"
-        write_oifits(tables, path)
+        write_oifits(data, path)
         paths.append(str(path))
     return paths
 
