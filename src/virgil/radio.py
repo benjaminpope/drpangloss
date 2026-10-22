@@ -726,8 +726,8 @@ class ComplexVisData(eqx.Module):
         pixel_scale_mas,
         weighting="natural",
         robust=0.5,
-        nuisance=None,
         values=None,
+        nuisance=None,
         uv_cell=None,
         chunk_size=1_000_000,
         uvtaper=None,
@@ -736,7 +736,8 @@ class ComplexVisData(eqx.Module):
 
         The response to a unit point source at the phase centre, normalized
         to 1 there. See [`dirty_image`][virgil.radio.ComplexVisData.dirty_image]
-        for the parameters. On an even ``npix`` the phase centre lies between
+        for the parameters; ``values`` and ``nuisance`` together divide the
+        weights by the fitted ``s_d²`` (as ``use_sigma=True``). On an even ``npix`` the phase centre lies between
         four pixels (the convention of [`Image`][virgil.models.Image]), so the
         sampled peak is slightly below 1; use an odd ``npix`` for a pixel
         centred on it.
@@ -771,38 +772,22 @@ class ComplexVisData(eqx.Module):
     ):
         """Dirty image ``Σ w Re[V e^{+2πi(u x + v y)}] / Σ w`` in Jy/beam.
 
-        A display diagnostic, never part of the likelihood. The transform is
-        the adjoint (type-1) NUFFT of nufftax at the raw (u, v) points (no
-        gridding of the data), accurate to the tolerance of
-        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]; the real part
-        adds the Hermitian conjugates. Dividing by ``Σ w`` makes the dirty
-        beam peak 1 (at the phase centre), so a point source of flux ``F``
-        at the centre peaks at ``F`` Jy/beam.
-
-        The image has the orientation of [`Image`][virgil.models.Image]:
-        East to the left (columns), North up (rows), the phase centre at
-        pixel ``((npix - 1)/2, (npix - 1)/2)`` (between pixels for even
-        ``npix``), pixel ``(row, col)`` at offset ``dra = (c - col) s``,
-        ``ddec = (c - row) s``.
+        A display diagnostic, never part of the likelihood: a type-1 NUFFT at
+        the raw (u, v), in the orientation of [`Image`][virgil.models.Image]
+        (East left, North up). Details:
+        [Dirty and residual images](../radio_interferometry.md#dirty-and-residual-images).
 
         Parameters
         ----------
         npix : int
         pixel_scale_mas : float
         weighting : {"natural", "uniform", "briggs"}
-            Natural: ``w`` (``1/σ²``). Uniform: ``w / W_c``, ``W_c`` the
-            summed weight of the point's uv cell. Briggs: ``w / (1 + W_c f²)``
-            with ``f² = (5·10^-R)² / (Σ_c W_c² / Σ_k w_k)``: natural as
-            ``R → +∞``, uniform as ``R → −∞`` (``R`` in about −2..2). The
-            densities are counted on a uv grid (Hermitian partners share a
-            cell) which only reweights the points.
+            Natural ``w`` (``1/σ²``), uniform ``w / W_c`` for the summed weight
+            ``W_c`` of the point's uv cell, or Briggs with ``robust``.
         robust : float
-            Briggs ``R``.
+            Briggs ``R``, about −2 (uniform) to 2 (natural).
         scene : callable or SourceModel, optional
-            With ``values`` and ``nuisance``, the image is of the residual
-            ``V − M`` (``M`` as in [`model`][virgil.radio.ComplexVisData.model]
-            including the calibration nuisances); ``scene`` is a model or a
-            function of the values as for ``term``.
+            With ``values`` and ``nuisance``, image the residual ``V − M``, ``M`` including the nuisances.
         values, nuisance : optional
             Fitted values and the
             [`CalibrationNuisance`][virgil.radio.CalibrationNuisance].
@@ -811,14 +796,12 @@ class ComplexVisData(eqx.Module):
             ``nuisance``).
         uv_cell : float, optional
             Cell of the density grid in wavelengths; default ``1/FoV``
-            (``FoV = npix · pixel_scale_mas`` in radians).
+            (``npix · pixel_scale_mas`` in radians).
         chunk_size : int
             Points transformed at a time, bounding memory.
         uvtaper : float or (bmaj_mas, bmin_mas, pa_deg), optional
-            CASA's ``uvtaper``: weights times the Fourier transform of a
-            Gaussian of that FWHM (a float is circular; ``pa_deg`` is East of
-            North). Applied after the density weights, so the beam is the
-            weighted beam convolved with the Gaussian.
+            CASA's ``uvtaper``: a Gaussian FWHM in mas (a float is circular;
+            ``pa_deg`` is East of North), applied after the density weights.
 
         Returns
         -------
@@ -1064,9 +1047,10 @@ class _LogImproper(dist.Distribution):
 class CalibrationNuisance:
     """Per-observation calibration nuisances of a radio dataset.
 
-    Static configuration: which nuisances are fitted and their site names.
-    The sites (``prefix="cal"``) are keys of the fit's ``priors``; a function
-    model must accept them:
+    Static configuration: which nuisances are fitted and their site names. The
+    sites (``prefix="cal"``) are keys of the fit's ``priors``; a function model
+    must accept them. The model, loss, conditioning and default priors are in
+    [Radio interferometry](../radio_interferometry.md#a-model-with-calibration-nuisances).
 
     ===============  ================  ==========================  =============
     Site             Shape             Default prior               Not fitted
@@ -1078,62 +1062,23 @@ class CalibrationNuisance:
     ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
     ===============  ================  ==========================  =============
 
-    **Conditioning.** ``fit`` optimizes each site through the bijection of
-    its prior, so the prior's width sets the coordinate's scale. The gains
-    and σ scales have the improper Jeffreys prior ``1/x`` by default, flat in
-    ``ln x`` over the whole line: ``z = ln x``, no box. The offset of
-    observation ``k`` is a uniform location on ``±θ_k`` with
-    ``θ_k = offset_beams · 2π b_k`` (default 3 beams), where
-    ``b_k = 1/(2π q_max,k)`` and ``q_max,k`` is the longest baseline of that
-    observation. A sigmoid on ``±θ_k`` has slope ``θ_k/2`` ≈ 9 ``b_k`` at
-    the centre, so the coordinate's unit step is a few phase turns at the
-    longest baseline of each observation, however different the arrays: the
-    old default box ``±1/(2 q_min)`` (about 10⁴ mas) made it ~5·10³ mas.
-    **The bound is a real prior:** an offset larger than ``θ_k`` is excluded
-    (and reported in ``fit(...).info["at_bound"]``); widen it with
-    ``offset_beams`` or ``priors(offset=(lo, hi))`` in mas, which sets the
-    coordinate scale again (``(hi - lo)/4`` at the centre). Passing
-    ``priors(gain=(lo, hi))`` or ``sigma=(lo, hi)`` gives a ``LogUniform``
-    box. The site values are always the physical ones (``cal.gain``,
-    ``cal.offset`` in mas, ``cal.sigma``).
-
-    The reference observation (``ref_obs``, an index) has gain 1 and zero
-    offset. The model at a point is
-    ``F g_e (ν/ν₀)^α exp(-2πi(δα_e u + δδ_e v)) T(u, v) V_scene(u, v)``,
-    the offset ramp with the sign of a component's ``dra``, ``ddec``; ``T`` is
-    the optional Gaussian taper ``exp(-(π θ q)² / (4 ln 2))`` (θ the FWHM in
-    radians, ``q = √(u² + v²)``), a Gaussian convolution of the image. The
-    error scale ``s_d`` of each ddid multiplies the errors.
-
-    **Loss convention.** Per unmasked point the term is
-    ``½ |r|² / s_d² + 2 ln s_d`` for ``r = (V − M) √w``, the two real
-    parts counting as one complex point, so that the total is ``½ χ²`` plus
-    ``log_norm = Σ_k m_k 2 ln s_d(k)``.
+    The reference observation (``ref_obs``) has gain 1 and zero offset. The
+    offset bound ``θ_k`` is ``offset_beams`` beams of observation ``k``: a real
+    prior, reported in ``fit(...).info["at_bound"]`` when hit.
 
     Parameters
     ----------
     data : ComplexVisData
     ref_obs : int
+        Index of the reference observation.
     gains, offsets, sigmas, alpha : bool
         Which nuisances are fitted (the flux always is). Gains and offsets
-        need more than one observation. ``sigmas`` may also be ``"profile"``:
-        the ``s_d`` are not sites but are set at every evaluation to
-        ``ŝ_d² = χ²_d(s=1) / (2 N_d)``, ``N_d`` the number of unmasked
-        complex points of ddid ``d``. With the Jeffreys prior (flat in
-        ``ln s``) this is exactly the maximum over ``ln s_d`` of the loss
-        above, so the profiled optimum over the other parameters equals the
-        joint optimum; the gradient is the partial derivative at ``ŝ`` (the
-        envelope theorem), taken with ``ŝ`` held by ``stop_gradient``. It
-        removes the ``n_ddid`` sites and the near-degeneracy between ``s``
-        and the amplitude of the model; ``ŝ`` is reported in
-        ``fit(...).info["derived"]`` as ``"<prefix>.sigma"``, and by
-        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]. The loss it
-        returns is ``½ χ²(ŝ) + log_norm(ŝ) = Σ_d N_d (1 + 2 ln ŝ_d)``, the
-        profile of the joint loss, so values compare across fits of the same
-        data.
+        need more than one observation; a nuisance not fitted takes the value
+        in the table's last column. ``sigmas="profile"`` sets the error
+        scales at every evaluation instead of fitting them (see
+        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]).
     offset_beams : float, optional
-        Half-width of the default offset prior, in beams
-        (``2π b_k`` each); default 3.
+        Half-width of the default offset prior, in beams; default 3.
     nu0_hz : float, optional
         Reference frequency of the spectral index; default the
         weight-averaged frequency of ``data``.

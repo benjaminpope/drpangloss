@@ -124,6 +124,12 @@ The site values stay physical (`cal.gain`, `cal.offset` in mas, `cal.sigma`).
 Explicit bounds, `priors(offset=(lo, hi))` in mas, `priors(gain=(0.5, 2))` or
 `sigma=(0.1, 10)`, set the scale again.
 
+**Loss.** Per unmasked point the term is `½|r|²/s_d² + 2 ln s_d` for
+`r = (V − M)√w`, the two real parts counting as one complex point, so the total
+is `½χ²` plus `log_norm = Σ_k m_k 2 ln s_d(k)`. The taper is
+`T = exp(−(πθq)²/(4 ln 2))`, `θ` the FWHM in radians and `q = √(u² + v²)`; the
+offset ramp has the sign of a component's `dra`, `ddec`.
+
 **Profiled error scales.** `CalibrationNuisance(data, sigmas="profile")` has no
 `cal.sigma` site. At every evaluation `s_d² = χ²_d(s=1) / (2 N_d)`, `N_d` the number
 of unmasked complex points of ddid `d`. The loss of a point is
@@ -135,7 +141,7 @@ between `s` and the amplitude. The gradient is the partial derivative at `ŝ`
 `result.info["derived"]["cal.sigma"]` and
 [`data.sigma_hat`][virgil.radio.ComplexVisData.sigma_hat] computes it for any
 values. Held-out data are not scored with their own `ŝ`: pass the training
-`ŝ` as `data.term(..., sigma=ŝ)`, and use `sigmas=True` with `cross_validate`. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
+`ŝ` as `data.term(..., sigma=ŝ)`, and use `sigmas=True` with `cross_validate`. The loss it returns is `½χ²(ŝ) + log_norm(ŝ) = Σ_d N_d (1 + 2 ln ŝ_d)`, the profile of the joint loss, so losses compare across fits of the same data, profiled or not. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
 χ² at the quoted errors, `Σ_d 2 N_d ŝ_d²`, instead.
 
 The term evaluates the points in chunks of `chunk_size` with `jax.lax.map`,
@@ -304,9 +310,13 @@ Jy/beam and a point source of flux `F` at the centre peaks at `F`.
   weight in the point's uv cell; `"briggs"` is `w/(1 + W_c f²)` with
   `f² = (5·10^−R)² / (Σ_c W_c² / Σ_k w_k)`, natural as `R → +∞` and uniform as
   `R → −∞`. The density is counted on a uv grid (cell `1/FoV` by default;
-  Hermitian partners share a cell) and only reweights the points.
+  Hermitian partners share a cell) and only reweights the points. `uvtaper`
+  multiplies the weights by the Fourier transform of a Gaussian, so the beam is
+  the weighted beam convolved with it.
 * **Residuals**: with `scene`, `values` and `nuisance` the data minus the
   model (with the calibration nuisances applied, as in `term`) is imaged;
-  `use_sigma=True` divides the weights by the fitted `s_d²`.
+  `use_sigma=True` divides the weights by the fitted `s_d²`. `dirty_beam` has
+  no `scene` or `use_sigma`: passing `values` and `nuisance` always divides its
+  weights by `s_d²`, so match it to an image made with `use_sigma=True`.
 * The beam is not deconvolved: this is a display and a check on a fit, never
   a likelihood. Large data are transformed in chunks of `chunk_size` points.
