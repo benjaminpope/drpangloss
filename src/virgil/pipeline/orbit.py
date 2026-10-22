@@ -1040,7 +1040,7 @@ def _modes(p):
 def _outlying_night(epochs, nights):
     """``(night, indices, chi2_per_n)`` of the night with the highest raw
     χ²/N at the best orbit (``nights``: the search report's per-dataset
-    table), the indices being its datasets'."""
+    table), the indices being its datasets'; ``None`` if no night has data."""
     pooled = {}
     for k, (name, night) in enumerate(
         zip(epochs.dataset_names, epochs.epoch_of)
@@ -1051,12 +1051,13 @@ def _outlying_night(epochs, nights):
         total[1] += row["n"]
         total[2].append(k)
     ratio = {
-        night: chi2 / n if n else math.nan
+        night: chi2 / n
         for night, (chi2, n, _) in pooled.items()
+        if n > 0 and math.isfinite(chi2)
     }
-    night = max(
-        ratio, key=lambda k: -math.inf if math.isnan(ratio[k]) else ratio[k]
-    )
+    if not ratio:
+        return None
+    night = max(ratio, key=ratio.get)
     return night, pooled[night][2], ratio[night]
 
 
@@ -1112,22 +1113,38 @@ def _robustness(p, result, verdict):
     if len(epochs.names) < 3:  # the refit needs two nights; one has none
         return {"skipped": "fewer than 3 nights"}
     nights = p._report("search")["chi2"]["nights"]
-    night, drop, chi2_per_n = _outlying_night(epochs, nights)
+    outlier = _outlying_night(epochs, nights)
+    if outlier is None:
+        return {"skipped": "no night has data"}
+    night, drop, chi2_per_n = outlier
     keep = [k for k in range(len(epochs.data)) if k not in drop]
     data = [epochs.data[k] for k in keep]
-    refit = _alias_search(
-        p,
-        data,
-        _without(_read_positions(p), drop),
-        epochs.times[keep],
-        _band_checkpoints(p).with_name("bands_drop"),
-    )
-    verdict_drop = _null_verdict(refit, data, s)["verdict"]
+    positions = _without(_read_positions(p), drop)
+    if int((~positions.flagged).sum()) < 2:  # flagged nights seed nothing
+        return {"skipped": "fewer than 2 usable nights after the drop"}
     best = result.best
+    try:
+        refit = _alias_search(
+            p,
+            data,
+            positions,
+            epochs.times[keep],
+            _band_checkpoints(p).with_name("bands_drop"),
+        )
+        verdict_drop = _null_verdict(refit, data, s)["verdict"]
+    except (
+        Exception
+    ) as err:  # deliberate: a failed refit must not stop `modes`
+        return {"skipped": f"the refit failed ({type(err).__name__}: {err})"}
     period = refit.best.best.get("period")
-    # The same alias: the refit's winning period is in the full fit's band
-    # (band numbers shift when the dropped night ends the arc).
-    same_band = bool(period is not None and best.p_lo <= period <= best.p_hi)
+    # The same alias: the periods differ by less than half a cycle over the
+    # full span (band numbers shift when the dropped night ends the arc, so
+    # the two fits' bands are not compared).
+    span = float(onp.ptp(epochs.times))
+    same_band = bool(
+        period is not None
+        and span * abs(1.0 / period - 1.0 / best.best["period"]) < 0.5
+    )
     return {
         "night": night,
         "chi2_per_n": chi2_per_n,
