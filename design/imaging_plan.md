@@ -21,7 +21,7 @@ Status (2026-10-16): stages 0 to 6a.1, 6d and the cross-cutting marginalisation 
 | 6e | Closure amplitudes | not started | Not estimated |
 | 6b, 6c | Joint multi-filter AMI, `ImageCube` | not started | Milestone 2 not reached |
 | 6.5 | 0.2.0 release | done | |
-| 7 | Hardening | mostly not started | MEM preconditioning, L-curve success test, multi-start, K-fold CV, MFT caching, a regularizer guide |
+| 7 | Hardening | mostly not started | MEM preconditioning (`precondition="diag"` built; PR 2 dropped, Hutchinson adequate; benchmark pending), L-curve success test, multi-start, K-fold CV, MFT caching, a regularizer guide |
 | 8 | PMOIRED parity | partial | `RadialProfile` is realized as `PolarDisk` ([`radial_profiles.md`](radial_profiles.md)); `Projected` and `bootstrap_fit` not built |
 | – | Binary-detection parity | done | `injection_limits`, `linear_flux_grid`, `detection.py` |
 | – | Sparse imaging | done to S2 | [`sparse_imaging.md`](sparse_imaging.md) |
@@ -665,6 +665,7 @@ Released after the October 2026 codebase review ([`history/codebase_review_2026-
     - a Skilling–Bryan-style subspace solver;
     - a least-squares (LM) form of the entropy term;
     - a looser, better-founded stopping rule.
+  - **Update (2026-10-22):** PR 2 (analytic diagonals) is dropped: Hutchinson probes are adequate. The IM Lup benchmark (float64, with and without `precondition`) is pending. Newton–CG is not started.
   - **Success test:** an L-curve from w = 0.1 to 10⁴ that converges at every weight within the default step limit, in float32 and float64.
   - **Multi-start or annealed-weight image fitting** (priority: image fits are non-convex, and a single start can settle in a poor local minimum). Two independent pieces of evidence:
     - virgil-validation found that, from the same start, eht-imaging's L-BFGS-B and virgil end in different local minima, although from each other's solution both agree to 5e-8 in loss. The minima differ; the optimisers do not.
