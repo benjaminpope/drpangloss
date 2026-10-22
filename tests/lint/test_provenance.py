@@ -57,7 +57,7 @@ ARXIV = re.compile(
 )
 DOI = re.compile(r"(?<![\w.])(10\.\d{4,9}/[^\s\"'<>\]}|]+)")
 BIBCODE = re.compile(
-    r"(?<![\w.&])((?:18|19|20)\d\d[A-Za-z][A-Za-z.&]{4}[\w.]{4}[\w.][\w.]{4}[A-Z])"
+    r"(?<![\w.&])((?:18|19|20)\d\d[A-Za-z][\w.&]{4}[\w.]{4}[\w.][\w.]{4}[A-Z])"
     r"(?![A-Za-z\d])"
 )
 REPO = re.compile(
@@ -65,6 +65,7 @@ REPO = re.compile(
 )
 ANCHOR = re.compile(r"references\.md#([\w-]+)")
 URL = re.compile(r"https?://\S+")
+URL_GROUP = re.compile(r"(https?://\S+)")
 
 # Author-year citations. A surname may carry a prefix ("van der Marel",
 # "De Prins"); the first author is the one that is matched.
@@ -96,7 +97,17 @@ NOT_AUTHORS = {
 NOT_CITATIONS: set[tuple[str, str]] = set()
 # The generated page restates the TOML, so it cannot check it.
 EXCLUDED = {"docs/references.md"}
-SKIP_DIRS = {".git", ".venv", "site", "build", "dist", "node_modules"}
+SKIP_DIRS = {
+    ".git",
+    ".venv",
+    ".claude",
+    ".jax-cache",
+    ".ipynb_checkpoints",
+    "site",
+    "build",
+    "dist",
+    "node_modules",
+}
 SKIP_PREFIXES = ("notebooks/archive/",)
 
 
@@ -108,6 +119,8 @@ def _files() -> list[Path]:
         *ROOT.glob("scripts/*.py"),
         ROOT / "README.md",
         ROOT / "CONTRIBUTING.md",
+        # hand-written prose; the generated page restates the TOML
+        ROOT / "references" / "references_intro.md",
     ]
     for dirpath, dirs, names in os.walk(ROOT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
@@ -222,6 +235,16 @@ def _matches(surname: str, year: str) -> bool:
 
 def _arxiv_id(groups: tuple[str | None, ...]) -> str:
     return re.sub(r"v\d+$", "", next(g for g in groups if g)).lower()
+
+
+def _clean_url(url: str) -> str:
+    """A link without trailing markup or punctuation, for comparing with ``url``."""
+    url = url.rstrip(".,;:")
+    while url.endswith((")", "]", '"', "'", ">", "*", "`")):
+        if url.endswith(")") and url.count("(") >= url.count(")"):
+            break
+        url = url[:-1].rstrip(".,;:")
+    return url.rstrip("/").lower()
 
 
 def _clean_doi(doi: str) -> str:
@@ -339,6 +362,7 @@ def _cited_keys() -> set[str]:
     codes = {g[0] for _, g in _scan(BIBCODE)}
     repos = {_repo("/".join(g)) for _, g in _scan(REPO)}
     anchors = {g[0] for _, g in _scan(ANCHOR)}
+    urls = {_clean_url(g[0]) for _, g in _scan(URL_GROUP)}
     pairs = {(s, y) for _, s, years in _all_citations() for y in years}
     for key, e in REFS.items():
         hit = (
@@ -347,6 +371,7 @@ def _cited_keys() -> set[str]:
             or e.get("doi", "").lower() in dois
             or e.get("bibcode") in codes
             or any(_repo(e[f]) in repos for f in ("url", "repo") if f in e)
+            or ("url" in e and _clean_url(e["url"]) in urls)
             or any(
                 (s, y) in pairs
                 for s in _first_surnames(e["authors"])
@@ -429,6 +454,10 @@ def test_the_identifier_matchers_read_each_form():
     assert _clean_doi("10.1016/0167-2789(92") == "10.1016/0167-2789(92"
     assert BIBCODE.search("2026PASP..138e4504D")
     assert BIBCODE.search("see 2025AJ....169..137B.")
+    assert BIBCODE.search("2022SPIE12183E..1NM")
+    assert _clean_url("https://www.netlib.org/cephes/).") == (
+        "https://www.netlib.org/cephes"
+    )
     assert not BIBCODE.search("2025 is a year")
     assert _repo("https://gitlab.com/Foo/Bar.git") == "gitlab.com/foo/bar"
     assert _repo("github.com/Foo/Bar.") == "foo/bar"

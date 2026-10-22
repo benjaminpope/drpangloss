@@ -2,8 +2,8 @@
 
 Docstrings already over the limit are listed in ``docstring_allowlist.txt``
 (one ``module:qualname N`` per line, sorted by that key; ``#`` starts a
-comment). ``N`` is the docstring's current length: it may shrink but not grow,
-and the list may only shrink. See "Docstring style" in AGENTS.md.
+comment). ``N`` is the docstring's current length, so a docstring can neither grow
+nor shrink without its line being edited; the list may only shrink. See "Docstring style" in AGENTS.md.
 """
 
 from __future__ import annotations
@@ -99,14 +99,15 @@ def test_no_new_docstring_is_over_the_limit():
 
 def test_an_allowlisted_docstring_does_not_grow():
     lengths = docstring_lengths()
-    grown = sorted(
-        f"{key} ({lengths[key]} lines > {cap})"
+    off = sorted(
+        f"{key} ({lengths[key]} lines, cap {cap})"
         for key, cap in allowlist().items()
-        if lengths.get(key, 0) > cap
+        if key in lengths and lengths[key] > MAX_LINES and lengths[key] != cap
     )
-    assert not grown, (
-        f"allowlisted docstrings grew past their cap: {grown}. Shorten them; "
-        "lower the cap in docstring_allowlist.txt when one shrinks."
+    assert not off, (
+        f"allowlisted docstrings whose length is not their cap: {off}. A "
+        "docstring may not grow; when one shrinks, set its cap to the new "
+        "length in the same PR (or delete the line once it is within the limit)."
     )
 
 
