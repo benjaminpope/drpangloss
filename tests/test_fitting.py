@@ -1319,3 +1319,52 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
     assert not result.info["at_bound"]
     for path, value in truth_values.items():
         assert result.values[path] == pytest.approx(value, rel=1e-2)
+
+
+@pytest.mark.parametrize(
+    "n, itemsize, expected",
+    [
+        (0, 8, 100),  # nothing to store: no division by zero
+        (1, 8, 100),  # tiny problem: the full history
+        (1681, 8, 100),  # the 41² image
+        (671_088, 8, 100),  # the largest float64 problem with the full history
+        (671_089, 8, 99),
+        (1_000_000, 8, 67),  # 10⁶ float64 pixels: 1 GiB of history
+        (1_342_177, 4, 100),  # float32 vectors are half the size
+        (10**9, 8, 5),  # never below 5 steps
+    ],
+)
+def test_the_lbfgs_history_is_100_unless_it_would_pass_one_gibibyte(
+    n, itemsize, expected
+):
+    from virgil.fitting import _lbfgs_memory
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert _lbfgs_memory(None, n, itemsize) == expected
+    assert bool(caught) == (expected < 100)
+    assert _lbfgs_memory(7, n, itemsize) == 7  # explicit: as given, no cut
+    assert _lbfgs_memory(500, n, itemsize) == 500
+
+
+def test_the_lbfgs_vector_size_uses_the_widest_leaf():
+    from virgil.fitting import _vector_size
+
+    tree = {"a": onp.zeros(3, "float32"), "b": onp.zeros((2, 2), "float64")}
+    assert _vector_size(tree) == (7, 8)
+    assert _vector_size({}) == (0, 8)
+
+
+def test_fit_resolves_the_default_lbfgs_memory(monkeypatch):
+    from virgil import fitting
+
+    seen = []
+    real = fitting._lbfgs_memory
+    monkeypatch.setattr(
+        fitting,
+        "_lbfgs_memory",
+        lambda memory, *size: seen.append(memory) or real(memory, *size),
+    )
+    fit(START, PRIORS, DATA, method="lbfgs", max_steps=5)
+    fit(START, PRIORS, DATA, method="lbfgs", lbfgs_memory=7, max_steps=5)
+    assert seen == [None, 7]
