@@ -864,7 +864,8 @@ authors = "Mawet et al."
 year = 2014
 title = "Fundamental limitations of high contrast imaging set by small sample statistics"
 used_in = ["virgil.detection:injection_recovery"]
-note = "ApJ 792, 97"
+note = "ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery"
+role = "compared"
 bibcode = "2014ApJ...792...97M"
 arxiv = "1407.2247"
 verified = true
@@ -1007,7 +1008,7 @@ url = "https://github.com/kammerje/fouriever"
 verified = false
 verified_via = "none"
 used_in = ["virgil.grid_fit:linear_flux_grid"]
-note = "comparison only: linear_flux_grid is equivalent to its lincmap; no paper found"
+note = "comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found"
 role = "compared"
 
 [ref.amical]
