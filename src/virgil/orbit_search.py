@@ -3,34 +3,26 @@
 !!! warning "Provisional"
     May change in any 0.4.x release without a deprecation cycle.
 
-The first stage of an automatic orbit search scores many candidate orbits
-on all the data at once. [`score_orbits`][virgil.orbit_search.score_orbits]
-does this exactly, on the visibilities and closure phases, with the
-nuisances that a single orbit shares across epochs shared in the score:
+[`score_orbits`][virgil.orbit_search.score_orbits] scores many candidate orbits
+exactly on all the data at once, sharing across epochs the nuisances that one
+orbit shares:
 
-* **Flux.** One companion flux per band (or instrument), the same at
-  every epoch of that band, optionally with a chromatic power law
-  f(λ) = f₀ (λ/λ₀)^β. It is integrated out under a log-uniform
-  (Jeffreys) prior, adaptively about its profiled peak, and its profiled
-  value and uncertainty are reported.
-  Letting each epoch have its own flux is a strictly looser model, whose
-  extra freedom moves each epoch's peaks and makes new ones that no orbit
-  with one flux visits, so it is never used to rank.
-* **Error scales.** Each dataset's error scale is integrated out block by
-  block, as in [`marginal_loglike`][virgil.epochs.marginal_loglike].
-* **Calibration gains** set with
-  [`OIData.with_gains`][virgil.oidata.OIData.with_gains] and closure-phase
-  offsets set with
-  [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets]
-  are truly per epoch. They enter the residuals linearly and are profiled
-  analytically (each costs one degree of freedom), not marginalized, so
-  that a block's χ² stays proportional to 1/s².
+* **Flux.** One companion flux per band, optionally with a chromatic power law
+  f(lambda) = f0 (lambda/lambda0)^beta, integrated out under a log-uniform
+  prior about its profiled peak. A flux per epoch is a strictly looser model
+  that makes peaks no single-flux orbit visits, so it is never used to rank.
+* **Error scales** are integrated out block by block
+  ([`marginal_loglike`][virgil.epochs.marginal_loglike]).
+* **Gains and closure-phase offsets**
+  ([`OIData.with_gains`][virgil.oidata.OIData.with_gains],
+  [`OIData.with_closure_offsets`][virgil.oidata.OIData.with_closure_offsets])
+  are per epoch and linear, so they are profiled analytically, not
+  marginalized, keeping a block's chi-squared proportional to 1/s^2.
 
-The companion's position is evaluated at every sample's own time, so
-motion within a night needs no threshold. Extra likelihood terms, such as
-radial velocities ([`RVData`][virgil.orbits.RVData]) or published
-positions ([`PositionData`][virgil.orbits.PositionData]), are added to the
-score.
+The companion is placed at every sample's own time, so motion within a night
+needs no threshold. Extra terms such as radial velocities
+([`RVData`][virgil.orbits.RVData]) or positions
+([`PositionData`][virgil.orbits.PositionData]) are added to the score.
 """
 
 import copy
@@ -85,46 +77,29 @@ class SharedFlux:
     Parameters
     ----------
     grid : tuple, array-like or dict, optional
-        The coarse flux grid at the reference wavelength λ₀: ``(lo, hi,
-        n)`` (a tuple whose last element is an integer, Python or NumPy) for ``n``
-        points spaced uniformly in ln f from ``lo`` to ``hi``, or the flux
-        values themselves (one value fixes the flux; give them as a list
-        or array, or a tuple with a non-``int`` last element, so that
-        ``(0.01, 0.1, 1.0)`` is three fluxes, not a one-point range), or a
-        dict ``{band: either}``. The default, ``(1e-3, 1.0, 16)``, is
-        used for every band not in the dict. The prior is log-uniform
-        (Jeffreys) between the first and last points. The grid only finds
-        the peak: the marginal is integrated adaptively about the profiled
-        peak (see ``order``).
+        Coarse flux grid at the reference wavelength: ``(lo, hi, n)`` (last element
+        an integer) for ``n`` points uniform in ln f, or the flux values (a list,
+        array or tuple with a non-``int`` last element; one value fixes the flux),
+        or ``{band: either}``. Default ``(1e-3, 1.0, 16)``. The prior is
+        log-uniform between the first and last points; the grid only finds the
+        peak, and the marginal is integrated adaptively about it.
     bands : dict, optional
-        ``{epoch or dataset name: band}``; a dataset's own entry overrides
-        its epoch's. Every dataset of a band shares that band's flux. By
-        default all datasets form one band, ``"all"``.
+        ``{epoch or dataset name: band}`` (a dataset's entry overrides its epoch's);
+        datasets of a band share its flux. Default one band, ``"all"``.
     reference : optional
-        The band whose flux is at most 1 (default: the first band, in the
-        order of the datasets). Bounding the flux in one band fixes which
-        star is called the companion (a companion at r with flux f is
-        the same in V² and closure phases as one at −r with flux 1/f), so
-        that the labelling is the same in every band; the other bands may
-        be given grids above 1.
+        The band whose flux is at most 1 (default the first). Bounding one band
+        fixes which star is the companion (r with flux f equals -r with 1/f in V^2
+        and closure phases) in every band; the others may have grids above 1.
     slope : tuple, array-like or dict, optional
-        The chromatic slope β, as ``(lo, hi, n)`` (uniform prior) or the
-        values, or a dict per band. None (the default) fixes β = 0.
+        The chromatic slope beta, ``(lo, hi, n)`` (uniform prior), values, or a dict
+        per band; None fixes beta = 0.
     wavel0 : float or dict, optional
-        The reference wavelength λ₀ (metres), one or per band; by default
-        the geometric mean of each band's wavelengths.
-    order : int, optional
-        Gauss–Legendre nodes per side of the adaptive marginal (default
-        16): each side of the profiled peak is integrated out to where the
-        score has fallen by 12 nats (grown from the curvature's length
-        scale, and at a prior bound also the slope's), cut at the prior's
-        bounds, with the nodes crowded towards the peak. With a slope,
-        ``order`` nodes per side over the whole β prior each integrate
-        ln f from their own conditional peak.
-    newton : int, optional
-        Newton steps from the best coarse grid point to the profiled peak
-        (default 8), each at most one grid step and kept only if it raises
-        the score.
+        Reference wavelength (m), one or per band; default the geometric mean of
+        each band's wavelengths.
+    order, newton : int, optional
+        Gauss-Legendre nodes per side of the adaptive marginal (default 16; each
+        side runs to 12 nats below the peak) and Newton steps from the best grid
+        point to the profiled peak (default 8).
     """
 
     grid: object = (1e-3, 1.0, 16)
@@ -144,55 +119,37 @@ class SharedFlux:
 class OrbitScores:
     """The scores of candidate orbits, in the order they were given.
 
-    Returned by [`score_orbits`][virgil.orbit_search.score_orbits]. Rank
-    them with :meth:`order` (or
-    [`rank_scores`][virgil.orbit_search.rank_scores]).
+    Returned by [`score_orbits`][virgil.orbit_search.score_orbits]; rank with
+    :meth:`order` or [`rank_scores`][virgil.orbit_search.rank_scores].
 
     Attributes
     ----------
-    score : numpy.ndarray
-        ``(n,)``: the log likelihood with every shared flux (and slope)
-        integrated out, error scales marginalized (or on the quoted
-        errors), gains profiled, plus the extra terms. ``-inf`` where not
-        finite.
-    profiled : numpy.ndarray
-        ``(n,)``: the same at the profiled flux (and slope) of each band,
-        instead of integrated over them.
-    flux, flux_err : numpy.ndarray
-        ``(n, n_band)``: the profiled flux f₀ of each band (Newton steps
-        in ln f from the best coarse grid point), and its uncertainty from
-        the curvature in ln f there, σ_f = f σ_ln f (NaN with one grid
-        point, or where the curvature is not negative).
-    flux_at_edge : numpy.ndarray
-        ``(n, n_band)`` bool: the profiled flux is at a prior bound.
+    score, profiled : numpy.ndarray
+        ``(n,)``: the log likelihood with every shared flux (and slope) integrated
+        out (error scales marginalized, gains profiled, extra terms added; ``-inf``
+        where not finite), and the same at each band's profiled flux instead.
+    flux, flux_err, flux_at_edge : numpy.ndarray
+        ``(n, n_band)``: the profiled flux of each band, its uncertainty from the
+        curvature in ln f (NaN with one grid point or non-negative curvature), and
+        whether it is at a prior bound.
     slope, slope_err, slope_at_edge : numpy.ndarray
-        The same for the chromatic slope β (0 and NaN without a slope
-        grid). With both free, the uncertainties are marginal (from the
-        inverse of the 2 × 2 curvature).
+        The same for the chromatic slope (0 and NaN without a slope grid; with both
+        free the uncertainties are marginal).
     fallback : numpy.ndarray
-        ``(n, n_band)`` bool: the curvature at the peak was not negative
-        or not finite, so the marginal is the coarse grid's trapezoidal
-        rule instead of the adaptive integral.
+        ``(n, n_band)`` bool: the curvature at the peak was unusable, so the
+        marginal is the coarse grid's trapezoidal rule.
     terms : numpy.ndarray
-        ``(n, n_terms)``: each extra term's log likelihood (included in
-        ``score``).
-    scale : numpy.ndarray
-        ``(n, n_dataset)``: each dataset's largest block error scale
-        ŝ = √(χ²/ν) at the profiled flux (and slope), on the quoted errors.
-    scale_at_bound : numpy.ndarray
-        ``(n, n_dataset)`` bool: a block's scale posterior presses against
-        ``s_max`` (ŝ within one posterior width in ln s, 1/√(2 dof ν), of
-        the bound), so its score is penalized by the bound: the candidate
-        needs errors inflated past ``s_max`` there. Always False with
-        ``s_max=None``.
-    bands : tuple
-        The band names, in column order; ``reference`` is the one whose
-        flux is at most 1.
-    reference : object
+        ``(n, n_terms)``: each extra term's log likelihood (included in ``score``).
+    scale, scale_at_bound : numpy.ndarray
+        ``(n, n_dataset)``: each dataset's largest block error scale on the quoted
+        errors at the profiled flux, and whether it presses against ``s_max`` (the
+        score is then penalized: the candidate needs errors inflated past the bound;
+        always False with ``s_max=None``).
+    bands, reference : tuple, object
+        The band names in column order, and the band whose flux is at most 1.
     cost : int
-        The work units spent: candidates × Σ over datasets of the score
-        evaluations of the band's marginal (grid points, Newton steps with
-        their derivatives, and nodes).
+        Work units spent: candidates times the score evaluations of each dataset's
+        band marginal.
     """
 
     score: onp.ndarray
@@ -1044,79 +1001,58 @@ def score_orbits(
     terms=(),
     scales="marginal",
     dof=1.0,
-    s_max=5.0,
+    s_max=5.0,  # deliberate: bounds the scale gain so a flux-profiled score stays finite
     batch_size=None,
     max_evaluations=None,
     dtype="float64",
 ):
     """Score candidate orbits on all epochs, with the flux shared.
 
-    Each candidate's companion is placed at every sample's own time, and
-    the scene, which must be linear in the companion's flux, is evaluated
-    for a unit companion once; other fluxes are then cheap arithmetic. The
+    Each candidate's companion is placed at every sample's own time and the scene
+    (linear in the companion's flux) is evaluated for a unit companion once. The
     score is the scale-marginalized log likelihood of
-    [`marginal_loglike`][virgil.epochs.marginal_loglike] (or, with
-    ``scales="quoted"``, ``-χ²/2``), with gains and closure-phase offsets
-    profiled analytically and each band's flux integrated out under a
-    log-uniform prior; where the peak's curvature is unusable, the coarse
-    grid's trapezoidal rule is used and ``OrbitScores.fallback`` is set.
-    The extra terms are then added. See [`virgil.orbit_search`][virgil.orbit_search].
+    [`marginal_loglike`][virgil.epochs.marginal_loglike] (or ``-chi2/2`` with
+    ``scales="quoted"``), with gains and closure-phase offsets profiled
+    analytically, each band's flux integrated out under a log-uniform prior and
+    the extra terms added. Details: [`virgil.orbit_search`][virgil.orbit_search].
 
     Parameters
     ----------
     model : callable
         ``model(orbit, flux)`` returns the time-dependent scene, e.g.
-        [`OrbitalBinary`][virgil.models.OrbitalBinary] itself. It must be
-        linear in ``flux`` (a component weight), and the scene at flux 0
-        must not depend on the orbit; both are checked on the first and
-        last candidates.
+        [`OrbitalBinary`][virgil.models.OrbitalBinary]. It must be linear in
+        ``flux`` and the scene at flux 0 must not depend on the orbit (both are
+        checked on the first and last candidates).
     epochs : Epochs
-        The data. Datasets without sample times (``mjd``) are evaluated at
-        their snapshot time (``Epochs.times``).
+        The data. Datasets without sample times are evaluated at ``Epochs.times``.
     orbits : sequence or orbit
-        A list of orbits (or ``starting_orbits`` pairs), or one orbit whose
-        elements have a leading candidate axis. All share one class and
-        ``t_ref``; times are measured from ``t_ref``, in float64 on the
-        host, so float32 keeps them precise.
+        A list of orbits (or ``starting_orbits`` pairs), or one orbit with a leading
+        candidate axis; one class and ``t_ref`` (times are kept in float64).
     shared : SharedFlux, optional
-        The shared flux grids, bands and slopes (default ``SharedFlux()``:
-        one band, f in [1e-3, 1] on 16 log-spaced points, no slope).
+        Flux grids, bands and slopes (default one band, f in [1e-3, 1], no slope).
     terms : sequence, optional
-        Extra log likelihood terms: likelihood terms from
-        [`RVData.term`][virgil.orbits.RVData.term] or
-        [`PositionData.term`][virgil.orbits.PositionData.term], whose
-        ``params`` (or ``orbit``) callable receives ``{"orbit": orbit}``,
-        or callables ``orbit -> log likelihood``. Each brings its own
-        error model (e.g. a fixed RV jitter).
+        Extra log likelihood terms: [`RVData.term`][virgil.orbits.RVData.term],
+        [`PositionData.term`][virgil.orbits.PositionData.term], or callables
+        ``orbit -> log likelihood``, each with its own error model.
     scales : {"marginal", "quoted"}, optional
-        Integrate each dataset's error scales out (default), or use the
-        quoted errors (the score is then ``-χ²/2``, up to a constant).
+        Integrate each dataset's error scales out (default) or use the quoted errors.
     dof, s_max : optional
-        The effective-dof fraction (one number, or a dict keyed by dataset
-        or epoch name) and the bound on the scales, as for
-        ``marginal_loglike``. The default ``s_max=5`` bounds each block's
-        gain at about ν ln s_max and keeps the score finite (``rank_orbits``
-        defaults to ``s_max=None``: it has no flux to profile). A candidate
-        needing more inflation on some dataset is penalized and flagged in
-        ``OrbitScores.scale_at_bound``.
+        As for ``marginal_loglike``. ``s_max`` defaults to 5, which keeps the score
+        finite (``rank_orbits`` uses None: no flux to profile); a candidate needing
+        more inflation is penalized and flagged in ``OrbitScores.scale_at_bound``.
     batch_size : int, optional
-        Candidates evaluated together by ``jax.lax.map`` (default: about a
-        million model visibilities in memory at once). The result does not
-        depend on it.
+        Candidates per ``jax.lax.map`` step (default about a million model
+        visibilities); never changes the result.
     max_evaluations : int, optional
-        A budget in score evaluations (candidates × Σ over datasets of the
-        band marginal's coarse points, Newton steps and nodes), predicted
-        before anything is evaluated; a cost over budget raises a
+        Budget in score evaluations, predicted first; over budget raises
         ``ValueError``.
     dtype : {"float64", "float32"}, optional
-        Precision of the evaluation (default float64, in a local
-        ``jax.enable_x64`` context).
+        Precision (default float64, in a local ``jax.enable_x64`` context).
 
     Returns
     -------
     OrbitScores
-        Scores in the order of ``orbits``; rank them with
-        ``OrbitScores.order()``.
+        In the order of ``orbits``; rank with ``OrbitScores.order()``.
 
     Examples
     --------

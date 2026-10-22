@@ -56,6 +56,7 @@ nav:
   - Quickstart: quickstart.md
   - Background:
       - Contributions: contributors.md
+      - References: references.md
       - "Comparison with other packages": comparison.md
       - Stability: stability.md
       - Development carbon: dev_carbon.md

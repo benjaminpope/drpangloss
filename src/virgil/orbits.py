@@ -284,29 +284,22 @@ class KeplerOrbit(zdx.Base):
     ):
         """The orbit whose position angle at ``t_ref`` is ``theta``.
 
-        An alternative to ``dt_peri`` for short arcs, after Thompson et al.
-        (2023, AJ 166, 164, https://arxiv.org/abs/2402.01971): astrometry measures the position angle at an
-        epoch directly. With φ = θ - Ω, the argument of latitude u = ω + f
-        at ``t_ref`` follows from (cos φ, sin φ) ∝ (cos u, sin u cos i):
-        u = atan2(sin φ / cos i, cos φ); then the true anomaly f = u - ω,
-        the eccentric and mean anomalies, and ``dt_peri = -M P / 2π`` (in
-        [-P/2, P/2)). Sample ``theta`` as an
-        [`AngleVector`][virgil.angles.AngleVector], and add
-        [`position_angle_prior`][virgil.orbits.position_angle_prior] to
-        the likelihood terms, so that the prior stays uniform in the time
-        of periastron.
-
-        **Singular at i = 90°**, where the position angle takes only two
-        values (Ω and Ω + 180°) and does not fix the phase; a concrete
-        ``inc`` of 90° is rejected. Near edge-on the map is badly
-        conditioned: keep ``dt_peri``, or use
+        An alternative to ``dt_peri`` for short arcs: astrometry measures the position
+        angle at an epoch directly
+        ([derivation](../orbit_methods.md#position-angle)). Sample ``theta`` as an
+        [`AngleVector`][virgil.angles.AngleVector] and add
+        [`position_angle_prior`][virgil.orbits.position_angle_prior] to the likelihood
+        terms so the prior stays uniform in the time of periastron.
+        **Singular at i = 90°** (a concrete ``inc`` of 90° is rejected) and badly
+        conditioned near edge-on: keep ``dt_peri`` or use
         [`StateVectorOrbit`][virgil.orbits.StateVectorOrbit].
+
+        Source: Thompson et al. (2023), [references](../references.md#thompson2023).
 
         Parameters
         ----------
         theta : float
-            Position angle of the secondary at ``t_ref`` (degrees, North
-            through East).
+            Position angle of the secondary at ``t_ref`` (degrees, North through East).
         period, ecc, inc, omega, Omega, a_mas, t_ref
             As for ``KeplerOrbit``.
         """
@@ -662,30 +655,19 @@ class PositionData(zdx.Base):
     def term(self, orbit, north_angle=None, plate_scale=None):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
+        Source: Thompson et al. (2023), [references](../references.md#thompson2023).
+
         Parameters
         ----------
         orbit : callable
             Maps the fitted values (a dict, by path or keyword) to a
             [`KeplerOrbit`][virgil.orbits.KeplerOrbit].
         north_angle, plate_scale : str, optional
-            Names of fitted values holding this dataset's North angle δ
-            (degrees, added to every measured position angle) and plate
-            scale m (a factor, 1 when calibrated), as in
-            [`model`][virgil.orbits.PositionData.model]. As for
-            ``RVData.term``'s ``jitter``, each is a key of ``priors``
-            (which a function model must accept and may ignore); give
-            each dataset its own names. Their priors must be stated:
-            there is no default width. The invariant priors (uniform on
-            the circle for δ, log-uniform for m) leave each one
-            degenerate with the orbit's orientation and size if a single
-            dataset is fitted; a Gaussian, e.g. ``Normal(0, 0.1)`` for δ
-            and ``Normal(1, 1e-3)`` for m, is strong information and
-            should come from the instrument's astrometric calibration.
-            Per-dataset plate-scale and North-angle terms follow
-            Octofitter (Thompson et al. 2023, AJ 166, 164,
-            https://arxiv.org/abs/2402.01971). They do not
-            change the likelihood's normalization, so a least-squares
-            fit keeps its form.
+            Keys of ``priors`` holding this dataset's North angle (degrees, added to
+            every position angle) and plate scale (a factor), as in
+            [`model`][virgil.orbits.PositionData.model]; each dataset needs its own
+            names, and the priors must be stated (no default; see
+            [calibration terms](../orbit_methods.md#position-term)).
         """
         if north_angle is None and plate_scale is None:
             return _Term(self, lambda values: (orbit(values),))

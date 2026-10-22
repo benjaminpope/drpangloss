@@ -126,7 +126,7 @@ The lint workflow only checks: fix what it reports with
 
 **Keep it small**
 
-Prefer deleting to adding, build only what a test system or user needs now, and keep docstrings short (a summary, parameters, returns and at most one example), putting derivations and design history in the docs or `design/` notes instead. The full rules, including the docstring style, are in [AGENTS.md](AGENTS.md); each pull request also gets a comment showing its net change in `src/` and `tests/` lines.
+Prefer deleting to adding, build only what a test system or user needs now, and keep docstrings short (a summary, parameters, returns and at most one example), putting derivations and design history in the docs or `design/` notes instead. A docstring over 60 lines fails `tests/lint/test_docstring_length.py` unless it is in `tests/lint/docstring_allowlist.txt`, a list that may only shrink; and a source cited in the code or docs needs an entry in `references/provenance.toml` (`scripts/sync_references_page.py` regenerates `docs/references.md`). The full rules, including the docstring style, are in [AGENTS.md](AGENTS.md); each pull request also gets a comment showing its net change in `src/` and `tests/` lines.
 
 **Documentation**
 

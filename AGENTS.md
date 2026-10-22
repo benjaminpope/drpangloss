@@ -39,6 +39,7 @@ upgrading `jax` alone can leave optax, equinox etc. too old for it.
 | Lint changed files only | `bash scripts/lint_local.sh --changed --fix` |
 | Full pre-commit pass | `.venv/bin/python -m pre_commit run --all-files` |
 | Regenerate tutorial docs | `.venv/bin/python scripts/sync_tutorial_docs.py` |
+| Regenerate the references page (after editing `references/provenance.toml`) | `.venv/bin/python scripts/sync_references_page.py` |
 | Build docs | `.venv/bin/python -m zensical build --clean` |
 | Refresh the development-carbon page and badge (local only; needs [claude-code-carbon-dashboard](https://github.com/benjaminpope/claude-code-carbon-dashboard) installed) | `python3 scripts/dev_carbon.py` |
 
@@ -54,6 +55,7 @@ Before committing:
 3. If you touched a tutorial notebook: rerun `scripts/sync_tutorial_docs.py` and
    `pytest tests/lint/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `.venv/bin/python -m zensical build --clean`.
+5. If you touched `references/provenance.toml`: rerun `scripts/sync_references_page.py`.
 
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
 them, so lint before you push.
@@ -163,6 +165,30 @@ Ben is surprised how long some docstrings are. Keep them short.
   priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
   there rather than creating a page), and each docstring says one line and links it.
 - **Private helpers:** one or two lines.
+- **Deliberate choices:** a surprising or deliberate choice gets a short inline
+  `#` comment at the line that makes it, not a docstring paragraph, e.g.
+  `mixed=False  # deliberate: the null must not get the broad companion`.
+- **Sources:** a docstring cites a source in one line, never in a paragraph:
+  `Source: Kammerer et al. (2020), [references](../references.md#kammerer2020).`
+  (the link resolves from the API pages). Any new idea or port adds or extends
+  its entry in `references/provenance.toml` (`used_in`, and `how = "ported"`
+  when code was adapted) in the same PR, and `scripts/sync_references_page.py`
+  regenerates the public `docs/references.md`; `tests/lint/test_provenance.py`
+  fails on a cited arXiv ID, GitHub repository or "Author et al. (YYYY)" with
+  no entry. Never invent an arXiv ID: leave the entry `verified = false` until
+  it is checked on the arXiv abstract page (`scripts/fetch_references.py`
+  resolves entries against ADS). `scripts/sync_references_page.py --by-module`
+  and `--unverified` give the census.
+- **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
+  over 60 lines that is not in `tests/lint/docstring_allowlist.txt`
+  (`module:qualname`, sorted by module), and on a stale entry, so the list can
+  only shrink. New code may not add to it; a PR that rewrites a listed
+  docstring deletes its line.
+- **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
+  subagent only the signature and the new docstring of each rewritten public
+  function. It writes a correct call for a stated task and lists anything it
+  had to guess. Each guess restores one line of the docstring. The PR
+  description records the results.
 
 ## Package layout
 
@@ -381,6 +407,8 @@ to that test.
 - `docs/generated/` and `data/*.npy` — generated or fixture data.
 - `docs/*.md` pages listed in `scripts/sync_tutorial_docs.py::MAPPINGS` — generated from
   notebooks (see below).
+- `docs/references.md` — generated from `references/provenance.toml` by
+  `scripts/sync_references_page.py`; edit the TOML (and `references/references_intro.md`).
 - `docs/index.md` — generated from `README.md` by `scripts/sync_tutorial_docs.py`; edit
   `README.md`, then run the script.
 - `docs/dev_carbon.md` and the README badge between the `dev-carbon-badge` markers —
