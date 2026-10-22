@@ -34,7 +34,7 @@ A list of files is read in order and concatenated. `TARGET_ID` numbering is per 
 
 `VISPHI` and `VISAMP` rows are matched to visibility samples as closure-phase legs are (below); a reversed baseline negates the phase. With `extras`, `VISPHI` is never an absolute phase, so without `OI_T3` the phase block is empty. If `OI_VIS` holds correlated fluxes and there is no `OI_VIS2`, the visibility samples are flagged and the amplitudes go in `"visamp"`.
 
-With `bandwidth=True` the record also holds `"bandwidth"`, each sample's channel `EFF_BAND` (matched by wavelength within the selected `insname`; absent if the file gives only zeros). It is off by default, so nothing is smeared unless you ask.
+With `bandwidth=True` the record also holds `"bandwidth"`, each sample's channel `EFF_BAND` (matched by wavelength within the selected `insname`; absent if the file gives only zeros or marks its widths `BANDEST = T`, as virgil's own files do when the width was unknown). It is off by default, so nothing is smeared unless you ask.
 
 ## Closure-phase triangles {#closure-phases}
 

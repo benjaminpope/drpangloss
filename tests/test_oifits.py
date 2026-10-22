@@ -1175,6 +1175,9 @@ def test_eff_band_is_positive_when_the_width_is_unknown(tmp_path):
     with fits.open(path) as hdul:
         wave = hdul["OI_WAVELENGTH"]
         assert onp.all(wave.data["EFF_BAND"] > 0) and wave.header["BANDEST"]
+    assert (
+        OIData(path, bandwidth=True).bandwidth is None
+    )  # estimates stay hidden
     spaced = _tables(waves=(4.6e-6, 5.0e-6, 5.4e-6))
     spaced["OI_WAVELENGTH"].pop("EFF_BAND")
     with fits.open(write_oifits(spaced, tmp_path / "y.oifits")) as hdul:

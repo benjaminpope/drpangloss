@@ -237,8 +237,8 @@ def _channel_widths(tables):
     """``{EFF_WAVE: EFF_BAND}`` over the OI_WAVELENGTH tables (metres)."""
     widths = {}
     for hdu in tables.get("OI_WAVELENGTH", []):
-        if "EFF_BAND" not in hdu.columns.names:
-            continue
+        if "EFF_BAND" not in hdu.columns.names or hdu.header.get("BANDEST"):
+            continue  # BANDEST: written as an estimate, not a measured width
         wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
         band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
         for w, b in zip(wave.tolist(), band.tolist()):
