@@ -57,8 +57,10 @@ from .epochs import (
     default_memory_budget,
     _REFINE_WINDOW,
     EpochPositions,
+    _amp_profile,
     _amp_residuals,
     _binary,
+    _distinct_tracks,
     _refine_marginal,
     _refuse_amp_with_gains,
     _Surface,
@@ -424,29 +426,8 @@ def _epoch_residuals(surface, model, d, amp_range):
             "vis_amp needs squared visibilities as the visibility channel "
             f"(vis_mode='v2', unprojected), got vis_mode={d.vis_mode!r}."
         )
-    n = surface.blocks[0][2]
-    obs = np.reshape(d.vis, -1)
-    err = np.reshape(d.d_vis, -1)
-    mod = obs + r[:n] * err
-    w = 1.0 / err**2
-    tiny = np.finfo(r.dtype).tiny
-    amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
-    amp = np.clip(amp, *amp_range)
-    return _scale_vis(r, d, n, amp), amp
-
-
-def _scale_vis(r, d, n, amp):
-    """The whitened residuals ``r`` with the first ``n`` (the squared
-    visibilities) recomputed for the model scaled by the V² amplitude
-    ``amp``: ``(amp * model - obs) / err``, the model being recovered from
-    the residual as ``obs + r * err``. Shared by the fit
-    (``_epoch_residuals``, ``amp`` profiled) and the accessors of
-    [`AliasBandResult`][virgil.aliases.AliasBandResult] (``amp`` as fitted),
-    so that both score the same residuals."""
-    obs = np.reshape(d.vis, -1)
-    err = np.reshape(d.d_vis, -1)
-    mod = obs + r[:n] * err
-    return r.at[:n].set((amp * mod - obs) / err)
+    amp, r = _amp_profile(r, d, surface.blocks[0][2], amp_range)
+    return r, amp
 
 
 def _epoch_chi2(surface, model, d, amp_range, dof=None):
@@ -855,13 +836,6 @@ def _start_vector(orbit, flux, t_ref, band, bounds, diam=None):
     )
 
 
-def _senses(x):
-    """The seed and its other sense of motion (i -> 180 - i)."""
-    other = onp.array(x)
-    other[3] = -other[3]
-    return [x, other]
-
-
 # The likelihood is a narrow, curved ridge for an orbit of many cycles, where
 # L-BFGS-B stops 50-250 nats short of the optimum. Damped Newton on the IRLS
 # curvature (``_KernelProblem``) follows the ridge; L-BFGS-B is only the
@@ -1077,14 +1051,13 @@ def _candidates(settings, band, bounds, rng, orbits):
     ``n_random`` random orbits."""
     s = settings
     diam = s.diam_seed if s.fit_diam else None
-    pool = [
-        x
-        for orbit, _ in orbits or ()
-        for flux in s.flux_scan
-        for x in _senses(
-            _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
-        )
-    ]
+    pool = []
+    for orbit, _ in orbits or ():
+        for flux in s.flux_scan:
+            x = _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
+            other = onp.array(x)  # the other sense of motion (i -> 180 - i)
+            other[3] = -other[3]
+            pool += [x, other]
     pool.extend(_init_starts(s, band, bounds))
     for _ in range(s.n_random):
         pool.append(
@@ -1167,18 +1140,12 @@ def _distinct(modes, times, t_ref, min_distance_mas):
     """Keep the best of the modes whose tracks at ``times`` agree within
     ``min_distance_mas``."""
     modes = sorted(modes, key=lambda m: -m[1])
-    kept, tracks = [], []
-    for x, value in modes:
+    tracks = []
+    for x, _ in modes:
         orbit, _ = _elements(np.asarray(x), t_ref)
         dra, ddec, _ = orbit.relative(np.asarray(times))
-        track = onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
-        if all(
-            onp.max(onp.hypot(*(track - t).T)) > min_distance_mas
-            for t in tracks
-        ):
-            kept.append((x, value))
-            tracks.append(track)
-    return kept
+        tracks.append(onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1))
+    return [modes[k] for k in _distinct_tracks(tracks, min_distance_mas)]
 
 
 def _refine(problem, settings, bounds, pool, times, forced=()):
@@ -2360,9 +2327,10 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
             )
         else:
             positions = None
-            detail = (
-                f" (flagged: {_skipped_codes(skipped)})" if skipped else ""
-            )
+            codes = {  # {name: [code, ...]} of the skipped-night records
+                u["name"]: [f["code"] for f in u["flags"]] for u in skipped
+            }
+            detail = f" (flagged: {codes})" if skipped else ""
     elif positions is not None and len(positions.dt) < _MIN_SEED_NIGHTS:
         n_seed, detail, positions = len(positions.dt), "", None
     else:
@@ -2396,13 +2364,6 @@ def _signs_trusted(positions, min_gap, temper_f=1.0):
     return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
-def _seed_motion(data, positions, skip_flagged, jitter, cov_scale=1.0):
-    """The within-night velocities of the seeding nights (``EpochPositions``),
-    aligned with ``EpochPositions.positions(skip_flagged=...)``."""
-    motion = night_motion(data, positions, jitter=jitter, cov_scale=cov_scale)
-    return motion.take(~positions.flagged) if skip_flagged else motion
-
-
 def _short_arc_profile(
     data,
     seed_positions,
@@ -2423,9 +2384,13 @@ def _short_arc_profile(
     positions' and velocities' covariances are times ``cov_scale`` (the
     effective-channel factor); ``grid`` is ``ecc_max``, ``jitter_mas``,
     ``k`` and ``eccs``."""
-    motion = _seed_motion(
-        data, seed_positions, skip_flagged, arc_jitter, cov_scale
+    # The within-night velocities of the seeding nights, aligned with
+    # ``EpochPositions.positions(skip_flagged=...)``.
+    motion = night_motion(
+        data, seed_positions, jitter=arc_jitter, cov_scale=cov_scale
     )
+    if skip_flagged:
+        motion = motion.take(~seed_positions.flagged)
     counts = unwrap_cycles(
         positions,
         motion,
@@ -2515,11 +2480,6 @@ def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
         seed_scores=[[n, v] for n, v in score.items()],
         steps=list(counts.steps),
     )
-
-
-def _skipped_codes(skipped):
-    """``{name: [code, ...]}`` of the skipped-night records."""
-    return {u["name"]: [f["code"] for f in u["flags"]] for u in skipped}
 
 
 def _check_seed_diameter(positions, primary_diam):

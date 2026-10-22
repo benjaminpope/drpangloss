@@ -7,7 +7,6 @@ phases that flip there, so its sampler diagnostics are expected to fail).
 """
 
 import dataclasses
-import inspect
 import json
 import math
 
@@ -19,6 +18,7 @@ pytest.importorskip("h5py")
 pytest.importorskip("nbclient")
 
 import virgil  # noqa: E402
+from tests._shared import executed_quicklook  # noqa: E402
 from virgil import UniformDisk  # noqa: E402
 from virgil._precision import in_float64  # noqa: E402
 from virgil.coverage import vlti_oidata  # noqa: E402
@@ -67,7 +67,8 @@ def data():
 @pytest.fixture(scope="module")
 def full_run(data, tmp_path_factory):
     out = tmp_path_factory.mktemp("star") / "run"
-    pipeline = StarPipeline(data, output=out, **FULL)
+    # The notebook is executed by test_quicklook_notebook alone.
+    pipeline = StarPipeline(data, output=out, quicklook_execute=False, **FULL)
     return pipeline, pipeline.run()
 
 
@@ -169,31 +170,9 @@ CHECKS = [
 ]
 
 
-def _signature(name):
-    obj = {"StarPipeline": StarPipeline}[name.split(".")[0]]
-    for part in name.split(".")[1:]:
-        obj = getattr(obj, part)
-    params = [
-        p.replace(annotation=inspect.Parameter.empty)
-        for p in inspect.signature(obj).parameters.values()
-    ]
-    return str(
-        inspect.signature(obj).replace(
-            parameters=params, return_annotation=inspect.Signature.empty
-        )
-    )
-
-
-def test_api_snapshot():
-    # Changing any of these breaks users' scripts: update the snapshot only
-    # with an additive change or a schema bump (see docs/pipeline.md).
-    assert {k: _signature(k) for k in API} == API
-    assert StarPipeline.STAGES == STAGES
-    assert StarPipeline.defaults() == DEFAULTS
-    assert StarPipeline.STABILITY == "provisional"
-    assert StarPipeline.NAME == "star"
-    assert SCHEMA == "virgil-pipeline-run-v1"
-    assert "StarPipeline" in virgil.pipeline.__all__
+def test_pipeline_specific_contract():
+    # The shared part (signatures, stages, defaults) is test_api_snapshot
+    # in test_pipeline_robust_core.py.
     assert sorted(star.models()) == ["limb_darkened", "uniform"]
     assert star.DEFAULT_MODELS == ("uniform", "limb_darkened")
 
@@ -372,24 +351,8 @@ def test_round_trip(full_run, data):
 
 def test_quicklook_notebook(full_run):
     pipeline, _ = full_run
-    nb = json.loads((pipeline.output / "quicklook.ipynb").read_text())
-    cells = nb["cells"]
-    assert (
-        cells[0]["cell_type"] == "markdown"
-        and cells[-1]["cell_type"] == "markdown"
-    )
-    code = [i for i, c in enumerate(cells) if c["cell_type"] == "code"]
-    for i in code:
-        assert cells[i - 1]["cell_type"] == "markdown"  # prose before code
-        assert len(cells[i]["outputs"]) == 1, cells[i]["source"]  # one output
-        assert cells[i]["outputs"][0]["output_type"] != "error"
-    images = sum(
-        "image/png" in o.get("data", {})
-        for c in cells
-        if c["cell_type"] == "code"
-        for o in c["outputs"]
-    )
-    assert images == 4  # overview, V² with models, correlation, corner
+    # overview, V² with models, correlation, corner
+    cells, code = executed_quicklook(pipeline.output, images=4)
     main = "".join(cells[code[2] - 1]["source"]) + "".join(
         cells[code[2]]["source"]
     )
