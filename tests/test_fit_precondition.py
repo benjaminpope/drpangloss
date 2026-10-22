@@ -122,6 +122,11 @@ def test_a_known_diagonal_metric_is_removed():
     assert scaled.info["steps"] < plain.info["steps"]
     assert scaled.info["precondition"] == "diag"
     assert plain.info["precondition"] is None
+    assert plain.info["precondition_decades"] == []
+    # The quadratic's diagonal spans 2.8 decades.
+    assert scaled.info["precondition_decades"][0] == pytest.approx(
+        2.8, abs=0.1
+    )
 
 
 def test_adam_with_a_metric_reaches_the_same_optimum():

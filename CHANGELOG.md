@@ -9,7 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
-- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
+- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_decades"]` records its spread per round. `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
 
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`

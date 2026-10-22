@@ -714,7 +714,9 @@ def fit(
         decades, as for the faint pixels of a flat-prior image. The diagonal is
         refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
         ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
-        unconstrained coordinates. LM ignores it: it already uses JᵀJ.
+        unconstrained coordinates. ``info["precondition_decades"]`` lists, per
+        round, the spread of the diagonal in decades (the largest within a
+        coordinate block). LM ignores it: it already uses JᵀJ.
 
     Returns
     -------
@@ -757,6 +759,7 @@ def fit(
         # set a loop's length, so they stay static.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         stop = grad_norm = None
+        decades = []
         if method == "lm":
             limit = max_steps or 1000
             z, steps, converged, stop = _lm(
@@ -764,7 +767,7 @@ def fit(
             )
         elif method == "lbfgs":
             limit = max_steps or 20_000
-            z, steps, converged, stop, grad_norm = _lbfgs(
+            z, steps, converged, stop, grad_norm, decades = _lbfgs(
                 problem,
                 z0,
                 traced_scale,
@@ -826,6 +829,7 @@ def fit(
             "precondition": "diag"
             if precondition and method != "lm"
             else None,
+            "precondition_decades": decades,
             "at_bound": _at_bound(problem, values),
             "derived": _derived(problem, values),
         }
@@ -1581,6 +1585,7 @@ class _Metric(eqx.Module):
     zref: dict
     width: dict
     gauge: dict
+    decades: float = 0.0
 
     def to_z(self, zt):
         return {
@@ -1604,7 +1609,7 @@ class _Metric(eqx.Module):
             np.stack([np.min(w) for w in jax.tree.leaves(self.width)])
         )
         width = jax.tree.map(lambda w: w / smallest, self.width)
-        return _Metric(self.zref, width, self.gauge)
+        return _Metric(self.zref, width, self.gauge, self.decades)
 
     def _project(self, key, x):
         if key not in self.gauge:
@@ -1656,13 +1661,14 @@ def _metric(problem, z, scale):
     n = sum(int(np.size(z[k])) for k in problem.coordinate_keys)
     flat = _fisher_diagonal(problem, z, _diagonal_probes(n, None))
     _, unravel = problem.ravel(z)
-    width = {}
+    width, decades = {}, 0.0
     for key, d in unravel(flat).items():
         floor = _DIAG_FLOOR * np.max(d)
         usable = np.isfinite(floor) & (floor > 0)
         d = np.where(usable, np.maximum(np.nan_to_num(d), floor), 1.0 * scale)
         width[key] = np.sqrt(scale / d)
-    return _Metric(z, width, _gauge_masks(problem))
+        decades = max(decades, float(np.log10(np.max(d) / np.min(d))))
+    return _Metric(z, width, _gauge_masks(problem), decades)
 
 
 def _capped_lbfgs(max_step_size, memory, metric=None):
@@ -1846,10 +1852,13 @@ def _lbfgs(
     (see ``_Metric``).
     """
     limit, total, z, tolerance = int(max_steps), 0, z0, None
+    decades = []
     size = _LBFGS_ROUND
     while True:
         before = float(_forward_summary(problem, z)[0])
         metric = _metric(problem, z, scale) if precondition else None
+        if precondition:
+            decades.append(metric.decades)
         z, steps, converged, stop, tolerance, grad_norm = _lbfgs_round(
             problem,
             z,
@@ -1868,7 +1877,7 @@ def _lbfgs(
         # (the line search out of precision) or a timed-out or non-finite
         # one ends the fit.
         if converged or stop != "limit" or total >= limit:
-            return z, total, converged, stop, grad_norm
+            return z, total, converged, stop, grad_norm, decades
         gain = before - float(_forward_summary(problem, z)[0])
         if not gain > _RESTART_GAIN:  # also true of a NaN
             size = limit  # little progress: the rest as one last round

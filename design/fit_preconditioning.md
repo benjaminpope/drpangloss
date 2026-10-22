@@ -232,6 +232,15 @@ At a tight `gtol` the gain is larger: 16² AMI image at `w = 10`, `gtol = 10⁻�
 `gtol = 10⁻⁸` is 129.2282, at `10⁻⁴` 129.28 plain and 129.53 preconditioned),
 so that stopping rule, not the optimizer, limits how well two runs agree.
 
+**Accuracy of the generic diagonal (decides piece 3).** On the 41² case at the
+w = 1 solution (75 pixels above 10⁻³ of the peak), 16 probes give a median
+per-pixel error of 27% (90th percentile 55%; 56% of pixels within 30%), 64
+probes 15%; the exact diagonal of the 1681 coordinates costs about 0.4 s
+including compilation. That is at the 30% bar and the cost is negligible, so
+**no analytic per-data-type overrides are built**: one generic path (data terms
+via `curvature_rows`, regularizers via Hessian probes) serves OI, DISCO and
+radio alike. `info["precondition_decades"]` records the spread of D per round.
+
 **The Stage 7 success test is not met by a diagonal alone.** Float64 passes
 on the 41² case at 14645 of 20000 steps (plain fails), but float32 fails for both:
 at float32 resolution the line search stalls ("a step no longer changes the
