@@ -50,6 +50,8 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 
 The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position (`dra` and `ddec` on a box of half-width `max_sep_mas`) and log-uniform in flux and in error scales. Both templates sample the same `dra`, `ddec` and `flux`, so they give the same prior on the sky; a `BinaryModelAngular` template reports `sep` and `pa` derived from them, with no wrap at 0 or 360 degrees in the fit. The flux range is a setting (`flux_range`).
 
+`max_sep_mas` is by default the coarsest λ/B. Where the uv samples of one wavelength lie on a lattice (aperture masks, DISCO products), the visibilities repeat when the companion moves by a vector of the reciprocal lattice, so the default box is limited to half an alias cell, the largest square with no two points that differ by such a vector. The summary records the limit as `search.alias_cap_mas` (`null` when it was not applied), and the quicklook notes it. An explicit `max_sep_mas` is never capped; `OrbitPipeline` limits its position grid in the same way.
+
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
 
 ## `StarPipeline`: stellar diameters

@@ -136,6 +136,13 @@ def _binary_search_cell(run, summary):
     search, limits = summary["search"], summary["limits"]
     # The curve of the limits stage: same annuli as the saved plot.
     bins = run["config"].get("limit_bins", _LIMIT_BINS)
+    cap = search.get("alias_cap_mas")
+    capped = (
+        f" The search box is capped at ±{cap:.0f} mas, the alias limit of "
+        "the uv lattice; set `max_sep_mas` to search further out."
+        if cap
+        else ""
+    )
     return (
         "## Search and limits\n\n"
         "The left panel is the Δχ² of a point companion over the grid, "
@@ -143,7 +150,7 @@ def _binary_search_cell(run, summary):
         f"({format_sigma(search['local_nsigma'])} local, "
         f"{format_sigma(search['global_nsigma'])} after the "
         f"look-elsewhere correction for {search['n_trials']:.0f} "
-        "resolution elements). "
+        f"resolution elements).{capped} "
         f"The right panel is the {limits['sigma']:g}σ contrast curve "
         "(Absil method), the median limit in annuli about the star.",
         "grid = res.grid()\n"

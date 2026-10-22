@@ -908,3 +908,18 @@ def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
     assert abs(best["period"] - TRUTH["period"]) < 0.05
     assert best["ecc"] == pytest.approx(0.8, abs=0.1)
     assert load(tmp_path / "run").summary["chi2"]["best_orbit_reduced"] < 3.0
+
+
+def test_the_position_grid_stops_at_the_lattice_alias_limit(
+    nights, tmp_path, monkeypatch
+):
+    """On lattice coverage the default box is not widened past one alias
+    cell (here a limit of 4 mas); an explicit ``max_sep_mas`` is."""
+    monkeypatch.setattr(orbit_module, "lattice_alias_limit", lambda d: 4.0)
+    res = OrbitPipeline(nights, output=tmp_path / "run", **TINY).run(
+        through="epochs"
+    )
+    report = json.loads(
+        (res.path / "stages" / "epochs" / "report.json").read_text()
+    )
+    assert report["half_widths_mas"] == [4.0]

@@ -150,6 +150,7 @@ SUMMARY_KEYS = {
         "ddec_mas",
         "flux",
         "max_sep_mas",
+        "alias_cap_mas",
     },
     "limits": {
         "sigma",
@@ -518,7 +519,7 @@ def test_grid_is_capped_at_an_odd_number_and_the_step_reported(data, tmp_path):
     pipeline = BinaryPipeline(data, output=tmp_path / "run", **settings)
     grid = pipeline._grid()
     assert grid["dra"].size == grid["ddec"].size == 11  # not 13
-    max_sep, n, step, wanted = pipeline._grid_axis()
+    max_sep, n, step, wanted, _ = pipeline._grid_axis()
     assert n == 11 and step == pytest.approx(2 * max_sep / 10)
     assert step > wanted == 10.0
     with pytest.raises(ValueError, match="max_grid"):
@@ -797,3 +798,91 @@ def test_stage_warnings_are_recorded_not_emitted(data, tmp_path, monkeypatch):
     check = {c.name: c for c in res.checks}["convergence"]
     assert check.status == "warn" and check.value >= 2 / 169 - 1e-12
     assert "warning(s) recorded" in res.describe()
+
+
+# --- the default search box on lattice coverage -----------------------------
+
+LATTICE_TRUTH = BinaryModelCartesian(99.9, -60.1, 0.02)  # 116.6 mas, PA 121°
+LATTICE_SETTINGS = {
+    "max_grid": 41,
+    "n_flux": 6,
+    "flux_range": [1e-3, 0.2],
+    "quicklook_execute": False,
+}
+
+
+@pytest.fixture(scope="module")
+def lattice_data():
+    from virgil.coverage import nrm_oidata
+
+    return nrm_oidata(sigma_v2=0.002, sigma_cp_deg=0.1).with_model(
+        LATTICE_TRUTH, key=jax.random.PRNGKey(0)
+    )
+
+
+def test_default_box_on_lattice_coverage_stays_inside_one_alias_cell(
+    lattice_data, tmp_path
+):
+    """The 7-hole mask's aliases are 671.9 mas away in the larger component
+    (the old default half-width), so the box stops at half of that."""
+    pipeline = BinaryPipeline(lattice_data, output=tmp_path / "run")
+    axis = pipeline._grid_axis()
+    assert axis.max_sep == axis.alias_cap == pytest.approx(335.96, abs=0.1)
+    assert axis.max_sep < pipeline.settings["fov_fraction"] * 671.9 / 1.0001
+    explicit = BinaryPipeline(
+        lattice_data, output=tmp_path / "run2", max_sep_mas=500.0
+    )
+    assert explicit._grid_axis().max_sep == 500.0
+    assert explicit._grid_axis().alias_cap is None
+
+
+def test_lattice_default_search_recovers_the_companion_not_an_alias(
+    lattice_data, tmp_path
+):
+    pipeline = BinaryPipeline(
+        lattice_data, output=tmp_path / "run", **LATTICE_SETTINGS
+    )
+    res = pipeline.run(through="search")
+    search = json.loads(
+        (tmp_path / "run/stages/search/report.json").read_text()
+    )
+    assert search["alias_cap_mas"] == pytest.approx(335.96, abs=0.1)
+    assert search["max_sep_mas"] == search["alias_cap_mas"]
+    assert search["dra_mas"] == pytest.approx(99.9, abs=20.0)
+    assert search["ddec_mas"] == pytest.approx(-60.1, abs=20.0)
+    assert res.summary["search"]["alias_cap_mas"] == search["alias_cap_mas"]
+
+
+def test_coverage_that_is_not_a_lattice_keeps_the_field_of_view(tmp_path):
+    from tests._shared import vlti_night
+    from virgil.pipeline._common import _geometry
+
+    night = vlti_night(60000.0, frames=3)
+    axis = BinaryPipeline(night, output=tmp_path / "run")._grid_axis()
+    assert axis.alias_cap is None
+    assert axis.max_sep == pytest.approx(_geometry(night)["fov_mas"])
+
+
+def test_lattice_alias_limit_needs_one_wavelength_and_a_lattice():
+    from types import SimpleNamespace
+
+    from virgil._geometry import lattice_alias_limit
+    from virgil._utils import mas2rad
+    from virgil.coverage import ami_grid_record
+
+    square = OIData(ami_grid_record(pitch_m=0.5))
+    assert lattice_alias_limit(square) == pytest.approx(
+        0.5 * 4.3e-6 / 0.5 / mas2rad, rel=1e-4
+    )
+    ragged = SimpleNamespace(
+        u=onp.array([10.0, 17.0, 31.0]),
+        v=onp.array([0.0, 5.5, 9.3]),
+        wavel=onp.array([2e-6]),
+    )
+    assert lattice_alias_limit(ragged) is None
+    colours = SimpleNamespace(
+        u=onp.array([10.0, 20.0, 10.0]),
+        v=onp.array([0.0, 0.0, 10.0]),
+        wavel=onp.array([2e-6, 2.1e-6]),
+    )
+    assert lattice_alias_limit(colours) is None

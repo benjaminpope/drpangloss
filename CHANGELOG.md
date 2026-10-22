@@ -16,6 +16,14 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
+  DISCO products) the default search box is limited to half an alias cell, so
+  a companion is no longer reported at a lattice copy of its position (the
+  7-hole NIRISS box was 672 mas, beyond its 336 mas limit). The cap is in
+  `summary["search"]["alias_cap_mas"]` and the quicklook; an explicit
+  `max_sep_mas` is never capped. Other coverage is unchanged. The
+  `BinaryPipeline` docstring is shorter.
+
 - `CalibrationNuisance` default priors are in natural units. Gains and error
   scales are improper Jeffreys priors (the fit coordinate is `ln x`, no box);
   each offset is uniform over `offset_beams` (default 3) beams of its

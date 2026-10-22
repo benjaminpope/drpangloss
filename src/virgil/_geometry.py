@@ -351,6 +351,10 @@ def _unflagged_samples(data):
     return baseline, wavel, width
 
 
+# Largest multiple of a dual-lattice vector searched for the shortest alias.
+_ALIAS_ORDER = 6
+
+
 def fringe_scales(data):
     """The finest and coarsest fringe spacings of ``data``, in mas.
 
@@ -366,6 +370,55 @@ def fringe_scales(data):
     baseline, wavel, _ = _unflagged_samples(data)
     rho = baseline / wavel
     return 1.0 / (rho.max() * mas2rad), 1.0 / (rho.min() * mas2rad)
+
+
+def lattice_alias_limit(data, tolerance=1e-3):
+    """Half-width (mas) of the largest square search box free of alias copies, or ``None``.
+
+    If the uv samples of one wavelength lie on a 2-D lattice (aperture masks,
+    DISCO products), the visibilities repeat under the reciprocal lattice
+    (period ``λ`` times the dual lattice, in the sky frame), so two
+    positions in one box can look alike. A box of half-width ``h`` has no such
+    pair when ``2h`` is below every alias vector's larger component, so the
+    limit is half the smallest of those. ``None`` for other coverage (several
+    wavelengths, or samples off a lattice to within ``tolerance`` cells).
+
+    Parameters
+    ----------
+    data : OIData
+    tolerance : float, optional
+        Largest allowed offset from a lattice point, in cells.
+    """
+    wavel = onp.unique(onp.asarray(data.wavel, float))
+    if wavel.size != 1:
+        return None
+    uv = onp.unique(
+        onp.round(
+            onp.column_stack(
+                [onp.ravel(onp.asarray(x, float)) for x in (data.u, data.v)]
+            ),
+            9,
+        ),
+        axis=0,
+    )
+    norm = onp.hypot(*uv.T)
+    uv, norm = uv[norm > 0], norm[norm > 0]
+    if len(uv) < 2:
+        return None
+    first = uv[onp.argmin(norm)]
+    cross = onp.abs(first[0] * uv[:, 1] - first[1] * uv[:, 0])
+    apart = cross > 1e-6 * onp.linalg.norm(first) * norm
+    if not apart.any():
+        return None
+    basis = onp.array([first, uv[apart][onp.argmin(norm[apart])]])
+    cells = uv @ onp.linalg.inv(basis)
+    if onp.max(onp.abs(cells - onp.round(cells))) > tolerance:
+        return None
+    # The alias vectors are the reciprocal lattice, scaled by λ (rad -> mas).
+    dual = onp.linalg.inv(basis).T * wavel[0] / mas2rad
+    steps = onp.arange(-_ALIAS_ORDER, _ALIAS_ORDER + 1)
+    mix = onp.array([(i, j) for i in steps for j in steps if i or j])
+    return float(0.5 * onp.abs(mix @ dual).max(axis=1).min())
 
 
 def smearing_scale(data):

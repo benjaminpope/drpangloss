@@ -39,7 +39,7 @@ from ._common import (
     _save,
     _scales_of,
 )
-from .._geometry import separation_pa
+from .._geometry import lattice_alias_limit, separation_pa
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
 
@@ -62,13 +62,15 @@ class _Axis(NamedTuple):
     """The position axes of the search grid.
 
     ``max_sep`` is the half-width (mas), ``n`` the points per axis, ``step``
-    the effective spacing and ``wanted`` the requested one.
+    the effective spacing and ``wanted`` the requested one. ``alias_cap`` is
+    the lattice alias limit (mas) when it set ``max_sep``, else ``None``.
     """
 
     max_sep: float
     n: int
     step: float
     wanted: float
+    alias_cap: float | None = None
 
     @property
     def coarsened(self):
@@ -103,81 +105,38 @@ class BinaryPipeline(_Pipeline):
         May change in any 0.4.x release without a deprecation cycle.
 
     Stages: ``load → overview → search → limits → fit → posterior →
-    quicklook``.
-
-    * ``load`` applies ``wavel_range`` and ``error_floor`` and writes the
-      data that are fitted to ``data/processed.oifits``.
-    * ``overview`` plots the data and their uv coverage.
-    * ``search`` runs
-      [`detection_statistics`][virgil.detection.detection_statistics]
-      (Δχ², log Bayes factor, best SNR) on a point-companion grid
-      (``dra``, ``ddec`` in mas, log-spaced ``flux``), with maps of Δχ²,
-      best flux and SNR, and the significance at the peak
-      ([`local_nsigma`][virgil.detection.local_nsigma]) before and after a
-      look-elsewhere correction for the number of resolution elements
-      searched.
-    * ``limits`` runs [`absil_limits`][virgil.limits.absil_limits] at
-      ``sigma`` and its [`radial_profile`][virgil.limits.radial_profile].
-    * ``fit`` runs [`fit`][virgil.fitting.fit] on the model template from
-      the best grid point.
-    * ``posterior`` samples
-      [`numpyro_model`][virgil.likelihood.numpyro_model] with NUTS from
-      the fit.
-    * ``quicklook`` writes and executes ``quicklook.ipynb``.
-
-    The fit is on the quoted errors unless ``error_scale="fit"``, and χ²/N
-    is always reported on the quoted errors. Both templates sample the
-    same priors: uniform in position over the search box (``dra``, ``ddec``;
-    ``sep`` and ``pa`` of an angular template are derived from them, so
-    there is no wrap at 0°/360°) and log-uniform in flux over
-    ``flux_range``.
+    quicklook``. The search is a point-companion grid with
+    [`detection_statistics`][virgil.detection.detection_statistics] and a
+    look-elsewhere-corrected significance; the limits are
+    [`absil_limits`][virgil.limits.absil_limits]; the fit and the NUTS
+    posterior share one prior (uniform in ``dra``, ``ddec`` over the search
+    box, log-uniform in flux over ``flux_range``). The fit is on the quoted
+    errors unless ``error_scale="fit"``, and χ²/N is always on the quoted
+    errors. Stages, settings and outputs are described in
+    [Pipelines](../pipeline.md).
 
     Parameters
     ----------
     data : OIData
         The data.
     model : BinaryModelAngular or BinaryModelCartesian, optional
-        Model template; its class sets the fitted parameters (``sep``,
-        ``pa``, ``flux`` or ``dra``, ``ddec``, ``flux``). Default
-        ``BinaryModelAngular``. The search and limits always use a point
-        companion in Cartesian offsets.
+        Template whose class sets the fitted parameters (default
+        ``BinaryModelAngular``); the search always uses a point companion.
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of the defaults (see ``BinaryPipeline.defaults()``):
-
-        - ``sigma`` (3.0): significance of the contrast limits.
-        - ``detection_sigma`` (3.0): threshold of the detection check, on
-          the look-elsewhere-corrected significance.
-        - ``max_sep_mas`` (None): half-width of the search grid; by
-          default ``fov_fraction`` × the coarsest λ/B of the samples (each
-          sample's own wavelength over its own baseline, not λ_max/B_min).
-        - ``fov_fraction`` (1.0): see ``max_sep_mas``.
-        - ``grid_step_mas`` (None): grid spacing; by default a quarter of
-          the finest λ/B of the samples, coarsened so that no axis exceeds
-          ``max_grid`` points (the search report then records the effective
-          step and warns).
-        - ``max_grid`` (101): most points per position axis; the grid has
-          the largest odd number of points not above it (at least 3).
-        - ``flux_range`` ([1e-5, 0.5]): flux axis of the grid and bounds
-          of the log-uniform flux prior (companion/primary).
-        - ``n_flux`` (40): points on the flux axis.
-        - ``wavel_range`` (None): ``[min, max]`` wavelengths to keep (m).
-        - ``error_floor`` (None): absolute error floors by observable,
-          e.g. ``{"vis": 0.01, "phi": 0.005}`` (phases in radians), as
-          [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor].
-        - ``error_scale`` ("quoted"): ``"fit"`` also fits log-uniform
-          error scales ``vis_scale`` and ``phi_scale`` on [0.1, 10].
-        - ``num_warmup``, ``num_samples``, ``num_chains`` (1000, 1000, 4),
-          ``chain_method`` ("vectorized") and ``seed`` (0): NUTS.
-        - ``batch_size`` (None): grid batch size.
-        - ``limit_bins`` (20): annuli of the contrast curve.
-        - ``quicklook_execute`` (True): execute the quicklook notebook.
+        Overrides of ``BinaryPipeline.defaults()``. The search box has
+        half-width ``max_sep_mas``; by default ``fov_fraction`` × the
+        coarsest λ/B, and on lattice coverage (aperture masks, DISCO) no
+        more than half an alias cell (``search.alias_cap_mas`` in the
+        summary); an explicit ``max_sep_mas`` is never capped. The step is
+        ``grid_step_mas``, by default a quarter of the finest λ/B, coarsened
+        to at most ``max_grid`` points per axis.
 
     Examples
     --------
     >>> import virgil as vg  # doctest: +SKIP
-    >>> from virgil.pipeline import BinaryPipeline, load  # doctest: +SKIP
+    >>> from virgil.pipeline import BinaryPipeline  # doctest: +SKIP
     >>> res = BinaryPipeline(vg.OIData("hd1234.oifits"), output="runs/hd1234").run()  # doctest: +SKIP
     >>> res.summary["companion"]["sep_mas"]  # doctest: +SKIP
     """
@@ -258,19 +217,28 @@ class BinaryPipeline(_Pipeline):
         """
         s = self.settings
         geo = _geometry(self.processed)
-        max_sep = s["max_sep_mas"] or s["fov_fraction"] * geo["fov_mas"]
+        max_sep, cap = s["max_sep_mas"], None
+        if not max_sep:
+            max_sep = s["fov_fraction"] * geo["fov_mas"]
+            # Deliberate: on lattice coverage (aperture masks, DISCO) the
+            # default box stops at the first alias, since a companion and its
+            # lattice copies fit the data equally well. An explicit
+            # ``max_sep_mas`` is not capped.
+            limit = lattice_alias_limit(self.processed)
+            if limit is not None and limit < max_sep:
+                max_sep, cap = limit, limit
         wanted = (
             s["grid_step_mas"] or _STEP_FRACTION * geo["lambda_over_b_mas"]
         )
         most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
         n = min(2 * math.ceil(max_sep / wanted) + 1, most)
-        return _Axis(max_sep, n, 2.0 * max_sep / (n - 1), wanted)
+        return _Axis(max_sep, n, 2.0 * max_sep / (n - 1), wanted, cap)
 
     def _grid(self):
         import jax.numpy as np
 
         s = self.settings
-        max_sep, n, _, _ = self._grid_axis()
+        max_sep, n = self._grid_axis()[:2]
         axis = np.linspace(-max_sep, max_sep, n)
         lo, hi = s["flux_range"]
         return {
@@ -533,6 +501,7 @@ def _search_report(data, grid, axis, detection):
         "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
         "n_trials": n_trials,
         "max_sep_mas": axis.max_sep,
+        "alias_cap_mas": axis.alias_cap,
         "grid_step_mas": axis.step,
         "grid_step_wanted_mas": axis.wanted,
         "grid_shape": [len(onp.asarray(grid[k])) for k in _AXIS_ORDER],
@@ -821,6 +790,7 @@ _SEARCH_KEYS = (
     "ddec_mas",
     "flux",
     "max_sep_mas",
+    "alias_cap_mas",
 )
 _LIMITS_KEYS = (
     "sigma",
