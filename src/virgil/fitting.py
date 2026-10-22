@@ -676,8 +676,7 @@ def fit(
         Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100, cut so the history stays under 2 GiB; an
-        explicit value is used as given); CG steps per LM step (above 200
+        L-BFGS history (default 100, cut to keep it under 1 GB); CG steps per LM step (above 200
         coordinates); Adam's rate.
     dtype : {"float64", "float32"}, optional
         Precision; see [common arguments](../common_arguments.md#dtype).
@@ -757,7 +756,7 @@ def fit(
                 np.asarray(limit),
                 gtol,
                 np.asarray(max_step_size),
-                _lbfgs_memory(lbfgs_memory, z0),
+                _lbfgs_memory(lbfgs_memory, *_vector_size(z0)),
                 budget,
                 precondition,
             )
@@ -1391,20 +1390,24 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
             return z, steps, False, "time"
 
 
-# L-BFGS keeps 2 * memory vectors of the problem's size; the default memory is
-# cut to fit this many bytes (it binds above 1.34e6 float64 coordinates).
-_LBFGS_BYTES = 2**31
+# L-BFGS keeps 2 * memory vectors of the problem's size.
+# deliberate: the default memory 100 is cut to a 1 GB history (above 6e5 float64
+# coordinates); the sweep behind 100 is in design/fit_preconditioning.md.
+_LBFGS_BYTES = 10**9
 _LBFGS_MEMORY = 100
 
 
-def _lbfgs_memory(memory, z0):
-    """``memory`` if given, else 100 cut to keep the history within 2 GiB."""
+def _vector_size(z):
+    """The number of coordinates of the tree ``z`` and the bytes of one."""
+    leaves = jax.tree.leaves(z)
+    return sum(int(np.size(leaf)) for leaf in leaves), leaves[0].dtype.itemsize
+
+
+def _lbfgs_memory(memory, n, itemsize):
+    """``memory`` if given, else 100 cut so that ``n`` coordinates fit the budget."""
     if memory is not None:
         return int(memory)
-    leaves = jax.tree.leaves(z0)
-    size = sum(int(np.size(leaf)) for leaf in leaves)
-    itemsize = leaves[0].dtype.itemsize if leaves else 8
-    return max(1, min(_LBFGS_MEMORY, _LBFGS_BYTES // (2 * size * itemsize)))
+    return max(1, min(_LBFGS_MEMORY, _LBFGS_BYTES // (2 * n * itemsize)))
 
 
 # Up to this many coordinates the Gauss–Newton diagonal is exact (one

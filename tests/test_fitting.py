@@ -1321,19 +1321,26 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
         assert result.values[path] == pytest.approx(value, rel=1e-2)
 
 
-def test_the_lbfgs_history_is_100_unless_it_would_pass_the_byte_budget(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "n, itemsize, expected",
+    [
+        (1, 8, 100),  # tiny problem: the full history
+        (1681, 8, 100),  # the 41² image
+        (625_000, 8, 100),  # the largest float64 problem with the full history
+        (625_001, 8, 99),
+        (1_000_000, 8, 62),  # 10⁶ float64 pixels: 1 GB of history
+        (1_250_000, 4, 100),  # float32 vectors are half the size
+        (10**12, 8, 1),  # never below one step
+    ],
+)
+def test_the_lbfgs_history_is_100_unless_it_would_pass_one_gigabyte(
+    n, itemsize, expected
 ):
-    from virgil import fitting
+    from virgil.fitting import _lbfgs_memory
 
-    z = {"x": onp.zeros(1000)}
-    assert fitting._lbfgs_memory(None, z) == 100
-    assert fitting._lbfgs_memory(7, z) == 7
-    monkeypatch.setattr(fitting, "_LBFGS_BYTES", 2 * 1000 * 8 * 10)
-    assert fitting._lbfgs_memory(None, z) == 10
-    assert fitting._lbfgs_memory(500, z) == 500
-    # float32 vectors are half the size, so twice the history fits
-    assert fitting._lbfgs_memory(None, {"x": onp.zeros(1000, "float32")}) == 20
+    assert _lbfgs_memory(None, n, itemsize) == expected
+    assert _lbfgs_memory(7, n, itemsize) == 7
+    assert _lbfgs_memory(500, n, itemsize) == 500
 
 
 def test_fit_resolves_the_default_lbfgs_memory(monkeypatch):
@@ -1344,7 +1351,7 @@ def test_fit_resolves_the_default_lbfgs_memory(monkeypatch):
     monkeypatch.setattr(
         fitting,
         "_lbfgs_memory",
-        lambda memory, z: seen.append(memory) or real(memory, z),
+        lambda memory, *size: seen.append(memory) or real(memory, *size),
     )
     fit(START, PRIORS, DATA, method="lbfgs", max_steps=5)
     fit(START, PRIORS, DATA, method="lbfgs", lbfgs_memory=7, max_steps=5)
