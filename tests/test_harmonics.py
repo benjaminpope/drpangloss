@@ -824,7 +824,9 @@ def test_render_gradients_are_finite_with_a_pixel_on_the_origin(inc, kind):
             GaussianRing(6.0, 1.0), harmonics=harmonics, inc=inc, pa=20.0
         )
     else:
-        disk = ModulatedGaussianRim(6.0, 1.0, inc, 20.0, az_amps=0.5, az_pas=0.0)
+        disk = ModulatedGaussianRim(
+            6.0, 1.0, inc, 20.0, az_amps=0.5, az_pas=0.0
+        )
 
     def total(model):
         return np.sum(model.render(npix=25, fov_mas=24.0) ** 2)
