@@ -865,26 +865,32 @@ def _fold_fit(ctx, shape, priors, model, values):
 # === STAGE: GEOMETRY ===
 
 
+# deliberate: module-level, bound with functools.partial, so the jitted grid
+# kernel's cache key (a pytree of the function and the hashable ctx) is stable
+# across calls; a closure is a new object each call and recompiles.
+def _single_ring(ctx, *, cos_inc, pa, r1, f1):
+    """One ring of width one half-fringe, for the geometry grid."""
+    import jax.numpy as np
+
+    v = {
+        "inc": np.degrees(np.arccos(cos_inc)),
+        "pa": pa,
+        "r1": r1,
+        "s1": ctx.halffringe,
+        "f1": f1,
+    }
+    return _ring_scene(ctx, _Shape(1, False, 0, False), v)
+
+
 @in_float64
 def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
 
-    def single_ring(*, cos_inc, pa, r1, f1):
-        """One ring of width one half-fringe."""
-        v = {
-            "inc": np.degrees(np.arccos(cos_inc)),
-            "pa": pa,
-            "r1": r1,
-            "s1": ctx.halffringe,
-            "f1": f1,
-        }
-        return _ring_scene(ctx, _Shape(1, False, 0, False), v)
-
     return onp.asarray(
         likelihood_grid(
-            single_ring,
+            functools.partial(_single_ring, ctx),
             data=p.processed,
             grid={
                 "cos_inc": np.asarray(cos_axis),
