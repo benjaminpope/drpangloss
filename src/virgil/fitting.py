@@ -45,7 +45,13 @@ from .likelihood import (
     noise_sites,
     tied_log_prior,
 )
-from .models import MultipoleKernel, RadialGP, RadialGPFunction, SourceModel
+from .models import (
+    Image,
+    MultipoleKernel,
+    RadialGP,
+    RadialGPFunction,
+    SourceModel,
+)
 from ._deprecate import external_stacklevel
 
 
@@ -475,14 +481,14 @@ class _Objective(eqx.Module):
         # ``Normal(0, 1).to_event(2)`` is still a separable, elementwise prior.
         if is_angle_vector(prior):
             return True
+        if isinstance(base, dist.ImproperUniform):
+            return True
         if base.event_shape != ():
             raise NoLeastSquaresForm(
                 f"{type(base).__name__} has event_shape {base.event_shape}: "
                 "its curvature is not diagonal, and the Gauss–Newton matrix "
                 "takes only elementwise priors and angle vectors."
             )
-        if isinstance(base, dist.ImproperUniform):
-            return True
         if jacobian:
             return False
         return self._in_flat_coordinate(prior) or isinstance(
@@ -527,6 +533,11 @@ class _Objective(eqx.Module):
             second = jax.jvp(jax.grad(potential), (zk,), (ones,))[1]
             parts.append(np.ravel(np.maximum(0.0, second)))
         return np.concatenate(parts) if parts else np.zeros(0)
+
+    def penalty(self, z):
+        """The summed regularizers at ``z``."""
+        model = _reference(self.build(z))
+        return sum((r.value(model) for r in self.regularizers), 0.0)
 
     def loss(self, z):
         """Negative log posterior (up to a constant) at ``z``.
@@ -634,6 +645,7 @@ def fit(
     likelihoods=(),
     time_limit=None,
     progress=None,
+    precondition=None,
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
@@ -694,6 +706,15 @@ def fit(
     progress : callable or bool, optional
         Between chunks, call a function with a dict of ``steps``, ``loss``,
         ``grad_norm`` and ``elapsed`` (seconds), or print them if ``True``.
+    precondition : {None, "diag"}, optional
+        ``"diag"`` rescales each unconstrained coordinate by the square root of
+        the diagonal of the Gauss–Newton curvature (see
+        [`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and
+        Adam, which helps when the coordinates' curvatures differ by many
+        decades, as for the faint pixels of a flat-prior image. The diagonal is
+        refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
+        ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
+        unconstrained coordinates. LM ignores it: it already uses JᵀJ.
 
     Returns
     -------
@@ -711,6 +732,11 @@ def fit(
         raise ValueError(
             f"time_limit must be a number of seconds, not {time_limit}."
         )
+    if precondition not in (None, False, "diag"):
+        raise ValueError(
+            f"precondition must be None or 'diag', not {precondition!r}."
+        )
+    precondition = bool(precondition)
     budget = _Budget(time_limit, progress)
     with run_in(dtype):
         problem = cast_tree(
@@ -747,6 +773,7 @@ def fit(
                 np.asarray(max_step_size),
                 int(lbfgs_memory),
                 budget,
+                precondition,
             )
         elif method == "adam":
             if budget.chunked:
@@ -756,8 +783,16 @@ def fit(
                     "'lbfgs')."
                 )
             steps = limit = max_steps or 2000
+            metric = (
+                _metric(problem, z0, traced_scale) if precondition else None
+            )
             z = _adam(
-                problem, z0, traced_scale, np.asarray(learning_rate), steps
+                problem,
+                z0,
+                traced_scale,
+                np.asarray(learning_rate),
+                steps,
+                None if metric is None else metric.normalized(),
             )
             converged = None
         else:
@@ -788,6 +823,9 @@ def fit(
             "ndata": ndata,
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
+            "precondition": "diag"
+            if precondition and method != "lm"
+            else None,
             "at_bound": _at_bound(problem, values),
             "derived": _derived(problem, values),
         }
@@ -1219,7 +1257,7 @@ def _loss_and_gradient(problem, z, scale, grad_norm=None):
     return float(loss), float(grad_norm)
 
 
-def _final_gradient(carry):
+def _final_gradient(carry, metric=None):
     """The gradient norm at the point an L-BFGS carry holds, without a new gradient.
 
     The carry's own gradient is that of the step's start, one step behind its
@@ -1230,12 +1268,13 @@ def _final_gradient(carry):
     count, _, state, _, gradient, _ = carry
     if int(count) == 0:
         return gradient
-    return _state_gradient_norm(state)
+    return _state_gradient_norm(state, metric)
 
 
 @jax.jit
-def _state_gradient_norm(state):
-    return _largest(optax.tree_utils.tree_get(state, "grad"))
+def _state_gradient_norm(state, metric=None):
+    gradient = optax.tree_utils.tree_get(state, "grad")
+    return _largest(gradient if metric is None else metric.gradient(gradient))
 
 
 def _largest(tree):
@@ -1388,16 +1427,256 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
             return z, steps, False, "time"
 
 
-def _capped_lbfgs(max_step_size, memory):
+# Up to this many coordinates the Gauss–Newton diagonal is exact (one
+# Jacobian-vector product each); above, it is estimated from _DIAG_PROBES probes.
+_EXACT_DIAG = 1024
+_DIAG_PROBES = 16
+# A coordinate's curvature is floored at this fraction of its block's largest.
+_DIAG_FLOOR = 1e-3
+
+
+def _gn_diagonal(rows, x, probes):
+    """The diagonal of JᵀJ for the rows ``rows(x)``: exact (``probes=None``),
+    or the mean of ``(Jᵀu)²`` over Gaussian ``u`` in row space, whose mean is
+    the diagonal and which is never negative."""
+    n = x.size
+    m = jax.eval_shape(rows, x).size
+    if probes is None and n <= m:
+
+        def column(i):
+            e = np.zeros(n, x.dtype).at[i].set(1.0)
+            return np.sum(jax.jvp(rows, (x,), (e,))[1] ** 2)
+
+        return jax.lax.map(column, np.arange(n))
+    _, pull = jax.vjp(rows, x)
+    if probes is None:
+
+        def add(total, i):
+            return total + pull(np.zeros(m, x.dtype).at[i].set(1.0))[
+                0
+            ] ** 2, None
+
+        return jax.lax.scan(add, np.zeros(n, x.dtype), np.arange(m))[0]
+
+    def squared(key):
+        return pull(jax.random.normal(key, (m,), x.dtype))[0] ** 2
+
+    keys = jax.random.split(jax.random.PRNGKey(0), probes)
+    return np.mean(jax.lax.map(squared, keys), axis=0)
+
+
+def _hessian_diagonal(f, x, probes):
+    """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
+    the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
+    n = x.size
+    grad = jax.grad(f)
+
+    def product(v):
+        return jax.jvp(grad, (x,), (v,))[1]
+
+    if probes is None:
+
+        def entry(i):
+            return product(np.zeros(n, x.dtype).at[i].set(1.0))[i]
+
+        return jax.lax.map(entry, np.arange(n))
+
+    def estimate(key):
+        v = jax.random.rademacher(key, (n,), x.dtype)
+        return v * product(v)
+
+    keys = jax.random.split(jax.random.PRNGKey(1), probes)
+    return np.mean(jax.lax.map(estimate, keys), axis=0)
+
+
+@eqx.filter_jit
+def _fisher_diagonal(problem, z, probes):
+    """The diagonal of the Gauss–Newton curvature of ``problem.loss`` at ``z``,
+    over the flat coordinates: JᵀJ of the data and likelihood rows, the
+    curvature of the priors, and the Hessian diagonal of the regularizers
+    (floored at zero, as for ``gauss_newton_mass``)."""
+    flat, unravel = problem.ravel(z)
+    diagonal = _gn_diagonal(
+        lambda x: problem.curvature_rows(unravel(x)), flat, probes
+    ) + problem.curvature_diag(z, False)
+    if problem.regularizers:
+        penalty = _hessian_diagonal(
+            lambda x: problem.penalty(unravel(x)), flat, probes
+        )
+        diagonal = diagonal + np.maximum(penalty, 0.0)
+    return diagonal
+
+
+def _diagonal_probes(n, n_probes):
+    """``None`` for an exact diagonal of ``n`` coordinates, else the probes."""
+    if n_probes is None:
+        return None if n <= _EXACT_DIAG else _DIAG_PROBES
+    return int(n_probes) or None
+
+
+def gauss_newton_diag(
+    model,
+    priors,
+    data,
+    values,
+    *,
+    regularizers=(),
+    likelihoods=(),
+    noise=None,
+    n_probes=None,
+    dtype="float64",
+):
+    """The diagonal of the Gauss–Newton curvature of a fit's loss.
+
+    The curvature is F = JᵀJ + diag(P) + diag(R) in the unconstrained
+    coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
+    whitened residuals, P the curvature of the priors and R the Hessian diagonal
+    of the regularizers, floored at zero. It is the scale
+    ``fit(..., precondition="diag")`` divides each coordinate by; see
+    [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
+    matrix.
+
+    Parameters
+    ----------
+    model, priors, data, regularizers, noise, likelihoods, dtype
+        As for [`fit`][virgil.fitting.fit].
+    values : dict
+        Parameter values at which to take the curvature (e.g. ``fit(...).values``).
+    n_probes : int, optional
+        Up to 1024 coordinates the diagonal is exact, one Jacobian-vector
+        product per coordinate. Above, it is estimated: JᵀJ from the mean of
+        ``(Jᵀu)²`` over 16 Gaussian vectors ``u``, R from 16 Rademacher
+        Hessian-vector products, each good to a relative ``√(2 / probes)``.
+        Give a number of probes to estimate at any size, or ``0`` for the exact
+        diagonal at any size.
+
+    Returns
+    -------
+    dict
+        The diagonal by coordinate name, with each coordinate's shape.
+    """
+    with run_in(dtype):
+        problem = cast_tree(
+            _Objective(model, priors, data, regularizers, noise, likelihoods),
+            dtype,
+        )
+        z = problem.init(cast_tree(values, dtype))
+        n = sum(int(np.size(z[k])) for k in problem.coordinate_keys)
+        flat = _fisher_diagonal(problem, z, _diagonal_probes(n, n_probes))
+        _, unravel = problem.ravel(z)
+        return {k: onp.asarray(v) for k, v in unravel(flat).items()}
+
+
+class _Metric(eqx.Module):
+    """A frozen change of variables ``z = z_ref + P(width ⊙ z̃)``.
+
+    ``width`` is the reciprocal square root of the loss's curvature per data
+    point (see ``gauss_newton_diag``), so L-BFGS in ``z̃`` starts from a
+    diagonal Newton step. ``P`` removes the mean over the support from an
+    image's log-brightness block (``gauge``: the support masks), the direction
+    the loss does not depend on (a softmax image), which the scaling would
+    otherwise let drift.
+    """
+
+    zref: dict
+    width: dict
+    gauge: dict
+
+    def to_z(self, zt):
+        return {
+            k: self.zref[k] + self._project(k, self.width[k] * zt[k])
+            for k in self.zref
+        }
+
+    def step(self, updates):
+        """Steps of ``z̃`` in the coordinates of ``z``."""
+        return {
+            k: self._project(k, self.width[k] * u) for k, u in updates.items()
+        }
+
+    def gradient(self, gradient):
+        """A gradient with respect to ``z̃`` as one with respect to ``z``."""
+        return jax.tree.map(lambda g, w: g / w, gradient, self.width)
+
+    def normalized(self):
+        """The same, with the narrowest width scaled to one."""
+        smallest = np.min(
+            np.stack([np.min(w) for w in jax.tree.leaves(self.width)])
+        )
+        width = jax.tree.map(lambda w: w / smallest, self.width)
+        return _Metric(self.zref, width, self.gauge)
+
+    def _project(self, key, x):
+        if key not in self.gauge:
+            return x
+        mask = self.gauge[key]
+        mean = np.sum(np.where(mask, x, 0.0)) / np.sum(mask)
+        return x - np.where(mask, mean, 0.0)
+
+
+class _InMetric(eqx.Module):
+    """A problem's loss as a function of ``z̃``, for ``_scaled_loss``."""
+
+    problem: object
+    metric: _Metric
+
+    def loss(self, zt):
+        return self.problem.loss(self.metric.to_z(zt))
+
+
+def _gauge_masks(problem):
+    """Support masks of the plain log-brightness arrays being fitted: an Image's
+    brightness is a softmax of them, so adding a constant leaves it unchanged."""
+    model = problem.model
+    if not isinstance(model, SourceModel):
+        return {}
+    masks = {}
+    for path in problem.priors:
+        if not path.endswith("log_brightness"):
+            continue
+        parent = path[: -len("log_brightness")].rstrip(".")
+        image = model.resolved()
+        image = image.get(parent) if parent else image
+        if not isinstance(image, Image) or hasattr(
+            image.log_brightness, "evaluate"
+        ):
+            continue
+        shape = np.shape(image.log_brightness)
+        support = image.support
+        masks[path] = (
+            np.ones(shape, bool)
+            if support is None
+            else np.asarray(support != 0)
+        )
+    return masks
+
+
+def _metric(problem, z, scale):
+    """The ``_Metric`` at ``z`` for a loss per data point ``scale``."""
+    n = sum(int(np.size(z[k])) for k in problem.coordinate_keys)
+    flat = _fisher_diagonal(problem, z, _diagonal_probes(n, None))
+    _, unravel = problem.ravel(z)
+    width = {}
+    for key, d in unravel(flat).items():
+        floor = _DIAG_FLOOR * np.max(d)
+        usable = np.isfinite(floor) & (floor > 0)
+        d = np.where(usable, np.maximum(np.nan_to_num(d), floor), 1.0 * scale)
+        width[key] = np.sqrt(scale / d)
+    return _Metric(z, width, _gauge_masks(problem))
+
+
+def _capped_lbfgs(max_step_size, memory, metric=None):
     """optax's L-BFGS, with no coordinate moving more than ``max_step_size``.
 
     The whole direction is scaled down to the cap before the zoom line search (so
     the quasi-Newton direction is kept and the line search evaluates the points
-    actually taken).
+    actually taken). With a ``metric`` the optimizer's coordinates are scaled and
+    the cap acts on the step in the unscaled ones.
     """
 
     def cap(updates, state, params=None):
-        factor = np.minimum(1.0, max_step_size / _largest(updates))
+        step = updates if metric is None else metric.step(updates)
+        factor = np.minimum(1.0, max_step_size / _largest(step))
         return jax.tree.map(lambda u: u * factor, updates), state
 
     return optax.chain(
@@ -1413,16 +1692,21 @@ def _capped_lbfgs(max_step_size, memory):
 
 
 @eqx.filter_jit
-def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
+def _lbfgs_loop(
+    problem, carry, scale, stop_at, tolerance, step_size, memory, metric=None
+):
     """L-BFGS steps from ``carry`` until step ``stop_at`` or a stop.
 
     ``carry`` is ``(count, z, optimizer state, loss, gradient, moved)``. Stops at
     ``stop_at`` steps, within ``tolerance``, when a step no longer moves the
     parameters, or when the loss or gradient is not finite. ``stop_at`` is traced,
-    so chunked fits compile the loop once.
+    so chunked fits compile the loop once. With a ``metric``, ``z`` is in its
+    scaled coordinates, and ``gradient`` is still the unscaled one.
     """
-    optimizer = _capped_lbfgs(step_size, memory)
+    optimizer = _capped_lbfgs(step_size, memory, metric)
     loss = _scaled_loss(problem, scale)
+    if metric is not None:
+        loss = _scaled_loss(_InMetric(problem, metric), scale)
     value_and_grad = optax.value_and_grad_from_state(loss)
 
     def keep_going(carry):
@@ -1441,14 +1725,23 @@ def _lbfgs_loop(problem, carry, scale, stop_at, tolerance, step_size, memory):
             np.logical_or,
             jax.tree.map(lambda a, b: np.any(a != b), new, z),
         )
-        return count + 1, new, state, value, _largest(grad), moved
+        size = _largest(grad if metric is None else metric.gradient(grad))
+        return count + 1, new, state, value, size, moved
 
     return jax.lax.while_loop(keep_going, step, carry)
 
 
 @eqx.filter_jit
 def _lbfgs_run(
-    problem, z0, scale, max_steps, gtol, max_step_size, memory, tolerance=None
+    problem,
+    z0,
+    scale,
+    max_steps,
+    gtol,
+    max_step_size,
+    memory,
+    tolerance=None,
+    metric=None,
 ):
     # optax's L-BFGS (with a zoom line search, and capped steps; see
     # _capped_lbfgs), stopped on the gradient.
@@ -1461,7 +1754,8 @@ def _lbfgs_run(
     # stopping at once. The fit also stops, unconverged, when a step no
     # longer changes the parameters (the line search has run out of
     # precision, as can happen in float32). Returns the loop's carry (see
-    # _lbfgs_loop) after at most max_steps steps, and the tolerance.
+    # _lbfgs_loop) after at most max_steps steps, and the tolerance. With a
+    # metric (see _Metric) the loop runs in its coordinates, from zero.
     loss = _scaled_loss(problem, scale)
     value, gradient = jax.value_and_grad(loss)(z0)
     # A restart passes the first round's tolerance, so that every round
@@ -1469,10 +1763,19 @@ def _lbfgs_run(
     if tolerance is None:
         tolerance = _tolerance(gradient, gtol)
     # The start itself may already be a stationary point.
-    state = _capped_lbfgs(max_step_size, memory).init(z0)
+    if metric is not None:
+        z0 = jax.tree.map(np.zeros_like, z0)
+    state = _capped_lbfgs(max_step_size, memory, metric).init(z0)
     start = (0, z0, state, value, _largest(gradient), np.asarray(True))
     carry = _lbfgs_loop(
-        problem, start, scale, max_steps, tolerance, max_step_size, memory
+        problem,
+        start,
+        scale,
+        max_steps,
+        tolerance,
+        max_step_size,
+        memory,
+        metric,
     )
     return carry, tolerance
 
@@ -1523,17 +1826,30 @@ def _lbfgs_not_converged(method, stop, steps, limit, dtype):
     )
 
 
-def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
+def _lbfgs(
+    problem,
+    z0,
+    scale,
+    max_steps,
+    gtol,
+    max_step_size,
+    memory,
+    budget,
+    precondition=False,
+):
     """L-BFGS in rounds, returning ``(z, steps, converged, stop, grad_norm)``.
 
     A round that ends at its step limit without converging restarts from its last
     point with fresh curvature memory, until a round gains less than
-    ``_RESTART_GAIN`` in the loss per data point.
+    ``_RESTART_GAIN`` in the loss per data point. With ``precondition``, each
+    round runs in coordinates scaled by the diagonal curvature at its start
+    (see ``_Metric``).
     """
     limit, total, z, tolerance = int(max_steps), 0, z0, None
     size = _LBFGS_ROUND
     while True:
         before = float(_forward_summary(problem, z)[0])
+        metric = _metric(problem, z, scale) if precondition else None
         z, steps, converged, stop, tolerance, grad_norm = _lbfgs_round(
             problem,
             z,
@@ -1545,6 +1861,7 @@ def _lbfgs(problem, z0, scale, max_steps, gtol, max_step_size, memory, budget):
             budget,
             total,
             tolerance,
+            metric,
         )
         total += steps
         # Only a round that used all its steps restarts: a stalled one
@@ -1568,6 +1885,7 @@ def _lbfgs_round(
     budget,
     offset,
     tolerance=None,
+    metric=None,
 ):
     """One round of L-BFGS: ``(z, steps, converged, stop, tolerance, grad_norm)``.
 
@@ -1590,19 +1908,21 @@ def _lbfgs_round(
         max_step_size,
         memory,
         None if tolerance is None else np.asarray(tolerance),
+        metric,
     )
     tolerance, stop = float(traced_tolerance), None
+    to_z = (lambda x: x) if metric is None else metric.to_z
     while budget.chunked:
         count, _, _, value, gradient, moved = carry
         count, value, gradient = int(count), float(value), float(gradient)
         running = count < limit and gradient > tolerance and bool(moved)
         if not (running and math.isfinite(value)):
             break
-        z = carry[1]
+        z = to_z(carry[1])
         if budget.check(
             offset + count,
             lambda: _loss_and_gradient(
-                problem, z, scale, _final_gradient(carry)
+                problem, z, scale, _final_gradient(carry, metric)
             ),
         ):
             stop = "time"
@@ -1615,10 +1935,12 @@ def _lbfgs_round(
             traced_tolerance,
             max_step_size,
             memory,
+            metric,
         )
     count, z, _, value, gradient, moved = carry
+    z = to_z(z)
     count, value, gradient = int(count), float(value), float(gradient)
-    grad_norm = _final_gradient(carry)
+    grad_norm = _final_gradient(carry, metric)
     if budget.chunked:
         budget.finish(
             offset + count,
@@ -1638,7 +1960,18 @@ def _lbfgs_round(
 
 
 @eqx.filter_jit
-def _adam(problem, z0, scale, learning_rate, steps):
+def _adam(problem, z0, scale, learning_rate, steps, metric=None):
+    # With a metric, Adam runs in its scaled coordinates: its rms divisor
+    # follows the size of the gradient, the metric the width of the
+    # coordinate, so each coordinate's step is the learning rate times its
+    # width. See design/fit_preconditioning.md.
+    if metric is not None:
+        problem, start = (
+            _InMetric(problem, metric),
+            jax.tree.map(np.zeros_like, z0),
+        )
+    else:
+        start = z0
     optimizer = optax.adam(learning_rate)
     grad = jax.grad(_scaled_loss(problem, scale))
 
@@ -1648,6 +1981,6 @@ def _adam(problem, z0, scale, learning_rate, steps):
         return (optax.apply_updates(z, updates), state), None
 
     (z, _), _ = jax.lax.scan(
-        step, (z0, optimizer.init(z0)), None, length=steps
+        step, (start, optimizer.init(start)), None, length=steps
     )
-    return z
+    return z if metric is None else metric.to_z(z)

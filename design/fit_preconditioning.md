@@ -1,6 +1,6 @@
 # Conditioning of full-batch fits: natural units, profiled scales, preconditioning
 
-Status: A and C built; B scoped only (no code). General note: the worked example
+Status: A and C built; B pieces 1–2 built (opt-in `precondition="diag"`), pieces 3–4 pending; the Stage 7 success test is *not* met by a diagonal alone (see "B as built"). General note: the worked example
 is a multi-observation radio fit, but nothing here is specific to it.
 
 ## The problem
@@ -77,7 +77,7 @@ couples to flux, α and the image through `M`. Variable projection over `(g, s)`
 jointly would need an inner iteration or a closed form for the pair, and the
 joint conditioning problem is already fixed by `z = ln g`. Left out.
 
-## B. Diagonal Fisher preconditioning in `virgil.fit` (scoping only)
+## B. Diagonal Fisher preconditioning in `virgil.fit` (pieces 1–2 built)
 
 This is the plan for finishing the **Stage 7 maximum-entropy preconditioning
 item** of [`imaging_plan.md`](imaging_plan.md#stage-7-hardening-and-release-about-8-11-h-of-which-3-4-h-is-release-chores-and-the-rest-mem-preconditioning)
@@ -171,6 +171,96 @@ agree.
    (~1 day plus a job).
 
 Total roughly 1–1.5 weeks; piece 2 carries the risk.
+
+### B as built (pieces 1–2)
+
+`fit(..., precondition="diag")` (default off) and
+`gauss_newton_diag(model, priors, data, values, ...)` in `virgil.fitting`.
+
+* **The diagonal.** `D = diag(JᵀJ) + P + max(0, diag ∇²penalty)`, in `fit`'s own
+  (flat) coordinates: `J` from `curvature_rows`, `P` from `curvature_diag`, the
+  regularizers' Hessian diagonal from Hessian-vector products. Exact up to 1024
+  coordinates (one Jacobian-vector product each, with `lax.map`, never
+  materializing `J`), not the 4096 of the NUTS mass: a refresh costs `n` model
+  evaluations, so the threshold is lower. Above it, `diag(JᵀJ)` is the mean of
+  `(Jᵀu)²` over 16 Gaussian `u` in *row* space, not Rademacher probes in
+  coordinate space: the estimate is never negative and its relative error is
+  `√(2/probes)` whatever the off-diagonals, which Rademacher's is not; the
+  regularizer's diagonal uses 16 Rademacher Hessian-vector probes. The probe
+  keys are fixed, so a fit is reproducible and does not depend on the JAX version.
+  The result sets scale only: the optimum does not depend on it.
+* **The change of variables.** `z = z_ref + P(w ⊙ z̃)` with `w = √(N / D)`,
+  `N` the number of data points (the loss the optimizers see is per point, so
+  `z̃` has unit curvature and the first L-BFGS step is a diagonal Newton step).
+  It is frozen within a round and refreshed at each L-BFGS restart (every 2000
+  steps). `gtol`, `info["grad_norm"]` and the stopping test stay in `z`
+  (`∇_z = ∇_z̃ / w`); the step cap acts on `P(w ⊙ Δz̃)`, a step in `z`, as one
+  factor on the whole direction as before.
+* **Floor.** `D ≥ 10⁻³ max D` within each coordinate block. Smaller floors
+  (10⁻⁶, 10⁻⁸) let dead pixels (`I → 0`, `D → 0`) have huge `w`; the cap then
+  shrinks every step to nothing and the line search stalls (measured: w = 1
+  and 0.1 of the L-curve below stall at 10⁻⁶ and 10⁻⁸).
+* **Softmax gauge.** `P` removes the mean over the support from the plain
+  `log_brightness` block of an `Image` (`flux × softmax`): the loss does not see
+  it, but the diagonal scaling would let it drift. (`GaussianField` latents get
+  no projection.)
+* **Adam.** `scale_by_rms` is kept. It follows the *size of the gradient*, the
+  metric the *width of the coordinate*; Adam's step is then `lr · width` per
+  coordinate, rather than `lr` for all (a faint pixel's minimum is wide in `z`,
+  a nuisance's narrow). `D` is computed once at the start (Adam has no rounds)
+  and its widths normalized to a minimum of one, so the best-determined
+  coordinate keeps the learning rate `lr`. Not benchmarked: the question is
+  whether the gain over plain Adam is real (see (c)).
+* **LM** ignores the option (it already uses `JᵀJ`).
+* `ImproperUniform` priors with an `event_shape` (an image's) are now accepted by
+  the curvature code: they add none (previously they raised, as the check on the
+  event shape came first).
+
+**Measured** (L-curves, descending `w = 10⁴ … 0.1` in six log steps, warm-started,
+default `max_steps = 20000`, `MaxEntropy`, flat prior; steps per weight):
+
+| Case | dtype | plain | `precondition="diag"` |
+| --- | --- | --- | --- |
+| 2 VLTI-like nights, 495 + 396 points, 41² image | float64 | 19, 57, 360, 2042, 8844, **20000 (limit)** | 19, 80, 127, 850, 6092, 14645; all converge |
+| same | float32 | 18, 53, 286, 1309, 6860, 16002 (stalled) | 18, 60, 124, 720, 5680, **20000 (limit)** |
+| AMI 7-hole grid, 32² image | float64 | 206, 81, 137, 465, 2066, 2088 | 40, 27, 36, 188, 1357, 1326 |
+| same | float32 | converges to w = 100; stalls from w = 10 | the same: converges to w = 100; stalls from w = 10 |
+
+At a tight `gtol` the gain is larger: 16² AMI image at `w = 10`, `gtol = 10⁻⁸`:
+17607 steps plain, 4020 preconditioned. At the default `gtol = 10⁻⁴` both stop
+0.1–0.3% above the minimum in the loss, in a flat direction (the loss at
+`gtol = 10⁻⁸` is 129.2282, at `10⁻⁴` 129.28 plain and 129.53 preconditioned),
+so that stopping rule, not the optimizer, limits how well two runs agree.
+
+**The Stage 7 success test is not met by a diagonal alone.** Float64 passes
+on the 41² case at 14645 of 20000 steps (plain fails), but float32 fails for both:
+at float32 resolution the line search stalls ("a step no longer changes the
+parameters") before the gradient test is met, and preconditioning does not
+change that. Why a diagonal cannot do more, at the `w = 1` solution of the 41²
+case (dense `F = JᵀJ + ∇²penalty` over the 1644 supported pixels):
+
+* `JᵀJ` has numerical rank ≈ 60 of 1644. The other directions have curvature
+  only from the entropy, `∇²S` in `z = ln I`, which is `I(1 + ln(I/b))` per pixel,
+  **negative** for `I < b/e` and tiny for the faint pixels (the image has 155
+  pixels above 10⁻³ of its peak, whose brightness runs to 10⁻¹⁶).
+* `F` has 1568 non-positive eigenvalues; its positive spread is `1.7·10⁸`.
+  Scaling by `D^{-½}` cuts that to `5.6·10⁶` (30×), not to something L-BFGS
+  can absorb. The remaining spread is between the 60 data-fixed directions and
+  the entropy-only ones, which is off-diagonal.
+
+**Next options (Stage 7 list), in the order I would try them:**
+
+1. **A least-squares / Newton–CG form of the entropy**, in the plan's words.
+   `F = JᵀJ + diag(R)` is a rank-≈60 matrix plus a diagonal, so a Newton step
+   is cheap by Woodbury or by CG on `(diag(R) + JᵀJ)`, preconditioned by `D`.
+   virgil already has matrix-free LM (`method="lm"`, CG on the normal
+   equations); the missing piece is a residual form for the entropy
+   (`r_p = √(2 w (I ln(I/b) − I + b))`, whose half squared norm is the entropy
+   penalty, defined for `I ≥ 0`), so that LM applies to `MaxEntropy` fits.
+2. **The Skilling–Bryan subspace solver** in `I`-space (entropy metric `diag(b)`),
+   which handles the non-convexity of the entropy in `ln I` (the image stays
+   positive by construction).
+3. **A better stopping rule** for the flat directions (see above), independent of both.
 
 ### Worth doing after A–C?
 
