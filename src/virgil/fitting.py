@@ -538,17 +538,23 @@ class _Objective(eqx.Module):
         values = self.constrain(z)
         whitened = self._whitened(model, values)
         chi2 = sum(np.sum(w**2) for w, _ in whitened)
-        chi2 = chi2 + sum(np.sum(t(values) ** 2) for t in self.likelihoods)
+        norms = 0.0
+        for t in self.likelihoods:
+            if hasattr(t, "residuals_and_log_norm"):
+                # One evaluation gives both (a profiled scale needs the
+                # residuals to find its own normalization).
+                r, n = t.residuals_and_log_norm(values)
+                chi2, norms = chi2 + np.sum(r**2), norms + n
+            else:
+                chi2 = chi2 + np.sum(t(values) ** 2)
+                if getattr(t, "has_log_norm", False):
+                    norms = norms + t.log_norm(values)
         # With fitted error terms, the normalization of the Gaussian
         # likelihood, sum(log σ), is no longer a constant.
         log_norm = sum(np.sum(np.log(e)) for _, e in whitened)
         log_norm = log_norm if self.noise or self._has_gains else 0.0
         # A likelihood term with a fitted jitter reports its own Σ log σ.
-        log_norm = log_norm + sum(
-            t.log_norm(values)
-            for t in self.likelihoods
-            if getattr(t, "has_log_norm", False)
-        )
+        log_norm = log_norm + norms
         penalty = sum(r.value(_reference(model)) for r in self.regularizers)
         log_prior = sum(
             np.sum(prior.log_prob(self._prior_value(values, path)))
@@ -597,7 +603,10 @@ class FitResult:
         the parameters and error terms that ended within 1/1000 of their
         prior's range of one of its finite ends, in the coordinate they
         are fitted in: a fit that runs into a prior bound (say an
-        eccentricity at 0.9) is often not at a mode.
+        eccentricity at 0.9) is often not at a mode. ``derived`` holds
+        quantities that likelihood terms compute from the fit and that are not
+        parameters, such as the profiled error scales ``ŝ`` of a radio
+        term (``"cal.sigma"``).
     """
 
     model: object
@@ -780,6 +789,7 @@ def fit(
             "chi2_red": sum(chi2) / scale,
             "grad_norm": float(grad_norm),
             "at_bound": _at_bound(problem, values),
+            "derived": _derived(problem, values),
         }
     ambient = "float64" if jax.config.jax_enable_x64 else "float32"
     return FitResult(
@@ -838,6 +848,18 @@ class _Budget:
                 }
             )
         return elapsed
+
+
+def _derived(problem, values):
+    """Quantities a likelihood term computes from the fit that are not sites
+    (a radio term's profiled error scales ``ŝ``), by name."""
+    out = {}
+    for term in problem.likelihoods:
+        if hasattr(term, "derived"):
+            out.update(
+                {k: onp.asarray(v) for k, v in term.derived(values).items()}
+            )
+    return out
 
 
 # A parameter is at a bound of its prior when it is within this fraction of
