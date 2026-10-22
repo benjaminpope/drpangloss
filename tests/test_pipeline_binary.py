@@ -863,7 +863,7 @@ def test_coverage_that_is_not_a_lattice_keeps_the_field_of_view(tmp_path):
     assert axis.max_sep == pytest.approx(_geometry(night)["fov_mas"])
 
 
-def test_lattice_alias_limit_needs_one_wavelength_and_a_lattice():
+def test_lattice_alias_limit_needs_a_lattice_in_every_channel():
     from types import SimpleNamespace
 
     from virgil._geometry import lattice_alias_limit
@@ -883,9 +883,34 @@ def test_lattice_alias_limit_needs_one_wavelength_and_a_lattice():
     colours = SimpleNamespace(
         u=onp.array([10.0, 20.0, 10.0]),
         v=onp.array([0.0, 0.0, 10.0]),
-        wavel=onp.array([2e-6, 2.1e-6]),
+        wavel=onp.array([2e-6, 2.1e-6, 2e-6]),
     )
-    assert lattice_alias_limit(colours) is None
+    assert (
+        lattice_alias_limit(colours) is None
+    )  # the 2.1 µm channel has one sample
+
+
+def test_lattice_alias_limit_is_set_by_the_shortest_unflagged_channel():
+    """Two lattice channels: the alias period scales with λ, so the shorter
+    one binds, and a flagged channel does not count."""
+    from types import SimpleNamespace
+
+    from virgil._geometry import lattice_alias_limit
+    from virgil._utils import mas2rad
+
+    def limit(unflagged):
+        data = SimpleNamespace(
+            u=onp.array([10.0, 0.0, 20.0, 10.0, 0.0, 20.0]),
+            v=onp.array([0.0, 10.0, 10.0, 0.0, 10.0, 10.0]),
+            wavel=onp.repeat([2e-6, 4e-6], 3),
+            unflagged=onp.array(unflagged),
+        )
+        return lattice_alias_limit(data)
+
+    both = limit([True] * 6)
+    assert both == pytest.approx(0.5 * 2e-6 / 10.0 / mas2rad)
+    assert limit([False] * 3 + [True] * 3) == pytest.approx(2 * both)
+    assert limit([False] * 6) is None
 
 
 def test_lattice_alias_limit_uses_only_the_unflagged_samples():

@@ -35,10 +35,12 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The shortest unflagged wavelength binds; `None` only if some unflagged channel is off a lattice.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
 
+- Internal: inlined single-use trivial private helpers in `models`, `radio` and `radio_clean`; the lint size comment also lists new ones (AGENTS.md rule 8).
 - `ComplexVisData.dirty_beam` takes `values` before `nuisance`, the order of `dirty_image` (radio is provisional, so there is no deprecation shim). The last long docstrings, `CalibrationNuisance` and `ComplexVisData.dirty_image`, are now short, and the docstring allowlist is empty. `safe_azimuth` in `_geometry` replaces the copies of the origin-safe azimuth in `fields` and `models`, and `FlaredDisk` shares its grid validation with its base class.
 
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,

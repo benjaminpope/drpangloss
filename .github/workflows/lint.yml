@@ -47,6 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
         run: |
           api=repos/${GITHUB_REPOSITORY}/issues
           sum() { gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq \
@@ -63,6 +64,17 @@ jobs:
           [ "$(echo "$src" | tr -d '*' | awk -F'|' '{ print $5 + 0 }')" -gt 1000 ] && body+="
 
           Net src growth is over +1,000 lines: say in the PR description what it buys and what it supersedes (rule 7 in AGENTS.md)."
+          # Names only, never a failure: single-use private functions of at most
+          # three statements this PR adds (rule 8 in AGENTS.md).
+          if git fetch -q --depth=1 origin "$BASE" && shape=$(python3 scripts/code_shape.py --since "origin/$BASE" 2>/dev/null) \
+            && [ "$(echo "$shape" | wc -l)" -gt 1 ]; then
+            body+="
+
+          \`\`\`
+          $shape
+          \`\`\`
+          Inline these unless each is a jit/vmap boundary, a test seam or a named step."
+          fi
           id=$(gh api --paginate "$api/${PR}/comments" --jq '.[] | select(.body | startswith("<!-- size-comment -->")) | .id' | head -n 1)
           if [ -n "$id" ]; then gh api -X PATCH "$api/comments/$id" -f body="$body"; else gh api -X POST "$api/${PR}/comments" -f body="$body"; fi >/dev/null
 
