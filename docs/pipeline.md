@@ -52,6 +52,27 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 
 `max_sep_mas` is by default the coarsest λ/B. Where the uv samples of one wavelength lie on a lattice (aperture masks, DISCO products), the visibilities repeat when the companion moves by a vector of the reciprocal lattice, so the default box is limited to half an alias cell, the largest square with no two points that differ by such a vector. The summary records the limit as `search.alias_cap_mas` (`null` when it was not applied), and the quicklook notes it. An explicit `max_sep_mas` is never capped; `OrbitPipeline` limits its position grid in the same way.
 
+The settings of `BinaryPipeline` (`BinaryPipeline.defaults()` lists the values):
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `sigma` (3.0) | Significance of the contrast limits. |
+| `detection_sigma` (3.0) | Threshold of the detection check, on the look-elsewhere-corrected significance. |
+| `max_sep_mas` (`None`) | Half-width of the search grid; by default `fov_fraction` times the coarsest λ/B of the samples (each sample's own wavelength over its own baseline, not λ_max/B_min), capped as above on lattice coverage. |
+| `fov_fraction` (1.0) | See `max_sep_mas`. |
+| `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
+| `max_grid` (101) | Most points per position axis; the grid has the largest odd number of points not above it (at least 3). |
+| `flux_range` (`[1e-5, 0.5]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
+| `n_flux` (40) | Points on the flux axis. |
+| `wavel_range` (`None`) | `[min, max]` wavelengths to keep, in metres. |
+| `error_floor` (`None`) | Absolute error floors by observable, for example `{"vis": 0.01, "phi": 0.005}` (phases in radians), as [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor]. |
+| `error_scale` (`"quoted"`) | `"fit"` also fits log-uniform error scales `vis_scale` and `phi_scale` on [0.1, 10]. |
+| `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4) | NUTS. |
+| `chain_method` (`"vectorized"`), `seed` (0) | NUTS chain method and random seed. |
+| `batch_size` (`None`) | Grid batch size. |
+| `limit_bins` (20) | Annuli of the contrast curve. |
+| `quicklook_execute` (`True`) | Execute the quicklook notebook. |
+
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
 
 ## `StarPipeline`: stellar diameters

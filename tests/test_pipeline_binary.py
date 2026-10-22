@@ -886,3 +886,28 @@ def test_lattice_alias_limit_needs_one_wavelength_and_a_lattice():
         wavel=onp.array([2e-6, 2.1e-6]),
     )
     assert lattice_alias_limit(colours) is None
+
+
+def test_lattice_alias_limit_uses_only_the_unflagged_samples():
+    """Without the baseline (10, 0) the rest generate a coarser lattice, whose
+    alias cell is smaller in x."""
+    from types import SimpleNamespace
+
+    from virgil._geometry import lattice_alias_limit
+    from virgil._utils import mas2rad
+
+    def limit(unflagged):
+        data = SimpleNamespace(
+            u=onp.array([10.0, 0.0, 20.0]),
+            v=onp.array([0.0, 10.0, 10.0]),
+            wavel=onp.array([2e-6]),
+            unflagged=onp.array(unflagged),
+        )
+        return lattice_alias_limit(data)
+
+    assert limit([True, True, True]) == pytest.approx(
+        0.5 * 2e-6 / 10.0 / mas2rad
+    )
+    assert limit([False, True, True]) == pytest.approx(
+        0.5 * 2e-6 / 20.0 / mas2rad
+    )

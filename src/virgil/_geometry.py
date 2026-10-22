@@ -375,7 +375,7 @@ def fringe_scales(data):
 def lattice_alias_limit(data, tolerance=1e-3):
     """Half-width (mas) of the largest square search box free of alias copies, or ``None``.
 
-    If the uv samples of one wavelength lie on a 2-D lattice (aperture masks,
+    If the unflagged uv samples of one wavelength lie on a 2-D lattice (aperture masks,
     DISCO products), the visibilities repeat under the reciprocal lattice
     (period ``λ`` times the dual lattice, in the sky frame), so two
     positions in one box can look alike. A box of half-width ``h`` has no such
@@ -392,15 +392,13 @@ def lattice_alias_limit(data, tolerance=1e-3):
     wavel = onp.unique(onp.asarray(data.wavel, float))
     if wavel.size != 1:
         return None
-    uv = onp.unique(
-        onp.round(
-            onp.column_stack(
-                [onp.ravel(onp.asarray(x, float)) for x in (data.u, data.v)]
-            ),
-            9,
-        ),
-        axis=0,
+    uv = onp.column_stack(
+        [onp.ravel(onp.asarray(x, float)) for x in (data.u, data.v)]
     )
+    unflagged = getattr(data, "unflagged", None)
+    if unflagged is not None:  # a flagged sample measures nothing
+        uv = uv[onp.ravel(onp.asarray(unflagged, bool))]
+    uv = onp.unique(onp.round(uv, 9), axis=0)
     norm = onp.hypot(*uv.T)
     uv, norm = uv[norm > 0], norm[norm > 0]
     if len(uv) < 2:

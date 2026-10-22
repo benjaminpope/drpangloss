@@ -112,7 +112,7 @@ class BinaryPipeline(_Pipeline):
     posterior share one prior (uniform in ``dra``, ``ddec`` over the search
     box, log-uniform in flux over ``flux_range``). The fit is on the quoted
     errors unless ``error_scale="fit"``, and χ²/N is always on the quoted
-    errors. Stages, settings and outputs are described in
+    errors. The stages and the settings table are in
     [Pipelines](../pipeline.md).
 
     Parameters
