@@ -5,6 +5,7 @@ The fast tests stop at the ``epochs`` stage or fake the later reports; the
 golden cases (a full blind run each) are marked slow.
 """
 
+import dataclasses
 import inspect
 import json
 from pathlib import Path
@@ -20,7 +21,7 @@ pytest.importorskip("jaxoplanet")
 
 import virgil  # noqa: E402
 import virgil.pipeline.orbit as orbit_module  # noqa: E402
-from virgil.epochs import Epochs  # noqa: E402
+from virgil.epochs import Epochs, NightFlag  # noqa: E402
 from virgil.models import OrbitalBinary, PointSource  # noqa: E402
 from virgil.oifits import write_oifits  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
@@ -674,7 +675,9 @@ def _fake_search(calls, period):
     return search
 
 
-def _robustness(pipeline, monkeypatch, period, chi2=(1.0, 9.0, 1.0)):
+def _robustness(
+    pipeline, monkeypatch, period, chi2=(1.0, 9.0, 1.0), best_period=12.4
+):
     """``_robustness`` of the epochs-stage run, with the refit faked and the
     night ``n1`` (by default) the outlier."""
     calls = []
@@ -695,7 +698,9 @@ def _robustness(pipeline, monkeypatch, period, chi2=(1.0, 9.0, 1.0)):
             }
         },
     )
-    result = SimpleNamespace(best=SimpleNamespace(n=20, p_lo=12.0, p_hi=12.8))
+    result = SimpleNamespace(
+        best=SimpleNamespace(n=20, best={"period": best_period})
+    )
     return orbit_module._robustness(pipeline, result, "orbit"), calls
 
 
@@ -711,14 +716,65 @@ def test_the_most_outlying_night_is_dropped_and_the_verdicts_compared(
     # The refit sees the other two nights, their positions and times, and
     # checkpoints its bands apart from the search's.
     assert len(data) == 2 and positions.names == ("n0", "n2")
-    assert positions.log_broad is None or len(positions.log_broad) == 2
+    assert onp.allclose(
+        positions.dra, orbit_module._read_positions(pipeline).dra[[0, 2]]
+    )
     assert onp.allclose(times, pipeline.data.times[[0, 2]])
     assert bands.name == "bands_drop"
     assert bands.parent == orbit_module._band_checkpoints(pipeline).parent
-    # The same winner at a period outside the full fit's band is another alias.
-    moved, _ = _robustness(pipeline, monkeypatch, 14.0)
+    # A period a whole cycle away over the span is another alias.
+    span = float(onp.ptp(pipeline.data.times))
+    moved, _ = _robustness(
+        pipeline, monkeypatch, 1.0 / (1.0 / 12.4 - 1.0 / span)
+    )
     assert not moved["dropped"]["same_band"]
     assert _checks.night_dropped(moved).status == "warn"
+
+
+def test_a_period_just_across_a_band_edge_is_the_same_alias(
+    epochs_run, monkeypatch
+):
+    """Dropping an end night shifts the band numbers; periods a third of a
+    cycle apart over the span are one alias even across a band edge."""
+    pipeline, _ = epochs_run
+    span = float(onp.ptp(pipeline.data.times))
+    edge = 1.0 / (1.0 / 12.6 - 0.3 / span)  # 0.3 cycle from 12.6 d
+    near, _ = _robustness(pipeline, monkeypatch, edge, best_period=12.6)
+    assert near["dropped"]["same_band"]
+
+
+def test_a_failed_refit_or_too_few_usable_nights_skip_the_check(
+    epochs_run, monkeypatch
+):
+    pipeline, _ = epochs_run
+
+    def fail(*args, **kwargs):
+        raise ValueError("fewer than 2 seeded nights")
+
+    _robustness(pipeline, monkeypatch, 12.4)  # fakes the search report
+    monkeypatch.setattr(orbit_module, "_alias_search", fail)
+    result = SimpleNamespace(best=SimpleNamespace(n=20, best={"period": 12.4}))
+    skipped = orbit_module._robustness(pipeline, result, "orbit")
+    assert "refit failed" in skipped["skipped"]
+    assert _checks.night_dropped(skipped).status == "pass"
+    found = orbit_module._read_positions(pipeline)
+    blocked = dataclasses.replace(
+        found, flags=tuple((NightFlag("low-gap", "x"),) for _ in found.names)
+    )
+    monkeypatch.setattr(orbit_module, "_read_positions", lambda p: blocked)
+    flagged = orbit_module._robustness(pipeline, result, "orbit")
+    assert "usable" in flagged["skipped"]
+
+
+def test_nights_without_data_are_never_the_outlier():
+    epochs = SimpleNamespace(dataset_names=("a", "b"), epoch_of=(0, 1))
+    nights = {
+        "a": {"chi2": float("nan"), "n": 0},
+        "b": {"chi2": 3.0, "n": 2},
+    }
+    assert orbit_module._outlying_night(epochs, nights) == (1, [1], 1.5)
+    nights["b"]["n"] = 0
+    assert orbit_module._outlying_night(epochs, nights) is None
 
 
 def test_the_robustness_check_is_skipped_below_three_nights_or_when_off(
@@ -1045,3 +1101,31 @@ def test_the_position_grid_stops_at_the_lattice_alias_limit(
         (res.path / "stages" / "epochs" / "report.json").read_text()
     )
     assert report["half_widths_mas"] == [4.0]
+
+
+@pytest.mark.slow  # two real searches: minutes
+def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
+    """No fakes: a search of the three nights, then the check's refit of two."""
+    pipeline, _ = epochs_run
+    epochs = pipeline.data
+    with jax.enable_x64(True):
+        full = orbit_module._alias_search(
+            pipeline,
+            list(epochs.data),
+            orbit_module._read_positions(pipeline),
+            epochs.times,
+            orbit_module._band_checkpoints(pipeline),
+        )
+        pipeline._report = lambda stage: {
+            "chi2": {
+                "nights": {
+                    n: {"chi2": c, "n": 1}
+                    for n, c in zip(epochs.dataset_names, (1.0, 9.0, 1.0))
+                }
+            }
+        }
+        report = orbit_module._robustness(pipeline, full, "orbit")
+    assert "skipped" in report or report["dropped"]["verdict"] in (
+        "orbit",
+        "no-orbit",
+    )
