@@ -300,6 +300,24 @@ the priors of [`MultipoleKernel`][virgil.models.MultipoleKernel], converted by
 priors in [`gp_priors`][virgil.models.gp_priors]; and a residual aligned with
 the disk in [`MultipoleField`][virgil.fields.MultipoleField].
 
+**The quadrature visibility.** [`multipole_disk_cvis`][virgil.models.multipole_disk_cvis]
+sums thin rings at nodes $r_k$ with weights $w_k$ after undoing `inc` and `pa`.
+Ring $k$ has brightness $1 + \sum_m c_{mk}\cos m\theta + s_{mk}\sin m\theta$ in
+the disk plane, with $\theta$ measured from the projected major axis towards East,
+so
+
+$$
+V = 2\pi \sum_{|m| \le M} (-i)^m e^{im\phi} \sum_k w_k I_m(r_k)
+    J_m(2\pi q r_k),
+$$
+
+with $I_{\pm m} = (c_m \mp i s_m)/2$, $I_0 = 1$, and $q$, $\phi$ the length and
+direction of the spatial frequency in the disk plane. The sum is normalized
+($V(0) = 1$) and `blur_fwhm` multiplies it as a Gaussian envelope. A `height`
+lifts ring $k$ along the disk's normal, shifting it on the sky by
+$h_k\sin(\mathrm{inc})$ towards `pa + 90` as a phase factor; the surface is thin
+and nothing is occulted. Large problems are evaluated in chunks over the samples.
+
 **References.** The Hankel-transform representation of a radial profile on a
 fixed set of nodes follows frank (Jennings et al. 2020, MNRAS 495, 3209), and
 the parametric profiles, uv deprojection and Gaussian envelope follow vis-r

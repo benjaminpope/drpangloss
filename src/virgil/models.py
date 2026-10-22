@@ -722,70 +722,45 @@ class GaussianArc(Component):
 
 
 class TruncatedCone(Component):
-    """A thin conical shell, truncated near its apex, e.g. a dust cone.
+    """A thin conical shell truncated near its apex, e.g. a dust cone.
 
-    The axis points towards position angle ``pa`` and is tilted ``tilt`` degrees
-    out of the sky plane; the half-opening angle is ``alpha``. The apex lies
-    ``tip`` milliarcseconds (along the axis, in 3-D) behind ``(dra, ddec)``. The
-    emission starts a slant distance ``s0`` from the apex and falls off as
-    ``exp(-(s - s0) / length)``; the shell has Gaussian thickness of FWHM
-    ``width``. It is optically thin, so the sign of an unmodulated cone's
-    ``tilt`` does not change its image.
-
-    The cone is a [`MultipoleDisk`][virgil.models.MultipoleDisk] (an
-    [`ExpTail`][virgil.models.ExpTail] profile, a [`Cone`][virgil.models.Cone]
-    height and [`Harmonics`][virgil.models.Harmonics] for the modulation), with
-    inclination ``90 - |tilt|`` and major axis at ``pa - 90``. The ring
-    construction, the modulation conventions and the choice of ``n_rings`` are in
-    [Model notes](../notes.md#truncatedcone).
+    The axis points towards position angle ``pa``, tilted ``tilt`` degrees out of
+    the sky plane, with half-opening angle ``alpha``. Emission starts a slant
+    distance ``s0`` from the apex and falls as ``exp(-(s - s0) / length)`` across a
+    Gaussian shell of FWHM ``width``. It is a
+    [`MultipoleDisk`][virgil.models.MultipoleDisk] of rings; the construction,
+    conventions and ``n_rings`` are in [Model notes](../notes.md#truncatedcone).
 
     Parameters
     ----------
-    tip : float or array-like
-        Distance from ``(dra, ddec)`` back to the apex along the axis, in
-        milliarcseconds.
+    tip, s0, length, width : float or array-like
+        Distance from ``(dra, ddec)`` back to the apex along the axis; slant
+        distance from the apex where emission starts; e-folding length along
+        the walls; FWHM thickness of the shell; all in mas.
     alpha : float or array-like
-        Half-opening angle of the cone, in degrees (0 < alpha < 90).
-    s0 : float or array-like
-        Slant distance from the apex where the emission starts, in
-        milliarcseconds.
-    length : float or array-like
-        e-folding length of the emission along the walls, in milliarcseconds.
-    width : float or array-like
-        FWHM thickness of the shell, in milliarcseconds.
+        Half-opening angle in degrees (0 < alpha < 90).
     tilt : float or array-like, optional
-        Angle of the axis out of the sky plane, in degrees (-90 to 90).
+        Axis angle out of the sky plane, in degrees (-90 to 90).
     pa : float or array-like, optional
         Position angle the cone opens towards, in degrees North to East.
     ratio : float or array-like, optional
         Axis ratio of the cross-section (default 1, circular).
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset of the reference point, as
-        for any [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
     n_rings : int, optional
-        Gauss-Legendre nodes (rings) along the walls, at least 2 (default 48).
-        The error falls spectrally once they resolve the fringes; check
-        convergence by doubling it.
+        Gauss-Legendre rings along the walls, at least 2 (default 48); check
+        convergence by doubling.
     az_amps : float or array-like, optional
-        Amplitudes of the cosine modulations of the walls, from first order up;
-        a scalar gives one first-order modulation, the default (empty) none.
-        ``sum(abs(az_amps)) <= 1`` keeps the brightness non-negative.
+        Cosine modulation amplitudes of the walls, first order up; ``sum(abs(az_amps))
+        <= 1`` keeps the brightness non-negative. Default none.
     az_pas : float or array-like, optional
-        Azimuths of the modulations in degrees, one per ``az_amps`` entry, in
-        the plane of the rings: ``pa + 90`` and ``pa - 90`` are the walls at
-        those position angles on the sky.
+        Modulation azimuths in degrees, one per ``az_amps`` entry, in the ring plane
+        (``pa + 90`` and ``pa - 90`` are the walls at those position angles).
 
     Examples
     --------
     >>> cone = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
     ...                      width=1.0, tilt=20.0, pa=90.0)
-
-    A cone brighter on its southern wall (PA 180), half as bright on the
-    northern one:
-
-    >>> lopsided = TruncatedCone(tip=5.0, alpha=30.0, s0=4.0, length=10.0,
-    ...                          width=1.0, tilt=20.0, pa=90.0,
-    ...                          az_amps=1 / 3, az_pas=180.0)
     """
 
     tip: jax.Array
@@ -1218,45 +1193,29 @@ class LimbDarkenedDisk(_LimbDarkenedDisk):
 class EllipticalLimbDarkenedDisk(_LimbDarkenedDisk):
     r"""Limb-darkened disk with an elliptical outline, e.g. an oblate star.
 
-    A [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] compressed along
-    its minor axis: the brightness is
-    $I(\mu) / I(1) = 1 - \sum_{n=1}^{N} u_n (1 - \mu)^n$, with
-    $\mu = \sqrt{1 - \rho^2}$ and $\rho$ the elliptical radius (1 on the
-    limb), so the profile follows the outline. The major axis is
-    oriented exactly as an
-    [`EllipticalGaussian`][virgil.models.EllipticalGaussian]'s. Like every
-    component it has unit flux on its own: compressing the disk does not
-    change its total flux, so the visibility at zero baseline is 1 and
-    ``flux`` is its weight in a [`System`][virgil.models.System].
-
-    The visibility is that of the circular disk at the spatial frequencies
-    stretched by ``ratio`` along the minor axis (the Fourier similarity
-    theorem), so it is analytic like
-    [`cvis_limb_darkened_disk`][virgil.models.cvis_limb_darkened_disk].
-    This is a geometric ellipse with a radial profile, not a model of a
-    rapid rotator's gravity darkening; for that use
-    [`GravityDarkenedStar`][virgil.models.GravityDarkenedStar].
+    A [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] compressed along its
+    minor axis, with the profile $I(\mu)/I(1) = 1 - \sum_n u_n (1 - \mu)^n$ following
+    the outline ($\mu = \sqrt{1 - \rho^2}$, $\rho$ the elliptical radius). Unit flux
+    on its own; the visibility is the circular disk's at frequencies stretched by
+    ``ratio`` (Fourier similarity). A geometric ellipse, not gravity darkening: for
+    that use [`GravityDarkenedStar`][virgil.models.GravityDarkenedStar].
 
     Parameters
     ----------
     diam : float or array-like
-        Angular diameter of the limb along the major axis, in
-        milliarcseconds.
+        Angular diameter of the limb along the major axis, in mas.
     ratio : float or array-like, optional
-        Minor-to-major axis ratio, in (0, 1] (default 1, a circular
-        [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk]).
+        Minor-to-major axis ratio in (0, 1] (default 1).
     pa : float or array-like, optional
-        Position angle of the major axis in degrees, North to East
-        (default 0).
+        Position angle of the major axis in degrees, North to East (default 0),
+        as for an [`EllipticalGaussian`][virgil.models.EllipticalGaussian].
     u : sequence of float, optional
-        Limb-darkening coefficients $u_1, \ldots, u_N$ as in
-        [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] (default: none,
-        a uniform elliptical disk).
-        [`is_physical`][virgil.models.SourceModel.is_physical] is false
-        where the profile goes negative.
+        Coefficients $u_1, \ldots, u_N$ as in
+        [`LimbDarkenedDisk`][virgil.models.LimbDarkenedDisk] (default none, uniform).
+        [`is_physical`][virgil.models.SourceModel.is_physical] is false where the
+        profile goes negative.
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset in milliarcseconds,
-        as for any [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
 
     Examples
     --------
@@ -1452,44 +1411,38 @@ def _in_unit_square(q1, q2):
 class GravityDarkenedStar(Component):
     """Rapidly rotating star: Roche shape and gravity darkening (ELR11).
 
-    A rigidly rotating star has the oblate Roche shape, and its local bolometric
-    flux follows the effective gravity without a free gravity-darkening exponent
-    (Espinosa Lara & Rieutord 2011, A&A 533, A43). The brightness is that local
-    flux, summed over the visible triangles of a surface mesh, with no limb
-    darkening. The implementation is Aaron Dotter's GDit, ported to JAX by
-    Shashank Dholakia; the physics lives in ``virgil._elr``. The tutorial
-    [Gravity-darkened stars](../../../gravity_darkened_star.md) shows a fit, and
-    [Model notes](../notes.md#gravitydarkenedstar) the chromatic mode, the mapping
-    to Dholakia's parameters and the accuracy of ``n_lat``.
+    A rigidly rotating star with the oblate Roche shape and local bolometric flux
+    following the effective gravity, with no free exponent and no limb darkening;
+    summed over the visible triangles of a surface mesh. The physics lives in
+    ``virgil._elr``; see the [tutorial](../../../gravity_darkened_star.md) and
+    [Model notes](../notes.md#gravitydarkenedstar) for the chromatic mode, the
+    mapping to the original parameters and the accuracy of ``n_lat``.
+
+    Source: Espinosa Lara & Rieutord (2011), via GDit,
+    [references](../references.md#espinosalara2011).
 
     Parameters
     ----------
     diam_eq : float or array-like
-        Equatorial angular diameter in milliarcseconds.
+        Equatorial angular diameter in mas.
     omega : float or array-like, optional
-        Angular velocity as a fraction of the Keplerian (critical) rate at the
-        equator, in [0, 1) (default 0, a sphere).
+        Angular velocity as a fraction of the critical rate, in [0, 1) (default 0).
     inc : float or array-like, optional
-        Inclination in degrees, from 0 (pole-on) to 90 (equator-on, the default).
-        ``inc`` and ``180 - inc`` give the same image with the pole flipped, so
-        [0, 90] keeps ``pa`` unambiguous.
+        Inclination in degrees, 0 (pole-on) to 90 (equator-on, default).
     pa : float or array-like, optional
-        Position angle in degrees, North through East, of the visible rotation
-        pole on the sky (default 0).
+        Position angle in degrees, North through East, of the visible pole (default 0).
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset in milliarcseconds, as for
-        any [`Component`][virgil.models.Component]. In chromatic mode ``flux``
+        As for any [`Component`][virgil.models.Component]; in chromatic mode ``flux``
         must be a number, not a [`Spectrum`][virgil.spectra.Spectrum].
     n_lat : int, optional
-        Latitude rings of the surface mesh (default 32, 2520 triangles). The
-        cost is O(``n_lat``$^2$) per baseline and the error falls as
-        ``1 / n_lat**2``; check by doubling it.
+        Latitude rings of the mesh (default 32, 2520 triangles); cost is O(``n_lat``$^2$)
+        per baseline and error falls as ``1 / n_lat**2``; check by doubling.
     t_pole : float or array-like, optional
-        Effective temperature of the pole in kelvin. The default ``None`` is the
-        grey model; a value switches on the chromatic (Planck) model.
+        Polar effective temperature in kelvin. ``None`` (default) is the grey model;
+        a value switches on the chromatic (Planck) model.
     wavel0 : float or array-like, optional
         Reference wavelength in metres (default 1.65e-6) at which the chromatic
-        star's spectrum is normalized to ``flux`` and which
+        spectrum is normalized to ``flux``, and which
         [`render`][virgil.models.SourceModel.render] shows.
 
     Examples
@@ -1498,13 +1451,6 @@ class GravityDarkenedStar(Component):
     >>> v0 = star.model(np.zeros(1), np.zeros(1), 1.65e-6)
     >>> round(float(np.abs(v0)[0]), 3)
     1.0
-
-    The chromatic model's pole-to-equator contrast depends on wavelength:
-
-    >>> hot = GravityDarkenedStar(2.0, omega=0.9, inc=45.0, t_pole=9000.0)
-    >>> w = hot._weight(np.array([1.0e-6, 2.2e-6]))
-    >>> bool(w[0] > 1.0 > w[1])
-    True
     """
 
     diam_eq: jax.Array
@@ -1764,39 +1710,31 @@ def _modulation_array(values, name):
 class ModulatedGaussianRim(Component):
     """Azimuthally modulated, infinitely thin rim convolved with a Gaussian.
 
-    The rim is defined in its own plane, blurred by a Gaussian that is isotropic
-    there, and then inclined by ``inc`` and rotated to ``pa``. The azimuths
-    ``az_pas`` are angles in that plane, not on-sky position angles; see
-    [Model notes](../notes.md#modulatedgaussianrim). The model is achromatic and
-    contains no star: put it in a [`System`][virgil.models.System] with a
-    [`PointSource`][virgil.models.PointSource] for that.
+    The rim is defined in its own plane, blurred by a Gaussian isotropic there, then
+    inclined by ``inc`` and rotated to ``pa``. ``az_pas`` are angles in that plane,
+    not on-sky position angles; see [Model notes](../notes.md#modulatedgaussianrim).
+    Achromatic and star-free: add a [`PointSource`][virgil.models.PointSource] in a
+    [`System`][virgil.models.System].
 
     Parameters
     ----------
     diam : float or array-like
-        Diameter of the rim in milliarcseconds.
+        Rim diameter in mas.
     fwhm : float or array-like
-        Gaussian FWHM of the rim in milliarcseconds, measured in the plane of
-        the rim: on the sky, ``fwhm`` along the projected major axis and
-        ``fwhm * cos(inc)`` along the minor axis.
+        Gaussian FWHM in mas, in the rim plane: ``fwhm`` along the projected major
+        axis and ``fwhm * cos(inc)`` along the minor axis on the sky.
     inc : float or array-like
-        Apparent inclination of the rim in degrees.
+        Apparent inclination in degrees.
     pa : float or array-like
-        Position angle of the rim's projected major axis in degrees, North to
-        East.
+        Position angle of the projected major axis in degrees, North to East.
     az_amps : float or array-like, optional
-        Amplitudes of the cosine azimuthal modulations, from first order up. A
-        scalar gives one first-order modulation, the default (empty) an
-        unmodulated rim. The brightness must stay non-negative, which
-        ``sum(abs(az_amps)) <= 1`` guarantees; concrete values are checked when
-        the model is built.
+        Cosine modulation amplitudes, first order up (default none);
+        ``sum(abs(az_amps)) <= 1`` keeps the brightness non-negative.
     az_pas : float or array-like, optional
-        Azimuths of the modulations in degrees, one per ``az_amps`` entry,
-        measured in the plane of the rim in the same sense as position angle,
-        with ``pa`` on the major axis.
+        Modulation azimuths in degrees, one per ``az_amps`` entry, in the rim plane,
+        in the sense of position angle with ``pa`` on the major axis.
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset of the centre, as for any
-        [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
 
     Examples
     --------
@@ -1956,55 +1894,37 @@ def _pixel_visibilities(
 class Image(Component):
     """Pixelised brightness distribution, for image reconstruction.
 
-    The pixel fluxes are ``brightness = softmax(log_brightness)`` taken over
-    the pixels in ``support``: positive, summing to one, and exactly zero
-    outside the support. Like any other component, the image has a ``flux``
-    weight and an offset inside a [`System`][virgil.models.System], so
-    unresolved sources can stay analytic (e.g. a
-    [`PointSource`][virgil.models.PointSource] star) while resolved
-    emission goes in the pixels.
-
-    Visibilities are the exact Fourier transform of the pixels, each treated
-    as a point at its centre.
+    Pixel fluxes are ``softmax(log_brightness)`` over the pixels in ``support``:
+    positive, summing to one, zero outside. Inside a
+    [`System`][virgil.models.System] it has a ``flux`` weight and offset like any
+    component, so unresolved sources stay analytic. Visibilities are the exact
+    Fourier transform of the pixels, each a point at its centre.
 
     Parameters
     ----------
     log_brightness : array-like, shape (nrow, ncol), or GaussianField
-        Log pixel fluxes, up to an additive constant, in the orientation of
-        [`render`][virgil.models.SourceModel.render]: row 0 is the top
-        (North) and column 0 the left (East) of the image. Alternatively an
-        object with an ``evaluate(pixel_scale_mas)`` method returning them,
-        such as a [`GaussianField`][virgil.fields.GaussianField] (a
-        Gaussian-process prior on the log-brightness).
+        Log pixel fluxes up to a constant, oriented as
+        [`render`][virgil.models.SourceModel.render] (row 0 North, column 0 East),
+        or an object with ``evaluate(pixel_scale_mas)`` such as a
+        [`GaussianField`][virgil.fields.GaussianField].
     pixel_scale_mas : float
-        Pixel size in milliarcseconds. The image centre, at index
-        ``((nrow - 1) / 2, (ncol - 1) / 2)``, is at ``(dra, ddec)``.
+        Pixel size in mas; the image centre is at ``(dra, ddec)``.
     support : array-like of bool, optional
-        Pixels allowed to carry flux (default: all); see
+        Pixels allowed to carry flux (default all); see
         [`circular_support`][virgil.models.circular_support].
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset in milliarcseconds,
-        as for any [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
     rotation_deg : float, optional
-        Position angle (North to East) of the pixel grid's "up" axis, so
-        that pixels can follow a detector rather than the sky; default 0
-        (North up). An image whose rotation matches the uv lattice of its
-        data (``data.uv_grid.rotation_deg``, e.g. AMI data at their
-        parallactic angle) is transformed with an exact two-sided matrix
-        Fourier transform, which is much faster.
+        Position angle (North to East) of the grid's "up" axis (default 0). A
+        rotation matching ``data.uv_grid.rotation_deg`` uses a much faster exact
+        two-sided matrix Fourier transform.
     ft : {"auto", "dft", "nufft"}, optional
-        Transform for irregular uv points: the exact sum, a non-uniform FFT
-        or, by default, whichever is faster for the problem size (see
+        Transform for irregular uv points (default whichever is faster; see
         [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
     smooth_fwhm_mas : float, optional
-        FWHM in milliarcseconds of a fixed Gaussian smoothing kernel (not a
-        fitted parameter). The image the data see is the pixels convolved with
-        it, as in MPoL's ``GaussConvFourier``: the visibilities are the pixel
-        transform times the analytic Gaussian, exact at any uv point for every
-        ``ft``, and ``smoothed()`` gives the
-        convolved pixels. Regularizers can act on either (their ``smoothed``
-        option). Default ``None``: no smoothing. It compounds with
-        ``CalibrationNuisance.taper_fwhm_mas``, which tapers any scene.
+        FWHM in mas of a fixed (not fitted) Gaussian smoothing kernel, applied
+        analytically to the visibilities; ``smoothed()`` gives the convolved pixels.
+        Default none. Compounds with ``CalibrationNuisance.taper_fwhm_mas``.
 
     Examples
     --------
@@ -2245,72 +2165,46 @@ def _check_rotation(rotation_deg):
 
 
 class FlaredDisk(_PixelRendered):
-    r"""Flared, inclined scattered-light disk (Blakely et al. 2024, §III).
+    r"""Flared, inclined scattered-light disk: a skewed Gaussian ring on a flared surface.
 
-    A skewed Gaussian ring on a flared surface with a forward-scattering peak on
-    its near side (arXiv:2404.13032). It is an abstract base: use
+    Abstract base with a forward-scattering peak on the near side; use
     [`FlaredDiskHG`][virgil.models.FlaredDiskHG],
     [`FlaredDiskGaussian`][virgil.models.FlaredDiskGaussian] or
-    [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw], which differ only in
-    the azimuthal phase function. The disk contains no star or planets; compose
-    them in a [`System`][virgil.models.System], and any over-resolved flux with a
-    [`Resolved`][virgil.models.Resolved] component (the paper's $I_o$).
+    [`FlaredDiskPowerLaw`][virgil.models.FlaredDiskPowerLaw]. No star or planets:
+    compose them in a [`System`][virgil.models.System]. The visibilities are the
+    exact (two-sided matrix on a uv lattice, else ``ft``) Fourier transform of the
+    brightness on a fixed ``npix`` x ``npix`` grid, which must cover the disk and
+    resolve its inner edge. Equations: [Model notes](../notes.md#flareddisk).
 
-    The brightness has no analytic Fourier transform, so the visibilities are the
-    exact Fourier transform of the brightness sampled on a fixed, centred
-    ``npix`` x ``npix`` grid of ``pixel_scale_mas`` pixels, which must cover the
-    disk and resolve its ring and sharp inner edge. On data whose uv samples lie
-    on a regular lattice (``data.uv_grid``, e.g. AMIGO DISCO products) the grid
-    is rendered in the lattice's frame (``rotation_deg``) and the transform is
-    the exact two-sided matrix Fourier transform, which is much faster than the
-    per-point sum; elsewhere it is ``ft``. The brightness equations are
-    in [Model notes](../notes.md#flareddisk).
+    Source: Blakely et al. (2024), §III, [references](../references.md#blakely2024).
 
     Parameters
     ----------
     radius : float or array-like
-        Radius of peak brightness $r_0$ in milliarcseconds (before the skew,
-        which moves the peak outwards).
+        Radius of peak brightness in mas, before the skew moves it outwards.
     fwhm : float or array-like
-        Radial FWHM of the Gaussian ring in milliarcseconds.
+        Radial FWHM of the ring in mas.
     inc : float or array-like
         Inclination in degrees, from 0 (face-on) up to but not including 90.
     pa : float or array-like
-        Position angle of the projected major axis in degrees, North to East.
-        The near side, where forward scattering peaks, is at ``pa + 90``.
+        Position angle of the projected major axis in degrees, North to East; the
+        near side is at ``pa + 90``.
     npix : int
-        Pixels on a side of the grid; even, so that no pixel centre falls on the
-        star, where the surface is singular.
+        Pixels on a side of the grid; even, so no pixel centre is on the star.
     pixel_scale_mas : float
-        Pixel size of that grid in milliarcseconds.
+        Grid pixel size in mas.
     ft : {"auto", "dft", "nufft"}, optional
-        Transform for irregular uv points: the exact sum, a non-uniform FFT
-        or, by default, whichever is faster for the problem size (see
-        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]). Data on a
-        matching uv lattice use the matrix Fourier transform whatever it says.
+        Transform for irregular uv points (see
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
     rotation_deg : "grid" or float, optional
-        Position angle (North to East) of the pixel grid's "up" axis. The
-        default, ``"grid"``, follows the lattice of whatever data the disk
-        is evaluated on (``data.uv_grid.rotation_deg``; AMI data are on a
-        lattice at their parallactic angle), so that DISCO data, and several
-        filters or exposures whose lattices differ in rotation by rounding,
-        all use the matrix Fourier transform; without a lattice the grid is
-        North up. A number fixes the rotation (0: North up). The pixel grid
-        only discretises the brightness, so its rotation changes the
-        visibilities by the discretisation error alone.
-    skew : float or array-like, optional
-        Truncation $\alpha$ of the ring's inner edge (default 0, symmetric).
-    aspect : float or array-like, optional
-        Aspect ratio $z/\rho$ of the scattering surface at ``radius`` (default 0,
-        flat).
-    flaring : float or array-like, optional
-        Flaring index $\beta$ of the surface (default 1.25).
-    symmetric : float or array-like, optional
-        Brightness of the axisymmetric part relative to the phase function,
-        $A_s/A_a$ in the paper (default 0).
+        Position angle of the grid's "up" axis: ``"grid"`` (default) follows the
+        data's uv lattice, else North up; a number fixes it.
+    skew, aspect, flaring, symmetric : float or array-like, optional
+        Inner-edge truncation (default 0), aspect ratio $z/\rho$ at ``radius``
+        (default 0, flat), flaring index (1.25), axisymmetric brightness
+        relative to the phase function (0).
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset in milliarcseconds, as for
-        any [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
     """
 
     radius: jax.Array
@@ -3400,54 +3294,36 @@ class _RadialGPBase(zdx.Base):
 
 
 class RadialGP(_RadialGPBase, _RadialProfile):
-    r"""A non-parametric radial profile: the exponential of a Gaussian process in the radius, $I_0(r) = \exp g(r)$, positive.
+    r"""A non-parametric radial profile: the exponential of a Gaussian process, $I_0(r) = \exp g(r)$.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The nodes are the Gauss-Legendre nodes of $[r_{\rm in}, r_{\rm out}]$ that the
-    disk's quadrature uses, one latent each (so ``n_r`` latents). Rendering
-    interpolates linearly in $r$. The disk's visibility is normalized, so the mean
-    ``mu`` of $g$ is not identifiable: leave it at 0. The process itself, with no
-    exponential and on equally spaced nodes, is
-    [`RadialGPFunction`][virgil.models.RadialGPFunction] (a spectral index, a
-    harmonic coefficient); the whitened-latent construction
-    $g = \mu + \sigma L z$, $z \sim N(0, I)$ (path ``z``), is shared.
-
-    ``z`` has a standard-normal prior. ``sigma`` and ``ell`` are scales, so their
-    invariant priors are log-uniform ([`gp_priors`][virgil.models.gp_priors]
-    writes them); fitted by MAP they are biased (``fit`` warns), so fix them,
-    sample them, or choose them by [`log_evidence`][virgil.imaging.log_evidence].
-    Draws from the prior come from [`draws`][virgil.models.RadialGP.draws]. What
-    ``ell`` means, and what the data can constrain, is in
+    One whitened latent ``z`` per Gauss-Legendre node of $[r_{\rm in}, r_{\rm out}]$
+    (``n_r`` of them), $g = \mu + \sigma L z$, interpolated linearly in $r$. The
+    visibility is normalized, so leave ``mu`` at 0. The process without the
+    exponential is [`RadialGPFunction`][virgil.models.RadialGPFunction]. Priors
+    (``z`` standard normal, ``sigma`` and ``ell`` log-uniform via
+    [`gp_priors`][virgil.models.gp_priors]; MAP biases the scales),
+    [`draws`][virgil.models.RadialGP.draws] and the meaning of ``ell`` are in
     [Model notes](../notes.md#radialgp).
 
     Parameters
     ----------
     r_in, r_out : float
-        Radii in milliarcseconds of the first and last node (the range of the
-        process).
-    sigma : float, optional
-        Standard deviation of $g$ (default 1; the dynamic range is about
-        $e^{\pm\sigma}$).
-    ell : float, optional
-        Correlation length in milliarcseconds (default 1).
-    mu : float, optional
-        Mean of $g$ (default 0).
+        Radii in mas of the first and last node.
+    sigma, ell, mu : float, optional
+        Standard deviation of $g$, correlation length in mas, and mean of $g$
+        (defaults 1, 1, 0).
     z : array-like, shape (n_r,), optional
-        Whitened latents (default 0); one per node, set when the profile is built
-        into a disk.
+        Whitened latents (default 0); set when the profile is built into a disk.
     nu : {0.5, 1.5, 2.5, inf}, optional
-        Matérn smoothness (default 1.5; ``inf`` is the squared exponential).
-        Static.
+        Matérn smoothness (default 1.5; ``inf`` squared exponential). Static.
     jitter : float, optional
-        Relative jitter on the correlation matrix's diagonal (default 1e-6;
-        static).
+        Relative jitter on the correlation diagonal (default 1e-6). Static.
 
     Examples
     --------
-    A non-parametric profile with a fitted prior, and a spectral index:
-
     >>> profile = RadialGP(r_in=0.5, r_out=12.0, sigma=1.5, ell=2.0)
     >>> disk = MultipoleDisk(
     ...     profile,
@@ -3529,31 +3405,25 @@ class RadialGP(_RadialGPBase, _RadialProfile):
 class RadialGPFunction(_RadialGPBase, _RadialFunction):
     r"""A Gaussian process in the radius as a function: $g(r)$ itself, with no exponential.
 
-    Use it for the ``spectral_index`` of a
-    [`MultipoleDisk`][virgil.models.MultipoleDisk] or a coefficient of
-    [`Harmonics`][virgil.models.Harmonics]; for a non-negative profile use
-    [`RadialGP`][virgil.models.RadialGP].
-
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The values at the ``n`` equally spaced nodes of $[r_{\rm in}, r_{\rm out}]$ are
-    $g = \mu + \sigma L z$, with $LL^\top$ the Matérn correlation matrix and
-    **whitened latents** $z \sim N(0, I)$ as the parameters (path ``z``), so a
-    standard-normal prior on ``z`` is the Gaussian-process prior (as for
-    [`GaussianField`][virgil.fields.GaussianField]). ``g`` is interpolated
-    linearly between the nodes (constant beyond). The priors, and what ``ell``
-    means, are as for [`RadialGP`][virgil.models.RadialGP].
+    For the ``spectral_index`` of a [`MultipoleDisk`][virgil.models.MultipoleDisk] or a
+    coefficient of [`Harmonics`][virgil.models.Harmonics]; for a non-negative profile
+    use [`RadialGP`][virgil.models.RadialGP]. Values at ``n`` equally spaced nodes are
+    $g = \mu + \sigma L z$ with whitened latents ``z`` (a standard-normal prior is the
+    GP prior), interpolated linearly (constant beyond). Priors and ``ell`` are as
+    for `RadialGP`.
 
     Parameters
     ----------
     r_in, r_out : float or None, optional
-        Radii in milliarcseconds of the first and last node; both or neither (the
-        disk's profile range by default).
+        Radii in mas of the first and last node; both or neither (default the
+        disk's profile range).
     sigma : float, optional
         Standard deviation of $g$ (default 1).
     ell : float, optional
-        Correlation length in milliarcseconds (default 1).
+        Correlation length in mas (default 1).
     mu : float, optional
         Mean of $g$ (default 0).
     z : array-like, shape (n,), optional
@@ -3563,8 +3433,7 @@ class RadialGPFunction(_RadialGPBase, _RadialFunction):
     nu : {0.5, 1.5, 2.5, inf}, optional
         Matérn smoothness (default 1.5). Static.
     jitter : float, optional
-        Relative jitter on the correlation matrix's diagonal (default 1e-6;
-        static).
+        Relative jitter on the correlation diagonal (default 1e-6). Static.
 
     Examples
     --------
@@ -3614,46 +3483,36 @@ class RadialGPFunction(_RadialGPBase, _RadialFunction):
 
 
 class MultipoleKernel(zdx.Base):
-    r"""A prior over the azimuthal-harmonic coefficients of a [`MultipoleDisk`][virgil.models.MultipoleDisk]: a Matérn kernel in the radius and in the azimuth.
+    r"""A prior over the azimuthal-harmonic coefficients of a [`MultipoleDisk`][virgil.models.MultipoleDisk]: a Matérn kernel in radius and azimuth.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Give it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. The
-    coefficients of every order $m = 1 \dots M$ ($c_m$ and $s_m$ of the linear
-    form, the latents $\mathrm{re}_m$ and $\mathrm{im}_m$ of the positive one) are
-    independent [`RadialGPFunction`][virgil.models.RadialGPFunction]s with the same
-    radial length ``ell_r`` (mas), and their variance falls with the order as the
-    spectral density of a periodic Matérn kernel in the azimuth, with correlation
-    length ``ell_theta`` (mas along the ring at the mean radius). The prior mean is
-    0 (a uniform ring); a long ``ell_theta`` favours smooth arcs and low orders
-    without imposing them. The variance formula is in
-    [Model notes](../notes.md#multipolekernel).
-
-    The latents are whitened, ``z`` of shape ``(2, M, n)`` (``disk.harmonics.z``,
-    standard-normal prior), on ``n`` equally spaced radii of ``[r_in, r_out]``
-    (the disk's profile range by default). Priors on ``sigma``, ``ell_r`` and
-    ``ell_theta`` are log-uniform on stated bounds
-    ([`gp_priors`][virgil.models.gp_priors]).
+    Pass it to [`Harmonics`][virgil.models.Harmonics] as ``prior=``. Each order
+    $m = 1 \dots M$ is an independent
+    [`RadialGPFunction`][virgil.models.RadialGPFunction] with radial length
+    ``ell_r``; the variance falls with order as a periodic Matérn spectral density of
+    azimuthal length ``ell_theta``. The mean is a uniform ring. Whitened latents
+    ``z`` have shape ``(2, M, n)`` (``disk.harmonics.z``, standard-normal prior);
+    the variance formula is in [Model notes](../notes.md#multipolekernel). Log-uniform
+    priors on the scales: [`gp_priors`][virgil.models.gp_priors].
 
     Parameters
     ----------
     ell_r : float
-        Correlation length in the radius, in milliarcseconds.
+        Correlation length in the radius, in mas.
     ell_theta : float
-        Correlation length in the azimuth, in milliarcseconds along the ring at
-        ``r_ref`` (the angular length is ``ell_theta / r_ref`` radians).
+        Correlation length in the azimuth, in mas along the ring at ``r_ref``.
     sigma : float, optional
         Standard deviation of the first-order coefficients (default 0.3).
     r_in, r_out : float or None, optional
-        Range of the radial processes (the disk's profile extent by default).
+        Range of the radial processes (default the disk's profile extent).
     r_ref : float or None, optional
-        The radius that converts ``ell_theta`` to an angle (the middle of the
-        range by default).
+        Radius converting ``ell_theta`` to an angle (default mid-range).
     n : int, optional
         Number of radial nodes (default 16, static).
     nu_r, nu_theta : {0.5, 1.5, 2.5, inf}, optional
-        Matérn smoothness in the radius and in the azimuth (default 1.5; static).
+        Matérn smoothness in radius and azimuth (default 1.5; static).
 
     Examples
     --------
@@ -3898,64 +3757,40 @@ class Harmonics(_Azimuthal):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The brightness at radius $r$ and azimuth $\theta$ in the plane of the disk is
-    the profile $I_0(r)$ times an azimuthal factor of mean 1, with $\theta$
-    measured from the projected major axis towards ``pa + 90`` on the sky (the
-    azimuth of [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]).
-    Every coefficient is a constant or a function of the radius, such as
-    [`RadialLinear`][virgil.models.RadialLinear]. The image has harmonics
-    exactly ``0..M``, none beyond.
-
-    ``form="positive"`` (the default when no ``c``/``s`` is given) is
-    $I/I_0 = |h(e^{i\theta})|^2 / \sum_j |h_j|^2$ with a polynomial $h$ built from
-    unconstrained latents; the image is positive for every parameter value. The
-    ``"linear"`` form (given whenever ``c`` or ``s`` is) is
-    $1 + \sum_m c_m(r)\cos m\theta + s_m(r)\sin m\theta$, exactly linear in its
-    coefficients but not always positive: ``sum(sqrt(c_m**2 + s_m**2)) <= 1``
-    guarantees it, and ``MultipoleDisk.min_intensity`` reports violations. The
-    construction, the latents and the image harmonics are in
-    [Model notes](../notes.md#harmonics); [`virgil.harmonics`][virgil.harmonics]
-    converts between the forms. Everything after ``c`` and ``s`` is keyword-only.
+    The brightness is the profile $I_0(r)$ times an azimuthal factor of mean 1 in the
+    disk plane ($\theta$ from the projected major axis towards ``pa + 90``, as for
+    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]), with harmonics
+    exactly ``0..M``. ``form="positive"`` (the default without ``c``/``s``) is
+    $|h(e^{i\theta})|^2$ normalized, positive for all parameters; ``"linear"`` is
+    $1 + \sum_m c_m(r)\cos m\theta + s_m(r)\sin m\theta$, positive if
+    ``sum(sqrt(c_m**2 + s_m**2)) <= 1`` (``MultipoleDisk.min_intensity`` reports
+    violations). Constructions and conversions: [Model notes](../notes.md#harmonics),
+    [`virgil.harmonics`][virgil.harmonics]. Arguments after ``c`` and ``s`` are
+    keyword-only.
 
     Parameters
     ----------
     c, s : float, radial function or sequence of them, optional
-        Linear form: coefficients of $\cos m\theta$ and $\sin m\theta$ from the
-        first order up. A scalar is the first order only; missing orders are zero.
-    re, im : float, radial function or sequence of them, optional
-        Positive form: real and imaginary parts of the latents $w_j$,
-        $j = 1 \dots M$ (missing ones are zero).
-    w : complex or sequence of complex, optional
-        Positive form, for constants: the latents as complex numbers, in place of
-        ``re`` and ``im``.
+        Linear form: coefficients of $\cos m\theta$ and $\sin m\theta$ from first
+        order up; a scalar is first order only, missing orders are zero.
+    re, im, w : float, radial function or sequence, optional
+        Positive form: real and imaginary parts of the latents $w_j$, or (constants
+        only) ``w`` as complex numbers.
     degree : int, optional
-        The highest order ``M`` (static: it sets shapes, so changing it
-        recompiles). By default the number of coefficients given.
+        Highest order ``M`` (static; changing it recompiles). Default the number of
+        coefficients given.
     form : {"positive", "linear"}, optional
-        By default ``"linear"`` if ``c`` or ``s`` is given, else ``"positive"``.
+        Default ``"linear"`` if ``c`` or ``s`` is given, else ``"positive"``.
     prior : MultipoleKernel, optional
-        A Gaussian-process prior over the coefficients of every order (``degree``
-        is then required, and none of ``c``, ``s``, ``re``, ``im`` or ``w``): the
-        coefficients are [`RadialGPFunction`][virgil.models.RadialGPFunction]s
-        whose whitened latents are the parameter ``z`` of shape ``(2, M, n)``
-        (standard-normal prior), with the variances and lengths of the
-        [`MultipoleKernel`][virgil.models.MultipoleKernel]. The form is then the
-        positive one unless ``form="linear"``.
+        Gaussian-process prior over every order; needs ``degree`` and none of
+        ``c``, ``s``, ``re``, ``im``, ``w``. The parameter is the whitened latent
+        ``z`` of shape ``(2, M, n)``; the form is positive unless ``form="linear"``.
 
     Examples
     --------
-    A lopsided ring that stays positive, with a second harmonic:
-
     >>> w = (0.4 + 0.1j, 0.2j)
     >>> disk = MultipoleDisk(GaussianRing(6.0, 1.0), harmonics=Harmonics(w=w), inc=30.0)
-
-    The linear form, with a second order that grows outwards:
-
     >>> harmonics = Harmonics(c=(0.3, RadialLinear(0.0, 0.02, 5.0)), s=(0.1,))
-
-    A linear form is converted to the positive one, when it is positive:
-
-    >>> positive = Harmonics(c=0.5, s=0.2).convert("positive")
     """
 
     c: tuple
@@ -4158,47 +3993,34 @@ class Harmonics(_Azimuthal):
 
 
 class VonMises(_Azimuthal):
-    r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$,
-    for [`MultipoleDisk`][virgil.models.MultipoleDisk], truncated at ``degree``.
+    r"""A von Mises azimuthal profile $\exp[\kappa\cos(\theta - \theta_0)]$ for a [`MultipoleDisk`][virgil.models.MultipoleDisk], truncated at ``degree``.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The profile (an arc of width $\sim 1/\sqrt\kappa$ radians centred on
-    the azimuth $\theta_0$; $\kappa = 0$ is a uniform ring) has the analytic
-    harmonics $c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$
-    with $I_m$ the modified Bessel function; they are computed by a small FFT
-    of $\exp[\kappa(\cos\theta_j - 1)]$, so no special function is needed,
-    and are differentiable in $\kappa$ and $\theta_0$. The azimuth is in the
-    plane of the disk, as for [`Harmonics`][virgil.models.Harmonics]. The
-    brightness is the truncated series, not the von Mises function itself,
-    and goes slightly negative if ``degree`` is too low for $\kappa$:
-    narrow arcs (large $\kappa$) need a larger degree, about
-    $5.7\sqrt\kappa$ for harmonics below $10^{-6}$.
-    [`truncation_power`][virgil.models.VonMises.truncation_power] reports the
-    fraction of the power that the truncation drops.
+    An arc of width $\sim 1/\sqrt\kappa$ radians at azimuth $\theta_0$ in the disk plane
+    (as for [`Harmonics`][virgil.models.Harmonics]); $\kappa = 0$ is a uniform ring.
+    The harmonics are computed by a small FFT, differentiable in $\kappa$ and
+    $\theta_0$. The truncated series goes slightly negative if ``degree`` is too
+    low (about $5.7\sqrt\kappa$ for harmonics below $10^{-6}$);
+    [`truncation_power`][virgil.models.VonMises.truncation_power] reports the power
+    dropped. Details: [Model notes](../notes.md#harmonics).
 
     Parameters
     ----------
     kappa : float or radial function
-        Concentration (dimensionless, non-negative).
+        Concentration (non-negative).
     theta0 : float or radial function, optional
-        Azimuth of the brightest point in degrees (default 0, the projected
-        major axis).
+        Azimuth of the brightest point in degrees (default 0, the major axis).
     degree : int, optional
-        The highest order kept (static). By default the smallest that keeps
-        the harmonics above $10^{-6}$ of the mean for the given constant
-        ``kappa`` (at most 256), or 32 if ``kappa`` is a radial function or
-        traced.
+        Highest order kept (static). Default the smallest keeping the harmonics above
+        $10^{-6}$ for constant ``kappa`` (at most 256), else 32.
     n_fft : int, optional
-        Points of the FFT (static); the default, ``max(512, 8 (degree +
-        1))``, is accurate to the aliasing error ``I_{n_fft - m} / I_0``,
-        negligible for $\kappa$ below about ``n_fft**2 / 30``.
+        FFT points (static); default ``max(512, 8 (degree + 1))``, accurate for
+        $\kappa$ below about ``n_fft**2 / 30``.
 
     Examples
     --------
-    An arc brightest at azimuth 30 degrees, about 25 degrees wide:
-
     >>> arc = VonMises(kappa=5.0, theta0=30.0, degree=20)
     >>> ring = MultipoleDisk(GaussianRing(6.0, 1.0), harmonics=arc, inc=40.0)
     """
@@ -4405,67 +4227,47 @@ def multipole_disk_cvis(
     height=None,
     stretch=None,
 ):
-    r"""Unit-flux visibility of a disk from radial quadrature.
+    """Unit-flux visibility of a disk from radial quadrature.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The disk is a sum of thin rings at the nodes ``r`` weighted by ``w``, after
-    undoing the inclination ``inc`` and position angle ``pa`` of the projected
-    major axis (North to East). Ring ``k`` has brightness
-    $1 + \sum_m c_{mk}\cos m\theta + s_{mk}\sin m\theta$ in the disk plane, with
-    $\theta$ measured from the projected major axis towards East, so
+    A sum of thin rings at nodes ``r`` with weights ``w``, with inclination ``inc``
+    and position angle ``pa`` undone, normalized so $V(0) = 1$. The Bessel series,
+    the ``height`` phase and the envelope are in
+    [Model notes](../notes.md#multipoledisk).
 
-    $$
-    V = 2\pi \sum_{|m| \le M} (-i)^m e^{im\phi} \sum_k w_k I_m(r_k)
-        J_m(2\pi q r_k),
-    $$
-
-    with $I_{\pm m} = (c_m \mp i s_m)/2$, $I_0 = 1$, and $q$, $\phi$ the length
-    and direction of the spatial frequency in the disk plane. The sum is
-    normalized (so $V(0) = 1$) and ``blur_fwhm`` multiplies it as a Gaussian
-    envelope. A ``height`` lifts ring ``k`` along the disk's normal, shifting it
-    on the sky by ``height[k] sin(inc)`` towards ``pa + 90`` as a phase factor;
-    the surface is thin and nothing is occulted. Large problems are evaluated in
-    chunks over the samples.
+    Source: Jennings et al. (2020) and Kennedy (2025), ideas only,
+    [references](../references.md#frank).
 
     Parameters
     ----------
     u, v : array-like
         Baseline coordinates in wavelength units (cycles/rad); any shape.
     r : array-like
-        Quadrature radii in milliarcseconds, shape ``(n_r,)``.
+        Quadrature radii in mas, shape ``(n_r,)``.
     w : array-like
-        Quadrature weights ($I_0(r_k) r_k\,dr$ folded in), shape ``(n_r,)``, or
-        ``u.shape + (n_r,)`` for weights that differ per sample (a chromatic
-        profile); each is normalized to unit sum.
+        Quadrature weights, shape ``(n_r,)``, or ``u.shape + (n_r,)`` for weights
+        that differ per sample (a chromatic profile); each is normalized to unit sum.
     inc, pa : float or array-like, optional
         Inclination and position angle in degrees.
     blur_fwhm : float, array-like or None, optional
-        FWHM in milliarcseconds, in the disk plane, of a Gaussian that smooths
-        the profile.
+        FWHM in mas, in the disk plane, of a smoothing Gaussian.
     c, s : array-like or None, optional
-        Cartesian coefficients of the linear azimuthal harmonics at the nodes,
-        shape ``(M, n_r)``: row ``m - 1`` is order ``m``. Keeping the brightness
-        non-negative is the caller's task.
+        Linear azimuthal-harmonic coefficients at the nodes, shape ``(M, n_r)``
+        (row ``m - 1`` is order ``m``); keeping the brightness non-negative is the
+        caller's task.
     height : array-like or None, optional
-        Height of each ring above the disk plane in milliarcseconds, shape
-        ``(n_r,)`` (``None`` is a flat disk).
+        Height of each ring above the disk plane in mas, shape ``(n_r,)`` (``None``
+        is flat).
     stretch : float or array-like or None, optional
-        The factor by which the minor axis is foreshortened on the sky,
-        ``cos(inc)`` by default; a negative value mirrors the azimuth.
+        Foreshortening of the minor axis on the sky (default ``cos(inc)``); a
+        negative value mirrors the azimuth.
 
     Returns
     -------
     array-like
         Complex visibilities with the shape of ``u``.
-
-    References
-    ----------
-    Jennings et al. 2020, MNRAS 495, 3209 (frank): visibilities of a radial
-    profile as a Hankel transform on nodes. Kennedy 2025, RASTI 4, rzaf004
-    (vis-r): parametric profiles, the uv deprojection and a Gaussian envelope. No
-    code was copied.
     """
     q, q2, phase, q_minor = _polar_frequencies(u, v, inc, pa, stretch)
 
@@ -4646,79 +4448,47 @@ class MultipoleDisk(Component):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The brightness is a radial profile $I(r)$ in the plane of the disk, inclined
-    by ``inc`` and rotated by ``pa``. Its visibility is the Hankel transform
-    $2\pi \int I(r) J_0(2\pi q r) r\,dr$, summed over ``n_r`` nodes of a rule the
-    profile owns (Gauss-Legendre, or Gauss-Laguerre for an
-    [`ExpTail`][virgil.models.ExpTail]); both converge spectrally, so a narrow ring
-    needs only tens of nodes. Profiles:
-    [`ThinRing`][virgil.models.ThinRing], [`GaussianRing`][virgil.models.GaussianRing],
-    [`RadialPowerLaw`][virgil.models.RadialPowerLaw],
-    [`ExpTail`][virgil.models.ExpTail], [`Gap`][virgil.models.Gap],
-    [`RadialSum`][virgil.models.RadialSum] and
-    [`RadialGP`][virgil.models.RadialGP]. Parameters are reached by path
-    (``"disk.inc"``, ``"disk.profile.radius"``, ``"disk.profile.outer.weight"``),
-    so they can be fitted like any other. Choosing ``n_r``, symmetry, precision
-    and the options' homes are in [Model notes](../notes.md#multipoledisk).
-    [`GaussianArc`][virgil.models.GaussianArc],
-    [`TruncatedCone`][virgil.models.TruncatedCone] and
-    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] are special
-    cases.
+    A radial profile $I(r)$ in the disk plane, inclined by ``inc`` and rotated by
+    ``pa``; the visibility is its Hankel transform summed over ``n_r`` nodes of the
+    profile's quadrature rule (spectral convergence). Profiles: ``ThinRing``,
+    ``GaussianRing``, ``RadialPowerLaw``, ``ExpTail``, ``Gap``, ``RadialSum``,
+    [`RadialGP`][virgil.models.RadialGP]; parameters are reached by path
+    (``"disk.profile.radius"``). Choosing ``n_r``, symmetry and precision:
+    [Model notes](../notes.md#multipoledisk), [guide](../../../multipole_disk_rings.md).
+
+    Source: Jennings et al. (2020) and Kennedy (2025), ideas only,
+    [references](../references.md#frank).
 
     Parameters
     ----------
     profile : profile
         The radial profile; its quadrature rule is set to ``n_r`` nodes.
     harmonics : Harmonics, VonMises or None, optional
-        Azimuthal factor of mean one and exact degree ``M``, with the azimuth
-        measured in the disk plane from the projected major axis towards
-        ``pa + 90``. Odd orders make closure phases non-zero for a centred disk.
+        Azimuthal factor of mean one; odd orders make closure phases non-zero.
     height : Cone, PowerLawHeight or None, optional
-        Height of each ring above the disk plane as a function of its radius;
-        the ring shifts on the sky by ``h sin(inc)`` towards ``pa + 90``.
-    inc : float or array-like, optional
-        Inclination in degrees (0 is face-on).
-    pa : float or array-like, optional
-        Position angle of the projected major axis in degrees, North to East.
+        Height of each ring above the disk plane (see the notes).
+    inc, pa : float or array-like, optional
+        Inclination (0 is face-on) and position angle of the projected major axis
+        (North to East), in degrees.
     blur_fwhm : float, array-like or None, optional
-        FWHM in milliarcseconds, in the disk plane, of a Gaussian that smooths the
-        profile (an exact Fourier envelope).
+        FWHM in mas, in the disk plane, of a smoothing Gaussian (exact envelope).
     flux, dra, ddec : optional
-        Relative weight (or spectrum) and sky offset of the centre, as for any
-        [`Component`][virgil.models.Component].
+        As for any [`Component`][virgil.models.Component].
     n_r : int, optional
-        Quadrature nodes per profile (default 64). Static: changing it
-        recompiles. [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r] gives
-        a starting value.
+        Quadrature nodes per profile (default 64; static).
+        [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r] gives a start.
     spectral_index : float, radial function, RadialGPFunction or None, optional
-        Makes the profile chromatic, $I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$, with
-        $\alpha$ a constant, a radial function
-        ([`RadialLinear`][virgil.models.RadialLinear],
-        [`RadialPower`][virgil.models.RadialPower]) or a
-        [`RadialGPFunction`][virgil.models.RadialGPFunction]. ``flux`` is then
-        the flux at ``wavel0`` and must be a number, not a spectrum.
+        Makes the profile chromatic, $I_0(r)(\lambda/\lambda_0)^{\alpha(r)}$; ``flux``
+        is then the flux at ``wavel0`` and must be a number.
     wavel0 : float or None, optional
-        Reference wavelength in metres of ``spectral_index`` (required with it;
-        an image renders at it).
+        Reference wavelength in metres, required with ``spectral_index``.
 
     Examples
     --------
-    A ring with a gap beyond it, seen at 50 degrees:
-
     >>> profile = Gap(GaussianRing(radius=10.0, sigma=3.0), radius=10.0, sigma=0.8)
     >>> disk = MultipoleDisk(profile, inc=50.0, pa=30.0, blur_fwhm=1.0, n_r=48)
     >>> scene = System(star=PointSource(), disk=disk.set("flux", 0.3))
     >>> vis = scene.model(np.array([30.0]), np.array([10.0]), 2.2e-6)
-
-    Two named rings, with the outer one's weight a parameter:
-
-    >>> rings = RadialSum(
-    ...     inner=GaussianRing(3.0, 0.5),
-    ...     outer=(GaussianRing(8.0, 1.0), 0.5),
-    ... )
-    >>> disk = MultipoleDisk(rings, inc=40.0, pa=20.0, n_r=32)
-    >>> float(disk.get("profile.outer.weight"))
-    0.5
     """
 
     profile: _RadialProfile
@@ -5286,69 +5056,36 @@ class Resolved(SourceModel):
 class System(SourceModel):
     r"""Flux-weighted mixture of named source models.
 
-    A scene with more than one part: a star with a disk, a binary inside a ring, a
-    companion with its own circumstellar material. The visibility is the
-    flux-weighted mean $V = \sum_i f_i V_i \,/\, \sum_i f_i$, with ``f_i`` each
-    component's ``flux``. Visibilities are normalized to 1 at zero baseline, so
-    only flux *ratios* can be measured: keep one reference component (usually the
-    star) at ``flux=1`` and fit the others relative to it.
-
-    Components are reached by name, as attributes (``system.comp.flux``) and as
-    zodiax paths (``system.get("comp.flux")``, ``system.set("comp.flux", 0.02)``),
-    which is how [`virgil.grid_fit`][virgil.grid_fit] and
-    [`numpyro_model`][virgil.likelihood.numpyro_model] address parameters, in the
-    order given. A System can itself be a component: its ``flux`` is then the
-    group's total relative to its siblings, and ``dra``/``ddec`` move the group.
-
-    Fluxes must be non-negative and not all zero; this is checked when a model is
-    built from concrete values, not after ``set`` or in traced code, where
-    positivity is the job of the priors and grid axes
-    ([`numpyro_model`][virgil.likelihood.numpyro_model] rejects flux priors that
-    allow negative values).
+    A scene with several parts, e.g. a star with a disk. The visibility is
+    $V = \sum_i f_i V_i / \sum_i f_i$ with ``f_i`` each component's ``flux``; it is 1
+    at zero baseline, so only flux *ratios* are measurable: keep one reference
+    (usually the star) at ``flux=1``. Components are reached by name, as attributes
+    and as zodiax paths (``system.get("comp.flux")``). A System can be a component:
+    its ``flux`` is then the group's weight and ``dra``/``ddec`` move the group.
+    Fluxes must be non-negative and not all zero, checked only for concrete values
+    at build (traced code relies on priors and grid axes). See
+    [Composing models](../../../composition.md).
 
     Parameters
     ----------
     components : dict[str, SourceModel], optional
-        Components as a mapping from name to model; usually keyword arguments are
-        clearer.
+        Components by name; keyword arguments are usually clearer.
     flux : float or array-like, optional
-        Weight of the whole system when nested inside another (default 1); it
-        has no effect at the top level.
+        Weight of the whole system when nested (default 1); no effect at top level.
     dra, ddec : float or array-like, optional
-        Offset of the whole system in milliarcseconds (positive to the East and
-        North).
+        Offset of the whole system in mas (positive to the East and North).
     **named : SourceModel
-        Components as keyword arguments, e.g. ``star=PointSource()``. Names must
-        be valid Python identifiers that do not start with ``_`` or clash with a
-        System attribute (``model``, ``render``, ``set``, ``flux``, ...).
+        Components as keywords, e.g. ``star=PointSource()``; names must be valid
+        identifiers, not start with ``_`` and not clash with a System attribute.
 
     Examples
     --------
-    A star with a faint companion:
-
     >>> binary = System(
     ...     star=PointSource(),
     ...     comp=PointSource(dra=45.0, ddec=30.0, flux=0.01),
     ... )
     >>> binary.comp
     PointSource(flux=0.01, dra=45, ddec=30)
-
-    A star with a rim, and a companion that has its own disk:
-
-    >>> scene = System(
-    ...     star=PointSource(),
-    ...     rim=ModulatedGaussianRim(diam=40.0, fwhm=4.0, inc=50.0, pa=30.0, flux=0.5),
-    ...     comp=System(
-    ...         core=PointSource(),
-    ...         disk=GaussianDisk(sigma=4.0, flux=0.5),
-    ...         dra=-30.0,
-    ...         ddec=25.0,
-    ...         flux=0.3,
-    ...     ),
-    ... )
-    >>> list(scene.components)
-    ['star', 'rim', 'comp']
-    >>> moved = scene.set(["comp.dra", "comp.ddec"], [30.0, -25.0])
     """
 
     names: tuple = eqx.field(static=True)
@@ -5695,22 +5432,16 @@ _FRAME_ANGLES = (
 class Attached(SourceModel):
     """A component placed and oriented in the frame of a binary's orbit.
 
-    At each time the component is moved to its anchor on the orbit, and
-    its angle attributes are set from angles of the binary frame (see
-    [`KeplerOrbit.frame`][virgil.orbits.KeplerOrbit.frame]). A companion
-    on its orbit is ``Attached(PointSource(flux), orbit)``; a disc around
-    it in the orbital plane, brighter on the side facing the primary, is
-
-    ``Attached(ModulatedGaussianRim(...), orbit, bind={"pa": "node_pa",
-    "inc": "apparent_inc", "az_pas": "towards_primary"})``.
-
-    The model changes with time, so it is evaluated through
-    [`at`][virgil.models.SourceModel.at]; inside a
-    [`System`][virgil.models.System],
-    [`OIData.model`][virgil.oidata.OIData.model] evaluates every sample at
-    its own time. Components that should share one orbit (a companion and
-    its disc) are best built from shared parameters in a model function
-    (see [`fit`][virgil.fitting.fit]).
+    At each time the component moves to its anchor on the orbit and its angle
+    attributes are set from angles of the binary frame
+    ([`KeplerOrbit.frame`][virgil.orbits.KeplerOrbit.frame]). A companion is
+    ``Attached(PointSource(flux), orbit)``; a disc around it in the orbital plane,
+    brighter towards the primary, is ``Attached(ModulatedGaussianRim(...), orbit,
+    bind={"pa": "node_pa", "inc": "apparent_inc", "az_pas": "towards_primary"})``.
+    Time-dependent, so evaluated through [`at`][virgil.models.SourceModel.at];
+    [`OIData.model`][virgil.oidata.OIData.model] uses each sample's time. Share one
+    orbit between components via shared parameters in a model function
+    ([`fit`][virgil.fitting.fit]).
 
     Parameters
     ----------
@@ -5719,20 +5450,16 @@ class Attached(SourceModel):
     orbit : KeplerOrbit
         The orbit of the secondary about the primary (the scene's origin).
     anchor : {"secondary", "primary"} or float, optional
-        Where the component sits: on the secondary (default), on the
-        primary, or at this fraction of the way from the primary to the
-        secondary (e.g. ``q / (1 + q)`` for the barycentre).
+        Where the component sits: the secondary (default), the primary, or this
+        fraction of the way from primary to secondary (``q / (1 + q)`` for the
+        barycentre).
     bind : dict, optional
-        ``{attribute: frame angle}``, e.g. ``{"pa": "line_pa"}``. Frame
-        angles: ``line_pa``, ``towards_primary``, ``line_tilt``,
-        ``node_pa``, ``inc`` and ``apparent_inc``. An ``az_pas`` binding is a
-        sky position angle, converted to the component's deprojected rim
-        angle after its ``pa`` and ``inc`` are set (as
-        [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim]
-        measures it).
+        ``{attribute: frame angle}``, e.g. ``{"pa": "line_pa"}``; frame angles are
+        ``line_pa``, ``towards_primary``, ``line_tilt``, ``node_pa``, ``inc`` and
+        ``apparent_inc``. An ``az_pas`` binding is a sky position angle, converted
+        to the rim angle after ``pa`` and ``inc`` are set.
     offsets : dict, optional
-        ``{attribute: degrees}`` added to the bound angles (fittable, e.g. a
-        skew); zero by default.
+        ``{attribute: degrees}`` added to the bound angles (fittable); default zero.
     """
 
     component: SourceModel
@@ -6263,42 +5990,28 @@ def cvis_uniform_disk(u, v, diam, dra=0.0, ddec=0.0):
 def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     r"""Complex visibilities of a disk whose brightness is a sum of powers of $\mu$.
 
-    For $I(\mu) = \sum_\nu a_\nu \mu^\nu$, with $\mu = \sqrt{1 - (r/R)^2}$,
-    Quirrenbach et al. (1996, A&A 312, 160,
-    https://ui.adsabs.harvard.edu/abs/1996A&A...312..160Q, eqs. 1-4) show that
+    For $I(\mu) = \sum_\nu a_\nu \mu^\nu$, $\mu = \sqrt{1 - (r/R)^2}$, the visibility
+    is a sum of $J_{\nu/2+1}(x)/x^{\nu/2+1}$ terms with $x = \pi\theta|b|/\lambda$,
+    normalized to 1 at zero baseline (a uniform disk gives $2 J_1(x)/x$). Powers need
+    not be integers, with $-2 < \nu \le 22$ (the lower limit keeps the flux finite).
+    Formula: [Limb-darkened stars](../../../limb_darkening.md#profiles-and-visibilities).
 
-    $$
-    V(x) = \frac{1}{C} \sum_\nu a_\nu\, 2^{\nu/2}\,
-    \Gamma\!\left(\frac{\nu}{2} + 1\right)
-    \frac{J_{\nu/2+1}(x)}{x^{\nu/2+1}}, \qquad
-    C = \sum_\nu \frac{a_\nu}{\nu + 2},
-    $$
-
-    with $x = \pi\,\theta\,|b| / \lambda$ for diameter $\theta$, normalized to
-    1 at zero baseline. A uniform disk ($a_0 = 1$) gives $2 J_1(x)/x$. The
-    powers need not be integers: the square-root law has $\nu = 1/2$, which
-    needs order $5/4$, from jaxbessel's ``bessel_jv_over_xv``, which takes
-    orders up to 12, so $-2 < \nu \le 22$ (the lower limit keeps the flux
-    finite). harmonix
-    ([Dholakia & Pope 2025](https://arxiv.org/abs/2509.25433)) generalizes
-    the result to polynomial limb darkening of spherical-harmonic maps.
+    Source: Quirrenbach et al. (1996), eqs. 1-4,
+    [references](../references.md#quirrenbach1996); generalized by harmonix,
+    [references](../references.md#harmonix).
 
     Parameters
     ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units (cycles / rad).
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    u, v : array-like
+        Baseline coordinates in wavelength units (cycles / rad).
     diam : float or array-like
-        Limb-darkened diameter in milliarcseconds.
+        Limb-darkened diameter in mas.
     coeffs : array-like
         Coefficients $a_\nu$, one per power (traceable).
     powers : sequence of float
         Powers $\nu$ of $\mu$, each with $-2 < \nu \le 22$ (static).
-    dra : float or array-like
-        Right-ascension offset in milliarcseconds.
-    ddec : float or array-like
-        Declination offset in milliarcseconds.
+    dra, ddec : float or array-like
+        Right-ascension and declination offsets in mas.
 
     Returns
     -------
@@ -6320,30 +6033,22 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
 
 
 def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
-    r"""Compute the complex visibility for an azimuthally modulated radial dirac
-    delta ring. The image intensity can be described in polar image coordinates as
-    $I(r, \theta) \propto \delta(r-r_0) \left( 1 + \sum_{m=1}^{n} A_m
-    \cos{(m(\theta - \phi_m))} \right)$, where $r_0$ is the ring's radial position,
-    $A_m$ the amplitude and $\phi_m$ the position phase angle (defined counter-clockwise
-    , North to East) for the m-th order modulation.
+    r"""Complex visibility of an azimuthally modulated radial Dirac-delta ring.
+
+    The intensity is $I(r, \theta) \propto \delta(r-r_0)(1 + \sum_m A_m
+    \cos[m(\theta - \phi_m)])$ with $\theta$ counter-clockwise from North to East.
 
     Parameters
     ----------
-    u : array-like
-        Baseline ``u`` coordinates in wavelength units (cycles / rad).
-    v : array-like
-        Baseline ``v`` coordinates in wavelength units (cycles / rad).
+    u, v : array-like
+        Baseline coordinates in wavelength units (cycles / rad).
     r0 : float or array-like
-        Scalar with the radial position of the ring in milliarcseconds.
+        Radial position of the ring in mas.
     az_amps : array-like
-        1D array containing amplitude coefficients for cosine azimuthal modulations.
-        The first element is seen as the amplitude for the first-order modulation,
-        the second as the amplitude for the second-order modulation, etc.
+        1D amplitudes $A_m$ of the cosine modulations, first order first.
     az_phis : array-like
-        1D array containing offset angles of the cosine azimuthal modulations,
-        relative to the position angle of the rim's projected major axis, in
-        degrees. The first element is seen as the offset for the first-order
-        modulation, the second for the second-order modulation, etc.
+        1D offset angles $\phi_m$ in degrees relative to the position angle of the
+        projected major axis, first order first.
 
     Returns
     -------
@@ -6352,14 +6057,10 @@ def cvis_radial_dirac_delta_modulated(u, v, r0, az_amps, az_phis):
 
     Notes
     -----
-    This function does not account for rotation and geometric stretching (e.g. due to
-    inclination). A separate transformation of $uv$ coordinates should account for this.
-    The phase angles of the cosine modulations are defined relative to the
-    spatial y-axis (North), turning counterclockwise to the x-axis (East). This means
-    that a single 1st order modulation with a phase angle of $0 \, \mathrm{deg}$
-    results in a bright peak towards the North, and a faint peak towards the South.
-    A phase angle of $90 \, \mathrm{deg}$ would result in a bright peak towards the
-    East, and a faint one towards the West.
+    Rotation and inclination are not applied: transform the $uv$ coordinates
+    separately. Angles are from North turning to East, so one first-order modulation
+    with phase 0 is bright to the North and faint to the South, and with phase 90
+    bright to the East.
     """
     # Add radially symmetric component (order m=0) to beginning of the order arrays.
     az_amps = np.concatenate([np.array([1.0]), az_amps])
