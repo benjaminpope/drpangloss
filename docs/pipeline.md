@@ -234,7 +234,7 @@ A run that interrupts resumes: the bands already fitted are read back from their
 | `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
 | `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
 | `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks. |
-| `drop_outlier_night` (`True`) | Refit the search without the night of highest raw χ²/N (skipped below 3 nights) and compare the verdict (the `night_dropped` check); it costs a second search. |
+| `drop_outlier_night` (`True`) | Refit the search without the night of highest raw χ²/N (skipped below 3 nights) and compare the verdict (the `night_dropped` check); it costs a second search (about twice the search time; `False` skips it). |
 | `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
 | `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
 | `quicklook_execute` (`True`) | Execute the quicklook notebook. |

@@ -36,7 +36,7 @@ from ._common import (
     _write_samples,
 )
 from ._core import Stage, _Pipeline
-from .._deprecate import external_stacklevel
+from .._deprecate import external_stacklevel, keyword_only
 from .._geometry import lattice_alias_limit
 from .._precision import run_in
 
@@ -117,7 +117,9 @@ class OrbitPipeline(_Pipeline):
         (days, 0.5; the gap that splits nights), ``exclude`` (a dict whose
         keys are a file name, night or dataset name and values the reason,
         recorded in ``run.json``), ``period_range``
-        (default from the data), ``outlier_eps`` (0.02), ``max_modes`` (3).
+        (default from the data), ``outlier_eps`` (0.02), ``max_modes`` (3),
+        ``drop_outlier_night`` (True; the refit without the worst night about
+        doubles the search time).
         Priors and errors: [conventions](../conventions.md).
 
     Examples
@@ -170,7 +172,8 @@ class OrbitPipeline(_Pipeline):
         "quicklook_execute": True,
     }
 
-    def __init__(self, epochs, output="run", **settings):
+    @keyword_only("output")
+    def __init__(self, epochs, *, output="run", **settings):
         notes = getattr(self, "_notes", {})
         super().__init__(_as_mapping(epochs), None, output=output, **settings)
         mapping, times = self.data
