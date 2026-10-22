@@ -83,7 +83,8 @@ def detection_statistics(
     data : OIData
         Data to search; may be traced (a simulation built under ``jax.lax.map``).
     grid : dict[str, array-like]
-        Coordinate axes (mas) and a non-negative flux axis, usually log-spaced
+        Coordinate axes (``dra``/``ddec`` in mas, or ``sep`` in mas and ``pa`` in
+        degrees) and a non-negative flux axis, usually log-spaced
         (the optimizer's start and the flux prior of ``log_bayes_factor``); it must
         [resolve the peak](../detection_statistics.md#grid-resolution).
     flux_param, batch_size : optional
