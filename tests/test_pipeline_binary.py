@@ -427,7 +427,9 @@ def test_rerun_discards_the_outputs_of_later_stages(full_run, tmp_path):
     assert all((out / name).exists() for name in later)
     (out / "plots" / "overview_uv.png").unlink()  # an output of 'overview'
 
-    again = BinaryPipeline(pipeline.data, output=out, **TINY)
+    again = BinaryPipeline(
+        pipeline.data, output=out, quicklook_execute=False, **TINY
+    )
     res = again.run(through="overview")
     assert res.status == "partial"
     assert not any((out / name).exists() for name in later)
