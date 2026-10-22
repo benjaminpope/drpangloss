@@ -1,11 +1,3 @@
-<<<<<<< HEAD
-virgil.fields:MultipoleField
-=======
-virgil.fitting:fit
-virgil.fitting:gauss_newton_mass
-virgil.imaging:clean
-virgil.imaging:starting_image
->>>>>>> 8c72471010e733cc2f6607c34307318516ceedc3
 virgil.models:FlaredDisk
 virgil.models:Harmonics
 virgil.models:MultipoleDisk
