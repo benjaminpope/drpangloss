@@ -1,7 +1,7 @@
 # Instrument data and noise treatments in pipelines
 
-Status (2026-10-18): **design, nothing implemented.** Target virgil 0.4.1; it
-must not block 0.4.0. Replaces `vlti_noise_in_pipelines.md` (virgil#420), which
+Status (2026-10-22): **design, not implemented.** Not part of 0.4.1, which
+ships the pipelines lean; the target is a later release. Replaces `vlti_noise_in_pipelines.md` (virgil#420), which
 specified the same machinery for VLTI only. Counterpart in virgil-vlti:
 `design/noise_spec_emission.md`.
 

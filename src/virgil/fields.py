@@ -21,6 +21,7 @@ from jax.scipy.fft import idctn
 from ._geometry import (
     pixel_offsets,
     safe_azimuth,
+    safe_radius,
     undo_elliptical_transf_coord,
 )
 from ._utils import concrete, dtor
@@ -587,7 +588,7 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         x, y = np.broadcast_arrays(x, y)
         stretch = np.maximum(np.cos(inc * dtor), 1e-8)
         xe, ye = undo_elliptical_transf_coord(x, y, pa, stretch)
-        r = np.hypot(xe, ye)
+        r = safe_radius(xe, ye)
         # The azimuth runs from the deprojected North towards East, as for
         # MultipoleDisk's harmonics.
         theta = safe_azimuth(xe, ye)

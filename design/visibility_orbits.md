@@ -310,7 +310,7 @@ time, for scenes that move within an observation.
 
 Model before data, as everywhere in 0.4 (`design/api_argument_order.md`).
 
-Since PR A of `design/automatic_orbits.md` (#268), `epoch_positions`
+Since PR A of `design/history/automatic_orbits.md` (#268), `epoch_positions`
 scores, refines and takes covariances on the scale-marginalized surface
 (each block's error scale integrated out), adds `gap_marginal` beside the
 unchanged quoted-error `gap`, and records `chi2_raw` and `scale`;

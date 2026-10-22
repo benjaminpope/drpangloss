@@ -9,9 +9,7 @@ astronomers expect: Cotton–Schwab major cycles against the exact visibility
 residual, Högbom or multi-scale minor cycles, natural, uniform or Briggs
 weighting with a `uvtaper`, a restoring beam fitted to the PSF, and FITS products
 with the headers `tclean` writes. It claims no parity with CASA or WSClean:
-the algorithms are the published ones, and the independent comparison with
-DSHARP's image of IM Lup is planned in
-[virgil-validation](https://github.com/benjaminpope/virgil-validation).
+the algorithms are the published ones.
 
 ```python
 from virgil.radio_clean import clean
@@ -19,7 +17,7 @@ from virgil.radio_clean import clean
 res = clean(
     data,                      # ComplexVisData
     npix=1025, pixel_scale_mas=3.0,
-    deconvolver="multiscale", scales=[0, 10, 50, 150],
+    deconvolver="multiscale", scales_mas=[0, 30, 150, 450],
     weighting="briggs", robust=0.5, uvtaper=(33, 26, 137.5),
     niter=50000, gain=0.1, threshold=5e-5, nsigma=3,
     usemask="auto-multithresh",
@@ -50,14 +48,14 @@ loop ends at `threshold`, `nsigma`, `niter` or `time_limit`; `RadioCleanResult.s
 says which.
 
 **Multi-scale** (Cornwell 2008): the components are Gaussians of the given
-`scales` (FWHM in pixels; 0 is a point). At each iteration the scale and
+`scales_mas` (FWHM in mas; 0 is a point). At each iteration the scale and
 position with the largest `D_s / √H_ss` (the decrease in χ² of a component, `D_s`
 the residual smoothed to the scale, `H_ss` the smoothed PSF's peak), weighted by
 CASA's small-scale bias `1 − smallscalebias · s/s_max`, is chosen. Cross terms
 between scales are the PSF convolved with one Gaussian of the summed variance.
-`deconvolver="hogbom"` is the single scale 0, i.e. Högbom's (1974) CLEAN; the
-`"clark"` option is the same loop (every minor cycle here is Clark's windowed
-one).
+`deconvolver="hogbom"` is the single scale 0, i.e. Högbom's (1974) CLEAN
+(every minor cycle here is Clark's windowed one, so there is no `"clark"`
+option). `scales_mas` are in mas, as in `imaging.clean`; `npix` must be odd.
 
 **Weighting.** Briggs and uniform densities are counted on a uv grid of cell
 `1/FoV` (`uv_cell`), with Hermitian partners together. `uvtaper` multiplies the
@@ -85,8 +83,8 @@ restored image by a power beam, e.g. `exp(primary_beam(...))`.
 | `virgil.radio_clean.clean` | `tclean` | WSClean |
 | --- | --- | --- |
 | `npix`, `pixel_scale_mas` | `imsize`, `cell` | `-size`, `-scale` |
-| `deconvolver="hogbom"/"clark"/"multiscale"` | `deconvolver` (also `mtmfs`) | `-multiscale` |
-| `scales` (pixels) | `scales` | `-multiscale-scales` |
+| `deconvolver="hogbom"/"multiscale"` | `deconvolver` (also `mtmfs`) | `-multiscale` |
+| `scales_mas` (mas; tclean's are pixels) | `scales` | `-multiscale-scales` |
 | `smallscalebias` | `smallscalebias` | `-multiscale-scale-bias` |
 | `weighting`, `robust` | `weighting`, `robust` | `-weight briggs R` |
 | `uvtaper` | `uvtaper` | `-taper-gaussian` |

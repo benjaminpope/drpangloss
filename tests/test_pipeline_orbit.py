@@ -1,8 +1,7 @@
-"""OrbitPipeline: API contract, inputs, run folder, resume, CLI, quicklook and
-the golden synthetic cases of the blind alias search.
+"""OrbitPipeline: API contract, inputs, run folder, resume, CLI and quicklook.
 
-The fast tests stop at the ``epochs`` stage or fake the later reports; the
-golden cases (a full blind run each) are marked slow.
+The tests stop at the ``epochs`` stage or fake the later reports. The golden
+blind runs are in ``test_pipeline_orbit_{gap,cases,resolved}.py``.
 """
 
 import dataclasses
@@ -21,8 +20,15 @@ pytest.importorskip("jaxoplanet")
 
 import virgil  # noqa: E402
 import virgil.pipeline.orbit as orbit_module  # noqa: E402
+from tests._orbit_pipeline import (  # noqa: E402
+    CHECKS,
+    SEASONS,
+    SUMMARY_KEYS,
+    T_REF,
+    TRUTH,
+    _simulate,
+)
 from virgil.epochs import Epochs, NightFlag  # noqa: E402
-from virgil.models import OrbitalBinary, PointSource  # noqa: E402
 from virgil.oifits import write_oifits  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
 from virgil.pipeline import (  # noqa: E402
@@ -30,30 +36,15 @@ from virgil.pipeline import (  # noqa: E402
     Check,
     ConfigMismatchError,
     OrbitPipeline,
+    _checks,
+    _quicklook,
     cli,
-    load,
 )
-from virgil.pipeline import _checks, _quicklook  # noqa: E402
-from virgil.simulate import simulate  # noqa: E402
-from tests._shared import vlti_night  # noqa: E402
 from virgil.pipeline.orbit import _engine_defaults  # noqa: E402
 
 # One xdist worker builds each fixture once.
 pytestmark = pytest.mark.xdist_group("pipeline_orbit")
 
-T_REF = 60000.0
-TRUTH = dict(
-    period=12.38,
-    dt_peri=2.0,
-    ecc=0.3,
-    inc=50.0,
-    omega=60.0,
-    Omega=120.0,
-    a_mas=10.0,
-)
-FLUX = 0.3
-# Two seasons: three nights, a gap of 238 d, three more.
-SEASONS = T_REF + onp.array([0.0, 2.4, 5.1, 238.0, 240.6, 247.4])
 TINY = {
     "max_grid": 25,
     "n_candidates": 10,
@@ -64,28 +55,6 @@ TINY = {
     "num_chains": 2,
     "quicklook_execute": False,
 }
-
-
-def _night(mjd, rotation):
-    return vlti_night(mjd, 3, rotation, d_phi=0.02, stations=True)
-
-
-def _simulate(times, truth=None, flux=FLUX, seed=3):
-    """One simulated night per time, for the orbit ``truth``."""
-    if flux is None:
-        scene = PointSource()
-    else:
-        orbit = KeplerOrbit(**(truth or TRUTH), t_ref=T_REF)
-        scene = OrbitalBinary(orbit, flux)
-    key = jax.random.PRNGKey(seed)
-    nights = {}
-    with jax.enable_x64(True):
-        for k, mjd in enumerate(times):
-            night = _night(mjd, 7.0 * k)
-            nights[f"n{k}"] = simulate(
-                scene, night, key=jax.random.fold_in(key, k)
-            )
-    return nights
 
 
 @pytest.fixture(scope="module")
@@ -140,40 +109,6 @@ DEFAULTS = {
     "seed": 0,
     "quicklook_execute": True,
 }
-SUMMARY_KEYS = {
-    "schema": None,
-    "pipeline": None,
-    "stability": None,
-    "status": None,
-    "worst_check": None,
-    "data": set(orbit_module._DATA_KEYS),
-    "nights": None,
-    "chi2": {"n_independent", "best_orbit_reduced", "nights"},
-    "search": set(orbit_module._SEARCH_KEYS),
-    "modes": set(orbit_module._MODES_KEYS),
-    "orbit": {"n", "verdict", "source", "elements"},
-    "posterior": set(orbit_module._POSTERIOR_KEYS),
-    "warnings": None,
-    "checks": None,
-}
-CHECKS = [
-    "chi2",
-    "night_flags",
-    "labels_free",
-    "bands_failed",
-    "alias_ambiguity",
-    "winner_flags",
-    "tempering",
-    "primary_resolved",
-    "no_orbit",
-    "night_dropped",
-    "period_bound",
-    "prior_bound",
-    "r_hat",
-    "ess",
-    "divergences",
-    "mode_converged",
-]
 
 
 def _signature(path):
@@ -949,145 +884,6 @@ def test_the_class_is_exported_lazily():
     assert "OrbitPipeline" in dir(module)
 
 
-# --- golden synthetic cases (slow) --------------------------------------------
-
-# The search keeps the engine's default effort (that is the point: the
-# default run must work); only the sampler is small. A blind run takes
-# 2-5 minutes on a CI runner, so each golden carries a 15-minute timeout
-# in place of the 5-minute hang detector of pyproject.toml.
-GOLDEN = {
-    "num_warmup": 200,
-    "num_samples": 150,
-    "num_chains": 2,
-    "quicklook_execute": False,
-}
-
-
-def _blind(nights, out, **settings):
-    pipeline = OrbitPipeline(nights, output=out, **{**GOLDEN, **settings})
-    return pipeline, pipeline.run()
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
-    # Two seasons 238 d apart leave the period aliased to many integer
-    # orbit counts; only the closure phases can say which. No period window,
-    # start or prior is given: the engine gets the data alone.
-    import virgil.aliases as aliases
-
-    seen = {}
-    real = aliases.fit_orbit_aliases
-
-    def spy(*args, **kwargs):
-        seen.update(args=args, kwargs=kwargs)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(aliases, "fit_orbit_aliases", spy)
-    data = _simulate(SEASONS)
-    pipeline, res = _blind(data, tmp_path / "run")
-    assert len(seen["args"]) == 2 and seen["args"][1] is None  # no window
-    kwargs = seen["kwargs"]
-    # the engine's own defaults, which include the short-arc stage
-    assert not {"init", "skip_flagged", "short_arcs"} & set(kwargs)
-    assert kwargs["primary_diam"] == "auto" and kwargs["a_range"] == (
-        1.0,
-        30.0,
-    )
-    modes = res.summary["modes"]
-    n_true = round(float(onp.ptp(SEASONS)) / TRUTH["period"])
-    assert modes["winner"]["n"] == n_true
-    assert abs(modes["winner"]["elements"]["period"] - TRUTH["period"]) < 0.05
-    assert modes["delta_log_z"] > 10.0  # the runner-up is ruled out
-    assert modes["no_orbit"]["verdict"] == "orbit"
-    robust = modes["robustness"]  # the refit without the worst night
-    assert robust["full"]["n"] == n_true and robust["night"].startswith("n")
-    # Six well-sampled nights: the verdict survives the refit of five.
-    assert robust["dropped"]["verdict"] == "orbit"
-    assert robust["dropped"]["same_band"]
-    status = {c.name: c.status for c in res.checks}
-    assert status["night_dropped"] == "pass"
-    arcs = res.summary["search"]["short_arc"]  # the engine's default stage
-    assert arcs is not None and n_true in arcs["kept"]
-    assert res.aliases().short_arc["kept"] == arcs["kept"]
-    post = res.summary["posterior"]["modes"][0]["params"]
-    assert abs(post["period"]["median"] - TRUTH["period"]) < 0.05
-    assert res.status == "complete"
-    assert res.aliases().best.n == n_true
-    assert res.samples()["period"].shape == (2, 150)
-    names = [c.name for c in res.checks if c.name in CHECKS]
-    assert names == CHECKS
-    assert res.summary["chi2"]["best_orbit_reduced"] < 3.0
-    keys = {
-        k: (set(v) if isinstance(v, dict) else None)
-        for k, v in res.summary.items()
-    }
-    assert keys == SUMMARY_KEYS
-    assert (res.path / "plots" / "modes_sky.png").exists()
-    assert (res.path / "plots" / "search_bands.png").exists()
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_a_twin_is_labels_free(tmp_path):
-    data = _simulate(SEASONS, flux=1.0, seed=5)
-    _, res = _blind(data, tmp_path / "run")
-    assert res.summary["modes"]["labels_free"]
-    status = {c.name: c.status for c in res.checks}
-    assert status["labels_free"] == "warn"
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_a_resolved_primary_is_fitted(tmp_path):
-    import virgil.aliases as aliases
-
-    orbit = KeplerOrbit(**TRUTH, t_ref=T_REF)
-    scene = aliases._UDBinary(orbit, FLUX, 1.05)
-    key = jax.random.PRNGKey(7)
-    data = {}
-    with jax.enable_x64(True):
-        for k, mjd in enumerate(SEASONS):
-            data[f"n{k}"] = simulate(
-                scene, _night(mjd, 7.0 * k), key=jax.random.fold_in(key, k)
-            )
-    _, res = _blind(data, tmp_path / "run")
-    search = res.summary["search"]
-    assert search["primary_resolved"] is True
-    assert search["primary_diam"] == "fit"
-    assert res.summary["orbit"]["elements"]["diam"]["median"] == pytest.approx(
-        1.05, rel=0.3
-    )
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_a_single_star_is_no_orbit(tmp_path):
-    data = _simulate(SEASONS, flux=None, seed=9)
-    _, res = _blind(data, tmp_path / "run")
-    modes = res.summary["modes"]
-    assert modes["no_orbit"]["verdict"] == "no-orbit"
-    assert res.summary["posterior"].get("skipped") == "no-orbit" or (
-        "modes" in res.summary["posterior"]
-        and not res.summary["posterior"]["modes"]
-    )
-    status = {c.name: c.status for c in res.checks}
-    assert status["no_orbit"] in ("warn", "fail")
-    assert res.samples() == {}
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(900)
-def test_a_highly_eccentric_orbit_is_recovered(tmp_path):
-    truth = {**TRUTH, "ecc": 0.8}
-    data = _simulate(SEASONS, truth=truth, seed=11)
-    _, res = _blind(data, tmp_path / "run", ecc_max=0.95)
-    best = res.summary["modes"]["winner"]["elements"]
-    assert abs(best["period"] - TRUTH["period"]) < 0.05
-    assert best["ecc"] == pytest.approx(0.8, abs=0.1)
-    assert load(tmp_path / "run").summary["chi2"]["best_orbit_reduced"] < 3.0
-
-
 def test_the_position_grid_stops_at_the_lattice_alias_limit(
     nights, tmp_path, monkeypatch
 ):
@@ -1127,3 +923,20 @@ def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
     assert report["night"] == epochs.epoch_of[1]
     assert report["dropped"]["verdict"] in ("orbit", "no-orbit")
     assert report["dropped"]["n"] <= full.best.n
+
+
+def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
+    import virgil.aliases as aliases
+
+    def empty(*args, **kwargs):  # an empty window
+        aliases.period_window([0.0, 100.0], 20.0, 10.0, resolution=0.1)
+
+    monkeypatch.setattr(aliases, "fit_orbit_aliases", empty)
+    settings = {"period_range": None}
+    pipeline = SimpleNamespace(
+        settings=type(
+            "Settings", (dict,), {"__missing__": lambda self, key: (1, 2)}
+        )(settings)
+    )
+    with pytest.raises(ValueError, match="Set period_range"):
+        orbit_module._alias_search(pipeline, [], None, None, None)

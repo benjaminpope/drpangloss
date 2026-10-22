@@ -20,7 +20,7 @@ virgil models optical interferometry data in JAX. It fits parametric models and 
 
 ## Stability
 
-Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, CLEAN and the image-recovery metrics. See the [list of provisional features](stability.md).
+Everything public is **stable** (a change needs a deprecation cycle) except a list of **provisional** features that are new in 0.4 and may change in any 0.4.x release without one: orbit fitting across epochs and aliases, the `MultipoleDisk` family, Gaussian-process ensembles, variational inference, the pipelines, sparse-imaging CLEAN, radio visibilities and radio CLEAN (`radio`, `radio_clean`), cross-validation (`crossval`) and the image-recovery metrics. See the [list of provisional features](stability.md).
 
 ## Installation
 
@@ -34,7 +34,9 @@ pip install virgil-astro
 
 Optional extras: `pip install "virgil-astro[plots]"` adds pandas and
 ChainConsumer for the corner plots in `virgil.plotting`, and `[legacy]` adds
-astroquery for the SIMBAD lookups in `virgil.legacy`. `virgil.orbits` solves
+astroquery for the SIMBAD lookups in `virgil.legacy`, `[radio]` reads CASA
+measurement sets for `virgil.radio`, and `[pipeline]` adds the HDF5 outputs and executed
+quicklook notebooks of the scriptable pipelines. `virgil.orbits` solves
 Kepler's equation with
 [jaxoplanet](https://github.com/exoplanet-dev/jaxoplanet), from
 `pip install "virgil-astro[orbits]"`. The module imports without it; only

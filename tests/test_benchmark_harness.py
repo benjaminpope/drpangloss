@@ -3,7 +3,7 @@
 One tiny case through the real pipeline steps, checking that the harness
 writes valid rows with compile and run times separated and that the
 recompile detector works. The benchmarks themselves run on OzSTAR; see
-design/automatic_orbits.md section 9.
+design/history/automatic_orbits.md section 9.
 """
 
 import json

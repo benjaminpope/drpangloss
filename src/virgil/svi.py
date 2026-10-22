@@ -295,10 +295,11 @@ def variational(
     """Approximate the posterior with a guide fitted by numpyro's SVI.
 
     Maximizes the ELBO with Adam on the posterior of
-    [`numpyro_model`][virgil.likelihood.numpyro_model]. With ``start`` the guide
-    starts at that point with the Gauss–Newton width (``init_scale`` given
-    ``regularizers`` or ``dense_start=False``); with ``start=None`` at the priors' medians with width
-    ``init_scale``. Which guide to use and how to check the result:
+    [`numpyro_model`][virgil.likelihood.numpyro_model]. The guide starts at
+    ``start`` with the Gauss–Newton width, or with width ``init_scale`` if
+    there are ``regularizers`` or ``dense_start=False``; with ``start=None`` it
+    starts at the priors' medians with width ``init_scale``. Which guide to use
+    and how to check the result:
     [Variational inference](../variational_inference.md).
 
     Parameters

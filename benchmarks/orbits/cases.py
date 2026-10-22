@@ -2,7 +2,7 @@
 
 A ``Case`` is a manifest (seeds and parameters, no data); ``build`` turns it
 into a ``System``: simulated ``Epochs``, the true scene, priors, the position
-grid and trial periods. The adversarial cases of design/automatic_orbits.md
+grid and trial periods. The adversarial cases of design/history/automatic_orbits.md
 section 9.3 that are cheap to generate are here; the others raise
 ``NotImplementedError`` with their number.
 

@@ -146,7 +146,7 @@ for (kind, curve), colour in zip(curves.items(), ("C0", "C1")):
         k = int(jnp.argmin(jnp.abs(jnp.log(curve.weights) - jnp.log(weight))))
         ax.plot(curve.penalty[k], curve.chi2[k], marker, color=colour, ms=10, mfc="none", mew=2, label=f"{name}: w = {weight:.3g}")
 ax.axhline(data.vis.size, color="k", ls=":", lw=1, label="χ² = N")
-ax.set(xscale="log", yscale="log", xlabel="penalty R (negative entropy)", ylabel="χ²", title="L-curves, strong to weak regularisation")
+ax.set(xscale="log", yscale="log", xlabel="penalty R (negative entropy)", ylabel="χ²", title="L-curves, strong to weak regularization")
 ax.legend(frameon=False, fontsize=8)
 plt.show()
 for kind, curve in curves.items():

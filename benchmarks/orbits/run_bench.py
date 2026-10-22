@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Benchmark the orbit pipeline: timing, compile cost, memory, throughput.
 
-Run as a script (never a notebook; design/automatic_orbits.md section 9.5):
+Run as a script (never a notebook; design/history/automatic_orbits.md section 9.5):
 
     python -X faulthandler benchmarks/orbits/run_bench.py --size tiny
     python -X faulthandler benchmarks/orbits/run_bench.py --size full \\

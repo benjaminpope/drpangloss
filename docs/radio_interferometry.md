@@ -4,8 +4,7 @@
     May change in any 0.4.x release without a deprecation cycle.
 
 This module is not final and claims no parity with MPoL or with published
-DSHARP analyses; a comparison with MPoL on ALMA IM Lup data is in progress in
-virgil-validation.
+DSHARP analyses.
 
 [`virgil.radio`](api/radio.md) fits calibrated complex visibilities at
 arbitrary (u, v) points, the data of any radio or millimetre array whose
@@ -221,7 +220,7 @@ of the flux (an upper bound, times the raw transform at the aliased
 frequency), p the pixel size: about 1.5e-8 at FWHM 3 px and `q = 0.25 / p`.
 Measured on a compact image in float64 with `|q| <= 0.25 / p`, the error is
 3e-11 of the flux at 3 px. A narrower kernel is not band-limited on the pixel grid, and
-the discretisation error grows quickly; the visibilities, which use the
+the discretization error grows quickly; the visibilities, which use the
 analytic factor, stay exact.
 
 ## Primary beam and cross-validation

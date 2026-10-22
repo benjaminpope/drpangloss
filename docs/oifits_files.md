@@ -52,7 +52,7 @@ A frame is one exposure of one instrument: the baselines that closure phases tie
 
 With `frame_mjd="mean"` (the default) every sample of a frame gets the frame's mean `MJD`; `"row"` keeps each row's own. A sample's time is `mjd` (days, float64).
 
-## Writing an `OIData` {#writing-oidata}
+## Writing {#writing-oidata}
 
 `write_oifits(data, filename)` writes an [`OIData`][virgil.oidata.OIData] as an OIFITS2 file that `read_oifits` reads back to the same observables, errors, flags, wavelengths and $(u, v)$, and the same times if there are any: squared visibilities in `OI_VIS2`, and closure phases in `OI_T3` or absolute phases in `OI_VIS`.
 
@@ -63,7 +63,7 @@ With `frame_mjd="mean"` (the default) every sample of a frame gets the frame's m
 - **Bandwidth** is written as `EFF_BAND`. If it is unknown it is estimated from the channel spacing (1% of the wavelength for one channel), as OIFITS2 needs `EFF_BAND` > 0, and `BANDEST = T` marks the `OI_WAVELENGTH` table. Widths that differ between baselines of one channel are not written. `EFF_WAVE` and `EFF_BAND` are float32 columns (relative error 6e-8).
 - **Not written:** extra observables, gains or closure offsets, projected observables, uv-grid data, visibility amplitudes in place of $V^2$, and irregular closure-phase or wavelength layouts. `write_oifits` raises a `ValueError` naming the reason; the pipelines record it as `processed_oifits_skipped`.
 
-## Writing tables {#writing}
+### From a dictionary of tables {#writing}
 
 `write_oifits(tables, filename)` also writes an OIFITS2 file from a dictionary of tables in the layout of the legacy `virgil.legacy.oifits_implaneia.save`:
 

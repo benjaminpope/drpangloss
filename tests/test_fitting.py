@@ -762,7 +762,7 @@ def test_lbfgs_restarts_reach_the_same_minimum(monkeypatch):
     assert last.info["steps"] == 7 and last.info["stop"] == "limit"
 
 
-# --- The Gauss–Newton curvature (design/gauss_newton_plan.md, GN2) ---
+# --- The Gauss–Newton curvature (design/history/gauss_newton_plan.md, GN2) ---
 
 NOISY = oidata.with_model(TRUTH, key=jax.random.PRNGKey(3), noise_scale=1.7)
 SCALES = {

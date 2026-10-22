@@ -444,16 +444,13 @@ def _peak_index(grid, best):
     return index
 
 
-def _n_trials(max_sep, lambda_over_b):
-    """Resolution elements in the search box, at least one."""
-    return max(1.0, (2.0 * max_sep / lambda_over_b) ** 2)
-
-
 def _search_report(data, grid, axis, detection):
     from ..detection import local_nsigma
 
     local = float(local_nsigma(float(detection["delta_chi2"])))
-    n_trials = _n_trials(axis.max_sep, _geometry(data)["lambda_over_b_mas"])
+    # Resolution elements in the search box, at least one.
+    lambda_over_b = _geometry(data)["lambda_over_b_mas"]
+    n_trials = max(1.0, (2.0 * axis.max_sep / lambda_over_b) ** 2)
     chi2_null, _ = _chi2(_null_model(), data)
     return {
         "delta_chi2": float(detection["delta_chi2"]),
@@ -679,7 +676,13 @@ def _posterior(p):
     )
 
     diagnostics = {k: _diagnostics([x]) for k, x in sampled.items()}
-    derived = _derived_diagnostics(samples) if angular else {}
+    derived = {}
+    if angular:  # an angle through its sine and cosine
+        pa = onp.radians(samples["pa"])
+        derived = {
+            "sep": _diagnostics([samples["sep"]]),
+            "pa": _diagnostics([onp.sin(pa), onp.cos(pa)]),
+        }
     summary = {
         k: _site_summary(
             samples[k],
@@ -714,15 +717,6 @@ def _run_nuts(p, priors, angular):
         priors=priors,
     )
     return _draws(mcmc)
-
-
-def _derived_diagnostics(samples):
-    """Diagnostics of ``sep`` and ``pa``; an angle through its sine and cosine."""
-    pa = onp.radians(samples["pa"])
-    return {
-        "sep": _diagnostics([samples["sep"]]),
-        "pa": _diagnostics([onp.sin(pa), onp.cos(pa)]),
-    }
 
 
 # === SUMMARY AND CHECKS ===
@@ -810,16 +804,6 @@ def _companion(params, source):
     return out
 
 
-def _chi2_section(settings, search, fit):
-    return {
-        "n_independent": search["n_independent"],
-        "null_reduced": search["chi2_null"] / search["n_independent"],
-        "companion_reduced": fit["chi2_reduced"] if fit else None,
-        "error_scale": settings["error_scale"],
-        "error_scales": fit["error_scales"] if fit else None,
-    }
-
-
 def _chi2_checks(search, fit):
     """The χ²/N check: of the best-fit binary, else of the star alone."""
     null = search["chi2_null"] / search["n_independent"] if search else None
@@ -831,20 +815,6 @@ def _chi2_checks(search, fit):
     if search:
         return [_checks.chi2_reduced("chi2", null, label="the star alone")]
     return []
-
-
-def _search_checks(settings, search):
-    return [
-        _checks.detection(
-            search["local_nsigma"],
-            search["global_nsigma"],
-            threshold=settings["detection_sigma"],
-        ),
-        # The flux axis only seeds the optimizer: not a search boundary.
-        _checks.grid_edge(
-            search["peak_index"][:2], search["grid_shape"][:2], ("dra", "ddec")
-        ),
-    ]
 
 
 def _fit_checks(fit, companion, load):
@@ -879,9 +849,29 @@ def _summarize(settings, reports):
     if load:
         sections["data"] = _pick(load, _DATA_KEYS)
     if search:
-        sections["chi2"] = _chi2_section(settings, search, fit)
+        sections["chi2"] = {
+            "n_independent": search["n_independent"],
+            "null_reduced": search["chi2_null"] / search["n_independent"],
+            "companion_reduced": fit["chi2_reduced"] if fit else None,
+            "error_scale": settings["error_scale"],
+            "error_scales": fit["error_scales"] if fit else None,
+        }
         sections["search"] = _pick(search, _SEARCH_KEYS)
-        checks += _search_checks(settings, search)
+        checks.append(
+            _checks.detection(
+                search["local_nsigma"],
+                search["global_nsigma"],
+                threshold=settings["detection_sigma"],
+            )
+        )
+        # The flux axis only seeds the optimizer: not a search boundary.
+        checks.append(
+            _checks.grid_edge(
+                search["peak_index"][:2],
+                search["grid_shape"][:2],
+                ("dra", "ddec"),
+            )
+        )
     if limits:
         sections["limits"] = _pick(limits, _LIMITS_KEYS)
     if fit:

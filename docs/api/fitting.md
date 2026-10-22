@@ -4,7 +4,9 @@
 [`numpyro_model`](likelihood.md), plus optional regularizers. `gauss_newton_mass` turns a fit into a
 mass matrix for numpyro's NUTS, for sampling any posterior with one peak:
 images, and orbits and binaries with fitted error scales and gains.
-Angles with an [`AngleVector`](angles.md) prior are fitted as 2-D vectors,
+`gauss_newton_diag` gives the per-coordinate scales that
+`fit(..., precondition="diag")` divides by, which conditions a fit of an image or other badly scaled
+parameters. Angles with an [`AngleVector`](angles.md) prior are fitted as 2-D vectors,
 with no wrap boundary at 0°/360°.
 
 ::: virgil.fitting
@@ -13,4 +15,8 @@ with no wrap boundary at 0°/360°.
         - fit
         - FitResult
         - gauss_newton_mass
+        - GaussNewtonMass
         - gauss_newton_diag
+        - NoLeastSquaresForm
+        - NoStartingValue
+        - SingularCurvature

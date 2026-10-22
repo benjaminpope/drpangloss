@@ -459,7 +459,7 @@ class ComplexVisData(eqx.Module):
     def sigma_hat(self, scene, values, nuisance, mask=None):
         """The error scales ``s_d`` per ddid at ``values``: the profiled ``ŝ``
         of ``CalibrationNuisance(sigmas="profile")``, the fitted ``cal.sigma``
-        with ``sigmas=True``, ones otherwise."""
+        with ``sigmas=True``, ones otherwise. Provisional, as the module."""
         if isinstance(scene, SourceModel):
             model = scene
             scene = lambda values: model  # noqa: E731
@@ -802,6 +802,7 @@ class ComplexVisData(eqx.Module):
         uvtaper : float or (bmaj_mas, bmin_mas, pa_deg), optional
             CASA's ``uvtaper``: a Gaussian FWHM in mas (a float is circular;
             ``pa_deg`` is East of North), applied after the density weights.
+            Provisional, as the module.
 
         Returns
         -------
@@ -1079,6 +1080,7 @@ class CalibrationNuisance:
         [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]).
     offset_beams : float, optional
         Half-width of the default offset prior, in beams; default 3.
+        Provisional, as the module.
     nu0_hz : float, optional
         Reference frequency of the spectral index; default the
         weight-averaged frequency of ``data``.
