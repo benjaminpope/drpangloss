@@ -304,21 +304,17 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
     """``n`` positive scales drawn from a log-normal population.
 
     ``log s_k`` is normal about ``log(median)`` with standard deviation
-    ``spread``, and ``median`` and ``spread`` are sampled too, with log-uniform
-    (Jeffreys) priors. Use it for nuisances that differ between epochs but come
-    from one instrument, such as a closure-phase error scale per night; pass the
-    scales as ``noise`` terms of [`numpyro_model`][virgil.likelihood.numpyro_model]
-    or [`fit`][virgil.fitting.fit], and use every member (an unused member of the
-    centred form has a flat, improper prior). See
-    [hierarchical scales](../conventions.md#hierarchical-scales) for when to
-    choose the centred form.
+    ``spread``; both are sampled, with log-uniform priors. Use it for
+    nuisances that differ between epochs but share an instrument, passed as
+    ``noise`` terms (one dict per dataset, in order); use every member (an unused centred
+    member has an improper flat prior). When to centre:
+    [hierarchical scales](../conventions.md#hierarchical-scales).
 
     Parameters
     ----------
     name : str
-        Prefix of the new parameters, ``"<name>_median"``,
-        ``"<name>_spread"``, and ``"<name>_log"`` (centred) or
-        ``"<name>_z"`` (non-centred), a vector of length ``n``.
+        Prefix of the parameters ``"<name>_median"``, ``"<name>_spread"`` and
+        the length-``n`` ``"<name>_log"`` (centred) or ``"<name>_z"``.
     n : int
         Number of scales, e.g. the number of epochs.
     median : numpyro.distributions.Distribution, optional
@@ -328,8 +324,8 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
         Prior on the standard deviation of log s (default
         ``LogUniform(0.01, 1)``: from 1% to a factor of e).
     centred : bool, optional
-        Sample ``log s_k`` (default; for well-measured members) or a standard
-        normal ``z_k`` with ``s_k = median exp(spread z_k)``.
+        Sample ``log s_k`` (default) or a standard normal ``z_k`` with
+        ``s_k = median exp(spread z_k)``.
 
     Returns
     -------

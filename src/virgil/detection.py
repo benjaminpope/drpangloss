@@ -83,10 +83,9 @@ def detection_statistics(
     data : OIData
         Data to search; may be traced (a simulation built under ``jax.lax.map``).
     grid : dict[str, array-like]
-        Coordinate axes (``dra``/``ddec`` in mas, or ``sep`` in mas and ``pa`` in
-        degrees) and a non-negative flux axis, usually log-spaced
-        (the optimizer's start and the flux prior of ``log_bayes_factor``); it must
-        [resolve the peak](../detection_statistics.md#grid-resolution).
+        Coordinate axes (``dra``/``ddec`` in mas, or ``sep`` in mas and ``pa``
+        in degrees) and a non-negative, usually log-spaced flux axis, which
+        must [resolve the peak](../detection_statistics.md#grid-resolution).
     flux_param, batch_size : optional
         Key of ``grid`` holding the flux (default: the key ending in ``flux``),
         and grid points evaluated at once, as for ``likelihood_grid``.
@@ -94,12 +93,12 @@ def detection_statistics(
     Returns
     -------
     dict[str, jax.Array]
-        Scalars ``delta_chi2`` (profile likelihood ratio over the grid, flux >= 0),
+        Scalars ``delta_chi2`` (profile likelihood ratio, flux >= 0),
         ``log_bayes_factor`` (companion somewhere on the grid against none),
-        ``max_snr`` (largest best flux over its Laplace uncertainty), one entry
-        per ``grid`` key (where ``delta_chi2`` is reached) and
-        ``flux_peak_steps`` (peak FWHM over the flux spacing; below about 2,
-        ``log_bayes_factor`` is inaccurate).
+        ``max_snr`` (best flux over its Laplace uncertainty), one entry per
+        ``grid`` key (where ``delta_chi2`` peaks) and ``flux_peak_steps``
+        (peak FWHM over flux spacing; below about 2 the Bayes factor is
+        inaccurate).
 
     Warns
     -----
@@ -605,8 +604,8 @@ def injection_recovery(
     """Detection statistics of simulated null and injected observations.
 
     Each draw simulates an observation (null, or with a companion injected) and
-    runs [`detection_statistics`][virgil.detection.detection_statistics] on it,
-    in one compiled kernel with bounded memory; see
+    runs [`detection_statistics`][virgil.detection.detection_statistics] on it
+    in one compiled kernel; see
     [Detection statistics](../detection_statistics.md#injection).
 
     Source: Mawet et al. (2014), [references](../references.md#mawet2014).
@@ -614,12 +613,11 @@ def injection_recovery(
     Parameters
     ----------
     model : SourceModel or class
-        Companion model: injections are this model at the injected position and
-        flux, null draws at zero flux.
+        Companion model: injected at the injected position and flux, null
+        draws at zero flux.
     null_scene, template : SourceModel, OIData
-        The scene without a companion (it must predict what ``model`` predicts
-        at zero flux), and the sampling and errors to simulate (the real data
-        for ``noise="bootstrap"``).
+        The scene without a companion (it must equal ``model`` at zero flux),
+        and the sampling and errors to simulate (the data for ``"bootstrap"``).
     grid, flux_param
         The search grid and its flux key, as for ``detection_statistics``.
     key, n_null : jax.Array or int, int
@@ -627,14 +625,14 @@ def injection_recovery(
     injections : dict[str, array-like], optional
         Companions to inject, e.g. from
         [`injection_grid`][virgil.detection.injection_grid]: one equal-length
-        array per grid key, by full name (``"comp.dra"``) or last part (``"dra"``).
+        array per grid key, by full name or last part (``"dra"``).
     noise : {"gaussian", "bootstrap"} or simulator, optional
         [`gaussian_null`][virgil.detection.gaussian_null],
         [`bootstrap_null`][virgil.detection.bootstrap_null], or a simulator
         built by either from ``template``.
     match_radius : float, optional
-        In mas: an injection is detected only if its best position lies within
-        it of the injected one; needs ``dra``/``ddec`` or ``sep``/``pa`` keys.
+        In mas: an injection counts as detected only if its best position is
+        within this of the injected one (needs position keys).
     draw_batch, chunk_size, batch_size : int, optional
         Draws evaluated together in ``jax.lax.map``; draws per kernel call
         (default min(64, draws)); grid points per search.
@@ -648,10 +646,9 @@ def injection_recovery(
 
     Examples
     --------
-    >>> injections = injection_grid([60, 100], [1e-3, 3e-3], 100, 1)
     >>> mc = injection_recovery(
     ...     BinaryModelCartesian, BinaryModelCartesian(0, 0, 0), template,
-    ...     grid, 0, n_null=1000, injections=injections,
+    ...     grid, 0, n_null=1000,
     ... )  # doctest: +SKIP
     """
     params, coord_keys, flux_key = _resolve_keys(grid, flux_param)
