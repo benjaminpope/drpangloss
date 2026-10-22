@@ -575,11 +575,7 @@ def build_notebook(path):
 
 @contextlib.contextmanager
 def _without_mplbackend():
-    """Unset ``MPLBACKEND`` so the kernel uses the inline backend.
-
-    Batch jobs often set ``MPLBACKEND=Agg``; a kernel that inherits it
-    draws figures without embedding them in the notebook.
-    """
+    """Unset ``MPLBACKEND`` (``Agg`` in batch jobs embeds no figures)."""
     saved = os.environ.pop("MPLBACKEND", None)
     try:
         yield
