@@ -400,6 +400,7 @@ class ComplexVisData(eqx.Module):
         flux; ``cal.flux`` sets the scale), evaluated at wavelength
         ``c / ν`` of each point so that chromatic scenes work.
         """
+        _no_antenna_gains(nuisance)
         return _model_points(
             scene,
             nuisance._unpack(values),
@@ -875,6 +876,7 @@ class ComplexVisData(eqx.Module):
         return self._adjoint(a, w, npix, pixel_scale_mas, chunk_size)
 
     def _model_chunked(self, scene, values, nuisance, chunk_size):
+        _no_antenna_gains(nuisance)
         unpacked = nuisance._unpack(values)
         out = onp.empty(len(self), dtype=onp.complex128)
         for lo in range(0, len(self), int(chunk_size)):
@@ -1068,11 +1070,11 @@ class CalibrationNuisance:
     ===============  ================  ==========================  =============
 
     With ``fit_gain_widths``, scalar sites ``cal.gain_amp_width`` and
-    ``cal.gain_phase_width`` (Jeffreys priors) join the table.
+    ``cal.gain_phase_width`` (``LogUniform(1e-3, 10)``) join the table.
 
     The reference observation (``ref_obs``) has gain 1 and zero offset. The
-    offset bound ``θ_k`` is ``offset_beams`` beams of observation ``k``: a real
-    prior, reported in ``fit(...).info["at_bound"]`` when hit.
+    offset bound ``θ_k`` is ``offset_beams`` beams of observation ``k``
+    (``fit(...).info["at_bound"]`` reports when it is hit).
 
     Parameters
     ----------
@@ -1099,7 +1101,7 @@ class CalibrationNuisance:
         Widths ``τ_a`` and ``τ_φ`` (rad) of the Gaussian gain priors: choices,
         not measurements.
     fit_gain_widths : bool or {"amp", "phase"}
-        Fit the widths (Jeffreys priors) from the values above.
+        Fit the widths (log-uniform priors; see ``priors``).
     gain_steps : int
         Gauss–Newton steps of the gain solution.
     nu0_hz : float, optional
@@ -1182,6 +1184,12 @@ class CalibrationNuisance:
                 raise ValueError(
                     "fit_gain_widths must be a bool, 'amp' or 'phase'."
                 )
+        elif fit_gain_widths or solint != "scan" or gain_steps != 5:
+            raise ValueError(
+                "fit_gain_widths, solint and gain_steps need antenna_gains=True."
+            )
+        if int(gain_steps) < 1:
+            raise ValueError("gain_steps must be at least 1.")
         self.solint = solint
         self.gain_widths = (float(gain_amp_width), float(gain_phase_width))
         self.fit_widths = (
@@ -1203,7 +1211,9 @@ class CalibrationNuisance:
         """Default priors of the fitted sites, a dict for ``fit``.
 
         ``bounds`` override the ends ``(lo, hi)`` of a site's prior, keyed by
-        ``flux``, ``gain``, ``offset``, ``sigma`` or ``alpha``. Without a
+        ``flux``, ``gain``, ``offset``, ``sigma``, ``alpha``,
+        ``gain_amp_width`` or ``gain_phase_width`` (the last two are
+        ``LogUniform(1e-3, 10)`` by default). Without a
         bound, the gains and σ scales are improper Jeffreys priors (flat in
         ``ln x``, no box) and the offsets are uniform over
         ``±offset_beams`` beams of their observation (``2π b_k``, see the
@@ -1212,7 +1222,14 @@ class CalibrationNuisance:
         default: a shift of the phase centre beyond that is less than half a
         turn of phase on every baseline.
         """
-        unknown = set(bounds) - {"flux", "gain", "offset", "sigma", "alpha"}
+        unknown = set(bounds) - {
+            "flux",
+            "gain",
+            "offset",
+            "sigma",
+            "alpha",
+            *_WIDTHS,
+        }
         if unknown:
             raise ValueError(f"unknown bounds {sorted(unknown)}.")
         k = self.n_obs - 1
@@ -1252,7 +1269,10 @@ class CalibrationNuisance:
             out[self._site("alpha")] = dist.Uniform(lo, hi)
         for name, fitted in zip(_WIDTHS, self.fit_widths):
             if fitted:
-                out[self._site(name)] = _LogImproper(())
+                # bounded: the marginal tends to a constant as τ → 0, so an
+                # improper 1/τ prior would give an improper posterior
+                lo, hi = bounds.get(name, (1e-3, 10.0))
+                out[self._site(name)] = dist.LogUniform(lo, hi)
         return out
 
     def defaults(self):
@@ -1315,6 +1335,14 @@ class CalibrationNuisance:
         if self.taper_fwhm_mas is None:
             return 1.0
         return gaussian_taper(u * u + v * v, self.taper_fwhm_mas)
+
+
+def _no_antenna_gains(nuisance):
+    if nuisance.antenna_gains:
+        raise ValueError(
+            "this model has no antenna gains applied; with antenna_gains=True "
+            "use term.gains(values) for the solved gains."
+        )
 
 
 def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
@@ -1479,7 +1507,7 @@ class _RadioTerm(eqx.Module):
         tau_a, tau_p = self.nuisance._widths(values)
         sqrt_w = a["sqrt_w"] / sigma[a["ddid"]]
         flat = lambda x: np.reshape(x, -1)  # noqa: E731
-        lam, phi, norm = _antenna_gains.marginal(
+        lam, phi, norm, step = _antenna_gains.marginal(
             flat(model),
             flat(a["vis"]),
             flat(sqrt_w) ** 2,
@@ -1492,13 +1520,13 @@ class _RadioTerm(eqx.Module):
             tau_p,
             self.nuisance.gain_steps,
         )
-        return lam, phi, norm, sqrt_w, (tau_a, tau_p)
+        return lam, phi, norm, sqrt_w, (tau_a, tau_p), step
 
     def _with_gains(self, values, model, sigma):
         a = self.arrays
 
         def solve(sigma):
-            lam, phi, norm, sqrt_w, taus = self._gain_solution(
+            lam, phi, norm, sqrt_w, taus, _ = self._gain_solution(
                 values, model, sigma
             )
             si, i, j = a["interval"], a["a1"], a["a2"]
@@ -1517,28 +1545,14 @@ class _RadioTerm(eqx.Module):
         return np.real(r), np.imag(r), sigma, prior, norm
 
     def gains(self, values):
-        """Solved antenna gains ``exp(λ̂ + iφ̂)``, shape ``(n_interval, n_ant)``."""
-        sigma = self.nuisance._unpack(values)[3]
-        scene = self.scene(values)
-        nuis = self.nuisance
-        unpacked = nuis._unpack(values)
-
-        def model(a):
-            return _model_points(
-                scene,
-                unpacked,
-                nuis,
-                a["u"],
-                a["v"],
-                a["freq"],
-                a["ddid"],
-                a["obs"],
-            )
-
-        lam, phi, *_ = self._gain_solution(
-            values, jax.lax.map(model, self.arrays), sigma
-        )
-        return np.exp(lam + 1j * phi)
+        """Solved antenna gains ``exp(λ̂ + iφ̂)``, shape ``(n_interval, n_ant)``,
+        at the point the likelihood is evaluated."""
+        n_s, n_a = self.gain_index
+        prior = self._evaluate(values)[3]
+        tau_a, tau_p = self.nuisance._widths(values)
+        lam = prior[: n_s * n_a] * tau_a
+        phi = prior[n_s * n_a :] * tau_p
+        return np.exp(lam + 1j * phi).reshape(n_s, n_a)
 
     def _profile_sigma(self, re, im):
         """``ŝ_d = sqrt(χ²_d(1) / 2 N_d)`` (1 where ddid ``d`` has no points),
@@ -1559,9 +1573,34 @@ class _RadioTerm(eqx.Module):
 
     def derived(self, values):
         """Quantities of the fit that are not sites: the profiled ``ŝ``."""
-        if not self._profiled:
-            return {}
-        return {self.nuisance._site("sigma"): self.sigma_hat(values)}
+        out = {}
+        if self._profiled:
+            out[self.nuisance._site("sigma")] = self.sigma_hat(values)
+        if self.gain_index is not None:
+            out[self.nuisance._site("gain_step")] = self.gain_step(values)
+        return out
+
+    def gain_step(self, values):
+        """The largest change of ``(λ, φ)`` in the last Gauss–Newton step: the
+        gain solution has converged where it is small (raise ``gain_steps``
+        otherwise)."""
+        a = self.arrays
+        nuis = self.nuisance
+        unpacked, scene = nuis._unpack(values), self.scene(values)
+        model = jax.lax.map(
+            lambda c: _model_points(
+                scene,
+                unpacked,
+                nuis,
+                c["u"],
+                c["v"],
+                c["freq"],
+                c["ddid"],
+                c["obs"],
+            ),
+            a,
+        )
+        return self._gain_solution(values, model, self.sigma_hat(values))[-1]
 
     def _flat(self, x):
         return np.reshape(x, -1)[: self.n]

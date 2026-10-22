@@ -101,9 +101,10 @@ def marginal(model, vis, w, interval, a1, a2, n_s, n_a, tau_a, tau_p, steps):
     """Gain solution and Laplace terms of the flat arrays.
 
     ``K = steps`` Gauss–Newton steps from g = 1, then the Hessian blocks at
-    the solution. Returns ``(lam, phi, norm)``, ``lam`` and ``phi`` of shape
+    the solution. Returns ``(lam, phi, norm, step)``, ``lam`` and ``phi`` of shape
     ``(S, N)`` and ``norm`` the ``½ log det H`` terms plus the prior
-    normalization (without the ½ Σ prior χ², which the residuals carry).
+    normalization (without the ½ Σ prior χ², which the residuals carry);
+    ``step`` is the size of the last step (small once converged).
     """
     k1 = interval * n_a + a1
     k2 = interval * n_a + a2
@@ -128,10 +129,11 @@ def marginal(model, vis, w, interval, a1, a2, n_s, n_a, tau_a, tau_p, steps):
         # a step beyond one e-fold or one radian is not trusted
         d_lam = np.clip(d_lam.reshape(-1), -1.0, 1.0)
         d_phi = np.clip(d_phi.reshape(-1), -1.0, 1.0)
-        return (lam - d_lam, phi - d_phi), None
+        size = np.maximum(np.max(np.abs(d_lam)), np.max(np.abs(d_phi)))
+        return (lam - d_lam, phi - d_phi), size
 
     zero = np.zeros(p, dtype=np.real(model).dtype)
-    (lam, phi), _ = jax.lax.scan(step, (zero, zero), None, length=steps)
+    (lam, phi), sizes = jax.lax.scan(step, (zero, zero), None, length=steps)
     v, _ = state(lam, phi)
     h_lam, h_phi = _hessians(
         w * np.abs(v) ** 2, k1, k2, n_s, n_a, tau_a, tau_p
@@ -139,4 +141,4 @@ def marginal(model, vis, w, interval, a1, a2, n_s, n_a, tau_a, tau_p, steps):
     norm = 0.5 * (_logdet(h_lam) + _logdet(h_phi)) + n_s * n_a * (
         np.log(tau_a) + np.log(tau_p)
     )
-    return lam.reshape(n_s, n_a), phi.reshape(n_s, n_a), norm
+    return lam.reshape(n_s, n_a), phi.reshape(n_s, n_a), norm, sizes[-1]

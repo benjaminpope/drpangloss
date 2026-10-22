@@ -314,6 +314,44 @@ def test_lm_is_refused():
         )
 
 
+def test_padding_and_masks_are_inert():
+    """Chunk padding and masked rows (with garbage data) change nothing."""
+    scene = _scene()
+    data, *_ = _data(scene, _vals(x=0.3))
+    nuis = _nuis(data, antenna_gains=True)
+    base = _loss(data.term(scene, nuis), _vals(x=0.3))
+    padded = _loss(data.term(scene, nuis, chunk_size=7), _vals(x=0.3))
+    assert float(padded) == pytest.approx(float(base), rel=1e-10)
+    bad = onp.arange(len(data)) % 5 == 0
+    junk = eqx.tree_at(
+        lambda d: d.vis, data, np.where(bad, 1e3 + 1e3j, data.vis)
+    )
+    masked = _loss(
+        junk.term(scene, nuis, mask=~bad, chunk_size=7), _vals(x=0.3)
+    )
+    kept = _loss(data.subset(~bad).term(scene, nuis), _vals(x=0.3))
+    assert float(masked) == pytest.approx(float(kept), rel=1e-6)
+
+
+def test_option_validation_and_diagnostics():
+    scene = _scene()
+    data, *_ = _data(scene, _vals(x=0.0))
+    with pytest.raises(ValueError, match="gain_steps"):
+        _nuis(data, antenna_gains=True, gain_steps=0)
+    with pytest.raises(ValueError, match="antenna_gains"):
+        _nuis(data, fit_gain_widths=True)
+    nuis = _nuis(data, antenna_gains=True, sigmas="profile", gain_steps=8)
+    term = data.term(scene, nuis)
+    v = _vals(x=0.0)
+    assert float(term.gain_step(v)) < 1e-3  # converged
+    assert "cal.gain_step" in term.derived(v)
+    # the reported gains are those of the likelihood: the solved phases are
+    # recovered from the prior rows, whatever ŝ is
+    assert onp.all(onp.isfinite(onp.asarray(term.gains(v))))
+    with pytest.raises(ValueError, match="no antenna gains"):
+        data.model(scene(v), v, nuis)
+
+
 def test_needs_time_and_antennas():
     data = ComplexVisData.from_arrays(
         [1e5, 2e5], [0.0, 1e5], [1, 1], 1.0, FREQ
@@ -433,6 +471,8 @@ def test_offset_with_gains_is_pinned_by_the_phase_prior():
         init={**nuis.defaults(), "x": 2.0},
         method="lbfgs",
     )
-    # the position is known only through the phase prior: a few tenths of a mas
-    assert float(result.values["x"]) == pytest.approx(3.0, abs=1.0)
-    assert onp.all(onp.abs(onp.asarray(result.values["cal.offset"])) < 1.0)
+    # With two intervals per observation the gains absorb most of the ramp:
+    # x is known only through τ_φ, to about 0.6 mas (the start is 1 mas off),
+    # and no more than that moves into cal.offset.
+    assert float(result.values["x"]) == pytest.approx(3.0, abs=0.8)
+    assert onp.all(onp.abs(onp.asarray(result.values["cal.offset"])) < 0.8)

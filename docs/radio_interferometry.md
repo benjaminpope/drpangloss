@@ -210,7 +210,9 @@ radians or more) can leave the solution in a local minimum; raise
 `cal.gain_phase_width` (`τ_φ`, default 0.5 rad) are not measurements; the
 default amplitude width is of the order of ALMA's absolute flux accuracy
 (5–20%, by band), and no phase specification exists. Fix them, or fit them
-(`fit_gain_widths=True`, Jeffreys priors).
+(`fit_gain_widths=True`: log-uniform priors on 1e-3–10, overridable in
+`priors`; an unbounded `1/τ` prior would be improper, since the marginal tends
+to a constant as `τ → 0`).
 
 - With `τ → 0` the likelihood is the ungained one (up to a constant); with
   `τ → ∞` it tends to closure-only inference. The finite phase prior is
@@ -229,9 +231,12 @@ default amplitude width is of the order of ALMA's absolute flux accuracy
   `residuals` hold the data and the solved gains over their prior widths,
   and `log_norm` the log-determinants. `precondition="diag"` sees those rows
   and omits the log-determinant, so it is approximate.
+- `data.model` and `dirty_image(scene=...)` apply no gains and raise with
+  antenna gains; `term.gains(values)` returns the solved gains, and
+  `chi2_by_ddid` is taken at the solution. `fit(...).info["derived"]` holds
+  `cal.gain_step`, the size of the last Gauss–Newton step: if it is not small,
+  raise `gain_steps`.
 - `sigmas="profile"` takes `ŝ` at the gain solution and holds it fixed.
-- The dirty-beam (compressed) likelihood cannot be combined with antenna
-  gains, which break the compression.
 - Memory is `n_interval × n_ant²` floats per Hessian block; independent
   intervals only (gains correlated in time are a later stage).
 
