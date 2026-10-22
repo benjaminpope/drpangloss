@@ -436,6 +436,19 @@ def _image_cells(run, summary, path):
     return cells
 
 
+def _robust_sentence(modes):
+    """What dropping the most outlying night does to the verdict."""
+    r = modes.get("robustness", {"skipped": "not run (older run)"})
+    if "skipped" in r:
+        return f"The night-dropped refit was skipped ({r['skipped']})."
+    d = r["dropped"]
+    band = "the same alias band" if d["same_band"] else "another alias band"
+    return (
+        f"Without night {r['night']} (raw χ²/N = {r['chi2_per_n']:.3g}) the "
+        f"verdict is {d['verdict']} in {band} (N = {d['n']})."
+    )
+
+
 def _orbit_cells(run, summary, path):
     done = _completed(run)
     cells = []
@@ -480,7 +493,8 @@ def _orbit_cells(run, summary, path):
                 f"The winner is the band of N = {win['n']} orbits "
                 f"(probability {win['p']:.3g}); {margin}. Against a single "
                 f"star it gains {null['delta_log_z']:.4g} nats "
-                f"(verdict: {null['verdict']}). The sky plot shows the best "
+                f"(verdict: {null['verdict']}). {_robust_sentence(modes)} "
+                "The sky plot shows the best "
                 "orbit, each night's position and error ellipse (hollow if "
                 "flagged), and the orbit at the nights.",
                 'display(Image("plots/modes_sky.png"))\n'

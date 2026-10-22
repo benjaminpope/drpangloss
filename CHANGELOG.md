@@ -9,6 +9,11 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- `OrbitPipeline` checks that its verdict survives dropping the most outlying
+  night (`night_dropped`): the `modes` stage refits the search without the
+  night of highest raw χ²/N and compares the orbit-or-not verdict and the
+  winning alias band, reported in `modes.robustness` (a second search; skipped
+  below 3 nights or with `drop_outlier_night=False`).
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,

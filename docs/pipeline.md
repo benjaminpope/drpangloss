@@ -144,7 +144,7 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
 | `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
 | `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
-| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
+| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`); the same search refitted without the night of highest raw χ²/N, to see whether the verdict survives (`drop_outlier_night`, skipped below 3 nights) | `AliasResult` |
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
@@ -223,6 +223,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |
+| `night_dropped` (`OrbitPipeline`: the verdict, orbit or not and the winning alias band, after dropping the night of highest raw χ²/N; recorded in `modes.robustness`) | the verdict changes: one night decides the result | |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages
