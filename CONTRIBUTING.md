@@ -198,7 +198,7 @@ Releases go to PyPI as `virgil-astro` (the import name is `virgil`) through `.gi
    - its evidence (`trust/evidence/*.jsonl`) is regenerated and pinned to that single commit: `scripts/check_evidence_pin.py --release --expect <sha>` passes there;
    - no finding in its ledger ruled `virgil` with severity `bug` is open without a recorded decision (fixed, or accepted with a reason in the release notes);
    - the mutation kill rate of its suite (`scripts/mutation.py`) is reported in the release notes.
-4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`), and the period-alias search for Gl 229 Ba–Bb (ozstar_scripts job `orbit_aliases`, which runs virgil-validation's `scripts/reanalyse_orbits.py`, i.e. `virgil.aliases.fit_orbit_aliases`) runs cold (`--no-init`) at the release commit and ranks the N = 34 alias band (P ≈ 12.134 d) first with Δlog Z > 10 over every other band. The aliases come from the integer number of orbits across the 233 d gap between observing seasons; results are on virgil-validation's Period aliases page.
+4. **GPU and long runs** (maintainer, on OzSTAR): the docs-examples run on a GPU passes (ozstar_scripts job `docs_examples_prof`). The Gl 229 Ba–Bb period-alias search was a release gate through 0.4.1 and was retired on 2026-10-23: the alias-search regressions are guarded by the CI tests listed in AGENTS.md "Binary orbits: solved problems", and a maintainer may still run the cold search (ozstar_scripts job `orbit_aliases`, `virgil.aliases.fit_orbit_aliases` with `--no-init`; the N = 34 band, P ≈ 12.134 d, should rank first) when the search code changes.
 5. Check the build locally:
    ```bash
    uv build && uvx twine check --strict dist/*
