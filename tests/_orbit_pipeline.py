@@ -85,6 +85,10 @@ CHECKS = [
 
 # 2-5 minutes on a CI runner, so each golden carries a 15-minute timeout
 # in place of the 5-minute hang detector of pyproject.toml.
+# The search keeps the engine's default effort (that is the point: the default
+# run must work); only the sampler is small. Do not add search settings here
+# to speed up CI. A blind run takes 2-5 minutes, so each golden test carries a
+# 15-minute timeout in place of the 5-minute hang detector of pyproject.toml.
 GOLDEN = {
     "num_warmup": 200,
     "num_samples": 150,

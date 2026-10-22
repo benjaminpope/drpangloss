@@ -31,7 +31,7 @@ from tests._orbit_pipeline import (  # noqa: E402
 from virgil.epochs import Epochs, NightFlag  # noqa: E402
 from virgil.oifits import write_oifits  # noqa: E402
 from virgil.orbits import KeplerOrbit  # noqa: E402
-from virgil.pipeline import (  # noqa: E402  # noqa: E402
+from virgil.pipeline import (  # noqa: E402
     SCHEMA,
     Check,
     ConfigMismatchError,
@@ -884,9 +884,6 @@ def test_the_class_is_exported_lazily():
     assert "OrbitPipeline" in dir(module)
 
 
-# --- golden synthetic cases (slow) --------------------------------------------
-
-
 def test_the_position_grid_stops_at_the_lattice_alias_limit(
     nights, tmp_path, monkeypatch
 ):
@@ -931,8 +928,8 @@ def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
 def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
     import virgil.aliases as aliases
 
-    def empty(*args, **kwargs):
-        raise ValueError("The period window is empty. Pass p_range.")
+    def empty(*args, **kwargs):  # an empty window
+        aliases.period_window([0.0, 100.0], 20.0, 10.0, resolution=0.1)
 
     monkeypatch.setattr(aliases, "fit_orbit_aliases", empty)
     settings = {"period_range": None}

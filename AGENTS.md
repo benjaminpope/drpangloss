@@ -141,7 +141,8 @@ and writing history into docstrings. So:
    `pipeline/_common`, before adding a quadrature, solver or linear-algebra routine.
 5. **Tests share helpers.** Put shared fixtures in `tests/conftest.py`, and
    shared constants and helpers in `tests/_shared.py` or data in `tests/_test_data.py`
-   (extend these, don't add a second module); parametrize near-identical tests, and never redefine a
+   (extend these, don't add a second module, except one `tests/_<pipeline>.py` for the
+   files a split pipeline test shares, since `_shared` must not import optional extras); parametrize near-identical tests, and never redefine a
    `_scene`/`_data` helper that exists.
 6. **Keep pipelines thin.** A new pipeline subclasses `pipeline/_core` and reuses
    `_common`; aim at about 500 lines.
