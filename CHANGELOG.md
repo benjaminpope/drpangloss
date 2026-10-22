@@ -42,7 +42,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
-- `import virgil` no longer imports matplotlib or astropy: `virgil.plotting`, `virgil.oifits`, `read_oifits` and `write_oifits` load on first use (`from virgil import read_oifits` is unchanged).
+- `import virgil` no longer imports matplotlib: `virgil.plotting`, `virgil.oifits`, `read_oifits` and `write_oifits` load on first use (`from virgil import read_oifits` is unchanged). astropy is still imported, through `oidata`.
 - Removed the stray `virgil.name` string (it was never in `__all__` or the docs; use `virgil.__version__`).
 - `virgil.radio_clean.clean` (provisional, no shim): `scales` is now `scales_mas`, in mas as in `imaging.clean` (was pixels); `deconvolver="clark"` is removed (it was identical to `"hogbom"`) and raises a `ValueError` naming it. `npix` must still be odd; the docstring says so.
 - The `t_ref = 0` UserWarning of the orbit classes now says it becomes an error in 0.5.

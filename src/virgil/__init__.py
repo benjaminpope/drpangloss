@@ -21,7 +21,7 @@ Modules:
 * [`simulate`][virgil.simulate], [`plotting`][virgil.plotting],
   [`oifits`][virgil.oifits] (with ``read_oifits`` and ``write_oifits``) and
   [`pipeline`][virgil.pipeline] (provisional; imported on first use, which
-  keeps matplotlib and astropy out of ``import virgil``; ``pipeline`` needs
+  keeps matplotlib out of ``import virgil``; ``pipeline`` needs
   the ``pipeline`` extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -177,7 +177,7 @@ from .spectra import (  # noqa: E402
 )
 
 
-_LAZY = {  # imported on first use: matplotlib and astropy are slow to load
+_LAZY = {  # imported on first use: matplotlib is slow to load; astropy follows once oidata stops importing oifits
     "pipeline": ("pipeline", None),
     "plotting": ("plotting", None),
     "oifits": ("oifits", None),

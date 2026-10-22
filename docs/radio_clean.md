@@ -50,7 +50,7 @@ loop ends at `threshold`, `nsigma`, `niter` or `time_limit`; `RadioCleanResult.s
 says which.
 
 **Multi-scale** (Cornwell 2008): the components are Gaussians of the given
-`scales` (FWHM in pixels; 0 is a point). At each iteration the scale and
+`scales_mas` (FWHM in mas; 0 is a point). At each iteration the scale and
 position with the largest `D_s / √H_ss` (the decrease in χ² of a component, `D_s`
 the residual smoothed to the scale, `H_ss` the smoothed PSF's peak), weighted by
 CASA's small-scale bias `1 − smallscalebias · s/s_max`, is chosen. Cross terms
@@ -86,7 +86,7 @@ restored image by a power beam, e.g. `exp(primary_beam(...))`.
 | --- | --- | --- |
 | `npix`, `pixel_scale_mas` | `imsize`, `cell` | `-size`, `-scale` |
 | `deconvolver="hogbom"/"multiscale"` | `deconvolver` (also `mtmfs`) | `-multiscale` |
-| `scales` (pixels) | `scales` | `-multiscale-scales` |
+| `scales_mas` (mas; tclean's are pixels) | `scales` | `-multiscale-scales` |
 | `smallscalebias` | `smallscalebias` | `-multiscale-scale-bias` |
 | `weighting`, `robust` | `weighting`, `robust` | `-weight briggs R` |
 | `uvtaper` | `uvtaper` | `-taper-gaussian` |
