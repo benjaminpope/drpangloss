@@ -651,8 +651,7 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     def _subset(self, keep, flux_keep=None):
         """These data restricted to the samples where ``keep`` is True.
 
-        ``flux_keep(block)`` gives the samples to keep of an OI_FLUX block,
-        which are not visibility samples.
+        ``flux_keep(block)`` selects the samples of an OI_FLUX block.
         """
         if (
             self.vis_encoding != "split"
@@ -828,24 +827,15 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
 
     @classmethod
     def _diagonalized(cls, operator, channel_sigma, correlation=None):
-        """An operator whose outputs are independent, and their errors.
+        """The operator rotated to independent outputs, and their errors.
 
-        Projected outputs are linear combinations of the input angles and
-        are not wrapped (as for kernel phases and DISCOs), so a projection
-        of closure phases is not invariant to shifting one input by 2π;
-        prefer unprojected closure phases, whose likelihood is periodic
-        (``cp_noise``).
-
-        The outputs of ``operator`` have covariance A D^½ R D^½ Aᵀ, with D
-        the diagonal of ``channel_sigma``² and R the inputs' correlation
-        (the identity unless given, e.g. for correlated closure phases). If
-        that is diagonal, the operator is
-        kept and the errors are its square-rooted diagonal. Otherwise the
-        outputs are correlated, and using only the diagonal would count
-        shared information more than once: the operator is rotated onto
-        the eigenvectors of A D^½ R D^½ Aᵀ, keeping those with non-zero
-        variance, so that the new outputs are independent with errors √λ.
+        Outputs have covariance A D^½ R D^½ Aᵀ (D = ``channel_sigma``², R =
+        ``correlation``); a non-diagonal one is rotated onto its eigenvectors.
         """
+        # Projected outputs are not wrapped, so projecting closure phases is
+        # not invariant to a 2π shift of one input: prefer unprojected ones.
+        # Rotating, not keeping the diagonal, because the diagonal would count
+        # shared information more than once.
         # Built on the host in float64: this runs once at construction and is
         # never traced, and the rank cut below (1e-10 of the largest
         # eigenvalue) is under float32 eps, so a float32 ``eigh`` would keep
@@ -929,16 +919,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return amp
 
     def _visibility_channel_from_data(self, vis, d_vis):
-        """Convert stored visibility observables to the configured scalar channel.
-
-        Log-amplitudes take the log of the observable floored at its own
-        uncertainty (as in ``_visibility_uncertainty_channel``), so that a
-        V² or amplitude at or below zero gives a finite value rather than
-        log 1e-30.
-        """
+        """Convert stored visibility observables to the scalar channel ``vis_mode``."""
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
         if self.vis_mode == "logamp":
+            # Floored at its own error: V² or |V| at or below zero stays finite.
             floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
             if self.v2_flag:
                 return 0.5 * np.log(floored)
@@ -950,17 +935,11 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         return vis
 
     def _visibility_uncertainty_channel(self, vis, d_vis):
-        """Convert visibility uncertainties into the configured scalar channel.
-
-        The errors are propagated linearly, with the derivative evaluated
-        at the noisy data. Near zero that derivative diverges, so the data
-        are floored at their own uncertainty first, in either direction:
-        V² → amplitude gives ½σ/√max(V², σ) and V² → log-amplitude
-        ½σ/max(V², σ) (at most ½√σ and ½), amplitude → log-amplitude
-        σ/max(|V|, σ), and amplitude → V² uses √(|V|² + σ²) for |V|.
-        """
+        """Propagate visibility errors linearly into the scalar channel ``vis_mode``."""
         vis = np.asarray(vis, dtype=float)
         d_vis = np.asarray(d_vis, dtype=float)
+        # The derivative diverges near zero, so the data are floored at their
+        # own error first, in either direction.
         floored = np.maximum(vis, np.maximum(d_vis, 1e-30))
         if self.vis_mode == "logamp":
             if self.v2_flag:
@@ -1636,15 +1615,9 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         The likelihood marginalizes offsets common to the channels of a frame
         analytically (see [`ClosureOffsets`][virgil.gains.ClosureOffsets]), with
         these widths unless fitted as the noise terms ``phi_offset_baseline``,
-        ``phi_offset_triangle`` or ``phi_offset_modes`` (log-uniform priors on
-        stated bounds). Off by default; use it only
-        if calibrators show such offsets. Three telescopes (one triangle per frame and
-        channel) are supported: their baseline offsets are folded into the
-        triangle group, and, as for four, the likelihood then whitens the
-        sines with a periodic penalty (not the von Mises form of plain
-        three-telescope data, whose normalization differs by about
-        log(1 + σ²/8) per closure phase). A small-offset approximation
-        (δ ≲ 0.3 rad).
+        ``phi_offset_triangle`` or ``phi_offset_modes``. Off by default; use it
+        only if calibrators show such offsets. A small-offset approximation
+        (δ ≲ 0.3 rad); three or more telescopes are supported.
 
         Parameters
         ----------
@@ -1664,7 +1637,10 @@ class OIData(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         """
         offsets = closure_offsets(self, baseline, triangle, modes)
         # Three telescopes have no cp_noise; the offsets are whitened with
-        # the one-triangle-per-group form.
+        # the one-triangle-per-group form. Their baseline offsets are folded
+        # into the triangle group, and the likelihood whitens the sines with a
+        # periodic penalty, not the von Mises form of plain three-telescope
+        # data (a normalization differing by about log(1 + σ²/8) per phase).
         return eqx.tree_at(
             lambda d: (d.phase_offsets, d.cp_noise),
             self,
@@ -1789,12 +1765,7 @@ def _positive_factor(factor):
 
 
 def _valid_samples(values, errors):
-    """Mask of finite samples with a finite, positive error.
-
-    A zero (or negative) error cannot be used: the whitened residual
-    ``r / σ`` is infinite, and one such sample makes every likelihood and
-    fit non-finite. Such samples are dropped, as flagged ones are.
-    """
+    """Mask of finite samples with a finite, positive error (``r / σ`` must be finite)."""
     return (
         onp.isfinite(values) & onp.isfinite(errors) & (onp.asarray(errors) > 0)
     )
@@ -2076,13 +2047,7 @@ _ZERO_PROJECTED_ERROR = (
 def _good_samples(values, errors, flag, n_samples, name, operator=False):
     """Mask of unflagged, usable samples, or ``None`` if all are good.
 
-    Usable is as for [`_valid_samples`][virgil.oidata._valid_samples]:
-    finite, with a finite, positive error. With an ``operator``, the raw
-    errors only enter through the projected ones, so a zero raw error is
-    usable (``_diagonalized`` rejects zero projected errors).
-
-    Data whose size is not ``n_samples`` are already projected and are not
-    checked.
+    Already-projected data (size not ``n_samples``) are not checked.
     """
     if values.size != n_samples:
         if flag is not None:
@@ -2092,6 +2057,8 @@ def _good_samples(values, errors, flag, n_samples, name, operator=False):
             )
         return None
     if operator:
+        # A raw error of zero is usable: only the projected errors enter, and
+        # ``_diagonalized`` rejects a zero projected one.
         bad = ~(onp.isfinite(values) & onp.isfinite(errors) & (errors >= 0))
     else:
         bad = ~_valid_samples(values, errors)

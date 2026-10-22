@@ -192,140 +192,39 @@ class DiskPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The disk is always a ``MultipoleDisk`` and the star a single point
-    source; a companion search is an opt-in expert setting.
-
-    Stages: ``load → overview → geometry → profile → compare → posterior →
-    quicklook``.
-
-    * ``load`` applies ``wavel_range`` and ``error_floor`` and writes the
-      data that are fitted to ``data/processed.oifits``.
-    * ``overview`` plots the data and their uv coverage and sets the
-      **resolution scale**, the half-fringe λ/2B of the longest baseline.
-      The inner radius, the ring-width floor and the length-scale grid are
-      stated in half-fringes.
-    * ``geometry`` maps χ² over a grid of the inclination (uniform in
-      cos ``inc``) and the position angle on [0°, 180°) (an axisymmetric
-      disk without height is the same under ``pa`` → ``pa`` + 180°), with a
-      single ring at each point, then fits that single ring from the best
-      cell. The inclination and position angle are multimodal, so they are
-      never left to a local optimizer from one start. The grid map goes to
-      ``grids.h5``, the single-ring fit is ``models/geometry``, and its
-      profile's dynamic range sets the Gaussian process's σ.
-    * ``profile`` and ``compare`` depend on the model; see below.
-    * ``posterior`` (``posterior=True``) samples every free parameter with
-      NUTS in flat coordinates, with the geometry released.
-    * ``quicklook`` writes and executes ``quicklook.ipynb``.
-
-    **Models** (``model=``) are separate, parallel options:
-
-    * ``"rings"``: *N* Gaussian rings share the inclination and position
-      angle. Rings are added one at a time, each starting at the radius of a
-      one-ring scan (the others held at their fit) with a width of one
-      half-fringe, and fitted by Levenberg–Marquardt to the MAP; adding
-      stops when the BIC no longer improves, or at ``max_rings``.
-      ``compare`` takes the Laplace log evidence and the BIC of every
-      count and keeps the one of least BIC.
-    * ``"gp"`` (the default): one ``RadialGP`` profile, with low-degree
-      ``Harmonics`` and, with several channels, a ``RadialGP`` spectral
-      index. At the geometry's inclination and position angle (held, so
-      each refit is a matrix-vector product) the profile is fitted at each
-      length scale of a grid (ℓ/√3 of 1, 2 and 4 half-fringes by default),
-      then refitted with the inclination and position angle released, since
-      a single ring's geometry is a few degrees off for a lopsided,
-      multi-ring disk. A grid must not choose its own edge: when the best
-      length is the smallest or largest, the grid is extended once that
-      way (not below ``ell_floor_halffringes``), and the ``length_scale``
-      check warns if the best is still on an edge (``on_grid_edge`` in the
-      summary). ``compare`` keeps the length of largest Laplace evidence. σ
-      comes from the dynamic range of the single-ring profile, not from a
-      known truth, and the Matérn smoothness is fixed at ν = 3/2.
-
-    The spectral index is relative to the star, so it is conditional on the
-    star's assumed spectrum: the star is a point source with a grey
-    spectrum unless ``star_diameter_mas`` (a uniform disk, which also sets
-    the inner radius to at least its radius), ``star_temperature_k`` or
-    ``star_index`` is given, and the summary says which. Errors: with
-    ``error_scale="rescale"`` (the default for ``"gp"``) one MacKay scale
-    is estimated from the baseline fit at the middle ℓ and the data are
-    rescaled by it, so that every fit and every evidence is on one footing;
-    the scale is reported, and PIONIER-like errors are often conservative
-    (a scale under 1). ``"quoted"`` (the default for ``"rings"``) fits the
-    errors as given, and ``"fit"`` (rings only) samples error scales. χ²/N
-    is always reported on the quoted errors. Priors are group-invariant: uniform in
-    ``cos inc``, uniform angles (an ``AngleVector``, with no wrap),
-    log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian
-    (scale 0.4) on the real and imaginary parts of each ring's harmonics, so
-    that the phase of the lopsidedness is uniform.
+    The star is one point source. Stages: ``load`` (apply ``wavel_range`` and
+    ``error_floor``), ``overview`` (plots; sets the half-fringe λ/2B of the
+    longest baseline), ``geometry`` (χ² over a grid of cos ``inc`` and ``pa``,
+    then a single-ring fit), ``profile``, ``compare``, ``posterior`` (NUTS,
+    with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
+    ``RadialGP`` profile at each length scale of a grid and keeps the one of
+    largest Laplace evidence; ``"rings"`` adds Gaussian rings until the BIC
+    stops improving. ``run()`` returns a ``Result``: ``res.summary["disk"]``
+    (``n_rings`` and ``rings`` for ``"rings"``), ``res.model()`` (the best fit),
+    ``res.checks``. All settings, with defaults:
+    [pipeline settings](../pipeline.md#diskpipeline-settings).
 
     Parameters
     ----------
     data : OIData
         The data.
     model : {"gp", "rings"}, optional
-        What to fit (default ``"gp"``, the option that assumes least about
-        the disk).
+        What to fit (default ``"gp"``, the option that assumes least).
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of the defaults (see ``DiskPipeline.defaults()``):
-
-        - ``r_in_mas`` (None), ``r_out_mas`` (None): the radial range; by
-          default one half-fringe and half of
-          [`image_field`][virgil.imaging.image_field].
-        - ``n_r`` (None): quadrature nodes of a profile; by default
-          [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r] (for the
-          Gaussian process, at least enough to resolve the shortest ℓ).
-        - ``n_inc`` (10), ``n_pa`` (12), ``inc_max_deg`` (85): the geometry
-          grid.
-        - ``max_rings`` (4): the most rings fitted (``"rings"``).
-        - ``ell_halffringes`` ([1, 2, 4]): the grid of ℓ/√3, in
-          half-fringes (``"gp"``).
-        - ``ell_floor_halffringes`` (0.5): the smallest ℓ/√3, in
-          half-fringes, that the grid or its extension may reach.
-        - ``harmonic_degree`` (1): the degree of the harmonics (0 for none).
-        - ``spectral_index`` (None): ``True`` or ``False`` to force the
-          colour on or off; by default it is on with more than
-          ``spectral_index_min_channels`` (3) channels.
-        - ``ring_colour`` (``"power_law"``): the colour of each ring and
-          of the planet when the colour is on (``"rings"`` only):
-          ``"power_law"`` fits a spectral index, ``"blackbody"`` a
-          temperature (300 to 3000 K, log-uniform) with the flux at the
-          reference wavelength, which represents blackbody-like spectra over
-          a broad band that a power law misses.
-        - ``wavel0_m`` (None), ``star_temperature_k`` (None): the
-          reference wavelength (default the mean wavelength) and the star's
-          blackbody (default a grey reference). ``star_diameter_mas``
-          (None: a point source) makes the star a uniform disk and
-          ``star_index`` (None) gives it a power-law spectrum; only one of
-          ``star_temperature_k`` and ``star_index`` may be set.
-        - ``companion`` (False): search the residuals for a point source and
-          fit any detection (``companion_min_delta_chi2``, 25) jointly;
-          ``companion_max_sep_mas`` (None, i.e. ``r_out_mas``) and
-          ``companion_step_mas`` (None, i.e. half a half-fringe) set the
-          search grid.
-        - ``length_scale_nats`` (3), ``ring_count_nats`` (3),
-          ``inner_edge_fraction`` (0.1), ``inner_edge_correlation`` (0.9),
-          ``outer_edge_fraction`` (0.01), ``inclination_min_deg`` (15):
-          thresholds of the checks, and ``render_tolerance`` (0.1) and
-          ``unconstrained_correlation`` (0.8) those of ``render_consistency``
-          and ``structure_unconstrained``.
-        - ``error_scale`` ("auto": ``"rescale"`` for ``"gp"``, ``"quoted"``
-          for ``"rings"``; or ``"quoted"``, ``"fit"`` (rings), ``"rescale"``
-          (gp)), ``wavel_range`` (None), ``error_floor`` (None),
-          ``batch_size`` (None): as for the other pipelines.
-        - ``posterior`` (False), ``num_warmup``, ``num_samples``,
-          ``num_chains`` (1000, 1000, 4), ``chain_method`` ("vectorized"),
-          ``seed`` (0): NUTS.
-        - ``quicklook_execute`` (True): execute the quicklook notebook.
+        Overrides of ``DiskPipeline.defaults()``. The most used: ``r_in_mas``
+        and ``r_out_mas`` (radial range, mas), ``max_rings`` (most rings, 4),
+        ``ell_halffringes`` (the ℓ grid, [1, 2, 4]), ``companion`` (search the
+        residuals for a point source, False), ``posterior`` (False). Priors are group-invariant and errors are
+        quoted or rescaled; see [conventions](../conventions.md).
 
     Examples
     --------
     >>> import virgil as vg  # doctest: +SKIP
     >>> from virgil.pipeline import DiskPipeline  # doctest: +SKIP
-    >>> pipeline = DiskPipeline(vg.OIData("disk.oifits"), "rings", output="runs/disk")  # doctest: +SKIP
-    >>> res = pipeline.run()  # doctest: +SKIP
-    >>> res.summary["disk"]["rings"]  # doctest: +SKIP
+    >>> res = DiskPipeline(vg.OIData("disk.oifits"), "rings", output="runs/disk").run()  # doctest: +SKIP
+    >>> res.summary["disk"]["n_rings"], res.model()  # doctest: +SKIP
     """
 
     NAME = "disk"
@@ -711,12 +610,7 @@ class _Shape:
 
 
 def _star(ctx):
-    """The star: a point source, or a uniform disk of ``star_diameter_mas``,
-    grey unless ``star_temperature_k`` or ``star_index`` gives it a spectrum.
-
-    The disk's spectral index is relative to this star, so it is conditional
-    on the spectrum assumed here (the summary reports it).
-    """
+    """The star: a point source or uniform disk, grey unless given a spectrum."""
     from ..models import PointSource, UniformDisk
     from ..spectra import BlackBody, PowerLaw
 
@@ -785,10 +679,7 @@ def _planet(ctx, v, colour):
 
 
 def _ring_scene(ctx, shape, v):
-    """Star, ``shape.n`` coplanar rings and optionally a planet.
-
-    One ``inc`` and ``pa`` go to every ring.
-    """
+    """Star, ``shape.n`` coplanar rings (one ``inc``, ``pa``) and optionally a planet."""
     from ..models import GaussianRing, Harmonics, MultipoleDisk, System
 
     parts = {"star": _star(ctx)}
@@ -819,13 +710,9 @@ def _ring_scene(ctx, shape, v):
 
 @functools.lru_cache(maxsize=None)
 def _builder(ctx, shape):
-    """The scene as a function of its parameters (``fit`` calls it by name).
+    """The scene as a function of its parameters (``fit`` calls it by name)."""
 
-    Cached, so equal arguments give the same function: ``fit`` and
-    ``laplace_cov`` treat the function as static and recompile for every new
-    one.
-    """
-
+    # cached: ``fit`` and ``laplace_cov`` recompile for every new function object
     def build(**v):
         return _ring_scene(ctx, shape, v)
 
@@ -886,13 +773,7 @@ def _scalars(values):
 
 @dataclasses.dataclass(frozen=True)
 class _DiskFit:
-    """A fitted model with its χ² on the quoted errors.
-
-    ``score`` is the −2 log L the BIC uses: at the fitted error scales (with
-    their normalization) under ``error_scale="fit"``, where χ² on the quoted
-    errors would reward every extra ring by the unmodelled noise; None means
-    the quoted-error χ².
-    """
+    """A fitted model, its quoted-error χ² and the −2 log L ``score`` the BIC uses."""
 
     model: object
     values: dict
@@ -921,23 +802,17 @@ def _finish(model, values, info, priors, data):
         chi2=float(chi2),
         scales=scales,
         n_free=_n_free(values, priors),
+        # at the fitted error scales: quoted-error χ² rewards each extra ring
         score=_m2loglike_64(model, data, **scales) if scales else None,
     )
 
 
 def _inside_priors(priors, start):
-    """``start`` with any value outside its prior's support pulled just inside.
-
-    A ring's starting width is one resolution element, which exceeds the
-    width prior's upper end (half the radial range) when the field holds
-    less than two of them, and a radius saved in single precision can fall a
-    rounding error below the radial range. A start outside the support has
-    no unconstrained value, and the fit returns NaN. Values on or inside a
-    bound stay as they are.
-    """
+    """``start`` with any value outside its prior's support pulled just inside."""
     from .._flat import _base
     from ..fitting import _bound_fraction
 
+    # a start outside the support has no unconstrained value: the fit gives NaN
     outside = {}
     for name, value in start.items():
         prior = priors.get(name)
@@ -966,13 +841,7 @@ def _fit_rings(p, shape, init):
 
 
 def _fold_fit(ctx, shape, priors, model, values):
-    """The fit with ``pa`` in [0°, 180°), the harmonics turned to match.
-
-    ``AngleVector`` returns [0°, 360°), and ``pa`` and ``pa`` + 180° are the
-    same disk once the order-*m* harmonics are multiplied by ``(-1)^m``. The
-    grid and the posterior use [0°, 180°); the MAP is folded to match before
-    it is saved or summarized.
-    """
+    """The fit with ``pa`` folded into [0°, 180°), the harmonics turned to match."""
     pa = float(onp.asarray(values["pa"]))
     if 0.0 <= pa < 180.0:
         return model, values
@@ -983,6 +852,7 @@ def _fold_fit(ctx, shape, priors, model, values):
         angle = math.radians(folded)
         out["pa_vec"] = onp.asarray([math.cos(angle), math.sin(angle)])
     if (pa % 360.0) >= 180.0:
+        # pa + 180° is the same disk once order-m harmonics get (-1)^m
         for i in range(1, shape.n + 1):
             for j in range(1, shape.degree + 1):
                 for part in ("re", "im"):
@@ -1033,17 +903,12 @@ def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
 
 
 def _grid_minima(delta, inc_deg):
-    """Local minima of the geometry map ``delta[inc, pa]``.
-
-    The position angle is periodic (the map spans [0°, 180°)); the
-    inclination is not. Cells within 5° of face-on are skipped: their
-    position angle is undefined, so they form a flat ridge.
-    """
+    """Local minima of the geometry map ``delta[inc, pa]`` (``pa`` is periodic)."""
     n_inc, n_pa = delta.shape
     minima = []
     for i in range(n_inc):
         if inc_deg[i] < 5.0:
-            continue
+            continue  # face-on: pa undefined, a flat ridge
         for j in range(n_pa):
             value = delta[i, j]
             around = [
@@ -1058,12 +923,7 @@ def _grid_minima(delta, inc_deg):
 
 
 def _dynamic_range_sigma(ctx, r0, sigma):
-    """The Gaussian process's σ: ln of the single ring's peak-to-mean contrast.
-
-    The contrast is the peak intensity over the intensity averaged over the
-    radial range by area, ``(r_out² − r_in²) / (2 √(2π) σ r0)`` for a
-    Gaussian ring, so ``exp(±σ)`` spans the profile's dynamic range.
-    """
+    """The Gaussian process's σ: ln of the single ring's peak-to-mean contrast."""
     contrast = (ctx.r_out**2 - ctx.r_in**2) / (
         2.0 * math.sqrt(2.0 * math.pi) * sigma * r0
     )
@@ -1196,17 +1056,7 @@ def _laplace(ctx, shape, names, values, data):
 
 @in_float64
 def _point_source_search(model, data, ctx, batch_size=None):
-    """The best point source to add to ``model``, on a grid of positions.
-
-    Adds a grey ``PointSource`` and maximizes the likelihood over its flux
-    at every position of a grid; the Δχ² is against ``model`` itself.
-
-    Returns
-    -------
-    dict
-        ``delta_chi2``, ``dra_mas``, ``ddec_mas`` and ``flux`` of the best
-        position.
-    """
+    """The best grey point source to add to ``model``: Δχ², position and flux."""
     import jax.numpy as np
 
     from .._grid import batch_size_or_default, resolve_grid_keys
@@ -1274,11 +1124,7 @@ def _planet_start(search, ctx):
 
 
 def _ring_start(ctx, held, n, new):
-    """Starting values of an ``n``-ring scene.
-
-    ``held`` has the earlier rings' values; ``new`` is the scan's radius and
-    flux for ring ``n`` (None for the first ring, which ``held`` has).
-    """
+    """Starting values of an ``n``-ring scene from ``held`` and the scan's ``new`` ring."""
     start = {k: v for k, v in held.items() if k != "pa_vec"}
     start["inc"] = max(float(start["inc"]), 5.0)
     if new is not None:
@@ -1310,10 +1156,7 @@ def _scan_model(ctx, shape, base, *, rnew, fnew):
 
 @in_float64
 def _scan_new_ring(p, ctx, shape, base, step=None):
-    """The radius and flux of one more ring, scanned with the rest held.
-
-    The radii are ``step`` apart (default one half-fringe).
-    """
+    """Radius and flux of one more ring, scanned ``step`` apart (default a half-fringe)."""
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
@@ -1338,14 +1181,9 @@ def _bic(fit, n):
 
 
 def _fit_with_planet(p, shape, start, backfit=False):
-    """Fit ``shape`` (without a planet), search the residuals, refit with one.
+    """Fit ``shape``, search the residuals, refit with a planet if found.
 
-    With ``backfit`` the rings are then re-placed (``_backfit``) in the scene
-    that is returned, planet included: the objective is the one reported, so
-    the back-fit can only lower it. Returns ``(fit, shape, search, steps)``:
-    the search result is None unless ``companion`` is on, the returned shape
-    has the planet if the search found one, and ``steps`` records each
-    back-fit step (empty without ``backfit``).
+    Returns ``(fit, shape, search, steps)``; ``backfit`` adds ``_backfit`` steps.
     """
     ctx = p._ctx()
     fit = _fit_rings(p, shape, start)
@@ -1360,6 +1198,7 @@ def _fit_with_planet(p, shape, start, backfit=False):
             fit = _fit_rings(p, shape, values)
     steps = []
     if backfit:
+        # after the planet, so the back-fit objective is the one reported
         fit, steps = _backfit(p, shape, fit)
     return fit, shape, search, steps
 
@@ -1385,21 +1224,13 @@ def _without_ring(values, k):
 
 
 def _unresolved_pairs(ctx, values, n):
-    """Pairs of the ``n`` rings closer than the data can tell apart.
-
-    Two rings are one feature, fitted as two, when their radii differ by
-    less than twice the narrower one's width (two equal Gaussians are
-    unimodal within 2σ; a narrow ring on a broad one is a second feature
-    however broad the other) or by less than a half-fringe (the
-    visibilities hold nothing finer). Both limits are lengths in the same
-    units as the radii, so the rule has no preferred scale beyond the data's
-    own. Returns ``(i, j, separation, limit)`` for each such pair, ``i < j``,
-    in mas.
-    """
+    """Pairs of the ``n`` rings closer than the data can tell apart: ``(i, j, sep, limit)``."""
     pairs = []
     for i in range(1, n + 1):
         for j in range(i + 1, n + 1):
             sep = abs(float(values[f"r{i}"]) - float(values[f"r{j}"]))
+            # unresolved within 2σ of the narrower ring (equal Gaussians are
+            # unimodal there) or within a half-fringe
             limit = max(
                 2.0 * min(float(values[f"s{i}"]), float(values[f"s{j}"])),
                 ctx.halffringe,
@@ -1410,22 +1241,7 @@ def _unresolved_pairs(ctx, values, n):
 
 
 def _backfit(p, shape, fit):
-    """Re-place each ring in turn and keep what improves the fit.
-
-    Rings are added one at a time at the radius of a scan, so a ring can be
-    left away from where the others would put it once they are all there. For
-    each ring in turn this drops it, scans for the best radius of a ring added
-    to the rest on a grid twice as fine as the first scan's, refits every
-    parameter (geometry included) from there and keeps the result if the BIC
-    falls by more than ``_BACKFIT_MIN_GAIN`` and it leaves no more rings
-    unresolved from each other (``_unresolved_pairs``) than before. A pass
-    that changes nothing ends it, as does ``_BACKFIT_PASSES``.
-
-    Returns ``(fit, steps)``; each step records the pass, the ring dropped and
-    its radius, the scan's best radius and flux, the refit's χ², geometry and
-    radii, the BIC change (negative is better), the number of unresolved pairs
-    of rings and whether it was kept.
-    """
+    """Re-place each ring in turn and keep what lowers the BIC: ``(fit, steps)``."""
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     steps = []
     if shape.n < 2:
@@ -1435,6 +1251,7 @@ def _backfit(p, shape, fit):
         for k in range(1, shape.n + 1):
             held = _without_ring(_scalars(fit.values), k)
             base = _fill_new(ctx, held, shape.n)
+            # a grid twice as fine as the first scan's
             new = _scan_new_ring(
                 p, ctx, shape, base, step=0.5 * ctx.halffringe
             )
@@ -1442,6 +1259,7 @@ def _backfit(p, shape, fit):
             trial = _fit_rings(p, shape, start)
             d_bic = _bic(trial, n_data) - _bic(fit, n_data)
             pairs = _unresolved_pairs(ctx, trial.values, shape.n)
+            # accept only if no more rings end up unresolved than before
             accepted = d_bic < -_BACKFIT_MIN_GAIN and len(pairs) <= len(
                 _unresolved_pairs(ctx, fit.values, shape.n)
             )
@@ -1473,20 +1291,11 @@ def _backfit(p, shape, fit):
 
 
 def _prune(p, shape, fit):
-    """Drop every ring whose removal lowers the BIC, one at a time.
-
-    A greedy fit can end with a ring that carries no light (parked at the
-    inner radius, at the width floor and the flux floor): the data do not
-    want it, and a fit without it has the same χ² and fewer parameters. Each
-    ring in turn is dropped and the rest refitted from where they are; the
-    drop that lowers the BIC most is kept, and this repeats until none does.
-
-    Returns ``(fit, shape, dropped)``; each dropped ring is recorded with its
-    radius, width and flux and the BIC change (negative is better).
-    """
+    """Drop the ring whose removal lowers the BIC most, repeatedly: ``(fit, shape, dropped)``."""
     ctx, n_data = p._ctx(), int(p.processed.n_independent)
     dropped = []
     while shape.n > 1:
+        # a greedy fit can leave a ring carrying no light, which only costs parameters
         smaller = dataclasses.replace(shape, n=shape.n - 1)
         best = None
         for k in range(1, shape.n + 1):
@@ -1711,11 +1520,7 @@ def _planet_values(values, colour):
 
 
 def _companion_report(p, planet):
-    """The fitted companion for the summary, or None without one.
-
-    ``planet`` is ``dra, ddec, fp[, ap]`` of the preferred model;
-    ``detection_delta_chi2`` is the best Δχ² of the searches that found it.
-    """
+    """The fitted companion (``dra, ddec, fp[, ap]``) for the summary, or None."""
     if planet is None:
         return None
     searches = p._report("profile")["searches"]
@@ -1734,15 +1539,9 @@ def _companion_report(p, planet):
 
 
 def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
-    """MAP fit of the Gaussian-process disk at one ℓ.
+    """MAP fit of the Gaussian-process disk at one ℓ, geometry frozen at ``geo``.
 
-    The geometry is frozen at ``geo`` (the single-ring fit's), which makes
-    the fit fast. A single ring is only an approximation to a
-    lopsided, multi-ring disk, so its inclination and position angle are a
-    few degrees off, and a frozen error is paid for by the profile and the
-    companion. With ``release`` a second fit frees them, starting from the
-    first fit's values, and the returned values and priors include them.
-    ``max_steps`` bounds the frozen fit (a screening fit).
+    ``release`` refits with the geometry free; ``max_steps`` bounds the frozen fit.
     """
     import equinox as eqx
 
@@ -1750,6 +1549,7 @@ def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
 
     ctx, data = p._ctx(), p.processed
     template, priors = _gp_template(ctx, geo, ell, planet, degree)
+    # frozen first (fast): the single ring's geometry is a few degrees off
     frozen = eqx.tree_at(
         lambda m: m.parts[1], template, template.disk.freeze_geometry(data)
     )
@@ -1770,12 +1570,7 @@ def _gp_fit(p, ell, planet, geo, degree=None, release=False, max_steps=None):
 
 
 def _fold_gp_values(ctx, values, degree=None):
-    """``values`` with the disk's ``pa`` in [0°, 180°), the harmonics turned.
-
-    The Gaussian process's version of ``_fold_fit``: the harmonics are a
-    ``MultipoleKernel``'s latents, of shape ``(2, order, node)``, and the order-*m*
-    latents are multiplied by ``(-1)^m`` when ``pa`` is moved by 180°.
-    """
+    """``_fold_fit`` for the Gaussian process: ``pa`` in [0°, 180°), latents turned."""
     pa = float(onp.asarray(values["disk.pa"]))
     if 0.0 <= pa < 180.0:
         return values
@@ -1794,14 +1589,9 @@ def _fold_gp_values(ctx, values, degree=None):
 
 
 def _geometry_starts(p, geo):
-    """Candidate ``(inc, pa)`` starts for the Gaussian process.
-
-    The single-ring fit's, the grid's rival minima and a coarse lattice: a
-    single ring is the wrong model for a multi-ring, lopsided disk and can
-    settle in a mode far from the disk's geometry, which the released fit
-    then cannot leave.
-    """
+    """Candidate ``(inc, pa)`` starts: the single-ring fit, grid rivals and a lattice."""
     ctx = p._ctx()
+    # the single ring can settle in a wrong mode that the released fit cannot leave
     starts = [(geo["inc"], geo["pa"])]
     starts += [
         (r["inc_deg"], r["pa_deg"])
@@ -1817,17 +1607,12 @@ def _geometry_starts(p, geo):
 
 
 def _geometry_search(p, geo, ell):
-    """The start whose frozen-geometry Gaussian-process fit has the lowest χ².
-
-    Returns ``(geometry, fit, rows)``: the winning ``geo``, its converged fit
-    (with no planet) and every start's χ²/N after a short screening fit. The
-    geometry is frozen, and a wrong geometry costs far more χ² than a right
-    one, so a few steps rank the starts.
-    """
+    """The start with the lowest frozen-geometry χ²: ``(geometry, fit, rows)``."""
     n_data = int(p.processed.n_independent)
     best, rows = None, []
     for inc, pa in _geometry_starts(p, geo):
         trial = {**geo, "inc": float(inc), "pa": float(pa)}
+        # a few steps suffice: a wrong geometry costs far more χ² than a right one
         screen, _ = _gp_fit(p, ell, None, geo=trial, max_steps=_SCREEN_STEPS)
         rows.append(
             {
@@ -1843,22 +1628,14 @@ def _geometry_search(p, geo, ell):
 
 
 def _mackay_scale(model, data):
-    """MacKay's error scale ``s`` at a Gaussian-process disk's MAP fit.
-
-    ``s² = χ² / (N − γ)`` with ``γ`` the effective number of parameters the
-    data measure (``imaging.error_scale``, here on the disk's latents).
-    """
+    """MacKay's error scale ``s² = χ² / (N − γ)`` at a Gaussian-process disk's MAP."""
     from ..imaging import error_scale
 
     return float(error_scale(model, data, path="disk"))
 
 
 def _score_ell(p, ell, planet, geo, k):
-    """Fit the Gaussian-process disk at one ℓ and score it: a candidate row.
-
-    The Laplace evidence is computed on the data the fit used (rescaled with
-    ``error_scale="rescale"``), so every ℓ is scored on one footing.
-    """
+    """Fit the Gaussian-process disk at one ℓ and score it: a candidate row."""
     from ..imaging import log_evidence
 
     fit, priors = _gp_fit(p, ell, planet, geo=geo, release=True)
@@ -2150,13 +1927,7 @@ def _compare_rings(p):
 
 
 def _inner_stats(model, data, ctx):
-    """Light near the inner edge, and its Laplace correlation with the flux.
-
-    The fraction of the disk's light within one half-fringe of ``r_in``,
-    and the correlation between ``disk.flux`` and that fraction under the
-    Gauss-Newton posterior of the flux and the profile's latents (a flat
-    prior on the flux and the standard-normal prior of the latents).
-    """
+    """The disk's light fraction within a half-fringe of ``r_in`` and its flux correlation."""
     import jax
     import jax.numpy as np
 
@@ -2209,13 +1980,7 @@ def _stability(p, rows):
 
 
 def _render_stats(p, model):
-    """χ²/N of the model and of its disk rendered to pixels, as a dict.
-
-    Compared on the channel nearest the reference wavelength with the disk's
-    colour removed, so that the pixel image (one brightness) is exactly the
-    disk the model describes there; the star and any companion are kept.
-    ``None`` entries when it cannot be computed.
-    """
+    """χ²/N of the model and of its disk rendered to pixels (None if not computable)."""
     import equinox as eqx
     import jax.numpy as np
 
@@ -2229,6 +1994,7 @@ def _render_stats(p, model):
         w0 = wavel[onp.argmin(onp.abs(wavel - ctx.wavel0))]
         channel = data.select(w0 * (1.0 - 1e-6), w0 * (1.0 + 1e-6))
         n = int(channel.n_independent)
+        # colour removed: the pixel image has one brightness
         if model.disk.spectral_index is not None:
             model = eqx.tree_at(
                 lambda m: m.disk.spectral_index,
@@ -2319,11 +2085,7 @@ def _compare_gp(p):
 
 
 def _profile_curves(model, r):
-    """Radial profile, spectral index and lopsidedness of a model's disks.
-
-    Each is evaluated at the radii ``r`` and combined over the disks by
-    their share of the light at that radius.
-    """
+    """Profile, spectral index and lopsidedness at radii ``r``, light-weighted over disks."""
     from ..models import MultipoleDisk
 
     total = onp.zeros_like(r)
@@ -2459,27 +2221,9 @@ def _plot_summary_file(p, model):
 
 
 def _fold_pa(samples, pa_site, parity, centre):
-    """``pa`` folded to within 90° of ``centre``, the harmonics rotated to match.
-
-    A disk without height is the same under ``pa`` → ``pa`` + 180° with the
-    order-*m* harmonic turned by 180°, i.e. multiplied by ``(-1)^m``, so
-    harmonics let a sampler move between the two. Folding every sample to
-    the half-circle around the MAP makes the summary unimodal wherever the
-    MAP lies; a cut at a fixed angle would split a posterior near it.
-
-    Parameters
-    ----------
-    samples : dict
-        Site to array of shape ``(chain, draw, ...)``.
-    pa_site : str
-        The position-angle site (degrees).
-    parity : dict
-        Harmonic site to its sign ``(-1)^m``, an array broadcast against the
-        site's trailing dimensions.
-    centre : float
-        The position angle (degrees) to fold about, normally the MAP's.
-    """
+    """``pa`` folded to within 90° of ``centre``, the ``parity``-signed harmonics flipped."""
     pa = onp.asarray(samples[pa_site], dtype=float)
+    # fold about the MAP, not a fixed angle, which would split a posterior near it
     turns = onp.floor((pa - centre + 90.0) / 180.0)
     flip = (turns % 2.0) == 1.0
     out = dict(samples)
@@ -2497,12 +2241,7 @@ def _best_row(compare):
 
 
 def _posterior_setup(p):
-    """Model, priors, start, position-angle site and parity of the NUTS run.
-
-    The geometry is released: the rings' ``inc`` and ``pa`` are free
-    already; the Gaussian process's are added, starting at the geometry
-    stage's values (a Gaussian process's NUTS is run on the unfrozen model).
-    """
+    """Model, priors, start, position-angle site and parity of the NUTS run."""
     ctx = p._ctx()
     compare = p._report("compare")
     values = _io.load_model_values(p.output / "models" / "best")
@@ -2530,6 +2269,7 @@ def _posterior_setup(p):
     planet = _planet_values(values, ctx.colour) if row["planet"] else None
     template, priors = _gp_template(ctx, geo, compare["ell_mas"], planet)
     model = _apply(template, values, priors)
+    # NUTS runs on the unfrozen model: the geometry is released here
     priors = {
         **priors,
         **{f"disk.{k}": v for k, v in _geometry_priors(ctx).items()},

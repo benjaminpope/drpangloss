@@ -52,7 +52,9 @@ The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per 
 
 `max_sep_mas` is by default the coarsest λ/B. Where the uv samples of one wavelength lie on a lattice (aperture masks, DISCO products), the visibilities repeat when the companion moves by a vector of the reciprocal lattice, so the default box is limited to half an alias cell, the largest square with no two points that differ by such a vector. The summary records the limit as `search.alias_cap_mas` (`null` when it was not applied), and the quicklook notes it. An explicit `max_sep_mas` is never capped; `OrbitPipeline` limits its position grid in the same way.
 
-The settings of `BinaryPipeline` (`BinaryPipeline.defaults()` lists the values):
+### `BinaryPipeline` settings
+
+`BinaryPipeline.defaults()` lists the values:
 
 | Setting (default) | Meaning |
 | --- | --- |
@@ -96,6 +98,19 @@ res.summary["star"]["diam_mas"], res.model(), res.model("uniform")
 
 Priors are group-invariant: log-uniform in the diameter over `diam_range_mas` (by default from a tenth of the resolution limit to four times the field of view) and uniform on [0, 1] in `q1` and `q2`, which cover exactly the physical quadratic laws. The fit is on the quoted errors, and chi-squared per independent datum is reported on them for each model.
 
+### `StarPipeline` settings
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `diam_range_mas` (`None`) | `[min, max]` of the log-uniform diameter prior; by default from 0.1 times the finest λ/B (well inside the unresolved regime) to 4 times the coarsest (beyond the first null on every baseline), taken over the observed samples. |
+| `n_scan` (2000) | Points of the log-spaced diameter scan; each lobe's minimum is then refined on 201 points within one scan step either side. |
+| `max_lobes` (5) | The most diameter lobes (separate minima of the scan) fitted for each model. The best lobe gives the fit and bounds the posterior's diameter prior; the table is `summary["fit"]["models"][name]["lobes"]`. |
+| `wavel_range` (`None`), `error_floor` (`None`) | As for `BinaryPipeline`. |
+| `error_scale` (`"quoted"`) | `"fit"` also fits log-uniform error scales `vis_scale` and `phi_scale` on [0.1, 10], profiled along the scan. With fitted scales χ² is N by construction, so lobes and models are compared on −2 log L (on the quoted errors, χ² up to a constant). |
+| `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
+| `batch_size` (`None`) | Scan batch size. |
+| `quicklook_execute` (`True`) | Execute the quicklook notebook. |
+
 ## `ImagingPipeline`: a model-independent image (provisional, first version)
 
 ```python
@@ -115,6 +130,17 @@ This first version fits an ensemble of up to 8 members (`members`, default 8), w
 ```bash
 virgil-pipeline image star.oifits -o runs/image --set star=auto
 ```
+
+### `ImagingPipeline` settings
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `oversample` (3.0), `field_fwhms` (6.0), `field_mas` (`None`), `max_npix` (128) | The grid: pixels per resolution element, the field in beam FWHMs (or `field_mas` in mas), and the most pixels per side. |
+| `star` (`"auto"`), `star_threshold` (5.0) | `True`, `False` or `"auto"`, which compares fits with and without a central point source by log evidence and decides at \|ΔlogZ\| ≥ `star_threshold`. |
+| `sigmas` ([1, 2, 4]), `lengths_beam` ([0.5, 1, 2]), `grid_growths` (2) | The evidence grid for the Gaussian-process amplitude σ and length ℓ (in beams). |
+| `members` (8), `member_grids` (`False`) | Members fitted at the shared hyperparameters, varying only the start, the pixel scale and the field (1 or 1.5 times). `member_grids=True` gives each its own evidence grid: slow, for cluster runs. |
+| `method` (`None`), `max_steps` (`None`) | The optimizer of [`fit`][virgil.fitting.fit]. |
+| `seed` (0), `wavel_range` (`None`), `error_floor` (`None`), `quicklook_execute` (`True`) | As for `BinaryPipeline`. |
 
 ## `DiskPipeline`: rings and haloes (provisional)
 
@@ -144,6 +170,26 @@ The resolution scale is the half-fringe λ/2B of the longest baseline. The inner
 
 Priors are group-invariant: uniform in cos *i*, an `AngleVector` for the position angle (no wrap), log-uniform in ring radii, widths and fluxes, and an isotropic Gaussian (scale 0.4) on the real and imaginary parts of each ring's harmonics, so that the phase of the lopsidedness is uniform. The rings are fitted on the quoted errors (`error_scale="quoted"`, the default there), and `error_scale="fit"` is available for them only; `"rescale"` is for the Gaussian process (see above). The star is a grey point source unless `star_diameter_mas` (a uniform disk; the inner radius is then at least its radius), `star_temperature_k` or `star_index` says otherwise, and the disk's spectral index is relative to that star: it is conditional on the star's assumed spectrum, so read it with the `model.star` section of the summary beside it (on real discs a different star index moved the disk's index by 0.3 to 1.4). The rings' colour is a power-law index per ring by default; `ring_colour="blackbody"` (rings only) fits a temperature per ring and for the planet instead, which follows blackbody-like spectra across a broad band that a power law misses. A model saved under `models/` is a real virgil object: `res.model()` is the preferred one, `res.model("geometry")` the single-ring fit and `res.model("rings_2")` or `res.model("gp_ell1")` a candidate.
 
+### `DiskPipeline` settings
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `r_in_mas` (`None`), `r_out_mas` (`None`) | The radial range; by default one half-fringe and half of [`image_field`][virgil.imaging.image_field]. |
+| `n_r` (`None`) | Quadrature nodes of a profile; by default [`suggest_n_r`][virgil.models.MultipoleDisk.suggest_n_r] (for the Gaussian process, at least enough to resolve the shortest ℓ). |
+| `n_inc` (10), `n_pa` (12), `inc_max_deg` (85) | The geometry grid. |
+| `max_rings` (4) | The most rings fitted (`"rings"`). |
+| `ell_halffringes` ([1, 2, 4]), `ell_floor_halffringes` (0.5) | The grid of ℓ/√3 in half-fringes (`"gp"`), and the smallest ℓ/√3 that the grid or its extension may reach. |
+| `harmonic_degree` (1) | Degree of the harmonics (0 for none). |
+| `spectral_index` (`None`), `spectral_index_min_channels` (3) | `True` or `False` forces the colour on or off; by default it is on with more than `spectral_index_min_channels` channels. |
+| `ring_colour` (`"power_law"`) | Colour of each ring and of the planet when the colour is on (`"rings"` only): `"power_law"` fits a spectral index, `"blackbody"` a temperature (300 to 3000 K, log-uniform) with the flux at the reference wavelength. |
+| `wavel0_m` (`None`), `star_temperature_k` (`None`), `star_diameter_mas` (`None`), `star_index` (`None`) | The reference wavelength (default the mean) and the star: a grey point source unless a uniform disk (`star_diameter_mas`), a blackbody (`star_temperature_k`) or a power law (`star_index`) is given; only one of the last two may be set. |
+| `companion` (`False`), `companion_min_delta_chi2` (25), `companion_max_sep_mas` (`None`), `companion_step_mas` (`None`) | Search the residuals for a point source and fit a detection jointly; the grid defaults to `r_out_mas` and half a half-fringe. |
+| `length_scale_nats` (3), `ring_count_nats` (3), `inner_edge_fraction` (0.1), `inner_edge_correlation` (0.9), `outer_edge_fraction` (0.01), `inclination_min_deg` (15), `render_tolerance` (0.1), `unconstrained_correlation` (0.8) | Thresholds of the [checks](#checks) of the same names. |
+| `error_scale` (`"auto"`) | `"auto"` is `"rescale"` for `"gp"` and `"quoted"` for `"rings"`; `"fit"` is for rings only. |
+| `wavel_range` (`None`), `error_floor` (`None`), `batch_size` (`None`) | As for `BinaryPipeline`. |
+| `posterior` (`False`), `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
+| `quicklook_execute` (`True`) | Execute the quicklook notebook. |
+
 ## `OrbitPipeline`: a binary seen on several nights (provisional)
 
 `OrbitPipeline` fits the orbit of a binary observed on several nights, and it does not need to be told the period. The default run is a blind search over the period aliases: the window of periods comes from the data, and no published period, warm start or paper prior is used. Give it the OIFITS files (each is split into nights at gaps of `gap_days`), or an `Epochs`, or `{night: data}`:
@@ -172,6 +218,26 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
 A run that interrupts resumes: the bands already fitted are read back from their checkpoints, so only the missing bands are refitted. `run(resume=False)` starts over, bands included. The winner is the band of highest evidence; the summary's `delta_log_z` is its log Z over the runner-up's, and `alias_ambiguity` warns below 10 nats and fails below 1. `no-orbit` compares the best orbit's evidence (with its prior volume) with the best log likelihood of the star alone (a maximum, not an evidence, so the test leans towards no orbit), and a run that finds no orbit skips the posterior. The posterior is sampled with NUTS (dense mass matrix) on the engine's own tempered, scale-marginalized density, not with `gauss_newton_mass`: that builds its curvature from the Jacobian of a virgil model's whitened residuals, which this density (tempered, with the V² amplitude profiled) is not. On the two-season synthetic case a diagonal mass matrix gave a similar minimum effective sample size (225 against 156, 300 warm-up and 300 draws on 2 chains) at 60% of the cost, so the dense mass is a conservative choice for the narrow ridges that real, correlated orbits can have.
+
+### `OrbitPipeline` settings
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `gap_days` (0.5) | Frames further apart than this are in different nights (`from_oifits`). |
+| `exclude` (`{}`) | `{file, night or dataset: reason}` left out; a ruling recorded in `run.json`. |
+| `flag_nights` (`True`), `flag_sep_blocks` (`False`) | Flag the nights that cannot seed an orbit; whether a separation below λ/2B also keeps a night from seeding (reported either way). |
+| `outlier_eps` (0.02) | Prior outlier probability of each night in the orbit fit, whose likelihood is `(1 - eps) L + eps L_broad`, with `L_broad` the night's mean likelihood over the position grid, so one bad night (a sidelobe) cannot move the orbit. `0 <= eps < 1`; 0 turns it off. The posterior outlier probability of each night is in the search report, with the `orbit-prefers-secondary` flags (reported only: no night is ever excluded). The no-orbit null is scored without the mixture, since its broad component is a companion elsewhere, which a single star must not have. |
+| `batch_size` (`None`), `memory_budget` (`None`, bytes), `coarse_nats` (30) | Grid points and candidate orbits scored together (by default what fits in the budget, 1 GiB on a CPU); for data with gains or offsets, the nats below the best within which the position grid integrates the error scale in full (`None`: every point). See `epoch_positions`. None is a prior range. |
+| `n_peaks` (5), `max_sep_mas` (`None`), `grid_step_mas` (`None`), `max_grid` (201) | The position search; the step is by default a quarter of the finest λ/B (coarsened to `max_grid` points) and the half-width the coarsest λ/B, widened to at most `a_range[1] (1 + ecc_max)` and limited on lattice coverage (aperture masks, DISCO) to the alias cell. |
+| `period_range` (`None`) | `[min, max]` days; by default from the data (see `fit_orbit_aliases`). |
+| `a_range` ([1, 30]), `flux_range` ([0.01, 1]), `ecc_max` (0.9), `s_max` (`None`) | The engine's prior ranges (mas; flux ratio at most 1; eccentricity; error-scale bound). |
+| `primary_diam` (`"auto"`), `vis_amp`, `sign_free`, `flip_flux`, `temper` (`True`) | As for the engine. |
+| `n_bands_max`, `n_candidates`, `n_refine`, `max_steps`, `n_is` | Search effort; the defaults are those of `fit_orbit_aliases`, the one place to raise them (the `mode_converged` check says when to). |
+| `alias_nats` (10), `no_orbit_nats` (10) | Thresholds of the `alias_ambiguity` and `no_orbit` checks. |
+| `drop_outlier_night` (`True`) | Refit the search without the night of highest raw χ²/N (skipped below 3 nights) and compare the verdict (the `night_dropped` check); it costs a second search. |
+| `posterior_p_min` (0.05), `max_modes` (3) | Bands sampled by NUTS besides the winner. |
+| `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4), `chain_method` (`"vectorized"`), `seed` (0) | NUTS. |
+| `quicklook_execute` (`True`) | Execute the quicklook notebook. |
 
 ## The run folder
 

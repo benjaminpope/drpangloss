@@ -564,10 +564,8 @@ def model_gain(
 ):
     """Whether a richer model improves the fit by more than its BIC penalty.
 
-    The gain is the drop in −2 log L from the simpler to the richer model,
-    which is their Δχ² when the errors are quoted. The richer model
-    contains the simpler one, so a negative gain means that one of the fits
-    did not converge.
+    The gain is the drop in −2 log L from the simpler to the richer model
+    (their Δχ² on quoted errors).
 
     Parameters
     ----------
@@ -589,7 +587,9 @@ def model_gain(
         return Check(
             name, "fail", gain, penalty, "The −2 log L gain is not finite."
         )
-    if gain < -1.0:
+    if (
+        gain < -1.0
+    ):  # the richer model contains the simpler: a fit did not converge
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
@@ -662,10 +662,8 @@ def length_scale(
 ):
     """Whether the data measure the Gaussian-process length scale ℓ.
 
-    The Laplace evidences of the profile fitted at each ℓ of a grid differ
-    by little when the data are silent about ℓ: it is then a prior choice
-    and not a result, and the profile's fine structure is the prior
-    wherever the data say nothing.
+    Laplace evidences that differ by little across the ℓ grid mean ℓ is a
+    prior choice, not a result.
 
     Parameters
     ----------
@@ -678,19 +676,15 @@ def length_scale(
     nats : float, optional
         Spread of the evidences (max − min) below which ℓ is not measured.
     edge : str or None, optional
-        ``"low"`` or ``"high"`` when the best ℓ is still the smallest or the
-        largest of the grid after the one extension the pipeline allows
-        itself: the grid has then chosen its own edge, so the choice
-        reflects the grid and not the data.
+        ``"low"`` or ``"high"`` when the best ℓ is still the smallest or
+        largest of the grid after its one extension (the grid chose its edge).
     extended : str or None, optional
-        The side the grid was extended on (``None`` when it was not, as when
-        the smallest ℓ was already at the floor).
+        The side the grid was extended on (``None`` if it was not).
 
     Notes
     -----
-    A Matérn length is not a feature width. The message quotes the
-    squared-exponential equivalent of the best ℓ, which matches the
-    curvature at zero lag: ℓ·√((ν − 1)/ν) = ℓ/√3 for the pipeline's ν = 3/2.
+    The message quotes the squared-exponential equivalent ℓ/√3 of the Matérn
+    ν = 3/2 length, which matches the curvature at zero lag.
     """
     z = [float(v) for v in evidences]
     if len(z) < 2 or not all(_finite(v) for v in z):
@@ -704,7 +698,9 @@ def length_scale(
         )
     spread = max(z) - min(z)
     best = max(range(len(z)), key=z.__getitem__)
-    equivalent = float(ells[best]) / math.sqrt(3.0)
+    equivalent = float(ells[best]) / math.sqrt(
+        3.0
+    )  # a Matérn length is not a feature width
     where = (
         f"best ℓ = {float(ells[best]):.3g} mas, a squared-exponential "
         f"length of {equivalent:.3g} mas, {equivalent / halffringe:.2g}× "
@@ -1265,11 +1261,8 @@ def at_bound(names, *, start=False):
 def render_consistency(chi2_model, chi2_render, *, tolerance=0.1, floor=0.02):
     """Whether the rendered image fits the data as well as the model does.
 
-    A ``MultipoleDisk`` is evaluated in the Fourier domain, but an image
-    is a sum of pixels, so a profile needs more quadrature nodes to render
-    than to fit: the model's χ²/N hardly moves with ``n_r`` while a
-    rendered image's can be 30 per cent worse. An image drawn from a model
-    that fails this check is not the image the fit found.
+    A rendered image needs more quadrature nodes than the fit, so it can
+    fit worse than the model it was drawn from.
 
     Parameters
     ----------
@@ -1289,6 +1282,7 @@ def render_consistency(chi2_model, chi2_render, *, tolerance=0.1, floor=0.02):
             "The rendered image's χ² could not be computed.",
         )
     gap = abs(chi2_render - chi2_model)
+    # Allowed gap is relative plus a floor, so a near-zero chi-squared passes.
     ok = gap <= tolerance * chi2_model + floor
     return Check(
         "render_consistency",
@@ -1316,12 +1310,9 @@ def structure_unconstrained(
 ):
     """Whether the data constrain the structure at all.
 
-    Flat evidences across the length-scale grid alone say the data do not
-    measure ℓ (see ``length_scale``). Flat evidences *and* radial profiles
-    that differ between the fits (a low minimum correlation) say more: the
-    image is the prior's, and a different ℓ, a smaller hole or another
-    strategy would give a different image that fits as well. On poorly
-    constrained data shrinking the hole changed nothing.
+    Flat evidences across the length-scale grid say only that ℓ is not
+    measured (see ``length_scale``); flat evidences *and* unstable radial
+    profiles say the image is the prior's.
 
     Parameters
     ----------
