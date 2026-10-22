@@ -141,7 +141,7 @@ between `s` and the amplitude. The gradient is the partial derivative at `ŝ`
 `result.info["derived"]["cal.sigma"]` and
 [`data.sigma_hat`][virgil.radio.ComplexVisData.sigma_hat] computes it for any
 values. Held-out data are not scored with their own `ŝ`: pass the training
-`ŝ` as `data.term(..., sigma=ŝ)`, and use `sigmas=True` with `cross_validate`. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
+`ŝ` as `data.term(..., sigma=ŝ)`, and use `sigmas=True` with `cross_validate`. The loss it returns is `½χ²(ŝ) + log_norm(ŝ) = Σ_d N_d (1 + 2 ln ŝ_d)`, the profile of the joint loss, so losses compare across fits of the same data, profiled or not. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
 χ² at the quoted errors, `Σ_d 2 N_d ŝ_d²`, instead.
 
 The term evaluates the points in chunks of `chunk_size` with `jax.lax.map`,
@@ -302,17 +302,6 @@ part adds the Hermitian conjugates. Dividing by `Σ w` makes the dirty beam
 `Σ w cos(2π(ux + vy)) / Σ w` peak at 1 at the phase centre, so the image is in
 Jy/beam and a point source of flux `F` at the centre peaks at `F`.
 
-Weightings: natural is `w` (`1/σ²`); uniform is `w / W_c`, `W_c` the summed weight
-of the point's uv cell; Briggs is `w / (1 + W_c f²)` with
-`f² = (5·10^−R)² / (Σ_c W_c² / Σ_k w_k)`, natural as `R → +∞` and uniform as
-`R → −∞` (`R` in about −2..2). Densities are counted on a uv grid (Hermitian
-partners share a cell) that only reweights the points; the default cell is
-`1/FoV`. `uvtaper` multiplies the weights by the Fourier transform of a Gaussian,
-so the beam is the weighted beam convolved with it. With `scene`, `values` and
-`nuisance` the image is of `V − M`. `dirty_beam` takes the same arguments and
-peaks at 1 only on an odd `npix` (on an even one the phase centre lies between
-four pixels).
-
 * **Orientation** is that of `Image`: East to the left, North up, the phase
   centre at pixel `((npix − 1)/2, (npix − 1)/2)` (between pixels for an even
   `npix`, where the sampled beam peak is a little below 1: use an odd `npix` for a
@@ -321,9 +310,13 @@ four pixels).
   weight in the point's uv cell; `"briggs"` is `w/(1 + W_c f²)` with
   `f² = (5·10^−R)² / (Σ_c W_c² / Σ_k w_k)`, natural as `R → +∞` and uniform as
   `R → −∞`. The density is counted on a uv grid (cell `1/FoV` by default;
-  Hermitian partners share a cell) and only reweights the points.
+  Hermitian partners share a cell) and only reweights the points. `uvtaper`
+  multiplies the weights by the Fourier transform of a Gaussian, so the beam is
+  the weighted beam convolved with it.
 * **Residuals**: with `scene`, `values` and `nuisance` the data minus the
   model (with the calibration nuisances applied, as in `term`) is imaged;
-  `use_sigma=True` divides the weights by the fitted `s_d²`.
+  `use_sigma=True` divides the weights by the fitted `s_d²`. `dirty_beam` has
+  no `scene` or `use_sigma`: passing `values` and `nuisance` always divides its
+  weights by `s_d²`, so match it to an image made with `use_sigma=True`.
 * The beam is not deconvolved: this is a display and a check on a fit, never
   a likelihood. Large data are transformed in chunks of `chunk_size` points.

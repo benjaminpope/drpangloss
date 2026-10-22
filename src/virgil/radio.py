@@ -736,7 +736,8 @@ class ComplexVisData(eqx.Module):
 
         The response to a unit point source at the phase centre, normalized
         to 1 there. See [`dirty_image`][virgil.radio.ComplexVisData.dirty_image]
-        for the parameters. On an even ``npix`` the phase centre lies between
+        for the parameters; ``values`` and ``nuisance`` together divide the
+        weights by the fitted ``s_d²`` (as ``use_sigma=True``). On an even ``npix`` the phase centre lies between
         four pixels (the convention of [`Image`][virgil.models.Image]), so the
         sampled peak is slightly below 1; use an odd ``npix`` for a pixel
         centred on it.
