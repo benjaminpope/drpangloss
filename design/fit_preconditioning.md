@@ -406,3 +406,23 @@ Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
   master parameters, float64 loss sums, re-centred parameters and a loss
   offset to the round's reference did not help. float32 is documented as
   limited at weak weights.
+
+### Ensemble corners at memory 100 (12² AMI grid of `tests/test_ensemble.py`)
+
+Corner (weight per data point) of an 11-weight L-curve, by L-BFGS memory and
+step budget; the ensemble itself runs `fit`'s default 20000 steps, not 200.
+
+| family | range | mem 50, 200 steps | mem 50, converged | mem 100, 200 steps | mem 100, converged |
+| --- | --- | --- | --- | --- | --- |
+| tv | 1e-4 … 10 | 0.32 | 1.0 | 1.0 | 1.0 |
+| maxent | 1e-4 … 10 | 0.32 | 0.32 | 0.32 | 0.32 |
+| starlet | 1e-4 … 10 | 0.1 | 0.32 | **3e-4** | 0.32 |
+| tsv (LM) | 0.1 … 1e4 | – | – | 32 | 32 |
+
+All corners lie in the default ranges once converged, so the ranges are
+unchanged. The corner of a truncated starlet curve is not stable (3e-4 at
+memory 100 and 200 steps), so `test_default_weight_ranges_hold_the_corner_with_room_below`
+now fits to convergence. The starlet corner also moves with the sweep's range
+(converged: 0.32 for 1e-4 … 10, 0.16 for 1e-5, 5e-6 for 1e-6): its L-curve has
+no sharp corner, so a corner at the edge of a sweep is not a corner. Re-deriving
+the ranges on the 60-dataset contest bench needs an OzSTAR job.

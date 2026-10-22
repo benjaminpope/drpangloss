@@ -81,7 +81,7 @@ def _default_weight_ranges():
         "tv": (1e-4, 1e1),
         "tsv": (1e-1, 1e4),
         "maxent": (1e-4, 1e1),
-        "starlet": (1e-5, 1e1),
+        "starlet": (1e-4, 1e1),
     }
 
 
