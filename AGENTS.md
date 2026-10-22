@@ -178,14 +178,19 @@ Ben is surprised how long some docstrings are. Keep them short.
   its entry in `references/provenance.toml` (`used_in`, and `how = "ported"`
   when code was adapted) in the same PR, and `scripts/sync_references_page.py`
   regenerates the public `docs/references.md`; `tests/lint/test_provenance.py`
-  fails on a cited arXiv ID, GitHub repository or "Author et al. (YYYY)" with
-  no entry. Never invent an arXiv ID: leave the entry `verified = false` until
+  fails on a cited arXiv ID, DOI, ADS bibcode, GitHub/GitLab/Bitbucket
+  repository or author-year citation ("Smith (2019)", "Smith et al. 2019") with
+  no entry, in the source, docs, notebooks, scripts and top-level Markdown. A
+  citation matches the first author and `year`; when the journal year differs
+  from the arXiv year, add `alt_years` with an `alt_years_note`. An entry
+  with no `used_in` must be cited somewhere or have `role = "bibliography"`. Never invent an arXiv ID: leave the entry `verified = false` until
   it is checked on the arXiv abstract page (`scripts/fetch_references.py`
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
 - **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
   over 60 lines that is not in `tests/lint/docstring_allowlist.txt`
-  (`module:qualname`, sorted by module), and on a stale entry, so the list can
+  (`module:qualname N`, sorted by that key; `N` is the current length and a
+  listed docstring may not grow past it), and on a stale entry, so the list can
   only shrink. New code may not add to it; a PR that rewrites a listed
   docstring deletes its line.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh

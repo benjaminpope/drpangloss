@@ -965,7 +965,7 @@ def test_absolute_phases_with_a_nonzero_constant_time(tmp_path):
 # === WRITING AN OIDATA ===
 
 
-def _same_data(back, data):
+def _same_data(back, data, placeholders=False):
     """``back`` has ``data``'s observables, errors, flags, (u, v) and times."""
     for name in ("u", "v", "vis", "d_vis", "phi", "d_phi"):
         onp.testing.assert_allclose(
@@ -984,14 +984,23 @@ def _same_data(back, data):
         onp.broadcast_to(data.wavel, data.u.shape),
     )
     assert back.cp_flag == data.cp_flag
-    # Data without times come back at MJD 0 (documented), not as timeless.
-    assert back.dt is not None
-    if data.dt is not None:
+    if data.dt is None:  # documented: timeless data come back at MJD 0
+        assert back.t_ref == 0.0 and not onp.any(onp.asarray(back.dt))
+    else:
         onp.testing.assert_allclose(
             onp.asarray(back.dt) + back.t_ref,
             onp.asarray(data.dt) + data.t_ref,
             atol=1e-9,
         )
+    if data.frame is not None:  # the same partition into frames
+        pairs = onp.column_stack([back.frame, data.frame])
+        assert (
+            len(onp.unique(pairs, axis=0))
+            == onp.unique(back.frame).size
+            == onp.unique(data.frame).size
+        )
+    if data.stations is not None and not placeholders:
+        assert onp.array_equal(back.stations, data.stations)
 
 
 def _closure_only():
@@ -1076,8 +1085,7 @@ def test_written_oidata_passes_pyoifits_verification(tmp_path):
 
     data = nrm_oidata()
     tables, _ = _oidata_tables(data)
-    # pyoifits cannot verify the zero EFF_BAND that stands for an unknown width.
-    tables["OI_WAVELENGTH"]["EFF_BAND"] = 0.1e-6
+    assert "EFF_BAND" not in tables["OI_WAVELENGTH"]  # estimated on writing
     path = tmp_path / "v.oifits"
     build_hdulist(tables).writeto(path)
     pyoifits.open(path).verify("exception")
@@ -1092,18 +1100,115 @@ def test_oidata_bandwidth_is_written_as_eff_band(tmp_path):
     onp.testing.assert_allclose(back.bandwidth, data.bandwidth, rtol=1e-6)
 
 
-def test_repeated_baselines_without_times_get_placeholder_stations(tmp_path):
-    """Frames without times share station pairs, which the reader could not
-    tell apart: the file renumbers the stations and keeps the closure phases."""
+def test_timeless_frames_survive_with_their_stations(tmp_path):
+    """Frames without times share an MJD: the file separates them in TIME."""
     from virgil.coverage import vlti_oidata
 
     data = vlti_oidata()
     assert data.dt is None and data.stations is not None
+    assert onp.unique(data.frame).size > 1
     tables, reason = _oidata_tables(data)
     assert reason is None
-    pairs = tables["OI_VIS2"]["STA_INDEX"]
-    assert len({tuple(p) for p in pairs}) == len(pairs)
-    _same_data(OIData(write_oifits(data, tmp_path / "x.oifits")), data)
+    assert "STAPLACE" not in tables["info"]
+    back = OIData(write_oifits(data, tmp_path / "x.oifits"))
+    assert onp.unique(back.frame).size == onp.unique(data.frame).size
+    _same_data(back, data)
+
+
+def test_timed_frames_closer_than_the_tolerance_stay_apart(tmp_path):
+    import equinox as eqx
+    from virgil.coverage import vlti_oidata
+
+    data = vlti_oidata()
+    mjd = 60000.0 + 1e-6 * onp.asarray(data.frame)  # 0.09 s apart
+    data = eqx.tree_at(
+        lambda d: d.dt,
+        data,
+        np.asarray(mjd - 60000.0),
+        is_leaf=lambda x: x is None,
+    )
+    object.__setattr__(data, "t_ref", 60000.0)  # static field
+    back = OIData(write_oifits(data, tmp_path / "x.oifits"))
+    _same_data(back, data)
+
+
+def test_repeated_baselines_without_stations_get_flagged_placeholders(
+    tmp_path,
+):
+    import equinox as eqx
+    from virgil.coverage import vlti_oidata
+
+    data = vlti_oidata()
+    data = eqx.tree_at(
+        lambda d: (d.stations, d.frame),
+        data,
+        (None, onp.zeros_like(onp.asarray(data.frame))),
+        is_leaf=lambda x: x is None,
+    )
+    tables, reason = _oidata_tables(data)
+    assert reason is None and tables["info"]["STAPLACE"]
+
+
+def test_station_index_beyond_int16_is_refused(tmp_path):
+    import equinox as eqx
+    from virgil.coverage import vlti_oidata
+
+    data = vlti_oidata()
+    big = onp.asarray(data.stations) + 40000
+    data = eqx.tree_at(lambda d: d.stations, data, big)
+    _, reason = _oidata_tables(data)
+    assert reason and "32767" in reason
+    with pytest.raises(ValueError, match="32767"):
+        write_oifits(data, tmp_path / "x.oifits")
+    tables = _tables()
+    tables["OI_VIS2"]["STA_INDEX"] = (
+        onp.asarray(tables["OI_VIS2"]["STA_INDEX"]) + 40000
+    )
+    with pytest.raises(ValueError, match="32767"):
+        build_hdulist(tables)
+
+
+def test_eff_band_is_positive_when_the_width_is_unknown(tmp_path):
+    from virgil.coverage import nrm_oidata
+
+    path = write_oifits(nrm_oidata(), tmp_path / "x.oifits")
+    with fits.open(path) as hdul:
+        wave = hdul["OI_WAVELENGTH"]
+        assert onp.all(wave.data["EFF_BAND"] > 0) and wave.header["BANDEST"]
+    assert (
+        OIData(path, bandwidth=True).bandwidth is None
+    )  # estimates stay hidden
+    spaced = _tables(waves=(4.6e-6, 5.0e-6, 5.4e-6))
+    spaced["OI_WAVELENGTH"].pop("EFF_BAND")
+    with fits.open(write_oifits(spaced, tmp_path / "y.oifits")) as hdul:
+        onp.testing.assert_allclose(
+            hdul["OI_WAVELENGTH"].data["EFF_BAND"], 0.4e-6, rtol=1e-6
+        )
+
+
+def test_only_the_unknown_eff_band_entries_are_estimated():
+    tables = _tables(waves=(4.6e-6, 5.0e-6, 5.4e-6))
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = [0.1e-6, 0.1e-6, 0.0]
+    band = build_hdulist(tables)["OI_WAVELENGTH"].data["EFF_BAND"]
+    onp.testing.assert_allclose(band, [0.1e-6, 0.1e-6, 0.4e-6], rtol=1e-6)
+    tables["OI_WAVELENGTH"]["EFF_WAVE"] = [4.6e-6, 4.6e-6, 5.4e-6]
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = 0.0
+    band = build_hdulist(tables)["OI_WAVELENGTH"].data["EFF_BAND"]
+    assert onp.all(band > 0)
+
+
+def test_write_oifits_argument_handling(tmp_path):
+    with pytest.raises(TypeError, match="OIData or a mapping"):
+        write_oifits([1, 2], tmp_path / "x.oifits")
+    with pytest.warns(FutureWarning, match="tables"):
+        write_oifits(tables=_tables(), filename=tmp_path / "x.oifits")
+
+
+def test_date_obs_follows_the_times(tmp_path):
+    from tests._shared import vlti_night
+
+    path = write_oifits(vlti_night(60000.0, frames=2), tmp_path / "x.oifits")
+    assert fits.getheader(path)["DATE-OBS"] == "2023-02-25"
 
 
 def test_bandwidth_that_differs_between_baselines_is_reported(tmp_path):

@@ -60,7 +60,8 @@ Hartkopf, McAlister & Franz 1989, AJ 98, 1014). Analytic marginalization of RV
 zero points is also done by orvara (Brandt et al. 2021, AJ 162, 186). For
 orbit fits to relative and absolute astrometry and RVs without an
 interferometric scene, mature codes exist:
-[orbitize!](https://github.com/sblunt/orbitize) (Blunt et al. 2020, AJ 159, 89),
+[orbitize!](https://github.com/sblunt/orbitize) (Blunt et al. 2020, AJ 159, 89; v3: Blunt et al. 2024, JOSS 9, 6756; the OFTI
+sampler: Blunt et al. 2017),
 [Octofitter](https://github.com/sefffal/Octofitter.jl) (Thompson et al. 2023,
 AJ 166, 164; it also fits closure phases and kernel phases of point sources)
 and [orvara](https://github.com/t-brandt/orvara) (Brandt et al. 2021). They

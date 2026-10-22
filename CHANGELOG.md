@@ -10,7 +10,7 @@ anything before 1.0 may change between minor versions.
 ### Added
 
 - `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
-- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI), and for data with flagged samples; `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
+- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI) and for data with flagged visibilities (flagged closure phases are still skipped); `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0; an unknown width is estimated from the channel spacing and marked `BANDEST`, since OIFITS2 needs it positive), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
 - **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
   `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor
   cycles with a PSF window and cycle threshold, `niter`, `gain`, `threshold`,
@@ -36,11 +36,14 @@ anything before 1.0 may change between minor versions.
 ### Fixed
 
 - `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The longest unflagged wavelength sets the limit (a shift must alias in every channel); `None` only if some unflagged channel is off a lattice. The default box of multi-channel lattice data can therefore now be capped where it was the full field of view before.
+- `write_oifits(OIData)` keeps the frames of data without times (or with frames at one `MJD`): they are written with distinct `TIME`s, so `frame` survives a round trip; data without times are still read back at `MJD` 0. A station index above 32767 (a 16-bit column) is refused with a reason instead of wrapping, `DATE-OBS` follows the times, placeholder stations are marked `STAPLACE`, and a non-`OIData` argument raises `TypeError`.
+- `OrbitPipeline`'s drop-the-outlying-night check no longer kills the `modes` stage when the refit fails (it is recorded as skipped with the reason), counts usable seeded nights, ignores nights with no data, and compares the alias band for the refit's own time span.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
 
 - Internal: inlined single-use trivial private helpers in `models`, `radio` and `radio_clean`; the lint size comment also lists new ones (AGENTS.md rule 8).
+- The first parameter of `write_oifits` is `data` (it was `tables`); `tables=` still works with a `FutureWarning` until 0.5.
 - `ComplexVisData.dirty_beam` takes `values` before `nuisance`, the order of `dirty_image` (radio is provisional, so there is no deprecation shim). The last long docstrings, `CalibrationNuisance` and `ComplexVisData.dirty_image`, are now short, and the docstring allowlist is empty. `safe_azimuth` in `_geometry` replaces the copies of the origin-safe azimuth in `fields` and `models`, and `FlaredDisk` shares its grid validation with its base class.
 
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,

@@ -67,7 +67,9 @@ def pytest_addoption(parser):
 
 
 # Test files whose results cannot depend on JAX's float width: file formats,
-# plotting, pipeline orchestration, the shims and the benchmark harness. The
+# plotting, pipeline orchestration, the shims and the benchmark harness, and
+# the orbit stack and sampler tests, which run inside their own enable_x64 or
+# take dtype as an explicit argument. The
 # float64 CI jobs (VIRGIL_SKIP_DTYPE_INDEPENDENT=1) skip them, since the
 # float32 jobs already run them. Every other file, including each one that
 # carries a `validates` marker (the evidence virgil-validation reads from the
@@ -77,16 +79,29 @@ DTYPE_INDEPENDENT = (
     "test_benchmark_harness.py",
     "test_deprecate.py",
     "test_docs_synthetic_recovery.py",
+    "test_epoch_coarse.py",
+    "test_epochs.py",
     "test_fetch_references.py",
+    "test_night_flags.py",
     "test_oifits.py",
+    "test_orbit_positions.py",
+    "test_orbit_search.py",
     "test_pipeline_binary.py",
     "test_pipeline_checks.py",
+    "test_pipeline_disk.py",
+    "test_pipeline_image.py",
     "test_pipeline_io.py",
+    "test_pipeline_orbit.py",
     "test_pipeline_robust_binary.py",
+    "test_pipeline_robust_core.py",
+    "test_pipeline_robust_disk.py",
     "test_pipeline_robust_star.py",
     "test_pipeline_star.py",
+    "test_pipeline_start_at_bound.py",
     "test_plotting_detection.py",
     "test_stability.py",
+    "test_svi.py",
+    "test_tempering.py",
 )
 
 
