@@ -30,7 +30,7 @@ Claude Code made the harmonix, ELR, dorito, scenes and Gaussian-process inclusio
 
 ## Methods
 
-Docstrings cite these where they are used; `references/` in the repository has the full list with BibTeX.
+Docstrings cite these where they are used. The [References](references.md) page lists every source by module, and `references/` in the repository has the BibTeX.
 
 **Data and observables**
 

@@ -1,15 +1,20 @@
-# Provenance of the methods in virgil. See design/provenance.md for the narrative table.
+# Provenance of the methods in virgil. docs/references.md is generated from this file
+# (scripts/sync_references_page.py); see design/provenance.md for how to maintain it.
 # Fields: authors, year, title, arxiv, doi, verified (checked against the arXiv abstract page
 # or Crossref; ADS resolution with scripts/fetch_references.py gives the final check),
-# verified_via, used_in (module:symbol), note. Entries with neither arxiv nor doi are
-# unverified until scripts/fetch_references.py resolves them against ADS.
-# role: absent = a source of an idea or code; "compared" = studied for comparison,
-# not ported; "bibliography" = in virgil.bib for the paper, not provenance.
+# verified_via, used_in (module:symbol), note, url, repo (a GitHub URL), how ("ported" when
+# code was adapted; the default, "after", means the idea was reimplemented).
+# Entries with neither arxiv nor doi are unverified until scripts/fetch_references.py
+# resolves them against ADS.
+# role: absent = a source of an idea or code; "compared" = studied for comparison, not
+# ported; "context" = background literature cited in the docs; "bibliography" = in
+# virgil.bib for the paper, not provenance.
 
 [ref.harmonix]
 authors = "Dholakia & Pope"
 year = 2025
 title = "Analytic Interferometry of Rotating Stellar Surfaces"
+repo = "https://github.com/shashankdholakia/harmonix"
 used_in = ["virgil.models:HarmonixModel", "virgil.models:LimbDarkenedDisk"]
 bibcode = "2026PASP..138e4504D"
 arxiv = "2509.25433"
@@ -20,6 +25,7 @@ verified_via = "ads"
 authors = "Charles et al."
 year = 2025
 title = "Image reconstruction with the JWST Interferometer"
+how = "ported"
 used_in = ["virgil.imaging:Image", "virgil.imaging:starting_image"]
 note = "PASA 43, e048 (2026)"
 bibcode = "2026PASA...43...48C"
@@ -115,6 +121,7 @@ verified_via = "ads"
 authors = "Mérand"
 year = 2022
 title = "Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED"
+repo = "https://github.com/amerand/pmoired"
 used_in = ["virgil.oidata:OIData.with_error_floor", "virgil.spectra:Nodes"]
 note = "PMOIRED"
 bibcode = "2022SPIE12183E..1NM"
@@ -256,6 +263,7 @@ verified_via = "ads"
 authors = "Hattori et al."
 year = 2024
 title = "jaxoplanet"
+repo = "https://github.com/exoplanet-dev/jaxoplanet"
 doi = "10.5281/zenodo.10736936"
 used_in = []
 note = "Zenodo; https://github.com/exoplanet-dev/jaxoplanet"
@@ -460,6 +468,7 @@ verified_via = "ads"
 authors = "Chael et al."
 year = 2018
 title = "Interferometric Imaging Directly with Closure Phases and Closure Amplitudes"
+repo = "https://github.com/achael/eht-imaging"
 doi = "10.3847/1538-4357/aab6a8"
 used_in = ["virgil.imaging:TV"]
 note = "ApJ 857, 23; eht-imaging"
@@ -731,7 +740,7 @@ authors = "Kucukelbir et al."
 year = 2016
 title = "Automatic Differentiation Variational Inference"
 used_in = ["virgil.svi:variational"]
-note = "ADVI; JMLR 18, 14"
+note = "ADVI; JMLR 18, 14 (2017)"
 bibcode = "2016arXiv160300788K"
 arxiv = "1603.00788"
 verified = true
@@ -965,6 +974,7 @@ role = "bibliography"
 [ref.implaneia]
 authors = "Greenbaum, Sivaramakrishnan et al."
 title = "ImPlaneIA"
+how = "ported"
 url = "https://github.com/anand0xff/ImPlaneIA"
 verified = false
 verified_via = "none"
@@ -975,6 +985,7 @@ note = "paper: greenbaum2015"
 authors = "Czekala et al."
 year = 2025
 title = "Million Points of Light (MPoL): a PyTorch library for radio interferometric imaging"
+repo = "https://github.com/mpol-dev/MPoL"
 url = "https://mpol-dev.github.io/MPoL/"
 used_in = []
 note = "arXiv ID returned by title search; ADS check pending"
@@ -1016,6 +1027,7 @@ note = "no paper"
 [ref.gdit]
 authors = "Dotter"
 title = "GDit"
+how = "ported"
 url = "https://github.com/aarondotter/GDit"
 verified = false
 verified_via = "none"
@@ -1025,6 +1037,7 @@ note = "ELR equations ported via Dholakia from GDit"
 [ref.frito]
 authors = "Goldfine"
 title = "frito"
+how = "ported"
 url = "https://github.com/JonahDG/frito"
 verified = false
 verified_via = "none"
@@ -1033,6 +1046,7 @@ used_in = ["virgil.scenes"]
 [ref.jaxbessel]
 authors = "Pope et al."
 title = "jaxbessel"
+how = "ported"
 url = "https://github.com/benjaminpope/jaxbessel"
 verified = false
 verified_via = "none"
@@ -1042,6 +1056,7 @@ note = "CEPHES (Moshier) translation, adapted from harmonix"
 [ref.cephes]
 authors = "Moshier"
 title = "Cephes mathematical library"
+how = "ported"
 url = "https://www.netlib.org/cephes/"
 verified = false
 verified_via = "none"
@@ -1051,6 +1066,7 @@ used_in = []
 authors = "Martinache"
 year = 2010
 title = "Kernel-Phase in Fizeau Inteferometry"
+how = "ported"
 url = "https://github.com/fmartinache/xara"
 used_in = ["virgil.models:cvis_binary"]
 note = "xara was formerly pysco; cvis_binary is adapted from it"
@@ -1084,6 +1100,7 @@ verified_via = "ads"
 authors = "Jennings et al."
 year = 2020
 title = "Frankenstein: fitting the visibilities of protoplanetary disc and other radially symmetric sources"
+repo = "https://github.com/discsim/frank"
 used_in = ["virgil.models:MultipoleDisk", "virgil.models:multipole_disk_cvis"]
 note = "MNRAS 495, 3209 (2020); github.com/discsim/frank. Ideas only, no code copied (LGPL)."
 bibcode = "2020MNRAS.495.3209J"
@@ -1095,6 +1112,7 @@ verified_via = "ads"
 authors = "Kennedy"
 year = 2025
 title = "vis-r: a parametric visibility modelling code for radial profiles of discs"
+repo = "https://github.com/drgmk/vis-r"
 used_in = ["virgil.models:MultipoleDisk", "virgil.models:multipole_disk_cvis"]
 note = "RASTI (2025); github.com/drgmk/vis-r. Ideas only, no code copied."
 bibcode = "2025RASTI...4....4D"
@@ -1126,10 +1144,170 @@ verified_via = "crossref"
 authors = "Yoshida et al."
 year = 2026
 title = "Direct Retrieval of Protoplanetary Disk Dust Properties Using Auto-differentiable Gaussian Processes and Their Application to the HD 169142 Disk"
+repo = "https://github.com/tomyoshida/frap"
 used_in = ["virgil.models:RadialGP", "virgil.models:RadialGPFunction", "virgil.models:MultipoleKernel"]
 note = "ApJ 1007, 198 (2026); github.com/tomyoshida/frap. Ideas only, no code copied: whitened Gaussian-process latents (g = mu + L z) at radial nodes with a dense kernel, sampled by NUTS, and a radial GP per physical quantity."
 bibcode = "2026ApJ..1007..198Y"
 arxiv = "2607.12618"
 doi = "10.3847/1538-4357/ae89ad"
+verified = true
+verified_via = "ads"
+
+
+# cited in the docs or docstrings as a test or formula that was implemented
+
+[ref.diazcordoves1992]
+authors = "Díaz-Cordovés & Giménez"
+year = 1992
+title = "A new nonlinear approximation to the limb-darkening of hot stars"
+used_in = ["virgil.models:SquareRootLimbDarkenedDisk"]
+note = "A&A 259, 227; the square-root limb-darkening law"
+bibcode = "1992A&A...259..227D"
+verified = false
+verified_via = "ads"
+
+[ref.lawson2004]
+authors = "Lawson, Cotton & Hummel"
+year = 2004
+title = "An interferometry imaging beauty contest"
+doi = "10.1117/12.550710"
+used_in = ["virgil.metrics:lawson_sigma_over_peak"]
+note = "Proc. SPIE 5491, 886; Eq. 2"
+bibcode = "2004SPIE.5491..886L"
+verified = true
+verified_via = "crossref"
+
+[ref.cotton2008]
+authors = "Cotton, Monnier & Baron"
+year = 2008
+title = "2008 imaging beauty contest"
+doi = "10.1117/12.788903"
+used_in = ["virgil.metrics:rms_convolved"]
+note = "Proc. SPIE 7013"
+bibcode = "2008SPIE.7013E..1NC"
+verified = true
+verified_via = "crossref"
+
+[ref.ireland2006]
+authors = "Ireland, Monnier & Thureau"
+year = 2006
+title = "Monte-Carlo imaging for optical interferometry"
+doi = "10.1117/12.670940"
+used_in = ["virgil.imaging:short_baseline_residual"]
+note = "Proc. SPIE 6268; MACIM, whose test of the shortest baselines the large-scale residual check follows"
+bibcode = "2006SPIE.6268E..1TI"
+verified = true
+verified_via = "crossref"
+
+
+# background literature cited in the docs, not a source of virgil's methods
+
+[ref.junklewitz2016]
+authors = "Junklewitz et al."
+year = 2016
+title = "RESOLVE: A new algorithm for aperture synthesis imaging of extended emission in radio astronomy"
+used_in = []
+note = "A&A 586, A76; an IFT imaging algorithm for radio interferometry"
+role = "context"
+bibcode = "2016A&A...586A..76J"
+arxiv = "1311.5282"
+verified = true
+verified_via = "ads"
+
+[ref.kraus2012]
+authors = "Kraus & Ireland"
+year = 2012
+title = "LkCa 15: A Young Exoplanet Caught at Formation?"
+used_in = []
+note = "ApJ 745, 5; motivates fitting a disk and a planet together"
+role = "context"
+bibcode = "2012ApJ...745....5K"
+arxiv = "1110.3808"
+doi = "10.1088/0004-637X/745/1/5"
+verified = true
+verified_via = "ads"
+
+[ref.sallum2015]
+authors = "Sallum et al."
+year = 2015
+title = "Accreting protoplanets in the LkCa 15 transition disk"
+used_in = []
+note = "Nature 527, 342; motivates fitting a disk and a planet together"
+role = "context"
+bibcode = "2015Natur.527..342S"
+arxiv = "1511.07456"
+doi = "10.1038/nature15761"
+verified = true
+verified_via = "ads"
+
+[ref.currie2019]
+authors = "Currie et al."
+year = 2019
+title = "No Clear, Direct Evidence for Multiple Protoplanets Orbiting LkCa 15: LkCa 15 bcd are Likely Inner Disk Signals"
+used_in = []
+note = "ApJL 877, L3; motivates fitting a disk and a planet together"
+role = "context"
+bibcode = "2019ApJ...877L...3C"
+arxiv = "1905.04322"
+doi = "10.3847/2041-8213/ab1b42"
+verified = true
+verified_via = "ads"
+
+[ref.roettenbacher2016]
+authors = "Roettenbacher et al."
+year = 2016
+title = "No Sun-like dynamo on the active star ζ Andromedae from starspot asymmetry"
+used_in = []
+note = "Nature 533, 217; CHARA/MIRC starspot imaging that motivates HarmonixModel"
+role = "context"
+bibcode = "2016Natur.533..217R"
+arxiv = "1709.10107"
+doi = "10.1038/nature17444"
+verified = true
+verified_via = "ads"
+
+[ref.rasmussen2006]
+authors = "Rasmussen & Williams"
+year = 2006
+title = "Gaussian Processes for Machine Learning"
+doi = "10.7551/mitpress/3206.001.0001"
+url = "https://gaussianprocess.org/gpml/"
+used_in = []
+note = "MIT Press (book); GP terminology, Matérn kernels, marginal likelihood"
+role = "context"
+verified = true
+verified_via = "crossref"
+
+[ref.rue2005]
+authors = "Rue & Held"
+year = 2005
+title = "Gaussian Markov Random Fields: Theory and Applications"
+doi = "10.1201/9780203492024"
+used_in = []
+note = "Chapman & Hall/CRC (book)"
+role = "context"
+verified = true
+verified_via = "crossref"
+
+[ref.lindgren2011]
+authors = "Lindgren, Rue & Lindström"
+year = 2011
+title = "An Explicit Link between Gaussian Fields and Gaussian Markov Random Fields: The Stochastic Partial Differential Equation Approach"
+doi = "10.1111/j.1467-9868.2011.00777.x"
+used_in = []
+note = "JRSS B 73, 423; Matérn fields as solutions of an SPDE"
+role = "context"
+verified = true
+verified_via = "crossref"
+
+[ref.papaspiliopoulos2007]
+authors = "Papaspiliopoulos, Roberts & Sköld"
+year = 2007
+title = "A General Framework for the Parametrization of Hierarchical Models"
+doi = "10.1214/088342307000000014"
+used_in = []
+note = "Statistical Science 22, 59; centred and non-centred parameterizations"
+role = "context"
+bibcode = "2007StaSc..22...59P"
 verified = true
 verified_via = "ads"
