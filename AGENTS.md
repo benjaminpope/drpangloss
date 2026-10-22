@@ -148,6 +148,10 @@ and writing history into docstrings. So:
 7. **Make growth visible.** CI comments each PR's net `src`/`tests` line change.
    Above +1,000 `src` lines, the PR description says what the size buys and what
    it supersedes.
+8. **Inline trivial private helpers.** Don't add a private function that is
+   called once and has three statements or fewer, unless it is a `jit`/`vmap`
+   boundary, a test seam or a named step. CI lists the ones a PR adds
+   (`python scripts/code_shape.py --since origin/main`).
 
 ## Docstring style
 

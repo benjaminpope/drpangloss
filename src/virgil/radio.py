@@ -61,12 +61,6 @@ _CROSS = {(9, 12), (5, 8)}  # XX, YY and RR, LL
 # ----------------------------------------------------------------------
 
 
-def _relabel(ids):
-    """Sorted unique original ids and the 0..n-1 label of every entry."""
-    originals, labels = onp.unique(onp.asarray(ids), return_inverse=True)
-    return tuple(int(i) for i in originals), labels.astype(onp.int32)
-
-
 class ComplexVisData(eqx.Module):
     """Complex visibilities at (u, v) points, with calibration labels.
 
@@ -186,7 +180,13 @@ class ComplexVisData(eqx.Module):
             raise ValueError("weight must be finite and positive.")
         if not (onp.all(onp.isfinite(freq)) and onp.all(freq > 0)):
             raise ValueError("freq must be finite and positive.")
-        obs_ids, obs_l = _relabel(obs_orig)
+        originals, obs_l = onp.unique(
+            onp.asarray(obs_orig), return_inverse=True
+        )
+        obs_ids, obs_l = (
+            tuple(int(i) for i in originals),
+            obs_l.astype(onp.int32),
+        )
         # A label is a (ddid, observation) pair: a concatenated measurement
         # set can hold one ddid in several observations, each with its own
         # error scale.

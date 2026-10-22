@@ -35,12 +35,14 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The longest unflagged wavelength sets the limit (a shift must alias in every channel); `None` only if some unflagged channel is off a lattice. The default box of multi-channel lattice data can therefore now be capped where it was the full field of view before.
 - `write_oifits(OIData)` keeps the frames of data without times (or with frames at one `MJD`): they are written with distinct `TIME`s, so `frame` survives a round trip; data without times are still read back at `MJD` 0. A station index above 32767 (a 16-bit column) is refused with a reason instead of wrapping, `DATE-OBS` follows the times, placeholder stations are marked `STAPLACE`, and a non-`OIData` argument raises `TypeError`.
 - `OrbitPipeline`'s drop-the-outlying-night check no longer kills the `modes` stage when the refit fails (it is recorded as skipped with the reason), counts usable seeded nights, ignores nights with no data, and compares the alias band for the refit's own time span.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
 
+- Internal: inlined single-use trivial private helpers in `models`, `radio` and `radio_clean`; the lint size comment also lists new ones (AGENTS.md rule 8).
 - The first parameter of `write_oifits` is `data` (it was `tables`); `tables=` still works with a `FutureWarning` until 0.5.
 - `ComplexVisData.dirty_beam` takes `values` before `nuisance`, the order of `dirty_image` (radio is provisional, so there is no deprecation shim). The last long docstrings, `CalibrationNuisance` and `ComplexVisData.dirty_image`, are now short, and the docstring allowlist is empty. `safe_azimuth` in `_geometry` replaces the copies of the origin-safe azimuth in `fields` and `models`, and `FlaredDisk` shares its grid validation with its base class.
 
