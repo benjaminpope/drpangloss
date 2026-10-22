@@ -8,8 +8,8 @@ name: automated tests
 on:
   push: {branches: [main]}
   pull_request:
-    # The docs build covers these.
-    paths-ignore: ["docs/**", "notebooks/**", "design/**", "**.md"]
+    # Not docs/**: test_docs_quickstart and test_stability read those pages.
+    paths-ignore: ["notebooks/**", "design/**", "*.md"]
     # `labeled` is for the full-ci label; any other label runs nothing.
     types: [opened, synchronize, reopened, labeled]
   schedule:
@@ -74,17 +74,25 @@ jobs:
           fi
           uv pip list --python .venv/bin/python
 
-      # The JAX compilation cache is keyed on the job, JAX version, shard
-      # packing and ISO week. The first push or nightly of a week saves it
+      # The JAX compilation cache is keyed on the job, JAX version, this
+      # shard's file list and ISO week. The first push or nightly of a week saves it
       # from an empty cache; pull requests restore the latest match. A new
-      # packing means a new cache, and the per-test budget stays off until
-      # then (the nightly deletes older weeks' caches).
+      # file list means a new cache, and the per-test budget stays off until
+      # then; a file added to another shard changes nothing here (the
+      # nightly deletes older weeks' caches).
       - name: JAX version, week and packing
         id: key
         shell: bash
         run: |
           jax=$(.venv/bin/python -c 'import jax; print(jax.__version__)')
-          pack=$( (cat tests/test_durations.json; git ls-files 'tests/*test_*.py') | shasum -a 256 | cut -c1-8)
+          pack=$(.venv/bin/python -c "
+          import sys; sys.path.insert(0, 'tests')
+          import subprocess, conftest
+          files = subprocess.run(['git', 'ls-files', 'tests/test_*.py'], capture_output=True, text=True).stdout.split()
+          k, n = ('${{ matrix.shard }}' or '1/1').split('/')
+          shard = conftest._shard_files(files, int(n))
+          print('\n'.join(sorted(f for f in files if shard[f] == int(k) - 1)))
+          " | shasum -a 256 | cut -c1-8)
           echo "jax=$jax" >> "$GITHUB_OUTPUT"
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
           echo "prefix=jax-${{ matrix.id }}-jax$jax-pack$pack-" >> "$GITHUB_OUTPUT"
@@ -120,10 +128,9 @@ jobs:
           VIRGIL_SKIP_DTYPE_INDEPENDENT: ${{ matrix.x64 }}
           VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
           # Seconds per test not marked slow (tests/conftest.py), only with a
-          # warm cache for this job, JAX and packing. Fast tests peak near 25 s.
-          # Warm means this shard's cache for this JAX, whatever the packing: a
-          # new test file changes the pack hash but not the cache's usefulness.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '30' || '' }}
+          # warm cache for this job, JAX and
+          # shard files. Fast tests peak near 25 s.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '30' || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .

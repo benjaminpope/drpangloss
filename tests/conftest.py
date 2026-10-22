@@ -79,7 +79,6 @@ DTYPE_INDEPENDENT = (
     "test_benchmark_harness.py",
     "test_deprecate.py",
     "test_docs_synthetic_recovery.py",
-    "test_ensemble.py",
     "test_epoch_coarse.py",
     "test_epochs.py",
     "test_fetch_references.py",
