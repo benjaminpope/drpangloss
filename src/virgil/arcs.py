@@ -582,11 +582,12 @@ def unwrap_cycles(
             (1.0 / (1.0 / p + half), 1.0 / max(1.0 / p - half, 1e-300))
             for p in periods[keep]
         ]
+        admitted = _merge(admitted)
         intervals = _merge(
             [
                 (max(lo1, lo2), min(hi1, hi2))
                 for lo1, hi1 in intervals
-                for lo2, hi2 in _merge(admitted)
+                for lo2, hi2 in admitted
                 if max(lo1, lo2) < min(hi1, hi2)
             ]
         )
