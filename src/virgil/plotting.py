@@ -1016,13 +1016,6 @@ def _local_threshold(stat, n_sigma):
     return None
 
 
-def _one_sided_fap(n_sigma):
-    """One-sided Gaussian tail at ``n_sigma``: 0.135% at 3σ."""
-    from scipy.stats import norm
-
-    return float(norm.sf(float(n_sigma)))
-
-
 def _format_probability(p):
     """A probability as a short percentage, or as a power of ten if tiny."""
     p = float(p)
@@ -1084,12 +1077,6 @@ def _legend_outside(ax):
         fontsize="small",
         borderaxespad=0.0,
     )
-
-
-def _rates_at(fpr, tpr, thresholds, value):
-    """False- and true-positive rates at the threshold ``value``."""
-    i = int(onp.count_nonzero(onp.asarray(thresholds) >= value)) - 1
-    return float(fpr[i]), float(tpr[i])
 
 
 @_styled
@@ -1181,7 +1168,12 @@ def plot_roc(
                 value = _local_threshold(s, n_sigma)
                 if value is None:
                     continue
-                x, y = _rates_at(fpr, tpr, thresholds, value)
+                # The false- and true-positive rates at the threshold.
+                i = (
+                    int(onp.count_nonzero(onp.asarray(thresholds) >= value))
+                    - 1
+                )
+                x, y = float(fpr[i]), float(tpr[i])
                 if log_fpr and x <= 0.0:
                     continue  # no null draw reaches it: off the log axis
                 ax.plot(
@@ -1201,8 +1193,11 @@ def plot_roc(
         else onp.linspace(0.0, 1.0, 200)
     )
     ax.plot(chance, chance, color="grey", lw=1, label="chance (TPR = FPR)")
+    from scipy.stats import norm as _norm
+
     for k, n_sigma in enumerate(marks):
-        nominal = _one_sided_fap(n_sigma)
+        # One-sided Gaussian tail at ``n_sigma``: 0.135% at 3σ.
+        nominal = float(_norm.sf(float(n_sigma)))
         if log_fpr and nominal < fpr_min:
             continue
         ax.axvline(
@@ -1558,12 +1553,6 @@ def _orbit_tracks(orbits, n_points):
     return onp.asarray(dra), onp.asarray(ddec)
 
 
-def _position_covariances(positions):
-    """The ``(n, 2, 2)`` covariances of a ``PositionData``'s positions."""
-    chol = onp.linalg.inv(onp.asarray(positions.whitener, dtype=float))
-    return chol @ onp.swapaxes(chol, -1, -2)
-
-
 @_styled
 def plot_orbit_ensemble(
     orbits,
@@ -1660,8 +1649,10 @@ def plot_orbit_ensemble(
             mjd.min(), max(mjd.max(), mjd.min() + 1)
         )
         colours = matplotlib.colormaps[cmap](norm(mjd))
+        # The (n, 2, 2) covariances of the positions.
+        chol = onp.linalg.inv(onp.asarray(positions.whitener, dtype=float))
         for xi, yi, cov, c in zip(
-            x, y, _position_covariances(positions), colours
+            x, y, chol @ onp.swapaxes(chol, -1, -2), colours
         ):
             values, vectors = onp.linalg.eigh(cov)
             angle = onp.degrees(onp.arctan2(vectors[1, -1], vectors[0, -1]))

@@ -17,6 +17,7 @@ from collections.abc import Mapping
 
 import numpy as onp
 from astropy.io import fits
+from ._closure import _merge
 from ._deprecate import external_stacklevel, renamed
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
@@ -358,13 +359,6 @@ def _time(hdu, mask):
     return onp.zeros(int(mask.sum()))
 
 
-def _exposure_time(hdu, mask):
-    """Longest ``INT_TIME`` in a table, in days (zero if there is none)."""
-    if "INT_TIME" in hdu.columns.names and mask.any():
-        return float(onp.max(_column(hdu, "INT_TIME", mask))) / 86400.0
-    return 0.0
-
-
 def _phase_unit_scale(unit, default, name="phase"):
     """Factor converting a phase in ``unit`` to radians.
 
@@ -526,22 +520,6 @@ def _amptyp(hdu):
     return str(hdu.header.get("AMPTYP", "absolute")).strip().lower()
 
 
-def _check_amptyp(hdu):
-    """Refuse a ``VISAMP`` that is not an absolute visibility amplitude."""
-    amptyp = _amptyp(hdu)
-    if amptyp != "absolute":
-        raise ValueError(
-            f"VISAMP in this OI_VIS table has AMPTYP = {amptyp!r}, not "
-            "'absolute'. A differential visibility is normalized across "
-            "the band and a correlated flux is in flux units (e.g. MATISSE "
-            "products reduced with corrFlux=TRUE), so neither can be fitted "
-            "as a visibility amplitude. Calibrate the amplitudes into "
-            "visibilities first, read them as an extra observable "
-            "(extras=('visamp',)), or fit the closure phases (OI_T3) "
-            "alone by removing the OI_VIS table."
-        )
-
-
 def _read_visibilities(tables, wavelengths, target_id, extras=()):
     if "OI_VIS2" in tables:
         names = ("OI_VIS2", "VIS2DATA", "VIS2ERR")
@@ -572,15 +550,28 @@ def _read_visibilities(tables, wavelengths, target_id, extras=()):
                 # The amplitudes are an extra observable ("visamp"); the
                 # rows only give the samples here.
                 values = onp.full(values.shape, onp.nan)
-            else:
-                _check_amptyp(hdu)
+            elif _amptyp(hdu) != "absolute":
+                # Refuse a VISAMP that is not an absolute amplitude.
+                raise ValueError(
+                    f"VISAMP in this OI_VIS table has AMPTYP = {_amptyp(hdu)!r}, not "
+                    "'absolute'. A differential visibility is normalized across "
+                    "the band and a correlated flux is in flux units (e.g. MATISSE "
+                    "products reduced with corrFlux=TRUE), so neither can be fitted "
+                    "as a visibility amplitude. Calibrate the amplitudes into "
+                    "visibilities first, read them as an extra observable "
+                    "(extras=('visamp',)), or fit the closure phases (OI_T3) "
+                    "alone by removing the OI_VIS table."
+                )
         flag = _flags(hdu, mask, nwave, values, errors)
         ucoord = _column(hdu, "UCOORD", mask)
         vcoord = _column(hdu, "VCOORD", mask)
         sta_index = _column(hdu, "STA_INDEX", mask, dtype=int)
         mjd = _mjd(hdu, mask)
         time = _time(hdu, mask)
-        exposure = _exposure_time(hdu, mask)
+        # Longest INT_TIME in the table, in days (zero if there is none).
+        exposure = 0.0
+        if "INT_TIME" in hdu.columns.names and mask.any():
+            exposure = float(onp.max(_column(hdu, "INT_TIME", mask))) / 86400.0
         ins = _lookup_key(hdu)
         for row in range(values.shape[0]):
             lookup.add(
@@ -1799,22 +1790,18 @@ def _closure_stations(b1, b2, b3, n_b):
     of BC, end A of AB with end A of AC, and end C of BC with end C of AC.
     Each class of identified ends is one station, numbered from 1.
     """
-    parent = list(range(2 * n_b))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for x, y, z in zip(b1, b2, b3):
-        for i, j in (
-            (2 * x + 1, 2 * y),
-            (2 * x, 2 * z),
-            (2 * y + 1, 2 * z + 1),
-        ):
-            parent[find(i)] = find(j)
-    roots = [find(i) for i in range(2 * n_b)]
+    roots = _merge(
+        2 * n_b,
+        (
+            pair
+            for x, y, z in zip(b1, b2, b3)
+            for pair in (
+                (2 * x + 1, 2 * y),
+                (2 * x, 2 * z),
+                (2 * y + 1, 2 * z + 1),
+            )
+        ),
+    ).tolist()
     number = {r: k + 1 for k, r in enumerate(dict.fromkeys(roots))}
     return onp.array([number[r] for r in roots]).reshape(n_b, 2)
 
