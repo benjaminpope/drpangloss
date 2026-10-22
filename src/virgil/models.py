@@ -5060,7 +5060,8 @@ class System(SourceModel):
     $V = \sum_i f_i V_i / \sum_i f_i$ with ``f_i`` each component's ``flux``; it is 1
     at zero baseline, so only flux *ratios* are measurable: keep one reference
     (usually the star) at ``flux=1``. Components are reached by name, as attributes
-    and as zodiax paths (``system.get("comp.flux")``). A System can be a component:
+    and as zodiax paths (``system.get("comp.flux")``; ``set`` returns a new
+    System). A System can be a component:
     its ``flux`` is then the group's weight and ``dra``/``ddec`` move the group.
     Fluxes must be non-negative and not all zero, checked only for concrete values
     at build (traced code relies on priors and grid axes). See
