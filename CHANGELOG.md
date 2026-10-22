@@ -65,6 +65,10 @@ anything before 1.0 may change between minor versions.
   weights instead of 11; `detection_roc` searches 32 draws at once
   (`draw_batch=32`).
 
+### Changed (internal)
+
+- The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
+
 ## 0.4.0 (2026-10-18)
 
 Everything listed as new was added after 0.3.0, which is on PyPI.
