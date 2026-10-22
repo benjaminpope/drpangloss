@@ -101,7 +101,7 @@ def test_multiscale_recovers_an_extended_source():
         N,
         S,
         deconvolver="multiscale",
-        scales=[0, 5, 10, 20],
+        scales_mas=[m * S for m in (0, 5, 10, 20)],
         niter=1500,
         threshold=3e-4,
     )

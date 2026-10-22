@@ -1099,7 +1099,7 @@ def rank_orbits(
     scales="marginal",
     noise=None,
     dof=1.0,
-    s_max=None,  # deliberate: no flux is profiled here, so the scale integral needs no bound (score_orbits: 5)
+    s_max=None,  # deliberate: no flux is profiled, so no bound is needed
     batch_size=None,
     dtype="float64",
 ):
@@ -1129,7 +1129,7 @@ def rank_orbits(
     dof, s_max : optional
         As for ``marginal_loglike``; ``dof`` is a number or a dict keyed by
         dataset or epoch name. ``s_max`` defaults to None (no bound; 10 for data
-        needing numeric integration), ``score_orbits`` to 5.
+        needing numeric integration).
     batch_size : int, optional
         Orbits evaluated together (default about a million model visibilities).
     dtype : {"float64", "float32"}, optional

@@ -3069,7 +3069,7 @@ def fit_orbit_aliases(
     arc_jitter=ARC_JITTER,
     arc_delta_chi2=ARC_DELTA_CHI2,
     arc_min_gap=ARC_MIN_GAP,
-    outlier_eps=0.0,
+    outlier_eps=0.0,  # deliberate: off, so direct calls keep their results (pipeline: 0.02)
 ):
     """Weigh the period aliases of an undersampled orbit with the observables.
 
@@ -3103,7 +3103,8 @@ def fit_orbit_aliases(
         correlated channels ([`virgil.tempering`][virgil.tempering]): True
         estimates the factor (needs ``EpochPositions``), a float >= 1 fixes it,
         False is off; period-grid density; seed eccentricities; outlier weight
-        in [0, 1); batching.
+        in [0, 1); batching. ``outlier_eps`` defaults to 0 (no mixture),
+        unlike ``OrbitPipeline``'s 0.02, so direct calls keep their results.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]).
         Needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
