@@ -456,6 +456,19 @@ marked, its full text. Nothing here is a ranking: the fields differ in data, arr
   `2021A&A...646A..58A`) and direction-dependent calibration (Roth 2023).
 - **Instrument-specific forward models:** GR's fibre damping and aberration maps.
 
+#### Scope decisions (2026-10-23)
+
+Ben's calls on the list above:
+
+- **Closure-only imaging:** wanted eventually; being scoped now. The other route is antenna-gain marginalization
+  with broad priors (B7; another PR, in progress).
+- **Scattering and variability:** out of scope for now.
+- **Polarimetry:** wanted, but after 0.4.2.
+- **Learned score-based priors:** out of scope (a separate PhD project).
+- **Multi-frequency:** a global spectral index (SPARCO-like; `virgil.spectra`, `cal.alpha`) exists. Per-pixel
+  spectral-index maps (MT-MFS, Rau & Cornwell 2011) are a later Toeplitz PR.
+- **Posterior sampling of images:** wanted; GP imaging work is in progress in another session.
+
 ### C6. Where virgil could contribute
 
 Defensible claims only. Each is conditional on the validation shown in vv.
