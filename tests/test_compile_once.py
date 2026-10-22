@@ -6,7 +6,9 @@ Guards the jit-recompile audit: `fit(progress=True)` (the chunked loop) and
 
 import jax
 import numpyro.distributions as dist
+import pytest
 
+import virgil.fitting
 from virgil.coverage import ami_grid_record
 from virgil.fitting import fit
 from virgil.imaging import diagnose
@@ -23,15 +25,20 @@ PRIORS = {
 }
 
 
-def test_fit_with_progress_compiles_once(capsys):
-    record = ami_grid_record(pitch_m=0.5)
-    data = OIData(record).with_model(
+@pytest.mark.parametrize("method", ["lm", "lbfgs"])
+def test_fit_with_progress_compiles_once(method, monkeypatch):
+    # Tiny chunks so that each method runs several chunk-to-chunk rounds.
+    monkeypatch.setattr(virgil.fitting, "_LM_CHUNK", 2)
+    monkeypatch.setattr(virgil.fitting, "_LBFGS_CHUNK", 3)
+    data = OIData(ami_grid_record(pitch_m=0.5)).with_model(
         BinaryModelCartesian(150.0, -80.0, 0.02), key=jax.random.PRNGKey(0)
     )
-    start = BinaryModelCartesian(140.0, -70.0, 0.01)
-    fit(start, PRIORS, data, progress=True)  # warm up
+    start = BinaryModelCartesian(60.0, -20.0, 0.005)
+    reports = []
+    fit(start, PRIORS, data, method=method, progress=reports.append)
+    assert len(reports) > 1  # several chunks ran
     with count_compiles() as compiles:
-        fit(start, PRIORS, data, progress=True)
+        fit(start, PRIORS, data, method=method, progress=reports.append)
     assert compiles == []
 
 
