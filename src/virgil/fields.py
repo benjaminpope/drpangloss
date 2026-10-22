@@ -18,7 +18,11 @@ import numpy as onp
 import zodiax as zdx
 from jax.scipy.fft import idctn
 
-from ._geometry import pixel_offsets, undo_elliptical_transf_coord
+from ._geometry import (
+    pixel_offsets,
+    safe_azimuth,
+    undo_elliptical_transf_coord,
+)
 from ._utils import concrete, dtor
 from .models import _check_nu, _gp_factor, _log_azimuthal_spectrum
 
@@ -585,9 +589,8 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         xe, ye = undo_elliptical_transf_coord(x, y, pa, stretch)
         r = np.hypot(xe, ye)
         # The azimuth runs from the deprojected North towards East, as for
-        # MultipoleDisk's harmonics; the centre has none, so avoid arctan2(0, 0).
-        origin = (xe == 0.0) & (ye == 0.0)
-        theta = np.arctan2(xe, np.where(origin, 1.0, ye))
+        # MultipoleDisk's harmonics.
+        theta = safe_azimuth(xe, ye)
         eta = polar_interpolate(
             self.polar_values(),
             self.r_min_mas,
