@@ -22,25 +22,35 @@ import jax.scipy.linalg as jsl
 import numpy as onp
 
 
+def _merge(n, links):
+    """Union-find root of each of ``n`` items after merging every ``(i, j)`` link."""
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i, j in links:
+        parent[find(i)] = find(j)
+    return onp.array([find(i) for i in range(n)])
+
+
 def _groups(i1, i2, i3):
     """Triangles connected through shared baseline samples, as index lists."""
     n = len(i1)
-    parent = onp.arange(n)
-
-    def find(t):
-        while parent[t] != t:
-            parent[t] = parent[parent[t]]
-            t = parent[t]
-        return t
-
     owner = {}
-    for t in range(n):
-        for b in (int(i1[t]), int(i2[t]), int(i3[t])):
-            if b in owner:
-                parent[find(t)] = find(owner[b])
-            else:
-                owner[b] = t
-    roots = onp.array([find(t) for t in range(n)])
+
+    def links():
+        for t in range(n):
+            for b in (int(i1[t]), int(i2[t]), int(i3[t])):
+                if b in owner:
+                    yield t, owner[b]
+                else:
+                    owner[b] = t
+
+    roots = _merge(n, links())
     # Split by root with one stable sort: groups in root order, each sorted.
     order = onp.argsort(roots, kind="stable")
     _, starts = onp.unique(roots[order], return_index=True)

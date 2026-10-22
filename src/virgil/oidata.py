@@ -1837,7 +1837,12 @@ def _build_extras(data, obj, legs):
                     value[good],
                     error[good],
                     wavel[sample],
-                    _row_labels(f, pair),
+                    # One label per (frame, station pair).
+                    onp.unique(
+                        onp.column_stack([f, pair]),
+                        axis=0,
+                        return_inverse=True,
+                    )[1].reshape(-1),
                     f,
                     pair,
                     sample=sample,
@@ -1906,12 +1911,6 @@ def _build_extras(data, obj, legs):
             )
         )
     return tuple(sorted(blocks, key=lambda b: KINDS.index(b.kind)))
-
-
-def _row_labels(frame, pairs):
-    """One label per (frame, station pair)."""
-    keys = onp.column_stack([onp.asarray(frame), onp.asarray(pairs)])
-    return onp.unique(keys, axis=0, return_inverse=True)[1].reshape(-1)
 
 
 def closure_phases(cvis, index_cps1, index_cps2, index_cps3):
