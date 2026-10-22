@@ -148,14 +148,15 @@ def cv_task(
         one fold, so the caller loops over folds and settings.
     fit_kwargs : callable
         ``fit_kwargs(setting)`` returns the mask-independent arguments of
-        [`fit`][virgil.fitting.fit] (``model``, ``priors``, ``data``,
+        [`fit`][virgil.fitting.fit] (``model``, ``priors``, ``data=()``,
         ``regularizers=...``). Vary the setting through array leaves (a
         regularizer's weight, a prior's scale), not static structure, so
         every setting reuses one compilation.
     make_term : callable
         ``make_term(mask)``: the likelihood term of the points where ``mask``
         is true (fitted on the training mask, scored on the held-out one);
-        ``fit_kwargs`` then needs no ``data``. Same function for every task.
+        pass ``data=()`` in ``fit_kwargs``, or the held-out points leak into
+        the fit. Same function for every task.
     init : dict, optional
         Starting values for the fit, the same for every task.
     groups : (N,) int array, optional

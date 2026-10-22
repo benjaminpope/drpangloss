@@ -752,7 +752,7 @@ def numpyro_model(
         [`SourceModel`][virgil.models.SourceModel] or a list of them, one per
         dataset (see [`build_model`][virgil.likelihood.build_model]).
     priors : dict[str, numpyro.distributions.Distribution]
-        Parameter path to prior; each key is also the sample-site name. An
+        Parameter path (or function argument name) to prior; each key is also the sample-site name. An
         [`AngleVector`][virgil.angles.AngleVector] prior samples a 2-D vector
         at ``"<path>_vec"`` and records the angle at ``"<path>"``.
     data : OIData or sequence of OIData

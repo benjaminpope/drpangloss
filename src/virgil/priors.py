@@ -306,7 +306,8 @@ def hierarchical_scales(name, n, median=None, spread=None, centred=True):
     ``log s_k`` is normal about ``log(median)`` with standard deviation
     ``spread``; both are sampled, with log-uniform priors. Use it for
     nuisances that differ between epochs but share an instrument, passed as
-    ``noise`` terms (one dict per dataset, in order); use every member. When to centre:
+    ``noise`` terms (one dict per dataset, in order); use every member (an unused centred
+    member has an improper flat prior). When to centre:
     [hierarchical scales](../conventions.md#hierarchical-scales).
 
     Parameters

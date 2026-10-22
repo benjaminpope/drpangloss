@@ -317,11 +317,15 @@ def variational(
         Steps (3000), draws per ELBO estimate (8), draws returned (2000).
     optimizer, learning_rate : optional
         Optimizer (default ``optax.adam``) and step size (3e-3).
-    key, flat_coordinates, dtype : optional
-        As for ``numpyro_model`` and ``fit``.
+    key, flat_coordinates : optional
+        As for ``numpyro_model``.
+    dtype : {"float64", "float32"}, optional
+        Precision (default ``"float64"``, as for ``fit``).
     dense_start, init_scale : optional
         Start the width at the Gauss–Newton covariance (default ``True``;
-        skipped, with a warning, given ``regularizers``), else ``init_scale``.
+        skipped, with a warning, given ``regularizers``). ``init_scale``
+        (default 0.1) is the width of the coordinates it does not cover, or of
+        all of them without it.
     window, psis : optional
         Convergence-test window (default ``steps // 10``); whether to compute
         the Pareto k̂.
