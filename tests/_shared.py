@@ -6,6 +6,8 @@ from pathlib import Path
 import jax
 import numpy as onp
 
+from numpyro.diagnostics import effective_sample_size
+
 from virgil.oidata import OIData, cp_indices
 
 PAIRS = onp.array([[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]])
@@ -88,15 +90,18 @@ def executed_quicklook(folder, images):
     """Execute the quicklook notebook of the run in ``folder``; check it.
 
     The run fixtures are built with ``quicklook_execute=False`` (a kernel
-    start is the slowest part of a run and only this check needs it). The
+    start is the slowest part of a run and only this check needs it); the
+    folder is left untouched. The
     cell structure is common to every pipeline: prose before each code
     cell, one output per code cell, none an error, ``images`` figures.
     Returns ``(cells, code)``: the cells and the indices of the code cells.
     """
     from virgil.pipeline import _quicklook
 
-    path = _quicklook.write_quicklook(folder, execute=True)
-    cells = json.loads(path.read_text())["cells"]
+    # In memory: the run folder (module-scoped, hashed into run.json) must
+    # stay as the run left it, or a later `validate` would report a change.
+    nb = _quicklook.execute_notebook(_quicklook.build_notebook(folder), folder)
+    cells = nb["cells"]
     assert (
         cells[0]["cell_type"] == "markdown"
         and cells[-1]["cell_type"] == "markdown"
@@ -113,3 +118,15 @@ def executed_quicklook(folder, images):
     )
     assert n_images == images
     return cells, code
+
+
+def thinned(draws):
+    """``draws`` thinned to about their effective sample size.
+
+    NUTS draws are autocorrelated, and KS assumes independent ones: keep
+    every ``n / ESS``-th draw (numpyro's ESS of the single chain).
+    """
+    draws = onp.asarray(draws, float)
+    ess = float(effective_sample_size(draws[None]))
+    step = max(1, int(onp.ceil(len(draws) / max(ess, 1.0))))
+    return draws[::step]

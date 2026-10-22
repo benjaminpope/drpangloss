@@ -1,6 +1,8 @@
 import dataclasses
 
 import equinox as eqx
+import warnings
+
 import jax
 import numpy as onp
 import pytest
@@ -441,8 +443,11 @@ def test_ensemble_recovers_two_blobs():
     assert best.chi2_red[0] < 2.0
     scores = score(result.mean, truth.env)
     # One fixed dataset and seed (the noise draw, key 7, is the only
-    # randomness): the margin over 0.8 is what a CI log should show.
-    print(f"two blobs: ncc {float(scores['ncc']):.3f} (floor 0.8)")
+    # randomness). Passing runs show no stdout, so report the margin over
+    # 0.8 in the warnings summary.
+    warnings.warn(
+        f"two blobs: ncc {float(scores['ncc']):.3f} (floor 0.8)", stacklevel=1
+    )
     assert scores["ncc"] > 0.8
 
 

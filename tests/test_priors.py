@@ -9,6 +9,7 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.util import log_density
 from scipy import integrate, stats
 
+from tests._shared import thinned
 from virgil import fit
 from virgil.likelihood import numpyro_model
 from virgil.priors import (
@@ -309,7 +310,7 @@ def test_hierarchical_scales_no_data_reproduce_the_population():
     spread = onp.asarray(population["s_spread"].sample(keys[1], (20000,)))
     unit = onp.asarray(jax.random.normal(keys[2], (20000,)))
     direct = onp.log(median) + spread * unit
-    # Thinned: NUTS draws are correlated. 1500 draws thinned by 10 leave
-    # about 150 near-independent points; the KS statistic then has sd
-    # ~ 0.5/sqrt(150) = 0.04, and the 1e-3 floor (D ~ 0.15) is ~4 sd.
-    assert stats.ks_2samp(log_s[::10], direct).pvalue > 1e-3
+    # Thinned to the ESS: NUTS draws are correlated, and the KS test
+    # assumes independent ones. Fixed [::10] thinning would throw away most
+    # of the power of the 1500 draws.
+    assert stats.ks_2samp(thinned(log_s), direct).pvalue > 1e-3
