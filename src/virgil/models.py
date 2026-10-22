@@ -6411,3 +6411,15 @@ def _cvis_gaussian_envelope(u, v, fwhm):
         np.exp(-(np.pi**2) * fwhm_rad**2 * base_norm**2 / (4.0 * np.log(2.0)))
         + 0j
     )
+
+
+def _scene_images(scene, prefix=""):
+    """Yield ``(path prefix, Image)`` for each Image in a scene, walking
+    ``System`` components and ``Rotated`` sources (``"env."``, ``"source."``)."""
+    if isinstance(scene, Image):
+        yield prefix, scene
+    elif isinstance(scene, System):
+        for name, part in scene.components.items():
+            yield from _scene_images(part, prefix + name + ".")
+    elif isinstance(scene, Rotated):
+        yield from _scene_images(scene.source, prefix + "source.")

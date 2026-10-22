@@ -9,6 +9,8 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
+
 - Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
 - Docs: terse docstrings for the data and pipeline modules (`oidata`, `observables`, `virgil.pipeline.*`): the pipeline classes' settings are now a table per pipeline in [Pipelines](https://benjaminpope.github.io/virgil/pipeline/), and `DiskPipeline`, `OrbitPipeline` and `StarPipeline` leave the docstring allowlist.
 - `OrbitPipeline` checks that its verdict survives dropping the most outlying
@@ -20,6 +22,10 @@ anything before 1.0 may change between minor versions.
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,
   `ComplexVisData.sigma_hat` computes it, and `term(sigma=)` fixes it for scoring. New `offset_beams` argument.
+
+### Fixed
+
+- `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
 
@@ -1158,6 +1164,7 @@ Provisional in 0.4:
 - image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the
   `smoothed` option of the regularizers;
 - `virgil.crossval`;
+- `virgil.fitting.gauss_newton_diag` and the `precondition` argument of `fit`;
 - the module `virgil.radio` (new: complex visibilities from CASA measurement
   sets with per-observation calibration nuisances; instrument-neutral, with
   the spectral-index prior `Uniform(0, 5)` and the data-derived reference
