@@ -9,11 +9,8 @@ tests/test_benchmark_harness.py::test_a_tiny_case_writes_valid_rows
 tests/test_benchmark_harness.py::test_rows_survive_a_crash_in_a_later_config
 tests/test_broadcast_in_time.py::test_broadcast_matches_the_serial_loop_in_float64[_binary-False]
 tests/test_broadcast_in_time.py::test_broadcast_matches_the_serial_loop_in_float64[_binary-True]
-tests/test_chromatic_search.py::test_detection_statistics_and_mc_detect_the_chromatic_companion
 tests/test_chromatic_search.py::test_limits_are_finite_and_sensible_for_the_chromatic_companion
-tests/test_ensemble.py::test_default_weight_ranges_hold_the_corner_with_room_below[tsv]
 tests/test_epochs.py::test_a_known_orbit_is_recovered_from_multi_epoch_visibilities
-tests/test_epochs.py::test_a_positions_fit_starts_where_a_default_start_fails
 tests/test_epochs.py::test_each_chain_starts_at_its_own_values
 tests/test_evidence.py::test_the_evidence_of_two_images_is_the_joint_laplace
 tests/test_evidence.py::test_the_evidence_with_gains_matches_model_loglike
@@ -43,7 +40,6 @@ tests/test_aliases.py
 tests/test_benchmark_harness.py
 tests/test_broadcast_in_time.py
 tests/test_chromatic_search.py
-tests/test_ensemble.py
 tests/test_epochs.py
 tests/test_evidence.py
 tests/test_flat_coordinates.py

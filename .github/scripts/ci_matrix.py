@@ -17,8 +17,9 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | main    | push to main                 | the gate, with the slow tests           |
 | full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13 and the     |
 |         |                              | floors (the last two in 2 shards each)  |
-| nightly | daily schedule               | full, all with slow tests, + the        |
-|         |                              | newest-dependencies canary              |
+| nightly | daily schedule               | full, all with slow tests except macOS  |
+|         |                              | (fast tier), + the newest-dependencies  |
+|         |                              | canary                                  |
 
 Job names do not change between tiers, so the same checks report on every
 pull request. Standard library and the ``gh`` CLI only.
@@ -83,6 +84,9 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
                 "python-version": "3.11",
                 "x64": "0",
                 "slow": nightly,
+                # Unsharded, its 3 cores took over 3 hours for the whole
+                # suite: the nightly's 90-minute limit fits the fast tier.
+                "fast_only": True,
             }
         )
         # Two shards each: unsharded, py3.13 and the floors outgrew the
