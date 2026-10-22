@@ -81,6 +81,17 @@ def test_max_entropy_residuals_square_to_its_value():
         assert np.all(np.isfinite(grad.log_brightness))
 
 
+def test_max_entropy_residuals_are_accurate_in_float32_near_the_default():
+    q = np.ones((NPIX, NPIX)) / NPIX**2
+    t = np.linspace(-0.02, 0.02, NPIX * NPIX).reshape(NPIX, NPIX)
+    reg = MaxEntropy(3.0, prior=q)
+    r = {}
+    for dtype in (np.float32, np.float64):
+        brightness = (q * (1.0 + t)).astype(dtype)
+        r[dtype] = reg.residuals(_image(brightness))
+    assert np.allclose(r[np.float32], r[np.float64], rtol=2e-3, atol=1e-7)
+
+
 def test_max_entropy_is_zero_at_the_default_image():
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     assert np.isclose(

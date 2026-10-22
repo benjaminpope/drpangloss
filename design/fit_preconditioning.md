@@ -183,9 +183,9 @@ Total roughly 1–1.5 weeks; piece 2 carries the risk.
   coordinates (one Jacobian-vector product each, with `lax.map`, never
   materializing `J`), not the 4096 of the NUTS mass: a refresh costs `n` model
   evaluations, so the threshold is lower. Above it, `diag(JᵀJ)` is the mean of
-  `(Jᵀu)²` over 16 Gaussian `u` in *row* space, not Rademacher probes in
-  coordinate space: the estimate is never negative and its relative error is
-  `√(2/probes)` whatever the off-diagonals, which Rademacher's is not; the
+  `(Jᵀu)²` over 16 Rademacher `u` (±1) in *row* space (2026-10-22; they were
+  Gaussian): the estimate is never negative and unbiased, and exact for a
+  diagonal `J`, which the entropy metric's rows nearly are; the
   regularizer's diagonal uses 16 Rademacher Hessian-vector probes. The probe
   keys are fixed, so a fit is reproducible and does not depend on the JAX version.
   The result sets scale only: the optimum does not depend on it.
@@ -401,7 +401,8 @@ Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
   metric); using it instead of the floored Hessian diagonal gives 1.5–3× fewer
   L-BFGS steps at weak weights. `MaxEntropy.metric_rows` exposes it as a
   Gauss–Newton form; probes cost about a third of the gain at 1681
-  coordinates, so the diagonal is now exact up to 4096.
+  coordinates, so the diagonal is now exact up to 4096. *Superseded below:* the
+  cutoff is back at 1024 and the probes are Rademacher.
 - L-BFGS memory 100 helps every case (default raised from 50).
 - 41² VLTI-like, steps at w = 1e4 … 0.1: float64 17 33 77 295 1326 2543,
   float32 18 32 70 259 1594 2917 (before: 18 50 106 582 3015 6018 and
@@ -434,3 +435,21 @@ now fits to convergence. The starlet corner also moves with the sweep's range
 (converged: 0.32 for 1e-4 … 10, 0.16 for 1e-5, 5e-6 for 1e-6): its L-curve has
 no sharp corner, so a corner at the edge of a sweep is not a corner. Re-deriving
 the ranges on the 60-dataset contest bench needs an OzSTAR job.
+
+## Rademacher probes, exact cutoff back at 1024 (2026-10-22)
+
+The exact diagonal at 4096 removed the probe error on the entropy metric, but
+that error was the Gaussian probes' own: for a nearly diagonal `J`,
+`(Jᵀu)_p² ≈ J_pp² u_p²` has relative variance 2 for Gaussian `u` and 0 for
+Rademacher `u`. So `_gn_diagonal` uses Rademacher probes and `_EXACT_DIAG` is 1024
+again (above it exact costs `n` Jacobian-vector products per refresh, wasted on
+entropy pixels, whose data term is dropped). 41² VLTI-like L-curve, memory 100,
+steps for w = 1e4 → 0.1 (identical χ²):
+
+| dtype | Rademacher, 1024 | Gaussian, exact (4096) |
+|---|---|---|
+| float64 | 18 33 79 236 1348 2837 (15 s) | 17 33 77 317 1453 2877 (18 s) |
+| float32 | 18 31 80 266 1355 3416 (9 s) | 18 32 73 252 1529 2971 (10 s) |
+
+Wall times are one run each on a loaded laptop. Float64 is at least as good;
+float32 is within the line search's run-to-run variation at the last weight.

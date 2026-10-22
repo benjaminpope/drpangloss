@@ -123,6 +123,21 @@ def test_max_entropy_curvature_is_the_weight_times_the_image():
     onp.testing.assert_allclose(diag, 7.0 / 64.0, rtol=0.05)
 
 
+def test_the_entropy_metric_replaces_the_data_curvature_on_its_pixels():
+    start, priors, data = _image_fit(8)
+    values = {"env.log_brightness": start.env.log_brightness}
+    regularizers = [MaxEntropy(7.0, path="env")]
+    once = gauss_newton_diag(
+        start, priors, data, values, regularizers=regularizers
+    )
+    twice = gauss_newton_diag(
+        start, priors, [data, data], values, regularizers=regularizers
+    )
+    onp.testing.assert_allclose(
+        twice["env.log_brightness"], once["env.log_brightness"], rtol=1e-6
+    )
+
+
 def test_lm_fits_maximum_entropy():
     start, priors, data = _image_fit(8)
     regularizers = [MaxEntropy(50.0, path="env")]

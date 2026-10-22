@@ -1392,7 +1392,7 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
 
 # Up to this many coordinates the Gauss–Newton diagonal is exact (one
 # Jacobian-vector product each); above, it is estimated from _DIAG_PROBES probes.
-_EXACT_DIAG = 4096
+_EXACT_DIAG = 1024
 _DIAG_PROBES = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
 _DIAG_FLOOR = 1e-3
@@ -1400,8 +1400,9 @@ _DIAG_FLOOR = 1e-3
 
 def _gn_diagonal(rows, x, probes, key=None):
     """The diagonal of JᵀJ for the rows ``rows(x)``: exact (``probes=None``),
-    or the mean of ``(Jᵀu)²`` over Gaussian ``u`` in row space, whose mean is
-    the diagonal and which is never negative."""
+    or the mean of ``(Jᵀu)²`` over Rademacher ``u`` (±1) in row space, whose
+    mean is the diagonal and which is never negative; for a diagonal J it is
+    exact."""
     n = x.size
     m = jax.eval_shape(rows, x).size
     if probes is None and n <= m:
@@ -1422,7 +1423,7 @@ def _gn_diagonal(rows, x, probes, key=None):
         return jax.lax.scan(add, np.zeros(n, x.dtype), np.arange(m))[0]
 
     def squared(key):
-        return pull(jax.random.normal(key, (m,), x.dtype))[0] ** 2
+        return pull(jax.random.rademacher(key, (m,), x.dtype))[0] ** 2
 
     keys = jax.random.split(jax.random.fold_in(key, 0), probes)
     return np.mean(jax.lax.map(squared, keys), axis=0)
@@ -1459,7 +1460,9 @@ def _fisher_diagonal(problem, z, probes, round=0):
     curvature of the priors, and the Hessian diagonal of the regularizers
     (floored at zero, as for ``gauss_newton_mass``). A regularizer with
     ``metric_rows`` (maximum entropy) gives its own positive curvature instead,
-    which replaces the rest on the coordinates it covers. Probes are drawn
+    which replaces the rest on the coordinates it covers (the data JᵀJ is
+    dropped there on purpose: whitened by the regularizer it is the identity
+    plus a low-rank part). Probes are drawn
     afresh in each ``round`` (deterministically), so that refreshes do not
     repeat an error."""
     key = jax.random.PRNGKey(round)
@@ -1517,7 +1520,10 @@ def gauss_newton_diag(
     The curvature is F = JᵀJ + diag(P) + diag(R) in the unconstrained
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
-    of the regularizers, floored at zero. It is the scale
+    of the regularizers, floored at zero. On the pixels of a regularizer with
+    ``metric_rows`` (maximum entropy) it is that metric alone, ``weight * b``:
+    the data JᵀJ and the other terms are dropped there (measured faster than
+    adding them), so it is a scale, not the curvature, at weak weights. It is the scale
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
     matrix.
@@ -1535,7 +1541,7 @@ def gauss_newton_diag(
     n_probes : int, optional
         Up to 1024 coordinates the diagonal is exact, one Jacobian-vector
         product per coordinate. Above, it is estimated: JᵀJ from the mean of
-        ``(Jᵀu)²`` over 16 Gaussian vectors ``u``, R from 16 Rademacher
+        ``(Jᵀu)²`` over 16 Rademacher vectors ``u``, R from 16 Rademacher
         Hessian-vector products, each good to a relative ``√(2 / probes)``.
         Give a number of probes to estimate at any size, or ``0`` for the exact
         diagonal at any size.

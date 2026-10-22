@@ -256,12 +256,12 @@ class MaxEntropy(_ImageRegulariser):
         b, q = self._brightness_and_default(model)
         inside = b > 0.0
         t = np.where(inside, (b - q) / q, 0.5)
-        small = np.abs(t) < 1e-3
+        small = np.abs(t) < 1e-2
         ts = np.where(small, 1.0, t)  # the series covers the small ones
         phi = np.where(
             small,
-            0.5 - t / 6.0 + t**2 / 12.0,
-            (xlogy(1.0 + ts, 1.0 + ts) - ts) / ts**2,
+            0.5 - t / 6.0 + t**2 / 12.0 - t**3 / 20.0,
+            ((1.0 + ts) * np.log1p(ts) - ts) / ts**2,
         )
         r = t * np.sqrt(2.0 * self.weight * q * phi)
         return np.ravel(np.where(inside, r, 0.0))
