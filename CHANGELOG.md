@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths, (u, v) and times. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI), and for data with flagged samples or bandwidths; `processed_oifits_skipped` keeps an honest reason for the rest. `pipeline._io.oidata_tables` moved to `virgil.oifits.oidata_tables`. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
 - Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
 - `OrbitPipeline` checks that its verdict survives dropping the most outlying
   night (`night_dropped`): the `modes` stage refits the search without the

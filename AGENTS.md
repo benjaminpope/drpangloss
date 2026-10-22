@@ -197,7 +197,7 @@ Ben is surprised how long some docstrings are. Keep them short.
 | `oidata.py` | `OIData` (observables, flags, operators, residuals; `unflagged`, the samples an observable uses, which set every resolution and field), `closure_phases`, `cp_indices` |
 | `gains.py` | `GainModes`: calibration gains correlated across channels (and closure-phase offsets), marginalized analytically; used by `OIData.with_gains`/`with_closure_offsets` and `likelihood` |
 | `_closure.py` | `ClosureNoise`: independent, whitened closure phases with Kammerer et al.'s (2020) correlations, used by `whitened_residuals`; `colour` inverts `whiten` for the residual bootstrap (private) |
-| `oifits.py` | `read_oifits` / `write_oifits` / `build_hdulist`, astropy only |
+| `oifits.py` | `read_oifits` / `write_oifits` (an `OIData` or a dict of tables, via `oidata_tables`) / `build_hdulist`, astropy only |
 | `amigo.py` | AMIGO mixed-DISCO records and `load_oi_data` |
 | `models.py` | source models (`SourceModel`, components including the pixel `Image` and the radial-profile `MultipoleDisk` with its profiles, `Harmonics` and `VonMises`, `System`, binaries, `HarmonixModel`) and the analytic `cvis_*` functions, and `multipole_disk_cvis`, the quadrature engine of `MultipoleDisk` |
 | `harmonics.py` | azimuthal harmonics of `MultipoleDisk`: the image-harmonic convention, the positive form's reflection-coefficient machinery (`reflection_coefficients`, `step_up`, `step_down`, `spectral_factor`), the von Mises harmonics, legacy `az_amps`/`az_pas` conversions, and `to_image_harmonics`/`from_image_harmonics`; imports `models` only lazily |

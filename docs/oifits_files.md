@@ -52,9 +52,19 @@ A frame is one exposure of one instrument: the baselines that closure phases tie
 
 With `frame_mjd="mean"` (the default) every sample of a frame gets the frame's mean `MJD`; `"row"` keeps each row's own. A sample's time is `mjd` (days, float64).
 
-## Writing {#writing}
+## Writing an `OIData` {#writing-oidata}
 
-`write_oifits(tables, filename)` writes an OIFITS2 file from a dictionary of tables in the layout of the legacy `virgil.legacy.oifits_implaneia.save`:
+`write_oifits(data, filename)` writes an [`OIData`][virgil.oidata.OIData] as an OIFITS2 file that `read_oifits` reads back to the same observables, errors, flags, wavelengths, $(u, v)$ and times: squared visibilities in `OI_VIS2`, and closure phases in `OI_T3` or absolute phases in `OI_VIS`.
+
+- **Flagged samples** are written as NaN with `FLAG` set, so a file holding only closure phases has an all-flagged `OI_VIS2` that keeps the baselines.
+- **Stations.** Closure phases need station indices: data that has none (as from AMI or kernel-phase reductions) gets placeholder stations from its triangles, one per distinct end of a baseline, at the origin of `OI_ARRAY`. Closing triangles $(a, b, c)$ use the baselines $(a, b)$, $(b, c)$ and $(a, c)$, as above.
+- **Times.** Data without times are written with `MJD` 0, so their frames are not kept. Closure phases of repeated baselines (one set per frame) could not be told apart on reading, so such data get placeholder stations even if they have their own.
+- **Bandwidth** is written as `EFF_BAND`, or as 0 when unknown.
+- **Not written:** extra observables, gains or closure offsets, projected observables, uv-grid data, visibility amplitudes in place of $V^2$, and irregular closure-phase or wavelength layouts. `write_oifits` raises a `ValueError` naming the reason; the pipelines record it as `processed_oifits_skipped`.
+
+## Writing tables {#writing}
+
+`write_oifits(tables, filename)` also writes an OIFITS2 file from a dictionary of tables in the layout of the legacy `virgil.legacy.oifits_implaneia.save`:
 
 - `"OI_WAVELENGTH"` (required): `EFF_WAVE` and `EFF_BAND` in metres, one value per channel.
 - At least one of `"OI_VIS2"`, `"OI_VIS"` and `"OI_T3"`, and optionally `"OI_FLUX"` (`FLUXDATA`, `FLUXERR` and a `STA_INDEX` per row). Data columns (e.g. `VIS2DATA`, `T3PHI`) have shape `(nrow,)` or `(nrow, nwave)`; **phases are in degrees**. `T3AMP` and `T3AMPERR` may be omitted (they are then NaN and flagged). The keywords `AMPTYP` and `PHITYP` of `OI_VIS` (default `'absolute'`) and `CALSTAT` of `OI_FLUX` (default `'C'`) may be given as entries of their table. `TARGET_ID`, `TIME`, `MJD` and `INT_TIME` may be scalars; `FLAG` is optional (default: nothing flagged).

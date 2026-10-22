@@ -10,7 +10,12 @@ from astropy.io import fits
 from virgil.likelihood import loglike, model_loglike, whitened_residuals
 from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData, closure_phases, cp_indices
-from virgil.oifits import read_oifits, write_oifits
+from virgil.oifits import (
+    build_hdulist,
+    oidata_tables,
+    read_oifits,
+    write_oifits,
+)
 from tests._shared import PAIRS, TRIANGLES  # noqa: E402
 
 
@@ -955,3 +960,145 @@ def test_absolute_phases_with_a_nonzero_constant_time(tmp_path):
         data = OIData(hdul)
         assert not data.cp_flag
         assert np.allclose(data.phi, onp.angle(cvis), atol=1e-6)
+
+
+# === WRITING AN OIDATA ===
+
+
+def _same_data(back, data):
+    """``back`` has ``data``'s observables, errors, flags, (u, v) and times."""
+    for name in ("u", "v", "vis", "d_vis", "phi", "d_phi"):
+        onp.testing.assert_allclose(
+            onp.asarray(getattr(back, name)),
+            onp.asarray(getattr(data, name)),
+            rtol=1e-6,
+            atol=1e-12,
+            err_msg=name,
+        )
+    for name in ("i_cps1", "i_cps2", "i_cps3", "vis_index", "phi_index"):
+        assert (getattr(back, name) is None) == (getattr(data, name) is None)
+        if getattr(data, name) is not None:
+            assert onp.array_equal(getattr(back, name), getattr(data, name))
+    onp.testing.assert_allclose(
+        onp.broadcast_to(back.wavel, back.u.shape),
+        onp.broadcast_to(data.wavel, data.u.shape),
+    )
+    assert back.cp_flag == data.cp_flag
+    if data.dt is not None:
+        onp.testing.assert_allclose(
+            onp.asarray(back.dt) + back.t_ref,
+            onp.asarray(data.dt) + data.t_ref,
+            atol=1e-9,
+        )
+
+
+def _closure_only():
+    tables = _tables(waves=(4.4e-6, 5.2e-6))
+    del tables["OI_VIS2"]
+    return tables
+
+
+def _flagged_absolute_phases():
+    """V² and absolute phases with a flagged sample of each."""
+    u, v = _baselines()
+    flag = onp.zeros((len(u), 1), dtype=bool)
+    flag[2] = True
+    vis2 = {**_tables()["OI_VIS2"], "FLAG": flag}
+    flag = flag.copy()
+    flag[4], flag[2] = True, False
+    return {
+        "OI_WAVELENGTH": {"EFF_WAVE": [4.8e-6], "EFF_BAND": 0.1e-6},
+        "OI_VIS2": vis2,
+        "OI_VIS": {**_vis_table(phase=onp.arange(6.0)), "FLAG": flag},
+    }
+
+
+@pytest.fixture(
+    params=[
+        "ami",
+        "vlti-stations",
+        "vlti-no-stations",
+        "closure-only",
+        "flagged",
+    ]
+)
+def data_shape(request, tmp_path):
+    from virgil.coverage import nrm_oidata
+    from tests._shared import vlti_night
+
+    kind = request.param
+    if kind == "ami":
+        return nrm_oidata()
+    if kind.startswith("vlti"):
+        return vlti_night(60000.0, frames=3, stations=kind == "vlti-stations")
+    tables = (
+        _closure_only()
+        if kind == "closure-only"
+        else _flagged_absolute_phases()
+    )
+    return OIData(write_oifits(tables, tmp_path / "in.oifits"))
+
+
+def test_oidata_round_trips_through_oifits(data_shape, tmp_path):
+    path = write_oifits(data_shape, tmp_path / "out.oifits")
+    _same_data(OIData(path), data_shape)
+    with fits.open(path) as hdul:
+        assert hdul[0].header["CONTENT"] == "OIFITS2"
+    assert pyoifits.open(path).get_dataHDUs()
+
+
+def test_closure_only_data_keeps_its_flagged_visibilities(tmp_path):
+    data = OIData(write_oifits(_closure_only(), tmp_path / "in.oifits"))
+    assert data.vis.size == 0 and data.vis_index.size == 0 and data.phi.size
+    back = OIData(write_oifits(data, tmp_path / "out.oifits"))
+    assert back.vis.size == 0 and back.cp_flag
+    assert onp.array_equal(back.i_cps1, data.i_cps1)
+
+
+def test_synthesized_stations_chain_the_triangles(tmp_path):
+    """Without station indices the file gets one station per hole, with the
+    triangle (A, B, C) made of the baselines AB, BC and AC."""
+    from virgil.coverage import nrm_oidata
+
+    tables, reason = oidata_tables(nrm_oidata())
+    assert reason is None
+    pairs = tables["OI_VIS2"]["STA_INDEX"]
+    assert set(pairs.ravel()) == set(range(1, 8))
+    assert len({tuple(p) for p in pairs}) == len(pairs)
+    for a, b, c in tables["OI_T3"]["STA_INDEX"]:
+        assert {(a, b), (b, c), (a, c)} <= {tuple(p) for p in pairs}
+
+
+def test_written_oidata_passes_pyoifits_verification(tmp_path):
+    from virgil.coverage import nrm_oidata
+
+    data = nrm_oidata()
+    tables, _ = oidata_tables(data)
+    # pyoifits cannot verify the zero EFF_BAND that stands for an unknown width.
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = 0.1e-6
+    path = tmp_path / "v.oifits"
+    build_hdulist(tables).writeto(path)
+    pyoifits.open(path).verify("exception")
+
+
+def test_oidata_bandwidth_is_written_as_eff_band(tmp_path):
+    waves = (4.6e-6, 5.0e-6)
+    tables = _tables(waves=waves)
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = [0.1e-6, 0.2e-6]
+    data = OIData(write_oifits(tables, tmp_path / "in.oifits"), bandwidth=True)
+    back = OIData(write_oifits(data, tmp_path / "out.oifits"), bandwidth=True)
+    onp.testing.assert_allclose(back.bandwidth, data.bandwidth, rtol=1e-6)
+
+
+def test_repeated_baselines_without_times_get_placeholder_stations(tmp_path):
+    """Frames without times share station pairs, which the reader could not
+    tell apart: the file renumbers the stations and keeps the closure phases."""
+    from virgil.coverage import vlti_oidata
+
+    data = vlti_oidata()
+    assert data.dt is None and data.stations is not None
+    tables, reason = oidata_tables(data)
+    assert reason is None
+    pairs = tables["OI_VIS2"]["STA_INDEX"]
+    assert len({tuple(p) for p in pairs}) == len(pairs)
+    _same_data(OIData(write_oifits(data, tmp_path / "x.oifits")), data)

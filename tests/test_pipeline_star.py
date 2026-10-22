@@ -729,15 +729,13 @@ def test_scanned_fit_refines_the_diameter_between_grid_points():
 def test_load_removes_a_stale_processed_oifits(data, tmp_path, monkeypatch):
     from types import SimpleNamespace
 
-    from virgil.pipeline import _common
-
     folder = tmp_path / "data"
     folder.mkdir()
     stale = folder / "processed.oifits"
     stale.write_text("an earlier run's data")
     p = SimpleNamespace(processed=data, output=tmp_path)
     monkeypatch.setattr(
-        _common._io, "oidata_tables", lambda d: (None, "no tables")
+        "virgil.oifits.oidata_tables", lambda d: (None, "no tables")
     )
     report = star._load_star(p)
     assert not stale.exists()

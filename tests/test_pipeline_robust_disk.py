@@ -397,8 +397,7 @@ def test_from_oifits_rejects_a_bad_file_with_a_clear_error(
 
 def test_from_oifits_rejects_a_list_with_one_bad_file(junk, tiny, tmp_path):
     good = tmp_path / "good.oifits"
-    tables, _ = _io.oidata_tables(tiny)
-    write_oifits(tables, good)
+    write_oifits(tiny, good)
     with pytest.raises(OSError, match="FITS"):
         DiskPipeline.from_oifits(
             [good, junk / "notes.fits"], output=tmp_path / "run"
@@ -414,9 +413,7 @@ def test_from_oifits_without_files_raises(tmp_path):
 def test_from_oifits_reads_a_good_file_and_runs_the_load_stage(tiny, tmp_path):
     # The positive control for the failures above.
     path = tmp_path / "tiny.oifits"
-    tables, reason = _io.oidata_tables(tiny)
-    assert reason is None
-    write_oifits(tables, path)
+    write_oifits(tiny, path)
     pipeline = DiskPipeline.from_oifits(path, output=tmp_path / "run", **TINY)
     res = pipeline.run(through="load")
     assert res.status == "partial"
