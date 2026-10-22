@@ -756,7 +756,7 @@ def fit(
                 np.asarray(limit),
                 gtol,
                 np.asarray(max_step_size),
-                _lbfgs_memory(lbfgs_memory, *_vector_size(z0)),
+                _lbfgs_memory(lbfgs_memory, z0),
                 budget,
                 precondition,
             )
@@ -1399,26 +1399,22 @@ _LBFGS_MEMORY = 100
 _LBFGS_MIN_MEMORY = 5
 
 
-def _vector_size(z):
-    """The number of coordinates of the tree ``z`` and the bytes of the widest."""
-    leaves = jax.tree.leaves(z)
-    n = sum(int(np.size(leaf)) for leaf in leaves)
-    return n, max((leaf.dtype.itemsize for leaf in leaves), default=8)
-
-
-def _lbfgs_memory(memory, n, itemsize):
-    """``memory`` if given, else 100 cut so that ``n`` coordinates fit the budget."""
+def _lbfgs_memory(memory, z):
+    """``memory`` if given, else 100 cut so that the tree ``z`` fits the budget."""
     if memory is not None:
         return int(memory)
+    leaves = jax.tree.leaves(z)
+    n = sum(int(leaf.size) for leaf in leaves)
     if n == 0:
         return _LBFGS_MEMORY
+    itemsize = max(leaf.dtype.itemsize for leaf in leaves)
     cut = max(_LBFGS_MIN_MEMORY, _LBFGS_BYTES // (2 * n * itemsize))
     if cut < _LBFGS_MEMORY:
         warnings.warn(
             f"L-BFGS history cut to {cut} steps to stay under 1 GiB for {n} "
             "coordinates; pass lbfgs_memory to choose.",
             UserWarning,
-            stacklevel=3,
+            stacklevel=external_stacklevel(),
         )
     return min(_LBFGS_MEMORY, cut)
 
