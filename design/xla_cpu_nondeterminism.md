@@ -1,7 +1,9 @@
 # XLA CPU run-to-run nondeterminism (0.4.1 upstream report)
 
-Status: investigated 2026-10-22. Not filed. Ben files; the upstream tracker already has a matching open issue
-([jax-ml/jax#39741](https://github.com/jax-ml/jax/issues/39741)), so the draft below is a comment, not a new issue.
+Status: investigated 2026-10-22. Not filed. Ben files. The upstream tracker already has a matching open issue
+([jax-ml/jax#39741](https://github.com/jax-ml/jax/issues/39741)), so any report is a comment, not a new issue.
+**It does not reproduce on jax 0.12.0.1** (the version `uv.lock` pins; see Results), so the recommendation is to post at
+most the short comment at the end, or nothing.
 
 ## Evidence in virgil
 
@@ -15,7 +17,7 @@ The case is the compiled Levenberg–Marquardt solve, not a primitive op. Trail:
 - The cause of the garbage solves was not fixed. The same inputs and compiled code give different results from call to
   call. Eager stepping of the same LM steps never does (0 of 100); the compiled `while_loop` does.
   `--xla_cpu_enable_concurrency_optimized_scheduler=false` makes the unfixed code pass 60 of 60 (notes in the 0.4.0 release
-  review session; no copy in the repo, which has no `XLA_FLAGS` setting except `likelihood.py:729-743`, a device-count helper).
+  review session; no copy in the repo, which has no `XLA_FLAGS` setting except `likelihood._host_devices`, a device-count helper).
 - Unrelated and not this bug: commit `b1158ae` (CLEAN test, first χ² 27.1/28.7/29.3 across CI runners) is a cross-platform
   float32 difference in the noise draw, and `jnp.hypot` NaN gradient at the origin on JAX 0.12.0 (#455).
 
@@ -63,9 +65,10 @@ outs = [tuple(np.asarray(o) for o in fn.call(x0)) for _ in range(a.calls)]
 print(f"jax {jax.__version__}  calls={a.calls}  distinct bitwise={len({b''.join(o.tobytes() for o in r) for r in outs})}  steps={outs[0][1]}")
 ```
 
-Files (not committed, 92 KB binary): `~/Library/Application Support/Claude/side-session-notes/local_9a7256c5-8eb2-4f23-9030-5d03771abfc0/xla-cpu-repro/`
-(`lm_step.jaxexport`, `x0.npy`, `replay.py`, plus the virgil-side `export_module.py`, `lm_models.py`, `lmrepro.py`).
-Attach `lm_step.jaxexport`, `x0.npy` and `replay.py` to the comment, or put them in a gist.
+The scripts that rebuild the module are in `design/sketches/xla_cpu_repro/` (`export_module.py`, `lm_models.py`, `lmrepro.py`,
+`replay.py`); run `export_module.py` with virgil at `c446485` on jax 0.11.2 and `PYTHONPATH` including `flatbuffers` to regenerate
+`lm_step.jaxexport` and `x0.npy`. Attach those two files and `replay.py` to the comment (or a gist) once the comment is
+posted; the binary is not committed.
 
 ## Results
 
@@ -84,10 +87,25 @@ in that process.
 | `--xla_force_host_platform_device_count=4` | 5 | 5 | 2 |
 | scheduler flag off and `--xla_cpu_use_thunk_runtime=false` | 1 | 1 | 1 |
 
-`JAX_DEFAULT_MATMUL_PRECISION=highest` gave 1 distinct result in one run, which is inside the default's range (1 to 5); the
-module is f64 so the setting should not matter. No `taskset` on macOS, so the single-core case is untested here.
+`JAX_DEFAULT_MATMUL_PRECISION=highest`, three processes: 4, 5, 5 distinct results, so it does not help (the module is f64). No `taskset` on macOS, so the single-core case is untested here.
 On this machine the scheduler flag is the only one that always restored determinism, unlike #39741 (x86 Linux, f32), where it
 only reduced the rate.
+
+### jax 0.12.0.1
+
+Fresh venv (Python 3.13, jax = jaxlib = 0.12.0.1, same machine). Two tests:
+
+| test | default | scheduler flag off |
+|---|---|---|
+| `replay.py` on the same exported module, 200 calls, three processes | 1, 1, 1 (and `steps=15`, not 100) | 1, 1, 1 |
+| pre-fix virgil (`c446485`) installed, 20 consecutive `fit` calls on the failing scene | 1 distinct result | 1 distinct result |
+| same, Gaussian star + point companion in the optimistix loop, 30 runs | 1 | 1 |
+
+So the nondeterminism is absent on 0.12.0.1 on this machine, whether the 0.11.2 module is replayed or the code is traced
+afresh. The replayed module stops after 15 steps instead of 100, so the compiled program differs between releases
+(the StableHLO is the same). The pre-fix `fit` still ends at the loss 14.5 optimum every time, deterministically: that is
+a separate matter (the start/alias behaviour the #443 trust-region change addresses), not nondeterminism.
+Not tested: x86 Linux, and the CI runners' failures at 0.12.0 (the scheduler flag was not needed for those, per #455).
 
 ## Existing upstream issues
 
@@ -100,26 +118,20 @@ only reduced the rate.
 - [openxla/xla#50284](https://github.com/openxla/xla/issues/50284): CPU scheduling memory bound; mentions the same flag, not this.
 - No other matches for `nondeterministic`, `different results across calls`, `thunk`, `lapack` in jax-ml/jax or openxla/xla.
 
-## Draft: comment for jax-ml/jax#39741 (Ben to post)
+## Draft: comment for jax-ml/jax#39741 (Ben to post, optional)
 
-> A second independent instance, with the smallest module I have so far, and a case where the scheduler flag *does* restore
-> determinism.
+Only worth posting because it gives a second independent case and a version datum. Attach `lm_step.jaxexport`, `x0.npy`, `replay.py`.
+
+> A second case, on macOS arm64, float64, and it is gone in 0.12.0.1.
 >
-> **Setup.** Apple M4, macOS 26.7.1 arm64, Python 3.12, jax = jaxlib = 0.11.2, float64, CPU. The module is one `jax.jit` of
-> `optimistix.least_squares` (Levenberg–Marquardt, `lineax.QR`, a custom `terminate` that evaluates `jax.grad` of the loss each step,
-> 100 steps) on a 4-parameter interferometric model fit (about 550 residuals). Post-optimization HLO has one
-> `lapack_dgeqrf_ffi`, one `lapack_dormqr_ffi` and eight batched `lapack_dtrsm_ffi` custom calls (42 × 3×3). Stepping the
-> same LM steps eagerly never differs (0 of 100); the compiled while-loop sometimes returns a garbage damped solve.
+> **Setup.** Apple M4, macOS 26.7.1, Python 3.12, jax = jaxlib = 0.11.2, CPU, x64. The module is one `jax.jit` of
+> `optimistix.least_squares` (Levenberg–Marquardt, `lineax.QR`, a `terminate` that evaluates `jax.grad` of the loss each
+> step, 100 steps) on a 4-parameter model fit of about 550 residuals. Its optimized HLO has one `lapack_dgeqrf_ffi`,
+> one `lapack_dormqr_ffi` and eight batched `lapack_dtrsm_ffi` calls. Stepping the same LM steps eagerly never differs
+> (0 of 100); the compiled while-loop sometimes returns a garbage damped solve.
 >
-> **Repro (jax, numpy, flatbuffers only).** Exported with `jax.export` (92 KB); `replay.py` deserializes it and calls it on
-> identical buffers, counting distinct bitwise results (attached: `lm_step.jaxexport`, `x0.npy`, `replay.py`).
->
-> ```
-> pip install jax==0.11.2 flatbuffers
-> python replay.py --calls 200
-> ```
->
-> Distinct bitwise results in 200 calls, three processes per row:
+> **Repro (jax, numpy, flatbuffers).** The module exported with `jax.export` (92 KB); `replay.py` calls it on identical
+> buffers and counts distinct bitwise results. Distinct results in 200 calls, three processes per row, 0.11.2:
 >
 > | `XLA_FLAGS` | |
 > |---|---|
@@ -128,12 +140,10 @@ only reduced the rate.
 > | `--xla_cpu_use_thunk_runtime=false` | 1, 6, 3 |
 > | `--xla_cpu_multi_thread_eigen=false` | 1, 3, 5 |
 > | `--xla_cpu_enable_fast_math=false` | 4, 5, 2 |
-> | `--xla_cpu_multi_thread_eigen=false intra_op_parallelism_threads=1` | 3, 5, 3 |
-> | scheduler flag off and `--xla_cpu_use_thunk_runtime=false` | 1, 1, 1 |
 >
-> The effect is large: before we guarded our solver against accepting a step that raises the loss, about half of the full fits
-> ended at a wrong optimum (flux about 0, parameters on the prior bound); with the scheduler flag off, 0 of 60. Only the
-> exported module reproduces it. Seven hand-built jax-only reconstructions (QR/SVD/eigh/Cholesky/LU, optimistix LM with a
-> synthetic model, batched `solve_triangular`) stayed bit-identical over up to 1500 calls, as the reporter here also found.
-> The only non-elementwise ops are the LAPACK FFI calls, so a race between concurrently scheduled LAPACK thunks
-> (for example the in-place `dtrsm` outputs, `output_to_operand_aliasing`) is my guess; I have not localized it.
+> On jax 0.12.0.1 the same replay gives 1, 1, 1 with and without the scheduler flag, and so does re-tracing the solver
+> (20 fits, one distinct result). Worth checking whether your module is also deterministic on 0.12.
+>
+> On 0.11.2 the effect was large: before our solver rejected steps that raised the loss, 14 or more of 20 fits in one process
+> ended at a wrong optimum, and with the scheduler flag off the fits agreed. Hand-built jax-only reconstructions (QR, SVD, eigh,
+> Cholesky, LU, batched `solve_triangular`, optimistix LM with a synthetic model) stayed bit-identical, as you also found.
