@@ -1340,3 +1340,13 @@ role = "context"
 bibcode = "2007StaSc..22...59P"
 verified = true
 verified_via = "ads"
+
+[ref.offringa2014]
+authors = "Offringa et al."
+year = 2014
+title = "WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy"
+used_in = ["virgil.radio_clean:clean"]
+note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows; not checked against ADS"
+bibcode = "2014MNRAS.444..606O"
+verified = false
+verified_via = "none"
