@@ -1,10 +1,10 @@
 # Pipelines: a stable contract over virgil's analyses
 
-Status (2026-10-16): **BinaryPipeline and StarPipeline built** (2026-10-08);
-the pipelines are provisional in 0.4.0 (`docs/stability.md`). `DiskPipeline`
-is in review (virgil#369). `OrbitPipeline` is next, planned in
-[`orbit_pipeline.md`](orbit_pipeline.md) (phase 1e); `ImagingPipeline` has its first version (one member), designed in
-[`imaging_pipeline.md`](imaging_pipeline.md).
+Status (2026-10-22): **all five pipelines are built** (`BinaryPipeline`,
+`StarPipeline`, `DiskPipeline`, `OrbitPipeline`, `ImagingPipeline`) and
+provisional (`docs/stability.md`). `OrbitPipeline` is planned in
+[`orbit_pipeline.md`](orbit_pipeline.md); `ImagingPipeline` has its first
+version (one member), designed in [`imaging_pipeline.md`](imaging_pipeline.md).
 
 ## Goal
 

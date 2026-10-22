@@ -188,11 +188,8 @@ Ben is surprised how long some docstrings are. Keep them short.
   resolves entries against ADS). `scripts/sync_references_page.py --by-module`
   and `--unverified` give the census.
 - **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
-  over 60 lines that is not in `tests/lint/docstring_allowlist.txt`
-  (`module:qualname N`, sorted by that key; `N` is the current length and a
-  listed docstring may not grow past it), and on a stale entry, so the list can
-  only shrink. New code may not add to it; a PR that rewrites a listed
-  docstring deletes its line.
+  over 60 lines, with no allowlist: shorten the docstring, and put
+  derivations in `docs/` and design history in `design/`.
 - **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
   subagent only the signature and the new docstring of each rewritten public
   function. It writes a correct call for a stated task and lists anything it
@@ -242,7 +239,7 @@ Ben is surprised how long some docstrings are. Keep them short.
 | `_flat.py` | flat coordinates of priors (`_flat_coordinate`, `_FlatBijection`), shared by `fit` and `numpyro_model`; `flat_sampled` makes numpyro's `biject_to` use them, so NUTS samples in them with `flat_coordinates=True` (opt-in; private; imports nothing from virgil); see `design/sampler_flat_coordinates.md` |
 | `_geometry.py`, `_utils.py`, `_grid.py` | shared geometry, constants and helpers, and the grid machinery used by both `grid_fit` and `limits` (private) |
 | `_linear.py` | the shared algebra for parameters that enter linearly and are marginalized analytically (`LinearMarginal`), used by `gains`, `observables` and `orbits` (private) |
-| `_gauss_newton.py` | the dense damped-Newton (Levenberg–Marquardt) kernel for objectives that are not plain sums of squares: kernel problems (`loss`, `rows`, `diag`), `init`/`step`/`solve`, ε-active box bounds, integer stop codes (private; imports nothing from virgil); see `design/gauss_newton_plan.md` |
+| `_gauss_newton.py` | the dense damped-Newton (Levenberg–Marquardt) kernel for objectives that are not plain sums of squares: kernel problems (`loss`, `rows`, `diag`), `init`/`step`/`solve`, ε-active box bounds, integer stop codes (private; imports nothing from virgil); see `design/history/gauss_newton_plan.md` |
 | `_precision.py` | local float32/float64 for entry points: `run_in`, `cast_tree` and the `in_float64` decorator (private) |
 | `pipeline/` | `virgil.pipeline`, loaded lazily and needing the `pipeline` extra: scriptable pipelines (`BinaryPipeline`, `StarPipeline`, `DiskPipeline`, `ImagingPipeline` for a model-independent image: `image`, and `OrbitPipeline` for a multi-epoch binary orbit, a blind alias search: `orbit`) that run fixed stages, resume, and write a run folder (`run.json`, `summary.json`, HDF5 grids and samples, plots, processed OIFITS, an executed quicklook notebook) with deterministic quality checks; `_core` (`_Pipeline`, `Stage`, `ConfigMismatchError`), `_common` (helpers both pipelines share: χ², residual moments, quantiles, data geometry, prior-bound fractions, figure saving), `_io` (atomic writes, `Result`, `load`, model specs without pickles), `_checks` (`Check`), `_quicklook`, `binary`, `star` (with a registry of models by short name), `disk`, `image`, `orbit`, `cli` (`virgil-pipeline`); public docs in `docs/pipeline.md`, design in `design/pipeline.md` |
 | `legacy/` | ImPlaneIA-derived OIFITS tools, not imported by `import virgil` |

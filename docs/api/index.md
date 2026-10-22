@@ -28,6 +28,9 @@ may change in any 0.4.x release without a deprecation. See
 - [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits
 - [Radio](radio.md): `ComplexVisData`, `CalibrationNuisance`, complex visibilities from CASA measurement sets with per-observation calibration nuisances
 - [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances
+- [Radio CLEAN](radio_clean.md): `clean`, CLEAN deconvolution of complex visibilities (provisional)
+- [Cross-validation](crossval.md): K-fold cross-validation of a hyperparameter (provisional)
+- [Short arcs](arcs.md): each night's velocity, the periods its positions and velocities admit, and each alias band's seed orbits
 - [Fields](fields.md): Gaussian-process log-brightness priors for pixel images
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
 - [SVI](svi.md): `variational`, a guide fitted to the posterior of `numpyro_model` with numpyro's SVI

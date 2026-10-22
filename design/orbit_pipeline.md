@@ -1,7 +1,7 @@
 # Binary orbits: one blind, automatic, user-friendly pipeline
 
 Status (2026-10-20): **the canonical orbit plan.** It supersedes
-`automatic_orbits.md`, `orbit_aliases.md` and `thiele_innes_marginalisation.md`
+`history/automatic_orbits.md`, `orbit_aliases.md` and `thiele_innes_marginalisation.md`
 (see their headers for what stays valid).
 - Phases 1a to 1f are merged: the engine result API (1a, #359), night flags
   (1b, #366), engine defaults (1c, #368), tempering (1d, #372, with
@@ -59,7 +59,7 @@ Earlier rulings still hold:
    - the **engine**, `aliases.fit_orbit_aliases` (same name, so no rename churn), extended with the new defaults, for power users;
    - the **user-facing `OrbitPipeline`**, which calls it.
 
-   `start_from_positions` and `design/automatic_orbits.md` are marked superseded. The v2 prototype LM (`exp3_lm.py`) is never merged; everything uses `_gauss_newton.solve`.
+   `start_from_positions` and `design/history/automatic_orbits.md` are marked superseded. The v2 prototype LM (`exp3_lm.py`) is never merged; everything uses `_gauss_newton.solve`.
 3. **Sensible defaults, every option exposed.** Each default is data-driven or physical, never per-system. Each is a one-line settings bullet in the docstring; why it was chosen goes in the docs page.
 4. **Published information reaches only the comparison stage**, enforced by tests.
 5. **Self-documenting fixes, under virgil's growth rules (2026-10-16).** Every solved problem has:
@@ -161,7 +161,7 @@ Status: 1a to 1f done (see the top of this note); 1g only if a golden case fails
 | 1c | Engine defaults: `sign_free`, `flip_flux`, `vis_amp`, `primary_diam="auto"`; `labels-free` flag; `period_window` when `p_range=None` | twin, flip, UD and short-arc cases pass with no per-system arguments |
 | 1d | Tempering: per-block dof plus a pooled effective-channel f at runtime; remove `dof=1.0` from `_loglike` | white noise gives f within 5% of 1; p < 1 at χ²/N ≈ 12 |
 | 1e | **`OrbitPipeline`**:<ul><li>`pipeline/orbit.py`</li><li>registration in `__init__._LAZY`, `__all__`, `cli._PIPELINES` and `_quicklook._SECTIONS`</li><li>the base-class change for multi-night inputs</li><li>`no-orbit` and modes, per-mode NUTS with `gauss_newton_mass`</li></ul> | `tests/test_pipeline_orbit.py`, modelled on `test_pipeline_binary.py`: API snapshot (signatures, `STAGES`, `DEFAULTS`), summary keys and check order, settings validation, folder layout and round trip, resume/fresh, CLI, quicklook; golden synthetic cases: gap alias, twin, UD, null → `no-orbit`, e = 0.8 |
-| 1f | Docs:<ul><li>rewrite `docs/orbit_fitting.md` to lead with `OrbitPipeline.from_oifits(paths)` and show the engine underneath, in the same style as `binary_search.md`'s "Everything above can be run in one call" section</li><li>add the orbit row and its stage table to `docs/pipeline.md`</li><li>add `docs/api/pipeline.md` entries</li><li>mark `start_from_positions` superseded</li><li>if the v2 solver internals are worth keeping, put them in virgil `design/orbit_solver.md` under this plan (this note stays the single orbit plan; `automatic_orbits.md` and `orbit_aliases.md` are already marked superseded by it)</li></ul> | docs build with `--strict`; doctest-skip examples run in the notebook |
+| 1f | Docs:<ul><li>rewrite `docs/orbit_fitting.md` to lead with `OrbitPipeline.from_oifits(paths)` and show the engine underneath, in the same style as `binary_search.md`'s "Everything above can be run in one call" section</li><li>add the orbit row and its stage table to `docs/pipeline.md`</li><li>add `docs/api/pipeline.md` entries</li><li>mark `start_from_positions` superseded</li><li>if the v2 solver internals are worth keeping, put them in virgil `design/orbit_solver.md` under this plan (this note stays the single orbit plan; `history/automatic_orbits.md` and `orbit_aliases.md` are already marked superseded by it)</li></ul> | docs build with `--strict`; doctest-skip examples run in the notebook |
 | 1g | *Only if Phase 3 fails a golden case:* the v2 screen (P4) and hierarchical gains (P1), inside the engine | the failing case passes |
 
 Every PR must have short NumPy docstrings (about 40 lines at most) on every function it touches, and follow Principle 5: a named test, one table row, a one-line pointer comment. `OrbitPipeline` stays thin (about 500 lines): it subclasses `_core`, reuses `_common` and shares one NUTS wrapper.

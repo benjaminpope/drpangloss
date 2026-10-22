@@ -1,7 +1,7 @@
 # Orbit benchmark harness
 
 Times each step of the multi-epoch orbit pipeline on simulated binaries
-(design: `automatic_orbits.md`, section 9). Heavy runs go to OzSTAR
+(design: `history/automatic_orbits.md`, section 9). Heavy runs go to OzSTAR
 (`ozstar_scripts/scripts/orbit_bench_baseline`); locally only `--size tiny`.
 
 ```bash
