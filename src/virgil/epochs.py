@@ -458,19 +458,6 @@ def _refuse_amp_with_gains(data):
         )
 
 
-def _check_marginal_data(data):
-    """Raise if ``data`` has extra observables with a model-dependent
-    covariance, which the scale-marginalized surface cannot score (gains
-    and closure offsets it integrates numerically: see ``_Surface``)."""
-    if any(b.model_dependent_covariance for b in data.extras):
-        raise NotImplementedError(
-            "The scale-marginalized surface (scales='marginal', "
-            "epoch_positions, marginal_loglike) cannot score extra "
-            "observables with a model-dependent covariance. Use the data "
-            "without them, or scales='quoted'."
-        )
-
-
 # Nodes of the Gauss-Legendre rule that integrates ln s of a block whose
 # covariance is s²D + UUᵀ (gains, closure offsets), the half-width of its
 # window in standard deviations of the (tempered) integrand, the Newton
@@ -500,7 +487,15 @@ class _Surface:
     """
 
     def __init__(self, data, s_max=None):
-        _check_marginal_data(data)
+        # Extra observables with a model-dependent covariance cannot be
+        # scored (gains and closure offsets are integrated numerically).
+        if any(b.model_dependent_covariance for b in data.extras):
+            raise NotImplementedError(
+                "The scale-marginalized surface (scales='marginal', "
+                "epoch_positions, marginal_loglike) cannot score extra "
+                "observables with a model-dependent covariance. Use the "
+                "data without them, or scales='quoted'."
+            )
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
@@ -1166,6 +1161,22 @@ def rank_orbits(
     return _ranked(listed, loglike, data)
 
 
+def _distinct_tracks(tracks, min_distance_mas, n=None):
+    """Indices of up to ``n`` of ``tracks`` (each ``(times, 2)``, best
+    first) that differ from every better choice by more than
+    ``min_distance_mas`` at some time."""
+    chosen = []
+    for k, track in enumerate(tracks):
+        if all(
+            onp.max(onp.hypot(*(track - tracks[j]).T)) > min_distance_mas
+            for j in chosen
+        ):
+            chosen.append(k)
+            if len(chosen) == n:
+                break
+    return chosen
+
+
 def _distinct(ranked, n, min_distance_mas):
     """Indices of up to ``n`` orbits of ``ranked``, best first, whose
     positions at the snapshot times differ from every better choice by
@@ -1173,18 +1184,7 @@ def _distinct(ranked, n, min_distance_mas):
     finite = int(onp.sum(onp.isfinite(ranked.loglike)))
     if finite == 0:
         return []
-    positions = ranked.positions()
-    chosen = []
-    for k in range(finite):
-        offsets = [positions[k] - positions[j] for j in chosen]
-        if all(
-            onp.max(onp.hypot(o[:, 0], o[:, 1])) > min_distance_mas
-            for o in offsets
-        ):
-            chosen.append(k)
-            if len(chosen) == n:
-                break
-    return chosen
+    return _distinct_tracks(ranked.positions()[:finite], min_distance_mas, n)
 
 
 def chain_starts(ranked, n_chains, *, min_distance_mas=None):
@@ -1625,18 +1625,14 @@ def _coarse_then_exact(
     return out, float(pick.mean())
 
 
-def _amp_residuals(model, data, surface, amp_range):
-    """The whitened residuals of ``model``, with the squared visibilities
-    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
-    when ``amp_range`` (lo, hi) is given: the weighted least-squares ``A``
-    clipped to the range, as in the orbit fit's per-epoch amplitude
-    (``aliases._epoch_residuals``). Without ``amp_range``, or without a
-    visibility block, the plain residuals."""
-    r = whitened_residuals(model, data)
-    if amp_range is None or surface.names[0] != "vis":
-        return r
-    _refuse_amp_with_gains(data)
-    n = surface.blocks[0][2]
+def _amp_profile(r, data, n, amp_range):
+    """``(A, r')``: the whitened residuals ``r`` with the first ``n`` (the
+    squared visibilities) recomputed for the model scaled by the profiled
+    V² amplitude ``A``, the weighted least-squares amplitude clipped to
+    ``amp_range`` (lo, hi). The model is recovered from the residual as
+    ``obs + r * err``; ``r'`` is ``(A * model - obs) / err``. Shared by the
+    orbit fit's per-epoch amplitude (``aliases._epoch_residuals``) and the
+    night fits."""
     obs = np.reshape(data.vis, -1)
     err = np.reshape(data.d_vis, -1)
     mod = obs + r[:n] * err
@@ -1644,7 +1640,19 @@ def _amp_residuals(model, data, surface, amp_range):
     tiny = np.finfo(r.dtype).tiny
     amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
     amp = np.clip(amp, *amp_range)
-    return r.at[:n].set((amp * mod - obs) / err)
+    return amp, r.at[:n].set((amp * mod - obs) / err)
+
+
+def _amp_residuals(model, data, surface, amp_range):
+    """The whitened residuals of ``model``, with the squared visibilities
+    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
+    when ``amp_range`` is given (see ``_amp_profile``). Without
+    ``amp_range``, or without a visibility block, the plain residuals."""
+    r = whitened_residuals(model, data)
+    if amp_range is None or surface.names[0] != "vis":
+        return r
+    _refuse_amp_with_gains(data)
+    return _amp_profile(r, data, surface.blocks[0][2], amp_range)[1]
 
 
 def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
