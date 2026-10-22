@@ -196,7 +196,7 @@ def _minor_cycle(
     """Multi-scale CLEAN of ``residual`` (Jy/beam) down to ``threshold``.
 
     Cornwell's (2008) algorithm with Gaussian scales (FWHM in pixels, 0 a
-    point) and CASA's small-scale bias. The component and scale maximising
+    point) and CASA's small-scale bias. The component and scale maximizing
     the bias-weighted ``D_s / sqrt(H_ss)`` is found (``D_s`` the residual
     smoothed to the scale, ``H_ss`` the smoothed PSF's peak), ``gain * D_s /
     H_ss`` is added, and the cross-convolved PSF is subtracted from every
@@ -430,7 +430,7 @@ def clean(
     pixel_scale_mas,
     *,
     deconvolver="hogbom",
-    scales=None,
+    scales_mas=None,
     weighting="natural",
     robust=0.5,
     uvtaper=None,
@@ -465,16 +465,21 @@ def clean(
 
     Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008).
 
+    Unlike [`virgil.imaging.clean`][virgil.imaging.clean] it takes complex
+    visibilities and an **odd** ``npix``. Provisional (new in 0.4.1).
+
     Parameters
     ----------
     data : ComplexVisData
     npix : int
-        Odd image side (the PSF then peaks on a pixel).
+        Odd image side, so the PSF peaks on a pixel (``Image`` wants even).
     pixel_scale_mas : float
-    deconvolver : {"hogbom", "clark", "multiscale"}
-        Point components (``"clark"`` is the same windowed loop) or Gaussians.
-    scales : sequence of float, optional
-        Multi-scale FWHMs in pixels, 0 a point; default ``[0, 5, 15]``.
+    deconvolver : {"hogbom", "multiscale"}
+        Point components or Gaussians. Every minor cycle is Clark's windowed
+        loop, so there is no separate ``"clark"``.
+    scales_mas : sequence of float, optional
+        Multi-scale FWHMs in mas, 0 a point, as in ``imaging.clean``; default
+        0, 5 and 15 pixels.
     weighting, robust, uvtaper
         As for [`dirty_image`][virgil.radio.ComplexVisData.dirty_image].
     niter, gain, threshold : int, float, float
@@ -515,14 +520,21 @@ def clean(
     npix = int(npix)
     if npix % 2 == 0:
         raise ValueError("npix must be odd, so the PSF peaks on a pixel.")
-    if deconvolver not in ("hogbom", "clark", "multiscale"):
+    if deconvolver == "clark":
         raise ValueError(
-            "deconvolver must be 'hogbom', 'clark' or 'multiscale'."
+            "deconvolver='clark' was identical to 'hogbom' and is removed; "
+            "use 'hogbom'."
         )
+    if deconvolver not in ("hogbom", "multiscale"):
+        raise ValueError("deconvolver must be 'hogbom' or 'multiscale'.")
     if usemask not in ("user", "auto-multithresh"):
         raise ValueError("usemask must be 'user' or 'auto-multithresh'.")
     if deconvolver == "multiscale":
-        scales = [0, 5, 15] if scales is None else list(scales)
+        scales = (
+            [0, 5, 15]
+            if scales_mas is None
+            else [float(m) / pixel_scale_mas for m in scales_mas]
+        )
     else:
         scales = [0]
     shape = (npix, npix)

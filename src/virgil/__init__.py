@@ -6,8 +6,7 @@ The everyday names are available at the top level::
 
 Modules:
 
-* Data: [`oidata`][virgil.oidata], [`oifits`][virgil.oifits],
-  [`amigo`][virgil.amigo] (mixed-DISCO products).
+* Data: [`oidata`][virgil.oidata], [`amigo`][virgil.amigo] (mixed-DISCO products).
 * Models and inference: [`models`][virgil.models],
   [`likelihood`][virgil.likelihood], [`fitting`][virgil.fitting] (`fit`),
   [`svi`][virgil.svi] (`variational`), [`inference`][virgil.inference]
@@ -19,8 +18,10 @@ Modules:
 * Searches and limits: [`grid_fit`][virgil.grid_fit],
   [`limits`][virgil.limits], [`detection`][virgil.detection].
 * Orbits: [`orbits`][virgil.orbits], [`epochs`][virgil.epochs].
-* [`simulate`][virgil.simulate], [`plotting`][virgil.plotting] and
-  [`pipeline`][virgil.pipeline] (provisional; imported on first use, needs
+* [`simulate`][virgil.simulate], [`plotting`][virgil.plotting],
+  [`oifits`][virgil.oifits] (with ``read_oifits`` and ``write_oifits``) and
+  [`pipeline`][virgil.pipeline] (provisional; imported on first use, which
+  keeps matplotlib and astropy out of ``import virgil``; ``pipeline`` needs
   the ``pipeline`` extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
@@ -32,8 +33,6 @@ SVI), which may change in any 0.4.x release; see the Stability page.
 """
 
 import importlib.metadata as _metadata
-
-name = "virgil"
 
 try:
     __version__ = _metadata.version("virgil-astro")
@@ -60,9 +59,7 @@ from . import (  # noqa: E402
     metrics,
     models,
     oidata,
-    oifits,
     orbits,
-    plotting,
     priors,
     radio,
     scenes,
@@ -152,7 +149,6 @@ from .models import (  # noqa: E402
     multipole_disk_cvis,
 )
 from .oidata import OIData  # noqa: E402
-from .oifits import read_oifits, write_oifits  # noqa: E402
 from .orbits import (  # noqa: E402
     AxialVonMises,
     KeplerOrbit,
@@ -181,12 +177,22 @@ from .spectra import (  # noqa: E402
 )
 
 
+_LAZY = {  # imported on first use: matplotlib and astropy are slow to load
+    "pipeline": ("pipeline", None),
+    "plotting": ("plotting", None),
+    "oifits": ("oifits", None),
+    "read_oifits": ("oifits", "read_oifits"),
+    "write_oifits": ("oifits", "write_oifits"),
+}
+
+
 def __getattr__(name):
-    # virgil.pipeline is imported on first use, not by `import virgil`.
-    if name == "pipeline":
+    if name in _LAZY:
         import importlib
 
-        return importlib.import_module(".pipeline", __name__)
+        module, attr = _LAZY[name]
+        mod = importlib.import_module(f".{module}", __name__)
+        return mod if attr is None else getattr(mod, attr)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
