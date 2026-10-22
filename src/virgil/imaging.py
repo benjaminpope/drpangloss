@@ -50,7 +50,7 @@ from ._deprecate import external_stacklevel, keyword_only, renamed
 from ._precision import cast_tree, run_in
 from .fitting import FitResult, fit
 from .spectra import flux_at
-from .likelihood import _whitened_and_log_norm, whitened_residuals
+from .likelihood import _whitened_errors_and_log_norm, whitened_residuals
 from .models import (
     _scene_images,
     Image,
@@ -1063,20 +1063,6 @@ def convolve_beam(image, pixel_scale_mas, beam):
     return fftconvolve(image, kernel / np.sum(kernel), mode="same")
 
 
-def _base_weight(base, wavel):
-    """The flux the components are measured against: a System's total."""
-    if isinstance(base, System):
-        return sum(part._weight(wavel) for part in base.parts)
-    return base._weight(wavel)
-
-
-def _spectral_shape(spectrum, wavel):
-    """The components' spectrum, 1 at its reference (``None``: grey)."""
-    if spectrum is None:
-        return 1.0
-    return spectrum(wavel) / spectrum(None)
-
-
 class _CleanScene(SourceModel):
     """A fixed base scene plus point components on a pixel grid, with
     ``V = (w V_base + s Σ c_p e_p) / (w + s Σ c_p)``: ``w`` the base's weight, ``c``
@@ -1110,8 +1096,16 @@ class _CleanScene(SourceModel):
             base = self.base.model(u, v, wavel)
         else:
             base = self.base.model_on_grid(u, v, wavel, grid)
-        weight = _base_weight(self.base, wavel)
-        shape = _spectral_shape(self.spectrum, wavel)
+        # The flux the components are measured against (a System's total),
+        # and their spectrum, 1 at its reference (``None``: grey).
+        if isinstance(self.base, System):
+            weight = sum(part._weight(wavel) for part in self.base.parts)
+        else:
+            weight = self.base._weight(wavel)
+        if self.spectrum is None:
+            shape = 1.0
+        else:
+            shape = self.spectrum(wavel) / self.spectrum(None)
         return (weight * base + shape * pixels) / (weight + shape * total)
 
 
@@ -1941,12 +1935,19 @@ def _single_model(model, caller):
 
 @eqx.filter_jit
 def _jitted_log_norm(model, datasets):
-    """The marginal nuisances' log-normalizer, summed over datasets."""
-    return sum(_whitened_and_log_norm(model, d)[1] for d in datasets)
+    """The marginal nuisances' log-normalizer, summed over datasets.
+
+    ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends only on
+    the data and the error terms; ``log_norm`` is ½ log det of the covariance
+    factors of marginalized gains and closure offsets (zero without them).
+    """
+    return sum(
+        _whitened_errors_and_log_norm(model, d, {})[2] for d in datasets
+    )
 
 
 def _log_norm(model, data):
-    """``_whitened_and_log_norm``'s log-normalizer at ``model``, in float64."""
+    """The marginal nuisances' log-normalizer at ``model``, in float64."""
     datasets = tuple(_as_list(data))
     with run_in("float64"):
         model, datasets = cast_tree((model, datasets), "float64")
@@ -2001,13 +2002,6 @@ def _field_images(model, path, caller):
                 f"{caller} needs an Image with a GaussianField at {p!r}."
             )
     return paths
-
-
-def _field_latents(model, path, caller):
-    """Tuple of ``(image_path, latent_path)`` for the fields ``path`` selects."""
-    return tuple(
-        (p, _latent_path(p)) for p in _field_images(model, path, caller)
-    )
 
 
 def _evidence_latents(model, path, caller):
@@ -2165,7 +2159,10 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
             "laplace_samples renders images only given both npix and fov_mas."
         )
     model = _single_model(model, "laplace_samples")
-    fields = _field_latents(model, path, "laplace_samples")
+    fields = tuple(
+        (p, _latent_path(p))
+        for p in _field_images(model, path, "laplace_samples")
+    )
     latent_paths = tuple(latent for _, latent in fields)
     _, jac = _residual_jacobian(model, data, latent_paths, on_device=True)
     zs = [
@@ -2734,18 +2731,6 @@ def _map_images(model, fn):
     return eqx.tree_at(lambda s: tuple(s.components.values()), model, parts)
 
 
-def _rotated_180(image):
-    """The Image turned by 180 degrees about the origin of the sky."""
-    support = image.support
-    return dataclasses.replace(
-        image,
-        log_brightness=image.eta[::-1, ::-1],
-        support=None if support is None else support[::-1, ::-1],
-        dra=-image.dra,
-        ddec=-image.ddec,
-    )
-
-
 @eqx.filter_jit
 def _jitted_chi2(model, observations):
     return np.stack(
@@ -2871,7 +2856,17 @@ def diagnose(model, data, regularizers=()):
             x, y = Centroid(1.0, path).centroid(model)
             checks["centroid_mas"].append((float(x), float(y)))
 
-        flipped = _map_images(model, _rotated_180)
+        # Each Image turned by 180 degrees about the origin of the sky.
+        flipped = _map_images(
+            model,
+            lambda im: dataclasses.replace(
+                im,
+                log_brightness=im.eta[::-1, ::-1],
+                support=None if im.support is None else im.support[::-1, ::-1],
+                dra=-im.dra,
+                ddec=-im.ddec,
+            ),
+        )
         checks["flip_dchi2"] = sum(_chi2(flipped, observations)) - sum(chi2)
         if abs(checks["flip_dchi2"]) < 1.0:
             warns.append(

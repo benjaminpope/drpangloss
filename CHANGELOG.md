@@ -65,6 +65,10 @@ anything before 1.0 may change between minor versions.
   weights instead of 11; `detection_roc` searches 32 draws at once
   (`draw_batch=32`).
 
+### Changed (internal)
+
+- Code shape, numerics and sweep: 22 single-use private helpers in `fitting`, `likelihood`, `imaging`, `ensemble`, `plotting`, `detection`, `arcs`, `crossval`, `simulate`, `angles` and `_gauss_newton` are inlined at their one call site. No behaviour or numerics change.
+
 ## 0.4.0 (2026-10-18)
 
 Everything listed as new was added after 0.3.0, which is on PyPI.

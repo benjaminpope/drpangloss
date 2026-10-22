@@ -414,10 +414,6 @@ def _eccs(eccs, ecc_max):
     return onp.arange(0.0, ecc_max + 1e-9, 0.05)
 
 
-def _ecc_step(eccs, ecc_max):
-    return float(onp.max(onp.diff(eccs))) if len(eccs) > 1 else ecc_max
-
-
 def _pv_grid(arc, periods, eccs, n_phase=_N_PHASE):
     """The grid ``(period, dt_peri, ecc)`` over ``periods × eccs ×
     phases`` (period-major), with each point's constants and χ²."""
@@ -490,16 +486,6 @@ def _merge(intervals):
         else:
             out.append((lo, hi))
     return out
-
-
-def _intersect(a, b):
-    out = [
-        (max(lo1, lo2), min(hi1, hi2))
-        for lo1, hi1 in a
-        for lo2, hi2 in b
-        if max(lo1, lo2) < min(hi1, hi2)
-    ]
-    return _merge(out)
 
 
 def unwrap_cycles(
@@ -578,11 +564,12 @@ def unwrap_cycles(
         )
         grid, _, chi2 = _pv_grid(sub, periods, eccs)
         # The period grid's and the (τ, e) grid's steps.
+        ecc_step = float(onp.max(onp.diff(eccs))) if len(eccs) > 1 else ecc_max
         spacing = onp.stack(
             [
                 periods**2 / (k * baseline),
                 periods / _N_PHASE,
-                onp.full(len(periods), _ecc_step(eccs, ecc_max)),
+                onp.full(len(periods), ecc_step),
             ],
             -1,
         )
@@ -595,7 +582,14 @@ def unwrap_cycles(
             (1.0 / (1.0 / p + half), 1.0 / max(1.0 / p - half, 1e-300))
             for p in periods[keep]
         ]
-        intervals = _intersect(intervals, _merge(admitted))
+        intervals = _merge(
+            [
+                (max(lo1, lo2), min(hi1, hi2))
+                for lo1, hi1 in intervals
+                for lo2, hi2 in _merge(admitted)
+                if max(lo1, lo2) < min(hi1, hi2)
+            ]
+        )
         steps.append(
             dict(
                 mjd=(sub.t + arc.t_ref).tolist(),
