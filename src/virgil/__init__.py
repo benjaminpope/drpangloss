@@ -6,44 +6,29 @@ The everyday names are available at the top level::
 
 Modules:
 
-* [`oidata`][virgil.oidata] and [`oifits`][virgil.oifits]: data and
-  OIFITS files; [`amigo`][virgil.amigo]: AMIGO mixed-DISCO products.
-* [`models`][virgil.models]: source models and their visibilities.
-* [`likelihood`][virgil.likelihood]: likelihoods and numpyro models.
-* [`fitting`][virgil.fitting]: `fit`, maximum a posteriori fits with
-  Levenberg–Marquardt, L-BFGS or Adam; [`svi`][virgil.svi]:
-  `variational`, variational inference started from a fit.
-* [`imaging`][virgil.imaging]: regularizers and helpers for image
-  reconstruction; [`scenes`][virgil.scenes]: synthetic truth images;
-  [`metrics`][virgil.metrics]: image-recovery scores;
-  [`ensemble`][virgil.ensemble]: averaged ensembles of reconstructions;
-  [`coverage`][virgil.coverage]: synthetic coverage and noise.
-* [`inference`][virgil.inference]: Laplace and Fisher curvature.
-* [`grid_fit`][virgil.grid_fit]: grid searches.
-* [`limits`][virgil.limits]: contrast limits and flux/contrast/Δmag
-  conversions.
-* [`detection`][virgil.detection]: detection statistics (Δχ², the
-  grid-marginalized Bayes factor, the best SNR) for ROC curves.
-* [`spectra`][virgil.spectra]: wavelength-dependent fluxes.
-* [`gains`][virgil.gains]: calibration gains correlated across channels.
-* [`priors`][virgil.priors]: isotropic-orientation priors (inclination,
-  latitude) for `fit` and `numpyro_model`.
-* [`orbits`][virgil.orbits]: Keplerian orbits; [`epochs`][virgil.epochs]:
-  named epochs of data, one snapshot of a moving scene per dataset.
-* [`simulate`][virgil.simulate]: simulated observations and bias tests.
-* [`plotting`][virgil.plotting]: figures.
-* [`pipeline`][virgil.pipeline]: scriptable pipelines (provisional) with
-  standard output folders (imported on first use; needs the ``pipeline``
-  extra).
+* Data: [`oidata`][virgil.oidata], [`oifits`][virgil.oifits],
+  [`amigo`][virgil.amigo] (mixed-DISCO products).
+* Models and inference: [`models`][virgil.models],
+  [`likelihood`][virgil.likelihood], [`fitting`][virgil.fitting] (`fit`),
+  [`svi`][virgil.svi] (`variational`), [`inference`][virgil.inference]
+  (Laplace, Fisher), [`priors`][virgil.priors], [`gains`][virgil.gains],
+  [`spectra`][virgil.spectra].
+* Imaging: [`imaging`][virgil.imaging] (regularizers and helpers),
+  [`ensemble`][virgil.ensemble], [`scenes`][virgil.scenes],
+  [`metrics`][virgil.metrics], [`coverage`][virgil.coverage].
+* Searches and limits: [`grid_fit`][virgil.grid_fit],
+  [`limits`][virgil.limits], [`detection`][virgil.detection].
+* Orbits: [`orbits`][virgil.orbits], [`epochs`][virgil.epochs].
+* [`simulate`][virgil.simulate], [`plotting`][virgil.plotting] and
+  [`pipeline`][virgil.pipeline] (provisional; imported on first use, needs
+  the ``pipeline`` extra).
 
 The legacy ImPlaneIA tools in ``virgil.legacy`` are not imported here.
 
 Everything public is **stable** (a deprecation cycle before any change)
-except the **provisional** features that a module lists in its
-``__provisional__`` tuple and flags in its docstring (new in 0.4: orbit
-search, ``MultipoleDisk``, pipelines, GP ensembles, SVI), which may change in
-any 0.4.x release. See ``virgil._stability`` and the Stability page of the
-documentation.
+except **provisional** features listed in a module's ``__provisional__``
+tuple (new in 0.4: orbit search, ``MultipoleDisk``, pipelines, GP ensembles,
+SVI), which may change in any 0.4.x release; see the Stability page.
 """
 
 import importlib.metadata as _metadata

@@ -294,62 +294,48 @@ def variational(
 ):
     """Approximate the posterior with a guide fitted by numpyro's SVI.
 
-    The guide is fitted to the posterior of
-    [`numpyro_model`][virgil.likelihood.numpyro_model] with the same arguments,
-    by maximizing the ELBO with Adam, in the unconstrained coordinates NUTS
-    samples. It starts at the Laplace approximation at ``start``. See
-    [Variational inference](../variational_inference.md) for which guide to
-    use, the one-mode limit and how to check the result.
+    Maximizes the ELBO with Adam on the posterior of
+    [`numpyro_model`][virgil.likelihood.numpyro_model], started at the Laplace
+    approximation at ``start``. Which guide to use and how to check the result:
+    [Variational inference](../variational_inference.md).
 
     Parameters
     ----------
     model, priors, data, regularizers, noise, likelihoods
-        As for [`numpyro_model`][virgil.likelihood.numpyro_model] and
-        [`fit`][virgil.fitting.fit]; see
+        As for [`numpyro_model`][virgil.likelihood.numpyro_model]; see
         [Common arguments](../common_arguments.md).
     start : FitResult or dict, optional
-        Where the guide starts: a fit, or its ``values``. ``None`` starts at
-        the priors' medians with width ``init_scale``.
+        Where the guide starts: a fit or its ``values`` (default: the priors'
+        medians, width ``init_scale``).
     guide : str or callable, optional
-        ``"bnaf"`` (default, a block neural autoregressive flow), ``"iaf"``
-        (inverse autoregressive flow), ``"mvn"`` (a dense Gaussian) or
-        ``"laplace"`` (numpyro's ``AutoLaplaceApproximation``); or a callable
-        ``guide(model, init_loc_fn=...)`` returning any numpyro autoguide. The
-        flows need at least two parameters. The dense guides keep an n × n
-        factor, so above ``fitting._DENSE_MASS_MAX`` (4096) coordinates they
-        raise ``ValueError``: for an image use
-        [`laplace_samples`][virgil.imaging.laplace_samples] or a diagonal guide
-        such as ``autoguide.AutoNormal``.
-    steps, num_particles, num_samples, optimizer, learning_rate : optional
-        Optimization steps (3000), draws per step in the ELBO estimate (8),
-        draws returned and used for PSIS (2000), a numpyro or optax optimizer
-        (default ``optax.adam(learning_rate)``) and its step size (3e-3).
-    key, flat_coordinates : optional
-        Random key (default ``PRNGKey(0)``), and the guide's coordinates, as
-        for ``numpyro_model`` (default ``False``).
+        ``"bnaf"`` (default), ``"iaf"``, ``"mvn"`` or ``"laplace"``; or a
+        callable ``guide(model, init_loc_fn=...)`` returning a numpyro
+        autoguide. The flows need two or more parameters; the dense guides
+        raise ``ValueError`` above 4096 coordinates (use
+        [`laplace_samples`][virgil.imaging.laplace_samples] for images).
+    steps, num_particles, num_samples : int, optional
+        Steps (3000), draws per ELBO estimate (8), draws returned (2000).
+    optimizer, learning_rate : optional
+        Optimizer (default ``optax.adam``) and step size (3e-3).
+    key, flat_coordinates, dtype : optional
+        As for ``numpyro_model`` and ``fit``.
     dense_start, init_scale : optional
-        Start the guide's width from the Gauss–Newton covariance at ``start``
-        (default ``True``; skipped, with a warning, whenever ``regularizers``
-        are given); the starting width of the coordinates it does not cover
-        (default 0.1).
-    window, psis, dtype : optional
-        Steps per window of the convergence test (default ``steps // 10``);
-        whether to compute the Pareto k̂ of the importance weights (default
-        ``True``); and the precision (default ``"float64"``, as for ``fit``).
+        Start the width at the Gauss–Newton covariance (default ``True``;
+        skipped, with a warning, given ``regularizers``), else ``init_scale``.
+    window, psis : optional
+        Convergence-test window (default ``steps // 10``); whether to compute
+        the Pareto k̂.
     **options
         Fixed error terms and ``reject_unphysical``, as for ``numpyro_model``.
 
     Returns
     -------
     VariationalResult
-        The draws, losses, guide and diagnostics; warns if the loss had not
-        settled.
+        Draws, losses, guide and diagnostics; warns if the loss had not settled.
 
     Examples
     --------
-    >>> result = fit(scene, priors, data)  # doctest: +SKIP
     >>> vi = variational(scene, priors, data, start=result)  # doctest: +SKIP
-    >>> vi.samples["companion.flux"].std()  # doctest: +SKIP
     """
     import optax
     from numpyro.infer import SVI, Trace_ELBO
