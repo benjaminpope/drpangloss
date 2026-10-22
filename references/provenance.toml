@@ -579,7 +579,7 @@ year = 2008
 title = "Multi-Scale CLEAN deconvolution of radio synthesis images"
 arxiv = "0806.2228"
 doi = "10.1109/jstsp.2008.2006388"
-used_in = ["virgil.imaging:clean"]
+used_in = ["virgil.imaging:clean", "virgil.radio_clean:_minor_cycle"]
 note = "IEEE JSTSP 2, 793"
 bibcode = "2008ISTSP...2..793C"
 verified = true
@@ -601,11 +601,40 @@ verified_via = "ads"
 authors = "Högbom"
 year = 1974
 title = "Aperture synthesis with a non-regular distribution of interferometer baselines"
-used_in = ["virgil.imaging:clean"]
+used_in = ["virgil.imaging:clean", "virgil.radio_clean:clean"]
 note = "A&AS 15, 417; bibcode 1974A&AS...15..417H; title from memory, to check against ADS"
 bibcode = "1974A&AS...15..417H"
 verified = true
 verified_via = "ads"
+
+[ref.clark1980]
+authors = "Clark"
+year = 1980
+title = "An efficient implementation of the algorithm 'CLEAN'"
+used_in = ["virgil.radio_clean:clean", "virgil.radio_clean:_minor_cycle"]
+note = "A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold; not checked against ADS"
+bibcode = "1980A&A....89..377C"
+verified = false
+verified_via = "none"
+
+[ref.schwab1984]
+authors = "Schwab"
+year = 1984
+title = "Relaxing the isoplanatism assumption in self-calibration; applications to low-frequency radio interferometry"
+used_in = ["virgil.radio_clean:clean"]
+note = "AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities); not checked against ADS. Cotton is cited there as a private communication"
+bibcode = "1984AJ.....89.1076S"
+verified = false
+verified_via = "none"
+
+[ref.briggs1995]
+authors = "Briggs"
+year = 1995
+title = "High fidelity deconvolution of moderately resolved sources"
+used_in = ["virgil.radio:ComplexVisData._imaging_weights"]
+note = "PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; not checked against ADS"
+verified = false
+verified_via = "none"
 
 [ref.arras2021]
 authors = "Arras et al."
@@ -1311,3 +1340,13 @@ role = "context"
 bibcode = "2007StaSc..22...59P"
 verified = true
 verified_via = "ads"
+
+[ref.offringa2014]
+authors = "Offringa et al."
+year = 2014
+title = "WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy"
+used_in = ["virgil.radio_clean:clean"]
+note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows; not checked against ADS"
+bibcode = "2014MNRAS.444..606O"
+verified = false
+verified_via = "none"
