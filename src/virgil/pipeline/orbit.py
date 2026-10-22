@@ -37,6 +37,7 @@ from ._common import (
 )
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
+from .._geometry import lattice_alias_limit
 from .._precision import run_in
 
 # Grid step of the per-night position search, as a fraction of the finest
@@ -156,7 +157,8 @@ class OrbitPipeline(_Pipeline):
           (None), ``max_grid`` (201): the position search; by default the
           step is a quarter of the finest λ/B (coarsened to ``max_grid``
           points) and the half-width the coarsest λ/B, widened to at most
-          ``a_range[1] (1 + ecc_max)``.
+          ``a_range[1] (1 + ecc_max)`` and, on lattice coverage (aperture
+          masks, DISCO), the alias cell.
         - ``period_range`` (None): ``[min, max]`` days; by default from the
           data (see ``fit_orbit_aliases``).
         - ``a_range`` ([1, 30]), ``flux_range`` ([0.01, 1]), ``ecc_max``
@@ -671,6 +673,10 @@ def _night_positions(p):
     geometry = _geometry(list(p.data.data))
     finest, coarsest = geometry["lambda_over_b_mas"], geometry["fov_mas"]
     cap = s["a_range"][1] * (1.0 + s["ecc_max"])  # the largest separation
+    # Deliberate: lattice coverage (aperture masks, DISCO) repeats beyond one
+    # alias cell, so the default box stops there; ``max_sep_mas`` overrides.
+    limits = [lattice_alias_limit(night) for night in p.data.data]
+    cap = min([cap] + [x for x in limits if x is not None])
     half = s["max_sep_mas"] or min(coarsest, cap)
     halves = []
     for _ in range(_MAX_WIDEN + 1):
