@@ -82,6 +82,23 @@ joint conditioning problem is already fixed by `z = ln g`. Left out.
 
 ## B. Diagonal Fisher preconditioning in `virgil.fit` (scoping only)
 
+This is the plan for finishing the **Stage 7 maximum-entropy preconditioning
+item** of [`imaging_plan.md`](imaging_plan.md#stage-7-hardening-and-release-about-8-11-h-of-which-3-4-h-is-release-chores-and-the-rest-mem-preconditioning)
+(Ben, 2026-10-03), not a new idea: its option "precondition L-BFGS in the
+entropy metric (diag 1/b, Skilling & Bryan 1984), or in a basis whitened by the
+default image" is B, and B generalizes it from the entropy to the data term.
+**Success test (adopted from Stage 7):** an L-curve from `w = 0.1` to `10⁴` that
+converges at every weight within the default step limit, in float32 and float64.
+It applies to image reconstruction in general, not to radio data alone (see
+"Image reconstruction in general" below).
+
+Measured on the synthetic radio test after the fact: with the gains and σ left
+in their old logit-on-`ln x` boxes and only the offsets changed, the
+(gain, offset, σ) spread is 2.6 decades; with `ln x` coordinates, 2.7. As the
+slope of that sigmoid is already O(1), the gain/σ change is not needed for
+conditioning (it removes the box and the saturation near its edges, not a decade
+of spread); the offsets carry the whole improvement.
+
 ### Idea
 
 Optimize `z̃ = D^{½}(z − z_ref)` instead of `z`, with `D = diag(F)`, `F` the
@@ -195,3 +212,73 @@ same size as the data curvature on faint pixels. Decide with a measurement:
 after A–C and B pieces 1–2, compute the eigenvalue spread of `diag(D^{-½}) F
 diag(D^{-½})` on a small image (Lanczos on a 128² problem); if the remaining
 condition number is ≫ 10³, build D as a follow-up. Otherwise skip.
+
+## Image reconstruction in general
+
+(a) **Analytic image diagonal in log-brightness coordinates.** For a pixel `z_p
+= ln I_p` and data linear in `I`, `V_k = Σ_p T_k F_{kp} I_p`,
+`D_p = I_p² · c + R_pp`, with `c = Σ_k w_k |T_k|²` (`|F_{kp}| = 1`) the same
+for every pixel, and `R_pp` the regularizer's curvature. For squared
+visibilities, closure phases and kernel phases (`OIData`) the data are not
+linear in `I`: the Gauss–Newton row of datum `m` is `∂m/∂I_p`, which for
+`V²_k = |V_k|²` is `2 Re(V_k* F_{kp}) T_k`, so
+`D_p = I_p² Σ_k w_k (∂m_k/∂I_p)²`. Averaging over the unknown phase of `V_k`
+gives `≈ I_p² · 2 Σ_k w_k |V_k|² |T_k|²` (the weights of V² data scale with
+`|V|²`: a `|V|`-weighted average of the same constant), and for a closure phase
+the sum of the three baselines' `|V_k|^{-2} w` factors (a phase datum has
+sensitivity `1/|V_k|`). These are used for scale only, so the constant
+`c` may be taken as a one-off sum, and can be refreshed from the model's
+current `|V_k|` each round.
+
+(b) **How to apply it.** Either as a diagonal initial inverse Hessian `H0 =
+D^{-1}` in L-BFGS (replacing optax's scalar `γ = sᵀy / yᵀy`, the two-loop
+recursion starts from `H0` instead of `γ I`), or as a frozen change of
+variables per restart round (above). `H0` is the more direct, keeps
+step caps and `gtol` in `z`, and lets `D` track the model inside a round
+because `H0` need not be constant over the secant pairs; its cost is the
+custom two-loop recursion (optax's `scale_by_lbfgs` fixes `γ`; a small own
+implementation or a wrapper around its `precondition_by_...` hooks is needed).
+The frozen change of variables works with optax unchanged. Start with the
+change of variables (piece 2), evaluate `H0` only if the secant pairs
+degrade across a refresh.
+
+(c) **Adam** already divides by the root of an exponential average of squared
+gradients, an empirical diagonal Fisher (`E[g²]` equals the diagonal of the
+Fisher at the optimum for a log-likelihood). This is likely why Adam does
+well on MPoL-style problems, and why a diagonal `D` is expected to bring L-BFGS
+to where Adam already is, not beyond it: the gain over Adam must be
+measured, not assumed, and the success test should include an Adam baseline.
+
+(d) **The softmax gauge.** A constant added to every `z_p` rescales the whole
+image, so with a fixed-flux (softmax) parametrization it is an exact null
+direction of the loss. A diagonal `D` weights it, so a preconditioned step can
+move along it by a lot without changing the loss, drifting the coordinates.
+Project out the mean of the step (or of `z̃`) every iteration, or fit the flux
+as a separate site.
+
+(e) **`GaussianField` latents are already prior-whitened** (standard-normal
+`η`; LM converges in 20–50 steps, per Stage 7), so B matters mostly for plain
+`ImproperUniform` log-brightness with an entropy or TV regularizer. Do not add
+`D` to the latent parametrization without a measurement.
+
+**Relation to the entropy metric.** The maximum-entropy penalty
+`λ Σ (I ln(I/b) − I + b)` has curvature `λ/I` in `I`, so the Skilling–Bryan
+metric is `diag(1/b)` at the default image `b`. In `z = ln I`:
+`dS/dz = I ln(I/b)`, `d²S/dz² = I (1 + ln(I/b))`, which is `b` at `I = b`, so the
+`1/b` metric becomes `diag(b)`: the entropy's part of `R_pp`. The data
+part `I_p² c` and this `λ b_p` together are `D_p`, with the entropy dominating on faint
+pixels and weak data, where Stage 7 reports that the L-BFGS fits stall. The
+analytic `D` of (a) therefore contains the Stage 7 preconditioner and adds the
+data term; the entropy part is the pixel's `λ b_p` and the data part `I_p² c`, so
+the data part dominates only where `I_p² c > λ b_p`.
+
+(f) **Profiling generalized (follow-up, not this PR).** C is variable
+projection of the scale parameters of one Gaussian likelihood. The same
+applies to every data type with a fitted error scale (a per-group
+`ŝ² = χ²_g(1)/(2 N_g)` for real and imaginary parts, `N_g` for real data), and
+to the linear amplitudes (flux, per-observation gains, flux ratios for complex
+visibilities and DISCO): solve the weighted least squares in closed form
+(`a = ⟨M,V⟩_w/⟨M,M⟩_w`) inside the loss with `stop_gradient`. Where a
+scale and an amplitude are both profiled, the pair is a coupled fixed point (see
+C), to be solved with an inner iteration. Scope as a separate PR per data
+type after B piece 2.

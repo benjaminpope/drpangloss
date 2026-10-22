@@ -658,6 +658,7 @@ Released after the October 2026 codebase review ([`history/codebase_review_2026-
 ## Stage 7: hardening and release (about 8–11 h, of which 3–4 h is release chores and the rest MEM preconditioning)
 - **Maximum-entropy preconditioning and better solvers** (Ben, 2026-10-03; important in the long run).
   - **The symptom.** At weak weights, MEM's L-BFGS fits are badly conditioned: faint pixels are almost unconstrained, so steps along those flat directions are tiny. One weight in `mwe_gaussian_field`'s sweep did not converge in 200,000 steps. The tutorials and MWEs keep their sweeps to w ≳ 3 with up to 2–5 × 10⁴ steps, which works around the problem rather than fixing it. The GP prior doesn't have it, because LM converges in 20–50 steps in whitened coordinates.
+  - **Plan:** [`fit_preconditioning.md`](fit_preconditioning.md) (diagonal Fisher preconditioning, which contains the entropy metric below).
   - **Options:**
     - precondition L-BFGS in the entropy metric (diag 1/b, as Skilling & Bryan 1984 do), or in a basis whitened by the default image;
     - a Skilling–Bryan-style subspace solver;
