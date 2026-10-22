@@ -1893,10 +1893,10 @@ class AliasResult:
     primary_diam, vis_amp, p_range : optional
         The primary, the V^2 amplitude range, the period window (days).
     period_bound, period_at_lower_bound : bool
-        ``period_bound``: the period is unconstrained, the best P is at the top
-        of ``p_range`` or σ(log P) spans a quarter of the window. The best
-        period is at the bottom, where the sampling limit may have cut the
-        truth, for ``period_at_lower_bound``.
+        ``period_bound``: the period is unconstrained (best P within 10% of the
+        top of ``p_range``, or σ(log P) at least a quarter of the window);
+        ``period_at_lower_bound``: best P within 10% of the bottom, where the
+        sampling limit may have cut the truth.
     window_capped, primary_fit : float or None, dict or None
         Lower end wanted when a default window was capped; the
         ``primary_diam="auto"`` estimate.

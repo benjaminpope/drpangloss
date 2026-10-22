@@ -2230,8 +2230,8 @@ def epoch_positions(
     flag_nights, flag_sep_blocks, flag_chi2_groups, flag_alias_nats, flag_min_gap, flag_chi2_factor, flag_sep_fraction, flag_flux_tol : optional
         Night flags and their thresholds: see
         [night flags](../orbit_methods.md#night-flags). None disables a numeric
-        threshold; ``flag_nights``, ``flag_sep_blocks`` and ``flag_chi2_groups``
-        are switches, not thresholds.
+        threshold; ``flag_nights`` and ``flag_sep_blocks`` are switches, and
+        ``flag_chi2_groups`` groups the blocks for the χ² check (None: by observable).
 
     Returns
     -------
@@ -2239,7 +2239,7 @@ def epoch_positions(
         ``dra``, ``ddec`` (mas, East and North of the primary), ``cov``,
         ``flags``, and per night ``peaks`` (the catalogue of ``n_peaks``),
         ``gap_marginal`` (nats between the best peak and its rival) and
-        ``chi2_raw`` (χ² on the quoted errors).
+        ``chi2_raw`` (χ²/N on the quoted errors, per block and ``"all"``).
 
     Warns
     -----

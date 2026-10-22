@@ -865,6 +865,7 @@ year = 2014
 title = "Fundamental limitations of high contrast imaging set by small sample statistics"
 used_in = ["virgil.detection:injection_recovery"]
 note = "ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery"
+role = "compared"
 bibcode = "2014ApJ...792...97M"
 arxiv = "1407.2247"
 verified = true

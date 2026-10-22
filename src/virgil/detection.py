@@ -609,8 +609,8 @@ def injection_recovery(
     in one compiled kernel; see
     [Detection statistics](../detection_statistics.md#injection).
 
-    Source: Mawet et al. (2014) for the small-sample false-alarm correction (not
-    applied here), [references](../references.md#mawet2014).
+    Compare: Mawet et al. (2014), whose small-sample false-alarm correction is
+    not applied here, [references](../references.md#mawet2014).
 
     Parameters
     ----------

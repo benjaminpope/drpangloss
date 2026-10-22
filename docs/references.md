@@ -115,7 +115,6 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `(module)` | [Gross & Vitells (2010)](#gross2010), [arXiv:1005.1891](https://arxiv.org/abs/1005.1891), [ADS](https://ui.adsabs.harvard.edu/abs/2010EPJC...70..525G/abstract) | after |
 | `DetectionMC` | [Fawcett (2006)](#fawcett2006), [ADS](https://ui.adsabs.harvard.edu/abs/2006PaReL..27..861F/abstract), [doi:10.1016/j.patrec.2005.10.010](https://doi.org/10.1016/j.patrec.2005.10.010) | after |
 | `bootstrap_null` | [Efron (1979)](#efron1979), [doi:10.1214/aos/1176344552](https://doi.org/10.1214/aos/1176344552) | after |
-| `injection_recovery` | [Mawet et al. (2014)](#mawet2014), [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract) | after |
 | `local_nsigma` | [Chernoff (1954)](#chernoff1954), [ADS](https://ui.adsabs.harvard.edu/abs/1954AnnMS..25..573C/abstract), [doi:10.1214/aoms/1177728725](https://doi.org/10.1214/aoms/1177728725) | after |
 | `local_nsigma` | [Wilks (1938)](#wilks1938), [doi:10.1214/aoms/1177732360](https://doi.org/10.1214/aoms/1177732360) | after |
 | `rescale_errors` | [Kammerer et al. (2020)](#kammerer2020), [arXiv:2011.01209](https://arxiv.org/abs/2011.01209), [ADS](https://ui.adsabs.harvard.edu/abs/2020A&A...644A.110K/abstract) | after |
@@ -365,6 +364,7 @@ Studied for comparison; nothing was taken from them.
 | [Blunt et al. (2024)](#blunt2024), [arXiv:2409.11573](https://arxiv.org/abs/2409.11573), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6756B/abstract), [doi:10.21105/joss.06756](https://doi.org/10.21105/joss.06756) | orbitize!; JOSS 9, 6756 |
 | [Brandt et al. (2021)](#brandt2021), [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract) | orvara; AJ 162, 186 |
 | [Kammerer](#fouriever), [GitHub](https://github.com/kammerje/fouriever) | comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found |
+| [Mawet et al. (2014)](#mawet2014), [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract) | ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery |
 | [Mérand et al.](#candid), [GitHub](https://github.com/amerand/CANDID) | algorithm paper: gallenne2015 |
 
 ## Background literature

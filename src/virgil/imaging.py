@@ -853,9 +853,9 @@ def starting_image(
     [`field_of_view`][virgil.imaging.field_of_view]), with pixels ``oversample``
     times finer than Nyquist and the fitted flux. Fit it with
     ``fit(start, image_priors(start), data, regularizers)``; see
-    [imaging with regularizers](../imaging_rml.md). The image flux is fixed
-    unless fitted: add a prior on ``"env.flux"`` (``"flux"`` with
-    ``star=False``) to ``image_priors(start)``.
+    [imaging with regularizers](../imaging_rml.md). With ``star=True`` the
+    envelope's flux ratio is fixed unless fitted: add a prior on ``"env.flux"``
+    to ``image_priors(start)`` (a lone Image is normalized, so it has no flux).
 
     Parameters
     ----------
@@ -2061,8 +2061,9 @@ def log_evidence(model, data, path="env"):
     [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
     of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
     ``L`` the likelihood normalizer. Compare it across hyperparameters: it is
-    conditional on those held in ``model`` (or give them log-uniform priors with
-    [`gp_priors`][virgil.models.gp_priors] and sample). Exact only for a linear
+    conditional on those held in ``model`` (or sample them: log-uniform priors
+    from [`gp_priors`][virgil.models.gp_priors] for a ``MultipoleDisk``, your own
+    on a field's ``sigma`` and ``ell`` for an Image). Exact only for a linear
     model, and it assumes correct error bars (see
     [`error_scale`][virgil.imaging.error_scale]). It uses the quoted errors, so
     no ``noise=`` terms or per-dataset models. See
@@ -2129,8 +2130,9 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     Only the latents vary, so the spread is narrower than the full posterior's
     where other parameters correlate with the image. Exact only for a linear
     model, assumes correct error bars and is conditional on the hyperparameters
-    held in ``model`` (or give them log-uniform priors with
-    [`gp_priors`][virgil.models.gp_priors] and sample). It uses the quoted errors.
+    held in ``model`` (or sample them: ``gp_priors`` for a ``MultipoleDisk``,
+    your own log-uniform priors on a field's ``sigma`` and ``ell`` for an
+    Image). It uses the quoted errors.
 
     Parameters
     ----------
