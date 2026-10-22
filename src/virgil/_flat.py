@@ -10,9 +10,14 @@ line onto the parameter through it; ``fit`` optimizes in it and
 
 import jax
 import jax.numpy as np
+import numpy as onp
 import numpyro.distributions as dist
 from numpyro.distributions import constraints
-from numpyro.distributions.transforms import Transform, biject_to
+from numpyro.distributions.transforms import (
+    IdentityTransform,
+    Transform,
+    biject_to,
+)
 
 
 def _base(distribution):
@@ -60,11 +65,22 @@ class _FlatBijection:
 
     ``x = from_flat(lo + (hi - lo) sigmoid(z))``: numpyro's bijection of the
     flat coordinate's interval, followed by the map back to the parameter.
+    With infinite ends (an improper prior flat on the whole line) ``z`` is the
+    flat coordinate itself, so a scale parameter is fitted in ``ln x``.
     """
 
     def __init__(self, to_flat, from_flat, low, high):
         self.to_flat, self.from_flat = to_flat, from_flat
-        self.interval = biject_to(constraints.interval(low, high))
+        # Python infinities only: array bounds (possibly traced) are finite.
+        if (
+            isinstance(low, float)
+            and isinstance(high, float)
+            and low == -onp.inf
+            and high == onp.inf
+        ):
+            self.interval = IdentityTransform()
+        else:
+            self.interval = biject_to(constraints.interval(low, high))
 
     def __call__(self, z):
         return self.from_flat(self.interval(z))
