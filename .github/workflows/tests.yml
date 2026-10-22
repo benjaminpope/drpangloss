@@ -8,6 +8,8 @@ name: automated tests
 on:
   push: {branches: [main]}
   pull_request:
+    # The docs build covers these.
+    paths-ignore: ["docs/**", "notebooks/**", "design/**", "**.md"]
     # `labeled` is for the full-ci label; any other label runs nothing.
     types: [opened, synchronize, reopened, labeled]
   schedule:
@@ -100,11 +102,11 @@ jobs:
         with:
           path: .jax-cache
           key: ${{ steps.key.outputs.prefix }}${{ steps.key.outputs.week }}
-          # Then any cache of this job and JAX, then of the same OS, Python, x64.
+          # Then any cache of this job and JAX; never another shard's (the
+          # trailing dash stops id "...shard1of3" matching other ids).
           restore-keys: |
             ${{ steps.key.outputs.prefix }}
             jax-${{ matrix.id }}-jax${{ steps.key.outputs.jax }}-
-            jax-${{ matrix.os }}-py${{ matrix.python-version }}-x64${{ matrix.x64 }}
 
       # loadgroup keeps each xdist_group module on one worker. The JUnit
       # report carries the validates markers (tests/conftest.py) as evidence
@@ -119,7 +121,9 @@ jobs:
           VIRGIL_SLOW_FILES: ${{ matrix.orbit_slow }}
           # Seconds per test not marked slow (tests/conftest.py), only with a
           # warm cache for this job, JAX and packing. Fast tests peak near 25 s.
-          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, steps.key.outputs.prefix) && '30' || '' }}
+          # Warm means this shard's cache for this JAX, whatever the packing: a
+          # new test file changes the pack hash but not the cache's usefulness.
+          VIRGIL_TEST_BUDGET: ${{ matrix.budget && startsWith(steps.cache.outputs.cache-matched-key, format('jax-{0}-jax{1}-', matrix.id, steps.key.outputs.jax)) && '30' || '' }}
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             nproc; free -m; df -h .
@@ -128,7 +132,7 @@ jobs:
           echo "per-test budget: ${VIRGIL_TEST_BUDGET:-off} s"
           .venv/bin/python -m pytest -n ${{ matrix.lowest && '2' || 'auto' }} --dist loadgroup -rs --durations=30 \
             --ignore=tests/lint \
-            ${{ !matrix.slow && !matrix.orbit_slow && '-m "not slow"' || '' }} \
+            ${{ (matrix.fast_only || !matrix.slow && !matrix.orbit_slow) && '-m "not slow"' || '' }} \
             ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} \
             --junitxml=junit-evidence.xml -o junit_family=xunit1
 
