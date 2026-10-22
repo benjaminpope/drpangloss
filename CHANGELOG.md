@@ -10,7 +10,7 @@ anything before 1.0 may change between minor versions.
 ### Added
 
 - `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
-- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI), and for data with flagged samples; `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
+- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI) and for data with flagged visibilities (flagged closure phases are still skipped); `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0; an unknown width is estimated from the channel spacing and marked `BANDEST`, since OIFITS2 needs it positive), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
 - **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
   `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor
   cycles with a PSF window and cycle threshold, `niter`, `gain`, `threshold`,
@@ -20,7 +20,7 @@ anything before 1.0 may change between minor versions.
   `dirty_beam` gain `uvtaper`. It is not `virgil.imaging.clean` (which is
   unchanged) and claims no parity with CASA or WSClean. See the
   [guide](docs/radio_clean.md).
-- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
+- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It takes 30–40% fewer L-BFGS steps in total along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
 - Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
 - Docs: terse docstrings for the data and pipeline modules (`oidata`, `observables`, `virgil.pipeline.*`): the pipeline classes' settings are now a table per pipeline in [Pipelines](https://benjaminpope.github.io/virgil/pipeline/), and `DiskPipeline`, `OrbitPipeline` and `StarPipeline` leave the docstring allowlist.
 - `OrbitPipeline` checks that its verdict survives dropping the most outlying
@@ -35,11 +35,17 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
+- `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The longest unflagged wavelength sets the limit (a shift must alias in every channel); `None` only if some unflagged channel is off a lattice. The default box of multi-channel lattice data can therefore now be capped where it was the full field of view before.
+- `write_oifits(OIData)` keeps the frames of data without times (or with frames at one `MJD`): they are written with distinct `TIME`s, so `frame` survives a round trip; data without times are still read back at `MJD` 0. A station index above 32767 (a 16-bit column) is refused with a reason instead of wrapping, `DATE-OBS` follows the times, placeholder stations are marked `STAPLACE`, and a non-`OIData` argument raises `TypeError`.
+- `OrbitPipeline`'s drop-the-outlying-night check no longer kills the `modes` stage when the refit fails (it is recorded as skipped with the reason), counts usable seeded nights, ignores nights with no data, and compares the alias band for the refit's own time span.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
 
 - Optimizer defaults: `lbfgs_memory` is 100 (was 50); with `precondition="diag"` a `MaxEntropy` pixel's curvature is its entropy metric `weight * b` (Skilling & Bryan 1984; a regularizer may expose `metric_rows`) instead of the floored Hessian diagonal, and `gauss_newton_diag` is exact up to 4096 coordinates (was 1024). Along the 41² VLTI-like L-curve (w = 1e4 → 0.1) this takes 6018 → 2543 steps at w = 0.1 in float64 and now converges every weight in float32 (2917). `MaxEntropy.residuals` lets `method="lm"` fit it (float64; not the default, and float32 LM does not converge at weak weights). float32 remains limited at weak weights on some problems (AMI 32²).
+- Internal: inlined single-use trivial private helpers in `models`, `radio` and `radio_clean`; the lint size comment also lists new ones (AGENTS.md rule 8).
+- The first parameter of `write_oifits` is `data` (it was `tables`); `tables=` still works with a `FutureWarning` until 0.5.
+- `ComplexVisData.dirty_beam` takes `values` before `nuisance`, the order of `dirty_image` (radio is provisional, so there is no deprecation shim). The last long docstrings, `CalibrationNuisance` and `ComplexVisData.dirty_image`, are now short, and the docstring allowlist is empty. `safe_azimuth` in `_geometry` replaces the copies of the origin-safe azimuth in `fields` and `models`, and `FlaredDisk` shares its grid validation with its base class.
 
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
   DISCO products) the default search box is limited to half an alias cell, so
@@ -64,6 +70,13 @@ anything before 1.0 may change between minor versions.
   compiled call; the L-curve sweeps of `imaging_rml` and `imaging_gp` use six
   weights instead of 11; `detection_roc` searches 32 draws at once
   (`draw_batch=32`).
+
+### Changed (internal)
+
+- `oifits` loses `_exposure_time` and `_check_amptyp`, and `oidata` loses `_row_labels`, all single-use; the two union-find loops (`_closure._groups`, `oifits._closure_stations`) share `_closure._merge`. No change in results.
+- Code shape, numerics and sweep: 22 single-use private helpers in `fitting`, `likelihood`, `imaging`, `ensemble`, `plotting`, `detection`, `arcs`, `crossval`, `simulate`, `angles` and `_gauss_newton` are inlined at their one call site. No behaviour or numerics change.
+
+- The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
 
 ## 0.4.0 (2026-10-18)
 

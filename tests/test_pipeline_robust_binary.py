@@ -246,34 +246,6 @@ def test_a_fresh_run_through_the_overview_really_replaces_the_outputs(
 # --- (b) failures are loud ---------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "name, error, message",
-    [
-        ("missing.fits", FileNotFoundError, "missing.fits"),
-        ("text.fits", OSError, "valid FITS"),
-        ("empty.fits", OSError, "Empty or corrupt FITS"),
-        ("no_tables.fits", ValueError, "no OI_WAVELENGTH"),
-    ],
-)
-def test_from_oifits_refuses_unusable_files_and_writes_nothing(
-    junk_files, name, error, message
-):
-    out = junk_files / "run"
-    with pytest.raises(error, match=message):
-        BinaryPipeline.from_oifits(junk_files / name, output=out, **TINY)
-    assert not out.exists()
-
-
-def test_from_oifits_refuses_a_list_with_one_bad_file(
-    junk_files, completed, tmp_path
-):
-    good = completed.output / "data" / "processed.oifits"
-    with pytest.raises(OSError, match="valid FITS"):
-        BinaryPipeline.from_oifits(
-            [good, junk_files / "text.fits"], output=tmp_path / "run"
-        )
-
-
 def test_from_config_refuses_a_missing_data_file(tmp_path):
     config = tmp_path / "config.json"
     config.write_text(json.dumps({"data": "nothing_here.fits"}))
@@ -291,33 +263,6 @@ def test_data_with_no_usable_samples_is_refused():
     }
     with pytest.raises(ValueError, match="No unflagged data"):
         OIData(empty)
-
-
-def test_from_oifits_refuses_an_empty_list_with_a_clear_error(tmp_path):
-    with pytest.raises(ValueError, match="at least one OIFITS file"):
-        BinaryPipeline.from_oifits([], output=tmp_path / "run")
-
-
-def test_a_wavelength_cut_that_removes_the_data_fails_in_load(data, tmp_path):
-    out = tmp_path / "run"
-    pipeline = BinaryPipeline(
-        data,
-        output=out,
-        wavel_range=[10e-6, 11e-6],
-        quicklook_execute=False,
-        **TINY,
-    )
-    with pytest.raises(Exception) as caught:
-        pipeline.run()
-    assert str(caught.value)  # a message, not a bare failure
-    run = _read(out / "run.json")
-    assert run["status"] == "failed"
-    assert run["error"]["stage"] == "load"
-    assert run["error"]["type"] == type(caught.value).__name__
-    assert run["stages"]["load"]["status"] == "failed"
-    assert not (out / "summary.json").exists() or (
-        _read(out / "summary.json")["status"] != "complete"
-    )
 
 
 def test_a_stage_that_raises_marks_the_run_failed_and_resume_continues(

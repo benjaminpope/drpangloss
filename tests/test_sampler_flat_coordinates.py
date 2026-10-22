@@ -187,7 +187,9 @@ def test_no_data_nuts_reproduces_the_flat_priors(x64):
         model = numpyro_model(
             _no_model, FLAT_PRIORS, (), noise=noise, flat_coordinates=True
         )
-        samples = _nuts(model, num_samples=1500, num_warmup=400)
+        # _assert_marginal thins by the ESS, so its KS tolerance scales as
+        # 1/sqrt(n_eff); 800 draws keep the 6 marginals well inside it.
+        samples = _nuts(model, num_samples=800, num_warmup=300)
     for site, prior in FLAT_PRIORS.items():
         _assert_marginal(samples, site, prior)
     _assert_marginal(samples, "noise.vis_scale", noise["vis_scale"])

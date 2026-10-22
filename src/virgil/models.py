@@ -47,6 +47,7 @@ from ._geometry import (
     pixel_offsets,
     separation_pa,
     rotate,
+    safe_azimuth,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -98,14 +99,6 @@ def _normalize_image(image):
     if value is not None and not (onp.isfinite(value) and value > 0.0):
         raise ValueError("Rendered image must contain positive finite flux.")
     return image / total
-
-
-def _unit_flux(component):
-    """Scale an image component to unit sum; components off the grid stay zero."""
-    total = np.sum(component)
-    return np.where(
-        total > 0.0, component / np.where(total > 0.0, total, 1.0), 0.0
-    )
 
 
 def _format_leaf(x):
@@ -1785,7 +1778,11 @@ class ModulatedGaussianRim(Component):
 
     def _ring_angle(self, sky_pa):
         """The in-plane azimuth whose projection points at ``sky_pa``."""
-        return _rim_angle(sky_pa, self.pa, self.inc)
+        # Deprojected first: the rim compresses its minor axis by cos(inc).
+        d = np.deg2rad(sky_pa - self.pa)
+        return self.pa + np.rad2deg(
+            np.arctan2(np.sin(d) / np.cos(np.deg2rad(self.inc)), np.cos(d))
+        )
 
     def _centred_cvis(self, uu, vv):
         # The rim is a MultipoleDisk: a ThinRing of radius diam / 2, the
@@ -1963,11 +1960,7 @@ class Image(Component):
         self.smooth_fwhm_mas = (
             None if smooth_fwhm_mas is None else float(smooth_fwhm_mas)
         )
-        if ft not in ("auto", "dft", "nufft"):
-            raise ValueError(
-                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
-            )
-        self.ft = ft
+        self.ft = _check_ft(ft)
         if not hasattr(log_brightness, "evaluate"):
             log_brightness = np.asarray(log_brightness, dtype=float)
         self.log_brightness = log_brightness
@@ -2114,6 +2107,26 @@ class _PixelRendered(Component):
     use the matrix transform.
     """
 
+    npix: int = eqx.field(static=True)
+    pixel_scale_mas: float = eqx.field(static=True)
+    ft: str = eqx.field(static=True)
+    rotation_deg: float | str = eqx.field(static=True)
+
+    def _set_grid(self, npix, pixel_scale_mas, ft, rotation_deg):
+        """Validate and store the pixel grid and its transform."""
+        self.ft = _check_ft(ft)
+        self.rotation_deg = _check_rotation(rotation_deg)
+        self.npix = int(npix)
+        if self.npix <= 0 or self.npix % 2:
+            raise ValueError(f"npix must be positive and even, got {npix}.")
+        self.pixel_scale_mas = float(pixel_scale_mas)
+        if not (
+            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
+        ):
+            raise ValueError(
+                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
+            )
+
     def _frame(self, grid):
         """Position angle of the pixel grid's "up" axis for these data."""
         if self.rotation_deg != "grid":
@@ -2149,6 +2162,13 @@ class _PixelRendered(Component):
             self.ft,
         )
         return vis * offset_phase(u / wavel, v / wavel, self.dra, self.ddec)
+
+
+def _check_ft(ft):
+    """``ft`` if it is a valid transform name."""
+    if ft not in ("auto", "dft", "nufft"):
+        raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")
+    return ft
 
 
 def _check_rotation(rotation_deg):
@@ -2216,10 +2236,6 @@ class FlaredDisk(_PixelRendered):
     aspect: jax.Array
     flaring: jax.Array
     symmetric: jax.Array
-    npix: int = eqx.field(static=True)
-    pixel_scale_mas: float = eqx.field(static=True)
-    ft: str = eqx.field(static=True)
-    rotation_deg: float | str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -2239,12 +2255,6 @@ class FlaredDisk(_PixelRendered):
         ft="auto",
         rotation_deg="grid",
     ):
-        if ft not in ("auto", "dft", "nufft"):
-            raise ValueError(
-                f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}."
-            )
-        self.ft = ft
-        self.rotation_deg = _check_rotation(rotation_deg)
         self.radius = np.asarray(radius, dtype=float)
         self.fwhm = np.asarray(fwhm, dtype=float)
         self.inc = np.asarray(inc, dtype=float)
@@ -2253,16 +2263,7 @@ class FlaredDisk(_PixelRendered):
         self.aspect = np.asarray(aspect, dtype=float)
         self.flaring = np.asarray(flaring, dtype=float)
         self.symmetric = np.asarray(symmetric, dtype=float)
-        self.npix = int(npix)
-        if self.npix <= 0 or self.npix % 2:
-            raise ValueError(f"npix must be positive and even, got {npix}.")
-        self.pixel_scale_mas = float(pixel_scale_mas)
-        if not (
-            onp.isfinite(self.pixel_scale_mas) and self.pixel_scale_mas > 0
-        ):
-            raise ValueError(
-                f"pixel_scale_mas must be positive, got {pixel_scale_mas}."
-            )
+        self._set_grid(npix, pixel_scale_mas, ft, rotation_deg)
         self._place(flux, dra, ddec)
 
     def _phase_function(self, cos_theta, x, y):
@@ -4899,8 +4900,7 @@ class MultipoleDisk(Component):
         image = self.profile.intensity(r_ell, pixel_scale_mas / stretch)
         if self.harmonics is not None and self.harmonics.degree:
             # The azimuth runs from the deprojected North towards East.
-            origin = (xx_ell == 0.0) & (yy_ell == 0.0)
-            theta = np.arctan2(xx_ell, np.where(origin, 1.0, yy_ell))
+            theta = safe_azimuth(xx_ell, yy_ell)
             image = image * self.harmonics.factor(r_ell, theta)
         return image
 
@@ -5234,9 +5234,12 @@ class System(SourceModel):
         xx, yy = xx - self.dra, yy - self.ddec
         parts = self.resolved().parts
         weights = [c._weight() for c in parts]
+        images = [c._image(xx, yy, pixel_scale_mas) for c in parts]
+        sums = [np.sum(im) for im in images]
+        # Components off the grid (zero sum) stay zero rather than become NaN.
         return sum(
-            w * _unit_flux(c._image(xx, yy, pixel_scale_mas))
-            for w, c in zip(weights, parts)
+            w * np.where(t > 0.0, im / np.where(t > 0.0, t, 1.0), 0.0)
+            for w, im, t in zip(weights, images, sums)
         ) / sum(weights)
 
     def _weight(self, wavel=None):
@@ -5644,19 +5647,6 @@ class OrbitalBinary(SourceModel):
         return _flux_is_non_negative(self.flux)
 
 
-def _rim_angle(sky_pa, pa, inc):
-    """The in-plane rim angle whose projection points at ``sky_pa``.
-
-    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] measures
-    ``az_pas - pa`` in the deprojected disc and then compresses its minor
-    axis by ``cos(inc)``, so a sky angle is deprojected first.
-    """
-    d = np.deg2rad(sky_pa - pa)
-    return pa + np.rad2deg(
-        np.arctan2(np.sin(d) / np.cos(np.deg2rad(inc)), np.cos(d))
-    )
-
-
 class BinaryModelAngular(SourceModel):
     """
     A primary star and a point-source companion, in polar coordinates.
@@ -5703,8 +5693,14 @@ class BinaryModelAngular(SourceModel):
 
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
-        uu, vv = u / wavel, v / wavel
-        return _cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
+        th = self.pa * dtor  # sep (mas) and PA (deg, East of North) -> offsets
+        return cvis_binary(
+            u / wavel,
+            v / wavel,
+            self.sep * np.sin(th),
+            self.sep * np.cos(th),
+            self.flux,
+        )
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
@@ -5884,29 +5880,6 @@ class HarmonixModel(SourceModel):
             x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
-
-
-def _cvis_binary_angular(u, v, sep, pa, flux):
-    """Complex visibilities of a binary in polar coordinates.
-
-    Parameters
-    ----------
-    u, v : array-like
-        Baseline coordinates in wavelength units.
-    sep : float or array-like
-        Separation in milliarcseconds.
-    pa : float or array-like
-        Position angle in degrees, measured East of North.
-    flux : float or array-like
-        Companion/primary flux ratio.
-
-    Returns
-    -------
-    array-like
-        Complex visibility samples, normalized to 1 at zero baseline.
-    """
-    th = pa * dtor
-    return cvis_binary(u, v, sep * np.sin(th), sep * np.cos(th), flux)
 
 
 def cvis_binary(u, v, dra, ddec, flux):

@@ -685,9 +685,14 @@ def fit(
         wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
         ``grad_norm``, ``elapsed``.
     precondition : {None, "diag"}, optional
-        ``"diag"`` rescales each coordinate by the Gauss–Newton curvature diagonal for
-        L-BFGS and Adam (provisional); a maximum-entropy pixel's is its metric
-        ``weight * b``. float32 can stall at weak weights; use float64 there.
+        ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
+        diagonal for L-BFGS and Adam (provisional); see
+        [conventions](../conventions.md#preconditioning-image-fits).
+        ``info["precondition_rounds"]`` records the spread per round. A maximum-entropy pixel's curvature is its
+        metric ``weight * b``; float32 can stall at weak weights, so use float64
+        there.
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
+        [Hutchinson (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
@@ -817,14 +822,6 @@ def fit(
     )
 
 
-def _print_progress(report):
-    print(
-        f"fit: {report['steps']} steps, loss {report['loss']:.6g}, "
-        f"grad_norm {report['grad_norm']:.3g}, {report['elapsed']:.1f} s",
-        flush=True,
-    )
-
-
 class _Budget:
     """The time limit and progress report of a fit (see ``fit``).
 
@@ -834,8 +831,13 @@ class _Budget:
 
     def __init__(self, time_limit=None, progress=None):
         self.time_limit = time_limit
-        self.progress = _print_progress if progress is True else progress
-        self.progress = self.progress or None
+        if progress is True:
+            progress = lambda r: print(  # noqa: E731
+                f"fit: {r['steps']} steps, loss {r['loss']:.6g}, "
+                f"grad_norm {r['grad_norm']:.3g}, {r['elapsed']:.1f} s",
+                flush=True,
+            )
+        self.progress = progress or None
         self.start = time.monotonic()
         self._reported = None
 
@@ -1519,6 +1521,10 @@ def gauss_newton_diag(
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
     matrix.
+
+    Source: [Bekas et al. (2007)](../references.md#bekas2007) and
+    [Hutchinson (1989)](../references.md#hutchinson1989) probes;
+    [Skilling & Bryan (1984)](../references.md#skillingbryan1984).
 
     Parameters
     ----------

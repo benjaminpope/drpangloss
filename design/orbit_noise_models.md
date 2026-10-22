@@ -41,7 +41,7 @@ in virgil-validation#147), HD 9312 as the failing system, and Gl 229 as the rele
    Until virgil#437, `epochs._Surface` refused data with gains or closure offsets, because its
    analytic error-scale marginalization assumes C = s²D. It now integrates the scale
    numerically for them (§3.2.1). It still refuses extra observables with a model-dependent
-   covariance (`_check_marginal_data`), which matters if |V| or T3AMP blocks are ever loaded.
+   covariance (checked in `_Surface.__init__`), which matters if |V| or T3AMP blocks are ever loaded.
    Two inconsistencies remain:
    - the `vis_amp` profile rebuilds the model as `obs + r·err`, valid only for diagonal errors
      (now refused with gains, §3.2.2);

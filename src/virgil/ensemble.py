@@ -73,18 +73,6 @@ __provisional__ = (
 FAMILIES = {"tv": TV, "tsv": TSV, "maxent": MaxEntropy, "starlet": StarletL1}
 
 
-def _default_weight_ranges():
-    # Weight per data point; each range holds the L-curve corners of the
-    # contest bench with a decade to spare below them. See
-    # docs/imaging_ensemble.md ("What is drawn").
-    return {
-        "tv": (1e-4, 1e1),
-        "tsv": (1e-1, 1e4),
-        "maxent": (1e-4, 1e1),
-        "starlet": (1e-4, 1e1),
-    }
-
-
 @dataclasses.dataclass(frozen=True)
 class EnsembleSpec:
     """What an ensemble draws at random, and how it selects members.
@@ -134,8 +122,16 @@ class EnsembleSpec:
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
+    # Weight per data point; each range holds the L-curve corners of the
+    # contest bench with a decade to spare below them. See
+    # docs/imaging_ensemble.md ("What is drawn").
     weight_ranges: dict = dataclasses.field(
-        default_factory=_default_weight_ranges
+        default_factory=lambda: {
+            "tv": (1e-4, 1e1),
+            "tsv": (1e-1, 1e4),
+            "maxent": (1e-4, 1e1),
+            "starlet": (1e-4, 1e1),
+        }
     )
     n_weights: int = 8
     oversample: tuple = (2.0, 3.0, 4.0)
@@ -473,18 +469,6 @@ def reference_starts(
     return out
 
 
-def _start_model(reference, draw, star):
-    """The group's starting scene: ``reference`` resampled to its grid."""
-    pixels = resample(reference, None, draw.npix, draw.pixel_scale_mas)
-    image = Image.from_brightness(
-        onp.maximum(onp.asarray(pixels), 0.0),
-        draw.pixel_scale_mas,
-        floor=1e-3,
-        flux=reference.flux,
-    )
-    return System(star=PointSource(), env=image) if star else image
-
-
 def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
     """Fit one group of an ensemble: an L-curve over its weights.
 
@@ -526,7 +510,16 @@ def run_group(data, draw, *, star=True, starts=None, spec=None, **fit_options):
         return gp_members(
             data, draw, star=star, starts=starts, spec=spec, **fit_options
         )
-    model = _start_model(starts[draw.start], draw, star)
+    # The group's starting scene: the reference resampled to its grid.
+    reference = starts[draw.start]
+    pixels = resample(reference, None, draw.npix, draw.pixel_scale_mas)
+    image = Image.from_brightness(
+        onp.maximum(onp.asarray(pixels), 0.0),
+        draw.pixel_scale_mas,
+        floor=1e-3,
+        flux=reference.flux,
+    )
+    model = System(star=PointSource(), env=image) if star else image
     priors = image_priors(model)
     if star:
         # The image's flux relative to the star is a scale: log-uniform.
@@ -931,16 +924,6 @@ def _mean_model(pixels, fraction, scale, star):
     return System(star=PointSource(), env=image)
 
 
-def _member_image(model, shift, star):
-    """A member's Image on its own grid, moved by ``shift`` (dra, ddec)."""
-    if star:
-        return model.env
-    return model.set(
-        ["dra", "ddec"],
-        [model.dra + float(shift[0]), model.ddec + float(shift[1])],
-    )
-
-
 def _mixture(images, fractions, chosen, star):
     """The mean of the ``chosen`` members' normalized scenes.
 
@@ -959,11 +942,6 @@ def _mixture(images, fractions, chosen, star):
         return System(**parts)
     star_flux = jax.numpy.asarray(1.0 - fluxes.sum())
     return System(star=PointSource(flux=star_flux), **parts)
-
-
-def _chi2_red(model, datasets):
-    chi2 = _chi2(model, datasets)
-    return tuple(c / d.n_independent for c, d in zip(chi2, datasets))
 
 
 def combine(data, groups, *, spec=None, star=True):
@@ -1100,8 +1078,17 @@ def combine(data, groups, *, spec=None, star=True):
     # that averaging identical images returns them unchanged.
     pixels = [onp.asarray(p, dtype=float) for p in pixels]
     weighted = [f * p / p.sum() for p, f in zip(pixels, fractions)]
+    # Each member's Image on its own grid, moved by its shift (dra, ddec).
     images = [
-        _member_image(members[i].result.model, s, star)
+        members[i].result.model.env
+        if star
+        else members[i].result.model.set(
+            ["dra", "ddec"],
+            [
+                members[i].result.model.dra + float(s[0]),
+                members[i].result.model.ddec + float(s[1]),
+            ],
+        )
         for i, s in zip(live, shifts)
     ]
 
@@ -1116,7 +1103,10 @@ def combine(data, groups, *, spec=None, star=True):
 
         def chi2_red(members):
             model = _mixture(images, fractions, members, star)
-            return _chi2_red(model, observations)
+            chi2 = _chi2(model, observations)
+            return tuple(
+                c / d.n_independent for c, d in zip(chi2, observations)
+            )
 
         chosen = [0]
         current = chi2_red(chosen)

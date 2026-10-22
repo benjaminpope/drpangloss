@@ -92,17 +92,6 @@ def _solve_free(F, g, free, lam):
     return np.where(free, delta, 0.0)
 
 
-def _decrement(F, g, free):
-    """Newton decrement ½ gᵀF⁻¹g on the free coordinates (inf if F is not PD).
-
-    F carries the smallest damping, so a direction the rows ignore (and with
-    a zero gradient) contributes nothing instead of NaN.
-    """
-    delta = _solve_free(F, g, free, _LAM_FLOOR)
-    dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
-    return np.where(np.isfinite(dec), dec, np.inf)
-
-
 def _evaluate(problem, z):
     value, grad = jax.value_and_grad(problem.loss)(z)
     return value, grad, curvature(problem, z)
@@ -155,7 +144,12 @@ def _advance(problem, state, lower, upper, gtol, dtol, limit):
 
     free = ~_held(z, g, lower, upper)
     gnorm = np.max(np.where(free, np.abs(g), 0.0))
-    dec = _decrement(F, g, free)
+    # Newton decrement ½ gᵀF⁻¹g on the free coordinates (inf if F is not PD).
+    # F carries the smallest damping, so a direction the rows ignore (and with
+    # a zero gradient) contributes nothing instead of NaN.
+    delta = _solve_free(F, g, free, _LAM_FLOOR)
+    dec = -0.5 * np.sum(np.where(free, g * delta, 0.0))
+    dec = np.where(np.isfinite(dec), dec, np.inf)
     eps = np.finfo(z.dtype).eps
     floor = lam > _LAM_STALL
     converged = (gnorm <= gtol) | (dec <= dtol)

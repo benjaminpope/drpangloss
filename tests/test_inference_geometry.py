@@ -205,3 +205,18 @@ def test_old_curvature_names_still_work_and_warn():
     assert virgil.observed_information is inference.observed_information
     for name in inference.__all__:
         assert hasattr(inference, name)
+
+
+def test_safe_azimuth_matches_arctan2_and_has_a_finite_gradient_at_the_origin():
+    import jax
+
+    from virgil._geometry import safe_azimuth
+
+    x = np.array([0.0, 1.0, -2.0, 0.0, 3.0])
+    y = np.array([0.0, 0.0, 1.5, -1.0, 4.0])
+    origin = (x == 0.0) & (y == 0.0)
+    assert np.array_equal(
+        safe_azimuth(x, y), np.arctan2(x, np.where(origin, 1.0, y))
+    )
+    grad = jax.grad(lambda p: safe_azimuth(p[0], p[1]))(np.zeros(2))
+    assert np.all(np.isfinite(grad))

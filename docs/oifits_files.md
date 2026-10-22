@@ -34,7 +34,7 @@ A list of files is read in order and concatenated. `TARGET_ID` numbering is per 
 
 `VISPHI` and `VISAMP` rows are matched to visibility samples as closure-phase legs are (below); a reversed baseline negates the phase. With `extras`, `VISPHI` is never an absolute phase, so without `OI_T3` the phase block is empty. If `OI_VIS` holds correlated fluxes and there is no `OI_VIS2`, the visibility samples are flagged and the amplitudes go in `"visamp"`.
 
-With `bandwidth=True` the record also holds `"bandwidth"`, each sample's channel `EFF_BAND` (matched by wavelength within the selected `insname`; absent if the file gives only zeros). It is off by default, so nothing is smeared unless you ask.
+With `bandwidth=True` the record also holds `"bandwidth"`, each sample's channel `EFF_BAND` (matched by wavelength within the selected `insname`; absent if the file gives only zeros or marks its widths `BANDEST = T`, as virgil's own files do when the width was unknown). It is off by default, so nothing is smeared unless you ask.
 
 ## Closure-phase triangles {#closure-phases}
 
@@ -58,8 +58,9 @@ With `frame_mjd="mean"` (the default) every sample of a frame gets the frame's m
 
 - **Flagged samples** are written as NaN with `FLAG` set, so a file holding only closure phases has an all-flagged `OI_VIS2` that keeps the baselines.
 - **Stations.** Closure phases need station indices: data that has none (as from AMI or kernel-phase reductions) gets placeholder stations from its triangles, one per distinct end of a baseline, at the origin of `OI_ARRAY`. Closing triangles $(a, b, c)$ use the baselines $(a, b)$, $(b, c)$ and $(a, c)$, as above.
-- **Times.** Data without times are written with `MJD` 0 and read back with every time 0 (not as having none), so their frames are not kept, and a time-dependent model on them is evaluated at MJD 0. Closure phases of repeated baselines (one set per frame) could not be told apart on reading, so such data get placeholder stations even if they have their own.
-- **Bandwidth** is written as `EFF_BAND`, or as 0 when unknown; widths that differ between baselines of one channel are not written.
+- **Times and frames.** Data without times are written with `MJD` 0 and read back with every time 0 (not as having none), so a time-dependent model on them is evaluated at MJD 0. Frames whose `MJD` is the same, or within about 9 seconds (all of them, without times), are written with `TIME`s about 86 s apart so that the reader keeps them as separate frames; frames that are already apart in time get `TIME` 0.
+- **Stations.** Station indices are 16-bit in OIFITS2: data with an index above 32767 are not written (the reason is reported). Repeated baselines in one frame cannot be told apart on reading, so such data get placeholder stations even if they have their own; `STAPLACE = T` in the primary header marks placeholders.
+- **Bandwidth** is written as `EFF_BAND`. If it is unknown it is estimated from the channel spacing (1% of the wavelength for one channel), as OIFITS2 needs `EFF_BAND` > 0, and `BANDEST = T` marks the `OI_WAVELENGTH` table. Widths that differ between baselines of one channel are not written. `EFF_WAVE` and `EFF_BAND` are float32 columns (relative error 6e-8).
 - **Not written:** extra observables, gains or closure offsets, projected observables, uv-grid data, visibility amplitudes in place of $V^2$, and irregular closure-phase or wavelength layouts. `write_oifits` raises a `ValueError` naming the reason; the pipelines record it as `processed_oifits_skipped`.
 
 ## Writing tables {#writing}

@@ -308,10 +308,6 @@ def aggregate_files(paths, **options):
     return aggregate(load_records(paths), **options)
 
 
-def _is_number(x):
-    return isinstance(x, Real) and not isinstance(x, bool)
-
-
 def aggregate(records, larger_is_simpler=True):
     """Combine the records of every (setting, fold) into the CV curve.
 
@@ -356,7 +352,9 @@ def aggregate(records, larger_is_simpler=True):
     for r in records:
         keys.setdefault(json.dumps(r["setting"]), r["setting"])
     settings = list(keys.values())
-    numeric = all(_is_number(s) for s in settings)
+    numeric = all(
+        isinstance(s, Real) and not isinstance(s, bool) for s in settings
+    )
     if numeric:
         settings.sort()
     folds = sorted({r["fold"] for r in records})

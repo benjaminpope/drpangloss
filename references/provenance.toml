@@ -36,6 +36,8 @@ verified_via = "ads"
 [ref.amigo]
 authors = "Desdoigts et al."
 year = 2025
+alt_years = [2026]
+alt_years_note = "year is the first posting; the journal paper is dated 2026"
 title = "AMIGO: a Data-Driven Calibration of the JWST Interferometer"
 used_in = ["virgil.amigo:load_oi_data", "virgil.coverage:ami_grid_record"]
 note = "PASA 43, e075 (2026)"
@@ -47,6 +49,8 @@ verified_via = "ads"
 [ref.blakely2024]
 authors = "Blakely et al."
 year = 2024
+alt_years = [2025]
+alt_years_note = "year is the first posting; the journal paper is dated 2025"
 title = "The James Webb Interferometer: Space-based interferometric detections of PDS 70 b and c at 3.8 and 4.8 microns"
 used_in = ["virgil.models:FlaredDisk"]
 note = "AJ 169, 137 (2025)"
@@ -132,6 +136,8 @@ verified_via = "ads"
 [ref.sivaramakrishnan2023]
 authors = "Sivaramakrishnan et al."
 year = 2022
+alt_years = [2023]
+alt_years_note = "year is the first posting; the journal paper is dated 2023"
 title = "The Near Infrared Imager and Slitless Spectrograph for the James Webb Space Telescope. IV. Aperture Masking Interferometry"
 used_in = ["virgil.coverage:mask_transfer"]
 note = "PASP 135, 015003 (2023)"
@@ -200,6 +206,8 @@ verified_via = "ads"
 [ref.blunt2020]
 authors = "Blunt et al."
 year = 2019
+alt_years = [2020]
+alt_years_note = "year is the first posting; the journal paper is dated 2020"
 title = "orbitize!: A Comprehensive Orbit-fitting Software Package for the High-contrast Imaging Community"
 used_in = []
 note = "orbitize!; AJ 159, 89 (2020)"
@@ -208,6 +216,7 @@ bibcode = "2020AJ....159...89B"
 arxiv = "1910.01756"
 verified = true
 verified_via = "ads"
+repo = "https://github.com/sblunt/orbitize"
 
 [ref.blunt2024]
 authors = "Blunt et al."
@@ -233,6 +242,7 @@ bibcode = "2021AJ....162..186B"
 arxiv = "2105.11671"
 verified = true
 verified_via = "ads"
+repo = "https://github.com/t-brandt/orvara"
 
 [ref.thompson2023]
 authors = "Thompson et al."
@@ -245,6 +255,7 @@ bibcode = "2023AJ....166..164T"
 arxiv = "2402.01971"
 verified = true
 verified_via = "ads"
+repo = "https://github.com/sefffal/Octofitter.jl"
 
 [ref.foreman-mackey2021]
 authors = "Foreman-Mackey et al."
@@ -341,6 +352,8 @@ verified_via = "ads"
 [ref.lazareff2017]
 authors = "Lazareff et al."
 year = 2016
+alt_years = [2017]
+alt_years_note = "year is the first posting; the journal paper (A&A 599, A85) is dated 2017"
 title = "Structure of Herbig AeBe disks at the milliarcsecond scale: A statistical survey in the H band using PIONIER-VLTI"
 used_in = ["virgil.models:ModulatedGaussianRim"]
 note = "A&A 599, A85 (2017)"
@@ -376,6 +389,8 @@ verified_via = "ads"
 [ref.duvert2017]
 authors = "Duvert, Young & Hummel"
 year = 2015
+alt_years = [2017]
+alt_years_note = "year is the first posting; the journal paper is dated 2017"
 title = "OIFITS 2: the 2nd version of the Data Exchange Standard for Optical (Visible/IR) Interferometry"
 doi = "10.1051/0004-6361/201526405"
 used_in = ["virgil.oifits:read_oifits", "virgil.oifits:write_oifits"]
@@ -491,6 +506,8 @@ verified_via = "ads"
 [ref.candes2008]
 authors = "Candès, Wakin & Boyd"
 year = 2007
+alt_years = [2008]
+alt_years_note = "year is the first posting; the journal paper is dated 2008"
 title = "Enhancing Sparsity by Reweighted L1 Minimization"
 used_in = ["virgil.imaging:LogSum"]
 note = "J. Fourier Anal. Appl. 14, 877 (2008)"
@@ -639,6 +656,8 @@ verified_via = "none"
 [ref.arras2021]
 authors = "Arras et al."
 year = 2020
+alt_years = [2021]
+alt_years_note = "year is the first posting; the journal paper is dated 2021"
 title = "Comparison of classical and Bayesian imaging in radio interferometry"
 used_in = ["virgil.fields:GaussianField"]
 note = "A&A 646, A84 (2021); cited in the audit as the correlated-field source: check"
@@ -650,6 +669,8 @@ verified_via = "ads"
 [ref.arras2022]
 authors = "Arras et al."
 year = 2020
+alt_years = [2022]
+alt_years_note = "year is the first posting; the journal paper is dated 2022"
 title = "Variable structures in M87* from space, time and frequency resolved interferometry"
 used_in = ["virgil.fields:GaussianField"]
 note = "Nature Astron. 6, 259 (2022)"
@@ -693,6 +714,8 @@ verified_via = "ads"
 [ref.ensslin2009]
 authors = "Enßlin, Frommert & Kitaura"
 year = 2008
+alt_years = [2009]
+alt_years_note = "year is the arXiv posting; the journal paper (Phys. Rev. D 80) is dated 2009"
 title = "Information field theory for cosmological perturbation reconstruction and non-linear signal analysis"
 used_in = ["virgil.fields"]
 note = "Phys. Rev. D 80, 105005 (2009)"
@@ -704,6 +727,8 @@ verified_via = "ads"
 [ref.tiede2025]
 authors = "Tiede et al."
 year = 2025
+alt_years = [2026]
+alt_years_note = "year is the first posting; the journal paper is dated 2026"
 title = "Hierarchical Interferometric Bayesian Imaging"
 used_in = ["virgil.imaging"]
 note = "HIBI/Comrade"
@@ -721,6 +746,7 @@ bibcode = "2026ApJ..1005..132C"
 arxiv = "2606.04094"
 verified = true
 verified_via = "ads"
+role = "bibliography"
 
 [ref.drevon2026]
 authors = "Drevon et al."
@@ -736,6 +762,8 @@ verified_via = "ads"
 [ref.hoffman2014]
 authors = "Hoffman & Gelman"
 year = 2011
+alt_years = [2014]
+alt_years_note = "year is the first posting; the journal paper is dated 2014"
 title = "The No-U-Turn Sampler: Adaptively Setting Path Lengths in Hamiltonian Monte Carlo"
 used_in = ["virgil.inference"]
 note = "NUTS; JMLR 15, 1593 (2014)"
@@ -767,6 +795,8 @@ verified_via = "ads"
 [ref.kucukelbir2017]
 authors = "Kucukelbir et al."
 year = 2016
+alt_years = [2017]
+alt_years_note = "year is the first posting; the journal paper is dated 2017"
 title = "Automatic Differentiation Variational Inference"
 used_in = ["virgil.svi:variational"]
 note = "ADVI; JMLR 18, 14 (2017)"
@@ -800,6 +830,8 @@ verified_via = "ads"
 [ref.vehtari2024]
 authors = "Vehtari et al."
 year = 2015
+alt_years = [2024]
+alt_years_note = "year is the first posting; the journal paper is dated 2024"
 title = "Pareto Smoothed Importance Sampling"
 used_in = ["virgil.svi:_khat"]
 note = "JMLR 25, 72 (2024)"
@@ -864,7 +896,8 @@ authors = "Mawet et al."
 year = 2014
 title = "Fundamental limitations of high contrast imaging set by small sample statistics"
 used_in = ["virgil.detection:injection_recovery"]
-note = "ApJ 792, 97"
+note = "ApJ 792, 97; the small-sample false-alarm correction, not applied in injection_recovery"
+role = "compared"
 bibcode = "2014ApJ...792...97M"
 arxiv = "1407.2247"
 verified = true
@@ -921,6 +954,8 @@ verified_via = "ads"
 [ref.vanderplas2018]
 authors = "VanderPlas"
 year = 2017
+alt_years = [2018]
+alt_years_note = "year is the first posting; the journal paper is dated 2018"
 title = "Understanding the Lomb-Scargle Periodogram"
 used_in = ["virgil.aliases"]
 note = "ApJS 236, 16 (2018)"
@@ -928,6 +963,26 @@ bibcode = "2018ApJS..236...16V"
 arxiv = "1703.09824"
 verified = true
 verified_via = "ads"
+
+[ref.hutchinson1989]
+authors = "Hutchinson"
+year = 1989
+title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
+doi = "10.1080/03610918908812806"
+verified = false
+verified_via = "none"
+used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches); DOI and title from memory, to check against Crossref"
+
+[ref.bekas2007]
+authors = "Bekas, Kokiopoulou & Saad"
+year = 2007
+title = "An estimator for the diagonal of a matrix"
+doi = "10.1016/j.apnum.2007.01.003"
+verified = false
+verified_via = "none"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "Appl. Numer. Math. 57, 1214; the estimator mean(v ⊙ Hv) over Rademacher v for the regularizer Hessian diagonal; from memory, to check against Crossref"
 
 [ref.skilling1989]
 authors = "Skilling"
@@ -943,8 +998,8 @@ note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.
 authors = "Skilling & Bryan"
 year = 1984
 title = "Maximum entropy image reconstruction: general algorithm"
-used_in = ["virgil.imaging:MaxEntropy"]
-note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S"
+used_in = ["virgil.imaging:MaxEntropy", "virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S; precondition=\"diag\" generalizes its entropy metric to the local curvature of data and regularizers"
 bibcode = "1984MNRAS.211..111S"
 verified = true
 verified_via = "ads"
@@ -987,7 +1042,7 @@ url = "https://github.com/kammerje/fouriever"
 verified = false
 verified_via = "none"
 used_in = ["virgil.grid_fit:linear_flux_grid"]
-note = "comparison only: linear_flux_grid is equivalent to its lincmap; no paper found"
+note = "comparison only: compare linear_flux_grid with its lincmap (closure/kernel phases only); no paper found"
 role = "compared"
 
 [ref.amical]
@@ -1080,16 +1135,7 @@ url = "https://github.com/benjaminpope/jaxbessel"
 verified = false
 verified_via = "none"
 used_in = ["virgil.models"]
-note = "CEPHES (Moshier) translation, adapted from harmonix"
-
-[ref.cephes]
-authors = "Moshier"
-title = "Cephes mathematical library"
-how = "ported"
-url = "https://www.netlib.org/cephes/"
-verified = false
-verified_via = "none"
-used_in = []
+note = "CEPHES (Moshier, https://www.netlib.org/cephes/) translation, adapted from harmonix; the Cephes credit lives here and in the jaxbessel repository"
 
 [ref.xara]
 authors = "Martinache"
@@ -1117,6 +1163,8 @@ verified_via = "ads"
 [ref.ensslin2019]
 authors = "Enßlin"
 year = 2018
+alt_years = [2019]
+alt_years_note = "year is the first posting; the journal paper is dated 2019"
 title = "Information theory for fields"
 used_in = ["virgil.fields:GaussianField"]
 note = "Annalen der Physik 531, 1800127 (2019)"
@@ -1348,5 +1396,62 @@ title = "WSCLEAN: an implementation of a fast, generic wide-field imager for rad
 used_in = ["virgil.radio_clean:clean"]
 note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows; not checked against ADS"
 bibcode = "2014MNRAS.444..606O"
+verified = false
+verified_via = "none"
+
+[ref.jaxinterferometry]
+authors = "Dholakia"
+title = "jax-interferometry"
+how = "ported"
+repo = "https://github.com/shashankdholakia/jax-interferometry"
+used_in = ["virgil._elr"]
+note = "the original ELR code (core/ELR.py, core/utils.py), run unmodified at commit 70689ed3dba338d59c98d02e8126a07a3b4e86da by scripts/make_elr_golden.py to produce the golden fixture the port is checked against"
+verified = false
+verified_via = "none"
+
+[ref.vanhamme1993]
+authors = "van Hamme"
+year = 1993
+title = "New Limb-Darkening Coefficients for Modeling Binary Star Light Curves"
+doi = "10.1086/116788"
+bibcode = "1993AJ....106.2096V"
+used_in = ["virgil.models:SquareRootLimbDarkenedDisk"]
+note = "AJ 106, 2096; the quadratic law the square-root law is compared with"
+role = "context"
+verified = true
+verified_via = "ads"
+
+[ref.monnier2007]
+authors = "Monnier et al."
+year = 2007
+title = "Imaging the Surface of Altair"
+doi = "10.1126/science.1143205"
+bibcode = "2007Sci...317..342M"
+arxiv = "0706.0867"
+used_in = ["virgil.models:GravityDarkenedStar"]
+note = "Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction"
+role = "context"
+verified = true
+verified_via = "ads"
+
+[ref.lannelongue2021]
+used_in = []
+authors = "Lannelongue, Grealey & Inouye"
+year = 2021
+title = "Green Algorithms: Quantifying the Carbon Footprint of Computation"
+doi = "10.1002/advs.202100707"
+bibcode = "2021AdvSc...800707L"
+note = "Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md)"
+role = "context"
+verified = true
+verified_via = "ads"
+
+[ref.bishop2006]
+used_in = []
+authors = "Bishop"
+year = 2006
+title = "Pattern Recognition and Machine Learning"
+note = "Springer textbook, section 3.5 (evidence approximation for regularization weights)"
+role = "context"
 verified = false
 verified_via = "none"

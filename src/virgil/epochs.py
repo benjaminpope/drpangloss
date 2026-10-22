@@ -458,19 +458,6 @@ def _refuse_amp_with_gains(data):
         )
 
 
-def _check_marginal_data(data):
-    """Raise if ``data`` has extra observables with a model-dependent
-    covariance, which the scale-marginalized surface cannot score (gains
-    and closure offsets it integrates numerically: see ``_Surface``)."""
-    if any(b.model_dependent_covariance for b in data.extras):
-        raise NotImplementedError(
-            "The scale-marginalized surface (scales='marginal', "
-            "epoch_positions, marginal_loglike) cannot score extra "
-            "observables with a model-dependent covariance. Use the data "
-            "without them, or scales='quoted'."
-        )
-
-
 # Nodes of the Gauss-Legendre rule that integrates ln s of a block whose
 # covariance is s²D + UUᵀ (gains, closure offsets), the half-width of its
 # window in standard deviations of the (tempered) integrand, the Newton
@@ -500,7 +487,15 @@ class _Surface:
     """
 
     def __init__(self, data, s_max=None):
-        _check_marginal_data(data)
+        # Extra observables with a model-dependent covariance cannot be
+        # scored (gains and closure offsets are integrated numerically).
+        if any(b.model_dependent_covariance for b in data.extras):
+            raise NotImplementedError(
+                "The scale-marginalized surface (scales='marginal', "
+                "epoch_positions, marginal_loglike) cannot score extra "
+                "observables with a model-dependent covariance. Use the "
+                "data without them, or scales='quoted'."
+            )
         if s_max is not None and not float(s_max) > 1.0:
             raise ValueError(f"s_max must exceed 1, got {s_max}.")
         self.numeric = bool(
@@ -1104,7 +1099,7 @@ def rank_orbits(
     scales="marginal",
     noise=None,
     dof=1.0,
-    s_max=None,
+    s_max=None,  # deliberate: no flux is profiled here, so the scale integral needs no bound (score_orbits: 5)
     batch_size=None,
     dtype="float64",
 ):
@@ -1127,11 +1122,14 @@ def rank_orbits(
     scales : {"marginal", "quoted"}, optional
         ``"marginal"`` (default) integrates each dataset's error scales out
         ([`marginal_loglike`][virgil.epochs.marginal_loglike]); ``"quoted"`` uses
-        ``Epochs.loglike`` on the quoted errors.
+        ``Epochs.loglike`` on the quoted errors (the score is ``-χ²/2``, up to a
+        constant).
     noise : dict, optional
         Noise values keyed by epoch or dataset name ([conventions](../conventions.md)).
     dof, s_max : optional
-        As for ``marginal_loglike``.
+        As for ``marginal_loglike``; ``dof`` is a number or a dict keyed by
+        dataset or epoch name. ``s_max`` defaults to None (no bound; 10 for data
+        needing numeric integration), ``score_orbits`` to 5.
     batch_size : int, optional
         Orbits evaluated together (default about a million model visibilities).
     dtype : {"float64", "float32"}, optional
@@ -1163,6 +1161,22 @@ def rank_orbits(
     return _ranked(listed, loglike, data)
 
 
+def _distinct_tracks(tracks, min_distance_mas, n=None):
+    """Indices of up to ``n`` of ``tracks`` (each ``(times, 2)``, best
+    first) that differ from every better choice by more than
+    ``min_distance_mas`` at some time."""
+    chosen = []
+    for k, track in enumerate(tracks):
+        if all(
+            onp.max(onp.hypot(*(track - tracks[j]).T)) > min_distance_mas
+            for j in chosen
+        ):
+            chosen.append(k)
+            if len(chosen) == n:
+                break
+    return chosen
+
+
 def _distinct(ranked, n, min_distance_mas):
     """Indices of up to ``n`` orbits of ``ranked``, best first, whose
     positions at the snapshot times differ from every better choice by
@@ -1170,18 +1184,7 @@ def _distinct(ranked, n, min_distance_mas):
     finite = int(onp.sum(onp.isfinite(ranked.loglike)))
     if finite == 0:
         return []
-    positions = ranked.positions()
-    chosen = []
-    for k in range(finite):
-        offsets = [positions[k] - positions[j] for j in chosen]
-        if all(
-            onp.max(onp.hypot(o[:, 0], o[:, 1])) > min_distance_mas
-            for o in offsets
-        ):
-            chosen.append(k)
-            if len(chosen) == n:
-                break
-    return chosen
+    return _distinct_tracks(ranked.positions()[:finite], min_distance_mas, n)
 
 
 def chain_starts(ranked, n_chains, *, min_distance_mas=None):
@@ -1622,18 +1625,14 @@ def _coarse_then_exact(
     return out, float(pick.mean())
 
 
-def _amp_residuals(model, data, surface, amp_range):
-    """The whitened residuals of ``model``, with the squared visibilities
-    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
-    when ``amp_range`` (lo, hi) is given: the weighted least-squares ``A``
-    clipped to the range, as in the orbit fit's per-epoch amplitude
-    (``aliases._epoch_residuals``). Without ``amp_range``, or without a
-    visibility block, the plain residuals."""
-    r = whitened_residuals(model, data)
-    if amp_range is None or surface.names[0] != "vis":
-        return r
-    _refuse_amp_with_gains(data)
-    n = surface.blocks[0][2]
+def _amp_profile(r, data, n, amp_range):
+    """``(A, r')``: the whitened residuals ``r`` with the first ``n`` (the
+    squared visibilities) recomputed for the model scaled by the profiled
+    V² amplitude ``A``, the weighted least-squares amplitude clipped to
+    ``amp_range`` (lo, hi). The model is recovered from the residual as
+    ``obs + r * err``; ``r'`` is ``(A * model - obs) / err``. Shared by the
+    orbit fit's per-epoch amplitude (``aliases._epoch_residuals``) and the
+    night fits."""
     obs = np.reshape(data.vis, -1)
     err = np.reshape(data.d_vis, -1)
     mod = obs + r[:n] * err
@@ -1641,7 +1640,19 @@ def _amp_residuals(model, data, surface, amp_range):
     tiny = np.finfo(r.dtype).tiny
     amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
     amp = np.clip(amp, *amp_range)
-    return r.at[:n].set((amp * mod - obs) / err)
+    return amp, r.at[:n].set((amp * mod - obs) / err)
+
+
+def _amp_residuals(model, data, surface, amp_range):
+    """The whitened residuals of ``model``, with the squared visibilities
+    multiplied by one profiled amplitude ``A`` (a per-night contrast loss)
+    when ``amp_range`` is given (see ``_amp_profile``). Without
+    ``amp_range``, or without a visibility block, the plain residuals."""
+    r = whitened_residuals(model, data)
+    if amp_range is None or surface.names[0] != "vis":
+        return r
+    _refuse_amp_with_gains(data)
+    return _amp_profile(r, data, surface.blocks[0][2], amp_range)[1]
 
 
 def _negative_marginal(x, dof, data, surface, diam=None, amp_range=None):
@@ -2202,6 +2213,8 @@ def epoch_positions(
     ``n_peaks`` best maxima and ranks them: the best is the position, its
     curvature the covariance. Each night also gets flags. The positions only
     start an orbit fit ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    Take ``primary_diam`` from the data or a calibrator, never from the orbit
+    under test (that is circular).
 
     Parameters
     ----------
@@ -2221,14 +2234,20 @@ def epoch_positions(
         (None: everywhere); see [night flags](../orbit_methods.md#night-flags).
     primary_diam : float, optional
         Fixed uniform-disk primary diameter (mas); None or 0 is a point primary.
+        Never the diameter implied by the orbit under test.
     flag_nights, flag_sep_blocks, flag_chi2_groups, flag_alias_nats, flag_min_gap, flag_chi2_factor, flag_sep_fraction, flag_flux_tol : optional
         Night flags and their thresholds: see
-        [night flags](../orbit_methods.md#night-flags). None disables a threshold.
+        [night flags](../orbit_methods.md#night-flags). None disables a numeric
+        threshold; ``flag_nights`` and ``flag_sep_blocks`` are switches, and
+        ``flag_chi2_groups`` groups the blocks for the χ² check (None: by observable).
 
     Returns
     -------
     EpochPositions
-        ``dra``, ``ddec`` (mas, East and North of the primary), ``cov``, ``flags``.
+        ``dra``, ``ddec`` (mas, East and North of the primary), ``cov``,
+        ``flags``, and per night ``peaks`` (the catalogue of ``n_peaks``),
+        ``gap_marginal`` (nats between the best peak and its rival) and
+        ``chi2_raw`` (χ²/N on the quoted errors, per block and ``"all"``).
 
     Warns
     -----
@@ -2906,6 +2925,7 @@ def start_from_positions(
     Thiele-Innes orbits, a ranking by all the data, then
     [`fit`][virgil.fitting.fit] from the best distinct orbits
     ([tutorial](../orbit_fitting.md#scale-marginalized-scoring-and-night-flags)).
+    Nothing here enters the posterior: it only chooses where the fits start.
 
     Parameters
     ----------
@@ -2924,14 +2944,19 @@ def start_from_positions(
     t_ref : float
         Reference time (MJD) of the starting orbits (your model's).
     scales, noise : optional
-        As for ``rank_orbits`` ([conventions](../conventions.md)).
+        ``scales`` (default ``"marginal"``) as for ``rank_orbits``
+        ([conventions](../conventions.md)); ``noise`` feeds only the refinement
+        fits, not the ranking.
     dof, s_max, batch_size, eccs, n_phase : optional
         Passed to ``epoch_positions``, the ranking and ``starting_orbits``.
     n_candidates, n_refine, min_gap : optional
-        Orbits ranked, distinct ones refined, and the ``gap_marginal`` a dataset
-        needs to seed (the rest are in ``OrbitStart.ambiguous``).
+        Orbits ranked (default 200), distinct ones refined (4), and the
+        ``gap_marginal`` (nats, default 5) a dataset needs to seed (the rest are
+        in ``OrbitStart.ambiguous``).
     refine_positions, n_peaks, primary_diam, flag_options, skip_flagged : optional
-        As for ``epoch_positions`` (``flag_options``: its ``flag_*`` keywords).
+        As for ``epoch_positions`` (``flag_options``: its ``flag_*`` keywords,
+        ``flag_min_gap`` defaulting to ``min_gap``); flagged datasets seed
+        nothing but still count (default True).
     **fit_options
         Passed to the refinement fits; one that raises goes in ``OrbitStart.failed``.
 
@@ -3007,6 +3032,8 @@ def start_from_positions(
         dof=dof,
         s_max=s_max,
     )
+    # deliberate: the ranking ignores ``noise=``; nothing here enters the
+    # posterior, the start only picks where the fits begin.
     ranked = _ranked(orbits, loglike, data)
     chosen = _distinct(ranked, n_refine, 0.5 * ranked.resolution_mas)
     if not chosen:

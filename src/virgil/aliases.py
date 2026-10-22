@@ -57,8 +57,10 @@ from .epochs import (
     default_memory_budget,
     _REFINE_WINDOW,
     EpochPositions,
+    _amp_profile,
     _amp_residuals,
     _binary,
+    _distinct_tracks,
     _refine_marginal,
     _refuse_amp_with_gains,
     _Surface,
@@ -424,29 +426,8 @@ def _epoch_residuals(surface, model, d, amp_range):
             "vis_amp needs squared visibilities as the visibility channel "
             f"(vis_mode='v2', unprojected), got vis_mode={d.vis_mode!r}."
         )
-    n = surface.blocks[0][2]
-    obs = np.reshape(d.vis, -1)
-    err = np.reshape(d.d_vis, -1)
-    mod = obs + r[:n] * err
-    w = 1.0 / err**2
-    tiny = np.finfo(r.dtype).tiny
-    amp = np.sum(w * obs * mod) / np.maximum(np.sum(w * mod**2), tiny)
-    amp = np.clip(amp, *amp_range)
-    return _scale_vis(r, d, n, amp), amp
-
-
-def _scale_vis(r, d, n, amp):
-    """The whitened residuals ``r`` with the first ``n`` (the squared
-    visibilities) recomputed for the model scaled by the V² amplitude
-    ``amp``: ``(amp * model - obs) / err``, the model being recovered from
-    the residual as ``obs + r * err``. Shared by the fit
-    (``_epoch_residuals``, ``amp`` profiled) and the accessors of
-    [`AliasBandResult`][virgil.aliases.AliasBandResult] (``amp`` as fitted),
-    so that both score the same residuals."""
-    obs = np.reshape(d.vis, -1)
-    err = np.reshape(d.d_vis, -1)
-    mod = obs + r[:n] * err
-    return r.at[:n].set((amp * mod - obs) / err)
+    amp, r = _amp_profile(r, d, surface.blocks[0][2], amp_range)
+    return r, amp
 
 
 def _epoch_chi2(surface, model, d, amp_range, dof=None):
@@ -855,13 +836,6 @@ def _start_vector(orbit, flux, t_ref, band, bounds, diam=None):
     )
 
 
-def _senses(x):
-    """The seed and its other sense of motion (i -> 180 - i)."""
-    other = onp.array(x)
-    other[3] = -other[3]
-    return [x, other]
-
-
 # The likelihood is a narrow, curved ridge for an orbit of many cycles, where
 # L-BFGS-B stops 50-250 nats short of the optimum. Damped Newton on the IRLS
 # curvature (``_KernelProblem``) follows the ridge; L-BFGS-B is only the
@@ -1077,14 +1051,13 @@ def _candidates(settings, band, bounds, rng, orbits):
     ``n_random`` random orbits."""
     s = settings
     diam = s.diam_seed if s.fit_diam else None
-    pool = [
-        x
-        for orbit, _ in orbits or ()
-        for flux in s.flux_scan
-        for x in _senses(
-            _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
-        )
-    ]
+    pool = []
+    for orbit, _ in orbits or ():
+        for flux in s.flux_scan:
+            x = _start_vector(orbit, flux, s.t_ref, band, bounds, diam)
+            other = onp.array(x)  # the other sense of motion (i -> 180 - i)
+            other[3] = -other[3]
+            pool += [x, other]
     pool.extend(_init_starts(s, band, bounds))
     for _ in range(s.n_random):
         pool.append(
@@ -1167,18 +1140,12 @@ def _distinct(modes, times, t_ref, min_distance_mas):
     """Keep the best of the modes whose tracks at ``times`` agree within
     ``min_distance_mas``."""
     modes = sorted(modes, key=lambda m: -m[1])
-    kept, tracks = [], []
-    for x, value in modes:
+    tracks = []
+    for x, _ in modes:
         orbit, _ = _elements(np.asarray(x), t_ref)
         dra, ddec, _ = orbit.relative(np.asarray(times))
-        track = onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1)
-        if all(
-            onp.max(onp.hypot(*(track - t).T)) > min_distance_mas
-            for t in tracks
-        ):
-            kept.append((x, value))
-            tracks.append(track)
-    return kept
+        tracks.append(onp.stack([onp.asarray(dra), onp.asarray(ddec)], -1))
+    return [modes[k] for k in _distinct_tracks(tracks, min_distance_mas)]
 
 
 def _refine(problem, settings, bounds, pool, times, forced=()):
@@ -1893,7 +1860,9 @@ class AliasResult:
     primary_diam, vis_amp, p_range : optional
         The primary, the V^2 amplitude range, the period window (days).
     period_bound, period_at_lower_bound : bool
-        The period is unconstrained; the best period is at the bottom, where the
+        ``period_bound``: the period is unconstrained (best P within 10% of the
+        top of ``p_range``, or σ(log P) at least a quarter of the window);
+        ``period_at_lower_bound``: best P within 10% of the bottom, where the
         sampling limit may have cut the truth.
     window_capped, primary_fit : float or None, dict or None
         Lower end wanted when a default window was capped; the
@@ -2358,9 +2327,10 @@ def _seeding_positions(positions, t_ref, skip_flagged, times):
             )
         else:
             positions = None
-            detail = (
-                f" (flagged: {_skipped_codes(skipped)})" if skipped else ""
-            )
+            codes = {  # {name: [code, ...]} of the skipped-night records
+                u["name"]: [f["code"] for f in u["flags"]] for u in skipped
+            }
+            detail = f" (flagged: {codes})" if skipped else ""
     elif positions is not None and len(positions.dt) < _MIN_SEED_NIGHTS:
         n_seed, detail, positions = len(positions.dt), "", None
     else:
@@ -2394,13 +2364,6 @@ def _signs_trusted(positions, min_gap, temper_f=1.0):
     return gaps.size > 0 and bool(onp.all(gaps >= min_gap))
 
 
-def _seed_motion(data, positions, skip_flagged, jitter, cov_scale=1.0):
-    """The within-night velocities of the seeding nights (``EpochPositions``),
-    aligned with ``EpochPositions.positions(skip_flagged=...)``."""
-    motion = night_motion(data, positions, jitter=jitter, cov_scale=cov_scale)
-    return motion.take(~positions.flagged) if skip_flagged else motion
-
-
 def _short_arc_profile(
     data,
     seed_positions,
@@ -2421,9 +2384,13 @@ def _short_arc_profile(
     positions' and velocities' covariances are times ``cov_scale`` (the
     effective-channel factor); ``grid`` is ``ecc_max``, ``jitter_mas``,
     ``k`` and ``eccs``."""
-    motion = _seed_motion(
-        data, seed_positions, skip_flagged, arc_jitter, cov_scale
+    # The within-night velocities of the seeding nights, aligned with
+    # ``EpochPositions.positions(skip_flagged=...)``.
+    motion = night_motion(
+        data, seed_positions, jitter=arc_jitter, cov_scale=cov_scale
     )
+    if skip_flagged:
+        motion = motion.take(~seed_positions.flagged)
     counts = unwrap_cycles(
         positions,
         motion,
@@ -2513,11 +2480,6 @@ def _short_arc_bands(problem, settings, bands, seeds, counts, motion):
         seed_scores=[[n, v] for n, v in score.items()],
         steps=list(counts.steps),
     )
-
-
-def _skipped_codes(skipped):
-    """``{name: [code, ...]}`` of the skipped-night records."""
-    return {u["name"]: [f["code"] for f in u["flags"]] for u in skipped}
 
 
 def _check_seed_diameter(positions, primary_diam):
@@ -2849,6 +2811,8 @@ def _period_flags(results, p_range):
     if live:
         top = max(live, key=lambda m: m["log_z"])
         sigma = float(onp.atleast_1d(top.get("sigma", [float("nan")]))[0])
+    # caveat: σ(log P) >= a quarter of the window is "unconstrained" even
+    # when the best P is not at an edge (a flat likelihood, e.g. a short arc).
     wide = onp.isfinite(sigma) and sigma >= _PERIOD_SIGMA_FRACTION * math.log(
         p_hi / p_lo
     )
@@ -3123,7 +3087,8 @@ def fit_orbit_aliases(
     positions : PositionData or EpochPositions, optional
         Positions that seed the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
-        Epoch times, ``dt_peri`` reference (MJD), prior ranges, eccentricity cap.
+        Epoch times and ``dt_peri`` reference (MJD; default each dataset's mean
+        time, and their mean), prior ranges (``a_range`` in mas), eccentricity cap.
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, flag_nats, ess_min, seed, checkpoint_dir, on_band, init : optional
         Search effort, sampling, seed; finished bands in ``checkpoint_dir`` are
         reloaded; a per-band callback; a warm start.
@@ -3134,11 +3099,15 @@ def fit_orbit_aliases(
         Sign-free seeds; a label-swapped refit at the flux ceiling; flagged
         nights seed nothing.
     n_bands_max, temper, k, eccs, outlier_eps, batch_size, memory_budget : optional
-        Band cap of a default window; tempering for correlated channels
-        ([`virgil.tempering`][virgil.tempering]); period-grid density; seed
-        eccentricities; outlier weight in [0, 1); batching.
+        Band cap of a default window; ``temper`` tempers the evidence for
+        correlated channels ([`virgil.tempering`][virgil.tempering]): True
+        estimates the factor (needs ``EpochPositions``), a float >= 1 fixes it,
+        False is off; period-grid density; seed eccentricities; outlier weight
+        in [0, 1); batching.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]).
+        Needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
+        decided; otherwise every band is seeded from the positions as without it.
 
     Returns
     -------
@@ -3147,8 +3116,15 @@ def fit_orbit_aliases(
 
     Raises
     ------
-    RuntimeError, ValueError
-        If every band fails; if no band lies in ``p_range``.
+    RuntimeError
+        If every band fails (chained to the last error).
+    ValueError
+        If no band lies in ``p_range``, or ``checkpoint_dir`` data cannot be
+        hashed. Preflight likelihood errors propagate unchanged.
+
+    Examples
+    --------
+    >>> result = fit_orbit_aliases(data, positions=positions)  # doctest: +SKIP
     """
     data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (
