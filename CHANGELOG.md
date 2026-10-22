@@ -11,6 +11,11 @@ anything before 1.0 may change between minor versions.
 
 - `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
 
+- `OrbitPipeline` checks that its verdict survives dropping the most outlying
+  night (`night_dropped`): the `modes` stage refits the search without the
+  night of highest raw χ²/N and compares the orbit-or-not verdict and the
+  winning alias band, reported in `modes.robustness` (a second search; skipped
+  below 3 nights or with `drop_outlier_night=False`).
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,
@@ -21,6 +26,14 @@ anything before 1.0 may change between minor versions.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
+
+- `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
+  DISCO products) the default search box is limited to half an alias cell, so
+  a companion is no longer reported at a lattice copy of its position (the
+  7-hole NIRISS box was 672 mas, beyond its 336 mas limit). The cap is in
+  `summary["search"]["alias_cap_mas"]` and the quicklook; an explicit
+  `max_sep_mas` is never capped. Other coverage is unchanged. The
+  `BinaryPipeline` docstring is shorter.
 
 - `CalibrationNuisance` default priors are in natural units. Gains and error
   scales are improper Jeffreys priors (the fit coordinate is `ln x`, no box);
