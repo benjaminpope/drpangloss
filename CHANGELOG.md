@@ -39,6 +39,8 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `ComplexVisData.dirty_beam` takes `values` before `nuisance`, the order of `dirty_image` (radio is provisional, so there is no deprecation shim). The last long docstrings, `CalibrationNuisance` and `ComplexVisData.dirty_image`, are now short, and the docstring allowlist is empty. `safe_azimuth` in `_geometry` replaces the copies of the origin-safe azimuth in `fields` and `models`, and `FlaredDisk` shares its grid validation with its base class.
+
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
   DISCO products) the default search box is limited to half an alias cell, so
   a companion is no longer reported at a lattice copy of its position (the

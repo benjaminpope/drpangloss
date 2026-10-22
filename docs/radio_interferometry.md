@@ -124,6 +124,12 @@ The site values stay physical (`cal.gain`, `cal.offset` in mas, `cal.sigma`).
 Explicit bounds, `priors(offset=(lo, hi))` in mas, `priors(gain=(0.5, 2))` or
 `sigma=(0.1, 10)`, set the scale again.
 
+**Loss.** Per unmasked point the term is `½|r|²/s_d² + 2 ln s_d` for
+`r = (V − M)√w`, the two real parts counting as one complex point, so the total
+is `½χ²` plus `log_norm = Σ_k m_k 2 ln s_d(k)`. The taper is
+`T = exp(−(πθq)²/(4 ln 2))`, `θ` the FWHM in radians and `q = √(u² + v²)`; the
+offset ramp has the sign of a component's `dra`, `ddec`.
+
 **Profiled error scales.** `CalibrationNuisance(data, sigmas="profile")` has no
 `cal.sigma` site. At every evaluation `s_d² = χ²_d(s=1) / (2 N_d)`, `N_d` the number
 of unmasked complex points of ddid `d`. The loss of a point is
@@ -295,6 +301,17 @@ cell centres; the accuracy is that of
 part adds the Hermitian conjugates. Dividing by `Σ w` makes the dirty beam
 `Σ w cos(2π(ux + vy)) / Σ w` peak at 1 at the phase centre, so the image is in
 Jy/beam and a point source of flux `F` at the centre peaks at `F`.
+
+Weightings: natural is `w` (`1/σ²`); uniform is `w / W_c`, `W_c` the summed weight
+of the point's uv cell; Briggs is `w / (1 + W_c f²)` with
+`f² = (5·10^−R)² / (Σ_c W_c² / Σ_k w_k)`, natural as `R → +∞` and uniform as
+`R → −∞` (`R` in about −2..2). Densities are counted on a uv grid (Hermitian
+partners share a cell) that only reweights the points; the default cell is
+`1/FoV`. `uvtaper` multiplies the weights by the Fourier transform of a Gaussian,
+so the beam is the weighted beam convolved with it. With `scene`, `values` and
+`nuisance` the image is of `V − M`. `dirty_beam` takes the same arguments and
+peaks at 1 only on an odd `npix` (on an even one the phase centre lies between
+four pixels).
 
 * **Orientation** is that of `Image`: East to the left, North up, the phase
   centre at pixel `((npix − 1)/2, (npix − 1)/2)` (between pixels for an even

@@ -26,6 +26,12 @@ def image_coordinates(npix, fov_mas):
     return np.meshgrid(x, y, indexing="xy")
 
 
+def safe_azimuth(x, y):
+    """Azimuth ``arctan2(x, y)`` (East of North), finite with finite gradients at the origin."""
+    origin = (x == 0.0) & (y == 0.0)
+    return np.arctan2(x, np.where(origin, 1.0, y))
+
+
 def pixel_offsets(npix, pixel_scale_mas):
     """Sky offsets (mas) of the pixel centres along one image axis.
 
