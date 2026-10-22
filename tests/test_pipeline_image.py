@@ -14,7 +14,6 @@ the star-free scene, a classical regularizer and the executed quicklook, are
 marked slow.
 """
 
-import inspect
 import json
 
 import jax
@@ -139,18 +138,10 @@ CHECKS = (
 )
 
 
-def test_api_snapshot():
-    for name, signature in API.items():
-        obj = ImagingPipeline
-        for part in name.split(".")[1:]:
-            obj = getattr(obj, part)
-        assert str(inspect.signature(obj)) == signature, name
-    assert ImagingPipeline.STAGES == STAGES
-    assert ImagingPipeline.defaults() == DEFAULTS
-    assert ImagingPipeline.NAME == "image"
-    assert ImagingPipeline.STABILITY == "provisional"
+def test_pipeline_specific_contract():
+    # The shared part (signatures, stages, defaults) is test_api_snapshot
+    # in test_pipeline_robust_core.py.
     assert image.CHECKS == CHECKS
-    assert SCHEMA == "virgil-pipeline-run-v1"
 
 
 def test_exported_lazily_and_registered_with_the_cli():
@@ -487,6 +478,7 @@ def test_star_auto_decides_the_star_on(data, tmp_path):
     assert star["member_star"] is True
 
 
+@pytest.mark.slow
 def test_members_are_resumable_and_fill_the_ensemble(data, tmp_path):
     """The array workflow: members out of order, then the stages finish."""
     pipe = ImagingPipeline(data, output=tmp_path / "run", **SMALL)

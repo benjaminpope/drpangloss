@@ -663,6 +663,7 @@ _COLD_CORNER_PLOT = """
 import time
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from virgil.plotting import plot_chainconsumer_diagnostics
@@ -678,14 +679,21 @@ chains = {
     ).astype("float32")
     for label in ("HMC", "Fisher-HMC")
 }
-start = time.perf_counter()
-plot_chainconsumer_diagnostics(
-    chains,
-    columns=["dra", "ddec", "flux"],
-    truth={"dra": 120.0, "ddec": -80.0, "flux": 4e-3},
-    colors=["#1f77b4", "#ff7f0e"],
-)
-print(time.perf_counter() - start)
+
+
+def call():
+    start = time.perf_counter()
+    plot_chainconsumer_diagnostics(
+        chains,
+        columns=["dra", "ddec", "flux"],
+        truth={"dra": 120.0, "ddec": -80.0, "flux": 4e-3},
+        colors=["#1f77b4", "#ff7f0e"],
+    )
+    plt.close("all")
+    return time.perf_counter() - start
+
+
+print(call(), call())
 """
 
 
@@ -693,7 +701,10 @@ def test_chainconsumer_diagnostics_first_call_is_fast():
     # A GPU docs run once reported 7,971 s for the first call on the docs'
     # two 2000-sample chains. Time that first call (lazy chainconsumer
     # import, font lookup, first plot) in a fresh interpreter, since an
-    # in-process test would find them already warm.
+    # in-process test would find them already warm, and compare it with
+    # the second call of the same process: the one-off costs are a small
+    # multiple of a warm plot, whatever the runner's speed. The subprocess
+    # timeout bounds the pathological case outright.
     import subprocess
     import sys
 
@@ -704,12 +715,16 @@ def test_chainconsumer_diagnostics_first_call_is_fast():
         check=True,
         timeout=120,
     )
-    elapsed = float(out.stdout.strip().splitlines()[-1])
-    assert elapsed < 20.0, f"cold corner plot took {elapsed:.1f} s"
+    cold, warm = map(float, out.stdout.strip().splitlines()[-1].split())
+    assert cold < 30.0 * max(warm, 0.05), (
+        f"cold corner plot took {cold:.1f} s, warm {warm:.2f} s"
+    )
 
 
 def test_chainconsumer_diagnostics_scale_linearly_in_samples():
-    # Ten times the docs' sample count must not be super-linearly slower.
+    # Ten times the docs' sample count must not be super-linearly slower:
+    # compared with a 2000-sample call in the same process (best of two
+    # each, so a noisy neighbour cannot fail it alone).
     import time
 
     import pandas as pd
@@ -735,13 +750,21 @@ def test_chainconsumer_diagnostics_scale_linearly_in_samples():
         truth={"dra": 120.0, "ddec": -80.0, "flux": 4e-3},
         colors=["#1f77b4", "#ff7f0e"],
     )
-    plot_chainconsumer_diagnostics(chains(2000), **kwargs)
-    plt.close("all")
-    start = time.perf_counter()
-    plot_chainconsumer_diagnostics(chains(20000), **kwargs)
-    elapsed = time.perf_counter() - start
-    plt.close("all")
-    assert elapsed < 10.0, f"20000-sample corner plot took {elapsed:.1f} s"
+
+    def timed(n):
+        data = chains(n)
+        start = time.perf_counter()
+        plot_chainconsumer_diagnostics(data, **kwargs)
+        plt.close("all")
+        return time.perf_counter() - start
+
+    timed(2000)  # warm the lazy imports and fonts
+    small = min(timed(2000) for _ in range(2))
+    large = min(timed(20000) for _ in range(2))
+    # Linear would be 10x; allow 25x before calling it super-linear.
+    assert large < 25.0 * small, (
+        f"20000 samples took {large:.1f} s, 2000 took {small:.2f} s"
+    )
 
 
 def test_batched_grid_matches_unbatched():

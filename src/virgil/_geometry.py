@@ -381,13 +381,16 @@ def fringe_scales(data):
 def lattice_alias_limit(data, tolerance=1e-3):
     """Half-width (mas) of the largest square search box free of alias copies, or ``None``.
 
-    If the unflagged uv samples of one wavelength lie on a 2-D lattice (aperture masks,
+    If the unflagged uv samples of each wavelength lie on a 2-D lattice (aperture masks,
     DISCO products), the visibilities repeat under the reciprocal lattice
     (period ``λ`` times the dual lattice, in the sky frame), so two
     positions in one box can look alike. A box of half-width ``h`` has no such
     pair when ``2h`` is below every alias vector's larger component, so the
-    limit is half the smallest of those. ``None`` for other coverage (several
-    wavelengths, or samples off a lattice to within ``tolerance`` cells).
+    limit is half the smallest of those. With several channels a position is
+    ambiguous only if it aliases in all of them, and every such shift is an
+    alias of the longest channel, so that channel's limit is used (a lower
+    bound on the joint one). ``None`` for other coverage (samples off a
+    lattice to within ``tolerance`` cells in any unflagged channel).
 
     Parameters
     ----------
@@ -395,15 +398,27 @@ def lattice_alias_limit(data, tolerance=1e-3):
     tolerance : float, optional
         Largest allowed offset from a lattice point, in cells.
     """
-    wavel = onp.unique(onp.asarray(data.wavel, float))
-    if wavel.size != 1:
-        return None
+    shape = onp.ravel(onp.asarray(data.u, float)).shape
     uv = onp.column_stack(
         [onp.ravel(onp.asarray(x, float)) for x in (data.u, data.v)]
     )
+    wavel = onp.broadcast_to(onp.ravel(onp.asarray(data.wavel, float)), shape)
     unflagged = getattr(data, "unflagged", None)
     if unflagged is not None:  # a flagged sample measures nothing
-        uv = uv[onp.ravel(onp.asarray(unflagged, bool))]
+        keep = onp.ravel(onp.asarray(unflagged, bool))
+        uv, wavel = uv[keep], wavel[keep]
+    limits = [
+        _channel_alias_limit(uv[wavel == lam], lam, tolerance)
+        for lam in onp.unique(wavel)
+    ]
+    if not limits or None in limits:
+        return None
+    # A joint alias is an alias of the longest unflagged wavelength: it binds.
+    return max(limits)
+
+
+def _channel_alias_limit(uv, wavel, tolerance):
+    """``lattice_alias_limit`` of the samples ``uv`` of one wavelength."""
     uv = onp.unique(onp.round(uv, 9), axis=0)
     norm = onp.hypot(*uv.T)
     uv, norm = uv[norm > 0], norm[norm > 0]
@@ -419,7 +434,7 @@ def lattice_alias_limit(data, tolerance=1e-3):
     if onp.max(onp.abs(cells - onp.round(cells))) > tolerance:
         return None
     # The alias vectors are the reciprocal lattice, scaled by λ (rad -> mas).
-    dual = onp.linalg.inv(basis).T * wavel[0] / mas2rad
+    dual = onp.linalg.inv(basis).T * wavel / mas2rad
     steps = onp.arange(-_ALIAS_ORDER, _ALIAS_ORDER + 1)
     mix = onp.array([(i, j) for i in steps for j in steps if i or j])
     return float(0.5 * onp.abs(mix @ dual).max(axis=1).min())
