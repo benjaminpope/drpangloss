@@ -144,3 +144,7 @@ Precision of a fit: `"float64"` (the default) runs in a local
 model and values are cast back to JAX's precision outside the fit (float32,
 unless x64 is enabled) so that they work with the rest of your code. See
 [Precision](conventions.md#precision).
+
+## Stopping rules of `fit` {#fit-stopping}
+
+LM and L-BFGS stop when no component of the gradient of the loss per data point exceeds `gtol`, nor 1/1000 of its largest starting value (floored at √eps of the `dtype` times that value, and at `1e-6 * gtol`). `max_step_size` limits L-BFGS to a change of at most that much in any unconstrained coordinate per step, a factor `exp(max_step_size)` for a log-brightness pixel. `time_limit` stops after the first chunk that ends past it, compilation included. LM is the default when the objective has a least-squares form (Normal priors, and priors flat in their fitted coordinate); above 200 coordinates it is matrix-free (`cg_steps`).
