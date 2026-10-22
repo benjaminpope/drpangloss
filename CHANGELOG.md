@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
 - `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI), and for data with flagged samples; `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
 - **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
   `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor

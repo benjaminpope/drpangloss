@@ -124,6 +124,34 @@ def test_the_secondary_recedes_at_the_node_with_position_angle_omega():
         assert onp.allclose(velocity, step, rtol=1e-6, atol=1e-9)
 
 
+def test_thiele_innes_to_kepler_jits_and_vmaps_over_a_batch():
+    with jax.enable_x64(True):
+        orbits = [
+            _orbit(inc=i, Omega=o)
+            for i, o in [(30, 20), (90, 100), (150, 300)]
+        ]
+        tis = [orb.to_thiele_innes() for orb in orbits]
+        consts = np.array([[t.A, t.B, t.F, t.G] for t in tis]).T
+
+        def elements(a, b, f, g):
+            k = ThieleInnesOrbit(
+                400.0, 30.0, 0.4, a, b, f, g, t_ref=T_REF
+            ).to_kepler()
+            return k.inc, k.omega, k.Omega, k.a_mas
+
+        batch = jax.jit(jax.vmap(elements))(*consts)
+        for i, t in enumerate(tis):
+            one = t.to_kepler()
+            got = [float(x[i]) for x in batch]
+            want = [
+                float(getattr(one, k))
+                for k in ("inc", "omega", "Omega", "a_mas")
+            ]
+            assert onp.allclose(got, want, rtol=1e-12)
+        grad = jax.grad(lambda a: elements(a, *consts[1:, 0])[0])(consts[0, 0])
+        assert onp.isfinite(float(grad))
+
+
 @pytest.mark.parametrize(
     "changes",
     [{}, {"ecc": 0.0}, {"inc": 0.0}, {"inc": 150.0, "Omega": 300.0}],
