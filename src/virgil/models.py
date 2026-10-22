@@ -1809,7 +1809,7 @@ class ModulatedGaussianRim(Component):
         stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
         xx_ell, yy_ell = undo_elliptical_transf_coord(xx, yy, self.pa, stretch)
         r_ell = safe_radius(xx_ell, yy_ell)
-        theta_ell = np.arctan2(xx_ell, yy_ell)
+        theta_ell = safe_azimuth(xx_ell, yy_ell)
 
         # Anti-aliased thin ring: Gaussian in de-projected radius, at least
         # half a pixel wide on the sky along the compressed minor axis.

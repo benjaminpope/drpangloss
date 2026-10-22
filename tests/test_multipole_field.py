@@ -272,7 +272,7 @@ def test_gradients_are_finite_in_every_parameter():
 @pytest.mark.parametrize("inc", [0.0, 40.0])
 def test_gradients_are_finite_with_a_pixel_on_the_origin(inc):
     # An odd grid with no offset puts a pixel exactly at the field's centre,
-    # where arctan2's gradient is NaN unless the azimuth is made safe.
+    # where hypot and arctan2 have NaN gradients unless made safe.
     base = _field(shape=(25, 25), inc=inc)
     names = ["latent", "inc", "pa", "dra", "ddec"]
 

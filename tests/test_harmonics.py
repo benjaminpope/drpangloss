@@ -814,13 +814,17 @@ def test_harmonics_keyword_only_after_c_and_s():
 
 
 @pytest.mark.parametrize("inc", [0.0, 40.0])
-def test_render_gradients_are_finite_with_a_pixel_on_the_origin(inc):
+@pytest.mark.parametrize("kind", ["multipole", "rim"])
+def test_render_gradients_are_finite_with_a_pixel_on_the_origin(inc, kind):
     # An odd grid with no offset puts a pixel exactly at the disk's centre,
     # where hypot and arctan2 have NaN gradients unless made safe.
     harmonics = Harmonics(w=_random_latents(2, 7))
-    disk = MultipoleDisk(
-        GaussianRing(6.0, 1.0), harmonics=harmonics, inc=inc, pa=20.0
-    )
+    if kind == "multipole":
+        disk = MultipoleDisk(
+            GaussianRing(6.0, 1.0), harmonics=harmonics, inc=inc, pa=20.0
+        )
+    else:
+        disk = ModulatedGaussianRim(6.0, 1.0, inc, 20.0, az_amps=0.5, az_pas=0.0)
 
     def total(model):
         return np.sum(model.render(npix=25, fov_mas=24.0) ** 2)
