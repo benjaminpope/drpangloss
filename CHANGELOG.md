@@ -82,6 +82,7 @@ anything before 1.0 may change between minor versions.
 
 - The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
 - The pipelines inline 20 single-use private helpers (`_mcmc`, `_sample_stats`, `_wrap`, `_fmt`, `_closing`, the posterior-cell builders, `_n_trials`, `_derived_diagnostics`, `_search_checks`, `_parse_value`, `_robustness_of` and the star-pipeline wrappers). No change in `summary.json`. `tests/test_pipeline_orbit.py` is split into four files (the golden blind runs in three) so CI can shard it.
+- `pipeline/disk.py` inlines six single-use private helpers (`_wavel0`, `_n_free`, `_single_ring`, `_mackay_scale`, `_best_at_bound`, `_log_prior`). No change in `summary.json`.
 
 ## 0.4.0 (2026-10-18)
 

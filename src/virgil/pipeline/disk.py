@@ -524,12 +524,6 @@ def _channels(data):
     return int(onp.unique(onp.round(wavel, 12)).size)
 
 
-def _wavel0(data, settings):
-    if settings["wavel0_m"] is not None:
-        return float(settings["wavel0_m"])
-    return float(onp.mean(onp.unique(onp.asarray(data.wavel, dtype=float))))
-
-
 def _n_nodes(settings, data, r_in, r_out, halffringe, ell_min):
     """Quadrature nodes for the ring family and for the Gaussian process."""
     from ..models import GaussianRing, MultipoleDisk, RadialGP
@@ -574,6 +568,11 @@ def _overview(p):
     ell = [_ELL_PER_EQUIVALENT * k * halffringe for k in s["ell_halffringes"]]
     n_rings, n_gp = _n_nodes(s, data, r_in, r_out, halffringe, min(ell))
     channels = _channels(data)
+    wavel0 = (
+        float(s["wavel0_m"])
+        if s["wavel0_m"] is not None
+        else float(onp.mean(onp.unique(onp.asarray(data.wavel, dtype=float))))
+    )
     colour = (
         channels > s["spectral_index_min_channels"]
         if s["spectral_index"] is None
@@ -587,7 +586,7 @@ def _overview(p):
         "n_r_gp": n_gp,
         "n_channels": channels,
         "colour": bool(colour),
-        "wavel0_m": _wavel0(data, s),
+        "wavel0_m": wavel0,
         "ell_mas": ell,
         "ell_floor_mas": _ELL_PER_EQUIVALENT
         * s["ell_floor_halffringes"]
@@ -788,24 +787,19 @@ class _DiskFit:
     score: float | None = None
 
 
-def _n_free(values, priors):
-    return int(
-        sum(onp.size(values[k]) for k in priors if k in values)
-        + sum(1 for k in values if k.startswith("noise."))
-    )
-
-
 def _finish(model, values, info, priors, data):
     """A ``_DiskFit`` from a ``fit`` result's pieces."""
     chi2, _ = _chi2_64(model, data)
     scales = _scales_of(values)
+    n_free = sum(onp.size(values[k]) for k in priors if k in values)
+    n_free += sum(1 for k in values if k.startswith("noise."))
     return _DiskFit(
         model=model,
         values={k: onp.asarray(v) for k, v in values.items()},
         info=_io.clean_json(dict(info)),
         chi2=float(chi2),
         scales=scales,
-        n_free=_n_free(values, priors),
+        n_free=int(n_free),
         # at the fitted error scales: quoted-error χ² rewards each extra ring
         score=_m2loglike_64(model, data, **scales) if scales else None,
     )
@@ -871,29 +865,26 @@ def _fold_fit(ctx, shape, priors, model, values):
 # === STAGE: GEOMETRY ===
 
 
-def _single_ring(ctx, *, cos_inc, pa, r1, f1):
-    """One ring of width one half-fringe, for the geometry grid."""
-    import jax.numpy as np
-
-    v = {
-        "inc": np.degrees(np.arccos(cos_inc)),
-        "pa": pa,
-        "r1": r1,
-        "s1": ctx.halffringe,
-        "f1": f1,
-    }
-    return _ring_scene(ctx, _Shape(1, False, 0, False), v)
-
-
 @in_float64
 def _geometry_grid(p, ctx, cos_axis, pa_axis, r_axis):
     import jax.numpy as np
 
     from ..grid_fit import likelihood_grid
 
+    def single_ring(*, cos_inc, pa, r1, f1):
+        """One ring of width one half-fringe."""
+        v = {
+            "inc": np.degrees(np.arccos(cos_inc)),
+            "pa": pa,
+            "r1": r1,
+            "s1": ctx.halffringe,
+            "f1": f1,
+        }
+        return _ring_scene(ctx, _Shape(1, False, 0, False), v)
+
     return onp.asarray(
         likelihood_grid(
-            functools.partial(_single_ring, ctx),
+            single_ring,
             data=p.processed,
             grid={
                 "cos_inc": np.asarray(cos_axis),
@@ -1631,13 +1622,6 @@ def _geometry_search(p, geo, ell):
     return best[1], fit, rows
 
 
-def _mackay_scale(model, data):
-    """MacKay's error scale ``s² = χ² / (N − γ)`` at a Gaussian-process disk's MAP."""
-    from ..imaging import error_scale
-
-    return float(error_scale(model, data, path="disk"))
-
-
 def _score_ell(p, ell, planet, geo, k):
     """Fit the Gaussian-process disk at one ℓ and score it: a candidate row."""
     from ..imaging import log_evidence
@@ -1690,6 +1674,8 @@ def _edge_side(candidates):
 
 
 def _profile_gp(p):
+    from ..imaging import error_scale
+
     p._error_factor = 1.0  # until the baseline fit gives the scale
     ctx, data = p._ctx(), p.processed
     geo = _gp_geometry(p)
@@ -1712,7 +1698,8 @@ def _profile_gp(p):
         # geometry released: structure the model lacks would be absorbed
         # into the scale.
         base, _ = _gp_fit(p, ctx.ell_mid, planet, geo=geo, release=True)
-        factor = _mackay_scale(base.model, data)
+        # MacKay's error scale s² = χ² / (N − γ) at the disk's MAP
+        factor = float(error_scale(base.model, data, path="disk"))
         p._error_factor = factor
     candidates = []
     for ell in ctx.ells:
@@ -1755,16 +1742,6 @@ def _compare(p):
     return models()[p.name].compare(p)
 
 
-def _log_prior(priors, values):
-    total = 0.0
-    for k, prior in priors.items():
-        if k == "pa":  # an AngleVector's density per degree
-            total += -math.log(360.0)
-        else:
-            total += float(prior.log_prob(values[k]))
-    return total
-
-
 def _light_fraction(model, lo, hi):
     """Fraction of the disks' light (at the reference wavelength) in [lo, hi]."""
     from ..models import MultipoleDisk
@@ -1803,25 +1780,21 @@ def _common_compare(p, model, chi2, extra):
     n = int(data.n_independent)
     factor = p._rescale_factor()
     rescaled = p.error_mode == "rescale"
+    # the fitted parameters of models/best within 0.1% of a prior bound
+    best = _io.read_json(p.output / "models" / "best" / "info.json")
     return {
         "n_independent": n,
         "chi2": chi2,
         "chi2_reduced": chi2 / n,
         "error_scales": {"mackay": factor} if rescaled else None,
         "error_scale_factor": factor if rescaled else None,
-        "at_bound": _best_at_bound(p),
+        "at_bound": list(best.get("at_bound") or []),
         "degree": ctx.degree,
         "outer_fraction": _light_fraction(
             model, ctx.r_out - ctx.halffringe, onp.inf
         ),
         **extra,
     }
-
-
-def _best_at_bound(p):
-    """The fitted parameters of ``models/best`` within 0.1% of a prior bound."""
-    info = _io.read_json(p.output / "models" / "best" / "info.json")
-    return list(info.get("at_bound") or [])
 
 
 def _load_candidate(p, name):
@@ -1862,9 +1835,16 @@ def _compare_rings(p):
             sign, logdet = onp.linalg.slogdet(cov)
             if sign > 0:
                 r = onp.asarray(whitened_residuals(model, data), dtype=float)
+                # log prior; pa is an AngleVector, density per degree
+                log_prior = sum(
+                    -math.log(360.0)
+                    if k == "pa"
+                    else float(prior.log_prob(flat[k]))
+                    for k, prior in priors.items()
+                )
                 log_z = float(
                     -0.5 * onp.sum(r**2)
-                    + _log_prior(priors, flat)
+                    + log_prior
                     + 0.5 * len(names) * math.log(2.0 * math.pi)
                     + 0.5 * logdet
                 )
