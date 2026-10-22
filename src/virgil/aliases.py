@@ -1893,7 +1893,9 @@ class AliasResult:
     primary_diam, vis_amp, p_range : optional
         The primary, the V^2 amplitude range, the period window (days).
     period_bound, period_at_lower_bound : bool
-        The period is unconstrained; the best period is at the bottom, where the
+        ``period_bound``: the period is unconstrained (best P within 10% of the
+        top of ``p_range``, or σ(log P) at least a quarter of the window);
+        ``period_at_lower_bound``: best P within 10% of the bottom, where the
         sampling limit may have cut the truth.
     window_capped, primary_fit : float or None, dict or None
         Lower end wanted when a default window was capped; the
@@ -2849,6 +2851,8 @@ def _period_flags(results, p_range):
     if live:
         top = max(live, key=lambda m: m["log_z"])
         sigma = float(onp.atleast_1d(top.get("sigma", [float("nan")]))[0])
+    # caveat: σ(log P) >= a quarter of the window is "unconstrained" even
+    # when the best P is not at an edge (a flat likelihood, e.g. a short arc).
     wide = onp.isfinite(sigma) and sigma >= _PERIOD_SIGMA_FRACTION * math.log(
         p_hi / p_lo
     )
@@ -3123,7 +3127,8 @@ def fit_orbit_aliases(
     positions : PositionData or EpochPositions, optional
         Positions that seed the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
-        Epoch times, ``dt_peri`` reference (MJD), prior ranges, eccentricity cap.
+        Epoch times and ``dt_peri`` reference (MJD; default each dataset's mean
+        time, and their mean), prior ranges (``a_range`` in mas), eccentricity cap.
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, flag_nats, ess_min, seed, checkpoint_dir, on_band, init : optional
         Search effort, sampling, seed; finished bands in ``checkpoint_dir`` are
         reloaded; a per-band callback; a warm start.
@@ -3134,11 +3139,15 @@ def fit_orbit_aliases(
         Sign-free seeds; a label-swapped refit at the flux ceiling; flagged
         nights seed nothing.
     n_bands_max, temper, k, eccs, outlier_eps, batch_size, memory_budget : optional
-        Band cap of a default window; tempering for correlated channels
-        ([`virgil.tempering`][virgil.tempering]); period-grid density; seed
-        eccentricities; outlier weight in [0, 1); batching.
+        Band cap of a default window; ``temper`` tempers the evidence for
+        correlated channels ([`virgil.tempering`][virgil.tempering]): True
+        estimates the factor (needs ``EpochPositions``), a float >= 1 fixes it,
+        False is off; period-grid density; seed eccentricities; outlier weight
+        in [0, 1); batching.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]).
+        Needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
+        decided; otherwise every band is seeded from the positions as without it.
 
     Returns
     -------
@@ -3147,8 +3156,15 @@ def fit_orbit_aliases(
 
     Raises
     ------
-    RuntimeError, ValueError
-        If every band fails; if no band lies in ``p_range``.
+    RuntimeError
+        If every band fails (chained to the last error).
+    ValueError
+        If no band lies in ``p_range``, or ``checkpoint_dir`` data cannot be
+        hashed. Preflight likelihood errors propagate unchanged.
+
+    Examples
+    --------
+    >>> result = fit_orbit_aliases(data, positions=positions)  # doctest: +SKIP
     """
     data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (

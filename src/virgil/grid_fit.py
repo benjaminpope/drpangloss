@@ -533,7 +533,8 @@ def linear_flux_grid(
     for a bright companion; see [Grid searches](../grid_searches.md#linear-flux-grid).
 
     Source: Luger et al. (2017), [references](../references.md#luger2017linear);
-    equivalent to [fouriever](../references.md#fouriever)'s ``lincmap``.
+    compare with [fouriever](../references.md#fouriever)'s ``lincmap`` (closure
+    or kernel phases only).
 
     Parameters
     ----------
@@ -544,17 +545,18 @@ def linear_flux_grid(
     n_iter : int, optional
         Gauss-Newton relinearization steps after the first at ``f = 0``.
     prior : numpyro LogUniform or Normal, optional
-        Prior on ``f``, filling the posterior and Bayes-factor fields; prefer
-        ``dist.LogUniform(f_min, f_max)`` with scalar bounds (see
-        [Grid searches](../grid_searches.md#linear-flux-prior)).
+        Prior on ``f``, filling the posterior and Bayes-factor fields. It must
+        be a scalar distribution with both bounds (``LogUniform``) or both
+        parameters (``Normal``), and the Bayes factor depends on the bounds, so
+        choose them (see [Grid searches](../grid_searches.md#linear-flux-prior)).
 
     Returns
     -------
     LinearFluxGrid
         Named tuple of arrays with one axis per coordinate key: ``flux``,
-        ``flux_error`` (NaN where the model ignores the flux), ``snr``, and
+        ``flux_error`` (NaN where the model ignores the flux), ``snr`` (flux over error), and
         with a ``prior`` ``posterior_mean``, ``posterior_sd`` and
-        ``log_bayes_factor`` (> 0 favours a companion; else ``None``).
+        ``log_bayes_factor`` (per position; > 0 favours a companion; else ``None``).
 
     Examples
     --------
