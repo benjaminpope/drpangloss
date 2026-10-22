@@ -112,6 +112,26 @@ def test_the_regularizer_curvature_is_included_and_estimated_by_probes():
     )
 
 
+def test_max_entropy_curvature_is_the_weight_times_the_image():
+    start, priors, data = _image_fit(8)
+    values = {"env.log_brightness": start.env.log_brightness}
+    diag = gauss_newton_diag(
+        start, priors, data, values, regularizers=[MaxEntropy(7.0, path="env")]
+    )["env.log_brightness"]
+    # Σb = 1 and a flat start: b = 1/64, curvature w b (the softmax gauge
+    # adds the b² terms, 1/64² of it)
+    onp.testing.assert_allclose(diag, 7.0 / 64.0, rtol=0.05)
+
+
+def test_lm_fits_maximum_entropy():
+    start, priors, data = _image_fit(8)
+    regularizers = [MaxEntropy(50.0, path="env")]
+    lm = fit(start, priors, data, regularizers, method="lm")
+    lbfgs = fit(start, priors, data, regularizers, method="lbfgs")
+    assert lm.info["converged"]
+    onp.testing.assert_allclose(lm.info["loss"], lbfgs.info["loss"], rtol=1e-3)
+
+
 def test_a_known_diagonal_metric_is_removed():
     plain = _quadratic_fit()
     scaled = _quadratic_fit(precondition="diag")
@@ -308,20 +328,7 @@ def _l_curve_steps(dtype, npix=41):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(
-    "dtype",
-    [
-        "float64",
-        pytest.param(
-            "float32",
-            marks=pytest.mark.xfail(
-                reason="Stage 7 not met in float32 by a diagonal alone: "
-                "see design/fit_preconditioning.md",
-                strict=False,
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("dtype", ["float64", "float32"])
 def test_the_l_curve_converges_at_every_weight(dtype):
     """Stage 7: flat-prior MaxEntropy, w = 0.1 ... 1e4, default step limit."""
     runs = _l_curve_steps(dtype)

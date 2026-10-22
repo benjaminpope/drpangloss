@@ -383,3 +383,26 @@ visibilities and DISCO): solve the weighted least squares in closed form
 scale and an amplitude are both profiled, the pair is a coupled fixed point (see
 C), to be solved with an inner iteration. Scope as a separate PR per data
 type after B piece 2.
+
+
+## Entropy metric, memory 100, LM residuals (2026-10-22)
+
+Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
+
+- A maximum-entropy pixel's curvature in `ln I` is `w·b` (the Skilling–Bryan
+  metric); using it instead of the floored Hessian diagonal gives 1.5–3× fewer
+  L-BFGS steps at weak weights. `MaxEntropy.metric_rows` exposes it as a
+  Gauss–Newton form; probes cost about a third of the gain at 1681
+  coordinates, so the diagonal is now exact up to 4096.
+- L-BFGS memory 100 helps every case (default raised from 50).
+- 41² VLTI-like, steps at w = 1e4 … 0.1: float64 17 33 77 295 1326 2543,
+  float32 18 32 70 259 1594 2917 (before: 18 50 106 582 3015 6018 and
+  18 52 97 434 2534 8007). Every weight converges in both.
+- `MaxEntropy.residuals` (r = t√(2wqφ(t)), t = (b−q)/q) lets LM fit entropy;
+  it converges every weight in float64 (11–1133 steps) but not in float32, so
+  L-BFGS stays the default for entropy.
+- float32 on AMI 32² still stalls at w ≤ 10 for every variant: the line search
+  meets the noise of the float32 model evaluation (χ² biased 1–4 %); float64
+  master parameters, float64 loss sums, re-centred parameters and a loss
+  offset to the round's reference did not help. float32 is documented as
+  limited at weak weights.

@@ -12,7 +12,7 @@ import pytest
 from virgil._precision import cast_tree, run_in
 from virgil.coverage import ami_grid_record, vlti_oidata
 from virgil.fitting import _GradientStoppedLM, _Objective, fit
-from virgil.imaging import TSV, Centroid, MaxEntropy, image_priors
+from virgil.imaging import TSV, TV, Centroid, MaxEntropy, image_priors
 from virgil.likelihood import numpyro_model, whitened_residuals
 from virgil.models import (
     BinaryModelCartesian,
@@ -142,12 +142,24 @@ def test_normal_priors_are_least_squares_terms():
 
 def test_non_least_squares_objectives_default_to_lbfgs():
     start, priors, data = _image_fit()
-    regularizers = [MaxEntropy(1.0, path="env")]
+    regularizers = [TV(1.0, path="env")]
     objective = _Objective(start, priors, data, regularizers)
     with pytest.raises(TypeError, match="lbfgs"):
         objective.residuals(objective.init())
     result = fit(start, priors, data, regularizers, max_steps=50)
     assert result.info["method"] == "lbfgs"
+    # Maximum entropy has a least-squares form, but LM is not its default.
+    entropy = [MaxEntropy(1.0, path="env")]
+    assert (
+        fit(start, priors, data, entropy, max_steps=50).info["method"]
+        == "lbfgs"
+    )
+    assert (
+        fit(start, priors, data, entropy, method="lm", max_steps=50).info[
+            "method"
+        ]
+        == "lm"
+    )
     # A prior with no least-squares form (here a Beta flux) also falls back.
     beta = dict(PRIORS, flux=dist.Beta(1.0, 20.0))
     assert fit(START, beta, DATA).info["method"] == "lbfgs"

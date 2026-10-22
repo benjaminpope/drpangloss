@@ -641,7 +641,7 @@ def fit(
     max_steps=None,
     gtol=1e-4,
     max_step_size=2.0,
-    lbfgs_memory=50,
+    lbfgs_memory=100,
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
@@ -679,7 +679,8 @@ def fit(
     method : {"lm", "lbfgs", "adam"}, optional
         ``"lm"``: Levenberg–Marquardt, the default when the objective has a
         least-squares form (Normal priors and priors flat in their fitted
-        coordinate); matrix-free (``cg_steps``) above 200 coordinates.
+        coordinate; not with maximum entropy, whose LM form is for float64
+        only); matrix-free (``cg_steps``) above 200 coordinates.
         ``"lbfgs"``: for penalties such as maximum entropy and total variation,
         and the default otherwise. ``"adam"``: with ``learning_rate``.
     max_steps : int, optional
@@ -692,7 +693,8 @@ def fit(
         L-BFGS moves no unconstrained coordinate by more than this per step (a
         factor ``exp(max_step_size)`` for a log-brightness pixel).
     lbfgs_memory : int, optional
-        Past steps L-BFGS keeps to model the curvature.
+        Past steps L-BFGS keeps to model the curvature (default 100: fewer
+        steps than 50 along a maximum-entropy L-curve).
     learning_rate : float, optional
         Adam's learning rate, in unconstrained coordinates.
     cg_steps : int, optional
@@ -714,13 +716,17 @@ def fit(
         the diagonal of the Gauss–Newton curvature (see
         [`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and
         Adam, which helps when the coordinates' curvatures differ by many
-        decades, as for the faint pixels of a flat-prior image. The diagonal is
+        decades, as for the faint pixels of a flat-prior image. A maximum-entropy
+        pixel's curvature is taken as its entropy metric ``weight * b``. The
+        diagonal is
         refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
         ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
         unconstrained coordinates (provisional: may change in any 0.4.x
         release). ``info["precondition_rounds"]`` lists, per
         round, the spread of the diagonal before its floor in decades (the
         largest of any coordinate block) and the fraction of coordinates floored. LM ignores it: it already uses JᵀJ.
+        float32 can stall at weak weights (the line search meets the noise of
+        the model evaluation); use float64 there.
 
     Returns
     -------
@@ -750,7 +756,15 @@ def fit(
             dtype,
         )
         z0 = problem.init(cast_tree(init, dtype))
-        method = method or ("lm" if _has_residuals(problem, z0) else "lbfgs")
+        method = method or (
+            "lm"
+            if _has_residuals(problem, z0)
+            and not any(
+                getattr(r, "prefers_lbfgs", False)
+                for r in problem.regularizers
+            )
+            else "lbfgs"
+        )
         # Optimizers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
@@ -1442,7 +1456,7 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
 
 # Up to this many coordinates the Gauss–Newton diagonal is exact (one
 # Jacobian-vector product each); above, it is estimated from _DIAG_PROBES probes.
-_EXACT_DIAG = 1024
+_EXACT_DIAG = 4096
 _DIAG_PROBES = 16
 # A coordinate's curvature is floored at this fraction of its block's largest.
 _DIAG_FLOOR = 1e-3
@@ -1507,18 +1521,36 @@ def _fisher_diagonal(problem, z, probes, round=0):
     """The diagonal of the Gauss–Newton curvature of ``problem.loss`` at ``z``,
     over the flat coordinates: JᵀJ of the data and likelihood rows, the
     curvature of the priors, and the Hessian diagonal of the regularizers
-    (floored at zero, as for ``gauss_newton_mass``). Probes are drawn afresh in
-    each ``round`` (deterministically), so that refreshes do not repeat an error."""
+    (floored at zero, as for ``gauss_newton_mass``). A regularizer with
+    ``metric_rows`` (maximum entropy) gives its own positive curvature instead,
+    which replaces the rest on the coordinates it covers. Probes are drawn
+    afresh in each ``round`` (deterministically), so that refreshes do not
+    repeat an error."""
     key = jax.random.PRNGKey(round)
     flat, unravel = problem.ravel(z)
     diagonal = _gn_diagonal(
         lambda x: problem.curvature_rows(unravel(x)), flat, probes, key
     ) + problem.curvature_diag(z, False)
-    if problem.regularizers:
+    metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
+    plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
+    if plain:
         penalty = _hessian_diagonal(
-            lambda x: problem.penalty(unravel(x)), flat, probes, key
+            lambda x: sum(
+                r.value(_reference(problem.build(unravel(x)))) for r in plain
+            ),
+            flat,
+            probes,
+            key,
         )
         diagonal = diagonal + np.maximum(penalty, 0.0)
+    if metric:
+
+        def rows(x):
+            model = _reference(problem.build(unravel(x)))
+            return np.concatenate([r.metric_rows(model) for r in metric])
+
+        curvature = _gn_diagonal(rows, flat, probes, key)
+        diagonal = np.where(curvature > 0.0, curvature, diagonal)
     return diagonal
 
 

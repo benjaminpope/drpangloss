@@ -63,6 +63,24 @@ def test_tv_has_no_preferred_direction():
     assert np.allclose(np.array(values), values[0], rtol=1e-5)
 
 
+def test_max_entropy_residuals_square_to_its_value():
+    blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
+    flat = _image(np.ones((NPIX, NPIX)))
+    for reg in (
+        MaxEntropy(3.0),
+        MaxEntropy(3.0, prior=flat.brightness),
+        MaxEntropy(3.0, prior=blob.brightness),
+    ):
+        r = reg.residuals(blob)
+        assert np.all(np.isfinite(r))
+        assert np.isclose(
+            0.5 * np.sum(r**2), reg.value(blob), rtol=1e-4, atol=1e-5
+        )
+        # the gradient is finite where the image is exactly at the default
+        grad = jax.grad(lambda m, g=reg: np.sum(g.residuals(m) ** 2))(blob)
+        assert np.all(np.isfinite(grad.log_brightness))
+
+
 def test_max_entropy_is_zero_at_the_default_image():
     blob = _image(gaussian_blob(NPIX, SCALE, 15.0))
     assert np.isclose(

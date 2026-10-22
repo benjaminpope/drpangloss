@@ -29,6 +29,8 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- Optimizer defaults: `lbfgs_memory` is 100 (was 50); with `precondition="diag"` a `MaxEntropy` pixel's curvature is its entropy metric `weight * b` (Skilling & Bryan 1984; a regularizer may expose `metric_rows`) instead of the floored Hessian diagonal, and `gauss_newton_diag` is exact up to 4096 coordinates (was 1024). Along the 41² VLTI-like L-curve (w = 1e4 → 0.1) this takes 6018 → 2543 steps at w = 0.1 in float64 and now converges every weight in float32 (2917). `MaxEntropy.residuals` lets `method="lm"` fit it (float64; not the default, and float32 LM does not converge at weak weights). float32 remains limited at weak weights on some problems (AMI 32²). Because the 200-step starlet L-curve is less truncated with memory 100, its corner moved down to 3e-4, so the ensemble's default starlet weight range starts at 1e-5 (was 1e-4).
+
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
   DISCO products) the default search box is limited to half an alias cell, so
   a companion is no longer reported at a lattice copy of its position (the
