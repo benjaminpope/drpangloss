@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI), and for data with flagged samples; `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
 - **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
   `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor
   cycles with a PSF window and cycle threshold, `niter`, `gain`, `threshold`,
@@ -19,7 +20,6 @@ anything before 1.0 may change between minor versions.
   unchanged) and claims no parity with CASA or WSClean. See the
   [guide](docs/radio_clean.md).
 - `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It roughly halves L-BFGS steps along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
-
 - Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
 - Docs: terse docstrings for the data and pipeline modules (`oidata`, `observables`, `virgil.pipeline.*`): the pipeline classes' settings are now a table per pipeline in [Pipelines](https://benjaminpope.github.io/virgil/pipeline/), and `DiskPipeline`, `OrbitPipeline` and `StarPipeline` leave the docstring allowlist.
 - `OrbitPipeline` checks that its verdict survives dropping the most outlying

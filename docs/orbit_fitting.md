@@ -52,7 +52,6 @@ The binary has a period of 12.38 days, a mildly eccentric orbit ($e = 0.3$), a s
     from virgil.oifits import write_oifits
     from virgil.orbits import KeplerOrbit
     from virgil.pipeline import OrbitPipeline
-    from virgil.pipeline._io import oidata_tables
     from virgil.plotting import plot_orbit_ensemble, set_style
     from virgil.simulate import simulate
 
@@ -212,7 +211,7 @@ plt.show()
 
 ## One call
 
-Your data are OIFITS files, so we write the simulated nights to a temporary folder as one file per night. (This helper is internal to virgil, and is only here because the simulated nights start as `OIData`; real files come from your instrument package.)
+Your data are OIFITS files, so we write the simulated nights to a temporary folder as one file per night. (This is only here because the simulated nights start as `OIData`; real files come from your instrument package.)
 
 ??? note "Code"
 
@@ -220,10 +219,8 @@ Your data are OIFITS files, so we write the simulated nights to a temporary fold
     folder = TemporaryDirectory()
     files = []
     for k, night in enumerate(nights):
-        tables, reason = oidata_tables(night)
-        assert tables is not None, reason
         files.append(str(Path(folder.name) / f"night{k}.oifits"))
-        write_oifits(tables, files[-1])
+        write_oifits(night, files[-1])
     print(f"wrote {len(files)} OIFITS files")
     ```
 
