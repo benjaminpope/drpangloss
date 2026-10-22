@@ -12,7 +12,7 @@ from virgil.models import BinaryModelCartesian
 from virgil.oidata import OIData, closure_phases, cp_indices
 from virgil.oifits import (
     build_hdulist,
-    oidata_tables,
+    _oidata_tables,
     read_oifits,
     write_oifits,
 )
@@ -984,6 +984,8 @@ def _same_data(back, data):
         onp.broadcast_to(data.wavel, data.u.shape),
     )
     assert back.cp_flag == data.cp_flag
+    # Data without times come back at MJD 0 (documented), not as timeless.
+    assert back.dt is not None
     if data.dt is not None:
         onp.testing.assert_allclose(
             onp.asarray(back.dt) + back.t_ref,
@@ -1060,7 +1062,7 @@ def test_synthesized_stations_chain_the_triangles(tmp_path):
     triangle (A, B, C) made of the baselines AB, BC and AC."""
     from virgil.coverage import nrm_oidata
 
-    tables, reason = oidata_tables(nrm_oidata())
+    tables, reason = _oidata_tables(nrm_oidata())
     assert reason is None
     pairs = tables["OI_VIS2"]["STA_INDEX"]
     assert set(pairs.ravel()) == set(range(1, 8))
@@ -1073,7 +1075,7 @@ def test_written_oidata_passes_pyoifits_verification(tmp_path):
     from virgil.coverage import nrm_oidata
 
     data = nrm_oidata()
-    tables, _ = oidata_tables(data)
+    tables, _ = _oidata_tables(data)
     # pyoifits cannot verify the zero EFF_BAND that stands for an unknown width.
     tables["OI_WAVELENGTH"]["EFF_BAND"] = 0.1e-6
     path = tmp_path / "v.oifits"
@@ -1097,8 +1099,25 @@ def test_repeated_baselines_without_times_get_placeholder_stations(tmp_path):
 
     data = vlti_oidata()
     assert data.dt is None and data.stations is not None
-    tables, reason = oidata_tables(data)
+    tables, reason = _oidata_tables(data)
     assert reason is None
     pairs = tables["OI_VIS2"]["STA_INDEX"]
     assert len({tuple(p) for p in pairs}) == len(pairs)
     _same_data(OIData(write_oifits(data, tmp_path / "x.oifits")), data)
+
+
+def test_bandwidth_that_differs_between_baselines_is_reported(tmp_path):
+    import equinox as eqx
+
+    data = OIData(write_oifits(_tables(), tmp_path / "in.oifits"))
+    width = 0.1e-6 * onp.arange(1.0, data.u.size + 1)
+    uneven = eqx.tree_at(
+        lambda d: d.bandwidth,
+        data,
+        np.asarray(width),
+        is_leaf=lambda x: x is None,
+    )
+    assert _oidata_tables(uneven) == (
+        None,
+        "bandwidth differs between baselines of a channel",
+    )

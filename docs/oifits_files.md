@@ -54,12 +54,12 @@ With `frame_mjd="mean"` (the default) every sample of a frame gets the frame's m
 
 ## Writing an `OIData` {#writing-oidata}
 
-`write_oifits(data, filename)` writes an [`OIData`][virgil.oidata.OIData] as an OIFITS2 file that `read_oifits` reads back to the same observables, errors, flags, wavelengths, $(u, v)$ and times: squared visibilities in `OI_VIS2`, and closure phases in `OI_T3` or absolute phases in `OI_VIS`.
+`write_oifits(data, filename)` writes an [`OIData`][virgil.oidata.OIData] as an OIFITS2 file that `read_oifits` reads back to the same observables, errors, flags, wavelengths and $(u, v)$, and the same times if there are any: squared visibilities in `OI_VIS2`, and closure phases in `OI_T3` or absolute phases in `OI_VIS`.
 
 - **Flagged samples** are written as NaN with `FLAG` set, so a file holding only closure phases has an all-flagged `OI_VIS2` that keeps the baselines.
 - **Stations.** Closure phases need station indices: data that has none (as from AMI or kernel-phase reductions) gets placeholder stations from its triangles, one per distinct end of a baseline, at the origin of `OI_ARRAY`. Closing triangles $(a, b, c)$ use the baselines $(a, b)$, $(b, c)$ and $(a, c)$, as above.
-- **Times.** Data without times are written with `MJD` 0, so their frames are not kept. Closure phases of repeated baselines (one set per frame) could not be told apart on reading, so such data get placeholder stations even if they have their own.
-- **Bandwidth** is written as `EFF_BAND`, or as 0 when unknown.
+- **Times.** Data without times are written with `MJD` 0 and read back with every time 0 (not as having none), so their frames are not kept, and a time-dependent model on them is evaluated at MJD 0. Closure phases of repeated baselines (one set per frame) could not be told apart on reading, so such data get placeholder stations even if they have their own.
+- **Bandwidth** is written as `EFF_BAND`, or as 0 when unknown; widths that differ between baselines of one channel are not written.
 - **Not written:** extra observables, gains or closure offsets, projected observables, uv-grid data, visibility amplitudes in place of $V^2$, and irregular closure-phase or wavelength layouts. `write_oifits` raises a `ValueError` naming the reason; the pipelines record it as `processed_oifits_skipped`.
 
 ## Writing tables {#writing}

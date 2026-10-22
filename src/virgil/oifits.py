@@ -1298,8 +1298,9 @@ def write_oifits(data, filename, overwrite=True):
 
     An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
     read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
-    observables, errors, flags, wavelengths, (u, v) and times. Closure phases
-    without station indices get placeholder stations. A dictionary of tables
+    observables, errors, flags, wavelengths and (u, v), and to the times if there
+    are any (else MJD 0). Closure phases without station indices get
+    placeholder stations. A dictionary of tables
     (columns as in [writing OIFITS](../oifits_files.md#writing), upper-case
     OIFITS names) has phases in **degrees**.
     Source: Duvert et al. (2015), [references](../references.md#duvert2017).
@@ -1332,7 +1333,7 @@ def write_oifits(data, filename, overwrite=True):
     import pathlib
 
     if not isinstance(data, Mapping):
-        tables, reason = oidata_tables(data)
+        tables, reason = _oidata_tables(data)
         if tables is None:
             raise ValueError(
                 f"These data cannot be written as OIFITS: {reason}."
@@ -1579,7 +1580,7 @@ _IRREGULAR_CP = "irregular closure-phase layout"
 _IRREGULAR_WAVEL = "irregular wavelength layout"
 
 
-def oidata_tables(data):
+def _oidata_tables(data):
     """OIFITS tables for [`write_oifits`][virgil.oifits.write_oifits] from an `OIData`.
 
     Squared visibilities with closure phases or absolute phases, one or more
@@ -1651,7 +1652,7 @@ def _baseline_layout(data):
         band = onp.broadcast_to(onp.asarray(data.bandwidth, float), u.size)
         band = band.reshape(n_b, n_w)
         if not onp.all(band == band[:1]):
-            return None, _IRREGULAR_WAVEL
+            return None, "bandwidth differs between baselines of a channel"
         bands = band[0]
     n_vis = u.size if data.vis_index is None else data.vis_index.size
     if onp.asarray(data.vis).size != n_vis:
@@ -1666,10 +1667,11 @@ def _baseline_layout(data):
     if data.cp_flag and _repeated(stations, mjd):
         # The reader tells repeated baselines apart by station pair and time,
         # so give them placeholder stations when the data have no times.
-        legs = _closure_baselines(data, n_w)
-        if legs is not None and mjd is None:
-            stations = _closure_stations(*legs, n_b)
-        if legs is None or _repeated(stations, mjd):
+        if mjd is None:
+            stations, reason = _stations_from_triangles(data, n_b, n_w)
+            if reason:
+                return None, reason
+        if _repeated(stations, mjd):
             return None, "repeated baselines without distinct times"
     return {
         "n_b": n_b,
@@ -1691,10 +1693,20 @@ def _stations(data, n_b, n_w):
     if not data.cp_flag:
         index = onp.arange(n_b)
         return onp.stack([2 * index + 1, 2 * index + 2], axis=1), None
+    return _stations_from_triangles(data, n_b, n_w)
+
+
+def _stations_from_triangles(data, n_b, n_w):
+    """Placeholder stations chaining the triangles, or a reason."""
     legs = _closure_baselines(data, n_w)
     if legs is None:
         return None, _IRREGULAR_CP
-    return _closure_stations(*legs, n_b), None
+    stations = _closure_stations(*legs, n_b)
+    if onp.any(
+        stations[:, 0] == stations[:, 1]
+    ):  # a leg joins a station to itself
+        return None, _IRREGULAR_CP
+    return stations, None
 
 
 def _repeated(stations, mjd):

@@ -16,7 +16,7 @@ from virgil import (  # noqa: E402
     write_oifits,
 )
 from virgil.likelihood import model_loglike  # noqa: E402
-from virgil.oifits import oidata_tables  # noqa: E402
+from virgil.oifits import _oidata_tables  # noqa: E402
 from virgil.pipeline import SCHEMA, _io  # noqa: E402
 from tests.test_oifits import _tables  # noqa: E402
 
@@ -131,7 +131,7 @@ def test_processed_oifits_round_trip_absolute_phases(tmp_path):
 
 
 def test_processed_oifits_reports_unsupported_layouts(tmp_path):
-    assert oidata_tables(OIData(NUHOR))[1] is None
+    assert _oidata_tables(OIData(NUHOR))[1] is None
     amplitudes = OIData(
         {
             "u": onp.array([3.0, -2.0, 1.0]),
@@ -144,7 +144,7 @@ def test_processed_oifits_reports_unsupported_layouts(tmp_path):
         }
     )
     reason = "visibility amplitudes rather than V²"
-    assert oidata_tables(amplitudes) == (None, reason)
+    assert _oidata_tables(amplitudes) == (None, reason)
     with pytest.raises(ValueError, match=reason):
         write_oifits(amplitudes, tmp_path / "x.oifits")
 
@@ -156,16 +156,26 @@ def test_processed_oifits_refuses_mischained_triangles():
     import equinox as eqx
 
     data = OIData(NUHOR)
-    assert oidata_tables(data)[1] is None
+    assert _oidata_tables(data)[1] is None
     irregular = (None, "irregular closure-phase layout")
     # Legs 1 and 2 swapped: BC then AB.
     swapped = eqx.tree_at(
         lambda d: (d.i_cps1, d.i_cps2), data, (data.i_cps2, data.i_cps1)
     )
-    assert oidata_tables(swapped) == irregular
+    assert _oidata_tables(swapped) == irregular
     # The third leg is not the baseline AC.
     other = eqx.tree_at(lambda d: d.i_cps3, data, data.i_cps1)
-    assert oidata_tables(other) == irregular
+    assert _oidata_tables(other) == irregular
+    # Without stations the same legs would give a baseline from a station to
+    # itself, which is no valid OI_ARRAY pair.
+    bare = eqx.tree_at(
+        lambda d: d.stations, data, None, is_leaf=lambda x: x is None
+    )
+    assert _oidata_tables(bare)[1] is None
+    assert (
+        _oidata_tables(eqx.tree_at(lambda d: d.i_cps3, bare, bare.i_cps1))
+        == irregular
+    )
 
 
 def test_result_data_reports_why_the_processed_oifits_is_missing(tmp_path):

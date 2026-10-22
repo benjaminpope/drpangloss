@@ -90,12 +90,12 @@ def _load_report(p, **extra):
 
     ``extra`` entries are added to the report after the geometry. A stale
     ``processed.oifits`` of an earlier run is removed when the data cannot
-    be written (``oidata_tables`` returns no tables).
+    be written (``_oidata_tables`` returns no tables).
     """
-    from ..oifits import oidata_tables, write_oifits
+    from ..oifits import _oidata_tables, write_oifits
 
     data = p.processed
-    tables, reason = oidata_tables(data)
+    tables, reason = _oidata_tables(data)
     report = {
         "n_vis": int(onp.asarray(data.vis).size),
         "n_phi": int(onp.asarray(data.phi).size),
