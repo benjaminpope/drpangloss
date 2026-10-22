@@ -1749,9 +1749,7 @@ def _spy_settings(monkeypatch, **options):
     )
     data, _ = _synthetic(12.1)
     with pytest.raises(_Stop):
-        fit_orbit_aliases(
-            data, t_ref=T_REF, **{"n_random": 5, **options}
-        )
+        fit_orbit_aliases(data, t_ref=T_REF, **{"n_random": 5, **options})
     return seen
 
 
