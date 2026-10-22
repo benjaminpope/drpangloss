@@ -471,6 +471,10 @@ def test_cli_runs_the_image_pipeline(pipe, tmp_path, capsys):
     assert "data.n_independent" in capsys.readouterr().out
 
 
+# Two compiled evidence grids on an already tiny problem (16 pixels, one
+# hyperparameter, 20 steps): the time is the compiles, not the problem size,
+# so shrinking it does not help (7.9 s warm, 30.3 s on a cold CI runner).
+@pytest.mark.slow
 def test_star_auto_decides_the_star_on(data, tmp_path):
     settings = {**SMALL, "star": "auto"}
     pipeline = ImagingPipeline(data, output=tmp_path / "run", **settings)

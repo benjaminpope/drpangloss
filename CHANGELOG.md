@@ -10,12 +10,25 @@ anything before 1.0 may change between minor versions.
 ### Added
 
 - Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
+- `OrbitPipeline` checks that its verdict survives dropping the most outlying
+  night (`night_dropped`): the `modes` stage refits the search without the
+  night of highest raw χ²/N and compares the orbit-or-not verdict and the
+  winning alias band, reported in `modes.robustness` (a second search; skipped
+  below 3 nights or with `drop_outlier_night=False`).
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,
   `ComplexVisData.sigma_hat` computes it, and `term(sigma=)` fixes it for scoring. New `offset_beams` argument.
 
 ### Changed
+
+- `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
+  DISCO products) the default search box is limited to half an alias cell, so
+  a companion is no longer reported at a lattice copy of its position (the
+  7-hole NIRISS box was 672 mas, beyond its 336 mas limit). The cap is in
+  `summary["search"]["alias_cap_mas"]` and the quicklook; an explicit
+  `max_sep_mas` is never capped. Other coverage is unchanged. The
+  `BinaryPipeline` docstring is shorter.
 
 - `CalibrationNuisance` default priors are in natural units. Gains and error
   scales are improper Jeffreys priors (the fit coordinate is `ln x`, no box);

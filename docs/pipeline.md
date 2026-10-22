@@ -50,6 +50,29 @@ A run resumes by default: a completed stage whose outputs exist is skipped, and 
 
 The fit is on the quoted errors unless `error_scale="fit"`, and chi-squared per independent datum is always reported on the quoted errors. Priors are group-invariant: uniform in position (`dra` and `ddec` on a box of half-width `max_sep_mas`) and log-uniform in flux and in error scales. Both templates sample the same `dra`, `ddec` and `flux`, so they give the same prior on the sky; a `BinaryModelAngular` template reports `sep` and `pa` derived from them, with no wrap at 0 or 360 degrees in the fit. The flux range is a setting (`flux_range`).
 
+`max_sep_mas` is by default the coarsest λ/B. Where the uv samples of one wavelength lie on a lattice (aperture masks, DISCO products), the visibilities repeat when the companion moves by a vector of the reciprocal lattice, so the default box is limited to half an alias cell, the largest square with no two points that differ by such a vector. The summary records the limit as `search.alias_cap_mas` (`null` when it was not applied), and the quicklook notes it. An explicit `max_sep_mas` is never capped; `OrbitPipeline` limits its position grid in the same way.
+
+The settings of `BinaryPipeline` (`BinaryPipeline.defaults()` lists the values):
+
+| Setting (default) | Meaning |
+| --- | --- |
+| `sigma` (3.0) | Significance of the contrast limits. |
+| `detection_sigma` (3.0) | Threshold of the detection check, on the look-elsewhere-corrected significance. |
+| `max_sep_mas` (`None`) | Half-width of the search grid; by default `fov_fraction` times the coarsest λ/B of the samples (each sample's own wavelength over its own baseline, not λ_max/B_min), capped as above on lattice coverage. |
+| `fov_fraction` (1.0) | See `max_sep_mas`. |
+| `grid_step_mas` (`None`) | Grid spacing; by default a quarter of the finest λ/B of the samples, coarsened so that no axis exceeds `max_grid` points (the search report then records the effective step and warns). |
+| `max_grid` (101) | Most points per position axis; the grid has the largest odd number of points not above it (at least 3). |
+| `flux_range` (`[1e-5, 0.5]`) | Flux axis of the grid and bounds of the log-uniform flux prior (companion/primary). |
+| `n_flux` (40) | Points on the flux axis. |
+| `wavel_range` (`None`) | `[min, max]` wavelengths to keep, in metres. |
+| `error_floor` (`None`) | Absolute error floors by observable, for example `{"vis": 0.01, "phi": 0.005}` (phases in radians), as [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor]. |
+| `error_scale` (`"quoted"`) | `"fit"` also fits log-uniform error scales `vis_scale` and `phi_scale` on [0.1, 10]. |
+| `num_warmup`, `num_samples`, `num_chains` (1000, 1000, 4) | NUTS. |
+| `chain_method` (`"vectorized"`), `seed` (0) | NUTS chain method and random seed. |
+| `batch_size` (`None`) | Grid batch size. |
+| `limit_bins` (20) | Annuli of the contrast curve. |
+| `quicklook_execute` (`True`) | Execute the quicklook notebook. |
+
 The search and the limits always use a point companion in Cartesian offsets; the model template (`BinaryModelAngular` or `BinaryModelCartesian`) sets only the parameters of the fit and the posterior.
 
 ## `StarPipeline`: stellar diameters
@@ -144,7 +167,7 @@ The [orbit tutorial](orbit_fitting.md) runs this on synthetic two-season data, r
 | `load` | Groups the data into nights as given and records the nights | `OIData.split_by_epoch`, `Epochs` |
 | `epochs` | The companion's position on every night, on a grid widened until no best peak is on its edge; flags the nights that cannot seed an orbit (aliased peaks, a low gap, a high χ², a separation below the resolution, a flux at its bound) | `epoch_positions` |
 | `search` | The alias search with the engine's defaults, band by band, checkpointed in `stages/search/bands`: the period window from the data, the primary's diameter estimated, the V² amplitude fitted per night, the labels free, the likelihood tempered | `fit_orbit_aliases` |
-| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`) | `AliasResult` |
+| `modes` | Ranks the bands; the winner's margin over the runner-up; the band probabilities; the best orbit against a single star (`no-orbit`); the same search refitted without the night of highest raw χ²/N, to see whether the verdict survives (`drop_outlier_night`, skipped below 3 nights) | `AliasResult` |
 | `posterior` | NUTS in the winning band and in every band with a probability of at least `posterior_p_min` (at most `max_modes` besides the winner), on the engine's own posterior, so the tempering and the V² amplitude are those of the search | `AliasResult`, `chain_init_params` |
 | `quicklook` | Writes and executes `quicklook.ipynb` | `load` |
 
@@ -223,6 +246,7 @@ Checks are pure functions of plain numbers, so the same run always gives the sam
 | `tempering` (`OrbitPipeline`: the correlated-channel factor of the likelihood) | a factor above 2, a raw factor below 0.5, or a residual correlation that is not AR(1) | |
 | `primary_resolved` (`OrbitPipeline`) | the primary is resolved and its diameter is the largest tried | |
 | `no_orbit` (`OrbitPipeline`: the orbit's evidence over a single star's likelihood, `no_orbit_nats`) | under 10 nats | under 0: no orbit is detected |
+| `night_dropped` (`OrbitPipeline`: the verdict, orbit or not and the winning alias band, after dropping the night of highest raw χ²/N; recorded in `modes.robustness`) | the verdict changes: one night decides the result | |
 | `period_bound` (`OrbitPipeline`) | the best period is at the top of the window (a short arc) or at its bottom (the sampling limit) | |
 
 ### Warnings raised inside stages

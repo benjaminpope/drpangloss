@@ -555,7 +555,10 @@ def test_a_sampler_run_too_short_to_converge_is_not_a_pass(rings_short_nuts):
     assert res.summary["worst_check"] == "fail"
     post = res.summary["posterior"]
     assert post["num_warmup"] == 5 and post["num_samples"] == 8
-    assert post["ess_bulk_min"] < 100.0
+    # Eight draws can give no finite ESS (summary.json writes NaN as null,
+    # as on the lowest-dependency nightly); the ess check above fails either way.
+    ess = post["ess_bulk_min"]
+    assert ess is None or ess < 100.0
     assert res.status == "partial"  # through="posterior"
 
 
