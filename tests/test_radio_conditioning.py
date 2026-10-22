@@ -111,7 +111,7 @@ def test_fisher_diagonal_spans_fewer_decades():
     assert spread(d_new) < spread(d_old) - 2
 
 
-def test_coordinates_are_natural_units():
+def test_coordinates_are_set_by_the_box():
     data, _ = _problem()
     nuis = CalibrationNuisance(data, nu0_hz=239e9)
     priors = nuis.priors()
@@ -222,3 +222,43 @@ def test_sigma_hat_and_dirty_image_with_profile():
         data.dirty_image(8, 8.0, nuisance=nuis, use_sigma=True)
     with pytest.raises(ValueError, match="profile"):
         CalibrationNuisance(data, sigmas="bogus")
+
+
+def test_offset_on_its_box_is_reported_at_bound():
+    # an offset of 0.01 mas against a box of +-0.001 mas
+    data, template = _problem()
+    nuis = CalibrationNuisance(data, nu0_hz=239e9, sigmas=False)
+    term = data.term(lambda v: template, nuis)
+    narrow = nuis.priors(offset=(-0.001, 0.001))
+    pinned = fit(
+        lambda **v: template,
+        narrow,
+        data=(),
+        likelihoods=[term],
+        init=nuis.defaults(),
+        method="lbfgs",
+        max_steps=500,
+    )
+    assert "cal.offset" in pinned.info["at_bound"]
+
+
+def test_fixed_sigma_scores_held_out_points_at_training_scales():
+    data, template = _problem(n=300)
+    nuis = CalibrationNuisance(data, nu0_hz=239e9, sigmas="profile")
+    values = _truth(nuis)
+    mask = onp.arange(len(data)) % 2 == 0
+    own = data.term(lambda v: template, nuis, mask=mask)
+    s_train = data.sigma_hat(template, values, nuis, mask=~mask)
+    fixed = data.term(lambda v: template, nuis, mask=mask, sigma=s_train)
+    onp.testing.assert_allclose(fixed.sigma_hat(values), s_train)
+    assert not onp.allclose(own.sigma_hat(values), s_train)
+    # at fixed scales the held-out score is no better than at its own ŝ
+    assert float(fixed.log_norm(values)) + 0.5 * float(
+        np.sum(fixed(values) ** 2)
+    ) >= float(own.log_norm(values)) + 0.5 * float(np.sum(own(values) ** 2))
+    with pytest.raises(ValueError, match="profile"):
+        data.term(
+            lambda v: template,
+            CalibrationNuisance(data, sigmas=True),
+            sigma=s_train,
+        )

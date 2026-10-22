@@ -109,19 +109,20 @@ Vector-valued sites (`cal.gain` has one entry per non-reference observation) are
 ordinary array-valued parameters. Because the error scales are fitted, the
 term reports a log normalization and `fit` uses L-BFGS.
 
-**Natural-unit coordinates.** `fit` optimizes in unconstrained coordinates, and
-a poorly scaled coordinate makes L-BFGS crawl. The gains and error scales have
-the improper Jeffreys prior `1/x` by default (flat in `ln x`, no box), so
-the coordinate is `ln x`. The offset of observation `k` is uniform over
-three beams (`offset_beams=3`; one beam is `2π b_k`) and is optimized in units of
-`b_k = 1/(2π q_max,k)`, `q_max,k` the longest baseline of that observation, so a
-unit step moves the phase at the longest baseline by about a turn. An offset known
-to a microarcsecond from long baselines and one known to a tenth of a
-milliarcsecond from short ones then have curvatures of the same order. The site
-values stay physical (`cal.gain`, `cal.offset` in mas, `cal.sigma`). Explicit
-bounds, such as `priors(offset=(-lo, hi))` in mas, `priors(gain=(0.5, 2))`
-or `sigma=(0.1, 10)`, restore a box (the old defaults used `±1/(2 q_min)`,
-about 10⁴ mas, for the offset).
+**Conditioning.** `fit` optimizes in unconstrained coordinates, and a poorly
+scaled coordinate makes L-BFGS crawl. The gains and error scales have the
+improper Jeffreys prior `1/x` by default (flat in `ln x`, no box), so the
+coordinate is `ln x`. The offset of observation `k` is uniform over three
+beams (`offset_beams=3`; one beam is `2π b_k`, `b_k = 1/(2π q_max,k)`, `q_max,k` the
+longest baseline of that observation), so a unit step of the coordinate is a few
+phase turns at the longest baseline of each observation. An offset known to a
+microarcsecond from long baselines and one known to a tenth of a milliarcsecond
+from short ones then have curvatures of the same order, where the old
+`±1/(2 q_min)` box (about 10⁴ mas) did not. The bound is a prior: an offset beyond it
+is excluded and appears in `info["at_bound"]`, so widen `offset_beams` if it does.
+The site values stay physical (`cal.gain`, `cal.offset` in mas, `cal.sigma`).
+Explicit bounds, `priors(offset=(lo, hi))` in mas, `priors(gain=(0.5, 2))` or
+`sigma=(0.1, 10)`, set the scale again.
 
 **Profiled error scales.** `CalibrationNuisance(data, sigmas="profile")` has no
 `cal.sigma` site. At every evaluation `s_d² = χ²_d(s=1) / (2 N_d)`, `N_d` the number
@@ -133,7 +134,8 @@ between `s` and the amplitude. The gradient is the partial derivative at `ŝ`
 (the envelope theorem; `ŝ` is held by `stop_gradient`). `fit` returns `ŝ` in
 `result.info["derived"]["cal.sigma"]` and
 [`data.sigma_hat`][virgil.radio.ComplexVisData.sigma_hat] computes it for any
-values. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
+values. Held-out data are not scored with their own `ŝ`: pass the training
+`ŝ` as `data.term(..., sigma=ŝ)`, and use `sigmas=True` with `cross_validate`. The reported χ² is at `ŝ` (so it is `2 N_d` per ddid by construction): quote the
 χ² at the quoted errors, `Σ_d 2 N_d ŝ_d²`, instead.
 
 The term evaluates the points in chunks of `chunk_size` with `jax.lax.map`,

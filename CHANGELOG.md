@@ -11,17 +11,18 @@ anything before 1.0 may change between minor versions.
 
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
-  under the Jeffreys prior; `fit` reports it in `info["derived"]` and
-  `ComplexVisData.sigma_hat` computes it. New `offset_beams` argument.
+  under the Jeffreys prior; `fit` reports it in `info["derived"]`,
+  `ComplexVisData.sigma_hat` computes it, and `term(sigma=)` fixes it for scoring. New `offset_beams` argument.
 
 ### Changed
 
 - `CalibrationNuisance` default priors are in natural units. Gains and error
   scales are improper Jeffreys priors (the fit coordinate is `ln x`, no box);
   each offset is uniform over `offset_beams` (default 3) beams of its
-  observation, optimized in units of `1/(2π q_max)`. This fixes the conditioning
-  of full-batch L-BFGS fits with several observations (the old offset box,
-  `±1/(2 q_min)`, made its coordinate 10⁴ mas per unit). Site names and values
+  observation (`2π/(2π q_max)` each). This fixes the conditioning of full-batch
+  L-BFGS fits with several observations (the old offset box, `±1/(2 q_min)`,
+  made its coordinate ~5·10³ mas per unit). The offset box is now a real
+  prior: an offset beyond it is excluded and listed in `info["at_bound"]`. Site names and values
   are unchanged; `priors(gain=, sigma=, offset=)` bounds restore the old
   boxes.
 

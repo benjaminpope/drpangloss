@@ -28,7 +28,7 @@ import jax
 import jax.numpy as np
 import numpy as onp
 import numpyro.distributions as dist
-from numpyro.distributions import Uniform, constraints
+from numpyro.distributions import constraints
 
 from ._geometry import gaussian_taper, offset_phase, pixel_offsets
 from ._utils import mas2rad, rad2mas
@@ -410,7 +410,9 @@ class ComplexVisData(eqx.Module):
             self.obs,
         )
 
-    def term(self, scene, nuisance, mask=None, chunk_size=10_000_000):
+    def term(
+        self, scene, nuisance, mask=None, chunk_size=10_000_000, sigma=None
+    ):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
@@ -429,6 +431,16 @@ class ComplexVisData(eqx.Module):
             Points are padded with zero weight to a multiple of this and
             evaluated with ``jax.lax.map`` over chunks, bounding memory
             (the transform is never ``vmap``-ed).
+        sigma : (n_ddid,) array, optional
+            With ``sigmas="profile"``, fixed error scales instead of the
+            ``ŝ`` of this term's own points. Use it to score held-out data
+            at the ``ŝ`` of the training fit
+            (``fit(...).info["derived"]["cal.sigma"]``): a held-out term
+            that profiles its own ``ŝ`` is scored with errors tuned on the
+            test residuals, which is not a predictive score. (The
+            ``make_term(mask)`` protocol of
+            [`cross_validate`][virgil.crossval.cross_validate] re-profiles
+            each fold; use ``sigmas=True`` there.)
 
         Notes
         -----
@@ -442,7 +454,7 @@ class ComplexVisData(eqx.Module):
                 "scene must be a function of the fitted values, e.g. "
                 "`lambda values: model`, not a model instance."
             )
-        return _RadioTerm(self, scene, nuisance, mask, chunk_size)
+        return _RadioTerm(self, scene, nuisance, mask, chunk_size, sigma)
 
     def sigma_hat(self, scene, values, nuisance, mask=None):
         """The error scales ``s_d`` per ddid at ``values``: the profiled ``ŝ``
@@ -980,30 +992,6 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
 # ----------------------------------------------------------------------
 
 
-class _ScaledUniform(Uniform):
-    """``Uniform(low, high)`` fitted in units of ``scale``.
-
-    The flat coordinate is ``u = x / scale``, so the optimizer's step is
-    ``scale`` times a unit change of the unconstrained coordinate (up to the
-    factor ``(high - low) / (4 scale)`` of the sigmoid at its centre).
-    """
-
-    pytree_data_fields = ("low", "high", "scale")
-
-    def __init__(self, low, high, scale, *, validate_args=None):
-        super().__init__(low, high, validate_args=validate_args)
-        self.scale = np.asarray(scale)
-
-    def flat_coordinate(self):
-        scale = self.scale
-        return (
-            lambda x: x / scale,
-            lambda u: u * scale,
-            self.low / scale,
-            self.high / scale,
-        )
-
-
 class _LogImproper(dist.Distribution):
     """The improper Jeffreys prior ``p(x) ∝ 1/x`` of a positive scale.
 
@@ -1041,22 +1029,24 @@ class CalibrationNuisance:
     ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
     ===============  ================  ==========================  =============
 
-    **Natural-unit coordinates.** ``fit`` optimizes each site in a coordinate
-    whose unit step is about one unit of what the data resolve, so that the
-    curvature of the loss is of a similar size for all sites. The gains and σ
-    scales have the improper Jeffreys prior ``1/x`` by default, flat in
+    **Conditioning.** ``fit`` optimizes each site through the bijection of
+    its prior, so the prior's width sets the coordinate's scale. The gains
+    and σ scales have the improper Jeffreys prior ``1/x`` by default, flat in
     ``ln x`` over the whole line: ``z = ln x``, no box. The offset of
     observation ``k`` is a uniform location on ``±θ_k`` with
-    ``θ_k = offset_beams · 2π b_k`` (default 3 beams), fitted in units of
-    ``b_k = 1/(2π q_max,k)``, ``q_max,k`` the longest baseline of that
-    observation: a unit step of ``z`` moves the phase at the longest baseline
-    by about a turn (to within the sigmoid's slope at the centre,
-    ``θ_k/2`` ≈ 9 ``b_k`` for the default bound). The offsets of two observations are then comparable even when
-    one is known to a microarcsecond and the other to a tenth of a
-    milliarcsecond. Pass ``priors(offset=(lo, hi))`` for explicit bounds in
-    mas (still in units of ``b_k``), and ``priors(gain=(lo, hi))`` or
-    ``sigma=(lo, hi)`` for a ``LogUniform`` box. The site values are always
-    the physical ones (``cal.gain``, ``cal.offset`` in mas, ``cal.sigma``).
+    ``θ_k = offset_beams · 2π b_k`` (default 3 beams), where
+    ``b_k = 1/(2π q_max,k)`` and ``q_max,k`` is the longest baseline of that
+    observation. A sigmoid on ``±θ_k`` has slope ``θ_k/2`` ≈ 9 ``b_k`` at
+    the centre, so the coordinate's unit step is a few phase turns at the
+    longest baseline of each observation, however different the arrays: the
+    old default box ``±1/(2 q_min)`` (about 10⁴ mas) made it ~5·10³ mas.
+    **The bound is a real prior:** an offset larger than ``θ_k`` is excluded
+    (and reported in ``fit(...).info["at_bound"]``); widen it with
+    ``offset_beams`` or ``priors(offset=(lo, hi))`` in mas, which sets the
+    coordinate scale again (``(hi - lo)/4`` at the centre). Passing
+    ``priors(gain=(lo, hi))`` or ``sigma=(lo, hi)`` gives a ``LogUniform``
+    box. The site values are always the physical ones (``cal.gain``,
+    ``cal.offset`` in mas, ``cal.sigma``).
 
     The reference observation (``ref_obs``, an index) has gain 1 and zero
     offset. The model at a point is
@@ -1207,10 +1197,8 @@ class CalibrationNuisance:
             else:
                 lo, hi = -theta, theta
             shape = (k, 2)
-            out[self._site("offset")] = _ScaledUniform(
-                np.broadcast_to(lo, shape),
-                np.broadcast_to(hi, shape),
-                np.broadcast_to(unit, shape),
+            out[self._site("offset")] = dist.Uniform(
+                np.broadcast_to(lo, shape), np.broadcast_to(hi, shape)
             )
         if self.sigmas is True:
             if "sigma" in bounds:
@@ -1314,8 +1302,18 @@ class _RadioTerm(eqx.Module):
     scene: object = eqx.field(static=True)
     nuisance: object = eqx.field(static=True)
     n: int = eqx.field(static=True)
+    sigma_fixed: object = None
 
-    def __init__(self, data, scene, nuisance, mask, chunk_size):
+    def __init__(self, data, scene, nuisance, mask, chunk_size, sigma=None):
+        if sigma is not None:
+            if nuisance.sigmas != "profile":
+                raise ValueError("sigma= needs sigmas='profile'.")
+            sigma = np.asarray(sigma, dtype=np.float64)
+            if sigma.shape != (nuisance.n_ddid,):
+                raise ValueError(
+                    f"sigma must have shape ({nuisance.n_ddid},)."
+                )
+        self.sigma_fixed = sigma
         n = len(data)
         if mask is None:
             mask = onp.ones(n, dtype=bool)
@@ -1386,7 +1384,11 @@ class _RadioTerm(eqx.Module):
 
         re, im = jax.lax.map(chunk, self.arrays)
         if self._profiled:
-            sigma = self._profile_sigma(re, im)
+            sigma = (
+                self._profile_sigma(re, im)
+                if self.sigma_fixed is None
+                else self.sigma_fixed
+            )
             scale = sigma[self.arrays["ddid"]]
             re, im = re / scale, im / scale
         return re, im, sigma

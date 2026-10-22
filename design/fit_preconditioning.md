@@ -31,13 +31,10 @@ fitted jointly although it has a closed-form optimum.
 
 * **offsets**: for observation `k`, `b_k = 1/(2π q_max,k)` (rad → mas), the
   offset that turns the phase by one radian at the longest baseline. The prior
-  is a uniform location on `±θ_k`, `θ_k = offset_beams · 2π b_k` (default 3
+  is a plain `Uniform(±θ_k)`, `θ_k = offset_beams · 2π b_k` (default 3
   beams: a beam is `≈ 1/q_max = 2π b_k`; three beams is generous for a phase
   centre error after correlation, wide enough that the optimum is interior, and
-  narrow enough that the sigmoid's slope at the centre, `2θ_k/4 ≈ 9 b_k`, stays O(`b_k`)). The prior is a
-  `Uniform` subclass with a *flat coordinate* `u = x/b_k`, so `fit` optimizes
-  `z` with `x = b_k · (θ_k/b_k) · sigmoid-interval(z)`: `dx/dz` at `z = 0` is
-  `θ_k/2 ≈ 9.4 b_k` (O(`b_k`) for every observation, whatever the baselines).
+  narrow enough that the sigmoid's slope at the centre, `2θ_k/4 ≈ 9 b_k`, stays O(`b_k`)). The width of the box sets the scale: a sigmoid on `±θ_k` has `dx/dz = θ_k/2 ≈ 9.4 b_k` at `z = 0`, O(`b_k`) for every observation, whatever the baselines. (An earlier version also divided by `b_k` in a custom flat coordinate; that cancels exactly and was removed.)
   The old box remains available as `priors(offset=(-1/(2 q_min), 1/(2 q_min)))`
   (`offset_bound_mas`).
 * **gains, σ scales**: the improper Jeffreys prior `1/x` (`_LogImproper`), flat
@@ -47,8 +44,8 @@ fitted jointly although it has a closed-form optimum.
 
 Site names, shapes and physical values (`cal.gain`, `cal.offset` in mas,
 `cal.sigma`) are unchanged, so warm starts from saved physical values and
-downstream code keep working. `at_bound` ignores these priors (they have no
-finite edge in the fitted coordinate). Flux keeps `LogUniform(1e-4, 1e2)`: its
+downstream code keep working. `at_bound` still reports an offset on its (now narrower) box; the
+gain and σ priors have no edge. Flux keeps `LogUniform(1e-4, 1e2)`: its
 logit slope in `ln F` is 4, harmless.
 
 On the synthetic test (a compact Gaussian seen by a short- and a long-baseline
