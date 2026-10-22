@@ -216,6 +216,17 @@ Trigonometric Polynomials and Signal Processing Applications*, Springer), with
 the minimum-phase factor parametrized without constraint by reflection
 coefficients (Barndorff-Nielsen & Schou 1973, J. Multivariate Anal. 3, 408).
 
+## VonMises
+
+The profile $\exp[\kappa\cos(\theta - \theta_0)]$ has the analytic harmonics
+$c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$, with $I_m$ the
+modified Bessel function; this fixes the sign convention of `theta0`. They are
+computed by a small FFT of $\exp[\kappa(\cos\theta_j - 1)]$, so no special
+function is needed, and are differentiable in $\kappa$ and $\theta_0$. The FFT is
+accurate to the aliasing error $I_{n_{\rm fft}-m}/I_0$, negligible for $\kappa$
+below about `n_fft**2 / 30`. The brightness is the truncated series, not the von
+Mises function itself.
+
 ## RadialGP
 
 A non-parametric profile of `n_r` values is exactly a quadrature of the Hankel

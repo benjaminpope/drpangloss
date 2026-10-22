@@ -1419,7 +1419,7 @@ class GravityDarkenedStar(Component):
     mapping to the original parameters and the accuracy of ``n_lat``.
 
     Source: Espinosa Lara & Rieutord (2011), via GDit,
-    [references](../references.md#espinosalara2011).
+    [references](../../../references.md#espinosalara2011).
 
     Parameters
     ----------
@@ -1908,7 +1908,8 @@ class Image(Component):
         or an object with ``evaluate(pixel_scale_mas)`` such as a
         [`GaussianField`][virgil.fields.GaussianField].
     pixel_scale_mas : float
-        Pixel size in mas; the image centre is at ``(dra, ddec)``.
+        Pixel size in mas; the image centre, index ``((nrow - 1) / 2, (ncol - 1) / 2)``,
+        is at ``(dra, ddec)``.
     support : array-like of bool, optional
         Pixels allowed to carry flux (default all); see
         [`circular_support`][virgil.models.circular_support].
@@ -2176,7 +2177,7 @@ class FlaredDisk(_PixelRendered):
     brightness on a fixed ``npix`` x ``npix`` grid, which must cover the disk and
     resolve its inner edge. Equations: [Model notes](../notes.md#flareddisk).
 
-    Source: Blakely et al. (2024), §III, [references](../references.md#blakely2024).
+    Source: Blakely et al. (2024), §III, [references](../../../references.md#blakely2024).
 
     Parameters
     ----------
@@ -4004,7 +4005,7 @@ class VonMises(_Azimuthal):
     $\theta_0$. The truncated series goes slightly negative if ``degree`` is too
     low (about $5.7\sqrt\kappa$ for harmonics below $10^{-6}$);
     [`truncation_power`][virgil.models.VonMises.truncation_power] reports the power
-    dropped. Details: [Model notes](../notes.md#harmonics).
+    dropped. Harmonics and ``n_fft``: [Model notes](../notes.md#vonmises).
 
     Parameters
     ----------
@@ -4227,7 +4228,7 @@ def multipole_disk_cvis(
     height=None,
     stretch=None,
 ):
-    """Unit-flux visibility of a disk from radial quadrature.
+    r"""Unit-flux visibility of a disk from radial quadrature.
 
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
@@ -4235,10 +4236,10 @@ def multipole_disk_cvis(
     A sum of thin rings at nodes ``r`` with weights ``w``, with inclination ``inc``
     and position angle ``pa`` undone, normalized so $V(0) = 1$. The Bessel series,
     the ``height`` phase and the envelope are in
-    [Model notes](../notes.md#multipoledisk).
+    [Model notes](notes.md#multipoledisk).
 
-    Source: Jennings et al. (2020) and Kennedy (2025), ideas only,
-    [references](../references.md#frank).
+    Source: Jennings et al. (2020), [references](../../references.md#frank), and
+    Kennedy (2025), [references](../../references.md#visr); ideas only.
 
     Parameters
     ----------
@@ -4247,8 +4248,9 @@ def multipole_disk_cvis(
     r : array-like
         Quadrature radii in mas, shape ``(n_r,)``.
     w : array-like
-        Quadrature weights, shape ``(n_r,)``, or ``u.shape + (n_r,)`` for weights
-        that differ per sample (a chromatic profile); each is normalized to unit sum.
+        Quadrature weights with $I_0(r_k)\,r_k\,dr$ folded in, shape ``(n_r,)``, or
+        ``u.shape + (n_r,)`` if they differ per sample (a chromatic profile); each
+        is normalized to unit sum.
     inc, pa : float or array-like, optional
         Inclination and position angle in degrees.
     blur_fwhm : float, array-like or None, optional
@@ -4456,8 +4458,8 @@ class MultipoleDisk(Component):
     (``"disk.profile.radius"``). Choosing ``n_r``, symmetry and precision:
     [Model notes](../notes.md#multipoledisk), [guide](../../../multipole_disk_rings.md).
 
-    Source: Jennings et al. (2020) and Kennedy (2025), ideas only,
-    [references](../references.md#frank).
+    Source: Jennings et al. (2020), [references](../../../references.md#frank), and
+    Kennedy (2025), [references](../../../references.md#visr); ideas only.
 
     Parameters
     ----------
@@ -5995,11 +5997,11 @@ def cvis_limb_darkened_disk(u, v, diam, coeffs, powers, dra=0.0, ddec=0.0):
     is a sum of $J_{\nu/2+1}(x)/x^{\nu/2+1}$ terms with $x = \pi\theta|b|/\lambda$,
     normalized to 1 at zero baseline (a uniform disk gives $2 J_1(x)/x$). Powers need
     not be integers, with $-2 < \nu \le 22$ (the lower limit keeps the flux finite).
-    Formula: [Limb-darkened stars](../../../limb_darkening.md#profiles-and-visibilities).
+    Formula: [Limb-darkened stars](../../limb_darkening.md#profiles-and-visibilities).
 
     Source: Quirrenbach et al. (1996), eqs. 1-4,
-    [references](../references.md#quirrenbach1996); generalized by harmonix,
-    [references](../references.md#harmonix).
+    [references](../../references.md#quirrenbach1996); generalized by harmonix,
+    [references](../../references.md#harmonix).
 
     Parameters
     ----------
