@@ -488,6 +488,7 @@ ensemble corner fits; 32² AMI and parametric fits do not (50–60 is as good as
 100). The smallest tested `m` within 10 % of the best everywhere it matters
 is not one number (float64 41² keeps improving to 150, float32 41² is best at
 100, 32² AMI at 60), so the default is 100, with one rule: it is cut so that the
-history stays under 1 GB, which binds only above 6 × 10⁵ float64 coordinates
-(1.25 × 10⁶ in float32); none of the cases above is affected.
+history stays under 1 GiB (never below 5 steps, with a `UserWarning`), which binds
+only above 6.7 × 10⁵ float64 coordinates (1.3 × 10⁶ in float32); none of the
+cases above is affected.
 An explicit `lbfgs_memory` is used as given.
