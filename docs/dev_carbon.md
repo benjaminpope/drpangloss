@@ -11,9 +11,9 @@ The total of 317 kg CO₂e set against the three nearest items, on a log scale, 
 
 | Item | kg CO₂e each | Equivalent to | Range |
 |---|---:|---:|---:|
+| Tree's annual CO₂ uptake | 24.62 | 13 | 12–18 |
 | Manufactured smartphone | 80 | 4 | 3.6–5.5 |
 | Economy flight Zurich–London | 232 | 1.4 | 1.2–1.9 |
-| Year of driving an average car | 4,600 | 0.069 | 0.063–0.096 |
 
 ## By source
 

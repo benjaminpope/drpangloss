@@ -64,26 +64,25 @@ def carbon_home():
 def comparisons_section(summary, home):
     """The total against the nearest everyday items in the tool's table.
 
-    The item nearest the mid total on a log scale and its two neighbours,
-    each as a count with the range from the low and high totals.
+    The three items nearest the mid total on a log scale, in order of
+    size, each as a count with the range from the low and high totals.
     """
     sys.path.insert(0, str(home))
     import token_carbon as tc
 
-    items = tc.COMPARISONS
+    items = sorted(tc.COMPARISONS, key=lambda c: c["kg"])
     lo, mid, hi = summary["total"]["kg"]
-    i = min(
+    near = sorted(
         range(len(items)),
         key=lambda j: abs(math.log(mid / items[j]["kg"])),
-    )
+    )[:3]
     rows = [
         f"| {items[j]['one'][0].upper()}{items[j]['one'][1:]} "
         f"| {items[j]['kg']:,g} "
         f"| {tc.format_count(mid / items[j]['kg'])} "
         f"| {tc.format_count(lo / items[j]['kg'])}–"
         f"{tc.format_count(hi / items[j]['kg'])} |"
-        for j in (i - 1, i, i + 1)
-        if 0 <= j < len(items)
+        for j in sorted(near)
     ]
     return "\n".join(
         [
