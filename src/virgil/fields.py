@@ -1,25 +1,14 @@
 """Gaussian-process log-brightness fields for pixel images.
 
-A [`GaussianField`][virgil.fields.GaussianField] can stand in for the
-``log_brightness`` array of an [`Image`][virgil.models.Image]. The image's
-log-brightness is then a stationary Gaussian process with a Matérn-like
-spectrum, written in its whitened form: independent standard-normal
-``latent`` coefficients on the image's cosine (DCT-II) basis. This is the
-basis that diagonalizes the Laplacian with reflecting boundaries. Fitting the
-latents under a standard-normal prior (from
-[`image_priors`][virgil.imaging.image_priors]) is MAP estimation with a
-GP prior, and the same parameterization suits sampling.
+A [`GaussianField`][virgil.fields.GaussianField] stands in for the
+``log_brightness`` of an [`Image`][virgil.models.Image]: a stationary
+Gaussian process with a Matérn-like spectrum, written as independent
+standard-normal ``latent`` coefficients on the cosine (DCT-II) basis. Fitting
+the latents under a standard-normal prior is MAP estimation with a GP prior;
+see [Gaussian processes and IFT](../gp_and_ift.md).
 
-The construction, a Gaussian-process field with a stationary spectrum on a
-whitened basis, is abstracted from the NIFTy library (Edenhofer et al.
-2024, https://arxiv.org/abs/2402.16683) and the correlated field model used
-for M87* by Arras et al. (2022, Nature Astron. 6, 259,
-https://arxiv.org/abs/2002.05218), within the framework of information
-field theory (Enßlin et al. 2009, https://arxiv.org/abs/0806.3474; review:
-Enßlin 2019, https://arxiv.org/abs/1804.03350). The first NIFTy is Selig et
-al. (2013, https://arxiv.org/abs/1301.4499). That quadratic regularizers
-are Gaussian priors is the view of Thiébaut & Young (2017,
-https://arxiv.org/abs/1708.08390). No code is taken from NIFTy.
+Source: Edenhofer et al. (2024), Arras et al. (2022), Enßlin et al. (2009),
+[references](../references.md#edenhofer2024). No code is taken from NIFTy.
 """
 
 import equinox as eqx
@@ -145,35 +134,17 @@ def field_spectrum(shape, pixel_scale_mas, sigma, length_mas, order=2):
 class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     r"""A Gaussian-process log-brightness for an [`Image`][virgil.models.Image].
 
-    The log-brightness is
+    ``η = log(μ/max μ + ε) + IDCT[√S ⊙ z]``: the orthonormal inverse DCT-II of
+    the latents ``z`` scaled by the spectrum ``S`` of
+    [`field_spectrum`][virgil.fields.field_spectrum], about an optional
+    positive template ``μ``. With a standard-normal prior on ``latent`` (from
+    [`image_priors`][virgil.imaging.image_priors]) it is a Gaussian process of
+    standard deviation ``sigma`` and correlation length ``length_mas``;
+    ``latent = 0`` gives the floored template. Fix ``sigma`` and ``length_mas``
+    or sample them: their MAP values are biased (``fit`` warns). Derivation:
+    [Gaussian processes and IFT](../gp_and_ift.md).
 
-    $$\eta = \log\left(\frac{\mu}{\max\mu} + \epsilon\right)
-    + \mathrm{IDCT}\left[\sqrt{S} \odot z\right],$$
-
-    with the orthonormal inverse DCT-II, the spectrum ``S`` of
-    [`field_spectrum`][virgil.fields.field_spectrum], latent
-    coefficients ``z`` (``latent``) and an optional positive template image
-    ``μ`` (``mean``, floored at ``ε`` = ``mean_floor`` of its peak). With a
-    standard-normal prior on ``latent``, ``η`` is a Gaussian process with
-    standard deviation ``sigma`` and correlation length ``length_mas``
-    about the template. Two lengths make it anisotropic: with the Image's
-    ``rotation_deg`` set to a structure's position angle, ``(ℓ_along,
-    ℓ_across)`` correlates the field along the structure (the grid's "up"
-    axis) and across it, which suits filaments. ``latent = 0`` gives the template raised by the
-    floor, ``μ/max μ + ε``, as an image.
-
-    Use it in place of an Image's log-brightness, with priors from
-    [`image_priors`][virgil.imaging.image_priors]:
-
-    ```python
-    field = GaussianField(np.zeros((32, 32)), sigma=2.0, length_mas=3.0,
-                          mean=start.env.brightness)
-    env = Image(field, pixel_scale_mas=0.6, flux=0.3)
-    ```
-
-    Fix ``sigma`` and ``length_mas``, or sample them: their MAP values are
-    biased (``fit`` warns), and Stage 5's evidence helpers choose them from
-    the data.
+    Source: Edenhofer et al. (2024), [references](../references.md#edenhofer2024).
 
     Parameters
     ----------
@@ -183,15 +154,22 @@ class GaussianField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         Standard deviation of the field (default 1).
     length_mas : float or array-like, optional
         Correlation length in milliarcseconds (default 1), or a pair
-        ``(ℓ_row, ℓ_col)``: correlated over ``ℓ_row`` along the image's
-        vertical axis and ``ℓ_col`` along its horizontal axis.
+        ``(ℓ_row, ℓ_col)`` along the image's vertical and horizontal axes. With
+        the Image's ``rotation_deg`` set to a structure's position angle,
+        ``(ℓ_along, ℓ_across)`` correlates along and across it (filaments).
     order : int, optional
         Exponent of the spectrum (default 2).
     mean : array-like, optional
-        Positive template image, of the same shape (default: none, a flat
-        template).
+        Positive template image, of the same shape (default: flat).
     mean_floor : float, optional
         Floor on the template, as a fraction of its peak (default 1e-3).
+
+    Examples
+    --------
+    ```python
+    field = GaussianField(np.zeros((32, 32)), sigma=2.0, length_mas=3.0)
+    env = Image(field, pixel_scale_mas=0.6, flux=0.3)
+    ```
     """
 
     latent: jax.Array
@@ -360,77 +338,51 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The log-brightness of an Image is a Gaussian process on a polar grid in the
-    frame of a disk: ``n_r`` radii from ``r_min_mas`` to ``r_max_mas`` and
-    ``n_theta`` azimuths in the disk plane (deprojected by ``inc``, rotated by
-    ``pa``, centred on ``(dra, ddec)``), interpolated onto the pixels. The prior is
-    separable, with a Matérn kernel in radius (that of
-    [`RadialGP`][virgil.models.RadialGP]) and a periodic Matérn kernel in azimuth
-    (that of [`MultipoleKernel`][virgil.models.MultipoleKernel]). A long
-    ``length_theta`` favours rings and arcs without imposing them, and a short
-    ``length_r`` allows radial structure such as gaps. Use it for emission that
-    the parametric [`MultipoleDisk`][virgil.models.MultipoleDisk] misses, instead
-    of a Cartesian [`GaussianField`][virgil.fields.GaussianField] that knows
-    nothing about the geometry.
-
-    The parameters are whitened, independent standard-normal ``latent`` values
-    (standard-normal priors from [`image_priors`][virgil.imaging.image_priors]),
-    scaled so that ``sigma`` is the standard deviation of the field on the grid.
-    [`log_evidence`][virgil.imaging.log_evidence] and the numpyro model work as for
-    a ``GaussianField``. The Image's brightness is the softmax of the field, which
-    falls to ``outside`` beyond the polar grid. Give ``sigma`` and the two lengths
-    bounded log-uniform priors with
-    [`multipole_field_priors`][virgil.fields.multipole_field_priors]; their MAP
-    values are biased (``fit`` warns). The kernel, the tied geometry and the
-    fallback are in [Model notes](models/notes.md#multipolefield).
+    The log-brightness is a Gaussian process on a polar grid in the disk's
+    frame (``n_r`` radii, ``n_theta`` azimuths, deprojected by ``inc`` and
+    ``pa``, centred on ``(dra, ddec)``) with a separable Matérn prior: radial as
+    [`RadialGP`][virgil.models.RadialGP], periodic azimuthal as
+    [`MultipoleKernel`][virgil.models.MultipoleKernel]. The latents are
+    whitened standard normals; ``sigma`` is the field's standard deviation. The
+    brightness is the softmax of the field, ``outside`` beyond the grid. Priors:
+    [`multipole_field_priors`][virgil.fields.multipole_field_priors]. Kernel,
+    tied geometry and fallback: [Model notes](models/notes.md#multipolefield).
 
     Parameters
     ----------
     latent : array-like, shape (n_r, n_theta)
-        Whitened coefficients; their shape sets the polar grid (``n_theta`` need
-        be at most about ``2π r_max_mas`` over the pixel scale).
+        Whitened coefficients; their shape sets the polar grid.
     image_shape : tuple of int
         ``(nrow, ncol)`` of the Image's pixel grid.
     r_max_mas : float
-        Outermost radius of the polar grid in milliarcseconds, in the disk
-        plane; the field fades to zero over one node spacing beyond it.
-    r_min_mas : float, optional
-        Innermost radius (default 0).
-    sigma : float or array-like, optional
-        Standard deviation of the field on the polar grid (default 1).
-    length_r : float or array-like, optional
-        Radial correlation length in milliarcseconds (default: five node
-        spacings).
-    length_theta : float or array-like, optional
-        Azimuthal correlation length in radians (default 1).
-    inc, pa : float or array-like, optional
-        Inclination and position angle of the disk's projected major axis, in
-        degrees (North to East), in the Image's grid frame.
-    dra, ddec : float or array-like, optional
-        Centre of the disk relative to the Image's centre, in milliarcseconds.
+        Outermost radius of the polar grid (mas, disk plane); the field fades
+        to zero over one node spacing beyond it.
+    r_min_mas, sigma : float, optional
+        Innermost radius (default 0); standard deviation of the field (1).
+    length_r, length_theta : float or array-like, optional
+        Radial (mas; default five node spacings) and azimuthal (radians; 1)
+        correlation lengths.
+    inc, pa, dra, ddec : float or array-like, optional
+        Disk inclination and major-axis position angle (degrees, North to
+        East), and centre relative to the Image's (mas).
     nu, nu_theta : {0.5, 1.5, 2.5, inf}, optional
-        Smoothness of the radial and azimuthal kernels (default 1.5;
-        ``nu_theta`` defaults to ``nu``).
+        Kernel smoothness (default 1.5; ``nu_theta`` defaults to ``nu``).
     geometry_from : str or None, optional
-        Name of a sibling component of the [`System`][virgil.models.System] (a
-        ``MultipoleDisk``, or anything with ``inc``, ``pa``, ``dra`` and ``ddec``)
-        whose geometry the field follows when the System is evaluated (default
-        ``None``: the field's own).
-    mean : array-like, optional
-        Positive template image of shape ``image_shape``, as for
-        [`GaussianField`][virgil.fields.GaussianField] (default: flat).
-    mean_floor : float, optional
-        Floor on the template, as a fraction of its peak (default 1e-3).
+        Name of a sibling [`System`][virgil.models.System] component (with
+        ``inc``, ``pa``, ``dra``, ``ddec``) whose geometry the field follows
+        (default ``None``: its own).
+    mean, mean_floor : optional
+        Template and floor, as for
+        [`GaussianField`][virgil.fields.GaussianField].
     outside : float, optional
-        Log-brightness beyond the polar grid (default -20, effectively dark; 0
-        would leave a flat background the latents cannot remove).
+        Log-brightness beyond the grid (default -20, dark; 0 leaves a flat
+        background the latents cannot remove).
 
     Examples
     --------
     ```python
-    field = MultipoleField(np.zeros((24, 32)), sigma=1.0, length_r=4.0,
-                           length_theta=1.0, inc=50.0, pa=30.0,
-                           image_shape=(64, 64), r_max_mas=40.0)
+    field = MultipoleField(np.zeros((24, 32)), image_shape=(64, 64),
+                           r_max_mas=40.0, inc=50.0, pa=30.0)
     env = Image(field, pixel_scale_mas=1.5, flux=0.3)
     ```
     """

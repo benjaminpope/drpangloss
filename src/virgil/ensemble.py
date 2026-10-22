@@ -94,58 +94,43 @@ class EnsembleSpec:
     Attributes
     ----------
     families : tuple of str
-        Regularizer families drawn uniformly: ``"tv"``, ``"tsv"``,
-        ``"maxent"``, ``"starlet"`` (the regularizers of
-        [`virgil.imaging`][virgil.imaging]), or ``"gp"``, a Gaussian-process
-        prior chosen by the evidence ([`gp_members`][virgil.ensemble.gp_members]).
+        Families drawn uniformly: ``"tv"``, ``"tsv"``, ``"maxent"``,
+        ``"starlet"`` or ``"gp"`` ([`gp_members`][virgil.ensemble.gp_members]).
     weight_ranges : dict
-        For each family, the ``(low, high)`` range of the weight per
-        independent data point, from which ``n_weights`` (at least three)
-        log-uniform weights are drawn, one per equal bin of ``log w``. If the
-        L-curve corners fall at the edges, move the range.
+        Per family, the ``(low, high)`` weight per data point; ``n_weights``
+        (at least 3) log-uniform weights are drawn, one per bin of ``log w``.
     oversample : tuple of float
-        Pixels per Nyquist pixel
-        ([`nyquist_pixel_scale`][virgil.imaging.nyquist_pixel_scale]).
+        Pixels per Nyquist pixel.
     field_factors : tuple of float
-        The field is ``field_mas`` times one of these, never larger than
-        ``field_of_view(data)`` (and, on a uv lattice, never above 1).
+        The field is ``field_mas`` times one of these, at most
+        ``field_of_view(data)`` (and 1 on a uv lattice).
     field_mas, aperture_mas : float or None
-        The field in mas that the factors multiply (by default
-        [`image_field`][virgil.imaging.image_field]), and a telescope's field
-        of view as a ceiling on every field.
+        Base field (default [`image_field`][virgil.imaging.image_field]) and
+        a field-of-view ceiling.
     starts : tuple of str
-        Starting images, drawn uniformly: ``"moments"``, ``"dirty"`` (needs
-        phases) and ``"flat"`` (see
-        [`starting_image`][virgil.imaging.starting_image]).
+        Starts drawn uniformly: ``"moments"``, ``"dirty"`` (needs phases), ``"flat"``.
     max_npix : int
-        Largest number of pixels on a side; a larger field takes coarser pixels
-        (never coarser than Nyquist), or is cropped.
+        Most pixels on a side; larger fields get coarser pixels, then a crop.
     window_dex : float
-        Each group keeps the weights from ``corner / 10**window_dex`` to the
-        L-curve's corner.
+        A group keeps weights from ``corner / 10**window_dex`` up to the corner.
     max_chi2_red, chi2_ratio, mad_cut : float
-        Drop a member whose raw χ² per data point on any dataset exceeds
-        ``max_chi2_red`` or ``chi2_ratio`` times the best member's, then
-        members whose total is more than ``mad_cut`` robust standard deviations
-        above the median.
+        Drop members whose raw χ² per point on any dataset exceeds
+        ``max_chi2_red`` or ``chi2_ratio`` times the best's, then those more
+        than ``mad_cut`` robust deviations above the median total.
     max_shift_mas : float or None
-        Without a star, the largest shift when recentring members on the best
-        one (default: the beam's major axis).
+        Largest recentring shift without a star (default: beam major axis).
     mean_rtol : float or None
-        A member joins the mean if, on every dataset, the mean's χ² stays
-        within this fraction of the best member's; ``None`` (default) is the
-        χ²/N noise ``sqrt(2/N)``, and ``0`` often keeps the best member alone.
+        Tolerance on the mean's χ² excess over the best member's (default
+        ``sqrt(2/N)``; 0 often keeps one member).
     min_kept : int
         [`combine`][virgil.ensemble.combine] warns below this many members.
     gp_sigmas, gp_lengths, gp_sigma_limits, gp_length_limits, gp_growths
-        Starting amplitudes and correlation lengths (in beam minor axes) of
-        the Gaussian process's evidence grid, its limits, and the most
-        growth steps (see [`evidence_grid`][virgil.ensemble.evidence_grid]).
+        GP evidence grid ([`evidence_grid`][virgil.ensemble.evidence_grid]):
+        starting amplitudes and lengths (beam minor axes), limits, growth steps.
     gp_window_nats : float
-        A group's GP members are the fits within this log evidence of the best.
+        GP members are fits within this log evidence of the best.
     gp_axis_ratio : float or None
-        If an elliptical Gaussian fits the data with an axis ratio below this,
-        the grid also has anisotropic fields (``None``: isotropic only).
+        Add anisotropic fields if a Gaussian fits below this axis ratio.
     """
 
     families: tuple = ("tv", "tsv", "maxent", "starlet")
