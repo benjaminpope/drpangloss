@@ -43,16 +43,21 @@ def test_nufft_matches_the_direct_sum(shape, x64):
     assert error < (1e-10 if x64 else 5e-5)
 
 
+@pytest.mark.parametrize("ft", ["dft", "nufft"])
+@pytest.mark.parametrize("x64", [False, True])
 @pytest.mark.parametrize("shape", [(16, 16), (12, 15), (17, 17)])
-def test_long_baselines_beyond_the_nufft_period_agree(shape):
-    # |2π s u| up to ~27 rad: the even-axis half-pixel phase is 4π-periodic.
-    with jax.enable_x64(True):
-        image, uu, vv = _problem(shape, max_freq=3e7)
-        scale = 30.0
-        assert onp.max(onp.abs(2 * onp.pi * scale * MAS2RAD * uu)) > 3 * onp.pi
-        expected = _dft_reference(image, uu, vv, scale)
-        got = _nufft(np.asarray(image), np.asarray(uu), np.asarray(vv), scale)
-        assert onp.max(onp.abs(onp.asarray(got) - expected)) < 1e-10
+def test_long_baselines_beyond_the_nufft_period_agree(shape, x64, ft):
+    # |2π s u| up to ~27 rad: the even-axis half-pixel phase is 4π-periodic,
+    # and float32 phases are good to ~1e-6 rad.
+    image, uu, vv = _problem(shape, max_freq=3e7)
+    scale = 30.0
+    assert onp.max(onp.abs(2 * onp.pi * scale * MAS2RAD * uu)) > 3 * onp.pi
+    expected = _dft_reference(image, uu, vv, scale)
+    with jax.enable_x64(x64):
+        args = (np.asarray(image), np.asarray(uu), np.asarray(vv), scale)
+        got = onp.asarray(image_visibilities(*args, ft=ft))
+    assert got.dtype == (onp.complex128 if x64 else onp.complex64)
+    assert onp.max(onp.abs(got - expected)) < (1e-10 if x64 else 2e-5)
 
 
 def test_gradient_matches_the_dft_gradient():
