@@ -64,15 +64,11 @@ class Stage:
 
 
 def _record_warnings(stage, caught):
-    """Caught warnings as ``{"stage", "category", "message"}``, one per message.
-
-    ``ResourceWarning`` is dropped: it is raised when the garbage collector
-    finalizes an unclosed file or socket, so it reports whichever object
-    happened to be collected during the stage (often a handle leaked by a
-    third-party library or an earlier caller), not anything the stage did.
-    """
+    """Caught warnings as ``{"stage", "category", "message"}`` dicts."""
     seen, out = set(), []
     for w in caught:
+        # ResourceWarning reports whichever object the garbage collector
+        # finalized during the stage, not anything the stage did.
         if issubclass(w.category, ResourceWarning):
             continue
         message = str(w.message)
@@ -128,13 +124,8 @@ def _normalize(settings):
 
 
 class _Pipeline:
-    """Shared machinery of the pipelines; subclasses define the analysis.
-
-    A subclass sets ``NAME``, ``STABILITY``, ``STAGES``, ``_DEFAULTS`` and
-    implements ``_stages()`` (one [`Stage`][virgil.pipeline.Stage] per
-    name in ``STAGES``), ``_validate(settings)``, ``_default_model()`` and
-    ``_summarize(reports)``.
-    """
+    """Shared machinery of the pipelines; subclasses set the class
+    attributes and ``_stages()``."""
 
     NAME = ""
     STABILITY = "provisional"
@@ -357,15 +348,12 @@ class _Pipeline:
         Parameters
         ----------
         through : str, optional
-            Last stage to run (default: all of ``STAGES``). A later
-            ``run()`` continues from there.
+            Last stage to run (default: all). A later ``run()`` continues.
         resume : bool, optional
-            Skip stages already completed in ``output`` (default True). The
-            stored configuration, data and model template must match this
-            pipeline's, after filling in the current defaults for settings
-            the stored run lacks; otherwise
-            [`ConfigMismatchError`][virgil.pipeline.ConfigMismatchError] is raised.
-            ``False`` removes the run's previous outputs and starts over.
+            Skip stages already completed in ``output`` (default True); the
+            stored configuration, data and model must match, otherwise
+            [`ConfigMismatchError`][virgil.pipeline.ConfigMismatchError] is
+            raised. ``False`` removes the previous outputs and starts over.
 
         Returns
         -------

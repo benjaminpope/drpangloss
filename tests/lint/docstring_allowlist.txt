@@ -9,7 +9,4 @@ virgil.models:MultipoleDisk
 virgil.models:System
 virgil.models:TruncatedCone
 virgil.models:multipole_disk_cvis
-virgil.pipeline.disk:DiskPipeline
-virgil.pipeline.orbit:OrbitPipeline
-virgil.pipeline.star:StarPipeline
 virgil.radio:CalibrationNuisance

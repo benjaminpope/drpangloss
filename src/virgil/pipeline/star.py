@@ -80,48 +80,35 @@ _NULL_REACH = 4.0
 class StarModel:
     """A model ``StarPipeline`` can fit, registered under a short name.
 
-    Adding a model to the pipeline is adding an entry to ``MODELS``: the
-    stages, summary and checks are written against this description.
+    A new model is a new entry in ``MODELS``; the stages, summary and checks
+    are written against this description.
 
     Attributes
     ----------
-    name : str
-        The short name accepted by ``StarPipeline(model=...)``; also the
-        name of the model's folder under ``models/``.
-    label : str
-        Human-readable name, for plots and messages.
+    name, label : str
+        The short name of ``StarPipeline(model=...)`` (also its folder under
+        ``models/``) and a human-readable name.
     classes : tuple of type
-        Virgil classes recognized as templates of this entry, so that a
-        model instance can be passed instead of the name.
+        Virgil classes recognized as templates, so an instance can be passed.
     build : callable
-        ``build(values) -> model``: the model for a dict of parameter
-        values (every path in ``params``).
+        ``build(values) -> model`` for a dict of parameter values.
     params : tuple of str
         The fitted parameter paths; the first is the angular diameter.
     start : dict
         Starting values of the parameters other than the diameter.
     priors : callable
-        ``priors(diam_lo, diam_hi) -> dict`` of group-invariant numpyro
-        priors on ``params`` (log-uniform diameter).
+        ``priors(diam_lo, diam_hi) -> dict`` of group-invariant priors.
     scan : bool
-        Whether the model is fitted by a scan of the diameter alone rather
-        than a gradient-based fit (a uniform disk's closure phases flip
-        between 0 and 180 degrees at each null, so its χ² is not smooth).
+        Fit by a scan of the diameter alone, not by gradients.
     shape : tuple of str
-        Parameters, other than the diameter, that shape the star (e.g. the
-        limb-darkening coefficients); the pipeline compares their posterior
-        widths with their prior widths.
+        Parameters other than the diameter that shape the star; their
+        posterior widths are compared with their prior widths.
     derived : callable or None
-        ``derived(samples) -> dict`` of extra reported quantities computed
-        from sampled values (for example ``u1`` and ``u2`` from ``q1`` and
-        ``q2``).
+        ``derived(samples) -> dict`` of extra reported quantities.
     parent : str or None
-        The name of the simpler model this one contains, for the model
-        comparison (None if it contains none).
+        The simpler model this one contains, for the comparison.
     check_stem : str or None
-        Stem of the names of this model's checks: ``<stem>_gain`` (its gain
-        over its parent) and ``<stem>_constrained`` (its shape parameters
-        against their priors). Defaults to ``name``.
+        Stem of the model's check names (default ``name``).
     """
 
     name: str
@@ -254,75 +241,34 @@ class StarPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Stages: ``load → overview → fit → posterior → quicklook``.
-
-    * ``load`` applies ``wavel_range`` and ``error_floor`` and writes the
-      data that are fitted to ``data/processed.oifits``.
-    * ``overview`` plots the data and their uv coverage.
-    * ``fit`` scans the uniform-disk diameter (a uniform disk's closure
-      phases flip at every null, so its χ² is not smooth and a scan is
-      the reliable fit; with ``error_scale="fit"`` its error scales are
-      profiled along the scan), then fits each other model with
-      [`fit`][virgil.fitting.fit] from the scanned diameter. With the
-      default ``model`` it compares the limb-darkened and uniform fits by
-      their Δ(−2 log L) against a BIC penalty. Lobes of the diameter are
-      compared the same way.
-    * ``posterior`` samples every fitted model with NUTS
-      ([`numpyro_model`][virgil.likelihood.numpyro_model]).
-    * ``quicklook`` writes and executes ``quicklook.ipynb``: the main
-      result is V² against spatial frequency with the model curves.
-
-    The fit is on the quoted errors unless ``error_scale="fit"``, and χ²/N
-    is always reported on the quoted errors. (With fitted error scales,
-    χ² at each model's own scales is N by construction, so lobes and
-    models are compared on −2 log L, whose normalization penalizes inflated
-    errors; on the quoted errors that is χ² up to a constant.) Priors are group-invariant:
-    log-uniform in the diameter over ``diam_range_mas`` and uniform on
-    [0, 1] in Kipping's limb-darkening coefficients ``q1``, ``q2``, which
-    cover exactly the physical quadratic laws.
-
-    ``res.model()`` is the preferred model (the limb-darkened one only if
-    its Δ(−2 log L) exceeds the BIC penalty of its two extra parameters);
-    ``res.model("uniform")`` and ``res.model("limb_darkened")`` give each.
+    Stages: ``load``, ``overview``, ``fit`` (a scan of the uniform-disk
+    diameter, then [`fit`][virgil.fitting.fit] of each other model from the
+    scanned diameter), ``posterior`` (NUTS) and ``quicklook``. By default
+    the uniform and limb-darkened fits are compared on −2 log L against a
+    BIC penalty. ``run()`` returns a ``Result``: ``res.summary["star"]``
+    (``diam_mas`` is the preferred model's), ``res.model(name)``. All settings,
+    with defaults:
+    [pipeline settings](../pipeline.md#starpipeline-settings).
 
     Parameters
     ----------
     data : OIData
         The data.
     model : str or SourceModel, optional
-        What to fit. A short name, ``"uniform"`` (a
-        [`UniformDisk`][virgil.models.UniformDisk]) or ``"limb_darkened"``
-        (a [`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk]
-        in Kipping's q1, q2), fits that model alone. An instance of one of
-        those classes fits that model, with its ``q1`` and ``q2`` as
-        starting values. By default both are fitted and compared.
+        ``"uniform"`` ([`UniformDisk`][virgil.models.UniformDisk]) or
+        ``"limb_darkened"``
+        ([`QuadraticLimbDarkenedDisk`][virgil.models.QuadraticLimbDarkenedDisk]),
+        or an instance of one (its ``q1`` and ``q2`` start the fit). Default:
+        both, compared.
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of the defaults (see ``StarPipeline.defaults()``):
-
-        - ``diam_range_mas`` (None): ``[min, max]`` of the log-uniform
-          diameter prior; by default from 0.1 times the finest λ/B (well
-          inside the unresolved regime) to 4 times the coarsest (beyond
-          the first null on every baseline), where λ/B is taken over the
-          observed samples (see ``fringe_scales``).
-        - ``n_scan`` (2000): points of the log-spaced diameter scan; each
-          lobe's minimum is then refined on 201 points within one scan step
-          either side.
-        - ``max_lobes`` (5): the most diameter lobes (separate minima of
-          the scan) fitted for each model. The best lobe gives the fit
-          and bounds the posterior's diameter prior; the table of lobes
-          is in ``summary["fit"]["models"][name]["lobes"]``.
-        - ``wavel_range`` (None): ``[min, max]`` wavelengths to keep (m).
-        - ``error_floor`` (None): absolute error floors by observable,
-          e.g. ``{"vis": 0.01, "phi": 0.005}``, as
-          [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor].
-        - ``error_scale`` ("quoted"): ``"fit"`` also fits log-uniform
-          error scales ``vis_scale`` and ``phi_scale`` on [0.1, 10].
-        - ``num_warmup``, ``num_samples``, ``num_chains`` (1000, 1000, 4),
-          ``chain_method`` ("vectorized") and ``seed`` (0): NUTS.
-        - ``batch_size`` (None): scan batch size.
-        - ``quicklook_execute`` (True): execute the quicklook notebook.
+        Overrides of ``StarPipeline.defaults()``. The most used:
+        ``diam_range_mas`` (``[min, max]`` in mas, the log-uniform diameter
+        prior; default from a tenth of the finest λ/B to four times the
+        coarsest), ``n_scan``
+        (2000), ``max_lobes`` (5), ``error_scale`` (``"quoted"`` or
+        ``"fit"``). Priors and errors: [conventions](../conventions.md).
 
     Examples
     --------
@@ -511,12 +457,7 @@ def _freq_max(data):
 
 
 def _first_null(model, diam_mas, n=_NULL_POINTS):
-    """θB/λ at the first sign change of the model visibility.
-
-    The visibility is evaluated on a one-dimensional grid of B/λ out to
-    θf = 4 (about 3.3 times the uniform-disk null). Falls back to the
-    uniform-disk value when the model has no null in range.
-    """
+    """θB/λ at the model's first visibility sign change (else uniform-disk)."""
     scale = float(rad2mas) / float(diam_mas)  # f for θf = 1
     grid = onp.linspace(1e-3, _NULL_REACH, n) * scale
     vis = onp.real(onp.asarray(model.model(grid, 0.0 * grid, 1.0)))
@@ -559,39 +500,16 @@ def _uniform_loglike(data, diameters, batch_size):
 
 @in_float64
 def _scan(data, lo, hi, n_scan, batch_size):
-    """Uniform-disk Δ(−2 log L) on a log-spaced diameter grid.
-
-    Returns
-    -------
-    tuple
-        ``(axis, delta)``: the diameters and the excess of −2 log L over
-        its minimum on the grid (Δχ² on the quoted errors).
-    """
+    """Uniform-disk scan: ``(axis, delta)``, the diameters and Δ(−2 log L)."""
     axis = onp.geomspace(lo, hi, n_scan)
     ll = _uniform_loglike(data, axis, batch_size)
     return axis, 2.0 * (onp.nanmax(ll) - ll)
 
 
 def _find_lobes(axis, delta, lo, hi, cap, *, separation=_LOBE_SEPARATION):
-    """The scan's lobes: separate minima of the diameter scan.
+    """The ``cap`` lowest separate minima of the scan, as lobe dicts.
 
-    Past the first null the squared visibility repeats in lobes (and
-    closure phases flip at its zeros), so the scan has several separate
-    minima. A point is a minimum if it is the lowest within ``separation``
-    (fractionally) either side; the ``cap`` lowest are kept, and the lobe
-    boundaries are the geometric midpoints between neighbouring minima
-    (``lo`` and ``hi`` at the ends).
-
-    Returns
-    -------
-    list[dict]
-        By increasing diameter: ``{"diam": scan minimum, "scan_delta_chi2":
-        its excess over the best, "bounds": (low, high)}``.
-
-    Raises
-    ------
-    RuntimeError
-        If the scan is not finite anywhere.
+    Raises ``RuntimeError`` if the scan is not finite anywhere.
     """
     if not onp.isfinite(delta).any():
         raise RuntimeError(
@@ -635,11 +553,7 @@ def _refine(data, centre, lo, hi, step, batch_size):
 
 
 def _scan_lobes(data, lo, hi, n_scan, max_lobes, batch_size):
-    """Scan, find and refine: ``(axis, delta, lobes)``.
-
-    The lobes are those of ``_find_lobes``, each with its diameter refined
-    on the uniform disk's likelihood.
-    """
+    """Scan, find and refine the lobes: ``(axis, delta, lobes)``."""
     axis, delta = _scan(data, lo, hi, n_scan, batch_size)
     lobes = _find_lobes(axis, delta, lo, hi, max_lobes)
     step = (hi / lo) ** (1.0 / (n_scan - 1))
@@ -659,24 +573,19 @@ class LobeFit:
     ----------
     model : SourceModel
         The fitted model.
-    values : dict
-        Fitted values by path (and ``noise.<name>`` for error scales).
+    values, scales : dict
+        Fitted values by path, and the fitted error scales (empty on the
+        quoted errors).
     info : dict
         The fit's diagnostics.
-    chi2 : float
-        χ² on the quoted errors.
-    chi2_fitted : float
-        χ² at the fitted error scales (N by construction at the MAP; a
-        diagnostic only, not a score).
+    chi2, chi2_fitted : float
+        χ² on the quoted errors, and at the fitted scales (N by
+        construction; a diagnostic, not a score).
     m2loglike : float
-        −2 log L at the fitted error scales: the score that compares lobes
-        and models.
-    scales : dict
-        The fitted error scales by name (empty on the quoted errors).
-    priors : dict
-        The priors the lobe was fitted with.
-    lobe : dict
-        The lobe (``diam``, ``bounds``) it was fitted in.
+        −2 log L at the fitted scales, the score that compares lobes and
+        models.
+    priors, lobe : dict
+        The priors, and the lobe (``diam``, ``bounds``) it was fitted in.
     warnings : list
         Warnings the fit raised.
     """
@@ -704,15 +613,7 @@ def _diameter_grid(centre, priors):
 
 
 def _fit_scanned(p, entry, start, grid, noise):
-    """A scan model's fit: the lobe's diameter, error scales profiled.
-
-    Without ``noise`` the lobe's refined diameter is the fit. With fitted
-    error scales the scales are profiled analytically at each diameter of
-    ``grid`` (see ``_common._profiled_scales``); the diameter of least
-    −2 log L is then refined between its grid neighbours, with the scales
-    re-profiled at each trial, so the fit is not limited to the grid
-    spacing (a gradient fit of the non-smooth χ² would stall).
-    """
+    """A scan model's fit: the lobe's diameter (scales profiled)."""
     info = {
         "method": "scan",
         "converged": True,
@@ -727,6 +628,8 @@ def _fit_scanned(p, entry, start, grid, noise):
     best = int(onp.nanargmin(m2loglike))
     low = grid[max(best - 1, 0)]
     high = grid[min(best + 1, grid.size - 1)]
+    # Refine between grid neighbours rather than a gradient fit, which would
+    # stall on the non-smooth chi-squared.
     diam, m2, scales = _refine_diameter(
         entry.build, start, data, low, high, noise
     )
@@ -740,20 +643,15 @@ def _fit_scanned(p, entry, start, grid, noise):
 
 
 def _fit_from_starts(p, entry, priors, start, grid, noise):
-    """A gradient fit from the lobe's diameter and from the best of a grid.
-
-    A limb-darkened star seen past its first null has closure phases that
-    flip at visibility nulls, so χ² is a union of thin slivers and a local
-    fit started on the wrong one stalls at a huge χ². Start from the scan
-    diameter and from the best of a small grid of diameters with the
-    starting shape, and keep the better fit.
-    """
+    """A gradient fit from the lobe's diameter and the grid's best."""
     from ..fitting import fit
 
     data = p.processed
     m2loglike, _ = _m2loglike_grid(
         entry.build, start, data, grid, None, p.settings["batch_size"]
     )
+    # Two starts: past a null chi-squared is a union of thin slivers, and a
+    # local fit started on the wrong one stalls.
     starts = [start["diam"], float(grid[int(onp.nanargmin(m2loglike))])]
     best = None
     for diam in dict.fromkeys(starts):
@@ -821,11 +719,7 @@ def _choose_lobe(fits):
 
 
 def _lobe_table(fits, n):
-    """One row per lobe, with its −2 log L above the best lobe's.
-
-    ``delta_chi2`` is that difference (the Δχ² on the quoted errors, up to
-    the constant that cancels), kept under its older name.
-    """
+    """One row per lobe, with its −2 log L above the best lobe's."""
     top = _choose_lobe(fits).m2loglike
     return [
         {
@@ -900,25 +794,7 @@ def _compare(registry, reports, child, n):
 
 
 def _choose_model(reports, registry, n):
-    """The preferred model, by walking down the chain of parents.
-
-    Every fitted model with a fitted parent is compared with it (the gain
-    in −2 log L against ``n_extra ln N``). The walk starts at the fitted
-    model that has no fitted parent (the one of least −2 log L if there
-    are several) and moves to a child while that child is preferred over
-    the model it contains, taking the largest gain among children.
-
-    With more than two nested models, a deeper model C is reached only
-    through a preferred intermediate B: C is never compared with the root
-    A directly, so a C that would beat A but not B is not chosen.
-
-    Returns
-    -------
-    tuple
-        ``(best, decisive, comparisons)``: the name of the preferred model,
-        the comparison that decided it (the last one made on the walk; None
-        if no model has a fitted parent) and all of them.
-    """
+    """Walk down the chain of parents to ``(best, decisive, comparisons)``."""
     comparisons = [
         _compare(registry, reports, name, n)
         for name in reports
@@ -929,6 +805,8 @@ def _choose_model(reports, registry, n):
         roots, key=lambda k: _finite_or(reports[k]["m2loglike"], math.inf)
     )
     decisive = None
+    # Deliberate: a deeper model is reached only through a preferred
+    # intermediate, never compared with the root directly.
     while True:
         children = [c for c in comparisons if c["simple"] == best]
         if not children:
@@ -1010,13 +888,8 @@ def _fit(p):
 
 
 def _bound_fractions(entry, priors, noise, samples):
-    """Fraction of samples within 1% of the range of either prior bound.
-
-    Covers the sampled priors except the entry's shape parameters (whose
-    priors are meant to matter and are judged by the ``constrained`` check
-    instead), and every fitted error scale ``noise.<term>``. Parameters
-    whose prior has no finite edges are left out.
-    """
+    """Fraction of samples within 1% of either prior bound."""
+    # Shape priors are meant to matter; the ``constrained`` check judges them.
     sampled = {k: v for k, v in priors.items() if k not in entry.shape}
     sampled.update({f"noise.{k}": v for k, v in (noise or {}).items()})
     return _prior_bounds(sampled, samples)
@@ -1033,22 +906,9 @@ def _rewarn(caught):
 def _wall_probe(
     entry, data, samples, priors, n=_WALL_DRAWS, radius=_WALL_RADIUS, seed=0
 ):
-    """How much of the posterior's surroundings is a hard wall.
+    """Fraction of random steps of ``radius`` posterior sd that hit a χ² wall.
 
-    A closure phase of a centrosymmetric star flips by π wherever a model
-    visibility changes sign, which costs about 4/σ² in χ² (5e4 at 0.5°).
-    The likelihood is then exact-zero outside a cell of the parameters, and
-    NUTS integrators that cross its wall are rejected and flagged
-    divergent. This probes it: from ``n`` posterior draws it steps
-    ``radius`` posterior standard deviations in a random direction, and
-    counts the steps that raise χ² by more than ``_WALL_JUMP``, which in a
-    smooth posterior would raise it by a few.
-
-    Returns
-    -------
-    dict
-        ``{"radius_sd", "n", "exposed"}``, with ``exposed`` the fraction of
-        the ``n`` valid steps that hit a wall.
+    Returns ``{"radius_sd", "n", "exposed"}``; a hit is χ² rising > ``_WALL_JUMP``.
     """
     names = list(entry.params)
     flat = {k: onp.asarray(samples[k], dtype=float).ravel() for k in names}

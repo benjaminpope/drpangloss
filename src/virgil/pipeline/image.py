@@ -52,28 +52,17 @@ class ImagingPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The image fits the data on the quoted errors; it does **not** promise
-    that the morphology is right (contest reconstructions that passed every
-    data-fidelity check were judged unusable). Multi-channel data give one
-    grey image.
-
-    Stages: ``load → overview → star → hyperparameters → members → combine
-    → quicklook``. ``overview`` sets the grid; ``star="auto"`` compares fits
-    with and without a star by log evidence (|ΔlogZ| ≥ ``star_threshold``
-    decides); ``hyperparameters`` picks the Gaussian-process σ and ℓ by the
-    Laplace evidence and saves ``models/best``; ``members`` fits ``members``
-    images at those **shared** hyperparameters, varying only the start, the
-    pixel scale and the field (1 or 1.5 times), each saved in
-    ``members/``; ``combine`` keeps the members that fit V² and closure
-    phases (``ensemble.combine``), and writes ``images/mean.fits``,
-    ``images/sigma.fits`` and the diagnostics of the mean image. Every χ²/N
-    is on the quoted errors. The sigma map is the spread of the members: with
-    shared hyperparameters it excludes hyperparameter uncertainty (and any
-    error every member shares).
-
-    To spread the members over cluster tasks, ``run(through="hyperparameters")``,
-    then ``run_member(k)`` for ``k`` in ``range(members)`` in any order or
-    process, then ``run()``.
+    A Gaussian-process image on the quoted errors; a good fit does **not**
+    promise that the morphology is right. Multi-channel data give one grey
+    image. Stages: ``load``, ``overview`` (the grid), ``star`` (with or
+    without a point source, by log evidence), ``hyperparameters`` (σ and ℓ by
+    Laplace evidence), ``members`` (``members`` fits at those shared
+    hyperparameters), ``combine`` (``images/mean.fits`` and ``sigma.fits``)
+    and ``quicklook``. To spread the members over tasks, call
+    ``pipeline.run(through="hyperparameters")``, then ``pipeline.run_member(k)``
+    for ``k`` in ``range(members)``, then ``pipeline.run()``, which returns the
+    ``Result`` (``res.image()``). All settings, with defaults:
+    [pipeline settings](../pipeline.md#imagingpipeline-settings).
 
     Parameters
     ----------
@@ -84,16 +73,10 @@ class ImagingPipeline(_Pipeline):
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of ``ImagingPipeline.defaults()``: ``oversample``,
-        ``field_fwhms``, ``field_mas``, ``max_npix`` (the grid); ``star``
-        (``"auto"``, True, False) and ``star_threshold``; ``sigmas``,
-        ``lengths_beam`` and ``grid_growths`` (the evidence grid);
-        ``members`` (default 8) and ``member_grids`` (an evidence grid per
-        member instead of the shared hyperparameters: slow, for cluster
-        runs);
-        ``method`` and ``max_steps`` (the optimizer of
-        [`fit`][virgil.fitting.fit]); ``seed``, ``wavel_range``,
-        ``error_floor`` and ``quicklook_execute``.
+        Overrides of ``ImagingPipeline.defaults()``. The most used: ``star``
+        (``"auto"``, or True or False to force the point source on or off),
+        ``members`` (8), ``field_fwhms`` (6), ``oversample`` (3), ``max_npix``
+        (128, most pixels per side).
 
     Examples
     --------
