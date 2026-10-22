@@ -44,6 +44,8 @@ anything before 1.0 may change between minor versions.
 ### Changed
 
 - `fit(..., precondition="diag")` scales a `MaxEntropy` pixel by its entropy metric `weight * b` (Skilling & Bryan 1984) in place of the data and prior curvature there, and the probes of `gauss_newton_diag` are Rademacher (were Gaussian); on the 41² VLTI-like L-curve this takes 12265 → 4527 steps at w = 0.1 in float64 (one run). `MaxEntropy.residuals` lets `method="lm"` fit it (float64 only: float32 LM stalls at weak weights, so L-BFGS stays the default for entropy).
+- `OrbitPipeline(epochs, output=...)`: `output` is keyword-only, as for the other pipelines; a positional `output` still works until 0.5, with a `FutureWarning`.
+- `write_oifits` given the flat record that `read_oifits` returns raises a `ValueError` saying to write `OIData(record)` (it was a `KeyError`). The `OIData` docstring documents all five parameters.
 - `import virgil` no longer imports matplotlib: `virgil.plotting`, `virgil.oifits`, `read_oifits` and `write_oifits` load on first use (`from virgil import read_oifits` is unchanged). astropy is still imported, through `oidata`.
 - Removed the stray `virgil.name` string (it was never in `__all__` or the docs; use `virgil.__version__`).
 - `virgil.radio_clean.clean` (provisional, no shim): `scales` is now `scales_mas`, in mas as in `imaging.clean` (was pixels); `deconvolver="clark"` is removed (it was identical to `"hogbom"`) and raises a `ValueError` naming it. `npix` must still be odd; the docstring says so.
@@ -83,6 +85,7 @@ anything before 1.0 may change between minor versions.
 
 - The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
 - The pipelines inline 20 single-use private helpers (`_mcmc`, `_sample_stats`, `_wrap`, `_fmt`, `_closing`, the posterior-cell builders, `_n_trials`, `_derived_diagnostics`, `_search_checks`, `_parse_value`, `_robustness_of` and the star-pipeline wrappers). No change in `summary.json`. `tests/test_pipeline_orbit.py` is split into four files (the golden blind runs in three) so CI can shard it.
+- `pipeline/disk.py` inlines five single-use private helpers (`_wavel0`, `_n_free`, `_mackay_scale`, `_best_at_bound`, `_log_prior`). No change in `summary.json`.
 
 ## 0.4.0 (2026-10-18)
 

@@ -201,7 +201,7 @@ def _select_insname(tables, insname):
                 f"{fringe_tracker} and science-channel tables {science}, "
                 "which measure the same baselines and must not be merged. "
                 "Choose with insname=, e.g. insname="
-                f"{science[0]!r} (or both polarisations, {science!r})."
+                f"{science[0]!r} (or both polarizations, {science!r})."
             )
         return tables
     wanted = {insname} if isinstance(insname, str) else set(insname)
@@ -1323,7 +1323,8 @@ def write_oifits(data, filename, overwrite=True):
     TypeError
         If `data` is neither an `OIData` nor a mapping.
     ValueError
-        If an `OIData` has a layout OIFITS cannot hold (the message says
+        If `data` is the flat record `read_oifits` returns (write
+        `OIData(record)` instead), or an `OIData` has a layout OIFITS cannot hold (the message says
         which): extra observables, gains, projected or uv-grid data, a station
         index above 32767. No file is written.
     KeyError
@@ -1345,6 +1346,11 @@ def write_oifits(data, filename, overwrite=True):
                 f"These data cannot be written as OIFITS: {reason}."
             )
         data = tables
+    elif "OI_WAVELENGTH" not in data and {"u", "vis"} <= set(data):
+        raise ValueError(
+            "This mapping is the flat record that read_oifits returns, not "
+            "a dictionary of OIFITS tables. Write OIData(record) instead."
+        )
     path = pathlib.Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
     build_hdulist(data).writeto(path, overwrite=overwrite)

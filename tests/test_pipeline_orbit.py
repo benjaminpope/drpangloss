@@ -65,7 +65,7 @@ def nights():
 # --- the contract -----------------------------------------------------------
 
 API = {
-    "OrbitPipeline": "(epochs, output='run', **settings)",
+    "OrbitPipeline": "(epochs, *, output='run', **settings)",
     "OrbitPipeline.from_oifits": (
         "(paths, metadata=None, *, output='run', **settings)"
     ),
@@ -727,6 +727,12 @@ def test_the_robustness_check_is_skipped_below_three_nights_or_when_off(
     )
     assert "off" in orbit_module._robustness(off, result, "orbit")["skipped"]
     assert _checks.night_dropped({"skipped": "x"}).status == "pass"
+
+
+def test_a_positional_output_warns_and_still_works(nights, tmp_path):
+    with pytest.warns(FutureWarning, match="output"):
+        pipeline = OrbitPipeline(nights, tmp_path / "pos", **TINY)
+    assert pipeline.output == tmp_path / "pos"
 
 
 def test_resume_skips_completed_stages(nights, tmp_path, monkeypatch):
