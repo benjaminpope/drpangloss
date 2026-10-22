@@ -13,8 +13,15 @@ hide_excluded = true
 [claude]
 # The main checkout and its worktrees (.claude/worktrees/*), the sessions
 # opened in them from other projects, and the old sibling worktrees
-# (~/code/drpangloss-*).
-projects = ["drpangloss"]
+# (~/code/drpangloss-*). After the rename, ~/code/virgil: its project
+# directory (the trailing space ends the match, as the next field follows
+# it) and its worktrees, but not the separate virgil-validation and
+# virgil-vlti repositories.
+projects = [
+    "drpangloss",
+    "-Users-benpope-code-virgil ",
+    "-Users-benpope-code-virgil--claude-worktrees-",
+]
 
 [vscode]
 # Single-folder workspaces on the repository. The multi-root workspace that
