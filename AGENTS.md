@@ -90,7 +90,8 @@ beyond published practice gets an entry in a design-note register (the radio one
 - a status: *established*, *derived* or *novel / experimental*.
 
 Novel or experimental methods are opt-in, never defaults, until virgil-validation has
-validated them. Public docs do not link `design/` notes.
+validated them. The rule binds new entries; gaps in existing ones are listed in the register
+as to-do. Public docs do not link `design/` notes.
 
 ## Instrument-specific work
 

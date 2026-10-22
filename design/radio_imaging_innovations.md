@@ -159,9 +159,11 @@ marked *(unverified)*. Corrections are listed at the end.
     Müller & Lobanov 2023, A&A 672, A26 (`2023A&A...672A..26M`).
 
 ### B5. Exact Toeplitz (dirty-beam) likelihood with free offsets (PR 1 in progress)
-- **What:** χ² = g²IᵀBI − 2gIᵀD + C, where B is the dirty beam per spectral window (a convolution done with
-  2×-padded FFTs) and D the dirty image. Both are precomputed once, so each evaluation is independent of the
-  number of visibilities: an estimated 5–10 ms against 0.45–0.5 s, still to be measured.
+- **What:** χ² = Σ_k [g_k² IᵀB_k I − 2 g_k IᵀD_k(Δ_k)] + C, where k runs over (observation, spectral window),
+  g_k is the observation's gain, B_k the dirty beam (a convolution done with 2×-padded FFTs) and D_k the dirty
+  image. The σ profiling needs χ² for each k too. All B_k and D_k are precomputed once, so each evaluation is
+  independent of the number of visibilities but grows with the number of groups k: an estimated 5–10 ms against
+  0.45–0.5 s, still to be measured.
 - **Free per-observation offsets, exactly.**
   - The beam term does not depend on the offsets, because the phase ramp cancels in |M|².
   - The cross term needs D at shifted positions. These are evaluated from the stored NUFFT spread grid, with
@@ -173,7 +175,8 @@ marked *(unverified)*. Corrections are listed at the end.
     windowed sinc to 2e-6–3e-9.
 - **Also planned:** a fitted spectral index through Taylor-moment beams, and exact Hessian-vector products
   for truncated Newton-CG.
-- **Where:** design/toeplitz_likelihood.md; the toeplitz-core worker (virgil PR to come).
+- **Where:** not yet on `main`: the design note (`design/toeplitz_likelihood.md`) and the virgil PR are with the
+  toeplitz-core worker, still to come.
 - **Status:** derived. The Toeplitz normal operator is established. The exact offsets are a special case of the
   type-3 NUFFT (see "Prior-art search" below); we found no published use of the combination.
   - Derivation, in two lines. With spread grid ĝ_l, the dirty image at pixel x is D(x) = Σ_l ĝ_l e^{ilx}/ψ̂(x)
@@ -242,7 +245,7 @@ marked *(unverified)*. Corrections are listed at the end.
   (Prentice-Hall; SIAM reissue doi:10.1137/1.9781611977523); Higham 2002, *Accuracy and Stability of Numerical
   Algorithms*, 2nd ed., SIAM, doi:10.1137/1.9780898718027.
 
-### B7. Marginalized antenna gains (other session; design/antenna_gains.md)
+### B7. Marginalized antenna gains (other session; `design/antenna_gains.md`, branch `claude/radio-antenna-gains-42de72`, not yet on `main`)
 - **What:** complex antenna gains per solution interval, marginalized with a Laplace approximation about a
   per-interval Gauss–Newton solution, with the log-determinant in the normalization. Stage 2 makes them
   correlated in time with a state-space Gaussian process (Kalman/RTS).
@@ -269,7 +272,7 @@ marked *(unverified)*. Corrections are listed at the end.
 
 ### B8. Ordered-subsets / minibatch acceleration (other session)
 - **What:** cycle through subsets of the data per step, as in OS-EM.
-- **Status:** established; not built. design/ordered_subsets.md is "scoping only, nothing built" (2026-10-23), and
+- **Status:** established; not built. the scoping note `design/ordered_subsets.md` (not yet on `main`) is "scoping only, nothing built" (2026-10-23), and
   proposes it only for joint gain and image fitting.
 - **Traceability:** no PR, no test. vv check: none yet.
 - **Prior art:** Hudson & Larkin 1994, IEEE Trans. Med. Imaging 13, 601 (`1994ITMI...13..601H`); SVRG, Johnson &
@@ -294,6 +297,13 @@ marked *(unverified)*. Corrections are listed at the end.
 | B6 float32 δV loss | derived; experimental | Wilkinson 1963; Higham 2002 | none on main | none yet |
 | B7 marginalized gains | established (Stage 1), derived (Stage 2); not built for radio | Broderick+ 2020; Arras+ 2019; Hartikainen & Särkkä 2010 | none for radio (AMI: `test_marginal_gains.py`) | none yet |
 | B8 ordered subsets | established; not built | Hudson & Larkin 1994; Johnson & Zhang 2013 | none | none yet |
+
+### Provenance gaps (to do)
+
+The rule in AGENTS.md applies to new entries. These references for code already on `main` are not yet in
+`references/provenance.toml` (checked 2026-10-23), and the modules lack a `Source:` line: Zawadzki et al. 2023
+and Barnett et al. 2019 (B1, `nufft`); Martens 2010, Schraudolph 2002 and Cornwell & Evans 1985 (B2); Cornwell &
+Wilkinson 1981 and Pawitan 2001 (B3). A follow-up PR adds them.
 
 ## C. Comparison with the state of the art
 
