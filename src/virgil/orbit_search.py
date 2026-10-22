@@ -1008,58 +1008,43 @@ def score_orbits(
 ):
     """Score candidate orbits on all epochs, with the flux shared.
 
-    Each candidate's companion is placed at every sample's own time and the scene
-    (linear in the companion's flux) is evaluated for a unit companion once. The
-    score is the scale-marginalized log likelihood of
-    [`marginal_loglike`][virgil.epochs.marginal_loglike] (or ``-chi2/2`` with
-    ``scales="quoted"``), with gains and closure-phase offsets profiled
-    analytically, each band's flux integrated out under a log-uniform prior and
-    the extra terms added. Details: [`virgil.orbit_search`][virgil.orbit_search].
+    Each companion is placed at every sample's own time and the scene (linear in
+    the flux) evaluated once for a unit companion. The score is the
+    scale-marginalized log likelihood with the flux integrated out and the
+    extra terms added ([details][virgil.orbit_search]).
 
     Parameters
     ----------
     model : callable
-        ``model(orbit, flux)`` returns the time-dependent scene, e.g.
+        ``model(orbit, flux)`` returns the scene, e.g.
         [`OrbitalBinary`][virgil.models.OrbitalBinary]. It must be linear in
-        ``flux`` and the scene at flux 0 must not depend on the orbit (both are
-        checked on the first and last candidates).
+        ``flux`` and independent of the orbit at flux 0 (both are checked).
     epochs : Epochs
-        The data. Datasets without sample times are evaluated at ``Epochs.times``.
+        The data; datasets without sample times use ``Epochs.times``.
     orbits : sequence or orbit
-        A list of orbits (or ``starting_orbits`` pairs), or one orbit with a leading
-        candidate axis; one class and ``t_ref`` (times are kept in float64).
+        A list of orbits (or ``starting_orbits`` pairs), or one orbit with a
+        leading candidate axis; one class and ``t_ref``.
     shared : SharedFlux, optional
-        Flux grids, bands and slopes (default one band, f in [1e-3, 1], no slope).
+        Flux grids, bands and slopes (default one band, f in [1e-3, 1]).
     terms : sequence, optional
         Extra log likelihood terms: [`RVData.term`][virgil.orbits.RVData.term],
         [`PositionData.term`][virgil.orbits.PositionData.term], or callables
-        ``orbit -> log likelihood``, each with its own error model.
-    scales : {"marginal", "quoted"}, optional
-        Integrate each dataset's error scales out (default) or use the quoted errors.
-    dof, s_max : optional
-        As for ``marginal_loglike``. ``s_max`` defaults to 5, which keeps the score
-        finite (``rank_orbits`` uses None: no flux to profile); a candidate needing
-        more inflation is penalized and flagged in ``OrbitScores.scale_at_bound``.
-    batch_size : int, optional
-        Candidates per ``jax.lax.map`` step (default about a million model
-        visibilities); never changes the result.
-    max_evaluations : int, optional
-        Budget in score evaluations, predicted first; over budget raises
-        ``ValueError``.
-    dtype : {"float64", "float32"}, optional
-        Precision (default float64, in a local ``jax.enable_x64`` context).
+        ``orbit -> log likelihood``.
+    scales, dof, s_max : optional
+        As for ``rank_orbits``; ``s_max`` defaults to 5, and a candidate needing
+        more is flagged in ``OrbitScores.scale_at_bound``.
+    batch_size, max_evaluations, dtype : optional
+        Candidates per step (never changes the result); a budget in score
+        evaluations (over it raises ``ValueError``); precision.
 
     Returns
     -------
     OrbitScores
-        In the order of ``orbits``; rank with ``OrbitScores.order()``.
+        In the order of ``orbits``; rank with ``.order()``.
 
     Examples
     --------
-    >>> scores = score_orbits(OrbitalBinary, epochs, candidates,
-    ...                       shared=SharedFlux((0.01, 1.0, 16)))  # doctest: +SKIP
-    >>> best = scores.order()[0]  # doctest: +SKIP
-    >>> scores.flux[best], scores.flux_err[best]  # doctest: +SKIP
+    >>> scores = score_orbits(OrbitalBinary, epochs, candidates)  # doctest: +SKIP
     """
     if not isinstance(epochs, Epochs):
         raise TypeError(
