@@ -10,7 +10,7 @@ residual, Högbom or multi-scale minor cycles, natural, uniform or Briggs
 weighting with a `uvtaper`, a restoring beam fitted to the PSF, and FITS products
 with the headers `tclean` writes. It claims no parity with CASA or WSClean:
 the algorithms are the published ones, and the independent comparison with
-DSHARP's image of IM Lup is in
+DSHARP's image of IM Lup is planned in
 [virgil-validation](https://github.com/benjaminpope/virgil-validation).
 
 ```python

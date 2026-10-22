@@ -53,6 +53,23 @@ def test_fit_beam_recovers_a_gaussian(n, pa):
     assert abs((pa_fit - pa + 90) % 180 - 90) < 1.0
 
 
+def test_fit_beam_position_angle_from_explicit_sky_arithmetic():
+    # elongated 30 deg East of North, built from (east, north) directly
+    rr, cc = onp.indices((N, N), dtype=float)
+    east, north = C - cc, C - rr  # column 0 is East, row 0 is North
+    pa = onp.deg2rad(30.0)
+    along = east * onp.sin(pa) + north * onp.cos(pa)
+    across = east * onp.cos(pa) - north * onp.sin(pa)
+    psf = onp.exp(-4 * onp.log(2) * ((along / 9.0) ** 2 + (across / 5.0) ** 2))
+    assert fit_beam(psf, 1.0)[2] == pytest.approx(30.0, abs=1.0)
+    # north-south baselines only: the beam is long in the East direction
+    u = onp.zeros(40)
+    v = onp.linspace(-3e5, 3e5, 40)
+    one = ComplexVisData.from_arrays(u, v, onp.ones(40, complex), 1.0, 230e9)
+    res = clean(one, N, S, niter=0)
+    assert abs(res.beam[2] - 90.0) < 5.0
+
+
 def test_point_source_is_recovered():
     data = _data([(2.0, C + 5, C - 7)])
     res = clean(data, N, S, niter=400, threshold=1e-3)
@@ -133,11 +150,18 @@ def test_taper_beam_peaks_at_one_and_matches_dirty_beam():
 
 def test_auto_mask_finds_the_source_and_nsigma_stops():
     data = _data([(1.0, C - 6, C + 8)])
+    rng = onp.random.default_rng(1)
+    noise = 0.02 * (
+        rng.normal(size=data.vis.shape) + 1j * rng.normal(size=data.vis.shape)
+    )
+    data = ComplexVisData.from_arrays(
+        data.u, data.v, onp.asarray(data.vis) + noise, 1.0, 230e9
+    )
     res = clean(data, N, S, niter=500, usemask="auto-multithresh", nsigma=3.0)
     assert res.mask[int(C - 6), int(C + 8)]
     assert res.mask.sum() < 0.2 * N * N
     assert res.model.sum() == pytest.approx(1.0, rel=0.05)
-    assert res.stop in ("nsigma", "no_progress", "niter")
+    assert res.stop == "nsigma"
 
 
 def test_auto_mask_seeds_the_peak_when_the_psf_sidelobe_is_high():

@@ -78,6 +78,7 @@ def fit_beam(psf, pixel_scale_mas, psfcutoff=0.35):
     r0, r1 = max(rows.min() - 1, 0), min(rows.max() + 2, psf.shape[0])
     c0, c1 = max(cols.min() - 1, 0), min(cols.max() + 2, psf.shape[1])
     sub = psf[r0:r1, c0:c1]
+    lobe_sub = lobe[r0:r1, c0:c1]
     # circular start from the lobe's area at the cutoff
     fwhm = (
         2.0
@@ -86,7 +87,7 @@ def fit_beam(psf, pixel_scale_mas, psfcutoff=0.35):
     )
 
     def resid(p):
-        return (_gaussian(sub.shape, p[:2], *p[2:]) - sub).ravel()
+        return ((_gaussian(sub.shape, p[:2], *p[2:]) - sub) * lobe_sub).ravel()
 
     best = None
     for pa0 in (0.0, 45.0, 90.0, 135.0):  # the angle is ill-conditioned
@@ -107,6 +108,9 @@ def fit_beam(psf, pixel_scale_mas, psfcutoff=0.35):
 def restore(model, residual, beam, pixel_scale_mas):
     """Restored image in Jy/beam: ``model`` convolved with ``beam``, plus the
     residual.
+
+    The kernel is built here, peak 1 as Jy/beam needs, to keep this module
+    off ``imaging``.
 
     Parameters
     ----------

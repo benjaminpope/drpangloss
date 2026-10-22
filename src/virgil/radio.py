@@ -818,7 +818,7 @@ class ComplexVisData(eqx.Module):
             CASA's ``uvtaper``: weights times the Fourier transform of a
             Gaussian of that FWHM (a float is circular; ``pa_deg`` is East of
             North). Applied after the density weights, so the beam is the
-            natural one convolved with the Gaussian.
+            weighted beam convolved with the Gaussian.
 
         Returns
         -------
