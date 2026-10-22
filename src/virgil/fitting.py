@@ -676,8 +676,8 @@ def fit(
         Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps per LM step (above 200
-        coordinates); Adam's rate.
+        L-BFGS history (default 100, cut to keep it under 1 GiB); CG steps
+        per LM step (above 200 coordinates); Adam's rate.
     dtype : {"float64", "float32"}, optional
         Precision; see [common arguments](../common_arguments.md#dtype).
     likelihoods, time_limit, progress : sequence, float and callable, optional
