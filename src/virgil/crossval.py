@@ -141,50 +141,46 @@ def cv_task(
     setting : float or JSON-friendly
         The hyperparameter value (e.g. a regularization weight λ).
     k : int
-        The held-out fold.
+        The held-out fold label (a value in ``fold``).
     fold : (N,) int array
-        The fold of every point.
+        The fold label of every point, e.g. from
+        [`dartboard_folds`][virgil.radio.dartboard_folds]; one task scores
+        one fold, so the caller loops over folds and settings.
     fit_kwargs : callable
-        ``fit_kwargs(setting)`` returns the keyword arguments of
-        [`fit`][virgil.fitting.fit] that depend on the setting and not on the
-        mask: ``model``, ``priors``, ``data``, and for example
-        ``regularizers=[MaxEntropy(setting)]``. Give new values as array
-        leaves (a regularizer's weight, a prior's scale), not as new static
-        structure, so that every setting reuses one compilation.
+        ``fit_kwargs(setting)`` returns the mask-independent arguments of
+        [`fit`][virgil.fitting.fit] (``model``, ``priors``, ``data=()``,
+        ``regularizers=...``). Vary the setting through array leaves (a
+        regularizer's weight, a prior's scale), not static structure, so
+        every setting reuses one compilation.
     make_term : callable
         ``make_term(mask)``: the likelihood term of the points where ``mask``
-        is true (see the module docstring). Use the same function and
-        arguments but the mask for every task.
+        is true (fitted on the training mask, scored on the held-out one);
+        pass ``data=()`` in ``fit_kwargs``, or the held-out points leak into
+        the fit. Same function for every task.
     init : dict, optional
-        Starting values for the fit, the same for every task (e.g. from a
-        fit to all the data).
+        Starting values for the fit, the same for every task.
     groups : (N,) int array, optional
-        A label per point (uv annulus, spectral window): the record then
-        breaks the held-out sums down by group.
+        A label per point (uv annulus, spectral window): the record breaks the
+        held-out sums down by group.
     unit_scale : callable, optional
         ``unit_scale(values)`` returns the fitted values with every error
-        scale set to 1, for the raw χ² of the held-out points; the record's
-        ``chi2`` is ``None`` without it.
+        scale set to 1, for the raw χ²; ``chi2`` is ``None`` without it.
     fit_ft, score_ft : dict, optional
-        [`set_ft_defaults`][virgil._geometry.set_ft_defaults] settings (e.g.
-        ``{"eps_f64": 1e-6}`` and ``{"eps_f64": 1e-12}``) in force while
-        fitting and while scoring; the previous defaults are restored
-        afterwards. Use the same settings in every task of a process: they
-        are read when a function is first traced.
+        [`set_ft_defaults`][virgil._geometry.set_ft_defaults] settings in force
+        while fitting and scoring. Keep them the same in every task of a
+        process: they are read when a function is first traced.
     dtype : {"float64", "float32"}, optional
-        Precision of the fit and of the scoring.
+        Precision of the fit and the scoring.
     fit_options : dict, optional
-        Further arguments of ``fit`` (``method``, ``max_steps``,
-        ``time_limit``, ``progress``, ...).
+        Further arguments of ``fit`` (``method``, ``max_steps``, ...).
 
     Returns
     -------
     dict
         JSON-friendly record: ``setting``, ``fold``, ``score`` (−ln L of the
-        held-out points), ``chi2`` (raw, s = 1), ``n_test`` and ``n_train``
-        (points), ``loss``, ``converged``, ``steps`` and ``stop`` of the fit,
-        and, with ``groups``, ``group_labels``, ``group_score``,
-        ``group_chi2`` and ``group_n``.
+        held-out points), ``chi2`` (raw, s = 1), ``n_test``, ``n_train``,
+        ``loss``, ``converged``, ``steps``, ``stop``, and with ``groups``
+        ``group_labels``, ``group_score``, ``group_chi2``, ``group_n``.
     """
     fold = onp.asarray(fold)
     n = fold.size

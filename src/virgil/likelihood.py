@@ -741,44 +741,36 @@ def numpyro_model(
 ):
     """Return a numpyro model sampling the parameters in ``priors``.
 
-    `model`, `priors`, `data`, `regularizers`, `noise` and `likelihoods` are shared
-    with [`fit`][virgil.fitting.fit]; see
+    Arguments are shared with [`fit`][virgil.fitting.fit]; see
     [common arguments](../common_arguments.md).
 
     Parameters
     ----------
     model : SourceModel or callable
         A template whose leaves at the paths in ``priors`` are sampled, or a
-        function of the sampled values that returns a
-        [`SourceModel`][virgil.models.SourceModel] (see
-        [`build_model`][virgil.likelihood.build_model]) or a list of models, one
-        per dataset in ``data``.
+        function of the sampled values returning a
+        [`SourceModel`][virgil.models.SourceModel] or a list of them, one per
+        dataset (see [`build_model`][virgil.likelihood.build_model]).
     priors : dict[str, numpyro.distributions.Distribution]
-        Parameter path (or function argument name) to prior; each key is also the
-        numpyro sample-site name. An angle with an
-        [`AngleVector`][virgil.angles.AngleVector] prior is sampled as a 2-D
-        vector at the site ``"<path>_vec"``, with the angle recorded as the
-        deterministic site ``"<path>"``.
+        Parameter path (or function argument name) to prior; each key is also the sample-site name. An
+        [`AngleVector`][virgil.angles.AngleVector] prior samples a 2-D vector
+        at ``"<path>_vec"`` and records the angle at ``"<path>"``.
     data : OIData or sequence of OIData
-        Data whose Gaussian log likelihood is added with ``numpyro.factor``; may
-        be ``()`` when ``likelihoods`` holds all the data.
+        Gaussian log likelihood, added with ``numpyro.factor``; may be ``()``
+        when ``likelihoods`` holds all the data.
     regularizers : sequence, optional
-        Log-prior terms on the model, e.g. a [`Centroid`][virgil.imaging.Centroid]
-        prior.
+        Log-prior terms on the model, e.g. [`Centroid`][virgil.imaging.Centroid].
     noise : dict or list of dict, optional
-        Priors on error and calibration terms, sampled as sites
-        ``"noise.<term>"`` (``"noise[i].<term>"`` for a list); the terms are
-        listed under [common arguments](../common_arguments.md#noise).
+        Priors on error and calibration terms, sites ``"noise.<term>"``
+        (``"noise[i].<term>"`` for a list); see
+        [common arguments](../common_arguments.md#noise).
     likelihoods : sequence, optional
-        Extra data terms, such as ``PositionData.term(orbit_fn)``, added as sites
-        ``"likelihood_<i>"``; see
+        Extra data terms, sites ``"likelihood_<i>"``; see
         [common arguments](../common_arguments.md#likelihoods).
     flat_coordinates : bool, optional
-        Sample each prior that is uniform in some coordinate in that coordinate,
-        as `fit` optimizes it (default ``False``; see
+        Sample each prior in its flat coordinate (default ``False``; see
         [common arguments](../common_arguments.md#flat_coordinates)). Pass the
-        same value to
-        [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
+        same value to [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass].
     **options
         Fixed error terms and ``reject_unphysical``, passed to
         [`model_loglike`][virgil.likelihood.model_loglike].

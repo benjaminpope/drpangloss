@@ -528,10 +528,9 @@ def linear_flux_grid(
 
     A fast first pass beside
     [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]: for a faint
-    companion the whitened residuals are linear in the flux, so one model
-    evaluation per position gives ``f_hat`` (unconstrained in sign) and its
-    error, with no optimizer. See [Grid searches](../grid_searches.md#linear-flux-grid);
-    for a bright companion (``f`` near 0.3) raise ``n_iter``.
+    companion the residuals are linear in the flux, so one model evaluation
+    per position gives the flux (either sign) and its error. Raise ``n_iter``
+    for a bright companion; see [Grid searches](../grid_searches.md#linear-flux-grid).
 
     Source: Luger et al. (2017), [references](../references.md#luger2017linear);
     equivalent to [fouriever](../references.md#fouriever)'s ``lincmap``.
@@ -545,10 +544,9 @@ def linear_flux_grid(
     n_iter : int, optional
         Gauss-Newton relinearization steps after the first at ``f = 0``.
     prior : numpyro LogUniform or Normal, optional
-        Prior on ``f``, filling the posterior and Bayes-factor fields. Prefer
-        ``dist.LogUniform(f_min, f_max)`` (both bounds scalar; the Bayes
-        factor depends on them); see
-        [Grid searches](../grid_searches.md#linear-flux-prior).
+        Prior on ``f``, filling the posterior and Bayes-factor fields; prefer
+        ``dist.LogUniform(f_min, f_max)`` with scalar bounds (see
+        [Grid searches](../grid_searches.md#linear-flux-prior)).
 
     Returns
     -------
@@ -562,9 +560,7 @@ def linear_flux_grid(
     --------
     >>> axis = np.linspace(-300.0, 300.0, 61)
     >>> grid = {"dra": axis, "ddec": axis, "flux": np.array([1e-3])}
-    >>> res = linear_flux_grid(
-    ...     BinaryModelCartesian, data, grid
-    ... )  # doctest: +SKIP
+    >>> res = linear_flux_grid(BinaryModelCartesian, data, grid)  # doctest: +SKIP
     """
     params, coord_keys, flux_key = resolve_grid_keys(grid, flux_param)
     return _linear_flux_grid(
