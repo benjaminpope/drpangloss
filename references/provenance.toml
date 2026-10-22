@@ -1132,17 +1132,7 @@ url = "https://github.com/benjaminpope/jaxbessel"
 verified = false
 verified_via = "none"
 used_in = ["virgil.models"]
-note = "CEPHES (Moshier) translation, adapted from harmonix"
-
-[ref.cephes]
-authors = "Moshier"
-title = "Cephes mathematical library"
-how = "ported"
-url = "https://www.netlib.org/cephes/"
-verified = false
-verified_via = "none"
-used_in = []
-role = "bibliography"
+note = "CEPHES (Moshier, https://www.netlib.org/cephes/) translation, adapted from harmonix; the Cephes credit lives here and in the jaxbessel repository"
 
 [ref.xara]
 authors = "Martinache"
