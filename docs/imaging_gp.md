@@ -153,7 +153,7 @@ $$s^2 = \frac{\chi^2}{N - \gamma}, \qquad \gamma = \sum_i \frac{\lambda_i / s^2}
 
 Here λᵢ are the eigenvalues of JᵀJ with the quoted errors, so λᵢ/s² are those with the rescaled ones, and γ is the effective number of parameters the data measure. Each one absorbs a datum's worth of scatter, so honest error bars give χ² ≈ N − γ rather than N, and s ≈ 1. Since γ depends on s, `error_scale` solves the equation for s.
 
-These simulated data have honest errors. For contrast, the same truth is also simulated with only half as much noise as the error bars claim, like overestimated errors on real data. Rescaling those data by s (`OIData.with_error_scale`) and refitting brings the estimate back to about one. The `error_scale` docstring gives the derivation and references.
+These simulated data have honest errors. For contrast, the same truth is also simulated with only half as much noise as the error bars claim, like overestimated errors on real data. Rescaling those data by s (`OIData.with_error_scale`) and refitting brings the estimate back to about one. The derivation above is MacKay (1992); see [`error_scale`][virgil.imaging.error_scale] for the call. An `s` much greater than 1 means the model is failing, not that the noise is underestimated: unmodelled structure is absorbed into `s`, so fix the model before rescaling.
 
 ```python
 best_scene = gp_scene(sigmas[best[1]], lengths[best[0]])

@@ -98,7 +98,7 @@ class SharedFlux:
         each band's wavelengths.
     order, newton : int, optional
         Gauss-Legendre nodes per side of the adaptive marginal (default 16; each
-        side runs to 12 nats below the peak) and Newton steps from the best grid
+        side runs to 12 nats below the peak, or the prior bound) and Newton steps from the best grid
         point to the profiled peak (default 8).
     """
 
@@ -571,6 +571,7 @@ def _nodes(f, x, fx, scale, lo, hi, order):
 
     def double(_, length):
         drop = fx - jax.vmap(f)(x + side * length)
+        # caveat: grows to a _DEPTH-nat drop but is cut at the prior's bounds
         grow = ~(drop >= _DEPTH) & (length < room)
         return np.where(grow, np.minimum(2.0 * length, room), length)
 
@@ -1001,7 +1002,7 @@ def score_orbits(
     terms=(),
     scales="marginal",
     dof=1.0,
-    s_max=5.0,  # deliberate: bounds the scale gain so a flux-profiled score stays finite
+    s_max=5.0,  # deliberate: bounds the scale gain so a flux-profiled score stays finite (rank_orbits has no flux: None)
     batch_size=None,
     max_evaluations=None,
     dtype="float64",
@@ -1031,8 +1032,10 @@ def score_orbits(
         [`PositionData.term`][virgil.orbits.PositionData.term], or callables
         ``orbit -> log likelihood``.
     scales, dof, s_max : optional
-        As for ``rank_orbits``; ``s_max`` defaults to 5, and a candidate needing
-        more is flagged in ``OrbitScores.scale_at_bound``.
+        As for ``rank_orbits``: ``scales="quoted"`` scores ``-χ²/2``; ``dof`` is
+        a number or a dict keyed by dataset or epoch name. ``s_max`` defaults to
+        5 (``rank_orbits``: None, no bound), and a candidate needing more is
+        penalized and flagged in ``OrbitScores.scale_at_bound``.
     batch_size, max_evaluations, dtype : optional
         Candidates per step (never changes the result); a budget in score
         evaluations (over it raises ``ValueError``); precision.

@@ -12,7 +12,8 @@ them in use.
 for companion searches, beside the iterative
 [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]. It is the
 counterpart of the linear contrast map (`lincmap`) of
-[fouriever](https://github.com/kammerje/fouriever) (Kammerer; it has no paper).
+[fouriever](https://github.com/kammerje/fouriever) (Kammerer; it has no paper),
+which handles closure or kernel phases only.
 
 For a faint companion (flux $f \ll 1$) the whitened residuals $r$ are linear
 in $f$ at fixed position, $r(f) = r(0) + f g$, where $g = \mathrm{d}r/\mathrm{d}f$
