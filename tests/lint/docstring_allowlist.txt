@@ -1,4 +1,3 @@
-virgil.fields:MultipoleField
 virgil.fitting:fit
 virgil.fitting:gauss_newton_mass
 virgil.imaging:clean
