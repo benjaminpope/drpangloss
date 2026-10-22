@@ -393,7 +393,7 @@ path serves OI, DISCO and radio alike. The IM Lup benchmark (float64, with and
 without `precondition`, same step budget, pinned commits) is pending. Newton–CG
 for the entropy term is not started; it waits on the benchmark.
 
-## Entropy metric, memory 100, LM residuals (2026-10-22)
+## Entropy metric, LM residuals (2026-10-22)
 
 Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
 
@@ -403,11 +403,12 @@ Experiments on the 32² AMI and 41² VLTI-like L-curves (w = 1e4 → 0.1):
   Gauss–Newton form; probes cost about a third of the gain at 1681
   coordinates, so the diagonal is now exact up to 4096. *Superseded below:* the
   cutoff is back at 1024 and the probes are Rademacher.
-- L-BFGS memory 100 helps every case (default raised from 50).
-- 41² VLTI-like, steps at w = 1e4 … 0.1: float64 18 33 79 236 1348 2837,
-  float32 18 31 80 266 1355 3416 (Rademacher probes at 1024, one run, laptop
-  under load; the earlier exact-diagonal figures were 2543 and 2917; before: 18 50 106 582 3015 6018 and
-  18 52 97 434 2534 8007). Every weight converges in both.
+- L-BFGS memory 100 helps image fits (the default stays 50 here; see the memory sweep).
+- 41² VLTI-like, memory 50, steps at w = 1e4 … 0.1 (Rademacher probes at
+  1024, one run, laptop under load): float64 18 33 86 300 2919 4527, float32
+  18 31 96 385 2456 19524 (before: 18 50 147 792 4382 12265 and
+  18 52 111 585 4004 20000, not converged). Memory 100 converges both faster
+  (see the memory sweep).
 - `MaxEntropy.residuals` (r = t√(2wqφ(t)), t = (b−q)/q) lets LM fit entropy;
   it converges every weight in float64 (11–1133 steps) but not in float32, so
   L-BFGS stays the default for entropy.

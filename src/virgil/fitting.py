@@ -641,7 +641,7 @@ def fit(
     max_steps=None,
     gtol=1e-4,
     max_step_size=2.0,
-    lbfgs_memory=100,
+    lbfgs_memory=50,
     learning_rate=1e-2,
     cg_steps=50,
     dtype="float64",
@@ -676,7 +676,7 @@ def fit(
         Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100); CG steps per LM step (above 200
+        L-BFGS history (default 50); CG steps per LM step (above 200
         coordinates); Adam's rate.
     dtype : {"float64", "float32"}, optional
         Precision; see [common arguments](../common_arguments.md#dtype).
