@@ -8,6 +8,7 @@ golden cases (a full blind run each) are marked slow.
 import inspect
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import jax
 import numpy as onp
@@ -129,6 +130,7 @@ DEFAULTS = {
     ),
     "alias_nats": 10.0,
     "no_orbit_nats": 10.0,
+    "drop_outlier_night": True,
     "posterior_p_min": 0.05,
     "max_modes": 3,
     "num_warmup": 1000,
@@ -164,6 +166,7 @@ CHECKS = [
     "tempering",
     "primary_resolved",
     "no_orbit",
+    "night_dropped",
     "period_bound",
     "prior_bound",
     "r_hat",
@@ -310,6 +313,7 @@ def _fake_reports():
             "delta_log_z": 30.0,
             "labels_free": False,
             "no_orbit": {"delta_log_z": 50.0, "verdict": "orbit"},
+            "robustness": {"skipped": "fewer than 3 nights"},
             "sampled": [20],
             "table": [band],
         },
@@ -386,6 +390,23 @@ def test_partial_and_no_orbit_summaries():
     assert sections["orbit"]["source"] == "map"
 
 
+_ROBUST = {
+    "night": "n1",
+    "chi2_per_n": 3.0,
+    "full": {"verdict": "orbit", "n": 20},
+    "dropped": {"verdict": "orbit", "n": 20, "same_band": True},
+}
+# Dropping the night loses the orbit; or keeps it in another alias band.
+_ROBUST_FLIPPED = {
+    **_ROBUST,
+    "dropped": {"verdict": "no-orbit", "n": 20, "same_band": True},
+}
+_ROBUST_MOVED = {
+    **_ROBUST,
+    "dropped": {"verdict": "orbit", "n": 21, "same_band": False},
+}
+
+
 @pytest.mark.parametrize(
     "check, args, status",
     [
@@ -396,6 +417,10 @@ def test_partial_and_no_orbit_summaries():
         (_checks.no_orbit, (50.0,), "pass"),
         (_checks.no_orbit, (5.0,), "warn"),
         (_checks.no_orbit, (-1.0,), "fail"),
+        (_checks.night_dropped, (_ROBUST,), "pass"),
+        (_checks.night_dropped, (_ROBUST_FLIPPED,), "warn"),
+        (_checks.night_dropped, (_ROBUST_MOVED,), "warn"),
+        (_checks.night_dropped, ({"skipped": "fewer than 3 nights"},), "pass"),
         (_checks.mode_converged, (0.0,), "pass"),
         (_checks.mode_converged, (25.0,), "warn"),
         (_checks.bands_failed, ([],), "pass"),
@@ -640,6 +665,82 @@ def test_the_position_grid_widens_until_no_peak_is_on_its_edge(epochs_run):
     assert report["grid_step_mas"] <= report["grid_step_wanted_mas"] * 1.001
 
 
+def _fake_search(calls, period):
+    """An ``_alias_search`` stand-in that records its arguments."""
+
+    def search(p, data, positions, times, checkpoint_dir):
+        calls.append((data, positions, times, checkpoint_dir))
+        return SimpleNamespace(
+            best=SimpleNamespace(n=20, best={"period": period})
+        )
+
+    return search
+
+
+def _robustness(pipeline, monkeypatch, period, chi2=(1.0, 9.0, 1.0)):
+    """``_robustness`` of the epochs-stage run, with the refit faked and the
+    night ``n1`` (by default) the outlier."""
+    calls = []
+    monkeypatch.setattr(
+        orbit_module, "_alias_search", _fake_search(calls, period)
+    )
+    monkeypatch.setattr(
+        orbit_module, "_null_verdict", lambda *a: {"verdict": "orbit"}
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_report",
+        lambda stage: {
+            "chi2": {
+                "nights": {
+                    f"n{k}": {"chi2": c, "n": 1} for k, c in enumerate(chi2)
+                }
+            }
+        },
+    )
+    result = SimpleNamespace(best=SimpleNamespace(n=20, p_lo=12.0, p_hi=12.8))
+    return orbit_module._robustness(pipeline, result, "orbit"), calls
+
+
+def test_the_most_outlying_night_is_dropped_and_the_verdicts_compared(
+    epochs_run, monkeypatch
+):
+    pipeline, _ = epochs_run
+    report, calls = _robustness(pipeline, monkeypatch, 12.4)
+    assert report["night"] == "n1" and report["chi2_per_n"] == 9.0
+    assert report["full"] == {"verdict": "orbit", "n": 20}
+    assert report["dropped"]["same_band"] and report["dropped"]["n"] == 20
+    ((data, positions, times, bands),) = calls
+    # The refit sees the other two nights, their positions and times, and
+    # checkpoints its bands apart from the search's.
+    assert len(data) == 2 and positions.names == ("n0", "n2")
+    assert positions.log_broad is None or len(positions.log_broad) == 2
+    assert onp.allclose(times, pipeline.data.times[[0, 2]])
+    assert bands.name == "bands_drop"
+    assert bands.parent == orbit_module._band_checkpoints(pipeline).parent
+    # The same winner at a period outside the full fit's band is another alias.
+    moved, _ = _robustness(pipeline, monkeypatch, 14.0)
+    assert not moved["dropped"]["same_band"]
+    assert _checks.night_dropped(moved).status == "warn"
+
+
+def test_the_robustness_check_is_skipped_below_three_nights_or_when_off(
+    nights, tmp_path
+):
+    two = OrbitPipeline(
+        nights, output=tmp_path / "two", exclude={"n2": "no"}, **TINY
+    )
+    result = SimpleNamespace(best=None)
+    assert orbit_module._robustness(two, result, "orbit") == {
+        "skipped": "fewer than 3 nights"
+    }
+    off = OrbitPipeline(
+        nights, output=tmp_path / "off", drop_outlier_night=False, **TINY
+    )
+    assert "off" in orbit_module._robustness(off, result, "orbit")["skipped"]
+    assert _checks.night_dropped({"skipped": "x"}).status == "pass"
+
+
 def test_resume_skips_completed_stages(nights, tmp_path, monkeypatch):
     out = tmp_path / "run"
     OrbitPipeline(nights, output=out, **TINY).run(through="load")
@@ -755,6 +856,10 @@ def test_quicklook_cells_are_valid_code(tmp_path):
         assert markdown.startswith("##") or markdown[0].isalpha()
         compile(code, "<cell>", "exec")
     assert "OrbitalBinary" not in "".join(m for m, _ in cells)  # target-free
+    assert "refit was skipped" in cells[2][0]
+    summary["modes"]["robustness"] = _ROBUST
+    again = _quicklook._SECTIONS["orbit"](run, summary, tmp_path)
+    assert "Without night n1 (raw χ²/N = 3)" in again[2][0]
     partial = _quicklook._SECTIONS["orbit"](
         {"stages": {"load": {"status": "complete"}}}, summary, tmp_path
     )
@@ -829,6 +934,8 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     assert abs(modes["winner"]["elements"]["period"] - TRUTH["period"]) < 0.05
     assert modes["delta_log_z"] > 10.0  # the runner-up is ruled out
     assert modes["no_orbit"]["verdict"] == "orbit"
+    robust = modes["robustness"]  # the refit without the worst night
+    assert robust["full"]["n"] == n_true and robust["night"].startswith("n")
     arcs = res.summary["search"]["short_arc"]  # the engine's default stage
     assert arcs is not None and n_true in arcs["kept"]
     assert res.aliases().short_arc["kept"] == arcs["kept"]

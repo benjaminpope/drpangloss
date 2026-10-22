@@ -3,6 +3,7 @@ multi-epoch binary orbit."""
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import inspect
@@ -170,6 +171,9 @@ class OrbitPipeline(_Pipeline):
           them (the ``mode_converged`` check says when to).
         - ``alias_nats`` (10), ``no_orbit_nats`` (10): thresholds of the
           ``alias_ambiguity`` and ``no_orbit`` checks.
+        - ``drop_outlier_night`` (True): refit the search without the night of
+          highest raw χ²/N (skipped below 3 nights) and compare the verdict
+          (the ``night_dropped`` check); it costs a second search.
         - ``posterior_p_min`` (0.05), ``max_modes`` (3): bands sampled by
           NUTS besides the winner.
         - ``num_warmup``, ``num_samples``, ``num_chains`` (1000, 1000, 4),
@@ -215,6 +219,7 @@ class OrbitPipeline(_Pipeline):
         ),
         "alias_nats": 10.0,
         "no_orbit_nats": 10.0,
+        "drop_outlier_night": True,
         "posterior_p_min": 0.05,
         "max_modes": 3,
         "num_warmup": 1000,
@@ -836,19 +841,19 @@ def _band_checkpoints(p):
     return p.output / "stages" / "search" / "bands"
 
 
-@_x64
-def _search(p):
+def _alias_search(p, data, positions, times, checkpoint_dir):
+    """The engine call of the ``search`` stage (and of the refit of the
+    robustness check): ``fit_orbit_aliases`` with the settings."""
     from ..aliases import fit_orbit_aliases
 
     # The default run is blind: no period window, start or paper prior
     # (test_blind_search_resolves_the_two_season_gap_alias).
     s = p.settings
-    epochs = p.data
-    result = fit_orbit_aliases(
-        list(epochs.data),
+    return fit_orbit_aliases(
+        data,
         None if s["period_range"] is None else tuple(s["period_range"]),
-        positions=_read_positions(p),
-        times=epochs.times,
+        positions=positions,
+        times=times,
         a_range=tuple(s["a_range"]),
         flux_range=tuple(s["flux_range"]),
         ecc_max=s["ecc_max"],
@@ -859,7 +864,7 @@ def _search(p):
         sign_free=s["sign_free"],
         n_is=s["n_is"],
         seed=s["seed"],
-        checkpoint_dir=_band_checkpoints(p),
+        checkpoint_dir=checkpoint_dir,
         primary_diam=s["primary_diam"],
         vis_amp=s["vis_amp"]
         if isinstance(s["vis_amp"], bool)
@@ -870,6 +875,18 @@ def _search(p):
         outlier_eps=s["outlier_eps"],
         batch_size=s["batch_size"],
         memory_budget=s["memory_budget"],
+    )
+
+
+@_x64
+def _search(p):
+    epochs = p.data
+    result = _alias_search(
+        p,
+        list(epochs.data),
+        _read_positions(p),
+        epochs.times,
+        _band_checkpoints(p),
     )
     with _io.atomic_path(
         p.output / "stages" / "search" / "aliases.json"
@@ -1025,10 +1042,24 @@ def _single_star(problem, x, diam_range):
     return float(max(onp.max(ll), onp.max(best(near))))
 
 
-@_x64
-def _modes(p):
+def _null_verdict(result, data, s):
+    """The best orbit against a single star: ``{delta_log_z,
+    log_like_single_star, threshold, verdict}``."""
     from ..aliases import _band_target
 
+    problem, _, x, settings = _band_target(result, data)
+    null = _single_star(problem, x, settings.diam_range)
+    delta = float(result.best.log_z - null)
+    return {
+        "delta_log_z": delta,
+        "log_like_single_star": null,
+        "threshold": s["no_orbit_nats"],
+        "verdict": "orbit" if delta >= s["no_orbit_nats"] else "no-orbit",
+    }
+
+
+@_x64
+def _modes(p):
     s = p.settings
     result = _load_result(p)
     epochs = p.data
@@ -1036,15 +1067,12 @@ def _modes(p):
     best, bands = result.best, result.bands
     runner = next((b for b in bands[1:] if onp.isfinite(b.log_z)), None)
     delta = None if runner is None else float(best.log_z - runner.log_z)
-    problem, _, x, settings = _band_target(result, data)
-    null = _single_star(problem, x, settings.diam_range)
-    delta_null = float(best.log_z - null)
+    no_orbit = _null_verdict(result, data, s)
     sampled = [best.n] + [
         b.n
         for b in bands[1 : 1 + s["max_modes"]]
         if b.p >= s["posterior_p_min"] and onp.isfinite(b.log_z)
     ]
-    verdict = "orbit" if delta_null >= s["no_orbit_nats"] else "no-orbit"
     _plot_sky(p, result, epochs)
     return {
         "winner": {
@@ -1060,14 +1088,108 @@ def _modes(p):
         else {"n": int(runner.n), "p": runner.p, "log_z": runner.log_z},
         "delta_log_z": delta,
         "labels_free": bool(result.labels_free),
-        "no_orbit": {
-            "delta_log_z": delta_null,
-            "log_like_single_star": null,
-            "threshold": s["no_orbit_nats"],
-            "verdict": verdict,
-        },
+        "no_orbit": no_orbit,
+        "robustness": _robustness(p, result, no_orbit["verdict"]),
         "sampled": [int(n) for n in sampled],
         "table": _band_rows(result)[: max(_BAND_ROWS, len(sampled))],
+    }
+
+
+def _outlying_night(epochs, nights):
+    """``(night, indices, chi2_per_n)`` of the night with the highest raw
+    χ²/N at the best orbit (``nights``: the search report's per-dataset
+    table), the indices being its datasets'."""
+    pooled = {}
+    for k, (name, night) in enumerate(
+        zip(epochs.dataset_names, epochs.epoch_of)
+    ):
+        row = nights[name]
+        total = pooled.setdefault(night, [0.0, 0, []])
+        total[0] += row["chi2"]
+        total[1] += row["n"]
+        total[2].append(k)
+    ratio = {
+        night: chi2 / n if n else math.nan
+        for night, (chi2, n, _) in pooled.items()
+    }
+    night = max(
+        ratio, key=lambda k: -math.inf if math.isnan(ratio[k]) else ratio[k]
+    )
+    return night, pooled[night][2], ratio[night]
+
+
+def _without(found, drop):
+    """``EpochPositions`` without the datasets at the indices ``drop``."""
+    keep = [k for k in range(len(found.names)) if k not in drop]
+
+    def pick(value):
+        if value is None:
+            return None
+        if isinstance(value, tuple):
+            return tuple(value[k] for k in keep)
+        return value[keep]
+
+    return dataclasses.replace(
+        found,
+        **{
+            f: pick(getattr(found, f))
+            for f in (
+                "names",
+                "mjd",
+                "dra",
+                "ddec",
+                "cov",
+                "flux",
+                "gap_marginal",
+                "chi2_raw",
+                "scale",
+                "peaks",
+                "flags",
+                "log_broad",
+                "exact_fraction",
+            )
+        },
+    )
+
+
+def _robustness(p, result, verdict):
+    """Does the verdict (orbit or not, and the winning alias band) survive
+    dropping the night with the highest raw χ²/N? The search is refitted
+    without it by the same engine call, its bands checkpointed apart from
+    the search's. ``{"skipped": reason}`` when it is not run."""
+    s = p.settings
+    epochs = p.data
+    if not s["drop_outlier_night"]:
+        return {"skipped": "drop_outlier_night is off"}
+    if len(epochs.names) < 3:  # two nights left would fit any orbit
+        return {"skipped": "fewer than 3 nights"}
+    nights = p._report("search")["chi2"]["nights"]
+    night, drop, chi2_per_n = _outlying_night(epochs, nights)
+    keep = [k for k in range(len(epochs.data)) if k not in drop]
+    data = [epochs.data[k] for k in keep]
+    refit = _alias_search(
+        p,
+        data,
+        _without(_read_positions(p), drop),
+        epochs.times[keep],
+        _band_checkpoints(p).with_name("bands_drop"),
+    )
+    verdict_drop = _null_verdict(refit, data, s)["verdict"]
+    best = result.best
+    period = refit.best.best.get("period")
+    # The same alias: the refit's winning period is in the full fit's band
+    # (band numbers shift when the dropped night ends the arc).
+    same_band = bool(period is not None and best.p_lo <= period <= best.p_hi)
+    return {
+        "night": night,
+        "chi2_per_n": chi2_per_n,
+        "full": {"verdict": verdict, "n": int(best.n)},
+        "dropped": {
+            "verdict": verdict_drop,
+            "n": int(refit.best.n),
+            "period": period,
+            "same_band": same_band,
+        },
     }
 
 
@@ -1368,6 +1490,7 @@ _MODES_KEYS = (
     "delta_log_z",
     "labels_free",
     "no_orbit",
+    "robustness",
     "sampled",
     "table",
 )
@@ -1482,6 +1605,7 @@ def _summarize(settings, reports):
                 threshold=settings["no_orbit_nats"],
             )
         )
+        checks.append(_checks.night_dropped(modes["robustness"]))
     if search:
         checks.append(
             _checks.period_bound(
