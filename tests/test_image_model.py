@@ -243,3 +243,25 @@ def test_from_brightness_floor_ignores_pixels_outside_support():
     support = np.array([[False, True], [True, True]])
     image = Image.from_brightness(brightness, 1.0, support=support)
     assert np.allclose(image.brightness[1], np.array([2.0, 1.0]) / 3.0)
+
+
+@pytest.mark.parametrize("ft", ["dft", "nufft"])
+def test_float32_visibilities_match_float64_on_long_baselines(ft):
+    # |2π s u| up to ~27 rad: float32 phases are good to ~1e-6, so χ² differs
+    # from float64 by ~1e-7 relative (virgil float32 imaging fits; the
+    # float32 and float64 noise draws differ, the forward models do not).
+    rng = onp.random.default_rng(1)
+    image = rng.uniform(0.0, 1.0, (32, 32))
+    image /= image.sum()
+    uu, vv = rng.uniform(-3e7, 3e7, (2, 300))
+
+    def vis(x64):
+        with jax.enable_x64(x64):
+            args = (np.asarray(image), np.asarray(uu), np.asarray(vv), 30.0)
+            return onp.asarray(image_visibilities(*args, ft=ft))
+
+    v64, v32 = vis(True), vis(False)
+    assert v32.dtype == onp.complex64
+    assert onp.max(onp.abs(v32 - v64)) < 2e-5
+    chi2 = lambda v: onp.sum(((onp.abs(v) ** 2 - 0.5) / 1e-3) ** 2)  # noqa: E731
+    assert abs(chi2(v32) / chi2(v64) - 1.0) < 1e-5
