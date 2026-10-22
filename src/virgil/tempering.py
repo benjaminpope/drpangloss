@@ -50,17 +50,15 @@ class ChannelFactors:
     Attributes
     ----------
     f : float
-        The pooled factor ``N / N_eff`` of all chains that the likelihood
-        is tempered by where a block has none of its own, at least 1; 1
-        when the data have none.
+        Pooled factor ``N / N_eff`` (at least 1; 1 without chains), used
+        where a block has no estimate of its own.
     blocks : dict
-        ``{block name: f_b}`` used for every block of the data
-        (``"vis"``, ``"phi"``, ``"extra[k]"``): its own estimate where it
-        has ``MIN_CHAINS`` chains, else the pooled ``f``; at least 1.
+        ``{block name: f_b}`` for every block (``"vis"``, ``"phi"``,
+        ``"extra[k]"``): its own estimate with ``MIN_CHAINS`` chains, else
+        the pooled ``f``; at least 1.
     rho : dict
-        ``{block name: ρ1}``, the lag-1 correlation of the blocks with
-        chains of their own, plus ``"pooled"`` (NaN without chains).
-        Diagnostic: it is not an input of ``f``.
+        ``{block name: ρ1}``, the lag-1 correlation, plus ``"pooled"`` (NaN
+        without chains). Diagnostic only.
     rho2 : dict
         The same for the lag-2 correlation ρ2.
     n_pairs : dict
@@ -70,15 +68,13 @@ class ChannelFactors:
     n_channels : dict
         ``{block name: mean chain length}``, plus ``"pooled"``.
     f_raw : float
-        The lowest unfloored ``f̂`` of the pooled estimate and every block
-        with its own: below 1 for anticorrelated residuals (flagged, not
-        used).
+        The lowest unfloored ``f̂``; below 1 means anticorrelated residuals
+        (flagged, not used).
     raw : dict
         ``{block name: unfloored f̂}`` of the blocks with chains of their
         own, plus ``"pooled"``.
     fallback : tuple of str
-        The blocks that took the pooled ``f`` for want of an estimate of
-        their own (extras, closure phases with offsets, too few chains).
+        Blocks that took the pooled ``f`` for want of their own estimate.
     n_pairs2 : dict
         ``{block name: pairs two channels apart}``, plus ``"pooled"``: the
         number behind ρ2.

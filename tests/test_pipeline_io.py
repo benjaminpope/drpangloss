@@ -16,6 +16,7 @@ from virgil import (  # noqa: E402
     write_oifits,
 )
 from virgil.likelihood import model_loglike  # noqa: E402
+from virgil.oifits import _oidata_tables  # noqa: E402
 from virgil.pipeline import SCHEMA, _io  # noqa: E402
 from tests.test_oifits import _tables  # noqa: E402
 
@@ -71,9 +72,7 @@ def test_model_spec_refuses_non_virgil_classes(tmp_path):
 
 
 def _round_trip(data, tmp_path):
-    tables, reason = _io.oidata_tables(data)
-    assert reason is None
-    back = OIData(write_oifits(tables, tmp_path / "processed.oifits"))
+    back = OIData(write_oifits(data, tmp_path / "processed.oifits"))
     for name in ("u", "v", "vis", "d_vis", "phi", "d_phi"):
         onp.testing.assert_allclose(
             onp.asarray(getattr(back, name)),
@@ -131,34 +130,23 @@ def test_processed_oifits_round_trip_absolute_phases(tmp_path):
     assert not back.cp_flag
 
 
-def test_processed_oifits_reports_unsupported_layouts():
-    data = OIData(NUHOR)
-    import equinox as eqx
-
-    assert _io.oidata_tables(data)[1] is None
-    rng = onp.random.default_rng(1)
-    u, v = rng.uniform(-6, 6, (2, 8))
-    flag = onp.ones(8, dtype=bool)
-    flag[3] = False  # one flagged visibility
-    flagged = OIData(
+def test_processed_oifits_reports_unsupported_layouts(tmp_path):
+    assert _oidata_tables(OIData(NUHOR))[1] is None
+    amplitudes = OIData(
         {
-            "u": u,
-            "v": v,
+            "u": onp.array([3.0, -2.0, 1.0]),
+            "v": onp.array([1.0, 2.0, -3.0]),
             "wavel": [4.8e-6],
-            "vis": onp.ones(8),
-            "d_vis": onp.full(8, 0.01),
-            "vis_flag": flag,
+            "vis": onp.ones(3),
+            "d_vis": onp.full(3, 0.01),
+            "v2_flag": False,
             "cp_flag": False,
         }
     )
-    assert flagged.vis_index is not None
-    assert _io.oidata_tables(flagged) == (None, "flagged samples")
-
-    no_stations = eqx.tree_at(
-        lambda d: d.stations, data, None, is_leaf=lambda x: x is None
-    )
-    tables, reason = _io.oidata_tables(no_stations)
-    assert tables is None and "station" in reason
+    reason = "visibility amplitudes rather than V²"
+    assert _oidata_tables(amplitudes) == (None, reason)
+    with pytest.raises(ValueError, match=reason):
+        write_oifits(amplitudes, tmp_path / "x.oifits")
 
 
 def test_processed_oifits_refuses_mischained_triangles():
@@ -168,17 +156,26 @@ def test_processed_oifits_refuses_mischained_triangles():
     import equinox as eqx
 
     data = OIData(NUHOR)
-    tables, reason = _io.oidata_tables(data)
-    assert reason is None
+    assert _oidata_tables(data)[1] is None
     irregular = (None, "irregular closure-phase layout")
     # Legs 1 and 2 swapped: BC then AB.
     swapped = eqx.tree_at(
         lambda d: (d.i_cps1, d.i_cps2), data, (data.i_cps2, data.i_cps1)
     )
-    assert _io.oidata_tables(swapped) == irregular
+    assert _oidata_tables(swapped) == irregular
     # The third leg is not the baseline AC.
     other = eqx.tree_at(lambda d: d.i_cps3, data, data.i_cps1)
-    assert _io.oidata_tables(other) == irregular
+    assert _oidata_tables(other) == irregular
+    # Without stations the same legs would give a baseline from a station to
+    # itself, which is no valid OI_ARRAY pair.
+    bare = eqx.tree_at(
+        lambda d: d.stations, data, None, is_leaf=lambda x: x is None
+    )
+    assert _oidata_tables(bare)[1] is None
+    assert (
+        _oidata_tables(eqx.tree_at(lambda d: d.i_cps3, bare, bare.i_cps1))
+        == irregular
+    )
 
 
 def test_result_data_reports_why_the_processed_oifits_is_missing(tmp_path):

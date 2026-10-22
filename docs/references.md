@@ -308,6 +308,23 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `(module)` | [Jeffreys (1946)](#jeffreys1946), [ADS](https://ui.adsabs.harvard.edu/abs/1946RSPSA.186..453J/abstract), [doi:10.1098/rspa.1946.0056](https://doi.org/10.1098/rspa.1946.0056) | after |
 | `hierarchical_scales` | [Betancourt & Girolami (2013)](#betancourt2013), [arXiv:1312.0906](https://arxiv.org/abs/1312.0906), [ADS](https://ui.adsabs.harvard.edu/abs/2013arXiv1312.0906B/abstract) | after |
 
+### `virgil.radio`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `ComplexVisData._imaging_weights` | [Briggs (1995)](#briggs1995) | after |
+
+### `virgil.radio_clean`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `_minor_cycle` | [Clark (1980)](#clark1980), [ADS](https://ui.adsabs.harvard.edu/abs/1980A&A....89..377C/abstract) | after |
+| `_minor_cycle` | [Cornwell (2008)](#cornwell2008), [arXiv:0806.2228](https://arxiv.org/abs/0806.2228), [ADS](https://ui.adsabs.harvard.edu/abs/2008ISTSP...2..793C/abstract), [doi:10.1109/jstsp.2008.2006388](https://doi.org/10.1109/jstsp.2008.2006388) | after |
+| `clean` | [Clark (1980)](#clark1980), [ADS](https://ui.adsabs.harvard.edu/abs/1980A&A....89..377C/abstract) | after |
+| `clean` | [Högbom (1974)](#hogbom1974), [ADS](https://ui.adsabs.harvard.edu/abs/1974A&AS...15..417H/abstract) | after |
+| `clean` | [Offringa et al. (2014)](#offringa2014), [ADS](https://ui.adsabs.harvard.edu/abs/2014MNRAS.444..606O/abstract) | after |
+| `clean` | [Schwab (1984)](#schwab1984), [ADS](https://ui.adsabs.harvard.edu/abs/1984AJ.....89.1076S/abstract) | after |
+
 ### `virgil.scenes`
 
 | Symbol | Source | Relation |
@@ -401,11 +418,13 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="blunt2020"></a>**Blunt et al. (2019)**. orbitize!: A Comprehensive Orbit-fitting Software Package for the High-contrast Imaging Community. [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract). orbitize!; AJ 159, 89 (2020).
 - <a id="blunt2024"></a>**Blunt et al. (2024)**. orbitize! v3: Orbit fitting for the High-contrast Imaging Community. [arXiv:2409.11573](https://arxiv.org/abs/2409.11573), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6756B/abstract), [doi:10.21105/joss.06756](https://doi.org/10.21105/joss.06756). orbitize!; JOSS 9, 6756.
 - <a id="brandt2021"></a>**Brandt et al. (2021)**. orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute, and/or Relative Astrometry. [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract). orvara; AJ 162, 186.
+- <a id="briggs1995"></a>**Briggs (1995)**. High fidelity deconvolution of moderately resolved sources. PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; not checked against ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="candes2008"></a>**Candès, Wakin & Boyd (2007)**. Enhancing Sparsity by Reweighted L1 Minimization. [arXiv:0711.1612](https://arxiv.org/abs/0711.1612), [ADS](https://ui.adsabs.harvard.edu/abs/2008JFAA...14..877C/abstract). J. Fourier Anal. Appl. 14, 877 (2008).
 - <a id="chael2018"></a>**Chael et al. (2018)**. Interferometric Imaging Directly with Closure Phases and Closure Amplitudes. [arXiv:1803.07088](https://arxiv.org/abs/1803.07088), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJ...857...23C/abstract), [doi:10.3847/1538-4357/aab6a8](https://doi.org/10.3847/1538-4357/aab6a8), [GitHub](https://github.com/achael/eht-imaging). ApJ 857, 23; eht-imaging.
 - <a id="dorito"></a>**Charles et al. (2025)**. Image reconstruction with the JWST Interferometer. [arXiv:2510.10924](https://arxiv.org/abs/2510.10924), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASA...43...48C/abstract). PASA 43, e048 (2026).
 - <a id="chavez2026"></a>**Chavez et al. (2026)**. Multifrequency Synthesis via CHIBI: Colorful Hierarchical Interferometric Bayesian Imaging. [arXiv:2606.04094](https://arxiv.org/abs/2606.04094), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ..1005..132C/abstract).
 - <a id="chernoff1954"></a>**Chernoff (1954)**. On the Distribution of the Likelihood Ratio. [ADS](https://ui.adsabs.harvard.edu/abs/1954AnnMS..25..573C/abstract), [doi:10.1214/aoms/1177728725](https://doi.org/10.1214/aoms/1177728725).
+- <a id="clark1980"></a>**Clark (1980)**. An efficient implementation of the algorithm 'CLEAN'. [ADS](https://ui.adsabs.harvard.edu/abs/1980A&A....89..377C/abstract). A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold; not checked against ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="cornwell2008"></a>**Cornwell (2008)**. Multi-Scale CLEAN deconvolution of radio synthesis images. [arXiv:0806.2228](https://arxiv.org/abs/0806.2228), [ADS](https://ui.adsabs.harvard.edu/abs/2008ISTSP...2..793C/abstract), [doi:10.1109/jstsp.2008.2006388](https://doi.org/10.1109/jstsp.2008.2006388). IEEE JSTSP 2, 793.
 - <a id="cotton2008"></a>**Cotton, Monnier & Baron (2008)**. 2008 imaging beauty contest. [ADS](https://ui.adsabs.harvard.edu/abs/2008SPIE.7013E..1NC/abstract), [doi:10.1117/12.788903](https://doi.org/10.1117/12.788903). Proc. SPIE 7013.
 - <a id="currie2019"></a>**Currie et al. (2019)**. No Clear, Direct Evidence for Multiple Protoplanets Orbiting LkCa 15: LkCa 15 bcd are Likely Inner Disk Signals. [arXiv:1905.04322](https://arxiv.org/abs/1905.04322), [ADS](https://ui.adsabs.harvard.edu/abs/2019ApJ...877L...3C/abstract), [doi:10.3847/2041-8213/ab1b42](https://doi.org/10.3847/2041-8213/ab1b42). ApJL 877, L3; motivates fitting a disk and a planet together.
@@ -476,6 +495,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="cephes"></a>**Moshier**. Cephes mathematical library. [link](https://www.netlib.org/cephes/). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
+- <a id="offringa2014"></a>**Offringa et al. (2014)**. WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy. [ADS](https://ui.adsabs.harvard.edu/abs/2014MNRAS.444..606O/abstract). MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows; not checked against ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="papaspiliopoulos2007"></a>**Papaspiliopoulos, Roberts & Sköld (2007)**. A General Framework for the Parametrization of Hierarchical Models. [ADS](https://ui.adsabs.harvard.edu/abs/2007StaSc..22...59P/abstract), [doi:10.1214/088342307000000014](https://doi.org/10.1214/088342307000000014). Statistical Science 22, 59; centred and non-centred parameterizations.
 - <a id="pauls2005"></a>**Pauls et al. (2005)**. A Data Exchange Standard for Optical (Visible/IR) Interferometry. [arXiv:astro-ph/0508185](https://arxiv.org/abs/astro-ph/0508185), [ADS](https://ui.adsabs.harvard.edu/abs/2005PASP..117.1255P/abstract), [doi:10.1086/444523](https://doi.org/10.1086/444523). OIFITS 1; PASP 117, 1255.
 - <a id="jaxbessel"></a>**Pope et al.**. jaxbessel. [GitHub](https://github.com/benjaminpope/jaxbessel). CEPHES (Moshier) translation, adapted from harmonix. *Not yet verified against arXiv, Crossref or ADS.*
@@ -488,6 +508,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="rue2005"></a>**Rue & Held (2005)**. Gaussian Markov Random Fields: Theory and Applications. [doi:10.1201/9780203492024](https://doi.org/10.1201/9780203492024). Chapman & Hall/CRC (book).
 - <a id="ruffio2018"></a>**Ruffio et al. (2018)**. A Bayesian Framework for Exoplanet Direct Detection and Non-Detection. [arXiv:1809.08261](https://arxiv.org/abs/1809.08261), [ADS](https://ui.adsabs.harvard.edu/abs/2018AJ....156..196R/abstract).
 - <a id="sallum2015"></a>**Sallum et al. (2015)**. Accreting protoplanets in the LkCa 15 transition disk. [arXiv:1511.07456](https://arxiv.org/abs/1511.07456), [ADS](https://ui.adsabs.harvard.edu/abs/2015Natur.527..342S/abstract), [doi:10.1038/nature15761](https://doi.org/10.1038/nature15761). Nature 527, 342; motivates fitting a disk and a planet together.
+- <a id="schwab1984"></a>**Schwab (1984)**. Relaxing the isoplanatism assumption in self-calibration; applications to low-frequency radio interferometry. [ADS](https://ui.adsabs.harvard.edu/abs/1984AJ.....89.1076S/abstract). AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities); not checked against ADS. Cotton is cited there as a private communication. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="selig2013"></a>**Selig et al. (2013)**. NIFTY - Numerical Information Field Theory - a versatile Python library for signal inference. [arXiv:1301.4499](https://arxiv.org/abs/1301.4499), [ADS](https://ui.adsabs.harvard.edu/abs/2013A&A...554A..26S/abstract).
 - <a id="sivaramakrishnan2023"></a>**Sivaramakrishnan et al. (2022)**. The Near Infrared Imager and Slitless Spectrograph for the James Webb Space Telescope. IV. Aperture Masking Interferometry. [arXiv:2210.17434](https://arxiv.org/abs/2210.17434), [ADS](https://ui.adsabs.harvard.edu/abs/2023PASP..135a5003S/abstract). PASP 135, 015003 (2023).
 - <a id="skilling1989"></a>**Skilling (1989)**. Classic Maximum Entropy. [doi:10.1007/978-94-015-7860-8_3](https://doi.org/10.1007/978-94-015-7860-8_3). Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.md links its Skilling 1989 entry to DOI ..._4, which Crossref gives as the Gull 1989 chapter.

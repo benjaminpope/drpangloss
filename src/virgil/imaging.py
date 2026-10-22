@@ -876,60 +876,36 @@ def starting_image(
 ):
     """A starting model for an image fit, sized from the data.
 
-    It fits a quick parametric model, an analytic star (if ``star``) plus a
-    circular Gaussian envelope with free flux and width, from a few starting
-    widths, then builds the image: a field of ``field_fwhms`` envelope FWHMs
-    (the rule of [`image_field`][virgil.imaging.image_field], never above
-    ``largest_mas`` and never above the interferometric field λ / B_min that
-    [`field_of_view`][virgil.imaging.field_of_view] gives), pixels ``oversample`` times finer than the Nyquist scale,
-    and the fitted flux. The pixels are the fitted Gaussian
-    (``start="moments"``) or the positive part of the
-    [`dirty_image`][virgil.imaging.dirty_image] with the star removed
-    (``start="dirty"``; better when the Fourier coverage is dense, worse when
-    sparse). To image beyond λ / B_min, for example to leave room for a disc
-    larger than the data size, pass ``pad_to_mas``: the grid is padded with
-    empty pixels (at the floor brightness) out to that width. Fit it with
-    ``fit(start, image_priors(start), data, regularizers)``; add a prior on ``"env.flux"`` (``"flux"`` with
-    ``star=False``) to fit the flux too.
+    Fits an analytic star (if ``star``) plus a circular Gaussian envelope to the
+    data, then builds an image of ``field_fwhms`` envelope FWHMs (capped by
+    ``largest_mas`` and the field λ / B_min of
+    [`field_of_view`][virgil.imaging.field_of_view]), with pixels ``oversample``
+    times finer than Nyquist and the fitted flux. Fit it with
+    ``fit(start, image_priors(start), data, regularizers)``; see
+    [imaging with regularizers](../imaging_rml.md).
 
     Parameters
     ----------
     data : OIData or sequence of OIData
         The data.
     star : bool, optional
-        Whether the scene has an unresolved star at the origin (which also
-        fixes the image's position). Without one, the result is the Image
-        alone, and a [`Centroid`][virgil.imaging.Centroid] prior should fix its
-        position.
+        Whether an unresolved star at the origin is in the scene (it fixes the
+        position; otherwise use a [`Centroid`][virgil.imaging.Centroid] prior).
     oversample : float, optional
         Pixels per Nyquist pixel.
     largest_mas : float, optional
-        A cap on the data-sized field. It cannot raise the field above the
-        interferometric limit λ / B_min (a warning says so when it would have);
-        use ``pad_to_mas`` for a larger grid.
+        Cap on the data-sized field, which never exceeds λ / B_min.
     start : {"moments", "dirty"}, optional
-        The starting pixels, as above.
+        Starting pixels: the fitted Gaussian, or the positive part of the
+        [`dirty_image`][virgil.imaging.dirty_image] minus the star.
     hole_mas : float, optional
-        Radius of a hole in the image's support under the star. Extended flux
-        within a fraction of a beam of the star is nearly indistinguishable
-        from the star's, so without a hole the fit can trade the two; half the
-        beam's minor axis (``0.5 * beam(data).minor_mas``) is a good choice.
-    field_fwhms : float, optional
-        The field in FWHMs of the envelope (6 by default).
-    inner_elements : float, optional
-        The least field, in resolution elements λ / (2 B_max) (4 by default).
+        Radius of a hole in the support under the star; ``0.5 * beam(data).minor_mas`` works well.
+    field_fwhms, inner_elements : float, optional
+        Field in envelope FWHMs; least field in resolution elements λ / (2 B_max).
     aperture_mas : float, optional
-        A telescope's field of view, as a ceiling on the field and on the
-        envelope's width.
+        A telescope's field of view, as a ceiling on field and envelope width.
     pad_to_mas : float, optional
-        The least width (mas) of the grid. Unlike ``EnsembleSpec.field_mas``,
-        which replaces the data's field and is capped at ``field_of_view``, this
-        never shrinks the grid and may exceed that field. If it exceeds the data-sized field,
-        the start image is padded with empty pixels, centred, to
-        ``ceil(pad_to_mas / pixel)`` pixels (one more if needed to keep the
-        centre pixel), at the same pixel scale. Beyond λ / B_min the data
-        do not constrain the flux, so pair a large field with a support or
-        priors. Unset (the default), the field is the data-sized one.
+        Least grid width (mas), padded with empty pixels; may exceed λ / B_min.
 
     Returns
     -------
@@ -1469,80 +1445,41 @@ def clean(
         May change in any 0.4.x release without a deprecation cycle.
 
     Each iteration adds ``gain`` times the Gauss–Newton step at the pixel that
-    lowers χ² most. For data linear in the image this is Högbom's CLEAN; for
-    any other data virgil can fit (closure, kernel and DISCO phases, V²) it is
-    matching pursuit on the gradient of χ². Components are point sources or
-    Gaussians of several widths (``scales_mas``), added to a fixed ``base``
-    scene, usually an analytic star; every ``refit_every`` iterations a major
-    cycle refits all their fluxes by non-negative least squares. It stops at
-    ``target_chi2_red``, when χ² has stalled, or at ``max_iterations``. See
-    [CLEAN](imaging.md#clean) for the algorithm.
+    lowers χ² most (Högbom's CLEAN for linear data, else matching pursuit); every
+    ``refit_every`` iterations a major cycle refits all fluxes by non-negative
+    least squares. See [CLEAN](../imaging_clean.md).
+    Source: Högbom (1974), [references](../references.md#hogbom1974).
 
     Parameters
     ----------
     data : OIData or sequence of OIData
         The data, fitted jointly.
-    npix : int
-        Pixels on a side of the grid.
-    pixel_scale_mas : float
-        Pixel size in milliarcseconds.
-    base : SourceModel, optional
-        A fixed scene the components are added to (default: none). A
-        System base must not be offset (put any offset on its components).
-    gain : float, optional
-        Loop gain, the fraction of each step taken (default 0.1).
-    max_iterations : int, optional
-        Iteration limit (default 1000).
-    target_chi2_red : float, optional
-        χ² per data point at which to stop (default 1).
-    refit_every : int, optional
-        Iterations between major cycles (default 50); 0 for none.
+    npix, pixel_scale_mas : int and float
+        Grid size and pixel size (mas).
+    base, gain : SourceModel and float, optional
+        Fixed scene (e.g. a star) to add components to, not offset if a System;
+        fraction of each step taken, in (0, 1].
+    max_iterations, target_chi2_red, refit_every : int, float and int, optional
+        Iteration limit; χ² per point to stop at; iterations per major cycle (0: none).
     stall_window, stall_tolerance : int and float, optional
-        Stop when χ² has fallen by less than a fraction ``stall_tolerance``
-        (default 1e-3) over the last ``stall_window`` (default 50) iterations,
-        even after a major cycle.
-    base_priors : dict, optional
-        Priors on parameters of the base to fit at every major cycle, keyed by
-        their paths in the base (e.g. ``{"comp.dra": dist.Normal(30.0, 5.0)}``
-        for a System base, whose paths must start with a component's name).
-        Needs a base and ``refit_every`` > 0. The fits run in ``dtype``.
-    refresh_norms : bool, optional
-        Recompute the norms ``|J e_p|`` at every major cycle (default
-        ``False``): one Jacobian–vector product per pixel each time.
-    spectrum : Spectrum, optional
-        The spectrum all the components share, e.g.
-        ``PowerLaw(1.0, index, wavel0)``; only its shape matters, and the
-        component fluxes are at its reference wavelength. Default: grey.
-        Needs a base.
-    support : array-like of bool, shape (npix, npix), optional
-        Pixels allowed to receive components (default: all), e.g. a
-        [`circular_support`][virgil.models.circular_support] with a hole
-        under the star.
-    init : array-like, shape (npix, npix) or (n_scales, npix, npix), optional
-        Starting component fluxes, non-negative and zero outside ``support``
-        (default: none with a base; without one, a component of the smallest
-        scale on the supported pixel nearest the centre). An (npix, npix)
-        array is point components, and needs 0 among the ``scales_mas``.
-    rotation_deg : float, optional
-        Position angle of the grid's "up" axis, as for
-        [`Image`][virgil.models.Image]; match the data's uv lattice
-        (``data.uv_grid.rotation_deg``) for the fast exact transform.
-    dtype : {"float64", "float32"}, optional
-        Precision of the iterations, as for [`fit`][virgil.fitting.fit].
-    scales_mas : sequence of float, optional
-        FWHM in mas of the components' Gaussian shapes, distinct and
-        non-negative (default ``(0.0,)``: points only), e.g.
-        ``(0.0, 2 * beam_fwhm)``.
-    scale_bias : float, optional
-        In [0, 1): scales the scores of scale ``s`` by
-        ``1 - scale_bias s / max(scales_mas)`` (default 0, no bias).
+        Stop when χ² falls by less than this fraction in this many iterations.
+    base_priors, refresh_norms : dict and bool, optional
+        Base priors refitted, and pixel norms ``|J e_p|`` recomputed (costly), each major cycle.
+    spectrum, support, init : Spectrum and array-like, optional
+        Shared spectrum (default grey; needs a base); boolean ``(npix, npix)``
+        mask, e.g. [`circular_support`][virgil.models.circular_support];
+        non-negative starting fluxes ``(npix, npix)`` or ``(n_scales, npix, npix)``.
+    rotation_deg, dtype : float and str, optional
+        Grid position angle (match ``data.uv_grid.rotation_deg``, see
+        [`Image`][virgil.models.Image]); [precision](../common_arguments.md#dtype).
+    scales_mas, scale_bias : sequence of float and float, optional
+        FWHMs (mas) of the components, 0 for a point (``(0.0, 3.0)``: both); in
+        [0, 1), the down-weighting ``1 - scale_bias s / max(scales_mas)`` of scale ``s``.
 
     Returns
     -------
     CleanResult
-        The model, components and χ² history. Polish the model with
-        [`fit`][virgil.fitting.fit], use it as a starting image for a
-        regularized fit, or restore it with the beam.
+        The model, components and χ² history.
     """
     observations = tuple(_as_list(data))
     npix, pixel_scale_mas = int(npix), float(pixel_scale_mas)
@@ -2144,42 +2081,26 @@ def _evidence_latents(model, path, caller):
 def log_evidence(model, data, path="env"):
     """Laplace-approximated log evidence of a Gaussian-process fit.
 
-    For a model whose Image log-brightness is a
-    [`GaussianField`][virgil.fields.GaussianField], or whose
-    [`MultipoleDisk`][virgil.models.MultipoleDisk] has Gaussian-process parts
-    ([`RadialGP`][virgil.models.RadialGP],
-    [`RadialGPFunction`][virgil.models.RadialGPFunction] and
-    [`MultipoleKernel`][virgil.models.MultipoleKernel]), with standard-normal
-    whitened latents ``z``, at the MAP ``model`` from
-    [`fit`][virgil.fitting.fit]:
-
-    ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``,
-
-    up to a constant that depends only on the data, so differences between fits
-    are what matter: compare it across hyperparameters and choose the largest
-    (MacKay's evidence framework). ``J`` is the Jacobian of the whitened
-    residuals with respect to all the selected latents together; other fitted
-    parameters are held at their MAP values. ``L`` is the likelihood's
-    model-dependent normalizer (zero for plain data; see
-    [Evidence](imaging.md#evidence)). It is exact for a linear model, assumes
-    correct error bars, and uses the data's quoted errors, so it does not
-    support fits with ``noise=`` terms, nor one model per dataset.
+    At the MAP ``model``, ``log Z ≈ -½ χ² - L - ½ |z|² - ½ log det(I + JᵀJ)``
+    up to a data-only constant, with ``z`` the whitened latents of the Image's
+    [`GaussianField`][virgil.fields.GaussianField] (or the Gaussian-process parts
+    of a [`MultipoleDisk`][virgil.models.MultipoleDisk]), ``J`` their Jacobian and
+    ``L`` the likelihood normalizer. Compare it across hyperparameters; it uses
+    the quoted errors, so no ``noise=`` terms or per-dataset models. See
+    [Evidence](../imaging_gp.md#choosing-and-from-the-evidence).
+    Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
     ----------
     model : SourceModel or FitResult
-        The MAP model, or better the [`FitResult`][virgil.fitting.FitResult]
-        itself, so that fitted ``noise=`` terms are caught (a ``ValueError``).
-        A list of models raises a ``TypeError``.
+        The MAP model, or better the [`FitResult`][virgil.fitting.FitResult], so
+        fitted ``noise=`` terms are caught (``ValueError``); a list of models
+        raises ``TypeError``.
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of paths
-        of Images with GaussianFields and MultipoleDisks with Gaussian-process
-        parts, or ``None`` for every such Image and disk (a ``TypeError`` if
-        there is none). The evidence is conditional on the hyperparameters held
-        in ``model``: compare it across fits with different ones, or give them
-        log-uniform priors ([`gp_priors`][virgil.models.gp_priors]) and sample.
+        Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
+        every such Image and disk (``TypeError`` if there is none).
 
     Returns
     -------
@@ -2224,23 +2145,16 @@ def _render_latents(model, latent_path, latents, npix, fov_mas):
 def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     """Draws from the Laplace posterior of a Gaussian-field image.
 
-    For an Image whose log-brightness is a
-    [`GaussianField`][virgil.fields.GaussianField], the whitened latents ``z``
-    have the Gauss–Newton (Laplace) posterior ``N(z₀, (I + JᵀJ)⁻¹)`` about the
-    MAP ``z₀``, the approximation of
-    [`log_evidence`][virgil.imaging.log_evidence]; directions the data do not
-    constrain keep the prior's unit width. ``J`` covers the latents of every
-    selected Image together, so the draws keep the correlations between their
-    fields. Only the latents vary: every other fitted parameter is held at its
-    MAP value, so the spread is narrower than the full posterior's where they
-    correlate with the image. It uses the data's quoted errors.
+    The whitened latents ``z`` are drawn from ``N(z₀, (I + JᵀJ)⁻¹)`` about the
+    MAP ``z₀``, the approximation of [`log_evidence`][virgil.imaging.log_evidence].
+    Only the latents vary, so the spread is narrower than the full posterior's
+    where other parameters correlate with the image. It uses the quoted errors.
 
     Parameters
     ----------
     model : SourceModel or FitResult
-        The MAP model, or the [`FitResult`][virgil.fitting.FitResult] itself
-        (fitted ``noise=`` terms raise a ``ValueError``, lists of models a
-        ``TypeError``).
+        The MAP model, or the [`FitResult`][virgil.fitting.FitResult] (fitted
+        ``noise=`` terms raise ``ValueError``, lists of models ``TypeError``).
     data : OIData or sequence of OIData
         The data it was fitted to.
     n : int
@@ -2248,22 +2162,19 @@ def laplace_samples(model, data, n, key, path="env", npix=None, fov_mas=None):
     key : jax.Array
         A JAX random key.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of paths
-        of Images with GaussianFields, or ``None`` for every such Image (a
-        ``TypeError`` if there is none).
+        Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
+        every Image with a GaussianField (``TypeError`` if there is none).
     npix, fov_mas : int and float, optional
         Together, also render the whole model for each draw (see
         [`SourceModel.render`][virgil.models.SourceModel.render]); one alone
-        raises a ``ValueError``.
+        raises ``ValueError``.
 
     Returns
     -------
     dict
-        ``"latents"``, a NumPy array ``(n, *latent.shape)``, and, given
-        ``npix`` and ``fov_mas``, ``"images"``, ``(n, npix, npix)``: unit-sum
-        images of the whole model. With more than one Image selected,
-        ``"latents"`` is a dict from each Image's path (``""`` for the model's
-        own Image) to its array.
+        ``"latents"``, an array ``(n, *latent.shape)`` (a dict by Image path if
+        several are selected), and with ``npix`` and ``fov_mas`` ``"images"``,
+        ``(n, npix, npix)`` unit-sum images of the whole model.
     """
     if (npix is None) != (fov_mas is None):
         raise ValueError(
@@ -2450,52 +2361,36 @@ def _check_scalable_blocks(datasets):
 def error_scale(model, data, path="env", *, by_observable=False):
     r"""Re-estimate the scale of the error bars from a Gaussian-field fit.
 
-    Returns the factor ``s`` by which every error bar should be multiplied for
-    the data to be consistent with the fit: ``s < 1`` means the error bars are
-    too large, ``s > 1`` too small or the model is missing something. It is
-    MacKay's evidence re-estimation of the noise level, ``s² = χ² / (N − γ)``
-    with ``γ`` the effective number of parameters the data measure, solved at
-    the fitted model (see [Error scale](imaging.md#error-scale)). Fit, call
-    this, rescale with
+    Returns the factor ``s`` to multiply every error bar by for consistency with
+    the fit (``s < 1``: bars too large; ``s > 1``: too small, or the model is
+    inadequate). It solves ``s² = χ² / (N − γ)``, with ``γ`` the effective number
+    of parameters the data measure; see [Error scale](../imaging_gp.md#are-the-error-bars-right).
+    Fit, call this, rescale with
     [`OIData.with_error_scale`][virgil.oidata.OIData.with_error_scale], refit.
-    Rescale before choosing hyperparameters: error bars that are too large make
-    the discrepancy principle, classic MaxEnt and the evidence over-regularize.
-
-    It uses the data's quoted errors, so it does not support fits with
-    ``noise=`` terms, nor fits with one model per dataset. It assumes the model
-    is adequate: structure it cannot fit is absorbed into ``s``.
+    It uses the quoted errors, so no ``noise=`` terms or per-dataset models.
+    Source: MacKay (1992), [references](../references.md#mackay1992).
 
     Parameters
     ----------
     model : SourceModel or FitResult
-        The MAP model, whose Image at ``path`` has a GaussianField
-        log-brightness (or whose MultipoleDisk at ``path`` has
-        Gaussian-process parts, as for
-        [`log_evidence`][virgil.imaging.log_evidence]), or better the
-        [`FitResult`][virgil.fitting.FitResult]
-        itself, so that fitted ``noise=`` terms are caught (a ``ValueError``).
-        A list of models raises a ``TypeError``.
+        The MAP model, as for [`log_evidence`][virgil.imaging.log_evidence].
     data : OIData or sequence of OIData
         The data it was fitted to.
     path : str or tuple of str or None, optional
-        Path of the Image in the model (default ``"env"``), a tuple of paths of
-        Images with GaussianFields and Gaussian-process MultipoleDisks (γ
-        counts all their latents), or ``None`` for every such Image and disk
-        in the model (a ``TypeError`` if there is none).
+        Path of the Image (default ``"env"``), a tuple of paths, or ``None`` for
+        every such Image and disk (``TypeError`` if there is none).
     by_observable : bool, optional
-        One scale per kind of observable (default False: one scale for all the
-        data), for when the V² and the closure phases are off by different
-        factors. Data with calibration gains, closure-phase offsets or other
-        nuisance covariance that does not scale with the errors raise a
-        ``ValueError``.
+        One scale per kind of observable instead of one for all. Data with
+        gains, closure-phase offsets or other covariance that does not scale
+        with the errors raise ``ValueError``.
 
     Returns
     -------
     float or dict
-        The scale ``s``, or with ``by_observable=True`` a dictionary from each
-        kind of observable present (``"vis"``, ``"phi"``, and e.g. ``"flux"``)
-        to its scale ``s_b``, ready for ``OIData.with_error_scale``. A warning
-        is issued if the block scales do not converge.
+        The scale ``s``, or with ``by_observable=True`` a dict from each
+        observable kind (``"vis"``, ``"phi"``, ...) to its scale, ready for
+        ``OIData.with_error_scale``. A warning is issued if the block scales do
+        not converge.
     """
     model = _single_model(model, "error_scale")
     latent_paths = _evidence_latents(model, path, "error_scale")

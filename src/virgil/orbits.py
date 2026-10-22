@@ -453,6 +453,25 @@ class KeplerOrbit(zdx.Base):
         )
 
 
+@jax.jit  # one dispatch per eager call; the maths is ~20 ns per draw under vmap
+def _thiele_innes_angles(a, b, f, g):
+    """``(inc, omega, Omega, a_mas)`` (degrees, mas) of Thiele–Innes constants."""
+    total = np.arctan2(b - f, a + g)  # omega + Omega
+    difference = np.arctan2(-(b + f), a - g)  # omega - Omega
+    omega = np.rad2deg((total + difference) / 2)
+    Omega = np.rad2deg((total - difference) / 2)
+    omega, Omega = _wrap_node(omega, Omega)
+    # The singular values of [[A, B], [F, G]] are a and a |cos i|, and
+    # in terms of p = |(A - G, B + F)|, q = |(A + G, B - F)| they are
+    # (q ± p) / 2 (p, q are differences of norms that cannot cancel).
+    # So tan²(i/2) = p / q: exact near i = 0 and i = 180°, unlike arccos.
+    p_norm = np.hypot(a - g, b + f)
+    q_norm = np.hypot(a + g, b - f)
+    a_mas = (q_norm + p_norm) / 2
+    inc = 2.0 * np.rad2deg(np.arctan2(np.sqrt(p_norm), np.sqrt(q_norm)))
+    return inc, omega, Omega, a_mas
+
+
 class ThieleInnesOrbit(zdx.Base):
     """A sky orbit in Thiele–Innes form: linear in ``A``, ``B``, ``F``, ``G``.
 
@@ -512,25 +531,13 @@ class ThieleInnesOrbit(zdx.Base):
         other solution, with ``dz`` reversed.
         """
         a, b, f, g = self.A, self.B, self.F, self.G
-        total = np.arctan2(b - f, a + g)  # omega + Omega
-        difference = np.arctan2(-(b + f), a - g)  # omega - Omega
-        omega = np.rad2deg((total + difference) / 2)
-        Omega = np.rad2deg((total - difference) / 2)
-        omega, Omega = _wrap_node(omega, Omega)
         half = (a**2 + b**2 + f**2 + g**2) / 2
         if concrete(half) is not None and not onp.all(concrete(half) > 0):
             raise ValueError(
                 "The Thiele–Innes constants are all zero: the positions "
                 "carry no orbit (all at the primary)."
             )
-        # The singular values of [[A, B], [F, G]] are a and a |cos i|, and
-        # in terms of p = |(A - G, B + F)|, q = |(A + G, B - F)| they are
-        # (q ± p) / 2 (p, q are differences of norms that cannot cancel).
-        # So tan²(i/2) = p / q: exact near i = 0 and i = 180°, unlike arccos.
-        p_norm = np.hypot(a - g, b + f)
-        q_norm = np.hypot(a + g, b - f)
-        a_sq = ((q_norm + p_norm) / 2) ** 2
-        inc = 2.0 * np.rad2deg(np.arctan2(np.sqrt(p_norm), np.sqrt(q_norm)))
+        inc, omega, Omega, a_mas = _thiele_innes_angles(a, b, f, g)
         return KeplerOrbit(
             period=self.period,
             dt_peri=self.dt_peri,
@@ -538,7 +545,7 @@ class ThieleInnesOrbit(zdx.Base):
             inc=inc,
             omega=omega,
             Omega=Omega,
-            a_mas=np.sqrt(a_sq),
+            a_mas=a_mas,
             t_ref=self.t_ref,
         )
 
@@ -933,6 +940,62 @@ def starting_orbits(
     ]
 
 
+@jax.jit  # one dispatch per eager call, as for ``_thiele_innes_angles``
+def _state_elements(dra, ddec, dz, vra, vdec, vz, mu):
+    """``(period, dt_peri, ecc, inc, omega, Omega, a_mas)`` of a state vector."""
+    r = np.stack([dra, ddec, dz])  # (East, North, away)
+    v = np.stack([vra, vdec, vz])
+    r_norm = np.linalg.norm(r)
+    h = np.cross(r, v)
+    e_vec = np.cross(v, h) / mu - r / r_norm
+    ecc = np.linalg.norm(e_vec)
+    a_mas = 1.0 / (2.0 / r_norm - np.dot(v, v) / mu)
+    period = 2 * np.pi * np.sqrt(a_mas**3 / mu) * 365.25  # days
+    circular = ecc < 1e-12
+    p_hat = np.where(
+        circular, r / r_norm, e_vec / np.where(circular, 1.0, ecc)
+    )
+    # Eccentric anomaly at t_ref, then the time of periastron. It goes
+    # through the true anomaly measured from ``p_hat`` itself, so for a
+    # near-circular orbit, where ``p_hat`` is uncertain by about
+    # eps / e, the error moves ω and the anomaly oppositely and cancels
+    # in the positions (ω + M is what the sky fixes).
+    q_hat = np.cross(h / np.linalg.norm(h), p_hat)
+    nu = np.arctan2(np.dot(r, q_hat), np.dot(r, p_hat))
+    ecc_anomaly = 2.0 * np.arctan2(
+        np.sqrt(1.0 - ecc) * np.sin(nu / 2),
+        np.sqrt(1.0 + ecc) * np.cos(nu / 2),
+    )
+    mean_anomaly = ecc_anomaly - ecc * np.sin(ecc_anomaly)
+    dt_peri = -mean_anomaly / (2 * np.pi) * period
+    # The angles from the plane's orientation, all by atan2 so that they
+    # stay accurate near face-on and edge-on. With P, Q the unit vectors
+    # of the Thiele–Innes constants, h ∝ P × Q = (sin i cos Ω,
+    # -sin i sin Ω, -cos i) in (East, North, away), which fixes i and
+    # the true node Ω (in [0, 360), not just modulo 180°) directly.
+    h_xy = np.hypot(h[0], h[1])
+    inc = np.arctan2(h_xy, -h[2])
+    Omega = np.arctan2(-h[1], h[0])
+    sin_i, cos_i = np.sin(inc), np.cos(inc)
+    sin_n, cos_n = np.sin(Omega), np.cos(Omega)
+    # P = cos ω u + sin ω w, with u the node direction at ω = 0 and w
+    # the in-plane direction 90° on from it.
+    u_hat = np.stack([sin_n, cos_n, np.zeros_like(sin_n)])
+    w_hat = np.stack([cos_n * cos_i, -sin_n * cos_i, sin_i])
+    omega = np.arctan2(np.dot(p_hat, w_hat), np.dot(p_hat, u_hat))
+    Omega_deg = np.mod(np.rad2deg(Omega), 360.0)
+    omega_deg = np.mod(np.rad2deg(omega), 360.0)
+    return (
+        period,
+        dt_peri,
+        ecc,
+        np.rad2deg(inc),
+        np.where(omega_deg >= 360.0, 0.0, omega_deg),
+        np.where(Omega_deg >= 360.0, 0.0, Omega_deg),
+        a_mas,
+    )
+
+
 class StateVectorOrbit(zdx.Base):
     """An orbit given by the relative position and velocity at ``t_ref``.
 
@@ -1043,58 +1106,10 @@ class StateVectorOrbit(zdx.Base):
         positions alone leave ambiguous by 180°. A circular orbit (e = 0)
         has no periastron: the position at ``t_ref`` is used instead.
         """
-        r = np.stack([self.dra, self.ddec, self.dz])  # (East, North, away)
-        v = np.stack([self.vra, self.vdec, self.vz])
-        r_norm = np.linalg.norm(r)
-        h = np.cross(r, v)
-        e_vec = np.cross(v, h) / self.mu - r / r_norm
-        ecc = np.linalg.norm(e_vec)
-        a_mas = 1.0 / (2.0 / r_norm - np.dot(v, v) / self.mu)
-        period = 2 * np.pi * np.sqrt(a_mas**3 / self.mu) * 365.25  # days
-        circular = ecc < 1e-12
-        p_hat = np.where(
-            circular, r / r_norm, e_vec / np.where(circular, 1.0, ecc)
+        elements = _state_elements(
+            self.dra, self.ddec, self.dz, self.vra, self.vdec, self.vz, self.mu
         )
-        # Eccentric anomaly at t_ref, then the time of periastron. It goes
-        # through the true anomaly measured from ``p_hat`` itself, so for a
-        # near-circular orbit, where ``p_hat`` is uncertain by about
-        # eps / e, the error moves ω and the anomaly oppositely and cancels
-        # in the positions (ω + M is what the sky fixes).
-        q_hat = np.cross(h / np.linalg.norm(h), p_hat)
-        nu = np.arctan2(np.dot(r, q_hat), np.dot(r, p_hat))
-        ecc_anomaly = 2.0 * np.arctan2(
-            np.sqrt(1.0 - ecc) * np.sin(nu / 2),
-            np.sqrt(1.0 + ecc) * np.cos(nu / 2),
-        )
-        mean_anomaly = ecc_anomaly - ecc * np.sin(ecc_anomaly)
-        dt_peri = -mean_anomaly / (2 * np.pi) * period
-        # The angles from the plane's orientation, all by atan2 so that they
-        # stay accurate near face-on and edge-on. With P, Q the unit vectors
-        # of the Thiele–Innes constants, h ∝ P × Q = (sin i cos Ω,
-        # -sin i sin Ω, -cos i) in (East, North, away), which fixes i and
-        # the true node Ω (in [0, 360), not just modulo 180°) directly.
-        h_xy = np.hypot(h[0], h[1])
-        inc = np.arctan2(h_xy, -h[2])
-        Omega = np.arctan2(-h[1], h[0])
-        sin_i, cos_i = np.sin(inc), np.cos(inc)
-        sin_n, cos_n = np.sin(Omega), np.cos(Omega)
-        # P = cos ω u + sin ω w, with u the node direction at ω = 0 and w
-        # the in-plane direction 90° on from it.
-        u_hat = np.stack([sin_n, cos_n, np.zeros_like(sin_n)])
-        w_hat = np.stack([cos_n * cos_i, -sin_n * cos_i, sin_i])
-        omega = np.arctan2(np.dot(p_hat, w_hat), np.dot(p_hat, u_hat))
-        Omega_deg = np.mod(np.rad2deg(Omega), 360.0)
-        omega_deg = np.mod(np.rad2deg(omega), 360.0)
-        return KeplerOrbit(
-            period,
-            dt_peri,
-            ecc,
-            np.rad2deg(inc),
-            np.where(omega_deg >= 360.0, 0.0, omega_deg),
-            np.where(Omega_deg >= 360.0, 0.0, Omega_deg),
-            a_mas,
-            t_ref=self.t_ref,
-        )
+        return KeplerOrbit(*elements, t_ref=self.t_ref)
 
     def relative(self, mjd):
         """``(dra, ddec, dz)`` (mas), as for

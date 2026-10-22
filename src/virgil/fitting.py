@@ -652,89 +652,48 @@ def fit(
 ):
     """Find the maximum a posteriori parameters of a model given data.
 
-    `model`, `priors`, `data`, `regularizers`, `noise`, `likelihoods` and `dtype`
-    are shared with [`numpyro_model`][virgil.likelihood.numpyro_model]; see
-    [common arguments](../common_arguments.md). A prior that is uniform in some
-    coordinate (`LogUniform`, an isotropic inclination, ...) is optimized in it;
-    the returned `values` are always in the model's own parameters.
+    Arguments are shared with [`numpyro_model`][virgil.likelihood.numpyro_model]
+    ([common arguments](../common_arguments.md)). Parameters under a prior uniform
+    in some coordinate are optimized in it; `values` are in the model's own.
 
     Parameters
     ----------
     model : SourceModel or callable
-        A template whose leaves at the paths in ``priors`` are fitted (their
-        values are the starting point), or a function of the parameters that
-        returns a model or a list of models, one per dataset.
+        A template whose leaves at the paths in ``priors`` are fitted, or a
+        function of the parameters returning a model (or one per dataset).
     priors : dict[str, numpyro.distributions.Distribution]
         A prior for each free parameter, keyed by its path.
     data : OIData or sequence of OIData
-        The data, fitted jointly; may be ``()`` when ``likelihoods`` holds all
-        the data.
-    regularizers : sequence, optional
-        Penalties added to the loss, e.g. from [`virgil.imaging`][virgil.imaging].
-    noise : dict or list of dict, optional
-        Priors on error and calibration terms fitted with the parameters; see
-        [common arguments](../common_arguments.md#noise).
-    init : dict, optional
-        Starting values by path (or ``noise`` site); required for a function model.
-    method : {"lm", "lbfgs", "adam"}, optional
-        ``"lm"``: Levenberg–Marquardt, the default when the objective has a
-        least-squares form (Normal priors and priors flat in their fitted
-        coordinate; not with maximum entropy, whose LM form is for float64
-        only); matrix-free (``cg_steps``) above 200 coordinates.
-        ``"lbfgs"``: for penalties such as maximum entropy and total variation,
-        and the default otherwise. ``"adam"``: with ``learning_rate``.
-    max_steps : int, optional
-        Step limit (defaults: 1000 for LM, 20000 for L-BFGS, 2000 for Adam).
-    gtol : float, optional
-        LM and L-BFGS stop when no component of the gradient of the loss per data
-        point exceeds ``gtol``, nor 1/1000 of its largest starting value (floored
-        at √eps of the dtype times that value, and at ``1e-6 * gtol``).
-    max_step_size : float, optional
-        L-BFGS moves no unconstrained coordinate by more than this per step (a
-        factor ``exp(max_step_size)`` for a log-brightness pixel).
-    lbfgs_memory : int, optional
-        Past steps L-BFGS keeps to model the curvature (default 100: fewer
-        steps than 50 along a maximum-entropy L-curve).
-    learning_rate : float, optional
-        Adam's learning rate, in unconstrained coordinates.
-    cg_steps : int, optional
-        Conjugate-gradient steps per LM step, above 200 coordinates.
+        The data, fitted jointly; ``()`` if ``likelihoods`` has it all.
+    regularizers, noise : sequence and dict, optional
+        Loss penalties (e.g. [`virgil.imaging`][virgil.imaging]) and priors on
+        error terms; see [common arguments](../common_arguments.md).
+    init, method : dict and str, optional
+        Starting values by path (required for a function model); ``"lm"`` (the
+        default for a least-squares objective), ``"lbfgs"`` (for penalties such as
+        maximum entropy, which LM also fits in float64) or ``"adam"``.
+    max_steps, gtol, max_step_size : int and float, optional
+        Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
+        tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
+    lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
+        L-BFGS history (default 100); CG steps per LM step (above 200
+        coordinates); Adam's rate.
     dtype : {"float64", "float32"}, optional
-        Precision of the fit; see [common arguments](../common_arguments.md#dtype).
-    likelihoods : sequence, optional
-        Further Gaussian likelihood terms, such as
-        [`PositionData.term`][virgil.orbits.PositionData.term].
-    time_limit : float, optional
-        Wall-clock budget (seconds) for LM and L-BFGS, which run in chunks and
-        stop after the first chunk that ends past it, with
-        ``info["stop"] == "time"`` and a warning. Compilation counts.
-    progress : callable or bool, optional
-        Between chunks, call a function with a dict of ``steps``, ``loss``,
-        ``grad_norm`` and ``elapsed`` (seconds), or print them if ``True``.
+        Precision; see [common arguments](../common_arguments.md#dtype).
+    likelihoods, time_limit, progress : sequence, float and callable, optional
+        Further terms, e.g. [`PositionData.term`][virgil.orbits.PositionData.term];
+        wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
+        ``grad_norm``, ``elapsed``.
     precondition : {None, "diag"}, optional
-        ``"diag"`` rescales each unconstrained coordinate by the square root of
-        the diagonal of the Gauss–Newton curvature (see
-        [`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and
-        Adam, which helps when the coordinates' curvatures differ by many
-        decades, as for the faint pixels of a flat-prior image. A maximum-entropy
-        pixel's curvature is taken as its entropy metric ``weight * b``. The
-        diagonal is
-        refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
-        ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
-        unconstrained coordinates (provisional: may change in any 0.4.x
-        release). ``info["precondition_rounds"]`` lists, per
-        round, the spread of the diagonal before its floor in decades (the
-        largest of any coordinate block) and the fraction of coordinates floored. LM ignores it: it already uses JᵀJ.
-        float32 can stall at weak weights (the line search meets the noise of
-        the model evaluation); use float64 there.
+        ``"diag"`` rescales each coordinate by the Gauss–Newton curvature diagonal for
+        L-BFGS and Adam (provisional); a maximum-entropy pixel's is its metric
+        ``weight * b``. float32 can stall at weak weights; use float64 there.
 
     Returns
     -------
     FitResult
-        The fitted model, values and diagnostics. A warning is raised if LM or
-        L-BFGS did not converge; ``info["stop"]`` holds the reason, and
-        ``info["grad_norm"]`` the largest absolute component of the gradient of
-        the loss per data point, in the unconstrained coordinates.
+        Model, values and diagnostics; warns if LM or L-BFGS did not converge
+        (``info["stop"]`` gives the reason, ``info["grad_norm"]`` the gradient).
     """
     if not math.isfinite(max_step_size) or max_step_size <= 0:
         raise ValueError(
@@ -1007,61 +966,36 @@ def gauss_newton_mass(
 ):
     """A NUTS mass matrix from the Gauss–Newton curvature at a fit.
 
-    Near the maximum a posteriori, a posterior with one peak is close to a
-    Gaussian whose precision is F = JᵀJ + diag(P) in the unconstrained
-    coordinates numpyro samples (J: Jacobian of the whitened residuals; P: curvature
-    of the priors and transforms). Its inverse is the mass matrix, so that
-    directions the data fix tightly take the same step size as those left to the
-    prior. See [the Gauss–Newton mass matrix](../gauss_newton_mass.md) for the
-    construction, fitted error terms and gains, what it leaves out, and
-    [when not to use it](../gauss_newton_mass.md#when-not-to-use-it). Use it at
-    fixed field hyperparameters, with every sampled parameter in ``priors``.
-
-    With more than 4096 coordinates (images larger than 64²) the result is a
-    diagonal mass, with a ``UserWarning``.
+    Near the maximum a posteriori the posterior is close to a Gaussian with
+    precision F = JᵀJ + diag(P) in numpyro's unconstrained coordinates; its
+    inverse is the mass matrix. See [the Gauss–Newton mass matrix](../gauss_newton_mass.md)
+    for the construction and [when not to use it](../gauss_newton_mass.md#when-not-to-use-it).
+    Use it at fixed field hyperparameters, with every sampled parameter in
+    ``priors``. Above 4096 coordinates the mass is diagonal, with a ``UserWarning``.
 
     Parameters
     ----------
-    model, priors, data
-        As for [`fit`][virgil.fitting.fit]. Any elementwise prior is accepted
-        (``event_shape == ()``; a ``MultivariateNormal`` or ``Dirichlet`` raises
-        ``NoLeastSquaresForm``). ``ImproperUniform`` priors add no curvature, nor
-        do [`AngleVector`][virgil.angles.AngleVector] priors, whose residuals are
-        rows instead; an angle vector's block is keyed by its site,
-        ``"<path>_vec"``. Data may carry gains.
+    model, priors, data, likelihoods, noise
+        As for [`fit`][virgil.fitting.fit]. Priors must be elementwise
+        (a ``MultivariateNormal`` or ``Dirichlet`` raises ``NoLeastSquaresForm``).
     values : dict
-        The parameter values at which to take the curvature, normally
-        ``fit(model, priors, data).values``, including the fitted error terms if
-        ``noise`` is given.
-    likelihoods : sequence, optional
-        Further likelihood terms, as for ``fit``; ``data`` may then be ``()``.
-    noise : dict or list of dict, optional
-        Priors on error terms, as for ``fit``; they are coordinates of the matrix.
-        A term tied to the parameters (a function instead of a prior) is not one.
+        Where to take the curvature, normally ``fit(...).values`` (model's own parameters).
     flat_coordinates : bool, optional
-        Whether the sampler moves in the priors' flat coordinates, as for
-        ``numpyro_model`` (default ``False``); pass the same value to both. See
+        Pass the value given to ``numpyro_model``; see
         [common arguments](../common_arguments.md#flat_coordinates).
 
     Returns
     -------
     GaussNewtonMass
-        A dict of keyword arguments for ``numpyro.infer.NUTS``:
-        ``inverse_mass_matrix``, ``dense_mass`` and ``adapt_mass_matrix=False``
-        (a covariance estimated from a few hundred draws in thousands of
-        dimensions is far worse than this matrix). The attribute ``condition`` is
-        the condition number of the correlation matrix, or ``None`` for a
-        diagonal mass; above 1e10 the matrix is numerically unreliable. For the
-        diagonal mass ``dense_mass`` is empty and ``inverse_mass_matrix`` holds a
-        vector.
+        Keyword arguments for ``numpyro.infer.NUTS``; ``condition`` is the
+        correlation matrix's condition number (``None`` if diagonal; above 1e10
+        the matrix is unreliable).
 
     Raises
     ------
     SingularCurvature
-        If a direction is constrained by neither the data nor a proper prior (an
-        ``ImproperUniform`` or flat-in-coordinate parameter the data do not
-        fix), or the matrix is not positive definite. A parameter under a
-        bounded prior is not one: it gets the curvature of the transform.
+        If a direction is fixed by neither the data nor a proper prior, or the
+        matrix is not positive definite.
 
     Examples
     --------
@@ -1107,7 +1041,7 @@ def gauss_newton_mass(
     out = GaussNewtonMass(
         inverse_mass_matrix={sites: covariance},
         dense_mass=[sites] if dense else [],
-        adapt_mass_matrix=False,
+        adapt_mass_matrix=False,  # deliberate: a covariance from a few hundred draws in thousands of dimensions is far worse
     )
     out.flat_coordinates = bool(flat_coordinates)
     out.condition = condition
