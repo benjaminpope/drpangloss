@@ -16,6 +16,10 @@ anything before 1.0 may change between minor versions.
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,
   `ComplexVisData.sigma_hat` computes it, and `term(sigma=)` fixes it for scoring. New `offset_beams` argument.
 
+### Fixed
+
+- `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
+
 ### Changed
 
 - `CalibrationNuisance` default priors are in natural units. Gains and error
@@ -1145,6 +1149,7 @@ Provisional in 0.4:
 - image smoothing: `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the
   `smoothed` option of the regularizers;
 - `virgil.crossval`;
+- `virgil.fitting.gauss_newton_diag` and the `precondition` argument of `fit`;
 - the module `virgil.radio` (new: complex visibilities from CASA measurement
   sets with per-observation calibration nuisances; instrument-neutral, with
   the spectral-index prior `Uniform(0, 5)` and the data-derived reference

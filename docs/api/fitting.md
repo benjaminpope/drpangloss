@@ -13,3 +13,4 @@ with no wrap boundary at 0°/360°.
         - fit
         - FitResult
         - gauss_newton_mass
+        - gauss_newton_diag

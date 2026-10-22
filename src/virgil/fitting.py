@@ -55,6 +55,9 @@ from .models import (
 from ._deprecate import external_stacklevel
 
 
+__provisional__ = ("gauss_newton_diag",)
+
+
 def _bijection(distribution):
     from numpyro.distributions.transforms import biject_to
 
@@ -714,7 +717,8 @@ def fit(
         decades, as for the faint pixels of a flat-prior image. The diagonal is
         refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
         ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
-        unconstrained coordinates. ``info["precondition_decades"]`` lists, per
+        unconstrained coordinates (provisional: may change in any 0.4.x
+        release). ``info["precondition_decades"]`` lists, per
         round, the spread of the diagonal in decades (the largest within a
         coordinate block). LM ignores it: it already uses JᵀJ.
 
@@ -1532,6 +1536,9 @@ def gauss_newton_diag(
 ):
     """The diagonal of the Gauss–Newton curvature of a fit's loss.
 
+    !!! warning "Provisional"
+        May change in any 0.4.x release without a deprecation cycle.
+
     The curvature is F = JᵀJ + diag(P) + diag(R) in the unconstrained
     coordinates [`fit`][virgil.fitting.fit] optimizes: J is the Jacobian of the
     whitened residuals, P the curvature of the priors and R the Hessian diagonal
@@ -1604,11 +1611,8 @@ class _Metric(eqx.Module):
         return jax.tree.map(lambda g, w: g / w, gradient, self.width)
 
     def normalized(self):
-        """The same, with the narrowest width scaled to one."""
-        smallest = np.min(
-            np.stack([np.min(w) for w in jax.tree.leaves(self.width)])
-        )
-        width = jax.tree.map(lambda w: w / smallest, self.width)
+        """The same, with each block's widest width scaled to one."""
+        width = jax.tree.map(lambda w: w / np.max(w), self.width)
         return _Metric(self.zref, width, self.gauge, self.decades)
 
     def _project(self, key, x):
@@ -1632,12 +1636,18 @@ class _InMetric(eqx.Module):
 def _gauge_masks(problem):
     """Support masks of the plain log-brightness arrays being fitted: an Image's
     brightness is a softmax of them, so adding a constant leaves it unchanged."""
+    import numpyro.distributions as dist
+
     model = problem.model
     if not isinstance(model, SourceModel):
         return {}
     masks = {}
     for path in problem.priors:
-        if not path.endswith("log_brightness"):
+        # Only a flat prior leaves the loss unchanged by a constant shift.
+        prior = problem.priors[path]
+        if not path.endswith("log_brightness") or not isinstance(
+            _base(prior), dist.ImproperUniform
+        ):
             continue
         parent = path[: -len("log_brightness")].rstrip(".")
         image = model.resolved()
@@ -1973,7 +1983,8 @@ def _adam(problem, z0, scale, learning_rate, steps, metric=None):
     # With a metric, Adam runs in its scaled coordinates: its rms divisor
     # follows the size of the gradient, the metric the width of the
     # coordinate, so each coordinate's step is the learning rate times its
-    # width. See design/fit_preconditioning.md.
+    # width, the widest of its block taking the learning rate itself.
+    # See design/fit_preconditioning.md.
     if metric is not None:
         problem, start = (
             _InMetric(problem, metric),

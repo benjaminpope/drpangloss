@@ -138,7 +138,7 @@ def test_adam_with_a_metric_reaches_the_same_optimum():
         init={"x": np.zeros(24)},
         likelihoods=[_quadratic_term],
         method="adam",
-        max_steps=500,
+        max_steps=3000,
         learning_rate=0.1,
         precondition="diag",
     )
@@ -193,3 +193,26 @@ def test_the_l_curve_converges_at_every_weight():
         assert all(r.info["converged"] for r in curve.results)
         steps[option] = sum(r.info["steps"] for r in curve.results)
     assert steps["diag"] < steps[None]
+
+
+def test_a_proper_pixel_prior_is_not_given_the_gauge_projection():
+    # A Normal prior is not invariant to a constant shift of the pixels, so
+    # the mean must follow it from 0 towards -2. (The two fits may end in
+    # different local minima of this softmax image; a warm start from the plain
+    # optimum must stay there.)
+    start, _, data = _image_fit(8)
+    shape = (8, 8)
+    priors = {
+        "env.log_brightness": dist.Normal(-2.0 * np.ones(shape), 1.0).to_event(
+            2
+        )
+    }
+    options = dict(gtol=1e-8, method="lbfgs")
+    plain = fit(start, priors, data, **options)
+    scaled = fit(start, priors, data, precondition="diag", **options)
+    assert scaled.info["converged"]
+    assert float(np.mean(scaled.values["env.log_brightness"])) < -0.5
+    again = fit(
+        start, priors, data, init=plain.values, precondition="diag", **options
+    )
+    assert again.info["loss"] == pytest.approx(plain.info["loss"], rel=1e-6)
