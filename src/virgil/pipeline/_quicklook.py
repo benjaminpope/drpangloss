@@ -29,12 +29,6 @@ _OPENING = {
 }
 
 
-def _fmt(value):
-    if isinstance(value, float):
-        return f"{value:.4g}"
-    return str(value)
-
-
 def _nuts_sentence(post):
     return (
         f"NUTS drew {post['num_samples']} samples in each of "
@@ -66,7 +60,10 @@ def _intro(run):
         for name, entry in run["stages"].items()
         if entry.get("status") == "complete"
     )
-    settings = ", ".join(f"`{k}={_fmt(v)}`" for k, v in run["config"].items())
+    settings = ", ".join(
+        f"`{k}={f'{v:.4g}' if isinstance(v, float) else v}`"
+        for k, v in run["config"].items()
+    )
     prov = run["provenance"]
     note = _IMAGE_CAVEAT if run["pipeline"] == "image" else ""
     return (
@@ -82,22 +79,6 @@ def _intro(run):
         f"{'on' if prov['x64'] else 'off'}).\n\n"
         "The first cell reloads the run from this folder, without recomputing "
         "anything, and prints its key numbers."
-    )
-
-
-def _closing(summary):
-    checks = summary.get("checks", [])
-    rows = "\n".join(
-        f"| `{c['name']}` | {_STATUS_WORD[c['status']]} | {c['message']} |"
-        for c in checks
-    )
-    return (
-        "## Checks\n\n"
-        f"{_OPENING[summary.get('worst_check', 'pass')]}\n\n"
-        "| Check | Status | Message |\n|---|---|---|\n"
-        f"{rows}\n\n"
-        "Each message is a stock sentence chosen by the check's status; see "
-        "the pipeline reference for the thresholds."
     )
 
 
@@ -195,29 +176,6 @@ def _binary_fit_cell(summary, posterior, has_data):
     )
 
 
-def _binary_posterior_cells(summary):
-    post = summary["posterior"]
-    return [
-        (
-            "## Posterior\n\n"
-            f"{_nuts_sentence(post)}. The corner plot shows the fitted parameters.",
-            _corner_code('res.summary["fit"]["params"]'),
-        ),
-        (
-            "The sampler diagnostics per parameter: median with its 16th and "
-            "84th percentiles, split R-hat and bulk effective sample size, "
-            f"with {100 * post['divergence_fraction']:.2g} per cent divergent "
-            "transitions overall.",
-            'for name, row in res.summary["posterior"]["params"].items():\n'
-            "    print(\n"
-            "        f\"{name:>6}: {row['median']:.5g} "
-            "[{row['q16']:.5g}, {row['q84']:.5g}]  \"\n"
-            "        f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
-            "    )",
-        ),
-    ]
-
-
 def _binary_cells(run, summary, path):
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
@@ -229,7 +187,26 @@ def _binary_cells(run, summary, path):
     if "fit" in done:
         cells.append(_binary_fit_cell(summary, "posterior" in done, has_data))
     if "posterior" in done:
-        cells += _binary_posterior_cells(summary)
+        post = summary["posterior"]
+        cells += [
+            (
+                "## Posterior\n\n"
+                f"{_nuts_sentence(post)}. The corner plot shows the fitted parameters.",
+                _corner_code('res.summary["fit"]["params"]'),
+            ),
+            (
+                "The sampler diagnostics per parameter: median with its 16th and "
+                "84th percentiles, split R-hat and bulk effective sample size, "
+                f"with {100 * post['divergence_fraction']:.2g} per cent divergent "
+                "transitions overall.",
+                'for name, row in res.summary["posterior"]["params"].items():\n'
+                "    print(\n"
+                "        f\"{name:>6}: {row['median']:.5g} "
+                "[{row['q16']:.5g}, {row['q84']:.5g}]  \"\n"
+                "        f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
+                "    )",
+            ),
+        ]
     return cells
 
 
@@ -294,36 +271,6 @@ def _star_fit_cell(posterior, has_data):
     )
 
 
-def _star_posterior_cells(summary):
-    post = summary["posterior"]
-    return [
-        (
-            "## Posterior\n\n"
-            f"{_nuts_sentence(post)}, for each fitted model. The corner plot shows the "
-            f"preferred model, `{post['best']}`.",
-            _corner_code('res.summary["posterior"]["sampled"]'),
-        ),
-        (
-            "The sampler diagnostics per model and parameter: median with "
-            "its 16th and 84th percentiles, split R-hat and bulk effective "
-            "sample size (derived quantities have none), with "
-            f"{100 * post['divergence_fraction']:.2g} per cent divergent "
-            "transitions in the worst model.",
-            'for model, rows in res.summary["posterior"]["models"].items():\n'
-            '    for name, row in rows["params"].items():\n'
-            "        diag = (\n"
-            "            f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
-            "            if 'r_hat' in row\n"
-            "            else 'derived'\n"
-            "        )\n"
-            "        print(\n"
-            "            f\"{model:>13} {name:>5}: {row['median']:.5g} \"\n"
-            "            f\"[{row['q16']:.5g}, {row['q84']:.5g}]  {diag}\"\n"
-            "        )",
-        ),
-    ]
-
-
 def _star_cells(run, summary, path):
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
@@ -334,7 +281,33 @@ def _star_cells(run, summary, path):
         cells.append(_star_result_cell(summary, has_data))
         cells.append(_star_fit_cell("posterior" in done, has_data))
     if "posterior" in done:
-        cells += _star_posterior_cells(summary)
+        post = summary["posterior"]
+        cells += [
+            (
+                "## Posterior\n\n"
+                f"{_nuts_sentence(post)}, for each fitted model. The corner plot shows the "
+                f"preferred model, `{post['best']}`.",
+                _corner_code('res.summary["posterior"]["sampled"]'),
+            ),
+            (
+                "The sampler diagnostics per model and parameter: median with "
+                "its 16th and 84th percentiles, split R-hat and bulk effective "
+                "sample size (derived quantities have none), with "
+                f"{100 * post['divergence_fraction']:.2g} per cent divergent "
+                "transitions in the worst model.",
+                'for model, rows in res.summary["posterior"]["models"].items():\n'
+                '    for name, row in rows["params"].items():\n'
+                "        diag = (\n"
+                "            f\"R-hat {row['r_hat']:.4f}  ESS {row['ess_bulk']:.0f}\"\n"
+                "            if 'r_hat' in row\n"
+                "            else 'derived'\n"
+                "        )\n"
+                "        print(\n"
+                "            f\"{model:>13} {name:>5}: {row['median']:.5g} \"\n"
+                "            f\"[{row['q16']:.5g}, {row['q84']:.5g}]  {diag}\"\n"
+                "        )",
+            ),
+        ]
     return cells
 
 
@@ -566,7 +539,20 @@ def build_notebook(path):
     for markdown, code in _SECTIONS[run["pipeline"]](run, summary, path):
         cells.append(v4.new_markdown_cell(markdown))
         cells.append(v4.new_code_cell(code))
-    cells.append(v4.new_markdown_cell(_closing(summary)))
+    checks = summary.get("checks", [])
+    rows = "\n".join(
+        f"| `{c['name']}` | {_STATUS_WORD[c['status']]} | {c['message']} |"
+        for c in checks
+    )
+    closing = (
+        "## Checks\n\n"
+        f"{_OPENING[summary.get('worst_check', 'pass')]}\n\n"
+        "| Check | Status | Message |\n|---|---|---|\n"
+        f"{rows}\n\n"
+        "Each message is a stock sentence chosen by the check's status; see "
+        "the pipeline reference for the thresholds."
+    )
+    cells.append(v4.new_markdown_cell(closing))
     nb = v4.new_notebook(cells=cells)
     nb.metadata["kernelspec"] = _KERNELSPEC
     nb.metadata["virgil"] = {"schema": _io.SCHEMA, "pipeline": run["pipeline"]}

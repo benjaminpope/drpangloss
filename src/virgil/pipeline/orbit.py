@@ -792,6 +792,18 @@ def _alias_search(p, data, positions, times, checkpoint_dir):
 
     # The default run is blind: no period window, start or paper prior
     # (test_blind_search_resolves_the_two_season_gap_alias).
+    try:
+        return _fit_aliases(
+            p, fit_orbit_aliases, data, positions, times, checkpoint_dir
+        )
+    except ValueError as error:
+        # period_window names its own argument, which a pipeline user lacks.
+        raise ValueError(
+            str(error).replace("Pass p_range.", "Set period_range.")
+        ) from error
+
+
+def _fit_aliases(p, fit_orbit_aliases, data, positions, times, checkpoint_dir):
     s = p.settings
     return fit_orbit_aliases(
         data,
@@ -1093,12 +1105,6 @@ def _without(found, drop):
             )
         },
     )
-
-
-def _robustness_of(modes):
-    """``modes["robustness"]``; a ``modes`` report from before the check
-    (a resumed run folder) says it was not run."""
-    return modes.get("robustness", {"skipped": "not run (older run)"})
 
 
 def _robustness(p, result, verdict):
@@ -1562,7 +1568,12 @@ def _summarize(settings, reports):
                 threshold=settings["no_orbit_nats"],
             )
         )
-        checks.append(_checks.night_dropped(_robustness_of(modes)))
+        # A modes report from before the check (a resumed run folder) says it
+        # was not run.
+        robustness = modes.get(
+            "robustness", {"skipped": "not run (older run)"}
+        )
+        checks.append(_checks.night_dropped(robustness))
     if search:
         checks.append(
             _checks.period_bound(

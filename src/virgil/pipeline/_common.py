@@ -344,20 +344,6 @@ _SAMPLER_SETTINGS = (
 )
 
 
-def _mcmc(posterior, settings, *, dense_mass):
-    """A NUTS ``MCMC`` with the pipeline's sampler settings (not yet run)."""
-    from numpyro.infer import MCMC, NUTS
-
-    return MCMC(
-        NUTS(posterior, dense_mass=dense_mass),
-        num_warmup=settings["num_warmup"],
-        num_samples=settings["num_samples"],
-        num_chains=settings["num_chains"],
-        chain_method=settings["chain_method"],
-        progress_bar=False,
-    )
-
-
 # How far inside its prior a NUTS start is pulled, as a fraction of the
 # prior's width, measured as ``fit`` measures ``at_bound`` (in log x for a
 # LogUniform). A start exactly on a bound has an infinite unconstrained
@@ -414,6 +400,7 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
     on a bound, instead of numpyro's own message.
     """
     import jax
+    from numpyro.infer import MCMC, NUTS
 
     from ..likelihood import chain_init_params
 
@@ -435,18 +422,16 @@ def _run_chains(posterior, settings, start, *, dense_mass, priors=None):
             )
             + ". Check that the fitted model and its priors agree."
         ) from error
-    mcmc = _mcmc(posterior, settings, dense_mass=dense_mass)
+    mcmc = MCMC(
+        NUTS(posterior, dense_mass=dense_mass),
+        num_warmup=settings["num_warmup"],
+        num_samples=settings["num_samples"],
+        num_chains=settings["num_chains"],
+        chain_method=settings["chain_method"],
+        progress_bar=False,
+    )
     mcmc.run(run_key, init_params=init, extra_fields=_NUTS_FIELDS)
     return mcmc
-
-
-def _sample_stats(mcmc):
-    """NUTS diagnostics per transition, ``(chain, draw)``, by clean name."""
-    extra = mcmc.get_extra_fields(group_by_chain=True)
-    return {
-        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
-        for k, v in extra.items()
-    }
 
 
 def _diagnostics(arrays):
@@ -481,10 +466,6 @@ def _moments(r):
     return float(stats.skew(r)), float(stats.kurtosis(r))
 
 
-def _wrap(angle):
-    return (onp.asarray(angle) + 360.0) % 360.0
-
-
 def _quantiles(x, angle=False, period=360.0):
     """Median, 16th and 84th percentiles; angles about their mean direction.
 
@@ -503,7 +484,7 @@ def _quantiles(x, angle=False, period=360.0):
         )
         dev = (x - mean + 180.0) % 360.0 - 180.0
         q = onp.percentile(dev, [50, 16, 84])
-        median = float(_wrap(q[0] + mean))
+        median = float((q[0] + mean + 360.0) % 360.0)
         q = (
             onp.array([median, median + q[1] - q[0], median + q[2] - q[0]])
             / scale
@@ -526,7 +507,12 @@ def _draws(mcmc):
         k: onp.asarray(v)
         for k, v in mcmc.get_samples(group_by_chain=True).items()
     }
-    return samples, _sample_stats(mcmc)
+    extra = mcmc.get_extra_fields(group_by_chain=True)
+    stats = {
+        ("step_size" if k == "adapt_state.step_size" else k): onp.asarray(v)
+        for k, v in extra.items()
+    }
+    return samples, stats
 
 
 def _chain_health(diagnostics, stats):

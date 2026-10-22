@@ -926,3 +926,20 @@ def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
     assert report["night"] == epochs.epoch_of[1]
     assert report["dropped"]["verdict"] in ("orbit", "no-orbit")
     assert report["dropped"]["n"] <= full.best.n
+
+
+def test_an_empty_period_window_names_the_pipeline_setting(monkeypatch):
+    import virgil.aliases as aliases
+
+    def empty(*args, **kwargs):
+        raise ValueError("The period window is empty. Pass p_range.")
+
+    monkeypatch.setattr(aliases, "fit_orbit_aliases", empty)
+    settings = {"period_range": None}
+    pipeline = SimpleNamespace(
+        settings=type(
+            "Settings", (dict,), {"__missing__": lambda self, key: (1, 2)}
+        )(settings)
+    )
+    with pytest.raises(ValueError, match="Set period_range"):
+        orbit_module._alias_search(pipeline, [], None, None, None)

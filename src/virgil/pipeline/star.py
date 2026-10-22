@@ -172,37 +172,6 @@ def _quadratic_priors(lo, hi):
     }
 
 
-def _registry():
-    from ..models import QuadraticLimbDarkenedDisk, UniformDisk
-
-    entries = (
-        StarModel(
-            name="uniform",
-            label="uniform disk",
-            classes=(UniformDisk,),
-            build=_uniform_disk,
-            params=("diam",),
-            start={},
-            priors=_uniform_priors,
-            scan=True,
-        ),
-        StarModel(
-            name="limb_darkened",
-            label="limb-darkened disk",
-            classes=(QuadraticLimbDarkenedDisk,),
-            build=_quadratic_disk,
-            params=("diam", "q1", "q2"),
-            start={"q1": 0.5, "q2": 0.5},
-            priors=_quadratic_priors,
-            shape=("q1", "q2"),
-            derived=_quadratic_derived,
-            parent="uniform",
-            check_stem="limb_darkening",
-        ),
-    )
-    return {e.name: e for e in entries}
-
-
 _MODELS = None
 
 
@@ -210,7 +179,34 @@ def models():
     """The registry of short names to [`StarModel`][virgil.pipeline.star.StarModel]."""
     global _MODELS
     if _MODELS is None:
-        _MODELS = _registry()
+        from ..models import QuadraticLimbDarkenedDisk, UniformDisk
+
+        entries = (
+            StarModel(
+                name="uniform",
+                label="uniform disk",
+                classes=(UniformDisk,),
+                build=_uniform_disk,
+                params=("diam",),
+                start={},
+                priors=_uniform_priors,
+                scan=True,
+            ),
+            StarModel(
+                name="limb_darkened",
+                label="limb-darkened disk",
+                classes=(QuadraticLimbDarkenedDisk,),
+                build=_quadratic_disk,
+                params=("diam", "q1", "q2"),
+                start={"q1": 0.5, "q2": 0.5},
+                priors=_quadratic_priors,
+                shape=("q1", "q2"),
+                derived=_quadratic_derived,
+                parent="uniform",
+                check_stem="limb_darkening",
+            ),
+        )
+        _MODELS = {e.name: e for e in entries}
     return _MODELS
 
 
@@ -449,13 +445,6 @@ def plot_v2_models(data, fitted, ax=None, curves=400):
 # === STAGES ===
 
 
-def _freq_max(data):
-    """The longest spatial frequency B/λ in the data (cycles per radian)."""
-    from .._geometry import fringe_scales
-
-    return float(rad2mas) / fringe_scales(data)[0]
-
-
 def _first_null(model, diam_mas, n=_NULL_POINTS):
     """θB/λ at the model's first visibility sign change (else uniform-disk)."""
     scale = float(rad2mas) / float(diam_mas)  # f for θf = 1
@@ -470,7 +459,11 @@ def _first_null(model, diam_mas, n=_NULL_POINTS):
 
 
 def _load_star(p):
-    return _load_report(p, freq_max_per_rad=_freq_max(p.processed))
+    from .._geometry import fringe_scales
+
+    # The longest spatial frequency B/λ in the data (cycles per radian).
+    freq_max = float(rad2mas) / fringe_scales(p.processed)[0]
+    return _load_report(p, freq_max_per_rad=freq_max)
 
 
 # --- the diameter scan and its lobes ---
@@ -602,16 +595,6 @@ class LobeFit:
     warnings: list
 
 
-def _diameter_grid(centre, priors):
-    """The grid of diameters around ``centre``, within the prior."""
-    low, high = float(priors["diam"].low), float(priors["diam"].high)
-    return onp.geomspace(
-        max(low, _START_SPAN[0] * centre),
-        min(high, _START_SPAN[1] * centre),
-        _START_POINTS,
-    )
-
-
 def _fit_scanned(p, entry, start, grid, noise):
     """A scan model's fit: the lobe's diameter (scales profiled)."""
     info = {
@@ -671,7 +654,12 @@ def _fit_from_starts(p, entry, priors, start, grid, noise):
 def _fit_model(p, entry, priors, best_diam, noise):
     """MAP fit of one registered model: ``(model, values, info)``."""
     start = {"diam": best_diam, **p._starts[entry.name]}
-    grid = _diameter_grid(best_diam, priors)
+    low, high = float(priors["diam"].low), float(priors["diam"].high)
+    grid = onp.geomspace(
+        max(low, _START_SPAN[0] * best_diam),
+        min(high, _START_SPAN[1] * best_diam),
+        _START_POINTS,
+    )  # diameters around the best one, within the prior
     if entry.scan:
         return _fit_scanned(p, entry, start, grid, noise)
     return _fit_from_starts(p, entry, priors, start, grid, noise)
@@ -718,23 +706,6 @@ def _choose_lobe(fits):
     return min(fits, key=lambda f: _finite_or(f.m2loglike, math.inf))
 
 
-def _lobe_table(fits, n):
-    """One row per lobe, with its −2 log L above the best lobe's."""
-    top = _choose_lobe(fits).m2loglike
-    return [
-        {
-            "diam_bounds_mas": list(f.lobe["bounds"]),
-            "diam_mas": float(onp.asarray(f.values["diam"])),
-            "chi2": f.chi2,
-            "chi2_reduced": f.chi2 / n,
-            "m2loglike": f.m2loglike,
-            "delta_m2loglike": f.m2loglike - top,
-            "delta_chi2": f.m2loglike - top,
-        }
-        for f in fits
-    ]
-
-
 def _model_report(entry, fit, table, n):
     """The stage report of one model's best lobe."""
     params = {k: float(onp.asarray(fit.values[k])) for k in entry.params}
@@ -770,7 +741,20 @@ def _fit_in_lobes(p, entry, lobes, noise):
     # Only the best lobe's fit warns: a fit that stalls in an alias lobe,
     # whose χ² is thousands above the best, is not a problem.
     _rewarn(best.warnings)
-    return best, _model_report(entry, best, _lobe_table(fits, n), n)
+    # One row per lobe, with its −2 log L above the best lobe's.
+    table = [
+        {
+            "diam_bounds_mas": list(f.lobe["bounds"]),
+            "diam_mas": float(onp.asarray(f.values["diam"])),
+            "chi2": f.chi2,
+            "chi2_reduced": f.chi2 / n,
+            "m2loglike": f.m2loglike,
+            "delta_m2loglike": f.m2loglike - best.m2loglike,
+            "delta_chi2": f.m2loglike - best.m2loglike,
+        }
+        for f in fits
+    ]
+    return best, _model_report(entry, best, table, n)
 
 
 # --- choosing between models ---
@@ -822,17 +806,6 @@ def _choose_model(reports, registry, n):
 # --- the fit stage ---
 
 
-def _fit_plots(p, registry, fits, best):
-    """The MAP fit's data-model correlation and the V² curves."""
-    _save_map_correlation(
-        p, fits[best].model, fits[best].values, list(registry[best].params)
-    )
-    fig = plot_v2_models(
-        p.processed, {registry[n].label: fits[n].model for n in p.names}
-    )
-    _save(fig, p.output / "plots" / "fit_v2.png")
-
-
 def _fit(p):
     data, s = p.processed, p.settings
     lo, hi = p._diam_range()
@@ -867,7 +840,13 @@ def _fit(p):
     _save_fit(
         p.output / "models" / "best", fits[best], list(registry[best].params)
     )
-    _fit_plots(p, registry, fits, best)
+    _save_map_correlation(
+        p, fits[best].model, fits[best].values, list(registry[best].params)
+    )
+    fig = plot_v2_models(
+        p.processed, {registry[n].label: fits[n].model for n in p.names}
+    )
+    _save(fig, p.output / "plots" / "fit_v2.png")
     scan_best = min(lobes, key=lambda lobe: lobe["scan_delta_chi2"])
     return {
         "names": list(p.names),
@@ -1057,29 +1036,6 @@ _POSTERIOR_KEYS = (
 )
 
 
-def _chi2_section(settings, fit):
-    names = fit["names"]
-    return {
-        "n_independent": fit["n_independent"],
-        "error_scale": settings["error_scale"],
-        "reduced": {k: fit["models"][k]["chi2_reduced"] for k in names},
-        "error_scales": {k: fit["models"][k]["error_scales"] for k in names},
-    }
-
-
-def _fit_section(fit):
-    return {
-        "best": fit["best"],
-        "scan_diam_mas": fit["scan_diam_mas"],
-        "diam_bounds_mas": fit["diam_bounds_mas"],
-        "rivals": fit["rivals"],
-        "models": {
-            k: {f: fit["models"][k][f] for f in _FIT_KEYS}
-            for k in fit["names"]
-        },
-    }
-
-
 def _fit_checks(fit, registry):
     """Checks on the fits: χ²/N, model gains and the fitted error scales."""
     reports = fit["models"]
@@ -1172,19 +1128,6 @@ def _shape(fit, post, entry):
     return section, _checks.prior_constrained(entry.constrained_check, ratios)
 
 
-def _posterior_checks(post):
-    """Checks on the sampler: bounds, R-hat, ESS and divergences."""
-    worst = max(
-        post["models"].values(), key=lambda m: m["divergence_fraction"]
-    )
-    bounds = {
-        f"{n}.{k}": v
-        for n, m in post["models"].items()
-        for k, v in m["prior_bound_fraction"].items()
-    }
-    return _sampler_checks(post, bounds=bounds, walls=worst.get("wall_probe"))
-
-
 def _summarize(settings, reports):
     registry = models()
     sections, checks = {}, []
@@ -1198,8 +1141,22 @@ def _summarize(settings, reports):
     if not fit:
         return sections, checks
 
-    sections["chi2"] = _chi2_section(settings, fit)
-    sections["fit"] = _fit_section(fit)
+    names = fit["names"]
+    sections["chi2"] = {
+        "n_independent": fit["n_independent"],
+        "error_scale": settings["error_scale"],
+        "reduced": {k: fit["models"][k]["chi2_reduced"] for k in names},
+        "error_scales": {k: fit["models"][k]["error_scales"] for k in names},
+    }
+    sections["fit"] = {
+        "best": fit["best"],
+        "scan_diam_mas": fit["scan_diam_mas"],
+        "diam_bounds_mas": fit["diam_bounds_mas"],
+        "rivals": fit["rivals"],
+        "models": {
+            k: {f: fit["models"][k][f] for f in _FIT_KEYS} for k in names
+        },
+    }
     if fit["comparison"]:
         sections["comparison"] = dict(fit["comparison"])
         sections["comparisons"] = [dict(c) for c in fit["comparisons"]]
@@ -1217,5 +1174,15 @@ def _summarize(settings, reports):
             sections["shape"], check = _shape(fit, post, entry)
             checks.append(check)
         sections["posterior"] = _pick(post, _POSTERIOR_KEYS)
-        checks += _posterior_checks(post)
+        worst = max(
+            post["models"].values(), key=lambda m: m["divergence_fraction"]
+        )
+        bounds = {
+            f"{n}.{k}": v
+            for n, m in post["models"].items()
+            for k, v in m["prior_bound_fraction"].items()
+        }
+        checks += _sampler_checks(
+            post, bounds=bounds, walls=worst.get("wall_probe")
+        )
     return sections, checks
