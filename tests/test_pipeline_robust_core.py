@@ -1,11 +1,17 @@
 """Robustness of the shared pipeline machinery: ``_core``, ``_common`` and
 the orbit pipeline's use of it."""
 
+import importlib
+import inspect
+import json
+
 import numpy as onp
 import numpyro.distributions as dist
 import pytest
 
+from virgil import OIData
 from virgil.pipeline import (
+    SCHEMA,
     BinaryPipeline,
     DiskPipeline,
     OrbitPipeline,
@@ -22,25 +28,119 @@ from virgil.pipeline._common import (
 )
 
 
-@pytest.mark.parametrize(
-    "pipeline", [BinaryPipeline, StarPipeline, DiskPipeline, OrbitPipeline]
-)
+ALL = [BinaryPipeline, StarPipeline, DiskPipeline, OrbitPipeline]
+# The pipelines whose failures on bad input are checked end to end: the
+# others share the same loader (virgil.pipeline._common).
+LOADING = [StarPipeline, BinaryPipeline]
+
+
+@pytest.mark.parametrize("pipeline", ALL)
 def test_from_oifits_refuses_an_empty_list_in_every_pipeline(
     pipeline, tmp_path
 ):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=pipeline.__name__) as caught:
         pipeline.from_oifits([], output=tmp_path / "run")
+    assert "at least one OIFITS file" in str(caught.value)
     assert not (tmp_path / "run").exists()
 
 
+@pytest.mark.parametrize("pipeline", LOADING)
 @pytest.mark.parametrize(
-    "pipeline", [BinaryPipeline, StarPipeline, DiskPipeline, OrbitPipeline]
+    "name, error, message",
+    [
+        ("missing.fits", FileNotFoundError, "missing.fits"),
+        ("text.fits", OSError, "valid FITS"),
+        ("empty.fits", OSError, "Empty or corrupt FITS"),
+        ("no_tables.fits", ValueError, "no OI_WAVELENGTH"),
+    ],
 )
-def test_from_oifits_names_the_pipeline_in_the_empty_list_error(
+def test_from_oifits_refuses_unusable_files_and_writes_nothing(
+    pipeline, junk_files, name, error, message
+):
+    out = junk_files / "run"
+    with pytest.raises(error, match=message):
+        pipeline.from_oifits(junk_files / name, output=out)
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("pipeline", LOADING)
+def test_from_oifits_refuses_a_list_with_one_bad_file(
+    pipeline, junk_files, tmp_path
+):
+    with pytest.raises(OSError, match="valid FITS"):
+        pipeline.from_oifits(
+            ["data/NuHor_F480M.oifits", junk_files / "text.fits"],
+            output=tmp_path / "run",
+        )
+
+
+@pytest.mark.parametrize("pipeline", LOADING)
+def test_a_wavelength_cut_that_removes_the_data_fails_in_load(
     pipeline, tmp_path
 ):
-    with pytest.raises(ValueError, match=pipeline.__name__):
-        pipeline.from_oifits([], output=tmp_path / "run")
+    data = OIData("data/NuHor_F480M.oifits")
+    out = tmp_path / "run"
+    run = pipeline(data, output=out, wavel_range=[10e-6, 11e-6])
+    with pytest.raises(Exception) as caught:
+        run.run()
+    assert str(caught.value)  # a message, not a bare failure
+    stored = json.loads((out / "run.json").read_text())
+    assert stored["status"] == "failed"
+    assert stored["error"]["stage"] == "load"
+    assert stored["error"]["type"] == type(caught.value).__name__
+    assert stored["stages"]["load"]["status"] == "failed"
+    summary = out / "summary.json"
+    assert not summary.exists() or (
+        json.loads(summary.read_text())["status"] != "complete"
+    )
+
+
+# --- the stable contract, one copy for every pipeline ------------------------
+
+
+def _signature(obj):
+    sig = inspect.signature(obj)
+    # Annotations print differently across Python versions: compare names,
+    # kinds and defaults only.
+    params = [
+        p.replace(annotation=inspect.Parameter.empty)
+        for p in sig.parameters.values()
+    ]
+    return str(sig.replace(parameters=params, return_annotation=sig.empty))
+
+
+@pytest.mark.parametrize(
+    "module, name",
+    [
+        ("star", "StarPipeline"),
+        ("binary", "BinaryPipeline"),
+        ("disk", "DiskPipeline"),
+        ("image", "ImagingPipeline"),
+    ],
+)
+def test_api_snapshot(module, name):
+    # Changing any of these breaks users' scripts: update the snapshot only
+    # with an additive change or a schema bump (see docs/pipeline.md). The
+    # snapshots themselves (API, STAGES, DEFAULTS) live next to each
+    # pipeline's other contract tests; the pipeline-specific parts of the
+    # contract (models, check names) are asserted there too.
+    import virgil.pipeline
+
+    contract = importlib.import_module(f"tests.test_pipeline_{module}")
+    cls = getattr(virgil.pipeline, name)
+    signatures = {}
+    for path in contract.API:
+        obj = virgil.pipeline
+        for part in path.split("."):
+            obj = getattr(obj, part)
+        signatures[path] = _signature(obj)
+    assert signatures == contract.API
+    assert cls.STAGES == contract.STAGES
+    assert cls.defaults() == contract.DEFAULTS
+    assert cls.STABILITY == "provisional"
+    assert cls.NAME == module
+    assert SCHEMA == "virgil-pipeline-run-v1"
+    assert name in virgil.pipeline.__all__
 
 
 # --- prior descriptions are stable ------------------------------------------

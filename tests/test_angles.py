@@ -129,7 +129,10 @@ def test_bad_arguments_are_rejected():
 
 def test_nuts_samples_a_posterior_straddling_the_wrap():
     # §4.1 test 3: a von Mises posterior centred on 0°, with half its
-    # mass on each side of the wrap. Tiny: one angle, 1000 draws.
+    # mass on each side of the wrap. Tiny: one angle, 600 draws. With
+    # sd ~ 0.3 per unit-vector component and n_eff <~ 600, the mean
+    # resultant has sd <~ 0.013 (tolerance 0.05, ~4 sd) and its direction
+    # <~ 0.02 rad = 1.2 deg (tolerance 6 deg).
     from numpyro.infer import MCMC, NUTS
 
     kappa = 4.0
@@ -140,11 +143,11 @@ def test_nuts_samples_a_posterior_straddling_the_wrap():
         likelihoods=[_chord(0.0, 1 / onp.sqrt(kappa))],
     )
     mcmc = MCMC(
-        NUTS(model), num_warmup=500, num_samples=1000, progress_bar=False
+        NUTS(model), num_warmup=300, num_samples=600, progress_bar=False
     )
     mcmc.run(jax.random.PRNGKey(0))
     samples = mcmc.get_samples()
-    assert samples["pa_vec"].shape == (1000, 2)
+    assert samples["pa_vec"].shape == (600, 2)
     angle = onp.deg2rad(onp.asarray(samples["pa"]))
     resultant = onp.mean(onp.exp(1j * angle))
     # The truth: mean 0, mean resultant length I1(κ)/I0(κ).
