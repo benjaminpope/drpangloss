@@ -198,8 +198,13 @@ Total roughly 1–1.5 weeks; piece 2 carries the risk.
   factor on the whole direction as before.
 * **Floor.** `D ≥ 10⁻³ max D` within each coordinate block. Smaller floors
   (10⁻⁶, 10⁻⁸) let dead pixels (`I → 0`, `D → 0`) have huge `w`; the cap then
-  shrinks every step to nothing and the line search stalls (measured: w = 1
-  and 0.1 of the L-curve below stall at 10⁻⁶ and 10⁻⁸).
+  shrinks every step to nothing and the line search stalls. Sweep over floors
+  10⁻³…10⁻¹² (AMI 32² and VLTI-like 41², float64/float32; steps, `*` = not
+  converged): at 10⁻³ every weight converges in float64 on both (AMI
+  40 27 36 188 1357 1326; 41²: 18 56 121 963 4911 9236); at 10⁻⁶ the weakest
+  weight stalls or hits the 20000-step limit; at ≤10⁻⁹ the weak weights stop
+  after 1–2 steps. So 10⁻³ is the only floor tested that converges every
+  weight, chosen from this data, not from the rank argument.
 * **Softmax gauge.** `P` removes the mean over the support from the plain
   `log_brightness` block of an `Image` (`flux × softmax`): the loss does not see
   it, but the diagonal scaling would let it drift. (`GaussianField` latents get

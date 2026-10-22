@@ -52,6 +52,7 @@ from .fitting import FitResult, fit
 from .spectra import flux_at
 from .likelihood import _whitened_and_log_norm, whitened_residuals
 from .models import (
+    _scene_images,
     Image,
     PointSource,
     Rotated,
@@ -488,25 +489,16 @@ def image_priors(scene):
     import numpyro.distributions as dist
 
     priors = {}
-
-    def visit(model, prefix):
-        if isinstance(model, Image) and _whitened_field(model.log_brightness):
-            shape = model.log_brightness.shape
+    for prefix, image in _scene_images(scene):
+        shape = image.log_brightness.shape
+        if _whitened_field(image.log_brightness):
             priors[prefix + "log_brightness.latent"] = dist.Normal(
                 np.zeros(shape), 1.0
             ).to_event(2)
-        elif isinstance(model, Image):
-            shape = model.log_brightness.shape
+        else:
             priors[prefix + "log_brightness"] = dist.ImproperUniform(
                 dist.constraints.real, (), event_shape=shape
             )
-        elif isinstance(model, System):
-            for name, part in model.components.items():
-                visit(part, prefix + name + ".")
-        elif isinstance(model, Rotated):
-            visit(model.source, prefix + "source.")
-
-    visit(scene, "")
     if not priors:
         raise ValueError("The scene contains no Image.")
     return priors

@@ -46,11 +46,11 @@ from .likelihood import (
     tied_log_prior,
 )
 from .models import (
-    Image,
     MultipoleKernel,
     RadialGP,
     RadialGPFunction,
     SourceModel,
+    _scene_images,
 )
 from ._deprecate import external_stacklevel
 
@@ -718,9 +718,9 @@ def fit(
         refreshed every L-BFGS round (Adam: once). The optimum, ``gtol``,
         ``max_step_size`` and ``info["grad_norm"]`` keep their meaning in the
         unconstrained coordinates (provisional: may change in any 0.4.x
-        release). ``info["precondition_decades"]`` lists, per
-        round, the spread of the diagonal in decades (the largest within a
-        coordinate block). LM ignores it: it already uses JᵀJ.
+        release). ``info["precondition_rounds"]`` lists, per
+        round, the spread of the diagonal before its floor in decades (the
+        largest of any coordinate block) and the fraction of coordinates floored. LM ignores it: it already uses JᵀJ.
 
     Returns
     -------
@@ -763,7 +763,7 @@ def fit(
         # set a loop's length, so they stay static.
         traced_scale, gtol = np.asarray(scale), np.asarray(gtol)
         stop = grad_norm = None
-        decades = []
+        rounds = []
         if method == "lm":
             limit = max_steps or 1000
             z, steps, converged, stop = _lm(
@@ -771,7 +771,7 @@ def fit(
             )
         elif method == "lbfgs":
             limit = max_steps or 20_000
-            z, steps, converged, stop, grad_norm, decades = _lbfgs(
+            z, steps, converged, stop, grad_norm, rounds = _lbfgs(
                 problem,
                 z0,
                 traced_scale,
@@ -790,9 +790,10 @@ def fit(
                     "'lbfgs')."
                 )
             steps = limit = max_steps or 2000
-            metric = (
-                _metric(problem, z0, traced_scale) if precondition else None
-            )
+            metric = None
+            if precondition:
+                metric, stats = _metric(problem, z0, traced_scale)
+                rounds = [stats]
             z = _adam(
                 problem,
                 z0,
@@ -833,7 +834,7 @@ def fit(
             "precondition": "diag"
             if precondition and method != "lm"
             else None,
-            "precondition_decades": decades,
+            "precondition_rounds": rounds,
             "at_bound": _at_bound(problem, values),
             "derived": _derived(problem, values),
         }
@@ -1145,7 +1146,11 @@ def _covariance(problem, z, dense):
     p = problem.curvature_diag(z, True)
     zero = problem.curvature_zero(z, True)
     # Forward mode costs a pass per coordinate, reverse a pass per row.
-    jac = (jax.jacfwd if n_rows >= n else jax.jacrev)(rows)(flat)
+    # The diagonal alone (no dense matrix) never needs the Jacobian itself.
+    diagonal_only = not dense and n_rows >= n
+    jac = None
+    if not diagonal_only:
+        jac = (jax.jacfwd if n_rows >= n else jax.jacrev)(rows)(flat)
     if n_rows >= n:
         if dense:
             factor = jax.scipy.linalg.cho_factor(jac.T @ jac + np.diag(p))
@@ -1154,7 +1159,7 @@ def _covariance(problem, z, dense):
         else:
             # Never forming n × n: every coordinate must be constrained,
             # which a diagonal mass can check (not a rank deficiency).
-            diagonal = np.sum(jac**2, axis=0) + p
+            diagonal = _gn_diagonal(rows, flat, None) + p
             covariance = 1.0 / diagonal
             ok_factor = np.all(diagonal > 0)
     else:
@@ -1443,7 +1448,7 @@ _DIAG_PROBES = 16
 _DIAG_FLOOR = 1e-3
 
 
-def _gn_diagonal(rows, x, probes):
+def _gn_diagonal(rows, x, probes, key=None):
     """The diagonal of JᵀJ for the rows ``rows(x)``: exact (``probes=None``),
     or the mean of ``(Jᵀu)²`` over Gaussian ``u`` in row space, whose mean is
     the diagonal and which is never negative."""
@@ -1469,11 +1474,11 @@ def _gn_diagonal(rows, x, probes):
     def squared(key):
         return pull(jax.random.normal(key, (m,), x.dtype))[0] ** 2
 
-    keys = jax.random.split(jax.random.PRNGKey(0), probes)
+    keys = jax.random.split(jax.random.fold_in(key, 0), probes)
     return np.mean(jax.lax.map(squared, keys), axis=0)
 
 
-def _hessian_diagonal(f, x, probes):
+def _hessian_diagonal(f, x, probes, key=None):
     """The diagonal of the Hessian of ``f`` at ``x``: exact (``probes=None``) or
     the mean of ``v ⊙ Hv`` over Rademacher ``v``."""
     n = x.size
@@ -1493,23 +1498,25 @@ def _hessian_diagonal(f, x, probes):
         v = jax.random.rademacher(key, (n,), x.dtype)
         return v * product(v)
 
-    keys = jax.random.split(jax.random.PRNGKey(1), probes)
+    keys = jax.random.split(jax.random.fold_in(key, 1), probes)
     return np.mean(jax.lax.map(estimate, keys), axis=0)
 
 
 @eqx.filter_jit
-def _fisher_diagonal(problem, z, probes):
+def _fisher_diagonal(problem, z, probes, round=0):
     """The diagonal of the Gauss–Newton curvature of ``problem.loss`` at ``z``,
     over the flat coordinates: JᵀJ of the data and likelihood rows, the
     curvature of the priors, and the Hessian diagonal of the regularizers
-    (floored at zero, as for ``gauss_newton_mass``)."""
+    (floored at zero, as for ``gauss_newton_mass``). Probes are drawn afresh in
+    each ``round`` (deterministically), so that refreshes do not repeat an error."""
+    key = jax.random.PRNGKey(round)
     flat, unravel = problem.ravel(z)
     diagonal = _gn_diagonal(
-        lambda x: problem.curvature_rows(unravel(x)), flat, probes
+        lambda x: problem.curvature_rows(unravel(x)), flat, probes, key
     ) + problem.curvature_diag(z, False)
     if problem.regularizers:
         penalty = _hessian_diagonal(
-            lambda x: problem.penalty(unravel(x)), flat, probes
+            lambda x: problem.penalty(unravel(x)), flat, probes, key
         )
         diagonal = diagonal + np.maximum(penalty, 0.0)
     return diagonal
@@ -1592,7 +1599,6 @@ class _Metric(eqx.Module):
     zref: dict
     width: dict
     gauge: dict
-    decades: float = 0.0
 
     def to_z(self, zt):
         return {
@@ -1611,9 +1617,11 @@ class _Metric(eqx.Module):
         return jax.tree.map(lambda g, w: g / w, gradient, self.width)
 
     def normalized(self):
-        """The same, with each block's widest width scaled to one."""
+        """The same, with each block's widest width scaled to one (so Adam's
+        learning rate applies to the least-constrained coordinate of each
+        block, and its better-determined ones step less)."""
         width = jax.tree.map(lambda w: w / np.max(w), self.width)
-        return _Metric(self.zref, width, self.gauge, self.decades)
+        return _Metric(self.zref, width, self.gauge)
 
     def _project(self, key, x):
         if key not in self.gauge:
@@ -1635,50 +1643,53 @@ class _InMetric(eqx.Module):
 
 def _gauge_masks(problem):
     """Support masks of the plain log-brightness arrays being fitted: an Image's
-    brightness is a softmax of them, so adding a constant leaves it unchanged."""
+    brightness is a softmax of them, so adding a constant leaves it unchanged
+    (if the prior is flat too)."""
     import numpyro.distributions as dist
 
     model = problem.model
     if not isinstance(model, SourceModel):
         return {}
     masks = {}
-    for path in problem.priors:
-        # Only a flat prior leaves the loss unchanged by a constant shift.
-        prior = problem.priors[path]
-        if not path.endswith("log_brightness") or not isinstance(
+    for prefix, image in _scene_images(model):
+        path = prefix + "log_brightness"
+        prior = problem.priors.get(path)
+        flat = prior is not None and isinstance(
             _base(prior), dist.ImproperUniform
-        ):
-            continue
-        parent = path[: -len("log_brightness")].rstrip(".")
-        image = model.resolved()
-        image = image.get(parent) if parent else image
-        if not isinstance(image, Image) or hasattr(
-            image.log_brightness, "evaluate"
-        ):
-            continue
-        shape = np.shape(image.log_brightness)
-        support = image.support
-        masks[path] = (
-            np.ones(shape, bool)
-            if support is None
-            else np.asarray(support != 0)
         )
+        if flat and not hasattr(image.log_brightness, "evaluate"):
+            support = image.support
+            masks[path] = (
+                np.ones(np.shape(image.log_brightness), bool)
+                if support is None
+                else np.asarray(support != 0)
+            )
     return masks
 
 
-def _metric(problem, z, scale):
-    """The ``_Metric`` at ``z`` for a loss per data point ``scale``."""
+def _metric(problem, z, scale, round=0):
+    """``(metric, stats)`` at ``z`` for a loss per data point ``scale``.
+
+    ``stats`` has the spread of the diagonal before the floor, in decades (the
+    largest of any coordinate block), and the fraction of coordinates floored.
+    """
     n = sum(int(np.size(z[k])) for k in problem.coordinate_keys)
-    flat = _fisher_diagonal(problem, z, _diagonal_probes(n, None))
+    flat = _fisher_diagonal(problem, z, _diagonal_probes(n, None), round)
     _, unravel = problem.ravel(z)
-    width, decades = {}, 0.0
+    width, decades, floored = {}, 0.0, 0
     for key, d in unravel(flat).items():
+        d = np.nan_to_num(d)
         floor = _DIAG_FLOOR * np.max(d)
-        usable = np.isfinite(floor) & (floor > 0)
-        d = np.where(usable, np.maximum(np.nan_to_num(d), floor), 1.0 * scale)
+        usable = bool(floor > 0)
+        if usable:
+            floored += int(np.sum(d < floor))
+            decades = max(
+                decades, float(np.log10(np.max(d) / np.min(d[d > 0])))
+            )
+        d = np.maximum(d, floor) if usable else np.full_like(d, scale)
         width[key] = np.sqrt(scale / d)
-        decades = max(decades, float(np.log10(np.max(d) / np.min(d))))
-    return _Metric(z, width, _gauge_masks(problem), decades)
+    stats = {"decades": decades, "floored": floored / n}
+    return _Metric(z, width, _gauge_masks(problem)), stats
 
 
 def _capped_lbfgs(max_step_size, memory, metric=None):
@@ -1862,13 +1873,14 @@ def _lbfgs(
     (see ``_Metric``).
     """
     limit, total, z, tolerance = int(max_steps), 0, z0, None
-    decades = []
+    rounds = []
     size = _LBFGS_ROUND
     while True:
         before = float(_forward_summary(problem, z)[0])
-        metric = _metric(problem, z, scale) if precondition else None
+        metric = None
         if precondition:
-            decades.append(metric.decades)
+            metric, stats = _metric(problem, z, scale, len(rounds))
+            rounds.append(stats)
         z, steps, converged, stop, tolerance, grad_norm = _lbfgs_round(
             problem,
             z,
@@ -1887,7 +1899,7 @@ def _lbfgs(
         # (the line search out of precision) or a timed-out or non-finite
         # one ends the fit.
         if converged or stop != "limit" or total >= limit:
-            return z, total, converged, stop, grad_norm, decades
+            return z, total, converged, stop, grad_norm, rounds
         gain = before - float(_forward_summary(problem, z)[0])
         if not gain > _RESTART_GAIN:  # also true of a NaN
             size = limit  # little progress: the rest as one last round
