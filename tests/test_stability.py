@@ -42,6 +42,7 @@ EXPECTED = {
     "virgil.metrics": {"*"},
     "virgil.radio": {"*"},
     "virgil.radio_clean": {"*"},
+    "virgil.radio_toeplitz": {"*"},
     "virgil.crossval": {"*"},
     "virgil.pipeline": {"*"},
     "virgil.models": {
@@ -144,6 +145,7 @@ PAGES = [
     "docs/api/models/classes/multipole_disk.md",
     "docs/radio_clean.md",
     "docs/api/radio_clean.md",
+    "docs/api/radio_toeplitz.md",
     "docs/stability.md",
 ]
 

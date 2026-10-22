@@ -9,6 +9,31 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- **`virgil.radio_toeplitz`** (provisional): `ComplexVisData.toeplitz` precomputes
+  the dirty beams and images of a one-`Image` radio fit, and its `term` gives
+  the loss, gradient, profiled `ŝ` and `derived` of `ComplexVisData.term` at a
+  cost independent of the number of visibilities (per-observation gains,
+  flux, taper, smoothing, mask; fixed, fitted or profiled error scales;
+  float64 only), after Fessler et al. (2005). Antenna gains, a fitted spectral
+  index and other components are refused. `crosscheck` compares it with the
+  direct term (about 1e-13 of the loss) and `rebuild` repeats the precompute
+  for new weights without recompiling. See
+  [Toeplitz χ²](docs/radio_interferometry.md#toeplitz-chi2).
+  - Extension, opt-in: `offsets="spread"` fits the per-observation offsets
+    by evaluating the stored nufftax spread grids (nufftax ≥ 0.6.1) at
+    shifted positions, a type-3 evaluation (Lee & Greengard 2005; Barnett et
+    al. 2019) that we know of no prior use of in this combination. It refuses
+    baselines past the kernel's Nyquist margin. Tests: the value, loss
+    differences and δ-gradient against the direct χ² at sub-pixel shifts and
+    at the bound (`test_matches_direct_term`, `test_matches_direct_term_at_scale`),
+    the refusals (`test_refuses_what_it_cannot_do`, `test_runtime_checks`) and
+    the adapter against nufftax's type-1 transform and direct sums
+    (`test_spread_grid_against_nufftax_and_direct_sums`).
+- `CalibrationNuisance(alpha=<number>)` fixes the spectral index at that value.
+- `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
+  residual vector): L-BFGS and Adam use them, LM and the Gauss–Newton
+  covariance raise `NoLeastSquaresForm`, and `precondition="diag"` takes
+  their Gauss–Newton diagonal through `curvature_params` and `curvature_loss`.
 - Docs: the API index lists Radio CLEAN, Cross-validation and Short arcs; the fitting page documents `GaussNewtonMass` and its exceptions; the README names the `[radio]` and `[pipeline]` extras; the OIFITS writing sections are merged. Nine references checked against ADS (Högbom, Clark, Schwab, Briggs, Offringa, Quirrenbach, Thiele, Bekas, Hutchinson).
 - `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
 - `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI) and for data with flagged visibilities (flagged closure phases are still skipped); `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0; an unknown width is estimated from the channel spacing and marked `BANDEST`, since OIFITS2 needs it positive), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.

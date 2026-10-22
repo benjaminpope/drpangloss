@@ -73,6 +73,12 @@ class NoLeastSquaresForm(TypeError):
     """
 
 
+def _scalar(term):
+    """Whether a likelihood term gives a scalar χ² (``chi2_and_log_norm``)
+    instead of a residual vector."""
+    return hasattr(term, "chi2_and_log_norm")
+
+
 class SingularCurvature(ValueError):
     """The Gauss–Newton curvature is singular at the given values: some
     direction is constrained by neither the data nor a proper prior (an
@@ -381,6 +387,11 @@ class _Objective(eqx.Module):
                 "depend on the model); fit "
                 "with method='lbfgs' or 'adam'."
             )
+        if any(_scalar(t) for t in self.likelihoods):
+            raise NoLeastSquaresForm(
+                "A likelihood term with a scalar χ² (no residual vector) has "
+                "no least-squares form; fit with method='lbfgs' or 'adam'."
+            )
         if term_norms and self._has_term_norms:
             raise NoLeastSquaresForm(
                 "Likelihood terms with a log_norm (a fitted RV jitter, or "
@@ -448,13 +459,21 @@ class _Objective(eqx.Module):
         priors.update({site: p for site, (p, _, _) in self.noise.items()})
         return [(key, priors[key]) for key in self.coordinate_keys]
 
-    def curvature_rows(self, z):
+    def curvature_rows(self, z, skip_scalar=False):
         """The curvature rows ρ(z), whose Jacobian J gives JᵀJ.
 
         In order: each dataset's mean and normalizer rows
         (``likelihood._curvature_rows``), each likelihood term's residuals, and the
-        residuals of ``AngleVector`` priors. Regularizers are not included.
+        residuals of ``AngleVector`` priors. Regularizers are not included. A
+        scalar-χ² term has no rows: it raises :class:`NoLeastSquaresForm`
+        unless ``skip_scalar``.
         """
+        scalar = [t for t in self.likelihoods if _scalar(t)]
+        if scalar and not skip_scalar:
+            raise NoLeastSquaresForm(
+                "A likelihood term with a scalar χ² has no curvature rows "
+                "(no Gauss–Newton mass or covariance from it)."
+            )
         model = self.build(z)
         values = self.constrain(z)
         models = _per_dataset(model, len(self.data))
@@ -462,7 +481,11 @@ class _Objective(eqx.Module):
             _curvature_rows(m, d, noise_for(self.noise, values, i))
             for i, (m, d) in enumerate(zip(models, self.data))
         ]
-        rows += [np.ravel(term(values)) for term in self.likelihoods]
+        rows += [
+            np.ravel(term(values))
+            for term in self.likelihoods
+            if not _scalar(term)
+        ]
         rows += [
             prior.residuals(z[path])
             for path, prior in self.priors.items()
@@ -537,6 +560,13 @@ class _Objective(eqx.Module):
             parts.append(np.ravel(np.maximum(0.0, second)))
         return np.concatenate(parts) if parts else np.zeros(0)
 
+    @property
+    def loss_constant(self):
+        """What ``loss`` leaves out of the scalar-χ² terms' loss."""
+        return sum(
+            (t.loss_constant for t in self.likelihoods if _scalar(t)), 0.0
+        )
+
     def penalty(self, z):
         """The summed regularizers at ``z``."""
         model = _reference(self.build(z))
@@ -554,7 +584,11 @@ class _Objective(eqx.Module):
         chi2 = sum(np.sum(w**2) for w, _ in whitened)
         norms = 0.0
         for t in self.likelihoods:
-            if hasattr(t, "residuals_and_log_norm"):
+            if _scalar(t):
+                # Less its constants (``loss_constant``).
+                c, n = t.chi2_and_log_norm(values)
+                chi2, norms = chi2 + c, norms + n
+            elif hasattr(t, "residuals_and_log_norm"):
                 # One evaluation gives both (a profiled scale needs the
                 # residuals to find its own normalization).
                 r, n = t.residuals_and_log_norm(values)
@@ -732,9 +766,14 @@ def fit(
         # Optimizers see the loss per data point, so step sizes and
         # tolerances do not depend on the size of the dataset.
         ndata = [d.n_independent for d in problem.data]
-        # A term's size is the length of its residuals at the start.
+        # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
-        ndata += [int(np.size(term(start))) for term in problem.likelihoods]
+        ndata += [
+            int(term.n_data)
+            if hasattr(term, "n_data")
+            else int(np.size(term(start)))
+            for term in problem.likelihoods
+        ]
         scale = float(max(sum(ndata), 1))
         # Numbers go to the jitted solvers as arrays, which are traced, so
         # that new values do not recompile. The step limits of LM and Adam
@@ -1190,8 +1229,13 @@ def _forward_summary(problem, z):
     """
     values = problem.constrain(z)
     residuals = problem.data_residuals(problem.build(z), values)
-    residuals += [term(values) for term in problem.likelihoods]
-    return problem.loss(z), [np.sum(r**2) for r in residuals]
+    chi2 = [np.sum(r**2) for r in residuals]
+    for term in problem.likelihoods:
+        if _scalar(term):
+            chi2.append(term.chi2_and_log_norm(values)[0] + term.chi2_constant)
+        else:
+            chi2.append(np.sum(term(values) ** 2))
+    return problem.loss(z) + problem.loss_constant, chi2
 
 
 @eqx.filter_jit
@@ -1434,6 +1478,8 @@ def _gn_diagonal(rows, x, probes, key=None):
     exact."""
     n = x.size
     m = jax.eval_shape(rows, x).size
+    if m == 0:
+        return np.zeros(n, x.dtype)
     if probes is None and n <= m:
 
         def column(i):
@@ -1482,12 +1528,43 @@ def _hessian_diagonal(f, x, probes, key=None):
     return np.mean(jax.lax.map(estimate, keys), axis=0)
 
 
+def _gn_params_diagonal(params, loss, x, probes, key=None):
+    """The diagonal of JᵀHJ, J the Jacobian of ``params(x)`` and H the Hessian
+    of ``loss`` at ``params(x)``: the Gauss–Newton curvature of a loss that is
+    quadratic in its parameters. Exact (``probes=None``) or the mean of
+    ``u ⊙ JᵀHJu`` over Rademacher ``u``."""
+    n = x.size
+    theta, push = jax.linearize(params, x)
+    grad = jax.grad(loss)
+
+    def product(v):
+        return jax.jvp(grad, (theta,), (v,))[1]
+
+    if probes is None:
+
+        def entry(i):
+            v = push(np.zeros(n, x.dtype).at[i].set(1.0))
+            leaves = jax.tree.leaves(jax.tree.map(np.vdot, v, product(v)))
+            return np.real(sum(leaves))
+
+        return jax.lax.map(entry, np.arange(n))
+    pull = jax.linear_transpose(push, x)
+
+    def estimate(key):
+        u = jax.random.rademacher(key, (n,), x.dtype)
+        return u * pull(product(push(u)))[0]
+
+    keys = jax.random.split(jax.random.fold_in(key, 2), probes)
+    return np.mean(jax.lax.map(estimate, keys), axis=0)
+
+
 @eqx.filter_jit
 def _fisher_diagonal(problem, z, probes, round=0):
     """The diagonal of the Gauss–Newton curvature of ``problem.loss`` at ``z``,
     over the flat coordinates: JᵀJ of the data and likelihood rows, the
-    curvature of the priors, and the Hessian diagonal of the regularizers
-    (floored at zero, as for ``gauss_newton_mass``). A regularizer with
+    curvature of the priors, the Hessian diagonal of the regularizers (floored
+    at zero, as for ``gauss_newton_mass``) and, for scalar-χ² terms, JᵀHJ through
+    their ``curvature_params`` (also floored). A regularizer with
     ``metric_rows`` (maximum entropy) gives its own positive curvature instead,
     which replaces the rest on the coordinates it covers (the data JᵀJ is
     dropped there on purpose: whitened by the regularizer it is the identity
@@ -1497,8 +1574,23 @@ def _fisher_diagonal(problem, z, probes, round=0):
     key = jax.random.PRNGKey(round)
     flat, unravel = problem.ravel(z)
     diagonal = _gn_diagonal(
-        lambda x: problem.curvature_rows(unravel(x)), flat, probes, key
+        lambda x: problem.curvature_rows(unravel(x), skip_scalar=True),
+        flat,
+        probes,
+        key,
     ) + problem.curvature_diag(z, False)
+    scalar = [t for t in problem.likelihoods if _scalar(t)]
+    if scalar:
+
+        def params(x):
+            values = problem.constrain(unravel(x))
+            return [t.curvature_params(values) for t in scalar]
+
+        def loss(theta):
+            return sum(t.curvature_loss(p) for t, p in zip(scalar, theta))
+
+        curvature = _gn_params_diagonal(params, loss, flat, probes, key)
+        diagonal = diagonal + np.maximum(curvature, 0.0)
     metric = [r for r in problem.regularizers if hasattr(r, "metric_rows")]
     plain = [r for r in problem.regularizers if not hasattr(r, "metric_rows")]
     if plain:

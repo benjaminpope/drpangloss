@@ -1,0 +1,622 @@
+"""virgil.radio_toeplitz: the dirty-beam χ² against the direct radio term."""
+
+import math
+import warnings
+
+import jax
+import jax.numpy as np
+import numpy as onp
+import numpyro.distributions as dist
+import pytest
+
+from virgil import (
+    CalibrationNuisance,
+    ComplexVisData,
+    Image,
+    PointSource,
+    System,
+    fit,
+)
+from virgil import _nufft_spread as spread_grid
+from virgil._utils import mas2rad
+from virgil.fitting import (
+    NoLeastSquaresForm,
+    gauss_newton_diag,
+    gauss_newton_mass,
+)
+
+
+@pytest.fixture(autouse=True)
+def float64():
+    """Tight tolerances need float64; opt in locally, as AGENTS.md asks."""
+    with jax.enable_x64(True):
+        yield
+
+
+PIXEL = 2.0  # mas
+DDID_OBS = (0, 0, 1, 1)  # 2 observations x 2 ddids
+CENTRES = onp.array([230e9, 232e9, 240e9, 242e9])
+
+
+def _uv(n, reach, rng):
+    """Points in a disc reaching ``reach`` of the pixel Nyquist limit."""
+    q = reach / (2.0 * mas2rad * PIXEL) * onp.sqrt(rng.uniform(0, 1, n))
+    phi = rng.uniform(0, 2 * onp.pi, n)
+    return q * onp.cos(phi), q * onp.sin(phi)
+
+
+def _data(n, npix, seed=0, reach=0.45, alpha=0.7):
+    """Visibilities of a random image with gains, an offset and noise;
+    channels spread ±1% around each ddid's centre."""
+    rng = onp.random.default_rng(seed)
+    ddid = rng.integers(0, len(DDID_OBS), n)
+    obs = onp.asarray(DDID_OBS)[ddid]
+    freq = CENTRES[ddid] * (1.0 + rng.uniform(-0.01, 0.01, n))
+    u, v = _uv(n, reach, rng)
+    weight = rng.uniform(0.5, 2.0, n) * 1e2
+    blank = ComplexVisData.from_arrays(
+        u, v, onp.zeros(n, complex), weight, freq, ddid=ddid + 5, obs=obs + 2
+    )
+    nuis = CalibrationNuisance(blank, alpha=alpha)
+    truth = Image(rng.normal(size=(npix, npix)), PIXEL, ft="dft")
+    values = _values(nuis, flux=0.9, gain=[1.15], offset=[[0.4, -0.7]])
+    model = onp.asarray(blank.model(truth, values, nuis))
+    noise = rng.normal(size=n) + 1j * rng.normal(size=n)
+    return ComplexVisData.from_arrays(
+        u,
+        v,
+        model + noise / onp.sqrt(weight),
+        weight,
+        freq,
+        ddid=ddid + 5,
+        obs=obs + 2,
+    )
+
+
+def _values(nuis, **sites):
+    values = {k: np.asarray(x) for k, x in nuis.defaults().items()}
+    for name, x in sites.items():
+        if nuis._site(name) in values:
+            values[nuis._site(name)] = np.asarray(x, dtype=float)
+    return values
+
+
+def _scene(npix, rotation=0.0, **kw):
+    def scene(values):
+        return Image(
+            values["eta"], PIXEL, rotation_deg=rotation, ft="dft", **kw
+        )
+
+    template = Image(
+        np.zeros((npix, npix)), PIXEL, rotation_deg=rotation, **kw
+    )
+    return scene, template
+
+
+def _losses(tdata, scene, nuis, **term_kw):
+    """Toeplitz loss (less its constant) and direct loss, as functions of
+    the values."""
+    term = tdata.term(scene, nuis, **term_kw)
+    direct = tdata.direct_term(scene, nuis, **term_kw)
+
+    def toeplitz(values):
+        chi2, log_norm = term.chi2_and_log_norm(values)
+        return 0.5 * chi2 + log_norm
+
+    def reference(values):
+        r, log_norm = direct.residuals_and_log_norm(values)
+        return 0.5 * np.sum(r**2) + log_norm
+
+    return term, toeplitz, reference
+
+
+def _loss_difference(data, mask, scene, nuis, v1, v2, sigma=None):
+    """The direct loss difference L(v2) - L(v1), compensated: per-point
+    differences of |r|², summed with ``math.fsum``, at a σ common to both."""
+    w = onp.asarray(data.weight)
+    vis = onp.asarray(data.vis)
+    m1 = onp.asarray(data.model(scene(v1), v1, nuis))
+    m2 = onp.asarray(data.model(scene(v2), v2, nuis))
+    r1 = (vis - m1) * onp.sqrt(w)
+    diff = onp.real(
+        (m1 - m2) * onp.sqrt(w) * onp.conj(2.0 * r1 + (m1 - m2) * onp.sqrt(w))
+    )
+    ddid = onp.asarray(data.ddid)
+    out = 0.0
+    for d in range(len(DDID_OBS)):
+        sel = mask & (ddid == d)
+        if not sel.any():
+            continue
+        d_chi2 = math.fsum(diff[sel])
+        if nuis.sigmas == "profile" and sigma is None:
+            chi2_1 = math.fsum(onp.abs(r1[sel]) ** 2)
+            out += sel.sum() * math.log1p(d_chi2 / chi2_1)
+        else:
+            s = 1.0 if sigma is None else float(sigma[d])
+            out += 0.5 * d_chi2 / s**2
+    return out
+
+
+def _relative(a, b):
+    return float(np.max(np.abs(a - b)) / np.max(np.abs(b)))
+
+
+def _check_against_direct(data, npix, sigmas, offsets, rotation, seed, **kw):
+    """Loss, loss difference and gradient (every site) of the Toeplitz term
+    against the direct term; returns the largest relative differences."""
+    rng = onp.random.default_rng(seed)
+    mask = rng.uniform(size=len(data)) > 0.1
+    nuis = CalibrationNuisance(
+        data, sigmas=sigmas, offsets=offsets, alpha=0.7, taper_fwhm_mas=3.0
+    )
+    scene, template = _scene(npix, rotation)
+    tdata = data.toeplitz(
+        template,
+        nuis,
+        mask=mask,
+        offsets="spread" if offsets else "none",
+        **kw,
+    )
+    term, toeplitz, reference = _losses(tdata, scene, nuis)
+    bound = (
+        tdata.max_shift_pix
+        * PIXEL
+        / (
+            abs(onp.cos(onp.deg2rad(rotation)))
+            + abs(onp.sin(onp.deg2rad(rotation)))
+        )
+    )
+    v1 = _values(
+        nuis,
+        flux=0.8,
+        gain=[1.1],
+        # one sub-pixel offset, one at the bound of the precompute
+        offset=[[0.37, -0.999 * bound]],
+        sigma=[1.2, 0.9, 1.05, 1.3],
+    )
+    v1["eta"] = np.asarray(rng.normal(size=(npix, npix)))
+    v2 = dict(v1, eta=v1["eta"] + 0.05 * rng.normal(size=(npix, npix)))
+
+    loss, grad = jax.value_and_grad(toeplitz)(v1)
+    loss_d, grad_d = jax.value_and_grad(reference)(v1)
+    sigma = v1["cal.sigma"] if sigmas is True else None
+    exact = _loss_difference(data, mask, scene, nuis, v1, v2, sigma)
+    return dict(
+        loss=abs(float(loss + term.loss_constant - loss_d))
+        / abs(float(loss_d)),
+        difference=abs(float(toeplitz(v2) - toeplitz(v1)) - exact)
+        / abs(exact),
+        direct_difference=abs(float(reference(v2) - reference(v1)) - exact)
+        / abs(exact),
+        **{f"grad {k}": _relative(grad[k], grad_d[k]) for k in grad_d},
+    )
+
+
+@pytest.mark.validates(
+    "virgil.radio_toeplitz.ToeplitzVisData",
+    roots=["self-consistency"],
+)
+@pytest.mark.parametrize("offsets", [True, False])
+@pytest.mark.parametrize("sigmas", [False, True, "profile"])
+def test_matches_direct_term(sigmas, offsets):
+    npix = 15 if offsets else 16  # odd and even grids
+    data = _data(1500, npix, seed=1)
+    out = _check_against_direct(data, npix, sigmas, offsets, 25.0, seed=2)
+    assert out["loss"] < 1e-12
+    assert out["difference"] < 1e-10
+    assert all(out[k] < 1e-10 for k in out if k.startswith("grad"))
+
+
+@pytest.mark.slow
+@pytest.mark.validates(
+    "virgil.radio_toeplitz.ToeplitzVisData",
+    roots=["self-consistency"],
+)
+def test_matches_direct_term_at_scale():
+    """64² image, 1e5 points, 2 obs x 2 ddids, gains, sub-pixel offsets and
+    offsets at the bound, taper, mask, channel spread, fixed α."""
+    data = _data(100_000, 64, seed=3)
+    for sigmas in (False, True, "profile"):
+        out = _check_against_direct(data, 64, sigmas, True, 33.0, seed=4)
+        assert out["loss"] < 1e-12, (sigmas, out)
+        assert out["difference"] < 1e-10, (sigmas, out)
+        assert all(out[k] < 1e-10 for k in out if k.startswith("grad")), (
+            sigmas,
+            out,
+        )
+
+
+def test_integer_lags_are_exact_past_nyquist():
+    """Without free offsets the beam and dirty image sit at integer lags,
+    exact for any baseline length (here 1.4 of the pixel Nyquist limit)."""
+    data = _data(800, 12, seed=5, reach=1.4)
+    nuis = CalibrationNuisance(data, offsets=False, sigmas=False, alpha=0.7)
+    scene, template = _scene(12)
+    tdata = data.toeplitz(template, nuis)
+    assert tdata.nyquist_fraction > 1.0
+    term, toeplitz, reference = _losses(tdata, scene, nuis)
+    values = _values(nuis, gain=[1.2])
+    values["eta"] = np.asarray(onp.random.default_rng(6).normal(size=(12, 12)))
+    loss, grad = jax.value_and_grad(toeplitz)(values)
+    loss_d, grad_d = jax.value_and_grad(reference)(values)
+    assert float(loss + term.loss_constant) == pytest.approx(
+        float(loss_d), rel=1e-12
+    )
+    for k in grad_d:
+        assert _relative(grad[k], grad_d[k]) < 1e-10
+
+
+@pytest.mark.parametrize("kind", ["smoothed", "system"])
+def test_scene_variants(kind):
+    data = _data(1000, 12, seed=7)
+    nuis = CalibrationNuisance(data, sigmas="profile", alpha=0.7)
+    if kind == "smoothed":
+        scene, template = _scene(12, 10.0, smooth_fwhm_mas=2.5)
+    else:
+        image_scene, template = _scene(12, 10.0)
+
+        def scene(values):
+            return System(disk=image_scene(values))
+
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    term, toeplitz, reference = _losses(tdata, scene, nuis)
+    values = _values(nuis, gain=[0.9], offset=[[1.1, 0.3]])
+    values["eta"] = np.asarray(onp.random.default_rng(8).normal(size=(12, 12)))
+    loss, grad = jax.value_and_grad(toeplitz)(values)
+    loss_d, grad_d = jax.value_and_grad(reference)(values)
+    assert float(loss + term.loss_constant) == pytest.approx(
+        float(loss_d), rel=1e-12
+    )
+    for k in grad_d:
+        assert _relative(grad[k], grad_d[k]) < 1e-10
+
+
+def test_results_match_direct():
+    """``loglike``, ``derived``, ``chi2_by_ddid`` and ``crosscheck``, with a
+    ddid fully masked (profiled ŝ = 1, no χ²)."""
+    data = _data(1200, 10, seed=9)
+    mask = onp.asarray(data.ddid) != 2
+    scene, template = _scene(10)
+    values = None
+    for sigmas in ("profile", True):
+        nuis = CalibrationNuisance(data, sigmas=sigmas, alpha=0.7)
+        tdata = data.toeplitz(template, nuis, mask=mask, offsets="spread")
+        values = _values(nuis, gain=[1.1], sigma=[1.1, 0.8, 1.0, 1.2])
+        values["eta"] = np.asarray(
+            onp.random.default_rng(10).normal(size=(10, 10))
+        )
+        term, direct = tdata.term(scene, nuis), tdata.direct_term(scene, nuis)
+        assert float(term.loglike(values)) == pytest.approx(
+            float(direct.loglike(values)), rel=1e-12
+        )
+        for k, x in direct.derived(values).items():
+            onp.testing.assert_allclose(term.derived(values)[k], x, rtol=1e-12)
+        chi2, n = tdata.chi2_by_ddid(scene, values, nuis)
+        chi2_d, n_d = data.chi2_by_ddid(scene, values, nuis, mask)
+        onp.testing.assert_array_equal(n, n_d)
+        assert chi2[2] == 0.0 and n[2] == 0
+        onp.testing.assert_allclose(chi2, chi2_d, rtol=1e-12)
+        assert tdata.crosscheck(scene, values, nuis)["max_rel"] < 1e-12
+    # a held-out score at fixed σ
+    nuis = CalibrationNuisance(data, sigmas="profile", alpha=0.7)
+    tdata = data.toeplitz(template, nuis, mask=mask, offsets="spread")
+    sigma = onp.array([1.3, 0.7, 1.0, 1.1])
+    _, toeplitz, reference = _losses(tdata, scene, nuis, sigma=sigma)
+    term = tdata.term(scene, nuis, sigma=sigma)
+    assert float(toeplitz(values) + term.loss_constant) == pytest.approx(
+        float(reference(values)), rel=1e-12
+    )
+
+
+def test_rebuild_matches_a_fresh_precompute_without_recompiling():
+    from virgil.radio_toeplitz import _build
+
+    data = _data(900, 10, seed=11)
+    nuis = CalibrationNuisance(data, sigmas=False, alpha=0.7)
+    _, template = _scene(10)
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    rng = onp.random.default_rng(12)
+    vis = onp.asarray(data.vis) + 0.1 * rng.normal(size=len(data))
+    weight = onp.asarray(data.weight) * rng.uniform(0.5, 1.5, len(data))
+    compiled = _build._cache_size()
+    rebuilt = tdata.rebuild(vis, weight)
+    assert _build._cache_size() == compiled
+    fresh = ComplexVisData.from_arrays(
+        data.u, data.v, vis, weight, data.freq, ddid=data.ddid, obs=data.obs
+    ).toeplitz(template, nuis, offsets="spread")
+    for k in fresh.arrays:
+        onp.testing.assert_allclose(
+            rebuilt.arrays[k],
+            fresh.arrays[k],
+            rtol=1e-13,
+            atol=1e-13 * float(np.max(np.abs(fresh.arrays[k]))),
+        )
+    onp.testing.assert_array_equal(rebuilt.data.vis, vis)
+
+
+def _fit_problem(npix=10, sigmas="profile"):
+    data = _data(1200, npix, seed=13)
+    nuis = CalibrationNuisance(data, sigmas=sigmas, alpha=0.7)
+    scene, template = _scene(npix)
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    priors = nuis.priors()
+    priors["eta"] = dist.Normal(0.0, 1.0)
+    init = _values(nuis)
+    init["eta"] = np.zeros((npix, npix))
+    return tdata, nuis, scene, priors, init
+
+
+def _fit_both(tdata, nuis, scene, priors, init, **kw):
+    out = []
+    for term in (tdata.term(scene, nuis), tdata.direct_term(scene, nuis)):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            out.append(
+                fit(
+                    lambda **v: scene(v),
+                    priors,
+                    (),
+                    likelihoods=[term],
+                    init=dict(init),
+                    **kw,
+                )
+            )
+    return out
+
+
+def test_fit_reaches_the_direct_optimum():
+    problem = _fit_problem()
+    # Adam follows the same trajectory step for step.
+    a, b = _fit_both(
+        *problem, method="adam", max_steps=200, learning_rate=3e-2
+    )
+    for k in b.values:
+        assert _relative(a.values[k], b.values[k]) < 1e-10
+    # L-BFGS (the default without a residual vector) reaches the same optimum.
+    a, b = _fit_both(*problem, max_steps=2000, gtol=1e-9)
+    assert a.info["method"] == "lbfgs" and a.info["converged"]
+    assert a.info["loss"] == pytest.approx(b.info["loss"], rel=1e-10)
+    assert a.info["chi2"] == pytest.approx(b.info["chi2"], rel=1e-10)
+    assert a.info["ndata"] == b.info["ndata"]
+    for k in b.values:
+        assert _relative(a.values[k], b.values[k]) < 1e-4
+    onp.testing.assert_allclose(
+        a.info["derived"]["cal.sigma"],
+        b.info["derived"]["cal.sigma"],
+        rtol=1e-8,
+    )
+
+
+def test_diag_preconditioner_uses_gauss_newton_curvature():
+    tdata, nuis, scene, priors, init = _fit_problem(sigmas=False)
+    values = dict(
+        init, eta=np.asarray(onp.random.default_rng(14).normal(size=(10, 10)))
+    )
+    values["cal.offset"] = np.asarray([[0.4, -0.7]])
+
+    def diagonal(term):
+        return gauss_newton_diag(
+            lambda **v: scene(v),
+            priors,
+            (),
+            values,
+            likelihoods=[term],
+            n_probes=0,
+        )
+
+    toeplitz = diagonal(tdata.term(scene, nuis))
+    direct = diagonal(tdata.direct_term(scene, nuis))
+    # The loss is quadratic in the pixels and in G = flux·gain: the same JᵀJ.
+    for k in ("eta", "cal.flux", "cal.gain"):
+        assert _relative(toeplitz[k], direct[k]) < 1e-10
+    # Offsets take the loss Hessian, near JᵀJ.
+    assert onp.all(toeplitz["cal.offset"] > 0.0)
+    kw = dict(method="lbfgs", max_steps=2000, gtol=1e-9)
+    a, b = _fit_both(
+        tdata, nuis, scene, priors, init, precondition="diag", **kw
+    )
+    plain, _ = _fit_both(tdata, nuis, scene, priors, init, **kw)
+    assert a.info["converged"] and a.info["steps"] < 1.5 * b.info["steps"]
+    assert a.info["steps"] < 0.5 * plain.info["steps"]
+    assert a.info["loss"] == pytest.approx(b.info["loss"], rel=1e-10)
+
+
+# -- refusals -------------------------------------------------------------
+
+
+@pytest.fixture
+def small():
+    data = _data(300, 8, seed=15)
+    nuis = CalibrationNuisance(data, alpha=0.7)
+    scene, template = _scene(8)
+    return data, nuis, scene, template
+
+
+def test_refuses_what_it_cannot_do(small):
+    data, nuis, scene, template = small
+    with pytest.raises(ValueError, match="fixed spectral index"):
+        data.toeplitz(template, CalibrationNuisance(data))
+    gains = CalibrationNuisance(data, alpha=0.7)
+    gains.antenna_gains = True
+    with pytest.raises(ValueError, match="antenna gains"):
+        data.toeplitz(template, gains)
+    far = _data(300, 8, seed=15, reach=0.99)
+    with pytest.raises(ValueError, match="Nyquist"):
+        far.toeplitz(
+            template, CalibrationNuisance(far, alpha=0.7), offsets="spread"
+        )
+    with pytest.raises(TypeError, match="Image"):
+        data.toeplitz(PointSource(), nuis, offsets="spread")
+    # fitted offsets are opt-in, and only with a nuisance that fits them
+    with pytest.raises(ValueError, match="offsets='spread'"):
+        data.toeplitz(template, nuis)
+    with pytest.raises(ValueError, match="needs a nuisance that fits"):
+        data.toeplitz(
+            template,
+            CalibrationNuisance(data, alpha=0.7, offsets=False),
+            offsets="spread",
+        )
+    with pytest.raises(ValueError, match="'none' or 'spread'"):
+        data.toeplitz(template, nuis, offsets=True)
+    tdata = data.toeplitz(template, nuis, offsets="spread")
+    with pytest.raises(ValueError, match="differs from the one"):
+        tdata.term(
+            scene, CalibrationNuisance(data, alpha=0.7, taper_fwhm_mas=5.0)
+        )
+    no_offsets = data.toeplitz(
+        template, CalibrationNuisance(data, alpha=0.7, offsets=False)
+    )
+    with pytest.raises(ValueError, match="without"):
+        no_offsets.term(scene, nuis)
+    values = _values(nuis)
+    values["eta"] = np.zeros((8, 8))
+    for bad, error in [
+        (lambda v: PointSource(), TypeError),
+        (lambda v: System(a=scene(v), b=PointSource()), ValueError),
+        (lambda v: Image(v["eta"], 1.5 * PIXEL), ValueError),
+    ]:
+        with pytest.raises(error):
+            tdata.term(bad, nuis).chi2_and_log_norm(values)
+    term = tdata.term(scene, nuis)
+    with pytest.raises(TypeError, match="no residual vector"):
+        term(values)
+
+
+def test_runtime_checks(small):
+    data, nuis, scene, template = small
+    tdata = data.toeplitz(template, nuis, offsets="spread", max_offset_mas=2.0)
+    values = _values(nuis, offset=[[0.0, 3.0]])
+    values["eta"] = np.zeros((8, 8))
+    loss = eqx_jit(lambda t, v: t.chi2_and_log_norm(v)[0])
+    with pytest.raises(Exception, match="beyond the bound"):
+        loss(tdata.term(scene, nuis), values)
+    values = _values(nuis)
+    values["eta"] = np.zeros((8, 8))
+    moved = tdata.term(lambda v: Image(v["eta"], PIXEL, dra=1.0), nuis)
+    with pytest.raises(Exception, match="zero offset"):
+        loss(moved, values)
+
+
+def eqx_jit(f):
+    import equinox as eqx
+
+    return eqx.filter_jit(f)
+
+
+def test_fit_protocol_refusals(small):
+    data, nuis, scene, template = small
+    term = data.toeplitz(template, nuis, offsets="spread").term(scene, nuis)
+    priors = nuis.priors()
+    priors["eta"] = dist.Normal(0.0, 1.0)
+    init = _values(nuis)
+    init["eta"] = np.zeros((8, 8))
+    model = lambda **v: scene(v)  # noqa: E731
+    with pytest.raises(NoLeastSquaresForm):
+        fit(model, priors, (), likelihoods=[term], init=init, method="lm")
+    with pytest.raises(NoLeastSquaresForm):
+        gauss_newton_mass(model, priors, (), init, likelihoods=[term])
+    with pytest.raises(ValueError, match="float64"):
+        fit(
+            model,
+            priors,
+            (),
+            likelihoods=[term],
+            init=init,
+            dtype="float32",
+            max_steps=2,
+        )
+
+
+def test_needs_float64(small):
+    data, nuis, scene, template = small
+    with jax.enable_x64(False), pytest.raises(ValueError, match="float64"):
+        data.toeplitz(template, nuis, offsets="spread")
+
+
+def test_fixed_alpha_nuisance(small):
+    data, _, scene, _ = small
+    fixed = CalibrationNuisance(data, alpha=0.7)
+    fitted = CalibrationNuisance(data, alpha=True)
+    assert "cal.alpha" not in fixed.priors() and fixed.alpha_fixed == 0.7
+    values = _values(fitted)
+    values["eta"] = np.zeros((8, 8))
+    values["cal.alpha"] = np.asarray(0.7)
+    onp.testing.assert_allclose(
+        data.model(scene(values), values, fixed),
+        data.model(scene(values), values, fitted),
+        rtol=1e-14,
+    )
+    assert CalibrationNuisance(data, alpha=False).alpha_fixed == 0.0
+
+
+# -- the spread-grid adapter ---------------------------------------------
+
+
+@pytest.mark.validates("virgil._nufft_spread.evaluate", roots=["mathematics"])
+def test_spread_grid_against_nufftax_and_direct_sums():
+    from nufftax import nufft2d1
+
+    rng = onp.random.default_rng(16)
+    n, npix = 3000, 16
+    tx, ty = rng.uniform(-0.8, 0.8, (2, n)) * onp.pi
+    c = rng.normal(size=n) + 1j * rng.normal(size=n)
+    kp = spread_grid.kernel(1e-14)
+
+    def direct(x, y):
+        return onp.real(
+            onp.einsum(
+                "k,ky,kx->yx",
+                c,
+                onp.exp(1j * ty[:, None] * y),
+                onp.exp(1j * tx[:, None] * x),
+            )
+        )
+
+    # integer modes: nufftax's own type-1 transform
+    m = onp.arange(-npix // 2, npix // 2)
+    nf = spread_grid.grid_size(npix, kp)
+    b = spread_grid.spread(
+        np.asarray(tx), np.asarray(ty), np.asarray(c), nf, kp
+    )
+    ours = spread_grid.evaluate(b, m, 0.0, m, 0.0, kp)
+    theirs = onp.real(
+        nufft2d1(
+            np.asarray(tx),
+            np.asarray(ty),
+            np.asarray(c),
+            (npix, npix),
+            eps=1e-14,
+            isign=1,
+        )
+    )
+    scale = onp.abs(theirs).max()
+    assert onp.abs(ours - theirs).max() < 1e-13 * scale
+    # any real position within M/2, kernel not wrapping
+    nf = spread_grid.grid_size(npix + 26, kp)
+    assert 0.8 < spread_grid.margin(nf, kp)
+    b = spread_grid.spread(
+        np.asarray(tx), np.asarray(ty), np.asarray(c), nf, kp
+    )
+    m = npix // 2 - 1 - onp.arange(npix)
+    for fx, fy in [(0.5, 0.5), (0.8, -0.3), (6.5, -5.5)]:
+        ours = spread_grid.evaluate(b, m, fx, m, fy, kp)
+        assert onp.abs(ours - direct(m + fx, m + fy)).max() < 1e-13 * scale
+    # and differentiable in the shift
+    fx = 0.3
+
+    def at(f):
+        return spread_grid.evaluate(b, m, f, m, 0.0, kp)[3, 5]
+
+    x = m[5] + fx
+    expected = onp.sum(
+        onp.real(c * 1j * tx * onp.exp(1j * (tx * x + ty * m[3])))
+    )
+    assert float(jax.grad(at)(fx)) == pytest.approx(expected, rel=1e-11)
+
+
+def test_spread_grid_needs_nufftax_0_6_1(monkeypatch):
+    import nufftax
+
+    monkeypatch.setattr(nufftax, "__version__", "0.6.0")
+    with pytest.raises(ImportError, match="0.6.1"):
+        spread_grid.kernel(1e-12)
