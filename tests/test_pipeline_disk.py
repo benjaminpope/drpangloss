@@ -16,7 +16,6 @@ stages, the quicklook, harmonics and the companion search run in the slow
 tier: each stage's JIT compile alone takes several seconds on a CI runner.
 """
 
-import inspect
 import json
 
 import jax
@@ -26,7 +25,7 @@ import pytest
 pytest.importorskip("h5py")
 pytest.importorskip("nbclient")
 
-import virgil  # noqa: E402
+from tests._shared import executed_quicklook  # noqa: E402
 from virgil.coverage import vlti_oidata  # noqa: E402
 from virgil.models import (  # noqa: E402
     GaussianRing,
@@ -36,7 +35,6 @@ from virgil.models import (  # noqa: E402
     System,
 )
 from virgil.pipeline import (  # noqa: E402
-    SCHEMA,
     Check,
     ConfigMismatchError,
     DiskPipeline,
@@ -90,9 +88,7 @@ def data():
 @pytest.fixture(scope="module")
 def gp_run(data, tmp_path_factory):
     out = tmp_path_factory.mktemp("disk_gp") / "run"
-    pipeline = DiskPipeline(
-        data, output=out, **{**SMALL, "quicklook_execute": True}
-    )
+    pipeline = DiskPipeline(data, output=out, **SMALL)  # notebook unexecuted
     return pipeline, pipeline.run()
 
 
@@ -282,21 +278,6 @@ RINGS_CHECKS = [
 ]
 
 
-def _signature(name):
-    obj = {"DiskPipeline": DiskPipeline}[name.split(".")[0]]
-    for part in name.split(".")[1:]:
-        obj = getattr(obj, part)
-    params = [
-        p.replace(annotation=inspect.Parameter.empty)
-        for p in inspect.signature(obj).parameters.values()
-    ]
-    return str(
-        inspect.signature(obj).replace(
-            parameters=params, return_annotation=inspect.Signature.empty
-        )
-    )
-
-
 def _keys(summary):
     return {
         k: (set(v) if isinstance(v, dict) else None)
@@ -304,16 +285,11 @@ def _keys(summary):
     }
 
 
-def test_api_snapshot():
-    assert {k: _signature(k) for k in API} == API
-    assert DiskPipeline.STAGES == STAGES
-    assert DiskPipeline.defaults() == DEFAULTS
+def test_pipeline_specific_contract():
+    # The shared part (signatures, stages, defaults) is test_api_snapshot
+    # in test_pipeline_robust_core.py.
     # model=None is "gp", the option that assumes least about the disk.
     assert DiskPipeline._default_model(None) == "gp"
-    assert DiskPipeline.STABILITY == "provisional"
-    assert DiskPipeline.NAME == "disk"
-    assert SCHEMA == "virgil-pipeline-run-v1"
-    assert "DiskPipeline" in virgil.pipeline.__all__
     assert sorted(disk.models()) == ["gp", "rings"]
     assert disk.CHECKS == (
         "chi2_reduced",
@@ -523,24 +499,8 @@ def test_gp_round_trip(gp_run, data):
 @pytest.mark.slow
 def test_quicklook_notebook(gp_run):
     pipeline, _ = gp_run
-    nb = json.loads((pipeline.output / "quicklook.ipynb").read_text())
-    cells = nb["cells"]
-    assert (
-        cells[0]["cell_type"] == "markdown"
-        and cells[-1]["cell_type"] == "markdown"
-    )
-    code = [i for i, c in enumerate(cells) if c["cell_type"] == "code"]
-    for i in code:
-        assert cells[i - 1]["cell_type"] == "markdown"
-        assert len(cells[i]["outputs"]) == 1, cells[i]["source"]
-        assert cells[i]["outputs"][0]["output_type"] != "error"
-    images = sum(
-        "image/png" in o.get("data", {})
-        for c in cells
-        if c["cell_type"] == "code"
-        for o in c["outputs"]
-    )
-    assert images == 3  # overview, geometry grid, disk summary
+    # overview, geometry grid, disk summary
+    cells, code = executed_quicklook(pipeline.output, images=3)
     text = "".join("".join(cells[i]["source"]) for i in code)
     assert "plot_summary" in text
     assert "| `absorbed_companion` |" in "".join(cells[-1]["source"])

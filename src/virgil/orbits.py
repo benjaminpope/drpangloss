@@ -65,11 +65,6 @@ def _jaxoplanet():
     return jaxoplanet
 
 
-def _kepler(mean_anomaly, ecc):
-    """``(sin f, cos f)`` of the true anomaly, from jaxoplanet's solver."""
-    return _jaxoplanet().core.kepler(mean_anomaly, ecc)
-
-
 def _check(cls, checks):
     """Reject concrete out-of-domain values; traced ones pass unchecked."""
     for name, value, ok, domain in checks:
@@ -157,23 +152,11 @@ def _unit_orbit(dt, period, dt_peri, ecc):
     Computed from the true anomaly: ``X = (r/a) cos f``, ``Y = (r/a) sin f``.
     """
     mean_anomaly = 2.0 * np.pi * (dt - dt_peri) / period
-    sin_f, cos_f = _kepler(mean_anomaly, ecc * np.ones_like(mean_anomaly))
+    sin_f, cos_f = _jaxoplanet().core.kepler(  # true anomaly
+        mean_anomaly, ecc * np.ones_like(mean_anomaly)
+    )
     radius = (1.0 - ecc**2) / (1.0 + ecc * cos_f)
     return radius * cos_f, radius * sin_f
-
-
-def _thiele_innes(a_mas, inc, omega, Omega):
-    """``(A, B, F, G, C, H)`` for angles in degrees (§2.4)."""
-    i, w, n = np.deg2rad(inc), np.deg2rad(omega), np.deg2rad(Omega)
-    ci = np.cos(i)
-    return (
-        a_mas * (np.cos(w) * np.cos(n) - np.sin(w) * np.sin(n) * ci),
-        a_mas * (np.cos(w) * np.sin(n) + np.sin(w) * np.cos(n) * ci),
-        a_mas * (-np.sin(w) * np.cos(n) - np.cos(w) * np.sin(n) * ci),
-        a_mas * (-np.sin(w) * np.sin(n) + np.cos(w) * np.cos(n) * ci),
-        a_mas * np.sin(w) * np.sin(i),
-        a_mas * np.cos(w) * np.sin(i),
-    )
 
 
 def _velocity(position, dt):
@@ -323,7 +306,20 @@ class KeplerOrbit(zdx.Base):
         ``ddec = A X + F Y``, ``dra = B X + G Y`` and ``dz = C X + H Y``,
         with ``X = cos E - e`` and ``Y = √(1 - e²) sin E``.
         """
-        return _thiele_innes(self.a_mas, self.inc, self.omega, self.Omega)
+        i, w, n = (
+            np.deg2rad(self.inc),
+            np.deg2rad(self.omega),
+            np.deg2rad(self.Omega),
+        )
+        a, ci = self.a_mas, np.cos(i)
+        return (
+            a * (np.cos(w) * np.cos(n) - np.sin(w) * np.sin(n) * ci),
+            a * (np.cos(w) * np.sin(n) + np.sin(w) * np.cos(n) * ci),
+            a * (-np.sin(w) * np.cos(n) - np.cos(w) * np.sin(n) * ci),
+            a * (-np.sin(w) * np.sin(n) + np.cos(w) * np.cos(n) * ci),
+            a * np.sin(w) * np.sin(i),
+            a * np.cos(w) * np.sin(i),
+        )
 
     def _relative(self, dt):
         x, y = _unit_orbit(dt, self.period, self.dt_peri, self.ecc)

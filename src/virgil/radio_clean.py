@@ -138,13 +138,6 @@ def restore(model, residual, beam, pixel_scale_mas):
     return conv[r : r + n0, c : c + n1] + residual
 
 
-def _sidelobe(psf):
-    """Largest |PSF| outside the main lobe (down to its first null)."""
-    peak = onp.unravel_index(onp.argmax(psf), psf.shape)
-    lab, _ = ndimage.label(psf > 0)
-    return float(onp.where(lab == lab[peak], 0.0, onp.abs(psf)).max())
-
-
 def _mad_rms(image):
     """Robust rms: 1.4826 × the median absolute deviation."""
     return float(1.4826 * onp.median(onp.abs(image - onp.median(image))))
@@ -296,16 +289,6 @@ def _minor_cycle(
     out = onp.zeros((nsc,) + residual.shape)
     out[:, r0:r1, c0:c1] = comps
     return out, done
-
-
-def _model_image(components, scales):
-    """Jy per pixel: ``Σ_s B_s ⊛ components_s`` (``B_s`` peak 1)."""
-    sm = _Smoother(components.shape[1:])
-    return sum(
-        _area(s * FWHM_TO_SIGMA) * sm(c, s * FWHM_TO_SIGMA)
-        for c, s in zip(components, scales)
-        if onp.any(c)
-    )
 
 
 # ----------------------------------------------------------------------
@@ -560,7 +543,11 @@ def clean(
 
         psf = dirty(onp.ones(len(data), onp.complex128))
         beam = fit_beam(psf, pixel_scale_mas, psfcutoff)
-        side = _sidelobe(psf)
+        lab, _ = ndimage.label(
+            psf > 0
+        )  # the main lobe, down to its first null
+        peak = onp.unravel_index(onp.argmax(psf), psf.shape)
+        side = float(onp.where(lab == lab[peak], 0.0, onp.abs(psf)).max())
         beam_pix = onp.sqrt(beam[0] * beam[1]) / pixel_scale_mas
         psf_frac = min(max(cyclefactor * side, minpsffraction), maxpsffraction)
         comps = onp.zeros((len(scales),) + shape)
@@ -633,7 +620,12 @@ def clean(
                 break
             comps += inc
             total += n
-            model = _model_image(comps, scales)
+            sm = _Smoother(shape)
+            model = sum(  # Jy per pixel: Σ_s B_s ⊛ comps_s, B_s of peak 1
+                _area(s * FWHM_TO_SIGMA) * sm(c, s * FWHM_TO_SIGMA)
+                for c, s in zip(comps, scales)
+                if onp.any(c)
+            )
     if restoringbeam is not None:
         beam = tuple(float(b) for b in restoringbeam)
     image = restore(model, resid, beam, pixel_scale_mas)

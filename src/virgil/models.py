@@ -101,14 +101,6 @@ def _normalize_image(image):
     return image / total
 
 
-def _unit_flux(component):
-    """Scale an image component to unit sum; components off the grid stay zero."""
-    total = np.sum(component)
-    return np.where(
-        total > 0.0, component / np.where(total > 0.0, total, 1.0), 0.0
-    )
-
-
 def _format_leaf(x):
     """Short human-readable form of a parameter value for ``repr``."""
     value = concrete(x)
@@ -1786,7 +1778,11 @@ class ModulatedGaussianRim(Component):
 
     def _ring_angle(self, sky_pa):
         """The in-plane azimuth whose projection points at ``sky_pa``."""
-        return _rim_angle(sky_pa, self.pa, self.inc)
+        # Deprojected first: the rim compresses its minor axis by cos(inc).
+        d = np.deg2rad(sky_pa - self.pa)
+        return self.pa + np.rad2deg(
+            np.arctan2(np.sin(d) / np.cos(np.deg2rad(self.inc)), np.cos(d))
+        )
 
     def _centred_cvis(self, uu, vv):
         # The rim is a MultipoleDisk: a ThinRing of radius diam / 2, the
@@ -5238,9 +5234,12 @@ class System(SourceModel):
         xx, yy = xx - self.dra, yy - self.ddec
         parts = self.resolved().parts
         weights = [c._weight() for c in parts]
+        images = [c._image(xx, yy, pixel_scale_mas) for c in parts]
+        sums = [np.sum(im) for im in images]
+        # Components off the grid (zero sum) stay zero rather than become NaN.
         return sum(
-            w * _unit_flux(c._image(xx, yy, pixel_scale_mas))
-            for w, c in zip(weights, parts)
+            w * np.where(t > 0.0, im / np.where(t > 0.0, t, 1.0), 0.0)
+            for w, im, t in zip(weights, images, sums)
         ) / sum(weights)
 
     def _weight(self, wavel=None):
@@ -5648,19 +5647,6 @@ class OrbitalBinary(SourceModel):
         return _flux_is_non_negative(self.flux)
 
 
-def _rim_angle(sky_pa, pa, inc):
-    """The in-plane rim angle whose projection points at ``sky_pa``.
-
-    [`ModulatedGaussianRim`][virgil.models.ModulatedGaussianRim] measures
-    ``az_pas - pa`` in the deprojected disc and then compresses its minor
-    axis by ``cos(inc)``, so a sky angle is deprojected first.
-    """
-    d = np.deg2rad(sky_pa - pa)
-    return pa + np.rad2deg(
-        np.arctan2(np.sin(d) / np.cos(np.deg2rad(inc)), np.cos(d))
-    )
-
-
 class BinaryModelAngular(SourceModel):
     """
     A primary star and a point-source companion, in polar coordinates.
@@ -5707,8 +5693,14 @@ class BinaryModelAngular(SourceModel):
 
     def model(self, u, v, wavel):
         """Complex visibilities on baselines ``u``, ``v`` (m) at ``wavel`` (m)."""
-        uu, vv = u / wavel, v / wavel
-        return _cvis_binary_angular(uu, vv, self.sep, self.pa, self.flux)
+        th = self.pa * dtor  # sep (mas) and PA (deg, East of North) -> offsets
+        return cvis_binary(
+            u / wavel,
+            v / wavel,
+            self.sep * np.sin(th),
+            self.sep * np.cos(th),
+            self.flux,
+        )
 
     def _image(self, xx, yy, pixel_scale_mas):
         return self.to_cartesian()._image(xx, yy, pixel_scale_mas)
@@ -5888,29 +5880,6 @@ class HarmonixModel(SourceModel):
             x.ravel(), y.ravel(), z.ravel(), theta=theta
         )
         return np.where(on_disk, np.reshape(intensity, xx.shape), 0.0)
-
-
-def _cvis_binary_angular(u, v, sep, pa, flux):
-    """Complex visibilities of a binary in polar coordinates.
-
-    Parameters
-    ----------
-    u, v : array-like
-        Baseline coordinates in wavelength units.
-    sep : float or array-like
-        Separation in milliarcseconds.
-    pa : float or array-like
-        Position angle in degrees, measured East of North.
-    flux : float or array-like
-        Companion/primary flux ratio.
-
-    Returns
-    -------
-    array-like
-        Complex visibility samples, normalized to 1 at zero baseline.
-    """
-    th = pa * dtor
-    return cvis_binary(u, v, sep * np.sin(th), sep * np.cos(th), flux)
 
 
 def cvis_binary(u, v, dra, ddec, flux):

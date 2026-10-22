@@ -22,6 +22,7 @@ from numpyro.infer import MCMC, NUTS
 from numpyro.infer.util import potential_energy
 from scipy import stats
 
+from tests._shared import thinned as _thinned
 from virgil.coverage import nrm_oidata, vlti_oidata
 from virgil.detection import _log_prior_weights, detection_statistics
 from virgil.fields import GaussianField
@@ -59,18 +60,6 @@ def _cdf(prior, x):
         low, high = onp.log(prior.low), onp.log(prior.high)
         return onp.clip((onp.log(x) - low) / (high - low), 0.0, 1.0)
     return onp.asarray(prior.cdf(x), float)
-
-
-def _thinned(draws):
-    """``draws`` thinned to about their effective sample size.
-
-    NUTS draws are autocorrelated, and KS assumes independent ones: keep
-    every ``n / ESS``-th draw (numpyro's ESS of the single chain).
-    """
-    draws = onp.asarray(draws, float)
-    ess = float(effective_sample_size(draws[None]))
-    step = max(1, int(onp.ceil(len(draws) / max(ess, 1.0))))
-    return draws[::step]
 
 
 def _assert_marginal(samples, site, prior):
@@ -324,11 +313,13 @@ def test_gp_latents_sample_standard_normal():
     scene = Image(_field(), pixel_scale_mas=PIXEL_MAS, flux=0.3)
     priors = image_priors(scene)
     assert list(priors) == ["log_brightness.latent"]
+    # 1500 draws: the mean and variance tolerances below are 5 standard
+    # errors from the quantity's own ESS, so they scale as 1/sqrt(n_eff).
     samples = _nuts(
-        numpyro_model(scene, priors, ()), num_samples=4000, num_warmup=500
+        numpyro_model(scene, priors, ()), num_samples=1500, num_warmup=500
     )
     latent = onp.asarray(samples["log_brightness.latent"])
-    assert latent.shape == (4000, *SHAPE)
+    assert latent.shape == (1500, *SHAPE)
     flat = latent.reshape(len(latent), -1)
     normal = dist.Normal(0.0, 1.0)
     for j in range(flat.shape[1]):
