@@ -352,6 +352,8 @@ verified_via = "ads"
 [ref.lazareff2017]
 authors = "Lazareff et al."
 year = 2016
+alt_years = [2017]
+alt_years_note = "year is the first posting; the journal paper (A&A 599, A85) is dated 2017"
 title = "Structure of Herbig AeBe disks at the milliarcsecond scale: A statistical survey in the H band using PIONIER-VLTI"
 used_in = ["virgil.models:ModulatedGaussianRim"]
 note = "A&A 599, A85 (2017)"
