@@ -82,6 +82,21 @@ plt.show()
 
 ![imaging_gp output 4.1](generated/imaging_gp_cell004_out01.png)
 
+The same prior as a diagnostic. The top row shows three draws and the bottom a hundred cuts through them, one in bold. In the isotropic prior (σ = 2, ℓ = 3 mas) a row and a column wiggle alike. Give ℓ a pair, `(ℓ_row, ℓ_col)`, and the field is stretched along the vertical axis. The cuts along the two axes, the kernel's principal axes, now have visibly different correlation lengths.
+
+```python
+from virgil.plotting import plot_field_draws
+
+for length, name in ((3.0, "isotropic, length 3 mas"), (jnp.array([8.0, 1.5]), "anisotropic, length (8, 1.5) mas")):
+    prior = GaussianField(jnp.zeros((64, 64)), sigma=2.0, length_mas=length)
+    plot_field_draws(prior, 0.5, jax.random.PRNGKey(0), n=300, title=f"GP prior, σ = 2, {name}")
+    plt.show()
+```
+
+![imaging_gp output 6.1](generated/imaging_gp_cell006_out01.png)
+
+![imaging_gp output 6.2](generated/imaging_gp_cell006_out02.png)
+
 ## One MAP fit
 
 The GP image replaces the pixel image of part 2. `image_priors` now gives the field's latents standard-normal priors and needs no regularizer, because the prior is the regularizer. Every term of the loss is then a least-squares residual, so `fit` uses Levenberg–Marquardt (LM). The image's flux is fitted too.
@@ -139,7 +154,7 @@ plt.show()
 print(f"best: σ = {sigmas[best[1]]}, ℓ = {lengths[best[0]]:.0f} mas; all fits converged: {all(r.info['converged'] for r in gp.values())}")
 ```
 
-![imaging_gp output 8.1](generated/imaging_gp_cell008_out01.png)
+![imaging_gp output 10.1](generated/imaging_gp_cell010_out01.png)
 
 ```text
 best: σ = 4.0, ℓ = 131 mas; all fits converged: True
@@ -201,7 +216,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-![imaging_gp output 12.1](generated/imaging_gp_cell012_out01.png)
+![imaging_gp output 14.1](generated/imaging_gp_cell014_out01.png)
 
 ## Summary
 

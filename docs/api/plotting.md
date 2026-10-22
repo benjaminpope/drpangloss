@@ -10,6 +10,7 @@
         - plot_roc
         - plot_completeness
         - plot_orbit_ensemble
+        - plot_field_draws
         - plot_model
         - plot_residual_map
         - plot_uv_coverage

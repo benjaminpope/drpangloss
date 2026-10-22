@@ -8,6 +8,8 @@
   [`plot_completeness`][virgil.plotting.plot_completeness] draw a
   [`DetectionMC`][virgil.detection.DetectionMC]; see
   [detection limits](../detection_limits.md#detection-plots).
+* [`plot_field_draws`][virgil.plotting.plot_field_draws] shows draws from a
+  Gaussian-process image prior or posterior, with cuts through them.
 
 ``units="flux" | "contrast" | "delta_mag"`` shows contrasts as companion/primary
 flux, primary/companion, or magnitudes. Sky images have East (positive ``dra``)
@@ -26,6 +28,7 @@ from matplotlib.ticker import FuncFormatter
 from ._deprecate import renamed
 from ._geometry import separation_pa
 from ._utils import is_flux_param, resolve_flux_param
+from .fields import GaussianField, MultipoleField
 from .limits import flux_to_contrast, flux_to_delta_mag, radial_profile
 
 
@@ -1838,3 +1841,291 @@ def plot_oidata_overview(oidata, figsize=(15, 4.5)):
     ax_phi.set_title("Phases")
     fig.tight_layout()
     return fig, (ax_uv, ax_vis, ax_phi)
+
+
+def _cut(image, pa_deg, pixel_scale, offsets):
+    """``image`` sampled along the line through its centre at PA ``pa_deg``."""
+    from scipy.ndimage import map_coordinates
+
+    t = onp.deg2rad(pa_deg)
+    row = (image.shape[0] - 1) / 2 - offsets * onp.cos(t) / pixel_scale
+    col = (image.shape[1] - 1) / 2 - offsets * onp.sin(t) / pixel_scale
+    return map_coordinates(image, [row, col], order=1)
+
+
+def _draw_cuts(ax, curves, nfaint):
+    for values, colour, label in curves:
+        x, y = values
+        ax.plot(x, y[1 : 1 + nfaint].T, color=colour, alpha=0.06, lw=0.8)
+        ax.plot(x, y[0], color=colour, lw=1.8, label=label)
+
+
+@_styled
+def plot_field_draws(
+    field=None,
+    pixel_scale_mas=None,
+    key=None,
+    *,
+    latents=None,
+    images=None,
+    n=100,
+    cuts=None,
+    axes_pa=((0.0, "vertical"), (90.0, "horizontal")),
+    mmax=3,
+    truth=None,
+    snr=False,
+    beam=None,
+    snr_scale="linear",
+    snr_vmax=None,
+    n_cuts=100,
+    title=None,
+    figsize=(9, 6),
+):
+    r"""Draws from a Gaussian-process image prior or posterior, with cuts.
+
+    Three draws (``abc``) above cuts through many of them (``ddd``), one
+    in bold. Posterior draws are unit-sum images on a shared colour scale;
+    prior draws are scaled to unit peak.
+
+    Parameters
+    ----------
+    field : GaussianField or MultipoleField, optional
+        Alone, gives prior draws from whitened normal latents of ``key``;
+        with ``latents``, posterior draws.
+    pixel_scale_mas : float
+        Pixel scale, mas.
+    key : jax.Array, optional
+        PRNG key for prior draws.
+    latents : array-like, shape (n, *field.latent.shape), optional
+        Posterior latents, e.g. from
+        [`laplace_samples`][virgil.imaging.laplace_samples].
+    images : array-like, shape (n, nrow, ncol), optional
+        Rendered images instead of a field (not for ``"multipole"`` cuts).
+    n : int, optional
+        Number of prior draws (default 100).
+    cuts : {"principal", "axes", "multipole"}, optional
+        Panel d. ``"principal"``: the central row and column of a
+        GaussianField, its kernel's principal axes. ``"axes"``: lines through
+        the centre at the position angles ``axes_pa``. ``"multipole"``: the
+        cosine amplitudes ``a_m(r)``, ``m = 0..mmax``, of
+        ``η = Σ a_m cos mθ + b_m sin mθ`` (FFT of
+        ``MultipoleField.polar_values`` along θ; ``a_0`` is the mean) against
+        disk-plane radius, one offset track per ``m``. Default
+        ``"multipole"`` for a MultipoleField, ``"principal"`` for a
+        GaussianField, ``"axes"`` for images.
+    axes_pa : sequence of (float, str), optional
+        ``(PA in degrees North through East, label)`` per ``"axes"`` cut.
+    truth : array-like, shape (nrow, ncol), optional
+        True image: dashed in the cuts, and the reference peak.
+    snr : bool, optional
+        Posterior only. Panel c shows the posterior mean over standard
+        deviation of each pixel's brightness (grey where there is no spread).
+        This is a per-pixel S/N, not a detection significance: a ring detected
+        with confidence can have a per-pixel S/N near one.
+    beam : Beam, optional
+        Drawn on the map panels, as in [`plot_model`][virgil.plotting.plot_model].
+    snr_scale : {"linear", "log"}, optional
+        Colour scale of the S/N map (default linear).
+    snr_vmax, n_cuts, title, figsize : optional
+        Top of the S/N scale (default its 99th percentile); number of faint
+        cuts (100); figure title and size.
+
+    Returns
+    -------
+    tuple
+        ``(fig, axes)``, ``axes`` a dict keyed ``"a"`` to ``"d"``.
+
+    Prior cuts show ``η``; image and posterior cuts show ``log10``
+    brightness over the reference peak (the truth's, else the first draw's).
+    """
+    import jax
+    import jax.numpy as np
+
+    if (images is None) == (field is None):
+        raise ValueError("Give either a field or images.")
+    if pixel_scale_mas is None:
+        raise ValueError("pixel_scale_mas is required.")
+    posterior = images is not None or latents is not None
+    if snr and not posterior:
+        raise ValueError("snr=True needs posterior input: latents or images.")
+    if field is not None:
+        if not isinstance(field, (GaussianField, MultipoleField)):
+            raise TypeError("field must be a GaussianField or MultipoleField.")
+        if latents is None:
+            if key is None:
+                raise ValueError("Prior draws need a PRNG key.")
+            latents = jax.random.normal(
+                key, (n, *field.latent.shape), dtype=field.latent.dtype
+            )
+        latents = np.asarray(latents)
+
+        etas = onp.asarray(
+            jax.vmap(
+                lambda z: _with_latent(field, z).evaluate(pixel_scale_mas)
+            )(latents)
+        )
+        imgs = onp.exp(etas)
+    else:
+        imgs = onp.asarray(images, dtype=float)
+        etas = None
+    if imgs.ndim != 3 or imgs.shape[0] < 3:
+        raise ValueError("Need at least three draws of 2D images.")
+    h = float(pixel_scale_mas)
+    imgs = imgs / (
+        imgs.sum(axis=(1, 2), keepdims=True)
+        if posterior
+        else imgs.max(axis=(1, 2), keepdims=True)
+    )
+    if cuts is None:
+        cuts = (
+            "axes"
+            if field is None
+            else "multipole"
+            if isinstance(field, MultipoleField)
+            else "principal"
+        )
+    if cuts not in ("principal", "axes", "multipole"):
+        raise ValueError(f"Unknown cuts mode {cuts!r}.")
+    if cuts == "multipole" and not isinstance(field, MultipoleField):
+        raise ValueError("cuts='multipole' needs a MultipoleField.")
+    if (
+        cuts == "principal"
+        and field is not None
+        and not isinstance(field, GaussianField)
+    ):
+        raise ValueError("cuts='principal' needs a GaussianField; use 'axes'.")
+
+    nrow, ncol = imgs.shape[1:]
+    ext = [ncol * h / 2, -ncol * h / 2, -nrow * h / 2, nrow * h / 2]
+    fig = plt.figure(figsize=figsize, layout="constrained")
+    ax = fig.subplot_mosaic("abc\nddd", height_ratios=[1, 0.8])
+    name = "posterior draw" if posterior else "draw"
+    vmax = imgs[:3].max()
+    for i, lab in enumerate("abc"[: 2 if snr else 3]):
+        ax[lab].imshow(
+            imgs[i],
+            origin="upper",
+            extent=ext,
+            cmap="inferno",
+            vmin=0,
+            vmax=vmax,
+        )
+        ax[lab].set_title(f"{name} {i + 1}")
+    if snr:
+        mean, std = imgs.mean(0), imgs.std(0)
+        live = std > 1e-12 * imgs.max()
+        ratio = onp.where(live, mean / onp.where(live, std, 1.0), onp.nan)
+        top = onp.nanpercentile(ratio, 99) if snr_vmax is None else snr_vmax
+        if snr_scale == "log":
+            from matplotlib.colors import LogNorm
+
+            norm = LogNorm(
+                vmin=max(float(onp.nanpercentile(ratio, 5)), 0.1), vmax=top
+            )
+        elif snr_scale == "linear":
+            from matplotlib.colors import Normalize
+
+            norm = Normalize(vmin=0, vmax=top)
+        else:
+            raise ValueError("snr_scale must be 'linear' or 'log'.")
+        cmap = plt.get_cmap("viridis").with_extremes(bad="0.15")
+        shown = ax["c"].imshow(
+            ratio, origin="upper", extent=ext, cmap=cmap, norm=norm
+        )
+        ax["c"].set_title("mean / std")
+        fig.colorbar(shown, ax=ax["c"], shrink=0.85, label="S/N per pixel")
+    for lab in "abc":
+        ax[lab].set_xlabel("ΔRA [mas]")
+        if beam is not None:
+            _draw_beam(ax[lab], beam)
+    ax["a"].set_ylabel("ΔDec [mas]")
+
+    d = ax["d"]
+    nfaint = max(n_cuts, 0)
+    if truth is not None:
+        truth = onp.asarray(truth, dtype=float)
+        truth = truth / truth.sum()
+    if posterior or cuts == "axes":
+        ref = (truth if truth is not None else imgs[0]).max()
+
+        def level(a):
+            return onp.log10(onp.maximum(a / ref, 1e-3))
+
+        ylabel = "log₁₀ brightness / reference peak"
+    else:
+
+        def level(a):
+            return a
+
+        ylabel = "log-brightness η"
+    if cuts == "multipole":
+        polar = onp.asarray(
+            jax.vmap(lambda z: _with_latent(field, z).polar_values())(latents)
+        )
+        coef = onp.fft.rfft(polar, axis=2) * 2 / polar.shape[2]
+        coef[:, :, 0] *= 0.5
+        r = field.r_min_mas + field.spacing * onp.arange(polar.shape[1])
+        step = 2.5 * float(onp.max(onp.asarray(field.sigma)))
+        for m in range(min(mmax, polar.shape[2] // 2) + 1):
+            off = -step * m
+            c = coef[:, :, m].real + off
+            _draw_cuts(d, [((r, c), f"C{m}", None)], nfaint)
+            d.axhline(off, color="k", lw=0.4)
+            d.text(
+                1.01,
+                off,
+                f"m = {m}" + (" (cos)" if m else ""),
+                color=f"C{m}",
+                va="center",
+                transform=d.get_yaxis_transform(),
+            )
+        d.set_yticks([])
+        d.set_xlim(r[0], r[-1])
+        d.set_xlabel("disk-plane radius [mas]")
+        d.set_ylabel("amplitude of η (offset by m)")
+    else:
+        if cuts == "principal":
+            vals = level(etas if etas is not None else imgs)
+            s_row = (nrow / 2 - 0.5 - onp.arange(nrow)) * h
+            s_col = (ncol / 2 - 0.5 - onp.arange(ncol)) * h
+            curves = [
+                ((s_row, vals[:, :, ncol // 2]), "C0", "along vertical axis"),
+                (
+                    (s_col, vals[:, nrow // 2, :]),
+                    "C1",
+                    "along horizontal axis",
+                ),
+            ]
+            if truth is not None:
+                tv = level(truth)
+                d.plot(s_row, tv[:, ncol // 2], "C0--", lw=1.2)
+                d.plot(s_col, tv[nrow // 2, :], "C1--", lw=1.2)
+        else:
+            s = onp.linspace(-ncol * h / 2, ncol * h / 2, 200)
+            curves = []
+            for j, (pa, label) in enumerate(axes_pa):
+                y = level(onp.stack([_cut(im, pa, h, s) for im in imgs]))
+                curves.append(((s, y), f"C{j}", f"{label} (PA {pa:g}°)"))
+                if truth is not None:
+                    d.plot(s, level(_cut(truth, pa, h, s)), f"C{j}--", lw=1.2)
+        _draw_cuts(d, curves, nfaint)
+        if truth is not None:
+            d.plot([], [], "k--", lw=1.2, label="truth")
+        if posterior and cuts == "axes":
+            d.set_ylim(-3.05, 0.6)
+        d.set_xlim(curves[0][0][0][0], curves[0][0][0][-1])
+        if cuts == "principal" and not posterior:
+            d.axhline(0, color="k", lw=0.5)
+        d.set_xlabel("offset along cut [mas]")
+        d.set_ylabel(ylabel)
+        d.legend(loc="upper right", frameon=False, ncols=3)
+    if title:
+        fig.suptitle(title)
+    return fig, ax
+
+
+def _with_latent(field, latent):
+    """``field`` with its latents replaced."""
+    import equinox as eqx
+
+    return eqx.tree_at(lambda f: f.latent, field, latent)
