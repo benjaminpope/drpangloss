@@ -383,3 +383,12 @@ visibilities and DISCO): solve the weighted least squares in closed form
 scale and an amplitude are both profiled, the pair is a coupled fixed point (see
 C), to be solved with an inner iteration. Scope as a separate PR per data
 type after B piece 2.
+
+## Status (2026-10-22)
+
+`precondition="diag"` is merged (virgil#474) and documented in
+`docs/conventions.md`. **PR 2 (analytic per-data-type diagonals) is dropped**:
+the Hutchinson probes are accurate enough (see "Accuracy of the generic diagonal"), so the generic
+path serves OI, DISCO and radio alike. The IM Lup benchmark (float64, with and
+without `precondition`, same step budget, pinned commits) is pending. Newton–CG
+for the entropy term is not started; it waits on the benchmark.

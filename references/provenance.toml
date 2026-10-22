@@ -929,6 +929,16 @@ arxiv = "1703.09824"
 verified = true
 verified_via = "ads"
 
+[ref.hutchinson1989]
+authors = "Hutchinson"
+year = 1989
+title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
+doi = "10.1080/03610918908812806"
+verified = false
+verified_via = "none"
+used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+note = "Commun. Statist. Simul. Comput. 18, 1059; Rademacher probes for the diagonal of a matrix; DOI and title from memory, to check against Crossref"
+
 [ref.skilling1989]
 authors = "Skilling"
 year = 1989
@@ -943,8 +953,8 @@ note = "Maximum Entropy and Bayesian Methods, Cambridge 1988. docs/contributors.
 authors = "Skilling & Bryan"
 year = 1984
 title = "Maximum entropy image reconstruction: general algorithm"
-used_in = ["virgil.imaging:MaxEntropy"]
-note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S"
+used_in = ["virgil.imaging:MaxEntropy", "virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
+note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S; the entropy metric that precondition=\"diag\" follows"
 bibcode = "1984MNRAS.211..111S"
 verified = true
 verified_via = "ads"

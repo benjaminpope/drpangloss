@@ -684,7 +684,12 @@ def fit(
         wall-clock budget (s); callback (or ``True``) on ``steps``, ``loss``,
         ``grad_norm``, ``elapsed``.
     precondition : {None, "diag"}, optional
-        ``"diag"`` rescales each coordinate by the Gauss–Newton curvature diagonal for L-BFGS and Adam (provisional).
+        ``"diag"`` rescales each coordinate by the Gauss–Newton curvature
+        diagonal for L-BFGS and Adam (provisional); see
+        [conventions](../conventions.md#preconditioning-image-fits).
+        ``info["precondition_rounds"]`` records the spread per round.
+        Source: [Skilling & Bryan (1984)](../references.md#skillingbryan1984),
+        [Hutchinson (1989)](../references.md#hutchinson1989).
 
     Returns
     -------
@@ -1490,6 +1495,9 @@ def gauss_newton_diag(
     ``fit(..., precondition="diag")`` divides each coordinate by; see
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
     matrix.
+
+    Source: [Hutchinson (1989)](../references.md#hutchinson1989) probes;
+    [Skilling & Bryan (1984)](../references.md#skillingbryan1984).
 
     Parameters
     ----------
