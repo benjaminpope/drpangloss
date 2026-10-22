@@ -1,14 +1,14 @@
 # Code shape audit (0.4.1)
 
-Report only: nothing under `src/` or `tests/` changes here. Measured on `origin/main` at `52cbfea` with [`scripts/code_shape.py`](../scripts/code_shape.py) (`python scripts/code_shape.py --json out.json`), which uses `ast` for definitions, call sites and statement counts, and a normalized-AST hash plus line-shingle overlap for duplicates. Spelling follows Oxford -ize.
+Report only: nothing under `src/` or `tests/` changes here. Measured on `origin/main` at `52cbfea` with [`scripts/code_shape.py`](../scripts/code_shape.py) (`python scripts/code_shape.py [--since REF]`), which prints every list below: definitions, per-module call sites (own-module uses, `from x import _name`, `mod._name` elsewhere, and registering decorators such as `@f.defjvp`), statement counts, the tests/docs/examples grep, normalized-AST hashes, same-name body similarity (`difflib`) and line-shingle overlap. Two steps were done by hand: the `~/data` analysis-script grep (`rg` for `virgil… import _name`) and reading the bodies behind the proposals. Spelling follows Oxford -ize.
 
 ## Summary
 
-The count of private helpers is real but is mostly **decomposition, not triviality**. Of 877 module-level private defs (15,914 lines), 428 have one call site, but only 104 of those have ≤3 statements, and only **71** can be inlined (the other 33 are jit boundaries or referenced by tests). Those 71 total 568 lines, so inlining them saves about 300 lines. The other ~320 single-use helpers are 4–86 statements long: named steps of large functions, and they should stay named unless their parent is deleted. Same-named helpers across modules are **not** duplicates (the highest body similarity is 0.54, and mostly <0.2). The genuine duplication is in differently named code: a profiled-amplitude residual, union-find closure grouping, and the per-pipeline `_nuts`/`_posterior`/`_summarize`/`_fit_checks`/quick-look-cell skeletons. Realistic net saving from the six PRs below is **about 1,300–1,700 `src` lines (2–3%)**; the large lever is the 0.5 removal of the argument-order shim and `legacy/`, not helper hygiene.
+The count of private helpers is real but is mostly **decomposition, not triviality**. Of 877 module-level private functions (15,914 lines), 467 have one call site, but only 113 of those have ≤3 statements, and only **76** can be inlined (the other 37 are jit/registered boundaries or mentioned by tests). Those 76 total 661 lines, so inlining them saves about 350 lines. The other ~350 single-use helpers are 4–86 statements long: named steps of large functions, and they should stay named unless their parent is deleted. Same-named helpers across modules are **not** duplicates (the highest body similarity is 0.48, mostly <0.2). The genuine duplication is in differently named code: a profiled-amplitude residual, union-find closure grouping, and the per-pipeline `_nuts`/`_posterior`/`_summarize`/`_fit_checks`/quick-look-cell skeletons. Realistic net saving from the six PRs below is **about 1,300–1,700 `src` lines (2–3%)**; the large lever is the 0.5 removal of the argument-order shim and `legacy/`, not helper hygiene.
 
 | Category | Finding | Size |
 |---|---|---|
-| (a) trivial single-use wrappers | 71 to inline; 33 to keep (15 jit/vmap, 21 test seams, overlapping) | 568 lines, about −300 net |
+| (a) trivial single-use wrappers | 76 to inline; 37 to keep (17 jit/registered, 25 mentioned by tests/docs, 5 both) | 661 lines, about −350 net |
 | (b) true duplicates | 5 clusters (see below); same-name helpers are not duplicates | about −250 lines |
 | (c) oversized modules | `pipeline/disk.py`, `aliases.py`, `epochs.py`, `oifits.py`, `pipeline/orbit.py`: simplify first; split only `aliases.py` and (0.5) `models.py` | about −600 lines |
 | (d) dead code | none: no private module-level function has zero uses (the one candidate, `limits._gammaincinv_jvp`, is registered by `@_gammaincinv.defjvp`) | 0 lines |
@@ -17,13 +17,13 @@ The coordinator's "937 private vs 490 public" counts module-level functions and 
 
 ## (a) Trivial single-use wrappers
 
-Rule used: one call site in `src/`, ≤3 statements, no decorator, and no mention in `tests/`, `docs/` or `examples/`. The full list is in A1. Concentrations: `pipeline/star.py` (10), `pipeline/_quicklook.py` (6), `pipeline/disk.py` (5), `ensemble.py`, `imaging.py`, `pipeline/_common.py`, `pipeline/binary.py`, `plotting.py` (3–4 each). Pure `return f(...)` wrappers among them: `_log_radial_norm`, `_field_latents`, `_kepler`, `_n_trials`, `_n_free`, `_robustness_of`.
+Rule used: one call site in `src/`, ≤3 statements, no decorator, and no mention in `tests/`, `docs/` or `examples/`. The full list is in A1; the script reproduces it with no manual step. Concentrations: `pipeline/star.py` (11), `pipeline/_quicklook.py` (6), `pipeline/disk.py` (5), `ensemble.py`, `imaging.py`, `pipeline/binary.py` (4 each). Pure `return f(...)` wrappers among them: `_log_radial_norm`, `_field_latents`, `_kepler`, `_n_trials`, `_n_free`, `_robustness_of`.
 
 **Keep** (A2): `jit`/`vmap`/`custom_jvp` boundaries (`_jitted_chi2`, `_jitted_residuals`, `_jitted_log_norm`, `_neg_loglike_hessian`, `_fit_batch`, `_m2loglike_grid_jit`, `_batch`, `_leggauss`, ...), and names that tests import (`_signs_trusted`, `_channels`, `_load_disk`, `_load_star`, `_fit_batch`, `_require_finite`, ...). Never inline a helper that analysis scripts import from `virgil`: `plotting._draw_beam`, `likelihood._whitened_and_errors`, `spectra._planck_ratio`, `oidata._valid_samples`, `models._cvis_gaussian_envelope`, `models._as_flux` (found by grepping `~/data`).
 
 ## (b) True duplicates
 
-Same names, different bodies (not duplicates): `_chi2`, `_moments`, `_positive`, `_jsonable`, `_candidates`, `_polish`, `_refine`, `_profile`, `_evaluate`, `_limits`, `_parts`, `_check`, `_distinct`. Largest body similarity: `_quicklook` 0.53 (a wrapper each), `_jsonable` 0.54 (`crossval` converts arrays, `pipeline/_checks` converts scalars: different jobs). No two private defs of ≥3 statements have the same normalized AST. The real duplicates:
+Same names, different bodies (not duplicates): `_chi2`, `_moments`, `_positive`, `_jsonable`, `_candidates`, `_polish`, `_refine`, `_profile`, `_evaluate`, `_limits`, `_parts`, `_check`, `_distinct`. Largest body similarity is 0.48 (`_quicklook`, a wrapper each) and 0.35 (`_moments`, `_evaluate`). No two private defs of ≥3 statements have the same normalized AST. The real duplicates:
 
 1. **Profiled V² amplitude residual.** `aliases._epoch_residuals` (with `_scale_vis`) and `epochs._amp_residuals` repeat the same 9-line weighted-least-squares amplitude and clip; the docstring of one cites the other. Home: `epochs` (which `aliases` imports), as one `amp_profile(r, data, n, amp_range)` returning `(amp, scaled residuals)`. About −25 lines.
 2. **Distinct-mode selection.** `aliases._distinct` (tracks of orbit modes) and `epochs._distinct` (positions of ranked orbits) are the same greedy "best first, keep if some time differs by more than d". Home: `epochs`, `_distinct_tracks(tracks, d, n=None)`. About −15 lines.
@@ -38,7 +38,7 @@ Not duplicates, despite the guess: `_closure_stations`/`_stations_from_triangles
 Lines: `models` 6129, `aliases` 3567, `epochs` 3084, `imaging` 2895, `pipeline/disk` 2546, `oidata` 2077, `fitting` 1955, `pipeline/_checks` 1929, `oifits` 1865, `plotting` 1849. Prefer deletion, then (for `aliases`, `models`) a private split that keeps the public path.
 
 - **`pipeline/disk.py`** (2546; 88 private behind 4 public). Parallel *ring* and *GP* paths are written twice: `_compare_rings` (84) / `_compare_gp` (54), `_profile_rings` (72) / `_profile_gp` (57), `_fold_fit` / `_fold_gp_values` / `_fold_pa`, `_ring_priors` / `_planet_priors` / `_geometry_priors`. Drive both from one family table (builder, priors, start, fold, profile) and delete the second copy of each driver. Five trivial wrappers inline. Target −350 to −450. No split.
-- **`aliases.py`** (3567; 79 private behind 7). Duplication (b1, b2) and 10 inlines (`_batch`, `_pinned`, `_failed_band`, `_dof_pairs`, `_skipped_codes`, ...) first (−100). The short-arc path (`_short_arc_profile`, `_short_arc_bands`, `_seed_scores`, `_seeding_positions`, `_signs_trusted`, `_seed_motion`, ~250 lines) is a seeding strategy separate from the band fit. If still above 3000 lines after that, split private submodules at: `_alias_problem.py` (`_UDBinary` … `_Draws`, lines 376–1000), `_alias_seed.py` (seeding, lines ~2380–2700), leaving `fit_orbit_aliases` and the result classes in `aliases.py`. Pin the split with `tests/lint/test_package_layout.py` and the import-order paragraph of `AGENTS.md`. The split is size-neutral; only do it if the worker judges it clarifies.
+- **`aliases.py`** (3567; 79 private behind 7). Duplication (b1, b2) and 3 inlines (`_senses`, `_seed_motion`, `_skipped_codes`; `_batch` is a jit boundary and `_pinned`, `_failed_band`, `_dof_pairs`, `_signs_trusted` are called by tests, so they stay) first (−100). The short-arc path (`_short_arc_profile`, `_short_arc_bands`, `_seed_scores`, `_seeding_positions`, `_signs_trusted`, `_seed_motion`, ~250 lines) is a seeding strategy separate from the band fit. If still above 3000 lines after that, split private submodules at: `_alias_problem.py` (`_UDBinary` … `_Draws`, lines 376–1000), `_alias_seed.py` (seeding, lines ~2380–2700), leaving `fit_orbit_aliases` and the result classes in `aliases.py`. Pin the split with `tests/lint/test_package_layout.py` and the import-order paragraph of `AGENTS.md`. The split is size-neutral; only do it if the worker judges it clarifies.
 - **`epochs.py`** (3084; 42 private). `_coarse_then_exact` (85) and `_flag_one_night` (85) are the only long helpers; dedupe (b1, b2); `_loglike_static`/`_loglike_kernel` and `_grid_scores`/`_grid_marginal`/`_grid_fixed`/`_grid_batch` are four near-sibling evaluators to check for a shared kernel. Target −80. No split.
 - **`oifits.py`** (1865; 55 private behind 3). Read side: `_read_closure_phases` (112), `_read_visibilities` (69), `_concat_records` (62), `_concat_extras`; write side: `_baseline_layout` (59), `_closure_baselines`, `_closure_stations`, `_stations_from_triangles`, `_repeated`, `_scattered`, `_unsupported_reason` (about 190 lines reconstructing stations for closure-only files). Dedupe (b3); check whether the reconstruction can be replaced by writing the stations the reader already knew (`_BaselineLookup`). Target −120 to −200. No split.
 - **`pipeline/orbit.py`** (1564; 44 private behind 1). Four `_robustness*`/`_without`/`_outlying_night` helpers, `_single_star`, `_modes`, `_null_verdict`: check each against `aliases` results for already-reported numbers; `_positions_json`/`_positions_from_json` (78 lines) re-serialize what `pipeline/_io` handles. Target −100. No split.
@@ -67,11 +67,11 @@ No two PRs share a file. PRs 1, 2, 4 and 5 can run in parallel now; 3 follows 4;
 
 ## Guard
 
-Recommended: **an `AGENTS.md` rule plus a non-failing CI report**, no hard lint. Add to "Keeping the code small": "Don't add a private function that is called once and has ≤2 statements unless it is a `jit`/`vmap` boundary, a test seam or a named step; inline it." Then have the existing size comment in `.github/workflows/lint.yml` also print, from `scripts/code_shape.py`, the added private defs with one call site and ≤2 statements (names only). It costs one script call, never blocks a legitimate helper, and reviewers see the list. Rejected: a failing lint test (the 33 legitimate keepers would need an allowlist that rots) and a private/public ratio (it penalizes splitting a long function, which is the good case).
+Recommended: **an `AGENTS.md` rule plus a non-failing CI report**, no hard lint. Add to "Keeping the code small": "Don't add a private function that is called once and has ≤3 statements (the audit's threshold) unless it is a `jit`/`vmap` boundary, a test seam or a named step; inline it." Then have the existing size comment in `.github/workflows/lint.yml` also print, from `scripts/code_shape.py`, the added private defs with one call site and ≤3 statements (the audit's threshold) (names only). The report is `python scripts/code_shape.py --since origin/main`, which lists only the single-use, undecorated, unmentioned private functions added since the base; `lint.yml` calls it after checking out the base ref, and the audit and guard both use the 3-statement cut (`--max-stmts`). It never blocks a legitimate helper, and reviewers see the list. Rejected: a failing lint test (the 33 legitimate keepers would need an allowlist that rots) and a private/public ratio (it penalizes splitting a long function, which is the good case).
 
 ## Appendix
 
-### A1. Inline candidates (single call site, ≤3 statements, undecorated, not referenced by tests/docs/examples)
+### A1. Inline candidates (one call site, ≤3 statements, undecorated, not mentioned in tests/docs/examples)
 
 - `_gauss_newton.py`: `_decrement`
 - `aliases.py`: `_senses`, `_seed_motion`, `_skipped_codes`
@@ -81,7 +81,7 @@ Recommended: **an `AGENTS.md` rule plus a non-failing CI report**, no hard lint.
 - `detection.py`: `_seed_record`, `_fingerprint_data`
 - `ensemble.py`: `_default_weight_ranges`, `_start_model`, `_member_image`, `_chi2_red`
 - `epochs.py`: `_check_marginal_data`
-- `fitting.py`: `_print_progress`, `_lm_residuals`
+- `fitting.py`: `_print_progress`, `_check_dense_size`, `_lm_residuals`
 - `imaging.py`: `_base_weight`, `_spectral_shape`, `_field_latents`, `_rotated_180`
 - `legacy/oifits_implaneia.py`: `_scalar`
 - `likelihood.py`: `_whitened_and_log_norm`, `_term_loglike`
@@ -91,20 +91,20 @@ Recommended: **an `AGENTS.md` rule plus a non-failing CI report**, no hard lint.
 - `orbits.py`: `_kepler`, `_thiele_innes`
 - `pipeline/_common.py`: `_mcmc`, `_sample_stats`, `_wrap`
 - `pipeline/_quicklook.py`: `_fmt`, `_closing`, `_binary_posterior_cells`, `_star_posterior_cells`, `_disk_geometry_cell`, `_disk_posterior_cell`
-- `pipeline/binary.py`: `_n_trials`, `_derived_diagnostics`, `_search_checks`
+- `pipeline/binary.py`: `_n_trials`, `_derived_diagnostics`, `_chi2_section`, `_search_checks`
 - `pipeline/cli.py`: `_parse_value`
 - `pipeline/disk.py`: `_wavel0`, `_n_free`, `_single_ring`, `_mackay_scale`, `_best_at_bound`
-- `pipeline/image.py`: `_members`, `_edge_flux`
-- `pipeline/orbit.py`: `_robustness_of`, `_orbit_section`
-- `pipeline/star.py`: `_uniform_disk`, `_quadratic_derived`, `_quadratic_priors`, `_registry`, `_freq_max`, `_diameter_grid`, `_lobe_table`, `_fit_plots`, `_fit_section`, `_posterior_checks`
+- `pipeline/image.py`: `_edges`, `_members`, `_edge_flux`
+- `pipeline/orbit.py`: `_search_report`, `_robustness_of`, `_orbit_section`
+- `pipeline/star.py`: `_uniform_disk`, `_quadratic_derived`, `_quadratic_priors`, `_registry`, `_freq_max`, `_diameter_grid`, `_lobe_table`, `_fit_plots`, `_chi2_section`, `_fit_section`, `_posterior_checks`
 - `plotting.py`: `_one_sided_fap`, `_rates_at`, `_position_covariances`
 - `radio.py`: `_relabel`
 - `radio_clean.py`: `_sidelobe`, `_model_image`
 - `simulate.py`: `_shift_times`
 
-### A2. Keep: single-use, ≤3 statements, but a jit/vmap boundary or a test seam
+### A2. Keep: one call site, ≤3 statements, but a jit/registered boundary or mentioned in tests/docs/examples
 
-`_marginal.py:_leggauss` (jit), `aliases.py:_batch` (jit), `aliases.py:_pinned` (tests), `aliases.py:_flip_is_relabelling` (tests), `aliases.py:_failed_band` (tests), `aliases.py:_signs_trusted` (tests), `aliases.py:_dof_pairs` (tests), `arcs.py:_jittered` (tests), `epochs.py:_loss_order` (tests), `fields.py:_radial_factor` (tests), `fitting.py:_gradient_norm` (jit), `fitting.py:_state_gradient_norm` (jit), `fitting.py:_lm_tolerance` (jit), `imaging.py:_pad_brightness` (tests), `imaging.py:_jitted_log_norm` (jit), `imaging.py:_jitted_residuals` (jit), `imaging.py:_jitted_chi2` (jit), `inference.py:_neg_loglike_hessian` (jit), `inference.py:_neg_loglike_curvature` (jit), `limits.py:_significance_ceiling` (tests), `metrics.py:_ncc_table` (jit), `orbits.py:_fit_batch` (jit), `pipeline/_common.py:_m2loglike` (tests), `pipeline/_common.py:_m2loglike_grid_jit` (jit), `pipeline/binary.py:_require_finite` (tests), `pipeline/disk.py:_channels` (tests), `pipeline/disk.py:_load_disk` (tests), `pipeline/disk.py:_geometry_grid` (jit), `pipeline/disk.py:_dynamic_range_sigma` (tests), `pipeline/orbit.py:_engine_defaults` (tests), `pipeline/orbit.py:_positions_json` (tests), `pipeline/star.py:_load_star` (tests), `pipeline/star.py:_scan` (jit)
+`_flat.py:_` (jit, tests), `_marginal.py:_leggauss` (jit), `aliases.py:_batch` (jit), `aliases.py:_pinned` (tests), `aliases.py:_flip_is_relabelling` (tests), `aliases.py:_failed_band` (tests), `aliases.py:_signs_trusted` (tests), `aliases.py:_dof_pairs` (tests), `arcs.py:_jittered` (tests), `epochs.py:_loss_order` (tests), `fields.py:_radial_factor` (tests), `fitting.py:_gradient_norm` (jit), `fitting.py:_state_gradient_norm` (jit), `fitting.py:_lm_tolerance` (jit), `imaging.py:_pad_brightness` (tests), `imaging.py:_jitted_log_norm` (jit), `imaging.py:_jitted_residuals` (jit), `imaging.py:_jitted_chi2` (jit), `inference.py:_neg_loglike_hessian` (jit), `inference.py:_neg_loglike_curvature` (jit), `limits.py:_significance_ceiling` (tests), `metrics.py:_ncc_table` (jit, tests), `orbits.py:_fit_batch` (jit, tests), `pipeline/_common.py:_m2loglike` (tests), `pipeline/_common.py:_m2loglike_grid_jit` (jit), `pipeline/binary.py:_require_finite` (tests), `pipeline/disk.py:_channels` (tests), `pipeline/disk.py:_load_disk` (tests), `pipeline/disk.py:_geometry_grid` (jit), `pipeline/disk.py:_dynamic_range_sigma` (tests), `pipeline/disk.py:_compare` (tests), `pipeline/orbit.py:_engine_defaults` (tests), `pipeline/orbit.py:_positions_json` (tests), `pipeline/star.py:_load_star` (tests), `pipeline/star.py:_scan` (jit, tests), `pipeline/star.py:_refine` (jit, tests), `pipeline/star.py:_bound_fractions` (tests)
 
 ### A3. Per-module counts
 
