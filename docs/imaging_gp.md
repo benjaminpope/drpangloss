@@ -187,7 +187,7 @@ def ncc(a, b):
 
 
 mem_start = starting_image(data, largest_mas=fov, hole_mas=0.5 * resolution.minor_mas)
-curve = l_curve(mem_start, image_priors(mem_start) | flux_prior, data, MaxEntropy(1.0, path="env"), jnp.logspace(3.5, 1.0, 11), max_steps=200_000)
+curve = l_curve(mem_start, image_priors(mem_start) | flux_prior, data, MaxEntropy(1.0, path="env"), jnp.logspace(3.5, 1.0, 6), max_steps=200_000)
 mem = curve.results[int(jnp.argmin(jnp.abs(jnp.log(curve.weights) - jnp.log(curve.discrepancy()))))]
 
 fig, axes = plt.subplots(2, 3, figsize=(15, 8.5))

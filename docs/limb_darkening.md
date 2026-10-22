@@ -33,6 +33,7 @@ root = next(
 sys.path.insert(0, str(root / "src"))
 
 import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as onp
 import numpyro.distributions as dist
@@ -169,9 +170,10 @@ data = template.with_model(truth, key=jax.random.PRNGKey(3))
 
 # A uniform disk's closure phases flip between 0 and 180 degrees at each null,
 # so its chi-squared jumps as the diameter changes: fit its one parameter
-# with a fine scan.
+# with a fine scan, compiled once and vectorized over the diameters.
 diams = onp.linspace(4.0, 8.0, 2001)
-chi2 = [onp.sum(whitened_residuals(UniformDisk(d), data) ** 2) for d in diams]
+scan = jax.jit(jax.vmap(lambda d: jnp.sum(whitened_residuals(UniformDisk(d), data) ** 2)))
+chi2 = onp.asarray(scan(diams))
 ud_model = UniformDisk(diams[onp.argmin(chi2)])
 
 priors = {
@@ -194,9 +196,6 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 
 ```text
  uniform disk: diam = 5.686 mas, chi2/N = 651.91 (N = 162)
-```
-
-```text
 limb-darkened: diam = 6.022 mas, chi2/N = 1.14 (N = 162)
 ```
 
@@ -318,7 +317,7 @@ print(res.describe())
 ```
 
 ```text
-StarPipeline run in /tmp/tmpqs9tzc4_/star_run: complete
+StarPipeline run in /tmp/tmp_qzc0x2u/star_run: complete
   data.n_vis = 108
   data.n_phi = 72
   data.n_independent = 162

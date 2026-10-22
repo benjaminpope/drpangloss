@@ -134,7 +134,7 @@ converged True after 2183 steps; chi2 per point 1.008; image flux 0.0514 (truth 
 Here both starting images are swept, and the two criteria are marked on each curve.
 
 ```python
-weights = jnp.logspace(3.5, 1.0, 11)
+weights = jnp.logspace(3.5, 1.0, 6)
 curves = {kind: l_curve(s, image_priors(s) | {"env.flux": dist.LogUniform(1e-3, 2.0)}, data, MaxEntropy(1.0, path="env"), weights, max_steps=200_000) for kind, s in starts.items()}
 
 fig, ax = plt.subplots(figsize=(6, 4.5))
@@ -154,8 +154,8 @@ for kind, curve in curves.items():
 ![imaging_rml output 10.1](generated/imaging_rml_cell010_out01.png)
 
 ```text
-start="moments" converged at each weight: 3.16e+03: True, 1.78e+03: True, 1e+03: True, 562: True, 316: True, 178: True, 100: True, 56.2: True, 31.6: True, 17.8: True, 10: True
-start="dirty" converged at each weight: 3.16e+03: True, 1.78e+03: True, 1e+03: True, 562: True, 316: True, 178: True, 100: True, 56.2: True, 31.6: True, 17.8: True, 10: True
+start="moments" converged at each weight: 3.16e+03: True, 1e+03: True, 316: True, 100: True, 31.6: True, 10: True
+start="dirty" converged at each weight: 3.16e+03: True, 1e+03: True, 316: True, 100: True, 31.6: True, 10: True
 ```
 
 ## Too much, about right, too little
@@ -217,13 +217,13 @@ print(diagnose(final["moments"], data))
 ```
 
 ```text
-chi2_red                [0.979]
-chi2_red_by_observable  [{'vis': 0.9793324189001241}]
+chi2_red                [0.98]
+chi2_red_by_observable  [{'vis': 0.9797832099964383}]
 short_baseline_mean     None
 anchored                True
 pixel_scale_mas         [20.9]
-edge_flux               [0.0161]
-centroid_mas            [[50, 18.3]]
+edge_flux               [0.0159]
+centroid_mas            [[50.1, 18.3]]
 flip_dchi2              2.11e+04
 phase_regime            [0]
 
