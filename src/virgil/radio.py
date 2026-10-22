@@ -1331,12 +1331,6 @@ def _model_points(scene, unpacked, nuisance, u, v, freq, ddid, obs):
 # ----------------------------------------------------------------------
 
 
-def _gain_of(a, lam, phi, n_a):
-    """``g_i conj(g_j)`` of every point from the solved ``(S, N)`` gains."""
-    s, i, j = a["interval"], a["a1"], a["a2"]
-    return np.exp(lam[s, i] + lam[s, j] + 1j * (phi[s, i] - phi[s, j]))
-
-
 def _warn_double_taper(scene, nuisance):
     if nuisance.taper_fwhm_mas is None:
         return
@@ -1507,7 +1501,10 @@ class _RadioTerm(eqx.Module):
             lam, phi, norm, sqrt_w, taus = self._gain_solution(
                 values, model, sigma
             )
-            gain = _gain_of(a, lam, phi, self.gain_index[1])
+            si, i, j = a["interval"], a["a1"], a["a2"]
+            gain = np.exp(
+                lam[si, i] + lam[si, j] + 1j * (phi[si, i] - phi[si, j])
+            )
             return lam, phi, norm, taus, (a["vis"] - gain * model) * sqrt_w
 
         if self._profiled and self.sigma_fixed is None:
