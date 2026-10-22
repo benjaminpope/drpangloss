@@ -43,6 +43,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `fit(..., precondition="diag")` scales a `MaxEntropy` pixel by its entropy metric `weight * b` (Skilling & Bryan 1984) in place of the data and prior curvature there, and the probes of `gauss_newton_diag` are Rademacher (were Gaussian); on the 41² VLTI-like L-curve this takes 12265 → 4527 steps at w = 0.1 in float64 (one run). `MaxEntropy.residuals` lets `method="lm"` fit it (float64 only: float32 LM stalls at weak weights, so L-BFGS stays the default for entropy).
 - `OrbitPipeline(epochs, output=...)`: `output` is keyword-only, as for the other pipelines; a positional `output` still works until 0.5, with a `FutureWarning`.
 - `write_oifits` given the flat record that `read_oifits` returns raises a `ValueError` saying to write `OIData(record)` (it was a `KeyError`). The `OIData` docstring documents all five parameters.
 - `import virgil` no longer imports matplotlib: `virgil.plotting`, `virgil.oifits`, `read_oifits` and `write_oifits` load on first use (`from virgil import read_oifits` is unchanged). astropy is still imported, through `oidata`.
