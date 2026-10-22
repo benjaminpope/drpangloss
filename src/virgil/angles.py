@@ -34,14 +34,6 @@ def vector_angle(vector):
     return np.mod(np.rad2deg(np.arctan2(vector[..., 1], vector[..., 0])), 360)
 
 
-def _log_radial_norm(width):
-    """log ∫₀^∞ r exp(-(r - 1)²/2s²) dr, the ring's normalizer."""
-    return np.log(
-        width**2 * np.exp(-0.5 / width**2)
-        + width * np.sqrt(2.0 * np.pi) * ndtr(1.0 / width)
-    )
-
-
 class AngleVector(dist.Distribution):
     """A prior on an angle (degrees), sampled as a 2-D vector.
 
@@ -146,11 +138,13 @@ class AngleVector(dist.Distribution):
     def log_prob(self, value):
         value = np.asarray(value)
         r = np.sqrt(np.sum(value**2, axis=-1))
-        log_p = (
-            -0.5 * ((r - 1.0) / self.ring_width) ** 2
-            - _log_radial_norm(self.ring_width)
-            - np.log(2.0 * np.pi)
+        w = self.ring_width
+        # log ∫₀^∞ r exp(-(r - 1)²/2s²) dr, the ring's normalizer.
+        log_norm = np.log(
+            w**2 * np.exp(-0.5 / w**2)
+            + w * np.sqrt(2.0 * np.pi) * ndtr(1.0 / w)
         )
+        log_p = -0.5 * ((r - 1.0) / w) ** 2 - log_norm - np.log(2.0 * np.pi)
         if self.uniform:
             return log_p
         unit, mean = self._directions(value)
