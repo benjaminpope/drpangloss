@@ -1332,3 +1332,20 @@ def test_the_lbfgs_history_is_100_unless_it_would_pass_the_byte_budget(
     monkeypatch.setattr(fitting, "_LBFGS_BYTES", 2 * 1000 * 8 * 10)
     assert fitting._lbfgs_memory(None, z) == 10
     assert fitting._lbfgs_memory(500, z) == 500
+    # float32 vectors are half the size, so twice the history fits
+    assert fitting._lbfgs_memory(None, {"x": onp.zeros(1000, "float32")}) == 20
+
+
+def test_fit_resolves_the_default_lbfgs_memory(monkeypatch):
+    from virgil import fitting
+
+    seen = []
+    real = fitting._lbfgs_memory
+    monkeypatch.setattr(
+        fitting,
+        "_lbfgs_memory",
+        lambda memory, z: seen.append(memory) or real(memory, z),
+    )
+    fit(START, PRIORS, DATA, method="lbfgs", max_steps=5)
+    fit(START, PRIORS, DATA, method="lbfgs", lbfgs_memory=7, max_steps=5)
+    assert seen == [None, 7]

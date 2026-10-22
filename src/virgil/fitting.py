@@ -676,7 +676,7 @@ def fit(
         Step limit (default 1000 LM, 20000 L-BFGS, 2000 Adam), gradient
         tolerance and L-BFGS step cap; see [fit stopping](../common_arguments.md#fit-stopping).
     lbfgs_memory, cg_steps, learning_rate : int, int and float, optional
-        L-BFGS history (default 100, cut so the history stays under 2 GB; an
+        L-BFGS history (default 100, cut so the history stays under 2 GiB; an
         explicit value is used as given); CG steps per LM step (above 200
         coordinates); Adam's rate.
     dtype : {"float64", "float32"}, optional
@@ -1392,13 +1392,13 @@ def _lm(problem, z0, scale, max_steps, gtol, cg_steps, budget):
 
 
 # L-BFGS keeps 2 * memory vectors of the problem's size; the default memory is
-# cut to fit this many bytes (it binds above 1.25e6 float64 coordinates).
+# cut to fit this many bytes (it binds above 1.34e6 float64 coordinates).
 _LBFGS_BYTES = 2**31
 _LBFGS_MEMORY = 100
 
 
 def _lbfgs_memory(memory, z0):
-    """``memory`` if given, else 100 cut to keep the history within 2 GB."""
+    """``memory`` if given, else 100 cut to keep the history within 2 GiB."""
     if memory is not None:
         return int(memory)
     leaves = jax.tree.leaves(z0)
