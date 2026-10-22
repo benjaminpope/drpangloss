@@ -244,7 +244,7 @@ probes 15%; the exact diagonal of the 1681 coordinates costs about 0.4 s
 including compilation. That is at the 30% bar and the cost is negligible, so
 **no analytic per-data-type overrides are built**: one generic path (data terms
 via `curvature_rows`, regularizers via Hessian probes) serves OI, DISCO and
-radio alike. `info["precondition_decades"]` records the spread of D per round.
+radio alike. `info["precondition_rounds"]` records, per round, the spread of D (`decades`) and the floored fraction (`floored`).
 
 **The Stage 7 success test is not met by a diagonal alone.** Float64 passes
 on the 41² case at 14645 of 20000 steps (plain fails), but float32 fails for both:
@@ -383,3 +383,12 @@ visibilities and DISCO): solve the weighted least squares in closed form
 scale and an amplitude are both profiled, the pair is a coupled fixed point (see
 C), to be solved with an inner iteration. Scope as a separate PR per data
 type after B piece 2.
+
+## Status (2026-10-22)
+
+`precondition="diag"` is merged (virgil#474) and documented in
+`docs/conventions.md`. **PR 2 (analytic per-data-type diagonals) is dropped**:
+the Hutchinson probes are accurate enough (see "Accuracy of the generic diagonal"), so the generic
+path serves OI, DISCO and radio alike. The IM Lup benchmark (float64, with and
+without `precondition`, same step budget, pinned commits) is pending. Newton–CG
+for the entropy term is not started; it waits on the benchmark.
