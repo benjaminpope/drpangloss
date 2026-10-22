@@ -75,6 +75,23 @@ match, and the precision expected. Before a release the validation evidence
 must be pinned to the release commit (see the evidence gate under Releasing in
 `CONTRIBUTING.md`).
 
+## Methods beyond published practice
+
+Until 1.0, virgil implements the state of the art and makes no unsupported
+innovations; the community will not yet trust LLM-driven development at this scale.
+Search the literature (ADS, arXiv) before calling anything new. Every method that goes
+beyond published practice gets an entry in a design-note register (the radio one is
+`design/radio_imaging_innovations.md`) giving:
+
+- the claim and a short derivation;
+- ADS-verified references, also in `references/provenance.toml`, with a one-line
+  `Source:` in the docstring;
+- the unit tests that pin it and the virgil-validation check;
+- a status: *established*, *derived* or *novel / experimental*.
+
+Novel or experimental methods are opt-in, never defaults, until virgil-validation has
+validated them. Public docs do not link `design/` notes.
+
 ## Instrument-specific work
 
 Calibration and error models specific to the VLTI instruments (GRAVITY,
