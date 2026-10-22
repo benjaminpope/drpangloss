@@ -36,20 +36,16 @@ _PIPELINES = {
 }
 
 
-def _parse_value(text):
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return text
-
-
 def _settings(pairs):
     settings = {}
     for pair in pairs or []:
         key, sep, value = pair.partition("=")
         if not sep:
             raise SystemExit(f"--set expects key=value; got {pair!r}.")
-        settings[key.strip()] = _parse_value(value)
+        try:
+            settings[key.strip()] = json.loads(value)
+        except json.JSONDecodeError:
+            settings[key.strip()] = value
     return settings
 
 

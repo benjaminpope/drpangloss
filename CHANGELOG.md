@@ -81,6 +81,7 @@ anything before 1.0 may change between minor versions.
 - Code shape, numerics and sweep: 22 single-use private helpers in `fitting`, `likelihood`, `imaging`, `ensemble`, `plotting`, `detection`, `arcs`, `crossval`, `simulate`, `angles` and `_gauss_newton` are inlined at their one call site. No behaviour or numerics change.
 
 - The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
+- The pipelines inline 20 single-use private helpers (`_mcmc`, `_sample_stats`, `_wrap`, `_fmt`, `_closing`, the posterior-cell builders, `_n_trials`, `_derived_diagnostics`, `_search_checks`, `_parse_value`, `_robustness_of` and the star-pipeline wrappers). No change in `summary.json`. `tests/test_pipeline_orbit.py` is split into four files (the golden blind runs in three) so CI can shard it.
 
 ## 0.4.0 (2026-10-18)
 
