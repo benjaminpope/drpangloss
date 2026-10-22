@@ -79,6 +79,16 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Luger, Foreman-Mackey & Hogg (2017)](#luger2017linear), [arXiv:1710.11136](https://arxiv.org/abs/1710.11136), [ADS](https://ui.adsabs.harvard.edu/abs/2017RNAAS...1....7L/abstract), [doi:10.3847/2515-5172/aa96b5](https://doi.org/10.3847/2515-5172/aa96b5) | after |
 
+### `virgil.aliases`
+
+| Symbol | Source | Relation |
+|---|---|---|
+| `(module)` | [Jeffreys (1946)](#jeffreys1946), [ADS](https://ui.adsabs.harvard.edu/abs/1946RSPSA.186..453J/abstract), [doi:10.1098/rspa.1946.0056](https://doi.org/10.1098/rspa.1946.0056) | after |
+| `(module)` | [Lucy (2014)](#lucy2014), [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract) | after |
+| `(module)` | [MacKay (1992)](#mackay1992), [doi:10.1162/neco.1992.4.3.415](https://doi.org/10.1162/neco.1992.4.3.415) | after |
+| `(module)` | [Price-Whelan et al. (2017)](#pricewhelan2017), [arXiv:1610.07602](https://arxiv.org/abs/1610.07602), [ADS](https://ui.adsabs.harvard.edu/abs/2017ApJ...837...20P/abstract) | after |
+| `(module)` | [VanderPlas (2017)](#vanderplas2018), [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract) | after |
+
 ### `virgil.amigo`
 
 | Symbol | Source | Relation |
@@ -283,6 +293,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | `KeplerOrbit` | [Hartkopf, McAlister & Franz (1989)](#hartkopf1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989AJ.....98.1014H/abstract), [doi:10.1086/115193](https://doi.org/10.1086/115193) | after |
 | `KeplerOrbit` | [Wright & Howard (2009)](#wright2009), [arXiv:0904.3725](https://arxiv.org/abs/0904.3725), [ADS](https://ui.adsabs.harvard.edu/abs/2009ApJS..182..205W/abstract) | after |
 | `KeplerOrbit.from_position_angle` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
+| `PositionData.term` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
 | `_thiele_innes_fit` | [Thiele (1883)](#thiele1883) | after |
 | `period_grid` | [Lucy (2014)](#lucy2014), [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract) | after |
 | `starting_orbits` | [Lucy (2014)](#lucy2014), [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract) | after |
@@ -360,7 +371,6 @@ Heritage and context without a code symbol of their own.
 | [Czekala et al. (2025)](#mpol), [arXiv:2502.00100](https://arxiv.org/abs/2502.00100), [ADS](https://ui.adsabs.harvard.edu/abs/2025arXiv250200100C/abstract), [GitHub](https://github.com/mpol-dev/MPoL), [link](https://mpol-dev.github.io/MPoL/) | arXiv ID returned by title search; ADS check pending |
 | [Martinache (2010)](#martinache2010), [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract) | ApJ 724, 464 (2010) |
 | [Moshier](#cephes), [link](https://www.netlib.org/cephes/) |  |
-| [VanderPlas (2017)](#vanderplas2018), [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract) | ApJS 236, 16 (2018) |
 
 ## In the bibliography only
 
