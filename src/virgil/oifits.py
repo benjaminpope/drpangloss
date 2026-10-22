@@ -17,7 +17,7 @@ from collections.abc import Mapping
 
 import numpy as onp
 from astropy.io import fits
-from ._deprecate import external_stacklevel
+from ._deprecate import external_stacklevel, renamed
 
 __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 
@@ -34,6 +34,9 @@ __all__ = ["build_hdulist", "read_oifits", "write_oifits"]
 # Relative tolerance for treating two wavelength tables as identical.
 _WAVE_RTOL = 1e-12
 _MJD_TOLERANCE = 1e-4
+# Frames the reader would merge (same MJD) are written this far apart in TIME [s].
+_FRAME_STEP = 10 * _MJD_TOLERANCE * 86400.0
+_INT16_MAX = 32767  # STA_INDEX is a 16-bit column in OIFITS2
 
 _DEFAULT_PHASE_UNIT = "deg"
 
@@ -234,8 +237,8 @@ def _channel_widths(tables):
     """``{EFF_WAVE: EFF_BAND}`` over the OI_WAVELENGTH tables (metres)."""
     widths = {}
     for hdu in tables.get("OI_WAVELENGTH", []):
-        if "EFF_BAND" not in hdu.columns.names:
-            continue
+        if "EFF_BAND" not in hdu.columns.names or hdu.header.get("BANDEST"):
+            continue  # BANDEST: written as an estimate, not a measured width
         wave = onp.asarray(hdu.data["EFF_WAVE"], dtype=float).reshape(-1)
         band = onp.asarray(hdu.data["EFF_BAND"], dtype=float).reshape(-1)
         for w, b in zip(wave.tolist(), band.tolist()):
@@ -1293,14 +1296,17 @@ _TABLE_KEYWORDS = {
 _OPTIONAL_DATA = {"T3AMP", "T3AMPERR"}
 
 
+@renamed({"tables": "data"})
 def write_oifits(data, filename, overwrite=True):
     """Write an `OIData` or a dictionary of OIFITS tables to an OIFITS2 file.
 
     An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
     read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
-    observables, errors, flags, wavelengths and (u, v), and to the times if there
-    are any (else MJD 0). Closure phases without station indices get
-    placeholder stations. A dictionary of tables
+    observables, errors, flags, frames, wavelengths and (u, v), and to the times
+    if there are any (else MJD 0). Frames whose `MJD` is the same get distinct
+    `TIME`s so that they stay apart. Closure phases without station indices get
+    placeholder stations (`STAPLACE` in the header). Wavelengths are written
+    as float32 (relative error 6e-8). A dictionary of tables
     (columns as in [writing OIFITS](../oifits_files.md#writing), upper-case
     OIFITS names) has phases in **degrees**.
     Source: Duvert et al. (2015), [references](../references.md#duvert2017).
@@ -1323,16 +1329,25 @@ def write_oifits(data, filename, overwrite=True):
 
     Raises
     ------
+    TypeError
+        If `data` is neither an `OIData` nor a mapping.
     ValueError
         If an `OIData` has a layout OIFITS cannot hold (the message says
-        which): extra observables, gains, projected or uv-grid data. No file
-        is written.
+        which): extra observables, gains, projected or uv-grid data, a station
+        index above 32767. No file is written.
+    KeyError
+        If a dictionary lacks `OI_WAVELENGTH` or a data table.
     OSError
         If the file exists and `overwrite` is False.
     """
     import pathlib
 
     if not isinstance(data, Mapping):
+        if not all(hasattr(data, a) for a in ("u", "vis", "cp_flag")):
+            raise TypeError(
+                "write_oifits needs an OIData or a mapping of tables, not "
+                f"{type(data).__name__}."
+            )
         tables, reason = _oidata_tables(data)
         if tables is None:
             raise ValueError(
@@ -1369,6 +1384,9 @@ def build_hdulist(tables):
     eff_band = onp.broadcast_to(
         onp.asarray(wave.get("EFF_BAND", 0.0), dtype=float), (nwave,)
     )
+    estimated = not onp.all(eff_band > 0)
+    if estimated:  # OIFITS2 needs EFF_BAND > 0: fill only the unknown widths
+        eff_band = onp.where(eff_band > 0, eff_band, _estimated_band(eff_wave))
 
     hdus = [_primary_hdu(info)]
     hdus.append(_target_hdu(tables.get("OI_TARGET"), info))
@@ -1382,6 +1400,8 @@ def build_hdulist(tables):
         ]
     )
     _set_table_header(wave_hdu, "OI_WAVELENGTH", insname=insname)
+    if estimated:
+        wave_hdu.header["BANDEST"] = (True, "EFF_BAND estimated, not measured")
     hdus.append(wave_hdu)
 
     if "OI_FLUX" in tables:
@@ -1400,6 +1420,18 @@ def build_hdulist(tables):
         hdus.append(hdu)
 
     return fits.HDUList(hdus)
+
+
+def _estimated_band(waves):
+    """Channel widths from the spacing of ``waves`` (1% of each if none)."""
+    waves = onp.abs(onp.asarray(waves, dtype=float))
+    band = 0.01 * waves
+    if waves.size > 1:
+        order = onp.argsort(waves)
+        spacing = onp.empty_like(waves)
+        spacing[order] = onp.gradient(waves[order])
+        band = onp.where(spacing > 0, spacing, band)  # duplicates: no spacing
+    return band
 
 
 def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):
@@ -1564,6 +1596,11 @@ def _data_hdu(name, table, info, nwave):
             fmt = f"{nwave}D"
         elif key == "STA_INDEX":
             values = onp.asarray(table[key], dtype=int).reshape(nrow, -1)
+            if values.size and onp.max(onp.abs(values)) > _INT16_MAX:
+                raise ValueError(
+                    f"{name}.STA_INDEX has a value above {_INT16_MAX}, which "
+                    "the 16-bit OIFITS2 column cannot hold."
+                )
             if fmt == "1I":
                 values = values.reshape(nrow)
         else:
@@ -1647,7 +1684,7 @@ def _baseline_layout(data):
         and onp.all(v == v[:, :1])
     ):
         return None, _IRREGULAR_WAVEL
-    bands = 0.0
+    bands = None  # unknown: written as an estimate (see build_hdulist)
     if data.bandwidth is not None:
         band = onp.broadcast_to(onp.asarray(data.bandwidth, float), u.size)
         band = band.reshape(n_b, n_w)
@@ -1664,20 +1701,36 @@ def _baseline_layout(data):
     if data.dt is not None and data.t_ref is not None:
         dt = onp.asarray(data.dt, dtype=float).reshape(n_b, n_w)
         mjd = (dt + data.t_ref)[:, 0]
-    if data.cp_flag and _repeated(stations, mjd):
+    frame = onp.zeros(n_b, dtype=int)
+    if data.frame is not None:
+        frames = onp.asarray(data.frame).reshape(n_b, n_w)
+        if not onp.all(frames == frames[:, :1]):
+            return None, "a baseline's channels are in different frames"
+        frame = frames[:, 0]
+    time = _frame_times(frame, mjd)
+    placeholders = data.stations is None
+    if _repeated(stations, mjd, time):
         # The reader tells repeated baselines apart by station pair and time,
         # so give them placeholder stations when the data have no times.
-        if mjd is None:
+        placeholders = True
+        if data.cp_flag:
             stations, reason = _stations_from_triangles(data, n_b, n_w)
             if reason:
                 return None, reason
-        if _repeated(stations, mjd):
+        else:
+            index = onp.arange(n_b)
+            stations = onp.stack([2 * index + 1, 2 * index + 2], axis=1)
+        if _repeated(stations, mjd, time):
             return None, "repeated baselines without distinct times"
+    if stations.size and onp.max(stations) > _INT16_MAX:
+        return None, f"a station index above {_INT16_MAX} (16-bit column)"
     return {
         "n_b": n_b,
         "n_w": n_w,
         "waves": waves,
         "bands": bands,
+        "time": time,
+        "placeholders": placeholders,
         "ub": u[:, 0],
         "vb": v[:, 0],
         "stations": stations,
@@ -1709,10 +1762,32 @@ def _stations_from_triangles(data, n_b, n_w):
     return stations, None
 
 
-def _repeated(stations, mjd):
-    """Whether two baselines share a station pair (and time)."""
+def _frame_times(frame, mjd):
+    """``TIME`` [s] of every baseline that keeps its frames apart on reading.
+
+    The reader merges rows within ``_MJD_TOLERANCE`` in both ``MJD`` and
+    ``TIME``, so frames at one ``MJD`` (all of them, for data without times)
+    are written ``_FRAME_STEP`` apart in ``TIME``; other frames get 0.
+    """
+    labels, inverse = onp.unique(frame, return_inverse=True)
+    when = onp.zeros(labels.size)
+    if mjd is not None:
+        when = onp.array(
+            [onp.mean(mjd[inverse == k]) for k in range(labels.size)]
+        )
+    offset = onp.zeros(labels.size)
+    previous = None
+    for k in onp.argsort(when, kind="stable"):
+        if previous is not None and when[k] - when[previous] <= _MJD_TOLERANCE:
+            offset[k] = offset[previous] + _FRAME_STEP
+        previous = k
+    return offset[inverse]
+
+
+def _repeated(stations, mjd, time):
+    """Whether two baselines share a station pair, ``MJD`` and ``TIME``."""
     key = onp.column_stack(
-        [stations, onp.zeros(len(stations)) if mjd is None else mjd]
+        [stations, onp.zeros(len(stations)) if mjd is None else mjd, time]
     )
     return len(onp.unique(key, axis=0)) < len(stations)
 
@@ -1744,6 +1819,12 @@ def _closure_stations(b1, b2, b3, n_b):
     return onp.array([number[r] for r in roots]).reshape(n_b, 2)
 
 
+def _date_obs(mjd):
+    """ISO date of a modified Julian date."""
+    day = datetime.date(1858, 11, 17) + datetime.timedelta(days=int(mjd // 1))
+    return day.isoformat()
+
+
 def _scattered(values, index, n):
     """``values`` placed at ``index`` of ``n`` samples, NaN elsewhere."""
     out = onp.full(n, onp.nan)
@@ -1763,10 +1844,7 @@ def _vis2_tables(data, layout):
         table["FLAG"] = onp.isnan(vis).reshape(n_b, n_w)
     tables = {
         "info": {"TARGET": "PIPELINE", "INSTRUME": "VIRGIL"},
-        "OI_WAVELENGTH": {
-            "EFF_WAVE": layout["waves"],
-            "EFF_BAND": layout["bands"],
-        },
+        "OI_WAVELENGTH": {"EFF_WAVE": layout["waves"]},
         "OI_VIS2": {
             "VIS2DATA": vis.reshape(n_b, n_w),
             "VIS2ERR": d_vis.reshape(n_b, n_w),
@@ -1776,9 +1854,15 @@ def _vis2_tables(data, layout):
             **table,
         },
     }
+    if layout["bands"] is not None:
+        tables["OI_WAVELENGTH"]["EFF_BAND"] = layout["bands"]
+    tables["OI_VIS2"]["TIME"] = layout["time"]
+    if layout["placeholders"]:
+        tables["info"]["STAPLACE"] = True
     if layout["mjd"] is not None:
         tables["OI_VIS2"]["MJD"] = layout["mjd"]
         tables["info"]["MJD"] = float(layout["mjd"][0])
+        tables["info"]["DATE-OBS"] = _date_obs(float(onp.min(layout["mjd"])))
     return tables
 
 
@@ -1805,6 +1889,7 @@ def _absolute_phase_tables(data, layout):
             "STA_INDEX": layout["stations"],
         }
     )
+    table["TIME"] = layout["time"]
     if layout["mjd"] is not None:
         table["MJD"] = layout["mjd"]
     return {"OI_VIS": table}, None
@@ -1860,6 +1945,7 @@ def _closure_tables(data, layout):
             [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
         ),
     }
+    table["TIME"] = layout["time"][b1]
     if layout["mjd"] is not None:
         table["MJD"] = layout["mjd"][b1]
     return {"OI_T3": table}, None

@@ -17,8 +17,9 @@ prints ``matrix=<json>`` for ``$GITHUB_OUTPUT``. Tiers:
 | main    | push to main                 | the gate, with the slow tests           |
 | full    | `full-ci` label, dispatch    | main + macOS py3.11, py3.13 and the     |
 |         |                              | floors (the last two in 2 shards each)  |
-| nightly | daily schedule               | full, all with slow tests, + the        |
-|         |                              | newest-dependencies canary              |
+| nightly | daily schedule               | full, all with slow tests except macOS  |
+|         |                              | (fast tier), + the newest-dependencies  |
+|         |                              | canary                                  |
 
 Job names do not change between tiers, so the same checks report on every
 pull request. Standard library and the ``gh`` CLI only.
@@ -33,7 +34,7 @@ import subprocess
 # touching one runs the slow tests of these test files too
 # (tests/conftest.py, VIRGIL_SLOW_FILES).
 ORBIT_PATHS = re.compile(
-    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*|pipeline/(disk|image))"
+    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*|likelihood|_marginal|_precision|pipeline/(disk|image))"
     r"|tests/test_(aliases|epochs|orbit[a-z_]*|pipeline_(disk|image)))\.py$"
 )
 ORBIT_SLOW_FILES = (
@@ -83,6 +84,9 @@ def choose(event, full_label=False, pyproject=False, orbit_slow=False):
                 "python-version": "3.11",
                 "x64": "0",
                 "slow": nightly,
+                # Unsharded, its 3 cores took over 3 hours for the whole
+                # suite: the nightly's 90-minute limit fits the fast tier.
+                "fast_only": True,
             }
         )
         # Two shards each: unsharded, py3.13 and the floors outgrew the

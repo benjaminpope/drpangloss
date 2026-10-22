@@ -60,10 +60,15 @@ def relation(entry: dict) -> str:
     return entry.get("how", "after")
 
 
+def authors_of(entry: dict) -> str:
+    """The authors, or ``(authors missing)`` so a bad entry cannot crash the page."""
+    return entry.get("authors") or "(authors missing)"
+
+
 def citation(entry: dict) -> str:
     """``Authors (year)`` as a short label."""
     year = entry.get("year")
-    return f"{entry['authors']} ({year})" if year else entry["authors"]
+    return f"{authors_of(entry)} ({year})" if year else authors_of(entry)
 
 
 def links(entry: dict) -> list[str]:
@@ -136,7 +141,7 @@ def render_module_tables(refs: dict[str, dict]) -> str:
 def render_role_section(refs: dict[str, dict], role: str) -> str:
     out = ["| Source | Note |", "|---|---|"]
     for key, entry in sorted(
-        refs.items(), key=lambda kv: kv[1]["authors"].lower()
+        refs.items(), key=lambda kv: authors_of(kv[1]).lower()
     ):
         if entry.get("role") == role:
             out.append(
@@ -149,7 +154,7 @@ def render_heritage(refs: dict[str, dict]) -> str:
     """Sources with no code symbol that are neither compared nor bibliography."""
     out = ["| Source | Note |", "|---|---|"]
     for key, entry in sorted(
-        refs.items(), key=lambda kv: kv[1]["authors"].lower()
+        refs.items(), key=lambda kv: authors_of(kv[1]).lower()
     ):
         if entry.get("role") is None and not entry.get("used_in"):
             out.append(
@@ -162,9 +167,9 @@ def render_all_sources(refs: dict[str, dict]) -> str:
     out = []
     for key, entry in sorted(
         refs.items(),
-        key=lambda kv: (kv[1]["authors"].lower(), kv[1].get("year", 0)),
+        key=lambda kv: (authors_of(kv[1]).lower(), kv[1].get("year", 0)),
     ):
-        line = f'- <a id="{key}"></a>**{citation(entry)}**. {entry["title"]}.'
+        line = f'- <a id="{key}"></a>**{citation(entry)}**. {entry.get("title") or "(title missing)"}.'
         extra = links(entry)
         if extra:
             line += " " + ", ".join(extra) + "."
