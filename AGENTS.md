@@ -39,6 +39,7 @@ upgrading `jax` alone can leave optax, equinox etc. too old for it.
 | Lint changed files only | `bash scripts/lint_local.sh --changed --fix` |
 | Full pre-commit pass | `.venv/bin/python -m pre_commit run --all-files` |
 | Regenerate tutorial docs | `.venv/bin/python scripts/sync_tutorial_docs.py` |
+| Regenerate the references page (after editing `references/provenance.toml`) | `.venv/bin/python scripts/sync_references_page.py` |
 | Build docs | `.venv/bin/python -m zensical build --clean` |
 | Refresh the development-carbon page and badge (local only; needs [claude-code-carbon-dashboard](https://github.com/benjaminpope/claude-code-carbon-dashboard) installed) | `python3 scripts/dev_carbon.py` |
 
@@ -54,6 +55,7 @@ Before committing:
 3. If you touched a tutorial notebook: rerun `scripts/sync_tutorial_docs.py` and
    `pytest tests/lint/test_tutorial_docs_sync.py`.
 4. If you touched docstrings or `docs/`: `.venv/bin/python -m zensical build --clean`.
+5. If you touched `references/provenance.toml`: rerun `scripts/sync_references_page.py`.
 
 CI checks linting and formatting (`.github/workflows/lint.yml`) but does not fix
 them, so lint before you push.
@@ -163,6 +165,30 @@ Ben is surprised how long some docstrings are. Keep them short.
   priors?", "Priors and the MAP" and "Precision"; add `noise` and `regularizers`
   there rather than creating a page), and each docstring says one line and links it.
 - **Private helpers:** one or two lines.
+- **Deliberate choices:** a surprising or deliberate choice gets a short inline
+  `#` comment at the line that makes it, not a docstring paragraph, e.g.
+  `mixed=False  # deliberate: the null must not get the broad companion`.
+- **Sources:** a docstring cites a source in one line, never in a paragraph:
+  `Source: Kammerer et al. (2020), [references](../references.md#kammerer2020).`
+  (the link resolves from the API pages). Any new idea or port adds or extends
+  its entry in `references/provenance.toml` (`used_in`, and `how = "ported"`
+  when code was adapted) in the same PR, and `scripts/sync_references_page.py`
+  regenerates the public `docs/references.md`; `tests/lint/test_provenance.py`
+  fails on a cited arXiv ID, GitHub repository or "Author et al. (YYYY)" with
+  no entry. Never invent an arXiv ID: leave the entry `verified = false` until
+  it is checked on the arXiv abstract page (`scripts/fetch_references.py`
+  resolves entries against ADS). `scripts/sync_references_page.py --by-module`
+  and `--unverified` give the census.
+- **The gate:** `tests/lint/test_docstring_length.py` fails on any docstring
+  over 60 lines that is not in `tests/lint/docstring_allowlist.txt`
+  (`module:qualname`, sorted by module), and on a stale entry, so the list can
+  only shrink. New code may not add to it; a PR that rewrites a listed
+  docstring deletes its line.
+- **Comprehension check:** every docstring-rewrite PR runs one. Give a fresh
+  subagent only the signature and the new docstring of each rewritten public
+  function. It writes a correct call for a stated task and lists anything it
+  had to guess. Each guess restores one line of the docstring. The PR
+  description records the results.
 
 ## Package layout
 
@@ -247,6 +273,7 @@ phase of the orbit-consolidation plan adds it (virgil-validation's
 | A single star must not be reported as an orbit | `modes.no_orbit`: the best orbit's evidence against the star alone (the engine's likelihood with an invisible companion); `no-orbit` skips the posterior; the `no_orbit` check fails below 0 nats and warns below 10 | `orbit._single_star`, `orbit._modes`, `_checks.no_orbit` | `test_pipeline_orbit.py::test_a_single_star_is_no_orbit` |
 | High eccentricity (e = 0.8) through the pipeline | `ecc_max` is a setting; the posterior samples e on its band prior | `orbit._sample_band` | `test_pipeline_orbit.py::test_a_highly_eccentric_orbit_is_recovered` |
 | An interrupted alias search must not refit finished bands | the band checkpoints live in `stages/search/bands`, outside the stage's declared outputs, so a re-run keeps them and `resume=False` removes them | `orbit._band_checkpoints`, `_core._discard` | `test_pipeline_orbit.py::test_band_checkpoints_survive_a_rerun_but_not_a_fresh_run` |
+| One outlying night must not decide the verdict | `modes.robustness` refits the search without the night of highest raw χ²/N (`drop_outlier_night`, skipped below 3 nights); the `night_dropped` check warns when the orbit-or-not verdict or the winning alias band changes | `orbit._robustness`, `orbit._without`, `_checks.night_dropped` | `test_pipeline_orbit.py::test_the_most_outlying_night_is_dropped_and_the_verdicts_compared` |
 | A failed alias band must not hide behind a decisive winner; files of one night split by 0h UT are one night | `search.failed_bands` and the `bands_failed` and `winner_flags` checks; night labels chain pieces within `gap_days`; the single-star null refines its diameter grid | `orbit._search_report`, `orbit._read_nights`, `orbit._single_star`, `_checks.bands_failed` | `test_pipeline_orbit.py::test_orbit_checks_have_the_documented_thresholds`, `test_pipeline_orbit.py::test_from_oifits_groups_files_into_nights` (and the `mode_converged` check: a search that stops short of the optimum, with the effort defaults read from the engine, `orbit._engine_defaults`) |
 
 
@@ -381,6 +408,8 @@ to that test.
 - `docs/generated/` and `data/*.npy` — generated or fixture data.
 - `docs/*.md` pages listed in `scripts/sync_tutorial_docs.py::MAPPINGS` — generated from
   notebooks (see below).
+- `docs/references.md` — generated from `references/provenance.toml` by
+  `scripts/sync_references_page.py`; edit the TOML (and `references/references_intro.md`).
 - `docs/index.md` — generated from `README.md` by `scripts/sync_tutorial_docs.py`; edit
   `README.md`, then run the script.
 - `docs/dev_carbon.md` and the README badge between the `dev-carbon-badge` markers —

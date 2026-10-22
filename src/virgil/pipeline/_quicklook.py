@@ -136,6 +136,13 @@ def _binary_search_cell(run, summary):
     search, limits = summary["search"], summary["limits"]
     # The curve of the limits stage: same annuli as the saved plot.
     bins = run["config"].get("limit_bins", _LIMIT_BINS)
+    cap = search.get("alias_cap_mas")
+    capped = (
+        f" The search box is capped at ±{cap:.0f} mas, the alias limit of "
+        "the uv lattice; set `max_sep_mas` to search further out."
+        if cap
+        else ""
+    )
     return (
         "## Search and limits\n\n"
         "The left panel is the Δχ² of a point companion over the grid, "
@@ -143,7 +150,7 @@ def _binary_search_cell(run, summary):
         f"({format_sigma(search['local_nsigma'])} local, "
         f"{format_sigma(search['global_nsigma'])} after the "
         f"look-elsewhere correction for {search['n_trials']:.0f} "
-        "resolution elements). "
+        f"resolution elements).{capped} "
         f"The right panel is the {limits['sigma']:g}σ contrast curve "
         "(Absil method), the median limit in annuli about the star.",
         "grid = res.grid()\n"
@@ -436,6 +443,19 @@ def _image_cells(run, summary, path):
     return cells
 
 
+def _robust_sentence(modes):
+    """What dropping the most outlying night does to the verdict."""
+    r = modes.get("robustness", {"skipped": "not run (older run)"})
+    if "skipped" in r:
+        return f"The night-dropped refit was skipped ({r['skipped']})."
+    d = r["dropped"]
+    band = "the same alias band" if d["same_band"] else "another alias band"
+    return (
+        f"Without night {r['night']} (raw χ²/N = {r['chi2_per_n']:.3g}) the "
+        f"verdict is {d['verdict']} in {band} (N = {d['n']})."
+    )
+
+
 def _orbit_cells(run, summary, path):
     done = _completed(run)
     cells = []
@@ -480,7 +500,8 @@ def _orbit_cells(run, summary, path):
                 f"The winner is the band of N = {win['n']} orbits "
                 f"(probability {win['p']:.3g}); {margin}. Against a single "
                 f"star it gains {null['delta_log_z']:.4g} nats "
-                f"(verdict: {null['verdict']}). The sky plot shows the best "
+                f"(verdict: {null['verdict']}). {_robust_sentence(modes)} "
+                "The sky plot shows the best "
                 "orbit, each night's position and error ellipse (hollow if "
                 "flagged), and the orbit at the nights.",
                 'display(Image("plots/modes_sky.png"))\n'
@@ -554,11 +575,7 @@ def build_notebook(path):
 
 @contextlib.contextmanager
 def _without_mplbackend():
-    """Unset ``MPLBACKEND`` so the kernel uses the inline backend.
-
-    Batch jobs often set ``MPLBACKEND=Agg``; a kernel that inherits it
-    draws figures without embedding them in the notebook.
-    """
+    """Unset ``MPLBACKEND`` (``Agg`` in batch jobs embeds no figures)."""
     saved = os.environ.pop("MPLBACKEND", None)
     try:
         yield

@@ -25,6 +25,40 @@ A period that is wrong by $\delta P$ drifts by $T\,\delta P / P^2$ cycles over t
 
 The default $k = 9$ puts the true period within half a step of a trial period. Once the trial times of periastron have centred the phase, its error is at most $1/(4k) = 1/36$ of a cycle at the ends of the baseline: one step of the default `n_phase = 36` grid of times of periastron, so the two grids are about equally fine. This is finer than ARMADA's rule, $P = 2fT/n$ with $f = 3$ ($k = 6$), and The Joker's resolution, $\delta P = 4P^2/(2\pi T)$ ($k = \pi/2$). For $P = 5$–20 d over $T = 410$ d, ARMADA's rule gives about 370 periods and $k = 9$ about 550.
 
+## Position angle at a reference epoch {#position-angle}
+
+Astrometry measures the position angle $\theta$ at an epoch directly, so [`KeplerOrbit.from_position_angle`][virgil.orbits.KeplerOrbit.from_position_angle] replaces the time of periastron by $\theta$ at `t_ref` (as in Octofitter), which suits short arcs. With $\varphi = \theta - \Omega$, the argument of latitude $u = \omega + f$ at `t_ref` follows from $(\cos\varphi, \sin\varphi) \propto (\cos u, \sin u \cos i)$, that is $u = \operatorname{atan2}(\sin\varphi / \cos i,\ \cos\varphi)$. Then the true anomaly is $f = u - \omega$, the eccentric and mean anomalies $M$ follow, and `dt_peri` $= -MP/2\pi$ (in $[-P/2, P/2)$). Sample $\theta$ as an [`AngleVector`][virgil.angles.AngleVector] and add [`position_angle_prior`][virgil.orbits.position_angle_prior] to the likelihood terms, so that the prior stays uniform in the time of periastron.
+
+The map is **singular at $i = 90°$**, where the position angle takes only two values ($\Omega$ and $\Omega + 180°$) and does not fix the phase; a concrete `inc` of 90° is rejected. Near edge-on it is badly conditioned: keep `dt_peri`, or use [`StateVectorOrbit`][virgil.orbits.StateVectorOrbit].
+
+## Position calibration terms {#position-term}
+
+[`PositionData.term`][virgil.orbits.PositionData.term] takes `north_angle=` and `plate_scale=`, names of fitted values holding a dataset's North angle $\delta$ (degrees, added to every measured position angle) and plate scale $m$ (a factor, 1 when calibrated), after Octofitter. As for the RV jitter, each is a key of `priors` (which a function model must accept and may ignore), and each dataset needs its own names. Their priors must be stated; there is no default width. The invariant priors (uniform on the circle for $\delta$, log-uniform for $m$) leave each one degenerate with the orbit's orientation and size when a single dataset is fitted, so a Gaussian such as `Normal(0, 0.1)` for $\delta$ and `Normal(1, 1e-3)` for $m$ is strong information and should come from the instrument's astrometric calibration. The terms do not change the likelihood's normalization, so a least-squares fit keeps its form.
+
+## Night flags {#night-flags}
+
+[`epoch_positions`][virgil.epochs.epoch_positions] flags a night whose position should not seed an orbit (`EpochPositions.flags`, each with a code and a reason). The thresholds are keywords; `None` disables a flag.
+
+| Code | Raised when | Keyword (default) |
+|---|---|---|
+| `alias-peaks` | another peak is within this many nats of the best | `flag_alias_nats` (2) |
+| `low-gap` | `gap_marginal` is below this many nats | `flag_min_gap` (5) |
+| `chi2-high` | raw $\chi^2/N$ exceeds this multiple of the median of nights with the same label | `flag_chi2_factor` (3), `flag_chi2_groups` (instrument mode) |
+| `sep-below-resolution` | the separation is below this fraction of the night's resolution $\lambda/2B_{\max}$ | `flag_sep_fraction` (0.5) |
+| `flux-at-bound` | the flux is within this fraction of a flux bound | `flag_flux_tol` (0.02) |
+
+The two nat thresholds scale with the data volume, so retune them for very different data. `sep-below-resolution` is reported only unless `flag_sep_blocks=True`, because $V^2$ and closure phases locate a companion below $\lambda/2B$ at good signal to noise. For data with gains or closure-phase offsets the scale integral holds many whitenings per grid point: `batch_size` (or `memory_budget`, in bytes) sets the points scored together, and a coarse pass at one fixed scale per block integrates $\ln s$ only within `coarse_nats` (30) of the best point and its `coarse_margin` (1) neighbours (`EpochPositions.exact_fraction` reports the share computed in full; `coarse_nats=None` integrates every point, which makes the result exact). The approximate scores outside that window feed `gap_marginal` and the choice of peaks to refine, so these two can change the peaks; `batch_size` and `memory_budget` never do.
+
+## Alias-search settings {#alias-settings}
+
+The defaults of [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] need no per-system arguments; the knobs below are for tuning effort and diagnostics.
+
+- **Effort per band:** `n_candidates`, `n_refine`, `n_random`, `min_distance_mas` (distinct modes), `max_steps`; `n_is` importance-sampling draws check each Laplace evidence (`flag_nats` is the `laplace-is-differ` threshold and `ess_min` the `low-ess` one); `n_samples` posterior draws are taken in the winning band and in every band with probability above `p_min_samples`.
+- **Primary:** `primary_diam="auto"` fits a shared uniform-disk diameter to the per-night positions and, when the data resolve it (a gain of 5 nats over a point), lets the engine fit it in `diam_range`, by default 0.001 mas to the larger of $1.5\,\lambda/B_{\max}$ and twice the estimate; `"fit"` samples it in `diam_range`, by default (0.05, 5) mas. Either way the prior is log-uniform.
+- **Short arcs:** `short_arcs=True` fits only the bands whose cycle counts the short arcs admit ([`virgil.arcs`][virgil.arcs]). `arc_jitter` is a position floor in units of $\lambda/B_{\max}$, `arc_delta_chi2` the $\chi^2$ margin around the best period, and `arc_min_gap` the tempered `gap_marginal / f` (nats) a night needs for its sign to count as decided; the cut's position and velocity errors are tempered by $f$ too. It needs `EpochPositions` and `skip_flagged`; otherwise every band is seeded from the positions.
+- **Window and tempering:** `n_bands_max` caps the bands of a default `p_range` (a longer window is cut, with a warning); `temper` is estimated by default, a fixed factor, or `False`.
+- **Memory:** `batch_size` and `memory_budget` change speed, never the result.
+
 ## Radial-velocity likelihood terms {#rv-term}
 
 [`RVData.term`][virgil.orbits.RVData.term] returns a likelihood term for the `likelihoods=` argument of [`fit`][virgil.fitting.fit].

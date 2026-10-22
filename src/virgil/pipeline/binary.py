@@ -39,7 +39,7 @@ from ._common import (
     _save,
     _scales_of,
 )
-from .._geometry import separation_pa
+from .._geometry import lattice_alias_limit, separation_pa
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
 
@@ -59,16 +59,14 @@ _AXIS_UNITS = {"dra": "mas", "ddec": "mas", "flux": "companion/primary"}
 
 
 class _Axis(NamedTuple):
-    """The position axes of the search grid.
-
-    ``max_sep`` is the half-width (mas), ``n`` the points per axis, ``step``
-    the effective spacing and ``wanted`` the requested one.
-    """
+    """Search-grid position axes: half-width ``max_sep`` (mas), ``n``
+    points, effective ``step`` and ``wanted`` step."""
 
     max_sep: float
     n: int
     step: float
     wanted: float
+    alias_cap: float | None = None
 
     @property
     def coarsened(self):
@@ -77,21 +75,15 @@ class _Axis(NamedTuple):
 
 
 def _global_nsigma(local_nsigma, n_trials):
-    """Look-elsewhere (Sidak) significance of ``local_nsigma`` in sigma.
-
-    The global p-value of the best of ``n_trials`` independent trials is
-    ``1 - (1 - p)**n_trials``; its Gaussian sigma is the quantile of the
-    complement ``(1 - p)**n_trials``, which is kept in log space so that it
-    stays finite when ``n_trials * p`` is large (then the p-value rounds to
-    1 and the sigma is negative: no significance). NaN if ``local_nsigma``
-    is not finite.
-    """
+    """Look-elsewhere (Sidak) significance of ``local_nsigma`` over
+    ``n_trials`` (NaN if not finite)."""
     from scipy.special import ndtri_exp
     from scipy.stats import norm
 
     if not math.isfinite(local_nsigma):
         return float("nan")
     p_local = float(norm.sf(local_nsigma))
+    # Log space keeps this finite when n_trials * p is large.
     sigma = float(ndtri_exp(n_trials * math.log1p(-p_local)))
     return min(sigma, local_nsigma)  # not above the local value
 
@@ -102,83 +94,38 @@ class BinaryPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Stages: ``load → overview → search → limits → fit → posterior →
-    quicklook``.
-
-    * ``load`` applies ``wavel_range`` and ``error_floor`` and writes the
-      data that are fitted to ``data/processed.oifits``.
-    * ``overview`` plots the data and their uv coverage.
-    * ``search`` runs
-      [`detection_statistics`][virgil.detection.detection_statistics]
-      (Δχ², log Bayes factor, best SNR) on a point-companion grid
-      (``dra``, ``ddec`` in mas, log-spaced ``flux``), with maps of Δχ²,
-      best flux and SNR, and the significance at the peak
-      ([`local_nsigma`][virgil.detection.local_nsigma]) before and after a
-      look-elsewhere correction for the number of resolution elements
-      searched.
-    * ``limits`` runs [`absil_limits`][virgil.limits.absil_limits] at
-      ``sigma`` and its [`radial_profile`][virgil.limits.radial_profile].
-    * ``fit`` runs [`fit`][virgil.fitting.fit] on the model template from
-      the best grid point.
-    * ``posterior`` samples
-      [`numpyro_model`][virgil.likelihood.numpyro_model] with NUTS from
-      the fit.
-    * ``quicklook`` writes and executes ``quicklook.ipynb``.
-
-    The fit is on the quoted errors unless ``error_scale="fit"``, and χ²/N
-    is always reported on the quoted errors. Both templates sample the
-    same priors: uniform in position over the search box (``dra``, ``ddec``;
-    ``sep`` and ``pa`` of an angular template are derived from them, so
-    there is no wrap at 0°/360°) and log-uniform in flux over
-    ``flux_range``.
+    Stages: ``load``, ``overview``, ``search`` (a point-companion grid with
+    [`detection_statistics`][virgil.detection.detection_statistics]),
+    ``limits`` ([`absil_limits`][virgil.limits.absil_limits]), ``fit``,
+    ``posterior`` (NUTS) and ``quicklook``. The fit and the posterior share
+    one prior. ``run()`` returns a ``Result`` (``res.summary["companion"]``
+    has ``sep_mas`` and ``pa_deg`` for either template). All settings, with
+    defaults:
+    [pipeline settings](../pipeline.md#binarypipeline-settings).
 
     Parameters
     ----------
     data : OIData
         The data.
     model : BinaryModelAngular or BinaryModelCartesian, optional
-        Model template; its class sets the fitted parameters (``sep``,
-        ``pa``, ``flux`` or ``dra``, ``ddec``, ``flux``). Default
-        ``BinaryModelAngular``. The search and limits always use a point
-        companion in Cartesian offsets.
+        An instance of [`BinaryModelAngular`][virgil.models.BinaryModelAngular]
+        (default) or [`BinaryModelCartesian`][virgil.models.BinaryModelCartesian];
+        its class sets the fitted parameters. The search always uses a point
+        companion.
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of the defaults (see ``BinaryPipeline.defaults()``):
-
-        - ``sigma`` (3.0): significance of the contrast limits.
-        - ``detection_sigma`` (3.0): threshold of the detection check, on
-          the look-elsewhere-corrected significance.
-        - ``max_sep_mas`` (None): half-width of the search grid; by
-          default ``fov_fraction`` × the coarsest λ/B of the samples (each
-          sample's own wavelength over its own baseline, not λ_max/B_min).
-        - ``fov_fraction`` (1.0): see ``max_sep_mas``.
-        - ``grid_step_mas`` (None): grid spacing; by default a quarter of
-          the finest λ/B of the samples, coarsened so that no axis exceeds
-          ``max_grid`` points (the search report then records the effective
-          step and warns).
-        - ``max_grid`` (101): most points per position axis; the grid has
-          the largest odd number of points not above it (at least 3).
-        - ``flux_range`` ([1e-5, 0.5]): flux axis of the grid and bounds
-          of the log-uniform flux prior (companion/primary).
-        - ``n_flux`` (40): points on the flux axis.
-        - ``wavel_range`` (None): ``[min, max]`` wavelengths to keep (m).
-        - ``error_floor`` (None): absolute error floors by observable,
-          e.g. ``{"vis": 0.01, "phi": 0.005}`` (phases in radians), as
-          [`OIData.with_error_floor`][virgil.oidata.OIData.with_error_floor].
-        - ``error_scale`` ("quoted"): ``"fit"`` also fits log-uniform
-          error scales ``vis_scale`` and ``phi_scale`` on [0.1, 10].
-        - ``num_warmup``, ``num_samples``, ``num_chains`` (1000, 1000, 4),
-          ``chain_method`` ("vectorized") and ``seed`` (0): NUTS.
-        - ``batch_size`` (None): grid batch size.
-        - ``limit_bins`` (20): annuli of the contrast curve.
-        - ``quicklook_execute`` (True): execute the quicklook notebook.
+        Overrides of ``BinaryPipeline.defaults()``. The most used: ``sigma``
+        (significance of the contrast limits, 3.0), ``max_sep_mas`` (search
+        half-width in mas; default the coarsest λ/B, capped on lattice coverage), ``grid_step_mas``, ``flux_range``,
+        ``error_scale`` (``"quoted"`` or ``"fit"``). Priors and errors:
+        [conventions](../conventions.md).
 
     Examples
     --------
     >>> import virgil as vg  # doctest: +SKIP
-    >>> from virgil.pipeline import BinaryPipeline, load  # doctest: +SKIP
-    >>> res = BinaryPipeline(vg.OIData("hd1234.oifits"), output="runs/hd1234").run()  # doctest: +SKIP
+    >>> from virgil.pipeline import BinaryPipeline  # doctest: +SKIP
+    >>> res = BinaryPipeline(vg.OIData("hd1234.oifits"), output="runs/binary").run()  # doctest: +SKIP
     >>> res.summary["companion"]["sep_mas"]  # doctest: +SKIP
     """
 
@@ -250,27 +197,31 @@ class BinaryPipeline(_Pipeline):
     # --- shared state, rebuilt on demand so that resume works ------------
 
     def _grid_axis(self):
-        """The position axes as an ``_Axis``.
-
-        ``wanted`` is the requested step (``grid_step_mas``, or a fraction
-        of the finest λ/B); ``n`` points (odd, so that the star is on the
-        grid, and at most ``max_grid``) give the effective ``step``.
-        """
+        """The position axes as an ``_Axis`` (odd ``n``, star on the grid)."""
         s = self.settings
         geo = _geometry(self.processed)
-        max_sep = s["max_sep_mas"] or s["fov_fraction"] * geo["fov_mas"]
+        max_sep, cap = s["max_sep_mas"], None
+        if not max_sep:
+            max_sep = s["fov_fraction"] * geo["fov_mas"]
+            # Deliberate: on lattice coverage (aperture masks, DISCO) the
+            # default box stops at the first alias, since a companion and its
+            # lattice copies fit the data equally well. An explicit
+            # ``max_sep_mas`` is not capped.
+            limit = lattice_alias_limit(self.processed)
+            if limit is not None and limit < max_sep:
+                max_sep, cap = limit, limit
         wanted = (
             s["grid_step_mas"] or _STEP_FRACTION * geo["lambda_over_b_mas"]
         )
         most = s["max_grid"] - (1 - s["max_grid"] % 2)  # the odd number
         n = min(2 * math.ceil(max_sep / wanted) + 1, most)
-        return _Axis(max_sep, n, 2.0 * max_sep / (n - 1), wanted)
+        return _Axis(max_sep, n, 2.0 * max_sep / (n - 1), wanted, cap)
 
     def _grid(self):
         import jax.numpy as np
 
         s = self.settings
-        max_sep, n, _, _ = self._grid_axis()
+        max_sep, n = self._grid_axis()[:2]
         axis = np.linspace(-max_sep, max_sep, n)
         lo, hi = s["flux_range"]
         return {
@@ -280,15 +231,11 @@ class BinaryPipeline(_Pipeline):
         }
 
     def _priors(self, max_sep):
-        """Priors on ``dra``, ``ddec`` (uniform on the box) and ``flux``.
-
-        Both templates sample these, so they share one prior on the sky:
-        uniform in position is the translation-invariant choice, and a
-        uniform ``sep`` would put p(dra, ddec) proportional to 1/sep.
-        """
+        """Priors on ``dra``, ``ddec`` (uniform on the box) and ``flux``."""
         import numpyro.distributions as dist
 
         lo, hi = self.settings["flux_range"]
+        # Uniform in position, not sep (which would put p ∝ 1/sep on the sky).
         return {
             "dra": dist.Uniform(-max_sep, max_sep),
             "ddec": dist.Uniform(-max_sep, max_sep),
@@ -296,12 +243,7 @@ class BinaryPipeline(_Pipeline):
         }
 
     def _sampled_model(self):
-        """The template as a function of the sampled ``dra``, ``ddec``, ``flux``.
-
-        A ``BinaryModelAngular`` template gets its ``sep`` and ``pa`` from
-        the offsets, so that its fit and posterior have the same prior as a
-        ``BinaryModelCartesian`` one.
-        """
+        """The template as a function of ``dra``, ``ddec`` and ``flux``."""
         from ..models import BinaryModelAngular, BinaryModelCartesian
 
         if not isinstance(self.model, BinaryModelAngular):
@@ -397,11 +339,7 @@ def _search(p):
 
 
 def _refined_flux(data, grid, batch_size):
-    """``(flux, loglike)`` of the point companion refined at every position.
-
-    This is ``optimized_flux_grid`` and ``optimized_likelihood_grid`` from
-    one optimizer pass (each public function runs it and keeps one half).
-    """
+    """``(flux, loglike)`` of the point companion refined at every position."""
     from .._grid import (
         batch_size_or_default,
         resolve_grid_keys,
@@ -495,11 +433,7 @@ def _plot_search(output, grid, maps, best):
 
 
 def _peak_index(grid, best):
-    """Grid index of ``best`` (the detection statistics' peak) on each axis.
-
-    The position indices and the flux index come from the same source, the
-    point where ``delta_chi2`` is reached; the flux is matched in log.
-    """
+    """Grid index of ``best`` on each axis (the flux is matched in log)."""
     index = []
     for key in _AXIS_ORDER:
         axis = onp.asarray(grid[key], dtype=float)
@@ -533,6 +467,7 @@ def _search_report(data, grid, axis, detection):
         "global_nsigma_method": GLOBAL_NSIGMA_METHOD,
         "n_trials": n_trials,
         "max_sep_mas": axis.max_sep,
+        "alias_cap_mas": axis.alias_cap,
         "grid_step_mas": axis.step,
         "grid_step_wanted_mas": axis.wanted,
         "grid_shape": [len(onp.asarray(grid[k])) for k in _AXIS_ORDER],
@@ -652,12 +587,7 @@ def _fit(p):
 
 
 def _fit_start(p, search, priors, angular):
-    """The template to fit, and the starting values (``init``) if needed.
-
-    The fit starts at the search's best point, kept inside the priors. An
-    angular template takes ``init``; a Cartesian one is started by setting
-    its parameters.
-    """
+    """The template to fit and its start (the search's best point)."""
     lo, hi = p.settings["flux_range"]
     start = {
         "dra": search["dra_mas"],
@@ -821,6 +751,7 @@ _SEARCH_KEYS = (
     "ddec_mas",
     "flux",
     "max_sep_mas",
+    "alias_cap_mas",
 )
 _LIMITS_KEYS = (
     "sigma",

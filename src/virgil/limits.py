@@ -4,10 +4,10 @@ Fluxes are companion/primary; contrast is primary/companion and
 ``Δmag = 2.5 log10(contrast)``. See
 [detection limits](../detection_limits.md) for the methods and which to use.
 
-* :func:`ruffio_upperlimit`: Bayesian upper limits (Ruffio et al. 2018).
-* `absil_limits`: frequentist chi-squared limits (Absil et al. 2011).
-* `injection_limits`: limits by companion injection (CANDID).
-* :func:`radial_profile`: azimuthal statistics of a limit map.
+* `ruffio_upperlimit`: Bayesian upper limits.
+* `absil_limits`: frequentist chi-squared limits.
+* `injection_limits`: limits by companion injection.
+* `radial_profile`: azimuthal statistics of a limit map.
 """
 
 import warnings
@@ -93,24 +93,21 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
     Parameters
     ----------
     values : array-like
-        Map with shape ``(len(dra), len(ddec))`` (axis 0 is ``dra``), as
-        returned by the grid and limit functions, e.g. flux limits.
+        Map of shape ``(len(dra), len(ddec))`` (axis 0 is ``dra``), e.g. flux limits.
     dra, ddec : array-like
-        Grid axes in milliarcseconds.
+        Grid axes in mas.
     center : tuple[float, float], optional
-        Centre ``(dra, ddec)`` of the annuli in milliarcseconds.
+        Centre ``(dra, ddec)`` of the annuli in mas.
     r_max : float, optional
-        Outer radius in milliarcseconds (default: the largest separation on
-        the grid).
+        Outer radius in mas (default: the largest separation on the grid).
     bins : int, optional
         Number of annuli.
 
     Returns
     -------
     dict
-        ``r`` (annulus centres, mas), ``mean``, ``std``, ``median``,
-        ``q16``, ``q84`` and ``count`` per annulus. Non-finite values are
-        ignored; empty annuli are NaN.
+        ``r`` (annulus centres, mas), ``mean``, ``std``, ``median``, ``q16``,
+        ``q84`` and ``count``. Non-finite values are ignored; empty annuli are NaN.
     """
     xx, yy = onp.meshgrid(onp.asarray(dra), onp.asarray(ddec), indexing="ij")
     values = onp.asarray(values, dtype=float)
@@ -153,26 +150,20 @@ def radial_profile(values, dra, ddec, center=(0.0, 0.0), r_max=None, bins=20):
 def chi2ppf(p, df):
     """Percentile function (inverse CDF) of the chi-squared distribution.
 
-    Accurate to about 1e-14 relative in float64 for ``p`` in
-    [1e-10, 1 - 1e-10], differentiable and ``jit``-able in both arguments;
-    see [detection limits](../detection_limits.md#significance).
+    Accurate to about 1e-14 relative in float64 for ``p`` in [1e-10, 1 - 1e-10];
+    differentiable and ``jit``-able. ``p`` is clipped to ``[eps, 1 - eps]``; for
+    small tail probabilities use [`nsigma`][virgil.limits.nsigma]. See
+    [detection limits](../detection_limits.md#significance).
 
     Parameters
     ----------
-    p : array-like
-        Percentile value.
-    df : array-like
-        Degrees of freedom.
+    p, df : array-like
+        Percentile and degrees of freedom.
 
     Returns
     -------
     array-like
-        Corresponding chi2 value to the percentile.
-
-    Notes
-    -----
-    ``p`` is clipped to ``[eps, 1 - eps]``. Near ``p = 1`` precision is lost;
-    use [`nsigma`][virgil.limits.nsigma] for small tail probabilities.
+        The chi-squared value at the percentile.
     """
     p = np.asarray(p, dtype=float)
     eps = np.finfo(p.dtype).eps
@@ -243,26 +234,23 @@ def nsigma(chi2r_test, chi2r_true, ndof):
     """Gaussian-equivalent significance of a reduced-chi-squared ratio.
 
     ``ndof * chi2r_test / chi2r_true`` is compared with a chi-squared
-    distribution of ``ndof`` degrees of freedom (as in Absil et al. 2011).
+    distribution of ``ndof`` degrees of freedom. Accurate far beyond 8σ; it
+    saturates near 13σ in float32 and 37σ in float64. See
+    [detection limits](../detection_limits.md#significance).
+
+    Source: Absil et al. (2011), [references](../references.md#absil2011).
 
     Parameters
     ----------
-    chi2r_test: float
-        Reduced chi-squared of test model.
-    chi2r_true: float
-        Reduced chi-squared of true model.
-    ndof: int
-        Number of degrees of freedom.
+    chi2r_test, chi2r_true : float
+        Reduced chi-squared of the test and true models.
+    ndof : int
+        Degrees of freedom.
 
     Returns
     -------
-    nsigma: float
+    float
         Detection significance in Gaussian sigma.
-
-    Notes
-    -----
-    Accurate far beyond 8σ; it saturates at about 13σ in float32 and 37σ in
-    float64. See [detection limits](../detection_limits.md#significance).
     """
     x = ndof * chi2r_test / chi2r_true
     half_tail = 0.5 * jax.scipy.special.gammaincc(ndof / 2.0, x / 2.0)
@@ -279,28 +267,26 @@ def ruffio_upperlimit(mean, sigma, percentile):
     """Percentile of a flux posterior truncated to non-negative values.
 
     The posterior is the Laplace Gaussian ``N(mean, sigma)`` truncated to
-    ``flux >= 0`` (Ruffio et al. 2018, eqn 8). ``percentile = norm.cdf(2)``
-    gives a 2-sigma-equivalent upper limit. See
-    [detection limits](../detection_limits.md#ruffio).
+    ``flux >= 0``; ``percentile = norm.cdf(2)`` gives a 2σ-equivalent upper
+    limit. See [detection limits](../detection_limits.md#ruffio).
+
+    Source: Ruffio et al. (2018), [references](../references.md#ruffio2018).
 
     Parameters
     ----------
     mean : float or array-like
-        Unconstrained best-fit flux, e.g. from
-        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid]; may be
-        negative.
+        Unconstrained best-fit flux (may be negative), e.g. from
+        [`optimized_flux_grid`][virgil.grid_fit.optimized_flux_grid].
     sigma : float or array-like
         Laplace uncertainty of the flux, e.g. from
-        [`laplace_flux_uncertainty_grid`][virgil.grid_fit.laplace_flux_uncertainty_grid];
-        broadcastable to ``mean``.
+        [`laplace_flux_uncertainty_grid`][virgil.grid_fit.laplace_flux_uncertainty_grid].
     percentile : float or array-like
-        Quantile(s) of the truncated posterior to return, between 0 and 1.
+        Quantile(s) of the truncated posterior, between 0 and 1.
 
     Returns
     -------
     array-like
-        Non-negative flux at each percentile, with shape
-        ``broadcast(mean, sigma).shape + percentile.shape``.
+        Non-negative flux, of shape ``broadcast(mean, sigma).shape + percentile.shape``.
     """
     mean, sigma = np.broadcast_arrays(np.asarray(mean), np.asarray(sigma))
     percentile = np.asarray(percentile)
@@ -336,52 +322,42 @@ def absil_limits(
 ):
     """Flux above which a companion is ruled out at ``sigma`` significance.
 
-    Following Absil et al. (2011), at each grid position this finds the flux
-    at which the model fits the data worse than the no-companion model by a
-    chi-squared ratio corresponding to ``sigma`` (see
-    [`nsigma`][virgil.limits.nsigma]). See
+    At each grid position, the flux at which the model fits worse than the
+    no-companion model by a chi-squared ratio of significance ``sigma`` (see
+    [`nsigma`][virgil.limits.nsigma]); the degrees of freedom are the data
+    points, with fitted parameters not subtracted. See
     [detection limits](../detection_limits.md#absil-injection).
+
+    Source: Absil et al. (2011), [references](../references.md#absil2011).
 
     Parameters
     ----------
     model : SourceModel or class
-        Template model or model class, as for
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid]. The
+        As for [`likelihood_grid`][virgil.grid_fit.likelihood_grid]; the
         no-companion model sets every parameter in ``grid`` to zero.
     data : OIData
         Data to fit.
     grid : dict[str, array-like]
-        Grid axes: parameter name or path to 1D values (e.g. ``dra``/``ddec``
-        in mas). The flux axis only matters with ``flux_bounds=None``, where
-        its smallest positive value starts the search.
+        Grid axes (e.g. ``dra``/``ddec`` in mas). The flux axis matters only
+        with ``flux_bounds=None``, where its smallest positive value starts the
+        search.
     sigma : float
-        Exclusion significance. It must exceed the significance of a
-        chi-squared ratio of 1 (about 0.67) and stay below the float type's
-        ceiling (12.9 in float32, 37 in float64).
+        Exclusion significance in Gaussian-equivalent σ, above that of a ratio of 1 (about
+        0.67) and below the float ceiling (12.9 in float32, 37 in float64).
     flux_param : str, optional
-        Key of ``grid`` holding the flux solved for (default: the one key
-        whose last part is ``flux``).
+        Key of ``grid`` holding the flux (default: the key ending in ``flux``).
     flux_bounds : tuple[float, float] or None, optional
-        Search range of the flux (default ``(1e-6, 1.0)``), searched upward
-        from its lower end. Limits
-        outside it are returned at the nearer bound, with a
-        ``RuntimeWarning``. ``None`` searches without bounds, e.g. for
-        [`System`][virgil.models.System] weights that may exceed 1.
+        Search range, searched upward from its lower end; limits outside it are
+        clipped with a ``RuntimeWarning``. ``None`` searches without bounds
+        (e.g. for [`System`][virgil.models.System] weights above 1).
     batch_size : int, optional
-        Grid points evaluated at once; see
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid].
+        Grid points evaluated at once.
 
     Returns
     -------
     array-like
-        Flux limit (companion/primary), with one axis per coordinate key;
-        see :func:`flux_to_contrast` and :func:`flux_to_delta_mag`.
-
-    Notes
-    -----
-    The degrees of freedom are the number of data points; fitted parameters
-    are not subtracted. The limit is the first flux, going up from the start
-    of the search, at which the significance reaches ``sigma``.
+        Flux limit (companion/primary), one axis per coordinate key; convert
+        with `flux_to_contrast` or `flux_to_delta_mag`.
     """
     return _limits(
         "absil_limits",
@@ -409,32 +385,25 @@ def injection_limits(
 ):
     """Flux at which an injected companion would be detected at ``sigma``.
 
-    The injection method of Gallenne et al. (2015), as in CANDID: a companion
-    of flux ``f`` is added to every observable and the no-companion model is
-    fitted to the result; the limit is where it fits worse than the companion
-    model by a chi-squared ratio corresponding to ``sigma``. Compare
-    [`absil_limits`][virgil.limits.absil_limits]. See
-    [detection limits](../detection_limits.md#absil-injection).
+    A companion of flux ``f`` is added to every observable and the no-companion
+    model is fitted to the result; the limit is where it fits worse than the
+    companion model by a chi-squared ratio of significance ``sigma``. Compare
+    [`absil_limits`][virgil.limits.absil_limits]; the search and the differences
+    from CANDID are in [detection limits](../detection_limits.md#absil-injection).
+
+    Source: Gallenne et al. (2015), [references](../references.md#gallenne2015).
 
     Parameters
     ----------
     model, data, grid, flux_param, flux_bounds, batch_size
         As for [`absil_limits`][virgil.limits.absil_limits].
     sigma : float
-        Detection significance; it must exceed the significance of a ratio
-        of 1 and stay below the float type's ceiling (12.9 in float32, 37 in
-        float64).
+        Detection significance, with the same bounds as for ``absil_limits``.
 
     Returns
     -------
     array-like
-        Flux limit (companion/primary), with one axis per coordinate key;
-        see :func:`flux_to_contrast` and :func:`flux_to_delta_mag`.
-
-    Notes
-    -----
-    The search and the differences from CANDID are described in
-    [detection limits](../detection_limits.md#absil-injection).
+        Flux limit (companion/primary), one axis per coordinate key.
 
     Examples
     --------
@@ -447,8 +416,6 @@ def injection_limits(
     ...     "comp.flux": np.array([0.01]),
     ... }
     >>> limits = injection_limits(template, data, grid, 3.0)  # doctest: +SKIP
-    >>> limits.shape  # doctest: +SKIP
-    (21, 21)
     """
     return _limits(
         "injection_limits",

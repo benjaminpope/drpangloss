@@ -72,6 +72,7 @@ EXPECTED = {
         "EvidenceGrid",
     },
     "virgil.imaging": {"clean", "CleanResult"},
+    "virgil.fitting": {"gauss_newton_diag"},
 }
 
 

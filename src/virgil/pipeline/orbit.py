@@ -3,6 +3,7 @@ multi-epoch binary orbit."""
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import inspect
@@ -36,6 +37,7 @@ from ._common import (
 )
 from ._core import Stage, _Pipeline
 from .._deprecate import external_stacklevel
+from .._geometry import lattice_alias_limit
 from .._precision import run_in
 
 # Grid step of the per-night position search, as a fraction of the finest
@@ -92,94 +94,36 @@ class OrbitPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Stages: ``load → epochs → search → modes → posterior → quicklook``.
-
-    * ``load`` groups the data into nights as given (the data are expected
-      to be prepared already, with the instrument's own channel, band and
-      noise handling) and records every file's night.
-    * ``epochs`` finds the companion's position in each night
-      ([`epoch_positions`][virgil.epochs.epoch_positions]) on a grid widened
-      until no best peak is at its edge, and flags the nights that cannot
-      seed an orbit (aliased peaks, a low gap, a high χ², a separation below
-      the resolution, a flux at its bound).
-    * ``search`` runs [`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases]
-      with no published period, window, start or prior: the period window
-      comes from the data, the bands are checkpointed in the run folder, and
-      the label swap, flux flip, V² amplitude, primary diameter and
-      tempering are the engine's defaults.
-    * ``modes`` ranks the alias bands, gives the winner's margin over the
-      runner-up and the band probabilities, and compares the best orbit with
-      a single star (``no-orbit``).
-    * ``posterior`` samples each significant band with NUTS on the engine's
-      own posterior (tempered, V² amplitude profiled).
-    * ``quicklook`` writes and executes ``quicklook.ipynb``.
-
-    The raw χ²/N on the quoted errors is always reported; the error scale
-    of every night and block is marginalized inside the likelihood.
+    The data are expected to be prepared already (the instrument's channel,
+    band and noise handling). Stages: ``load`` (group into nights), ``epochs``
+    ([`epoch_positions`][virgil.epochs.epoch_positions] per night), ``search``
+    ([`fit_orbit_aliases`][virgil.aliases.fit_orbit_aliases] with no published
+    period, window or prior), ``modes`` (rank the alias bands; compare with a
+    single star), ``posterior`` (NUTS in each significant band) and
+    ``quicklook``. ``run()`` returns a ``Result``: ``summary["modes"]["winner"]``
+    is the winning alias band and ``summary["modes"]["delta_log_z"]`` its
+    margin over the runner-up in nats. All settings, with defaults:
+    [pipeline settings](../pipeline.md#orbitpipeline-settings).
 
     Parameters
     ----------
     epochs : Epochs or dict
-        The nights: an [`Epochs`][virgil.epochs.Epochs], or
-        ``{night: OIData | [OIData] | [paths]}``. Use
-        ``OrbitPipeline.from_oifits`` for files.
+        An [`Epochs`][virgil.epochs.Epochs] or ``{night: OIData | [OIData] |
+        [paths]}``; use ``OrbitPipeline.from_oifits`` for files.
     output : str or os.PathLike, optional
         Run folder (default ``"run"``).
     **settings
-        Overrides of the defaults (see ``OrbitPipeline.defaults()``):
-
-        - ``gap_days`` (0.5): frames further apart than this are in
-          different nights (``from_oifits``).
-        - ``exclude`` ({}): ``{file, night or dataset: reason}`` left out,
-          a ruling recorded in ``run.json``.
-        - ``flag_nights`` (True): flag the nights that cannot seed an orbit;
-          ``flag_sep_blocks`` (False): whether a separation below λ/2B also
-          keeps a night from seeding (it is reported either way).
-        - ``outlier_eps`` (0.02): the prior outlier probability of each
-          night in the orbit fit, whose likelihood is
-          ``(1 - eps) L + eps L_broad`` with ``L_broad`` the night's mean
-          likelihood over the position grid, so that one bad night (a
-          sidelobe) cannot move the orbit; ``0 <= eps < 1``, 0 turns it off.
-          The posterior outlier probability of each night is in the search
-          report, with the ``orbit-prefers-secondary`` night flags (reported
-          only: no night is ever excluded). The no-orbit null is scored
-          without the mixture, as its broad component is a companion
-          elsewhere that a single star must not have.
-        - ``batch_size`` (None), ``memory_budget`` (None, bytes),
-          ``coarse_nats`` (30): the grid points (and candidate orbits) scored
-          together, by default what fits in the budget (1 GiB on a CPU), and,
-          for data with gains or offsets, the nats below the best within which
-          the position grid integrates the error scale in full (None: every
-          point); see ``epoch_positions``. None of them is a prior range.
-        - ``n_peaks`` (5), ``max_sep_mas`` (None), ``grid_step_mas``
-          (None), ``max_grid`` (201): the position search; by default the
-          step is a quarter of the finest λ/B (coarsened to ``max_grid``
-          points) and the half-width the coarsest λ/B, widened to at most
-          ``a_range[1] (1 + ecc_max)``.
-        - ``period_range`` (None): ``[min, max]`` days; by default from the
-          data (see ``fit_orbit_aliases``).
-        - ``a_range`` ([1, 30]), ``flux_range`` ([0.01, 1]), ``ecc_max``
-          (0.9), ``s_max`` (None): the engine's prior ranges (mas; flux
-          ratio at most 1; eccentricity; error-scale bound).
-        - ``primary_diam`` ("auto"), ``vis_amp`` (True), ``sign_free``
-          (True), ``flip_flux`` (True), ``temper`` (True): as for the
-          engine.
-        - ``n_bands_max``, ``n_candidates``, ``n_refine``, ``max_steps``,
-          ``n_is``: search effort; the defaults are those of
-          ``fit_orbit_aliases``, so the engine is the one place to raise
-          them (the ``mode_converged`` check says when to).
-        - ``alias_nats`` (10), ``no_orbit_nats`` (10): thresholds of the
-          ``alias_ambiguity`` and ``no_orbit`` checks.
-        - ``posterior_p_min`` (0.05), ``max_modes`` (3): bands sampled by
-          NUTS besides the winner.
-        - ``num_warmup``, ``num_samples``, ``num_chains`` (1000, 1000, 4),
-          ``chain_method`` ("vectorized") and ``seed`` (0): NUTS.
-        - ``quicklook_execute`` (True): execute the quicklook notebook.
+        Overrides of ``OrbitPipeline.defaults()``. The most used: ``gap_days``
+        (days, 0.5; the gap that splits nights), ``exclude`` (a dict whose
+        keys are a file name, night or dataset name and values the reason,
+        recorded in ``run.json``), ``period_range``
+        (default from the data), ``outlier_eps`` (0.02), ``max_modes`` (3).
+        Priors and errors: [conventions](../conventions.md).
 
     Examples
     --------
     >>> from virgil.pipeline import OrbitPipeline  # doctest: +SKIP
-    >>> res = OrbitPipeline.from_oifits(files, output="runs/hd1234").run()  # doctest: +SKIP
+    >>> res = OrbitPipeline.from_oifits(files, output="runs/orbit").run()  # doctest: +SKIP
     >>> res.summary["modes"]["winner"]["period"]  # doctest: +SKIP
     """
 
@@ -215,6 +159,7 @@ class OrbitPipeline(_Pipeline):
         ),
         "alias_nats": 10.0,
         "no_orbit_nats": 10.0,
+        "drop_outlier_night": True,
         "posterior_p_min": 0.05,
         "max_modes": 3,
         "num_warmup": 1000,
@@ -249,10 +194,10 @@ class OrbitPipeline(_Pipeline):
         paths : str, os.PathLike or list of them
             OIFITS files, each split into nights at gaps of ``gap_days``.
         metadata : dict, optional
-            ``{file (path or name): {...}}``, each entry giving any of:
-            ``epoch`` (a night label for the file), ``mjd`` (the time of the
-            night the file holds, when its stamp is wrong or absent). Rulings that leave data
-            out go in the ``exclude`` setting, with their reason.
+            ``{file (path or name): {...}}``, each entry giving any of
+            ``epoch`` (a night label for the file) and ``mjd`` (the night's
+            time, when the file's stamp is wrong or absent). Rulings that
+            leave data out go in the ``exclude`` setting, with their reason.
         output : str or os.PathLike, optional
             Run folder.
         **settings
@@ -666,6 +611,10 @@ def _night_positions(p):
     geometry = _geometry(list(p.data.data))
     finest, coarsest = geometry["lambda_over_b_mas"], geometry["fov_mas"]
     cap = s["a_range"][1] * (1.0 + s["ecc_max"])  # the largest separation
+    # Deliberate: lattice coverage (aperture masks, DISCO) repeats beyond one
+    # alias cell, so the default box stops there; ``max_sep_mas`` overrides.
+    limits = [lattice_alias_limit(night) for night in p.data.data]
+    cap = min([cap] + [x for x in limits if x is not None])
     half = s["max_sep_mas"] or min(coarsest, cap)
     halves = []
     for _ in range(_MAX_WIDEN + 1):
@@ -836,19 +785,19 @@ def _band_checkpoints(p):
     return p.output / "stages" / "search" / "bands"
 
 
-@_x64
-def _search(p):
+def _alias_search(p, data, positions, times, checkpoint_dir):
+    """The engine call of the ``search`` stage (and of the refit of the
+    robustness check): ``fit_orbit_aliases`` with the settings."""
     from ..aliases import fit_orbit_aliases
 
     # The default run is blind: no period window, start or paper prior
     # (test_blind_search_resolves_the_two_season_gap_alias).
     s = p.settings
-    epochs = p.data
-    result = fit_orbit_aliases(
-        list(epochs.data),
+    return fit_orbit_aliases(
+        data,
         None if s["period_range"] is None else tuple(s["period_range"]),
-        positions=_read_positions(p),
-        times=epochs.times,
+        positions=positions,
+        times=times,
         a_range=tuple(s["a_range"]),
         flux_range=tuple(s["flux_range"]),
         ecc_max=s["ecc_max"],
@@ -859,7 +808,7 @@ def _search(p):
         sign_free=s["sign_free"],
         n_is=s["n_is"],
         seed=s["seed"],
-        checkpoint_dir=_band_checkpoints(p),
+        checkpoint_dir=checkpoint_dir,
         primary_diam=s["primary_diam"],
         vis_amp=s["vis_amp"]
         if isinstance(s["vis_amp"], bool)
@@ -870,6 +819,18 @@ def _search(p):
         outlier_eps=s["outlier_eps"],
         batch_size=s["batch_size"],
         memory_budget=s["memory_budget"],
+    )
+
+
+@_x64
+def _search(p):
+    epochs = p.data
+    result = _alias_search(
+        p,
+        list(epochs.data),
+        _read_positions(p),
+        epochs.times,
+        _band_checkpoints(p),
     )
     with _io.atomic_path(
         p.output / "stages" / "search" / "aliases.json"
@@ -992,19 +953,17 @@ def _load_result(p):
 
 
 def _single_star(problem, x, diam_range):
-    """The best log likelihood of the star alone: the engine's likelihood at
-    ``x`` with an invisible companion (and, if the orbit fitted the primary's
-    diameter, the best diameter: a log grid over its prior range, then a
-    finer one about the best cell, so the null is not under-fitted).
-
-    The null uses the plain likelihood (``mixed=False``), the modes the
-    outlier mixture: see docs/orbit_fitting.md.
-    test_a_single_star_is_no_orbit pins the verdict."""
+    """Best log likelihood of the star alone: an invisible companion at ``x``,
+    and the primary's best diameter if the orbit fits one."""
     import jax.numpy as np
 
     x = onp.array(x, float)
     x[7] = _NO_COMPANION
 
+    # Deliberate: the null is scored without the outlier mixture (mixed=False)
+    # while the orbit modes use it. The mixture's broad component is a
+    # companion elsewhere, which a single star must not have; test_a_single_
+    # star_is_no_orbit pins the verdict. See docs/orbit_fitting.md.
     def best(logd):
         xs = onp.tile(x, (len(logd), 1))
         xs[:, 8] = logd
@@ -1025,10 +984,24 @@ def _single_star(problem, x, diam_range):
     return float(max(onp.max(ll), onp.max(best(near))))
 
 
-@_x64
-def _modes(p):
+def _null_verdict(result, data, s):
+    """The best orbit against a single star: ``{delta_log_z,
+    log_like_single_star, threshold, verdict}``."""
     from ..aliases import _band_target
 
+    problem, _, x, settings = _band_target(result, data)
+    null = _single_star(problem, x, settings.diam_range)
+    delta = float(result.best.log_z - null)
+    return {
+        "delta_log_z": delta,
+        "log_like_single_star": null,
+        "threshold": s["no_orbit_nats"],
+        "verdict": "orbit" if delta >= s["no_orbit_nats"] else "no-orbit",
+    }
+
+
+@_x64
+def _modes(p):
     s = p.settings
     result = _load_result(p)
     epochs = p.data
@@ -1036,15 +1009,12 @@ def _modes(p):
     best, bands = result.best, result.bands
     runner = next((b for b in bands[1:] if onp.isfinite(b.log_z)), None)
     delta = None if runner is None else float(best.log_z - runner.log_z)
-    problem, _, x, settings = _band_target(result, data)
-    null = _single_star(problem, x, settings.diam_range)
-    delta_null = float(best.log_z - null)
+    no_orbit = _null_verdict(result, data, s)
     sampled = [best.n] + [
         b.n
         for b in bands[1 : 1 + s["max_modes"]]
         if b.p >= s["posterior_p_min"] and onp.isfinite(b.log_z)
     ]
-    verdict = "orbit" if delta_null >= s["no_orbit_nats"] else "no-orbit"
     _plot_sky(p, result, epochs)
     return {
         "winner": {
@@ -1060,14 +1030,114 @@ def _modes(p):
         else {"n": int(runner.n), "p": runner.p, "log_z": runner.log_z},
         "delta_log_z": delta,
         "labels_free": bool(result.labels_free),
-        "no_orbit": {
-            "delta_log_z": delta_null,
-            "log_like_single_star": null,
-            "threshold": s["no_orbit_nats"],
-            "verdict": verdict,
-        },
+        "no_orbit": no_orbit,
+        "robustness": _robustness(p, result, no_orbit["verdict"]),
         "sampled": [int(n) for n in sampled],
         "table": _band_rows(result)[: max(_BAND_ROWS, len(sampled))],
+    }
+
+
+def _outlying_night(epochs, nights):
+    """``(night, indices, chi2_per_n)`` of the night with the highest raw
+    χ²/N at the best orbit (``nights``: the search report's per-dataset
+    table), the indices being its datasets'."""
+    pooled = {}
+    for k, (name, night) in enumerate(
+        zip(epochs.dataset_names, epochs.epoch_of)
+    ):
+        row = nights[name]
+        total = pooled.setdefault(night, [0.0, 0, []])
+        total[0] += row["chi2"]
+        total[1] += row["n"]
+        total[2].append(k)
+    ratio = {
+        night: chi2 / n if n else math.nan
+        for night, (chi2, n, _) in pooled.items()
+    }
+    night = max(
+        ratio, key=lambda k: -math.inf if math.isnan(ratio[k]) else ratio[k]
+    )
+    return night, pooled[night][2], ratio[night]
+
+
+def _without(found, drop):
+    """``EpochPositions`` without the datasets at the indices ``drop``."""
+    keep = [k for k in range(len(found.names)) if k not in drop]
+
+    def pick(value):
+        if value is None:
+            return None
+        if isinstance(value, tuple):
+            return tuple(value[k] for k in keep)
+        return value[keep]
+
+    return dataclasses.replace(
+        found,
+        **{
+            f: pick(getattr(found, f))
+            for f in (
+                "names",
+                "mjd",
+                "dra",
+                "ddec",
+                "cov",
+                "flux",
+                "gap_marginal",
+                "chi2_raw",
+                "scale",
+                "peaks",
+                "flags",
+                "log_broad",
+                "exact_fraction",
+            )
+        },
+    )
+
+
+def _robustness_of(modes):
+    """``modes["robustness"]``; a ``modes`` report from before the check
+    (a resumed run folder) says it was not run."""
+    return modes.get("robustness", {"skipped": "not run (older run)"})
+
+
+def _robustness(p, result, verdict):
+    """Whether the verdict survives dropping the night of highest χ²/N.
+
+    Returns ``{"skipped": reason}`` when it is not run.
+    """
+    s = p.settings
+    epochs = p.data
+    if not s["drop_outlier_night"]:
+        return {"skipped": "drop_outlier_night is off"}
+    if len(epochs.names) < 3:  # the refit needs two nights; one has none
+        return {"skipped": "fewer than 3 nights"}
+    nights = p._report("search")["chi2"]["nights"]
+    night, drop, chi2_per_n = _outlying_night(epochs, nights)
+    keep = [k for k in range(len(epochs.data)) if k not in drop]
+    data = [epochs.data[k] for k in keep]
+    refit = _alias_search(
+        p,
+        data,
+        _without(_read_positions(p), drop),
+        epochs.times[keep],
+        _band_checkpoints(p).with_name("bands_drop"),
+    )
+    verdict_drop = _null_verdict(refit, data, s)["verdict"]
+    best = result.best
+    period = refit.best.best.get("period")
+    # The same alias: the refit's winning period is in the full fit's band
+    # (band numbers shift when the dropped night ends the arc).
+    same_band = bool(period is not None and best.p_lo <= period <= best.p_hi)
+    return {
+        "night": night,
+        "chi2_per_n": chi2_per_n,
+        "full": {"verdict": verdict, "n": int(best.n)},
+        "dropped": {
+            "verdict": verdict_drop,
+            "n": int(refit.best.n),
+            "period": period,
+            "same_band": same_band,
+        },
     }
 
 
@@ -1168,12 +1238,7 @@ def _orbit_model(problem, priors):
 
 
 def _sample_band(p, result, data, n):
-    """NUTS over the engine's posterior of band ``n`` from its best mode.
-
-    Returns ``(samples, stats, summary)``: draws by physical name and by
-    sampler site (each ``(chain, draw)``), the NUTS statistics and the
-    report.
-    """
+    """NUTS over band ``n``: ``(samples, stats, summary)``."""
     import numpyro.distributions as dist
 
     from ..aliases import _band_target, _physical
@@ -1206,10 +1271,7 @@ def _sample_band(p, result, data, n):
 
 
 def _optimum_gap(problem, draws, x0, n_max=500):
-    """How far (nats) the best sampled point lies above the start, the
-    search's best mode: positive means the search stopped short of the
-    optimum (a draw cannot beat a true maximum). At most ``n_max`` draws,
-    evenly spread, are scored."""
+    """How far (nats) the best draw lies above the start (>0: search short)."""
     import jax.numpy as np
 
     keep = draws[:: max(1, len(draws) // n_max)]
@@ -1368,6 +1430,7 @@ _MODES_KEYS = (
     "delta_log_z",
     "labels_free",
     "no_orbit",
+    "robustness",
     "sampled",
     "table",
 )
@@ -1482,6 +1545,7 @@ def _summarize(settings, reports):
                 threshold=settings["no_orbit_nats"],
             )
         )
+        checks.append(_checks.night_dropped(_robustness_of(modes)))
     if search:
         checks.append(
             _checks.period_bound(

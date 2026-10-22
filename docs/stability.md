@@ -25,6 +25,7 @@ Nothing warns at runtime. The tier lives in the documentation and in each module
 | Sparse imaging ([`virgil.imaging`](api/imaging.md)) | `clean`, `CleanResult` |
 | Fourier-transform choice | the `ft` argument of `Image`, `FlaredDisk*` and `image_visibilities`, `set_ft_defaults`, its automatic thresholds and its tolerances |
 | Rendered disks on uv lattices | the `rotation_deg` argument of `FlaredDisk*` and its `"grid"` default; the lattice tolerance for DISCO dictionaries |
+| Preconditioned fits ([`virgil.fitting`](api/fitting.md)) | `gauss_newton_diag` and the `precondition` argument of `fit` |
 | Radio interferometry | the module [`virgil.radio`](api/radio.md) (`ComplexVisData`, `CalibrationNuisance`, `primary_beam`, `dartboard_folds`; site names, default priors and the measurement-set convention) |
 | Radio CLEAN | the module [`virgil.radio_clean`](api/radio_clean.md) (`clean`, `RadioCleanResult`, `fit_beam`, `restore`) and the `uvtaper` argument of `ComplexVisData.dirty_image` and `dirty_beam` |
 | Image smoothing | `Image(smooth_fwhm_mas=...)`, `Image.smoothed()` and the `smoothed` option of the regularizers |
