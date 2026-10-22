@@ -171,23 +171,25 @@ def test_a_band_that_cannot_fit_the_data_warns_loudly():
     assert "poor-fit" in result.best.flags and result.best.flagged
 
 
-# Few random starts and no positions: this checks the run completes, and
-# the fit is often poor, which fit_orbit_aliases rightly warns about.
-@pytest.mark.filterwarnings("ignore:fit_orbit_aliases:UserWarning")
-def test_random_starts_and_s_max_without_positions():
+def test_random_starts_and_s_max_reach_the_settings_without_positions(
+    monkeypatch,
+):
+    # Without positions there are no seeds: the requested random starts and
+    # error-inflation bound must arrive in the settings unchanged. (The full
+    # fit this once ran, 58-88 s, only asserted that it completed.)
+    seen = {}
+
+    def preflight(problem, settings, band):
+        seen["n_random"], seen["s_max"] = settings.n_random, settings.s_max
+        raise _Stop
+
+    monkeypatch.setattr(aliases, "_preflight", preflight)
     data, _ = _synthetic(12.38)
-    result = fit_orbit_aliases(
-        data,
-        (12.1, 12.7),
-        t_ref=T_REF,
-        n_random=64,
-        n_refine=2,
-        n_is=100,
-        n_samples=20,
-        s_max=50.0,
-    )
-    # Random starts rarely find a narrow ridge in 8-D: only check that it runs.
-    assert result.bands and all(b.flags is not None for b in result.bands)
+    with pytest.raises(_Stop):
+        fit_orbit_aliases(
+            data, (12.1, 12.7), t_ref=T_REF, n_random=64, s_max=50.0
+        )
+    assert seen == {"n_random": 64, "s_max": 50.0}
 
 
 def _settings(**kw):
