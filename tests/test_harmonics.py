@@ -3,6 +3,7 @@
 import itertools
 import warnings
 
+import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
@@ -810,3 +811,20 @@ def test_harmonics_keyword_only_after_c_and_s():
         Harmonics(0.3, 0.1, 2)  # degree must be named
     with pytest.raises(TypeError):
         Harmonics((), (), None, "positive")
+
+
+@pytest.mark.parametrize("inc", [0.0, 40.0])
+def test_render_gradients_are_finite_with_a_pixel_on_the_origin(inc):
+    # An odd grid with no offset puts a pixel exactly at the disk's centre,
+    # where hypot and arctan2 have NaN gradients unless made safe.
+    harmonics = Harmonics(w=_random_latents(2, 7))
+    disk = MultipoleDisk(
+        GaussianRing(6.0, 1.0), harmonics=harmonics, inc=inc, pa=20.0
+    )
+
+    def total(model):
+        return np.sum(model.render(npix=25, fov_mas=24.0) ** 2)
+
+    grads = eqx.filter_grad(total)(disk)
+    for leaf in jax.tree_util.tree_leaves(grads):
+        assert bool(np.all(np.isfinite(leaf)))

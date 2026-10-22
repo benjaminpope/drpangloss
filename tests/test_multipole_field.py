@@ -269,6 +269,21 @@ def test_gradients_are_finite_in_every_parameter():
         assert onp.any(onp.asarray(g) != 0.0), name
 
 
+@pytest.mark.parametrize("inc", [0.0, 40.0])
+def test_gradients_are_finite_with_a_pixel_on_the_origin(inc):
+    # An odd grid with no offset puts a pixel exactly at the field's centre,
+    # where arctan2's gradient is NaN unless the azimuth is made safe.
+    base = _field(shape=(25, 25), inc=inc)
+    names = ["latent", "inc", "pa", "dra", "ddec"]
+
+    def total(values):
+        return np.sum(base.set(names, values).evaluate(1.0) ** 2)
+
+    grads = jax.grad(total)([getattr(base, n) for n in names])
+    for name, g in zip(names, grads):
+        assert onp.all(onp.isfinite(onp.asarray(g))), name
+
+
 def test_changing_values_does_not_recompile():
     u, v = onp.array([20.0, -35.0]), onp.array([15.0, 40.0])
 

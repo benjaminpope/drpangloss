@@ -32,6 +32,12 @@ def safe_azimuth(x, y):
     return np.arctan2(x, np.where(origin, 1.0, y))
 
 
+def safe_radius(x, y):
+    """Radius ``hypot(x, y)``, finite with finite gradients at the origin (where it is 0, with zero gradient)."""
+    origin = (x == 0.0) & (y == 0.0)
+    return np.where(origin, 0.0, np.hypot(np.where(origin, 1.0, x), y))
+
+
 def pixel_offsets(npix, pixel_scale_mas):
     """Sky offsets (mas) of the pixel centres along one image axis.
 

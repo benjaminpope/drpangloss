@@ -48,6 +48,7 @@ from ._geometry import (
     separation_pa,
     rotate,
     safe_azimuth,
+    safe_radius,
     undo_elliptical_transf_coord,
     undo_elliptical_transf_spat_freq,
 )
@@ -1807,7 +1808,7 @@ class ModulatedGaussianRim(Component):
     def _centred_image(self, xx, yy, pixel_scale_mas):
         stretch = np.maximum(np.cos(self.inc * dtor), 1e-8)
         xx_ell, yy_ell = undo_elliptical_transf_coord(xx, yy, self.pa, stretch)
-        r_ell = np.hypot(xx_ell, yy_ell)
+        r_ell = safe_radius(xx_ell, yy_ell)
         theta_ell = np.arctan2(xx_ell, yy_ell)
 
         # Anti-aliased thin ring: Gaussian in de-projected radius, at least
@@ -4896,7 +4897,7 @@ class MultipoleDisk(Component):
 
     def _flat_image(self, xx, yy, pixel_scale_mas, stretch):
         xx_ell, yy_ell = undo_elliptical_transf_coord(xx, yy, self.pa, stretch)
-        r_ell = np.hypot(xx_ell, yy_ell)
+        r_ell = safe_radius(xx_ell, yy_ell)
         image = self.profile.intensity(r_ell, pixel_scale_mas / stretch)
         if self.harmonics is not None and self.harmonics.degree:
             # The azimuth runs from the deprojected North towards East.
