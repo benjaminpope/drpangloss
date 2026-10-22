@@ -55,6 +55,7 @@ from ._grid import batch_size_or_default
 from .epochs import (
     _grid_batch,
     default_memory_budget,
+    _whitening_floats,
     _REFINE_WINDOW,
     EpochPositions,
     _amp_profile,
@@ -547,6 +548,38 @@ def _batch(surfaces, xs, data, cfg, dof, mix=None, batch_size=64):
     )
 
 
+# The Hessian of the likelihood (forward over reverse through the scale
+# integral) holds about this many whitenings' floats per night (measured: 6.4k
+# on calibrated GRAVITY-like data); it is a sum over nights, so it is
+# accumulated in groups of nights that fit the memory budget.
+_HESSIAN_COPIES = 8000
+
+
+def _hessian_groups(memory_budget, data, surfaces):
+    """Slices of the nights whose Hessians fit ``memory_budget`` bytes each:
+    one slice (the fused evaluation) for plain data or a roomy budget."""
+    n = len(data)
+    if not any(s.numeric for s in surfaces):
+        return [slice(0, n)]
+    budget = (
+        default_memory_budget() if memory_budget is None else memory_budget
+    )
+    if not budget > 0:
+        raise ValueError(f"memory_budget must be positive, got {budget}.")
+    per_night = [
+        8 * _HESSIAN_COPIES * _whitening_floats(d) if s.numeric else 0
+        for d, s in zip(data, surfaces)
+    ]
+    groups, start, used = [], 0, 0
+    for i, cost in enumerate(per_night):
+        if i > start and used + cost > budget:
+            groups.append(slice(start, i))
+            start, used = i, 0
+        used += cost
+    groups.append(slice(start, n))
+    return groups
+
+
 def _candidate_batch(batch_size, memory_budget, data, surfaces):
     """Orbits per batch of candidates: 64 (as ever) for plain data, fewer
     when gains or offsets make each epoch's scale integral hold many
@@ -580,6 +613,9 @@ class _Problem:
         self.surfaces = tuple(_Surface(d, settings.s_max) for d in self.data)
         self.batch_size = _candidate_batch(
             batch_size, memory_budget, self.data, self.surfaces
+        )
+        self.hessian_groups = _hessian_groups(
+            memory_budget, self.data, self.surfaces
         )
         # The tempering, one array of block dofs per epoch (traced).
         self.dof = tuple(
@@ -631,9 +667,19 @@ class _Problem:
         )
 
     def hessian(self, x):
-        return _hessian(
-            self.surfaces, x, self.data, self.cfg, self.dof, self.mix
-        )
+        """The Hessian of ``_loglike``: a sum over nights, accumulated one
+        memory-sized group of nights at a time."""
+        total = 0.0
+        for g in self.hessian_groups:
+            total = total + _hessian(
+                self.surfaces[g],
+                x,
+                tuple(self.data[g]),
+                self.cfg,
+                self.dof[g],
+                None if self.mix is None else self.mix[g],
+            )
+        return total
 
     def without_mixture(self):
         """This problem without the outlier mixture (itself without one).
@@ -2896,7 +2942,7 @@ def _with_outlier(
         settings, outlier_eps=eps, log_broad=tuple(map(float, broad))
     )
     return (
-        _Problem(problem.data, settings, problem.batch_size),
+        _Problem(problem.data, settings, problem.batch_size, memory_budget),
         settings,
     )
 
