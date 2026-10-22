@@ -27,6 +27,10 @@ anything before 1.0 may change between minor versions.
 - **`lattice_alias_limit` works per channel** (the longest unflagged wavelength sets the limit), so multi-channel lattice data now gets the alias-aware default box.
 - Docs: a public References page generated from `references/provenance.toml` (`tests/lint/test_provenance.py` fails on a cited source with no entry; nine references checked against ADS); the API index lists Radio CLEAN, Cross-validation and Short arcs; the pipeline settings are a table per pipeline.
 
+### Fixed
+
+- `fit_orbit_aliases` no longer runs out of memory on data with gains and many nights (κ Vel on an 80 GB A100 asked for 77 GiB): the Hessian at each mode is accumulated in groups of nights that fit `memory_budget` (default 8 GiB on an accelerator, 1 GiB on the CPU). Results agree to rounding.
+
 ### Changed
 
 - `fit(lbfgs_memory=None)`: the L-BFGS history defaults to 100 (was 50), cut to stay under 1 GiB (above 6.7×10⁵ float64 coordinates, never below 5, with a warning). LM ignores it. With `precondition="diag"` on the 41² `MaxEntropy` L-curve, float32 steps at w = 0.1 fall from 19524 to 3416 and float64 from 4527 to 2837 (one run); 32² AMI and a 3-parameter fit are indifferent between 50 and 100.
