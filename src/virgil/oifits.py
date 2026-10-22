@@ -3,8 +3,8 @@
 [`read_oifits`][virgil.oifits.read_oifits] turns an OIFITS file (a path or
 any astropy ``HDUList``) into the record that
 [`virgil.oidata.OIData`][virgil.oidata.OIData] is built from, and
-[`write_oifits`][virgil.oifits.write_oifits] writes a dictionary of tables to
-an OIFITS2 file. Each (baseline, wavelength) sample is one element of the flat
+[`write_oifits`][virgil.oifits.write_oifits] writes an `OIData` or a dictionary
+of tables to an OIFITS2 file. Each (baseline, wavelength) sample is one element of the flat
 ``u``, ``v`` and ``wavel`` arrays; closure phases index into them. See
 [OIFITS files](../oifits_files.md) for the details.
 """
@@ -13,6 +13,7 @@ import datetime
 import math
 import os
 import warnings
+from collections.abc import Mapping
 
 import numpy as onp
 from astropy.io import fits
@@ -48,59 +49,47 @@ def read_oifits(
     extras=(),
     bandwidth=False,
 ):
-    """Read an OIFITS file into a record for [`OIData`][virgil.oidata.OIData].
+    """Read an OIFITS file into the record `OIData(source)` is built from.
 
-    Squared visibilities (`OI_VIS2`) are preferred over amplitudes, and
-    closure phases (`OI_T3`) over absolute phases. Which tables are read, how
-    closure-phase triangles are matched to baselines, and how frames are
-    formed are described in [OIFITS files](../oifits_files.md).
+    Prefers `OI_VIS2` over amplitudes and `OI_T3` over absolute phases; see
+    [OIFITS files](../oifits_files.md) for the tables read and how closure
+    phases are matched to baselines.
+    Source: Pauls et al. (2005), [references](../references.md#pauls2005);
+    Duvert et al. (2015), [references](../references.md#duvert2017).
 
     Parameters
     ----------
     source : str, os.PathLike, astropy.io.fits.HDUList, or a list of them
-        File path, or an opened file (e.g. from ``astropy.io.fits.open`` or
-        ``pyoifits.open``). A list or tuple of files is read file by file and
-        concatenated into one record, in the order given.
+        A path or an opened file. A list is read in order and concatenated.
     target : str or int, optional
-        Target to keep, by ``OI_TARGET`` name or ``TARGET_ID``. Required when
-        a file contains data on more than one target. With several files it
-        must be the name, since ``TARGET_ID`` numbering is per file.
+        Target to keep, by name or `TARGET_ID`; needed for several targets,
+        and a name for several files.
     insname : str or sequence of str, optional
-        Keep only the tables with this ``INSNAME``, or one of these. Required
-        for a file holding several instruments, such as a GRAVITY product with
-        fringe-tracker and science tables (see
-        [one instrument at a time](../oifits_files.md#insname)).
+        Keep only tables with this `INSNAME`; needed for several instruments
+        (see [one instrument at a time](../oifits_files.md#insname)).
     frame_mjd : {"mean", "row"}, optional
-        ``"mean"`` (the default) gives every sample of a frame (one exposure)
-        the mean ``MJD`` of the frame's rows; ``"row"`` keeps each row's own
-        ``MJD``.
+        Give every sample of a frame the frame's mean `MJD` (default), or
+        keep each row's own.
     extras : sequence of str, optional
-        Further observables to read: any of ``"flux"``, ``"nflux"``,
-        ``"t3amp"``, ``"visamp"``, ``"visphi"`` (none by default); see
-        [extra observables](../oifits_files.md#extras).
+        Further observables: any of `"flux"`, `"nflux"`, `"t3amp"`,
+        `"visamp"`, `"visphi"` (see [extras](../oifits_files.md#extras)).
     bandwidth : bool, optional
-        Also return the ``EFF_BAND`` of each sample's channel as
-        ``"bandwidth"`` (default False).
+        Also return each sample's `EFF_BAND` as `"bandwidth"`.
 
     Returns
     -------
     dict
-        Record with flat per-sample arrays ``u``, ``v`` (metres) and
-        ``wavel`` (metres; a single element if every sample shares one
-        wavelength), the visibility observables ``vis``/``d_vis`` with a
-        boolean ``vis_flag`` (True = bad), the phases ``phi``/``d_phi`` in
-        radians with ``phi_flag``, the closure-phase indices
-        ``i_cps1``/``i_cps2``/``i_cps3`` (or ``None`` for absolute phases),
-        the flags ``v2_flag`` and ``cp_flag``, and per sample the time
-        ``mjd`` (days, float64) and the integer ``frame``. Each requested
-        extra adds a dictionary under its name.
+        Flat per-sample arrays `u`, `v`, `wavel` (metres), `vis`/`d_vis`
+        (V², or amplitudes if `v2_flag` is False; one-sigma errors, with
+        `vis_flag`, True = bad), `phi`/`d_phi` (radians, with `phi_flag`), the
+        closure-phase indices `i_cps1`/`i_cps2`/`i_cps3`, `cp_flag`, `mjd` and
+        `frame`, and a dict under each requested extra's name.
 
     Raises
     ------
     ValueError
-        For several targets or instruments without ``target``/``insname``,
-        differential or correlated-flux data, or unusable ``OI_T3``
-        coordinates.
+        For several targets or instruments without `target`/`insname`,
+        differential or correlated-flux data, or unusable `OI_T3` coordinates.
     """
     extras = _check_extras(extras)
     # An HDUList is itself a list (of HDUs): only other sequences are lists
@@ -1254,7 +1243,7 @@ def _concat_records(records):
 _ROW_COLUMNS = (
     ("TARGET_ID", "1I", None),
     ("TIME", "1D", "s"),
-    ("MJD", "1D", "day"),
+    ("MJD", "1D", "d"),
     ("INT_TIME", "1D", "s"),
 )
 
@@ -1304,19 +1293,24 @@ _TABLE_KEYWORDS = {
 _OPTIONAL_DATA = {"T3AMP", "T3AMPERR"}
 
 
-def write_oifits(tables, filename, overwrite=True):
-    """Write a dictionary of OIFITS tables to an OIFITS2 file.
+def write_oifits(data, filename, overwrite=True):
+    """Write an `OIData` or a dictionary of OIFITS tables to an OIFITS2 file.
 
-    Phases are in **degrees**. The layout of ``tables`` is described in
-    [writing OIFITS](../oifits_files.md#writing).
+    An `OIData` is written as `OI_VIS2` with `OI_T3` or `OI_VIS` phases, and
+    read back by [`read_oifits`][virgil.oifits.read_oifits] to the same
+    observables, errors, flags, wavelengths and (u, v), and to the times if there
+    are any (else MJD 0). Closure phases without station indices get
+    placeholder stations. A dictionary of tables
+    (columns as in [writing OIFITS](../oifits_files.md#writing), upper-case
+    OIFITS names) has phases in **degrees**.
+    Source: Duvert et al. (2015), [references](../references.md#duvert2017).
 
     Parameters
     ----------
-    tables : dict
-        Mapping of table name to a dict of columns: ``"OI_WAVELENGTH"``
-        (required), at least one of ``"OI_VIS2"``, ``"OI_VIS"`` and
-        ``"OI_T3"``, and optionally ``"OI_FLUX"``, ``"OI_TARGET"``,
-        ``"OI_ARRAY"`` and ``"info"`` (primary-header keywords).
+    data : OIData or dict
+        Squared visibilities with closure or absolute phases, or a mapping of
+        table name to a dict of columns (`OI_WAVELENGTH` and at least one data
+        table).
     filename : str or os.PathLike
         Output path. Missing parent directories are created.
     overwrite : bool, optional
@@ -1326,12 +1320,28 @@ def write_oifits(tables, filename, overwrite=True):
     -------
     pathlib.Path
         The path written.
+
+    Raises
+    ------
+    ValueError
+        If an `OIData` has a layout OIFITS cannot hold (the message says
+        which): extra observables, gains, projected or uv-grid data. No file
+        is written.
+    OSError
+        If the file exists and `overwrite` is False.
     """
     import pathlib
 
+    if not isinstance(data, Mapping):
+        tables, reason = _oidata_tables(data)
+        if tables is None:
+            raise ValueError(
+                f"These data cannot be written as OIFITS: {reason}."
+            )
+        data = tables
     path = pathlib.Path(filename)
     path.parent.mkdir(parents=True, exist_ok=True)
-    build_hdulist(tables).writeto(path, overwrite=overwrite)
+    build_hdulist(data).writeto(path, overwrite=overwrite)
     return path
 
 
@@ -1429,7 +1439,7 @@ def _target_hdu(target, info):
     name = str(info.get("TARGET", info.get("OBJECT", "UNKNOWN")))
     defaults = {
         "TARGET_ID": ("1I", None, 1),
-        "TARGET": ("16A", None, name),
+        "TARGET": ("32A", None, name),
         "RAEP0": ("1D", "deg", float(info.get("RA", 0.0))),
         "DECEP0": ("1D", "deg", float(info.get("DEC", 0.0))),
         "EQUINOX": ("1E", "yr", 2000.0),
@@ -1444,7 +1454,7 @@ def _target_hdu(target, info):
         "PMDEC_ERR": ("1D", "deg/yr", 0.0),
         "PARALLAX": ("1E", "deg", 0.0),
         "PARA_ERR": ("1E", "deg", 0.0),
-        "SPECTYP": ("16A", None, str(info.get("SPECTYP", "UNKNOWN"))),
+        "SPECTYP": ("32A", None, str(info.get("SPECTYP", "UNKNOWN"))),
     }
     target = target or {}
     nrow = onp.atleast_1d(target.get("TARGET_ID", 1)).size
@@ -1561,3 +1571,295 @@ def _data_hdu(name, table, info, nwave):
         columns.append(fits.Column(key, fmt, unit=unit, array=values))
     columns.append(fits.Column("FLAG", f"{nwave}L", array=flag))
     return fits.BinTableHDU.from_columns(columns)
+
+
+# === WRITING AN OIDATA ===
+
+
+_IRREGULAR_CP = "irregular closure-phase layout"
+_IRREGULAR_WAVEL = "irregular wavelength layout"
+
+
+def _oidata_tables(data):
+    """OIFITS tables for [`write_oifits`][virgil.oifits.write_oifits] from an `OIData`.
+
+    Squared visibilities with closure phases or absolute phases, one or more
+    channels per baseline, flagged samples (written as flagged NaN rows), no
+    projection and no extra observables. Returns ``(tables, None)`` with
+    phases in degrees, or ``(None, reason)`` when the data cannot be written
+    faithfully.
+    """
+    reason = _unsupported_reason(data)
+    if reason:
+        return None, reason
+    layout, reason = _baseline_layout(data)
+    if reason:
+        return None, reason
+    tables = _vis2_tables(data, layout)
+    phi = onp.asarray(data.phi, dtype=float)
+    if phi.size == 0:
+        return tables, None
+    phases = _closure_tables if data.cp_flag else _absolute_phase_tables
+    more, reason = phases(data, layout)
+    if reason:
+        return None, reason
+    tables.update(more)
+    return tables, None
+
+
+def _unsupported_reason(data):
+    """Why ``data`` has more than the supported observables, or ``None``."""
+    if data.vis_mat is not None or data.phi_mat is not None:
+        return "projected observables (vis_mat/phi_mat)"
+    if data.uv_grid is not None:
+        return "uv-grid (AMIGO DISCO) data"
+    if data.extras:
+        return "extra observables"
+    if data.gains is not None or data.phase_offsets is not None:
+        return "calibration gains or closure offsets"
+    if data.cp_flag and data.phi_index is not None:
+        return "flagged closure phases"
+    if not data.v2_flag or data.vis_mode != "v2":
+        return "visibility amplitudes rather than V²"
+    return None
+
+
+def _baseline_layout(data):
+    """Samples as ``n_b`` baselines by ``n_w`` channels: ``(layout, reason)``.
+
+    ``layout`` holds ``n_b``, ``n_w``, the channel wavelengths ``waves`` and
+    widths ``bands``, the baseline coordinates ``ub``, ``vb``, the
+    ``stations`` of every baseline and, if the data carry times, the ``mjd`` of
+    every baseline.
+    """
+    u = onp.asarray(data.u, dtype=float)
+    v = onp.asarray(data.v, dtype=float)
+    wavel = onp.broadcast_to(onp.asarray(data.wavel, dtype=float), u.shape)
+    waves = onp.asarray(list(dict.fromkeys(wavel.tolist())))
+    n_w = waves.size
+    if u.size % n_w:
+        return None, _IRREGULAR_WAVEL
+    n_b = u.size // n_w
+    u, v = u.reshape(n_b, n_w), v.reshape(n_b, n_w)
+    if not (
+        onp.all(wavel.reshape(n_b, n_w) == waves[None, :])
+        and onp.all(u == u[:, :1])
+        and onp.all(v == v[:, :1])
+    ):
+        return None, _IRREGULAR_WAVEL
+    bands = 0.0
+    if data.bandwidth is not None:
+        band = onp.broadcast_to(onp.asarray(data.bandwidth, float), u.size)
+        band = band.reshape(n_b, n_w)
+        if not onp.all(band == band[:1]):
+            return None, "bandwidth differs between baselines of a channel"
+        bands = band[0]
+    n_vis = u.size if data.vis_index is None else data.vis_index.size
+    if onp.asarray(data.vis).size != n_vis:
+        return None, "visibilities do not match the samples"
+    stations, reason = _stations(data, n_b, n_w)
+    if reason:
+        return None, reason
+    mjd = None
+    if data.dt is not None and data.t_ref is not None:
+        dt = onp.asarray(data.dt, dtype=float).reshape(n_b, n_w)
+        mjd = (dt + data.t_ref)[:, 0]
+    if data.cp_flag and _repeated(stations, mjd):
+        # The reader tells repeated baselines apart by station pair and time,
+        # so give them placeholder stations when the data have no times.
+        if mjd is None:
+            stations, reason = _stations_from_triangles(data, n_b, n_w)
+            if reason:
+                return None, reason
+        if _repeated(stations, mjd):
+            return None, "repeated baselines without distinct times"
+    return {
+        "n_b": n_b,
+        "n_w": n_w,
+        "waves": waves,
+        "bands": bands,
+        "ub": u[:, 0],
+        "vb": v[:, 0],
+        "stations": stations,
+        "mjd": mjd,
+    }, None
+
+
+def _stations(data, n_b, n_w):
+    """Station pair of every baseline: the data's, or placeholders."""
+    if data.stations is not None:
+        stations = onp.asarray(data.stations, dtype=int)
+        return stations.reshape(n_b, n_w, 2)[:, 0], None
+    if not data.cp_flag:
+        index = onp.arange(n_b)
+        return onp.stack([2 * index + 1, 2 * index + 2], axis=1), None
+    return _stations_from_triangles(data, n_b, n_w)
+
+
+def _stations_from_triangles(data, n_b, n_w):
+    """Placeholder stations chaining the triangles, or a reason."""
+    legs = _closure_baselines(data, n_w)
+    if legs is None:
+        return None, _IRREGULAR_CP
+    stations = _closure_stations(*legs, n_b)
+    if onp.any(
+        stations[:, 0] == stations[:, 1]
+    ):  # a leg joins a station to itself
+        return None, _IRREGULAR_CP
+    return stations, None
+
+
+def _repeated(stations, mjd):
+    """Whether two baselines share a station pair (and time)."""
+    key = onp.column_stack(
+        [stations, onp.zeros(len(stations)) if mjd is None else mjd]
+    )
+    return len(onp.unique(key, axis=0)) < len(stations)
+
+
+def _closure_stations(b1, b2, b3, n_b):
+    """Station pairs consistent with the triangles' baselines AB, BC, AC.
+
+    Each baseline has two ends; a triangle identifies end B of AB with end B
+    of BC, end A of AB with end A of AC, and end C of BC with end C of AC.
+    Each class of identified ends is one station, numbered from 1.
+    """
+    parent = list(range(2 * n_b))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for x, y, z in zip(b1, b2, b3):
+        for i, j in (
+            (2 * x + 1, 2 * y),
+            (2 * x, 2 * z),
+            (2 * y + 1, 2 * z + 1),
+        ):
+            parent[find(i)] = find(j)
+    roots = [find(i) for i in range(2 * n_b)]
+    number = {r: k + 1 for k, r in enumerate(dict.fromkeys(roots))}
+    return onp.array([number[r] for r in roots]).reshape(n_b, 2)
+
+
+def _scattered(values, index, n):
+    """``values`` placed at ``index`` of ``n`` samples, NaN elsewhere."""
+    out = onp.full(n, onp.nan)
+    out[index] = values
+    return out
+
+
+def _vis2_tables(data, layout):
+    n_b, n_w = layout["n_b"], layout["n_w"]
+    vis = onp.asarray(data.vis, float)
+    d_vis = onp.asarray(data.d_vis, float)
+    table = {}
+    if data.vis_index is not None:
+        index = onp.asarray(data.vis_index, int)
+        vis = _scattered(vis, index, n_b * n_w)
+        d_vis = _scattered(d_vis, index, n_b * n_w)
+        table["FLAG"] = onp.isnan(vis).reshape(n_b, n_w)
+    tables = {
+        "info": {"TARGET": "PIPELINE", "INSTRUME": "VIRGIL"},
+        "OI_WAVELENGTH": {
+            "EFF_WAVE": layout["waves"],
+            "EFF_BAND": layout["bands"],
+        },
+        "OI_VIS2": {
+            "VIS2DATA": vis.reshape(n_b, n_w),
+            "VIS2ERR": d_vis.reshape(n_b, n_w),
+            "UCOORD": layout["ub"],
+            "VCOORD": layout["vb"],
+            "STA_INDEX": layout["stations"],
+            **table,
+        },
+    }
+    if layout["mjd"] is not None:
+        tables["OI_VIS2"]["MJD"] = layout["mjd"]
+        tables["info"]["MJD"] = float(layout["mjd"][0])
+    return tables
+
+
+def _absolute_phase_tables(data, layout):
+    n_b, n_w = layout["n_b"], layout["n_w"]
+    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
+    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
+    table = {}
+    if data.phi_index is not None:
+        index = onp.asarray(data.phi_index, int)
+        phi = _scattered(phi, index, n_b * n_w)
+        d_phi = _scattered(d_phi, index, n_b * n_w)
+        table["FLAG"] = onp.isnan(phi).reshape(n_b, n_w)
+    if phi.size != n_b * n_w:
+        return None, "absolute phases do not match the samples"
+    table.update(
+        {
+            "VISPHI": phi.reshape(n_b, n_w),
+            "VISPHIERR": d_phi.reshape(n_b, n_w),
+            "VISAMP": onp.full((n_b, n_w), onp.nan),
+            "VISAMPERR": onp.full((n_b, n_w), onp.nan),
+            "UCOORD": layout["ub"],
+            "VCOORD": layout["vb"],
+            "STA_INDEX": layout["stations"],
+        }
+    )
+    if layout["mjd"] is not None:
+        table["MJD"] = layout["mjd"]
+    return {"OI_VIS": table}, None
+
+
+def _closure_baselines(data, n_w):
+    """Baseline of each leg of every triangle, or ``None`` if irregular.
+
+    Each leg indexes the flat samples as ``baseline * n_w + channel`` and
+    must run through the channels in order within one baseline.
+    """
+    legs = [
+        onp.asarray(i, dtype=int)
+        for i in (data.i_cps1, data.i_cps2, data.i_cps3)
+    ]
+    if legs[0].size % n_w:
+        return None
+    legs = [leg.reshape(-1, n_w) for leg in legs]
+    rows, cols = [leg // n_w for leg in legs], [leg % n_w for leg in legs]
+    if not all(
+        onp.all(r == r[:, :1]) and onp.all(c == onp.arange(n_w)[None, :])
+        for r, c in zip(rows, cols)
+    ):
+        return None
+    return [r[:, 0] for r in rows]
+
+
+def _closure_tables(data, layout):
+    n_w, stations = layout["n_w"], layout["stations"]
+    phi = onp.rad2deg(onp.asarray(data.phi, dtype=float))
+    d_phi = onp.rad2deg(onp.asarray(data.d_phi, dtype=float))
+    baselines = _closure_baselines(data, n_w)
+    if baselines is None or phi.size != baselines[0].size * n_w:
+        return None, _IRREGULAR_CP
+    b1, b2, b3 = baselines
+    # virgil's closure phase is φ[i_cps1] + φ[i_cps2] - φ[i_cps3], i.e. the
+    # baselines AB, BC and AC of the triangle ABC that OI_T3 stores.
+    if not (
+        onp.all(stations[b2, 0] == stations[b1, 1])
+        and onp.all(stations[b3, 0] == stations[b1, 0])
+        and onp.all(stations[b3, 1] == stations[b2, 1])
+    ):
+        return None, _IRREGULAR_CP
+    ub, vb = layout["ub"], layout["vb"]
+    table = {
+        "T3PHI": phi.reshape(-1, n_w),
+        "T3PHIERR": d_phi.reshape(-1, n_w),
+        "U1COORD": ub[b1],
+        "V1COORD": vb[b1],
+        "U2COORD": ub[b2],
+        "V2COORD": vb[b2],
+        "STA_INDEX": onp.stack(
+            [stations[b1, 0], stations[b1, 1], stations[b2, 1]], axis=1
+        ),
+    }
+    if layout["mjd"] is not None:
+        table["MJD"] = layout["mjd"][b1]
+    return {"OI_T3": table}, None
