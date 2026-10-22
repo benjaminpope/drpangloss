@@ -1065,12 +1065,10 @@ class CalibrationNuisance:
     ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
     ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
     ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
-    ``cal.gain_amp_width``    ``()``   Jeffreys ``1/τ``            ``0.1``
-    ``cal.gain_phase_width``  ``()``   Jeffreys ``1/τ``            ``0.5`` rad
     ===============  ================  ==========================  =============
 
-    The last two sites exist only with ``antenna_gains=True`` and
-    ``fit_gain_widths``.
+    With ``fit_gain_widths``, scalar sites ``cal.gain_amp_width`` and
+    ``cal.gain_phase_width`` (Jeffreys priors) join the table.
 
     The reference observation (``ref_obs``) has gain 1 and zero offset. The
     offset bound ``θ_k`` is ``offset_beams`` beams of observation ``k``: a real
