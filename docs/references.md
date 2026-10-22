@@ -59,6 +59,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `(module)` | [Espinosa Lara & Rieutord (2011)](#espinosalara2011), [arXiv:1109.3038](https://arxiv.org/abs/1109.3038), [ADS](https://ui.adsabs.harvard.edu/abs/2011A&A...533A..43E/abstract), [doi:10.1051/0004-6361/201117252](https://doi.org/10.1051/0004-6361/201117252) | after |
 | `(module)` | [Dotter](#gdit), [GitHub](https://github.com/aarondotter/GDit) | ported |
+| `(module)` | [Dholakia](#jaxinterferometry), [GitHub](https://github.com/shashankdholakia/jax-interferometry) | ported |
 
 ### `virgil._flat`
 
@@ -99,7 +100,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 
 | Symbol | Source | Relation |
 |---|---|---|
-| `AngleVector` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
+| `AngleVector` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl) | after |
 
 ### `virgil.coverage`
 
@@ -276,7 +277,7 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 | Symbol | Source | Relation |
 |---|---|---|
 | `OIData.with_error_floor` | [Mérand (2022)](#merand2022), [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired) | after |
-| `OIData.with_north_angle` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
+| `OIData.with_north_angle` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl) | after |
 
 ### `virgil.oifits`
 
@@ -292,8 +293,8 @@ Each row is a place where code in virgil follows a paper or package. *ported*: c
 |---|---|---|
 | `KeplerOrbit` | [Hartkopf, McAlister & Franz (1989)](#hartkopf1989), [ADS](https://ui.adsabs.harvard.edu/abs/1989AJ.....98.1014H/abstract), [doi:10.1086/115193](https://doi.org/10.1086/115193) | after |
 | `KeplerOrbit` | [Wright & Howard (2009)](#wright2009), [arXiv:0904.3725](https://arxiv.org/abs/0904.3725), [ADS](https://ui.adsabs.harvard.edu/abs/2009ApJS..182..205W/abstract) | after |
-| `KeplerOrbit.from_position_angle` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
-| `PositionData.term` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc) | after |
+| `KeplerOrbit.from_position_angle` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl) | after |
+| `PositionData.term` | [Thompson et al. (2023)](#thompson2023), [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl) | after |
 | `_thiele_innes_fit` | [Thiele (1883)](#thiele1883) | after |
 | `period_grid` | [Lucy (2014)](#lucy2014), [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract) | after |
 | `starting_orbits` | [Lucy (2014)](#lucy2014), [arXiv:1309.2868](https://arxiv.org/abs/1309.2868), [ADS](https://ui.adsabs.harvard.edu/abs/2014A&A...563A.126L/abstract) | after |
@@ -356,9 +357,9 @@ Studied for comparison; nothing was taken from them.
 | Source | Note |
 |---|---|
 | [Blunt et al. (2017)](#blunt2017), [arXiv:1703.10653](https://arxiv.org/abs/1703.10653), [ADS](https://ui.adsabs.harvard.edu/abs/2017AJ....153..229B/abstract) | OFTI |
-| [Blunt et al. (2019)](#blunt2020), [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract) | orbitize!; AJ 159, 89 (2020) |
+| [Blunt et al. (2019)](#blunt2020), [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract), [GitHub](https://github.com/sblunt/orbitize) | orbitize!; AJ 159, 89 (2020) |
 | [Blunt et al. (2024)](#blunt2024), [arXiv:2409.11573](https://arxiv.org/abs/2409.11573), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6756B/abstract), [doi:10.21105/joss.06756](https://doi.org/10.21105/joss.06756) | orbitize!; JOSS 9, 6756 |
-| [Brandt et al. (2021)](#brandt2021), [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract) | orvara; AJ 162, 186 |
+| [Brandt et al. (2021)](#brandt2021), [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract), [GitHub](https://github.com/t-brandt/orvara) | orvara; AJ 162, 186 |
 | [Kammerer](#fouriever), [GitHub](https://github.com/kammerje/fouriever) | comparison only: linear_flux_grid is equivalent to its lincmap; no paper found |
 | [Mérand et al.](#candid), [GitHub](https://github.com/amerand/CANDID) | algorithm paper: gallenne2015 |
 
@@ -368,15 +369,19 @@ Cited in the documentation as motivation or terminology; not a source of virgil'
 
 | Source | Note |
 |---|---|
+| [Bishop (2006)](#bishop2006) | Springer textbook, section 3.5 (evidence approximation for regularization weights) |
 | [Currie et al. (2019)](#currie2019), [arXiv:1905.04322](https://arxiv.org/abs/1905.04322), [ADS](https://ui.adsabs.harvard.edu/abs/2019ApJ...877L...3C/abstract), [doi:10.3847/2041-8213/ab1b42](https://doi.org/10.3847/2041-8213/ab1b42) | ApJL 877, L3; motivates fitting a disk and a planet together |
 | [Junklewitz et al. (2016)](#junklewitz2016), [arXiv:1311.5282](https://arxiv.org/abs/1311.5282), [ADS](https://ui.adsabs.harvard.edu/abs/2016A&A...586A..76J/abstract) | A&A 586, A76; an IFT imaging algorithm for radio interferometry |
 | [Kraus & Ireland (2012)](#kraus2012), [arXiv:1110.3808](https://arxiv.org/abs/1110.3808), [ADS](https://ui.adsabs.harvard.edu/abs/2012ApJ...745....5K/abstract), [doi:10.1088/0004-637X/745/1/5](https://doi.org/10.1088/0004-637X/745/1/5) | ApJ 745, 5; motivates fitting a disk and a planet together |
+| [Lannelongue, Grealey & Inouye (2021)](#lannelongue2021), [ADS](https://ui.adsabs.harvard.edu/abs/2021AdvSc...800707L/abstract), [doi:10.1002/advs.202100707](https://doi.org/10.1002/advs.202100707) | Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md) |
 | [Lindgren, Rue & Lindström (2011)](#lindgren2011), [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x) | JRSS B 73, 423; Matérn fields as solutions of an SPDE |
+| [Monnier et al. (2007)](#monnier2007), [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205) | Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction |
 | [Papaspiliopoulos, Roberts & Sköld (2007)](#papaspiliopoulos2007), [ADS](https://ui.adsabs.harvard.edu/abs/2007StaSc..22...59P/abstract), [doi:10.1214/088342307000000014](https://doi.org/10.1214/088342307000000014) | Statistical Science 22, 59; centred and non-centred parameterizations |
 | [Rasmussen & Williams (2006)](#rasmussen2006), [doi:10.7551/mitpress/3206.001.0001](https://doi.org/10.7551/mitpress/3206.001.0001), [link](https://gaussianprocess.org/gpml/) | MIT Press (book); GP terminology, Matérn kernels, marginal likelihood |
 | [Roettenbacher et al. (2016)](#roettenbacher2016), [arXiv:1709.10107](https://arxiv.org/abs/1709.10107), [ADS](https://ui.adsabs.harvard.edu/abs/2016Natur.533..217R/abstract), [doi:10.1038/nature17444](https://doi.org/10.1038/nature17444) | Nature 533, 217; CHARA/MIRC starspot imaging that motivates HarmonixModel |
 | [Rue & Held (2005)](#rue2005), [doi:10.1201/9780203492024](https://doi.org/10.1201/9780203492024) | Chapman & Hall/CRC (book) |
 | [Sallum et al. (2015)](#sallum2015), [arXiv:1511.07456](https://arxiv.org/abs/1511.07456), [ADS](https://ui.adsabs.harvard.edu/abs/2015Natur.527..342S/abstract), [doi:10.1038/nature15761](https://doi.org/10.1038/nature15761) | Nature 527, 342; motivates fitting a disk and a planet together |
+| [van Hamme (1993)](#vanhamme1993), [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788) | AJ 106, 2096; the quadratic law the square-root law is compared with |
 
 ## Other background sources
 
@@ -384,10 +389,8 @@ Heritage and context without a code symbol of their own.
 
 | Source | Note |
 |---|---|
-| [Chavez et al. (2026)](#chavez2026), [arXiv:2606.04094](https://arxiv.org/abs/2606.04094), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ..1005..132C/abstract) |  |
 | [Czekala et al. (2025)](#mpol), [arXiv:2502.00100](https://arxiv.org/abs/2502.00100), [ADS](https://ui.adsabs.harvard.edu/abs/2025arXiv250200100C/abstract), [GitHub](https://github.com/mpol-dev/MPoL), [link](https://mpol-dev.github.io/MPoL/) | arXiv ID returned by title search; ADS check pending |
 | [Martinache (2010)](#martinache2010), [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract) | ApJ 724, 464 (2010) |
-| [Moshier](#cephes), [link](https://www.netlib.org/cephes/) |  |
 
 ## In the bibliography only
 
@@ -395,8 +398,10 @@ Cited by the paper, not a source of virgil's methods.
 
 | Source | Note |
 |---|---|
+| [Chavez et al. (2026)](#chavez2026), [arXiv:2606.04094](https://arxiv.org/abs/2606.04094), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ..1005..132C/abstract) |  |
 | [Foreman-Mackey et al. (2021)](#foreman-mackey2021), [arXiv:2105.01994](https://arxiv.org/abs/2105.01994), [ADS](https://ui.adsabs.harvard.edu/abs/2021JOSS....6.3285F/abstract), [doi:10.21105/joss.03285](https://doi.org/10.21105/joss.03285) | JOSS 6, 3285 |
 | [Hattori et al. (2024)](#jaxoplanet), [ADS](https://ui.adsabs.harvard.edu/abs/2024zndo..10736936H/abstract), [doi:10.5281/zenodo.10736936](https://doi.org/10.5281/zenodo.10736936), [GitHub](https://github.com/exoplanet-dev/jaxoplanet) | Zenodo; https://github.com/exoplanet-dev/jaxoplanet |
+| [Moshier](#cephes), [link](https://www.netlib.org/cephes/) |  |
 | [Soulain et al.](#amical), [GitHub](https://github.com/SAIL-Labs/AMICAL) | separate package, bibliography only; paper reference to add (SPIE 2020) |
 
 ## All sources
@@ -413,11 +418,12 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="baron2010squeeze"></a>**Baron, Monnier & Kloppenburg (2010)**. A novel image reconstruction software for optical/infrared interferometry. [ADS](https://ui.adsabs.harvard.edu/abs/2010SPIE.7734E..2IB/abstract), [doi:10.1117/12.857364](https://doi.org/10.1117/12.857364). SQUEEZE; SPIE 7734.
 - <a id="betancourt2017"></a>**Betancourt (2017)**. A Conceptual Introduction to Hamiltonian Monte Carlo. [arXiv:1701.02434](https://arxiv.org/abs/1701.02434), [ADS](https://ui.adsabs.harvard.edu/abs/2017arXiv170102434B/abstract).
 - <a id="betancourt2013"></a>**Betancourt & Girolami (2013)**. Hamiltonian Monte Carlo for Hierarchical Models. [arXiv:1312.0906](https://arxiv.org/abs/1312.0906), [ADS](https://ui.adsabs.harvard.edu/abs/2013arXiv1312.0906B/abstract).
+- <a id="bishop2006"></a>**Bishop (2006)**. Pattern Recognition and Machine Learning. Springer textbook, section 3.5 (evidence approximation for regularization weights). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="blakely2024"></a>**Blakely et al. (2024)**. The James Webb Interferometer: Space-based interferometric detections of PDS 70 b and c at 3.8 and 4.8 microns. [arXiv:2404.13032](https://arxiv.org/abs/2404.13032), [ADS](https://ui.adsabs.harvard.edu/abs/2025AJ....169..137B/abstract). AJ 169, 137 (2025).
 - <a id="blunt2017"></a>**Blunt et al. (2017)**. Orbits for the Impatient: A Bayesian Rejection Sampling Method for Quickly Fitting the Orbits of Long-Period Exoplanets. [arXiv:1703.10653](https://arxiv.org/abs/1703.10653), [ADS](https://ui.adsabs.harvard.edu/abs/2017AJ....153..229B/abstract). OFTI.
-- <a id="blunt2020"></a>**Blunt et al. (2019)**. orbitize!: A Comprehensive Orbit-fitting Software Package for the High-contrast Imaging Community. [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract). orbitize!; AJ 159, 89 (2020).
+- <a id="blunt2020"></a>**Blunt et al. (2019)**. orbitize!: A Comprehensive Orbit-fitting Software Package for the High-contrast Imaging Community. [arXiv:1910.01756](https://arxiv.org/abs/1910.01756), [ADS](https://ui.adsabs.harvard.edu/abs/2020AJ....159...89B/abstract), [GitHub](https://github.com/sblunt/orbitize). orbitize!; AJ 159, 89 (2020).
 - <a id="blunt2024"></a>**Blunt et al. (2024)**. orbitize! v3: Orbit fitting for the High-contrast Imaging Community. [arXiv:2409.11573](https://arxiv.org/abs/2409.11573), [ADS](https://ui.adsabs.harvard.edu/abs/2024JOSS....9.6756B/abstract), [doi:10.21105/joss.06756](https://doi.org/10.21105/joss.06756). orbitize!; JOSS 9, 6756.
-- <a id="brandt2021"></a>**Brandt et al. (2021)**. orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute, and/or Relative Astrometry. [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract). orvara; AJ 162, 186.
+- <a id="brandt2021"></a>**Brandt et al. (2021)**. orvara: An Efficient Code to Fit Orbits using Radial Velocity, Absolute, and/or Relative Astrometry. [arXiv:2105.11671](https://arxiv.org/abs/2105.11671), [ADS](https://ui.adsabs.harvard.edu/abs/2021AJ....162..186B/abstract), [GitHub](https://github.com/t-brandt/orvara). orvara; AJ 162, 186.
 - <a id="briggs1995"></a>**Briggs (1995)**. High fidelity deconvolution of moderately resolved sources. PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; not checked against ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="candes2008"></a>**Candès, Wakin & Boyd (2007)**. Enhancing Sparsity by Reweighted L1 Minimization. [arXiv:0711.1612](https://arxiv.org/abs/0711.1612), [ADS](https://ui.adsabs.harvard.edu/abs/2008JFAA...14..877C/abstract). J. Fourier Anal. Appl. 14, 877 (2008).
 - <a id="chael2018"></a>**Chael et al. (2018)**. Interferometric Imaging Directly with Closure Phases and Closure Amplitudes. [arXiv:1803.07088](https://arxiv.org/abs/1803.07088), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJ...857...23C/abstract), [doi:10.3847/1538-4357/aab6a8](https://doi.org/10.3847/1538-4357/aab6a8), [GitHub](https://github.com/achael/eht-imaging). ApJ 857, 23; eht-imaging.
@@ -433,6 +439,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="zodiax"></a>**Desdoigts**. zodiax. [GitHub](https://github.com/LouisDesdoigts/zodiax). no paper. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="dlux"></a>**Desdoigts et al. (2024)**. Differentiable Optics with dLux I: Deep calibration of Flat Field and Phase Retrieval. [arXiv:2406.08703](https://arxiv.org/abs/2406.08703), [ADS](https://ui.adsabs.harvard.edu/abs/2023JATIS...9b8007D/abstract), [GitHub](https://github.com/LouisDesdoigts/dLux). matrix Fourier transform cross-check; part II is 2406.08704.
 - <a id="amigo"></a>**Desdoigts et al. (2025)**. AMIGO: a Data-Driven Calibration of the JWST Interferometer. [arXiv:2510.09806](https://arxiv.org/abs/2510.09806), [ADS](https://ui.adsabs.harvard.edu/abs/2025arXiv251009806D/abstract). PASA 43, e075 (2026).
+- <a id="jaxinterferometry"></a>**Dholakia**. jax-interferometry. [GitHub](https://github.com/shashankdholakia/jax-interferometry). the original ELR code (core/ELR.py, core/utils.py), run unmodified at commit 70689ed3dba338d59c98d02e8126a07a3b4e86da by scripts/make_elr_golden.py to produce the golden fixture the port is checked against. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="harmonix"></a>**Dholakia & Pope (2025)**. Analytic Interferometry of Rotating Stellar Surfaces. [arXiv:2509.25433](https://arxiv.org/abs/2509.25433), [ADS](https://ui.adsabs.harvard.edu/abs/2026PASP..138e4504D/abstract), [GitHub](https://github.com/shashankdholakia/harmonix).
 - <a id="gdit"></a>**Dotter**. GDit. [GitHub](https://github.com/aarondotter/GDit). ELR equations ported via Dholakia from GDit. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="drevon2026"></a>**Drevon et al. (2026)**. PYRA and MYTHRA: new statistical analysis for image reconstruction. [arXiv:2609.15365](https://arxiv.org/abs/2609.15365), [ADS](https://ui.adsabs.harvard.edu/abs/2026arXiv260915365D/abstract). the brief says 2025; arXiv v1 is 2026.
@@ -480,6 +487,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="kucukelbir2017"></a>**Kucukelbir et al. (2016)**. Automatic Differentiation Variational Inference. [arXiv:1603.00788](https://arxiv.org/abs/1603.00788), [ADS](https://ui.adsabs.harvard.edu/abs/2016arXiv160300788K/abstract). ADVI; JMLR 18, 14 (2017).
 - <a id="kuramochi2018"></a>**Kuramochi et al. (2018)**. Superresolution Interferometric Imaging with Sparse Modeling Using Total Squared Variation: Application to Imaging the Black Hole Shadow. [arXiv:1802.05783](https://arxiv.org/abs/1802.05783), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJ...858...56K/abstract), [doi:10.3847/1538-4357/aab6b5](https://doi.org/10.3847/1538-4357/aab6b5). ApJ 858, 56.
 - <a id="lachaume2021"></a>**Lachaume (2021)**. Bias-free model fitting of correlated data in interferometry. [arXiv:2104.07082](https://arxiv.org/abs/2104.07082), [ADS](https://ui.adsabs.harvard.edu/abs/2021PASA...38...29L/abstract), [doi:10.1017/pasa.2021.20](https://doi.org/10.1017/pasa.2021.20). PASA 38, e033 (2021).
+- <a id="lannelongue2021"></a>**Lannelongue, Grealey & Inouye (2021)**. Green Algorithms: Quantifying the Carbon Footprint of Computation. [ADS](https://ui.adsabs.harvard.edu/abs/2021AdvSc...800707L/abstract), [doi:10.1002/advs.202100707](https://doi.org/10.1002/advs.202100707). Advanced Science 8, 2100707; the method behind the development-carbon estimate (docs/dev_carbon.md).
 - <a id="lawson2004"></a>**Lawson, Cotton & Hummel (2004)**. An interferometry imaging beauty contest. [ADS](https://ui.adsabs.harvard.edu/abs/2004SPIE.5491..886L/abstract), [doi:10.1117/12.550710](https://doi.org/10.1117/12.550710). Proc. SPIE 5491, 886; Eq. 2.
 - <a id="lazareff2017"></a>**Lazareff et al. (2016)**. Structure of Herbig AeBe disks at the milliarcsecond scale: A statistical survey in the H band using PIONIER-VLTI. [arXiv:1611.08428](https://arxiv.org/abs/1611.08428), [ADS](https://ui.adsabs.harvard.edu/abs/2017A&A...599A..85L/abstract). A&A 599, A85 (2017).
 - <a id="lindgren2011"></a>**Lindgren, Rue & Lindström (2011)**. An Explicit Link between Gaussian Fields and Gaussian Markov Random Fields: The Stochastic Partial Differential Equation Approach. [doi:10.1111/j.1467-9868.2011.00777.x](https://doi.org/10.1111/j.1467-9868.2011.00777.x). JRSS B 73, 423; Matérn fields as solutions of an SPDE.
@@ -492,6 +500,7 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="martinache2010"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract). ApJ 724, 464 (2010).
 - <a id="xara"></a>**Martinache (2010)**. Kernel-Phase in Fizeau Inteferometry. [arXiv:1009.3933](https://arxiv.org/abs/1009.3933), [ADS](https://ui.adsabs.harvard.edu/abs/2010ApJ...724..464M/abstract), [GitHub](https://github.com/fmartinache/xara). xara was formerly pysco; cvis_binary is adapted from it.
 - <a id="mawet2014"></a>**Mawet et al. (2014)**. Fundamental limitations of high contrast imaging set by small sample statistics. [arXiv:1407.2247](https://arxiv.org/abs/1407.2247), [ADS](https://ui.adsabs.harvard.edu/abs/2014ApJ...792...97M/abstract). ApJ 792, 97.
+- <a id="monnier2007"></a>**Monnier et al. (2007)**. Imaging the Surface of Altair. [arXiv:0706.0867](https://arxiv.org/abs/0706.0867), [ADS](https://ui.adsabs.harvard.edu/abs/2007Sci...317..342M/abstract), [doi:10.1126/science.1143205](https://doi.org/10.1126/science.1143205). Science 317, 342; the Altair-like truth of notebooks/mwe/mwe_elr_chara.ipynb is inspired by it, not a reproduction.
 - <a id="cephes"></a>**Moshier**. Cephes mathematical library. [link](https://www.netlib.org/cephes/). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="merand2022"></a>**Mérand (2022)**. Flexible Spectro Interferometric modelling of OIFITS data with PMOIRED. [arXiv:2207.11047](https://arxiv.org/abs/2207.11047), [ADS](https://ui.adsabs.harvard.edu/abs/2022SPIE12183E..1NM/abstract), [GitHub](https://github.com/amerand/pmoired). PMOIRED.
 - <a id="candid"></a>**Mérand et al.**. CANDID: Companion Analysis and Non-Detection in Interferometric Data. [GitHub](https://github.com/amerand/CANDID). algorithm paper: gallenne2015. *Not yet verified against arXiv, Crossref or ADS.*
@@ -518,8 +527,9 @@ Alphabetical, one anchor per bibkey. Docstrings link here as `../references.md#<
 - <a id="starck2010"></a>**Starck, Murtagh & Fadili (2010)**. Sparse Image and Signal Processing: Wavelets, Curvelets, Morphological Diversity. book (CUP). *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="thiele1883"></a>**Thiele (1883)**. Neue Methode der Bahnbestimmung von Doppelsternen. Astron. Nachr. 104, 245; title from memory, to check against ADS. *Not yet verified against arXiv, Crossref or ADS.*
 - <a id="thiebaut2017"></a>**Thiébaut & Young (2017)**. Principles of image reconstruction in optical interferometry: tutorial. [arXiv:1708.08390](https://arxiv.org/abs/1708.08390), [ADS](https://ui.adsabs.harvard.edu/abs/2017JOSAA..34..904T/abstract). JOSA A 34, 904.
-- <a id="thompson2023"></a>**Thompson et al. (2023)**. Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets. [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc). AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication.
+- <a id="thompson2023"></a>**Thompson et al. (2023)**. Octofitter: Fast, Flexible, and Accurate Orbit Modelling to Detect Exoplanets. [arXiv:2402.01971](https://arxiv.org/abs/2402.01971), [ADS](https://ui.adsabs.harvard.edu/abs/2023AJ....166..164T/abstract), [doi:10.3847/1538-3881/acf5cc](https://doi.org/10.3847/1538-3881/acf5cc), [GitHub](https://github.com/sefffal/Octofitter.jl). AJ 166, 164 (2023); the arXiv preprint was posted in February 2024, after publication.
 - <a id="tiede2025"></a>**Tiede et al. (2025)**. Hierarchical Interferometric Bayesian Imaging. [arXiv:2511.17706](https://arxiv.org/abs/2511.17706), [ADS](https://ui.adsabs.harvard.edu/abs/2026ApJ...997..262T/abstract). HIBI/Comrade.
+- <a id="vanhamme1993"></a>**van Hamme (1993)**. New Limb-Darkening Coefficients for Modeling Binary Star Light Curves. [ADS](https://ui.adsabs.harvard.edu/abs/1993AJ....106.2096V/abstract), [doi:10.1086/116788](https://doi.org/10.1086/116788). AJ 106, 2096; the quadratic law the square-root law is compared with.
 - <a id="vanderplas2018"></a>**VanderPlas (2017)**. Understanding the Lomb-Scargle Periodogram. [arXiv:1703.09824](https://arxiv.org/abs/1703.09824), [ADS](https://ui.adsabs.harvard.edu/abs/2018ApJS..236...16V/abstract). ApJS 236, 16 (2018).
 - <a id="vehtari2024"></a>**Vehtari et al. (2015)**. Pareto Smoothed Importance Sampling. [arXiv:1507.02646](https://arxiv.org/abs/1507.02646), [ADS](https://ui.adsabs.harvard.edu/abs/2015arXiv150702646V/abstract). JMLR 25, 72 (2024).
 - <a id="wilks1938"></a>**Wilks (1938)**. The Large-Sample Distribution of the Likelihood Ratio for Testing Composite Hypotheses. [doi:10.1214/aoms/1177732360](https://doi.org/10.1214/aoms/1177732360).
