@@ -35,11 +35,13 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
-- `write_oifits(OIData)` keeps the frames of data without times (or with frames at one `MJD`): they are written with distinct `TIME`s, so `frame` survives a round trip; data without times are still read back at `MJD` 0. A station index above 32767 (a 16-bit column) is refused with a reason instead of wrapping, `DATE-OBS` follows the times, placeholder stations are marked `STAPLACE`, and a non-`OIData` argument raises `TypeError`. The first parameter of `write_oifits` is `data` (it was `tables`); `tables=` still works with a `FutureWarning` until 0.5.
+- `write_oifits(OIData)` keeps the frames of data without times (or with frames at one `MJD`): they are written with distinct `TIME`s, so `frame` survives a round trip; data without times are still read back at `MJD` 0. A station index above 32767 (a 16-bit column) is refused with a reason instead of wrapping, `DATE-OBS` follows the times, placeholder stations are marked `STAPLACE`, and a non-`OIData` argument raises `TypeError`.
 - `OrbitPipeline`'s drop-the-outlying-night check no longer kills the `modes` stage when the refit fails (it is recorded as skipped with the reason), counts usable seeded nights, ignores nights with no data, and compares the alias band for the refit's own time span.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed
+
+- The first parameter of `write_oifits` is `data` (it was `tables`); `tables=` still works with a `FutureWarning` until 0.5.
 
 - `BinaryPipeline` and `OrbitPipeline`: on lattice uv coverage (aperture masks,
   DISCO products) the default search box is limited to half an alias cell, so

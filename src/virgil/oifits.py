@@ -1385,8 +1385,8 @@ def build_hdulist(tables):
         onp.asarray(wave.get("EFF_BAND", 0.0), dtype=float), (nwave,)
     )
     estimated = not onp.all(eff_band > 0)
-    if estimated:  # OIFITS2 needs EFF_BAND > 0
-        eff_band = _estimated_band(eff_wave)
+    if estimated:  # OIFITS2 needs EFF_BAND > 0: fill only the unknown widths
+        eff_band = onp.where(eff_band > 0, eff_band, _estimated_band(eff_wave))
 
     hdus = [_primary_hdu(info)]
     hdus.append(_target_hdu(tables.get("OI_TARGET"), info))
@@ -1423,14 +1423,15 @@ def build_hdulist(tables):
 
 
 def _estimated_band(waves):
-    """Channel widths from the spacing of ``waves``; for one channel, 1% of it."""
+    """Channel widths from the spacing of ``waves`` (1% of each if none)."""
     waves = onp.abs(onp.asarray(waves, dtype=float))
-    if waves.size < 2:
-        return 0.01 * waves
-    order = onp.argsort(waves)
-    band = onp.empty_like(waves)
-    band[order] = onp.gradient(waves[order])
-    return onp.abs(band)
+    band = 0.01 * waves
+    if waves.size > 1:
+        order = onp.argsort(waves)
+        spacing = onp.empty_like(waves)
+        spacing[order] = onp.gradient(waves[order])
+        band = onp.where(spacing > 0, spacing, band)  # duplicates: no spacing
+    return band
 
 
 def _set_table_header(hdu, extname, insname=None, arrname=None, date_obs=None):

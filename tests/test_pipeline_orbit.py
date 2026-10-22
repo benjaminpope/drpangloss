@@ -1103,18 +1103,16 @@ def test_the_position_grid_stops_at_the_lattice_alias_limit(
     assert report["half_widths_mas"] == [4.0]
 
 
-@pytest.mark.slow  # two real searches: minutes
+@pytest.mark.slow  # a real search: minutes
+@pytest.mark.timeout(1200)
 def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
-    """No fakes: a search of the three nights, then the check's refit of two."""
+    """The check's refit of two nights is the real engine call."""
     pipeline, _ = epochs_run
     epochs = pipeline.data
     with jax.enable_x64(True):
-        full = orbit_module._alias_search(
-            pipeline,
-            list(epochs.data),
-            orbit_module._read_positions(pipeline),
-            epochs.times,
-            orbit_module._band_checkpoints(pipeline),
+        # Only the check's refit is real; the full search is a stand-in.
+        full = SimpleNamespace(
+            best=SimpleNamespace(n=20, best={"period": TRUTH["period"]})
         )
         pipeline._report = lambda stage: {
             "chi2": {
@@ -1125,7 +1123,7 @@ def test_the_real_refit_runs_on_a_tiny_case(epochs_run):
             }
         }
         report = orbit_module._robustness(pipeline, full, "orbit")
-    assert "skipped" in report or report["dropped"]["verdict"] in (
-        "orbit",
-        "no-orbit",
-    )
+    assert "skipped" not in report, report  # the refit itself must run
+    assert report["night"] == epochs.epoch_of[1]
+    assert report["dropped"]["verdict"] in ("orbit", "no-orbit")
+    assert report["dropped"]["n"] <= full.best.n

@@ -1186,6 +1186,17 @@ def test_eff_band_is_positive_when_the_width_is_unknown(tmp_path):
         )
 
 
+def test_only_the_unknown_eff_band_entries_are_estimated():
+    tables = _tables(waves=(4.6e-6, 5.0e-6, 5.4e-6))
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = [0.1e-6, 0.1e-6, 0.0]
+    band = build_hdulist(tables)["OI_WAVELENGTH"].data["EFF_BAND"]
+    onp.testing.assert_allclose(band, [0.1e-6, 0.1e-6, 0.4e-6], rtol=1e-6)
+    tables["OI_WAVELENGTH"]["EFF_WAVE"] = [4.6e-6, 4.6e-6, 5.4e-6]
+    tables["OI_WAVELENGTH"]["EFF_BAND"] = 0.0
+    band = build_hdulist(tables)["OI_WAVELENGTH"].data["EFF_BAND"]
+    assert onp.all(band > 0)
+
+
 def test_write_oifits_argument_handling(tmp_path):
     with pytest.raises(TypeError, match="OIData or a mapping"):
         write_oifits([1, 2], tmp_path / "x.oifits")
