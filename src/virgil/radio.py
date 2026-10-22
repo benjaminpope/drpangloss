@@ -605,14 +605,21 @@ class ComplexVisData(eqx.Module):
             lag_ratio=lag,
         )
 
-    def _imaging_weights(self, weighting, robust, uv_cell, nuisance, values):
-        """Imaging weights: ``w`` (÷ s_d² if fitted), times uv-density factors."""
+    def _imaging_weights(
+        self, weighting, robust, uv_cell, nuisance, values, uvtaper=None
+    ):
+        """Imaging weights: ``w`` (÷ s_d² if fitted), times uv-density
+        factors (computed without the taper) and the ``uvtaper``."""
         w = onp.asarray(self.weight, dtype=onp.float64)
         if nuisance is not None and values is not None and nuisance.sigmas:
             s = onp.asarray(nuisance._unpack(values)[3], dtype=onp.float64)
             w = w / s[onp.asarray(self.ddid)] ** 2
+        if uvtaper is not None:
+            taper = _uv_taper(
+                onp.asarray(self.u), onp.asarray(self.v), uvtaper
+            )
         if weighting == "natural":
-            return w
+            return w if uvtaper is None else w * taper
         if weighting not in ("uniform", "briggs"):
             raise ValueError(
                 "weighting must be 'natural', 'uniform' or 'briggs'."
@@ -628,11 +635,15 @@ class ComplexVisData(eqx.Module):
         _, inverse = onp.unique(cell, return_inverse=True)
         density = onp.bincount(inverse, weights=w)[inverse]
         if weighting == "uniform":
-            return w / density
-        # Briggs: w / (1 + W_c f²), f² = (5 · 10^-R)² / (Σ_c W_c² / Σ_k w_k)
-        w_c = onp.bincount(inverse, weights=w)
-        f2 = (5.0 * 10.0 ** (-robust)) ** 2 / (onp.sum(w_c**2) / onp.sum(w))
-        return w / (1.0 + density * f2)
+            out = w / density
+        else:
+            # Briggs: w / (1 + W_c f²), f² = (5 · 10^-R)² / (Σ_c W_c² / Σ_k w_k)
+            w_c = onp.bincount(inverse, weights=w)
+            f2 = (5.0 * 10.0 ** (-robust)) ** 2 / (
+                onp.sum(w_c**2) / onp.sum(w)
+            )
+            out = w / (1.0 + density * f2)
+        return out if uvtaper is None else out * taper
 
     def _adjoint(self, values, w, npix, pixel_scale_mas, chunk_size):
         """``Σ_k w_k Re[a_k exp(+2πi(u_k x + v_k y))] / Σ w`` on the pixel grid.
@@ -677,6 +688,7 @@ class ComplexVisData(eqx.Module):
         values=None,
         uv_cell=None,
         chunk_size=1_000_000,
+        uvtaper=None,
     ):
         """The dirty beam ``Σ w cos(2π(u x + v y)) / Σ w`` on the pixel grid.
 
@@ -697,6 +709,7 @@ class ComplexVisData(eqx.Module):
             values,
             uv_cell,
             chunk_size,
+            uvtaper,
             beam=True,
         )
 
@@ -712,6 +725,7 @@ class ComplexVisData(eqx.Module):
         use_sigma=False,
         uv_cell=None,
         chunk_size=1_000_000,
+        uvtaper=None,
     ):
         """Dirty image ``Σ w Re[V e^{+2πi(u x + v y)}] / Σ w`` in Jy/beam.
 
@@ -758,6 +772,11 @@ class ComplexVisData(eqx.Module):
             (``FoV = npix · pixel_scale_mas`` in radians).
         chunk_size : int
             Points transformed at a time, bounding memory.
+        uvtaper : float or (bmaj_mas, bmin_mas, pa_deg), optional
+            CASA's ``uvtaper``: weights times the Fourier transform of a
+            Gaussian of that FWHM (a float is circular; ``pa_deg`` is East of
+            North). Applied after the density weights, so the beam is the
+            natural one convolved with the Gaussian.
 
         Returns
         -------
@@ -773,6 +792,7 @@ class ComplexVisData(eqx.Module):
             values if use_sigma else None,
             uv_cell,
             chunk_size,
+            uvtaper,
             beam=False,
         )
 
@@ -787,13 +807,16 @@ class ComplexVisData(eqx.Module):
         values_w,
         uv_cell,
         chunk_size,
+        uvtaper,
         beam,
     ):
         if uv_cell is None:
             uv_cell = 1.0 / (int(npix) * pixel_scale_mas * mas2rad)
         if nuis_w is not None and values_w is None:
             raise ValueError("use_sigma needs values and nuisance.")
-        w = self._imaging_weights(weighting, robust, uv_cell, nuis_w, values_w)
+        w = self._imaging_weights(
+            weighting, robust, uv_cell, nuis_w, values_w, uvtaper
+        )
         if beam:
             a = onp.ones(len(self), dtype=onp.complex128)
         else:
@@ -872,6 +895,23 @@ def _type1(t_col, t_row, a, npix):
         isign=-1,
     )
     return onp.asarray(np.real(f))
+
+
+def _uv_taper(u, v, uvtaper):
+    """Fourier transform of the elliptical Gaussian ``uvtaper`` (see
+    ``dirty_image``) at ``u`` East and ``v`` North, in wavelengths."""
+    bmaj, bmin, pa = (
+        (uvtaper, uvtaper, 0.0) if onp.ndim(uvtaper) == 0 else uvtaper
+    )
+    pa = onp.deg2rad(pa)
+    along = u * onp.sin(pa) + v * onp.cos(pa)
+    across = u * onp.cos(pa) - v * onp.sin(pa)
+    a, b = bmaj * mas2rad, bmin * mas2rad
+    return onp.exp(
+        -(onp.pi**2)
+        * ((a * along) ** 2 + (b * across) ** 2)
+        / (4.0 * onp.log(2.0))
+    )
 
 
 def _parallel_hands(corr):

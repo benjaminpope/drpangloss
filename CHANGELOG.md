@@ -7,6 +7,18 @@ anything before 1.0 may change between minor versions.
 
 ## Unreleased
 
+### Added
+
+- **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
+  `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor
+  cycles with a PSF window and cycle threshold, `niter`, `gain`, `threshold`,
+  `nsigma`, `cyclefactor`, masks and a simplified `auto-multithresh`, a fitted
+  restoring beam), with `RadioCleanResult` writing FITS and the model as
+  visibilities, `fit_beam` and `restore`. `ComplexVisData.dirty_image` and
+  `dirty_beam` gain `uvtaper`. It is not `virgil.imaging.clean` (which is
+  unchanged) and claims no parity with CASA or WSClean. See the
+  [guide](docs/radio_clean.md).
+
 ### Changed
 
 - Docs: four slow example pages run faster on a GPU, with the same science.
