@@ -35,7 +35,7 @@ anything before 1.0 may change between minor versions.
 
 ### Fixed
 
-- `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The shortest unflagged wavelength binds; `None` only if some unflagged channel is off a lattice.
+- `lattice_alias_limit` works per channel: multi-channel lattice coverage (NIRISS AMI with several filters, or flagged extra channels) no longer returns `None`, so `BinaryPipeline`'s alias-aware default box applies. The longest unflagged wavelength sets the limit (a shift must alias in every channel); `None` only if some unflagged channel is off a lattice. The default box of multi-channel lattice data can therefore now be capped where it was the full field of view before.
 - `ImproperUniform` priors with an `event_shape` (as `image_priors` gives) no longer raise `NoLeastSquaresForm` in `gauss_newton_mass` and the curvature code: a flat prior adds no curvature.
 
 ### Changed

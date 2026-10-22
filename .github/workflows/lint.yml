@@ -40,7 +40,8 @@ jobs:
       # One PR comment with the net Python lines changed in src/ and tests/
       # ("Keeping the code small" in AGENTS.md). Never fails the build: a fork's
       # read-only token or an API error just skips it. It runs in this job, not
-      # `checks`, because that one executes the PR's code and this one does not.
+      # `checks`, because that one executes the PR's code and this one does not
+      # (the code-shape report below runs the base's copy of its script).
       - name: size comment
         if: github.event_name == 'pull_request'
         continue-on-error: true
@@ -66,7 +67,13 @@ jobs:
           Net src growth is over +1,000 lines: say in the PR description what it buys and what it supersedes (rule 7 in AGENTS.md)."
           # Names only, never a failure: single-use private functions of at most
           # three statements this PR adds (rule 8 in AGENTS.md).
-          if git fetch -q --depth=1 origin "$BASE" && shape=$(python3 scripts/code_shape.py --since "origin/$BASE" 2>/dev/null) \
+          # The base's copy of the script runs (it only parses src/), so a PR
+          # cannot run its own code with this job's token.
+          tool="$RUNNER_TEMP/shape"; mkdir -p "$tool/scripts"
+          ln -sfn "$PWD/src" "$tool/src"; ln -sfn "$PWD/.git" "$tool/.git"
+          if git fetch -q --depth=1 origin "$BASE" \
+            && git show "origin/$BASE:scripts/code_shape.py" > "$tool/scripts/code_shape.py" \
+            && shape=$(python3 "$tool/scripts/code_shape.py" --since "origin/$BASE" 2>/dev/null) \
             && [ "$(echo "$shape" | wc -l)" -gt 1 ]; then
             body+="
 

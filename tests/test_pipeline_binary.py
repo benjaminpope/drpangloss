@@ -890,9 +890,10 @@ def test_lattice_alias_limit_needs_a_lattice_in_every_channel():
     )  # the 2.1 µm channel has one sample
 
 
-def test_lattice_alias_limit_is_set_by_the_shortest_unflagged_channel():
-    """Two lattice channels: the alias period scales with λ, so the shorter
-    one binds, and a flagged channel does not count."""
+def test_lattice_alias_limit_is_set_by_the_longest_unflagged_channel():
+    """A shift is ambiguous only if it aliases in every channel, and every such
+    shift is an alias of the longest one, so that channel sets the limit; a
+    flagged channel does not count."""
     from types import SimpleNamespace
 
     from virgil._geometry import lattice_alias_limit
@@ -907,9 +908,10 @@ def test_lattice_alias_limit_is_set_by_the_shortest_unflagged_channel():
         )
         return lattice_alias_limit(data)
 
-    both = limit([True] * 6)
-    assert both == pytest.approx(0.5 * 2e-6 / 10.0 / mas2rad)
-    assert limit([False] * 3 + [True] * 3) == pytest.approx(2 * both)
+    short = 0.5 * 2e-6 / 10.0 / mas2rad
+    assert limit([True] * 6) == pytest.approx(2 * short)
+    assert limit([True] * 3 + [False] * 3) == pytest.approx(short)
+    assert limit([False] * 3 + [True] * 3) == pytest.approx(2 * short)
     assert limit([False] * 6) is None
 
 

@@ -386,9 +386,11 @@ def lattice_alias_limit(data, tolerance=1e-3):
     (period ``λ`` times the dual lattice, in the sky frame), so two
     positions in one box can look alike. A box of half-width ``h`` has no such
     pair when ``2h`` is below every alias vector's larger component, so the
-    limit is half the smallest of those, taken over the unflagged channels.
-    ``None`` for other coverage (samples off a lattice to within ``tolerance``
-    cells in any channel).
+    limit is half the smallest of those. With several channels a position is
+    ambiguous only if it aliases in all of them, and every such shift is an
+    alias of the longest channel, so that channel's limit is used (a lower
+    bound on the joint one). ``None`` for other coverage (samples off a
+    lattice to within ``tolerance`` cells in any unflagged channel).
 
     Parameters
     ----------
@@ -411,8 +413,8 @@ def lattice_alias_limit(data, tolerance=1e-3):
     ]
     if not limits or None in limits:
         return None
-    # The alias period scales with λ, so the shortest unflagged wavelength binds.
-    return min(limits)
+    # A joint alias is an alias of the longest unflagged wavelength: it binds.
+    return max(limits)
 
 
 def _channel_alias_limit(uv, wavel, tolerance):
