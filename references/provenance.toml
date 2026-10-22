@@ -321,7 +321,7 @@ authors = "Quirrenbach et al."
 year = 1996
 title = "Angular diameter and limb darkening of Arcturus"
 used_in = ["virgil.models:cvis_limb_darkened_disk"]
-note = "A&A 312, 160; bibcode 1996A&A...312..160Q; title from memory, to check against ADS"
+note = "A&A 312, 160; bibcode 1996A&A...312..160Q"
 bibcode = "1996A&A...312..160Q"
 verified = true
 verified_via = "ads"
@@ -619,7 +619,7 @@ authors = "Högbom"
 year = 1974
 title = "Aperture synthesis with a non-regular distribution of interferometer baselines"
 used_in = ["virgil.imaging:clean", "virgil.radio_clean:clean"]
-note = "A&AS 15, 417; bibcode 1974A&AS...15..417H; title from memory, to check against ADS"
+note = "A&AS 15, 417; bibcode 1974A&AS...15..417H"
 bibcode = "1974A&AS...15..417H"
 verified = true
 verified_via = "ads"
@@ -629,29 +629,30 @@ authors = "Clark"
 year = 1980
 title = "An efficient implementation of the algorithm 'CLEAN'"
 used_in = ["virgil.radio_clean:clean", "virgil.radio_clean:_minor_cycle"]
-note = "A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold; not checked against ADS"
+note = "A&A 89, 377; bibcode 1980A&A....89..377C; PSF-window minor cycles and the cycle threshold"
 bibcode = "1980A&A....89..377C"
-verified = false
-verified_via = "none"
+verified = true
+verified_via = "ads"
 
 [ref.schwab1984]
 authors = "Schwab"
 year = 1984
 title = "Relaxing the isoplanatism assumption in self-calibration; applications to low-frequency radio interferometry"
 used_in = ["virgil.radio_clean:clean"]
-note = "AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities); not checked against ADS. Cotton is cited there as a private communication"
+note = "AJ 89, 1076; bibcode 1984AJ.....89.1076S; the Cotton-Schwab major cycle (residual from the visibilities). Cotton is cited there as a private communication"
 bibcode = "1984AJ.....89.1076S"
-verified = false
-verified_via = "none"
+verified = true
+verified_via = "ads"
 
 [ref.briggs1995]
 authors = "Briggs"
 year = 1995
 title = "High fidelity deconvolution of moderately resolved sources"
 used_in = ["virgil.radio:ComplexVisData._imaging_weights"]
-note = "PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; not checked against ADS"
-verified = false
-verified_via = "none"
+note = "PhD thesis, New Mexico Institute of Mining and Technology; the robust weighting; ADS 1995PhDT.......238B"
+verified = true
+verified_via = "ads"
+bibcode = "1995PhDT.......238B"
 
 [ref.arras2021]
 authors = "Arras et al."
@@ -969,20 +970,22 @@ authors = "Hutchinson"
 year = 1989
 title = "A stochastic estimator of the trace of the influence matrix for Laplacian smoothing splines"
 doi = "10.1080/03610918908812806"
-verified = false
-verified_via = "none"
+verified = true
+verified_via = "ads"
+bibcode = "1989CoSSC..18.1059H"
 used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
-note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches); DOI and title from memory, to check against Crossref"
+note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches)"
 
 [ref.bekas2007]
 authors = "Bekas, Kokiopoulou & Saad"
 year = 2007
 title = "An estimator for the diagonal of a matrix"
 doi = "10.1016/j.apnum.2007.01.003"
-verified = false
-verified_via = "none"
+verified = true
+verified_via = "ads"
+bibcode = "2007ApNM...57.1214B"
 used_in = ["virgil.fitting:gauss_newton_diag"]
-note = "Appl. Numer. Math. 57, 1214; the estimator mean(v ⊙ Hv) over Rademacher v for the regularizer Hessian diagonal; from memory, to check against Crossref"
+note = "Appl. Numer. Math. 57, 1214; the estimator mean(v ⊙ Hv) over Rademacher v for the regularizer Hessian diagonal"
 
 [ref.skilling1989]
 authors = "Skilling"
@@ -1007,11 +1010,12 @@ verified_via = "ads"
 [ref.thiele1883]
 authors = "Thiele"
 year = 1883
-title = "Neue Methode der Bahnbestimmung von Doppelsternen"
-verified = false
-verified_via = "none"
+title = "Neue Methode zur Berechung von Doppelsternbahnen"
+verified = true
+verified_via = "ads"
+bibcode = "1883AN....104..245T"
 used_in = ["virgil.orbits:_thiele_innes_fit"]
-note = "Astron. Nachr. 104, 245; title from memory, to check against ADS"
+note = "Astron. Nachr. 104, 245; title as spelled by ADS"
 
 [ref.starck2010]
 authors = "Starck, Murtagh & Fadili"
@@ -1394,10 +1398,11 @@ authors = "Offringa et al."
 year = 2014
 title = "WSCLEAN: an implementation of a fast, generic wide-field imager for radio astronomy"
 used_in = ["virgil.radio_clean:clean"]
-note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows; not checked against ADS"
+note = "MNRAS 444, 606; bibcode 2014MNRAS.444..606O; the WSClean argument conventions radio_clean follows"
 bibcode = "2014MNRAS.444..606O"
-verified = false
-verified_via = "none"
+verified = true
+verified_via = "ads"
+arxiv = "1407.1943"
 
 [ref.jaxinterferometry]
 authors = "Dholakia"

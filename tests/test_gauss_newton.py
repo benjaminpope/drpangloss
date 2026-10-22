@@ -4,7 +4,7 @@ Everything here is tiny (2 to 6 coordinates, seconds on a laptop): linear and
 Rosenbrock least squares, an iteratively reweighted (IRLS) marginal
 objective that is not a sum of squares, boxes, and the `step`/`solve`
 contracts (vmap, scan, resume, monotone Φ, stop codes). See
-design/gauss_newton_plan.md, GN1.
+design/history/gauss_newton_plan.md, GN1.
 """
 
 import equinox as eqx

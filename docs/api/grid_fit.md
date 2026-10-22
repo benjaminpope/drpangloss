@@ -9,6 +9,7 @@ Grid searches. Contrast limits built on them are in [`virgil.limits`](limits.md)
         - optimized_likelihood_grid
         - optimized_flux_grid
         - linear_flux_grid
+        - LinearFluxGrid
         - LogUniform
         - Gaussian
         - laplace_flux_uncertainty_grid

@@ -23,11 +23,14 @@ may change in any 0.4.x release without a deprecation. See
 - [Detection](detection.md): detection statistics for false-alarm rates and ROC curves
 - [Spectra](spectra.md): wavelength-dependent fluxes
 - [Orbits](orbits.md): Keplerian orbits in virgil's conventions, solved with jaxoplanet
-- [Orbit aliases](aliases.md): `fit_orbit_aliases`, evidences of the period alias bands of an undersampled orbit
-- [Tempering](tempering.md): the effective-channel factor that tempers an orbit evidence for correlated spectral channels
-- [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits
-- [Radio](radio.md): `ComplexVisData`, `CalibrationNuisance`, complex visibilities from CASA measurement sets with per-observation calibration nuisances
-- [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances
+- [Orbit aliases](aliases.md): `fit_orbit_aliases`, evidences of the period alias bands of an undersampled orbit (provisional)
+- [Tempering](tempering.md): the effective-channel factor that tempers an orbit evidence for correlated spectral channels (provisional)
+- [Epochs](epochs.md): datasets grouped into epochs, and starting multi-epoch orbit fits (provisional)
+- [Radio](radio.md): `ComplexVisData`, `CalibrationNuisance`, complex visibilities from CASA measurement sets with per-observation calibration nuisances (provisional)
+- [Orbit Search](orbit_search.md): `score_orbits`, candidate orbits scored on all epochs with shared nuisances (provisional)
+- [Radio CLEAN](radio_clean.md): `clean`, CLEAN deconvolution of complex visibilities (provisional)
+- [Cross-validation](crossval.md): K-fold cross-validation of a hyperparameter (provisional)
+- [Short arcs](arcs.md): each night's velocity, the periods its positions and velocities admit, and each alias band's seed orbits (provisional)
 - [Fields](fields.md): Gaussian-process log-brightness priors for pixel images
 - [Fitting](fitting.md): `fit`, maximum a posteriori fits; `gauss_newton_mass`, a NUTS mass matrix from a fit
 - [SVI](svi.md): `variational`, a guide fitted to the posterior of `numpyro_model` with numpyro's SVI

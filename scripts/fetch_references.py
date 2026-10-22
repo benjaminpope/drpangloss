@@ -147,10 +147,16 @@ def export_bibtex(session, bibcodes):
     return r.json()["export"]
 
 
+def bibtex_authors(text):
+    """``A, B & C`` and ``A et al.`` as a BibTeX author list (``and``-separated)."""
+    text = re.sub(r"\s+et al\.?$", " and others", text)
+    return re.sub(r",\s*|\s+&\s+", " and ", text)
+
+
 def fallback_bibtex(key, entry):
     """A minimal BibTeX record for an entry ADS does not index."""
     fields = {
-        "author": entry.get("authors", ""),
+        "author": bibtex_authors(entry.get("authors", "")),
         "title": entry.get("title", ""),
     }
     if entry.get("year"):

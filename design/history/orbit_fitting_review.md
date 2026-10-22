@@ -6,7 +6,7 @@ check against full-text methods sections (see the tags at the start of
 implemented. Part 1 summarizes how published work fits visual and
 interferometric binary orbits. Part 2 assesses virgil's current tools
 (`epoch_positions`, `start_from_positions`, `rank_orbits`,
-`gap_marginal`, #281) and the plan in `design/automatic_orbits.md`
+`gap_marginal`, #281) and the plan in `design/history/automatic_orbits.md`
 (#279) against that practice and against our own evidence. Part 3
 lists prioritized improvements. Spelling is Oxford (-ize).
 
