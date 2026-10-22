@@ -1,26 +1,18 @@
 """Plotting functions for virgil models, data and grid results.
 
-* [`plot_grid_map`][virgil.plotting.plot_grid_map] draws any grid
-  result (log likelihood, best-fit flux, uncertainty, S/N, contrast limit)
-  with defaults chosen by ``kind=``, and
-  [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve] draws
-  radial contrast curves.
+* [`plot_grid_map`][virgil.plotting.plot_grid_map] draws a grid result and
+  [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve] a radial
+  contrast curve.
 * [`plot_null_distribution`][virgil.plotting.plot_null_distribution],
   [`plot_roc`][virgil.plotting.plot_roc] and
-  [`plot_completeness`][virgil.plotting.plot_completeness] draw the
-  simulated searches of a
-  [`DetectionMC`][virgil.detection.DetectionMC]: false-alarm
-  probabilities, ROC curves and completeness maps.
-* Contrasts can be shown as flux ratios (companion/primary), as contrasts
-  (primary/companion, e.g. 100) or in magnitudes (e.g. 5 mag), with
-  ``units="flux" | "contrast" | "delta_mag"``.
+  [`plot_completeness`][virgil.plotting.plot_completeness] draw a
+  [`DetectionMC`][virgil.detection.DetectionMC]; see
+  [detection limits](../detection_limits.md#detection-plots).
 
-Sky images follow the package convention: East (positive ``dra``) to the
-left and North (positive ``ddec``) up. Importing this module does not change
-matplotlib's global settings; call [`set_style`][virgil.plotting.set_style]
-to opt in to the virgil look. See
-[detection limits](../detection_limits.md#detection-plots) for how to read the
-detection plots.
+``units="flux" | "contrast" | "delta_mag"`` shows contrasts as companion/primary
+flux, primary/companion, or magnitudes. Sky images have East (positive ``dra``)
+to the left and North up. Importing this module leaves matplotlib's global
+settings alone; [`set_style`][virgil.plotting.set_style] opts in to the virgil look.
 """
 
 import contextlib
@@ -733,10 +725,9 @@ def plot_grid_map(
     ----------
     values : array-like
         Grid result with one axis per coordinate key of ``grid`` (every key but
-        the flux), as returned by [`virgil.grid_fit`][virgil.grid_fit] and
-        [`virgil.limits`][virgil.limits]; a full
-        [`likelihood_grid`][virgil.grid_fit.likelihood_grid] is reduced to its
-        maximum over flux. One coordinate gives a line plot.
+        the flux), from [`virgil.grid_fit`][virgil.grid_fit] or
+        [`virgil.limits`][virgil.limits]; a full ``likelihood_grid`` is reduced
+        to its maximum over flux. One coordinate gives a line plot.
     grid : dict[str, array-like]
         The grid axes used to compute ``values``.
     kind : {"loglike", "flux", "sigma", "snr", "limit"}, optional
@@ -752,18 +743,15 @@ def plot_grid_map(
         Mark the primary at the origin of sky maps (default True).
     flux_param : str, optional
         Key of the flux axis, if it is not the one key ending in ``flux``.
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on; a new figure is made if omitted.
+    ax, figsize : optional
+        Axes to draw on (default: a new figure of this size).
     cmap, log, label, title : optional
         Override the defaults for ``kind``.
-    figsize : tuple, optional
-        Size of a new figure.
 
     Returns
     -------
     tuple
-        ``(fig, ax)``. ``dra`` and ``ddec`` are drawn as x and y, East-left and
-        North-up, whatever their order in ``grid``.
+        ``(fig, ax)``; ``dra`` is x and ``ddec`` y whatever their order in ``grid``.
 
     Examples
     --------
@@ -941,12 +929,11 @@ def plot_contrast_curve(
         ``(dra, ddec, flux)`` of a detected companion to mark.
     center, r_max, bins : optional
         Annuli, passed to [`radial_profile`][virgil.limits.radial_profile].
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on, e.g. to overlay several curves.
+    ax, figsize : optional
+        Axes to draw on, e.g. to overlay several curves (default: a new figure
+        of this size).
     color : optional
         Line and band colour.
-    figsize : tuple, optional
-        Size of a new figure.
 
     Returns
     -------
@@ -1120,7 +1107,7 @@ def plot_roc(
 ):
     """Plot ROC curves: completeness against false-alarm probability.
 
-    A useless statistic lies on the chance curve TPR = FPR. See
+    A useless statistic lies on TPR = FPR; see
     [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
@@ -1131,24 +1118,20 @@ def plot_roc(
     stat : str or sequence of str
         ``"delta_chi2"``, ``"log_bayes_factor"`` or ``"max_snr"``, or several.
     flux : float, (float, float) or list, optional
-        Only the injections of this flux, or in this range, as for
+        Only injections of this flux or in this range, as for
         [`DetectionMC.roc`][virgil.detection.DetectionMC.roc]; a list gives one
         curve per entry.
     sep_bin : (float, float) or list of them, optional
-        Only the injections with separations in ``[lo, hi)`` (mas); a list
-        gives one curve per bin.
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on; a new figure is made if omitted.
+        Only injections with separation in ``[lo, hi)`` (mas); a list gives one
+        curve per bin.
     log_fpr : bool, optional
-        Logarithmic false-positive axis (default).
+        Logarithmic false-positive axis.
     mark_wilks : sequence of float, optional
-        Local significances (default 3σ and 5σ) at which to mark the
-        single-position false-alarm probability and the matching threshold on
-        each curve; the gap is the look-elsewhere effect. ``()`` marks nothing.
-    title : str, optional
-        Title; by default it names what all the curves share.
-    figsize : tuple, optional
-        Size of a new figure. The legend is drawn outside the axes.
+        Local significances at which to mark the single-position false-alarm
+        probability and its threshold on each curve (the gap is the
+        look-elsewhere effect); ``()`` marks nothing.
+    title, ax, figsize : optional
+        Title (default: what the curves share), axes, and size of a new figure.
 
     Returns
     -------
@@ -1308,10 +1291,9 @@ def plot_completeness(
 ):
     """Plot a completeness map against separation and companion brightness.
 
-    Each cell is the fraction of injected companions detected at the
-    false-alarm probability ``fap``
-    ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]);
-    lines mark the levels in ``contours``. See
+    Each cell is the fraction of injections detected at false-alarm probability
+    ``fap`` ([`DetectionMC.completeness`][virgil.detection.DetectionMC.completeness]);
+    lines mark ``contours``. See
     [detection limits](../detection_limits.md#detection-plots).
 
     Parameters
@@ -1325,21 +1307,18 @@ def plot_completeness(
         False-alarm probability of the threshold, e.g. 1.35e-3 (3σ).
     units : {"delta_mag", "contrast", "flux"}, optional
         The y-axis, as in
-        [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve].
+        [`plot_contrast_curve`][virgil.plotting.plot_contrast_curve]
+        (``delta_mag`` is 2.5 log10(primary/companion)).
     contours : sequence of float, optional
         Completeness levels to draw as lines (default 50% and 90%).
     sep_bins, flux_bins : array-like, optional
         Bin edges (mas, and flux); by default every injected value is a cell.
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on; a new figure is made if omitted.
     cmap : str or Colormap, optional
         Colour map of the completeness, from 0 to 1.
     colorbar : bool, optional
-        Add a colour bar (default True).
-    title : str, optional
-        Title; by default it gives the statistic and the FAP.
-    figsize : tuple, optional
-        Size of a new figure.
+        Add a colour bar.
+    title, ax, figsize : optional
+        Title (default: statistic and FAP), axes, and size of a new figure.
 
     Returns
     -------
@@ -1457,12 +1436,9 @@ def plot_null_distribution(
     reference : bool, optional
         Draw the single-position reference curve (default True; none for
         ``log_bayes_factor``).
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on; a new figure is made if omitted.
-    title : str, optional
-        Title; by default it names the statistic and the number of draws.
-    figsize : tuple, optional
-        Size of a new figure. The legend is drawn outside the axes.
+    title, ax, figsize : optional
+        Title (default: statistic and number of draws), axes, and size of a new
+        figure.
 
     Returns
     -------
