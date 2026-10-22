@@ -565,9 +565,11 @@ def test_defaults_come_from_the_data():
     w, f = onp.asarray(data.weight), onp.asarray(data.freq)
     assert nuis.nu0_hz == pytest.approx(onp.sum(w * f) / onp.sum(w))
     q = onp.hypot(onp.asarray(data.u), onp.asarray(data.v))
-    theta = rad2mas / (2 * q.min())
+    # default: three beams (2π b each) of the longest baseline of obs 1
+    q_max = q[onp.asarray(data.obs) == 1].max()
     prior = nuis.priors()["cal.offset"]
-    assert float(prior.high[0, 0]) == pytest.approx(theta)
+    assert float(prior.high[0, 0]) == pytest.approx(3 * rad2mas / q_max)
+    assert nuis.offset_bound_mas == pytest.approx(rad2mas / (2 * q.min()))
     custom = nuis.priors(offset=(-5.0, 5.0), alpha=(0.0, 3.0))
     assert float(custom["cal.offset"].high[0, 0]) == 5.0
     assert float(custom["cal.alpha"].high) == 3.0

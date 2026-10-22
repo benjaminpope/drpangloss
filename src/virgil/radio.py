@@ -27,6 +27,8 @@ import equinox as eqx
 import jax
 import jax.numpy as np
 import numpy as onp
+import numpyro.distributions as dist
+from numpyro.distributions import constraints
 
 from ._geometry import gaussian_taper, offset_phase, pixel_offsets
 from ._utils import mas2rad, rad2mas
@@ -408,7 +410,9 @@ class ComplexVisData(eqx.Module):
             self.obs,
         )
 
-    def term(self, scene, nuisance, mask=None, chunk_size=10_000_000):
+    def term(
+        self, scene, nuisance, mask=None, chunk_size=10_000_000, sigma=None
+    ):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
         Parameters
@@ -427,6 +431,16 @@ class ComplexVisData(eqx.Module):
             Points are padded with zero weight to a multiple of this and
             evaluated with ``jax.lax.map`` over chunks, bounding memory
             (the transform is never ``vmap``-ed).
+        sigma : (n_ddid,) array, optional
+            With ``sigmas="profile"``, fixed error scales instead of the
+            ``ŝ`` of this term's own points. Use it to score held-out data
+            at the ``ŝ`` of the training fit
+            (``fit(...).info["derived"]["cal.sigma"]``): a held-out term
+            that profiles its own ``ŝ`` is scored with errors tuned on the
+            test residuals, which is not a predictive score. (The
+            ``make_term(mask)`` protocol of
+            [`cross_validate`][virgil.crossval.cross_validate] re-profiles
+            each fold; use ``sigmas=True`` there.)
 
         Notes
         -----
@@ -440,7 +454,17 @@ class ComplexVisData(eqx.Module):
                 "scene must be a function of the fitted values, e.g. "
                 "`lambda values: model`, not a model instance."
             )
-        return _RadioTerm(self, scene, nuisance, mask, chunk_size)
+        return _RadioTerm(self, scene, nuisance, mask, chunk_size, sigma)
+
+    def sigma_hat(self, scene, values, nuisance, mask=None):
+        """The error scales ``s_d`` per ddid at ``values``: the profiled ``ŝ``
+        of ``CalibrationNuisance(sigmas="profile")``, the fitted ``cal.sigma``
+        with ``sigmas=True``, ones otherwise."""
+        if isinstance(scene, SourceModel):
+            model = scene
+            scene = lambda values: model  # noqa: E731
+        term = self.term(scene, nuisance, mask=mask)
+        return onp.asarray(term.sigma_hat(values))
 
     def chi2_by_ddid(self, scene, values, nuisance, mask=None):
         """χ² of the data with the σ scales applied, per ddid.
@@ -606,12 +630,30 @@ class ComplexVisData(eqx.Module):
         )
 
     def _imaging_weights(
-        self, weighting, robust, uv_cell, nuisance, values, uvtaper=None
+        self,
+        weighting,
+        robust,
+        uv_cell,
+        nuisance,
+        values,
+        sigma=None,
+        uvtaper=None,
     ):
         """Imaging weights: ``w`` (÷ s_d² if fitted), times uv-density
         factors (computed without the taper) and the ``uvtaper``."""
         w = onp.asarray(self.weight, dtype=onp.float64)
-        if nuisance is not None and values is not None and nuisance.sigmas:
+        if sigma is not None:
+            w = (
+                w
+                / onp.asarray(sigma, dtype=onp.float64)[onp.asarray(self.ddid)]
+                ** 2
+            )
+        elif nuisance is not None and values is not None and nuisance.sigmas:
+            if nuisance.sigmas == "profile":
+                raise ValueError(
+                    "sigmas='profile': pass use_sigma through dirty_image "
+                    "with a scene, which computes ŝ."
+                )
             s = onp.asarray(nuisance._unpack(values)[3], dtype=onp.float64)
             w = w / s[onp.asarray(self.ddid)] ** 2
         if uvtaper is not None:
@@ -782,6 +824,14 @@ class ComplexVisData(eqx.Module):
         -------
         (npix, npix) float64 array
         """
+        sigma = None
+        if use_sigma and nuisance is not None and nuisance.sigmas == "profile":
+            if scene is None or values is None:
+                raise ValueError(
+                    "use_sigma with sigmas='profile' needs a scene and "
+                    "values (ŝ is the scatter about the model)."
+                )
+            sigma = self.sigma_hat(scene, values, nuisance)
         return self._dirty(
             (scene, values, nuisance),
             npix,
@@ -794,6 +844,7 @@ class ComplexVisData(eqx.Module):
             chunk_size,
             uvtaper,
             beam=False,
+            sigma=sigma,
         )
 
     def _dirty(
@@ -809,13 +860,20 @@ class ComplexVisData(eqx.Module):
         chunk_size,
         uvtaper,
         beam,
+        sigma=None,
     ):
         if uv_cell is None:
             uv_cell = 1.0 / (int(npix) * pixel_scale_mas * mas2rad)
         if nuis_w is not None and values_w is None:
             raise ValueError("use_sigma needs values and nuisance.")
         w = self._imaging_weights(
-            weighting, robust, uv_cell, nuis_w, values_w, uvtaper
+            weighting,
+            robust,
+            uv_cell,
+            nuis_w,
+            values_w,
+            sigma,
+            uvtaper,
         )
         if beam:
             a = onp.ones(len(self), dtype=onp.complex128)
@@ -983,6 +1041,26 @@ def _read_ddid(sub, pair, chan_freq, stride, column, conjugate, u_sign):
 # ----------------------------------------------------------------------
 
 
+class _LogImproper(dist.Distribution):
+    """The improper Jeffreys prior ``p(x) ∝ 1/x`` of a positive scale.
+
+    Flat in ``ln x`` on the whole line, so ``fit`` optimizes ``z = ln x`` with
+    no box (``flat_coordinate`` has infinite ends); it has no samples.
+    """
+
+    support = constraints.positive
+    pytree_data_fields = ()
+
+    def __init__(self, shape=(), *, validate_args=None):
+        super().__init__(batch_shape=tuple(shape), validate_args=validate_args)
+
+    def log_prob(self, value):
+        return -np.log(value)
+
+    def flat_coordinate(self):
+        return np.log, np.exp, -onp.inf, onp.inf
+
+
 class CalibrationNuisance:
     """Per-observation calibration nuisances of a radio dataset.
 
@@ -994,11 +1072,30 @@ class CalibrationNuisance:
     Site             Shape             Default prior               Not fitted
     ===============  ================  ==========================  =============
     ``cal.flux``     ``()``            ``LogUniform(1e-4, 1e2)``   always fitted
-    ``cal.gain``     ``(n_obs-1,)``    ``LogUniform(0.5, 2)``      1
-    ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ, θ)`` mas      0
-    ``cal.sigma``    ``(n_ddid,)``     ``LogUniform(0.1, 10)``     1
+    ``cal.gain``     ``(n_obs-1,)``    Jeffreys ``1/g``            1
+    ``cal.offset``   ``(n_obs-1, 2)``  ``Uniform(-θ_k, θ_k)`` mas  0
+    ``cal.sigma``    ``(n_ddid,)``     Jeffreys ``1/s``            1
     ``cal.alpha``    ``()``            ``Uniform(0, 5)``           0
     ===============  ================  ==========================  =============
+
+    **Conditioning.** ``fit`` optimizes each site through the bijection of
+    its prior, so the prior's width sets the coordinate's scale. The gains
+    and σ scales have the improper Jeffreys prior ``1/x`` by default, flat in
+    ``ln x`` over the whole line: ``z = ln x``, no box. The offset of
+    observation ``k`` is a uniform location on ``±θ_k`` with
+    ``θ_k = offset_beams · 2π b_k`` (default 3 beams), where
+    ``b_k = 1/(2π q_max,k)`` and ``q_max,k`` is the longest baseline of that
+    observation. A sigmoid on ``±θ_k`` has slope ``θ_k/2`` ≈ 9 ``b_k`` at
+    the centre, so the coordinate's unit step is a few phase turns at the
+    longest baseline of each observation, however different the arrays: the
+    old default box ``±1/(2 q_min)`` (about 10⁴ mas) made it ~5·10³ mas.
+    **The bound is a real prior:** an offset larger than ``θ_k`` is excluded
+    (and reported in ``fit(...).info["at_bound"]``); widen it with
+    ``offset_beams`` or ``priors(offset=(lo, hi))`` in mas, which sets the
+    coordinate scale again (``(hi - lo)/4`` at the centre). Passing
+    ``priors(gain=(lo, hi))`` or ``sigma=(lo, hi)`` gives a ``LogUniform``
+    box. The site values are always the physical ones (``cal.gain``,
+    ``cal.offset`` in mas, ``cal.sigma``).
 
     The reference observation (``ref_obs``, an index) has gain 1 and zero
     offset. The model at a point is
@@ -1008,13 +1105,35 @@ class CalibrationNuisance:
     radians, ``q = √(u² + v²)``), a Gaussian convolution of the image. The
     error scale ``s_d`` of each ddid multiplies the errors.
 
+    **Loss convention.** Per unmasked point the term is
+    ``½ |r|² / s_d² + 2 ln s_d`` for ``r = (V − M) √w``, the two real
+    parts counting as one complex point, so that the total is ``½ χ²`` plus
+    ``log_norm = Σ_k m_k 2 ln s_d(k)``.
+
     Parameters
     ----------
     data : ComplexVisData
     ref_obs : int
     gains, offsets, sigmas, alpha : bool
         Which nuisances are fitted (the flux always is). Gains and offsets
-        need more than one observation.
+        need more than one observation. ``sigmas`` may also be ``"profile"``:
+        the ``s_d`` are not sites but are set at every evaluation to
+        ``ŝ_d² = χ²_d(s=1) / (2 N_d)``, ``N_d`` the number of unmasked
+        complex points of ddid ``d``. With the Jeffreys prior (flat in
+        ``ln s``) this is exactly the maximum over ``ln s_d`` of the loss
+        above, so the profiled optimum over the other parameters equals the
+        joint optimum; the gradient is the partial derivative at ``ŝ`` (the
+        envelope theorem), taken with ``ŝ`` held by ``stop_gradient``. It
+        removes the ``n_ddid`` sites and the near-degeneracy between ``s``
+        and the amplitude of the model; ``ŝ`` is reported in
+        ``fit(...).info["derived"]`` as ``"<prefix>.sigma"``, and by
+        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]. The loss it
+        returns is ``½ χ²(ŝ) + log_norm(ŝ) = Σ_d N_d (1 + 2 ln ŝ_d)``, the
+        profile of the joint loss, so values compare across fits of the same
+        data.
+    offset_beams : float, optional
+        Half-width of the default offset prior, in beams
+        (``2π b_k`` each); default 3.
     nu0_hz : float, optional
         Reference frequency of the spectral index; default the
         weight-averaged frequency of ``data``.
@@ -1035,6 +1154,7 @@ class CalibrationNuisance:
         nu0_hz=None,
         taper_fwhm_mas=None,
         prefix="cal",
+        offset_beams=3.0,
     ):
         self.n_obs = len(data.obs_ids)
         self.n_ddid = len(data.ddid_ids)
@@ -1043,7 +1163,12 @@ class CalibrationNuisance:
         self.ref_obs = int(ref_obs)
         self.gains = bool(gains) and self.n_obs > 1
         self.offsets = bool(offsets) and self.n_obs > 1
-        self.sigmas = bool(sigmas)
+        if isinstance(sigmas, str):
+            if sigmas != "profile":
+                raise ValueError("sigmas must be True, False or 'profile'.")
+            self.sigmas = "profile"
+        else:
+            self.sigmas = bool(sigmas)
         self.alpha = bool(alpha)
         w = onp.asarray(data.weight, dtype=onp.float64)
         if nu0_hz is None:
@@ -1059,6 +1184,17 @@ class CalibrationNuisance:
         ) / onp.sum(w[short])
         self.flux_start = float(total) if total > 0 else 0.1
         self.offset_bound_mas = float(rad2mas / (2.0 * q_min))
+        # b_k = 1/(2π q_max,k) in mas, the natural unit of observation k's
+        # offset; the reference observation has no offset site.
+        obs = onp.asarray(data.obs)
+        q_max = onp.array(
+            [
+                q[obs == k].max() if onp.any(obs == k) else onp.nan
+                for k in range(self.n_obs)
+            ]
+        )
+        self.offset_unit_mas = rad2mas / (2.0 * onp.pi * q_max)
+        self.offset_beams = float(offset_beams)
         self.taper_fwhm_mas = (
             None if taper_fwhm_mas is None else float(taper_fwhm_mas)
         )
@@ -1077,35 +1213,50 @@ class CalibrationNuisance:
         """Default priors of the fitted sites, a dict for ``fit``.
 
         ``bounds`` override the ends ``(lo, hi)`` of a site's prior, keyed by
-        ``flux``, ``gain``, ``offset``, ``sigma`` or ``alpha``. The default
-        offset bound is ``±θ`` with ``θ = 1/(2 q_min)`` (mas), ``q_min`` the
-        shortest baseline of the data: a shift of the phase centre beyond
-        that is less than half a turn of phase on every baseline.
+        ``flux``, ``gain``, ``offset``, ``sigma`` or ``alpha``. Without a
+        bound, the gains and σ scales are improper Jeffreys priors (flat in
+        ``ln x``, no box) and the offsets are uniform over
+        ``±offset_beams`` beams of their observation (``2π b_k``, see the
+        class docstring). ``offset=(-1/(2 q_min), 1/(2 q_min))`` in mas, with
+        ``q_min`` the shortest baseline (``offset_bound_mas``), is the old
+        default: a shift of the phase centre beyond that is less than half a
+        turn of phase on every baseline.
         """
-        import numpyro.distributions as dist
-
         unknown = set(bounds) - {"flux", "gain", "offset", "sigma", "alpha"}
         if unknown:
             raise ValueError(f"unknown bounds {sorted(unknown)}.")
         k = self.n_obs - 1
-        theta = self.offset_bound_mas
         lo, hi = bounds.get("flux", (1e-4, 1e2))
         out = {self._site("flux"): dist.LogUniform(lo, hi)}
         if self.gains:
-            lo, hi = bounds.get("gain", (0.5, 2.0))
-            out[self._site("gain")] = dist.LogUniform(
-                np.full(k, lo), np.full(k, hi)
-            )
+            if "gain" in bounds:
+                lo, hi = bounds["gain"]
+                out[self._site("gain")] = dist.LogUniform(
+                    np.full(k, lo), np.full(k, hi)
+                )
+            else:
+                out[self._site("gain")] = _LogImproper((k,))
         if self.offsets:
-            lo, hi = bounds.get("offset", (-theta, theta))
+            unit = self.offset_unit_mas[onp.arange(self.n_obs) != self.ref_obs]
+            unit = np.asarray(unit)[:, None]
+            theta = self.offset_beams * 2.0 * onp.pi * unit
+            if "offset" in bounds:
+                lo, hi = bounds["offset"]
+                lo, hi = lo + 0.0 * theta, hi + 0.0 * theta
+            else:
+                lo, hi = -theta, theta
+            shape = (k, 2)
             out[self._site("offset")] = dist.Uniform(
-                np.full((k, 2), lo), np.full((k, 2), hi)
+                np.broadcast_to(lo, shape), np.broadcast_to(hi, shape)
             )
-        if self.sigmas:
-            lo, hi = bounds.get("sigma", (0.1, 10.0))
-            out[self._site("sigma")] = dist.LogUniform(
-                np.full(self.n_ddid, lo), np.full(self.n_ddid, hi)
-            )
+        if self.sigmas is True:
+            if "sigma" in bounds:
+                lo, hi = bounds["sigma"]
+                out[self._site("sigma")] = dist.LogUniform(
+                    np.full(self.n_ddid, lo), np.full(self.n_ddid, hi)
+                )
+            else:
+                out[self._site("sigma")] = _LogImproper((self.n_ddid,))
         if self.alpha:
             lo, hi = bounds.get("alpha", (0.0, 5.0))
             out[self._site("alpha")] = dist.Uniform(lo, hi)
@@ -1119,7 +1270,7 @@ class CalibrationNuisance:
             out[self._site("gain")] = onp.ones(k)
         if self.offsets:
             out[self._site("offset")] = onp.zeros((k, 2))
-        if self.sigmas:
+        if self.sigmas is True:
             out[self._site("sigma")] = onp.ones(self.n_ddid)
         if self.alpha:
             out[self._site("alpha")] = 2.0
@@ -1130,7 +1281,10 @@ class CalibrationNuisance:
         return np.insert(free, self.ref_obs, fill, axis=0)
 
     def _unpack(self, values):
-        """(flux, gain[n_obs], offset[n_obs, 2], sigma[n_ddid], alpha)."""
+        """(flux, gain[n_obs], offset[n_obs, 2], sigma[n_ddid], alpha).
+
+        With ``sigmas="profile"`` the sigma is 1 here; the term sets ŝ.
+        """
         site = self._site
         gain = (
             self._expand(np.asarray(values[site("gain")]), 1.0)
@@ -1146,8 +1300,8 @@ class CalibrationNuisance:
         )
         sigma = (
             np.asarray(values[site("sigma")])
-            if self.sigmas
-            else np.ones(self.n_ddid)
+            if self.sigmas is True
+            else np.ones(self.n_ddid)  # profiled: set by the term
         )
         alpha = values[site("alpha")] if self.alpha else 0.0
         return values[site("flux")], gain, offset, sigma, alpha
@@ -1197,8 +1351,18 @@ class _RadioTerm(eqx.Module):
     scene: object = eqx.field(static=True)
     nuisance: object = eqx.field(static=True)
     n: int = eqx.field(static=True)
+    sigma_fixed: object = None
 
-    def __init__(self, data, scene, nuisance, mask, chunk_size):
+    def __init__(self, data, scene, nuisance, mask, chunk_size, sigma=None):
+        if sigma is not None:
+            if nuisance.sigmas != "profile":
+                raise ValueError("sigma= needs sigmas='profile'.")
+            sigma = np.asarray(sigma, dtype=np.float64)
+            if sigma.shape != (nuisance.n_ddid,):
+                raise ValueError(
+                    f"sigma must have shape ({nuisance.n_ddid},)."
+                )
+        self.sigma_fixed = sigma
         n = len(data)
         if mask is None:
             mask = onp.ones(n, dtype=bool)
@@ -1233,10 +1397,20 @@ class _RadioTerm(eqx.Module):
 
     @property
     def has_log_norm(self):
-        return self.nuisance.sigmas
+        return bool(self.nuisance.sigmas)
+
+    @property
+    def _profiled(self):
+        return self.nuisance.sigmas == "profile"
 
     def _residuals(self, values):
         """(re, im) whitened residual chunks of shape (nchunk, chunk)."""
+        re, im, _ = self._residuals_and_sigma(values)
+        return re, im
+
+    def _residuals_and_sigma(self, values):
+        """``(re, im, sigma)``: whitened residual chunks and the ``s_d`` used
+        (fitted, or the profiled ``ŝ``)."""
         nuis = self.nuisance
         unpacked = nuis._unpack(values)
         sigma = unpacked[3]
@@ -1257,7 +1431,39 @@ class _RadioTerm(eqx.Module):
             r = (a["vis"] - model) * a["sqrt_w"] / sigma[a["ddid"]]
             return np.real(r), np.imag(r)
 
-        return jax.lax.map(chunk, self.arrays)
+        re, im = jax.lax.map(chunk, self.arrays)
+        if self._profiled:
+            sigma = (
+                self._profile_sigma(re, im)
+                if self.sigma_fixed is None
+                else self.sigma_fixed
+            )
+            scale = sigma[self.arrays["ddid"]]
+            re, im = re / scale, im / scale
+        return re, im, sigma
+
+    def _profile_sigma(self, re, im):
+        """``ŝ_d = sqrt(χ²_d(1) / 2 N_d)`` (1 where ddid ``d`` has no points),
+        held by ``stop_gradient`` (envelope theorem)."""
+        a = self.arrays
+        n_ddid = self.nuisance.n_ddid
+        ddid = np.reshape(a["ddid"], -1)
+        chi2 = jax.ops.segment_sum(np.reshape(re**2 + im**2, -1), ddid, n_ddid)
+        count = jax.ops.segment_sum(np.reshape(a["m"], -1), ddid, n_ddid)
+        s2 = chi2 / (2.0 * np.maximum(count, 1.0))
+        s2 = np.where(count > 0, np.maximum(s2, np.finfo(s2.dtype).tiny), 1.0)
+        return jax.lax.stop_gradient(np.sqrt(s2))
+
+    def sigma_hat(self, values):
+        """The error scales ``s_d`` at ``values``: ``ŝ`` if profiled, else the
+        fitted ``cal.sigma`` (ones if not fitted)."""
+        return self._residuals_and_sigma(values)[2]
+
+    def derived(self, values):
+        """Quantities of the fit that are not sites: the profiled ``ŝ``."""
+        if not self._profiled:
+            return {}
+        return {self.nuisance._site("sigma"): self.sigma_hat(values)}
 
     def _flat(self, x):
         return np.reshape(x, -1)[: self.n]
@@ -1271,21 +1477,30 @@ class _RadioTerm(eqx.Module):
         re, im = self._residuals(values)
         return self._flat(re) ** 2 + self._flat(im) ** 2
 
-    def _log_sigma_sum(self, values):
-        sigma = self.nuisance._unpack(values)[3]
+    def _log_norm_of(self, sigma):
         a = self.arrays
-        return np.sum(a["m"] * np.log(sigma[a["ddid"]]))
+        return 2.0 * np.sum(a["m"] * np.log(sigma[a["ddid"]]))
 
     def log_norm(self, values):
         """``Σ_k m_k 2 ln s_d(k)``, which ``fit`` adds to ½χ²."""
-        return 2.0 * self._log_sigma_sum(values)
+        if self._profiled:
+            return self._log_norm_of(self.sigma_hat(values))
+        return self._log_norm_of(self.nuisance._unpack(values)[3])
+
+    def residuals_and_log_norm(self, values):
+        """``(term(values), log_norm(values))`` from one evaluation of the
+        model (``fit`` uses it, so that profiling ``ŝ`` costs no second pass)."""
+        re, im, sigma = self._residuals_and_sigma(values)
+        r = np.concatenate([self._flat(re), self._flat(im)])
+        return r, self._log_norm_of(sigma)
 
     def loglike(self, values):
         """Normalized Gaussian log density of the unmasked points."""
         a = self.arrays
-        chi2 = np.sum(self._r2(values))
+        re, im, sigma = self._residuals_and_sigma(values)
+        chi2 = np.sum(self._flat(re) ** 2 + self._flat(im) ** 2)
         const = np.sum(a["m"] * (np.log(2.0 * np.pi) - np.log(a["w"])))
-        return -0.5 * chi2 - self.log_norm(values) - const
+        return -0.5 * chi2 - self._log_norm_of(sigma) - const
 
 
 # ----------------------------------------------------------------------

@@ -55,6 +55,8 @@ def _gaussian(shape, centre, bmaj, bmin, pa_deg):
 def fit_beam(psf, pixel_scale_mas, psfcutoff=0.35):
     """Gaussian fitted to the main lobe of a PSF, as ``tclean`` does.
 
+    Source: CASA's ``psfcutoff`` fit (the lobe above the cutoff).
+
     Parameters
     ----------
     psf : (n, n) array
@@ -465,60 +467,53 @@ def clean(
 ):
     """Cotton–Schwab CLEAN of complex visibilities, after CASA's ``tclean``.
 
-    Major cycles form the residual from the exact visibilities, ``V − M``,
-    with the model ``M`` transformed by NUFFT; minor cycles clean the residual
-    image with the PSF (a window of it, as in Clark's CLEAN) until the cycle
-    threshold. The result is restored with a Gaussian fitted to the PSF.
-    Needs an odd ``npix`` (the PSF then peaks on a pixel).
+    Major cycles image the exact residual ``V − M`` (NUFFT model); minor
+    cycles clean it with a window of the PSF. Arguments are named as in
+    ``tclean``; see the [guide](../radio_clean.md) for the algorithm and the
+    WSClean equivalents.
+
+    Source: Högbom (1974), Clark (1980), Schwab (1984), Cornwell (2008).
 
     Parameters
     ----------
     data : ComplexVisData
     npix : int
-        Odd image side.
+        Odd image side (the PSF then peaks on a pixel).
     pixel_scale_mas : float
     deconvolver : {"hogbom", "clark", "multiscale"}
-        Minor cycle: point components (``"clark"`` is the same, windowed
-        loop) or Gaussian scales (Cornwell 2008).
+        Point components (``"clark"`` is the same windowed loop) or Gaussians.
     scales : sequence of float, optional
-        Multi-scale FWHMs in pixels, 0 a point (``tclean``'s ``scales``).
-        Default ``[0, 5, 15]``.
-    weighting : {"natural", "uniform", "briggs"}, robust : float, uvtaper
+        Multi-scale FWHMs in pixels, 0 a point; default ``[0, 5, 15]``.
+    weighting, robust, uvtaper
         As for [`dirty_image`][virgil.radio.ComplexVisData.dirty_image].
-    niter : int
-        Total minor-cycle iterations.
-    gain : float
-        Loop gain.
-    threshold : float
-        Stop when the peak residual in the mask is below this, Jy/beam.
+    niter, gain, threshold : int, float, float
+        Total iterations, loop gain, and the peak residual (Jy/beam) to stop at.
     nsigma : float
-        Also stop below ``nsigma`` × the residual's robust rms.
+        Also stop below ``nsigma`` × the robust rms of the residual.
     cycleniter : int
-        Iterations per minor cycle; −1 is all that remain.
+        Iterations per minor cycle (−1: all that remain).
     cyclefactor, minpsffraction, maxpsffraction : float
-        A minor cycle stops at ``max(threshold, f × peak)`` with ``f =
-        clip(cyclefactor × max PSF sidelobe, minpsffraction, maxpsffraction)``.
+        A minor cycle stops at ``max(threshold, f × peak)``, ``f =
+        clip(cyclefactor × PSF sidelobe, minpsffraction, maxpsffraction)``.
     smallscalebias : float
-        Multi-scale preference for small scales, 0 (none) to 1.
+        Preference for small scales, 0 to 1.
     psfpatch : int
-        Half-width in pixels of the PSF window the minor cycle subtracts.
+        Half-width in pixels of the PSF window subtracted per iteration.
     mask : array of bool, optional
         Where to clean; default the whole image.
-    usemask : {"user", "auto-multithresh"}
-        ``"auto-multithresh"`` adds, each major cycle, the regions of the
-        beam-smoothed residual above ``lownoisethreshold`` × rms that hold a
-        pixel above ``noisethreshold`` × rms or ``sidelobethreshold`` ×
-        sidelobe × peak (a simplified version of CASA's).
+    usemask : {"user", "auto-multithresh"}, sidelobethreshold, noisethreshold,
+        lownoisethreshold
+        ``"auto-multithresh"`` adds regions of the beam-smoothed residual
+        (a simplified CASA version, see the guide).
     restoringbeam : (bmaj_mas, bmin_mas, pa_deg), optional
-        Default the fit to the PSF above ``psfcutoff``.
+        Default: fitted to the PSF above ``psfcutoff``.
     uv_cell : float, optional
-        Briggs/uniform density cell in wavelengths; default ``1/FoV``.
+        Density cell in wavelengths; default ``1/FoV``.
     chunk_size : int
         Visibilities transformed at a time.
     time_limit : float, optional
         Seconds after which no further major cycle starts.
     verbose : bool
-        Print one line per major cycle.
 
     Returns
     -------
@@ -548,7 +543,7 @@ def clean(
         if uv_cell is None:
             uv_cell = 1.0 / (npix * pixel_scale_mas * mas2rad)
         w = data._imaging_weights(
-            weighting, robust, uv_cell, None, None, uvtaper
+            weighting, robust, uv_cell, None, None, uvtaper=uvtaper
         )
         vis = onp.asarray(data.vis, dtype=onp.complex128)
 
