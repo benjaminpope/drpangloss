@@ -478,6 +478,7 @@ def test_star_auto_decides_the_star_on(data, tmp_path):
     assert star["member_star"] is True
 
 
+@pytest.mark.slow
 def test_members_are_resumable_and_fill_the_ensemble(data, tmp_path):
     """The array workflow: members out of order, then the stages finish."""
     pipe = ImagingPipeline(data, output=tmp_path / "run", **SMALL)
