@@ -403,7 +403,7 @@ def _through(t0, r0, t1, r1, period=300.0, dt_peri=50.0, ecc=0.3):
     ).to_kepler()
 
 
-@pytest.mark.slow  # 30-75 s on a CI runner
+@pytest.mark.slow  # 27 s on a CI runner
 def test_per_epoch_flux_decoy_loses_under_shared_flux():
     # A companion at -r with flux 1/f has the same V² and closure phases as
     # one at r with flux f. The decoy follows the truth on night 0 and its

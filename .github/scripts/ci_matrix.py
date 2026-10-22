@@ -33,7 +33,7 @@ import subprocess
 # touching one runs the slow tests of these test files too
 # (tests/conftest.py, VIRGIL_SLOW_FILES).
 ORBIT_PATHS = re.compile(
-    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*|pipeline/(disk|image))"
+    r"^(src/virgil/(aliases|epochs|orbit[a-z_]*|likelihood|_marginal|_precision|pipeline/(disk|image))"
     r"|tests/test_(aliases|epochs|orbit[a-z_]*|pipeline_(disk|image)))\.py$"
 )
 ORBIT_SLOW_FILES = (

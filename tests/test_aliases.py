@@ -175,21 +175,11 @@ def test_random_starts_and_s_max_reach_the_settings_without_positions(
     monkeypatch,
 ):
     # Without positions there are no seeds: the requested random starts and
-    # error-inflation bound must arrive in the settings unchanged. (The full
-    # fit this once ran, 58-88 s, only asserted that it completed.)
-    seen = {}
-
-    def preflight(problem, settings, band):
-        seen["n_random"], seen["s_max"] = settings.n_random, settings.s_max
-        raise _Stop
-
-    monkeypatch.setattr(aliases, "_preflight", preflight)
-    data, _ = _synthetic(12.38)
-    with pytest.raises(_Stop):
-        fit_orbit_aliases(
-            data, (12.1, 12.7), t_ref=T_REF, n_random=64, s_max=50.0
-        )
-    assert seen == {"n_random": 64, "s_max": 50.0}
+    # error-inflation bound must arrive in the settings unchanged.
+    settings = _spy_settings(
+        monkeypatch, p_range=(12.1, 12.7), n_random=64, s_max=50.0
+    )["settings"]
+    assert (settings.n_random, settings.s_max) == (64, 50.0)
 
 
 def _settings(**kw):
@@ -1759,7 +1749,9 @@ def _spy_settings(monkeypatch, **options):
     )
     data, _ = _synthetic(12.1)
     with pytest.raises(_Stop):
-        fit_orbit_aliases(data, t_ref=T_REF, n_random=5, **options)
+        fit_orbit_aliases(
+            data, t_ref=T_REF, **{"n_random": 5, **options}
+        )
     return seen
 
 
