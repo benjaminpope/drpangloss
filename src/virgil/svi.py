@@ -296,8 +296,9 @@ def variational(
 
     Maximizes the ELBO with Adam on the posterior of
     [`numpyro_model`][virgil.likelihood.numpyro_model]. With ``start`` the guide
-    starts at the Laplace approximation there; with ``start=None`` at the priors'
-    medians with width ``init_scale``. Which guide to use and how to check the result:
+    starts at that point with the Laplace (Gauss–Newton) width, or ``init_scale``
+    given ``regularizers``; with ``start=None`` at the priors' medians with width
+    ``init_scale``. Which guide to use and how to check the result:
     [Variational inference](../variational_inference.md).
 
     Parameters

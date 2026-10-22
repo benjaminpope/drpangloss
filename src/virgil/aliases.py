@@ -3127,7 +3127,8 @@ def fit_orbit_aliases(
     positions : PositionData or EpochPositions, optional
         Positions that seed the fits (else random orbits).
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
-        Epoch times, ``dt_peri`` reference (MJD), prior ranges, eccentricity cap.
+        Epoch times and ``dt_peri`` reference (MJD; default each dataset's mean
+        time, and their mean), prior ranges (``a_range`` in mas), eccentricity cap.
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, flag_nats, ess_min, seed, checkpoint_dir, on_band, init : optional
         Search effort, sampling, seed; finished bands in ``checkpoint_dir`` are
         reloaded; a per-band callback; a warm start.

@@ -554,9 +554,9 @@ def linear_flux_grid(
     -------
     LinearFluxGrid
         Named tuple of arrays with one axis per coordinate key: ``flux``,
-        ``flux_error`` (NaN where the model ignores the flux), ``snr``, and
+        ``flux_error`` (NaN where the model ignores the flux), ``snr`` (flux over error), and
         with a ``prior`` ``posterior_mean``, ``posterior_sd`` and
-        ``log_bayes_factor`` (> 0 favours a companion; else ``None``).
+        ``log_bayes_factor`` (per position; > 0 favours a companion; else ``None``).
 
     Examples
     --------
