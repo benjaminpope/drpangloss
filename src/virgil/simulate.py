@@ -53,15 +53,10 @@ def simulate(scene, template, key=None, noise_scale=1.0, shift_days=None):
     if shift_days is not None:
         if data.dt is None:
             raise ValueError("shift_days needs a template with times.")
-        data = _shift_times(data, shift_days)
+        # Every time moved by ``shift_days`` (shifts the float64 ``t_ref``).
+        data = copy.copy(data)
+        object.__setattr__(data, "t_ref", data.t_ref + float(shift_days))
     return data.with_model(scene, key=key, noise_scale=noise_scale)
-
-
-def _shift_times(data, days):
-    """``data`` with every time moved by ``days`` (shifts float64 ``t_ref``)."""
-    shifted = copy.copy(data)
-    object.__setattr__(shifted, "t_ref", data.t_ref + float(days))
-    return shifted
 
 
 def bias_test(scene, template, model, priors, n, key, **fit_kwargs):

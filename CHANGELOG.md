@@ -72,6 +72,8 @@ anything before 1.0 may change between minor versions.
 
 ### Changed (internal)
 
+- Code shape, numerics and sweep: 22 single-use private helpers in `fitting`, `likelihood`, `imaging`, `ensemble`, `plotting`, `detection`, `arcs`, `crossval`, `simulate`, `angles` and `_gauss_newton` are inlined at their one call site. No behaviour or numerics change.
+
 - The orbit family loses six single-use private helpers (`_senses`, `_seed_motion`, `_skipped_codes`, `_check_marginal_data`, `_kepler`, `_thiele_innes`) and two duplicates: the profiled V² amplitude (`epochs._amp_profile`, used by `aliases` too) and the greedy distinct-track selection (`epochs._distinct_tracks`). No change in results.
 
 ## 0.4.0 (2026-10-18)

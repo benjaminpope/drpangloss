@@ -686,7 +686,11 @@ def injection_recovery(
     n_inj = inj_values.shape[0]
     draw_batch, grid_batch = _batch_sizes(batch_size, template, draw_batch)
     chunk = _chunk_size(chunk_size, draw_batch, max(n_null, n_inj))
-    seed = _seed_record(key)
+    # JSON description of ``key``, to tell array jobs apart.
+    if isinstance(key, (int, onp.integer)):
+        seed = {"seed": int(key)}
+    else:
+        seed = {"key": onp.asarray(_raw_key(key)).reshape(-1).tolist()}
     base = _raw_key(_as_key(key))
     static = {
         "params": params,
@@ -756,7 +760,11 @@ def injection_recovery(
         },
         "model": _describe(model),
         "null_scene": _describe(null_scene),
-        "template": _fingerprint_data(template),
+        "template": {  # shape and hash of the whole template
+            "n_vis": int(onp.size(template.vis)),
+            "n_phi": int(onp.size(template.phi)),
+            "hash": _fingerprint(template),
+        },
         "noise": simulator.describe(),
         "match_radius": match_radius,
         "n_null": n_null,
@@ -838,13 +846,6 @@ def _raw_key(key):
     if jax.dtypes.issubdtype(getattr(key, "dtype", None), jax.dtypes.prng_key):
         return jax.random.key_data(key)
     return np.asarray(key)
-
-
-def _seed_record(key):
-    """JSON description of ``key``, to tell array jobs apart."""
-    if isinstance(key, (int, onp.integer)):
-        return {"seed": int(key)}
-    return {"key": onp.asarray(_raw_key(key)).reshape(-1).tolist()}
 
 
 def _canonical_names(params, flux_key):
@@ -1046,15 +1047,6 @@ def _feed(h, obj):
 
 def _qualname(obj):
     return f"{getattr(obj, '__module__', '')}.{obj.__qualname__}"
-
-
-def _fingerprint_data(data):
-    """Shape and hash of the whole template (see :func:`_fingerprint`)."""
-    return {
-        "n_vis": int(onp.size(data.vis)),
-        "n_phi": int(onp.size(data.phi)),
-        "hash": _fingerprint(data),
-    }
 
 
 def _describe(model):

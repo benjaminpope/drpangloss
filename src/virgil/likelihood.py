@@ -383,19 +383,6 @@ def _whitened_and_errors(model, data, noise):
     return _whitened_errors_and_log_norm(model, data, noise)[:2]
 
 
-def _whitened_and_log_norm(model, data, noise=None):
-    """Whitened residuals and the marginal nuisances' log-normalizer.
-
-    ``model_loglike`` is ``-½ Σ r² - log_norm`` plus a term that depends only on
-    the data and the error terms; ``log_norm`` is ½ log det of the covariance
-    factors of marginalized gains and closure offsets (zero without them).
-    """
-    whitened, _, log_norm = _whitened_errors_and_log_norm(
-        model, data, {} if noise is None else noise
-    )
-    return whitened, log_norm
-
-
 def _prediction_and_errors(model, data, noise):
     """The model prediction and the diagonal errors of ``data``.
 
@@ -665,16 +652,6 @@ def _check_positive_flux_prior(name, distribution):
         )
 
 
-def _term_loglike(term, values):
-    """Log density of one ``likelihoods=`` term at the fitted ``values``: its own
-    normalized ``loglike`` for ``PositionData.term``/``RVData.term``, otherwise
-    ``-0.5 * sum(r**2)`` only.
-    """
-    if hasattr(term, "loglike"):
-        return term.loglike(values)
-    return -0.5 * np.sum(np.ravel(term(values)) ** 2)
-
-
 def _sample(numpyro, path, prior, flat=False):
     """Sample the parameter at ``path`` (an angle vector at ``<path>_vec``, with the
     angle recorded at ``path``); with ``flat``, in its flat coordinate.
@@ -834,7 +811,14 @@ def numpyro_model(
                 ),
             )
         for i, term in enumerate(likelihoods):
-            numpyro.factor(f"likelihood_{i}", _term_loglike(term, fitted))
+            # A term's own normalized ``loglike`` (``PositionData.term``,
+            # ``RVData.term``), otherwise ``-0.5 * sum(r**2)`` only.
+            numpyro.factor(
+                f"likelihood_{i}",
+                term.loglike(fitted)
+                if hasattr(term, "loglike")
+                else -0.5 * np.sum(np.ravel(term(fitted)) ** 2),
+            )
         for i, regularizer in enumerate(regularizers):
             numpyro.factor(
                 f"regularizer_{i}", -regularizer.value(_reference(source))

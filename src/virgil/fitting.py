@@ -811,14 +811,6 @@ def fit(
     )
 
 
-def _print_progress(report):
-    print(
-        f"fit: {report['steps']} steps, loss {report['loss']:.6g}, "
-        f"grad_norm {report['grad_norm']:.3g}, {report['elapsed']:.1f} s",
-        flush=True,
-    )
-
-
 class _Budget:
     """The time limit and progress report of a fit (see ``fit``).
 
@@ -828,8 +820,13 @@ class _Budget:
 
     def __init__(self, time_limit=None, progress=None):
         self.time_limit = time_limit
-        self.progress = _print_progress if progress is True else progress
-        self.progress = self.progress or None
+        if progress is True:
+            progress = lambda r: print(  # noqa: E731
+                f"fit: {r['steps']} steps, loss {r['loss']:.6g}, "
+                f"grad_norm {r['grad_norm']:.3g}, {r['elapsed']:.1f} s",
+                flush=True,
+            )
+        self.progress = progress or None
         self.start = time.monotonic()
         self._reported = None
 
