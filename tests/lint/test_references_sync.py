@@ -49,3 +49,16 @@ def test_unverified_means_no_id_or_not_checked():
     assert module.is_verified({"arxiv": "1", "verified": True})
     assert not module.is_verified({"arxiv": "1", "verified": False})
     assert not module.is_verified({"url": "x", "verified": True})
+
+
+def test_the_page_renders_an_entry_without_authors_or_title():
+    module = _load_script()
+    refs = {
+        "bare": {"used_in": ["virgil.models:A"]},
+        "role": {"role": "compared", "year": 2020},
+        "complete": {"authors": "Smith", "title": "T", "year": 2019},
+    }
+    page = module.render_page(refs, "intro")
+    assert '<a id="bare"></a>' in page and "(authors missing)" in page
+    assert "(title missing)" in page
+    assert "bare" in module.census_unverified(refs)
