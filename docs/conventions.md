@@ -278,14 +278,14 @@ An [`Image`][virgil.models.Image] (and the `FlaredDisk` family) computes visibil
 
 ## Preconditioning image fits
 
-An image fit with a weak penalty (maximum entropy at a small weight) is badly conditioned: the faint pixels are almost unconstrained, so L-BFGS takes many tiny steps along them. `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal of the Gauss–Newton curvature ([`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and Adam. The optimum is the same; it usually takes half to a quarter of the steps along an L-curve, and sometimes converges where the plain fit reaches the step limit. LM already uses JᵀJ and ignores it. The option is provisional (see [stability](stability.md)).
+An image fit with a weak penalty (maximum entropy at a small weight) is badly conditioned: the faint pixels are almost unconstrained, so L-BFGS takes many tiny steps along them. `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal of the Gauss–Newton curvature ([`gauss_newton_diag`][virgil.fitting.gauss_newton_diag]) for L-BFGS and Adam. The optimum is the same. In the two L-curves measured it took 30–40% fewer steps in total (more at a tight `gtol`), and at the weakest weight it sometimes converges where the plain fit reaches the step limit. LM already uses JᵀJ and ignores it. The option is provisional (see [stability](stability.md)).
 
 ```python
 result = fit(start, image_priors(start), data, MaxEntropy(10.0, path="env"), precondition="diag")
 result.info["precondition_rounds"]
 ```
 
-`info["precondition_rounds"]` has one entry per L-BFGS round: `decades`, the spread of the curvature before it is floored (the largest of any coordinate block), and `floored`, the fraction of coordinates held at the floor (1e-3 of the largest). A spread of several decades is where it helps; a spread near zero means the plain fit was already well conditioned. `gtol`, `max_step_size` and `info["grad_norm"]` keep their meaning in the unscaled coordinates.
+`info["precondition_rounds"]` has one entry per L-BFGS round (one for Adam, none for LM): `decades`, the spread of the curvature before it is floored (the largest of any coordinate block), and `floored`, the fraction of coordinates held at the floor (1e-3 of the largest in their block). A spread of several decades is where it helps; a spread near zero means the plain fit was already well conditioned. `gtol`, `max_step_size` and `info["grad_norm"]` keep their meaning in the unscaled coordinates.
 
 !!! warning "float32"
     At weak weights a float32 fit can still stall: the line search meets the noise of the float32 model evaluation, which rescaling does not remove. Use `dtype="float64"` (the default) for a sweep that reaches small weights.

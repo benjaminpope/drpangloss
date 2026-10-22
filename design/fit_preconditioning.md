@@ -244,7 +244,7 @@ probes 15%; the exact diagonal of the 1681 coordinates costs about 0.4 s
 including compilation. That is at the 30% bar and the cost is negligible, so
 **no analytic per-data-type overrides are built**: one generic path (data terms
 via `curvature_rows`, regularizers via Hessian probes) serves OI, DISCO and
-radio alike. `info["precondition_decades"]` records the spread of D per round.
+radio alike. `info["precondition_rounds"]` records, per round, the spread of D (`decades`) and the floored fraction (`floored`).
 
 **The Stage 7 success test is not met by a diagonal alone.** Float64 passes
 on the 41² case at 14645 of 20000 steps (plain fails), but float32 fails for both:

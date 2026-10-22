@@ -1496,7 +1496,8 @@ def gauss_newton_diag(
     [`gauss_newton_mass`][virgil.fitting.gauss_newton_mass] for the dense
     matrix.
 
-    Source: [Hutchinson (1989)](../references.md#hutchinson1989) probes;
+    Source: [Bekas et al. (2007)](../references.md#bekas2007) and
+    [Hutchinson (1989)](../references.md#hutchinson1989) probes;
     [Skilling & Bryan (1984)](../references.md#skillingbryan1984).
 
     Parameters

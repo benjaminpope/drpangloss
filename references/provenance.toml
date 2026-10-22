@@ -937,7 +937,17 @@ doi = "10.1080/03610918908812806"
 verified = false
 verified_via = "none"
 used_in = ["virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
-note = "Commun. Statist. Simul. Comput. 18, 1059; Rademacher probes for the diagonal of a matrix; DOI and title from memory, to check against Crossref"
+note = "Commun. Statist. Simul. Comput. 18, 1059; the trace estimator whose Rademacher probes the regularizer part of the diagonal follows (the JᵀJ part uses Gaussian (Jᵀu)² sketches); DOI and title from memory, to check against Crossref"
+
+[ref.bekas2007]
+authors = "Bekas, Kokiopoulou & Saad"
+year = 2007
+title = "An estimator for the diagonal of a matrix"
+doi = "10.1016/j.apnum.2007.01.003"
+verified = false
+verified_via = "none"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "Appl. Numer. Math. 57, 1214; the estimator mean(v ⊙ Hv) over Rademacher v for the regularizer Hessian diagonal; from memory, to check against Crossref"
 
 [ref.skilling1989]
 authors = "Skilling"
@@ -954,7 +964,7 @@ authors = "Skilling & Bryan"
 year = 1984
 title = "Maximum entropy image reconstruction: general algorithm"
 used_in = ["virgil.imaging:MaxEntropy", "virgil.fitting:gauss_newton_diag", "virgil.fitting:fit"]
-note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S; the entropy metric that precondition=\"diag\" follows"
+note = "MNRAS 211, 111; bibcode 1984MNRAS.211..111S; precondition=\"diag\" generalizes its entropy metric to the local curvature of data and regularizers"
 bibcode = "1984MNRAS.211..111S"
 verified = true
 verified_via = "ads"
