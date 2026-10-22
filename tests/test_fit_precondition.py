@@ -350,8 +350,8 @@ def _l_curve_steps(dtype, npix=41):
         pytest.param(
             "float32",
             marks=pytest.mark.xfail(
-                reason="Stage 7 not met in float32 by a diagonal alone: "
-                "see design/fit_preconditioning.md",
+                reason="converges at memory 100 in one run, but float32 at "
+                "the weakest weight is noisy: see design/fit_preconditioning.md",
                 strict=False,
             ),
         ),

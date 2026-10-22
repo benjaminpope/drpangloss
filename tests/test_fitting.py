@@ -1319,3 +1319,65 @@ def test_a_fit_near_the_truth_does_not_run_away_from_it():
     assert not result.info["at_bound"]
     for path, value in truth_values.items():
         assert result.values[path] == pytest.approx(value, rel=1e-2)
+
+
+def _tree(n, dtype):
+    return {"x": jax.ShapeDtypeStruct((n,), dtype)}
+
+
+@pytest.mark.parametrize(
+    "n, dtype, expected",
+    [
+        (0, "float64", 100),  # nothing to store: no division by zero
+        (1, "float64", 100),  # tiny problem: the full history
+        (1681, "float64", 100),  # the 41² image
+        (
+            671_088,
+            "float64",
+            100,
+        ),  # the largest float64 problem with the full history
+        (671_089, "float64", 99),
+        (1_000_000, "float64", 67),  # 10⁶ float64 pixels: 1 GiB of history
+        (1_342_177, "float32", 100),  # float32 vectors are half the size
+        (10**9, "float64", 5),  # never below 5 steps
+    ],
+)
+def test_the_lbfgs_history_is_100_unless_it_would_pass_one_gibibyte(
+    n, dtype, expected
+):
+    from virgil.fitting import _lbfgs_memory
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert _lbfgs_memory(None, _tree(n, dtype)) == expected
+    assert bool(caught) == (expected < 100)
+    assert _lbfgs_memory(7, _tree(n, dtype)) == 7  # explicit: as given, no cut
+    assert _lbfgs_memory(500, _tree(n, dtype)) == 500
+
+
+def test_the_lbfgs_history_is_sized_by_the_widest_leaf():
+    from virgil.fitting import _lbfgs_memory
+
+    narrow = {"a": jax.ShapeDtypeStruct((1_342_177,), "float32")}
+    mixed = narrow | {"b": jax.ShapeDtypeStruct((1,), "float64")}
+    assert _lbfgs_memory(None, narrow) == 100
+    with pytest.warns(UserWarning, match="pass lbfgs_memory"):
+        assert _lbfgs_memory(None, mixed) < 100
+
+
+def test_fit_passes_the_resolved_lbfgs_memory_to_the_optimizer(monkeypatch):
+    from virgil import fitting
+
+    jax.clear_caches()  # the optimizer is built at trace time
+    seen = []
+    real = fitting._capped_lbfgs
+    monkeypatch.setattr(
+        fitting,
+        "_capped_lbfgs",
+        lambda step, memory, *rest: seen.append(memory)
+        or real(step, memory, *rest),
+    )
+    fit(START, PRIORS, DATA, method="lbfgs", max_steps=5)
+    fit(START, PRIORS, DATA, method="lbfgs", lbfgs_memory=7, max_steps=5)
+    assert seen[0] == 100
+    assert seen[-1] == 7
