@@ -196,9 +196,6 @@ for name, model in [("uniform disk", ud_model), ("limb-darkened", ld.model)]:
 
 ```text
  uniform disk: diam = 5.686 mas, chi2/N = 651.91 (N = 162)
-```
-
-```text
 limb-darkened: diam = 6.022 mas, chi2/N = 1.14 (N = 162)
 ```
 
@@ -320,7 +317,7 @@ print(res.describe())
 ```
 
 ```text
-StarPipeline run in /tmp/tmpqs9tzc4_/star_run: complete
+StarPipeline run in /tmp/tmp_qzc0x2u/star_run: complete
   data.n_vis = 108
   data.n_phi = 72
   data.n_independent = 162
