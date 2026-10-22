@@ -343,6 +343,8 @@ def test_default_weight_ranges_hold_the_corner_with_room_below(family):
         starts=starts,
         method=method,
         max_steps=steps,
+        # a long history keeps the converged fits within the fast-test budget
+        lbfgs_memory=100,
     )
     corner = group.curve.corner() / n_data
     # The whole window below the corner lies inside the range.
