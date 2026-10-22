@@ -216,6 +216,17 @@ Trigonometric Polynomials and Signal Processing Applications*, Springer), with
 the minimum-phase factor parametrized without constraint by reflection
 coefficients (Barndorff-Nielsen & Schou 1973, J. Multivariate Anal. 3, 408).
 
+## VonMises
+
+The profile $\exp[\kappa\cos(\theta - \theta_0)]$ has the analytic harmonics
+$c_m + i s_m \propto [I_m(\kappa)/I_0(\kappa)]\,e^{-im\theta_0}$, with $I_m$ the
+modified Bessel function; this fixes the sign convention of `theta0`. They are
+computed by a small FFT of $\exp[\kappa(\cos\theta_j - 1)]$, so no special
+function is needed, and are differentiable in $\kappa$ and $\theta_0$. The FFT is
+accurate to the aliasing error $I_{n_{\rm fft}-m}/I_0$, negligible for $\kappa$
+below about `n_fft**2 / 30`. The brightness is the truncated series, not the von
+Mises function itself.
+
 ## RadialGP
 
 A non-parametric profile of `n_r` values is exactly a quadrature of the Hankel
@@ -299,6 +310,24 @@ the priors of [`MultipoleKernel`][virgil.models.MultipoleKernel], converted by
 [`Cone`][virgil.models.Cone] and [`PowerLawHeight`][virgil.models.PowerLawHeight];
 priors in [`gp_priors`][virgil.models.gp_priors]; and a residual aligned with
 the disk in [`MultipoleField`][virgil.fields.MultipoleField].
+
+**The quadrature visibility.** [`multipole_disk_cvis`][virgil.models.multipole_disk_cvis]
+sums thin rings at nodes $r_k$ with weights $w_k$ after undoing `inc` and `pa`.
+Ring $k$ has brightness $1 + \sum_m c_{mk}\cos m\theta + s_{mk}\sin m\theta$ in
+the disk plane, with $\theta$ measured from the projected major axis towards East,
+so
+
+$$
+V = 2\pi \sum_{|m| \le M} (-i)^m e^{im\phi} \sum_k w_k I_m(r_k)
+    J_m(2\pi q r_k),
+$$
+
+with $I_{\pm m} = (c_m \mp i s_m)/2$, $I_0 = 1$, and $q$, $\phi$ the length and
+direction of the spatial frequency in the disk plane. The sum is normalized
+($V(0) = 1$) and `blur_fwhm` multiplies it as a Gaussian envelope. A `height`
+lifts ring $k$ along the disk's normal, shifting it on the sky by
+$h_k\sin(\mathrm{inc})$ towards `pa + 90` as a phase factor; the surface is thin
+and nothing is occulted. Large problems are evaluated in chunks over the samples.
 
 **References.** The Hankel-transform representation of a radial profile on a
 fixed set of nodes follows frank (Jennings et al. 2020, MNRAS 495, 3209), and

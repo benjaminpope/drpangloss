@@ -1,7 +1,1 @@
-virgil.models:FlaredDisk
-virgil.models:Harmonics
-virgil.models:MultipoleDisk
-virgil.models:System
-virgil.models:TruncatedCone
-virgil.models:multipole_disk_cvis
 virgil.radio:CalibrationNuisance
