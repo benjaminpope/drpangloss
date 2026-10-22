@@ -3125,14 +3125,12 @@ def fit_orbit_aliases(
     Each alias band (an integer number of orbits between the epochs) is fitted
     to all epochs with a point companion on a Keplerian orbit
     ([`OrbitalBinary`][virgil.models.OrbitalBinary]) and given an evidence. The
-    defaults are automatic and need no per-system arguments
-    ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
-    [settings](../orbit_methods.md#alias-settings)).
+    defaults need no per-system arguments ([why](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults), [settings](../orbit_methods.md#alias-settings)).
 
     Parameters
     ----------
     data : sequence of OIData
-        One dataset per epoch, with per-exposure times.
+        One dataset per epoch (times from ``mjd`` unless ``times`` is given).
     p_range : (float, float), optional
         Period range (days, log-uniform prior); default
         [`period_window`][virgil.aliases.period_window], from the data.
@@ -3143,30 +3141,30 @@ def fit_orbit_aliases(
         axis (mas) and flux ratio, the maximum eccentricity, and the scale bound
         of [`marginal_loglike`][virgil.epochs.marginal_loglike].
     n_candidates, n_refine, n_random, min_distance_mas, max_steps, n_is, n_samples, p_min_samples, flag_nats, ess_min, seed : optional
-        Search effort, importance-sampling and posterior draws, and the seed.
+        Search effort, importance sampling, posterior draws and seed.
     checkpoint_dir, on_band, init : optional
-        Directory of finished bands (a rerun loads them), a per-band callback,
-        and a warm start.
+        Directory (created) of finished bands, which a rerun loads; a per-band
+        callback; a warm start.
     primary_diam, diam_range : optional
-        Primary diameter (mas): ``"auto"`` (default) fits a uniform disk if the
+        Uniform-disk diameter of the primary (mas): ``"auto"`` fits it if the
         data resolve it, a float fixes it, ``"fit"`` samples it, None is a point.
-    vis_amp : (float, float) or None, optional
-        Range of a profiled per-epoch V^2 amplitude (default (0.5, 1.2)).
+    vis_amp : bool or (float, float) or None, optional
+        Range of a profiled per-epoch V^2 amplitude; True is (0.5, 1.2), False
+        or None is none.
     sign_free, flip_flux, skip_flagged : bool, optional
-        Add sign-free seeds (a label swap of near-equal stars is found); refit with
-        the labels swapped when the flux ratio hits the prior's top (a brighter
-        companion); let flagged nights seed nothing but still count.
+        Add sign-free seeds (a label swap of near-equal stars is found); refit
+        with the labels swapped when the flux ratio hits the prior's top; let
+        flagged nights seed nothing but still count.
     n_bands_max, temper : optional
         Cap on the bands of a default window; tempering for correlated channels
-        ([`virgil.tempering`][virgil.tempering]): estimated, fixed or off.
-    k, eccs : optional
-        Period-grid density (as for [`period_grid`][virgil.orbits.period_grid])
-        and trial eccentricities of the Thiele-Innes seeds.
-    outlier_eps : float, optional
-        Weight in [0, 1) of a broad per-night outlier component (default 0: none;
-        needs ``EpochPositions`` with their grid); see ``AliasResult.outlier``.
-    batch_size, memory_budget : optional
-        Candidates scored together; never changes the result.
+        ([`virgil.tempering`][virgil.tempering]): True estimates it (needs
+        ``EpochPositions``), a float >= 1 fixes it, False is off.
+    k, eccs, outlier_eps, batch_size, memory_budget : optional
+        Period-grid density (as for [`period_grid`][virgil.orbits.period_grid]);
+        trial eccentricities of the Thiele-Innes seeds; weight in [0, 1) of a
+        broad per-night outlier component (needs ``EpochPositions`` with their
+        grid; see ``AliasResult.outlier``); candidates scored together (never
+        changes the result).
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]).
 
@@ -3179,8 +3177,7 @@ def fit_orbit_aliases(
     RuntimeError
         If every band fails (chained to the last error).
     ValueError
-        If no band lies within ``p_range``, or ``checkpoint_dir`` data cannot be
-        hashed.
+        If no band lies within ``p_range``, or the data cannot be hashed.
     """
     data = cast_tree(list(data), "float64")  # a generator, too
     mean_times = (
