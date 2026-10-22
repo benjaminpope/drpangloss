@@ -3147,10 +3147,11 @@ def fit_orbit_aliases(
         callback; a warm start.
     primary_diam, diam_range : optional
         Uniform-disk diameter of the primary (mas): ``"auto"`` fits it if the
-        data resolve it, a float fixes it, ``"fit"`` samples it, None is a point.
+        data resolve it, a float fixes it, ``"fit"`` samples it, None is a point;
+        ``diam_range`` is a fitted diameter's prior range (mas).
     vis_amp : bool or (float, float) or None, optional
-        Range of a profiled per-epoch V^2 amplitude; True is (0.5, 1.2), False
-        or None is none.
+        Range of a profiled per-epoch V^2 amplitude; True is (0.5, 1.2) for V^2
+        data without gains or offsets, else none; False or None is none.
     sign_free, flip_flux, skip_flagged : bool, optional
         Add sign-free seeds (a label swap of near-equal stars is found); refit
         with the labels swapped when the flux ratio hits the prior's top; let

@@ -9,6 +9,7 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines, with a shrinking allowlist) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
 - `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
   `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
   under the Jeffreys prior; `fit` reports it in `info["derived"]`,

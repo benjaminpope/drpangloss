@@ -150,9 +150,17 @@ class Epochs:
 
     Examples
     --------
-    >>> epochs = Epochs({"2023": {"ut": night1, "at": night2}, "2024": night3})
-    >>> epochs.dataset_names, epochs.epoch_of  # doctest: +SKIP
+    >>> from virgil.oidata import OIData
+    >>> def night(mjd):
+    ...     return OIData({"u": [10.0, 20.0], "v": [5.0, -3.0],
+    ...                    "wavel": 2.2e-6, "vis": [1.0, 1.0],
+    ...                    "d_vis": [0.01, 0.01], "mjd": [mjd, mjd + 0.1]})
+    >>> epochs = Epochs({"2023": {"ut": night(60100.0), "at": night(60101.0)},
+    ...                  "2024": night(60500.0)})
+    >>> epochs.dataset_names, epochs.epoch_of
     (('ut', 'at', '2024'), ('2023', '2023', '2024'))
+    >>> [round(float(t), 2) for t in epochs.times]
+    [60100.05, 60101.05, 60500.05]
     """
 
     def __init__(self, epochs, at="dataset", times=None):
@@ -1142,6 +1150,7 @@ def rank_orbits(
 
     Examples
     --------
+    >>> candidates = starting_orbits(positions, periods)  # doctest: +SKIP
     >>> ranked = rank_orbits(lambda o: OrbitalBinary(o, 0.1), epochs,
     ...                      candidates)  # doctest: +SKIP
     >>> ranked.best, ranked.loglike[:3]  # doctest: +SKIP
@@ -2225,7 +2234,11 @@ def epoch_positions(
         Effective-dof fraction (number, or dict keyed by dataset or epoch name) and
         scale bound, as for ``marginal_loglike``.
     batch_size, memory_budget, coarse_nats, coarse_margin : optional
-        Speed for data with gains or offsets; never change the peaks.
+        ``batch_size`` and ``memory_budget`` are speed only. For data with gains
+        or offsets, ``coarse_nats`` and ``coarse_margin`` integrate ln s exactly
+        only near the best points (``coarse_nats=None``: everywhere), which can
+        change the peaks and ``gap_marginal``; see
+        [night flags](../orbit_methods.md#night-flags).
     primary_diam : float, optional
         Fixed uniform-disk primary diameter (mas); None or 0 is a point primary.
         Take it from the data or a calibrator, never from the orbit being tested.
@@ -2960,7 +2973,8 @@ def start_from_positions(
         Orbits ranked (default 200) and distinct ones refined (default 4).
     min_gap : float, optional
         Seed only with datasets whose ``gap_marginal`` exceeds this (default 5);
-        the rest are in ``OrbitStart.ambiguous``.
+        the rest are in ``OrbitStart.ambiguous``. It is also the default
+        ``flag_min_gap``.
     refine_positions, n_peaks, primary_diam, flag_options : optional
         As for ``epoch_positions`` (``flag_options`` holds its ``flag_*`` keywords).
     skip_flagged : bool, optional
