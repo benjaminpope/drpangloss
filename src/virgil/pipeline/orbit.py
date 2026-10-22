@@ -1152,6 +1152,12 @@ def _without(found, drop):
     )
 
 
+def _robustness_of(modes):
+    """``modes["robustness"]``; a ``modes`` report from before the check
+    (a resumed run folder) says it was not run."""
+    return modes.get("robustness", {"skipped": "not run (older run)"})
+
+
 def _robustness(p, result, verdict):
     """Does the verdict (orbit or not, and the winning alias band) survive
     dropping the night with the highest raw χ²/N? The search is refitted
@@ -1161,7 +1167,7 @@ def _robustness(p, result, verdict):
     epochs = p.data
     if not s["drop_outlier_night"]:
         return {"skipped": "drop_outlier_night is off"}
-    if len(epochs.names) < 3:  # two nights left would fit any orbit
+    if len(epochs.names) < 3:  # the refit needs two nights; one has none
         return {"skipped": "fewer than 3 nights"}
     nights = p._report("search")["chi2"]["nights"]
     night, drop, chi2_per_n = _outlying_night(epochs, nights)
@@ -1605,7 +1611,7 @@ def _summarize(settings, reports):
                 threshold=settings["no_orbit_nats"],
             )
         )
-        checks.append(_checks.night_dropped(modes["robustness"]))
+        checks.append(_checks.night_dropped(_robustness_of(modes)))
     if search:
         checks.append(
             _checks.period_bound(

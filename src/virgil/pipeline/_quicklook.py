@@ -438,7 +438,7 @@ def _image_cells(run, summary, path):
 
 def _robust_sentence(modes):
     """What dropping the most outlying night does to the verdict."""
-    r = modes["robustness"]
+    r = modes.get("robustness", {"skipped": "not run (older run)"})
     if "skipped" in r:
         return f"The night-dropped refit was skipped ({r['skipped']})."
     d = r["dropped"]

@@ -860,6 +860,19 @@ def test_quicklook_cells_are_valid_code(tmp_path):
     summary["modes"]["robustness"] = _ROBUST
     again = _quicklook._SECTIONS["orbit"](run, summary, tmp_path)
     assert "Without night n1 (raw χ²/N = 3)" in again[2][0]
+    # A modes report from before the check (a resumed run folder).
+    reports = _fake_reports()
+    del reports["modes"]["robustness"]
+    sections, checks = orbit_module._summarize(
+        OrbitPipeline.defaults(), reports
+    )
+    assert (
+        "not run (older run)"
+        in next(c for c in checks if c.name == "night_dropped").message
+    )
+    summary["modes"] = sections["modes"]
+    older = _quicklook._SECTIONS["orbit"](run, summary, tmp_path)
+    assert "not run (older run)" in older[2][0]
     partial = _quicklook._SECTIONS["orbit"](
         {"stages": {"load": {"status": "complete"}}}, summary, tmp_path
     )
@@ -936,6 +949,11 @@ def test_blind_search_resolves_the_two_season_gap_alias(tmp_path, monkeypatch):
     assert modes["no_orbit"]["verdict"] == "orbit"
     robust = modes["robustness"]  # the refit without the worst night
     assert robust["full"]["n"] == n_true and robust["night"].startswith("n")
+    # Six well-sampled nights: the verdict survives the refit of five.
+    assert robust["dropped"]["verdict"] == "orbit"
+    assert robust["dropped"]["same_band"]
+    status = {c.name: c.status for c in res.checks}
+    assert status["night_dropped"] == "pass"
     arcs = res.summary["search"]["short_arc"]  # the engine's default stage
     assert arcs is not None and n_true in arcs["kept"]
     assert res.aliases().short_arc["kept"] == arcs["kept"]
