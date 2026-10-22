@@ -192,7 +192,9 @@ class DiskPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The star is one point source. Stages: ``load`` (apply ``wavel_range`` and
+    The star is a grey point source unless ``star_diameter_mas``,
+    ``star_temperature_k`` or ``star_index`` says otherwise; the disk's
+    spectral index is relative to it. Stages: ``load`` (apply ``wavel_range`` and
     ``error_floor``), ``overview`` (plots; sets the half-fringe λ/2B of the
     longest baseline), ``geometry`` (χ² over a grid of cos ``inc`` and ``pa``,
     then a single-ring fit), ``profile``, ``compare``, ``posterior`` (NUTS,
@@ -216,8 +218,10 @@ class DiskPipeline(_Pipeline):
         Overrides of ``DiskPipeline.defaults()``. The most used: ``r_in_mas``
         and ``r_out_mas`` (radial range, mas), ``max_rings`` (most rings, 4),
         ``ell_halffringes`` (the ℓ grid, [1, 2, 4]), ``companion`` (search the
-        residuals for a point source, False), ``posterior`` (False). Priors are group-invariant and errors are
-        quoted or rescaled; see [conventions](../conventions.md).
+        residuals for a point source, False), ``posterior`` (False),
+        ``error_scale`` (``"auto"``: rescaled for ``"gp"``, quoted for
+        ``"rings"``; ``"fit"`` for rings). Priors and errors:
+        [conventions](../conventions.md).
 
     Examples
     --------

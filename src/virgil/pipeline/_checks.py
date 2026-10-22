@@ -587,9 +587,8 @@ def model_gain(
         return Check(
             name, "fail", gain, penalty, "The −2 log L gain is not finite."
         )
-    if (
-        gain < -1.0
-    ):  # the richer model contains the simpler: a fit did not converge
+    # The richer model contains the simpler: a fit did not converge.
+    if gain < -1.0:
         status = "warn"
         message = (
             f"The {complex_} model fits worse than the {simple} model it "
@@ -698,9 +697,8 @@ def length_scale(
         )
     spread = max(z) - min(z)
     best = max(range(len(z)), key=z.__getitem__)
-    equivalent = float(ells[best]) / math.sqrt(
-        3.0
-    )  # a Matérn length is not a feature width
+    # A Matérn length is not a feature width: quote the squared-exponential one.
+    equivalent = float(ells[best]) / math.sqrt(3.0)
     where = (
         f"best ℓ = {float(ells[best]):.3g} mas, a squared-exponential "
         f"length of {equivalent:.3g} mas, {equivalent / halffringe:.2g}× "
