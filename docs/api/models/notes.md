@@ -363,9 +363,11 @@ evidence proper.
 single-valued at $r=0$. A smooth 2D field has Fourier coefficients
 $a_m(r)\sim r^{|m|}$ (the Zernike radial polynomials, Born & Wolf, *Principles
 of Optics*, section 9.2), so order $m$ of $\eta$ is multiplied by
-$\tanh(r/\Delta r)^{|m|}$, with $\Delta r$ the node spacing. The factor is 1 to
-$10^{-4}$ beyond five spacings, so the prior is stationary away from the centre;
-the latents stay whitened and only $m=0$ is free at $r=0$.
+$\tanh(r/\Delta r)^{|m|}$, with $\Delta r$ the node spacing. The factor is
+$1 - O(2|m|\,e^{-2r/\Delta r})$, so the prior is stationary away from the
+centre (the variance of order $m$ is within $4|m|e^{-10}$ of $\sigma^2$ beyond
+five spacings); the latents stay whitened and only $m=0$ is free at $r=0$. It is
+applied only when `r_min_mas = 0`; an annulus keeps the plain prior.
 
 **Geometry.** By default the geometry parameters belong to the field: they are
 copies of a `MultipoleDisk`'s (see

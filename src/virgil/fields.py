@@ -300,9 +300,9 @@ def _regular_at_origin(field, nodes, spacing):
 
     A smooth single-valued field has Fourier coefficients ``a_m(r) ~ r^|m|``
     (Zernike radial polynomials, Born & Wolf 1999 sec. 9.2). Each order is
-    scaled by ``tanh(r / spacing)^|m|``, which is 1 to within 1e-4 beyond
-    five node spacings, so the prior is stationary away from the centre
-    and only the first nodes of ``m >= 1`` shrink. Only the ``m = 0`` order
+    scaled by ``tanh(r / spacing)^|m|``, which is 1 - O(2|m| e^(-2r/spacing)):
+    the prior is stationary away from the centre and only the first few
+    nodes of ``m >= 1`` shrink. Used only when the grid reaches the origin. Only the ``m = 0`` order
     survives at ``r = 0``.
     """
     n_theta = field.shape[1]
@@ -595,7 +595,9 @@ class MultipoleField(zdx.Base):  # type: ignore[reportGeneralTypeIssues]
         field = self.sigma * np.matmul(
             factor, azimuthal, precision=jax.lax.Precision.HIGHEST
         )
-        return _regular_at_origin(field, nodes, self.spacing)
+        if self.r_min_mas == 0:
+            field = _regular_at_origin(field, nodes, self.spacing)
+        return field
 
     def evaluate(self, pixel_scale_mas):
         """The log-brightness ``η`` on pixels of ``pixel_scale_mas``."""
