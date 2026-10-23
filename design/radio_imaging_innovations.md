@@ -158,7 +158,7 @@ marked *(unverified)*. Corrections are listed at the end.
   - Multiscale in VLBI: DoG-HiT, Müller & Lobanov 2022, A&A 666, A137 (`2022A&A...666A.137M`); DoB-CLEAN,
     Müller & Lobanov 2023, A&A 672, A26 (`2023A&A...672A..26M`).
 
-### B5. Exact Toeplitz (dirty-beam) likelihood with free offsets (PR 1 in progress)
+### B5. Exact Toeplitz (dirty-beam) likelihood with free offsets (virgil#516, open)
 - **What:** χ² = Σ_k [g_k² IᵀB_k I − 2 g_k IᵀD_k(Δ_k)] + C, where k runs over (observation, spectral window),
   g_k is the observation's gain, B_k the dirty beam (a convolution done with 2×-padded FFTs) and D_k the dirty
   image. The σ profiling needs χ² for each k too. All B_k and D_k are precomputed once, so each evaluation is
@@ -175,10 +175,13 @@ marked *(unverified)*. Corrections are listed at the end.
     windowed sinc to 2e-6–3e-9.
 - **Also planned:** a fitted spectral index through Taylor-moment beams, and exact Hessian-vector products
   for truncated Newton-CG.
-- **Where:** not yet on `main`: the design note (`design/toeplitz_likelihood.md`) and the virgil PR are with the
-  toeplitz-core worker, still to come.
-- **Status:** derived. The Toeplitz normal operator is established. The exact offsets are a special case of the
-  type-3 NUFFT (see "Prior-art search" below); we found no published use of the combination.
+- **Where:** virgil#516 (open, not yet on `main`): `virgil.radio_toeplitz` and `virgil._nufft_spread`. The design
+  note `design/toeplitz_likelihood.md` ships with it.
+- **Status:**
+  - The Toeplitz quadratic and cross terms: established (Fessler et al. 2005).
+  - Free offsets (`offsets="spread"`): opt-in, never the default, and derived. They are a type-3 evaluation
+    (Lee & Greengard 2005, `2005JCoPh.206....1L`; Barnett et al. 2019, Sect. 3.3; see "Prior-art search"
+    below); we found no published use of the combination.
   - Derivation, in two lines. With spread grid ĝ_l, the dirty image at pixel x is D(x) = Σ_l ĝ_l e^{ilx}/ψ̂(x)
     (type 1). At x + Δ the exponential gains a factor e^{ilΔ}, a phase ramp on the stored grid, and the
     correction becomes 1/ψ̂(x + Δ), the kernel transform at a non-integer position by Gauss–Legendre quadrature.
@@ -186,11 +189,15 @@ marked *(unverified)*. Corrections are listed at the end.
     real Δ. The model visibility is M_j = e^{−2πi u_j·Δ} F(I)(u_j), so |M_j|² does not depend on Δ and the
     beam term is offset-free.
 - **Traceability:**
-  - No virgil PR or test yet: `git grep -i toeplitz origin/main` finds nothing, and there is no toeplitz branch.
-    Building blocks on main (PR #441, merged), `tests/test_radio.py`: `test_dirty_image_matches_brute_force`,
-    `test_dirty_beam_peak_and_briggs_limits`, `test_dirty_residual_of_true_model_is_zero`.
-  - vv check: none yet. The PR should add a brute-force check of D(x + Δ) against a direct sum, and of the
-    χ² against `data.term`, at fractional Δ.
+  - virgil#516 (open): `virgil.radio_toeplitz`, `virgil._nufft_spread`. Tests: `tests/test_radio_toeplitz.py`
+    (13 fast, 9 slow; the "Tests" table of the PR lists each guarantee), including
+    `test_matches_direct_term` (loss differences and gradients against `ComplexVisData.term`, ≤ 1e-10, with and
+    without offsets), `test_matches_direct_term_at_scale`, `test_spread_grid_against_nufftax_and_direct_sums`,
+    `test_fit_reaches_the_direct_optimum`. Building blocks on main (PR #441, merged), `tests/test_radio.py`:
+    `test_dirty_image_matches_brute_force`, `test_dirty_beam_peak_and_briggs_limits`,
+    `test_dirty_residual_of_true_model_is_zero`.
+  - vv check: "IM Lup A100 Toeplitz vs direct at the R_mpol solution" (PR pending); timing and large-data
+    agreement are not yet demonstrated.
 - **Prior art:**
   - Toeplitz embedding for NUFFT normal operators: Wajer & Pruessmann 2001, Proc. ISMRM 9, 767 *(unverified:
     the abstract could not be found online; the citation is from memory)*; Fessler, Lee, Olafsson, Shi, Noll
@@ -293,7 +300,7 @@ marked *(unverified)*. Corrections are listed at the end.
 | B2 diagonal GN + entropy metric | derived | Bekas+ 2007; Skilling & Bryan 1984; Martens 2010 | `test_fit_precondition.py` | `--precondition` switch only |
 | B3 nuisance parameterization | established | Cornwell & Wilkinson 1981; Jeffreys 1946; DSHARP Sect. 4.4 | `test_radio.py` (nuisances, σ scales, offsets) | none yet (vv#178) |
 | B4 cold starts | CLEAN start and staging established; coarse-to-fine novel / experimental | Readhead & Wilkinson 1978; Chael+ 2018; Cornwell 2008 | `test_radio_clean.py`; staging none | `test_alma_clean.py`; staging none |
-| B5 Toeplitz likelihood, free offsets | derived (type-3 NUFFT; combination not found) | Fessler+ 2005; Lee & Greengard 2005; Barnett+ 2019 | none yet | none yet |
+| B5 Toeplitz likelihood, free offsets | Toeplitz terms established; free offsets (`offsets="spread"`, opt-in) derived (type-3 NUFFT; combination not found) | Fessler+ 2005; Lee & Greengard 2005; Barnett+ 2019 | virgil#516: `test_radio_toeplitz.py` (fast and slow) | IM Lup A100 Toeplitz vs direct (PR pending) |
 | B6 float32 δV loss | derived; experimental | Wilkinson 1963; Higham 2002 | none on main | none yet |
 | B7 marginalized gains | established (Stage 1), derived (Stage 2); not built for radio | Broderick+ 2020; Arras+ 2019; Hartikainen & Särkkä 2010 | none for radio (AMI: `test_marginal_gains.py`) | none yet |
 | B8 ordered subsets | established; not built | Hudson & Larkin 1994; Johnson & Zhang 2013 | none | none yet |
