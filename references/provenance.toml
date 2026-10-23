@@ -1546,3 +1546,66 @@ used_in = ["virgil._nufft_spread:evaluate", "virgil.radio_toeplitz:ToeplitzVisDa
 note = "J. Comput. Phys. 206, 1; a type-1 spread grid evaluated off the integer lattice (the free offsets)"
 verified = true
 verified_via = "ads"
+
+[ref.zawadzki2023]
+authors = "Zawadzki et al."
+year = 2023
+title = "Regularized Maximum Likelihood Image Synthesis and Validation for ALMA Continuum Observations of Protoplanetary Disks"
+arxiv = "2209.11813"
+doi = "10.1088/1538-3873/acdf84"
+bibcode = "2023PASP..135f4503Z"
+used_in = ["virgil.radio:ComplexVisData", "virgil.radio:CalibrationNuisance"]
+note = "PASP 135, 064503 (MPoL); the RML objective for ALMA visibilities that virgil.radio reproduces (design register A)"
+verified = true
+verified_via = "ads"
+
+[ref.cornwellwilkinson1981]
+authors = "Cornwell & Wilkinson"
+year = 1981
+title = "A new method for making maps with unstable radio interferometers"
+doi = "10.1093/mnras/196.4.1067"
+bibcode = "1981MNRAS.196.1067C"
+used_in = ["virgil.radio:CalibrationNuisance"]
+note = "MNRAS 196, 1067; self-calibration with a reference antenna fixing the gauge (the reference observation's gain 1)"
+verified = true
+verified_via = "ads"
+
+[ref.cornwellevans1985]
+authors = "Cornwell & Evans"
+year = 1985
+title = "A simple maximum entropy deconvolution algorithm"
+bibcode = "1985A&A...143...77C"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "A&A 143, 77; the entropy metric as the natural preconditioner in MEM. No DOI or arXiv ID: checked on ADS only"
+verified = false
+verified_via = "ads"
+
+[ref.martens2010]
+authors = "Martens"
+year = 2010
+title = "Deep learning via Hessian-free optimization"
+url = "https://icml.cc/Conferences/2010/papers/458.pdf"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "ICML 27, 735-742; the Gauss-Newton matrix as the curvature matrix. No DOI or arXiv ID, not on ADS: title and author read from the ICML 2010 PDF"
+verified = false
+verified_via = "publisher"
+
+[ref.schraudolph2002]
+authors = "Schraudolph"
+year = 2002
+title = "Fast Curvature Matrix-Vector Products for Second-Order Gradient Descent"
+doi = "10.1162/08997660260028683"
+used_in = ["virgil.fitting:gauss_newton_diag"]
+note = "Neural Comput. 14, 1723; Gauss-Newton matrix-vector products by forward-mode differentiation. Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"
+
+[ref.pawitan2001]
+authors = "Pawitan"
+year = 2001
+title = "In All Likelihood: Statistical Modelling and Inference Using Likelihood"
+doi = "10.1093/oso/9780198507659.001.0001"
+used_in = ["virgil.radio:ComplexVisData"]
+note = "Oxford University Press (book); the profile likelihood of the noise scale, sigma_hat = sqrt(chi2 / 2N). Not on ADS: checked on Crossref"
+verified = true
+verified_via = "crossref"

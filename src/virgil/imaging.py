@@ -268,7 +268,8 @@ class MaxEntropy(_ImageRegulariser):
 
     def metric_rows(self, model):
         """Rows whose JᵀJ is the curvature ``w b`` of the entropy in
-        ``ln b`` (the Skilling–Bryan metric): a positive Gauss–Newton form."""
+        ``ln b`` (the Skilling–Bryan metric): a positive Gauss–Newton form.
+        In the Image's softmax logits its diagonal is ``w b (1 - b)``."""
         b = self.pixels(model)
         return np.ravel(2.0 * np.sqrt(self.weight * np.maximum(b, 1e-30)))
 
