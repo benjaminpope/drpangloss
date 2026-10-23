@@ -2899,7 +2899,7 @@ def fit_orbit_aliases(
 
     Each alias band (an integer number of orbits between the epochs) is fitted
     to all epochs and given an evidence; the defaults need no per-system
-    arguments ([how it decides](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
+    arguments ([how](../orbit_fitting.md#alias-search-how-it-decides-and-why-its-defaults),
     [settings](../orbit_methods.md#alias-settings)).
 
     Parameters
@@ -2915,13 +2915,11 @@ def fit_orbit_aliases(
         prior ranges (``a_range`` in mas), eccentricity cap.
     n_candidates, n_refine, n_random, n_is, n_samples, seed, init : optional
         Search effort, sampling and a warm start.
-    min_distance_mas, max_steps : float, int, optional
+    min_distance_mas, max_steps, p_min_samples, flag_nats, ess_min : optional
         Modes closer than ``min_distance_mas`` (mas, along the orbit) are one;
-        optimizer steps per start.
-    p_min_samples, flag_nats, ess_min : float, optional
-        Bands with ``p`` above ``p_min_samples`` also get posterior samples;
-        evidence margin (nats) and importance-sample size below which a band is
-        flagged.
+        optimizer steps per start; bands with ``p`` above ``p_min_samples`` also
+        get posterior samples; evidence margin (nats) and importance-sample size
+        below which a band is flagged.
     checkpoint_dir, on_band : optional
         Bands finished in ``checkpoint_dir`` are reloaded; ``on_band`` is called
         with each band's result.
@@ -2935,10 +2933,9 @@ def fit_orbit_aliases(
         True estimates the evidence tempering (needs ``EpochPositions``), a float
         >= 1 fixes it, False is off.
     outlier_eps : float, optional
-        Outlier weight in [0, 1); default 0 (no mixture), unlike
-        ``OrbitPipeline``'s 0.02.
+        Outlier weight in [0, 1); default 0 (no mixture), unlike ``OrbitPipeline``.
     n_bands_max, k, eccs, batch_size, memory_budget : optional
-        Band cap of a default window, grid density, seed eccentricities, batching.
+        Band cap, grid density, seed eccentricities, batching.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]);
         needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
