@@ -438,9 +438,9 @@ def injection_limits(
 _STEP_DECADES = 0.25
 _BISECTIONS = 22
 _MAX_BRACKET_DECADES = 40
+
+
 # deliberate: test seam: used by test_grid_and_limits
-
-
 def _significance_ceiling():
     """Largest significance `nsigma` represents in the default float type."""
     tiny = np.finfo(np.result_type(float)).tiny

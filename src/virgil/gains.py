@@ -229,8 +229,6 @@ class GainModes(eqx.Module):
 
 
 # deliberate: test seam: unit-tested directly
-
-
 def _frames_and_stations(data, need_stations):
     """Frame and station pair of each visibility observable."""
     if data.frame is None:
@@ -381,8 +379,6 @@ def _mode_blocks(touched, n_item):
 
 
 # deliberate: test seam: unit-tested directly
-
-
 def _pack(columns, groups, widths, frame):
     """Sort columns into blocks within frames (connected by shared rows,
     padded to a common size) and columns spanning frames."""

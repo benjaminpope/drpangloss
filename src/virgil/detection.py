@@ -269,8 +269,6 @@ def _detection_statistics(
 
 
 # deliberate: test seam: unit-tested directly
-
-
 def _constrained_profile(
     grid_flux, grid_loglike, opt_flux, opt_loglike, loglike0
 ):
@@ -291,8 +289,6 @@ def _constrained_profile(
 
 
 # deliberate: test seam: unit-tested directly
-
-
 def _log_prior_weights(shape, dtype):
     """Log trapezoid weights in the grid index, normalized to sum to 1.
 
@@ -909,8 +905,6 @@ def _lookup(injections, key, name):
 
 
 # deliberate: test seam: unit-tested directly
-
-
 def _batch_sizes(batch_size, template, draw_batch):
     """``(draw_batch, grid batch size)`` for ``injection_recovery``.
 
@@ -926,8 +920,6 @@ def _batch_sizes(batch_size, template, draw_batch):
 
 
 # deliberate: named step: validates a simulator against the template
-
-
 def _simulator(noise, template, null_scene):
     if isinstance(noise, _SIMULATORS):
         # The null check, batch sizing and metadata use ``template``, so

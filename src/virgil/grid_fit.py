@@ -316,9 +316,9 @@ class LogUniform(NamedTuple):
 _N_NODES = 256  # Gauss-Legendre nodes in ln f for the log-uniform evidence
 _WINDOW_SIGMA = 12.0  # half-width of the integration window, in sigma_f
 _TAIL_SIGMA = 40.0  # decay lengths kept when f_hat is outside the bounds
+
+
 # deliberate: named step: the quadrature, documented as a unit
-
-
 def _log_uniform_evidence(f_hat, sigma, f_min, f_max):
     """Evidence, posterior mean and sd of f under ``LogUniform(f_min, f_max)``.
 

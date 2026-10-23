@@ -391,9 +391,9 @@ class FluxSpectrum(_Block):
                 b = _continuum_basis(wavel[idx], continuum_order)
                 if onp.linalg.matrix_rank(b[mask]) < continuum_order + 1:
                     raise ValueError(
-                        f"A spectrum has {int(mask.sum())} continuum channels, too "
-                        f"few for a continuum of order {continuum_order}; widen the continuum "
-                        "ranges."
+                        f"A spectrum has {int(mask.sum())} continuum "
+                        "channels, too few for a continuum of order "
+                        f"{continuum_order}; widen the continuum ranges."
                     )
                 c_basis[r, : idx.size] = b
                 c_fit[r][:, onp.flatnonzero(mask)] = onp.linalg.pinv(b[mask])
@@ -938,8 +938,9 @@ class DifferentialPhase(_Block):
             cov = cov + pad[..., None] * np.eye(k, dtype=var.dtype)
             chol = np.linalg.cholesky(cov)
             x = jsl.solve_triangular(chol, y[..., None], lower=True)[..., 0]
-            # Offset and slope of each baseline: Qᵀ e_b times the basis, through
-            # the same whitening; degenerate (closure) directions are harmless.
+            # Offset and slope of each baseline: Qᵀ e_b times the basis,
+            # through the same whitening; degenerate (closure) directions are
+            # harmless.
             q_cols = np.broadcast_to(q[:, None], (n_f, r, k, q.shape[2]))
             q_cols = jsl.solve_triangular(chol, q_cols, lower=True)
             widths = np.asarray(self.prior_width, var.dtype)

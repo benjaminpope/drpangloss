@@ -65,8 +65,8 @@ def set_style():
     matplotlib.rcParams.update(STYLE)
 
 
-# deliberate: used outside src (notebooks/radio_clean.ipynb); restores only its own
-# keys, since ``plt.rc_context`` would restore ``backend`` and close Jupyter's open figures
+# deliberate: used by notebooks/radio_clean.ipynb. Restores only its own
+# keys: ``plt.rc_context`` would restore ``backend`` and close Jupyter's figures.
 @contextlib.contextmanager
 def _style_context(style=None):
     """Temporarily apply ``style`` (default: the virgil style)."""
@@ -618,8 +618,6 @@ def _convert_flux(values, units):
 
 
 # deliberate: named step: resolves the plotted axes (early returns)
-
-
 def _grid_axes(values, grid, kind, flux_param):
     """``(values, coord_keys)``; a full log-likelihood grid is reduced to its
     maximum over the flux axis."""
@@ -781,8 +779,8 @@ def plot_grid_map(
     if grid_values.ndim != 2 or len(coord_keys) != 2:
         raise ValueError(
             f"Expected a 2D grid with two coordinate keys; got shape "
-            f"{grid_values.shape} for keys {list(coord_keys)}. Reduce the flux "
-            "axis first, e.g. loglike_im.max(axis=...)."
+            f"{grid_values.shape} for keys {list(coord_keys)}. Reduce the "
+            "flux axis first, e.g. loglike_im.max(axis=...)."
         )
     dra = [k for k in coord_keys if _is_sky_key(k, "dra")]
     ddec = [k for k in coord_keys if _is_sky_key(k, "ddec")]
@@ -909,7 +907,8 @@ def plot_contrast_curve(
             matches = [key for key in keys if _is_sky_key(key, name)]
             if len(matches) != 1:
                 raise ValueError(
-                    f"grid needs exactly one {name!r} axis; keys are {list(grid)}."
+                    f"grid needs exactly one {name!r} axis; "
+                    f"keys are {list(grid)}."
                 )
             found.append(matches[0])
         if len(keys) != 2:
@@ -1877,15 +1876,14 @@ def plot_field_draws(
     n : int, optional
         Prior draws (default 100).
     cuts : {"principal", "axes", "multipole"}, optional
-        Panel d. ``"principal"``: the central row and column of a
-        GaussianField. ``"axes"``: lines through the centre at the position
-        angles ``axes_pa``. ``"multipole"``: the cosine amplitudes ``a_m(r)``,
-        ``m = 0..mmax``, of ``η = Σ a_m cos mθ + b_m sin mθ`` (the residual
-        without ``mean``; ``a_0`` is the azimuthal mean) against disk-plane
-        radius, one offset track per ``m``. For a MultipoleDisk, ``ln I₀ - μ``
-        and the cosine coefficients ``c_m(r)`` of ``I/I₀``. Default:
-        ``"multipole"`` for a MultipoleField or disk, ``"principal"`` for a GaussianField, ``"axes"``
-        for images.
+        Panel d. ``"principal"``: central row and column of a GaussianField.
+        ``"axes"``: lines through the centre at ``axes_pa``.
+        ``"multipole"``: cosine amplitudes ``a_m(r)`` of η = Σ a_m cos mθ +
+        b_m sin mθ (the residual without ``mean``; ``a_0`` is the azimuthal
+        mean), one offset track per ``m = 0..mmax``; for a MultipoleDisk,
+        ``ln I₀ - μ`` and the coefficients ``c_m(r)`` of ``I/I₀``. Default:
+        ``"multipole"`` for a MultipoleField or disk, ``"principal"`` for a
+        GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
         ``(PA in degrees, label)``, North through East, per ``"axes"`` cut.
     npix : int, optional
@@ -2149,8 +2147,6 @@ def _disk_with(disk, latents):
 
 
 # deliberate: named step: draws or validates the disk latents
-
-
 def _disk_latents(disk, latents, key, n):
     """The latents of the draws, as a dict of arrays ``(n, *shape)``."""
     import jax
@@ -2184,8 +2180,6 @@ def _disk_latents(disk, latents, key, n):
 
 
 # deliberate: named step: vmapped tracks of the disk cuts
-
-
 def _disk_tracks(disk, latents, mmax):
     """Radii and the tracks ``ln I0 - mu``, ``c_1 .. c_M``, each ``(n, nr)``."""
     import jax
