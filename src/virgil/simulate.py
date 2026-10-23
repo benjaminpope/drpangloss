@@ -79,7 +79,7 @@ def bias_test(scene, template, model, priors, n, key, **fit_kwargs):
     Returns
     -------
     dict
-        For each fitted path, the ``n`` fitted values; and ``chi2_red``, the
+        For each fitted path, the ``n`` fitted values as an array; and ``chi2_red``, the
         reduced χ² of each fit. Compare their means and spreads with the truth.
     """
     results = {}

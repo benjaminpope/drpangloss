@@ -120,7 +120,7 @@ def save(dic, filename=None, datadir=None, verbose=False):
     Save an ImPlaneIA dictionary as an OIFITS2 file.
 
     [`virgil.oifits.write_oifits`][virgil.oifits.write_oifits] plus the
-    ImPlaneIA extras: ``CTRS_EQT``, ``PSCALE`` and ``ISZ`` in ``OI_ARRAY``, a
+    ImPlaneIA extras: the ``CTRS_EQT`` column and ``PSCALE``/``ISZ`` keywords in ``OI_ARRAY``, a
     filename built from ``info``, and target coordinates from SIMBAD.
 
     Parameters

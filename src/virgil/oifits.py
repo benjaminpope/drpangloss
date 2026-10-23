@@ -83,9 +83,9 @@ def read_oifits(
     -------
     dict
         Flat per-sample `u`, `v`, `wavel` (metres), `vis`/`d_vis` (V², or
-        amplitudes if `v2_flag` is False; with `vis_flag`, True = bad),
+        amplitudes if `v2_flag` is False; one-sigma errors; `vis_flag` True = bad),
         `phi`/`d_phi` (radians, with `phi_flag`), `i_cps1`/`i_cps2`/`i_cps3`,
-        `cp_flag`, `mjd`, `frame`, and a dict per requested extra.
+        `cp_flag`, `v2_flag`, `mjd`, `frame`, and a dict per requested extra.
 
     Raises
     ------
