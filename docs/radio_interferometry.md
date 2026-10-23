@@ -176,6 +176,74 @@ For a fit with the scene on the model side only, `data.model(scene, values,
 nuis)` returns `M_k` and `data.chi2_by_ddid(scene, values, nuis)` the χ² and
 number of points of each ddid.
 
+## Antenna-based gains
+
+Self-calibration solves for the antenna gains and applies them; closure-only
+imaging discards them. `CalibrationNuisance(data, antenna_gains=True,
+solint="scan")` instead **marginalizes** one complex gain
+`g = exp(λ + iφ)` per antenna and solution interval, so the posterior of the
+image carries the calibration uncertainty. The model is
+`V_k = g_i conj(g_j) M_k + noise`, with priors `λ ~ N(0, τ_a²)` and
+`φ ~ N(0, τ_φ²)`, independent between antennas and intervals.
+
+`solint` is `"int"` (each integration), `"scan"` or a number of seconds;
+intervals never cross a scan. The data need `time`, `ant1` and `ant2` (and
+`scan` for `"scan"`; `read_ms` fills them).
+
+```python
+nuis = CalibrationNuisance(data, antenna_gains=True, solint="scan")
+term = data.term(scene, nuis)  # then fit(..., likelihoods=[term], method="lbfgs")
+```
+
+**Method.** At every evaluation the model `M_k` is computed once, then a few
+(`gain_steps`, default 5) Gauss–Newton steps from `g = 1` give the gain
+solution, and the integral over the gains is taken by a Laplace approximation
+about it. The Hessian splits into an amplitude block and a phase block
+(a weighted graph Laplacian), because the cross terms cancel; each adds
+`½ log det`, from a batched Cholesky factorization. The gradient passes
+through the unrolled steps. Centring on the solution, not on `g = 1`, is what
+lets phase errors of about a radian be handled. Larger errors (about two
+radians or more) can leave the solution in a local minimum; raise
+`gain_steps` or calibrate first.
+
+**The widths are choices.** `cal.gain_amp_width` (`τ_a`, default 0.1) and
+`cal.gain_phase_width` (`τ_φ`, default 0.5 rad) are not measurements; the
+default amplitude width is of the order of ALMA's absolute flux accuracy
+(5–20%, by band), and no phase specification exists. Fix them, or fit them
+(`fit_gain_widths=True`: log-uniform priors on 1e-3–10, overridable in
+`priors`; an unbounded `1/τ` prior would be improper, since the marginal tends
+to a constant as `τ → 0`).
+
+- With `τ → 0` the likelihood is the ungained one (up to a constant); with
+  `τ → ∞` it tends to closure-only inference. The finite phase prior is
+  essential: without it the absolute position is lost, as with closure phases.
+  A snapshot then constrains the source position only through `τ_φ`.
+- The mean `λ` of an interval is degenerate with `cal.flux` and `cal.gain`;
+  only `τ_a` identifies it, so `cal.gain` is pinned by the mean over
+  intervals.
+- Within an interval a per-observation `cal.offset` is a phase gradient that
+  the gains can absorb: with antenna gains it is identified through `τ_φ`
+  alone.
+- An amplitude gain rescales the noise too; the model does not know it, so
+  only the phase part of the closure equivalence is exact.
+- There is no least-squares form (`fit(method="lm")` raises
+  `NoLeastSquaresForm`; use `lbfgs` or `adam`, or `numpyro_model`). The
+  `residuals` hold the data and the solved gains over their prior widths,
+  and `log_norm` the log-determinants. `precondition="diag"` sees those rows
+  and omits the log-determinant, so it is approximate.
+- `data.model` and `dirty_image(scene=...)` apply no gains and raise with
+  antenna gains; `term.gains(values)` returns the solved gains, and
+  `chi2_by_ddid` is taken at the solution. `fit(...).info["derived"]` holds
+  `cal.gain_step`, the size of the last Gauss–Newton step: if it is not small,
+  raise `gain_steps`.
+- `sigmas="profile"` takes `ŝ` at the gain solution and holds it fixed.
+- Memory is `n_interval × n_ant²` floats per Hessian block; independent
+  intervals only (gains correlated in time are a later stage).
+
+Source: Blackburn et al. (2020), [references](references.md#blackburn2020);
+Broderick et al. (2020), [references](references.md#broderick2020); Arras et
+al. (2019), [references](references.md#arras2019).
+
 ## Smoothing: `Image(smooth_fwhm_mas=...)` or the nuisance taper
 
 Two Gaussian blurs are available, for different jobs.

@@ -1461,6 +1461,36 @@ role = "context"
 verified = false
 verified_via = "none"
 
+[ref.blackburn2020]
+authors = "Blackburn et al."
+year = 2020
+title = "Closure statistics in interferometric data"
+arxiv = "1910.02062"
+used_in = ["virgil.radio:CalibrationNuisance"]
+note = "ApJ 894, 31 (2020); closure equivalence with gains marginalized, finite gain priors"
+verified = true
+verified_via = "arxiv"
+
+[ref.broderick2020]
+authors = "Broderick et al."
+year = 2020
+title = "THEMIS: A Parameter Estimation Framework for the Event Horizon Telescope"
+doi = "10.3847/1538-4357/ab91a4"
+used_in = ["virgil.radio:CalibrationNuisance"]
+note = "ApJ 897, 139 (2020); Laplace marginalization of station gains"
+verified = true
+verified_via = "crossref"
+
+[ref.arras2019]
+authors = "Arras et al."
+year = 2019
+title = "Unified Radio Interferometric Calibration and Imaging with Joint Uncertainty Quantification"
+arxiv = "1903.11169"
+used_in = ["virgil.radio:CalibrationNuisance"]
+note = "A&A 627, A134 (2019); joint calibration and imaging (resolve), gain priors"
+verified = true
+verified_via = "arxiv"
+
 [ref.fessler2005]
 authors = "Fessler et al."
 year = 2005
