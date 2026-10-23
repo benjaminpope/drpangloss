@@ -1890,71 +1890,60 @@ def plot_field_draws(
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    Three draws (``abc``) above cuts through many of them (``ddd``), one
-    in bold. Posterior draws are unit-sum images on a shared colour scale;
-    prior draws are scaled to unit peak.
+    Three draws (``abc``) above cuts through many (``ddd``), one in bold.
+    Posterior draws are unit-sum on a shared colour scale; prior draws have
+    unit peak.
 
     Parameters
     ----------
     field : GaussianField, MultipoleField or MultipoleDisk, optional
-        Alone, gives prior draws from whitened normal latents of ``key``;
-        with ``latents``, posterior draws. A
+        Alone, prior draws from ``key``; with ``latents``, posterior draws. A
         [`MultipoleDisk`][virgil.models.MultipoleDisk] needs a
-        [`RadialGP`][virgil.models.RadialGP] profile; its profile latents
-        ``profile.z`` and, if its harmonics have a ``prior``,
-        ``harmonics.z`` are drawn at the disk's hyperparameters.
+        [`RadialGP`][virgil.models.RadialGP] profile; latents are drawn at its
+        hyperparameters.
     pixel_scale_mas : float
         Pixel scale, mas.
     key : jax.Array, optional
-        PRNG key for prior draws.
+        PRNG key (prior).
     latents : array-like, shape (n, *field.latent.shape) or dict, optional
         Posterior latents, e.g. from
         [`laplace_samples`][virgil.imaging.laplace_samples]. For a
-        MultipoleDisk, a dict ``{"profile.z": (n, n_r), "harmonics.z":
-        (n, 2, M, n_k)}`` (paths on the disk; a missing path stays at the
-        disk's value).
+        MultipoleDisk, a dict of disk paths, ``{"profile.z": ...,
+        "harmonics.z": ...}``, each ``(n, *shape)``; others keep their values.
     images : array-like, shape (n, nrow, ncol), optional
         Rendered images instead of a field (not for ``"multipole"`` cuts).
     n : int, optional
-        Number of prior draws (default 100).
+        Prior draws (default 100).
     cuts : {"principal", "axes", "multipole"}, optional
         Panel d. ``"principal"``: the central row and column of a
-        GaussianField, its kernel's principal axes. ``"axes"``: lines through
-        the centre at the position angles ``axes_pa``. ``"multipole"``: the
-        cosine amplitudes ``a_m(r)``, ``m = 0..mmax``, of
-        ``η = Σ a_m cos mθ + b_m sin mθ`` (FFT of
-        ``MultipoleField.polar_values`` along θ, the residual without ``mean``;
-        ``a_0`` is the azimuthal mean) against disk-plane radius, one offset
-        track per ``m``. For a MultipoleDisk the ``m = 0`` track is
-        ``ln I₀(r)`` (less ``μ``) and the others the cosine coefficients
-        ``c_m(r)`` of ``I/I₀ = 1 + Σ c_m cos mθ + s_m sin mθ``, at the
-        projected disk's radius. Default: ``"multipole"`` for a MultipoleField
-        or MultipoleDisk,
-        ``"principal"`` for a GaussianField, ``"axes"`` for images.
+        GaussianField. ``"axes"``: lines through the centre at the position
+        angles ``axes_pa``. ``"multipole"``: the cosine amplitudes ``a_m(r)``,
+        ``m = 0..mmax``, of ``η = Σ a_m cos mθ + b_m sin mθ`` (the residual
+        without ``mean``; ``a_0`` is the azimuthal mean) against disk-plane
+        radius, one offset track per ``m``. For a MultipoleDisk, ``ln I₀ - μ``
+        and the cosine coefficients ``c_m(r)`` of ``I/I₀``. Default:
+        ``"multipole"`` for a MultipoleField or disk, ``"principal"`` for a
+        GaussianField, ``"axes"`` for images.
     axes_pa : sequence of (float, str), optional
-        ``(PA in degrees North through East, label)`` per ``"axes"`` cut.
+        ``(PA in degrees, label)``, North through East, per ``"axes"`` cut.
     npix : int, optional
-        Image side in pixels for a MultipoleDisk (default 64).
+        Image side in pixels for a disk (default 64).
     truth : array-like, shape (nrow, ncol), optional
-        True image (posterior only): dashed in the cuts, and the reference peak.
+        True image (posterior only): dashed in the cuts; the reference peak.
     snr : bool, optional
-        Posterior only. Panel c shows the posterior mean over standard
-        deviation of each pixel's brightness (grey where there is no spread).
-        This is a per-pixel S/N, not a detection significance: a ring detected
-        with confidence can have a per-pixel S/N near one.
+        Posterior only. Panel c: mean over standard deviation of each pixel
+        (grey where no spread); per-pixel S/N, not a detection significance.
     beam : Beam, optional
         Drawn on the map panels, as in [`plot_model`][virgil.plotting.plot_model].
     snr_scale, snr_vmax, n_cuts, title, figsize : optional
-        S/N colour scale (``"linear"`` or ``"log"``) and its top (default the
-        99th percentile); number of faint cuts (100); title and size.
+        S/N scale (``"linear"``/``"log"``), its top (default 99th percentile),
+        faint cuts (100), title, size.
 
     Returns
     -------
     tuple
-        ``(fig, axes)``, ``axes`` a dict keyed ``"a"`` to ``"d"``.
-
-    Prior cuts show ``η``; image and posterior cuts show ``log10``
-    brightness over the reference peak (the truth's, else the first draw's).
+        ``(fig, axes)``, ``axes`` a dict keyed ``"a"`` to ``"d"``. Prior cuts
+        show ``η``; others ``log10`` brightness over the reference peak.
     """
     import jax
     import jax.numpy as np
