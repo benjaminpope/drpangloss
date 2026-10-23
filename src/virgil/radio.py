@@ -1151,15 +1151,13 @@ class CalibrationNuisance:
         Half-width of the default offset prior, in beams; default 3.
         Provisional, as the module.
     antenna_gains : bool
-        Marginalize a complex gain per antenna and solution interval (Laplace
-        about the gain solution; see [antenna
+        Marginalize a complex gain per antenna and solution interval ([antenna
         gains](../radio_interferometry.md#antenna-based-gains)). Needs
-        ``time``, ``ant1``, ``ant2`` in the data; no least-squares form.
+        ``time``, ``ant1``, ``ant2``; no least-squares form.
     solint : {"int", "scan"} or float
         Solution interval: an integration, a scan or seconds (within a scan).
     gain_amp_width, gain_phase_width : float
-        Widths ``τ_a`` and ``τ_φ`` (rad) of the Gaussian gain priors: choices,
-        not measurements.
+        Widths ``τ_a`` and ``τ_φ`` (rad) of the Gaussian gain priors (choices).
     fit_gain_widths : bool or {"amp", "phase"}
         Fit the widths (log-uniform priors; see ``priors``).
     gain_steps : int
