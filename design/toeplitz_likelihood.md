@@ -83,8 +83,25 @@ PR 2, because PR 1 has to give `precondition="diag"` meaningful curvature).
 | 64², 1e5 points, offsets, rotation 33°, σ fixed / fitted / profiled | ≤ 3e-16 | ≤ 3.2e-13 (direct: ≤ 5e-13) | ≤ 2.3e-14; fitted `cal.sigma` 1.4e-12 |
 
 Fits from the same start: Adam agrees step by step to 1e-14; L-BFGS reaches the same optimum (loss to 1e-10,
-values to ~1e-5, profiled σ to 1e-8). The large-data timing, memory and agreement checks (section 7) are not
-yet run.
+values to ~1e-5, profiled σ to 1e-8).
+
+**Measured (A100, float64), IM Lup at the config-R solution** (42,421,131 points, 26 groups, 1028² × 5 mas,
+free offsets, `n_f` = 4320 for `B` and 2160 for the offset grids; one run of the section 7 check):
+
+| Quantity | Toeplitz | Direct |
+|---|---|---|
+| χ² per group and loss, relative difference | 1.8e-13 | (reference) |
+| Gradient, relative: flux, gains, offsets, pixels | ≤ 2.0e-10 | (reference) |
+| Gradient, relative: `cal.sigma` | 2.1e-6 (∂L/∂s ≈ 0 at the optimum, so relative to a near-zero gradient) | (reference) |
+| Loss difference to a perturbed image, absolute | 1.5e-8 (roundoff) | (reference) |
+| Nyquist fraction / margin | 0.486 / 0.993 | — |
+| Precompute | 8.1 s; arrays 2.38 GB | — |
+| Value+grad | 21.8 ms | 734.7 ms (eps 1e-6), 997.7 ms (eps 1e-12): 34×, 46× |
+| Compile | 0.6 s | 3.0 s |
+| Peak GPU memory | 12.98 GB | 21.92 GB |
+
+The 21.8 ms is at the top of the section 4 estimate (10–25 ms with free offsets) and above its 5–10 ms
+image-only part; the estimates below are kept as written.
 
 
 ## Summary
@@ -104,7 +121,8 @@ to the NUFFT tolerance used for the precompute (the MRI "Toeplitz embedding" tri
 approximation.
 
 **Verdict: difficulty M** (three PRs, no blocker). Per-step cost for IM Lup (42.4 M points,
-26 ddids, 1028² × 5 mas) should fall from ~0.45–0.5 s to ~10–25 ms per value+grad with free offsets (estimate), 20–50× (5–10 ms and ~50–100× with offsets fixed);
+26 ddids, 1028² × 5 mas) should fall from ~0.45–0.5 s to ~10–25 ms per value+grad with free offsets (estimate), 20–50× (5–10 ms and ~50–100× with offsets fixed).
+Measured on an A100: 21.8 ms against 734.7 ms (direct, eps 1e-6), 34× (see "As built");
 the number of L-BFGS steps is unchanged, so a cold start goes from about an hour to about a minute,
 not to a different algorithm. Per-observation offsets can be fitted exactly (opt-in, "derived"; see "As built"): the spread (fine)
 grid of the type-1 NUFFT is stored once per group and evaluated at any shift (section 2, tested to 4e-13). The one
@@ -232,7 +250,7 @@ Conditions, all checkable when the term is built:
   conjugate-symmetric and `D` real) would halve memory and use `c2r` FFTs at twice the spreading cost; untested.
 * Cost per evaluation: the shifted cross term needs one `n_f²` FFT per observation (5–8 for IM Lup),
   ≈ 5–10 ms on an A100 added to the quadratic term's ≈ 5 ms, so ≈ 10–20 ms per value+grad (the
-  50× estimate becomes ≈ 25–40×). With **profiled σ** each ddid's `L_d` is needed separately each step: 26 FFTs,
+  50× estimate becomes ≈ 25–40×; measured 21.8 ms, 34×). With **profiled σ** each ddid's `L_d` is needed separately each step: 26 FFTs,
   ≈ 30–40 ms, so a fixed or fitted `s_d` is much cheaper than profiling here.
 * Precompute is one spread per group in place of the `D` adjoint (no FFT, so slightly cheaper); `D_e` at zero
   shift is just the same stored grid evaluated at `δ = 0`.
@@ -304,7 +322,7 @@ Fits an A100 40 GB comfortably. If σ is fixed (MPoL's objective, `s = 1`) and �
 observation could share a kernel and memory drops ~5×; keep per group otherwise (σ and the profiled ŝ are per
 ddid).
 
-**Estimated cost per value+grad** (A100, f64; to be measured): two 2056² real-to-complex FFTs ≈ 1–2 ms,
+**Estimated cost per value+grad** (A100, f64; measured: 21.8 ms with free offsets, see "As built"): two 2056² real-to-complex FFTs ≈ 1–2 ms,
 spectral reductions over 0.44–2.2 GB at ~1.5 TB/s ≈ 0.3–1.5 ms, pixel-space softmax/entropy/autodiff on 1M
 pixels ≈ 2–4 ms, so **≈ 5–10 ms** for the image part; free offsets add 2–3 complex 2136² FFTs per observation
 (5–8 observations, ≈ 5–15 ms) and the spread-grid reads. Total **≈ 10–25 ms** against the measured
@@ -458,7 +476,7 @@ lean-CI rule).
 inputs from the existing `alma_imlup_maxent` warm start (`values.npz`, MPoL solution, all data):
 
 ```python
-# draft: precompute, agreement and timing on IM Lup (A100, float64). Not run.
+# draft: precompute, agreement and timing on IM Lup (A100, float64). Run as vv's alma_imlup_toeplitz_check.py; results in "As built".
 import json, time, jax, numpy as np
 jax.config.update("jax_enable_x64", True)
 import virgil
