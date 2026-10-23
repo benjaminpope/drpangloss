@@ -287,6 +287,7 @@ offsets and error scales take the diagonal of the loss Hessian.
   that term. They agree to about 1e-13 of the loss.
 - **New weights.** `tdata.rebuild(vis, weight)` repeats the precompute for
   new visibilities or weights without recompiling (bootstraps, reweighting).
+  Weights must stay finite and positive; drop points through `mask` instead.
 
 **Fitted offsets** (`offsets="spread"`, an extension). The
 offset ramp `e^{−2πi u·δ_e}` cancels in `|M|²`, so `B_d` does not depend on

@@ -158,14 +158,15 @@ def _check_against_direct(data, npix, sigmas, offsets, rotation, seed, **kw):
         **kw,
     )
     term, toeplitz, reference = _losses(tdata, scene, nuis)
-    bound = (
-        tdata.max_shift_pix
-        * PIXEL
-        / (
-            abs(onp.cos(onp.deg2rad(rotation)))
-            + abs(onp.sin(onp.deg2rad(rotation)))
+    # the bound from the prior, not from the precompute under test
+    bound = 0.0
+    if offsets:
+        bound = float(np.max(nuis.priors()["cal.offset"].high))
+        angle = onp.deg2rad(rotation)
+        spread = abs(onp.cos(angle)) + abs(onp.sin(angle))
+        assert tdata.max_shift_pix * PIXEL == pytest.approx(
+            bound * spread, rel=1e-12
         )
-    )
     v1 = _values(
         nuis,
         flux=0.8,
@@ -355,6 +356,9 @@ def test_rebuild_matches_a_fresh_precompute_without_recompiling():
             atol=1e-13 * float(np.max(np.abs(fresh.arrays[k]))),
         )
     onp.testing.assert_array_equal(rebuilt.data.vis, vis)
+    weight[3] = 0.0  # a bootstrap's dropped point: mask it instead
+    with pytest.raises(Exception, match="finite and positive"):
+        tdata.rebuild(vis, weight)
 
 
 def _fit_problem(npix=10, sigmas="profile"):
@@ -583,6 +587,9 @@ def test_fixed_alpha_nuisance(small):
         rtol=1e-14,
     )
     assert CalibrationNuisance(data, alpha=False).alpha_fixed == 0.0
+    assert CalibrationNuisance(data, alpha=0).alpha_fixed == 0.0
+    with pytest.raises(ValueError, match="not the integer 1"):
+        CalibrationNuisance(data, alpha=1)  # once "fit α"
 
 
 # -- the spread-grid adapter ---------------------------------------------
@@ -653,6 +660,10 @@ def test_spread_grid_against_nufftax_and_direct_sums():
 def test_spread_grid_needs_nufftax_0_6_1(monkeypatch):
     import nufftax
 
-    monkeypatch.setattr(nufftax, "__version__", "0.6.0")
-    with pytest.raises(ImportError, match="0.6.1"):
+    for version in ("0.6.0", "0.6.0rc1", "0.5"):
+        monkeypatch.setattr(nufftax, "__version__", version)
+        with pytest.raises(ImportError, match="0.6.1"):
+            spread_grid.kernel(1e-12)
+    for version in ("0.7rc1", "0.6.2a1", "1.0.0.dev3"):
+        monkeypatch.setattr(nufftax, "__version__", version)
         spread_grid.kernel(1e-12)

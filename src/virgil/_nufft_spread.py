@@ -11,6 +11,7 @@ type-3 evaluation at non-integer ``x``. Source:
 """
 
 import functools
+import re
 
 import jax
 import jax.numpy as np
@@ -26,7 +27,11 @@ def _nufftax():
     from nufftax.core.kernel import compute_kernel_params, es_kernel
     from nufftax.core.spread import _spread_2d_dispatch
 
-    version = tuple(int(p) for p in nufftax.__version__.split(".")[:3])
+    # leading digits of each field, so "0.7rc1" reads as (0, 7)
+    version = tuple(
+        int(re.match(r"\d*", p).group() or 0)
+        for p in nufftax.__version__.split(".")[:3]
+    )
     if version < NUFFTAX_MIN:
         raise ImportError(
             f"the Toeplitz radio term needs nufftax >= "
@@ -108,7 +113,7 @@ def check_float64():
     """Raise unless JAX's 64-bit mode is on."""
     if jax.dtypes.canonicalize_dtype(onp.float64) != onp.float64:
         raise ValueError(
-            "the Toeplitz radio term needs float64: enable jax_enable_x64 "
-            "(or work inside `with jax.enable_x64(True):`); fit(dtype="
-            "'float64') does this."
+            "the Toeplitz radio term needs float64, the precompute "
+            "included: enable jax_enable_x64, or build and fit inside "
+            "`with jax.enable_x64(True):`."
         )

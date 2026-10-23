@@ -394,6 +394,12 @@ class ToeplitzVisData(eqx.Module):
         vis, weight = np.asarray(vis), np.asarray(weight)
         if vis.shape != (n,) or weight.shape != (n,):
             raise ValueError(f"vis and weight must have shape ({n},).")
+        weight = eqx.error_if(
+            weight,
+            ~np.all(np.isfinite(weight) & (weight > 0)),
+            "weight must be finite and positive (as for from_arrays); drop "
+            "points through the precompute's mask instead.",
+        )
         data = eqx.tree_at(
             lambda d: (d.vis, d.weight), self.data, (vis, weight)
         )

@@ -31,7 +31,7 @@ anything before 1.0 may change between minor versions.
     the refusals (`test_refuses_what_it_cannot_do`, `test_runtime_checks`) and
     the adapter against nufftax's type-1 transform and direct sums
     (`test_spread_grid_against_nufftax_and_direct_sums`).
-- `CalibrationNuisance(alpha=<number>)` fixes the spectral index at that value.
+- `CalibrationNuisance(alpha=<float>)` fixes the spectral index at that value.
 - `ComplexVisData.chi2_by_ddid` takes `chunk_size` (that of `term`).
 - `fit` accepts likelihood terms with a scalar χ² (`chi2_and_log_norm`, no
   residual vector): L-BFGS and Adam use them, LM and the Gauss–Newton
@@ -73,6 +73,7 @@ anything before 1.0 may change between minor versions.
 
 ### Changed
 
+- `CalibrationNuisance(alpha=1)` (a non-zero integer) raises: it used to fit α (`bool(1)`), and a float now fixes it. Pass `alpha=True` to fit, `alpha=1.0` to fix; `alpha=0` still gives α = 0.
 - `fit(lbfgs_memory=None)`: the L-BFGS history defaults to 100 (was 50), cut so that it stays under 1 GiB (above 6.7×10⁵ float64 coordinates, never below 5, with a warning); an explicit value is used as given. Only L-BFGS fits are affected (LM, which the pipelines use, ignores it). On the 41² VLTI-like L-curve with `precondition="diag"` and `MaxEntropy`, steps at w = 0.1 fall from 4527 to 2837 in float64 and from 19524 to 3416 in float32 (one run); 32² AMI and a 3-parameter fit are indifferent between 50 and 100. Sweep in `design/fit_preconditioning.md`.
 - `fit(..., precondition="diag")` scales a `MaxEntropy` pixel by its entropy metric `weight * b` (Skilling & Bryan 1984) in place of the data and prior curvature there, and the probes of `gauss_newton_diag` are Rademacher (were Gaussian); on the 41² VLTI-like L-curve this takes 12265 → 4527 steps at w = 0.1 in float64 (one run). `MaxEntropy.residuals` lets `method="lm"` fit it (float64 only: float32 LM stalls at weak weights, so L-BFGS stays the default for entropy).
 - `OrbitPipeline(epochs, output=...)`: `output` is keyword-only, as for the other pipelines; a positional `output` still works until 0.5, with a `FutureWarning`.

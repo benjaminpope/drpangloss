@@ -1135,8 +1135,9 @@ class CalibrationNuisance:
         need more than one observation; a nuisance not fitted takes the value
         in the table's last column. ``sigmas="profile"`` sets the error
         scales at every evaluation instead of fitting them (see
-        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A number
-        for ``alpha`` fixes the spectral index at that value.
+        [`sigma_hat`][virgil.radio.ComplexVisData.sigma_hat]). A float
+        for ``alpha`` fixes the spectral index at that value (a non-zero
+        integer is refused: ``alpha=1`` used to mean "fit").
     offset_beams : float, optional
         Half-width of the default offset prior, in beams; default 3.
         Provisional, as the module.
@@ -1177,6 +1178,12 @@ class CalibrationNuisance:
             self.sigmas = bool(sigmas)
         if isinstance(alpha, (bool, onp.bool_)):
             self.alpha, self.alpha_fixed = bool(alpha), 0.0
+        elif isinstance(alpha, (int, onp.integer)) and alpha != 0:
+            # alpha=1 used to fit α (bool(1)); refuse rather than fix it
+            raise ValueError(
+                "alpha must be True or False (fit it or not) or a float to "
+                f"fix it (alpha={float(alpha)!r}), not the integer {alpha}."
+            )
         else:
             self.alpha, self.alpha_fixed = False, float(alpha)
         w = onp.asarray(data.weight, dtype=onp.float64)
