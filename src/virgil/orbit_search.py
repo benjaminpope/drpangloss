@@ -83,19 +83,22 @@ class SharedFlux:
         or ``{band: either}``. Default
         ``(1e-3, 1.0, 16)``; the prior is log-uniform over the grid's range.
     bands : dict, optional
-        ``{epoch or dataset name: band}``; datasets of a band share its flux.
-        Default one band, ``"all"``.
+        ``{epoch or dataset name: band}`` (a dataset's entry overrides its
+        epoch's); datasets of a band share its flux. Default one band,
+        ``"all"``.
     reference : optional
         The band whose flux is at most 1 (default the first); it fixes which
-        star is the companion in every band.
+        star is the companion in every band; the others may have grids above
+        1.
     slope : tuple, array-like or dict, optional
         The chromatic slope beta, ``(lo, hi, n)`` (uniform prior), values, or
         a dict per band; None fixes beta = 0.
     wavel0 : float or dict, optional
         Reference wavelength (m); default the geometric mean per band.
     order, newton : int, optional
-        Gauss-Legendre nodes per side of the marginal (16) and Newton steps
-        to the profiled peak (8).
+        Gauss-Legendre nodes per side of the marginal (16; each side runs to
+        12 nats below the peak, or the prior bound) and Newton steps to the
+        profiled peak (8).
     """
 
     grid: object = (1e-3, 1.0, 16)
@@ -125,8 +128,9 @@ class OrbitScores:
         integrated out (``-inf`` where not finite), and at the profiled flux.
     flux, flux_err, flux_at_edge, slope, slope_err, slope_at_edge : numpy.ndarray
         ``(n, n_band)``: each band's profiled flux and chromatic slope (0
-        without a slope grid), their uncertainties (NaN without positive
-        curvature) and whether they sit at a prior bound.
+        without a slope grid), their uncertainties (NaN with one grid point
+        or non-positive curvature; marginal when both are free) and whether
+        they sit at a prior bound.
     fallback : numpy.ndarray
         ``(n, n_band)`` bool: the curvature at the peak was unusable, so the
         marginal is the coarse grid's trapezoidal rule.
@@ -135,9 +139,10 @@ class OrbitScores:
     scale, scale_at_bound : numpy.ndarray
         ``(n, n_dataset)``: each dataset's largest error scale at the
         profiled flux, and whether it presses against ``s_max`` (the score is
-        then penalized).
+        then penalized; always False with ``s_max=None``).
     bands, reference, cost : tuple, object, int
-        The band names, the reference band, and the work units spent.
+        The band names, the reference band, and the work units spent
+        (candidates times each dataset's band-marginal score evaluations).
     """
 
     score: onp.ndarray
@@ -930,7 +935,8 @@ def score_orbits(
 ):
     """Score candidate orbits on all epochs, with the flux shared.
 
-    The score is the scale-marginalized log likelihood with the flux
+    Unlike ``rank_orbits``, each companion is placed at every sample's own
+    time. The score is the scale-marginalized log likelihood with the flux
     integrated out and the extra terms added ([details][virgil.orbit_search]).
 
     Parameters
@@ -958,6 +964,7 @@ def score_orbits(
     Returns
     -------
     OrbitScores
+        In the order of ``orbits``; rank with ``.order()``.
     """
     if not isinstance(epochs, Epochs):
         raise TypeError(

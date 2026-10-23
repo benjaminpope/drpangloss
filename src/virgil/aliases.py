@@ -1821,8 +1821,9 @@ class AliasResult:
         The primary, the V^2 amplitude range, the period window (days), the prior
         ranges, and flagged nights that seeded nothing.
     period_bound, period_at_lower_bound : bool
-        P is unconstrained (near the window's top, or a flat likelihood); the best
-        P is within 10% of the bottom, where the sampling limit may have cut it.
+        P is unconstrained (best P within 10% of the top of ``p_range``, or
+        sigma(log P) at least a quarter of the window); the best P is within 10%
+        of the bottom, where the sampling limit may have cut the truth.
     window_capped, primary_fit, temper_f, temper_blocks, temper_f_raw, temper_rho
         Lower end wanted when a default window was capped; the ``"auto"``
         estimate; likelihood tempering ([`virgil.tempering`][virgil.tempering]).
@@ -2912,20 +2913,36 @@ def fit_orbit_aliases(
     times, t_ref, a_range, flux_range, ecc_max, s_max : optional
         Epoch times and ``dt_peri`` reference (MJD; default the mean times),
         prior ranges (``a_range`` in mas), eccentricity cap.
-    n_candidates, n_refine, n_random, n_is, n_samples, seed, init, ... : optional
-        Search effort, sampling and a warm start; bands finished in
-        ``checkpoint_dir`` are reloaded; ``on_band`` is a per-band callback.
-    primary_diam, diam_range, vis_amp, sign_free, flip_flux, skip_flagged : optional
-        Primary diameter (mas, ``"auto"``, a float or ``"fit"``) and its prior;
-        profiled V^2 amplitude; sign-free seeds; label-swapped refit at the flux
+    n_candidates, n_refine, n_random, n_is, n_samples, seed, init : optional
+        Search effort, sampling and a warm start.
+    min_distance_mas, max_steps : float, int, optional
+        Modes closer than ``min_distance_mas`` (mas, along the orbit) are one;
+        optimizer steps per start.
+    p_min_samples, flag_nats, ess_min : float, optional
+        Bands with ``p`` above ``p_min_samples`` also get posterior samples;
+        evidence margin (nats) and importance-sample size below which a band is
+        flagged.
+    checkpoint_dir, on_band : optional
+        Bands finished in ``checkpoint_dir`` are reloaded; ``on_band`` is called
+        with each band's result.
+    primary_diam, diam_range : optional
+        ``"auto"`` fits the primary diameter if resolved, a float (mas) fixes it,
+        ``"fit"`` samples it (prior ``diam_range``).
+    vis_amp, sign_free, flip_flux, skip_flagged : optional
+        Profiled V^2 amplitude; sign-free seeds; label-swapped refit at the flux
         ceiling; flagged nights seed nothing.
-    temper, outlier_eps, n_bands_max, k, eccs, batch_size, memory_budget : optional
-        ``temper``: True estimates the evidence tempering (needs
-        ``EpochPositions``), a float >= 1 fixes it, False is off. ``outlier_eps``
-        in [0, 1), default 0 (no mixture), unlike ``OrbitPipeline``'s 0.02.
+    temper : bool or float, optional
+        True estimates the evidence tempering (needs ``EpochPositions``), a float
+        >= 1 fixes it, False is off.
+    outlier_eps : float, optional
+        Outlier weight in [0, 1); default 0 (no mixture), unlike
+        ``OrbitPipeline``'s 0.02.
+    n_bands_max, k, eccs, batch_size, memory_budget : optional
+        Band cap of a default window, grid density, seed eccentricities, batching.
     short_arcs, arc_jitter, arc_delta_chi2, arc_min_gap : optional
         Fit only the bands the short arcs admit ([`virgil.arcs`][virgil.arcs]);
-        needs ``EpochPositions`` and ``skip_flagged``, else all bands are seeded.
+        needs ``EpochPositions`` and ``skip_flagged``, with every seeding night
+        decided; otherwise every band is seeded from the positions.
 
     Returns
     -------

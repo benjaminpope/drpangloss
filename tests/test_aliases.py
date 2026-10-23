@@ -850,6 +850,32 @@ def test_a_warm_start_reproduces_the_optimum_without_other_seeds():
 
 
 @in_float64
+@in_float64
+@pytest.mark.slow
+def test_the_flip_acts_only_on_a_flux_pinned_at_the_top(monkeypatch):
+    # The refit with swapped labels is tried for a mode within 0.02 (log
+    # flux) of the top of ``flux_range``, and not below that.
+    data, _ = _synthetic(12.1)
+    flipped, orig = [], aliases._flipped
+    monkeypatch.setattr(
+        aliases, "_flipped", lambda *a: flipped.append(1) or orig(*a)
+    )
+    for log_below, expect in ((0.019, True), (0.03, False)):
+        flux = float(onp.exp(-log_below))  # the top of flux_range is 1.0
+        monkeypatch.setattr(
+            aliases,
+            "_refine",
+            lambda *a, x=_x_truth(flux=flux): ([(x, -1.0)], 0),
+        )
+        flipped.clear()
+        fit_orbit_aliases(
+            data, (12.0, 12.2), t_ref=T_REF, n_is=50, n_samples=5,
+            max_steps=2, short_arcs=False,
+        )  # fmt: skip
+        assert bool(flipped) is expect  # a swap, and its swap back
+
+
+@in_float64
 def test_the_flip_is_skipped_for_a_resolved_primary():
     data, _ = _synthetic(12.1)
     for kw, expect in (({}, True), ({"primary_diam": 0.5}, False)):
@@ -1007,15 +1033,23 @@ def test_a_saved_result_loads_back_equal(tmp_path):
     ]
 
 
-def test_non_finite_numbers_survive_a_round_trip(tmp_path):
+def test_non_finite_numbers_survive_a_round_trip(tmp_path, monkeypatch):
     # ``clean_json`` writes NaN and infinity as null: loading restores -inf
     # for evidences and NaN for everything else, and keeps them distinct.
-    failed = AliasBandResult(
-        n=4, p_lo=1.0, p_hi=2.0, modes=[], log_z=-onp.inf, log_z_is=-onp.inf,
-        ess=0.0, flagged=True, flags=["band-failed"], error="ValueError: no",
-    )  # fmt: skip
+    data, _ = _synthetic(12.38)
+    seen = []
+
+    def fit_band(problem, settings, band, orbits, times):
+        if not seen:  # one band really fails inside fit_orbit_aliases
+            seen.append(band.n)
+            raise ValueError("a bad band")
+        return _band(band.n, []), (None, None)
+
+    monkeypatch.setattr(aliases, "_fit_band", fit_band)
+    fitted = fit_orbit_aliases(data, (11.3, 12.9), t_ref=T_REF)
+    failed = next(b for b in fitted.bands if "band-failed" in b.flags)
     nan = float("nan")
-    ok = _band(3, [dict(scale=[nan], chi2_red=[1.0])], p=0.5, flipped=True)
+    ok = _band(3, [dict(scale=[nan], chi2_red=[1.0])], p=nan, flipped=True)
     ok.modes = [
         dict(
             x=[0.0, nan], loglike=nan, log_z=-onp.inf, log_z_is=-onp.inf,
@@ -1029,7 +1063,8 @@ def test_non_finite_numbers_survive_a_round_trip(tmp_path):
     back = AliasResult.load(tmp_path / "r.json")
     assert back.bands[1].log_z == -onp.inf
     assert back.bands[1].error == failed.error
-    assert onp.isnan(back.bands[1].p) and onp.isnan(back.bands[1].chi2_red)
+    assert onp.isnan(back.bands[1].chi2_red) and onp.isnan(back.bands[0].p)
+    assert back.bands[1].p == failed.p
     assert onp.isnan(back.bands[0].epochs[0]["scale"][0])
     mode = back.bands[0].modes[0]
     assert mode["log_z"] == -onp.inf and onp.isnan(mode["loglike"])

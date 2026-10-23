@@ -105,6 +105,10 @@ def test_the_cut_keeps_an_off_grid_period():
     )
     counts = arcs.unwrap_cycles(pos, p_range=P_RANGE, eccs=ECCS)
     assert any(lo <= truth["period"] <= hi for lo, hi in counts.intervals)
+    # the polish lowers the minimum below the best grid point's
+    arc = arcs._arc(pos, None, 0.0)
+    _, _, grid_chi2 = arcs._pv_grid(arc, onp.array([truth["period"]]), ECCS)
+    assert counts.steps[-1]["chi2"] < 0.1 * grid_chi2.min()
 
 
 # The true cycle count survives for a range of eccentricities and

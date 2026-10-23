@@ -187,7 +187,8 @@ def night_motion(
 
     Each night's frames are split into an earlier and a later half, each
     refined from the night's
-    ([`epoch_positions`][virgil.epochs.epoch_positions]) position. The
+    ([`epoch_positions`][virgil.epochs.epoch_positions]) position on the same
+    scale-marginalized surface, with the same primary. The
     velocity is the difference over the time between them, with a covariance
     floor of ``jitter`` λ/B_max. A night with one frame, or whose halves move
     more than ``max_shift`` λ/B_max, has none.
@@ -203,7 +204,7 @@ def night_motion(
         half's position floor, in λ/B_max (defaults 0.5, ``ARC_JITTER``).
     cov_scale : float, optional
         Factor (at least 1) multiplying the halves' covariances, σ by its
-        square root (default 1).
+        square root, before the floor is added (default 1).
 
     Returns
     -------
@@ -480,8 +481,8 @@ def unwrap_cycles(
     ecc_max, jitter_mas, cov_scale, delta_chi2, k, eccs : optional
         The largest eccentricity; a position floor (mas); the factor (at
         least 1) multiplying the positions' covariances, σ by its square
-        root; the χ² margin; the
-        phase coherence of the period grids; trial eccentricities (default 0
+        root (match ``cov_scale`` in [`night_motion`][virgil.arcs.night_motion]);
+        the χ² margin; the phase coherence of the period grids; trial eccentricities (default 0
         to ``ecc_max`` in steps of 0.05).
 
     Returns

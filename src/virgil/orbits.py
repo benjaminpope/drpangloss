@@ -857,10 +857,12 @@ def starting_orbits(
     n_phase, n_best : int, optional
         Trial times of periastron per period; orbits returned.
     sign_free : bool, optional
-        Positions known only up to a sign (nearly equal fluxes); the
-        reflection (``omega`` + 180°) fits equally well.
+        Positions known only up to a sign (nearly equal fluxes); the orbit
+        returned has the global sign of its best fit, and its reflection
+        (``omega`` + 180°) fits equally well.
     batch_size : int, optional
-        Grid points solved together; bounds memory, not the result.
+        Grid points solved together; bounds memory, not the result. Capped
+        at the grid size (rounded up to a power of two) even when given.
 
     Returns
     -------
@@ -984,9 +986,10 @@ class StateVectorOrbit(zdx.Base):
         Its velocity at ``t_ref`` (mas/yr).
     dz, vz : float
         Line-of-sight position (mas) and velocity (mas/yr), positive away
-        from the observer.
+        from the observer; they and ``mu`` carry the physical priors.
     mu : float
-        Gravitational parameter ``4π² a_mas³ / P²`` (mas³/yr², P in years).
+        Gravitational parameter ``4π² a_mas³ / P²`` (mas³/yr², P in years);
+        free of distance.
     t_ref : float, optional
         The epoch of the state (MJD, static float64).
 

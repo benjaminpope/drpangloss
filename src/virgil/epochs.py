@@ -787,15 +787,16 @@ def marginal_loglike(
     data : OIData
         Data to compare with. Gains, closure-phase offsets and extra
         observables with a model-dependent covariance raise
-        ``NotImplementedError``.
+        ``NotImplementedError``: a scale does not multiply their covariance.
     dof : float, optional
         Effective degrees of freedom as a fraction of ``nu_b`` (default 1).
     block_dof : dict, optional
         ``{block name: 1/f_b}`` (``"vis"``, ``"phi"``, ``"extra[k]"``), as
         ``AliasResult.block_dof()`` gives.
     s_max : float, optional
-        Bound each scale to ``[1/s_max, s_max]`` and integrate numerically;
-        needed for weak closure phases, where the unbounded marginal is improper.
+        Bound each scale to ``[1/s_max, s_max]`` and integrate numerically, with
+        the exact von Mises normalization for uncorrelated closure phases; needed
+        for weak closure phases, where the unbounded marginal is improper.
     **noise
         Other noise terms; not ``vis_scale``/``phi_scale``.
 
@@ -1199,7 +1200,7 @@ class EpochPeaks:
         companion outside the grid, so treat the dataset as ambiguous.
     laplace : numpy.ndarray
         Weight is a Laplace mass (false without ``refine`` or where the
-        Hessian is not positive definite).
+        Hessian is not positive definite: a peak on a bound, or a flat direction).
     """
 
     dra: onp.ndarray
@@ -1272,7 +1273,8 @@ class EpochPositions:
         Log mean likelihood over the search grid and its axes, for
         ``broad_loglike``; None if not from a grid.
     exact_fraction : tuple of float or None
-        Fraction of grid points scored exactly.
+        Fraction of grid points scored with the full scale integral (1 unless
+        the coarse pass skipped some; see ``epoch_positions``).
     """
 
     names: tuple
