@@ -201,7 +201,6 @@ def test_the_optimum_and_the_gradient_norm_are_unchanged():
     # The softmax gauge is fixed: log-brightness is the log of the pixel fluxes.
     x = scaled.values["env.log_brightness"]
     assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-5)
-    assert float(np.max(np.abs(x))) < 1e3
 
 
 def test_lm_ignores_the_option_and_bad_values_are_rejected():
@@ -314,13 +313,21 @@ def _gauge_problem(npix=8):
     return start, image_priors(start), data
 
 
+def _lit(x, fraction):
+    """Pixels brighter than ``fraction`` of the brightest. The gradient in a
+    pixel's ``log_brightness`` is proportional to its flux, so a stopped fit
+    fixes it only as well as ``gtol / flux``: a pixel at 1e-9 of the peak is
+    uncertain by 1e-2 in log, and a darker one is a boundary optimum at -inf."""
+    return onp.exp(x - x.max()) > fraction
+
+
 def test_recentring_changes_no_loss_and_fixes_the_log_flux():
-    from virgil.fitting import _gauge_floor, _recentre
+    from virgil.fitting import _recentre
 
     start, priors, data = _gauge_problem()
     key = "log_brightness"
     x = onp.random.default_rng(0).normal(size=(8, 8))
-    x[0, :3] = -500.0  # dark pixels
+    x[0, :3] = -500.0  # dark pixels are left where they are
     with run_in("float64"):
         problem = cast_tree(
             _Objective(start, priors, data, [TSV(1e2)]), "float64"
@@ -328,19 +335,18 @@ def test_recentring_changes_no_loss_and_fixes_the_log_flux():
         z = {key: np.asarray(x + 1e5)}
         out = _recentre(problem, z)[key]
         assert float(jax.nn.logsumexp(out)) == pytest.approx(0.0, abs=1e-12)
-        assert float(np.max(out) - np.min(out)) == pytest.approx(
-            _gauge_floor(out)
+        assert float(np.max(out)) < 0.0
+        onp.testing.assert_allclose(
+            out - out[3, 3], z[key] - z[key][3, 3], atol=1e-9
         )
         assert float(problem.loss({key: out})) == pytest.approx(
             float(problem.loss(z)), rel=1e-12
         )
-        # A pixel at -inf (no flux) is allowed and is raised to the floor.
+        # A pixel at -inf (no flux) stays there.
         x[3, 3] = -onp.inf
         out = _recentre(problem, {key: np.asarray(x)})[key]
-        assert float(np.max(out) - np.min(out)) == pytest.approx(
-            _gauge_floor(out)
-        )
-        assert bool(np.all(np.isfinite(out)))
+        assert float(jax.nn.logsumexp(out)) == pytest.approx(0.0, abs=1e-12)
+        assert out[3, 3] == -onp.inf and onp.isfinite(out[0, 0])
 
 
 @pytest.mark.parametrize(
@@ -350,8 +356,9 @@ def test_recentring_changes_no_loss_and_fixes_the_log_flux():
 def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
     method, precondition
 ):
-    # LM took |x| ~ 5e3 here (a shift and dark pixels set by rounding); a start
-    # shifted by 1e5 must give the same fit as an unshifted one.
+    # LM left the lit pixels 4e5 apart from zero here, set by rounding; the
+    # fit must be at log of the fluxes, and a start shifted by 1e5 must give
+    # the same lit pixels as an unshifted one.
     start, priors, data = _gauge_problem()
     options = dict(
         method=method,
@@ -362,8 +369,9 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
     for weight in (1e3, 3e2, 1e2):
         result = fit(start, priors, data, [TSV(weight)], init=warm, **options)
         x = onp.asarray(result.values["log_brightness"])
-        assert onp.abs(x).max() < 1e3
+        assert onp.all(onp.isfinite(x))
         assert float(jax.nn.logsumexp(x)) == pytest.approx(0.0, abs=1e-9)
+        assert x[_lit(x, 1e-8)].min() > -25.0  # ln(1e-8 / 64 pixels) is -22.6
         onp.testing.assert_allclose(
             result.model.brightness,
             jax.nn.softmax(x.ravel()).reshape(x.shape),
@@ -387,7 +395,12 @@ def test_the_fitted_log_brightness_is_gauge_fixed_for_every_method(
     assert runs[1].info["loss"] == pytest.approx(
         runs[0].info["loss"], rel=1e-6
     )
-    assert onp.abs(onp.asarray(runs[1].values["log_brightness"])).max() < 1e3
+    x0, x1 = (onp.asarray(r.values["log_brightness"]) for r in runs)
+    lit = _lit(x0, 1e-3)
+    onp.testing.assert_allclose(x1[lit], x0[lit], atol=1e-4)
+    onp.testing.assert_allclose(
+        runs[1].model.brightness, runs[0].model.brightness, atol=1e-7
+    )
 
 
 def _l_curve_steps(dtype, npix=41):

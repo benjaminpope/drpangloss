@@ -1316,8 +1316,8 @@ class _GradientStoppedLM(optx.LevenbergMarquardt):
 
 def _lm_residuals(z, args):
     problem, scale, masks = args
-    view, gauge = _gauge_residuals(masks, z)
-    return np.concatenate([problem.residuals(view) / np.sqrt(scale), gauge])
+    rows = problem.residuals(z) / np.sqrt(scale)
+    return np.concatenate([rows, _gauge_residuals(masks, z)])
 
 
 @eqx.filter_jit
@@ -1677,22 +1677,6 @@ def _gauge_masks(problem):
     return masks
 
 
-def _gauge_floor(x):
-    """How far below its brightest pixel an image's log-brightness is held:
-    twice ``-log(eps)``, so that a pixel below it carries a smaller fraction of
-    the flux than rounding resolves (e^-72 in float64)."""
-    return -2.0 * np.log(np.finfo(x.dtype).eps)
-
-
-def _floored(mask, x):
-    """``x`` with the supported pixels no lower than ``_gauge_floor`` below the
-    brightest (unsupported pixels are left alone)."""
-    used = mask & np.isfinite(x)
-    peak = jax.lax.stop_gradient(np.max(np.where(used, x, -np.inf)))
-    peak = np.where(np.isfinite(peak), peak, 0.0)
-    return np.where(mask, np.maximum(x, peak - _gauge_floor(x)), x)
-
-
 def _log_flux(mask, x):
     """The log of the total flux ``Σ exp(x)`` over the supported pixels."""
     used = mask & np.isfinite(x)
@@ -1701,36 +1685,31 @@ def _log_flux(mask, x):
 
 def _recentre(problem, z):
     """``z`` with each flat image's log-brightness gauge-fixed to the log of its
-    pixel fluxes (``Σ exp(x) = 1``), and no pixel more than ``_gauge_floor``
-    below the brightest.
+    pixel fluxes (``Σ exp(x) = 1``), so the lit pixels sit near 0.
 
     The loss does not depend on a constant added to the log-brightness of a
-    softmax image (see ``Image``), nor, to rounding, on how far below the
-    rest a dark pixel is, which the optimizers leave to rounding noise
-    (platform-dependent values of 1e3 or more). This changes no loss or image.
+    softmax image (see ``Image``), which the optimizers leave to rounding
+    noise (platform-dependent shifts of 1e5 or more). This changes no loss
+    or image. Dark pixels, whose optimum is ``-inf``, are left to run.
     """
     out = dict(z)
     for key, mask in _gauge_masks(problem).items():
-        x = _floored(mask, z[key])
-        out[key] = np.where(mask, x - _log_flux(mask, x), x)
+        out[key] = np.where(mask, z[key] - _log_flux(mask, z[key]), z[key])
     return out
 
 
 def _gauge_residuals(masks, z):
-    """``z`` as LM sees it, and a residual per gauge block holding its gauge.
+    """One residual per gauge block, the log total flux ``Σ exp(x)``.
 
-    LM sees each flat image's log-brightness through ``_floored``, so that a
-    dark pixel, whose step grows as its flux falls, cannot be sent to
-    -1e10. And one more residual, the log total flux ``Σ exp(x)``, turns the
-    constant null direction of the data's Jacobian (a QR solve steps along it
-    by rounding noise) into a well-conditioned one that is held at 0, where
-    ``_recentre`` puts it. The loss and the stopping test do not see it.
+    It turns the constant null direction of the data's Jacobian (a QR solve
+    steps along it by rounding noise) into a well-conditioned one that is held
+    at 0, where ``_recentre`` puts it. The loss and the stopping test do not
+    see it.
     """
-    view, rows = dict(z), [np.zeros(0)]
-    for key, mask in masks.items():
-        view[key] = _floored(mask, z[key])
-        rows.append(_log_flux(mask, view[key])[None])
-    return view, np.concatenate(rows)
+    return np.concatenate(
+        [np.zeros(0)]
+        + [_log_flux(mask, z[key])[None] for key, mask in masks.items()]
+    )
 
 
 def _metric(problem, z, scale, round=0):

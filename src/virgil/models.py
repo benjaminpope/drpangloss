@@ -1900,8 +1900,9 @@ class Image(Component):
 
     A constant added to ``log_brightness`` changes nothing, so `fit` fixes it:
     a free pixel array comes back as ``log`` of the pixel fluxes (summing
-    to one), with no pixel more than ``-2 log(eps)`` (72 in float64) below the
-    brightest, where its flux is lost in rounding anyway.
+    to one). A pixel whose optimum is zero flux has no finite
+    ``log_brightness``, and can fit far below the rest (-1e3 or lower, set by
+    rounding): read an image from ``brightness``, not from those values.
 
     Parameters
     ----------
