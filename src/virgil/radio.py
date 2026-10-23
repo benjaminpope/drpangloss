@@ -461,12 +461,12 @@ class ComplexVisData(eqx.Module):
             and gradient, far cheaper per step) when it is exact: ``scene`` is
             one fixed [`Image`][virgil.models.Image], the nuisance has no
             ``antenna_gains``, fitted ``alpha`` or ``offsets``, the fit is
-            float64 and ``method="lbfgs"`` or ``"adam"``, and there are many
-            points per pixel
+            float64 and ``method="lbfgs"`` or ``"adam"``, and there are enough
+            points per pixel and ddid
             ([`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
             ``"toeplitz"`` requires it (``ValueError`` naming what fails;
             fitted offsets then use ``offsets="spread"``); ``"direct"`` never
-            uses it. ``numpyro_model`` and ``cross_validate`` stay direct.
+            uses it. ``numpyro_model`` and the fits of ``cross_validate`` stay direct.
 
         Notes
         -----
@@ -1613,9 +1613,12 @@ class _RadioTerm(eqx.Module):
                 unmet.append("the Image is not square")
             if auto and float(self.arrays["m"].sum()) < max(
                 _FT_DEFAULTS["toeplitz_min_points"],
-                _FT_DEFAULTS["toeplitz_points_per_pixel"] * side * other,
+                _FT_DEFAULTS["toeplitz_points_per_pixel"]
+                * nuis.n_ddid
+                * side
+                * other,
             ):
-                unmet.append("there are too few points per pixel")
+                unmet.append("there are too few points per pixel and ddid")
         if unmet:
             if auto:
                 return self

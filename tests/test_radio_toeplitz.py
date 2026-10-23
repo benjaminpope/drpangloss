@@ -816,6 +816,16 @@ def test_fit_with_auto_matches_direct_and_compiles_once(auto_always):
     assert results["auto"].info["chi2"][0] == pytest.approx(
         results["direct"].info["chi2"][0], rel=1e-8
     )
+    # the hook is wired into fit: an explicit request meets the method check
+    with pytest.raises(ValueError, match="least squares"):
+        fit(
+            model,
+            priors,
+            (),
+            likelihoods=[data.term(scene, nuis, chi2="toeplitz")],
+            init=dict(init),
+            method="lm",
+        )
     term = data.term(scene, nuis)
     kw = dict(likelihoods=[term], init=dict(init), method="lbfgs", max_steps=5)
     fit(model, priors, (), **kw)

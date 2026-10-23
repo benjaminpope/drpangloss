@@ -118,8 +118,9 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
 # toeplitz_*: radio chi2="auto" (CPU f64 scan, 4 ddids, direct term on the DFT,
 # so a favourable direct; 2026-10-23): the dirty-beam form costs 0.1-2 ms per
 # value+grad against 0.8 ms (32², 2 points/pixel) to 4.4 s (128², 32 points/pixel),
-# for a 0.4-1 s precompute (4 s at 5e5 points). The rule keeps the precompute
-# paid back within tens of calls. IM Lup (A100): 42 M points, 40 points/pixel,
+# for a 0.4-1 s precompute (4 s at 5e5 points). Per call the dirty-beam form costs ~ n_ddid N², the direct term ~ the points, so
+# the rule is points per pixel and ddid (>= 1: 4 ddids, 2 points/pixel in total
+# is still 15x faster). IM Lup (A100): 42 M points, 40 points/pixel,
 # 6.7 s precompute, 2.4 GB, 21.8 ms against 735 ms.
 _FT_DEFAULTS = {
     "ft": "auto",
@@ -131,7 +132,7 @@ _FT_DEFAULTS = {
     "eps_f32": 1e-5,
     "eps_f64": 1e-12,
     "toeplitz_min_points": 50_000,
-    "toeplitz_points_per_pixel": 8,
+    "toeplitz_points_per_pixel": 1,
 }
 
 
@@ -157,8 +158,8 @@ def set_ft_defaults(
     ``eps_f64`` are its tolerances, relative to the zero-baseline visibility.
 
     ``chi2="auto"`` radio terms use the dirty-beam form when they have at least
-    ``max(toeplitz_min_points, toeplitz_points_per_pixel * N²)`` points, N the
-    image side ([`ComplexVisData.term`][virgil.radio.ComplexVisData.term]).
+    ``max(toeplitz_min_points, toeplitz_points_per_pixel * n_ddid * N²)``
+    points, N the image side ([`ComplexVisData.term`][virgil.radio.ComplexVisData.term]).
 
     The settings are read when a function is traced: a jitted function that
     has already compiled keeps its old choice.
@@ -175,7 +176,8 @@ def set_ft_defaults(
     eps_f32, eps_f64 : float, optional
         NUFFT tolerances for float32 and float64 images.
     toeplitz_min_points, toeplitz_points_per_pixel : float, optional
-        The size thresholds of ``chi2="auto"`` above.
+        The size thresholds of ``chi2="auto"`` above; the beams take about
+        24 N² bytes per ddid of device memory.
 
     Returns
     -------
