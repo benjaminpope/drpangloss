@@ -87,7 +87,8 @@ class DiskModel:
     """A model ``DiskPipeline`` can fit, registered under a short name.
 
     Entries of ``MODELS`` are parallel options, not a chain: each runs the
-    ``profile`` and ``compare`` stages on its own settings and checks.
+    ``profile`` and ``compare`` stages on its own settings and checks. Adding an
+    entry (say a cone) is adding a row to ``MODELS``, with no new stage.
 
     Attributes
     ----------
@@ -190,16 +191,16 @@ class DiskPipeline(_Pipeline):
     !!! warning "Provisional"
         May change in any 0.4.x release without a deprecation cycle.
 
-    The star is a grey point source unless ``star_diameter_mas``,
-    ``star_temperature_k`` or ``star_index`` says otherwise; the disk's
-    spectral index is relative to it. Stages: ``load`` (``wavel_range`` [min, max] in metres; ``error_floor`` a dict of absolute floors), ``overview`` (plots;
-    sets the half-fringe λ/2B of the longest baseline), ``geometry`` (χ² grid over cos ``inc`` and
-    ``pa``, then a single-ring fit), ``profile``, ``compare``, ``posterior``
-    (NUTS, with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
-    ``RadialGP`` profile at each length scale and keeps the largest Laplace
-    evidence; ``"rings"`` adds Gaussian rings until the BIC stops improving.
-    ``run()`` returns a ``Result``: ``res.summary["disk"]`` (``n_rings`` and
-    ``rings`` for ``"rings"``), ``res.model()`` (the best fit), ``res.checks``. All settings, with defaults:
+    The star is a grey point source unless ``star_diameter_mas``, ``star_temperature_k`` or
+    ``star_index`` says otherwise; the disk's spectral index is relative to it. Stages: ``load``
+    (``wavel_range`` [min, max] in metres; ``error_floor`` a dict of absolute floors),
+    ``overview`` (plots; sets the half-fringe λ/2B of the longest baseline), ``geometry`` (χ²
+    grid over cos ``inc`` and ``pa``, then a single-ring fit), ``profile``, ``compare``,
+    ``posterior`` (NUTS, with ``posterior=True``) and ``quicklook``. ``model="gp"`` fits a
+    ``RadialGP`` profile at each length scale and keeps the largest Laplace evidence;
+    ``"rings"`` adds Gaussian rings until the BIC stops improving. ``run()`` returns a
+    ``Result``: ``res.summary["disk"]`` (``n_rings`` and ``rings`` for ``"rings"``),
+    ``res.model()`` (the best fit), ``res.checks``. All settings, with defaults:
     [pipeline settings](../pipeline.md#diskpipeline-settings).
 
     Parameters
@@ -2213,6 +2214,7 @@ def _best_row(compare):
     return next(r for r in compare["rows"] if r["name"] == compare["best"])
 
 
+# deliberate: float64 boundary (in_float64) around the NUTS run
 @in_float64
 def _nuts(p, model, priors, start):
     from ..likelihood import numpyro_model

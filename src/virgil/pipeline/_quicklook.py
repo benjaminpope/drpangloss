@@ -265,6 +265,7 @@ def _star_cells(run, summary, path):  # deliberate: dispatch-table callable
     return cells
 
 
+# deliberate: dispatch-table callable (_SECTIONS)
 def _disk_cells(run, summary, path):
     done = _completed(run)
     has_data = (path / "data" / "processed.oifits").exists()
