@@ -115,13 +115,9 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
 # eps is a requested tolerance relative to the zero-baseline visibility. 1e-5
 # in f32 is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and
 # 1.2-1.5x faster than 1e-6.
-# toeplitz_*: radio chi2="auto" (CPU f64 scan, 4 ddids, direct term on the DFT,
-# so a favourable direct; 2026-10-23): the dirty-beam form costs 0.1-2 ms per
-# value+grad against 0.8 ms (32², 2 points/pixel) to 4.4 s (128², 32 points/pixel),
-# for a 0.4-1 s precompute (4 s at 5e5 points). Per call the dirty-beam form costs ~ n_ddid N², the direct term ~ the points, so
-# the rule is points per pixel and ddid (>= 1: 4 ddids, 2 points/pixel in total
-# is still 15x faster). IM Lup (A100): 42 M points, 40 points/pixel,
-# 6.7 s precompute, 2.4 GB, 21.8 ms against 735 ms.
+# toeplitz_*: chi2="auto". CPU f64 scan, 4 ddids, direct on the NUFFT (2026-10-23): 0.6-1 s
+# precompute; per call 0.1-2 ms against 0.6-700 ms, paid back in <20 calls from 1 point
+# per pixel and ddid (IM Lup, A100: 1.5; 6.7 s, 2.4 GB, 21.8 ms against 735 ms).
 _FT_DEFAULTS = {
     "ft": "auto",
     "cpu_min_points": 500,
@@ -133,6 +129,7 @@ _FT_DEFAULTS = {
     "eps_f64": 1e-12,
     "toeplitz_min_points": 50_000,
     "toeplitz_points_per_pixel": 1,
+    "toeplitz_max_bytes": 4e9,
 }
 
 
@@ -147,6 +144,7 @@ def set_ft_defaults(
     eps_f64=None,
     toeplitz_min_points=None,
     toeplitz_points_per_pixel=None,
+    toeplitz_max_bytes=None,
 ):
     """Set how ``ft="auto"`` chooses the Fourier transform of pixel images.
 
@@ -162,7 +160,8 @@ def set_ft_defaults(
     points, N the image side ([`ComplexVisData.term`][virgil.radio.ComplexVisData.term]).
 
     The settings are read when a function is traced: a jitted function that
-    has already compiled keeps its old choice.
+    has already compiled keeps its old choice. The ``toeplitz_*`` ones are read
+    at each ``fit``.
 
     Parameters
     ----------
@@ -175,9 +174,9 @@ def set_ft_defaults(
         The GPU thresholds above.
     eps_f32, eps_f64 : float, optional
         NUFFT tolerances for float32 and float64 images.
-    toeplitz_min_points, toeplitz_points_per_pixel : float, optional
-        The size thresholds of ``chi2="auto"`` above; the beams take about
-        24 N² bytes per ddid of device memory.
+    toeplitz_min_points, toeplitz_points_per_pixel, toeplitz_max_bytes : float, optional
+        The size thresholds of ``chi2="auto"`` above; ``toeplitz_max_bytes``
+        caps the beams' device memory (about 24 N² n_ddid bytes).
 
     Returns
     -------
@@ -195,6 +194,7 @@ def set_ft_defaults(
         eps_f64=eps_f64,
         toeplitz_min_points=toeplitz_min_points,
         toeplitz_points_per_pixel=toeplitz_points_per_pixel,
+        toeplitz_max_bytes=toeplitz_max_bytes,
     )
     if ft is not None and ft not in _FT_CHOICES:
         raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")

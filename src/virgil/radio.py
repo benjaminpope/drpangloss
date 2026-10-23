@@ -466,7 +466,8 @@ class ComplexVisData(eqx.Module):
             ([`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
             ``"toeplitz"`` requires it (``ValueError`` naming what fails;
             fitted offsets then use ``offsets="spread"``); ``"direct"`` never
-            uses it. ``numpyro_model`` and the fits of ``cross_validate`` stay direct.
+            uses it. Each ``fit`` rebuilds the precompute: reuse
+            ``toeplitz(...)`` for repeated fits. ``numpyro_model`` and the fits of ``cross_validate`` stay direct.
 
         Notes
         -----
@@ -1572,10 +1573,11 @@ class _RadioTerm(eqx.Module):
         )
 
     def resolve(self, start, least_squares):
-        """The Toeplitz term of ``fit`` at ``start`` if ``chi2`` asks for it
-        and it is exact, else ``self``; ``"toeplitz"`` raises if it is not."""
+        """``(term, form)``: the Toeplitz term of ``fit`` at ``start`` if ``chi2``
+        asks for it and it is exact, else ``self``, with a note of what ran;
+        ``"toeplitz"`` raises if it is not exact."""
         if self.chi2 == "direct":
-            return self
+            return self, "direct"
         # Imported here: radio_toeplitz imports this module.
         from .radio_toeplitz import _single_image
 
@@ -1590,10 +1592,16 @@ class _RadioTerm(eqx.Module):
         if nuis.offsets and auto:
             # deliberate: free offsets use the derived spread grid, opt-in
             unmet.append("offsets are fitted (explicit chi2='toeplitz' only)")
-        if any(x.dtype != np.float64 for x in jax.tree.leaves(start)):
+        floats = [
+            x
+            for x in jax.tree.leaves(start)
+            if np.issubdtype(x.dtype, np.floating)
+        ]
+        if any(x.dtype != np.float64 for x in floats):
             unmet.append("the fit is not float64")
+        scene = self.scene(start)
         try:
-            image, shifts = _single_image(self.scene(start))
+            image, shifts = _single_image(scene)
         except (TypeError, ValueError):
             unmet.append("the scene is not one Image")
         else:
@@ -1611,17 +1619,17 @@ class _RadioTerm(eqx.Module):
             side, other = image.eta.shape
             if side != other:
                 unmet.append("the Image is not square")
+            pixels = side * other * nuis.n_ddid
             if auto and float(self.arrays["m"].sum()) < max(
                 _FT_DEFAULTS["toeplitz_min_points"],
-                _FT_DEFAULTS["toeplitz_points_per_pixel"]
-                * nuis.n_ddid
-                * side
-                * other,
+                _FT_DEFAULTS["toeplitz_points_per_pixel"] * pixels,
             ):
                 unmet.append("there are too few points per pixel and ddid")
+            if auto and 24 * pixels > _FT_DEFAULTS["toeplitz_max_bytes"]:
+                unmet.append("the beams would exceed toeplitz_max_bytes")
         if unmet:
             if auto:
-                return self
+                return self, "direct (auto): " + "; ".join(unmet)
             raise ValueError(
                 "chi2='toeplitz' is not exact here: " + "; ".join(unmet) + "."
             )
@@ -1631,9 +1639,8 @@ class _RadioTerm(eqx.Module):
             image,
             (sum(shifts[0::2]), sum(shifts[1::2])),
         )
-        return self.precompute.build(layout).term(
-            self.scene, nuis, self.sigma_fixed
-        )
+        tdata = self.precompute.build(layout)
+        return tdata.term(self.scene, nuis, self.sigma_fixed), "toeplitz"
 
     @property
     def has_log_norm(self):

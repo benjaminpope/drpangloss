@@ -695,7 +695,7 @@ def _auto(npix=8, n=600, scene=None, **nuis_kw):
 def test_auto_term_is_toeplitz_and_exact(auto_always):
     data, nuis, scene, init = _auto()
     term = data.term(scene, nuis)
-    resolved = term.resolve(init, False)
+    resolved = term.resolve(init, False)[0]
     assert type(resolved).__name__ == "_ToeplitzTerm"
     rng = onp.random.default_rng(3)
     values = dict(init, eta=np.asarray(rng.normal(size=(8, 8))))
@@ -745,20 +745,20 @@ def test_auto_falls_back_to_direct(case, auto_always):
     if case == "few":
         set_ft_defaults(toeplitz_min_points=10**9)
     term = data.term(scene, nuis)
-    assert term.resolve(init, least_squares) is term
+    assert term.resolve(init, least_squares)[0] is term
 
 
 def test_chi2_overrides(auto_always):
     data, nuis, scene, init = _auto()
     direct = data.term(scene, nuis, chi2="direct")
-    assert direct.resolve(init, False) is direct
+    assert direct.resolve(init, False) == (direct, "direct")
     set_ft_defaults(toeplitz_min_points=10**9)  # too small for auto only
-    forced = data.term(scene, nuis, chi2="toeplitz").resolve(init, False)
+    forced = data.term(scene, nuis, chi2="toeplitz").resolve(init, False)[0]
     assert type(forced).__name__ == "_ToeplitzTerm"
     with pytest.raises(ValueError, match="least squares"):
         data.term(scene, nuis, chi2="toeplitz").resolve(init, True)
     with pytest.raises(ValueError, match="not one Image"):
-        data.term(_two_part, nuis, chi2="toeplitz").resolve(init, False)
+        data.term(_two_part, nuis, chi2="toeplitz").resolve(init, False)[0]
     with pytest.raises(ValueError, match="chi2 must be"):
         data.term(scene, nuis, chi2="fast")
 
@@ -786,24 +786,31 @@ def test_toeplitz_refuses_antenna_gains(auto_always):
     for chi2 in ("auto", "toeplitz"):
         term = data.term(scene, nuis, chi2=chi2)
         if chi2 == "auto":
-            assert term.resolve(init, False) is term
+            assert term.resolve(init, False)[0] is term
         else:
             with pytest.raises(ValueError, match="antenna_gains"):
-                term.resolve(init, False)
+                term.resolve(init, False)[0]
     with pytest.raises(ValueError, match="antenna gains"):
         data.toeplitz(_scene(8)[1], nuis)
 
 
 @pytest.mark.filterwarnings("ignore::RuntimeWarning")
-def test_fit_with_auto_matches_direct_and_compiles_once(auto_always):
-    data, nuis, scene, init = _auto(npix=6, n=400)
+@pytest.mark.parametrize("masked", [False, True])
+def test_fit_with_auto_matches_direct_and_compiles_once(masked, auto_always):
+    npix = 6
+    shifted = lambda v: System(  # noqa: E731
+        env=Image(v["eta"], PIXEL, ft="dft", dra=0.3, ddec=-0.2), dra=0.4
+    )
+    data, nuis, scene, init = _auto(
+        npix=npix, n=400, scene=shifted, sigmas="profile"
+    )
+    mask = onp.arange(400) % 5 != 0 if masked else None
     priors = nuis.priors()
     priors["eta"] = dist.Normal(0.0, 1.0)
-    init["eta"] = np.zeros((6, 6))
     model = lambda **v: scene(v)  # noqa: E731
     results = {}
     for chi2 in ("auto", "direct"):
-        term = data.term(scene, nuis, chi2=chi2)
+        term = data.term(scene, nuis, mask=mask, chi2=chi2)
         results[chi2] = fit(
             model,
             priors,
@@ -813,9 +820,13 @@ def test_fit_with_auto_matches_direct_and_compiles_once(auto_always):
             method="lbfgs",
             max_steps=5,
         )
+    assert results["auto"].info["likelihood_forms"] == ["toeplitz"]
+    assert results["direct"].info["likelihood_forms"] == ["direct"]
     assert results["auto"].info["chi2"][0] == pytest.approx(
         results["direct"].info["chi2"][0], rel=1e-8
     )
+    if masked:
+        return
     # the hook is wired into fit: an explicit request meets the method check
     with pytest.raises(ValueError, match="least squares"):
         fit(
@@ -832,3 +843,16 @@ def test_fit_with_auto_matches_direct_and_compiles_once(auto_always):
     with count_compiles() as compiles:
         fit(model, priors, (), **kw)
     assert compiles == []
+
+
+def test_auto_reports_why_it_fell_back(auto_always):
+    data, nuis, scene, init = _auto(offsets=True)
+    term, form = data.term(scene, nuis).resolve(init, False)
+    assert form.startswith("direct (auto)") and "offsets" in form
+    set_ft_defaults(toeplitz_max_bytes=1)
+    data, nuis, scene, init = _auto()
+    assert (
+        "toeplitz_max_bytes" in data.term(scene, nuis).resolve(init, False)[1]
+    )
+    _, form = data.term(scene, nuis, chi2="toeplitz").resolve(init, False)
+    assert form == "toeplitz"  # explicit requests are not capped
