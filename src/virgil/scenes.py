@@ -31,15 +31,17 @@ def ring(
     npix, pixel_scale_mas : int, float
         Pixels on a side, and pixel size in milliarcseconds.
     radius_mas, width_mas : float
-        Radius of the ring's peak (the semi-major axis when inclined) and standard
-        deviation of the radial profile, in milliarcseconds.
+        Radius of the ring's peak (the semi-major axis when inclined) and
+        standard deviation of the radial profile, in milliarcseconds.
     inc_deg, pa_deg : float, optional
-        Inclination (0 is face-on; the minor axis is ``cos(inc)`` times the major axis) and
-        position angle of the major axis (North to East), in degrees.
+        Inclination (0 is face-on; the minor axis is ``cos(inc)`` times the
+        major axis) and position angle of the major axis (North to East), in
+        degrees.
     asymmetry, asymmetry_pa_deg : float, optional
-        Amplitude (0 to 1) of the modulation ``1 + asymmetry * cos(PA - asymmetry_pa_deg)`` of
-        the brightness around the ring (PA the on-sky position angle of a pixel), and the
-        position angle of its brightest part, in degrees.
+        Amplitude (0 to 1) of the modulation ``1 + asymmetry * cos(PA -
+        asymmetry_pa_deg)`` of the brightness around the ring (PA the on-sky
+        position angle of a pixel), and the position angle of its brightest
+        part, in degrees.
 
     Returns
     -------
@@ -67,19 +69,20 @@ def spiral(
 ):
     """Archimedean spiral, like a dust pinwheel.
 
-    The arm is ``r = step_mas * theta / (2 pi)``, starting at the centre and winding
-    towards increasing position angle as it moves outwards.
+    The arm is ``r = step_mas * theta / (2 pi)``, starting at the centre and
+    winding towards increasing position angle as it moves outwards.
 
     Parameters
     ----------
     npix, pixel_scale_mas : int, float
         Pixels on a side, and pixel size in milliarcseconds.
     step_mas, width_mas : float
-        Radial distance between successive turns, and standard deviation of the Gaussian
-        cross-section along the radial direction, in milliarcseconds.
+        Radial distance between successive turns, and standard deviation of the
+        Gaussian cross-section along the radial direction, in milliarcseconds.
     turns, pa_deg, fade_mas : float, optional
-        Number of turns of the arm, which ends in a rounded cap; position angle (North to East,
-        degrees) of its start; and, if given, ``exp(-r / fade_mas)`` falloff of the brightness.
+        Number of turns of the arm, which ends in a rounded cap; position angle
+        (North to East, degrees) of its start; and, if given, ``exp(-r /
+        fade_mas)`` falloff of the brightness.
 
     Returns
     -------
