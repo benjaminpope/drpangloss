@@ -235,7 +235,9 @@ def write_badge(summary):
         + "\n",
         "utf-8",
     )
-    url = "https://img.shields.io/endpoint?url=" + quote(BADGE_JSON_URL, safe="")
+    url = "https://img.shields.io/endpoint?url=" + quote(
+        BADGE_JSON_URL, safe=""
+    )
     # Markers go on their own lines: a line starting with an HTML comment is
     # raw HTML to Markdown, so the badge on that line would render as text.
     badge = (
