@@ -768,6 +768,17 @@ def fit(
         ndata = [d.n_independent for d in problem.data]
         # A term's size is its ``n_data``, or the length of its residuals.
         start = problem.constrain(z0)
+        if problem.likelihoods:
+            problem = eqx.tree_at(
+                lambda p: p.likelihoods,
+                problem,
+                tuple(
+                    t.resolve(start, method == "lm")
+                    if hasattr(t, "resolve")
+                    else t
+                    for t in problem.likelihoods
+                ),
+            )
         ndata += [
             int(term.n_data)
             if hasattr(term, "n_data")

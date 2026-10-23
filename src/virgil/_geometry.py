@@ -115,6 +115,12 @@ def _dft(brightness, uu, vv, pixel_scale_mas):
 # eps is a requested tolerance relative to the zero-baseline visibility. 1e-5
 # in f32 is the f32 floor: as accurate as the f32 DFT (7e-6 to 9e-5), and
 # 1.2-1.5x faster than 1e-6.
+# toeplitz_*: radio chi2="auto" (CPU f64 scan, 4 ddids, direct term on the DFT,
+# so a favourable direct; 2026-10-23): the dirty-beam form costs 0.1-2 ms per
+# value+grad against 0.8 ms (32², 2 points/pixel) to 4.4 s (128², 32 points/pixel),
+# for a 0.4-1 s precompute (4 s at 5e5 points). The rule keeps the precompute
+# paid back within tens of calls. IM Lup (A100): 42 M points, 40 points/pixel,
+# 6.7 s precompute, 2.4 GB, 21.8 ms against 735 ms.
 _FT_DEFAULTS = {
     "ft": "auto",
     "cpu_min_points": 500,
@@ -124,6 +130,8 @@ _FT_DEFAULTS = {
     "gpu_min_side": 128,
     "eps_f32": 1e-5,
     "eps_f64": 1e-12,
+    "toeplitz_min_points": 50_000,
+    "toeplitz_points_per_pixel": 8,
 }
 
 
@@ -136,6 +144,8 @@ def set_ft_defaults(
     gpu_min_side=None,
     eps_f32=None,
     eps_f64=None,
+    toeplitz_min_points=None,
+    toeplitz_points_per_pixel=None,
 ):
     """Set how ``ft="auto"`` chooses the Fourier transform of pixel images.
 
@@ -145,6 +155,10 @@ def set_ft_defaults(
     ``cpu_min_side``; on a GPU when there are at least ``gpu_min_points``
     points and the smaller side is at least ``gpu_min_side``. ``eps_f32`` and
     ``eps_f64`` are its tolerances, relative to the zero-baseline visibility.
+
+    ``chi2="auto"`` radio terms use the dirty-beam form when they have at least
+    ``max(toeplitz_min_points, toeplitz_points_per_pixel * N²)`` points, N the
+    image side ([`ComplexVisData.term`][virgil.radio.ComplexVisData.term]).
 
     The settings are read when a function is traced: a jitted function that
     has already compiled keeps its old choice.
@@ -160,6 +174,8 @@ def set_ft_defaults(
         The GPU thresholds above.
     eps_f32, eps_f64 : float, optional
         NUFFT tolerances for float32 and float64 images.
+    toeplitz_min_points, toeplitz_points_per_pixel : float, optional
+        The size thresholds of ``chi2="auto"`` above.
 
     Returns
     -------
@@ -175,6 +191,8 @@ def set_ft_defaults(
         gpu_min_side=gpu_min_side,
         eps_f32=eps_f32,
         eps_f64=eps_f64,
+        toeplitz_min_points=toeplitz_min_points,
+        toeplitz_points_per_pixel=toeplitz_points_per_pixel,
     )
     if ft is not None and ft not in _FT_CHOICES:
         raise ValueError(f"ft must be 'auto', 'dft' or 'nufft', not {ft!r}.")

@@ -18,7 +18,9 @@ from virgil import (
     fit,
 )
 from virgil import _nufft_spread as spread_grid
+from virgil._geometry import set_ft_defaults
 from virgil._utils import mas2rad
+from ._compiles import count_compiles
 from virgil.fitting import (
     NoLeastSquaresForm,
     gauss_newton_diag,
@@ -667,3 +669,156 @@ def test_spread_grid_needs_nufftax_0_6_1(monkeypatch):
     for version in ("0.7rc1", "0.6.2a1", "1.0.0.dev3"):
         monkeypatch.setattr(nufftax, "__version__", version)
         spread_grid.kernel(1e-12)
+
+
+# -- chi2="auto": the choice in fit ----------------------------------------
+
+
+@pytest.fixture
+def auto_always():
+    """Make every problem here big enough for ``chi2="auto"``."""
+    old = set_ft_defaults(toeplitz_min_points=1, toeplitz_points_per_pixel=0)
+    yield
+    set_ft_defaults(**old)
+
+
+def _auto(npix=8, n=600, scene=None, **nuis_kw):
+    data = _data(n, npix, seed=21)
+    kw = dict(alpha=0.7, offsets=False, sigmas=True) | nuis_kw
+    nuis = CalibrationNuisance(data, **kw)
+    scene = scene or _scene(npix)[0]
+    init = _values(nuis)
+    init["eta"] = np.zeros((npix, npix))
+    return data, nuis, scene, init
+
+
+def test_auto_term_is_toeplitz_and_exact(auto_always):
+    data, nuis, scene, init = _auto()
+    term = data.term(scene, nuis)
+    resolved = term.resolve(init, False)
+    assert type(resolved).__name__ == "_ToeplitzTerm"
+    rng = onp.random.default_rng(3)
+    values = dict(init, eta=np.asarray(rng.normal(size=(8, 8))))
+
+    def direct(v):
+        r, log_norm = term.residuals_and_log_norm(v)
+        return 0.5 * np.sum(r**2) + log_norm
+
+    def toeplitz(v):
+        chi2, log_norm = resolved.chi2_and_log_norm(v)
+        return 0.5 * (chi2 + resolved.chi2_constant) + log_norm
+
+    assert float(toeplitz(values)) == pytest.approx(
+        float(direct(values)), rel=1e-10
+    )
+    g1, g2 = jax.grad(toeplitz)(values), jax.grad(direct)(values)
+    for k in g2:
+        onp.testing.assert_allclose(g1[k], g2[k], rtol=1e-10, atol=1e-9)
+
+
+def _two_part(values):
+    return System(
+        star=PointSource(), env=Image(values["eta"], PIXEL, ft="dft")
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["least_squares", "alpha", "offsets", "scene", "dra", "float32", "few"],
+)
+def test_auto_falls_back_to_direct(case, auto_always):
+    kw, scene, least_squares = {}, None, False
+    if case == "alpha":
+        kw = dict(alpha=True)
+    elif case == "offsets":
+        kw = dict(offsets=True)
+    elif case == "scene":
+        scene = _two_part
+    elif case == "dra":
+        scene = lambda v: Image(  # noqa: E731
+            v["eta"], PIXEL, ft="dft", dra=v["cal.flux"]
+        )
+    least_squares = case == "least_squares"
+    data, nuis, scene, init = _auto(scene=scene, **kw)
+    if case == "float32":
+        init = {k: x.astype(np.float32) for k, x in init.items()}
+    if case == "few":
+        set_ft_defaults(toeplitz_min_points=10**9)
+    term = data.term(scene, nuis)
+    assert term.resolve(init, least_squares) is term
+
+
+def test_chi2_overrides(auto_always):
+    data, nuis, scene, init = _auto()
+    direct = data.term(scene, nuis, chi2="direct")
+    assert direct.resolve(init, False) is direct
+    set_ft_defaults(toeplitz_min_points=10**9)  # too small for auto only
+    forced = data.term(scene, nuis, chi2="toeplitz").resolve(init, False)
+    assert type(forced).__name__ == "_ToeplitzTerm"
+    with pytest.raises(ValueError, match="least squares"):
+        data.term(scene, nuis, chi2="toeplitz").resolve(init, True)
+    with pytest.raises(ValueError, match="not one Image"):
+        data.term(_two_part, nuis, chi2="toeplitz").resolve(init, False)
+    with pytest.raises(ValueError, match="chi2 must be"):
+        data.term(scene, nuis, chi2="fast")
+
+
+def test_toeplitz_refuses_antenna_gains(auto_always):
+    base = _data(300, 8, seed=2)
+    rng = onp.random.default_rng(0)
+    data = ComplexVisData.from_arrays(
+        base.u,
+        base.v,
+        base.vis,
+        base.weight,
+        base.freq,
+        ddid=base.ddid,
+        obs=base.obs,
+        time=onp.sort(rng.uniform(0, 100, 300)),
+        ant1=rng.integers(0, 3, 300),
+        ant2=rng.integers(3, 6, 300),
+    )
+    nuis = CalibrationNuisance(
+        data, alpha=0.7, offsets=False, antenna_gains=True, solint="int"
+    )
+    scene = _scene(8)[0]
+    init = {"eta": np.zeros((8, 8)), "cal.flux": np.asarray(1.0)}
+    for chi2 in ("auto", "toeplitz"):
+        term = data.term(scene, nuis, chi2=chi2)
+        if chi2 == "auto":
+            assert term.resolve(init, False) is term
+        else:
+            with pytest.raises(ValueError, match="antenna_gains"):
+                term.resolve(init, False)
+    with pytest.raises(ValueError, match="antenna gains"):
+        data.toeplitz(_scene(8)[1], nuis)
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_fit_with_auto_matches_direct_and_compiles_once(auto_always):
+    data, nuis, scene, init = _auto(npix=6, n=400)
+    priors = nuis.priors()
+    priors["eta"] = dist.Normal(0.0, 1.0)
+    init["eta"] = np.zeros((6, 6))
+    model = lambda **v: scene(v)  # noqa: E731
+    results = {}
+    for chi2 in ("auto", "direct"):
+        term = data.term(scene, nuis, chi2=chi2)
+        results[chi2] = fit(
+            model,
+            priors,
+            (),
+            likelihoods=[term],
+            init=dict(init),
+            method="lbfgs",
+            max_steps=5,
+        )
+    assert results["auto"].info["chi2"][0] == pytest.approx(
+        results["direct"].info["chi2"][0], rel=1e-8
+    )
+    term = data.term(scene, nuis)
+    kw = dict(likelihoods=[term], init=dict(init), method="lbfgs", max_steps=5)
+    fit(model, priors, (), **kw)
+    with count_compiles() as compiles:
+        fit(model, priors, (), **kw)
+    assert compiles == []

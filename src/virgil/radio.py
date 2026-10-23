@@ -31,7 +31,12 @@ import numpyro.distributions as dist
 from numpyro.distributions import constraints
 
 from . import _antenna_gains
-from ._geometry import gaussian_taper, offset_phase, pixel_offsets
+from ._geometry import (
+    _FT_DEFAULTS,
+    gaussian_taper,
+    offset_phase,
+    pixel_offsets,
+)
 from ._utils import mas2rad, rad2mas
 from .models import Image, SourceModel
 
@@ -413,7 +418,13 @@ class ComplexVisData(eqx.Module):
         )
 
     def term(
-        self, scene, nuisance, mask=None, chunk_size=10_000_000, sigma=None
+        self,
+        scene,
+        nuisance,
+        mask=None,
+        chunk_size=10_000_000,
+        sigma=None,
+        chi2="auto",
     ):
         """A likelihood term for [`fit`][virgil.fitting.fit]'s ``likelihoods``.
 
@@ -443,6 +454,19 @@ class ComplexVisData(eqx.Module):
             ``make_term(mask)`` protocol of
             [`cross_validate`][virgil.crossval.cross_validate] re-profiles
             each fold; use ``sigmas=True`` there.)
+        chi2 : {"auto", "direct", "toeplitz"}, optional
+            How [`fit`][virgil.fitting.fit] evaluates χ². ``"auto"`` uses the
+            dirty-beam form of
+            [`toeplitz`][virgil.radio.ComplexVisData.toeplitz] (same loss
+            and gradient, far cheaper per step) when it is exact: ``scene`` is
+            one fixed [`Image`][virgil.models.Image], the nuisance has no
+            ``antenna_gains``, fitted ``alpha`` or ``offsets``, the fit is
+            float64 and ``method="lbfgs"`` or ``"adam"``, and there are many
+            points per pixel
+            ([`set_ft_defaults`][virgil._geometry.set_ft_defaults]).
+            ``"toeplitz"`` requires it (``ValueError`` naming what fails;
+            fitted offsets then use ``offsets="spread"``); ``"direct"`` never
+            uses it. ``numpyro_model`` and ``cross_validate`` stay direct.
 
         Notes
         -----
@@ -456,7 +480,11 @@ class ComplexVisData(eqx.Module):
                 "scene must be a function of the fitted values, e.g. "
                 "`lambda values: model`, not a model instance."
             )
-        return _RadioTerm(self, scene, nuisance, mask, chunk_size, sigma)
+        if chi2 not in ("auto", "direct", "toeplitz"):
+            raise ValueError(
+                f"chi2 must be 'auto', 'direct' or 'toeplitz', not {chi2!r}."
+            )
+        return _RadioTerm(self, scene, nuisance, mask, chunk_size, sigma, chi2)
 
     def toeplitz(
         self,
@@ -1444,6 +1472,21 @@ def _warn_double_taper(scene, nuisance):
         )
 
 
+class _Precompute:
+    """The builder of a term's Toeplitz form, carried through ``jit`` as a
+    static field. All instances compare equal, so a new term of the same
+    shapes (another mask, say) does not recompile."""
+
+    def __init__(self, build):
+        self.build = build
+
+    def __eq__(self, other):
+        return isinstance(other, _Precompute)
+
+    def __hash__(self):
+        return 0
+
+
 class _RadioTerm(eqx.Module):
     """Whitened residuals of a `ComplexVisData` with calibration nuisances."""
 
@@ -1453,8 +1496,19 @@ class _RadioTerm(eqx.Module):
     n: int = eqx.field(static=True)
     sigma_fixed: object = None
     gain_index: object = eqx.field(static=True, default=None)
+    chi2: str = eqx.field(static=True, default="direct")
+    precompute: object = eqx.field(static=True, default=None)
 
-    def __init__(self, data, scene, nuisance, mask, chunk_size, sigma=None):
+    def __init__(
+        self,
+        data,
+        scene,
+        nuisance,
+        mask,
+        chunk_size,
+        sigma=None,
+        chi2="direct",
+    ):
         if sigma is not None:
             if nuisance.sigmas != "profile":
                 raise ValueError("sigma= needs sigmas='profile'.")
@@ -1507,6 +1561,76 @@ class _RadioTerm(eqx.Module):
         self.scene = scene
         self.nuisance = nuisance
         self.n = n
+        self.chi2 = chi2
+        self.precompute = _Precompute(
+            lambda image: data.toeplitz(
+                image,
+                nuisance,
+                mask,
+                "spread" if nuisance.offsets else "none",
+            )
+        )
+
+    def resolve(self, start, least_squares):
+        """The Toeplitz term of ``fit`` at ``start`` if ``chi2`` asks for it
+        and it is exact, else ``self``; ``"toeplitz"`` raises if it is not."""
+        if self.chi2 == "direct":
+            return self
+        # Imported here: radio_toeplitz imports this module.
+        from .radio_toeplitz import _single_image
+
+        nuis, auto = self.nuisance, self.chi2 == "auto"
+        unmet = []
+        if least_squares:
+            unmet.append("the fit is least squares (use lbfgs or adam)")
+        if nuis.antenna_gains:
+            unmet.append("antenna_gains is set")
+        if nuis.alpha:
+            unmet.append("alpha is fitted")
+        if nuis.offsets and auto:
+            # deliberate: free offsets use the derived spread grid, opt-in
+            unmet.append("offsets are fitted (explicit chi2='toeplitz' only)")
+        if any(x.dtype != np.float64 for x in jax.tree.leaves(start)):
+            unmet.append("the fit is not float64")
+        try:
+            image, shifts = _single_image(self.scene(start))
+        except (TypeError, ValueError):
+            unmet.append("the scene is not one Image")
+        else:
+            # The Image's offsets must not depend on any fitted value: follow
+            # the dependence of the traced outputs on the inputs.
+            jaxpr = jax.make_jaxpr(
+                lambda values: _single_image(self.scene(values))[1]
+            )(start).jaxpr
+            fitted = {id(v) for v in jaxpr.invars}  # ids: Literals don't hash
+            for eqn in jaxpr.eqns:
+                if any(id(v) in fitted for v in eqn.invars):
+                    fitted.update(id(v) for v in eqn.outvars)
+            if any(id(v) in fitted for v in jaxpr.outvars):
+                unmet.append("the Image's dra or ddec is fitted")
+            side, other = image.eta.shape
+            if side != other:
+                unmet.append("the Image is not square")
+            if auto and float(self.arrays["m"].sum()) < max(
+                _FT_DEFAULTS["toeplitz_min_points"],
+                _FT_DEFAULTS["toeplitz_points_per_pixel"] * side * other,
+            ):
+                unmet.append("there are too few points per pixel")
+        if unmet:
+            if auto:
+                return self
+            raise ValueError(
+                "chi2='toeplitz' is not exact here: " + "; ".join(unmet) + "."
+            )
+        shifts = [float(x) for x in shifts]
+        layout = eqx.tree_at(
+            lambda i: (i.dra, i.ddec),
+            image,
+            (sum(shifts[0::2]), sum(shifts[1::2])),
+        )
+        return self.precompute.build(layout).term(
+            self.scene, nuis, self.sigma_fixed
+        )
 
     @property
     def has_log_norm(self):

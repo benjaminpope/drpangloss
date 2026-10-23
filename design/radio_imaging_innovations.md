@@ -173,6 +173,11 @@ marked *(unverified)*. Corrections are listed at the end.
   - Condition: every baseline must lie within the grid's Nyquist limit minus the kernel margin.
   - The usual alternatives fall far short: a Fourier shift of the padded dirty image is good to 3e-4, a
     windowed sinc to 2e-6–3e-9.
+- **Automatic choice (virgil#532):** `ComplexVisData.term(chi2="auto")`; `_RadioTerm.resolve`, called once in `fit`,
+  swaps in the Toeplitz term when it is exact (one fixed `Image`, `offsets=False`, fixed `alpha`, no antenna gains,
+  float64, not LM) and the problem is big (`set_ft_defaults`: 50 000 points, 8 per pixel). Free offsets stay explicit.
+  numpyro, `cross_validate` and svi stay direct; Toeplitz cross-validation (a precompute per fold) is a possible
+  follow-up.
 - **Also planned:** a fitted spectral index through Taylor-moment beams, and exact Hessian-vector products
   for truncated Newton-CG.
 - **Where:** virgil#516 (open, not yet on `main`): `virgil.radio_toeplitz` and `virgil._nufft_spread`. The design
