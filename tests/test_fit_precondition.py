@@ -349,6 +349,32 @@ def test_recentring_changes_no_loss_and_fixes_the_log_flux():
         assert out[3, 3] == -onp.inf and onp.isfinite(out[0, 0])
 
 
+def test_lm_sees_the_gauge_direction_through_one_extra_residual():
+    # fit recentres its result, so only the residuals LM steps on can show that
+    # its own half works: the data do not see a constant added to the pixels
+    # (their Jacobian times ones is 0), and the gauge row alone does.
+    from virgil.fitting import _gauge_masks, _lm_residuals
+
+    start, priors, data = _gauge_problem()
+    with run_in("float64"):
+        problem = cast_tree(
+            _Objective(start, priors, data, [TSV(1e2)]), "float64"
+        )
+        masks = _gauge_masks(problem)
+        z = {
+            "log_brightness": np.asarray(
+                onp.random.default_rng(0).normal(size=(8, 8)) - 4.0
+            )
+        }
+        args = (problem, np.asarray(10.0), masks)
+        n = len(_lm_residuals(z, args)) - 1
+        ones = {"log_brightness": np.ones((8, 8))}
+        along = jax.jvp(lambda z: _lm_residuals(z, args), (z,), (ones,))[1]
+        scale = float(np.max(np.abs(_lm_residuals(z, args)[:n])))
+        assert float(np.max(np.abs(along[:n]))) < 1e-9 * scale
+        assert float(along[n]) == pytest.approx(1.0, abs=1e-12)
+
+
 @pytest.mark.parametrize(
     "method, precondition",
     [("lm", None), ("lbfgs", None), ("lbfgs", "diag"), ("adam", "diag")],
