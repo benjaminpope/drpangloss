@@ -9,6 +9,10 @@ anything before 1.0 may change between minor versions.
 
 ### Added
 
+- CI fails a PR that adds a private function called exactly once in the package
+  (`scripts/code_shape.py --since`, rule 8 in AGENTS.md; exemptions: `# deliberate:`
+  comment, jit kernels, custom derivatives, callbacks, names used in tests). The size
+  comment also prints before/after code-shape metrics (`scripts/code_shape_metrics.py`).
 - The README development-carbon badge is now a shields.io endpoint badge reading
   `generated/dev_carbon_badge.json` on the docs site, so the PyPI README shows
   the current figure, not the one frozen at release. `scripts/dev_carbon.py`
