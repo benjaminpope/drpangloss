@@ -73,6 +73,7 @@ EXPECTED = {
     },
     "virgil.imaging": {"clean", "CleanResult"},
     "virgil.fitting": {"gauss_newton_diag"},
+    "virgil.plotting": {"plot_field_draws"},
 }
 
 

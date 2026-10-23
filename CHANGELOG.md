@@ -98,6 +98,31 @@ Measured on `src/virgil`, from v0.4.0 to 0.4.1:
 
 ### Added
 
+- `plot_field_draws`: three draws and an ensemble of cuts (principal axes, disk axes, or the azimuthal harmonics of a `MultipoleField`) for a Gaussian-process image prior or posterior, with an optional per-pixel S/N map. Figures in the imaging parts 3 and 5 and the multipole-disk pages.
+- Docs: the API index lists Radio CLEAN, Cross-validation and Short arcs; the fitting page documents `GaussNewtonMass` and its exceptions; the README names the `[radio]` and `[pipeline]` extras; the OIFITS writing sections are merged. Nine references checked against ADS (Högbom, Clark, Schwab, Briggs, Offringa, Quirrenbach, Thiele, Bekas, Hutchinson).
+- `to_kepler` (Thiele–Innes and state-vector orbits) runs its maths as one jitted kernel: an eager call takes 0.16 ms (was 0.31) and 0.10 ms (was 0.57); under `jit` + `vmap` it was already about 20 ns per draw, so results are unchanged. The orbit docstrings are now 45 lines or fewer.
+- `write_oifits` takes an `OIData` as well as a dictionary of tables, and `read_oifits` reads the file back to the same observables, errors, flags, wavelengths and (u, v), and to the times if there are any. Closure phases without station indices get placeholder stations, so the pipelines now write `data/processed.oifits` for closure-only data (e.g. AMI) and for data with flagged visibilities (flagged closure phases are still skipped); `processed_oifits_skipped` keeps an honest reason for the rest. The channel widths are now written as `EFF_BAND` (they were written as 0; an unknown width is estimated from the channel spacing and marked `BANDEST`, since OIFITS2 needs it positive), and data whose widths differ between baselines of one channel are skipped with that reason. The written file now has `MJD` in `d`, and 32-character `TARGET` and `SPECTYP`, as OIFITS2 requires.
+- **`virgil.radio_clean`** (provisional): `clean`, a Cotton–Schwab CLEAN of
+  `ComplexVisData` named after CASA's `tclean` (Högbom and multi-scale minor
+  cycles with a PSF window and cycle threshold, `niter`, `gain`, `threshold`,
+  `nsigma`, `cyclefactor`, masks and a simplified `auto-multithresh`, a fitted
+  restoring beam), with `RadioCleanResult` writing FITS and the model as
+  visibilities, `fit_beam` and `restore`. `ComplexVisData.dirty_image` and
+  `dirty_beam` gain `uvtaper`. It is not `virgil.imaging.clean` (which is
+  unchanged) and claims no parity with CASA or WSClean. See the
+  [guide](docs/radio_clean.md).
+- `fit(..., precondition="diag")` rescales each coordinate by the square root of the diagonal Gauss–Newton curvature in L-BFGS (refreshed every restart round, with `gtol`, `max_step_size` and `info["grad_norm"]` still in the unscaled coordinates, and the softmax gauge of an `Image` projected out) and Adam. Off by default; LM ignores it. `info["precondition_rounds"]` records, per round, the spread of the scaling (`decades`) and the fraction of coordinates at the floor (`floored`). `gauss_newton_diag` returns the diagonal (exact up to 1024 coordinates, else probes). It takes 30–40% fewer L-BFGS steps in total along a maximum-entropy L-curve; it does not make weak-weight fits converge in float32.
+- Docs: a public [References](https://benjaminpope.github.io/virgil/references/) page, generated from `references/provenance.toml` by `scripts/sync_references_page.py`; `tests/lint/test_provenance.py` fails on a source cited in `src/` or `docs/` with no entry. A docstring-length gate (`tests/lint/test_docstring_length.py`, 60 lines) and terse docstrings for `aliases`, `epochs`, `orbit_search` and `orbits`; the derivations are in `docs/orbit_methods.md`.
+- Docs: terse docstrings for the data and pipeline modules (`oidata`, `observables`, `virgil.pipeline.*`): the pipeline classes' settings are now a table per pipeline in [Pipelines](https://benjaminpope.github.io/virgil/pipeline/).
+- `OrbitPipeline` checks that its verdict survives dropping the most outlying
+  night (`night_dropped`): the `modes` stage refits the search without the
+  night of highest raw χ²/N and compares the orbit-or-not verdict and the
+  winning alias band, reported in `modes.robustness` (a second search; skipped
+  below 3 nights or with `drop_outlier_night=False`).
+- `CalibrationNuisance(sigmas="profile")` removes the error-scale sites and sets
+  `ŝ_d² = χ²_d(1) / (2 N_d)` at each evaluation, the exact optimum over `ln s`
+  under the Jeffreys prior; `fit` reports it in `info["derived"]`,
+  `ComplexVisData.sigma_hat` computes it, and `term(sigma=)` fixes it for scoring. New `offset_beams` argument.
 - `write_oifits(OIData)`:
   - Errors, flags, wavelengths, (u, v) and times survive a round trip.
   - Closure phases without station indices get placeholder stations.
@@ -1251,6 +1276,7 @@ Provisional in 0.4:
   `smoothed` option of the regularizers;
 - `virgil.crossval`;
 - `virgil.fitting.gauss_newton_diag` and the `precondition` argument of `fit`;
+- `virgil.plotting.plot_field_draws`;
 - the module `virgil.radio_clean` (new in 0.4.1: `clean`, `RadioCleanResult`,
   `fit_beam`, `restore`), with the `uvtaper` argument of
   `ComplexVisData.dirty_image` and `dirty_beam`, `ComplexVisData.sigma_hat`,

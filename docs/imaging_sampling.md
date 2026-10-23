@@ -134,6 +134,19 @@ plt.show()
 
 ![imaging_sampling output 10.1](generated/imaging_sampling_cell010_out01.png)
 
+The same draws as a diagnostic, in the layout of part 3's prior figure. The top row shows two posterior draws and the per-pixel S/N, the posterior mean over the standard deviation; the beam is drawn in the corner. Below, a hundred cuts through the draws along the ring's major and minor axes are shown in log₁₀ brightness relative to the true peak, with the truth dashed. The cuts follow the truth where the data constrain it and fan out in the faint wings.
+
+The S/N is a **per-pixel brightness** S/N, not a detection significance. The ring is plainly detected, but each pixel's log-brightness is uncertain by order one, so per-pixel S/N stays at most about two even on the ring. Smoothing by the beam would raise it only a little.
+
+```python
+from virgil.plotting import plot_field_draws
+
+plot_field_draws(images=images, pixel_scale_mas=pixel_scale, truth=truth_image, snr=True, beam=resolution, axes_pa=((30, "major axis"), (120, "minor axis")), title="NUTS posterior draws of the ring")
+plt.show()
+```
+
+![imaging_sampling output 12.1](generated/imaging_sampling_cell012_out01.png)
+
 ## What about σ and ℓ?
 
 Holding σ and ℓ at the evidence's choice ignores their own uncertainty. Part 3's evidence grid shows how much that matters: if neighbouring σ and ℓ have nearly the same evidence, images drawn at either would do as well. You can sample them too. Give them priors (they are scales, so log-uniform on stated bounds) and run plain NUTS without `gauss_newton_mass`, whose matrix would be wrong as they move. On this scene that took about 4 minutes on an A100 GPU, and gave σ = 3–10 and ℓ = 80–340 mas (90% intervals), consistent with the evidence's choice. Run it on a GPU, or average images over the evidence grid's neighbouring points.

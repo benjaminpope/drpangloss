@@ -424,6 +424,24 @@ Look for a bump at each true ring radius and a minimum in the gap where the plan
 rms error of ln I0 over 2.0-29.0 mas (truth within e^-6 of its peak): GP 0.33, parametric 0.10
 ```
 
+## The multipole field prior
+
+A `MultipoleField` is the same Gaussian-process idea on a polar grid in the disk's frame, here inclined 50° at position angle 30°. It is a residual that follows the disk's geometry. The top row shows three prior draws. The bottom shows the field's azimuthal Fourier coefficients: the cosine amplitude $a_m(r)$ of each harmonic $m = 0, \dots, 3$ in $\eta = \sum_m a_m \cos m\theta + b_m \sin m\theta$, against disk-plane radius, each on its own offset track (the $m = 0$ coefficient is the azimuthal mean). Every harmonic is a smooth function of radius with correlation length $\ell_r$. Higher harmonics have smaller amplitudes, with a scale set by $\ell_\theta$.
+
+```python
+import jax
+import jax.numpy as np
+import matplotlib.pyplot as plt
+from virgil.fields import MultipoleField
+from virgil.plotting import plot_field_draws
+
+prior = MultipoleField(np.zeros((32, 64)), image_shape=(96, 96), r_max_mas=40.0, sigma=2.0, length_r=6.0, length_theta=0.8, inc=50.0, pa=30.0)
+plot_field_draws(prior, 1.0, jax.random.PRNGKey(3), n=300, title="MultipoleField prior, inclination 50°, PA 30°")
+plt.show()
+```
+
+![multipole_disk_rings output 15.1](generated/multipole_disk_rings_cell015_out01.png)
+
 ## Summary
 
 A non-parametric `MultipoleDisk` fits the same data as the parametric family without being told there are three rings: its profile, colour and lopsidedness are Gaussian processes, and only the planet keeps its parametric form. It reaches a $\chi^2/N$ close to that of the family that made the data and recovers the planet's position and flux. It pays for its freedom with a less accurate profile (a larger rms error of $\ln I_0$ against the truth; both are printed above). The profile's length scale is a prior choice, since the two evidences differ by only a couple of nat; structure finer than the 2 to 3 mas half-fringe is not constrained in either fit; and the Laplace $\log Z$ comparison with the parametric model is only indicative.
@@ -552,4 +570,4 @@ plot_summary(gp_res.model(), data, r_out_mas=30.0, r_in_mas=gp_res.summary["mode
 plt.show()
 ```
 
-![multipole_disk_rings output 17.1](generated/multipole_disk_rings_cell017_out01.png)
+![multipole_disk_rings output 19.1](generated/multipole_disk_rings_cell019_out01.png)
